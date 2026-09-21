@@ -93,7 +93,8 @@ export default function Recommend({ session }: Props) {
                 <th>Player</th>
                 <th>Objective</th>
                 <th>Cost</th>
-                {result.mode === "horizon" ? <th>P(next pick)</th> : <th>Punts</th>}
+                {result.mode === "horizon" && !result.on_the_clock && <th>P(my pick)</th>}
+                {result.mode === "horizon" ? <th>P(pick after)</th> : <th>Punts</th>}
                 <th>Weakest cat</th>
               </tr>
             </thead>
@@ -103,6 +104,9 @@ export default function Recommend({ session }: Props) {
                   <td>{c.name}</td>
                   <td className="num">{c.objective.toFixed(2)}</td>
                   <td className="num">{c.cost_vs_best.toFixed(2)}</td>
+                  {result.mode === "horizon" && !result.on_the_clock && (
+                    <td className="num">{((c.p_available_first ?? 0) * 100).toFixed(0)}%</td>
+                  )}
                   {result.mode === "horizon" ? (
                     <td className="num">{((c.p_available_next ?? 0) * 100).toFixed(0)}%</td>
                   ) : (

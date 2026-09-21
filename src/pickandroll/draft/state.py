@@ -41,6 +41,7 @@ class DraftState:
     pool_size: int | None = None
     adp: pd.Series | None = None
     adp_source: str = "none"
+    solver_margin: int = 60
 
     def __post_init__(self) -> None:
         if not 1 <= self.my_position <= self.settings.num_teams:
@@ -62,6 +63,15 @@ class DraftState:
     def available(self) -> list[str]:
         taken = self.taken
         return [pid for pid in self.z.index if pid not in taken]
+
+    def solver_players(self) -> list[str]:
+        """Players worth modelling: my roster plus the best available by total z, enough to
+        fill every remaining pick in the draft with a margin. Deep bench names only slow the
+        solver down and never enter an optimal roster."""
+        remaining = self.settings.total_picks - len(self.picks)
+        keep = remaining + self.solver_margin
+        best = self.z.loc[self.available, "total"].nlargest(keep).index.tolist()
+        return list(dict.fromkeys(self.my_roster + best))
 
     @property
     def next_overall(self) -> int:
@@ -116,11 +126,12 @@ class DraftState:
             return fallback
         return self.adp.fillna(fallback)
 
-    def availability(self) -> pd.DataFrame:
+    def availability(self, players: Sequence[str] | None = None) -> pd.DataFrame:
         """P(available at each of my remaining picks | still on the board now)."""
-        return conditional_availability(
-            self.effective_adp(), now=self.next_overall, picks=self.my_remaining_picks
-        )
+        adp = self.effective_adp()
+        if players is not None:
+            adp = adp.reindex(players)
+        return conditional_availability(adp, now=self.next_overall, picks=self.my_remaining_picks)
 
     # ------------------------------------------------------------------ mutation
     def apply_pick(self, team: str, player_id: str, overall: int | None = None) -> Pick:
@@ -157,9 +168,10 @@ class DraftState:
         **extra,
     ) -> RosterProblem:
         """Roster problem for the current board: my roster locked, everyone drafted blocked."""
+        players = self.solver_players()
         return RosterProblem(
-            z=self.z,
-            positions=self.positions,
+            z=self.z.loc[players],
+            positions={p: self.positions[p] for p in players},
             slots=self.settings.slots,
             cats=self.settings.cats,
             punt=punt,
@@ -167,8 +179,8 @@ class DraftState:
             balance=balance,
             weights=weights,
             locks=frozenset(self.my_roster),
-            blocks=self.taken - frozenset(self.my_roster),
-            raw=self.projections.df,
+            blocks=frozenset(p for p in players if p in self.taken and p not in self.my_roster),
+            raw=self.projections.df.loc[players],
             availability=availability,
             **extra,
         )
@@ -176,10 +188,17 @@ class DraftState:
     def best_roster(self, **kwargs) -> RosterSolution:
         return solve_roster(self.problem(**kwargs))
 
-    def candidates(self, n: int = 8, punt: frozenset[Cat] | None = None) -> list[str]:
-        """Top available players by total z (punt-adjusted when a punt is given)."""
+    def candidates(
+        self, n: int = 8, punt: frozenset[Cat] | None = None, expected: bool = False
+    ) -> list[str]:
+        """Top available players by punt-adjusted total z. With ``expected`` the total is
+        weighted by the chance the player is still there at my next pick, which is what
+        matters when someone else is on the clock."""
         cols = [c.value for c in self.settings.cats if not punt or c not in punt]
         totals = self.z.loc[self.available, cols].sum(axis=1)
+        if expected and self.my_remaining_picks and not self.on_the_clock:
+            avail = self.availability(self.available)[self.my_remaining_picks[0]]
+            totals = totals.clip(lower=0) * avail
         return totals.nlargest(n).index.tolist()
 
     def recommend(self, n: int = 8, punt: frozenset[Cat] | None = None, **kwargs) -> pd.DataFrame:
@@ -204,18 +223,19 @@ class DraftState:
     ) -> HorizonProblem:
         """Plan over my remaining picks. Raises ``ValueError`` when picks and open slots differ
         (traded picks, odd manual entry), in which case callers fall back to the roster model."""
+        players = self.solver_players()
         return HorizonProblem(
-            z=self.z,
-            positions=self.positions,
+            z=self.z.loc[players],
+            positions={p: self.positions[p] for p in players},
             picks=self.my_remaining_picks,
-            availability=self.availability(),
+            availability=self.availability(players),
             slots=self.settings.slots,
             cats=self.settings.cats,
             punt=punt,
             balance=balance,
             weights=weights,
             locks=frozenset(self.my_roster),
-            blocks=self.taken - frozenset(self.my_roster),
+            blocks=frozenset(p for p in players if p in self.taken and p not in self.my_roster),
         )
 
     def plan(
@@ -234,6 +254,7 @@ class DraftState:
         punt: frozenset[Cat] | None = None,
         max_punts: int = 2,
         balance: float = 0.0,
+        workers: int | None = None,
         **kwargs,
     ) -> tuple[pd.DataFrame, HorizonSolution, frozenset[Cat]]:
         """Candidates for my next pick priced with the waiting risk, plus the plan itself."""
@@ -242,10 +263,10 @@ class DraftState:
         )
         problem = self.horizon_problem(chosen, balance=balance, **kwargs)
         solution = solve_horizon(problem)
-        candidates = self.candidates(n, chosen)
+        candidates = self.candidates(n, chosen, expected=True)
         if solution.first_pick and solution.first_pick not in candidates:
             candidates.append(solution.first_pick)
-        table = horizon_pick_pool(problem, candidates)
+        table = horizon_pick_pool(problem, candidates, base=solution, workers=workers)
         if not table.empty:
             table.insert(1, "name", table["player"].map(self.projections.df["player"]))
         return table, solution, chosen

@@ -215,27 +215,53 @@ def solve_horizon(
     )
 
 
+def _solve_forced(
+    args: tuple[HorizonProblem, str, float, float],
+) -> tuple[str, HorizonSolution | None]:
+    problem, candidate, time_limit, gap = args
+    try:
+        return candidate, solve_horizon(
+            replace(problem, force_first=candidate), time_limit=time_limit, gap=gap
+        )
+    except (RuntimeError, ValueError):
+        return candidate, None
+
+
 def horizon_pick_pool(
-    problem: HorizonProblem, candidates: Sequence[str], time_limit: float = 5.0, gap: float = 0.0
+    problem: HorizonProblem,
+    candidates: Sequence[str],
+    time_limit: float = 5.0,
+    gap: float = 0.0,
+    base: HorizonSolution | None = None,
+    workers: int | None = None,
 ) -> pd.DataFrame:
     """Price candidates for the next pick by forcing each to be the plan's first pick.
 
-    ``cost_vs_best`` now includes the risk of waiting: a player the plan would take later at
-    high probability costs little to skip now, a player likely to vanish costs a lot.
+    ``cost_vs_best`` includes the risk of waiting: a player the plan would take later at high
+    probability costs little to skip now, a player likely to vanish costs a lot. Candidate
+    solves are independent and run in a process pool unless ``workers=1``.
     """
-    base = solve_horizon(problem, time_limit=time_limit, gap=gap)
+    if base is None:
+        base = solve_horizon(problem, time_limit=time_limit, gap=gap)
     next_pick = problem.picks[1] if len(problem.picks) > 1 else None
+    jobs = [(problem, c, time_limit, gap) for c in candidates]
+    if workers == 1 or len(jobs) <= 1:
+        results = [_solve_forced(job) for job in jobs]
+    else:
+        from concurrent.futures import ProcessPoolExecutor
+
+        with ProcessPoolExecutor(max_workers=workers) as pool:
+            results = list(pool.map(_solve_forced, jobs))
     rows = []
-    for c in candidates:
-        try:
-            sol = solve_horizon(replace(problem, force_first=c), time_limit=time_limit, gap=gap)
-        except (RuntimeError, ValueError):
+    for c, sol in results:
+        if sol is None:
             continue
         rows.append(
             {
                 "player": c,
                 "objective": sol.objective,
                 "cost_vs_best": max(0.0, base.objective - sol.objective),
+                "p_available_first": float(problem.availability.at[c, problem.picks[0]]),
                 "p_available_next": (
                     float(problem.availability.at[c, next_pick]) if next_pick is not None else 0.0
                 ),
@@ -244,7 +270,14 @@ def horizon_pick_pool(
         )
     out = pd.DataFrame(
         rows,
-        columns=["player", "objective", "cost_vs_best", "p_available_next", "min_active_total"],
+        columns=[
+            "player",
+            "objective",
+            "cost_vs_best",
+            "p_available_first",
+            "p_available_next",
+            "min_active_total",
+        ],
     )
     return out.sort_values("objective", ascending=False).reset_index(drop=True)
 

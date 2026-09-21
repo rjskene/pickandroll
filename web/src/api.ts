@@ -52,6 +52,7 @@ export interface Candidate {
   objective: number;
   cost_vs_best: number;
   punted?: string;
+  p_available_first?: number;
   p_available_next?: number;
   min_active_total: number;
 }

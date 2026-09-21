@@ -82,11 +82,12 @@ def test_pick_pool_prices_waiting_risk(pool):
     z = problem.z["total"]
     star = z.idxmax()
     mid = z.sort_values(ascending=False).index[30]
-    table = horizon_pick_pool(problem, [star, mid])
+    table = horizon_pick_pool(problem, [star, mid], workers=1)
     assert list(table.columns) == [
         "player",
         "objective",
         "cost_vs_best",
+        "p_available_first",
         "p_available_next",
         "min_active_total",
     ]

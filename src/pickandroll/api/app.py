@@ -313,7 +313,9 @@ def create_app(
                         ],
                         "best_roster": {
                             "objective": plan.objective,
-                            "punted": [c.value for c in chosen],
+                            "punted": [
+                                c.value for c in sorted(chosen, key=list(state.settings.cats).index)
+                            ],
                             "min_active_total": plan.min_active_total,
                             "cat_totals": {
                                 c.value: round(float(v), 3) for c, v in plan.expected_totals.items()

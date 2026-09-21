@@ -97,7 +97,7 @@ def test_plan_and_horizon_recommendation(pool):
     assert punt == frozenset({Cat.TOV})
     assert solution.plan["pick"].tolist() == state.my_remaining_picks
     assert solution.plan.iloc[0]["availability"] == 1.0
-    table, solution2, _chosen = state.recommend_horizon(n=4, punt=frozenset({Cat.TOV}))
+    table, solution2, _chosen = state.recommend_horizon(n=4, punt=frozenset({Cat.TOV}), workers=1)
     assert "p_available_next" in table.columns and "name" in table.columns
     assert table.iloc[0]["player"] == solution2.first_pick
     assert ids[0] not in table["player"].tolist()
@@ -110,3 +110,17 @@ def test_horizon_mismatch_raises(pool):
     state.apply_pick("me", top[1])  # I somehow own pick 2 as well: 11 open slots, 12 picks left
     with pytest.raises(ValueError, match="remaining picks"):
         state.horizon_problem(frozenset())
+
+
+def test_solver_pool_is_trimmed_but_keeps_my_roster(pool):
+    state = make_state(pool, num_teams=4)
+    state.solver_margin = 5
+    worst = state.z["total"].idxmin()
+    state.apply_pick("them", state.z["total"].idxmax())
+    state.apply_pick("me", worst)
+    players = state.solver_players()
+    assert worst in players
+    assert len(players) == min(len(pool), 52 - 2 + 5 + 1)
+    problem = state.problem(punt=frozenset())
+    assert set(problem.z.index) == set(players)
+    assert worst in problem.locks
