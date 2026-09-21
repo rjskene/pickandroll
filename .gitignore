@@ -1,0 +1,33 @@
+# environments
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+dist/
+build/
+*.egg-info/
+
+# secrets and tokens (Yahoo OAuth, BBM session, env)
+.env
+.env.*
+auth/
+*.token.json
+private.json
+token.json
+
+# subscriber data exports: never commit projections pulled from paid sources
+data/*
+!data/.gitkeep
+*.xls
+*.xlsx
+
+# web
+web/node_modules/
+web/dist/
+
+# os / editors
+.DS_Store
+.vscode/
+.idea/
