@@ -19,10 +19,27 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from pickandroll.sources.yahoo import make_query
 
+NOT_AUTHORIZED_HELP = """
+Yahoo accepted the login but rejected the Fantasy Sports call. That means the developer app
+has no Fantasy Sports API permission. Fix:
+  1. Open https://developer.yahoo.com/apps/ and edit the app.
+  2. Under API Permissions tick "Fantasy Sports" (Read) and save.
+  3. Delete the YAHOO_ACCESS_TOKEN / YAHOO_REFRESH_TOKEN / YAHOO_GUID / YAHOO_TOKEN_* lines
+     from .env so the next run asks for consent with the new permission.
+  4. Run this script again.
+"""
+
 
 def main() -> None:
+    from yfpy.exceptions import YahooFantasySportsDataNotFound
+
     query = make_query(league_id="0")
-    user = query.get_current_user()
+    try:
+        user = query.get_current_user()
+    except YahooFantasySportsDataNotFound as exc:
+        if "not authorized" in str(exc):
+            sys.exit(NOT_AUTHORIZED_HELP)
+        raise
     print(f"Authenticated as Yahoo user {user.guid}")
     print("NBA leagues on this account:")
     leagues = query.get_user_leagues_by_game_key("nba")
