@@ -109,7 +109,7 @@ tr.reco td { background: rgba(245, 185, 66, 0.08); }
 .live-rows td { padding: 1px 6px; border-bottom: none; }
 
 /* plan */
-.plan { display: grid; grid-template-columns: repeat(13, minmax(0, 1fr)); gap: 6px; }
+.plan { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 6px; }
 .plan .pick { background: var(--panel-2); border: 1px solid var(--line-2); border-radius: 6px; padding: 6px; font-size: 11px; line-height: 1.25; overflow: hidden; }
 .plan .pick.now { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
 .plan .pick .n { font-family: var(--display); font-size: 16px; font-weight: 700; }
@@ -132,4 +132,4 @@ tr.reco td { background: rgba(245, 185, 66, 0.08); }
 .roster li.mine { background: var(--mine); }
 
 @media (max-width: 1250px) { .layout { grid-template-columns: 1fr 320px; } .layout > .col:first-child { grid-column: 1 / -1; } }
-@media (max-width: 900px) { .layout { grid-template-columns: 1fr; } .plan { grid-template-columns: repeat(7, minmax(0, 1fr)); } }
+@media (max-width: 900px) { .layout { grid-template-columns: 1fr; } }

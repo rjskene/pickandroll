@@ -247,7 +247,7 @@ export default function Recommend({ session, solveEvents, onResult }: Props) {
 
       {result && !recommend.isPending && (
         <>
-          <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)", gap: 12 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 12 }}>
             <section className="panel">
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 6 }}>
                 <span className="k">Alternatives</span>
