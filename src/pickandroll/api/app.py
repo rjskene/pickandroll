@@ -22,6 +22,7 @@ from pydantic import BaseModel, Field
 
 from ..draft import DraftState, LeagueSettings
 from ..optim.roster import Slot, yahoo_default_slots
+from ..projections.adp import adp_for_projections, load_adp
 from ..projections.positions import apply_positions, load_positions
 from ..projections.schema import Cat, ProjectionSet
 from ..sources.bbm import PROJECTION_SUFFIXES, load_bbm
@@ -81,6 +82,10 @@ class SessionCreate(BaseModel):
     positions_file: str | None = Field(
         default=None,
         description="optional file inside data/ with player names and positions (csv or xls)",
+    )
+    adp_file: str | None = Field(
+        default=None,
+        description="optional file inside data/ with player names and ADP (csv or xls)",
     )
     horizon: str = "season"
     num_teams: int = 12
@@ -199,6 +204,16 @@ def create_app(
             )
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
+        adp_path = data_dir / body.adp_file if body.adp_file else data_dir / "adp.csv"
+        if adp_path.exists() and adp_path != path:
+            try:
+                adp = adp_for_projections(state.projections.df, load_adp(adp_path))
+            except ValueError as exc:
+                raise HTTPException(400, f"could not read ADP from {adp_path.name}: {exc}") from exc
+            if not adp.empty:
+                state.set_adp(adp, f"file:{adp_path.name}")
+        elif body.adp_file:
+            raise HTTPException(400, f"ADP file not found: {body.adp_file}")
         session = store.create(state, projections.label)
         return _summary(session)
 

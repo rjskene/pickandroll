@@ -13,6 +13,7 @@ export default function SessionSetup({ onCreated, onSelect }: Props) {
   const sessions = useQuery({ queryKey: ["sessions"], queryFn: api.sessions });
   const [file, setFile] = useState("");
   const [positionsFile, setPositionsFile] = useState("");
+  const [adpFile, setAdpFile] = useState("");
   const [numTeams, setNumTeams] = useState(12);
   const [position, setPosition] = useState(1);
   const [myTeam, setMyTeam] = useState("me");
@@ -27,6 +28,7 @@ export default function SessionSetup({ onCreated, onSelect }: Props) {
         my_team: myTeam,
         bench,
         positions_file: positionsFile || null,
+        adp_file: adpFile || null,
       }),
     onSuccess: (session) => {
       queryClient.invalidateQueries({ queryKey: ["sessions"] });
@@ -51,6 +53,17 @@ export default function SessionSetup({ onCreated, onSelect }: Props) {
         Positions from <span className="muted">(optional, for CSV projections without positions)</span>
         <select value={positionsFile} onChange={(e) => setPositionsFile(e.target.value)}>
           <option value="">none (data/positions.csv if present)</option>
+          {(projections.data ?? []).map((p) => (
+            <option key={p.file} value={p.file}>
+              {p.file}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label>
+        ADP from <span className="muted">(optional, Yahoo ADP replaces it when the feed attaches)</span>
+        <select value={adpFile} onChange={(e) => setAdpFile(e.target.value)}>
+          <option value="">none (data/adp.csv if present, else rank by z)</option>
           {(projections.data ?? []).map((p) => (
             <option key={p.file} value={p.file}>
               {p.file}

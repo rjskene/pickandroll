@@ -24,6 +24,8 @@ export interface SessionSummary {
   complete: boolean;
   my_roster: string[];
   unknown_positions: number;
+  adp_source: string;
+  adp_known: number;
 }
 
 export interface BoardPlayer {
@@ -122,6 +124,7 @@ export const api = {
     my_team: string;
     bench: number;
     positions_file: string | null;
+    adp_file: string | null;
   }) => request<SessionSummary>("/sessions", { method: "POST", body: JSON.stringify(body) }),
   board: (id: string, limit = 300) =>
     request<{ version: number; players: BoardPlayer[] }>(`/sessions/${id}/board?limit=${limit}`),
