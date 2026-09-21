@@ -1,0 +1,341 @@
+"""FastAPI app: draft sessions over :class:`DraftState` with a server-sent event stream.
+
+Sessions live in memory (a draft lasts an evening). Every mutation bumps the session version and
+publishes an event, so the UI can subscribe to ``/sessions/{id}/events`` and re-fetch the board
+and recommendation whenever a pick lands, whether it came from the Yahoo poller or manual entry.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import uuid
+from dataclasses import dataclass, field
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import Any
+
+import pandas as pd
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel, Field
+
+from ..draft import DraftState, LeagueSettings
+from ..optim.roster import Slot, yahoo_default_slots
+from ..projections.schema import Cat, ProjectionSet
+from ..sources.bbm import load_bbm_export
+
+DATA_DIR = Path(__file__).resolve().parents[3] / "data"
+KEEPALIVE_SECONDS = 15.0
+
+
+# --------------------------------------------------------------------------- session store
+@dataclass
+class Session:
+    id: str
+    state: DraftState
+    projection_label: str
+    version: int = 0
+    listeners: list[asyncio.Queue] = field(default_factory=list)
+    log: list[dict[str, Any]] = field(default_factory=list)
+
+    def publish(self, event: str, data: dict[str, Any]) -> None:
+        self.version += 1
+        payload = {"event": event, "version": self.version, "at": _now(), **data}
+        self.log.append(payload)
+        for queue in list(self.listeners):
+            queue.put_nowait(payload)
+
+
+class SessionStore:
+    def __init__(self) -> None:
+        self.sessions: dict[str, Session] = {}
+
+    def create(self, state: DraftState, projection_label: str) -> Session:
+        session = Session(id=uuid.uuid4().hex[:8], state=state, projection_label=projection_label)
+        self.sessions[session.id] = session
+        session.publish("created", {})
+        return session
+
+    def get(self, session_id: str) -> Session:
+        try:
+            return self.sessions[session_id]
+        except KeyError:
+            raise HTTPException(404, f"no session {session_id}") from None
+
+
+# --------------------------------------------------------------------------- schemas
+class SlotIn(BaseModel):
+    name: str
+    eligible: list[str] = Field(default_factory=list, description="empty means any position")
+
+
+class SessionCreate(BaseModel):
+    projection_file: str = Field(description="file name inside data/ (Basketball Monster .xls)")
+    horizon: str = "season"
+    num_teams: int = 12
+    my_position: int = 1
+    my_team: str = "me"
+    slots: list[SlotIn] | None = None
+    bench: int = 3
+    cats: list[Cat] | None = None
+
+
+class PickIn(BaseModel):
+    team: str
+    player_id: str
+    overall: int | None = None
+
+
+class SyncIn(BaseModel):
+    picks: list[tuple[int, str, str]] = Field(description="(overall, team, player_id) triples")
+
+
+class RecommendQuery(BaseModel):
+    n: int = 8
+    punt: list[Cat] | None = None
+    max_punts: int = 2
+    balance: float = 0.0
+
+
+# --------------------------------------------------------------------------- app
+def create_app(store: SessionStore | None = None, data_dir: Path | None = None) -> FastAPI:
+    store = store or SessionStore()
+    data_dir = data_dir or DATA_DIR
+    app = FastAPI(title="pickandroll", version="0.1.0")
+    app.state.store = store
+
+    @app.get("/health")
+    def health() -> dict[str, str]:
+        return {"status": "ok", "time": _now()}
+
+    @app.get("/projections")
+    def list_projections() -> list[dict[str, Any]]:
+        files = sorted(data_dir.glob("*.xls")) + sorted(data_dir.glob("*.xlsx"))
+        return [
+            {
+                "file": f.name,
+                "modified": datetime.fromtimestamp(f.stat().st_mtime, tz=UTC).isoformat(),
+            }
+            for f in files
+        ]
+
+    @app.post("/sessions", status_code=201)
+    def create_session(body: SessionCreate) -> dict[str, Any]:
+        path = data_dir / body.projection_file
+        if not path.exists() or path.suffix.lower() not in {".xls", ".xlsx"}:
+            raise HTTPException(400, f"projection file not found: {body.projection_file}")
+        projections: ProjectionSet = load_bbm_export(path, horizon=body.horizon)  # type: ignore[arg-type]
+        slots = (
+            tuple(
+                Slot(s.name, frozenset(s.eligible) if s.eligible else Slot.eligible)
+                for s in body.slots
+            )
+            if body.slots
+            else tuple(yahoo_default_slots(bench=body.bench))
+        )
+        settings = LeagueSettings(
+            num_teams=body.num_teams,
+            slots=slots,
+            cats=tuple(body.cats) if body.cats else LeagueSettings.cats,
+        )
+        try:
+            state = DraftState(
+                settings=settings,
+                projections=projections,
+                my_team=body.my_team,
+                my_position=body.my_position,
+            )
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        session = store.create(state, projections.label)
+        return _summary(session)
+
+    @app.get("/sessions")
+    def list_sessions() -> list[dict[str, Any]]:
+        return [_summary(s) for s in store.sessions.values()]
+
+    @app.get("/sessions/{session_id}")
+    def get_session(session_id: str) -> dict[str, Any]:
+        return _summary(store.get(session_id))
+
+    @app.get("/sessions/{session_id}/board")
+    def board(session_id: str, limit: int = 300) -> dict[str, Any]:
+        session = store.get(session_id)
+        state = session.state
+        z = state.z
+        df = state.projections.df
+        taken = state.taken
+        rows = []
+        for pid in z["total"].sort_values(ascending=False).index[:limit]:
+            rows.append(
+                {
+                    "player_id": pid,
+                    "name": df.at[pid, "player"],
+                    "team": df.at[pid, "team"],
+                    "positions": df.at[pid, "positions"],
+                    "games": float(df.at[pid, "games"]),
+                    "z": {
+                        c.value: round(float(z.at[pid, c.value]), 3) for c in state.settings.cats
+                    },
+                    "total": round(float(z.at[pid, "total"]), 3),
+                    "taken": pid in taken,
+                }
+            )
+        return {"version": session.version, "players": rows}
+
+    @app.get("/sessions/{session_id}/picks")
+    def picks(session_id: str) -> list[dict[str, Any]]:
+        session = store.get(session_id)
+        return [_pick_row(session.state, p) for p in session.state.picks]
+
+    @app.post("/sessions/{session_id}/picks", status_code=201)
+    def add_pick(session_id: str, body: PickIn) -> dict[str, Any]:
+        session = store.get(session_id)
+        try:
+            pick = session.state.apply_pick(body.team, body.player_id, body.overall)
+        except (KeyError, ValueError) as exc:
+            raise HTTPException(400, str(exc)) from exc
+        row = _pick_row(session.state, pick)
+        session.publish("pick", {"pick": row})
+        return row
+
+    @app.post("/sessions/{session_id}/sync")
+    def sync(session_id: str, body: SyncIn) -> dict[str, Any]:
+        session = store.get(session_id)
+        try:
+            added = session.state.sync(body.picks)
+        except (KeyError, ValueError) as exc:
+            raise HTTPException(400, str(exc)) from exc
+        rows = [_pick_row(session.state, p) for p in added]
+        for row in rows:
+            session.publish("pick", {"pick": row})
+        return {"added": rows, "version": session.version}
+
+    @app.delete("/sessions/{session_id}/picks/last")
+    def undo_pick(session_id: str) -> dict[str, Any]:
+        session = store.get(session_id)
+        if not session.state.picks:
+            raise HTTPException(400, "no picks to undo")
+        pick = session.state.picks.pop()
+        row = _pick_row(session.state, pick)
+        session.publish("undo", {"pick": row})
+        return row
+
+    @app.post("/sessions/{session_id}/recommend")
+    def recommend(session_id: str, body: RecommendQuery) -> dict[str, Any]:
+        session = store.get(session_id)
+        state = session.state
+        punt = frozenset(body.punt) if body.punt is not None else None
+        try:
+            table = state.recommend(
+                n=body.n, punt=punt, max_punts=body.max_punts, balance=body.balance
+            )
+            best = state.best_roster(punt=punt, max_punts=body.max_punts, balance=body.balance)
+        except RuntimeError as exc:
+            raise HTTPException(409, str(exc)) from exc
+        return {
+            "version": session.version,
+            "on_the_clock": state.on_the_clock,
+            "next_overall": state.next_overall,
+            "my_next_pick": state.my_next_pick,
+            "candidates": _records(table),
+            "best_roster": {
+                "objective": best.objective,
+                "punted": [c.value for c in best.punted],
+                "min_active_total": best.min_active_total,
+                "cat_totals": {c.value: round(float(v), 3) for c, v in best.cat_totals.items()},
+                "roster": [
+                    {**r, "name": state.projections.df.at[r["player"], "player"]}
+                    for r in best.roster.to_dict(orient="records")
+                ],
+                "solve_seconds": best.solve_seconds,
+            },
+        }
+
+    @app.get("/sessions/{session_id}/events")
+    async def events(session_id: str, request: Request) -> StreamingResponse:
+        """Server-sent events: one ``hello`` on connect, then ``pick`` / ``undo`` / ``created``.
+
+        A comment line is sent every ``KEEPALIVE_SECONDS`` so proxies keep the connection open.
+        """
+        session = store.get(session_id)
+        queue: asyncio.Queue = asyncio.Queue()
+        session.listeners.append(queue)
+
+        async def stream():
+            try:
+                yield _sse("hello", {"version": session.version})
+                while not await request.is_disconnected():
+                    try:
+                        payload = await asyncio.wait_for(queue.get(), timeout=KEEPALIVE_SECONDS)
+                    except TimeoutError:
+                        yield ": keepalive\n\n"
+                        continue
+                    yield _sse(payload["event"], payload)
+            finally:
+                session.listeners.remove(queue)
+
+        return StreamingResponse(
+            stream(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+
+    return app
+
+
+# --------------------------------------------------------------------------- helpers
+def _sse(event: str, data: dict[str, Any]) -> str:
+    return f"event: {event}\ndata: {json.dumps(data, default=str)}\n\n"
+
+
+def _now() -> str:
+    return datetime.now(tz=UTC).isoformat()
+
+
+def _summary(session: Session) -> dict[str, Any]:
+    state = session.state
+    return {
+        "id": session.id,
+        "version": session.version,
+        "projection": session.projection_label,
+        "num_teams": state.settings.num_teams,
+        "roster_size": state.settings.roster_size,
+        "cats": [c.value for c in state.settings.cats],
+        "slots": [s.name for s in state.settings.slots],
+        "my_team": state.my_team,
+        "my_position": state.my_position,
+        "my_picks": state.my_picks,
+        "picks_made": len(state.picks),
+        "next_overall": state.next_overall,
+        "my_next_pick": state.my_next_pick,
+        "on_the_clock": state.on_the_clock,
+        "complete": state.complete,
+        "my_roster": state.my_roster,
+    }
+
+
+def _pick_row(state: DraftState, pick) -> dict[str, Any]:
+    rnd, position = state.owner_of(pick.overall)
+    return {
+        "overall": pick.overall,
+        "round": rnd,
+        "position": position,
+        "team": pick.team,
+        "player_id": pick.player_id,
+        "name": state.projections.df.at[pick.player_id, "player"],
+    }
+
+
+def _records(table: pd.DataFrame) -> list[dict[str, Any]]:
+    if table.empty:
+        return []
+    out = table.copy()
+    for col in out.columns:
+        if pd.api.types.is_float_dtype(out[col]):
+            out[col] = out[col].round(4)
+    return out.to_dict(orient="records")
+
+
+app = create_app()
