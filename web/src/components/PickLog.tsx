@@ -20,18 +20,21 @@ export default function PickLog({ session }: Props) {
   return (
     <section className="panel picklog">
       <header className="board-head">
-        <h2>Picks</h2>
+        <span className="k">Picks</span>
+        <span style={{ flexGrow: 1 }} />
         <button className="small" onClick={() => undo.mutate()} disabled={!rows.length || undo.isPending}>
           Undo last
         </button>
       </header>
+      {rows.length === 0 && <p className="muted" style={{ margin: 0 }}>No picks yet.</p>}
       <ol reversed>
         {rows.map((p) => (
           <li key={p.overall} className={p.team === session.my_team ? "mine" : ""}>
             <span className="slot">
               {p.round}.{String(p.position).padStart(2, "0")}
-            </span>{" "}
-            {p.name} <span className="muted">{p.team}</span>
+            </span>
+            <span>{p.name}</span>
+            <span className="muted" style={{ marginLeft: "auto" }}>{p.team}</span>
           </li>
         ))}
       </ol>

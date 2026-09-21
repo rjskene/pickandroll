@@ -35,14 +35,15 @@ export default function SessionSetup({ onCreated, onSelect }: Props) {
       onCreated(session);
     },
   });
+  const files = projections.data ?? [];
 
   return (
     <section className="panel setup">
-      <h2>New draft</h2>
+      <h2>NEW DRAFT</h2>
       <label>
-        Projections
-        <select value={file || projections.data?.[0]?.file || ""} onChange={(e) => setFile(e.target.value)}>
-          {(projections.data ?? []).map((p) => (
+        <span className="k">Projections</span>
+        <select value={file || files[0]?.file || ""} onChange={(e) => setFile(e.target.value)}>
+          {files.map((p) => (
             <option key={p.file} value={p.file}>
               {p.file}
             </option>
@@ -50,10 +51,10 @@ export default function SessionSetup({ onCreated, onSelect }: Props) {
         </select>
       </label>
       <label>
-        Positions from <span className="muted">(optional, for CSV projections without positions)</span>
+        <span className="k">Positions from <span className="muted">(optional)</span></span>
         <select value={positionsFile} onChange={(e) => setPositionsFile(e.target.value)}>
-          <option value="">none (data/positions.csv if present)</option>
-          {(projections.data ?? []).map((p) => (
+          <option value="">none, use data/positions.csv if present</option>
+          {files.map((p) => (
             <option key={p.file} value={p.file}>
               {p.file}
             </option>
@@ -61,10 +62,10 @@ export default function SessionSetup({ onCreated, onSelect }: Props) {
         </select>
       </label>
       <label>
-        ADP from <span className="muted">(optional, Yahoo ADP replaces it when the feed attaches)</span>
+        <span className="k">ADP from <span className="muted">(optional, Yahoo replaces it)</span></span>
         <select value={adpFile} onChange={(e) => setAdpFile(e.target.value)}>
-          <option value="">none (data/adp.csv if present, else rank by z)</option>
-          {(projections.data ?? []).map((p) => (
+          <option value="">none, use data/adp.csv or rank by z</option>
+          {files.map((p) => (
             <option key={p.file} value={p.file}>
               {p.file}
             </option>
@@ -73,30 +74,30 @@ export default function SessionSetup({ onCreated, onSelect }: Props) {
       </label>
       <div className="row">
         <label>
-          Teams
+          <span className="k">Teams</span>
           <input type="number" min={2} max={20} value={numTeams} onChange={(e) => setNumTeams(+e.target.value)} />
         </label>
         <label>
-          My pick
+          <span className="k">My pick</span>
           <input type="number" min={1} max={numTeams} value={position} onChange={(e) => setPosition(+e.target.value)} />
         </label>
         <label>
-          Bench
+          <span className="k">Bench</span>
           <input type="number" min={0} max={6} value={bench} onChange={(e) => setBench(+e.target.value)} />
         </label>
+        <label style={{ flexGrow: 1 }}>
+          <span className="k">My team name</span>
+          <input value={myTeam} onChange={(e) => setMyTeam(e.target.value)} />
+        </label>
       </div>
-      <label>
-        My team name
-        <input value={myTeam} onChange={(e) => setMyTeam(e.target.value)} />
-      </label>
-      <button onClick={() => create.mutate()} disabled={create.isPending || !projections.data?.length}>
+      <button className="primary" onClick={() => create.mutate()} disabled={create.isPending || !files.length}>
         {create.isPending ? "Loading projections…" : "Start draft"}
       </button>
       {create.error && <p className="error">{String(create.error.message)}</p>}
-      {projections.data?.length === 0 && <p className="muted">Drop a Basketball Monster .xls export into data/.</p>}
+      {files.length === 0 && <p className="muted">Drop a Basketball Monster export into data/.</p>}
       {(sessions.data?.length ?? 0) > 0 && (
         <>
-          <h3>Open drafts</h3>
+          <span className="k">Open drafts</span>
           <ul className="sessions">
             {sessions.data!.map((s) => (
               <li key={s.id}>

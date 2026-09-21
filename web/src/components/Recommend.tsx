@@ -1,22 +1,44 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useMutation } from "@tanstack/react-query";
-import { api, CAT_LABEL, CATS, type Cat, type Candidate, type SessionSummary, type SolveEvent } from "../api";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
+import {
+  api,
+  CAT_LABEL,
+  CATS,
+  pickOwner,
+  teamLabel,
+  type Candidate,
+  type Cat,
+  type Recommendation,
+  type SessionSummary,
+  type SolveEvent,
+} from "../api";
 
 interface Props {
   session: SessionSummary;
   solveEvents: SolveEvent[];
+  onResult: (r: Recommendation) => void;
 }
 
 function parsePunt(label: string): Cat[] {
   return label === "-" ? [] : (label.split("/") as Cat[]);
 }
-
+function puntLabel(label: string): string {
+  return label === "-" ? "no punt" : label.split("/").map((c) => CAT_LABEL[c as Cat]).join(" + ");
+}
 function fmtMs(ms: number | undefined): string {
   if (ms === undefined) return "";
   return ms >= 1000 ? `${(ms / 1000).toFixed(1)} s` : `${Math.round(ms)} ms`;
 }
+function pct(x: number | undefined): string {
+  return `${Math.round((x ?? 0) * 100)}%`;
+}
+function shortName(name: string): string {
+  const parts = name.split(" ");
+  return parts.length > 1 ? `${parts[0][0]}. ${parts.slice(1).join(" ")}` : name;
+}
 
-export default function Recommend({ session, solveEvents }: Props) {
+export default function Recommend({ session, solveEvents, onResult }: Props) {
+  const queryClient = useQueryClient();
   const [auto, setAuto] = useState(true);
   const [punt, setPunt] = useState<Cat[]>([]);
   const [maxPunts, setMaxPunts] = useState(2);
@@ -24,14 +46,27 @@ export default function Recommend({ session, solveEvents }: Props) {
   const [n, setN] = useState(8);
   const [refreshOnPick, setRefreshOnPick] = useState(true);
   const [horizon, setHorizon] = useState(true);
+  const [showSettings, setShowSettings] = useState(false);
   const [showRoster, setShowRoster] = useState<string | null>(null);
 
   const params = { n, punt: auto ? null : punt, max_punts: maxPunts, balance, horizon };
-  const recommend = useMutation({ mutationFn: () => api.recommend(session.id, params) });
+  const recommend = useMutation({
+    mutationFn: () => api.recommend(session.id, params),
+    onSuccess: (r) => onResult(r),
+  });
   const { mutate } = recommend;
+  const owner = pickOwner(session.num_teams, session.next_overall);
+  const onClockTeam = teamLabel(session, owner.position);
 
-  // Re-solve whenever the board changes (session.version bumps on every pick). The ref keeps
-  // React's development double-invoke from firing two solves for one version.
+  const draft = useMutation({
+    mutationFn: (playerId: string) => api.addPick(session.id, { team: onClockTeam, player_id: playerId }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["session", session.id] });
+      queryClient.invalidateQueries({ queryKey: ["board", session.id] });
+      queryClient.invalidateQueries({ queryKey: ["picks", session.id] });
+    },
+  });
+
   const solvedFor = useRef<string>("");
   useEffect(() => {
     const key = `${session.id}:${session.version}`;
@@ -48,13 +83,10 @@ export default function Recommend({ session, solveEvents }: Props) {
     setTimeout(() => mutate(), 0);
   };
   const result = recommend.data;
-  const title = session.on_the_clock
-    ? "You are on the clock"
-    : session.my_next_pick
-      ? `Your next pick: ${session.my_next_pick}`
-      : "Draft complete";
+  const top: Candidate | undefined = result?.candidates[0];
+  const nextPick = session.my_next_pick;
+  const pickAfter = session.my_picks.find((k) => nextPick !== null && k > nextPick);
 
-  // Live view of the run in progress, built from the solve events.
   const live = useMemo(() => {
     const scan = solveEvents.filter((e) => e.stage === "punt_scan");
     const plan = solveEvents.find((e) => e.stage === "plan");
@@ -76,242 +108,286 @@ export default function Recommend({ session, solveEvents }: Props) {
     };
   }, [solveEvents]);
 
+  const strategy = result ? puntLabel(result.punted.join("/") || "-") : auto ? "auto" : puntLabel(punt.join("/") || "-");
+
   return (
-    <section className="panel recommend">
-      <header className="board-head">
-        <h2>{title}</h2>
-        <button onClick={() => mutate()} disabled={recommend.isPending}>
-          {recommend.isPending ? "Solving…" : "Re-solve"}
-        </button>
-        {result && !recommend.isPending && (
-          <span className="muted">
-            {fmtMs(result.timings.total_ms)} total
-            {result.timings.solver_players ? `, ${result.timings.solver_players} players modelled` : ""}
-          </span>
-        )}
-      </header>
-      <div className="controls">
-        <label className="inline">
-          <input type="checkbox" checked={auto} onChange={(e) => setAuto(e.target.checked)} /> choose punts automatically
-        </label>
-        {auto ? (
-          <label className="inline">
-            max punts
-            <input type="number" min={0} max={4} value={maxPunts} onChange={(e) => setMaxPunts(+e.target.value)} />
-          </label>
-        ) : (
-          <div className="punts">
-            {CATS.map((c) => (
-              <label key={c} className={`chip ${punt.includes(c) ? "on" : ""}`}>
-                <input type="checkbox" checked={punt.includes(c)} onChange={() => togglePunt(c)} />
-                punt {CAT_LABEL[c]}
-              </label>
-            ))}
-          </div>
-        )}
-        <label className="inline">
-          balance {balance.toFixed(2)}
-          <input type="range" min={0} max={1} step={0.05} value={balance} onChange={(e) => setBalance(+e.target.value)} />
-        </label>
-        <label className="inline">
-          candidates
-          <input type="number" min={3} max={20} value={n} onChange={(e) => setN(+e.target.value)} />
-        </label>
-        <label className="inline">
-          <input type="checkbox" checked={refreshOnPick} onChange={(e) => setRefreshOnPick(e.target.checked)} /> re-solve on every pick
-        </label>
-        <label className="inline">
-          <input type="checkbox" checked={horizon} onChange={(e) => setHorizon(e.target.checked)} /> plan all remaining picks
-        </label>
-      </div>
-
-      {recommend.isPending && (
-        <div className="solver">
-          <div className="stage">
-            <span className={`dot ${live.autoPunt ? (live.scanDone === live.scanTotal && live.scanTotal > 0 ? "ok" : "run") : "skip"}`} />
-            <span className="stage-name">Punt strategy</span>
-            {live.autoPunt ? (
-              <>
-                <progress value={live.scanDone} max={live.scanTotal || 1} />
-                <span className="muted">
-                  {live.scanDone}/{live.scanTotal || "…"} punt sets
-                  {live.best ? ` · best so far: punt ${live.best.best_punt} (${live.best.best_objective?.toFixed(2)})` : ""}
-                </span>
-              </>
-            ) : (
-              <span className="muted">fixed: {punt.length ? punt.map((c) => CAT_LABEL[c]).join(", ") : "no punt"}</span>
-            )}
-          </div>
-          <div className="stage">
-            <span className={`dot ${live.plan ? "ok" : live.scanDone === live.scanTotal ? "run" : "wait"}`} />
-            <span className="stage-name">Plan remaining picks</span>
-            <span className="muted">
-              {live.plan
-                ? `first pick ${live.plan.first_pick_name ?? live.plan.first_pick}, objective ${live.plan.objective?.toFixed(2)}, punting ${live.plan.punt}`
-                : "waiting"}
-            </span>
-          </div>
-          <div className="stage">
-            <span className={`dot ${live.candTotal && live.candDone === live.candTotal ? "ok" : live.plan ? "run" : "wait"}`} />
-            <span className="stage-name">Price candidates</span>
-            <progress value={live.candDone} max={live.candTotal || 1} />
-            <span className="muted">
-              {live.candDone}/{live.candTotal || "…"} priced · {fmtMs(live.elapsed)}
-            </span>
-          </div>
-          {live.rows.length > 0 && (
-            <table className="live-rows">
-              <tbody>
-                {live.rows.map((c) => (
-                  <tr key={c.player}>
-                    <td>{c.name}</td>
-                    <td className="num">{c.objective.toFixed(2)}</td>
-                    <td className="num muted">{((c.p_available_next ?? 0) * 100).toFixed(0)}% next</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-          {live.error && <p className="error">{live.error}</p>}
+    <>
+      <section className="hero">
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <span className="k">{session.on_the_clock ? "Recommended pick" : nextPick ? `Recommended for your pick ${nextPick}` : "Draft complete"}</span>
+          <span style={{ flexGrow: 1 }} />
+          <button className="small" onClick={() => mutate()} disabled={recommend.isPending}>
+            {recommend.isPending ? "Solving…" : "Re-solve"}
+          </button>
+          <button className="small" onClick={() => setShowSettings((v) => !v)}>
+            {showSettings ? "Hide settings" : "Settings"}
+          </button>
         </div>
-      )}
-      {recommend.error && <p className="error">{recommend.error.message}</p>}
-
-      {result && !recommend.isPending && (
-        <>
-          <h3>
-            Candidates{" "}
-            <span className="muted">
-              {result.mode === "horizon"
-                ? `cost includes the risk of waiting, punting ${result.punted.map((c) => CAT_LABEL[c]).join(", ") || "nothing"}, ADP from ${result.adp_source}`
-                : "cost = objective lost by taking them now"}
-            </span>
-          </h3>
-          <table>
-            <thead>
-              <tr>
-                <th>Player</th>
-                <th>Objective</th>
-                <th>Cost</th>
-                {result.mode === "horizon" && !result.on_the_clock && <th>P(my pick)</th>}
-                {result.mode === "horizon" ? <th>P(pick after)</th> : <th>Punts</th>}
-                <th>Weakest cat</th>
-              </tr>
-            </thead>
-            <tbody>
-              {result.candidates.map((c, i) => (
-                <tr key={c.player} className={i === 0 ? "best" : ""}>
-                  <td>{c.name}</td>
-                  <td className="num">{c.objective.toFixed(2)}</td>
-                  <td className="num">{c.cost_vs_best.toFixed(2)}</td>
-                  {result.mode === "horizon" && !result.on_the_clock && (
-                    <td className="num">{((c.p_available_first ?? 0) * 100).toFixed(0)}%</td>
-                  )}
-                  {result.mode === "horizon" ? (
-                    <td className="num">{((c.p_available_next ?? 0) * 100).toFixed(0)}%</td>
-                  ) : (
-                    <td>{c.punted}</td>
-                  )}
-                  <td className="num">{c.min_active_total.toFixed(2)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-
-          {result.punt_scan.length > 0 && (
-            <>
-              <h3>
-                Punt strategies{" "}
-                <span className="muted">
-                  {result.punt_scan.length} best of the scan in {fmtMs(result.timings.punt_scan_ms)}, click one to pin it
-                </span>
-              </h3>
-              <table className="punt-scan">
-                <thead>
-                  <tr>
-                    <th>Punt</th>
-                    <th>Objective</th>
-                    <th>Gap</th>
-                    <th>Weakest cat</th>
-                    <th></th>
-                  </tr>
-                </thead>
+        {top && !recommend.isPending ? (
+          <>
+            <div style={{ display: "flex", alignItems: "baseline", gap: 14, flexWrap: "wrap" }}>
+              <div className="name">{top.name}</div>
+              <div className="muted">
+                {result?.mode === "horizon" ? "rolling-horizon plan" : "single roster"} · ADP from {result?.adp_source}
+              </div>
+            </div>
+            <div className="stats">
+              <div className="stat">
+                <span className="k">Plan value</span>
+                <span className="v accent">{top.objective.toFixed(2)}</span>
+              </div>
+              {!session.on_the_clock && (
+                <div className="stat">
+                  <span className="k">Still there at #{nextPick}</span>
+                  <span className={`v ${(top.p_available_first ?? 0) < 0.5 ? "bad" : "good"}`}>{pct(top.p_available_first)}</span>
+                </div>
+              )}
+              {pickAfter && (
+                <div className="stat">
+                  <span className="k">Lasts to #{pickAfter}</span>
+                  <span className={`v ${(top.p_available_next ?? 0) < 0.5 ? "bad" : "good"}`}>{pct(top.p_available_next)}</span>
+                </div>
+              )}
+              <div className="stat">
+                <span className="k">Strategy</span>
+                <span className="v">{strategy}</span>
+              </div>
+              <div className="grow" />
+              {!session.complete && (
+                <button className="primary" style={{ fontSize: 15, padding: "9px 18px" }} onClick={() => draft.mutate(top.player)} disabled={draft.isPending}>
+                  Draft {shortName(top.name)} {session.on_the_clock ? "" : `to ${onClockTeam}`}
+                </button>
+              )}
+            </div>
+          </>
+        ) : (
+          <div className="solver">
+            <div className="stage">
+              <span className={`dot ${live.autoPunt ? (live.scanTotal && live.scanDone === live.scanTotal ? "ok" : "run") : "skip"}`} />
+              <span className="name">Punt strategy</span>
+              {live.autoPunt ? (
+                <>
+                  <div className="bar"><span style={{ width: `${live.scanTotal ? (100 * live.scanDone) / live.scanTotal : 0}%` }} /></div>
+                  <span className="note">
+                    {live.scanDone}/{live.scanTotal || "…"} sets{live.best ? ` · best ${puntLabel(live.best.best_punt ?? "-")} ${live.best.best_objective?.toFixed(2)}` : ""}
+                  </span>
+                </>
+              ) : (
+                <>
+                  <span />
+                  <span className="note">fixed: {puntLabel(punt.join("/") || "-")}</span>
+                </>
+              )}
+            </div>
+            <div className="stage">
+              <span className={`dot ${live.plan ? "ok" : !live.autoPunt || live.scanDone === live.scanTotal ? "run" : "skip"}`} />
+              <span className="name">Plan remaining picks</span>
+              <div className="bar"><span style={{ width: live.plan ? "100%" : "0%" }} /></div>
+              <span className="note">{live.plan ? `first ${live.plan.first_pick_name ?? live.plan.first_pick}, ${live.plan.objective?.toFixed(2)}` : "waiting"}</span>
+            </div>
+            <div className="stage">
+              <span className={`dot ${live.candTotal && live.candDone === live.candTotal ? "ok" : live.plan ? "run" : "skip"}`} />
+              <span className="name">Price candidates</span>
+              <div className="bar"><span style={{ width: `${live.candTotal ? (100 * live.candDone) / live.candTotal : 0}%` }} /></div>
+              <span className="note">
+                {live.candDone}/{live.candTotal || "…"} · {fmtMs(live.elapsed)}
+              </span>
+            </div>
+            {live.rows.length > 0 && (
+              <table className="live-rows">
                 <tbody>
-                  {result.punt_scan.map((row, i) => (
-                    <tr key={row.punt} className={i === 0 ? "best" : ""}>
-                      <td>
-                        <button className="link" onClick={() => pinPunt(row.punt)}>
-                          {row.punt === "-" ? "no punt" : row.punt.split("/").map((c) => CAT_LABEL[c as Cat]).join(" + ")}
-                        </button>
-                      </td>
-                      <td className="num">{row.objective.toFixed(2)}</td>
-                      <td className="num">{row.gap_to_best.toFixed(2)}</td>
-                      <td className="num">{row.min_active_total.toFixed(2)}</td>
-                      <td>
-                        <button className="small" onClick={() => setShowRoster(showRoster === row.punt ? null : row.punt)}>
-                          {showRoster === row.punt ? "hide" : "roster"}
-                        </button>
-                      </td>
+                  {live.rows.slice(0, 5).map((c) => (
+                    <tr key={c.player}>
+                      <td>{c.name}</td>
+                      <td className="num">{c.objective.toFixed(2)}</td>
+                      <td className="num muted">{pct(c.p_available_next)} next</td>
                     </tr>
                   ))}
                 </tbody>
               </table>
-              {showRoster && (
-                <p className="muted small-text">
-                  {result.punt_scan.find((r) => r.punt === showRoster)?.roster.join(", ")}
-                </p>
+            )}
+            {live.error && <p className="error">{live.error}</p>}
+            {recommend.error && <p className="error">{recommend.error.message}</p>}
+          </div>
+        )}
+        {showSettings && (
+          <div className="controls">
+            <label>
+              <input type="checkbox" checked={auto} onChange={(e) => setAuto(e.target.checked)} /> choose punts automatically
+            </label>
+            {auto ? (
+              <label>
+                max punts <input type="number" min={0} max={4} value={maxPunts} onChange={(e) => setMaxPunts(+e.target.value)} />
+              </label>
+            ) : (
+              <div className="punts">
+                {CATS.map((c) => (
+                  <label key={c} className={`chip ${punt.includes(c) ? "on" : ""}`}>
+                    <input type="checkbox" checked={punt.includes(c)} onChange={() => togglePunt(c)} />
+                    punt {CAT_LABEL[c]}
+                  </label>
+                ))}
+              </div>
+            )}
+            <label>
+              balance {balance.toFixed(2)} <input type="range" min={0} max={1} step={0.05} value={balance} onChange={(e) => setBalance(+e.target.value)} />
+            </label>
+            <label>
+              candidates <input type="number" min={3} max={20} value={n} onChange={(e) => setN(+e.target.value)} />
+            </label>
+            <label>
+              <input type="checkbox" checked={refreshOnPick} onChange={(e) => setRefreshOnPick(e.target.checked)} /> re-solve on every pick
+            </label>
+            <label>
+              <input type="checkbox" checked={horizon} onChange={(e) => setHorizon(e.target.checked)} /> plan all remaining picks
+            </label>
+          </div>
+        )}
+      </section>
+
+      {result && !recommend.isPending && (
+        <>
+          <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)", gap: 12 }}>
+            <section className="panel">
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 6 }}>
+                <span className="k">Alternatives</span>
+                <span className="muted" style={{ fontSize: 11 }}>
+                  cost = plan value lost{pickAfter ? ` · odds he lasts to #${pickAfter}` : ""}
+                </span>
+              </div>
+              <table>
+                <thead>
+                  <tr>
+                    <th>Player</th>
+                    <th className="num">Value</th>
+                    <th className="num">Cost</th>
+                    {!session.on_the_clock && nextPick && <th className="num">At #{nextPick}</th>}
+                    {pickAfter && <th style={{ width: 120 }}>Lasts to #{pickAfter}</th>}
+                  </tr>
+                </thead>
+                <tbody>
+                  {result.candidates.slice(1).map((c) => (
+                    <tr key={c.player}>
+                      <td>
+                        <button className="link" onClick={() => !session.complete && draft.mutate(c.player)} title="draft this player">
+                          {c.name}
+                        </button>
+                      </td>
+                      <td className="num">{c.objective.toFixed(2)}</td>
+                      <td className="num">{c.cost_vs_best.toFixed(2)}</td>
+                      {!session.on_the_clock && nextPick && <td className="num">{pct(c.p_available_first)}</td>}
+                      {pickAfter && (
+                        <td>
+                          <div className="bar">
+                            <span className={(c.p_available_next ?? 0) < 0.4 ? "bad" : ""} style={{ width: pct(c.p_available_next) }} />
+                          </div>
+                          <span className="muted" style={{ fontSize: 11 }}>
+                            {pct(c.p_available_next)}
+                          </span>
+                        </td>
+                      )}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </section>
+            <section className="panel" style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+                <span className="k">Solver</span>
+                <span className="muted" style={{ fontSize: 11 }}>
+                  {fmtMs(result.timings.total_ms)} · {result.timings.solver_players ?? "?"} players modelled
+                </span>
+              </div>
+              <div className="solver">
+                <div className="stage">
+                  <span className={`dot ${result.punt_scan.length ? "ok" : "skip"}`} />
+                  <span className="name">Punt strategy</span>
+                  <div className="bar"><span className="good" style={{ width: "100%" }} /></div>
+                  <span className="note">{result.punt_scan.length ? `46 sets · ${fmtMs(result.timings.punt_scan_ms)}` : "fixed"}</span>
+                </div>
+                <div className="stage">
+                  <span className="dot ok" />
+                  <span className="name">Plan {result.plan.length || ""} picks</span>
+                  <div className="bar"><span className="good" style={{ width: "100%" }} /></div>
+                  <span className="note">{fmtMs(result.timings.plan_ms ?? result.timings.total_ms)}</span>
+                </div>
+                <div className="stage">
+                  <span className="dot ok" />
+                  <span className="name">Price candidates</span>
+                  <div className="bar"><span className="good" style={{ width: "100%" }} /></div>
+                  <span className="note">
+                    {result.candidates.length} · {fmtMs(result.timings.candidates_ms)}
+                  </span>
+                </div>
+              </div>
+              {result.punt_scan.length > 0 && (
+                <>
+                  <span className="k" style={{ marginTop: 4 }}>
+                    Punt strategies <span className="muted" style={{ textTransform: "none", letterSpacing: 0, fontFamily: "var(--body)", fontWeight: 400 }}>click to pin</span>
+                  </span>
+                  <div className="punts">
+                    {result.punt_scan.slice(0, 6).map((row, i) => (
+                      <button
+                        key={row.punt}
+                        className={`pill clickable ${i === 0 ? "hot" : ""}`}
+                        onClick={() => pinPunt(row.punt)}
+                        onMouseEnter={() => setShowRoster(row.punt)}
+                        onMouseLeave={() => setShowRoster(null)}
+                        title={row.roster.join(", ")}
+                      >
+                        {puntLabel(row.punt)} · {i === 0 ? row.objective.toFixed(2) : `−${row.gap_to_best.toFixed(2)}`}
+                      </button>
+                    ))}
+                  </div>
+                  {showRoster && (
+                    <span className="muted" style={{ fontSize: 11 }}>
+                      {result.punt_scan.find((r) => r.punt === showRoster)?.roster.join(", ")}
+                    </span>
+                  )}
+                </>
               )}
-            </>
-          )}
+            </section>
+          </div>
 
           {result.plan.length > 0 && (
-            <>
-              <h3>
-                Plan for your remaining picks <span className="muted">(chance still there, planned in {fmtMs(result.timings.plan_ms)})</span>
-              </h3>
-              <ul className="plan">
-                {result.plan.map((p) => (
-                  <li key={p.pick}>
-                    <span className="slot">#{p.pick}</span> {p.name}
-                    <span className="muted"> {(p.availability * 100).toFixed(0)}%</span>
-                  </li>
+            <section className="panel">
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 8 }}>
+                <span className="k">Plan for your {result.plan.length} remaining picks</span>
+                <span className="muted" style={{ fontSize: 11 }}>
+                  re-solved after every pick · chance each is still there
+                </span>
+              </div>
+              <div className="plan">
+                {result.plan.map((p, i) => (
+                  <div key={p.pick} className={`pick ${i === 0 && session.on_the_clock ? "now" : ""}`} title={p.name}>
+                    <div className="n">#{p.pick}</div>
+                    <div className="who">{shortName(p.name)}</div>
+                    <div className={i === 0 && session.on_the_clock ? "" : p.availability < 0.5 ? "bad" : p.availability < 0.8 ? "accent" : "good"}>
+                      {i === 0 && session.on_the_clock ? "now" : pct(p.availability)}
+                    </div>
+                  </div>
                 ))}
-              </ul>
-            </>
+              </div>
+            </section>
           )}
 
-          <h3>
-            {result.mode === "horizon" ? "Expected roster if the plan holds" : "Best roster from here"}{" "}
-            <span className="muted">
-              obj {result.best_roster.objective.toFixed(2)}, punting{" "}
-              {result.best_roster.punted.map((c) => CAT_LABEL[c]).join(", ") || "nothing"},{" "}
-              {(result.best_roster.solve_seconds * 1000).toFixed(0)} ms
-            </span>
-          </h3>
-          <div className="roster-grid">
-            <ul className="roster">
+          <section className="panel">
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 6 }}>
+              <span className="k">{result.mode === "horizon" ? "Expected roster if the plan holds" : "Best roster from here"}</span>
+              <span className="muted" style={{ fontSize: 11 }}>
+                obj {result.best_roster.objective.toFixed(2)} · punting {result.best_roster.punted.map((c) => CAT_LABEL[c]).join(", ") || "nothing"}
+              </span>
+            </div>
+            <ul className="roster" style={{ columns: 2, columnGap: 16 }}>
               {result.best_roster.roster.map((r) => (
-                <li key={r.slot} className={session.my_roster.includes(r.player) ? "mine" : ""}>
+                <li key={r.slot} className={session.my_roster.includes(r.player) ? "mine" : ""} style={{ breakInside: "avoid" }}>
                   <span className="slot">{r.slot}</span> {r.name}
                 </li>
               ))}
             </ul>
-            <ul className="totals">
-              {CATS.map((c) => {
-                const v = result.best_roster.cat_totals[c] ?? 0;
-                const punted = result.best_roster.punted.includes(c);
-                return (
-                  <li key={c} className={punted ? "punted" : ""}>
-                    <span className="slot">{CAT_LABEL[c]}</span>
-                    <span className="bar" style={{ width: `${Math.min(100, Math.max(2, (v + 20) * 2))}%` }} />
-                    <span className="num">{v.toFixed(1)}</span>
-                  </li>
-                );
-              })}
-            </ul>
-          </div>
+          </section>
         </>
       )}
-    </section>
+    </>
   );
 }

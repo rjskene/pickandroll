@@ -161,6 +161,7 @@ export const api = {
   recommend: (id: string, params: RecommendParams) =>
     request<Recommendation>(`/sessions/${id}/recommend`, { method: "POST", body: JSON.stringify(params) }),
   eventsUrl: (id: string) => `${BASE}/sessions/${id}/events`,
+  yahooStatus: (id: string) => request<{ attached: boolean; running?: boolean; league?: string; polls?: number; last_error?: string | null }>(`/sessions/${id}/yahoo`),
 };
 
 export function teamLabel(session: SessionSummary, position: number): string {
