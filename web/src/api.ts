@@ -76,6 +76,8 @@ export interface Recommendation {
   candidates: Candidate[];
   punted: Cat[];
   plan: PlanRow[];
+  punt_scan: PuntScanRow[];
+  timings: Record<string, number>;
   best_roster: {
     objective: number;
     punted: Cat[];
@@ -84,6 +86,30 @@ export interface Recommendation {
     roster: { player: string; name: string; slot: string; slot_index: number }[];
     solve_seconds: number;
   };
+}
+
+export interface PuntScanRow {
+  punt: string;
+  objective: number;
+  gap_to_best: number;
+  min_active_total: number;
+  roster: string[];
+}
+
+export interface SolveEvent {
+  stage: "start" | "punt_scan" | "plan" | "candidates" | "roster" | "done" | "error";
+  done: number;
+  total: number;
+  elapsed_ms: number;
+  auto_punt?: boolean;
+  punt?: string;
+  objective?: number;
+  best_punt?: string;
+  best_objective?: number;
+  first_pick?: string;
+  first_pick_name?: string;
+  candidate?: Candidate & { failed?: boolean };
+  message?: string;
 }
 
 export interface RecommendParams {
