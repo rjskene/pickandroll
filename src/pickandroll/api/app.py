@@ -480,6 +480,8 @@ def _summary(session: Session) -> dict[str, Any]:
         "unknown_positions": int(
             (state.projections.df["positions"].fillna("").str.strip() == "").sum()
         ),
+        "adp_source": state.adp_source,
+        "adp_known": int(state.adp.notna().sum()) if state.adp is not None else 0,
     }
 
 

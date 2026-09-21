@@ -16,7 +16,7 @@ import pandas as pd
 from .names import normalize_name
 from .schema import split_positions
 
-NAME_COLUMNS = ("player", "name", "Name", "full_name")
+NAME_COLUMNS = ("player", "name", "Name", "Player", "PLAYER", "full_name", "player_name")
 POSITION_COLUMNS = ("positions", "position", "pos", "Pos", "eligible_positions", "display_position")
 
 
