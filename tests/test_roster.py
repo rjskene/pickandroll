@@ -115,3 +115,36 @@ def test_projection_set_round_trip(pool):
     )
     problem = RosterProblem(z=zscores(ps.df), positions=ps.positions())
     assert solve_roster(problem).status == "Optimal"
+
+
+def test_punt_sets_count():
+    from pickandroll.optim import punt_sets
+
+    assert len(punt_sets(list(Cat), 2)) == 1 + 9 + 36
+    assert len(punt_sets(list(Cat), 0)) == 1
+
+
+def test_punt_scan_matches_single_model_auto_punt(pool):
+    from pickandroll.optim import punt_scan
+
+    problem = make_problem(pool, punt=None, max_punts=2)
+    scan = punt_scan(problem, workers=1)
+    assert len(scan.solutions) == 46
+    assert list(scan.table.columns)[:2] == ["punt", "objective"]
+    assert scan.table["objective"].is_monotonic_decreasing
+    milp = solve_roster(problem, method="milp")
+    assert abs(scan.solutions[0].objective - milp.objective) < 1e-6
+    assert set(scan.solutions[0].punted) == set(milp.punted)
+
+
+def test_balanced_auto_punt_routes_through_enumeration_and_agrees_with_milp(pool):
+    problem = make_problem(pool, punt=None, max_punts=1, balance=0.5)
+    via_enum = solve_roster(problem, method="enumerate")
+    via_milp = solve_roster(problem, method="milp")
+    assert abs(via_enum.objective - via_milp.objective) < 1e-6
+    assert via_enum.status == "Optimal"
+
+
+def test_invalid_method_rejected(pool):
+    with pytest.raises(ValueError):
+        solve_roster(make_problem(pool, punt=frozenset()), method="magic")

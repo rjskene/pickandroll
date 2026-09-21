@@ -3,25 +3,26 @@
 Decision variables
     x[p, s]  binary   player p fills roster slot s (created only for eligible pairs)
     y[c]     binary   category c is *active* (not punted); constants when the punt is fixed
-    u[c]     real     active contribution of category c, equal to T_c * y[c] where
-                      T_c = sum_p z[p, c] * x_p is the team total (x_p = sum_s x[p, s])
+    w[p, c]  0..1     linearized product x_p * y[c], where x_p = sum_s x[p, s]
     t        real     floor on the team total of every active category (max-min term)
 
 Objective
-    maximize (1 - balance) * sum_c u[c] + balance * t
+    maximize (1 - balance) * sum_c sum_p z[p, c] * w[p, c] + balance * t
 
 Constraints
     each slot filled exactly once, each player at most once
     locks on, blocks off
     sum_c y[c] >= n_cats - max_punts
-    u[c] = T_c * y[c] by big-M:  -M y <= u <= M y,  T - M (1 - y) <= u <= T + M (1 - y)
-    t <= T_c + M_c (1 - y_c)
+    w <= x_p, w <= y_c, w >= x_p + y_c - 1          (exact for a product of two binaries)
+    t <= T_c + M_c (1 - y_c), T_c = sum_p z[p, c] x_p
     optional: team percentage floors  sum_p x_p (makes_p - floor * attempts_p) >= -M (1 - y_c)
     optional: minimum projected games sum_p x_p games_p >= min_games
 
-The product of a binary with a bounded team total is linearized per category (nine auxiliary
-variables) rather than per player and category, which keeps the model small enough to solve in
-well under a second during a draft.
+Benchmarks on a 188-player Basketball Monster export (13 slots): a fixed punt solves in about
+70 ms, automatic punt selection in about 300 ms, but the max-min balance term weakens the LP
+relaxation badly (several seconds with free punts). ``punt_scan`` therefore enumerates every punt
+set with a fixed-punt model in a process pool, which is exact, about one second for 46 sets, and
+also yields the full strategy table. ``solve_roster`` routes balanced auto-punt solves through it.
 
 ``z`` must already be sign-adjusted so higher is better everywhere (see ``projections.zscores``).
 Category weights scale the value columns. Availability weights, when given, scale a player's
@@ -173,27 +174,38 @@ def build(problem: RosterProblem) -> tuple[pulp.LpProblem, dict]:
             y[c] = 0 if c in problem.punt else 1
 
     totals = {c: pulp.lpSum(value.at[p, c.value] * on[p] for p in players) for c in cats}
-    big_m = {c: float(value[c.value].abs().sum()) + 1.0 for c in cats}
 
-    # u[c] = totals[c] * y[c]
-    u: dict[Cat, pulp.LpVariable | pulp.LpAffineExpression] = {}
+    # Active contribution per category: sum_p z * (x_p * y_c), linearized per player.
+    contribution: dict[Cat, pulp.LpAffineExpression] = {}
+    w: dict[tuple[str, Cat], pulp.LpVariable] = {}
     for c in cats:
         if auto_punt:
-            u[c] = model.add_variable(f"u_{c.value}", lowBound=-big_m[c], upBound=big_m[c])
-            model += u[c] <= big_m[c] * y[c], f"u_off_hi_{c.value}"
-            model += u[c] >= -big_m[c] * y[c], f"u_off_lo_{c.value}"
-            model += u[c] <= totals[c] + big_m[c] * (1 - y[c]), f"u_on_hi_{c.value}"
-            model += u[c] >= totals[c] - big_m[c] * (1 - y[c]), f"u_on_lo_{c.value}"
+            terms = []
+            for p in players:
+                coef = float(value.at[p, c.value])
+                if coef == 0.0:
+                    continue
+                w[p, c] = model.add_variable(f"w_{_safe(p)}_{c.value}", lowBound=0, upBound=1)
+                model += w[p, c] <= on[p], f"w_x_{_safe(p)}_{c.value}"
+                model += w[p, c] <= y[c], f"w_y_{_safe(p)}_{c.value}"
+                model += w[p, c] >= on[p] + y[c] - 1, f"w_xy_{_safe(p)}_{c.value}"
+                terms.append(coef * w[p, c])
+            contribution[c] = pulp.lpSum(terms)
         else:
-            u[c] = totals[c] if y[c] else pulp.lpSum([])
+            contribution[c] = totals[c] if y[c] else pulp.lpSum([])
 
-    t = model.add_variable(
-        "t_min_total", lowBound=-max(big_m.values()), upBound=max(big_m.values())
-    )
+    # Bounds on any feasible team total: sum of the best / worst `roster_size` values.
+    roster_size = len(slots)
+    hi = {c: float(value[c.value].nlargest(roster_size).clip(lower=0).sum()) for c in cats}
+    lo = {c: float(value[c.value].nsmallest(roster_size).clip(upper=0).sum()) for c in cats}
+    t_max = max(hi.values())
+    t = model.add_variable("t_min_total", lowBound=min(lo.values()), upBound=t_max)
     if problem.balance > 0.0:
         for c in cats:
             if auto_punt:
-                model += t <= totals[c] + big_m[c] * (1 - y[c]), f"floor_{c.value}"
+                # When c is punted, t may rise to the best active total while T_c can be as low
+                # as lo[c]; the slack must cover that whole range.
+                model += t <= totals[c] + (t_max - lo[c] + 1.0) * (1 - y[c]), f"floor_{c.value}"
             elif y[c]:
                 model += t <= totals[c], f"floor_{c.value}"
     else:
@@ -218,8 +230,9 @@ def build(problem: RosterProblem) -> tuple[pulp.LpProblem, dict]:
             "min_games",
         )
 
-    model += (1.0 - problem.balance) * pulp.lpSum(u[c] for c in cats) + problem.balance * t
-    return model, {"x": x, "y": y, "u": u, "t": t, "on": on, "totals": totals, "value": value}
+    objective = (1.0 - problem.balance) * pulp.lpSum(contribution[c] for c in cats)
+    model += objective + problem.balance * t
+    return model, {"x": x, "y": y, "w": w, "t": t, "on": on, "totals": totals, "value": value}
 
 
 def solve_roster(
@@ -227,7 +240,21 @@ def solve_roster(
     time_limit: float = 10.0,
     gap: float = 0.0,
     threads: int | None = None,
+    method: str = "auto",
 ) -> RosterSolution:
+    """Solve a roster problem.
+
+    ``method`` is ``"milp"`` (one model, free punt variables), ``"enumerate"`` (one fixed-punt
+    model per punt set, see :func:`punt_scan`) or ``"auto"``: enumerate when punts are free and
+    a balance term is present, otherwise a single model.
+    """
+    if method not in {"auto", "milp", "enumerate"}:
+        raise ValueError("method must be auto, milp or enumerate")
+    if problem.punt is None and (
+        method == "enumerate" or (method == "auto" and problem.balance > 0.0)
+    ):
+        scan = punt_scan(problem, time_limit=time_limit, gap=gap)
+        return scan.solutions[0]
     model, parts = build(problem)
     solver = pulp.HiGHS(msg=False, timeLimit=time_limit, gapRel=gap, threads=threads)
     start = time.perf_counter()
@@ -263,22 +290,76 @@ def solve_roster(
     )
 
 
+@dataclass
+class PuntScan:
+    """Every punt set up to ``max_punts`` solved as a fixed-punt model, best first."""
+
+    table: pd.DataFrame
+    solutions: list[RosterSolution]
+
+
+def _solve_fixed(args: tuple[RosterProblem, frozenset[Cat], float, float]) -> RosterSolution:
+    problem, punt, time_limit, gap = args
+    return solve_roster(replace(problem, punt=punt), time_limit=time_limit, gap=gap, method="milp")
+
+
+def punt_sets(cats: Sequence[Cat], max_punts: int) -> list[frozenset[Cat]]:
+    from itertools import combinations
+
+    return [frozenset(c) for k in range(max_punts + 1) for c in combinations(cats, k)]
+
+
+def punt_scan(
+    problem: RosterProblem,
+    time_limit: float = 10.0,
+    gap: float = 0.0,
+    workers: int | None = None,
+) -> PuntScan:
+    """Solve the roster problem once per punt set and rank the strategies.
+
+    Each solve is an independent fixed-punt model, so they run in a process pool. With
+    ``workers=1`` the scan runs in-process, which is what tests use.
+    """
+    sets = punt_sets(problem.cats, problem.max_punts)
+    jobs = [(problem, punt, time_limit, gap) for punt in sets]
+    if workers == 1:
+        solutions = [_solve_fixed(job) for job in jobs]
+    else:
+        from concurrent.futures import ProcessPoolExecutor
+
+        with ProcessPoolExecutor(max_workers=workers) as pool:
+            solutions = list(pool.map(_solve_fixed, jobs))
+    order = sorted(range(len(sets)), key=lambda i: solutions[i].objective, reverse=True)
+    rows = [
+        {
+            "punt": "/".join(c.value for c in sorted(sets[i], key=list(problem.cats).index)) or "-",
+            "objective": solutions[i].objective,
+            "min_active_total": solutions[i].min_active_total,
+            "players": ", ".join(solutions[i].players),
+            "solve_seconds": solutions[i].solve_seconds,
+        }
+        for i in order
+    ]
+    return PuntScan(table=pd.DataFrame(rows), solutions=[solutions[i] for i in order])
+
+
 def pick_pool(
     problem: RosterProblem,
     candidates: Sequence[str],
     time_limit: float = 5.0,
     gap: float = 0.0,
+    method: str = "auto",
 ) -> pd.DataFrame:
     """Rank candidate players by the best roster objective when each is forced onto the roster.
 
     The difference from the unconstrained optimum is the price of taking that player now.
     """
-    base = solve_roster(problem, time_limit=time_limit, gap=gap)
+    base = solve_roster(problem, time_limit=time_limit, gap=gap, method=method)
     rows = []
     for p in candidates:
         forced = replace(problem, locks=problem.locks | {p})
         try:
-            sol = solve_roster(forced, time_limit=time_limit, gap=gap)
+            sol = solve_roster(forced, time_limit=time_limit, gap=gap, method=method)
         except RuntimeError:
             continue
         rows.append(

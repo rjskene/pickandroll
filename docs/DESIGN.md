@@ -84,9 +84,28 @@ Constraints:
 Slots default to Yahoo's lineup: PG, SG, G, SF, PF, F, C, C, UTIL, UTIL and three bench spots.
 Auction drafts add `sum_p price_p x_p <= budget`.
 
-Solver: HiGHS through PuLP (`highspy` ships the binary in the wheel). A 13-of-200 problem solves in
-tens of milliseconds; the auto-punt variant with the `w` linearization is still well under a
-second.
+Solver: HiGHS through PuLP (`highspy` ships the binary in the wheel). Measured on a 188-player
+Basketball Monster export with 13 slots (Apple Silicon, single thread):
+
+| variant | time |
+| --- | --- |
+| fixed punt | ~70 ms |
+| automatic punt, up to two categories, single model | ~350 ms |
+| automatic punt with max-min balance, single model | ~7 s |
+| `punt_scan`: all 46 punt sets as fixed-punt models in a process pool | ~1.0 to 1.3 s |
+| `pick_pool` over 8 candidates, fixed punt | ~0.7 s |
+
+The balance term weakens the LP relaxation badly when the punt is free, so `solve_roster` routes
+balanced auto-punt solves through `punt_scan`, which is exact and also produces the strategy
+table (best roster and objective under every punt). During a draft the punt is usually fixed
+after the first few picks, and fixed-punt solves are what run on the clock.
+
+Future speed-up if needed: build the HiGHS model once and re-solve with changed objective
+coefficients per punt set instead of rebuilding through PuLP, which is most of the per-solve cost.
+
+`draft.state.DraftState` holds the live board (settings, projection set, z-scores, pick log) and
+builds the roster problem for the current state: my roster locked, everyone else's picks blocked.
+`recommend` prices the top available candidates with `pick_pool`.
 
 `pick_pool` forces each candidate onto the roster in turn and reports the objective lost versus the
 unconstrained optimum. That difference is the price of taking the candidate now and is what the UI
