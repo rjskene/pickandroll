@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import json
 import uuid
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -31,6 +32,9 @@ from .yahoo_feed import LeagueFactory, YahooFeed, attach_feed
 
 DATA_DIR = Path(__file__).resolve().parents[3] / "data"
 KEEPALIVE_SECONDS = 15.0
+# Streams end on their own after this long; EventSource reconnects and the UI refreshes on
+# the next hello. Bounded streams let uvicorn finish a graceful shutdown or reload.
+MAX_STREAM_SECONDS = 120.0
 
 
 # --------------------------------------------------------------------------- session store
@@ -129,7 +133,18 @@ def create_app(
     store = store or SessionStore()
     data_dir = data_dir or DATA_DIR
     league_factory = league_factory or (lambda league_id: YahooLeague(league_id))
-    app = FastAPI(title="pickandroll", version="0.1.0")
+    shutdown = asyncio.Event()
+
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI):
+        shutdown.clear()
+        yield
+        shutdown.set()  # wakes every open event stream so the server can exit
+        for session in store.sessions.values():
+            if session.yahoo and session.yahoo.task:
+                session.yahoo.task.cancel()
+
+    app = FastAPI(title="pickandroll", version="0.1.0", lifespan=lifespan)
     app.state.store = store
 
     @app.get("/health")
@@ -384,16 +399,31 @@ def create_app(
         session.listeners.append(queue)
 
         async def stream():
+            stop = asyncio.ensure_future(shutdown.wait())
+            started = asyncio.get_running_loop().time()
             try:
                 yield _sse("hello", {"version": session.version})
-                while not await request.is_disconnected():
-                    try:
-                        payload = await asyncio.wait_for(queue.get(), timeout=KEEPALIVE_SECONDS)
-                    except TimeoutError:
+                while not shutdown.is_set() and not await request.is_disconnected():
+                    if asyncio.get_running_loop().time() - started > MAX_STREAM_SECONDS:
+                        yield _sse("reconnect", {"version": session.version})
+                        break
+                    getter = asyncio.ensure_future(queue.get())
+                    done, _pending = await asyncio.wait(
+                        {getter, stop},
+                        timeout=KEEPALIVE_SECONDS,
+                        return_when=asyncio.FIRST_COMPLETED,
+                    )
+                    if getter in done:
+                        payload = getter.result()
+                        yield _sse(payload["event"], payload)
+                    else:
+                        getter.cancel()
+                        if stop in done:
+                            yield _sse("bye", {"reason": "server shutting down"})
+                            break
                         yield ": keepalive\n\n"
-                        continue
-                    yield _sse(payload["event"], payload)
             finally:
+                stop.cancel()
                 session.listeners.remove(queue)
 
         return StreamingResponse(

@@ -207,3 +207,46 @@ def test_create_session_from_csv_with_positions(client):
         "/sessions", json={"projection_file": files[-1].name, "positions_file": "nope.csv"}
     )
     assert r.status_code == 400
+
+
+def test_events_stream_ends_on_shutdown():
+    """A reload or Ctrl-C must not wait forever on open event streams."""
+    if not (DATA / "bbm_sample_ros_totals.xls").exists():
+        pytest.skip("no Basketball Monster sample export in data/")
+    import socket
+    import threading
+    import time
+
+    import httpx
+    import uvicorn
+
+    app = create_app(SessionStore(), data_dir=DATA)
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        port = sock.getsockname()[1]
+    config = uvicorn.Config(
+        app, host="127.0.0.1", port=port, log_level="warning", timeout_graceful_shutdown=2
+    )
+    server = uvicorn.Server(config)
+    thread = threading.Thread(target=server.run, daemon=True)
+    thread.start()
+    deadline = time.time() + 10
+    while not server.started and time.time() < deadline:
+        time.sleep(0.05)
+    assert server.started
+    with httpx.Client(base_url=f"http://127.0.0.1:{port}", timeout=10) as client:
+        s = create(client)
+        with client.stream("GET", f"/sessions/{s['id']}/events") as stream:
+            lines = stream.iter_lines()
+            assert next(line for line in lines if line.startswith("event:")) == "event: hello"
+            server.should_exit = True
+            started = time.time()
+            try:
+                for line in lines:
+                    if line.startswith("event:"):
+                        break
+            except httpx.HTTPError:
+                pass  # the server force-closed the stream after the graceful timeout
+            assert time.time() - started < 8
+    thread.join(timeout=10)
+    assert not thread.is_alive()

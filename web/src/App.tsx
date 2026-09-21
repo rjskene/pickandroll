@@ -31,6 +31,7 @@ export default function App() {
       queryClient.invalidateQueries({ queryKey: ["board", sessionId] });
       queryClient.invalidateQueries({ queryKey: ["picks", sessionId] });
     };
+    source.addEventListener("hello", refresh); // also fires after an automatic reconnect
     source.addEventListener("pick", refresh);
     source.addEventListener("undo", refresh);
     return () => source.close();

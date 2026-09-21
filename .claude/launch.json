@@ -4,7 +4,7 @@
     {
       "name": "api",
       "runtimeExecutable": ".venv/bin/uvicorn",
-      "runtimeArgs": ["pickandroll.api:app", "--host", "127.0.0.1", "--port", "8000", "--reload"],
+      "runtimeArgs": ["pickandroll.api:app", "--host", "127.0.0.1", "--port", "8000", "--reload", "--timeout-graceful-shutdown", "3"],
       "port": 8000
     },
     {
