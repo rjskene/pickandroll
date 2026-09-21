@@ -24,6 +24,8 @@ from ..draft import DraftState, LeagueSettings
 from ..optim.roster import Slot, yahoo_default_slots
 from ..projections.schema import Cat, ProjectionSet
 from ..sources.bbm import load_bbm_export
+from ..sources.yahoo import YahooLeague
+from .yahoo_feed import LeagueFactory, YahooFeed, attach_feed
 
 DATA_DIR = Path(__file__).resolve().parents[3] / "data"
 KEEPALIVE_SECONDS = 15.0
@@ -38,6 +40,7 @@ class Session:
     version: int = 0
     listeners: list[asyncio.Queue] = field(default_factory=list)
     log: list[dict[str, Any]] = field(default_factory=list)
+    yahoo: YahooFeed | None = None
 
     def publish(self, event: str, data: dict[str, Any]) -> None:
         self.version += 1
@@ -91,6 +94,12 @@ class SyncIn(BaseModel):
     picks: list[tuple[int, str, str]] = Field(description="(overall, team, player_id) triples")
 
 
+class YahooAttach(BaseModel):
+    league_id: str
+    interval: float = Field(default=8.0, ge=2.0, le=120.0)
+    start: bool = True
+
+
 class RecommendQuery(BaseModel):
     n: int = 8
     punt: list[Cat] | None = None
@@ -99,9 +108,14 @@ class RecommendQuery(BaseModel):
 
 
 # --------------------------------------------------------------------------- app
-def create_app(store: SessionStore | None = None, data_dir: Path | None = None) -> FastAPI:
+def create_app(
+    store: SessionStore | None = None,
+    data_dir: Path | None = None,
+    league_factory: LeagueFactory | None = None,
+) -> FastAPI:
     store = store or SessionStore()
     data_dir = data_dir or DATA_DIR
+    league_factory = league_factory or (lambda league_id: YahooLeague(league_id))
     app = FastAPI(title="pickandroll", version="0.1.0")
     app.state.store = store
 
@@ -281,6 +295,50 @@ def create_app(store: SessionStore | None = None, data_dir: Path | None = None) 
             media_type="text/event-stream",
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
+
+    # ------------------------------------------------------------------ yahoo feed
+    @app.post("/sessions/{session_id}/yahoo", status_code=201)
+    async def yahoo_attach(session_id: str, body: YahooAttach) -> dict[str, Any]:
+        session = store.get(session_id)
+        if session.yahoo and session.yahoo.running:
+            session.yahoo.task.cancel()
+        try:
+            league = league_factory(body.league_id)
+            feed = await asyncio.to_thread(
+                attach_feed, session, league, body.interval, data_dir / "aliases.json"
+            )
+        except Exception as exc:
+            raise HTTPException(502, f"yahoo: {exc}") from exc
+        session.yahoo = feed
+        if body.start:
+            feed.task = asyncio.create_task(feed.run(session))
+        return {**feed.status(), "session": _summary(session)}
+
+    @app.get("/sessions/{session_id}/yahoo")
+    def yahoo_status(session_id: str) -> dict[str, Any]:
+        session = store.get(session_id)
+        if session.yahoo is None:
+            return {"attached": False}
+        return session.yahoo.status()
+
+    @app.post("/sessions/{session_id}/yahoo/poll")
+    async def yahoo_poll(session_id: str) -> dict[str, Any]:
+        session = store.get(session_id)
+        if session.yahoo is None:
+            raise HTTPException(400, "no yahoo feed attached")
+        try:
+            applied = await asyncio.to_thread(session.yahoo.poll_once, session)
+        except Exception as exc:
+            raise HTTPException(502, f"yahoo: {exc}") from exc
+        return {"applied": applied, **session.yahoo.status()}
+
+    @app.delete("/sessions/{session_id}/yahoo")
+    def yahoo_detach(session_id: str) -> dict[str, Any]:
+        session = store.get(session_id)
+        if session.yahoo and session.yahoo.task:
+            session.yahoo.task.cancel()
+        session.yahoo = None
+        return {"attached": False}
 
     return app
 

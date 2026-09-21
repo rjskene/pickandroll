@@ -5,101 +5,7 @@ import pandas as pd
 from pickandroll.sources.matching import match_players, normalize_name
 from pickandroll.sources.yahoo import YahooLeague, player_row, slots_from_positions
 
-
-class FakeQuery:
-    """Stands in for yfpy's YahooFantasySportsQuery with canned NBA-shaped responses."""
-
-    def get_league_key(self):
-        return "466.l.12345"
-
-    def get_league_metadata(self):
-        return NS(league_key="466.l.12345", name=b"JKR Cup", num_teams=12, draft_status="draft")
-
-    def get_league_settings(self):
-        return NS(
-            draft_type="live",
-            is_auction_draft=0,
-            draft_time=1760000000,
-            scoring_type="headone",
-            roster_positions=[
-                NS(position="PG", count=1),
-                NS(position="SG", count=1),
-                NS(position="G", count=1),
-                NS(position="SF", count=1),
-                NS(position="PF", count=1),
-                NS(position="F", count=1),
-                NS(position="C", count=2),
-                NS(position="Util", count=2),
-                NS(position="BN", count=3),
-                NS(position="IL", count=2),
-            ],
-            stat_categories=NS(
-                stats=[
-                    NS(display_name=n, is_only_display_stat=0)
-                    for n in ["FG%", "FT%", "3PTM", "PTS", "REB", "AST", "ST", "BLK", "TO"]
-                ]
-                + [NS(display_name="FGM/A", is_only_display_stat=1)]
-            ),
-        )
-
-    def get_league_teams(self):
-        return [
-            NS(
-                team_key="466.l.12345.t.1",
-                team_id=1,
-                name=b"Me",
-                draft_position=3,
-                is_owned_by_current_login=1,
-            ),
-            NS(
-                team_key="466.l.12345.t.2",
-                team_id=2,
-                name=b"Them",
-                draft_position=1,
-                is_owned_by_current_login=0,
-            ),
-        ]
-
-    def get_league_draft_results(self):
-        return [
-            NS(pick=2, round=1, team_key="466.l.12345.t.1", player_key="466.p.6", cost=None),
-            NS(pick=1, round=1, team_key="466.l.12345.t.2", player_key="466.p.5", cost=None),
-        ]
-
-    def query(self, url, keys):
-        assert "sort=AR" in url and "draft_analysis" in url
-        start = int(url.split("start=")[1].split(";")[0])
-        if start > 0:
-            return []
-        return [
-            NS(
-                player_key="466.p.5",
-                player_id=5,
-                full_name="Nikola Jokic",
-                editorial_team_abbr="DEN",
-                eligible_positions=["C", "Util"],
-                status="",
-                draft_analysis=NS(average_pick="1.3", average_round="1.0", percent_drafted="100"),
-            ),
-            NS(
-                player_key="466.p.6",
-                player_id=6,
-                full_name="Luka Dončić",
-                editorial_team_abbr="LAL",
-                eligible_positions=["PG", "SG", "G", "Util"],
-                status="",
-                draft_analysis=NS(average_pick="2.9", average_round="1.0", percent_drafted="100"),
-            ),
-            NS(
-                player_key="466.p.7",
-                player_id=7,
-                full_name="Jaren Jackson Jr.",
-                editorial_team_abbr="MEM",
-                eligible_positions=["PF", "C", "F"],
-                status="GTD",
-                draft_analysis=NS(average_pick="-", average_round="-", percent_drafted="-"),
-            ),
-        ]
+from .fakes import FakeQuery
 
 
 def test_slots_from_positions_expands_counts_and_skips_il():
@@ -117,19 +23,19 @@ def test_league_info_and_teams():
     assert info.cats == ["fg_pct", "ft_pct", "threes", "pts", "reb", "ast", "stl", "blk", "tov"]
     teams = league.teams()
     assert [t.is_mine for t in teams] == [True, False]
-    assert teams[0].draft_position == 3
+    assert teams[0].draft_position == 2
 
 
 def test_players_and_draft_results():
-    league = YahooLeague(league_id="12345", query=FakeQuery())
+    fake = FakeQuery(picks=[("466.l.12345.t.2", "466.p.0"), ("466.l.12345.t.1", "466.p.1")])
+    league = YahooLeague(league_id="12345", query=fake)
     players = league.players()
-    assert list(players.index) == ["466.p.5", "466.p.6", "466.p.7"]
-    assert players.at["466.p.6", "positions"] == "PG/SG"
-    assert players.at["466.p.5", "adp"] == 1.3
-    assert players.at["466.p.7", "adp"] is None or pd.isna(players.at["466.p.7", "adp"])
+    assert list(players.index) == ["466.p.0", "466.p.1", "466.p.2"]
+    assert players.at["466.p.1", "positions"] == "PG"
+    assert players.at["466.p.0", "adp"] == 1.0
     assert league.draft_results() == [
-        (1, "466.l.12345.t.2", "466.p.5"),
-        (2, "466.l.12345.t.1", "466.p.6"),
+        (1, "466.l.12345.t.2", "466.p.0"),
+        (2, "466.l.12345.t.1", "466.p.1"),
     ]
 
 

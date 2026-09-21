@@ -135,3 +135,44 @@ def test_events_stream_receives_pick():
     finally:
         server.should_exit = True
         thread.join(timeout=5)
+
+
+def test_yahoo_feed_attach_and_poll(client):
+    from pickandroll.sources.yahoo import YahooLeague
+
+    from .fakes import FakeQuery
+
+    fake = FakeQuery(names=["Nikola Jokic", "Luka Doncic", "Nobody Real"])
+    app = create_app(
+        SessionStore(), data_dir=DATA, league_factory=lambda lid: YahooLeague(lid, query=fake)
+    )
+    with TestClient(app) as c:
+        s = create(c, num_teams=12, my_position=5)
+        sid = s["id"]
+        r = c.post(f"/sessions/{sid}/yahoo", json={"league_id": "12345", "start": False})
+        assert r.status_code == 201, r.text
+        status = r.json()
+        assert status["matched"] == 2
+        assert [u["name"] for u in status["unmatched_yahoo"]] == ["Nobody Real"]
+        # Attaching adopts the Yahoo team name and draft position of the team I own.
+        assert status["session"]["my_team"] == "Me" and status["session"]["my_position"] == 2
+
+        fake.picks = [("466.l.12345.t.2", "466.p.0"), ("466.l.12345.t.1", "466.p.1")]
+        r = c.post(f"/sessions/{sid}/yahoo/poll")
+        assert r.status_code == 200, r.text
+        applied = r.json()["applied"]
+        assert [(p["overall"], p["team"], p["name"]) for p in applied] == [
+            (1, "Them", "Nikola Jokic"),
+            (2, "Me", "Luka Doncic"),
+        ]
+        summary = c.get(f"/sessions/{sid}").json()
+        assert summary["picks_made"] == 2 and len(summary["my_roster"]) == 1
+
+        # Same feed again applies nothing; an unmapped player is reported, not applied.
+        fake.picks.append(("466.l.12345.t.2", "466.p.2"))
+        r = c.post(f"/sessions/{sid}/yahoo/poll").json()
+        assert r["applied"] == []
+        assert r["unmapped_picks"][0]["name"] == "Nobody Real"
+        assert c.get(f"/sessions/{sid}/yahoo").json()["polls"] == 2
+        assert c.delete(f"/sessions/{sid}/yahoo").json() == {"attached": False}
+        assert c.get(f"/sessions/{sid}/yahoo").json() == {"attached": False}
