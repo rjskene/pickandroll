@@ -42,6 +42,7 @@ class DraftState:
     adp: pd.Series | None = None
     adp_source: str = "none"
     solver_margin: int = 60
+    replacement_window: int = 24
 
     def __post_init__(self) -> None:
         if not 1 <= self.my_position <= self.settings.num_teams:
@@ -219,6 +220,19 @@ class DraftState:
         scan = punt_scan(self.problem(punt=None, max_punts=max_punts, balance=balance))
         return frozenset(scan.solutions[0].punted)
 
+    def replacement_level(self) -> pd.Series:
+        """Per-category z of a replacement-level player: the average over the players ranked
+        just outside the draft (from the last pick to ``replacement_window`` past it). Values
+        for planning are measured above this line so that a likely-available bench player is
+        worth a little and an unlikely star is not worth more than nothing."""
+        order = self.z.loc[self.available, "total"].sort_values(ascending=False).index
+        start = max(0, self.settings.total_picks - len(self.picks) - 1)
+        window = order[start : start + self.replacement_window]
+        if len(window) == 0:
+            window = order[-self.replacement_window :]
+        cols = [c.value for c in self.settings.cats]
+        return self.z.loc[window, cols].mean()
+
     def horizon_problem(
         self,
         punt: frozenset[Cat],
@@ -228,8 +242,11 @@ class DraftState:
         """Plan over my remaining picks. Raises ``ValueError`` when picks and open slots differ
         (traded picks, odd manual entry), in which case callers fall back to the roster model."""
         players = self.solver_players()
+        cols = [c.value for c in self.settings.cats]
+        z = self.z.loc[players, cols] - self.replacement_level()
+        z["total"] = z.sum(axis=1)
         return HorizonProblem(
-            z=self.z.loc[players],
+            z=z,
             positions={p: self.positions[p] for p in players},
             picks=self.my_remaining_picks,
             availability=self.availability(players),

@@ -124,3 +124,14 @@ def test_solver_pool_is_trimmed_but_keeps_my_roster(pool):
     problem = state.problem(punt=frozenset())
     assert set(problem.z.index) == set(players)
     assert worst in problem.locks
+
+
+def test_replacement_level_makes_late_plan_picks_likely(pool):
+    state = make_state(pool, position=1, num_teams=4)
+    level = state.replacement_level()
+    assert set(level.index) == {c.value for c in state.settings.cats}
+    solution, _ = state.plan(punt=frozenset())
+    # The final pick should be a player who will plausibly still be there, not a lottery ticket.
+    assert solution.plan.iloc[-1]["availability"] > 0.3
+    values = state.horizon_problem(frozenset()).z["total"]
+    assert values.loc[solution.plan["player"]].min() > -1.0
