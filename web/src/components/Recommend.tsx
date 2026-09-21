@@ -13,9 +13,11 @@ export default function Recommend({ session }: Props) {
   const [balance, setBalance] = useState(0);
   const [n, setN] = useState(8);
   const [refreshOnPick, setRefreshOnPick] = useState(true);
+  const [horizon, setHorizon] = useState(true);
 
   const recommend = useMutation({
-    mutationFn: () => api.recommend(session.id, { n, punt: auto ? null : punt, max_punts: maxPunts, balance }),
+    mutationFn: () =>
+      api.recommend(session.id, { n, punt: auto ? null : punt, max_punts: maxPunts, balance, horizon }),
   });
   const { mutate } = recommend;
 
@@ -70,12 +72,20 @@ export default function Recommend({ session }: Props) {
         <label className="inline">
           <input type="checkbox" checked={refreshOnPick} onChange={(e) => setRefreshOnPick(e.target.checked)} /> re-solve on every pick
         </label>
+        <label className="inline">
+          <input type="checkbox" checked={horizon} onChange={(e) => setHorizon(e.target.checked)} /> plan all remaining picks
+        </label>
       </div>
       {recommend.error && <p className="error">{recommend.error.message}</p>}
       {result && (
         <>
           <h3>
-            Candidates <span className="muted">(cost = objective lost by taking them now)</span>
+            Candidates{" "}
+            <span className="muted">
+              {result.mode === "horizon"
+                ? `cost includes the risk of waiting, punting ${result.punted.map((c) => CAT_LABEL[c]).join(", ") || "nothing"}, ADP from ${result.adp_source}`
+                : "cost = objective lost by taking them now"}
+            </span>
           </h3>
           <table>
             <thead>
@@ -83,7 +93,7 @@ export default function Recommend({ session }: Props) {
                 <th>Player</th>
                 <th>Objective</th>
                 <th>Cost</th>
-                <th>Punts</th>
+                {result.mode === "horizon" ? <th>P(next pick)</th> : <th>Punts</th>}
                 <th>Weakest cat</th>
               </tr>
             </thead>
@@ -93,14 +103,33 @@ export default function Recommend({ session }: Props) {
                   <td>{c.name}</td>
                   <td className="num">{c.objective.toFixed(2)}</td>
                   <td className="num">{c.cost_vs_best.toFixed(2)}</td>
-                  <td>{c.punted}</td>
+                  {result.mode === "horizon" ? (
+                    <td className="num">{((c.p_available_next ?? 0) * 100).toFixed(0)}%</td>
+                  ) : (
+                    <td>{c.punted}</td>
+                  )}
                   <td className="num">{c.min_active_total.toFixed(2)}</td>
                 </tr>
               ))}
             </tbody>
           </table>
+          {result.plan.length > 0 && (
+            <>
+              <h3>
+                Plan for your remaining picks <span className="muted">(chance still there)</span>
+              </h3>
+              <ul className="plan">
+                {result.plan.map((p) => (
+                  <li key={p.pick}>
+                    <span className="slot">#{p.pick}</span> {p.name}
+                    <span className="muted"> {(p.availability * 100).toFixed(0)}%</span>
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
           <h3>
-            Best roster from here{" "}
+            {result.mode === "horizon" ? "Expected roster if the plan holds" : "Best roster from here"}{" "}
             <span className="muted">
               obj {result.best_roster.objective.toFixed(2)}, punting{" "}
               {result.best_roster.punted.map((c) => CAT_LABEL[c]).join(", ") || "nothing"},{" "}

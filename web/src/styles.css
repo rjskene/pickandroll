@@ -57,8 +57,9 @@ tr.best { background: var(--mine); }
 .chip input { display: none; }
 .chip.on { background: var(--accent); color: white; border-color: var(--accent); }
 .roster-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-.roster, .totals, .picklog ol { list-style: none; padding: 0; margin: 0; }
-.roster li, .totals li, .picklog li { padding: 2px 4px; border-bottom: 1px solid var(--line); display: flex; gap: 8px; align-items: center; }
+.roster, .totals, .plan, .picklog ol { list-style: none; padding: 0; margin: 0; }
+.plan { display: grid; grid-template-columns: 1fr 1fr; column-gap: 12px; }
+.roster li, .totals li, .plan li, .picklog li { padding: 2px 4px; border-bottom: 1px solid var(--line); display: flex; gap: 8px; align-items: center; }
 .slot { display: inline-block; min-width: 42px; color: var(--muted); font-size: 12px; }
 li.mine { background: var(--mine); }
 li.punted { opacity: 0.4; }

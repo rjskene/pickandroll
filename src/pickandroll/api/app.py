@@ -105,6 +105,7 @@ class RecommendQuery(BaseModel):
     punt: list[Cat] | None = None
     max_punts: int = 2
     balance: float = 0.0
+    horizon: bool = True
 
 
 # --------------------------------------------------------------------------- app
@@ -238,10 +239,58 @@ def create_app(
 
     @app.post("/sessions/{session_id}/recommend")
     def recommend(session_id: str, body: RecommendQuery) -> dict[str, Any]:
+        """Next-pick candidates and the best roster or plan from the current board.
+
+        With ``horizon`` (default) the rolling-horizon model prices candidates including the
+        risk of waiting and returns the plan for every remaining pick. It falls back to the
+        single-roster model when my remaining picks and open slots disagree.
+        """
         session = store.get(session_id)
         state = session.state
         punt = frozenset(body.punt) if body.punt is not None else None
+        names = state.projections.df["player"]
         try:
+            if body.horizon and not state.complete:
+                try:
+                    table, plan, chosen = state.recommend_horizon(
+                        n=body.n, punt=punt, max_punts=body.max_punts, balance=body.balance
+                    )
+                    return {
+                        "version": session.version,
+                        "mode": "horizon",
+                        "on_the_clock": state.on_the_clock,
+                        "next_overall": state.next_overall,
+                        "my_next_pick": state.my_next_pick,
+                        "adp_source": state.adp_source,
+                        "candidates": _records(table),
+                        "punted": [
+                            c.value for c in sorted(chosen, key=list(state.settings.cats).index)
+                        ],
+                        "plan": [
+                            {
+                                "pick": int(r.pick),
+                                "player": r.player,
+                                "name": names.at[r.player],
+                                "availability": round(float(r.availability), 3),
+                            }
+                            for r in plan.plan.itertuples()
+                        ],
+                        "best_roster": {
+                            "objective": plan.objective,
+                            "punted": [c.value for c in chosen],
+                            "min_active_total": plan.min_active_total,
+                            "cat_totals": {
+                                c.value: round(float(v), 3) for c, v in plan.expected_totals.items()
+                            },
+                            "roster": [
+                                {**r, "name": names.at[r["player"]]}
+                                for r in plan.roster.to_dict(orient="records")
+                            ],
+                            "solve_seconds": plan.solve_seconds,
+                        },
+                    }
+                except ValueError:
+                    pass  # picks and open slots disagree: use the roster model below
             table = state.recommend(
                 n=body.n, punt=punt, max_punts=body.max_punts, balance=body.balance
             )
@@ -250,17 +299,21 @@ def create_app(
             raise HTTPException(409, str(exc)) from exc
         return {
             "version": session.version,
+            "mode": "roster",
             "on_the_clock": state.on_the_clock,
             "next_overall": state.next_overall,
             "my_next_pick": state.my_next_pick,
+            "adp_source": state.adp_source,
             "candidates": _records(table),
+            "punted": [c.value for c in best.punted],
+            "plan": [],
             "best_roster": {
                 "objective": best.objective,
                 "punted": [c.value for c in best.punted],
                 "min_active_total": best.min_active_total,
                 "cat_totals": {c.value: round(float(v), 3) for c, v in best.cat_totals.items()},
                 "roster": [
-                    {**r, "name": state.projections.df.at[r["player"], "player"]}
+                    {**r, "name": names.at[r["player"]]}
                     for r in best.roster.to_dict(orient="records")
                 ],
                 "solve_seconds": best.solve_seconds,

@@ -50,16 +50,28 @@ export interface Candidate {
   name: string;
   objective: number;
   cost_vs_best: number;
-  punted: string;
+  punted?: string;
+  p_available_next?: number;
   min_active_total: number;
+}
+
+export interface PlanRow {
+  pick: number;
+  player: string;
+  name: string;
+  availability: number;
 }
 
 export interface Recommendation {
   version: number;
+  mode: "horizon" | "roster";
   on_the_clock: boolean;
   next_overall: number;
   my_next_pick: number | null;
+  adp_source: string;
   candidates: Candidate[];
+  punted: Cat[];
+  plan: PlanRow[];
   best_roster: {
     objective: number;
     punted: Cat[];
@@ -75,6 +87,7 @@ export interface RecommendParams {
   punt: Cat[] | null;
   max_punts: number;
   balance: number;
+  horizon: boolean;
 }
 
 const BASE = "/api";

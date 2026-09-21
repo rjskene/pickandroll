@@ -130,6 +130,12 @@ def attach_feed(
     aliases = load_aliases(aliases_path) if aliases_path else {}
     match = match_players(players, session.state.projections.df, aliases=aliases)
     team_labels = {t.team_key: t.name for t in teams}
+    if not players.empty and "adp" in players and players["adp"].notna().any():
+        adp = players["adp"].dropna()
+        adp.index = adp.index.map(match.mapping)
+        adp = adp[adp.index.notna()]
+        if not adp.empty:
+            session.state.set_adp(adp.astype(float), "yahoo")
     mine = next((t for t in teams if t.is_mine), None)
     if mine is not None:
         session.state.my_team = mine.name

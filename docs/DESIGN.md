@@ -111,17 +111,35 @@ builds the roster problem for the current state: my roster locked, everyone else
 unconstrained optimum. That difference is the price of taking the candidate now and is what the UI
 shows as the pick recommendation list.
 
-## Model 2: rolling-horizon draft (planned)
+## Model 2: rolling-horizon draft (`optim.horizon`)
 
-Extend Model 1 with a pick index `k` over the manager's remaining picks: `x[p, s, k]`, one player
-per pick, value weighted by `P(available at pick k)`. Solve, act on pick `k = 1` only, then after
-the next real pick arrives re-solve from the new state. Because only the first decision is acted
-on, the horizon model can stay coarse (availability curves rather than opponent modelling).
+Plan one player for each of my remaining picks. Variables `y[p, j]` (player `p` is the plan for my
+`j`-th remaining pick) and `x[p, s]` (slot assignment for the final roster, locked players
+included), linked by `sum_j y[p, j] = sum_s x[p, s]`. Each pick gets exactly one player, each slot
+exactly one player. The objective weights every planned player's z by `A[p, j]`, the probability
+they are still on the board at that pick given they are on the board now, so stars go early and
+late picks lean on players that will actually last. Only the first pick is acted on; after the
+next real pick the plan is re-solved from the new state.
+
+`horizon_pick_pool` forces each candidate to be the first pick and reports the objective lost,
+which now includes the risk of waiting: a player the plan would take later with high probability
+costs little to skip now, a player likely to vanish costs a lot. It also reports
+`p_available_next`, the chance the candidate survives to my following pick.
+
+The punt is fixed inside Model 2. Automatic punting picks the best punt set with Model 1's
+`punt_scan` on the current board (about one second) and then plans under it.
+
+Measured on the 188-player export: one plan solves in about 300 ms, a candidate pool of eight
+in about 2.6 s. Picks with too few plausible candidates keep the 25 most likely players so late
+picks in a thin pool stay feasible. When my remaining picks and open slots disagree (traded
+picks, unusual manual entry) the API falls back to Model 1.
 
 ## Availability
 
 `availability.adp` models `P(available at pick k) = 1 - Phi((k - adp) / sd(adp))` with `sd`
-widening for later picks. ADP comes from Yahoo's player resource. This replaces the legacy Monte
+widening for later picks, and the conditional form `S(k) / S(now)` during a draft. ADP comes from
+Yahoo's player resource when the feed is attached; otherwise a stand-in ranks players by
+Basketball Monster's rank column or by total z. This replaces the legacy Monte
 Carlo draft simulator plus Kaplan-Meier survival curves. If simulation is wanted again, sample
 each draft as one vectorized Gumbel-top-k draw (a Plackett-Luce draft in one `argsort`).
 

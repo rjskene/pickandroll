@@ -66,10 +66,20 @@ def test_pick_flow_and_recommendation(client):
 
     rec = client.post(f"/sessions/{sid}/recommend", json={"n": 4, "punt": ["tov", "ft_pct"]}).json()
     assert rec["on_the_clock"] is True
-    assert len(rec["candidates"]) == 4
+    assert rec["mode"] == "horizon"
+    assert len(rec["candidates"]) >= 4
+    assert "p_available_next" in rec["candidates"][0]
     assert board[0]["player_id"] not in [c["player"] for c in rec["candidates"]]
     assert rec["best_roster"]["punted"] == ["tov", "ft_pct"]
     assert len(rec["best_roster"]["roster"]) == 13
+    assert [p["pick"] for p in rec["plan"]] == s["my_picks"]
+    assert rec["plan"][0]["availability"] == 1.0
+    assert rec["adp_source"] == "bbm_rank"
+
+    roster_mode = client.post(
+        f"/sessions/{sid}/recommend", json={"n": 4, "punt": ["tov", "ft_pct"], "horizon": False}
+    ).json()
+    assert roster_mode["mode"] == "roster" and roster_mode["plan"] == []
 
     mine = client.post(
         f"/sessions/{sid}/picks", json={"team": "me", "player_id": rec["candidates"][0]["player"]}
@@ -167,6 +177,9 @@ def test_yahoo_feed_attach_and_poll(client):
         ]
         summary = c.get(f"/sessions/{sid}").json()
         assert summary["picks_made"] == 2 and len(summary["my_roster"]) == 1
+        # Yahoo ADP for matched players now drives availability.
+        rec = c.post(f"/sessions/{sid}/recommend", json={"n": 3, "punt": []}).json()
+        assert rec["adp_source"] == "yahoo"
 
         # Same feed again applies nothing; an unmapped player is reported, not applied.
         fake.picks.append(("466.l.12345.t.2", "466.p.2"))

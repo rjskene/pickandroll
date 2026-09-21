@@ -71,3 +71,42 @@ def test_draft_completes(pool):
     assert state.complete
     assert len(state.my_roster) == 13
     assert state.my_next_pick is None
+
+
+def test_effective_adp_prefers_market_then_fallback(pool):
+    state = make_state(pool)
+    fallback = state.effective_adp()
+    assert state.adp_source == "z_total"
+    assert fallback[state.z["total"].idxmax()] == 1.0
+    market = fallback.copy() * 0 + 50.0
+    market.iloc[0] = 3.0
+    state.set_adp(market.iloc[:10], "yahoo")
+    eff = state.effective_adp()
+    assert state.adp_source == "yahoo"
+    assert eff.iloc[0] == 3.0
+    assert eff.iloc[20] == fallback.iloc[20]
+
+
+def test_plan_and_horizon_recommendation(pool):
+    state = make_state(pool, position=2, num_teams=4)
+    ids = state.z["total"].nlargest(2).index.tolist()
+    state.apply_pick("a", ids[0])
+    assert state.on_the_clock
+    assert state.my_remaining_picks[0] == 2 and len(state.my_remaining_picks) == state.open_slots
+    solution, punt = state.plan(punt=frozenset({Cat.TOV}))
+    assert punt == frozenset({Cat.TOV})
+    assert solution.plan["pick"].tolist() == state.my_remaining_picks
+    assert solution.plan.iloc[0]["availability"] == 1.0
+    table, solution2, chosen = state.recommend_horizon(n=4, punt=frozenset({Cat.TOV}))
+    assert "p_available_next" in table.columns and "name" in table.columns
+    assert table.iloc[0]["player"] == solution2.first_pick
+    assert ids[0] not in table["player"].tolist()
+
+
+def test_horizon_mismatch_raises(pool):
+    state = make_state(pool, position=1, num_teams=4)
+    top = state.z["total"].nlargest(3).index.tolist()
+    state.apply_pick("me", top[0])
+    state.apply_pick("me", top[1])  # I somehow own pick 2 as well: 11 open slots, 12 picks left
+    with pytest.raises(ValueError, match="remaining picks"):
+        state.horizon_problem(frozenset())

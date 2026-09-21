@@ -14,7 +14,9 @@ from dataclasses import dataclass, field
 
 import pandas as pd
 
-from ..optim.roster import RosterProblem, RosterSolution, pick_pool, solve_roster
+from ..availability.adp import conditional_availability, pseudo_adp
+from ..optim.horizon import HorizonProblem, HorizonSolution, horizon_pick_pool, solve_horizon
+from ..optim.roster import RosterProblem, RosterSolution, pick_pool, punt_scan, solve_roster
 from ..projections.schema import Cat, ProjectionSet
 from ..projections.zscores import zscores
 from .settings import LeagueSettings, pick_owner, snake_picks
@@ -37,6 +39,8 @@ class DraftState:
     positions: Mapping[str, Sequence[str]] = field(init=False)
     picks: list[Pick] = field(default_factory=list)
     pool_size: int | None = None
+    adp: pd.Series | None = None
+    adp_source: str = "none"
 
     def __post_init__(self) -> None:
         if not 1 <= self.my_position <= self.settings.num_teams:
@@ -82,6 +86,41 @@ class DraftState:
 
     def owner_of(self, overall: int) -> tuple[int, int]:
         return pick_owner(self.settings.num_teams, overall)
+
+    @property
+    def my_remaining_picks(self) -> list[int]:
+        return [k for k in self.my_picks if k >= self.next_overall]
+
+    @property
+    def open_slots(self) -> int:
+        return self.settings.roster_size - len(self.my_roster)
+
+    # ------------------------------------------------------------------ availability
+    def set_adp(self, adp: pd.Series, source: str) -> None:
+        """Market ADP keyed by projection id (for example from Yahoo). Missing players fall
+        back to the pseudo ranking."""
+        self.adp = adp.reindex(self.z.index)
+        self.adp_source = source
+
+    def effective_adp(self) -> pd.Series:
+        """ADP for every player: market data where known, else a rank-based stand-in."""
+        df = self.projections.df
+        if "bbm_rank" in df.columns and df["bbm_rank"].notna().any():
+            fallback = pseudo_adp(-df["bbm_rank"].astype(float).fillna(df["bbm_rank"].max() + 1))
+            fallback_source = "bbm_rank"
+        else:
+            fallback = pseudo_adp(self.z["total"])
+            fallback_source = "z_total"
+        if self.adp is None:
+            self.adp_source = fallback_source
+            return fallback
+        return self.adp.fillna(fallback)
+
+    def availability(self) -> pd.DataFrame:
+        """P(available at each of my remaining picks | still on the board now)."""
+        return conditional_availability(
+            self.effective_adp(), now=self.next_overall, picks=self.my_remaining_picks
+        )
 
     # ------------------------------------------------------------------ mutation
     def apply_pick(self, team: str, player_id: str, overall: int | None = None) -> Pick:
@@ -150,3 +189,63 @@ class DraftState:
         if not table.empty:
             table.insert(1, "name", table["player"].map(self.projections.df["player"]))
         return table
+
+    # ------------------------------------------------------------------ rolling horizon
+    def choose_punt(self, max_punts: int = 2, balance: float = 0.0) -> frozenset[Cat]:
+        """Best punt set for the current board from the roster model (fast, exact)."""
+        scan = punt_scan(self.problem(punt=None, max_punts=max_punts, balance=balance))
+        return frozenset(scan.solutions[0].punted)
+
+    def horizon_problem(
+        self,
+        punt: frozenset[Cat],
+        balance: float = 0.0,
+        weights: Mapping[Cat, float] | None = None,
+    ) -> HorizonProblem:
+        """Plan over my remaining picks. Raises ``ValueError`` when picks and open slots differ
+        (traded picks, odd manual entry), in which case callers fall back to the roster model."""
+        return HorizonProblem(
+            z=self.z,
+            positions=self.positions,
+            picks=self.my_remaining_picks,
+            availability=self.availability(),
+            slots=self.settings.slots,
+            cats=self.settings.cats,
+            punt=punt,
+            balance=balance,
+            weights=weights,
+            locks=frozenset(self.my_roster),
+            blocks=self.taken - frozenset(self.my_roster),
+        )
+
+    def plan(
+        self, punt: frozenset[Cat] | None = None, max_punts: int = 2, balance: float = 0.0, **kwargs
+    ) -> tuple[HorizonSolution, frozenset[Cat]]:
+        """Solve the rolling-horizon plan; choose the punt first when none is given."""
+        chosen = (
+            punt if punt is not None else self.choose_punt(max_punts=max_punts, balance=balance)
+        )
+        solution = solve_horizon(self.horizon_problem(chosen, balance=balance, **kwargs))
+        return solution, chosen
+
+    def recommend_horizon(
+        self,
+        n: int = 8,
+        punt: frozenset[Cat] | None = None,
+        max_punts: int = 2,
+        balance: float = 0.0,
+        **kwargs,
+    ) -> tuple[pd.DataFrame, HorizonSolution, frozenset[Cat]]:
+        """Candidates for my next pick priced with the waiting risk, plus the plan itself."""
+        chosen = (
+            punt if punt is not None else self.choose_punt(max_punts=max_punts, balance=balance)
+        )
+        problem = self.horizon_problem(chosen, balance=balance, **kwargs)
+        solution = solve_horizon(problem)
+        candidates = self.candidates(n, chosen)
+        if solution.first_pick and solution.first_pick not in candidates:
+            candidates.append(solution.first_pick)
+        table = horizon_pick_pool(problem, candidates)
+        if not table.empty:
+            table.insert(1, "name", table["player"].map(self.projections.df["player"]))
+        return table, solution, chosen
