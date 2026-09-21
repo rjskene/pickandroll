@@ -20,13 +20,14 @@ sys.path.insert(0, str(ROOT / "src"))
 from pickandroll.sources.yahoo import make_query
 
 NOT_AUTHORIZED_HELP = """
-Yahoo accepted the login but rejected the Fantasy Sports call. That means the developer app
-has no Fantasy Sports API permission. Fix:
-  1. Open https://developer.yahoo.com/apps/ and edit the app.
-  2. Under API Permissions tick "Fantasy Sports" (Read) and save.
-  3. Delete the YAHOO_ACCESS_TOKEN / YAHOO_REFRESH_TOKEN / YAHOO_GUID / YAHOO_TOKEN_* lines
-     from .env so the next run asks for consent with the new permission.
-  4. Run this script again.
+Yahoo accepted the login but rejected the Fantasy Sports call with "This application is not
+authorized to perform this action". Since July 2026 Yahoo enforces an allowlist for the Fantasy
+Sports API: every app, old or new, must be approved through the access program at
+https://sports.yahoo.com/developer/access/ (submit your App ID and Client ID / consumer key,
+sign the agreement they send, wait for the reinstatement email). Reports on
+https://github.com/uberfastman/yfpy/issues/84 put the turnaround at two to four weeks.
+Nothing in this repo or the app's permission settings changes the outcome; the token saved in
+.env will start working the day Yahoo binds the app. Until then use manual pick entry in the UI.
 """
 
 
