@@ -9,7 +9,8 @@ after every pick is the "roll" in pickandroll.
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+import time
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 
 import pandas as pd
@@ -43,6 +44,8 @@ class DraftState:
     adp_source: str = "none"
     solver_margin: int = 60
     replacement_window: int = 24
+    last_punt_scan: pd.DataFrame | None = field(default=None, repr=False)
+    last_timings: dict[str, float] = field(default_factory=dict, repr=False)
 
     def __post_init__(self) -> None:
         if not 1 <= self.my_position <= self.settings.num_teams:
@@ -215,9 +218,21 @@ class DraftState:
         return table
 
     # ------------------------------------------------------------------ rolling horizon
-    def choose_punt(self, max_punts: int = 2, balance: float = 0.0) -> frozenset[Cat]:
-        """Best punt set for the current board from the roster model (fast, exact)."""
-        scan = punt_scan(self.problem(punt=None, max_punts=max_punts, balance=balance))
+    def choose_punt(
+        self,
+        max_punts: int = 2,
+        balance: float = 0.0,
+        progress: Callable[[dict], None] | None = None,
+        workers: int | None = None,
+    ) -> frozenset[Cat]:
+        """Best punt set for the current board from the roster model (fast, exact). The
+        ranked strategy table is kept in ``last_punt_scan``."""
+        scan = punt_scan(
+            self.problem(punt=None, max_punts=max_punts, balance=balance),
+            progress=progress,
+            workers=workers,
+        )
+        self.last_punt_scan = scan.table
         return frozenset(scan.solutions[0].punted)
 
     def replacement_level(self) -> pd.Series:
@@ -276,18 +291,51 @@ class DraftState:
         max_punts: int = 2,
         balance: float = 0.0,
         workers: int | None = None,
+        progress: Callable[[dict], None] | None = None,
         **kwargs,
     ) -> tuple[pd.DataFrame, HorizonSolution, frozenset[Cat]]:
-        """Candidates for my next pick priced with the waiting risk, plus the plan itself."""
-        chosen = (
-            punt if punt is not None else self.choose_punt(max_punts=max_punts, balance=balance)
-        )
+        """Candidates for my next pick priced with the waiting risk, plus the plan itself.
+
+        ``progress`` receives staged updates (punt scan, plan, each priced candidate); the
+        stage timings are kept in ``last_timings``.
+        """
+        started = time.perf_counter()
+        timings: dict[str, float] = {}
+        if punt is None:
+            chosen = self.choose_punt(
+                max_punts=max_punts, balance=balance, progress=progress, workers=workers
+            )
+            timings["punt_scan_ms"] = (time.perf_counter() - started) * 1000
+        else:
+            chosen = punt
+            self.last_punt_scan = None
+        mark = time.perf_counter()
         problem = self.horizon_problem(chosen, balance=balance, **kwargs)
         solution = solve_horizon(problem)
+        timings["plan_ms"] = (time.perf_counter() - mark) * 1000
+        if progress is not None:
+            label = "/".join(c.value for c in sorted(chosen, key=list(self.settings.cats).index))
+            progress(
+                {
+                    "stage": "plan",
+                    "done": 1,
+                    "total": 1,
+                    "objective": solution.objective,
+                    "first_pick": solution.first_pick,
+                    "punt": label or "-",
+                }
+            )
         candidates = self.candidates(n, chosen, expected=True)
         if solution.first_pick and solution.first_pick not in candidates:
             candidates.append(solution.first_pick)
-        table = horizon_pick_pool(problem, candidates, base=solution, workers=workers)
+        mark = time.perf_counter()
+        table = horizon_pick_pool(
+            problem, candidates, base=solution, workers=workers, progress=progress
+        )
+        timings["candidates_ms"] = (time.perf_counter() - mark) * 1000
+        timings["total_ms"] = (time.perf_counter() - started) * 1000
+        timings["solver_players"] = float(len(problem.z))
+        self.last_timings = timings
         if not table.empty:
             table.insert(1, "name", table["player"].map(self.projections.df["player"]))
         return table, solution, chosen

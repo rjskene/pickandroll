@@ -33,7 +33,7 @@ picks discounts players who will not last.
 from __future__ import annotations
 
 import time
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 
 import pandas as pd
@@ -313,26 +313,62 @@ def punt_sets(cats: Sequence[Cat], max_punts: int) -> list[frozenset[Cat]]:
     return [frozenset(c) for k in range(max_punts + 1) for c in combinations(cats, k)]
 
 
+Progress = Callable[[dict], None]
+
+
+def _punt_label(punt: Iterable[Cat], cats: Sequence[Cat]) -> str:
+    return "/".join(c.value for c in sorted(punt, key=list(cats).index)) or "-"
+
+
 def punt_scan(
     problem: RosterProblem,
     time_limit: float = 10.0,
     gap: float = 0.0,
     workers: int | None = None,
+    progress: Progress | None = None,
 ) -> PuntScan:
     """Solve the roster problem once per punt set and rank the strategies.
 
     Each solve is an independent fixed-punt model, so they run in a process pool. With
-    ``workers=1`` the scan runs in-process, which is what tests use.
+    ``workers=1`` the scan runs in-process, which is what tests use. ``progress`` is called
+    after every finished punt set with the running count and best strategy so far.
     """
     sets = punt_sets(problem.cats, problem.max_punts)
     jobs = [(problem, punt, time_limit, gap) for punt in sets]
+    solutions: list[RosterSolution | None] = [None] * len(jobs)
+    best: tuple[float, str] | None = None
+
+    def report(index: int, sol: RosterSolution, done: int) -> None:
+        nonlocal best
+        label = _punt_label(sets[index], problem.cats)
+        if best is None or sol.objective > best[0]:
+            best = (sol.objective, label)
+        if progress is not None:
+            progress(
+                {
+                    "stage": "punt_scan",
+                    "done": done,
+                    "total": len(jobs),
+                    "punt": label,
+                    "objective": sol.objective,
+                    "best_punt": best[1],
+                    "best_objective": best[0],
+                }
+            )
+
     if workers == 1:
-        solutions = [_solve_fixed(job) for job in jobs]
+        for i, job in enumerate(jobs):
+            solutions[i] = _solve_fixed(job)
+            report(i, solutions[i], i + 1)
     else:
-        from concurrent.futures import ProcessPoolExecutor
+        from concurrent.futures import ProcessPoolExecutor, as_completed
 
         with ProcessPoolExecutor(max_workers=workers) as pool:
-            solutions = list(pool.map(_solve_fixed, jobs))
+            futures = {pool.submit(_solve_fixed, job): i for i, job in enumerate(jobs)}
+            for done, future in enumerate(as_completed(futures), start=1):
+                i = futures[future]
+                solutions[i] = future.result()
+                report(i, solutions[i], done)
     order = sorted(range(len(sets)), key=lambda i: solutions[i].objective, reverse=True)
     rows = [
         {

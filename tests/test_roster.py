@@ -148,3 +148,16 @@ def test_balanced_auto_punt_routes_through_enumeration_and_agrees_with_milp(pool
 def test_invalid_method_rejected(pool):
     with pytest.raises(ValueError):
         solve_roster(make_problem(pool, punt=frozenset()), method="magic")
+
+
+def test_punt_scan_progress_reports_running_best(pool):
+    from pickandroll.optim import punt_scan
+
+    updates = []
+    scan = punt_scan(make_problem(pool, punt=None, max_punts=1), workers=1, progress=updates.append)
+    assert len(updates) == 10
+    assert [u["done"] for u in updates] == list(range(1, 11))
+    assert all(u["total"] == 10 and u["stage"] == "punt_scan" for u in updates)
+    bests = [u["best_objective"] for u in updates]
+    assert bests == sorted(bests)
+    assert updates[-1]["best_punt"] == scan.table.iloc[0]["punt"]

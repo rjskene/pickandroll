@@ -128,3 +128,13 @@ def test_expected_totals_cover_punted_categories(pool):
     sol = solve_horizon(problem)
     assert set(sol.expected_totals.index) == set(Cat)
     assert sol.min_active_total == min(v for c, v in sol.expected_totals.items() if c != Cat.TOV)
+
+
+def test_pick_pool_progress_reports_each_candidate(pool):
+    problem = make(pool, FOUR_TEAM_PICKS)
+    z = problem.z["total"]
+    candidates = z.nlargest(3).index.tolist()
+    updates = []
+    table = horizon_pick_pool(problem, candidates, workers=1, progress=updates.append)
+    assert [u["done"] for u in updates] == [1, 2, 3]
+    assert {u["candidate"]["player"] for u in updates} == set(table["player"])

@@ -250,3 +250,23 @@ def test_events_stream_ends_on_shutdown():
             assert time.time() - started < 8
     thread.join(timeout=10)
     assert not thread.is_alive()
+
+
+def test_recommend_reports_punt_scan_and_timings_without_bumping_version(client):
+    s = create(client)
+    sid = s["id"]
+    before = client.get(f"/sessions/{sid}").json()["version"]
+    rec = client.post(f"/sessions/{sid}/recommend", json={"n": 3, "max_punts": 1}).json()
+    assert rec["mode"] == "horizon"
+    assert {"punt_scan_ms", "plan_ms", "candidates_ms", "total_ms", "solver_players"} <= set(
+        rec["timings"]
+    )
+    scan = rec["punt_scan"]
+    assert len(scan) == 10 and scan[0]["gap_to_best"] == 0.0
+    assert scan[0]["punt"] == "/".join(rec["punted"]) or (
+        scan[0]["punt"] == "-" and rec["punted"] == []
+    )
+    assert isinstance(scan[0]["roster"], list) and len(scan[0]["roster"]) == 13
+    assert client.get(f"/sessions/{sid}").json()["version"] == before
+    fixed = client.post(f"/sessions/{sid}/recommend", json={"n": 3, "punt": ["tov"]}).json()
+    assert fixed["punt_scan"] == [] and "punt_scan_ms" not in fixed["timings"]

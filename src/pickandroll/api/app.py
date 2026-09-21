@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 import uuid
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
@@ -48,10 +49,14 @@ class Session:
     log: list[dict[str, Any]] = field(default_factory=list)
     yahoo: YahooFeed | None = None
 
-    def publish(self, event: str, data: dict[str, Any]) -> None:
-        self.version += 1
+    def publish(self, event: str, data: dict[str, Any], bump: bool = True) -> None:
+        """Send an event to every listener. Board changes bump the version; transient solver
+        progress (``bump=False``) does not, so the UI never re-solves because of it."""
+        if bump:
+            self.version += 1
         payload = {"event": event, "version": self.version, "at": _now(), **data}
-        self.log.append(payload)
+        if bump:
+            self.log.append(payload)
         for queue in list(self.listeners):
             queue.put_nowait(payload)
 
@@ -138,6 +143,7 @@ def create_app(
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
         shutdown.clear()
+        app.state.loop = asyncio.get_running_loop()
         yield
         shutdown.set()  # wakes every open event stream so the server can exit
         for session in store.sessions.values():
@@ -315,15 +321,42 @@ def create_app(
         state = session.state
         punt = frozenset(body.punt) if body.punt is not None else None
         names = state.projections.df["player"]
+        started = time.perf_counter()
+        loop = getattr(app.state, "loop", None)
+
+        def progress(update: dict[str, Any]) -> None:
+            payload = {**update, "elapsed_ms": round((time.perf_counter() - started) * 1000)}
+            if "candidate" in payload and "player" in payload["candidate"]:
+                payload["candidate"] = {
+                    **payload["candidate"],
+                    "name": names.get(
+                        payload["candidate"]["player"], payload["candidate"]["player"]
+                    ),
+                }
+            if payload.get("first_pick"):
+                payload["first_pick_name"] = names.get(payload["first_pick"], payload["first_pick"])
+            if loop is not None and loop.is_running():
+                loop.call_soon_threadsafe(session.publish, "solve", payload, False)
+            else:
+                session.publish("solve", payload, bump=False)
+
         try:
             if body.horizon and not state.complete:
                 try:
+                    progress({"stage": "start", "done": 0, "total": 1, "auto_punt": punt is None})
                     table, plan, chosen = state.recommend_horizon(
-                        n=body.n, punt=punt, max_punts=body.max_punts, balance=body.balance
+                        n=body.n,
+                        punt=punt,
+                        max_punts=body.max_punts,
+                        balance=body.balance,
+                        progress=progress,
                     )
+                    progress({"stage": "done", "done": 1, "total": 1})
                     return {
                         "version": session.version,
                         "mode": "horizon",
+                        "timings": {k: round(v, 1) for k, v in state.last_timings.items()},
+                        "punt_scan": _punt_scan_rows(state, names),
                         "on_the_clock": state.on_the_clock,
                         "next_overall": state.next_overall,
                         "my_next_pick": state.my_next_pick,
@@ -525,6 +558,27 @@ def _pick_row(state: DraftState, pick) -> dict[str, Any]:
         "player_id": pick.player_id,
         "name": state.projections.df.at[pick.player_id, "player"],
     }
+
+
+def _punt_scan_rows(state: DraftState, names: pd.Series, top: int = 10) -> list[dict[str, Any]]:
+    """The ranked punt strategies from the last automatic scan, best first."""
+    table = state.last_punt_scan
+    if table is None or table.empty:
+        return []
+    rows = []
+    best = float(table["objective"].iloc[0])
+    for r in table.head(top).itertuples():
+        players = [p.strip() for p in str(r.players).split(",") if p.strip()]
+        rows.append(
+            {
+                "punt": r.punt,
+                "objective": round(float(r.objective), 3),
+                "gap_to_best": round(best - float(r.objective), 3),
+                "min_active_total": round(float(r.min_active_total), 3),
+                "roster": [names.get(p, p) for p in players],
+            }
+        )
+    return rows
 
 
 def _records(table: pd.DataFrame) -> list[dict[str, Any]]:

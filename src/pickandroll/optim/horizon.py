@@ -27,7 +27,7 @@ sets with :func:`punt_scan_horizon`.
 from __future__ import annotations
 
 import time
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from itertools import combinations
 
@@ -244,40 +244,60 @@ def horizon_pick_pool(
     gap: float = 0.0,
     base: HorizonSolution | None = None,
     workers: int | None = None,
+    progress: Callable[[dict], None] | None = None,
 ) -> pd.DataFrame:
     """Price candidates for the next pick by forcing each to be the plan's first pick.
 
     ``cost_vs_best`` includes the risk of waiting: a player the plan would take later at high
     probability costs little to skip now, a player likely to vanish costs a lot. Candidate
-    solves are independent and run in a process pool unless ``workers=1``.
+    solves are independent and run in a process pool unless ``workers=1``. ``progress`` is
+    called with each priced candidate as it finishes.
     """
     if base is None:
         base = solve_horizon(problem, time_limit=time_limit, gap=gap)
     next_pick = problem.picks[1] if len(problem.picks) > 1 else None
     jobs = [(problem, c, time_limit, gap) for c in candidates]
+
+    def row_for(c: str, sol: HorizonSolution) -> dict:
+        return {
+            "player": c,
+            "objective": sol.objective,
+            "cost_vs_best": max(0.0, base.objective - sol.objective),
+            "p_available_first": float(problem.availability.at[c, problem.picks[0]]),
+            "p_available_next": (
+                float(problem.availability.at[c, next_pick]) if next_pick is not None else 0.0
+            ),
+            "min_active_total": sol.min_active_total,
+        }
+
+    rows = []
+
+    def collect(c: str, sol: HorizonSolution | None, done: int) -> None:
+        if sol is not None:
+            rows.append(row_for(c, sol))
+        if progress is not None:
+            progress(
+                {
+                    "stage": "candidates",
+                    "done": done,
+                    "total": len(jobs),
+                    "candidate": rows[-1] if sol is not None else {"player": c, "failed": True},
+                }
+            )
+
     if workers == 1 or len(jobs) <= 1:
-        results = [_solve_forced(job) for job in jobs]
+        for done, job in enumerate(jobs, start=1):
+            c, sol = _solve_forced(job)
+            collect(c, sol, done)
     else:
-        from concurrent.futures import ProcessPoolExecutor
+        from concurrent.futures import ProcessPoolExecutor, as_completed
 
         with ProcessPoolExecutor(max_workers=workers) as pool:
-            results = list(pool.map(_solve_forced, jobs))
-    rows = []
-    for c, sol in results:
-        if sol is None:
-            continue
-        rows.append(
-            {
-                "player": c,
-                "objective": sol.objective,
-                "cost_vs_best": max(0.0, base.objective - sol.objective),
-                "p_available_first": float(problem.availability.at[c, problem.picks[0]]),
-                "p_available_next": (
-                    float(problem.availability.at[c, next_pick]) if next_pick is not None else 0.0
-                ),
-                "min_active_total": sol.min_active_total,
-            }
-        )
+            futures = [pool.submit(_solve_forced, job) for job in jobs]
+            for done, future in enumerate(as_completed(futures), start=1):
+                c, sol = future.result()
+                collect(c, sol, done)
+
     out = pd.DataFrame(
         rows,
         columns=[
