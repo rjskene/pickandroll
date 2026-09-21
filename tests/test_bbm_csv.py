@@ -67,6 +67,9 @@ def test_positions_attach_by_name_and_unknown_stay_util_only():
     assert out.loc["nikola-jokic", "positions"] == "C"
     assert missing == ["luka-doncic"]
     assert Slot("UTIL").accepts(()) and not Slot("PG", frozenset({"PG"})).accepts(())
+    assert Slot("G", frozenset({"G"})).accepts(("SG",)) and Slot("PG", frozenset({"PG"})).accepts(
+        ("G",)
+    )
     validate(out)
 
 

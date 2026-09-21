@@ -49,6 +49,7 @@ class DraftState:
         pool = self.pool_size or self.settings.total_picks
         self.z = zscores(self.projections.df, cats=self.settings.cats, pool_size=pool)
         self.positions = self.projections.positions()
+        self.effective_adp()  # records adp_source
 
     # ------------------------------------------------------------------ board state
     @property
@@ -121,6 +122,9 @@ class DraftState:
         else:
             fallback = pseudo_adp(self.z["total"])
             fallback_source = "z_total"
+        if "adp" in df.columns and df["adp"].notna().any():
+            fallback = df["adp"].astype(float).fillna(fallback)
+            fallback_source = "bbm_adp"
         if self.adp is None:
             self.adp_source = fallback_source
             return fallback

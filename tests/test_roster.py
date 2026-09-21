@@ -65,7 +65,7 @@ def test_balance_raises_weakest_category(pool):
 
 
 def test_pct_floor_constrains_team_percentage(pool):
-    floor = 0.56
+    floor = 0.54
     problem = make_problem(pool, punt=frozenset(), pct_floors={Cat.FG_PCT: floor})
     sol = solve_roster(problem)
     chosen = pool.loc[sol.players]

@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from pickandroll.projections.schema import POSITIONS
+FINE_POSITIONS = ("PG", "SG", "SF", "PF", "C")
 
 DATA = Path(__file__).resolve().parents[1] / "data"
 
@@ -24,7 +24,7 @@ def synthetic_pool(n: int = 60, seed: int = 7) -> pd.DataFrame:
         "player": [f"Player {i}" for i in range(n)],
         "team": rng.choice(["BOS", "LAL", "DEN", "MIL", "OKC"], n),
         "positions": [
-            "/".join(sorted(set(rng.choice(POSITIONS, rng.integers(1, 3)).tolist())))
+            "/".join(sorted(set(rng.choice(FINE_POSITIONS, rng.integers(1, 3)).tolist())))
             for _ in range(n)
         ],
         "games": games,

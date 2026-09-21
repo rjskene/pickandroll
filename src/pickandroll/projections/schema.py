@@ -56,7 +56,28 @@ STAT_COLS: tuple[str, ...] = (
 )
 REQUIRED_COLS: tuple[str, ...] = ID_COLS + STAT_COLS
 
-POSITIONS: tuple[str, ...] = ("PG", "SG", "SF", "PF", "C")
+POSITIONS: tuple[str, ...] = ("PG", "SG", "SF", "PF", "C", "G", "F")
+# Slot eligibility implied by a listed position. Yahoo lists guards as PG and/or SG, both of
+# which can fill the G slot; some sources only give the coarse G/F groups, which we let fill
+# either fine slot rather than leave PG/SG/SF/PF slots empty.
+POSITION_EXPANSION: dict[str, frozenset[str]] = {
+    "PG": frozenset({"PG", "G"}),
+    "SG": frozenset({"SG", "G"}),
+    "SF": frozenset({"SF", "F"}),
+    "PF": frozenset({"PF", "F"}),
+    "C": frozenset({"C"}),
+    "G": frozenset({"PG", "SG", "G"}),
+    "F": frozenset({"SF", "PF", "F"}),
+}
+
+
+def eligible_slots(positions) -> frozenset[str]:
+    """Every slot token a player with these listed positions may fill (UTIL/BN excluded)."""
+    out: set[str] = set()
+    for token in positions:
+        out |= POSITION_EXPANSION.get(str(token).upper(), frozenset())
+    return frozenset(out)
+
 
 Horizon = Literal["season", "week", "day", "custom"]
 

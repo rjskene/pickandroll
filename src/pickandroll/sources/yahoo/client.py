@@ -21,7 +21,7 @@ from typing import Any
 
 import pandas as pd
 
-from ...optim.roster import ANY, FORWARDS, GUARDS, Slot
+from ...optim.roster import ANY, Slot
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
 GAME_CODE = "nba"
@@ -31,10 +31,10 @@ PAGE_SIZE = 25
 SLOT_ELIGIBILITY: dict[str, frozenset[str]] = {
     "PG": frozenset({"PG"}),
     "SG": frozenset({"SG"}),
-    "G": GUARDS,
+    "G": frozenset({"G"}),
     "SF": frozenset({"SF"}),
     "PF": frozenset({"PF"}),
-    "F": FORWARDS,
+    "F": frozenset({"F"}),
     "C": frozenset({"C"}),
     "Util": ANY,
     "UTIL": ANY,
@@ -208,7 +208,7 @@ def player_row(player: Any) -> dict[str, Any]:
     positions = getattr(player, "eligible_positions", None) or []
     if isinstance(positions, str):
         positions = [positions]
-    positions = [p for p in positions if p not in {"Util", "UTIL", "G", "F", "BN", "IL", "IL+"}]
+    positions = [p for p in positions if p not in {"Util", "UTIL", "BN", "IL", "IL+", "NA"}]
     return {
         "player_key": player.player_key,
         "player_id": getattr(player, "player_id", None),

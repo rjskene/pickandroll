@@ -1,3 +1,5 @@
+import pytest
+
 from pickandroll.projections import validate, zscores
 from pickandroll.sources.bbm import is_per_game, load_bbm_export, normalize_bbm, read_bbm_export
 
@@ -33,3 +35,23 @@ def test_load_projection_set_and_zscores_match_bbm_direction(bbm_totals_path):
     assert corr > 0.95
     corr_tov = z["tov"].corr(ps.df["bbm_z_tov"])
     assert corr_tov > 0.95
+
+
+def test_2026_export_layout_if_present():
+    from pathlib import Path
+
+    from pickandroll.draft import DraftState, LeagueSettings
+
+    path = Path(__file__).resolve().parents[1] / "data" / "bbm_ros_pergame_2026-09-21.xls"
+    if not path.exists():
+        pytest.skip("no 2026 Basketball Monster export in data/")
+    ps = load_bbm_export(path, horizon="season")
+    df = ps.df
+    assert set(df["positions"].str.split("/").explode().unique()) <= {"G", "F", "C"}
+    assert {"injury_risk", "contract_status", "role", "usage", "bbm_rank"} <= set(df.columns)
+    state = DraftState(
+        settings=LeagueSettings(num_teams=12), projections=ps, my_team="me", my_position=5
+    )
+    assert state.adp_source == "bbm_rank"
+    sol = state.best_roster(punt=frozenset())
+    assert len(sol.roster) == 13

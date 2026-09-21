@@ -8,8 +8,18 @@ def test_split_positions_handles_separators():
     assert split_positions("PG/SG") == ("PG", "SG")
     assert split_positions("PF, C") == ("PF", "C")
     assert split_positions("c") == ("C",)
+    assert split_positions("G/F") == ("G", "F")
     with pytest.raises(ValueError):
         split_positions("PG/QB")
+
+
+def test_eligible_slots_expansion():
+    from pickandroll.projections.schema import eligible_slots
+
+    assert eligible_slots(("PG",)) == {"PG", "G"}
+    assert eligible_slots(("G",)) == {"PG", "SG", "G"}
+    assert eligible_slots(("PF", "C")) == {"PF", "F", "C"}
+    assert eligible_slots(()) == frozenset()
 
 
 def test_validate_accepts_synthetic_pool(pool):

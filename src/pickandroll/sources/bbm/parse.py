@@ -55,12 +55,21 @@ EXTRA_MAP = {
     "ValueCG": "bbm_value_cg",
     "Y!%": "yahoo_owned_pct",
     "Adv%": "bbm_adv_pct",
+    "Adv ADP": "adp",
     "Inj": "injury",
+    "Inj Risk": "injury_risk",
+    "Status": "contract_status",
+    "Tier": "bbm_tier",
+    "Role": "role",
+    "USG": "usage",
+    "Note": "note",
     "Depth": "depth",
     "QG": "quality_games",
     "b2b": "back_to_backs",
     "Ease": "schedule_ease",
     "Own": "owner",
+    "FrV": "bbm_first_round_value",
+    "1W+-": "bbm_one_week_delta",
 }
 VALUE_MAP = {
     "pV": "bbm_z_pts",
@@ -114,6 +123,8 @@ def normalize_bbm(raw: pd.DataFrame) -> pd.DataFrame:
     for src, dst in {**EXTRA_MAP, **VALUE_MAP}.items():
         if src in raw.columns:
             out[dst] = raw[src]
+    if "adp" in out:
+        out["adp"] = pd.to_numeric(out["adp"], errors="coerce")
     if "injury" in out:
         out["injury"] = pd.Series(
             [None if pd.isna(v) or not str(v).strip() else str(v) for v in out["injury"]],

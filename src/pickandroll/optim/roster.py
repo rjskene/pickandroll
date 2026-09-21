@@ -39,11 +39,11 @@ from dataclasses import dataclass, field, replace
 import pandas as pd
 import pulp
 
-from ..projections.schema import NINE_CAT, PCT_CATS, PCT_COMPONENTS, POSITIONS, Cat
+from ..projections.schema import NINE_CAT, PCT_CATS, PCT_COMPONENTS, Cat, eligible_slots
 
-GUARDS = frozenset({"PG", "SG"})
-FORWARDS = frozenset({"SF", "PF"})
-ANY = frozenset(POSITIONS)
+GUARDS = frozenset({"G"})
+FORWARDS = frozenset({"F"})
+ANY = frozenset({"PG", "SG", "SF", "PF", "C", "G", "F"})
 
 
 @dataclass(frozen=True)
@@ -52,10 +52,11 @@ class Slot:
     eligible: frozenset[str] = ANY
 
     def accepts(self, positions: Iterable[str]) -> bool:
-        """UTIL and bench slots take anyone, including players with unknown positions."""
+        """UTIL and bench slots take anyone, including players with unknown positions. Other
+        slots match on the slot tokens the listed positions imply (PG implies G, and so on)."""
         if self.eligible == ANY:
             return True
-        return bool(self.eligible & set(positions))
+        return bool(self.eligible & eligible_slots(positions))
 
 
 def yahoo_default_slots(bench: int = 3) -> list[Slot]:
