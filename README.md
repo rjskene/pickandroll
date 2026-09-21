@@ -19,14 +19,40 @@ The core never imports from sources or api. Sources never import from api.
 
 ## Status
 
-Early scaffold. See `docs/DESIGN.md` for the plan and the model formulations.
+Working end to end on local data: projections load, the board and recommendations render, picks
+(manual or from a Yahoo live draft) re-solve the roster in well under a second. See
+`docs/DESIGN.md` for the model formulations and measured solve times.
 
-## Development
+## Setup
 
 ```bash
 python3.12 -m venv .venv
-.venv/bin/pip install -e ".[dev,api]"
-.venv/bin/pytest
+.venv/bin/pip install -e ".[dev,api,yahoo,bbm]"
+.venv/bin/playwright install chromium        # only for Basketball Monster downloads
+cd web && npm install
+```
+
+Secrets go in `.env` at the repo root (gitignored):
+
+```
+YAHOO_CONSUMER_KEY=...
+YAHOO_CONSUMER_SECRET=...
+YAHOO_LEAGUE_ID=...
+```
+
+## Running
+
+```bash
+.venv/bin/uvicorn pickandroll.api:app --reload          # API on :8000
+cd web && npm run dev                                   # UI on :5173, proxies /api to :8000
+.venv/bin/pytest                                        # tests
+```
+
+Data pulls:
+
+```bash
+.venv/bin/python scripts/yahoo_auth.py       # one-time OAuth, lists your leagues
+.venv/bin/python scripts/bbm_fetch.py --ros  # Basketball Monster exports into data/ (log in on first run)
 ```
 
 Projection exports from paid services live in `data/` and are gitignored. Never commit them.
