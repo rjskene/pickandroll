@@ -23,6 +23,7 @@ export interface SessionSummary {
   on_the_clock: boolean;
   complete: boolean;
   my_roster: string[];
+  unknown_positions: number;
 }
 
 export interface BoardPlayer {
@@ -110,7 +111,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
-  projections: () => request<{ file: string; modified: string }[]>("/projections"),
+  projections: () => request<{ file: string; kind: string; modified: string }[]>("/projections"),
   sessions: () => request<SessionSummary[]>("/sessions"),
   session: (id: string) => request<SessionSummary>(`/sessions/${id}`),
   createSession: (body: {
@@ -119,6 +120,7 @@ export const api = {
     my_position: number;
     my_team: string;
     bench: number;
+    positions_file: string | null;
   }) => request<SessionSummary>("/sessions", { method: "POST", body: JSON.stringify(body) }),
   board: (id: string, limit = 300) =>
     request<{ version: number; players: BoardPlayer[] }>(`/sessions/${id}/board?limit=${limit}`),

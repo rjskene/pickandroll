@@ -12,6 +12,7 @@ export default function SessionSetup({ onCreated, onSelect }: Props) {
   const projections = useQuery({ queryKey: ["projections"], queryFn: api.projections });
   const sessions = useQuery({ queryKey: ["sessions"], queryFn: api.sessions });
   const [file, setFile] = useState("");
+  const [positionsFile, setPositionsFile] = useState("");
   const [numTeams, setNumTeams] = useState(12);
   const [position, setPosition] = useState(1);
   const [myTeam, setMyTeam] = useState("me");
@@ -25,6 +26,7 @@ export default function SessionSetup({ onCreated, onSelect }: Props) {
         my_position: position,
         my_team: myTeam,
         bench,
+        positions_file: positionsFile || null,
       }),
     onSuccess: (session) => {
       queryClient.invalidateQueries({ queryKey: ["sessions"] });
@@ -38,6 +40,17 @@ export default function SessionSetup({ onCreated, onSelect }: Props) {
       <label>
         Projections
         <select value={file || projections.data?.[0]?.file || ""} onChange={(e) => setFile(e.target.value)}>
+          {(projections.data ?? []).map((p) => (
+            <option key={p.file} value={p.file}>
+              {p.file}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label>
+        Positions from <span className="muted">(optional, for CSV projections without positions)</span>
+        <select value={positionsFile} onChange={(e) => setPositionsFile(e.target.value)}>
+          <option value="">none (data/positions.csv if present)</option>
           {(projections.data ?? []).map((p) => (
             <option key={p.file} value={p.file}>
               {p.file}

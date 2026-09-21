@@ -97,7 +97,7 @@ def test_plan_and_horizon_recommendation(pool):
     assert punt == frozenset({Cat.TOV})
     assert solution.plan["pick"].tolist() == state.my_remaining_picks
     assert solution.plan.iloc[0]["availability"] == 1.0
-    table, solution2, chosen = state.recommend_horizon(n=4, punt=frozenset({Cat.TOV}))
+    table, solution2, _chosen = state.recommend_horizon(n=4, punt=frozenset({Cat.TOV}))
     assert "p_available_next" in table.columns and "name" in table.columns
     assert table.iloc[0]["player"] == solution2.first_pick
     assert ids[0] not in table["player"].tolist()

@@ -1,3 +1,5 @@
+from .names import normalize_name, slugify
+from .positions import apply_positions, load_positions, positions_from_table
 from .schema import (
     COUNTING_CATS,
     NEGATIVE_CATS,
@@ -26,9 +28,14 @@ __all__ = [
     "STAT_COLS",
     "Cat",
     "ProjectionSet",
+    "apply_positions",
+    "load_positions",
+    "normalize_name",
     "per_game_to_totals",
+    "positions_from_table",
     "punt_total",
     "rank",
+    "slugify",
     "split_positions",
     "validate",
     "zscores",

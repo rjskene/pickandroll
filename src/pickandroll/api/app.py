@@ -22,8 +22,9 @@ from pydantic import BaseModel, Field
 
 from ..draft import DraftState, LeagueSettings
 from ..optim.roster import Slot, yahoo_default_slots
+from ..projections.positions import apply_positions, load_positions
 from ..projections.schema import Cat, ProjectionSet
-from ..sources.bbm import load_bbm_export
+from ..sources.bbm import PROJECTION_SUFFIXES, load_bbm
 from ..sources.yahoo import YahooLeague
 from .yahoo_feed import LeagueFactory, YahooFeed, attach_feed
 
@@ -74,7 +75,13 @@ class SlotIn(BaseModel):
 
 
 class SessionCreate(BaseModel):
-    projection_file: str = Field(description="file name inside data/ (Basketball Monster .xls)")
+    projection_file: str = Field(
+        description="file name inside data/ (Basketball Monster .xls or .csv)"
+    )
+    positions_file: str | None = Field(
+        default=None,
+        description="optional file inside data/ with player names and positions (csv or xls)",
+    )
     horizon: str = "season"
     num_teams: int = 12
     my_position: int = 1
@@ -126,10 +133,15 @@ def create_app(
 
     @app.get("/projections")
     def list_projections() -> list[dict[str, Any]]:
-        files = sorted(data_dir.glob("*.xls")) + sorted(data_dir.glob("*.xlsx"))
+        files = sorted(
+            (f for f in data_dir.iterdir() if f.suffix.lower() in PROJECTION_SUFFIXES),
+            key=lambda f: f.stat().st_mtime,
+            reverse=True,
+        )
         return [
             {
                 "file": f.name,
+                "kind": f.suffix.lower().lstrip("."),
                 "modified": datetime.fromtimestamp(f.stat().st_mtime, tz=UTC).isoformat(),
             }
             for f in files
@@ -138,9 +150,33 @@ def create_app(
     @app.post("/sessions", status_code=201)
     def create_session(body: SessionCreate) -> dict[str, Any]:
         path = data_dir / body.projection_file
-        if not path.exists() or path.suffix.lower() not in {".xls", ".xlsx"}:
+        if not path.exists() or path.suffix.lower() not in PROJECTION_SUFFIXES:
             raise HTTPException(400, f"projection file not found: {body.projection_file}")
-        projections: ProjectionSet = load_bbm_export(path, horizon=body.horizon)  # type: ignore[arg-type]
+        try:
+            projections: ProjectionSet = load_bbm(path, horizon=body.horizon)  # type: ignore[arg-type]
+        except ValueError as exc:
+            raise HTTPException(400, f"could not parse {body.projection_file}: {exc}") from exc
+        positions_path = (
+            data_dir / body.positions_file if body.positions_file else data_dir / "positions.csv"
+        )
+        if positions_path.exists() and positions_path != path:
+            try:
+                df, _missing = apply_positions(projections.df, load_positions(positions_path))
+            except ValueError as exc:
+                raise HTTPException(
+                    400, f"could not read positions from {positions_path.name}: {exc}"
+                ) from exc
+            projections = ProjectionSet(
+                source=projections.source,
+                label=projections.label,
+                horizon=projections.horizon,
+                as_of=projections.as_of,
+                df=df,
+                start=projections.start,
+                end=projections.end,
+            )
+        elif body.positions_file:
+            raise HTTPException(400, f"positions file not found: {body.positions_file}")
         slots = (
             tuple(
                 Slot(s.name, frozenset(s.eligible) if s.eligible else Slot.eligible)
@@ -424,6 +460,9 @@ def _summary(session: Session) -> dict[str, Any]:
         "on_the_clock": state.on_the_clock,
         "complete": state.complete,
         "my_roster": state.my_roster,
+        "unknown_positions": int(
+            (state.projections.df["positions"].fillna("").str.strip() == "").sum()
+        ),
     }
 
 

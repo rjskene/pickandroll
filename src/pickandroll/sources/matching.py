@@ -8,22 +8,13 @@ normalizer cannot reconcile goes into an alias table that the user edits by hand
 from __future__ import annotations
 
 import json
-import re
-import unicodedata
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 
 import pandas as pd
 
-SUFFIXES = {"jr", "sr", "ii", "iii", "iv", "v"}
-
-
-def normalize_name(name: str) -> str:
-    text = unicodedata.normalize("NFKD", str(name)).encode("ascii", "ignore").decode()
-    text = re.sub(r"[.'’\-]", "", text.lower())
-    tokens = [t for t in re.split(r"\s+", text.strip()) if t and t not in SUFFIXES]
-    return " ".join(tokens)
+from ..projections.names import normalize_name
 
 
 @dataclass

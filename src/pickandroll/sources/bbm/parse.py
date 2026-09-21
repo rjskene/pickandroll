@@ -13,12 +13,12 @@ and percentage (``fgm = fga * fg%``).
 
 from __future__ import annotations
 
-import re
 from datetime import UTC, date, datetime
 from pathlib import Path
 
 import pandas as pd
 
+from ...projections.names import slugify
 from ...projections.schema import STAT_COLS, Horizon, ProjectionSet, split_positions
 
 TOTALS_MAP = {
@@ -115,7 +115,11 @@ def normalize_bbm(raw: pd.DataFrame) -> pd.DataFrame:
         if src in raw.columns:
             out[dst] = raw[src]
     if "injury" in out:
-        out["injury"] = out["injury"].where(out["injury"].notna(), None)
+        out["injury"] = pd.Series(
+            [None if pd.isna(v) or not str(v).strip() else str(v) for v in out["injury"]],
+            index=out.index,
+            dtype="object",
+        )
 
     out.index = pd.Index(_player_ids(out), name="player_id")
     return out
@@ -129,11 +133,6 @@ def _player_ids(df: pd.DataFrame) -> list[str]:
     for slug, team in zip(slugs, df["team"], strict=True):
         ids.append(slug if counts[slug] == 1 else f"{slug}-{slugify(team)}")
     return ids
-
-
-def slugify(name: str) -> str:
-    cleaned = re.sub(r"[^a-z0-9]+", "-", str(name).lower()).strip("-")
-    return cleaned or "unknown"
 
 
 def load_bbm_export(

@@ -52,6 +52,9 @@ class Slot:
     eligible: frozenset[str] = ANY
 
     def accepts(self, positions: Iterable[str]) -> bool:
+        """UTIL and bench slots take anyone, including players with unknown positions."""
+        if self.eligible == ANY:
+            return True
         return bool(self.eligible & set(positions))
 
 

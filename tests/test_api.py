@@ -189,3 +189,21 @@ def test_yahoo_feed_attach_and_poll(client):
         assert c.get(f"/sessions/{sid}/yahoo").json()["polls"] == 2
         assert c.delete(f"/sessions/{sid}/yahoo").json() == {"attached": False}
         assert c.get(f"/sessions/{sid}/yahoo").json() == {"attached": False}
+
+
+def test_create_session_from_csv_with_positions(client):
+    files = sorted(DATA.glob("bbm_projections_*.csv"))
+    if not files or not (DATA / "bbm_sample_ros_totals.xls").exists():
+        pytest.skip("no Basketball Monster CSV in data/")
+    listing = client.get("/projections").json()
+    assert any(f["kind"] == "csv" for f in listing)
+    s = create(client, projection_file=files[-1].name, positions_file="bbm_sample_ros_totals.xls")
+    assert s["unknown_positions"] < 586
+    board = client.get(f"/sessions/{s['id']}/board?limit=3").json()["players"]
+    assert board[0]["positions"] != "" or board[1]["positions"] != ""
+    rec = client.post(f"/sessions/{s['id']}/recommend", json={"n": 3, "punt": ["tov"]}).json()
+    assert rec["mode"] == "horizon" and len(rec["candidates"]) >= 3
+    r = client.post(
+        "/sessions", json={"projection_file": files[-1].name, "positions_file": "nope.csv"}
+    )
+    assert r.status_code == 400
