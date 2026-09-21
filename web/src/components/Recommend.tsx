@@ -150,7 +150,7 @@ export default function Recommend({ session }: Props) {
             </ul>
             <ul className="totals">
               {CATS.map((c) => {
-                const v = result.best_roster.cat_totals[c];
+                const v = result.best_roster.cat_totals[c] ?? 0;
                 const punted = result.best_roster.punted.includes(c);
                 return (
                   <li key={c} className={punted ? "punted" : ""}>

@@ -202,8 +202,18 @@ def solve_horizon(
             )
     roster = pd.DataFrame(roster_rows).sort_values("slot_index").reset_index(drop=True)
 
-    expected = pd.Series({c: float(pulp.value(expr)) for c, expr in parts["totals"].items()})
-    min_active = float(expected.min()) if len(expected) else float("nan")
+    # Expected totals for every category, punted ones included, so callers can show the
+    # whole profile; the objective and the balance floor only see the active ones.
+    weights = dict(problem.weights or {})
+    expected = {}
+    for c in problem.cats:
+        col = problem.z[c.value].astype(float) * float(weights.get(c, 1.0))
+        planned = sum(float(col[r.player]) * float(r.availability) for r in plan.itertuples())
+        locked_total = float(col[list(problem.locks)].sum()) if problem.locks else 0.0
+        expected[c] = planned + locked_total
+    expected = pd.Series(expected)
+    active = [c for c in problem.cats if c not in problem.punt]
+    min_active = float(expected[active].min()) if active else float("nan")
     return HorizonSolution(
         status=status,
         objective=float(pulp.value(model.objective)),
