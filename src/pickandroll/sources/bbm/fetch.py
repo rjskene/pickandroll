@@ -17,6 +17,7 @@ import json
 import time
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
+from typing import Self
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
 DATA_DIR = REPO_ROOT / "data"
@@ -48,7 +49,7 @@ class BBMFetcher:
         self.page = None
 
     # ------------------------------------------------------------------ lifecycle
-    def __enter__(self) -> BBMFetcher:
+    def __enter__(self) -> Self:
         from playwright.sync_api import sync_playwright
 
         self.profile_dir.mkdir(parents=True, exist_ok=True)
