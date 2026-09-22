@@ -313,7 +313,14 @@ def test_score_benchmark_freezes_at_my_first_pick(client):
     assert score["latest"]["value"] == round(second["best_roster"]["objective"], 3)
     assert score["drafted"] == 1 and score["drafted_value"] > 0
     assert [h["next_overall"] for h in score["history"]] == [2, 7]
-    assert score["vs_benchmark"] == round(score["latest"]["value"] - score["benchmark"]["value"], 3)
+    assert score["best_now"] == score["latest"]["value"]
+    assert score["vs_benchmark"] == round(score["best_now"] - score["benchmark"]["value"], 3)
+    # Every value carries its punt: a solve with another punt is recorded as is.
+    other = client.post(f"/sessions/{sid}/recommend", json={"n": 3, "punt": ["ft_pct"]}).json()
+    score = client.get(f"/sessions/{sid}/score").json()
+    assert score["latest"]["punted"] == ["ft_pct"] and score["punted"] == ["ft_pct"]
+    assert score["latest"]["value"] == round(other["best_roster"]["objective"], 3)
+    assert score["benchmark"]["punted"] == ["tov"]
 
 
 def test_recommend_refuses_when_no_picks_left_and_score_is_final(client):
@@ -327,4 +334,7 @@ def test_recommend_refuses_when_no_picks_left_and_score_is_final(client):
     assert r.status_code == 400
     score = client.get(f"/sessions/{sid}/score").json()
     assert score["drafted"] == 13 and score["final"] is not None
-    assert score["final"] == score["drafted_value"]
+    assert (
+        score["final"] >= score["drafted_value"]
+    )  # the final takes whichever punt suits the roster
+    assert len(score["final_punted"]) <= 2 and score["best_now"] == score["final"]

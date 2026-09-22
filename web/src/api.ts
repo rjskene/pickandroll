@@ -135,7 +135,9 @@ export interface Score {
   roster_size: number;
   punted: Cat[];
   drafted_value: number;
+  best_now: number | null;
   final: number | null;
+  final_punted: Cat[];
   vs_benchmark: number | null;
   history: ScoreEntry[];
 }

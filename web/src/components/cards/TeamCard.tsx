@@ -15,34 +15,40 @@ function ScoreBlock() {
   const sc = score.data;
   if (!sc) return null;
   const bench = sc.benchmark;
-  const current = sc.final ?? sc.latest?.value ?? null;
+  const current = sc.final ?? sc.best_now;
   const delta = bench && current !== null ? current - bench.value : null;
+  const puntOf = (cats: typeof sc.punted) => (cats.length ? `punting ${cats.map((c) => CAT_LABEL[c]).join(" + ")}` : "no punt");
   return (
     <div className="block score">
       <div className="row">
         <span className="k">Score</span>
         <span className="muted" style={{ fontSize: 11 }}>
-          plan value: z above replacement, {sc.punted.length ? `punting ${sc.punted.map((c) => CAT_LABEL[c]).join(", ")}` : "no punt"}
+          plan value: z above replacement under the best punt at the time
         </span>
       </div>
       <div className="stats">
-        <div className="stat">
+        <div className="stat" title={bench ? puntOf(bench.punted) : ""}>
           <span className="k">{bench ? `Benchmark · pick ${bench.next_overall}` : "Benchmark"}</span>
           <span className="v">{bench ? bench.value.toFixed(2) : "—"}</span>
         </div>
-        <div className="stat">
-          <span className="k">{sc.final !== null ? "Final" : sc.latest ? `Best now · pick ${sc.latest.next_overall}` : "Best now"}</span>
+        <div className="stat" title={sc.final !== null ? puntOf(sc.final_punted) : sc.latest ? puntOf(sc.latest.punted) : ""}>
+          <span className="k">{sc.final !== null ? "Final" : `Best now · pick ${s.next_overall}`}</span>
           <span className={`v ${delta === null ? "" : delta < -0.005 ? "bad" : "good"}`}>{current === null ? "—" : current.toFixed(2)}</span>
         </div>
         <div className="stat">
           <span className="k">vs benchmark</span>
           <span className={`v ${delta === null ? "" : delta < -0.005 ? "bad" : "good"}`}>{delta === null ? "—" : signed(delta)}</span>
         </div>
-        <div className="stat">
+        <div className="stat" title={puntOf(sc.punted)}>
           <span className="k">Drafted so far</span>
           <span className="v">{sc.drafted_value.toFixed(2)}</span>
         </div>
       </div>
+      {bench && sc.latest && bench.punted.join("/") !== (sc.final !== null ? sc.final_punted : sc.latest.punted).join("/") && (
+        <p className="muted" style={{ fontSize: 11 }}>
+          Strategy moved from {puntOf(bench.punted)} to {puntOf(sc.final !== null ? sc.final_punted : sc.latest.punted)}. Pin a punt on the Solver card to hold it.
+        </p>
+      )}
       {!bench && <p className="muted" style={{ fontSize: 11 }}>Frozen when you are on the clock at your first pick.</p>}
       {sc.history.length > 1 && (
         <table className="history">
@@ -53,6 +59,7 @@ function ScoreBlock() {
                 <td>{h.top ?? ""}</td>
                 <td className="num">{h.value.toFixed(2)}</td>
                 <td className={`num ${bench ? (h.value - bench.value < -0.005 ? "bad" : "good") : ""}`}>{bench ? signed(h.value - bench.value) : ""}</td>
+                <td className="dim" style={{ fontSize: 11 }}>{h.punted.length ? h.punted.map((c) => CAT_LABEL[c]).join("+") : "no punt"}</td>
               </tr>
             ))}
           </tbody>

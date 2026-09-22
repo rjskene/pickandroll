@@ -23,7 +23,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from ..draft import DraftState, LeagueSettings, Strategy, simulate
-from ..optim.roster import Slot, yahoo_default_slots
+from ..optim.roster import Slot, punt_sets, yahoo_default_slots
 from ..projections.adp import adp_for_projections, load_adp
 from ..projections.positions import apply_positions, load_positions
 from ..projections.schema import Cat, ProjectionSet
@@ -644,14 +644,26 @@ def _summary(session: Session) -> dict[str, Any]:
 
 
 def _score(session: Session) -> dict[str, Any]:
+    """Every value is a plan value under the best punt at the time: the benchmark at my first
+    pick, the latest solve since, my drafted players under the latest punt, and once my roster
+    is full its value under whichever punt suits it best. The punt is reported alongside each
+    number because the auto punt can move as the board changes."""
     state = session.state
     latest = session.history[-1] if session.history else None
-    punt_labels = (latest or session.benchmark or {}).get("punted") or []
+    benchmark = session.benchmark
+    punt_labels = (latest or benchmark or {}).get("punted") or []
     punt = frozenset(Cat(c) for c in punt_labels)
     drafted_value = state.roster_value(punt)
     full = not state.my_remaining_picks
-    benchmark = session.benchmark
-    final = drafted_value if full else None
+    final: float | None = None
+    final_punt: list[str] = []
+    if full and state.my_roster:
+        cats = state.settings.cats
+        scored = [(state.roster_value(p), p) for p in punt_sets(cats, max_punts=2)]
+        best_value, best_punt = max(scored, key=lambda item: item[0])
+        final = best_value
+        final_punt = [c.value for c in sorted(best_punt, key=list(cats).index)]
+    best_now = final if final is not None else (latest["value"] if latest else None)
     return {
         "version": session.version,
         "benchmark": benchmark,
@@ -660,15 +672,13 @@ def _score(session: Session) -> dict[str, Any]:
         "roster_size": state.settings.roster_size,
         "punted": punt_labels,
         "drafted_value": round(drafted_value, 3),
+        "best_now": None if best_now is None else round(best_now, 3),
         "final": None if final is None else round(final, 3),
+        "final_punted": final_punt,
         "vs_benchmark": (
             None
-            if benchmark is None
-            else round(
-                (final if final is not None else (latest or benchmark)["value"])
-                - benchmark["value"],
-                3,
-            )
+            if benchmark is None or best_now is None
+            else round(best_now - benchmark["value"], 3)
         ),
         "history": [h for h in session.history if h["on_the_clock"]],
     }
