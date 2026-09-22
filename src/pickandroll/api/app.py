@@ -22,7 +22,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from ..draft import DraftState, LeagueSettings, simulate
+from ..draft import DraftState, LeagueSettings, Strategy, simulate
 from ..optim.roster import Slot, yahoo_default_slots
 from ..projections.adp import adp_for_projections, load_adp
 from ..projections.positions import apply_positions, load_positions
@@ -48,6 +48,33 @@ class Session:
     listeners: list[asyncio.Queue] = field(default_factory=list)
     log: list[dict[str, Any]] = field(default_factory=list)
     yahoo: YahooFeed | None = None
+    #: Plan value frozen when I reach my first pick, and one entry per solve after that.
+    benchmark: dict[str, Any] | None = None
+    history: list[dict[str, Any]] = field(default_factory=list)
+
+    def record_score(
+        self, mode: str, value: float, punted: list[str], top: str | None
+    ) -> dict[str, Any]:
+        """Remember a solve's plan value. The benchmark is the latest solve made while on the
+        clock at my first pick; after that pick it never changes."""
+        state = self.state
+        entry = {
+            "version": self.version,
+            "next_overall": state.next_overall,
+            "my_pick": state.my_next_pick,
+            "on_the_clock": state.on_the_clock,
+            "mode": mode,
+            "value": round(float(value), 3),
+            "punted": punted,
+            "top": top,
+            "drafted": len(state.my_roster),
+            "at": _now(),
+        }
+        self.history = [h for h in self.history if h["version"] != self.version] + [entry]
+        first = state.my_picks[0] if state.my_picks else None
+        if first is not None and state.on_the_clock and state.next_overall == first:
+            self.benchmark = entry
+        return entry
 
     def publish(self, event: str, data: dict[str, Any], bump: bool = True) -> None:
         """Send an event to every listener. Board changes bump the version; transient solver
@@ -118,10 +145,12 @@ class SyncIn(BaseModel):
 class AutoPickIn(BaseModel):
     count: int | None = Field(default=None, ge=1, description="stop after this many picks")
     until_my_pick: bool = Field(default=True, description="stop when my team is on the clock")
-    noise: float = Field(
-        default=1.0, ge=0.0, le=3.0, description="0 = best ADP available, 1 = model spread"
-    )
+    noise: float = Field(default=1.0, ge=0.0, le=3.0, description="0 = no randomness")
     seed: int | None = None
+    strategy: Strategy = Field(
+        default="z",
+        description="z = best total z, adp = noisy ADP slot, lp = each team's own roster model",
+    )
 
 
 class YahooAttach(BaseModel):
@@ -340,6 +369,7 @@ def create_app(
             until_my_pick=body.until_my_pick,
             noise=body.noise,
             seed=body.seed,
+            strategy=body.strategy,
         )
         rows = [_pick_row(session.state, p) for p in made]
         for row in rows:
@@ -356,6 +386,8 @@ def create_app(
         """
         session = store.get(session_id)
         state = session.state
+        if not state.my_remaining_picks:
+            raise HTTPException(400, "you have no picks left; the final score is at /score")
         punt = frozenset(body.punt) if body.punt is not None else None
         names = state.projections.df["player"]
         started = time.perf_counter()
@@ -389,6 +421,13 @@ def create_app(
                         progress=progress,
                     )
                     progress({"stage": "done", "done": 1, "total": 1})
+                    punted = [c.value for c in sorted(chosen, key=list(state.settings.cats).index)]
+                    session.record_score(
+                        "horizon",
+                        plan.objective,
+                        punted,
+                        names.at[plan.first_pick] if plan.first_pick else None,
+                    )
                     return {
                         "version": session.version,
                         "mode": "horizon",
@@ -435,6 +474,12 @@ def create_app(
             best = state.best_roster(punt=punt, max_punts=body.max_punts, balance=body.balance)
         except RuntimeError as exc:
             raise HTTPException(409, str(exc)) from exc
+        session.record_score(
+            "roster",
+            best.objective,
+            [c.value for c in best.punted],
+            names.at[table.iloc[0]["player"]] if len(table) else None,
+        )
         return {
             "version": session.version,
             "mode": "roster",
@@ -457,6 +502,13 @@ def create_app(
                 "solve_seconds": best.solve_seconds,
             },
         }
+
+    @app.get("/sessions/{session_id}/score")
+    def score(session_id: str) -> dict[str, Any]:
+        """The plan value frozen at my first pick, every solve since, what my drafted players
+        are worth now on the same scale, and the final score once my roster is full."""
+        session = store.get(session_id)
+        return _score(session)
 
     @app.get("/sessions/{session_id}/events")
     async def events(session_id: str, request: Request) -> StreamingResponse:
@@ -588,6 +640,37 @@ def _summary(session: Session) -> dict[str, Any]:
         ),
         "adp_source": state.adp_source,
         "adp_known": int(state.adp.notna().sum()) if state.adp is not None else 0,
+    }
+
+
+def _score(session: Session) -> dict[str, Any]:
+    state = session.state
+    latest = session.history[-1] if session.history else None
+    punt_labels = (latest or session.benchmark or {}).get("punted") or []
+    punt = frozenset(Cat(c) for c in punt_labels)
+    drafted_value = state.roster_value(punt)
+    full = not state.my_remaining_picks
+    benchmark = session.benchmark
+    final = drafted_value if full else None
+    return {
+        "version": session.version,
+        "benchmark": benchmark,
+        "latest": latest,
+        "drafted": len(state.my_roster),
+        "roster_size": state.settings.roster_size,
+        "punted": punt_labels,
+        "drafted_value": round(drafted_value, 3),
+        "final": None if final is None else round(final, 3),
+        "vs_benchmark": (
+            None
+            if benchmark is None
+            else round(
+                (final if final is not None else (latest or benchmark)["value"])
+                - benchmark["value"],
+                3,
+            )
+        ),
+        "history": [h for h in session.history if h["on_the_clock"]],
     }
 
 

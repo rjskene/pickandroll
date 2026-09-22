@@ -291,3 +291,40 @@ def test_autopick_simulates_other_teams(client):
     assert board["next_pick"] == 7
     assert 0.0 <= board["players"][0]["p_next"] <= 1.0
     assert board["players"][0]["adp"] is not None
+
+
+def test_score_benchmark_freezes_at_my_first_pick(client):
+    s = create(client)  # 4 teams, I pick second: my picks are 2, 7, 10, 15, ...
+    sid = s["id"]
+    assert client.get(f"/sessions/{sid}/score").json()["benchmark"] is None
+    client.post(f"/sessions/{sid}/autopick", json={"noise": 0.0, "strategy": "z"})
+    first = client.post(f"/sessions/{sid}/recommend", json={"n": 3, "punt": ["tov"]}).json()
+    score = client.get(f"/sessions/{sid}/score").json()
+    assert score["benchmark"]["value"] == round(first["best_roster"]["objective"], 3)
+    assert score["benchmark"]["next_overall"] == 2 and score["benchmark"]["on_the_clock"]
+    assert score["drafted"] == 0 and score["drafted_value"] == 0.0 and score["final"] is None
+    # Draft the recommendation, let the others pick, solve again: the benchmark stays put.
+    top = first["candidates"][0]["player"]
+    client.post(f"/sessions/{sid}/picks", json={"team": "me", "player_id": top})
+    client.post(f"/sessions/{sid}/autopick", json={"noise": 0.0, "strategy": "lp", "seed": 1})
+    second = client.post(f"/sessions/{sid}/recommend", json={"n": 3, "punt": ["tov"]}).json()
+    score = client.get(f"/sessions/{sid}/score").json()
+    assert score["benchmark"]["value"] == round(first["best_roster"]["objective"], 3)
+    assert score["latest"]["value"] == round(second["best_roster"]["objective"], 3)
+    assert score["drafted"] == 1 and score["drafted_value"] > 0
+    assert [h["next_overall"] for h in score["history"]] == [2, 7]
+    assert score["vs_benchmark"] == round(score["latest"]["value"] - score["benchmark"]["value"], 3)
+
+
+def test_recommend_refuses_when_no_picks_left_and_score_is_final(client):
+    s = create(client, num_teams=4, my_position=1)
+    sid = s["id"]
+    client.post(
+        f"/sessions/{sid}/autopick", json={"until_my_pick": False, "noise": 0.0, "strategy": "z"}
+    )
+    assert client.get(f"/sessions/{sid}").json()["complete"] is True
+    r = client.post(f"/sessions/{sid}/recommend", json={"n": 3})
+    assert r.status_code == 400
+    score = client.get(f"/sessions/{sid}/score").json()
+    assert score["drafted"] == 13 and score["final"] is not None
+    assert score["final"] == score["drafted_value"]

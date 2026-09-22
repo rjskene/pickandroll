@@ -248,6 +248,17 @@ class DraftState:
         cols = [c.value for c in self.settings.cats]
         return self.z.loc[window, cols].mean()
 
+    def roster_value(self, punt: frozenset[Cat] | None = None, balance: float = 0.0) -> float:
+        """What the plan objective is worth for the players already on my roster: their z above
+        replacement level in the active categories (the locked part of the horizon objective).
+        With every pick made this is the final score of the draft on the planner's scale."""
+        active = [c.value for c in self.settings.cats if not punt or c not in punt]
+        if not self.my_roster or not active:
+            return 0.0
+        above = self.z.loc[self.my_roster, active] - self.replacement_level()[active]
+        totals = above.sum(axis=0)
+        return float((1.0 - balance) * totals.sum() + balance * totals.min())
+
     def horizon_problem(
         self,
         punt: frozenset[Cat],

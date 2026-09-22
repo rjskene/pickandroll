@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { api, CAT_LABEL, CATS, teamLabel, type BoardPlayer } from "../api";
+import { api, CAT_LABEL, CATS, teamLabel, type BoardPlayer, type SimStrategy } from "../api";
 import { useDraft } from "../draft";
 import { oddsClass } from "../format";
 
@@ -11,10 +11,15 @@ function heat(z: number): string | undefined {
 }
 
 const NOISE = [
-  { value: 0, label: "naive (best ADP)" },
-  { value: 0.5, label: "a little noise" },
-  { value: 1, label: "model spread" },
+  { value: 0, label: "no randomness" },
+  { value: 0.5, label: "a little randomness" },
+  { value: 1, label: "normal randomness" },
   { value: 2, label: "wild" },
+];
+const STRATEGIES: { value: SimStrategy; label: string; title: string }[] = [
+  { value: "z", label: "by z-score", title: "Each team takes one of the best players by total z; randomness favours the ones closest to the top" },
+  { value: "adp", label: "by ADP", title: "Each team takes the earliest noisy ADP slot, the spread the availability model assumes" },
+  { value: "lp", label: "by LP", title: "Each team solves its own roster problem (with a punt of its own) and takes the best new player from it" },
 ];
 
 export default function Board() {
@@ -71,8 +76,8 @@ export default function Board() {
           />{" "}
           hide drafted
         </label>
-        {!s.complete && (
-          <span className="inline muted sim" title="Auto-pick for the other teams: each pick takes the earliest noisy ADP slot">
+        {!s.complete && !d.live && (
+          <span className="inline muted sim" title="Simulate the other teams' picks">
             <span className="k">Sim</span>
             <button className="small" disabled={busy} onClick={() => d.simulate({ count: 1, until_my_pick: false })} title="Simulate one pick (shift+S)">
               next pick
@@ -80,16 +85,31 @@ export default function Board() {
             <button className="small" disabled={busy || s.on_the_clock} onClick={() => d.simulate({ until_my_pick: true })} title="Simulate up to my pick (s)">
               to my pick
             </button>
-            <button className={`small ${d.mock ? "primary" : ""}`} onClick={() => d.setMock(!d.mock)} title="Run the whole draft: other teams by ADP, you by the solver (m)">
+            <button className={`small ${d.mock ? "primary" : ""}`} onClick={() => d.setMock(!d.mock)} title="Run the whole mock draft: the other teams are simulated, the solver drafts for you (m)">
               {d.mock ? "■ stop mock draft" : "▶ mock draft"}
             </button>
+            <select
+              value={d.strategy}
+              onChange={(e) => {
+                d.setStrategy(e.target.value as SimStrategy);
+                e.currentTarget.blur();
+              }}
+              aria-label="Simulation strategy"
+              title={STRATEGIES.find((x) => x.value === d.strategy)?.title}
+            >
+              {STRATEGIES.map((o) => (
+                <option key={o.value} value={o.value} title={o.title}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
             <select
               value={d.noise}
               onChange={(e) => {
                 d.setNoise(Number(e.target.value));
                 e.currentTarget.blur();
               }}
-              aria-label="Simulation noise"
+              aria-label="Simulation randomness"
             >
               {NOISE.map((o) => (
                 <option key={o.value} value={o.value}>

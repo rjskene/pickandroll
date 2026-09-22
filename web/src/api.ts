@@ -47,11 +47,14 @@ export interface BoardResponse {
   players: BoardPlayer[];
 }
 
+export type SimStrategy = "z" | "adp" | "lp";
+
 export interface AutoPickParams {
   count?: number | null;
   until_my_pick?: boolean;
   noise?: number;
   seed?: number | null;
+  strategy?: SimStrategy;
 }
 
 export interface PickRow {
@@ -109,6 +112,32 @@ export interface PuntScanRow {
   gap_to_best: number;
   min_active_total: number;
   roster: string[];
+}
+
+export interface ScoreEntry {
+  version: number;
+  next_overall: number;
+  my_pick: number | null;
+  on_the_clock: boolean;
+  mode: "horizon" | "roster";
+  value: number;
+  punted: Cat[];
+  top: string | null;
+  drafted: number;
+  at: string;
+}
+
+export interface Score {
+  version: number;
+  benchmark: ScoreEntry | null;
+  latest: ScoreEntry | null;
+  drafted: number;
+  roster_size: number;
+  punted: Cat[];
+  drafted_value: number;
+  final: number | null;
+  vs_benchmark: number | null;
+  history: ScoreEntry[];
 }
 
 export interface SolveEvent {
@@ -176,6 +205,7 @@ export const api = {
     request<{ added: PickRow[]; version: number }>(`/sessions/${id}/autopick`, { method: "POST", body: JSON.stringify(body) }),
   recommend: (id: string, params: RecommendParams) =>
     request<Recommendation>(`/sessions/${id}/recommend`, { method: "POST", body: JSON.stringify(params) }),
+  score: (id: string) => request<Score>(`/sessions/${id}/score`),
   eventsUrl: (id: string) => `${BASE}/sessions/${id}/events`,
   yahooStatus: (id: string) => request<{ attached: boolean; running?: boolean; league?: string; polls?: number; last_error?: string | null }>(`/sessions/${id}/yahoo`),
 };

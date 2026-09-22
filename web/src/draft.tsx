@@ -13,7 +13,7 @@ import {
   type RefObject,
 } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { api, pickOwner, teamLabel, type Cat, type Recommendation, type SessionSummary, type SolveEvent } from "./api";
+import { api, pickOwner, teamLabel, type Cat, type Recommendation, type SessionSummary, type SimStrategy, type SolveEvent } from "./api";
 import { parsePunt } from "./format";
 
 export type CardId = "pick" | "alts" | "plan" | "team" | "log" | "solver";
@@ -113,11 +113,12 @@ export interface DraftApi {
   simulating: boolean;
   noise: number;
   setNoise: (n: number) => void;
+  strategy: SimStrategy;
+  setStrategy: (s: SimStrategy) => void;
   pickError: string | null;
-  /** Draft the recommended pick as soon as the solve finishes whenever I am on the clock. */
-  autopilot: boolean;
-  setAutopilot: (v: boolean) => void;
-  /** Run the whole draft: simulate the other teams, autopilot my picks, until complete. */
+  /** A live feed is attached: nothing is ever drafted for me automatically and nothing is simulated. */
+  live: boolean;
+  /** Mock draft: simulate the other teams and let the solver make my picks until the draft is complete. */
   mock: boolean;
   setMock: (v: boolean) => void;
   // board
@@ -148,15 +149,17 @@ export function useDraft(): DraftApi {
 interface ProviderProps {
   session: SessionSummary;
   solveEvents: SolveEvent[];
+  live: boolean;
   children: ReactNode;
 }
 
-export function DraftProvider({ session, solveEvents, children }: ProviderProps) {
+export function DraftProvider({ session, solveEvents, live, children }: ProviderProps) {
   const queryClient = useQueryClient();
   const invalidate = useCallback(() => {
     queryClient.invalidateQueries({ queryKey: ["session", session.id] });
     queryClient.invalidateQueries({ queryKey: ["board", session.id] });
     queryClient.invalidateQueries({ queryKey: ["picks", session.id] });
+    queryClient.invalidateQueries({ queryKey: ["score", session.id] });
   }, [queryClient, session.id]);
 
   const owner = pickOwner(session.num_teams, session.next_overall);
@@ -236,17 +239,25 @@ export function DraftProvider({ session, solveEvents, children }: ProviderProps)
   );
   const paramsRef = useRef(params);
   paramsRef.current = params;
-  const recommend = useMutation({ mutationFn: () => api.recommend(session.id, paramsRef.current) });
+  const [result, setResult] = useState<Recommendation | undefined>(undefined);
+  const recommend = useMutation({
+    mutationFn: () => api.recommend(session.id, paramsRef.current),
+    onSuccess: (r) => {
+      setResult(r); // a failed re-solve keeps the last good result on screen
+      queryClient.invalidateQueries({ queryKey: ["score", session.id] });
+    },
+  });
   const { mutate: runSolve } = recommend;
   const solve = useCallback(() => runSolve(), [runSolve]);
   const solvedFor = useRef("");
+  const havePicks = session.my_next_pick !== null && !session.complete;
   useEffect(() => {
     const key = `${session.id}:${session.version}`;
-    if (settings.refreshOnPick && !session.complete && solvedFor.current !== key) {
+    if (settings.refreshOnPick && havePicks && solvedFor.current !== key) {
       solvedFor.current = key;
       runSolve();
     }
-  }, [session.id, session.version, session.complete, settings.refreshOnPick, runSolve]);
+  }, [session.id, session.version, havePicks, settings.refreshOnPick, runSolve]);
   const pinPunt = useCallback(
     (label: string) => {
       setSettingsState((s) => ({ ...s, auto: false, punt: parsePunt(label) }));
@@ -263,7 +274,7 @@ export function DraftProvider({ session, solveEvents, children }: ProviderProps)
       setTeamOverride(null);
       invalidate();
       if (v.via === "key") showToast({ message: `Drafted ${row.name} to ${row.team}`, undo: true });
-      if (v.via === "auto") showToast({ message: `Autopilot drafted ${row.name} (pick ${row.overall})`, undo: true });
+      if (v.via === "auto") showToast({ message: `Mock draft: the solver took ${row.name} at pick ${row.overall}`, undo: true });
     },
   });
   const { mutate: runDraft, isPending: drafting } = draftMutation;
@@ -286,10 +297,11 @@ export function DraftProvider({ session, solveEvents, children }: ProviderProps)
     if (session.picks_made > 0) runUndo();
   }, [session.picks_made, runUndo]);
   const [noise, setNoise] = useState(1);
-  const noiseRef = useRef(noise);
-  noiseRef.current = noise;
+  const [strategy, setStrategy] = useState<SimStrategy>("z");
+  const simRef = useRef({ noise, strategy });
+  simRef.current = { noise, strategy };
   const simMutation = useMutation({
-    mutationFn: (body: { count?: number; until_my_pick: boolean }) => api.autopick(session.id, { ...body, noise: noiseRef.current }),
+    mutationFn: (body: { count?: number; until_my_pick: boolean }) => api.autopick(session.id, { ...body, ...simRef.current }),
     onSuccess: (r) => {
       simVersion.current = r.version;
       invalidate();
@@ -300,44 +312,60 @@ export function DraftProvider({ session, solveEvents, children }: ProviderProps)
   const { mutate: runSim, isPending: simulating } = simMutation;
   const simulate = useCallback(
     (body: { count?: number; until_my_pick: boolean }) => {
+      if (live) {
+        showToast({ message: "Live draft: picks come from the feed, nothing is simulated" });
+        return;
+      }
       if (!session.complete && !simulating) runSim(body);
     },
-    [session.complete, simulating, runSim],
+    [live, session.complete, simulating, runSim, showToast],
   );
   const pickError = draftMutation.error?.message ?? undoMutation.error?.message ?? simMutation.error?.message ?? null;
 
-  // ---------------------------------------------------------------- autopilot and mock draft
-  const [autopilot, setAutopilot] = useState(false);
-  const [mock, setMock] = useState(false);
+  // ---------------------------------------------------------------- mock draft
+  // Never in a live draft: my picks are mine to make there. In a mock the solver drafts for me
+  // as soon as its solve finishes, and the other teams are simulated up to my next pick.
+  const [mockState, setMockState] = useState(false);
+  const mock = mockState && !live;
+  const setMock = useCallback(
+    (v: boolean) => {
+      if (v && live) {
+        showToast({ message: "Live draft: auto-drafting for you is off" });
+        return;
+      }
+      setMockState(v);
+    },
+    [live, showToast],
+  );
   const autoDraftedFor = useRef(-1);
-  const { data: latestResult, isPending: solvePending } = recommend;
+  const { isPending: solvePending } = recommend;
   useEffect(() => {
+    if (!mock) return;
     if (session.complete) {
-      if (mock) setMock(false);
+      setMockState(false);
       return;
     }
     if (!session.on_the_clock) {
-      // Mock draft: the other teams pick until my turn. Wait for the session to catch up with the last sim.
-      if (mock && !simulating && !drafting && session.version >= simVersion.current) runSim({ until_my_pick: true });
+      // The other teams pick until my turn. Wait for the session to catch up with the last sim.
+      if (!simulating && !drafting && session.version >= simVersion.current) runSim({ until_my_pick: true });
       return;
     }
-    if (!(autopilot || mock) || drafting || solvePending) return;
-    if (autoDraftedFor.current === session.version) return;
+    if (drafting || solvePending || autoDraftedFor.current === session.version) return;
     const key = `${session.id}:${session.version}`;
-    if (!latestResult || latestResult.version !== session.version) {
+    if (!result || result.version !== session.version) {
       if (solvedFor.current !== key) {
         solvedFor.current = key;
         runSolve();
       }
       return;
     }
-    const top = latestResult.candidates[0];
+    const top = result.candidates[0];
     if (!top) return;
     autoDraftedFor.current = session.version;
     runDraft({ playerId: top.player, team: onClockTeam, via: "auto" });
-  }, [session.complete, session.on_the_clock, session.version, session.id, mock, autopilot, simulating, drafting, solvePending, latestResult, runSim, runSolve, runDraft, onClockTeam]);
+  }, [mock, session.complete, session.on_the_clock, session.version, session.id, simulating, drafting, solvePending, result, runSim, runSolve, runDraft, onClockTeam]);
   useEffect(() => {
-    if (simMutation.error || draftMutation.error) setMock(false); // stop the loop on any failure
+    if (simMutation.error || draftMutation.error) setMockState(false); // stop the loop on any failure
   }, [simMutation.error, draftMutation.error]);
 
   // ---------------------------------------------------------------- board
@@ -375,7 +403,7 @@ export function DraftProvider({ session, solveEvents, children }: ProviderProps)
     setSplit,
     settings,
     setSettings,
-    result: recommend.data,
+    result,
     solving: recommend.isPending,
     solveError: recommend.error?.message ?? null,
     solveEvents,
@@ -388,9 +416,10 @@ export function DraftProvider({ session, solveEvents, children }: ProviderProps)
     simulating,
     noise,
     setNoise,
+    strategy,
+    setStrategy,
     pickError,
-    autopilot,
-    setAutopilot,
+    live,
     mock,
     setMock,
     hideTaken,
@@ -517,13 +546,14 @@ export function Hotkeys() {
         case "S":
           d.simulate({ count: 1, until_my_pick: false });
           break;
-        case "a":
-          d.setAutopilot(!d.autopilot);
-          d.showToast({ message: d.autopilot ? "Autopilot off" : "Autopilot on: your picks draft themselves when the solve finishes" });
-          break;
         case "m":
-          d.setMock(!d.mock);
-          d.showToast({ message: d.mock ? "Mock draft stopped" : "Mock draft running: other teams by ADP, you by the solver" });
+          if (d.mock) {
+            d.setMock(false);
+            d.showToast({ message: "Mock draft stopped" });
+          } else if (!d.live) {
+            d.setMock(true);
+            d.showToast({ message: "Mock draft running: other teams simulated, the solver drafts for you" });
+          } else d.setMock(true); // shows the live-draft toast
           break;
         default:
           return;

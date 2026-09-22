@@ -135,3 +135,21 @@ def test_replacement_level_makes_late_plan_picks_likely(pool):
     assert solution.plan.iloc[-1]["availability"] > 0.3
     values = state.horizon_problem(frozenset()).z["total"]
     assert values.loc[solution.plan["player"]].min() > -1.0
+
+
+def test_roster_value_is_the_locked_part_of_the_plan(pool):
+    state = make_state(pool, position=1, num_teams=4)
+    assert state.roster_value() == 0.0
+    top = state.z["total"].nlargest(2).index.tolist()
+    state.apply_pick("me", top[0])
+    one = state.roster_value(punt=frozenset({Cat.TOV}))
+    assert one > 0
+    for _ in range(6):  # the other teams' picks
+        state.apply_pick("them", state.z.loc[state.available, "total"].idxmax())
+    state.apply_pick("me", top[1]) if top[1] in state.available else None
+    assert state.roster_value(punt=frozenset({Cat.TOV})) >= one - 1e-6
+    active = [c.value for c in state.settings.cats if c is not Cat.TOV]
+    expected = (
+        (state.z.loc[state.my_roster, active] - state.replacement_level()[active]).sum().sum()
+    )
+    assert abs(state.roster_value(punt=frozenset({Cat.TOV})) - expected) < 1e-9
