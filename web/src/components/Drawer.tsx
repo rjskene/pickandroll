@@ -1,6 +1,6 @@
 import { useRef, type CSSProperties, type ReactElement } from "react";
 import { CARDS, cardIndex, useDraft, type CardId, type Half } from "../draft";
-import { Chevron, Grip } from "./icons";
+import { Chevron, Grip, Swap } from "./icons";
 import AltsCard from "./cards/AltsCard";
 import LogCard from "./cards/LogCard";
 import PickCard from "./cards/PickCard";
@@ -29,6 +29,11 @@ function CardFrame({ id, half, style }: { id: CardId; half: Half; style: CSSProp
           {half} · card {i + 1} of {CARDS.length}
         </span>
         <span className="grow" />
+        {d.drawer.top && d.drawer.bottom && (
+          <button className="icon" aria-label="Swap the top and bottom cards" title="Swap halves (x)" onClick={d.swapHalves}>
+            <Swap />
+          </button>
+        )}
         <button className="icon" aria-label={`Close ${CARDS[i].title}`} title={`Close (${i + 1})`} onClick={() => d.closeCard(id)}>
           <Chevron dir={half === "top" ? "up" : "down"} />
         </button>

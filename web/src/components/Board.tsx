@@ -61,7 +61,15 @@ export default function Board() {
           onKeyDown={(e) => e.key === "Enter" && draftFirstMatch()}
         />
         <label className="inline muted" title="Hide drafted players (h)">
-          <input type="checkbox" checked={d.hideTaken} onChange={(e) => d.setHideTaken(e.target.checked)} /> hide drafted
+          <input
+            type="checkbox"
+            checked={d.hideTaken}
+            onChange={(e) => {
+              d.setHideTaken(e.target.checked);
+              e.currentTarget.blur();
+            }}
+          />{" "}
+          hide drafted
         </label>
         {!s.complete && (
           <span className="inline muted sim" title="Auto-pick for the other teams: each pick takes the earliest noisy ADP slot">
@@ -72,7 +80,17 @@ export default function Board() {
             <button className="small" disabled={busy || s.on_the_clock} onClick={() => d.simulate({ until_my_pick: true })} title="Simulate up to my pick (s)">
               to my pick
             </button>
-            <select value={d.noise} onChange={(e) => d.setNoise(Number(e.target.value))} aria-label="Simulation noise">
+            <button className={`small ${d.mock ? "primary" : ""}`} onClick={() => d.setMock(!d.mock)} title="Run the whole draft: other teams by ADP, you by the solver (m)">
+              {d.mock ? "■ stop mock draft" : "▶ mock draft"}
+            </button>
+            <select
+              value={d.noise}
+              onChange={(e) => {
+                d.setNoise(Number(e.target.value));
+                e.currentTarget.blur();
+              }}
+              aria-label="Simulation noise"
+            >
               {NOISE.map((o) => (
                 <option key={o.value} value={o.value}>
                   {o.label}
@@ -85,7 +103,13 @@ export default function Board() {
         {!s.complete && (
           <label className="inline muted">
             Pick {s.next_overall} goes to
-            <select value={d.draftingTeam} onChange={(e) => d.setTeamOverride(e.target.value)}>
+            <select
+              value={d.draftingTeam}
+              onChange={(e) => {
+                d.setTeamOverride(e.target.value);
+                e.currentTarget.blur();
+              }}
+            >
               {teams.map((t) => (
                 <option key={t} value={t}>
                   {t}

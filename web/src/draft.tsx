@@ -106,7 +106,7 @@ export interface DraftApi {
   solve: () => void;
   pinPunt: (label: string) => void;
   // picks
-  draftPlayer: (playerId: string, opts?: { via?: "key" | "click"; team?: string }) => void;
+  draftPlayer: (playerId: string, opts?: { via?: "key" | "click" | "auto"; team?: string }) => void;
   drafting: boolean;
   undo: () => void;
   simulate: (body: { count?: number; until_my_pick: boolean }) => void;
@@ -114,6 +114,12 @@ export interface DraftApi {
   noise: number;
   setNoise: (n: number) => void;
   pickError: string | null;
+  /** Draft the recommended pick as soon as the solve finishes whenever I am on the clock. */
+  autopilot: boolean;
+  setAutopilot: (v: boolean) => void;
+  /** Run the whole draft: simulate the other teams, autopilot my picks, until complete. */
+  mock: boolean;
+  setMock: (v: boolean) => void;
   // board
   hideTaken: boolean;
   setHideTaken: (v: boolean) => void;
@@ -251,17 +257,18 @@ export function DraftProvider({ session, solveEvents, children }: ProviderProps)
 
   // ---------------------------------------------------------------- picks
   const draftMutation = useMutation({
-    mutationFn: (v: { playerId: string; team: string; via: "key" | "click" }) =>
+    mutationFn: (v: { playerId: string; team: string; via: "key" | "click" | "auto" }) =>
       api.addPick(session.id, { team: v.team, player_id: v.playerId }),
     onSuccess: (row, v) => {
       setTeamOverride(null);
       invalidate();
       if (v.via === "key") showToast({ message: `Drafted ${row.name} to ${row.team}`, undo: true });
+      if (v.via === "auto") showToast({ message: `Autopilot drafted ${row.name} (pick ${row.overall})`, undo: true });
     },
   });
   const { mutate: runDraft, isPending: drafting } = draftMutation;
   const draftPlayer = useCallback(
-    (playerId: string, opts: { via?: "key" | "click"; team?: string } = {}) => {
+    (playerId: string, opts: { via?: "key" | "click" | "auto"; team?: string } = {}) => {
       if (session.complete || drafting) return;
       runDraft({ playerId, team: opts.team ?? draftingTeam, via: opts.via ?? "click" });
     },
@@ -284,10 +291,12 @@ export function DraftProvider({ session, solveEvents, children }: ProviderProps)
   const simMutation = useMutation({
     mutationFn: (body: { count?: number; until_my_pick: boolean }) => api.autopick(session.id, { ...body, noise: noiseRef.current }),
     onSuccess: (r) => {
+      simVersion.current = r.version;
       invalidate();
       if (r.added.length > 1) showToast({ message: `Simulated ${r.added.length} picks` });
     },
   });
+  const simVersion = useRef(-1);
   const { mutate: runSim, isPending: simulating } = simMutation;
   const simulate = useCallback(
     (body: { count?: number; until_my_pick: boolean }) => {
@@ -296,6 +305,40 @@ export function DraftProvider({ session, solveEvents, children }: ProviderProps)
     [session.complete, simulating, runSim],
   );
   const pickError = draftMutation.error?.message ?? undoMutation.error?.message ?? simMutation.error?.message ?? null;
+
+  // ---------------------------------------------------------------- autopilot and mock draft
+  const [autopilot, setAutopilot] = useState(false);
+  const [mock, setMock] = useState(false);
+  const autoDraftedFor = useRef(-1);
+  const { data: latestResult, isPending: solvePending } = recommend;
+  useEffect(() => {
+    if (session.complete) {
+      if (mock) setMock(false);
+      return;
+    }
+    if (!session.on_the_clock) {
+      // Mock draft: the other teams pick until my turn. Wait for the session to catch up with the last sim.
+      if (mock && !simulating && !drafting && session.version >= simVersion.current) runSim({ until_my_pick: true });
+      return;
+    }
+    if (!(autopilot || mock) || drafting || solvePending) return;
+    if (autoDraftedFor.current === session.version) return;
+    const key = `${session.id}:${session.version}`;
+    if (!latestResult || latestResult.version !== session.version) {
+      if (solvedFor.current !== key) {
+        solvedFor.current = key;
+        runSolve();
+      }
+      return;
+    }
+    const top = latestResult.candidates[0];
+    if (!top) return;
+    autoDraftedFor.current = session.version;
+    runDraft({ playerId: top.player, team: onClockTeam, via: "auto" });
+  }, [session.complete, session.on_the_clock, session.version, session.id, mock, autopilot, simulating, drafting, solvePending, latestResult, runSim, runSolve, runDraft, onClockTeam]);
+  useEffect(() => {
+    if (simMutation.error || draftMutation.error) setMock(false); // stop the loop on any failure
+  }, [simMutation.error, draftMutation.error]);
 
   // ---------------------------------------------------------------- board
   const [hideTaken, setHideTaken] = useState(true);
@@ -346,6 +389,10 @@ export function DraftProvider({ session, solveEvents, children }: ProviderProps)
     noise,
     setNoise,
     pickError,
+    autopilot,
+    setAutopilot,
+    mock,
+    setMock,
     hideTaken,
     setHideTaken,
     toggleHideTaken,
@@ -371,6 +418,7 @@ function applyClose(d: DrawerState, id: CardId): DrawerState {
 }
 
 const SHIFTED_DIGITS: Record<string, number> = { "!": 1, "@": 2, "#": 3, "$": 4, "%": 5, "^": 6 };
+const TEXT_INPUTS = new Set(["text", "search", "number", "email", "password", "url", "tel"]);
 
 /** 1 to 6 from the physical key when the browser reports it, else from the typed character. */
 function cardDigit(e: KeyboardEvent): number | null {
@@ -390,11 +438,19 @@ export function Hotkeys() {
       const d = latest.current;
       const target = e.target as HTMLElement | null;
       const tag = target?.tagName ?? "";
-      const typing = tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA" || !!target?.isContentEditable;
+      const isControl = tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA" || tag === "BUTTON" || tag === "A";
+      // Only text entry swallows letters: a focused checkbox, slider or select must not block shortcuts.
+      const typing =
+        tag === "TEXTAREA" ||
+        !!target?.isContentEditable ||
+        (tag === "INPUT" && TEXT_INPUTS.has((target as HTMLInputElement).type));
       if (e.key === "Escape") {
         if (d.sheetOpen) d.setSheetOpen(false);
-        else if (typing) target?.blur();
-        else d.collapseDrawer();
+        else if (typing || tag === "SELECT") target?.blur();
+        else {
+          if (isControl) target?.blur();
+          d.collapseDrawer();
+        }
         e.preventDefault();
         return;
       }
@@ -404,13 +460,18 @@ export function Hotkeys() {
         e.preventDefault();
         return;
       }
-      if (d.sheetOpen) return;
+      // Any shortcut used while the key sheet is open also closes the sheet, so keys can be tried from it.
+      const closeSheet = () => {
+        if (d.sheetOpen) d.setSheetOpen(false);
+      };
       const digit = cardDigit(e);
       if (digit) {
         d.openCard(CARDS[digit - 1].id, e.shiftKey ? "bottom" : "top");
+        closeSheet();
         e.preventDefault();
         return;
       }
+      if (tag === "SELECT") return; // letters change the selection natively
       switch (e.key) {
         case "]":
           d.toggleDrawer();
@@ -431,7 +492,7 @@ export function Hotkeys() {
           d.moveHighlight(-1);
           break;
         case "Enter":
-          if (tag === "BUTTON" || tag === "A" || !d.highlight) return; // let the focused control act
+          if (isControl || !d.highlight) return; // let the focused control act
           d.draftPlayer(d.highlight, { via: "key" });
           break;
         case "d": {
@@ -456,9 +517,18 @@ export function Hotkeys() {
         case "S":
           d.simulate({ count: 1, until_my_pick: false });
           break;
+        case "a":
+          d.setAutopilot(!d.autopilot);
+          d.showToast({ message: d.autopilot ? "Autopilot off" : "Autopilot on: your picks draft themselves when the solve finishes" });
+          break;
+        case "m":
+          d.setMock(!d.mock);
+          d.showToast({ message: d.mock ? "Mock draft stopped" : "Mock draft running: other teams by ADP, you by the solver" });
+          break;
         default:
           return;
       }
+      closeSheet();
       e.preventDefault();
     };
     window.addEventListener("keydown", onKey);

@@ -13,8 +13,12 @@ export default function Rail() {
             key={c.id}
             className={on ? "on" : ""}
             aria-pressed={on}
-            title={`${c.title}: ${c.blurb} (${i + 1}, shift+${i + 1} for the bottom half)`}
+            title={`${c.title}: ${c.blurb}. Key ${i + 1} or click: top half. Shift+${i + 1}, shift-click or right-click: bottom half.`}
             onClick={(e) => d.openCard(c.id, e.shiftKey ? "bottom" : "top")}
+            onContextMenu={(e) => {
+              e.preventDefault();
+              d.openCard(c.id, "bottom");
+            }}
           >
             {CARD_ICONS[c.id]}
             <span className="num">{i + 1}</span>

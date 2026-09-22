@@ -18,6 +18,9 @@ export default function PickCard() {
         <div className="row">
           <span className="k">{label}</span>
           <span className="grow" />
+          <label className={`inline muted switch ${d.autopilot ? "on" : ""}`} title="Draft the recommended pick as soon as the solve finishes whenever you are on the clock (a)">
+            <input type="checkbox" checked={d.autopilot} onChange={(e) => { d.setAutopilot(e.target.checked); e.currentTarget.blur(); }} /> autopilot <kbd>a</kbd>
+          </label>
           <button className="small" onClick={d.solve} disabled={d.solving} title="Re-solve (r)">
             {d.solving ? "Solving…" : "Re-solve"} <kbd>r</kbd>
           </button>

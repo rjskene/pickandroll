@@ -74,3 +74,11 @@ export function Close() {
     </svg>
   );
 }
+
+export function Swap() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" {...stroke} aria-hidden="true">
+      <path d="M8 4v16M8 4 5 7M8 4l3 3M16 20V4M16 20l-3-3M16 20l3-3" />
+    </svg>
+  );
+}

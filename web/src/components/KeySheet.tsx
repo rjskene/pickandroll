@@ -10,7 +10,7 @@ const GROUPS: { title: string; rows: [string[], string][] }[] = [
     title: "Cards",
     rows: [
       [["1", "…", "6"], "open that card in the top half; the same key again closes it"],
-      [["⇧ 1", "…", "⇧ 6"], "open it in the bottom half"],
+      [["⇧ 1", "…", "⇧ 6"], "open it in the bottom half (mouse: shift-click or right-click the rail icon)"],
       [["]"], "collapse the drawer to the rail, or bring it back with its two cards"],
       [["Esc"], "collapse the drawer; in a field it leaves the field first"],
       [["x"], "swap the top and bottom cards"],
@@ -34,6 +34,8 @@ const GROUPS: { title: string; rows: [string[], string][] }[] = [
       [["r"], "re-solve now"],
       [["s"], "simulate the other teams up to my pick"],
       [["⇧ S"], "simulate one pick"],
+      [["a"], "autopilot: draft the recommended pick yourself as soon as the solve finishes"],
+      [["m"], "mock draft: run the whole draft, other teams by ADP and you by the solver"],
       [["?"], "this sheet"],
     ],
   },
@@ -70,7 +72,7 @@ export default function KeySheet() {
             </div>
           ))}
         </div>
-        <footer className="muted">Every key mirrors a visible control. A pick made by key shows a toast with Undo for five seconds.</footer>
+        <footer className="muted">Every key mirrors a visible control. Keys work while this sheet is open and close it. A pick made by key shows a toast with Undo for five seconds.</footer>
       </div>
     </div>
   );

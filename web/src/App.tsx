@@ -70,6 +70,15 @@ function DraftScreen({ yahoo, onSwitch }: { yahoo: YahooStatus | undefined; onSw
               Pick {s.next_overall} · Round {owner.round}
             </span>
             <span className={`pill ${s.on_the_clock ? "hot" : ""}`}>{s.on_the_clock ? "YOU ARE ON THE CLOCK" : `${onClockTeam} on the clock`}</span>
+            {d.mock ? (
+              <button className="pill hot clickable" onClick={() => d.setMock(false)} title="Stop the mock draft (m)">
+                MOCK DRAFT RUNNING · STOP
+              </button>
+            ) : d.autopilot ? (
+              <button className="pill clickable" onClick={() => d.setAutopilot(false)} title="Switch autopilot off (a)">
+                AUTOPILOT ON
+              </button>
+            ) : null}
             <span className="clock" title="time since the last pick">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
                 <circle cx="12" cy="13" r="8" />

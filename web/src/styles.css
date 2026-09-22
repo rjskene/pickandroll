@@ -59,6 +59,9 @@ button.primary kbd { background: rgba(0, 0, 0, 0.18); border-color: rgba(0, 0, 0
 .bar > span.bad { background: var(--bad); }
 .bar > span.accent { background: var(--accent); }
 .inline { display: inline-flex !important; align-items: center; gap: 6px; }
+.switch { border: 1px solid var(--line-2); border-radius: 999px; padding: 2px 9px; font-size: 12px; cursor: pointer; }
+.switch.on { border-color: var(--accent); color: var(--accent); }
+.switch input { margin: 0; }
 .survival { display: inline-flex; align-items: center; gap: 8px; }
 .survival .bar { width: 70px; }
 .survival .muted { font-size: 11px; width: 30px; text-align: right; }
