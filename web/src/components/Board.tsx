@@ -1,22 +1,13 @@
-import { useMemo, useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { api, CAT_LABEL, CATS, pickOwner, teamLabel, type BoardPlayer, type SessionSummary } from "../api";
-
-interface Props {
-  session: SessionSummary;
-  recommended: string | null;
-  /** The board is the only wide column: show ADP and the odds each player lasts to my next pick. */
-  wide: boolean;
-}
+import { useEffect, useMemo, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { api, CAT_LABEL, CATS, teamLabel, type BoardPlayer } from "../api";
+import { useDraft } from "../draft";
+import { oddsClass } from "../format";
 
 function heat(z: number): string | undefined {
   if (Math.abs(z) < 0.5) return undefined;
   const t = Math.min(3, Math.abs(z));
   return z > 0 ? `hsl(150 45% ${14 + t * 8}%)` : `hsl(0 45% ${14 + t * 7}%)`;
-}
-
-function survivalClass(p: number): string {
-  return p >= 0.7 ? "good" : p >= 0.35 ? "" : "bad";
 }
 
 const NOISE = [
@@ -26,73 +17,62 @@ const NOISE = [
   { value: 2, label: "wild" },
 ];
 
-export default function Board({ session, recommended, wide }: Props) {
-  const queryClient = useQueryClient();
-  const board = useQuery({ queryKey: ["board", session.id], queryFn: () => api.board(session.id) });
+export default function Board() {
+  const d = useDraft();
+  const s = d.session;
+  const board = useQuery({ queryKey: ["board", s.id], queryFn: () => api.board(s.id) });
   const [search, setSearch] = useState("");
-  const [hideTaken, setHideTaken] = useState(true);
-  const [noise, setNoise] = useState(1);
-  const owner = pickOwner(session.num_teams, session.next_overall);
-  const [team, setTeam] = useState<string | null>(null);
-  const draftingTeam = team ?? teamLabel(session, owner.position);
-
-  const invalidate = () => {
-    queryClient.invalidateQueries({ queryKey: ["session", session.id] });
-    queryClient.invalidateQueries({ queryKey: ["board", session.id] });
-    queryClient.invalidateQueries({ queryKey: ["picks", session.id] });
-  };
-  const addPick = useMutation({
-    mutationFn: (player: BoardPlayer) => api.addPick(session.id, { team: draftingTeam, player_id: player.player_id }),
-    onSuccess: () => {
-      setTeam(null);
-      invalidate();
-    },
-  });
-  const autopick = useMutation({
-    mutationFn: (body: { count?: number; until_my_pick: boolean }) => api.autopick(session.id, { ...body, noise }),
-    onSuccess: invalidate,
-  });
+  const wide = !d.drawerOpen;
+  const recommended = d.result?.candidates[0]?.player ?? null;
 
   const rows = useMemo(() => {
     const needle = search.trim().toLowerCase();
     return (board.data?.players ?? []).filter(
-      (p) => (!hideTaken || !p.taken) && (!needle || p.name.toLowerCase().includes(needle)),
+      (p) => (!d.hideTaken || !p.taken) && (!needle || p.name.toLowerCase().includes(needle)),
     );
-  }, [board.data, search, hideTaken]);
+  }, [board.data, search, d.hideTaken]);
+  useEffect(() => {
+    d.setVisibleRows(rows.filter((p) => !p.taken).map((p) => p.player_id));
+  }, [rows, d.setVisibleRows]);
+  useEffect(() => {
+    if (d.highlight) document.querySelector("tr.hl")?.scrollIntoView({ block: "nearest" });
+  }, [d.highlight]);
 
-  const teams = Array.from({ length: session.num_teams }, (_, i) => teamLabel(session, i + 1));
+  const teams = Array.from({ length: s.num_teams }, (_, i) => teamLabel(s, i + 1));
   const draftFirstMatch = () => {
     const first = rows.find((p) => !p.taken);
-    if (first && search.trim()) addPick.mutate(first);
+    if (first && search.trim()) d.draftPlayer(first.player_id, { via: "key" });
   };
   const nextPick = board.data?.next_pick ?? null;
-  const busy = addPick.isPending || autopick.isPending;
-  const error = addPick.error ?? autopick.error;
+  const busy = d.drafting || d.simulating;
+  const draftRow = (p: BoardPlayer) => d.draftPlayer(p.player_id);
 
   return (
     <section className="panel board">
       <header className="board-head">
         <h2>BOARD</h2>
         <input
+          ref={d.searchRef}
           type="search"
-          placeholder="Search, Enter drafts first match"
+          placeholder="Search  /"
+          title="Search (/) · Enter drafts the first match"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && draftFirstMatch()}
         />
-        <label className="inline muted">
-          <input type="checkbox" checked={hideTaken} onChange={(e) => setHideTaken(e.target.checked)} /> hide drafted
+        <label className="inline muted" title="Hide drafted players (h)">
+          <input type="checkbox" checked={d.hideTaken} onChange={(e) => d.setHideTaken(e.target.checked)} /> hide drafted
         </label>
-        {!session.complete && (
+        {!s.complete && (
           <span className="inline muted sim" title="Auto-pick for the other teams: each pick takes the earliest noisy ADP slot">
             <span className="k">Sim</span>
-            <button className="small" disabled={busy} onClick={() => autopick.mutate({ count: 1, until_my_pick: false })}>
+            <button className="small" disabled={busy} onClick={() => d.simulate({ count: 1, until_my_pick: false })} title="Simulate one pick (shift+S)">
               next pick
             </button>
-            <button className="small" disabled={busy || session.on_the_clock} onClick={() => autopick.mutate({ until_my_pick: true })}>
+            <button className="small" disabled={busy || s.on_the_clock} onClick={() => d.simulate({ until_my_pick: true })} title="Simulate up to my pick (s)">
               to my pick
             </button>
-            <select value={noise} onChange={(e) => setNoise(Number(e.target.value))} aria-label="Simulation noise">
+            <select value={d.noise} onChange={(e) => d.setNoise(Number(e.target.value))} aria-label="Simulation noise">
               {NOISE.map((o) => (
                 <option key={o.value} value={o.value}>
                   {o.label}
@@ -101,11 +81,11 @@ export default function Board({ session, recommended, wide }: Props) {
             </select>
           </span>
         )}
-        <span style={{ flexGrow: 1 }} />
-        {!session.complete && (
+        <span className="grow" />
+        {!s.complete && (
           <label className="inline muted">
-            Pick {session.next_overall} goes to
-            <select value={draftingTeam} onChange={(e) => setTeam(e.target.value)}>
+            Pick {s.next_overall} goes to
+            <select value={d.draftingTeam} onChange={(e) => d.setTeamOverride(e.target.value)}>
               {teams.map((t) => (
                 <option key={t} value={t}>
                   {t}
@@ -115,7 +95,7 @@ export default function Board({ session, recommended, wide }: Props) {
           </label>
         )}
       </header>
-      {error && <p className="error">{error.message}</p>}
+      {d.pickError && <p className="error">{d.pickError}</p>}
       <div className="table-wrap">
         <table>
           <thead>
@@ -136,48 +116,54 @@ export default function Board({ session, recommended, wide }: Props) {
             </tr>
           </thead>
           <tbody>
-            {rows.map((p, i) => (
-              <tr key={p.player_id} className={p.taken ? "taken" : p.player_id === recommended ? "reco" : ""}>
-                <td className="dim">{i + 1}</td>
-                <td className={p.player_id === recommended ? "strong" : ""}>
-                  {p.name} <span className="dim">{p.team}</span>
-                </td>
-                <td>{p.positions || <span className="dim">?</span>}</td>
-                <td className="num">{Math.round(p.games)}</td>
-                {wide && <td className="num">{p.adp == null ? "" : p.adp.toFixed(1)}</td>}
-                <td className="num strong">{p.total.toFixed(1)}</td>
-                {CATS.map((c) => (
-                  <td key={c} className="num">
-                    <span className="cell" style={{ background: heat(p.z[c]) }}>
-                      {p.z[c].toFixed(1)}
-                    </span>
+            {rows.map((p, i) => {
+              const cls = [p.taken ? "taken" : "", p.player_id === recommended ? "reco" : "", p.player_id === d.highlight ? "hl" : ""].filter(Boolean).join(" ");
+              return (
+                <tr key={p.player_id} className={cls} onClick={() => !p.taken && d.setHighlight(p.player_id)}>
+                  <td className="dim">{i + 1}</td>
+                  <td className={p.player_id === recommended ? "strong" : ""}>
+                    {p.name} <span className="dim">{p.team}</span>
                   </td>
-                ))}
-                {wide && (
-                  <td>
-                    {!p.taken && p.p_next != null && (
-                      <span className="survival">
-                        <span className="bar">
-                          <span className={survivalClass(p.p_next)} style={{ width: `${Math.round(p.p_next * 100)}%` }} />
-                        </span>
-                        <span className="muted">{Math.round(p.p_next * 100)}%</span>
+                  <td>{p.positions || <span className="dim">?</span>}</td>
+                  <td className="num">{Math.round(p.games)}</td>
+                  {wide && <td className="num">{p.adp == null ? "" : p.adp.toFixed(1)}</td>}
+                  <td className="num strong">{p.total.toFixed(1)}</td>
+                  {CATS.map((c) => (
+                    <td key={c} className="num">
+                      <span className="cell" style={{ background: heat(p.z[c]) }}>
+                        {p.z[c].toFixed(1)}
                       </span>
+                    </td>
+                  ))}
+                  {wide && (
+                    <td>
+                      {!p.taken && p.p_next != null && (
+                        <span className="survival">
+                          <span className="bar">
+                            <span className={oddsClass(p.p_next)} style={{ width: `${Math.round(p.p_next * 100)}%` }} />
+                          </span>
+                          <span className="muted">{Math.round(p.p_next * 100)}%</span>
+                        </span>
+                      )}
+                    </td>
+                  )}
+                  <td>
+                    {!p.taken && !s.complete && (
+                      <button
+                        className={`small ${p.player_id === recommended ? "primary" : ""}`}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          draftRow(p);
+                        }}
+                        disabled={busy}
+                      >
+                        Draft
+                      </button>
                     )}
                   </td>
-                )}
-                <td>
-                  {!p.taken && !session.complete && (
-                    <button
-                      className={`small ${p.player_id === recommended ? "primary" : ""}`}
-                      onClick={() => addPick.mutate(p)}
-                      disabled={busy}
-                    >
-                      Draft
-                    </button>
-                  )}
-                </td>
-              </tr>
-            ))}
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>
