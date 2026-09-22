@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactElement } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, pickOwner, teamLabel, type SolveEvent } from "./api";
 import Board from "./components/Board";
@@ -6,6 +6,45 @@ import PickLog from "./components/PickLog";
 import Recommend from "./components/Recommend";
 import SessionSetup from "./components/SessionSetup";
 import TeamProfile from "./components/TeamProfile";
+
+type ColKey = "board" | "pick" | "team";
+type Visible = Record<ColKey, boolean>;
+const ALL_VISIBLE: Visible = { board: true, pick: true, team: true };
+const COLUMNS_KEY = "pickandroll.columns";
+
+const COLUMN_ICONS: Record<ColKey, ReactElement> = {
+  board: (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+      <rect x="3" y="4" width="18" height="16" rx="2" />
+      <path d="M3 10h18M9 4v16" />
+    </svg>
+  ),
+  pick: (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+      <circle cx="12" cy="12" r="9" />
+      <circle cx="12" cy="12" r="4" />
+      <path d="M12 3v3M12 18v3M3 12h3M18 12h3" />
+    </svg>
+  ),
+  team: (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+      <circle cx="9" cy="8" r="3.5" />
+      <path d="M2.5 20a6.5 6.5 0 0 1 13 0M16 4.5a3.5 3.5 0 0 1 0 7M21.5 20a6.5 6.5 0 0 0-5-6.3" />
+    </svg>
+  ),
+};
+const COLUMN_LABEL: Record<ColKey, string> = { board: "Board", pick: "Pick", team: "Team" };
+const COLUMN_ORDER: ColKey[] = ["board", "pick", "team"];
+
+function loadVisible(): Visible {
+  try {
+    const raw = localStorage.getItem(COLUMNS_KEY);
+    if (raw) return { ...ALL_VISIBLE, ...(JSON.parse(raw) as Partial<Visible>) };
+  } catch {
+    /* private mode or blocked storage: fall through */
+  }
+  return ALL_VISIBLE;
+}
 
 function useTicker(resetKey: number): number {
   const [seconds, setSeconds] = useState(0);
@@ -23,6 +62,7 @@ export default function App() {
   const [solveEvents, setSolveEvents] = useState<SolveEvent[]>([]);
   const [profile, setProfile] = useState<{ totals: Record<string, number>; punted: string[] } | null>(null);
   const [recommended, setRecommended] = useState<string | null>(null);
+  const [visible, setVisible] = useState<Visible>(loadVisible);
   const session = useQuery({
     queryKey: ["session", sessionId],
     queryFn: () => api.session(sessionId!),
@@ -43,7 +83,15 @@ export default function App() {
     history.replaceState(null, "", url);
   }, [sessionId]);
 
-  // Live feed: any pick (manual or from Yahoo) invalidates the board, picks and session.
+  useEffect(() => {
+    try {
+      localStorage.setItem(COLUMNS_KEY, JSON.stringify(visible));
+    } catch {
+      /* storage unavailable: the choice lasts for this page only */
+    }
+  }, [visible]);
+
+  // Live feed: any pick (manual, simulated or from Yahoo) invalidates the board, picks and session.
   useEffect(() => {
     if (!sessionId) return;
     const source = new EventSource(api.eventsUrl(sessionId));
@@ -61,6 +109,12 @@ export default function App() {
     source.addEventListener("undo", refresh);
     return () => source.close();
   }, [sessionId, queryClient]);
+
+  const toggleColumn = (key: ColKey) =>
+    setVisible((prev) => {
+      const next = { ...prev, [key]: !prev[key] };
+      return COLUMN_ORDER.some((k) => next[k]) ? next : prev; // keep at least one column
+    });
 
   if (!sessionId || !session.data) {
     return (
@@ -80,6 +134,7 @@ export default function App() {
   const onClockTeam = teamLabel(s, owner.position);
   const mm = Math.floor(sinceLastPick / 60);
   const ss = String(sinceLastPick % 60).padStart(2, "0");
+  const layoutClass = "layout v-" + COLUMN_ORDER.filter((k) => visible[k]).map((k) => k[0]).join("");
   return (
     <main className="shell">
       <header className="topbar">
@@ -89,6 +144,20 @@ export default function App() {
         <span className="muted">
           {s.projection} · {s.num_teams} teams · you pick {s.my_position}
         </span>
+        <div className="seg" role="group" aria-label="Panels">
+          {COLUMN_ORDER.map((key) => (
+            <button
+              key={key}
+              className={visible[key] ? "on" : ""}
+              aria-pressed={visible[key]}
+              title={`${visible[key] ? "Hide" : "Show"} the ${COLUMN_LABEL[key]} column`}
+              onClick={() => toggleColumn(key)}
+            >
+              {COLUMN_ICONS[key]}
+              {COLUMN_LABEL[key]}
+            </button>
+          ))}
+        </div>
         <span style={{ flexGrow: 1 }} />
         {s.complete ? (
           <span className="pill">DRAFT COMPLETE</span>
@@ -111,14 +180,15 @@ export default function App() {
           switch draft
         </button>
       </header>
-      <div className="layout">
-        <div className="col">
-          <Board session={s} recommended={recommended} />
+      <div className={layoutClass}>
+        <div className="col" hidden={!visible.board}>
+          <Board session={s} recommended={recommended} wide={!visible.pick} />
         </div>
-        <div className="col">
+        {/* Hidden columns stay mounted so the solver keeps running and its result survives a toggle. */}
+        <div className="col" hidden={!visible.pick}>
           <Recommend session={s} solveEvents={solveEvents} onResult={(r) => { setProfile({ totals: r.best_roster.cat_totals, punted: r.best_roster.punted }); setRecommended(r.candidates[0]?.player ?? null); }} />
         </div>
-        <div className="col">
+        <div className="col" hidden={!visible.team}>
           <TeamProfile profile={profile} />
           <PickLog session={s} />
         </div>

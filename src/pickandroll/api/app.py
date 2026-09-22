@@ -22,7 +22,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from ..draft import DraftState, LeagueSettings
+from ..draft import DraftState, LeagueSettings, simulate
 from ..optim.roster import Slot, yahoo_default_slots
 from ..projections.adp import adp_for_projections, load_adp
 from ..projections.positions import apply_positions, load_positions
@@ -113,6 +113,15 @@ class PickIn(BaseModel):
 
 class SyncIn(BaseModel):
     picks: list[tuple[int, str, str]] = Field(description="(overall, team, player_id) triples")
+
+
+class AutoPickIn(BaseModel):
+    count: int | None = Field(default=None, ge=1, description="stop after this many picks")
+    until_my_pick: bool = Field(default=True, description="stop when my team is on the clock")
+    noise: float = Field(
+        default=1.0, ge=0.0, le=3.0, description="0 = best ADP available, 1 = model spread"
+    )
+    seed: int | None = None
 
 
 class YahooAttach(BaseModel):
@@ -253,6 +262,12 @@ def create_app(
         z = state.z
         df = state.projections.df
         taken = state.taken
+        adp = state.effective_adp()
+        # Odds each player lasts to my next pick after the current one (the board's question
+        # while I am on the clock is "can I wait on this player?").
+        future = [k for k in state.my_remaining_picks if k > state.next_overall]
+        next_pick = future[0] if future else None
+        p_next = state.availability()[next_pick] if next_pick is not None else None
         rows = []
         for pid in z["total"].sort_values(ascending=False).index[:limit]:
             rows.append(
@@ -262,6 +277,8 @@ def create_app(
                     "team": df.at[pid, "team"],
                     "positions": df.at[pid, "positions"],
                     "games": float(df.at[pid, "games"]),
+                    "adp": _float_or_none(adp.get(pid)),
+                    "p_next": _float_or_none(p_next.get(pid)) if p_next is not None else None,
                     "z": {
                         c.value: round(float(z.at[pid, c.value]), 3) for c in state.settings.cats
                     },
@@ -269,7 +286,7 @@ def create_app(
                     "taken": pid in taken,
                 }
             )
-        return {"version": session.version, "players": rows}
+        return {"version": session.version, "next_pick": next_pick, "players": rows}
 
     @app.get("/sessions/{session_id}/picks")
     def picks(session_id: str) -> list[dict[str, Any]]:
@@ -308,6 +325,26 @@ def create_app(
         row = _pick_row(session.state, pick)
         session.publish("undo", {"pick": row})
         return row
+
+    @app.post("/sessions/{session_id}/autopick")
+    def autopick(session_id: str, body: AutoPickIn) -> dict[str, Any]:
+        """Auto-pick for the other teams (draft simulation) until my pick or ``count`` picks."""
+        session = store.get(session_id)
+        if session.state.complete:
+            raise HTTPException(400, "draft is complete")
+        if body.until_my_pick and body.count is None and session.state.on_the_clock:
+            raise HTTPException(400, "you are on the clock; make your pick first")
+        made = simulate(
+            session.state,
+            count=body.count,
+            until_my_pick=body.until_my_pick,
+            noise=body.noise,
+            seed=body.seed,
+        )
+        rows = [_pick_row(session.state, p) for p in made]
+        for row in rows:
+            session.publish("pick", {"pick": row})
+        return {"added": rows, "version": session.version}
 
     @app.post("/sessions/{session_id}/recommend")
     def recommend(session_id: str, body: RecommendQuery) -> dict[str, Any]:
@@ -519,6 +556,12 @@ def _sse(event: str, data: dict[str, Any]) -> str:
 
 def _now() -> str:
     return datetime.now(tz=UTC).isoformat()
+
+
+def _float_or_none(value: Any) -> float | None:
+    if value is None or pd.isna(value):
+        return None
+    return round(float(value), 3)
 
 
 def _summary(session: Session) -> dict[str, Any]:

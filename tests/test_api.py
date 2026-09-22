@@ -270,3 +270,24 @@ def test_recommend_reports_punt_scan_and_timings_without_bumping_version(client)
     assert client.get(f"/sessions/{sid}").json()["version"] == before
     fixed = client.post(f"/sessions/{sid}/recommend", json={"n": 3, "punt": ["tov"]}).json()
     assert fixed["punt_scan"] == [] and "punt_scan_ms" not in fixed["timings"]
+
+
+def test_autopick_simulates_other_teams(client):
+    s = create(client)  # 4 teams, I pick second
+    sid = s["id"]
+    r = client.post(f"/sessions/{sid}/autopick", json={"noise": 0.0})
+    assert r.status_code == 200, r.text
+    added = r.json()["added"]
+    assert [p["overall"] for p in added] == [1]
+    assert added[0]["team"] == "Team 1"
+    assert client.get(f"/sessions/{sid}").json()["on_the_clock"] is True
+    # On the clock: a plain "sim to my pick" is refused, an explicit count still works.
+    assert client.post(f"/sessions/{sid}/autopick", json={}).status_code == 400
+    r = client.post(
+        f"/sessions/{sid}/autopick", json={"count": 1, "until_my_pick": False, "seed": 1}
+    )
+    assert r.json()["added"][0]["team"] == "me"
+    board = client.get(f"/sessions/{sid}/board?limit=3").json()
+    assert board["next_pick"] == 7
+    assert 0.0 <= board["players"][0]["p_next"] <= 1.0
+    assert board["players"][0]["adp"] is not None

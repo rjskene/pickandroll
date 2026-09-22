@@ -34,9 +34,24 @@ export interface BoardPlayer {
   team: string;
   positions: string;
   games: number;
+  adp: number | null;
+  p_next: number | null;
   z: Record<Cat, number>;
   total: number;
   taken: boolean;
+}
+
+export interface BoardResponse {
+  version: number;
+  next_pick: number | null;
+  players: BoardPlayer[];
+}
+
+export interface AutoPickParams {
+  count?: number | null;
+  until_my_pick?: boolean;
+  noise?: number;
+  seed?: number | null;
 }
 
 export interface PickRow {
@@ -152,12 +167,13 @@ export const api = {
     positions_file: string | null;
     adp_file: string | null;
   }) => request<SessionSummary>("/sessions", { method: "POST", body: JSON.stringify(body) }),
-  board: (id: string, limit = 300) =>
-    request<{ version: number; players: BoardPlayer[] }>(`/sessions/${id}/board?limit=${limit}`),
+  board: (id: string, limit = 300) => request<BoardResponse>(`/sessions/${id}/board?limit=${limit}`),
   picks: (id: string) => request<PickRow[]>(`/sessions/${id}/picks`),
   addPick: (id: string, body: { team: string; player_id: string }) =>
     request<PickRow>(`/sessions/${id}/picks`, { method: "POST", body: JSON.stringify(body) }),
   undoPick: (id: string) => request<PickRow>(`/sessions/${id}/picks/last`, { method: "DELETE" }),
+  autopick: (id: string, body: AutoPickParams) =>
+    request<{ added: PickRow[]; version: number }>(`/sessions/${id}/autopick`, { method: "POST", body: JSON.stringify(body) }),
   recommend: (id: string, params: RecommendParams) =>
     request<Recommendation>(`/sessions/${id}/recommend`, { method: "POST", body: JSON.stringify(params) }),
   eventsUrl: (id: string) => `${BASE}/sessions/${id}/events`,
