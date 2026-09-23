@@ -251,8 +251,52 @@ league's drafter mix; sigma is taken at or above the league fit.
 
 ## Round leverage
 
-Pending: `data/studies/2026-09-23/leverage/` when the branches finish (win-surv 70 seeds,
-sum-adp 50 seeds, thirteen branches each).
+Which rounds does the planner's pick matter in? For each finished draft and each of my picks
+k, the draft was replayed to pick k, the consensus player (best available by ADP order, here
+BBM's rank) was taken instead of the planner's choice, and the planner drafted the rest. The
+paired loss, original minus branch, is the incremental alpha of the planner's pick at round k.
+Rounds where the consensus and the planner agreed count as zero. Curve planner (win-surv) on
+68 seeds, sum planner (sum-adp) on 45; tables and charts in
+`data/studies/2026-09-23/leverage/`.
+
+Alpha per round, matchups won of 11, mean ± 95% CI (value alpha in z after it):
+
+| round | win-surv: matchups | value | same pick | sum-adp: matchups | value | same pick |
+|---|---|---|---|---|---|---|
+| 1 | −0.04 ± 0.22 | +0.1 | 26% | −0.18 ± 0.56 | +0.9 | 69% |
+| 2 | +0.25 ± 0.21 | +2.3 | 9% | +0.69 ± 0.81 | +2.9 | 7% |
+| 3 | +0.22 ± 0.25 | +4.2 | 0% | +0.44 ± 0.73 | +3.2 | 4% |
+| 4 | +0.06 ± 0.23 | +1.8 | 1% | −0.51 ± 0.76 | +2.2 | 0% |
+| 5 | +0.18 ± 0.27 | +1.9 | 6% | +0.20 ± 0.85 | +2.1 | 4% |
+| 6 | +0.07 ± 0.23 | +1.1 | 12% | +0.04 ± 0.55 | +1.7 | 11% |
+| 7 | +0.34 ± 0.20 | +2.2 | 4% | −0.18 ± 0.54 | +2.5 | 2% |
+| 8 | +0.18 ± 0.23 | +2.0 | 3% | −0.16 ± 0.45 | +2.2 | 2% |
+| 9 | +0.28 ± 0.29 | +2.7 | 3% | −0.02 ± 0.43 | +2.5 | 0% |
+| 10 | +0.25 ± 0.21 | +2.8 | 3% | −0.07 ± 0.61 | +3.0 | 2% |
+| 11 | +0.12 ± 0.19 | +2.3 | 4% | +0.27 ± 0.48 | +2.9 | 7% |
+| 12 | +0.29 ± 0.21 | +2.5 | 0% | +0.42 ± 0.42 | +3.5 | 0% |
+| 13 | +0.43 ± 0.22 | +2.2 | 0% | +0.09 ± 0.51 | +3.7 | 0% |
+
+- **Round one is a commodity pick under the curve.** The planner disagrees with the consensus
+  there in 74% of drafts (Daniels, Jokic) and it makes no difference: −0.04 matchups, +0.1 z.
+  Whichever star opens the draft, the plan recovers. The 15 s pick-one solve buys nothing; a
+  consensus top pick and the budget spent from round two would do.
+- **Every later round carries alpha, the late ones most.** Rounds 2 to 13 are each worth 0.06
+  to 0.43 matchups, about 2.7 over the draft, with rounds 7, 9, 10, 12 and 13 at the top
+  (0.25 to 0.43) and round 13 the single largest. Late in the draft the consensus pick is a
+  generic scorer and the curve wants a category filler (a big, a steals guard), and that
+  gap is what the alpha measures. The per-round alphas add to less than the 4.4-matchup gap
+  between the curve and the sum planner because one consensus pick is largely repaired by
+  the picks after it.
+- **The sum planner has no matchup leverage anywhere.** Its pick beats the consensus by 0.9
+  to 3.7 z of value in every round and by nothing in matchups (every CI covers zero, round
+  four −0.51). Value earned round by round does not turn into category wins; the objective,
+  not the round, is the problem.
+- **What this changes** (`docs/ROADMAP.md`): compute and attention go to rounds two onward,
+  late rounds included, not to pick one; the dashboard should show the cost of a deviation on
+  the matchup scale, which is roughly a quarter of a matchup per round under the curve; and
+  the late-round alternatives deserve the same solver budget as the early ones, which they get
+  anyway because the curve solves fast from pick eight on.
 
 ## Rerun
 

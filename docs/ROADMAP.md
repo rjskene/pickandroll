@@ -78,12 +78,15 @@ Data that would calibrate availability from history instead of simulation:
 The harness measures the planner's incremental alpha per round: replay a finished draft to my
 pick k, make the consensus pick there (best available by ADP order), let the planner finish, and
 score the paired loss (`scripts/mock_study.py --naive-branches`, `scripts/mock_leverage.py`).
-Rounds where the consensus and the planner agree are zero alpha by construction. Once the
-profile is known:
+Rounds where the consensus and the planner agree are zero alpha by construction. Result
+(2026-09-23, curve planner, 68 seeds): round one is worth nothing (−0.04 matchups even though
+the planner's pick differs from the consensus 74% of the time), rounds two to thirteen are
+each worth 0.06 to 0.43 matchups with the late rounds highest, and the sum-of-z planner has
+no matchup leverage in any round. Consequences:
 
-- **Compute goes where alpha is.** Rounds with near-zero alpha (the planner takes the
-  consensus anyway) do not need the slow curve solve; take the board. Spend the budget on the
-  rounds that matter: longer time limit, tighter gap, priced alternatives. This is also the
+- **Compute goes where alpha is.** Pick one has no alpha under the curve, so the slowest
+  solve of the draft (15 s, usually truncated) can be replaced by a consensus top pick; the
+  budget goes to rounds two onward: longer time limit, tighter gap, priced alternatives. This is also the
   answer to pick-time worries: the curve solve takes 8 to 15 s at picks one to five and under
   3 s from pick eight, and the plan re-solves after every opponent pick, so by my turn the
   recommendation is at most one pick stale.
