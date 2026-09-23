@@ -100,3 +100,21 @@ profile is known:
   strategic reading is the only model-level consequence: if the draft is won in the middle
   rounds, the early picks are commodity and the middle picks decide the roster's category
   shape.
+
+## Draft-day news (2026-09-23)
+
+Basketball Monster already folds injury news into its rest-of-season projections and updates
+several times a day, so real-time coverage during a draft is about refreshing and flagging,
+not re-deriving rankings from headlines.
+
+1. **Mid-draft projection refresh.** A "refresh projections" action on the session runs the BBM
+   fetcher (`scripts/bbm_fetch.py`, headed login), recomputes z and re-solves without touching
+   the pick log.
+2. **News alerts.** Poll an injury feed (Rotowire or Rotoworld headlines, the ESPN injuries
+   page) during the draft and flag any player on the board or in the plan whose news is newer
+   than the projection file. Alerts only; a headline is not a projection.
+3. **Games-played override.** Projections are per game times games, so the honest on-the-fly
+   adjustment is a per-player games haircut from the UI ("out four weeks" means about fifteen
+   fewer games); z and the plan update at once. This is the manual counterpart to the alert.
+4. **Eligibility check.** Flag players whose Yahoo position eligibility differs from the BBM
+   export's coarse G/F/C, since slot feasibility depends on it.
