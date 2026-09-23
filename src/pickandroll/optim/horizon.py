@@ -18,6 +18,8 @@ Constraints
 Objective
     max (1 - balance) * sum_c T_c + balance * t,
     T_c = sum_{p,j} z[p, c] A[p, j] y[p, j] + sum_l z[l, c]
+    or, with a category curve, max sum_c Phi((T_c - mu_c) / sigma_c) in piecewise-linear form
+    (see ``optim.objective``): the expected number of categories won by the expected totals.
 
 Only the first pick of the plan is acted on. After the next real pick the state changes and the
 plan is re-solved ("roll"). The punt is fixed here; automatic punt selection enumerates punt
@@ -35,6 +37,7 @@ import pandas as pd
 import pulp
 
 from ..projections.schema import NINE_CAT, Cat
+from .objective import CategoryCurve, curve_objective
 from .roster import Slot, _safe, yahoo_default_slots
 
 
@@ -54,6 +57,11 @@ class HorizonProblem:
     force_first: str | None = None
     min_availability: float = 0.005
     min_candidates: int = 25
+    #: Keep only this many candidates per pick, the best by availability-weighted total z.
+    #: Shrinks the model a lot at early picks with hardly any change in the plan; the curve
+    #: objective needs it to solve in reasonable time.
+    max_candidates: int | None = None
+    curve: CategoryCurve | None = None
 
     def __post_init__(self) -> None:
         open_slots = len(self.slots) - len(self.locks)
@@ -63,6 +71,10 @@ class HorizonProblem:
             )
         if not 0.0 <= self.balance <= 1.0:
             raise ValueError("balance must be between 0 and 1")
+        if self.curve is not None and self.balance > 0.0:
+            raise ValueError("a category curve and a balance term cannot be combined")
+        if self.curve is not None and any(c not in self.curve.mu for c in self.cats):
+            raise ValueError("curve lacks a category")
         if self.locks & self.blocks:
             raise ValueError("a player cannot be both locked and blocked")
         missing = [k for k in self.picks if k not in self.availability.columns]
@@ -89,6 +101,8 @@ class HorizonSolution:
     expected_totals: pd.Series
     min_active_total: float
     solve_seconds: float
+    #: Win probability of each expected total under the problem's curve (punted ones zero).
+    expected_wins: pd.Series | None = None
 
     @property
     def first_pick(self) -> str | None:
@@ -121,11 +135,16 @@ def build(problem: HorizonProblem) -> tuple[pulp.LpProblem, dict]:
     # Plan variables only where the player has a real chance of being there. Every pick keeps
     # at least ``min_candidates`` options so late picks in a thin pool stay feasible.
     y: dict[tuple[str, int], pulp.LpVariable] = {}
+    total = problem.z["total"].astype(float).reindex(avail)
     for j, k in enumerate(picks):
         column = A[k]
         keep = set(column[column >= problem.min_availability].index)
         if len(keep) < problem.min_candidates:
             keep |= set(column.nlargest(problem.min_candidates).index)
+        cap = problem.max_candidates
+        if cap is not None and len(keep) > max(cap, problem.min_candidates):
+            weighted = (total * column).reindex(list(keep))
+            keep = set(weighted.nlargest(max(cap, problem.min_candidates)).index)
         if j == 0 and problem.force_first is not None:
             keep.add(problem.force_first)
         for p in avail:
@@ -168,7 +187,10 @@ def build(problem: HorizonProblem) -> tuple[pulp.LpProblem, dict]:
     else:
         model += t == 0, "t_unused"
 
-    model += (1.0 - problem.balance) * pulp.lpSum(totals.values()) + problem.balance * t
+    if problem.curve is not None:
+        model += curve_objective(model, totals, problem.curve, value, len(slots), cats)
+    else:
+        model += (1.0 - problem.balance) * pulp.lpSum(totals.values()) + problem.balance * t
     return model, {"y": y, "x": x, "totals": totals, "value": value, "A": A}
 
 
@@ -214,6 +236,14 @@ def solve_horizon(
     expected = pd.Series(expected)
     active = [c for c in problem.cats if c not in problem.punt]
     min_active = float(expected[active].min()) if active else float("nan")
+    wins = None
+    if problem.curve is not None:
+        wins = pd.Series(
+            {
+                c: (problem.curve.probability(c, float(expected[c])) if c in active else 0.0)
+                for c in problem.cats
+            }
+        )
     return HorizonSolution(
         status=status,
         objective=float(pulp.value(model.objective)),
@@ -222,6 +252,7 @@ def solve_horizon(
         expected_totals=expected,
         min_active_total=min_active,
         solve_seconds=seconds,
+        expected_wins=wins,
     )
 
 

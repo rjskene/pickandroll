@@ -16,7 +16,9 @@ from dataclasses import dataclass, field
 import pandas as pd
 
 from ..availability.adp import conditional_availability, pseudo_adp
+from ..availability.survival import SurvivalTable
 from ..optim.horizon import HorizonProblem, HorizonSolution, horizon_pick_pool, solve_horizon
+from ..optim.objective import CategoryCurve
 from ..optim.roster import RosterProblem, RosterSolution, pick_pool, punt_scan, solve_roster
 from ..projections.schema import Cat, ProjectionSet
 from ..projections.zscores import zscores
@@ -44,6 +46,12 @@ class DraftState:
     adp_source: str = "none"
     solver_margin: int = 60
     replacement_window: int = 24
+    #: Category-win objective for every solve; ``None`` keeps the sum of category totals.
+    curve: CategoryCurve | None = None
+    #: Simulated survival curves; ``None`` keeps the ADP model for availability.
+    survival: SurvivalTable | None = None
+    #: Candidates per pick the plan considers (``HorizonProblem.max_candidates``).
+    plan_candidates: int | None = None
     last_punt_scan: pd.DataFrame | None = field(default=None, repr=False)
     last_timings: dict[str, float] = field(default_factory=dict, repr=False)
 
@@ -135,11 +143,18 @@ class DraftState:
         return self.adp.fillna(fallback)
 
     def availability(self, players: Sequence[str] | None = None) -> pd.DataFrame:
-        """P(available at each of my remaining picks | still on the board now)."""
+        """P(available at each of my remaining picks | still on the board now), from the
+        survival table when one is loaded (the ADP model fills in any player it lacks)."""
         adp = self.effective_adp()
         if players is not None:
             adp = adp.reindex(players)
-        return conditional_availability(adp, now=self.next_overall, picks=self.my_remaining_picks)
+        frame = conditional_availability(adp, now=self.next_overall, picks=self.my_remaining_picks)
+        if self.survival is not None:
+            simulated = self.survival.conditional(
+                list(adp.index), now=self.next_overall, picks=self.my_remaining_picks
+            )
+            frame.update(simulated)
+        return frame
 
     # ------------------------------------------------------------------ mutation
     def apply_pick(self, team: str, player_id: str, overall: int | None = None) -> Pick:
@@ -177,6 +192,7 @@ class DraftState:
     ) -> RosterProblem:
         """Roster problem for the current board: my roster locked, everyone drafted blocked."""
         players = self.solver_players()
+        extra.setdefault("curve", self.curve)
         return RosterProblem(
             z=self.z.loc[players],
             positions={p: self.positions[p] for p in players},
@@ -259,6 +275,31 @@ class DraftState:
         totals = above.sum(axis=0)
         return float((1.0 - balance) * totals.sum() + balance * totals.min())
 
+    def horizon_curve(self) -> CategoryCurve | None:
+        """The category curve on the plan's scale: plan totals are measured above replacement
+        level, so the league's mean total moves down by ``roster_size * level``."""
+        if self.curve is None:
+            return None
+        level = self.replacement_level()
+        size = self.settings.roster_size
+        return self.curve.shift({c: -size * float(level[c.value]) for c in self.settings.cats})
+
+    def roster_wins(self, punt: frozenset[Cat] = frozenset()) -> float | None:
+        """Expected categories won by the players already on my roster under the curve, on
+        raw totals; ``None`` without a curve."""
+        if self.curve is None:
+            return None
+        if not self.my_roster:
+            return 0.0
+        totals = self.z.loc[self.my_roster, [c.value for c in self.settings.cats]].sum()
+        return float(
+            sum(
+                self.curve.probability(c, float(totals[c.value]))
+                for c in self.settings.cats
+                if c not in punt
+            )
+        )
+
     def horizon_problem(
         self,
         punt: frozenset[Cat],
@@ -283,6 +324,8 @@ class DraftState:
             weights=weights,
             locks=frozenset(self.my_roster),
             blocks=frozenset(p for p in players if p in self.taken and p not in self.my_roster),
+            max_candidates=self.plan_candidates,
+            curve=self.horizon_curve(),
         )
 
     def plan(

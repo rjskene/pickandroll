@@ -1,18 +1,31 @@
 """Mock-draft study: how the planner does against simulated leagues.
 
-    python scripts/mock_study.py --mocks 100 --out data/studies/2026-09-22 --workers 9
+    python scripts/mock_study.py --mocks 100 --out data/studies/2026-09-22 --workers 9 \
+        --branches 1,2,3,4,5,6,7,8,9,10,11,12
     python scripts/mock_study.py --mocks 1 --out /tmp/smoke --workers 1 --branches 1,6
+    python scripts/mock_study.py --mocks 500 --out data/studies/x/win-surv --objective win \
+        --curve data/studies/x/curve.json --availability survival \
+        --survival data/studies/x/survival.csv
 
 Every mock puts my team in a draft slot (slots cycle 1..12 over the mocks) and has it draft with
 the rolling-horizon planner, re-choosing its punt at every pick ("auto"). The eleven other teams
 each draw a drafter at random from z, adp and lp (see ``pickandroll.draft.autopick``) and, for
-lp, a punt of their own. The draft is then branched at each of my picks k: the picks before k are
-replayed from the auto run and the punt the auto run chose at pick k is held for the rest of the
-draft. Branch 1 is "punt fixed from the first pick"; branch 13 would be the auto run itself.
+lp, a punt of their own. With ``--branches`` the draft is also branched at each listed pick k of
+mine: the picks before k are replayed from the auto run and the punt the auto run chose at pick k
+is held for the rest of the draft. Branch 1 is "punt fixed from the first pick"; branch 13 would
+be the auto run itself.
 
-All randomness is keyed by (seed, overall pick) so that a branch and the auto run make the same
-draws; they differ only through the players still on the board. One JSON file per mock lands in
-the output directory; ``scripts/mock_study_report.py`` turns them into tables and a report.
+The planner's objective is the sum of category totals (``--objective sum``, with the punt scan
+choosing up to ``--max-punts`` categories to drop) or the expected number of categories won
+(``--objective win``, a category curve with no explicit punt; see ``pickandroll.optim.objective``).
+Availability comes from the ADP model or from a simulated survival table
+(``--availability survival --survival table.csv``, see ``scripts/survival_sim.py``).
+
+All randomness is keyed by (seed, overall pick) so that runs with the same seed under different
+settings face the same opponents making the same draws; they differ only through the players
+still on the board. One JSON file per mock lands in the output directory;
+``scripts/mock_study_report.py`` turns one study into tables and a report and
+``scripts/mock_compare.py`` compares several.
 """
 
 from __future__ import annotations
@@ -23,6 +36,7 @@ import os
 import sys
 import time
 from concurrent.futures import ProcessPoolExecutor, as_completed
+from dataclasses import asdict, dataclass
 from pathlib import Path
 
 os.environ.setdefault("OMP_NUM_THREADS", "1")
@@ -33,6 +47,7 @@ sys.path.insert(0, str(ROOT / "src"))
 import numpy as np
 import pandas as pd
 
+from pickandroll.availability.survival import SurvivalTable
 from pickandroll.draft import DraftState, LeagueSettings
 from pickandroll.draft.autopick import (
     STRATEGIES,
@@ -43,6 +58,7 @@ from pickandroll.draft.autopick import (
     team_label,
 )
 from pickandroll.optim.horizon import solve_horizon
+from pickandroll.optim.objective import DEFAULT_SIGMA, CategoryCurve
 from pickandroll.optim.roster import punt_sets
 from pickandroll.projections.schema import NINE_CAT, Cat
 from pickandroll.sources.bbm import load_bbm
@@ -51,7 +67,69 @@ DEFAULT_PROJECTIONS = ROOT / "data" / "bbm_ros_pergame_2026-09-21.xls"
 NOISE = 1.0
 MAX_PUNTS = 2
 
+
+@dataclass(frozen=True)
+class Config:
+    """Everything a worker needs to reproduce a run: the planner's settings and data paths."""
+
+    projections: str
+    objective: str = "sum"  # "sum" of category totals or "win" (category curve)
+    max_punts: int = MAX_PUNTS  # punt scan width for the sum objective (0 = never punt)
+    curve: str | None = None  # JSON with per-category mu/sigma, else the default curve
+    sigma: float = DEFAULT_SIGMA  # sigma of the default curve when no curve file is given
+    sigma_scale: float = 1.0  # multiplies every sigma (sensitivity runs)
+    availability: str = "adp"  # "adp" model or "survival" table
+    survival: str | None = None  # path of the survival table for --availability survival
+    plan_candidates: int | None = None  # candidates per pick in the plan (None = all)
+    time_limit: float = 10.0  # seconds per plan solve
+    gap: float = 0.0  # relative MIP gap per plan solve
+
+    def __post_init__(self) -> None:
+        if self.objective not in ("sum", "win"):
+            raise ValueError("objective must be sum or win")
+        if self.availability not in ("adp", "survival"):
+            raise ValueError("availability must be adp or survival")
+        if self.availability == "survival" and not self.survival:
+            raise ValueError("--availability survival needs --survival PATH")
+        if self.max_punts < 0:
+            raise ValueError("max_punts must be non-negative")
+
+
 _PROJECTIONS: dict[str, object] = {}
+_SURVIVAL: dict[str, SurvivalTable] = {}
+_CURVES: dict[str, CategoryCurve] = {}
+
+
+def load_curve(cfg: Config) -> CategoryCurve | None:
+    """The category curve a config asks for, cached per worker; ``None`` for the sum objective."""
+    if cfg.objective != "win":
+        return None
+    key = f"{cfg.curve}|{cfg.sigma}|{cfg.sigma_scale}"
+    if key not in _CURVES:
+        if cfg.curve:
+            spec = json.loads(Path(cfg.curve).read_text())
+            curve = CategoryCurve(
+                mu={Cat(c): float(v) for c, v in spec["mu"].items()},
+                sigma={Cat(c): float(v) for c, v in spec["sigma"].items()},
+            )
+        else:
+            curve = CategoryCurve.default(NINE_CAT, sigma=cfg.sigma)
+        if cfg.sigma_scale != 1.0:
+            curve = CategoryCurve(
+                mu=dict(curve.mu),
+                sigma={c: v * cfg.sigma_scale for c, v in curve.sigma.items()},
+                breaks=curve.breaks,
+            )
+        _CURVES[key] = curve
+    return _CURVES[key]
+
+
+def load_survival(cfg: Config) -> SurvivalTable | None:
+    if cfg.availability != "survival":
+        return None
+    if cfg.survival not in _SURVIVAL:
+        _SURVIVAL[cfg.survival] = SurvivalTable.load(Path(cfg.survival))
+    return _SURVIVAL[cfg.survival]
 
 
 def punt_label(punt) -> str:
@@ -69,10 +147,17 @@ def projections(path: Path):
     return _PROJECTIONS[key]
 
 
-def new_state(path: Path, slot: int) -> DraftState:
-    return DraftState(
-        settings=LeagueSettings(), projections=projections(path), my_team="me", my_position=slot
+def new_state(cfg: Config, slot: int) -> DraftState:
+    state = DraftState(
+        settings=LeagueSettings(),
+        projections=projections(Path(cfg.projections)),
+        my_team="me",
+        my_position=slot,
     )
+    state.curve = load_curve(cfg)
+    state.survival = load_survival(cfg)
+    state.plan_candidates = cfg.plan_candidates
+    return state
 
 
 def rng(seed: int, *keys: int) -> np.random.Generator:
@@ -150,26 +235,36 @@ def other_pick(state: DraftState, design: dict, boards: dict, adp: pd.Series) ->
     }
 
 
-def my_pick(state: DraftState, k: int, punt: frozenset[Cat] | None, adp: pd.Series) -> dict:
-    """Solve for my pick and make it. ``punt=None`` lets the punt scan choose."""
+def my_pick(
+    state: DraftState, k: int, punt: frozenset[Cat] | None, adp: pd.Series, cfg: Config
+) -> dict:
+    """Solve for my pick and make it. ``punt=None`` lets the punt scan choose (sum objective);
+    the win objective never punts explicitly, its curve soft-punts on its own."""
     started = time.perf_counter()
     scan = None
-    if punt is None:
-        chosen = state.choose_punt(max_punts=MAX_PUNTS, workers=1)
+    if punt is not None:
+        chosen = punt
+    elif cfg.objective == "win" or cfg.max_punts == 0:
+        chosen = frozenset()
+    else:
+        chosen = state.choose_punt(max_punts=cfg.max_punts, workers=1)
         table = state.last_punt_scan
         scan = {row.punt: round(float(row.objective), 3) for row in table.itertuples()}
-    else:
-        chosen = punt
-    solution = solve_horizon(state.horizon_problem(chosen))
+    solution = solve_horizon(state.horizon_problem(chosen), time_limit=cfg.time_limit, gap=cfg.gap)
     player = solution.first_pick
     if player is None:
         raise RuntimeError("empty plan")
+    wins = solution.expected_wins
     record = {
         "k": k,
         "overall": state.next_overall,
         "punt": punt_label(chosen),
         "objective": round(float(solution.objective), 3),
         "locked_value": round(state.roster_value(chosen), 3),
+        "locked_wins": (None if wins is None else round(float(state.roster_wins(chosen)), 3)),
+        "expected_wins": (
+            None if wins is None else {c.value: round(float(v), 3) for c, v in wins.items()}
+        ),
         "player": player,
         "plan": [
             {
@@ -181,6 +276,8 @@ def my_pick(state: DraftState, k: int, punt: frozenset[Cat] | None, adp: pd.Seri
         ],
         "expected": {c.value: round(float(v), 3) for c, v in solution.expected_totals.items()},
         "scan": scan,
+        "status": solution.status,
+        "plan_seconds": round(float(solution.solve_seconds), 2),
         "solve_ms": round((time.perf_counter() - started) * 1000),
         "replayed": False,
         **pick_features(state, player, adp),
@@ -201,7 +298,8 @@ def team_value(
 
 
 def finish(state: DraftState, design: dict, records: list[dict]) -> dict:
-    """Final scores for me and every other team, each under its own best punt."""
+    """Final scores for me and every other team, each under its own best punt (the sum-of-z
+    scoreboard, whichever objective drafted the roster)."""
     level = state.replacement_level()
     sets = punt_sets(state.settings.cats, MAX_PUNTS)
     cats = [c.value for c in state.settings.cats]
@@ -243,7 +341,7 @@ def finish(state: DraftState, design: dict, records: list[dict]) -> dict:
 
 # --------------------------------------------------------------------------- runs
 def run_draft(
-    path: Path,
+    cfg: Config,
     design: dict,
     fixed_from: int | None = None,
     punt: frozenset[Cat] | None = None,
@@ -253,7 +351,7 @@ def run_draft(
     """One full draft. With ``fixed_from`` the picks in ``prefix`` are replayed first and the
     punt is held from my ``fixed_from``-th pick onward."""
     started = time.perf_counter()
-    state = new_state(path, design["slot"])
+    state = new_state(cfg, design["slot"])
     boards = latent_boards(design, state)
     adp = state.effective_adp()
     log: list[dict] = []
@@ -274,7 +372,7 @@ def run_draft(
         if state.on_the_clock:
             k += 1
             hold = punt if fixed_from is not None and k >= fixed_from else None
-            record = my_pick(state, k, hold, adp)
+            record = my_pick(state, k, hold, adp, cfg)
             records.append(record)
             log.append(
                 {
@@ -304,10 +402,10 @@ def run_draft(
     }
 
 
-def run_mock(path: Path, seed: int, slot: int, branches: list[int]) -> dict:
-    state = new_state(path, slot)
+def run_mock(cfg: Config, seed: int, slot: int, branches: list[int]) -> dict:
+    state = new_state(cfg, slot)
     design = make_design(seed, slot, state)
-    auto = run_draft(path, design)
+    auto = run_draft(cfg, design)
     my_overall = state.my_picks
     runs = {"auto": auto}
     for k in branches:
@@ -317,11 +415,12 @@ def run_mock(path: Path, seed: int, slot: int, branches: list[int]) -> dict:
         prefix = [row for row in auto["picks"] if row["overall"] < cut]
         prefix_records = [rec for rec in auto["my_picks"] if rec["overall"] < cut]
         punt = parse_punt(auto["my_picks"][k - 1]["punt"])
-        runs[f"fix{k}"] = run_draft(path, design, k, punt, prefix, prefix_records)
+        runs[f"fix{k}"] = run_draft(cfg, design, k, punt, prefix, prefix_records)
     return {
         "seed": seed,
         "slot": slot,
         "design": design,
+        "config": asdict(cfg),
         "my_overall": my_overall,
         "benchmark": auto["my_picks"][0]["objective"],
         "benchmark_punt": auto["my_picks"][0]["punt"],
@@ -329,10 +428,10 @@ def run_mock(path: Path, seed: int, slot: int, branches: list[int]) -> dict:
     }
 
 
-def _job(args: tuple[str, str, int, int, list[int]]) -> tuple[int, str, float]:
-    path, out, seed, slot, branches = args
+def _job(args: tuple[Config, str, int, int, list[int]]) -> tuple[int, str, float]:
+    cfg, out, seed, slot, branches = args
     started = time.perf_counter()
-    result = run_mock(Path(path), seed, slot, branches)
+    result = run_mock(cfg, seed, slot, branches)
     target = Path(out) / f"mock_{seed:03d}.json"
     target.write_text(json.dumps(result))
     return seed, slot, time.perf_counter() - started
@@ -347,10 +446,33 @@ def main() -> None:
     parser.add_argument("--workers", type=int, default=max(1, (os.cpu_count() or 2) - 1))
     parser.add_argument(
         "--branches",
-        default="1,2,3,4,5,6,7,8,9,10,11,12",
+        default="",
         help="my picks at which to branch with the punt held (comma list, empty for none)",
     )
+    parser.add_argument("--objective", choices=("sum", "win"), default="sum")
+    parser.add_argument("--max-punts", type=int, default=MAX_PUNTS)
+    parser.add_argument("--curve", type=Path, default=None, help="JSON with mu/sigma per cat")
+    parser.add_argument("--sigma", type=float, default=DEFAULT_SIGMA)
+    parser.add_argument("--sigma-scale", type=float, default=1.0)
+    parser.add_argument("--availability", choices=("adp", "survival"), default="adp")
+    parser.add_argument("--survival", type=Path, default=None)
+    parser.add_argument("--plan-candidates", type=int, default=None)
+    parser.add_argument("--time-limit", type=float, default=10.0)
+    parser.add_argument("--gap", type=float, default=0.0)
     args = parser.parse_args()
+    cfg = Config(
+        projections=str(args.projections),
+        objective=args.objective,
+        max_punts=args.max_punts,
+        curve=str(args.curve) if args.curve else None,
+        sigma=args.sigma,
+        sigma_scale=args.sigma_scale,
+        availability=args.availability,
+        survival=str(args.survival) if args.survival else None,
+        plan_candidates=args.plan_candidates,
+        time_limit=args.time_limit,
+        gap=args.gap,
+    )
     args.out.mkdir(parents=True, exist_ok=True)
     branches = [int(b) for b in args.branches.split(",") if b.strip()]
     jobs = []
@@ -359,7 +481,7 @@ def main() -> None:
         slot = (seed % 12) + 1
         if (args.out / f"mock_{seed:03d}.json").exists():
             continue
-        jobs.append((str(args.projections), str(args.out), seed, slot, branches))
+        jobs.append((cfg, str(args.out), seed, slot, branches))
     (args.out / "manifest.json").write_text(
         json.dumps(
             {
@@ -368,7 +490,8 @@ def main() -> None:
                 "first_seed": args.first_seed,
                 "branches": branches,
                 "noise": NOISE,
-                "max_punts": MAX_PUNTS,
+                "max_punts": cfg.max_punts,
+                "config": asdict(cfg),
                 "started": time.strftime("%Y-%m-%dT%H:%M:%S"),
             },
             indent=2,

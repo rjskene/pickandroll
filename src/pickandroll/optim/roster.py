@@ -28,6 +28,11 @@ also yields the full strategy table. ``solve_roster`` routes balanced auto-punt 
 Category weights scale the value columns. Availability weights, when given, scale a player's
 value by the probability they are still on the board, which is how a planning solve for later
 picks discounts players who will not last.
+
+With a :class:`~pickandroll.optim.objective.CategoryCurve` the objective is the expected number
+of categories won, ``sum_c Phi((T_c - mu_c) / sigma_c)`` in piecewise-linear form, instead of
+the plain sum of totals. The curve needs a fixed punt (an explicit punt only ever removes a
+non-negative term, so the scan is the way to compare punts under it) and no balance term.
 """
 
 from __future__ import annotations
@@ -40,6 +45,7 @@ import pandas as pd
 import pulp
 
 from ..projections.schema import NINE_CAT, PCT_CATS, PCT_COMPONENTS, Cat, eligible_slots
+from .objective import CategoryCurve, curve_objective
 
 GUARDS = frozenset({"G"})
 FORWARDS = frozenset({"F"})
@@ -93,10 +99,15 @@ class RosterProblem:
     pct_floors: Mapping[Cat, float] | None = None
     min_games: float | None = None
     availability: pd.Series | None = None
+    curve: CategoryCurve | None = None
 
     def __post_init__(self) -> None:
         if not 0.0 <= self.balance <= 1.0:
             raise ValueError("balance must be between 0 and 1")
+        if self.curve is not None and self.balance > 0.0:
+            raise ValueError("a category curve and a balance term cannot be combined")
+        if self.curve is not None and any(c not in self.curve.mu for c in self.cats):
+            raise ValueError("curve lacks a category")
         if self.punt is not None and not set(self.punt) <= set(self.cats):
             raise ValueError("punt contains categories not in cats")
         unknown = [p for p in self.locks | self.blocks if p not in self.z.index]
@@ -150,6 +161,9 @@ def build(problem: RosterProblem) -> tuple[pulp.LpProblem, dict]:
     cats = list(problem.cats)
     slots = list(problem.slots)
     pos = {p: set(problem.positions[p]) for p in players}
+
+    if problem.curve is not None and problem.punt is None:
+        raise ValueError("a category curve needs a fixed punt; use punt_scan to compare punts")
 
     model = pulp.LpProblem("roster", pulp.LpMaximize)
 
@@ -234,8 +248,12 @@ def build(problem: RosterProblem) -> tuple[pulp.LpProblem, dict]:
             "min_games",
         )
 
-    objective = (1.0 - problem.balance) * pulp.lpSum(contribution[c] for c in cats)
-    model += objective + problem.balance * t
+    if problem.curve is not None:
+        active = [c for c in cats if y[c]]
+        model += curve_objective(model, totals, problem.curve, value, roster_size, active)
+    else:
+        objective = (1.0 - problem.balance) * pulp.lpSum(contribution[c] for c in cats)
+        model += objective + problem.balance * t
     return model, {"x": x, "y": y, "w": w, "t": t, "on": on, "totals": totals, "value": value}
 
 
@@ -250,12 +268,13 @@ def solve_roster(
 
     ``method`` is ``"milp"`` (one model, free punt variables), ``"enumerate"`` (one fixed-punt
     model per punt set, see :func:`punt_scan`) or ``"auto"``: enumerate when punts are free and
-    a balance term is present, otherwise a single model.
+    a balance term or a category curve is present, otherwise a single model.
     """
     if method not in {"auto", "milp", "enumerate"}:
         raise ValueError("method must be auto, milp or enumerate")
     if problem.punt is None and (
-        method == "enumerate" or (method == "auto" and problem.balance > 0.0)
+        method == "enumerate"
+        or (method == "auto" and (problem.balance > 0.0 or problem.curve is not None))
     ):
         scan = punt_scan(problem, time_limit=time_limit, gap=gap)
         return scan.solutions[0]
