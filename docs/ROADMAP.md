@@ -118,3 +118,19 @@ not re-deriving rankings from headlines.
    fewer games); z and the plan update at once. This is the manual counterpart to the alert.
 4. **Eligibility check.** Flag players whose Yahoo position eligibility differs from the BBM
    export's coarse G/F/C, since slot feasibility depends on it.
+
+### Automated BBM downloads
+
+`scripts/bbm_fetch.py` already drives Basketball Monster through a persistent Playwright
+profile: one headed run where the user logs in, then `--headless` reuses the session. Nothing
+in the project handles credentials. To make it automatic:
+
+1. The first headed run (pending since 2026-09-21) to create the profile.
+2. A macOS launchd agent running `bbm_fetch.py --ros --headless` every few hours in preseason
+   and every thirty minutes on draft day, saving timestamped exports into `data/`.
+3. The API reloads projections when a newer export appears, or on a "refresh now" action from
+   the dashboard, keeping the pick log.
+4. When BBM logs the profile out, the job stops and tells the user to redo the headed login. It
+   never authenticates on its own.
+5. A change summary per new file: players whose games or z moved most since the previous
+   export, so the news arrives as a short list.
