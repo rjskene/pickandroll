@@ -6,6 +6,8 @@
     python scripts/mock_study.py --mocks 500 --out data/studies/x/win-surv --objective win \
         --curve data/studies/x/curve.json --availability survival \
         --survival data/studies/x/survival.csv
+    python scripts/mock_study.py --mocks 100 --out data/studies/x/win-surv-naive \
+        --base data/studies/x/win-surv --naive-branches 1,2,3,4,5,6,7,8,9,10,11,12,13
 
 Every mock puts my team in a draft slot (slots cycle 1..12 over the mocks) and has it draft with
 the rolling-horizon planner, re-choosing its punt at every pick ("auto"). The eleven other teams
@@ -20,6 +22,12 @@ choosing up to ``--max-punts`` categories to drop) or the expected number of cat
 (``--objective win``, a category curve with no explicit punt; see ``pickandroll.optim.objective``).
 Availability comes from the ADP model or from a simulated survival table
 (``--availability survival --survival table.csv``, see ``scripts/survival_sim.py``).
+
+With ``--naive-branches`` the harness measures the leverage of each of my picks instead: for
+every listed pick k it replays the finished draft in ``--base`` up to that pick, takes the
+consensus player (best available by the ADP order, here Basketball Monster's rank) in place of
+the planner's choice, and lets the planner finish the draft. The base run's settings are reused.
+``scripts/mock_leverage.py`` reads the result.
 
 All randomness is keyed by (seed, overall pick) so that runs with the same seed under different
 settings face the same opponents making the same draws; they differ only through the players
@@ -286,6 +294,33 @@ def my_pick(
     return record
 
 
+def naive_pick(state: DraftState, k: int, adp: pd.Series) -> dict:
+    """The consensus pick: the best available player by the ADP order, no model."""
+    board = adp.reindex(state.available).dropna()
+    player = str(board.idxmin())
+    record = {
+        "k": k,
+        "overall": state.next_overall,
+        "punt": "-",
+        "objective": None,
+        "locked_value": None,
+        "locked_wins": None,
+        "expected_wins": None,
+        "player": player,
+        "plan": [],
+        "expected": {},
+        "scan": None,
+        "status": "naive",
+        "plan_seconds": 0.0,
+        "solve_ms": 0,
+        "replayed": False,
+        "naive": True,
+        **pick_features(state, player, adp),
+    }
+    state.apply_pick(state.my_team, player)
+    return record
+
+
 # --------------------------------------------------------------------------- scoring
 def team_value(
     state: DraftState, roster: list[str], punt: frozenset[Cat], level: pd.Series
@@ -347,9 +382,11 @@ def run_draft(
     punt: frozenset[Cat] | None = None,
     prefix: list[dict] | None = None,
     prefix_records: list[dict] | None = None,
+    naive_at: int | None = None,
 ) -> dict:
     """One full draft. With ``fixed_from`` the picks in ``prefix`` are replayed first and the
-    punt is held from my ``fixed_from``-th pick onward."""
+    punt is held from my ``fixed_from``-th pick onward. With ``naive_at`` my ``naive_at``-th
+    pick is the consensus player instead of the planner's choice."""
     started = time.perf_counter()
     state = new_state(cfg, design["slot"])
     boards = latent_boards(design, state)
@@ -372,7 +409,10 @@ def run_draft(
         if state.on_the_clock:
             k += 1
             hold = punt if fixed_from is not None and k >= fixed_from else None
-            record = my_pick(state, k, hold, adp, cfg)
+            if naive_at is not None and k == naive_at:
+                record = naive_pick(state, k, adp)
+            else:
+                record = my_pick(state, k, hold, adp, cfg)
             records.append(record)
             log.append(
                 {
@@ -395,6 +435,7 @@ def run_draft(
     return {
         "fixed_from": fixed_from,
         "punt_fixed": punt_label(punt) if punt is not None else None,
+        "naive_at": naive_at,
         "my_picks": records,
         "picks": log,
         "final": finish(state, design, records),
@@ -428,6 +469,36 @@ def run_mock(cfg: Config, seed: int, slot: int, branches: list[int]) -> dict:
     }
 
 
+def run_leverage(base: dict, ks: list[int]) -> dict:
+    """Branch a finished draft at each of my picks in ``ks`` with the consensus pick made
+    there, the planner drafting the rest; the base run's settings and design are reused."""
+    cfg = Config(**base["config"])
+    design = dict(base["design"])
+    design["strategies"] = {int(k): v for k, v in design["strategies"].items()}  # JSON keys
+    auto = base["runs"]["auto"]
+    my_overall = base["my_overall"]
+    runs = {"auto": auto}
+    for k in ks:
+        if k < 1 or k > len(my_overall):
+            continue
+        cut = my_overall[k - 1]
+        prefix = [row for row in auto["picks"] if row["overall"] < cut]
+        prefix_records = [rec for rec in auto["my_picks"] if rec["overall"] < cut]
+        runs[f"naive{k}"] = run_draft(
+            cfg, design, prefix=prefix, prefix_records=prefix_records, naive_at=k
+        )
+    return {
+        "seed": base["seed"],
+        "slot": base["slot"],
+        "design": design,
+        "config": base["config"],
+        "my_overall": my_overall,
+        "benchmark": base["benchmark"],
+        "benchmark_punt": base["benchmark_punt"],
+        "runs": runs,
+    }
+
+
 def _job(args: tuple[Config, str, int, int, list[int]]) -> tuple[int, str, float]:
     cfg, out, seed, slot, branches = args
     started = time.perf_counter()
@@ -435,6 +506,16 @@ def _job(args: tuple[Config, str, int, int, list[int]]) -> tuple[int, str, float
     target = Path(out) / f"mock_{seed:03d}.json"
     target.write_text(json.dumps(result))
     return seed, slot, time.perf_counter() - started
+
+
+def _leverage_job(args: tuple[str, str, int, list[int]]) -> tuple[int, str, float]:
+    base_dir, out, seed, ks = args
+    started = time.perf_counter()
+    base = json.loads((Path(base_dir) / f"mock_{seed:03d}.json").read_text())
+    result = run_leverage(base, ks)
+    target = Path(out) / f"mock_{seed:03d}.json"
+    target.write_text(json.dumps(result))
+    return seed, base["slot"], time.perf_counter() - started
 
 
 def main() -> None:
@@ -459,7 +540,19 @@ def main() -> None:
     parser.add_argument("--plan-candidates", type=int, default=None)
     parser.add_argument("--time-limit", type=float, default=10.0)
     parser.add_argument("--gap", type=float, default=0.0)
+    parser.add_argument(
+        "--naive-branches",
+        default="",
+        help="leverage mode: my picks at which to substitute the consensus pick (comma list)",
+    )
+    parser.add_argument("--base", type=Path, default=None, help="finished study for leverage mode")
     args = parser.parse_args()
+    naive = [int(b) for b in args.naive_branches.split(",") if b.strip()]
+    if naive:
+        if args.base is None:
+            raise SystemExit("--naive-branches needs --base DIR")
+        run_leverage_main(args, naive)
+        return
     cfg = Config(
         projections=str(args.projections),
         objective=args.objective,
@@ -518,6 +611,47 @@ def main() -> None:
                     f"(elapsed {elapsed / 60:.1f} min, eta {eta / 60:.1f} min)",
                     flush=True,
                 )
+    print(f"done in {(time.perf_counter() - started) / 60:.1f} min", flush=True)
+
+
+def run_leverage_main(args, ks: list[int]) -> None:
+    args.out.mkdir(parents=True, exist_ok=True)
+    jobs = []
+    for i in range(args.mocks):
+        seed = args.first_seed + i
+        if (args.out / f"mock_{seed:03d}.json").exists():
+            continue
+        if not (args.base / f"mock_{seed:03d}.json").exists():
+            continue
+        jobs.append((str(args.base), str(args.out), seed, ks))
+    (args.out / "manifest.json").write_text(
+        json.dumps(
+            {
+                "mode": "leverage",
+                "base": str(args.base),
+                "naive_branches": ks,
+                "mocks": args.mocks,
+                "first_seed": args.first_seed,
+                "started": time.strftime("%Y-%m-%dT%H:%M:%S"),
+            },
+            indent=2,
+        )
+    )
+    print(f"{len(jobs)} leverage mocks with {args.workers} workers -> {args.out}", flush=True)
+    started = time.perf_counter()
+    done = 0
+    with ProcessPoolExecutor(max_workers=args.workers) as pool:
+        futures = [pool.submit(_leverage_job, job) for job in jobs]
+        for future in as_completed(futures):
+            seed, slot, seconds = future.result()
+            done += 1
+            elapsed = time.perf_counter() - started
+            eta = elapsed / done * (len(jobs) - done)
+            print(
+                f"[{done}/{len(jobs)}] seed {seed} slot {slot} {seconds:.0f}s "
+                f"(elapsed {elapsed / 60:.1f} min, eta {eta / 60:.1f} min)",
+                flush=True,
+            )
     print(f"done in {(time.perf_counter() - started) / 60:.1f} min", flush=True)
 
 

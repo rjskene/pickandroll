@@ -75,17 +75,14 @@ def describe(cfg: dict) -> str:
     return ", ".join(parts)
 
 
-def mock_rows(name: str, mock: dict) -> tuple[dict, list[dict], list[dict]]:
-    """Scores for one mock plus its per-category rows and plan-calibration rows."""
-    run = mock["runs"]["auto"]
-    final = run["final"]
+def score_final(final: dict) -> dict:
+    """The scoreboard for one finished draft: value, categories, matchups, roto, rank."""
     teams = final["teams"]
     me = teams["me"]
     others = {t: info for t, info in teams.items() if t != "me"}
     values = sorted((t["value_best"] for t in teams.values()), reverse=True)
     rank = values.index(me["value_best"]) + 1
-
-    won_per_cat = {c: 0 for c in CATS}
+    won_per_cat = dict.fromkeys(CATS, 0)
     cats_won = []
     matchups = 0
     for info in others.values():
@@ -96,10 +93,35 @@ def mock_rows(name: str, mock: dict) -> tuple[dict, list[dict], list[dict]]:
                 w += 1
         cats_won.append(w)
         matchups += w >= 5
-    roto = sum(1 + sum(1 for info in others.values() if me["z"][c] > info["z"][c]) for c in CATS)
+    roto = sum(1 + won_per_cat[c] for c in CATS)
+    conceded = [c for c in CATS if me["z"][c] <= CONCEDED]
+    return {
+        "value": final["value_best"],
+        "punt_best": final["punt_best"],
+        "value_nopunt": final["value_nopunt"],
+        "rank": rank,
+        "top": int(rank == 1),
+        "cats_won": float(np.mean(cats_won)),
+        "matchups_won": matchups,
+        "roto": roto,
+        "conceded": len(conceded),
+        "conceded_cats": "/".join(conceded) or "-",
+        "won_per_cat": {c: won_per_cat[c] / len(others) for c in CATS},
+        "my_z": dict(me["z"]),
+        "field_mean": {c: float(np.mean([info["z"][c] for info in others.values()])) for c in CATS},
+    }
+
+
+SCORE_KEYS = ("won_per_cat", "my_z", "field_mean")
+
+
+def mock_rows(name: str, mock: dict) -> tuple[dict, list[dict], list[dict]]:
+    """Scores for one mock plus its per-category rows and plan-calibration rows."""
+    run = mock["runs"]["auto"]
+    final = run["final"]
+    scored = score_final(final)
     recs = run["my_picks"]
     first = recs[0]
-    conceded = [c for c in CATS if me["z"][c] <= CONCEDED]
     expected_first = (
         sum(first["expected_wins"].values()) if first.get("expected_wins") else math.nan
     )
@@ -111,16 +133,7 @@ def mock_rows(name: str, mock: dict) -> tuple[dict, list[dict], list[dict]]:
         "condition": name,
         "seed": mock["seed"],
         "slot": mock["slot"],
-        "value": final["value_best"],
-        "punt_best": final["punt_best"],
-        "value_nopunt": final["value_nopunt"],
-        "rank": rank,
-        "top": int(rank == 1),
-        "cats_won": float(np.mean(cats_won)),
-        "matchups_won": matchups,
-        "roto": roto,
-        "conceded": len(conceded),
-        "conceded_cats": "/".join(conceded) or "-",
+        **{k: v for k, v in scored.items() if k not in SCORE_KEYS},
         "punt_last": recs[-1]["punt"],
         "expected_wins_first": expected_first,
         "objective_first": first["objective"],
@@ -140,9 +153,9 @@ def mock_rows(name: str, mock: dict) -> tuple[dict, list[dict], list[dict]]:
             "condition": name,
             "seed": mock["seed"],
             "cat": c,
-            "my_z": me["z"][c],
-            "win_rate": won_per_cat[c] / len(others),
-            "field_mean": float(np.mean([info["z"][c] for info in others.values()])),
+            "my_z": scored["my_z"][c],
+            "win_rate": scored["won_per_cat"][c],
+            "field_mean": scored["field_mean"][c],
         }
         for c in CATS
     ]
