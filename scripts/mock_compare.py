@@ -187,6 +187,9 @@ def frames(out: Path) -> dict[str, pd.DataFrame | dict]:
     conditions = {}
     scores, cats, cal = [], [], []
     for path in sorted(p for p in out.iterdir() if p.is_dir()):
+        manifest = path / "manifest.json"
+        if manifest.exists() and json.loads(manifest.read_text()).get("mode") == "leverage":
+            continue  # round-leverage branches, read by mock_leverage.py
         mocks = load_condition(path)
         if not mocks:
             continue
