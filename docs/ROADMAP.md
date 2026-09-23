@@ -72,3 +72,31 @@ Data that would calibrate availability from history instead of simulation:
   pick minus ADP by ADP band, replacing the guessed 3 + 0.15·adp.
 - The league's own past drafts per manager: who reaches, who follows ADP, who punts what.
   Opponent priors before pick one instead of inference from round three.
+
+## Round leverage (2026-09-23)
+
+The harness measures the planner's incremental alpha per round: replay a finished draft to my
+pick k, make the consensus pick there (best available by ADP order), let the planner finish, and
+score the paired loss (`scripts/mock_study.py --naive-branches`, `scripts/mock_leverage.py`).
+Rounds where the consensus and the planner agree are zero alpha by construction. Once the
+profile is known:
+
+- **Compute goes where alpha is.** Rounds with near-zero alpha (the planner takes the
+  consensus anyway) do not need the slow curve solve; take the board. Spend the budget on the
+  rounds that matter: longer time limit, tighter gap, priced alternatives. This is also the
+  answer to pick-time worries: the curve solve takes 8 to 15 s at picks one to five and under
+  3 s from pick eight, and the plan re-solves after every opponent pick, so by my turn the
+  recommendation is at most one pick stale.
+- **Attention goes where alpha is.** The dashboard should show the cost of deviating from the
+  plan in the current round on the matchup scale, so a gut pick is known to be cheap or dear.
+- **Preparation goes where alpha is.** High-alpha rounds are where projections and availability
+  odds matter most: injury news, eligibility and target lists for those rounds; opponent
+  modelling and survival tables pay there.
+- **Truncated solves.** If alpha concentrates in rounds where the curve solve hits its time
+  limit, the measured alpha is a lower bound and the solver deserves a warm start or a larger
+  budget there.
+- **Not a weight.** The objective already values every pick by its marginal effect; per-round
+  alpha is a diagnostic. A "focus" multiplier on high-leverage rounds would double count. The
+  strategic reading is the only model-level consequence: if the draft is won in the middle
+  rounds, the early picks are commodity and the middle picks decide the roster's category
+  shape.
