@@ -103,7 +103,10 @@ def mock_rows(name: str, mock: dict) -> tuple[dict, list[dict], list[dict]]:
     expected_first = (
         sum(first["expected_wins"].values()) if first.get("expected_wins") else math.nan
     )
-    statuses = [r.get("status", "Optimal") for r in recs]
+    # PuLP reports a HiGHS solve stopped at the time limit with an incumbent as "Optimal", so
+    # count time-limited solves by their duration instead.
+    limit = float(mock.get("config", {}).get("time_limit", 10.0))
+    limited = sum(1 for r in recs if float(r.get("plan_seconds", 0.0)) >= 0.97 * limit)
     row = {
         "condition": name,
         "seed": mock["seed"],
@@ -127,7 +130,7 @@ def mock_rows(name: str, mock: dict) -> tuple[dict, list[dict], list[dict]]:
         "seconds": run["seconds"],
         "solve_ms": float(np.mean([r["solve_ms"] for r in recs])),
         "plan_seconds": float(np.mean([r.get("plan_seconds", math.nan) for r in recs])),
-        "time_limited": sum(1 for s in statuses if s != "Optimal"),
+        "time_limited": limited,
         "n_lp": sum(1 for s in mock["design"]["strategies"].values() if s == "lp"),
         "n_adp": sum(1 for s in mock["design"]["strategies"].values() if s == "adp"),
         "n_z": sum(1 for s in mock["design"]["strategies"].values() if s == "z"),
