@@ -44,3 +44,31 @@ asks the user to choose a punt, and nothing labels a pick with one.
   season totals, which argues for a flatter curve; pick sigma from that result.
 - Rebuild the survival table from opponents that resemble the real league once its drafters
   are known.
+
+## Ideas, not yet decided (2026-09-23)
+
+The planner treats the opponents as a fixed population and the league as a static prior.
+Candidates for closing that gap, cheapest first:
+
+1. **Matchup-aware curve.** Score a category by the number of the eleven actual opponents I
+   beat, projecting each opponent's final total from their drafted players plus
+   replacement-level fill. Marginal value then goes where the most opponents can be flipped
+   and a category the whole league concedes becomes cheap. Pure bookkeeping on the pick log.
+2. **Oracle experiment.** Give the planner the true opponent drafter types and punts in the
+   harness and measure the gain; it bounds what any detection can be worth.
+3. **Type-conditional survival.** Detect each opponent's drafter type from their picks (the
+   2026-09-22 study's classifier) and mix per-type survival tables by the posterior, aimed at
+   the players LP teams snipe.
+4. **Intervening-team conditioning.** For the pick right before mine, condition availability
+   on what the teams picking in between still need.
+5. **Equilibrium study.** Run the harness with opponents that also draft on the curve and see
+   whether the edge shrinks and which categories crowd.
+
+Data that would calibrate availability from history instead of simulation:
+
+- Real ADP once preseason mocks run (Yahoo, ESPN, FantasyPros, Hashtag Basketball, BBM's ADP
+  column, empty in the September export).
+- Any archive of real draft results (Yahoo mock logs, past league drafts) to fit the spread of
+  pick minus ADP by ADP band, replacing the guessed 3 + 0.15·adp.
+- The league's own past drafts per manager: who reaches, who follows ADP, who punts what.
+  Opponent priors before pick one instead of inference from round three.
