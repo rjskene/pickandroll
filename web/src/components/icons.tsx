@@ -11,6 +11,11 @@ export const CARD_ICONS: Record<CardId, ReactElement> = {
       <path d="M12 3v3M12 18v3M3 12h3M18 12h3" />
     </svg>
   ),
+  cats: (
+    <svg width="20" height="20" viewBox="0 0 24 24" {...stroke} aria-hidden="true">
+      <path d="M4 20h16M6 16V9M10 16V5M14 16v-7M18 16v-4" />
+    </svg>
+  ),
   alts: (
     <svg width="20" height="20" viewBox="0 0 24 24" {...stroke} aria-hidden="true">
       <path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01" />

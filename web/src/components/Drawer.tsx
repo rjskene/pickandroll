@@ -2,6 +2,7 @@ import { useRef, type CSSProperties, type ReactElement } from "react";
 import { CARDS, cardIndex, useDraft, type CardId, type Half } from "../draft";
 import { Chevron, Grip, Swap } from "./icons";
 import AltsCard from "./cards/AltsCard";
+import CategoriesCard from "./cards/CategoriesCard";
 import LogCard from "./cards/LogCard";
 import PickCard from "./cards/PickCard";
 import PlanCard from "./cards/PlanCard";
@@ -10,6 +11,7 @@ import TeamCard from "./cards/TeamCard";
 
 const BODIES: Record<CardId, () => ReactElement> = {
   pick: PickCard,
+  cats: CategoriesCard,
   alts: AltsCard,
   plan: PlanCard,
   team: TeamCard,

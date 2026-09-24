@@ -87,13 +87,21 @@ def test_pick_pool_prices_waiting_risk(pool):
         "player",
         "objective",
         "cost_vs_best",
+        "cost_first_order",
         "p_available_first",
         "p_available_next",
         "min_active_total",
+        "time_limited",
     ]
     assert table.iloc[0]["player"] == star
     assert table.loc[table["player"] == star, "cost_vs_best"].item() == 0.0
     assert table.loc[table["player"] == mid, "cost_vs_best"].item() > 0.0
+    # The first-order price is instant and lands close to the exact re-solve.
+    assert table.loc[table["player"] == star, "cost_first_order"].item() == 0.0
+    mid_row = table[table["player"] == mid].iloc[0]
+    assert mid_row["cost_first_order"] > 0.0
+    assert abs(mid_row["cost_first_order"] - mid_row["cost_vs_best"]) < 0.5
+    assert not table["time_limited"].any()
     assert (
         table.loc[table["player"] == star, "p_available_next"].item()
         < table.loc[table["player"] == mid, "p_available_next"].item()

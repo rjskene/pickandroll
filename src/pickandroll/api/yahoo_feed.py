@@ -92,7 +92,8 @@ class YahooFeed:
             if overall != expected:
                 break
             try:
-                pick = session.state.apply_pick(team, pid, overall)
+                with session.lock:
+                    pick = session.state.apply_pick(team, pid, overall)
             except (KeyError, ValueError) as exc:
                 self.last_error = f"pick {overall}: {exc}"
                 break

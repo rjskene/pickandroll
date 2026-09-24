@@ -1,6 +1,7 @@
 // Draft-screen state shared by the board, the drawer cards, the rail and the hotkeys:
-// which cards are open, the current recommendation and its settings, pick mutations,
-// the board highlight, toasts and the shortcut sheet.
+// which cards are open, the latest recommendation (solved in the background by the server
+// after every change) and its settings, pick mutations, the board highlight, toasts and the
+// shortcut sheet.
 import {
   createContext,
   useCallback,
@@ -12,20 +13,31 @@ import {
   type ReactNode,
   type RefObject,
 } from "react";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { api, pickOwner, teamLabel, type Cat, type Recommendation, type SessionSummary, type SimStrategy, type SolveEvent } from "./api";
-import { parsePunt } from "./format";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  api,
+  pickOwner,
+  teamLabel,
+  type Objective,
+  type Recommendation,
+  type SessionSummary,
+  type SimStrategy,
+  type SolveEvent,
+  type SolverStatus,
+  type SurvivalEvent,
+} from "./api";
 
-export type CardId = "pick" | "alts" | "plan" | "team" | "log" | "solver";
+export type CardId = "pick" | "cats" | "alts" | "plan" | "team" | "log" | "solver";
 export type Half = "top" | "bottom";
 
 export const CARDS: { id: CardId; title: string; blurb: string }[] = [
   { id: "pick", title: "Pick", blurb: "recommended pick" },
-  { id: "alts", title: "Alternatives", blurb: "priced alternatives" },
+  { id: "cats", title: "Categories", blurb: "odds of winning each category, and the league" },
+  { id: "alts", title: "Alternatives", blurb: "priced alternatives and what-if scenarios" },
   { id: "plan", title: "Plan", blurb: "plan for the remaining picks" },
-  { id: "team", title: "Team", blurb: "expected profile and roster" },
+  { id: "team", title: "Team", blurb: "score, expected profile and roster" },
   { id: "log", title: "Log", blurb: "every pick so far" },
-  { id: "solver", title: "Solver", blurb: "timings, punt strategies, settings" },
+  { id: "solver", title: "Solver", blurb: "timings, objective, settings" },
 ];
 export const cardIndex = (id: CardId): number => CARDS.findIndex((c) => c.id === id);
 
@@ -41,7 +53,7 @@ export interface DrawerState extends Pair {
   last: Pair;
 }
 const DRAWER_KEY = "pickandroll.drawer";
-const DEFAULT_DRAWER: DrawerState = { top: "pick", bottom: "team", collapsed: false, split: 0.5, last: { top: "pick", bottom: "team" } };
+const DEFAULT_DRAWER: DrawerState = { top: "pick", bottom: "cats", collapsed: false, split: 0.5, last: { top: "pick", bottom: "cats" } };
 const isCard = (v: unknown): v is CardId => typeof v === "string" && CARDS.some((c) => c.id === v);
 
 function loadDrawer(): DrawerState {
@@ -66,15 +78,17 @@ function loadDrawer(): DrawerState {
 }
 
 export interface Settings {
-  auto: boolean;
-  punt: Cat[];
-  maxPunts: number;
-  balance: number;
+  /** Candidates priced exactly. */
   n: number;
+  /** "If he is gone" plans solved while someone else is on the clock. */
+  scenarios: number;
+  /** Ask the server to re-solve on every pick when its own solve-ahead is off. */
   refreshOnPick: boolean;
   horizon: boolean;
+  /** Override the session's objective; null keeps it. */
+  objective: Objective | null;
 }
-const DEFAULT_SETTINGS: Settings = { auto: true, punt: [], maxPunts: 2, balance: 0, n: 8, refreshOnPick: true, horizon: true };
+const DEFAULT_SETTINGS: Settings = { n: 8, scenarios: 3, refreshOnPick: true, horizon: true, objective: null };
 
 export interface Toast {
   id: number;
@@ -100,11 +114,14 @@ export interface DraftApi {
   settings: Settings;
   setSettings: (patch: Partial<Settings>) => void;
   result: Recommendation | undefined;
+  /** The result was solved for an earlier board; a fresh solve is on its way. */
+  stale: boolean;
+  solver: SolverStatus | undefined;
   solving: boolean;
   solveError: string | null;
   solveEvents: SolveEvent[];
+  survival: SurvivalEvent | null;
   solve: () => void;
-  pinPunt: (label: string) => void;
   // picks
   draftPlayer: (playerId: string, opts?: { via?: "key" | "click" | "auto"; team?: string }) => void;
   drafting: boolean;
@@ -149,17 +166,19 @@ export function useDraft(): DraftApi {
 interface ProviderProps {
   session: SessionSummary;
   solveEvents: SolveEvent[];
+  survival: SurvivalEvent | null;
   live: boolean;
   children: ReactNode;
 }
 
-export function DraftProvider({ session, solveEvents, live, children }: ProviderProps) {
+export function DraftProvider({ session, solveEvents, survival, live, children }: ProviderProps) {
   const queryClient = useQueryClient();
   const invalidate = useCallback(() => {
     queryClient.invalidateQueries({ queryKey: ["session", session.id] });
     queryClient.invalidateQueries({ queryKey: ["board", session.id] });
     queryClient.invalidateQueries({ queryKey: ["picks", session.id] });
     queryClient.invalidateQueries({ queryKey: ["score", session.id] });
+    queryClient.invalidateQueries({ queryKey: ["teams", session.id] });
   }, [queryClient, session.id]);
 
   const owner = pickOwner(session.num_teams, session.next_overall);
@@ -231,40 +250,41 @@ export function DraftProvider({ session, solveEvents, live, children }: Provider
   const [sheetOpen, setSheetOpen] = useState(false);
 
   // ---------------------------------------------------------------- recommendation
+  // The server solves ahead of the clock after every change and publishes a `recommendation`
+  // event; App invalidates this query on it. Manual re-solves and sessions without solve-ahead
+  // queue a solve through /solve with the current settings.
   const [settings, setSettingsState] = useState<Settings>(DEFAULT_SETTINGS);
   const setSettings = useCallback((patch: Partial<Settings>) => setSettingsState((s) => ({ ...s, ...patch })), []);
   const params = useMemo(
-    () => ({ n: settings.n, punt: settings.auto ? null : settings.punt, max_punts: settings.maxPunts, balance: settings.balance, horizon: settings.horizon }),
+    () => ({ n: settings.n, horizon: settings.horizon, scenarios: settings.scenarios, objective: settings.objective }),
     [settings],
   );
   const paramsRef = useRef(params);
   paramsRef.current = params;
-  const [result, setResult] = useState<Recommendation | undefined>(undefined);
-  const recommend = useMutation({
-    mutationFn: () => api.recommend(session.id, paramsRef.current),
-    onSuccess: (r) => {
-      setResult(r); // a failed re-solve keeps the last good result on screen
-      queryClient.invalidateQueries({ queryKey: ["score", session.id] });
-    },
+  const latest = useQuery({
+    queryKey: ["recommendation", session.id],
+    queryFn: () => api.recommendation(session.id),
+    refetchInterval: (q) => (q.state.data?.solver.running || q.state.data?.solver.pending ? 2000 : false),
   });
-  const { mutate: runSolve } = recommend;
+  const result = latest.data?.recommendation ?? undefined;
+  const stale = !!result && (latest.data!.stale || (latest.data!.solved_version ?? -1) < session.version);
+  const solveMutation = useMutation({
+    mutationFn: () => api.solve(session.id, paramsRef.current),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["recommendation", session.id] }),
+  });
+  const { mutate: runSolve } = solveMutation;
   const solve = useCallback(() => runSolve(), [runSolve]);
   const solvedFor = useRef("");
   const havePicks = session.my_next_pick !== null && !session.complete;
+  const serverSolves = session.solver.enabled;
   useEffect(() => {
     const key = `${session.id}:${session.version}`;
-    if (settings.refreshOnPick && havePicks && solvedFor.current !== key) {
+    if (!serverSolves && settings.refreshOnPick && havePicks && solvedFor.current !== key) {
       solvedFor.current = key;
       runSolve();
     }
-  }, [session.id, session.version, havePicks, settings.refreshOnPick, runSolve]);
-  const pinPunt = useCallback(
-    (label: string) => {
-      setSettingsState((s) => ({ ...s, auto: false, punt: parsePunt(label) }));
-      window.setTimeout(() => runSolve(), 0);
-    },
-    [runSolve],
-  );
+  }, [session.id, session.version, havePicks, settings.refreshOnPick, serverSolves, runSolve]);
+  const solving = solveMutation.isPending || !!latest.data?.solver.running || (!!latest.data?.solver.pending && !result);
 
   // ---------------------------------------------------------------- picks
   const draftMutation = useMutation({
@@ -324,7 +344,8 @@ export function DraftProvider({ session, solveEvents, live, children }: Provider
 
   // ---------------------------------------------------------------- mock draft
   // Never in a live draft: my picks are mine to make there. In a mock the solver drafts for me
-  // as soon as its solve finishes, and the other teams are simulated up to my next pick.
+  // as soon as a solve for the current board lands, and the other teams are simulated up to my
+  // next pick.
   const [mockState, setMockState] = useState(false);
   const mock = mockState && !live;
   const setMock = useCallback(
@@ -338,7 +359,6 @@ export function DraftProvider({ session, solveEvents, live, children }: Provider
     [live, showToast],
   );
   const autoDraftedFor = useRef(-1);
-  const { isPending: solvePending } = recommend;
   useEffect(() => {
     if (!mock) return;
     if (session.complete) {
@@ -350,10 +370,10 @@ export function DraftProvider({ session, solveEvents, live, children }: Provider
       if (!simulating && !drafting && session.version >= simVersion.current) runSim({ until_my_pick: true });
       return;
     }
-    if (drafting || solvePending || autoDraftedFor.current === session.version) return;
+    if (drafting || solveMutation.isPending || autoDraftedFor.current === session.version) return;
     const key = `${session.id}:${session.version}`;
     if (!result || result.version !== session.version) {
-      if (solvedFor.current !== key) {
+      if (!serverSolves && solvedFor.current !== key) {
         solvedFor.current = key;
         runSolve();
       }
@@ -363,7 +383,7 @@ export function DraftProvider({ session, solveEvents, live, children }: Provider
     if (!top) return;
     autoDraftedFor.current = session.version;
     runDraft({ playerId: top.player, team: onClockTeam, via: "auto" });
-  }, [mock, session.complete, session.on_the_clock, session.version, session.id, simulating, drafting, solvePending, result, runSim, runSolve, runDraft, onClockTeam]);
+  }, [mock, session.complete, session.on_the_clock, session.version, session.id, simulating, drafting, solveMutation.isPending, result, serverSolves, runSim, runSolve, runDraft, onClockTeam]);
   useEffect(() => {
     if (simMutation.error || draftMutation.error) setMockState(false); // stop the loop on any failure
   }, [simMutation.error, draftMutation.error]);
@@ -404,11 +424,13 @@ export function DraftProvider({ session, solveEvents, live, children }: Provider
     settings,
     setSettings,
     result,
-    solving: recommend.isPending,
-    solveError: recommend.error?.message ?? null,
+    stale,
+    solver: latest.data?.solver,
+    solving,
+    solveError: solveMutation.error?.message ?? latest.data?.solver.last_error ?? null,
     solveEvents,
+    survival,
     solve,
-    pinPunt,
     draftPlayer,
     drafting,
     undo,
@@ -446,14 +468,14 @@ function applyClose(d: DrawerState, id: CardId): DrawerState {
   return { ...d, top, bottom, collapsed: empty, last: empty ? d.last : { top, bottom } };
 }
 
-const SHIFTED_DIGITS: Record<string, number> = { "!": 1, "@": 2, "#": 3, "$": 4, "%": 5, "^": 6 };
+const SHIFTED_DIGITS: Record<string, number> = { "!": 1, "@": 2, "#": 3, "$": 4, "%": 5, "^": 6, "&": 7 };
 const TEXT_INPUTS = new Set(["text", "search", "number", "email", "password", "url", "tel"]);
 
-/** 1 to 6 from the physical key when the browser reports it, else from the typed character. */
+/** 1 to 7 from the physical key when the browser reports it, else from the typed character. */
 function cardDigit(e: KeyboardEvent): number | null {
-  const physical = /^Digit([1-6])$/.exec(e.code);
+  const physical = /^Digit([1-7])$/.exec(e.code);
   if (physical) return Number(physical[1]);
-  if (/^[1-6]$/.test(e.key)) return Number(e.key);
+  if (/^[1-7]$/.test(e.key)) return Number(e.key);
   return SHIFTED_DIGITS[e.key] ?? null;
 }
 

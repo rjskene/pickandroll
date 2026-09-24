@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api, CAT_LABEL, CATS, teamLabel, type BoardPlayer, type SimStrategy } from "../api";
 import { useDraft } from "../draft";
-import { oddsClass } from "../format";
+import { fmtCost, oddsClass } from "../format";
 
 function heat(z: number): string | undefined {
   if (Math.abs(z) < 0.5) return undefined;
@@ -49,6 +49,8 @@ export default function Board() {
     if (first && search.trim()) d.draftPlayer(first.player_id, { via: "key" });
   };
   const nextPick = board.data?.next_pick ?? null;
+  const priced = board.data?.prices_version != null;
+  const scale = board.data?.scale ?? undefined;
   const busy = d.drafting || d.simulating;
   const draftRow = (p: BoardPlayer) => d.draftPlayer(p.player_id);
 
@@ -156,6 +158,9 @@ export default function Board() {
                 </th>
               ))}
               {wide && <th>{nextPick ? `Lasts to #${nextPick}` : "Lasts"}</th>}
+              <th className="num" title="cost of taking this player with your next pick instead of the plan's choice (first-order, on the objective's scale)">
+                Cost
+              </th>
               <th></th>
             </tr>
           </thead>
@@ -191,6 +196,9 @@ export default function Board() {
                       )}
                     </td>
                   )}
+                  <td className={`num ${p.cost != null && p.cost < 0.005 ? "good" : "muted"}`}>
+                    {!p.taken && priced && p.cost != null ? fmtCost(p.cost, scale, true) : ""}
+                  </td>
                   <td>
                     {!p.taken && !s.complete && (
                       <button

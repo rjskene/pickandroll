@@ -1,15 +1,14 @@
-import { CAT_LABEL } from "../../api";
 import { useDraft } from "../../draft";
-import { oddsClass, pct, shortName } from "../../format";
+import { fmtObjective, oddsClass, pct, shortName } from "../../format";
 
 export default function PlanCard() {
   const d = useDraft();
   const s = d.session;
   const result = d.result;
-  if (d.solving) return <p className="muted">Solving…</p>;
-  if (!result) return <p className="muted">Appears after the first solve.</p>;
+  if (!result) return <p className="muted">{d.solving ? "Solving…" : "Appears after the first solve."}</p>;
   return (
     <>
+      {d.stale && <p className="accent" style={{ fontSize: 12 }}>Board moved since this solve · re-planning…</p>}
       {result.plan.length > 0 && (
         <div className="block">
           <div className="row">
@@ -39,7 +38,8 @@ export default function PlanCard() {
         <div className="row">
           <span className="k">{result.mode === "horizon" ? "Expected roster if the plan holds" : "Best roster from here"}</span>
           <span className="muted" style={{ fontSize: 11 }}>
-            value {result.best_roster.objective.toFixed(2)} · punting {result.best_roster.punted.map((c) => CAT_LABEL[c]).join(", ") || "nothing"}
+            {fmtObjective(result.wins, "wins")} expected · {result.value.toFixed(1)} z above replacement
+            {result.best_roster.time_limited ? " · time limit hit" : ""}
           </span>
         </div>
         <ul className="roster" style={{ columns: 2, columnGap: 16 }}>

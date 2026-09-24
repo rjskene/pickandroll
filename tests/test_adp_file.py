@@ -42,12 +42,18 @@ def test_session_uses_adp_file(tmp_path):
     app = create_app(SessionStore(), data_dir=tmp_path)
     with TestClient(app) as client:
         r = client.post(
-            "/sessions", json={"projection_file": sample.name, "num_teams": 4, "my_position": 1}
+            "/sessions",
+            json={
+                "projection_file": sample.name,
+                "num_teams": 4,
+                "my_position": 1,
+                "solve_ahead": False,
+            },
         )
         assert r.status_code == 201, r.text
         s = r.json()
         assert s["adp_source"] == "file:adp.csv" and s["adp_known"] == 2
-        rec = client.post(f"/sessions/{s['id']}/recommend", json={"n": 3, "punt": ["tov"]}).json()
+        rec = client.post(f"/sessions/{s['id']}/recommend", json={"n": 3, "scenarios": 0}).json()
         assert rec["adp_source"] == "file:adp.csv"
         r = client.post(
             "/sessions",

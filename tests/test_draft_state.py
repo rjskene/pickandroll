@@ -153,3 +153,74 @@ def test_roster_value_is_the_locked_part_of_the_plan(pool):
         (state.z.loc[state.my_roster, active] - state.replacement_level()[active]).sum().sum()
     )
     assert abs(state.roster_value(punt=frozenset({Cat.TOV})) - expected) < 1e-9
+
+
+def test_curve_default_objective_and_category_report(pool):
+    from pickandroll.optim import CategoryCurve
+
+    state = make_state(pool, position=2, num_teams=4)
+    assert state.objective == "sum"
+    state.curve = CategoryCurve.default(state.settings.cats, sigma=3.0)
+    assert state.objective == "win"
+    ids = state.z["total"].nlargest(3).index.tolist()
+    state.apply_pick("Sharks", ids[0])
+    assert state.team_names() == {1: "Sharks", 2: "me", 3: "Team 3", 4: "Team 4"}
+    problem = state.horizon_problem()
+    assert problem.curve is not None and problem.max_candidates == 80
+    assert state.horizon_problem(curve=None).curve is None
+    table, solution, punt = state.recommend_horizon(n=3, workers=1)
+    assert punt == frozenset() and state.last_punt_scan is None
+    assert {"cost_first_order", "time_limited"} <= set(table.columns)
+    assert solution.wins is not None and 0.0 < solution.wins < 9.0
+    finals = state.raw_finals(solution)
+    report = state.category_report(finals)
+    assert [r["cat"] for r in report] == [c.value for c in state.settings.cats]
+    assert all(r["label"] in {"conceded", "contested", "secured"} for r in report)
+    assert all(r["expected"] == pytest.approx(float(finals[r["cat"]]), abs=1e-3) for r in report)
+    assert state.expected_wins(finals) == pytest.approx(sum(r["odds"] for r in report), abs=1e-3)
+    tally = state.matchups(finals)
+    assert [o["team"] for o in tally["opponents"]] == ["Sharks", "Team 3", "Team 4"]
+    assert tally["matchups_won"] == sum(o["won"] for o in tally["opponents"])
+    assert all(o["won"] == (o["cats_beaten"] >= 5) for o in tally["opponents"])
+    prices = state.board_prices(problem, solution)
+    assert prices[solution.first_pick] == 0.0
+    assert prices.dropna().min() >= 0.0 and ids[0] not in prices.index
+
+
+def test_scenarios_when_someone_else_is_on_the_clock(pool):
+    state = make_state(pool, position=3, num_teams=4)
+    assert not state.on_the_clock
+    problem = state.horizon_problem()
+    table, solution, _ = state.recommend_horizon(n=4, workers=1, problem=problem)
+    rows = state.scenarios(problem, table, count=2, workers=1)
+    assert len(rows) <= 2
+    for row in rows:
+        assert row["gone"] != row["pick"] and row["pick"] in state.available
+        assert row["objective"] <= solution.objective + 1e-6
+        assert "gone_name" in row and "pick_name" in row
+    state.apply_pick("a", state.available[0])
+    state.apply_pick("b", state.available[0])
+    assert state.on_the_clock
+    problem = state.horizon_problem()
+    table, _, _ = state.recommend_horizon(n=3, workers=1, problem=problem)
+    assert state.scenarios(problem, table, workers=1) == []
+
+
+def test_solve_plan_falls_back_to_sum_without_an_incumbent(pool, monkeypatch):
+    from pickandroll.draft import state as state_module
+
+    state = make_state(pool, position=1, num_teams=4)
+    state.curve = state.wins_curve()
+    calls = []
+    real = state_module.solve_horizon
+
+    def flaky(problem, **kwargs):
+        calls.append(problem.curve is not None)
+        if problem.curve is not None:
+            raise RuntimeError("horizon solve failed with status Infeasible")
+        return real(problem, **kwargs)
+
+    monkeypatch.setattr(state_module, "solve_horizon", flaky)
+    solution = state.solve_plan(state.horizon_problem())
+    assert calls == [True, False] and state.last_fallback == "sum"
+    assert solution.expected_wins is None and solution.slopes is not None

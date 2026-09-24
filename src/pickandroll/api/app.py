@@ -1,34 +1,45 @@
 """FastAPI app: draft sessions over :class:`DraftState` with a server-sent event stream.
 
 Sessions live in memory (a draft lasts an evening). Every mutation bumps the session version and
-publishes an event, so the UI can subscribe to ``/sessions/{id}/events`` and re-fetch the board
-and recommendation whenever a pick lands, whether it came from the Yahoo poller or manual entry.
+publishes an event, so the UI can subscribe to ``/sessions/{id}/events`` and refresh the board
+whenever a pick lands, whether it came from the Yahoo poller or manual entry. Each change also
+wakes the session's background solver (:mod:`.solver`), which re-plans ahead of the clock and
+publishes a ``recommendation`` event when the new answer is ready.
+
+A session's objective is the category-win curve by default (``objective: win``), with the
+curve's mean and spread taken from the simulated league of the 2026-09-23 study, from a JSON
+file, or fitted from the session's own survival simulation. Availability comes from the ADP
+formula unless a survival table is simulated at setup or loaded from a file.
 """
 
 from __future__ import annotations
 
 import asyncio
 import json
-import time
+import threading
 import uuid
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import pandas as pd
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from ..draft import DraftState, LeagueSettings, Strategy, simulate
-from ..optim.roster import Slot, punt_sets, yahoo_default_slots
+from ..availability.survival import SurvivalTable
+from ..draft import STRATEGIES, DraftState, LeagueSettings, Strategy, simulate
+from ..draft.league_sim import simulate_league
+from ..optim.objective import CategoryCurve
+from ..optim.roster import Slot, yahoo_default_slots
 from ..projections.adp import adp_for_projections, load_adp
 from ..projections.positions import apply_positions, load_positions
 from ..projections.schema import Cat, ProjectionSet
 from ..sources.bbm import PROJECTION_SUFFIXES, load_bbm
 from ..sources.yahoo import YahooLeague
+from .solver import BackgroundSolver, SolveParams, compute_recommendation, solver_executor
 from .yahoo_feed import LeagueFactory, YahooFeed, attach_feed
 
 DATA_DIR = Path(__file__).resolve().parents[3] / "data"
@@ -36,6 +47,8 @@ KEEPALIVE_SECONDS = 15.0
 # Streams end on their own after this long; EventSource reconnects and the UI refreshes on
 # the next hello. Bounded streams let uvicorn finish a graceful shutdown or reload.
 MAX_STREAM_SECONDS = 120.0
+SURVIVAL_SUFFIXES = {".csv"}
+CURVE_SUFFIXES = {".json"}
 
 
 # --------------------------------------------------------------------------- session store
@@ -48,37 +61,80 @@ class Session:
     listeners: list[asyncio.Queue] = field(default_factory=list)
     log: list[dict[str, Any]] = field(default_factory=list)
     yahoo: YahooFeed | None = None
-    #: Plan value frozen when I reach my first pick, and one entry per solve after that.
+    #: Guards the pick log: picks are applied and problems are built under it.
+    lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
+    #: Which objective the session drafts on; the curve itself lives on the state.
+    objective: str = "win"
+    sigma_scale: float = 1.0
+    curve_source: str = "none"
+    #: Survival availability: ``mode`` none/simulate/file, ``status`` none/building/ready/failed.
+    survival: dict[str, Any] = field(default_factory=lambda: {"mode": "none", "status": "none"})
+    solver: BackgroundSolver | None = None
+    solve_params: SolveParams = field(default_factory=SolveParams)
+    recommendation: dict[str, Any] | None = None
+    #: First-order deviation cost per available player from the latest plan.
+    prices: pd.Series | None = field(default=None, repr=False)
+    prices_version: int | None = None
+    #: Expected wins frozen before my first pick, and one entry per solve.
     benchmark: dict[str, Any] | None = None
     history: list[dict[str, Any]] = field(default_factory=list)
 
+    @property
+    def survival_building(self) -> bool:
+        return self.survival.get("status") == "building"
+
     def record_score(
-        self, mode: str, value: float, punted: list[str], top: str | None
+        self,
+        snapshot: dict[str, Any],
+        mode: str,
+        wins: float,
+        value: float,
+        matchups: int,
+        top: str | None,
     ) -> dict[str, Any]:
-        """Remember a solve's plan value. The benchmark is the latest solve made while on the
-        clock at my first pick; after that pick it never changes."""
+        """Remember a solve's expected categories won (and its value on the z scale). The
+        benchmark is the latest solve made before my first pick; after that pick it never
+        changes. ``snapshot`` is the board the solve was built on."""
         state = self.state
         entry = {
-            "version": self.version,
-            "next_overall": state.next_overall,
-            "my_pick": state.my_next_pick,
-            "on_the_clock": state.on_the_clock,
+            "version": snapshot["version"],
+            "next_overall": snapshot["next_overall"],
+            "my_pick": snapshot["my_next_pick"],
+            "on_the_clock": snapshot["on_the_clock"],
             "mode": mode,
+            "wins": round(float(wins), 4),
             "value": round(float(value), 3),
-            "punted": punted,
+            "matchups": int(matchups),
             "top": top,
-            "drafted": len(state.my_roster),
+            "drafted": snapshot["drafted"],
             "at": _now(),
         }
-        self.history = [h for h in self.history if h["version"] != self.version] + [entry]
+        self.history = [h for h in self.history if h["version"] != entry["version"]] + [entry]
+        self.history.sort(key=lambda h: h["version"])
         first = state.my_picks[0] if state.my_picks else None
-        if first is not None and state.on_the_clock and state.next_overall == first:
+        if first is not None and snapshot["next_overall"] <= first:
             self.benchmark = entry
         return entry
 
+    def set_recommendation(self, payload: dict[str, Any]) -> None:
+        self.recommendation = payload
+        top = payload["candidates"][0] if payload.get("candidates") else None
+        self.publish(
+            "recommendation",
+            {
+                "solved_version": payload["version"],
+                "stale": payload["version"] != self.version,
+                "wins": payload.get("wins"),
+                "top": top["name"] if top else None,
+                "top_player": top["player"] if top else None,
+            },
+            bump=False,
+        )
+
     def publish(self, event: str, data: dict[str, Any], bump: bool = True) -> None:
-        """Send an event to every listener. Board changes bump the version; transient solver
-        progress (``bump=False``) does not, so the UI never re-solves because of it."""
+        """Send an event to every listener. Board changes bump the version and wake the
+        background solver; transient solver progress (``bump=False``) does neither, so a
+        solve never triggers itself."""
         if bump:
             self.version += 1
         payload = {"event": event, "version": self.version, "at": _now(), **data}
@@ -86,14 +142,46 @@ class Session:
             self.log.append(payload)
         for queue in list(self.listeners):
             queue.put_nowait(payload)
+        if bump and self.solver is not None:
+            self.solver.kick(event)
+
+    def publish_threadsafe_solve(self, update: dict[str, Any]) -> None:
+        """Publish a ``solve`` progress event from a worker thread."""
+        loop = self.solver.loop if self.solver is not None else None
+        if loop is not None and loop.is_running():
+            loop.call_soon_threadsafe(self.publish, "solve", update, False)
+        else:
+            self.publish("solve", update, bump=False)
 
 
 class SessionStore:
     def __init__(self) -> None:
         self.sessions: dict[str, Session] = {}
+        self.loop: asyncio.AbstractEventLoop | None = None
 
-    def create(self, state: DraftState, projection_label: str) -> Session:
-        session = Session(id=uuid.uuid4().hex[:8], state=state, projection_label=projection_label)
+    def create(
+        self,
+        state: DraftState,
+        projection_label: str,
+        objective: str = "win",
+        sigma_scale: float = 1.0,
+        curve_source: str = "none",
+        survival: dict[str, Any] | None = None,
+        solve_ahead: bool = True,
+    ) -> Session:
+        session = Session(
+            id=uuid.uuid4().hex[:8],
+            state=state,
+            projection_label=projection_label,
+            objective=objective,
+            sigma_scale=sigma_scale,
+            curve_source=curve_source,
+            survival=survival or {"mode": "none", "status": "none"},
+        )
+        session.solver = BackgroundSolver(session)
+        session.solver.enabled = solve_ahead
+        if self.loop is not None:
+            session.solver.bind(self.loop)
         self.sessions[session.id] = session
         session.publish("created", {})
         return session
@@ -130,6 +218,40 @@ class SessionCreate(BaseModel):
     slots: list[SlotIn] | None = None
     bench: int = 3
     cats: list[Cat] | None = None
+    objective: Literal["win", "sum"] = Field(
+        default="win",
+        description="win = expected categories won (the curve), sum = plain sum of z",
+    )
+    sigma_scale: float = Field(
+        default=1.0,
+        gt=0.0,
+        le=5.0,
+        description="multiplies the curve's spread; above one hedges for noisy weeks",
+    )
+    curve_file: str | None = Field(
+        default=None, description="optional JSON inside data/ with per-category mu and sigma"
+    )
+    survival: Literal["none", "simulate", "file"] = Field(
+        default="none",
+        description="availability: ADP formula, a simulated table built now, or a saved table",
+    )
+    survival_sims: int = Field(default=300, ge=10, le=5000)
+    survival_file: str | None = Field(default=None, description="survival CSV inside data/")
+    drafters: list[Strategy] | None = Field(
+        default=None, description="drafter mix for the simulation (default z, adp and lp)"
+    )
+    fit_curve: bool = Field(
+        default=True, description="with survival=simulate, take mu and sigma from the run"
+    )
+    solve_ahead: bool = Field(
+        default=True, description="re-solve in the background after every change"
+    )
+    time_limit: float = Field(
+        default=20.0,
+        ge=1.0,
+        le=600.0,
+        description="seconds per plan solve; the incumbent is kept when it is hit",
+    )
 
 
 class PickIn(BaseModel):
@@ -159,12 +281,7 @@ class YahooAttach(BaseModel):
     start: bool = True
 
 
-class RecommendQuery(BaseModel):
-    n: int = 8
-    punt: list[Cat] | None = None
-    max_punts: int = 2
-    balance: float = 0.0
-    horizon: bool = True
+RecommendQuery = SolveParams
 
 
 # --------------------------------------------------------------------------- app
@@ -181,14 +298,21 @@ def create_app(
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
         shutdown.clear()
-        app.state.loop = asyncio.get_running_loop()
+        loop = asyncio.get_running_loop()
+        app.state.loop = loop
+        store.loop = loop
+        for session in store.sessions.values():
+            if session.solver is not None:
+                session.solver.bind(loop)
         yield
         shutdown.set()  # wakes every open event stream so the server can exit
         for session in store.sessions.values():
             if session.yahoo and session.yahoo.task:
                 session.yahoo.task.cancel()
+            if session.solver is not None:
+                session.solver.enabled = False
 
-    app = FastAPI(title="pickandroll", version="0.1.0", lifespan=lifespan)
+    app = FastAPI(title="pickandroll", version="0.2.0", lifespan=lifespan)
     app.state.store = store
 
     @app.get("/health")
@@ -197,83 +321,68 @@ def create_app(
 
     @app.get("/projections")
     def list_projections() -> list[dict[str, Any]]:
-        files = sorted(
-            (f for f in data_dir.iterdir() if f.suffix.lower() in PROJECTION_SUFFIXES),
-            key=lambda f: f.stat().st_mtime,
-            reverse=True,
-        )
-        return [
-            {
-                "file": f.name,
-                "kind": f.suffix.lower().lstrip("."),
-                "modified": datetime.fromtimestamp(f.stat().st_mtime, tz=UTC).isoformat(),
-            }
-            for f in files
-        ]
+        return _list_files(data_dir, PROJECTION_SUFFIXES)
+
+    @app.get("/files")
+    def list_files(kind: Literal["survival", "curve"] = "survival") -> list[dict[str, Any]]:
+        """Saved survival tables (CSV with a ``.sims`` sidecar) or curve files (JSON) in data/."""
+        if kind == "survival":
+            files = _list_files(data_dir, SURVIVAL_SUFFIXES)
+            return [f for f in files if (data_dir / (f["file"] + ".sims")).exists()]
+        return _list_files(data_dir, CURVE_SUFFIXES)
 
     @app.post("/sessions", status_code=201)
-    def create_session(body: SessionCreate) -> dict[str, Any]:
-        path = data_dir / body.projection_file
-        if not path.exists() or path.suffix.lower() not in PROJECTION_SUFFIXES:
-            raise HTTPException(400, f"projection file not found: {body.projection_file}")
-        try:
-            projections: ProjectionSet = load_bbm(path, horizon=body.horizon)  # type: ignore[arg-type]
-        except ValueError as exc:
-            raise HTTPException(400, f"could not parse {body.projection_file}: {exc}") from exc
-        positions_path = (
-            data_dir / body.positions_file if body.positions_file else data_dir / "positions.csv"
-        )
-        if positions_path.exists() and positions_path != path:
+    async def create_session(body: SessionCreate) -> dict[str, Any]:
+        state, label, curve_source = await asyncio.to_thread(_build_state, body, data_dir)
+        survival: dict[str, Any] = {"mode": body.survival, "status": "none"}
+        if body.survival == "file":
+            if not body.survival_file:
+                raise HTTPException(400, "survival=file needs survival_file")
+            path = data_dir / body.survival_file
+            if not path.exists():
+                raise HTTPException(400, f"survival file not found: {body.survival_file}")
             try:
-                df, _missing = apply_positions(projections.df, load_positions(positions_path))
-            except ValueError as exc:
+                table = await asyncio.to_thread(SurvivalTable.load, path)
+            except (OSError, ValueError) as exc:
+                raise HTTPException(400, f"could not read {path.name}: {exc}") from exc
+            if table.total_picks != state.settings.total_picks:
                 raise HTTPException(
-                    400, f"could not read positions from {positions_path.name}: {exc}"
-                ) from exc
-            projections = ProjectionSet(
-                source=projections.source,
-                label=projections.label,
-                horizon=projections.horizon,
-                as_of=projections.as_of,
-                df=df,
-                start=projections.start,
-                end=projections.end,
-            )
-        elif body.positions_file:
-            raise HTTPException(400, f"positions file not found: {body.positions_file}")
-        slots = (
-            tuple(
-                Slot(s.name, frozenset(s.eligible) if s.eligible else Slot.eligible)
-                for s in body.slots
-            )
-            if body.slots
-            else tuple(yahoo_default_slots(bench=body.bench))
+                    400,
+                    f"{path.name} covers {table.total_picks} picks, the draft has "
+                    f"{state.settings.total_picks}",
+                )
+            state.survival = table
+            survival = {
+                "mode": "file",
+                "status": "ready",
+                "sims": table.sims,
+                "source": f"file:{path.name}",
+            }
+        elif body.survival == "simulate":
+            drafters = tuple(body.drafters) if body.drafters else STRATEGIES
+            if any(d not in STRATEGIES for d in drafters):
+                raise HTTPException(400, f"drafters must be drawn from {STRATEGIES}")
+            survival = {
+                "mode": "simulate",
+                "status": "building",
+                "sims": body.survival_sims,
+                "done": 0,
+                "drafters": list(drafters),
+                "source": None,
+            }
+        session = store.create(
+            state,
+            label,
+            objective=body.objective,
+            sigma_scale=body.sigma_scale,
+            curve_source=curve_source,
+            survival=survival,
+            solve_ahead=body.solve_ahead,
         )
-        settings = LeagueSettings(
-            num_teams=body.num_teams,
-            slots=slots,
-            cats=tuple(body.cats) if body.cats else LeagueSettings.cats,
-        )
-        try:
-            state = DraftState(
-                settings=settings,
-                projections=projections,
-                my_team=body.my_team,
-                my_position=body.my_position,
+        if body.survival == "simulate":
+            asyncio.get_running_loop().create_task(
+                _build_survival(session, body.survival_sims, drafters, body.fit_curve)
             )
-        except ValueError as exc:
-            raise HTTPException(400, str(exc)) from exc
-        adp_path = data_dir / body.adp_file if body.adp_file else data_dir / "adp.csv"
-        if adp_path.exists() and adp_path != path:
-            try:
-                adp = adp_for_projections(state.projections.df, load_adp(adp_path))
-            except ValueError as exc:
-                raise HTTPException(400, f"could not read ADP from {adp_path.name}: {exc}") from exc
-            if not adp.empty:
-                state.set_adp(adp, f"file:{adp_path.name}")
-        elif body.adp_file:
-            raise HTTPException(400, f"ADP file not found: {body.adp_file}")
-        session = store.create(state, projections.label)
         return _summary(session)
 
     @app.get("/sessions")
@@ -290,13 +399,15 @@ def create_app(
         state = session.state
         z = state.z
         df = state.projections.df
-        taken = state.taken
-        adp = state.effective_adp()
-        # Odds each player lasts to my next pick after the current one (the board's question
-        # while I am on the clock is "can I wait on this player?").
-        future = [k for k in state.my_remaining_picks if k > state.next_overall]
-        next_pick = future[0] if future else None
-        p_next = state.availability()[next_pick] if next_pick is not None else None
+        with session.lock:
+            taken = state.taken
+            adp = state.effective_adp()
+            # Odds each player lasts to my next pick after the current one (the board's
+            # question while I am on the clock is "can I wait on this player?").
+            future = [k for k in state.my_remaining_picks if k > state.next_overall]
+            next_pick = future[0] if future else None
+            p_next = state.availability()[next_pick] if next_pick is not None else None
+            prices = session.prices if session.prices_version == session.version else None
         rows = []
         for pid in z["total"].sort_values(ascending=False).index[:limit]:
             rows.append(
@@ -308,6 +419,7 @@ def create_app(
                     "games": float(df.at[pid, "games"]),
                     "adp": _float_or_none(adp.get(pid)),
                     "p_next": _float_or_none(p_next.get(pid)) if p_next is not None else None,
+                    "cost": _float_or_none(prices.get(pid)) if prices is not None else None,
                     "z": {
                         c.value: round(float(z.at[pid, c.value]), 3) for c in state.settings.cats
                     },
@@ -315,7 +427,13 @@ def create_app(
                     "taken": pid in taken,
                 }
             )
-        return {"version": session.version, "next_pick": next_pick, "players": rows}
+        return {
+            "version": session.version,
+            "next_pick": next_pick,
+            "prices_version": session.prices_version if prices is not None else None,
+            "scale": (session.recommendation or {}).get("scale") if prices is not None else None,
+            "players": rows,
+        }
 
     @app.get("/sessions/{session_id}/picks")
     def picks(session_id: str) -> list[dict[str, Any]]:
@@ -325,10 +443,11 @@ def create_app(
     @app.post("/sessions/{session_id}/picks", status_code=201)
     def add_pick(session_id: str, body: PickIn) -> dict[str, Any]:
         session = store.get(session_id)
-        try:
-            pick = session.state.apply_pick(body.team, body.player_id, body.overall)
-        except (KeyError, ValueError) as exc:
-            raise HTTPException(400, str(exc)) from exc
+        with session.lock:
+            try:
+                pick = session.state.apply_pick(body.team, body.player_id, body.overall)
+            except (KeyError, ValueError) as exc:
+                raise HTTPException(400, str(exc)) from exc
         row = _pick_row(session.state, pick)
         session.publish("pick", {"pick": row})
         return row
@@ -336,10 +455,11 @@ def create_app(
     @app.post("/sessions/{session_id}/sync")
     def sync(session_id: str, body: SyncIn) -> dict[str, Any]:
         session = store.get(session_id)
-        try:
-            added = session.state.sync(body.picks)
-        except (KeyError, ValueError) as exc:
-            raise HTTPException(400, str(exc)) from exc
+        with session.lock:
+            try:
+                added = session.state.sync(body.picks)
+            except (KeyError, ValueError) as exc:
+                raise HTTPException(400, str(exc)) from exc
         rows = [_pick_row(session.state, p) for p in added]
         for row in rows:
             session.publish("pick", {"pick": row})
@@ -348,9 +468,10 @@ def create_app(
     @app.delete("/sessions/{session_id}/picks/last")
     def undo_pick(session_id: str) -> dict[str, Any]:
         session = store.get(session_id)
-        if not session.state.picks:
-            raise HTTPException(400, "no picks to undo")
-        pick = session.state.picks.pop()
+        with session.lock:
+            if not session.state.picks:
+                raise HTTPException(400, "no picks to undo")
+            pick = session.state.picks.pop()
         row = _pick_row(session.state, pick)
         session.publish("undo", {"pick": row})
         return row
@@ -363,14 +484,15 @@ def create_app(
             raise HTTPException(400, "draft is complete")
         if body.until_my_pick and body.count is None and session.state.on_the_clock:
             raise HTTPException(400, "you are on the clock; make your pick first")
-        made = simulate(
-            session.state,
-            count=body.count,
-            until_my_pick=body.until_my_pick,
-            noise=body.noise,
-            seed=body.seed,
-            strategy=body.strategy,
-        )
+        with session.lock:
+            made = simulate(
+                session.state,
+                count=body.count,
+                until_my_pick=body.until_my_pick,
+                noise=body.noise,
+                seed=body.seed,
+                strategy=body.strategy,
+            )
         rows = [_pick_row(session.state, p) for p in made]
         for row in rows:
             session.publish("pick", {"pick": row})
@@ -378,141 +500,108 @@ def create_app(
 
     @app.post("/sessions/{session_id}/recommend")
     def recommend(session_id: str, body: RecommendQuery) -> dict[str, Any]:
-        """Next-pick candidates and the best roster or plan from the current board.
+        """Solve now and wait for the answer: next-pick candidates priced with the risk of
+        waiting, the plan for every remaining pick, the category report and the league tally.
 
-        With ``horizon`` (default) the rolling-horizon model prices candidates including the
-        risk of waiting and returns the plan for every remaining pick. It falls back to the
-        single-roster model when my remaining picks and open slots disagree.
+        The background solver produces the same payload after every change; this endpoint is
+        for clients that want a synchronous answer. It falls back to the single-roster model
+        when my remaining picks and open slots disagree.
         """
         session = store.get(session_id)
-        state = session.state
-        if not state.my_remaining_picks:
-            raise HTTPException(400, "you have no picks left; the final score is at /score")
-        punt = frozenset(body.punt) if body.punt is not None else None
-        names = state.projections.df["player"]
-        started = time.perf_counter()
-        loop = getattr(app.state, "loop", None)
-
-        def progress(update: dict[str, Any]) -> None:
-            payload = {**update, "elapsed_ms": round((time.perf_counter() - started) * 1000)}
-            if "candidate" in payload and "player" in payload["candidate"]:
-                payload["candidate"] = {
-                    **payload["candidate"],
-                    "name": names.get(
-                        payload["candidate"]["player"], payload["candidate"]["player"]
-                    ),
-                }
-            if payload.get("first_pick"):
-                payload["first_pick_name"] = names.get(payload["first_pick"], payload["first_pick"])
-            if loop is not None and loop.is_running():
-                loop.call_soon_threadsafe(session.publish, "solve", payload, False)
-            else:
-                session.publish("solve", payload, bump=False)
-
+        session.solve_params = body
         try:
-            if body.horizon and not state.complete:
-                try:
-                    progress({"stage": "start", "done": 0, "total": 1, "auto_punt": punt is None})
-                    table, plan, chosen = state.recommend_horizon(
-                        n=body.n,
-                        punt=punt,
-                        max_punts=body.max_punts,
-                        balance=body.balance,
-                        progress=progress,
-                    )
-                    progress({"stage": "done", "done": 1, "total": 1})
-                    punted = [c.value for c in sorted(chosen, key=list(state.settings.cats).index)]
-                    session.record_score(
-                        "horizon",
-                        plan.objective,
-                        punted,
-                        names.at[plan.first_pick] if plan.first_pick else None,
-                    )
-                    return {
-                        "version": session.version,
-                        "mode": "horizon",
-                        "timings": {k: round(v, 1) for k, v in state.last_timings.items()},
-                        "punt_scan": _punt_scan_rows(state, names),
-                        "on_the_clock": state.on_the_clock,
-                        "next_overall": state.next_overall,
-                        "my_next_pick": state.my_next_pick,
-                        "adp_source": state.adp_source,
-                        "candidates": _records(table),
-                        "punted": [
-                            c.value for c in sorted(chosen, key=list(state.settings.cats).index)
-                        ],
-                        "plan": [
-                            {
-                                "pick": int(r.pick),
-                                "player": r.player,
-                                "name": names.at[r.player],
-                                "availability": round(float(r.availability), 3),
-                            }
-                            for r in plan.plan.itertuples()
-                        ],
-                        "best_roster": {
-                            "objective": plan.objective,
-                            "punted": [
-                                c.value for c in sorted(chosen, key=list(state.settings.cats).index)
-                            ],
-                            "min_active_total": plan.min_active_total,
-                            "cat_totals": {
-                                c.value: round(float(v), 3) for c, v in plan.expected_totals.items()
-                            },
-                            "roster": [
-                                {**r, "name": names.at[r["player"]]}
-                                for r in plan.roster.to_dict(orient="records")
-                            ],
-                            "solve_seconds": plan.solve_seconds,
-                        },
-                    }
-                except ValueError:
-                    pass  # picks and open slots disagree: use the roster model below
-            table = state.recommend(
-                n=body.n, punt=punt, max_punts=body.max_punts, balance=body.balance
-            )
-            best = state.best_roster(punt=punt, max_punts=body.max_punts, balance=body.balance)
+            payload = compute_recommendation(session, body, session.publish_threadsafe_solve)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
         except RuntimeError as exc:
             raise HTTPException(409, str(exc)) from exc
-        session.record_score(
-            "roster",
-            best.objective,
-            [c.value for c in best.punted],
-            names.at[table.iloc[0]["player"]] if len(table) else None,
-        )
+        session.set_recommendation(payload)
+        return payload
+
+    @app.post("/sessions/{session_id}/solve", status_code=202)
+    def solve(session_id: str, body: RecommendQuery) -> dict[str, Any]:
+        """Queue a background solve with these settings; the result arrives as a
+        ``recommendation`` event and at ``/recommendation``."""
+        session = store.get(session_id)
+        session.solve_params = body
+        if not session.state.my_remaining_picks:
+            raise HTTPException(400, "you have no picks left; the final score is at /score")
+        queued = session.solver.kick("manual", force=True) if session.solver else False
+        return {"queued": queued, "version": session.version, "solver": _solver_status(session)}
+
+    @app.get("/sessions/{session_id}/recommendation")
+    def recommendation(session_id: str) -> dict[str, Any]:
+        """The latest solve (possibly for an earlier board: compare ``solved_version``)."""
+        session = store.get(session_id)
+        payload = session.recommendation
         return {
             "version": session.version,
-            "mode": "roster",
-            "on_the_clock": state.on_the_clock,
-            "next_overall": state.next_overall,
-            "my_next_pick": state.my_next_pick,
-            "adp_source": state.adp_source,
-            "candidates": _records(table),
-            "punted": [c.value for c in best.punted],
-            "plan": [],
-            "best_roster": {
-                "objective": best.objective,
-                "punted": [c.value for c in best.punted],
-                "min_active_total": best.min_active_total,
-                "cat_totals": {c.value: round(float(v), 3) for c, v in best.cat_totals.items()},
-                "roster": [
-                    {**r, "name": names.at[r["player"]]}
-                    for r in best.roster.to_dict(orient="records")
-                ],
-                "solve_seconds": best.solve_seconds,
-            },
+            "solved_version": payload["version"] if payload else None,
+            "stale": payload is not None and payload["version"] != session.version,
+            "solver": _solver_status(session),
+            "recommendation": payload,
         }
+
+    @app.get("/sessions/{session_id}/teams")
+    def teams(session_id: str) -> dict[str, Any]:
+        """Every team's drafted category totals and projected finals, and the head-to-head
+        tally of my expected finals against each of them."""
+        session = store.get(session_id)
+        state = session.state
+        rec = session.recommendation
+        with session.lock:
+            my_final = None
+            if rec is not None and rec["version"] == session.version:
+                my_final = rec["best_roster"]["cat_totals"]
+            totals = state.team_totals()
+            projected = state.projected_finals(my_final)
+            tally = state.matchups(my_final)
+        by_team = {o["team"]: o for o in tally["opponents"]}
+        cats = [c.value for c in state.settings.cats]
+        rows = []
+        for team, row in totals.iterrows():
+            opp = by_team.get(team)
+            rows.append(
+                {
+                    "team": team,
+                    "position": int(row["position"]),
+                    "picks": int(row["picks"]),
+                    "mine": team == state.my_team,
+                    "totals": {c: round(float(row[c]), 3) for c in cats},
+                    "projected": {c: round(float(projected.at[team, c]), 3) for c in cats},
+                    "cats_beaten": opp["cats_beaten"] if opp else None,
+                    "won": opp["won"] if opp else None,
+                    "leads": opp["leads"] if opp else [],
+                }
+            )
+        rows.sort(key=lambda r: r["position"])
+        return {
+            "version": session.version,
+            "cats": cats,
+            "my_final_from": "plan" if my_final is not None else "replacement fill",
+            "teams": rows,
+            "matchups_won": tally["matchups_won"],
+            "cats_beaten": round(float(tally["cats_beaten"]), 3),
+            "teams_beaten": tally["teams_beaten"],
+        }
+
+    @app.get("/sessions/{session_id}/solver")
+    def solver_status(session_id: str) -> dict[str, Any]:
+        session = store.get(session_id)
+        return {**_solver_status(session), "survival": session.survival}
 
     @app.get("/sessions/{session_id}/score")
     def score(session_id: str) -> dict[str, Any]:
-        """The plan value frozen at my first pick, every solve since, what my drafted players
-        are worth now on the same scale, and the final score once my roster is full."""
+        """Expected categories won before my first pick (the benchmark), the best plan seen
+        during the draft, the latest, and the final roster's realized odds and league tally."""
         session = store.get(session_id)
-        return _score(session)
+        with session.lock:
+            return _score(session)
 
     @app.get("/sessions/{session_id}/events")
     async def events(session_id: str, request: Request) -> StreamingResponse:
-        """Server-sent events: one ``hello`` on connect, then ``pick`` / ``undo`` / ``created``.
+        """Server-sent events: one ``hello`` on connect, then ``pick`` / ``undo`` / ``created``
+        / ``survival`` / ``solve`` / ``recommendation``.
 
         A comment line is sent every ``KEEPALIVE_SECONDS`` so proxies keep the connection open.
         """
@@ -601,7 +690,157 @@ def create_app(
     return app
 
 
+# --------------------------------------------------------------------------- session setup
+def _build_state(body: SessionCreate, data_dir: Path) -> tuple[DraftState, str, str]:
+    """Load projections, positions, ADP and the curve for a new session (blocking I/O)."""
+    path = data_dir / body.projection_file
+    if not path.exists() or path.suffix.lower() not in PROJECTION_SUFFIXES:
+        raise HTTPException(400, f"projection file not found: {body.projection_file}")
+    try:
+        projections: ProjectionSet = load_bbm(path, horizon=body.horizon)  # type: ignore[arg-type]
+    except ValueError as exc:
+        raise HTTPException(400, f"could not parse {body.projection_file}: {exc}") from exc
+    positions_path = (
+        data_dir / body.positions_file if body.positions_file else data_dir / "positions.csv"
+    )
+    if positions_path.exists() and positions_path != path:
+        try:
+            df, _missing = apply_positions(projections.df, load_positions(positions_path))
+        except ValueError as exc:
+            raise HTTPException(
+                400, f"could not read positions from {positions_path.name}: {exc}"
+            ) from exc
+        projections = ProjectionSet(
+            source=projections.source,
+            label=projections.label,
+            horizon=projections.horizon,
+            as_of=projections.as_of,
+            df=df,
+            start=projections.start,
+            end=projections.end,
+        )
+    elif body.positions_file:
+        raise HTTPException(400, f"positions file not found: {body.positions_file}")
+    slots = (
+        tuple(
+            Slot(s.name, frozenset(s.eligible) if s.eligible else Slot.eligible) for s in body.slots
+        )
+        if body.slots
+        else tuple(yahoo_default_slots(bench=body.bench))
+    )
+    settings = LeagueSettings(
+        num_teams=body.num_teams,
+        slots=slots,
+        cats=tuple(body.cats) if body.cats else LeagueSettings.cats,
+    )
+    try:
+        state = DraftState(
+            settings=settings,
+            projections=projections,
+            my_team=body.my_team,
+            my_position=body.my_position,
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    adp_path = data_dir / body.adp_file if body.adp_file else data_dir / "adp.csv"
+    if adp_path.exists() and adp_path != path:
+        try:
+            adp = adp_for_projections(state.projections.df, load_adp(adp_path))
+        except ValueError as exc:
+            raise HTTPException(400, f"could not read ADP from {adp_path.name}: {exc}") from exc
+        if not adp.empty:
+            state.set_adp(adp, f"file:{adp_path.name}")
+    elif body.adp_file:
+        raise HTTPException(400, f"ADP file not found: {body.adp_file}")
+    state.plan_time_limit = body.time_limit
+    state.price_time_limit = min(state.price_time_limit, body.time_limit)
+    curve_source = "none"
+    if body.objective == "win":
+        if body.curve_file:
+            curve_path = data_dir / body.curve_file
+            if not curve_path.exists():
+                raise HTTPException(400, f"curve file not found: {body.curve_file}")
+            try:
+                spec = json.loads(curve_path.read_text())
+                curve = CategoryCurve.from_dict(
+                    {**spec, "source": f"file:{curve_path.name}"}, settings.cats
+                )
+            except (ValueError, KeyError, TypeError) as exc:
+                raise HTTPException(400, f"could not read {curve_path.name}: {exc}") from exc
+        else:
+            curve = CategoryCurve.simulated(settings.cats)
+        state.curve = curve.scaled(body.sigma_scale)
+        curve_source = state.curve.source
+    return state, projections.label, curve_source
+
+
+async def _build_survival(
+    session: Session, sims: int, drafters: tuple[Strategy, ...], fit_curve: bool
+) -> None:
+    """Simulate the league in a worker thread, then install the table (and the fitted curve)
+    and wake the solver."""
+    state = session.state
+
+    def progress(update: dict[str, Any]) -> None:
+        session.survival["done"] = update["done"]
+        loop = session.solver.loop if session.solver else None
+        payload = {"status": "building", **update}
+        if loop is not None and loop.is_running():
+            loop.call_soon_threadsafe(session.publish, "survival", payload, False)
+
+    try:
+        result = await asyncio.get_running_loop().run_in_executor(
+            solver_executor(),
+            lambda: simulate_league(
+                state.settings,
+                state.projections,
+                sims,
+                state.adp,
+                drafters,
+                progress=progress,
+            ),
+        )
+    except Exception as exc:  # noqa: BLE001 - report, keep the session usable
+        session.survival = {**session.survival, "status": "failed", "error": str(exc)}
+        session.publish("survival", {"status": "failed", "error": str(exc)})
+        return
+    with session.lock:
+        state.survival = result.survival
+        if fit_curve and session.objective == "win":
+            state.curve = result.curve.scaled(session.sigma_scale)
+            session.curve_source = state.curve.source
+    session.survival = {
+        **session.survival,
+        "status": "ready",
+        "done": sims,
+        "source": result.curve.source,
+        "seconds": round(result.seconds, 1),
+    }
+    session.publish(
+        "survival",
+        {"status": "ready", "sims": sims, "seconds": round(result.seconds, 1)},
+    )
+
+
 # --------------------------------------------------------------------------- helpers
+def _list_files(data_dir: Path, suffixes: set[str]) -> list[dict[str, Any]]:
+    if not data_dir.exists():
+        return []
+    files = sorted(
+        (f for f in data_dir.iterdir() if f.is_file() and f.suffix.lower() in suffixes),
+        key=lambda f: f.stat().st_mtime,
+        reverse=True,
+    )
+    return [
+        {
+            "file": f.name,
+            "kind": f.suffix.lower().lstrip("."),
+            "modified": datetime.fromtimestamp(f.stat().st_mtime, tz=UTC).isoformat(),
+        }
+        for f in files
+    ]
+
+
 def _sse(event: str, data: dict[str, Any]) -> str:
     return f"event: {event}\ndata: {json.dumps(data, default=str)}\n\n"
 
@@ -616,8 +855,14 @@ def _float_or_none(value: Any) -> float | None:
     return round(float(value), 3)
 
 
+def _solver_status(session: Session) -> dict[str, Any]:
+    status = session.solver.status() if session.solver is not None else {"enabled": False}
+    return {**status, "recommendation_version": (session.recommendation or {}).get("version")}
+
+
 def _summary(session: Session) -> dict[str, Any]:
     state = session.state
+    curve = state.curve
     return {
         "id": session.id,
         "version": session.version,
@@ -640,47 +885,58 @@ def _summary(session: Session) -> dict[str, Any]:
         ),
         "adp_source": state.adp_source,
         "adp_known": int(state.adp.notna().sum()) if state.adp is not None else 0,
+        "objective": state.objective,
+        "curve": None if curve is None else curve.to_dict(),
+        "sigma_scale": session.sigma_scale,
+        "availability_source": state.availability_source,
+        "survival": session.survival,
+        "solver": _solver_status(session),
     }
 
 
 def _score(session: Session) -> dict[str, Any]:
-    """Every value is a plan value under the best punt at the time: the benchmark at my first
-    pick, the latest solve since, my drafted players under the latest punt, and once my roster
-    is full its value under whichever punt suits it best. The punt is reported alongside each
-    number because the auto punt can move as the board changes."""
+    """Every number is expected categories won on the session's curve: the benchmark before my
+    first pick, the best plan seen during the draft, the latest solve, what my drafted players
+    are worth alone, and once the roster is full the final roster's odds and its head-to-head
+    tally against the league's projected finals. Values on the z scale ride along."""
     state = session.state
-    latest = session.history[-1] if session.history else None
+    history = list(session.history)
+    latest = history[-1] if history else None
     benchmark = session.benchmark
-    punt_labels = (latest or benchmark or {}).get("punted") or []
-    punt = frozenset(Cat(c) for c in punt_labels)
-    drafted_value = state.roster_value(punt)
+    best = max(history, key=lambda h: h["wins"]) if history else None
+    drafted_wins = state.roster_wins() if state.my_roster else 0.0
+    drafted_value = state.roster_value()
     full = not state.my_remaining_picks
-    final: float | None = None
-    final_punt: list[str] = []
+    final: dict[str, Any] | None = None
     if full and state.my_roster:
-        cats = state.settings.cats
-        scored = [(state.roster_value(p), p) for p in punt_sets(cats, max_punts=2)]
-        best_value, best_punt = max(scored, key=lambda item: item[0])
-        final = best_value
-        final_punt = [c.value for c in sorted(best_punt, key=list(cats).index)]
-    best_now = final if final is not None else (latest["value"] if latest else None)
+        finals = state.roster_totals()
+        tally = state.matchups(finals)
+        final = {
+            "wins": round(drafted_wins, 4),
+            "value": round(drafted_value, 3),
+            "matchups": tally["matchups_won"],
+            "cats_beaten": round(float(tally["cats_beaten"]), 3),
+            "opponents": tally["opponents"],
+            "categories": state.category_report(finals),
+        }
+    current = final["wins"] if final is not None else (latest["wins"] if latest else None)
     return {
         "version": session.version,
+        "objective": state.objective,
         "benchmark": benchmark,
+        "best": best,
         "latest": latest,
+        "final": final,
         "drafted": len(state.my_roster),
         "roster_size": state.settings.roster_size,
-        "punted": punt_labels,
+        "drafted_wins": round(drafted_wins, 4),
         "drafted_value": round(drafted_value, 3),
-        "best_now": None if best_now is None else round(best_now, 3),
-        "final": None if final is None else round(final, 3),
-        "final_punted": final_punt,
+        "current_wins": None if current is None else round(current, 4),
         "vs_benchmark": (
-            None
-            if benchmark is None or best_now is None
-            else round(best_now - benchmark["value"], 3)
+            None if benchmark is None or current is None else round(current - benchmark["wins"], 4)
         ),
-        "history": [h for h in session.history if h["on_the_clock"]],
+        "vs_best": None if best is None or current is None else round(current - best["wins"], 4),
+        "history": history,
     }
 
 
@@ -694,37 +950,6 @@ def _pick_row(state: DraftState, pick) -> dict[str, Any]:
         "player_id": pick.player_id,
         "name": state.projections.df.at[pick.player_id, "player"],
     }
-
-
-def _punt_scan_rows(state: DraftState, names: pd.Series, top: int = 10) -> list[dict[str, Any]]:
-    """The ranked punt strategies from the last automatic scan, best first."""
-    table = state.last_punt_scan
-    if table is None or table.empty:
-        return []
-    rows = []
-    best = float(table["objective"].iloc[0])
-    for r in table.head(top).itertuples():
-        players = [p.strip() for p in str(r.players).split(",") if p.strip()]
-        rows.append(
-            {
-                "punt": r.punt,
-                "objective": round(float(r.objective), 3),
-                "gap_to_best": round(best - float(r.objective), 3),
-                "min_active_total": round(float(r.min_active_total), 3),
-                "roster": [names.get(p, p) for p in players],
-            }
-        )
-    return rows
-
-
-def _records(table: pd.DataFrame) -> list[dict[str, Any]]:
-    if table.empty:
-        return []
-    out = table.copy()
-    for col in out.columns:
-        if pd.api.types.is_float_dtype(out[col]):
-            out[col] = out[col].round(4)
-    return out.to_dict(orient="records")
 
 
 app = create_app()

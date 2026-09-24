@@ -9,8 +9,8 @@ const GROUPS: { title: string; rows: [string[], string][] }[] = [
   {
     title: "Cards",
     rows: [
-      [["1", "…", "6"], "open that card in the top half; the same key again closes it"],
-      [["⇧ 1", "…", "⇧ 6"], "open it in the bottom half (mouse: shift-click or right-click the rail icon)"],
+      [["1", "…", "7"], "open that card in the top half; the same key again closes it"],
+      [["⇧ 1", "…", "⇧ 7"], "open it in the bottom half (mouse: shift-click or right-click the rail icon)"],
       [["]"], "collapse the drawer to the rail, or bring it back with its two cards"],
       [["Esc"], "collapse the drawer; in a field it leaves the field first"],
       [["x"], "swap the top and bottom cards"],
@@ -31,7 +31,7 @@ const GROUPS: { title: string; rows: [string[], string][] }[] = [
   {
     title: "Solver and simulation",
     rows: [
-      [["r"], "re-solve now"],
+      [["r"], "re-solve now (the server also re-solves after every pick)"],
       [["s"], "simulate the other teams up to my pick"],
       [["⇧ S"], "simulate one pick"],
       [["m"], "mock draft: run the whole draft, the other teams simulated and the solver drafting for you (never in a live draft)"],
@@ -49,7 +49,7 @@ export default function KeySheet() {
         <header>
           <h2>KEYBOARD</h2>
           <span className="muted">
-            Cards are 1 Pick · 2 Alternatives · 3 Plan · 4 Team · 5 Log · 6 Solver, the numbers on the rail. Letters do nothing while you are typing in a field.
+            Cards are 1 Pick · 2 Categories · 3 Alternatives · 4 Plan · 5 Team · 6 Log · 7 Solver, the numbers on the rail. Letters do nothing while you are typing in a field.
           </span>
           <span className="grow" />
           <button className="icon" aria-label="Close" onClick={() => d.setSheetOpen(false)}>

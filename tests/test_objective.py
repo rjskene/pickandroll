@@ -171,3 +171,30 @@ def test_horizon_curve_soft_punts_a_lost_category(pool):
     assert curved.expected_totals[Cat.BLK] <= plain.expected_totals[Cat.BLK] + 1e-6
     others = [c for c in NINE_CAT if c != Cat.BLK]
     assert curved.expected_totals[others].sum() >= plain.expected_totals[others].sum() - 1e-6
+
+
+def test_simulated_curve_scaling_slope_and_labels():
+    from pickandroll.optim.objective import SIMULATED_SIGMA, win_label
+
+    curve = CategoryCurve.simulated(NINE_CAT)
+    assert curve.source.startswith("simulated league")
+    assert curve.sigma[Cat.TOV] == SIMULATED_SIGMA[Cat.TOV]
+    flat = curve.scaled(2.0)
+    assert flat.sigma[Cat.PTS] == pytest.approx(2.0 * curve.sigma[Cat.PTS])
+    assert flat.mu == curve.mu and "sigma x2" in flat.source
+    assert curve.scaled(1.0) is curve
+    with pytest.raises(ValueError):
+        curve.scaled(0.0)
+    # The slope is the density over sigma: highest at the mean, tiny in the tails.
+    mu = curve.mu[Cat.REB]
+    assert curve.slope(Cat.REB, mu) == pytest.approx(0.3989 / curve.sigma[Cat.REB], abs=1e-3)
+    assert curve.slope(Cat.REB, mu + 20.0) < 1e-4
+    assert curve.wins({Cat.REB: mu, Cat.AST: curve.mu[Cat.AST]}) == pytest.approx(1.0)
+    assert win_label(0.05) == "conceded"
+    assert win_label(0.5) == "contested"
+    assert win_label(0.95) == "secured"
+    back = CategoryCurve.from_dict(flat.to_dict(), NINE_CAT)
+    assert back.sigma[Cat.PTS] == pytest.approx(flat.sigma[Cat.PTS], abs=1e-3)
+    assert back.source == flat.source
+    with pytest.raises(ValueError):
+        CategoryCurve.from_dict({"mu": {"pts": 0.0}, "sigma": {"pts": 1.0}}, NINE_CAT)

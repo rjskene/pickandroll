@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { api, pickOwner, teamLabel, type SolveEvent } from "./api";
+import { api, pickOwner, teamLabel, type SolveEvent, type SurvivalEvent } from "./api";
 import { DraftProvider, Hotkeys, useDraft } from "./draft";
 import Board from "./components/Board";
 import Drawer from "./components/Drawer";
@@ -42,6 +42,23 @@ function Toast() {
       </button>
     </div>
   );
+}
+
+/** What the background solver is doing, for the footer. */
+function SolverNote() {
+  const d = useDraft();
+  const s = d.session;
+  const surv = d.survival ?? null;
+  if (s.survival.status === "building") {
+    const done = surv?.done ?? s.survival.done ?? 0;
+    const total = surv?.total ?? s.survival.sims ?? 0;
+    return <span className="accent">Simulating the league {done}/{total} drafts</span>;
+  }
+  if (s.survival.status === "failed") return <span className="bad">League simulation failed: {s.survival.error}</span>;
+  if (!s.solver.enabled) return <span>Solver: on demand (r)</span>;
+  if (d.solver?.running) return <span className="accent">Solver: re-planning for pick {s.next_overall}…</span>;
+  if (d.result && !d.stale) return <span className="good">Solver: ready for pick {s.next_overall}</span>;
+  return <span>Solver: waiting</span>;
 }
 
 function DraftScreen({ yahoo, onSwitch }: { yahoo: YahooStatus | undefined; onSwitch: () => void }) {
@@ -104,11 +121,13 @@ function DraftScreen({ yahoo, onSwitch }: { yahoo: YahooStatus | undefined; onSw
             "manual entry (Yahoo pending approval)"
           )}
         </span>
-        <span>ADP: {s.adp_source}</span>
+        <span>Objective: {s.objective === "win" ? "categories won" : "sum of z"}</span>
+        <span>Odds: {s.availability_source === "survival" ? `simulated (${s.survival.sims} drafts)` : `ADP ${s.adp_source}`}</span>
         <span>Positions: {s.unknown_positions === 0 ? "all known" : `${s.unknown_positions} unknown`}</span>
+        <SolverNote />
         <span className="grow" />
         <span>
-          <kbd>?</kbd> keys · <kbd>1</kbd>–<kbd>6</kbd> cards · <kbd>d</kbd> draft the pick
+          <kbd>?</kbd> keys · <kbd>1</kbd>–<kbd>7</kbd> cards · <kbd>d</kbd> draft the pick
         </span>
         <span>Session {s.id}</span>
       </footer>
@@ -123,6 +142,7 @@ export default function App() {
   const queryClient = useQueryClient();
   const [sessionId, setSessionId] = useState<string | null>(() => new URLSearchParams(location.search).get("session"));
   const [solveEvents, setSolveEvents] = useState<SolveEvent[]>([]);
+  const [survival, setSurvival] = useState<SurvivalEvent | null>(null);
   const session = useQuery({
     queryKey: ["session", sessionId],
     queryFn: () => api.session(sessionId!),
@@ -142,18 +162,34 @@ export default function App() {
     history.replaceState(null, "", url);
   }, [sessionId]);
 
-  // Live feed: any pick (manual, simulated or from Yahoo) invalidates the board, picks and session.
+  // Live feed: any pick (manual, simulated or from Yahoo) invalidates the board, picks and
+  // session; a finished background solve invalidates the recommendation and the score.
   useEffect(() => {
     if (!sessionId) return;
+    setSolveEvents([]);
+    setSurvival(null);
     const source = new EventSource(api.eventsUrl(sessionId));
     const refresh = () => {
       queryClient.invalidateQueries({ queryKey: ["session", sessionId] });
       queryClient.invalidateQueries({ queryKey: ["board", sessionId] });
       queryClient.invalidateQueries({ queryKey: ["picks", sessionId] });
+      queryClient.invalidateQueries({ queryKey: ["teams", sessionId] });
+      queryClient.invalidateQueries({ queryKey: ["recommendation", sessionId] });
     };
     source.addEventListener("solve", (e) => {
       const event = JSON.parse((e as MessageEvent).data) as SolveEvent;
       setSolveEvents((prev) => (event.stage === "start" || event.stage === "roster" ? [event] : [...prev, event]));
+    });
+    source.addEventListener("recommendation", () => {
+      queryClient.invalidateQueries({ queryKey: ["recommendation", sessionId] });
+      queryClient.invalidateQueries({ queryKey: ["score", sessionId] });
+      queryClient.invalidateQueries({ queryKey: ["teams", sessionId] });
+      queryClient.invalidateQueries({ queryKey: ["board", sessionId] });
+    });
+    source.addEventListener("survival", (e) => {
+      const event = JSON.parse((e as MessageEvent).data) as SurvivalEvent;
+      setSurvival(event);
+      if (event.status !== "building") refresh();
     });
     source.addEventListener("hello", refresh);
     source.addEventListener("pick", refresh);
@@ -175,7 +211,7 @@ export default function App() {
     );
   }
   return (
-    <DraftProvider session={session.data} solveEvents={solveEvents} live={!!yahoo.data?.attached}>
+    <DraftProvider session={session.data} solveEvents={solveEvents} survival={survival} live={!!yahoo.data?.attached}>
       <DraftScreen yahoo={yahoo.data} onSwitch={() => setSessionId(null)} />
     </DraftProvider>
   );

@@ -22,8 +22,14 @@ Objective
     (see ``optim.objective``): the expected number of categories won by the expected totals.
 
 Only the first pick of the plan is acted on. After the next real pick the state changes and the
-plan is re-solved ("roll"). The punt is fixed here; automatic punt selection enumerates punt
-sets with :func:`punt_scan_horizon`.
+plan is re-solved ("roll"). The punt is fixed here (and empty on the product's default path);
+:func:`punt_scan_horizon` enumerates punt sets for studies that still want one.
+
+Pricing an alternative first pick is a re-solve with that player forced first
+(:func:`horizon_pick_pool`, in a process pool). :func:`first_order_prices` gives the same answer
+to first order in microseconds from the objective's slopes, so every candidate has a price
+before the exact solves land. :func:`scenarios_if_gone` answers "and if he is taken before my
+turn?" for the players most likely to go, so the next answer is ready before it is needed.
 """
 
 from __future__ import annotations
@@ -38,6 +44,7 @@ import pulp
 
 from ..projections.schema import NINE_CAT, Cat
 from .objective import CategoryCurve, curve_objective
+from .pool import shared_pool
 from .roster import Slot, _safe, yahoo_default_slots
 
 
@@ -103,10 +110,20 @@ class HorizonSolution:
     solve_seconds: float
     #: Win probability of each expected total under the problem's curve (punted ones zero).
     expected_wins: pd.Series | None = None
+    #: Marginal value of one more z-point in each category at the expected totals: the curve's
+    #: slope there, or one everywhere for the plain sum. Punted categories are zero.
+    slopes: pd.Series | None = None
+    #: The solver stopped at its time limit and this is the incumbent, not a proven optimum.
+    time_limited: bool = False
 
     @property
     def first_pick(self) -> str | None:
         return None if self.plan.empty else str(self.plan.iloc[0]["player"])
+
+    @property
+    def wins(self) -> float | None:
+        """Expected categories won, ``None`` without a curve."""
+        return None if self.expected_wins is None else float(self.expected_wins.sum())
 
 
 def _values(problem: HorizonProblem) -> pd.DataFrame:
@@ -244,6 +261,14 @@ def solve_horizon(
                 for c in problem.cats
             }
         )
+        slopes = pd.Series(
+            {
+                c: (problem.curve.slope(c, float(expected[c])) if c in active else 0.0)
+                for c in problem.cats
+            }
+        )
+    else:
+        slopes = pd.Series({c: (1.0 if c in active else 0.0) for c in problem.cats})
     return HorizonSolution(
         status=status,
         objective=float(pulp.value(model.objective)),
@@ -253,7 +278,37 @@ def solve_horizon(
         min_active_total=min_active,
         solve_seconds=seconds,
         expected_wins=wins,
+        slopes=slopes,
+        time_limited=status == "Not Solved" or seconds >= 0.97 * time_limit,
     )
+
+
+def first_order_prices(
+    problem: HorizonProblem, solution: HorizonSolution, candidates: Sequence[str]
+) -> pd.Series:
+    """Objective lost, to first order, by taking each candidate with my next pick instead of
+    the plan's first pick and keeping the rest of the plan.
+
+    The change in each category total is the candidate's availability-weighted value minus the
+    planned player's; the curve's slope at the expected totals converts it to categories won
+    (or to plain z for the sum objective). The exact price re-solves the whole plan and
+    differs a little: the later picks adjust, and a candidate the plan already had for a
+    later pick leaves a hole there. This one is instant and covers the whole board.
+    Candidates not in the model have no price (NaN).
+    """
+    first = solution.first_pick
+    if first is None or solution.slopes is None:
+        return pd.Series(float("nan"), index=list(candidates), dtype=float)
+    pick = problem.picks[0]
+    value = _values(problem)
+    cols = [c.value for c in problem.active_cats]
+    slopes = pd.Series({c.value: float(solution.slopes[c]) for c in problem.active_cats})
+    avail = problem.availability[pick].reindex(value.index).fillna(0.0).clip(0.0, 1.0)
+    weighted = value[cols].mul(avail, axis=0).mul(slopes, axis=1).sum(axis=1)
+    base = float(weighted.get(first, float("nan")))
+    prices = (base - weighted.reindex(list(candidates))).clip(lower=0.0)
+    prices.name = "cost_first_order"
+    return prices.astype(float)
 
 
 def _solve_forced(
@@ -288,17 +343,24 @@ def horizon_pick_pool(
         base = solve_horizon(problem, time_limit=time_limit, gap=gap)
     next_pick = problem.picks[1] if len(problem.picks) > 1 else None
     jobs = [(problem, c, time_limit, gap) for c in candidates]
+    first_order = first_order_prices(problem, base, candidates)
 
     def row_for(c: str, sol: HorizonSolution) -> dict:
+        objective = sol.objective
+        if c == base.first_pick:
+            # Same problem as the base plan: a time-limited re-solve never beats its incumbent.
+            objective = max(objective, base.objective)
         return {
             "player": c,
-            "objective": sol.objective,
-            "cost_vs_best": max(0.0, base.objective - sol.objective),
+            "objective": objective,
+            "cost_vs_best": max(0.0, base.objective - objective),
+            "cost_first_order": float(first_order.get(c, float("nan"))),
             "p_available_first": float(problem.availability.at[c, problem.picks[0]]),
             "p_available_next": (
                 float(problem.availability.at[c, next_pick]) if next_pick is not None else 0.0
             ),
             "min_active_total": sol.min_active_total,
+            "time_limited": sol.time_limited,
         }
 
     rows = []
@@ -321,13 +383,13 @@ def horizon_pick_pool(
             c, sol = _solve_forced(job)
             collect(c, sol, done)
     else:
-        from concurrent.futures import ProcessPoolExecutor, as_completed
+        from concurrent.futures import as_completed
 
-        with ProcessPoolExecutor(max_workers=workers) as pool:
-            futures = [pool.submit(_solve_forced, job) for job in jobs]
-            for done, future in enumerate(as_completed(futures), start=1):
-                c, sol = future.result()
-                collect(c, sol, done)
+        pool = shared_pool(workers)
+        futures = [pool.submit(_solve_forced, job) for job in jobs]
+        for done, future in enumerate(as_completed(futures), start=1):
+            c, sol = future.result()
+            collect(c, sol, done)
 
     out = pd.DataFrame(
         rows,
@@ -335,12 +397,74 @@ def horizon_pick_pool(
             "player",
             "objective",
             "cost_vs_best",
+            "cost_first_order",
             "p_available_first",
             "p_available_next",
             "min_active_total",
+            "time_limited",
         ],
     )
+    if not out.empty:
+        # A forced re-solve can beat a time-limited base plan; the best solve seen is the
+        # reference, so the top candidate always costs nothing.
+        best = max(base.objective, float(out["objective"].max()))
+        out["cost_vs_best"] = (best - out["objective"]).clip(lower=0.0)
     return out.sort_values("objective", ascending=False).reset_index(drop=True)
+
+
+def _solve_blocked(
+    args: tuple[HorizonProblem, str, float, float],
+) -> tuple[str, HorizonSolution | None]:
+    problem, gone, time_limit, gap = args
+    try:
+        return gone, solve_horizon(
+            replace(problem, blocks=problem.blocks | {gone}), time_limit=time_limit, gap=gap
+        )
+    except (RuntimeError, ValueError):
+        return gone, None
+
+
+def scenarios_if_gone(
+    problem: HorizonProblem,
+    players: Sequence[str],
+    time_limit: float = 5.0,
+    gap: float = 0.0,
+    workers: int | None = None,
+    progress: Callable[[dict], None] | None = None,
+) -> list[dict]:
+    """For each player, the plan if that player is taken before my next pick: who to take
+    instead and what the plan is then worth. Solved in the shared process pool."""
+    jobs = [(problem, p, time_limit, gap) for p in players if p in problem.z.index]
+    results: list[dict] = []
+
+    def collect(gone: str, sol: HorizonSolution | None, done: int) -> None:
+        if sol is not None:
+            results.append(
+                {
+                    "gone": gone,
+                    "pick": sol.first_pick,
+                    "objective": sol.objective,
+                    "wins": sol.wins,
+                    "time_limited": sol.time_limited,
+                }
+            )
+        if progress is not None:
+            progress({"stage": "scenarios", "done": done, "total": len(jobs), "gone": gone})
+
+    if workers == 1 or len(jobs) <= 1:
+        for done, job in enumerate(jobs, start=1):
+            gone, sol = _solve_blocked(job)
+            collect(gone, sol, done)
+    else:
+        from concurrent.futures import as_completed
+
+        pool = shared_pool(workers)
+        futures = {pool.submit(_solve_blocked, job): job[1] for job in jobs}
+        for done, future in enumerate(as_completed(futures), start=1):
+            gone, sol = future.result()
+            collect(gone, sol, done)
+    order = {p: i for i, p in enumerate(players)}
+    return sorted(results, key=lambda r: order.get(r["gone"], len(order)))
 
 
 def punt_scan_horizon(

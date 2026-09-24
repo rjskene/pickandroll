@@ -3,9 +3,10 @@
 Fantasy basketball draft optimizer for 9-category head-to-head leagues.
 
 The name is the algorithm. A **pick** is a mixed-integer program: choose the roster that maximizes
-value under position, punt and league constraints. The **roll** is the rolling horizon: after every
-pick in the live draft the board changes, so the plan is re-solved from the new state and only the
-next pick is acted on.
+the expected number of categories won under position and league constraints. The **roll** is the
+rolling horizon: after every pick in the live draft the board changes, so the plan is re-solved
+from the new state, in the background and ahead of the clock, and only the next pick is acted on.
+A punt is an outcome the board forces, never a goal the user picks.
 
 ## Pieces
 
@@ -19,9 +20,12 @@ The core never imports from sources or api. Sources never import from api.
 
 ## Status
 
-Working end to end on local data: projections load, the board and recommendations render, picks
-(manual or from a Yahoo live draft) re-solve the roster in well under a second. See
-`docs/DESIGN.md` for the model formulations and measured solve times.
+Working end to end on local data: projections load, a session can simulate its league before the
+draft for survival odds and the category curve, the background solver plans and prices every
+alternative after each pick (about 20 s per round on the curve objective, under a second on the
+sum), and the dashboard shows per-category win odds, marginal value and the league tally. See
+`docs/DESIGN.md` for the model formulations, `docs/analysis/` for the simulation studies behind
+the objective, and `docs/ROADMAP.md` for what is built and what is next.
 
 ## Setup
 

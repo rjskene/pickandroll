@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { api, type SessionSummary } from "../api";
+import { api, type Objective, type SessionSummary } from "../api";
 
 interface Props {
   onCreated: (session: SessionSummary) => void;
@@ -11,6 +11,8 @@ export default function SessionSetup({ onCreated, onSelect }: Props) {
   const queryClient = useQueryClient();
   const projections = useQuery({ queryKey: ["projections"], queryFn: api.projections });
   const sessions = useQuery({ queryKey: ["sessions"], queryFn: api.sessions });
+  const survivalFiles = useQuery({ queryKey: ["files", "survival"], queryFn: () => api.files("survival") });
+  const curveFiles = useQuery({ queryKey: ["files", "curve"], queryFn: () => api.files("curve") });
   const [file, setFile] = useState("");
   const [positionsFile, setPositionsFile] = useState("");
   const [adpFile, setAdpFile] = useState("");
@@ -18,6 +20,14 @@ export default function SessionSetup({ onCreated, onSelect }: Props) {
   const [position, setPosition] = useState(1);
   const [myTeam, setMyTeam] = useState("me");
   const [bench, setBench] = useState(3);
+  const [objective, setObjective] = useState<Objective>("win");
+  const [sigmaScale, setSigmaScale] = useState(1);
+  const [curveFile, setCurveFile] = useState("");
+  const [survival, setSurvival] = useState<"none" | "simulate" | "file">("none");
+  const [survivalSims, setSurvivalSims] = useState(300);
+  const [survivalFile, setSurvivalFile] = useState("");
+  const [solveAhead, setSolveAhead] = useState(true);
+  const [timeLimit, setTimeLimit] = useState(20);
 
   const create = useMutation({
     mutationFn: () =>
@@ -29,6 +39,14 @@ export default function SessionSetup({ onCreated, onSelect }: Props) {
         bench,
         positions_file: positionsFile || null,
         adp_file: adpFile || null,
+        objective,
+        sigma_scale: sigmaScale,
+        curve_file: curveFile || null,
+        survival,
+        survival_sims: survivalSims,
+        survival_file: survival === "file" ? survivalFile || survivalFiles.data?.[0]?.file || null : null,
+        solve_ahead: solveAhead,
+        time_limit: timeLimit,
       }),
     onSuccess: (session) => {
       queryClient.invalidateQueries({ queryKey: ["sessions"] });
@@ -36,6 +54,9 @@ export default function SessionSetup({ onCreated, onSelect }: Props) {
     },
   });
   const files = projections.data ?? [];
+  const perDraft = 1.2;
+  const workers = 8;
+  const simMinutes = (survivalSims * perDraft) / workers / 60;
 
   return (
     <section className="panel setup">
@@ -90,6 +111,78 @@ export default function SessionSetup({ onCreated, onSelect }: Props) {
           <input value={myTeam} onChange={(e) => setMyTeam(e.target.value)} />
         </label>
       </div>
+
+      <span className="k">Strategy</span>
+      <div className="row">
+        <label style={{ flexGrow: 1 }}>
+          <span className="k">Objective</span>
+          <select value={objective} onChange={(e) => setObjective(e.target.value as Objective)}>
+            <option value="win">expected categories won (recommended)</option>
+            <option value="sum">sum of z (the old planner, no punts)</option>
+          </select>
+        </label>
+        {objective === "win" && (
+          <label title="multiplies the curve's spread; 1 = the simulated league, 2 = flatter, hedging for noisy weeks">
+            <span className="k">Sigma ×</span>
+            <input type="number" min={0.25} max={5} step={0.25} value={sigmaScale} onChange={(e) => setSigmaScale(+e.target.value)} />
+          </label>
+        )}
+      </div>
+      {objective === "win" && (
+        <label>
+          <span className="k">League curve <span className="muted">(μ and σ per category)</span></span>
+          <select value={curveFile} onChange={(e) => setCurveFile(e.target.value)}>
+            <option value="">simulated league (3000 drafts, BBM 2026-09-21){survival === "simulate" ? ", refitted from the simulation below" : ""}</option>
+            {(curveFiles.data ?? []).map((f) => (
+              <option key={f.file} value={f.file}>
+                {f.file}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
+      <label>
+        <span className="k">Availability odds</span>
+        <select value={survival} onChange={(e) => setSurvival(e.target.value as "none" | "simulate" | "file")}>
+          <option value="none">ADP formula (instant)</option>
+          <option value="simulate">simulate this league before the draft (recommended)</option>
+          <option value="file" disabled={!survivalFiles.data?.length}>saved survival table in data/</option>
+        </select>
+      </label>
+      {survival === "simulate" && (
+        <div className="row">
+          <label>
+            <span className="k">Drafts</span>
+            <input type="number" min={10} max={5000} step={50} value={survivalSims} onChange={(e) => setSurvivalSims(+e.target.value)} />
+          </label>
+          <span className="muted" style={{ alignSelf: "end", paddingBottom: 6 }}>
+            about {simMinutes < 1 ? `${Math.max(10, Math.round(simMinutes * 60))} s` : `${simMinutes.toFixed(0)} min`} on {workers} cores; the draft screen opens at once and the table lands in the background.
+            {objective === "win" ? " The curve's μ and σ are refitted from the same run." : ""}
+          </span>
+        </div>
+      )}
+      {survival === "file" && (
+        <label>
+          <span className="k">Survival table</span>
+          <select value={survivalFile || survivalFiles.data?.[0]?.file || ""} onChange={(e) => setSurvivalFile(e.target.value)}>
+            {(survivalFiles.data ?? []).map((f) => (
+              <option key={f.file} value={f.file}>
+                {f.file}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
+      <div className="row">
+        <label className="inline" style={{ alignSelf: "end" }}>
+          <input type="checkbox" checked={solveAhead} onChange={(e) => setSolveAhead(e.target.checked)} /> solve ahead of the clock (re-plan after every pick)
+        </label>
+        <label title="seconds per plan solve; the incumbent is kept when the limit is hit">
+          <span className="k">Time limit (s)</span>
+          <input type="number" min={1} max={600} value={timeLimit} onChange={(e) => setTimeLimit(+e.target.value)} />
+        </label>
+      </div>
+
       <button className="primary" onClick={() => create.mutate()} disabled={create.isPending || !files.length}>
         {create.isPending ? "Loading projections…" : "Start draft"}
       </button>
@@ -105,7 +198,8 @@ export default function SessionSetup({ onCreated, onSelect }: Props) {
                   {s.id}
                 </button>{" "}
                 <span className="muted">
-                  {s.num_teams} teams, pick {s.my_position}, {s.picks_made}/{s.num_teams * s.roster_size} made
+                  {s.num_teams} teams, pick {s.my_position}, {s.picks_made}/{s.num_teams * s.roster_size} made · {s.objective === "win" ? "categories won" : "sum of z"}
+                  {s.survival.status === "building" ? " · simulating league" : s.availability_source === "survival" ? " · simulated odds" : ""}
                 </span>
               </li>
             ))}
