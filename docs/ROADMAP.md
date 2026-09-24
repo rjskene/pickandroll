@@ -84,9 +84,13 @@ the planner's pick differs from the consensus 74% of the time), rounds two to th
 each worth 0.06 to 0.43 matchups with the late rounds highest, and the sum-of-z planner has
 no matchup leverage in any round. Consequences:
 
-- **Compute goes where alpha is.** Pick one has no alpha under the curve, so the slowest
-  solve of the draft (15 s, usually truncated) can be replaced by a consensus top pick; the
-  budget goes to rounds two onward: longer time limit, tighter gap, priced alternatives. This is also the
+- **Compute runs ahead of the clock, not against it.** The board before the draft is known,
+  so the first plan and the prices of every plausible first-round alternative are solved
+  minutes ahead with no time limit. During the draft each opponent pick only removes players:
+  the session re-solves in the background after every pick, keeps pricing the surviving
+  alternatives, and solves "if he is gone" scenarios for the players likely to go right before
+  my turn, so the answer is ready when the pick arrives. Time limits stay only as a safety net.
+  Pick one has no alpha anyway, so whatever it names is fine. This is also the
   answer to pick-time worries: the curve solve takes 8 to 15 s at picks one to five and under
   3 s from pick eight, and the plan re-solves after every opponent pick, so by my turn the
   recommendation is at most one pick stale.
