@@ -8,6 +8,7 @@ import KeySheet from "./components/KeySheet";
 import Rail from "./components/Rail";
 import SessionSetup from "./components/SessionSetup";
 import { Close } from "./components/icons";
+import { adpIsStandIn, adpLabel } from "./format";
 
 function useTicker(resetKey: number): number {
   const [seconds, setSeconds] = useState(0);
@@ -122,7 +123,17 @@ function DraftScreen({ yahoo, onSwitch }: { yahoo: YahooStatus | undefined; onSw
           )}
         </span>
         <span>Objective: {s.objective === "win" ? "categories won" : "sum of z"}</span>
-        <span>Odds: {s.availability_source === "survival" ? `simulated (${s.survival.sims} drafts)` : `ADP ${s.adp_source}`}</span>
+        <span>Survival: {s.availability_source === "survival" ? `simulated (${s.survival.sims} drafts)` : "ADP formula"}</span>
+        <span
+          className={adpIsStandIn(s.adp_source) ? "bad" : ""}
+          title={
+            adpIsStandIn(s.adp_source)
+              ? "No ADP file loaded: the board's ADP is a value rank, which places specialists far later than real drafts do. Save one as data/adp.csv (player,adp)."
+              : "average draft position source"
+          }
+        >
+          ADP: {adpLabel(s.adp_source)}
+        </span>
         <span>Positions: {s.unknown_positions === 0 ? "all known" : `${s.unknown_positions} unknown`}</span>
         <SolverNote />
         <span className="grow" />

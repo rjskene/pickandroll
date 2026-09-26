@@ -1,6 +1,6 @@
 import { useRef, type CSSProperties, type ReactElement } from "react";
-import { CARDS, cardIndex, useDraft, type CardId, type Half } from "../draft";
-import { Chevron, Grip, Swap } from "./icons";
+import { CARDS, DRAWER_WIDTH, cardIndex, useDraft, type CardId, type Half } from "../draft";
+import { Chevron, Grip, GripV, Swap } from "./icons";
 import AltsCard from "./cards/AltsCard";
 import CategoriesCard from "./cards/CategoriesCard";
 import LogCard from "./cards/LogCard";
@@ -51,7 +51,7 @@ export default function Drawer() {
   const d = useDraft();
   const ref = useRef<HTMLElement | null>(null);
   if (!d.drawerOpen) return null;
-  const { top, bottom, split } = d.drawer;
+  const { top, bottom, split, width } = d.drawer;
 
   const startDrag = (e: React.PointerEvent) => {
     const el = ref.current;
@@ -67,15 +67,45 @@ export default function Drawer() {
     e.preventDefault();
   };
 
+  const startWidthDrag = (e: React.PointerEvent) => {
+    const startX = e.clientX;
+    const startWidth = width;
+    const move = (ev: PointerEvent) => d.setWidth(startWidth + (startX - ev.clientX));
+    const stop = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", stop);
+      document.body.style.userSelect = "";
+      document.body.style.cursor = "";
+    };
+    // No text selection or cursor flicker while the pointer crosses the board.
+    document.body.style.userSelect = "none";
+    document.body.style.cursor = "col-resize";
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", stop);
+    e.preventDefault();
+  };
+
   return (
-    <aside className="drawer" ref={ref}>
-      {top && <CardFrame id={top} half="top" style={{ flex: bottom ? `${split} 1 0%` : "1 1 0%" }} />}
-      {top && bottom && (
-        <div className="divider" role="separator" aria-orientation="horizontal" title="Drag to resize · x swaps the halves" onPointerDown={startDrag}>
-          <Grip />
-        </div>
-      )}
-      {bottom && <CardFrame id={bottom} half="bottom" style={{ flex: top ? `${1 - split} 1 0%` : "1 1 0%" }} />}
-    </aside>
+    <>
+      <div
+        className="vdivider"
+        role="separator"
+        aria-orientation="vertical"
+        title="Drag to resize the drawer · double-click resets it"
+        onPointerDown={startWidthDrag}
+        onDoubleClick={() => d.setWidth(DRAWER_WIDTH)}
+      >
+        <GripV />
+      </div>
+      <aside className="drawer" ref={ref} style={{ width }}>
+        {top && <CardFrame id={top} half="top" style={{ flex: bottom ? `${split} 1 0%` : "1 1 0%" }} />}
+        {top && bottom && (
+          <div className="divider" role="separator" aria-orientation="horizontal" title="Drag to resize · x swaps the halves" onPointerDown={startDrag}>
+            <Grip />
+          </div>
+        )}
+        {bottom && <CardFrame id={bottom} half="bottom" style={{ flex: top ? `${1 - split} 1 0%` : "1 1 0%" }} />}
+      </aside>
+    </>
   );
 }

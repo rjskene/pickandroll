@@ -3,6 +3,8 @@ import { useQuery } from "@tanstack/react-query";
 import { api, CAT_LABEL, type Cat, type CategoryRow } from "../../api";
 import { useDraft } from "../../draft";
 import { fmtSlope, labelClass, pct } from "../../format";
+import CatStrip from "../CatStrip";
+import Skeleton from "../Skeleton";
 
 function heat(z: number): string | undefined {
   if (Math.abs(z) < 1) return undefined;
@@ -20,8 +22,6 @@ export default function CategoriesCard() {
   const [view, setView] = useState<"totals" | "projected">("projected");
   const rows: CategoryRow[] | undefined = result?.categories;
   const opponents = s.num_teams - 1;
-  const conceded = rows?.filter((r) => r.label === "conceded").map((r) => CAT_LABEL[r.cat]) ?? [];
-  const secured = rows?.filter((r) => r.label === "secured").map((r) => CAT_LABEL[r.cat]) ?? [];
   return (
     <>
       <div className="block">
@@ -30,11 +30,12 @@ export default function CategoriesCard() {
             {result ? `Expected ${result.wins.toFixed(2)} of ${s.cats.length} categories · ${result.league.matchups_won} of ${opponents} matchups` : "Categories"}
           </span>
           <span className="muted" style={{ fontSize: 11 }}>
-            {result ? `if the plan holds · ${result.availability_source === "survival" ? "simulated odds" : "ADP odds"}` : d.solving ? "solving…" : "appears after the first solve"}
+            {result ? `if the plan holds · survival odds ${result.availability_source === "survival" ? "simulated" : "from the ADP formula"}` : d.solving ? "solving…" : "appears after the first solve"}
           </span>
         </div>
-        {d.stale && <p className="accent" style={{ fontSize: 12 }}>Board moved since this solve · re-planning…</p>}
-        {rows && (
+        {rows && d.busy && <Skeleton rows={9} note={`Re-planning for pick ${s.next_overall}…`} />}
+        {rows && !d.busy && <CatStrip rows={rows} />}
+        {rows && !d.busy && (
           <table className="cats">
             <thead>
               <tr>
@@ -68,12 +69,6 @@ export default function CategoriesCard() {
               ))}
             </tbody>
           </table>
-        )}
-        {rows && (
-          <span className="muted" style={{ fontSize: 11 }}>
-            {conceded.length ? `Conceding ${conceded.join(", ")} as the board stands` : "Nothing conceded"}
-            {secured.length ? ` · secured ${secured.join(", ")}` : ""} · a punt is an outcome here, never a goal.
-          </span>
         )}
       </div>
       <div className="block">

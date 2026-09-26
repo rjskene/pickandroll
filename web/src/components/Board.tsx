@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api, CAT_LABEL, CATS, teamLabel, type BoardPlayer, type SimStrategy } from "../api";
 import { useDraft } from "../draft";
-import { fmtCost, oddsClass } from "../format";
+import { adpIsStandIn, adpLabel, fmtCost, oddsClass } from "../format";
 
 function heat(z: number): string | undefined {
   if (Math.abs(z) < 0.5) return undefined;
@@ -18,7 +18,7 @@ const NOISE = [
 ];
 const STRATEGIES: { value: SimStrategy; label: string; title: string }[] = [
   { value: "z", label: "by z-score", title: "Each team takes one of the best players by total z; randomness favours the ones closest to the top" },
-  { value: "adp", label: "by ADP", title: "Each team takes the earliest noisy ADP slot, the spread the availability model assumes" },
+  { value: "adp", label: "by ADP", title: "Each team takes the earliest noisy ADP slot, the spread the survival formula assumes" },
   { value: "lp", label: "by LP", title: "Each team solves its own roster problem (with a punt of its own) and takes the best new player from it" },
 ];
 
@@ -28,7 +28,8 @@ export default function Board() {
   const board = useQuery({ queryKey: ["board", s.id], queryFn: () => api.board(s.id) });
   const [search, setSearch] = useState("");
   const wide = !d.drawerOpen;
-  const recommended = d.result?.candidates[0]?.player ?? null;
+  // No highlight while a solve runs or the answer is stale: the name may just have been drafted.
+  const recommended = d.busy ? null : (d.result?.candidates[0]?.player ?? null);
 
   const rows = useMemo(() => {
     const needle = search.trim().toLowerCase();
@@ -150,15 +151,19 @@ export default function Board() {
               <th>Player</th>
               <th>Pos</th>
               <th className="num">GP</th>
-              {wide && <th className="num">ADP</th>}
+              {wide && (
+                <th className="num" title={`average draft position: ${adpLabel(s.adp_source)}`}>
+                  ADP{adpIsStandIn(s.adp_source) ? "*" : ""}
+                </th>
+              )}
               <th className="num">Z</th>
               {CATS.map((c) => (
                 <th key={c} className="num">
                   {CAT_LABEL[c]}
                 </th>
               ))}
-              {wide && <th>{nextPick ? `Lasts to #${nextPick}` : "Lasts"}</th>}
-              <th className="num" title="cost of taking this player with your next pick instead of the plan's choice (first-order, on the objective's scale)">
+              {wide && <th title={nextPick ? `chance he is still on the board at your pick ${nextPick}` : "survival odds"}>{nextPick ? `Survives to #${nextPick}` : "Survives"}</th>}
+              <th className="num" title="cost of taking this player with your next pick instead of the plan's choice, on the objective's scale: exact re-solve for priced candidates, ≈ first-order estimate for the rest">
                 Cost
               </th>
               <th></th>
@@ -196,8 +201,11 @@ export default function Board() {
                       )}
                     </td>
                   )}
-                  <td className={`num ${p.cost != null && p.cost < 0.005 ? "good" : "muted"}`}>
-                    {!p.taken && priced && p.cost != null ? fmtCost(p.cost, scale, true) : ""}
+                  <td
+                    className={`num ${p.cost != null && p.cost < 0.005 ? "good" : "muted"}`}
+                    title={!p.taken && priced && p.cost != null ? (p.cost_exact ? "exact re-solve with this player taken first" : "first-order estimate from the plan's slopes, not re-solved") : ""}
+                  >
+                    {!p.taken && priced && p.cost != null ? fmtCost(p.cost, scale, !p.cost_exact) : ""}
                   </td>
                   <td>
                     {!p.taken && !s.complete && (

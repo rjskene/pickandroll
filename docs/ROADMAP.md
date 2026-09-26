@@ -28,6 +28,15 @@ product. Formulations in `docs/DESIGN.md`.
   drafted and projected totals), the punt card and badges gone, deviation cost per alternative
   and per board row, the Team card on the win scale, the setup form's strategy and availability
   options, a stale marker while a re-plan is under way.
+- **First manual test (2026-09-26).** Ties: candidates within 0.05 categories of the best are
+  shown as a group with ADP as the consensus order, since the model cannot separate them (at
+  pick 5 on an empty roster it priced Luka Doncic 0.03 behind Dyson Daniels, the scarce piece
+  of a three-category concession build). Board costs are the exact re-solve where one exists,
+  estimates marked. Cards show placeholders while a re-plan runs, so a drafted name never
+  sits in the recommended slot. "Survival odds" everywhere, the concession strip on the Pick
+  card, the plan as one table, info popovers on the setup form, a resizable drawer, and a loud
+  warning when no ADP file is loaded (a value rank places specialists far too late, which
+  flatters concession builds). Late-season durability is issue #2.
 
 ## Checks before drafting on it
 
