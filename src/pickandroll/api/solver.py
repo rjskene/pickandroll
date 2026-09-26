@@ -32,6 +32,10 @@ if TYPE_CHECKING:
 
 Progress = Callable[[dict[str, Any]], None]
 
+#: Candidates whose exact cost is within this much of the best are a tie: the model cannot
+#: tell them apart, so the UI shows them as a group. Categories won, and z for the sum objective.
+TIE_BAND = {"wins": 0.05, "z": 0.5}
+
 #: Background solves run here rather than in the event loop's default executor, which
 #: ``asyncio.run`` waits for at shutdown: a server reload must not wait out a 20 s solve.
 _EXECUTOR = ThreadPoolExecutor(max_workers=4, thread_name_prefix="solve")
@@ -68,6 +72,20 @@ def _records(table: pd.DataFrame) -> list[dict[str, Any]]:
         for key, value in row.items():
             if isinstance(value, float) and pd.isna(value):
                 row[key] = None
+    return rows
+
+
+def _candidates(table: pd.DataFrame, scale: str, adp: pd.Series) -> list[dict[str, Any]]:
+    """Candidate rows with each player's ADP and a ``tie`` flag: true when more than one
+    candidate, this one included, sits within ``TIE_BAND`` of the best exact objective."""
+    rows = _records(table)
+    band = TIE_BAND[scale]
+    close = [r for r in rows if r.get("cost_vs_best") is not None and r["cost_vs_best"] <= band]
+    tied = {r["player"] for r in close} if len(close) > 1 else set()
+    for row in rows:
+        value = adp.get(row["player"])
+        row["adp"] = None if value is None or pd.isna(value) else round(float(value), 1)
+        row["tie"] = row["player"] in tied
     return rows
 
 
@@ -164,18 +182,26 @@ def compute_recommendation(
                 matchups=league["matchups_won"],
                 top=names.get(solution.first_pick) if solution.first_pick else None,
             )
+        scale = "wins" if problem.curve is not None and state.last_fallback is None else "z"
+        candidate_rows = _candidates(table, scale, state.effective_adp())
         session.prices = prices
+        session.exact_prices = {
+            r["player"]: float(r["cost_vs_best"])
+            for r in candidate_rows
+            if r.get("cost_vs_best") is not None
+        }
         session.prices_version = version
         payload = {
             **snapshot,
             "mode": "horizon",
             "objective": objective,
-            "scale": "wins" if problem.curve is not None and state.last_fallback is None else "z",
+            "scale": scale,
+            "tie_band": TIE_BAND[scale],
             "fallback": state.last_fallback,
             "timings": {k: round(v, 1) for k, v in state.last_timings.items()},
             "adp_source": state.adp_source,
             "availability_source": state.availability_source,
-            "candidates": _records(table),
+            "candidates": candidate_rows,
             "plan": [
                 {
                     "pick": int(r.pick),
@@ -246,18 +272,21 @@ def compute_recommendation(
             top=names.at[table.iloc[0]["player"]] if len(table) else None,
         )
     session.prices = None
+    session.exact_prices = {}
     session.prices_version = None
     report({"stage": "roster", "done": 1, "total": 1})
+    scale = "wins" if roster_curve is not None else "z"
     payload = {
         **snapshot,
         "mode": "roster",
         "objective": objective,
-        "scale": "wins" if roster_curve is not None else "z",
+        "scale": scale,
+        "tie_band": TIE_BAND[scale],
         "fallback": None,
         "timings": {"total_ms": round((time.perf_counter() - started) * 1000, 1)},
         "adp_source": state.adp_source,
         "availability_source": state.availability_source,
-        "candidates": _records(table),
+        "candidates": _candidates(table, scale, state.effective_adp()),
         "plan": [],
         "scenarios": [],
         "best_roster": {

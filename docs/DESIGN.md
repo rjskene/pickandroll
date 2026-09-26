@@ -179,8 +179,11 @@ requires a fixed punt and routes free-punt solves through the scan; the API neve
 
 `availability.adp` models `P(available at pick k) = 1 - Phi((k - adp) / sd(adp))` with `sd`
 widening for later picks, and the conditional form `S(k) / S(now)` during a draft. ADP comes from
-Yahoo's player resource when the feed is attached; otherwise a stand-in ranks players by
-Basketball Monster's rank column or by total z.
+Yahoo's player resource when the feed is attached, else from `data/adp.csv` (or any file named
+at setup; `player,adp`, a FantasyPros `Player,AVG` export or a Basketball Monster export with a
+`Rank` column all load). Without any of those a stand-in ranks players by Basketball Monster's
+rank column or by total z, and the UI says so: a value rank places specialists far later than
+real drafts do, which flatters concession builds that lean on them.
 
 `availability.survival.SurvivalTable` replaces the formula with the record of simulated drafts:
 `S[p, k]` is the share of drafts in which player `p` was still on the board when pick `k` came
@@ -235,10 +238,17 @@ server-sent events. Manual pick entry covers leagues on other platforms.
 
 API surface: `POST /sessions` (projection, positions and ADP files, league shape, `objective`,
 `sigma_scale`, `curve_file`, `survival` none/simulate/file, `solve_ahead`, `time_limit`),
-`/board` (with the first-order `cost` per player), `/picks`, `/sync`, `/autopick`,
-`POST /recommend` (synchronous), `POST /solve` (queue a background solve),
-`GET /recommendation` (the latest, with `stale`), `/teams`, `/score`, `/solver`, `/events`
-(`pick`, `undo`, `survival`, `solve` progress, `recommendation`), and the Yahoo feed routes.
+`/files?kind=survival|curve|adp` (what data/ holds), `/board` (with a `cost` per player: the
+exact re-solve where the player was a priced candidate, flagged `cost_exact`, else the
+first-order estimate), `/picks`, `/sync`, `/autopick`, `POST /recommend` (synchronous),
+`POST /solve` (queue a background solve), `GET /recommendation` (the latest, with `stale`),
+`/teams`, `/score`, `/solver`, `/events` (`pick`, `undo`, `survival`, `solve` progress,
+`recommendation`), and the Yahoo feed routes.
+
+Candidates in a recommendation carry their ADP and a `tie` flag: when more than one candidate
+sits within `tie_band` of the best exact objective (0.05 categories, or 0.5 z on the sum
+objective) the model cannot separate them, and the UI shows the group as a tie with ADP as the
+consensus order rather than presenting the first as a decree.
 
 ## Sources
 

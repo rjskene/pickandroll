@@ -76,8 +76,10 @@ export interface BoardPlayer {
   games: number;
   adp: number | null;
   p_next: number | null;
-  /** First-order cost of taking this player with my next pick instead of the plan's choice. */
+  /** Cost of taking this player with my next pick instead of the plan's choice: the exact
+   * re-solve for priced candidates, else the first-order estimate from the plan's slopes. */
   cost: number | null;
+  cost_exact: boolean;
   z: Record<Cat, number>;
   total: number;
   taken: boolean;
@@ -120,6 +122,9 @@ export interface Candidate {
   p_available_next?: number;
   min_active_total: number;
   time_limited?: boolean;
+  adp: number | null;
+  /** Within the tie band of the best exact objective, along with at least one other candidate. */
+  tie: boolean;
 }
 
 export interface PlanRow {
@@ -189,6 +194,8 @@ export interface Recommendation {
   mode: "horizon" | "roster";
   objective: Objective;
   scale: Scale;
+  /** Candidates this close to the best are a tie the model cannot separate. */
+  tie_band: number;
   fallback: string | null;
   timings: Record<string, number>;
   adp_source: string;
@@ -350,7 +357,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 export const api = {
   projections: () => request<FileEntry[]>("/projections"),
-  files: (kind: "survival" | "curve") => request<FileEntry[]>(`/files?kind=${kind}`),
+  files: (kind: "survival" | "curve" | "adp") => request<FileEntry[]>(`/files?kind=${kind}`),
   sessions: () => request<SessionSummary[]>("/sessions"),
   session: (id: string) => request<SessionSummary>(`/sessions/${id}`),
   createSession: (body: SessionCreateBody) => request<SessionSummary>("/sessions", { method: "POST", body: JSON.stringify(body) }),

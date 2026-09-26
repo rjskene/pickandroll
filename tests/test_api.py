@@ -47,6 +47,15 @@ def test_create_session_and_board(client):
     assert board["players"][0]["total"] >= board["players"][1]["total"]
 
 
+def test_adp_file_listing(tmp_path):
+    (tmp_path / "adp.csv").write_text("player,adp\nNikola Jokic,1\n")
+    (tmp_path / "notes.csv").write_text("a,b\n")
+    (tmp_path / "hashtag_ADP.xls").write_bytes(b"")
+    with TestClient(create_app(SessionStore(), data_dir=tmp_path)) as c:
+        files = [f["file"] for f in c.get("/files?kind=adp").json()]
+    assert set(files) == {"adp.csv", "hashtag_ADP.xls"}
+
+
 def test_bad_projection_file_and_position(client):
     r = client.post("/sessions", json={"projection_file": "nope.xls"})
     assert r.status_code == 400
@@ -81,6 +90,12 @@ def test_pick_flow_and_recommendation(client):
     top = rec["candidates"][0]
     assert {"cost_vs_best", "cost_first_order", "p_available_next", "time_limited"} <= set(top)
     assert top["cost_vs_best"] == 0.0
+    # Ties: flagged only when more than one candidate is within the band of the best.
+    assert rec["tie_band"] == 0.05
+    tied = [c for c in rec["candidates"] if c["tie"]]
+    close = [c for c in rec["candidates"] if c["cost_vs_best"] <= rec["tie_band"]]
+    assert tied == (close if len(close) > 1 else [])
+    assert all(isinstance(c["adp"], float) for c in rec["candidates"])
     planned = next(c for c in rec["candidates"] if c["player"] == rec["plan"][0]["player"])
     assert planned["cost_first_order"] == 0.0
     assert board[0]["player_id"] not in [c["player"] for c in rec["candidates"]]
@@ -293,6 +308,12 @@ def test_recommend_reports_timings_and_prices_without_bumping_version(client):
     costs = {p["player_id"]: p["cost"] for p in board["players"]}
     assert costs[rec["plan"][0]["player"]] == 0.0
     assert all(c is None or c >= 0.0 for c in costs.values())
+    # Priced candidates carry their exact re-solve cost; the rest the first-order estimate.
+    exact = {p["player_id"]: p["cost_exact"] for p in board["players"]}
+    for c in rec["candidates"]:
+        assert exact[c["player"]] is True and costs[c["player"]] == round(c["cost_vs_best"], 3)
+    estimated = [p for p in board["players"] if not p["taken"] and not p["cost_exact"]]
+    assert estimated and all(p["cost"] is not None for p in estimated)
     # A solve on the sum objective prices on the z scale instead.
     plain = client.post(
         f"/sessions/{sid}/recommend", json={"n": 3, "scenarios": 0, "objective": "sum"}
