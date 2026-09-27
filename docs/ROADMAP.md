@@ -9,7 +9,7 @@ product. Formulations in `docs/DESIGN.md`.
   the old planner without a punt. Nothing in the API or UI chooses or pins a punt; the solver's
   punt arguments remain for the study harness only. The curve's mean and spread come from the
   simulated league of the study (`CategoryCurve.simulated`), a JSON file (`curve_file`) or the
-  session's own league simulation, with `sigma_scale` as the weekly-noise hedge.
+  session's own league simulation, with `sigma_scale` to flatten or steepen it.
 - **Survival table at setup.** `survival: simulate` runs an all-auto league simulation in the
   background (`draft/league_sim.py`, 300 drafts by default, progress over the event stream) and
   refits the curve from the same run; `survival: file` loads a saved table; the ADP formula is
@@ -37,6 +37,13 @@ product. Formulations in `docs/DESIGN.md`.
   card, the plan as one table, info popovers on the setup form, a resizable drawer, and a loud
   warning when no ADP file is loaded (a value rank places specialists far too late, which
   flatters concession builds). Late-season durability is issue #2.
+- **Second manual test (2026-09-27).** A pick announcement (pick number, team, player, NBA
+  team and positions) slides in under the top bar for every pick from any source and queues
+  when several land at once; my picks in accent. The board sorts by any column, keeps the
+  Player and Draft columns in view while the middle scrolls, and lost its row-number column.
+  "Spread ×" is described as flattening or steepening the curve, not as a hedge for noisy
+  weeks: there is one draft, then a season of weekly matchups, and the in-season module is
+  issue #4. Price reliability (time-limited forced solves inflating candidate costs) is issue #6.
 
 ## Checks before drafting on it
 
