@@ -169,8 +169,9 @@ class CategoryCurve:
         }
 
     def scaled(self, sigma_scale: float) -> CategoryCurve:
-        """The same means with every sigma multiplied by ``sigma_scale`` (a flatter curve for
-        a scale above one: real weeks are noisier than season totals)."""
+        """The same means with every sigma multiplied by ``sigma_scale``: above one the curve is
+        flatter, so a lead in a category is trusted less and the objective moves toward the sum
+        of z; below one it is steeper and leads count as nearly won."""
         if sigma_scale <= 0:
             raise ValueError("sigma_scale must be positive")
         if sigma_scale == 1.0:

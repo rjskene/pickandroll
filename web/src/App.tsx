@@ -1,7 +1,8 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { api, pickOwner, teamLabel, type SolveEvent, type SurvivalEvent } from "./api";
+import { api, pickOwner, teamLabel, type PickRow, type SolveEvent, type SurvivalEvent } from "./api";
 import { DraftProvider, Hotkeys, useDraft } from "./draft";
+import Announcer, { type Announcement } from "./components/Announcer";
 import Board from "./components/Board";
 import Drawer from "./components/Drawer";
 import KeySheet from "./components/KeySheet";
@@ -62,7 +63,14 @@ function SolverNote() {
   return <span>Solver: waiting</span>;
 }
 
-function DraftScreen({ yahoo, onSwitch }: { yahoo: YahooStatus | undefined; onSwitch: () => void }) {
+interface ScreenProps {
+  yahoo: YahooStatus | undefined;
+  onSwitch: () => void;
+  announce: Announcement[];
+  onShown: (id: number) => void;
+}
+
+function DraftScreen({ yahoo, onSwitch, announce, onShown }: ScreenProps) {
   const d = useDraft();
   const s = d.session;
   const sinceLastPick = useTicker(s.picks_made);
@@ -143,6 +151,7 @@ function DraftScreen({ yahoo, onSwitch }: { yahoo: YahooStatus | undefined; onSw
         <span>Session {s.id}</span>
       </footer>
       <Toast />
+      <Announcer queue={announce} onShown={onShown} />
       <KeySheet />
       <Hotkeys />
     </main>
@@ -154,6 +163,10 @@ export default function App() {
   const [sessionId, setSessionId] = useState<string | null>(() => new URLSearchParams(location.search).get("session"));
   const [solveEvents, setSolveEvents] = useState<SolveEvent[]>([]);
   const [survival, setSurvival] = useState<SurvivalEvent | null>(null);
+  // Picks waiting to be announced, oldest first; the Announcer shows them one at a time.
+  const [announce, setAnnounce] = useState<Announcement[]>([]);
+  const announceSeq = useRef(0);
+  const onShown = useCallback((id: number) => setAnnounce((q) => q.filter((a) => a.id !== id)), []);
   const session = useQuery({
     queryKey: ["session", sessionId],
     queryFn: () => api.session(sessionId!),
@@ -179,6 +192,7 @@ export default function App() {
     if (!sessionId) return;
     setSolveEvents([]);
     setSurvival(null);
+    setAnnounce([]);
     const source = new EventSource(api.eventsUrl(sessionId));
     const refresh = () => {
       queryClient.invalidateQueries({ queryKey: ["session", sessionId] });
@@ -203,7 +217,11 @@ export default function App() {
       if (event.status !== "building") refresh();
     });
     source.addEventListener("hello", refresh);
-    source.addEventListener("pick", refresh);
+    source.addEventListener("pick", (e) => {
+      refresh();
+      const { pick } = JSON.parse((e as MessageEvent).data) as { pick: PickRow };
+      setAnnounce((q) => [...q, { id: ++announceSeq.current, pick }]);
+    });
     source.addEventListener("undo", refresh);
     return () => source.close();
   }, [sessionId, queryClient]);
@@ -223,7 +241,7 @@ export default function App() {
   }
   return (
     <DraftProvider session={session.data} solveEvents={solveEvents} survival={survival} live={!!yahoo.data?.attached}>
-      <DraftScreen yahoo={yahoo.data} onSwitch={() => setSessionId(null)} />
+      <DraftScreen yahoo={yahoo.data} onSwitch={() => setSessionId(null)} announce={announce} onShown={onShown} />
     </DraftProvider>
   );
 }

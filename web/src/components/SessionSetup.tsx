@@ -143,7 +143,7 @@ export default function SessionSetup({ onCreated, onSelect }: Props) {
               Spread ×
               <Info title="spread multiplier" align="right">
                 <b>Multiplies each category's spread (σ) in the win curve.</b>
-                <span>1 = the league as simulated, no adjustment. Above 1 flattens the curve: win odds move less per z, a hedge for noisy weeks. Below 1 steepens it.</span>
+                <span>1 = the league as simulated, no adjustment. Above 1 flattens the curve: a lead is trusted less and the plan moves toward plain sum of z. Below 1 steepens it: leads count as nearly won.</span>
                 <span>Sane range 0.75 to 2. In the study ×2 cost 0.2 matchups of 11 and ×0.5 cost 0.65.</span>
               </Info>
             </span>

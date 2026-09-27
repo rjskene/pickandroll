@@ -229,7 +229,7 @@ class SessionCreate(BaseModel):
         default=1.0,
         gt=0.0,
         le=5.0,
-        description="multiplies the curve's spread; above one hedges for noisy weeks",
+        description="multiplies the curve's spread; above one flattens it toward sum of z, below one steepens it",
     )
     curve_file: str | None = Field(
         default=None, description="optional JSON inside data/ with per-category mu and sigma"

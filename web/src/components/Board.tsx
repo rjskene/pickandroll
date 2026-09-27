@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { api, CAT_LABEL, CATS, teamLabel, type BoardPlayer, type SimStrategy } from "../api";
+import { api, CAT_LABEL, CATS, teamLabel, type BoardPlayer, type Cat, type SimStrategy } from "../api";
 import { useDraft } from "../draft";
 import { adpIsStandIn, adpLabel, fmtCost, oddsClass } from "../format";
 
@@ -22,6 +22,68 @@ const STRATEGIES: { value: SimStrategy; label: string; title: string }[] = [
   { value: "lp", label: "by LP", title: "Each team solves its own roster problem (with a punt of its own) and takes the best new player from it" },
 ];
 
+// ---------------------------------------------------------------- sorting
+/** Any column but the Draft button. Categories sort by their z. */
+type SortKey = "name" | "positions" | "games" | "adp" | "total" | "p_next" | "cost" | Cat;
+type Dir = "asc" | "desc";
+interface Sort {
+  key: SortKey;
+  dir: Dir;
+}
+/** The server's order: best total z first. */
+const DEFAULT_SORT: Sort = { key: "total", dir: "desc" };
+/** A first click sorts best first: low is best for ADP and cost, names read A to Z. */
+const FIRST_DIR: Partial<Record<SortKey, Dir>> = { name: "asc", positions: "asc", adp: "asc", cost: "asc" };
+const sortKey = (sessionId: string) => `pickandroll.sort.${sessionId}`;
+
+function loadSort(sessionId: string): Sort {
+  try {
+    const raw = localStorage.getItem(sortKey(sessionId));
+    if (raw) {
+      const s = JSON.parse(raw) as Partial<Sort>;
+      if (typeof s.key === "string" && (s.dir === "asc" || s.dir === "desc")) return { key: s.key as SortKey, dir: s.dir };
+    }
+  } catch {
+    /* blocked storage: default order */
+  }
+  return DEFAULT_SORT;
+}
+
+function sortValue(p: BoardPlayer, key: SortKey): number | string | null {
+  switch (key) {
+    case "name":
+      return p.name;
+    case "positions":
+      return p.positions || null;
+    case "games":
+      return p.games;
+    case "adp":
+      return p.adp;
+    case "total":
+      return p.total;
+    case "p_next":
+      return p.taken ? null : p.p_next;
+    case "cost":
+      return p.taken ? null : p.cost;
+    default:
+      return p.z[key];
+  }
+}
+
+/** Rows in sort order. Missing values go last either way; equal values keep the server's
+ * order, so drafted rows stay where their numbers put them. */
+function sortRows(rows: BoardPlayer[], sort: Sort): BoardPlayer[] {
+  const sign = sort.dir === "asc" ? 1 : -1;
+  return rows
+    .map((p, i) => ({ p, i, v: sortValue(p, sort.key) }))
+    .sort((a, b) => {
+      if (a.v == null || b.v == null) return a.v == null && b.v == null ? a.i - b.i : a.v == null ? 1 : -1;
+      const c = typeof a.v === "string" || typeof b.v === "string" ? String(a.v).localeCompare(String(b.v)) : a.v - b.v;
+      return c !== 0 ? c * sign : a.i - b.i;
+    })
+    .map((x) => x.p);
+}
+
 export default function Board() {
   const d = useDraft();
   const s = d.session;
@@ -31,12 +93,24 @@ export default function Board() {
   // No highlight while a solve runs or the answer is stale: the name may just have been drafted.
   const recommended = d.busy ? null : (d.result?.candidates[0]?.player ?? null);
 
+  const [sort, setSort] = useState<Sort>(() => loadSort(s.id));
+  useEffect(() => {
+    try {
+      localStorage.setItem(sortKey(s.id), JSON.stringify(sort));
+    } catch {
+      /* storage unavailable */
+    }
+  }, [sort, s.id]);
+  const sortBy = (key: SortKey) =>
+    setSort((cur) => (cur.key === key ? { key, dir: cur.dir === "asc" ? "desc" : "asc" } : { key, dir: FIRST_DIR[key] ?? "desc" }));
+
   const rows = useMemo(() => {
     const needle = search.trim().toLowerCase();
-    return (board.data?.players ?? []).filter(
+    const shown = (board.data?.players ?? []).filter(
       (p) => (!d.hideTaken || !p.taken) && (!needle || p.name.toLowerCase().includes(needle)),
     );
-  }, [board.data, search, d.hideTaken]);
+    return sortRows(shown, sort);
+  }, [board.data, search, d.hideTaken, sort]);
   useEffect(() => {
     d.setVisibleRows(rows.filter((p) => !p.taken).map((p) => p.player_id));
   }, [rows, d.setVisibleRows]);
@@ -54,6 +128,23 @@ export default function Board() {
   const scale = board.data?.scale ?? undefined;
   const busy = d.drafting || d.simulating;
   const draftRow = (p: BoardPlayer) => d.draftPlayer(p.player_id);
+
+  /** A header cell that sorts its column: a click toggles the direction, an arrow marks the sort. */
+  const th = (key: SortKey, label: string, opts: { className?: string; title?: string } = {}) => {
+    const on = sort.key === key;
+    return (
+      <th
+        key={key}
+        className={[opts.className, "sortable", on ? "sorted" : ""].filter(Boolean).join(" ")}
+        title={opts.title ? `${opts.title} · click to sort` : "click to sort"}
+        aria-sort={on ? (sort.dir === "asc" ? "ascending" : "descending") : "none"}
+        onClick={() => sortBy(key)}
+      >
+        {label}
+        {on && <span className="arrow">{sort.dir === "asc" ? "▲" : "▼"}</span>}
+      </th>
+    );
+  };
 
   return (
     <section className="panel board">
@@ -147,34 +238,28 @@ export default function Board() {
         <table>
           <thead>
             <tr>
-              <th>#</th>
-              <th>Player</th>
-              <th>Pos</th>
-              <th className="num">GP</th>
-              {wide && (
-                <th className="num" title={`average draft position: ${adpLabel(s.adp_source)}`}>
-                  ADP{adpIsStandIn(s.adp_source) ? "*" : ""}
-                </th>
-              )}
-              <th className="num">Z</th>
-              {CATS.map((c) => (
-                <th key={c} className="num">
-                  {CAT_LABEL[c]}
-                </th>
-              ))}
-              {wide && <th title={nextPick ? `chance he is still on the board at your pick ${nextPick}` : "survival odds"}>{nextPick ? `Survives to #${nextPick}` : "Survives"}</th>}
-              <th className="num" title="cost of taking this player with your next pick instead of the plan's choice, on the objective's scale: exact re-solve for priced candidates, ≈ first-order estimate for the rest">
-                Cost
-              </th>
+              {th("name", "Player")}
+              {th("positions", "Pos")}
+              {th("games", "GP", { className: "num" })}
+              {wide && th("adp", `ADP${adpIsStandIn(s.adp_source) ? "*" : ""}`, { className: "num", title: `average draft position: ${adpLabel(s.adp_source)}` })}
+              {th("total", "Z", { className: "num" })}
+              {CATS.map((c) => th(c, CAT_LABEL[c], { className: "num" }))}
+              {wide &&
+                th("p_next", nextPick ? `Survives to #${nextPick}` : "Survives", {
+                  title: nextPick ? `chance he is still on the board at your pick ${nextPick}` : "survival odds",
+                })}
+              {th("cost", "Cost", {
+                className: "num",
+                title: "cost of taking this player with your next pick instead of the plan's choice, on the objective's scale: exact re-solve for priced candidates, ≈ first-order estimate for the rest",
+              })}
               <th></th>
             </tr>
           </thead>
           <tbody>
-            {rows.map((p, i) => {
+            {rows.map((p) => {
               const cls = [p.taken ? "taken" : "", p.player_id === recommended ? "reco" : "", p.player_id === d.highlight ? "hl" : ""].filter(Boolean).join(" ");
               return (
                 <tr key={p.player_id} className={cls} onClick={() => !p.taken && d.setHighlight(p.player_id)}>
-                  <td className="dim">{i + 1}</td>
                   <td className={p.player_id === recommended ? "strong" : ""}>
                     {p.name} <span className="dim">{p.team}</span>
                   </td>

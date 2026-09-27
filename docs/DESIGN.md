@@ -6,12 +6,17 @@ optimization models so the code can be judged against a stated plan.
 
 ## Goals
 
+The league: twelve teams, head-to-head, nine categories, one draft in late October, then weekly
+matchups all season on the drafted roster, managed through waiver moves. Nothing is redrafted.
+
 1. Recommend the next pick during a live Yahoo draft, re-solving after every pick.
 2. Value every category by the odds of winning it, so a punt is an outcome the board forces,
    never a goal the user picks (the 2026-09-23 study: the category-win objective won 10.3 of 11
    simulated matchups against 5.9 for sum-of-z with an explicit two-category punt).
 3. Use Basketball Monster projections, refreshed several times a day, as the primary input.
-4. Reuse the same roster model for waiver moves, trades and weekly matchups after the draft.
+4. Keep in-season management (weekly starts, waiver drops and pickups, the matchup view) a
+   separate module on the same projections and roster model, never a mode of the draft screen:
+   [issue #4](https://github.com/rjskene/pickandroll/issues/4).
 5. Solve ahead of the clock: the answer for the next pick is computed while the other teams
    pick, so nothing waits on a solve when my turn comes.
 
@@ -158,8 +163,9 @@ the plan stops paying for it: the punt emerges, nobody chooses it.
 * `mu` and `sigma` default to `CategoryCurve.simulated`: the fit over 36,000 teams from 3000
   simulated twelve-team drafts on Basketball Monster projections of 2026-09-21 (means −0.7 to
   +0.4 z, spreads 3.5 to 4.7 z). A session can refit them from its own league simulation, load
-  them from a JSON file, or scale every sigma (`sigma_scale`; above one is flatter, a hedge for
-  weekly noise: doubling sigma cost 0.2 matchups in the study, halving it cost 0.65).
+  them from a JSON file, or scale every sigma (`sigma_scale`; above one flattens the curve, so a
+  lead is trusted less and the objective moves toward the sum of z; below one steepens it.
+  Doubling sigma cost 0.2 matchups in the study, halving it cost 0.65).
 * The plan measures totals above replacement level, so the curve is shifted by
   `-roster_size * level_c` for planning and evaluated on raw totals for display.
 * The derivative `slope_c = phi((T_c - mu_c) / sigma_c) / sigma_c` is the marginal value of one
