@@ -1,5 +1,7 @@
 import { useDraft } from "../../draft";
 import { fmtCost, fmtObjective, oddsClass, pct, shortName } from "../../format";
+import CatStrip from "../CatStrip";
+import Skeleton from "../Skeleton";
 import Stepper from "../Stepper";
 
 export default function PickCard() {
@@ -11,30 +13,56 @@ export default function PickCard() {
   const pickAfter = s.my_picks.find((k) => nextPick !== null && k > nextPick);
   const label = s.complete ? "Draft complete" : s.on_the_clock ? "Recommended pick" : nextPick ? `Recommended for your pick ${nextPick}` : "No picks left";
   const scale = result?.scale;
-  const showResult = !!top && (!d.solving || d.stale);
+  // While a solve runs, or the answer is for an earlier board, the hero shows the solver's
+  // progress instead of a name that may just have been drafted.
+  const ready = !!result && !!top && !d.busy;
+  const ties = result && !d.busy ? result.candidates.filter((c) => c.tie) : [];
+  const tied = ties.length > 1;
+  const band = result ? (scale === "z" ? `${result.tie_band.toFixed(1)} z` : `${result.tie_band.toFixed(2)} cats`) : "";
 
   return (
     <>
       <div className="hero">
         <div className="row">
           <span className="k">{label}</span>
+          {tied && (
+            <span className="pill tie" title={`${ties.length} candidates within ${band} of the best: the model cannot separate them`}>
+              TIE
+            </span>
+          )}
           <span className="grow" />
           <button className="small" onClick={d.solve} disabled={d.solving} title="Re-solve (r)">
             {d.solving ? "Solving…" : "Re-solve"} <kbd>r</kbd>
           </button>
         </div>
-        {showResult && result && top ? (
+        {ready && result && top ? (
           <>
             <div className="name">{top.name}</div>
-            <div className="muted" style={{ fontSize: 12 }}>
-              {result.mode === "horizon" ? "rolling-horizon plan" : "single roster"} · {result.objective === "win" ? "expected categories won" : "sum of z"}
-              {result.fallback ? " · sum fallback (no incumbent in time)" : ""} · odds from {result.availability_source === "survival" ? "simulated drafts" : `ADP (${result.adp_source})`}
-            </div>
-            {d.stale && (
-              <div className="accent" style={{ fontSize: 12 }}>
-                Board moved since this solve (solved for pick {result.next_overall}, now {s.next_overall}) · re-planning…
+            {tied && (
+              <div className="tie-list">
+                <span className="muted">or</span>
+                {ties
+                  .filter((c) => c.player !== top.player)
+                  .map((c) => (
+                    <button key={c.player} className="link" onClick={() => d.draftPlayer(c.player)} title={`draft ${c.name}`} disabled={s.complete}>
+                      {c.name}{" "}
+                      <span className="dim">
+                        {fmtCost(c.cost_vs_best, scale)}
+                        {c.adp != null ? ` · ADP ${c.adp.toFixed(0)}` : ""}
+                      </span>
+                    </button>
+                  ))}
+                <span className="dim">
+                  within {band}
+                  {top.adp != null ? ` · ${shortName(top.name)} ADP ${top.adp.toFixed(0)}` : ""}
+                </span>
               </div>
             )}
+            <CatStrip rows={result.categories} />
+            <div className="muted" style={{ fontSize: 12 }}>
+              {result.mode === "horizon" ? "rolling-horizon plan" : "single roster"} · {result.objective === "win" ? "expected categories won" : "sum of z"}
+              {result.fallback ? " · sum fallback (no incumbent in time)" : ""} · survival odds from {result.availability_source === "survival" ? "simulated drafts" : "the ADP formula"}
+            </div>
             <div className="stats">
               <div className="stat" title="expected number of the nine categories won if the plan holds">
                 <span className="k">{scale === "z" ? "Plan value" : "Expected cats won"}</span>
@@ -45,14 +73,14 @@ export default function PickCard() {
                 <span className="v">{result.league.matchups_won} of {result.league.opponents.length}</span>
               </div>
               {!s.on_the_clock && nextPick && (
-                <div className="stat">
-                  <span className="k">Still there at #{nextPick}</span>
+                <div className="stat" title={`chance he is still on the board at your pick ${nextPick}`}>
+                  <span className="k">Survives to #{nextPick}</span>
                   <span className={`v ${oddsClass(top.p_available_first)}`}>{pct(top.p_available_first)}</span>
                 </div>
               )}
               {pickAfter && (
-                <div className="stat">
-                  <span className="k">Lasts to #{pickAfter}</span>
+                <div className="stat" title={`chance he is still on the board at your following pick, #${pickAfter}`}>
+                  <span className="k">Survives to #{pickAfter}</span>
                   <span className={`v ${oddsClass(top.p_available_next)}`}>{pct(top.p_available_next)}</span>
                 </div>
               )}
@@ -67,29 +95,37 @@ export default function PickCard() {
             )}
           </>
         ) : (
-          <Stepper />
+          <>
+            {result && d.busy && (
+              <span className="accent" style={{ fontSize: 12 }}>
+                Re-planning for pick {s.next_overall}…
+              </span>
+            )}
+            <Stepper />
+          </>
         )}
         {d.pickError && <p className="error">{d.pickError}</p>}
       </div>
 
-      {showResult && result && result.candidates.length > 1 && (
+      {ready && result && result.candidates.length > 1 && (
         <div className="block">
           <div className="row">
             <span className="k">Next best</span>
             <span className="muted" style={{ fontSize: 11 }}>
-              cost = {scale === "z" ? "z lost" : "categories won lost"}{pickAfter ? ` · lasts to #${pickAfter}` : ""}
+              cost = {scale === "z" ? "z lost" : "categories won lost"}{pickAfter ? ` · survives to #${pickAfter}` : ""}
             </span>
           </div>
           <table>
             <tbody>
               {result.candidates.slice(1, 4).map((c) => (
-                <tr key={c.player}>
+                <tr key={c.player} className={c.tie ? "tie" : ""}>
                   <td>
                     <button className="link" onClick={() => d.draftPlayer(c.player)} title="draft this player" disabled={s.complete}>
                       {c.name}
                     </button>
+                    {c.tie && <span className="tag tie" style={{ marginLeft: 6 }}>tie</span>}
                   </td>
-                  <td className="num" title={c.cost_first_order == null ? "" : `first-order estimate ${fmtCost(c.cost_first_order, scale, true)}`}>
+                  <td className="num" title={c.cost_first_order == null ? "exact re-solve" : `exact re-solve · first-order estimate ${fmtCost(c.cost_first_order, scale, true)}`}>
                     {fmtCost(c.cost_vs_best, scale)}
                   </td>
                   {pickAfter && (
@@ -112,7 +148,7 @@ export default function PickCard() {
         </div>
       )}
 
-      {showResult && result && result.scenarios.length > 0 && (
+      {ready && result && result.scenarios.length > 0 && (
         <div className="block">
           <div className="row">
             <span className="k">If he is gone before #{nextPick}</span>
@@ -133,6 +169,12 @@ export default function PickCard() {
               ))}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {result && d.busy && (
+        <div className="block">
+          <Skeleton rows={4} />
         </div>
       )}
     </>

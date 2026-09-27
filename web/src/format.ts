@@ -46,3 +46,18 @@ export function fmtCost(x: number | null | undefined, scale: Scale | undefined, 
 export function fmtSlope(slope: number): string {
   return `${(slope * 100).toFixed(1)}%`;
 }
+
+/** How the session's ADP was sourced, for labels. */
+export function adpLabel(source: string): string {
+  if (source.startsWith("file:")) return source.slice(5);
+  if (source.startsWith("yahoo")) return "Yahoo";
+  if (source === "bbm_adp") return "BBM ADP column";
+  if (source === "bbm_rank") return "BBM value rank, no ADP file";
+  if (source === "z_total") return "rank by z, no ADP file";
+  return source;
+}
+
+/** True when the ADP is a stand-in ranking rather than draft-position data. */
+export function adpIsStandIn(source: string): boolean {
+  return source === "bbm_rank" || source === "z_total" || source === "none";
+}

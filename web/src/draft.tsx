@@ -51,9 +51,18 @@ export interface DrawerState extends Pair {
   split: number;
   /** The last non-empty pair, restored by `]` after both halves were closed. */
   last: Pair;
+  /** Drawer width in pixels, dragged at its left edge. */
+  width: number;
 }
 const DRAWER_KEY = "pickandroll.drawer";
-const DEFAULT_DRAWER: DrawerState = { top: "pick", bottom: "cats", collapsed: false, split: 0.5, last: { top: "pick", bottom: "cats" } };
+export const DRAWER_WIDTH = 420;
+const MIN_DRAWER_WIDTH = 320;
+/** Between the minimum and six tenths of the window, so the board always keeps room. */
+export function clampWidth(px: number): number {
+  const max = Math.max(MIN_DRAWER_WIDTH, Math.round(window.innerWidth * 0.6));
+  return Math.min(max, Math.max(MIN_DRAWER_WIDTH, Math.round(px)));
+}
+const DEFAULT_DRAWER: DrawerState = { top: "pick", bottom: "cats", collapsed: false, split: 0.5, last: { top: "pick", bottom: "cats" }, width: DRAWER_WIDTH };
 const isCard = (v: unknown): v is CardId => typeof v === "string" && CARDS.some((c) => c.id === v);
 
 function loadDrawer(): DrawerState {
@@ -68,6 +77,7 @@ function loadDrawer(): DrawerState {
         bottom,
         collapsed: !!d.collapsed,
         split: typeof d.split === "number" ? Math.min(0.8, Math.max(0.2, d.split)) : 0.5,
+        width: clampWidth(typeof d.width === "number" ? d.width : DRAWER_WIDTH),
         last: d.last && (isCard(d.last.top) || isCard(d.last.bottom)) ? { top: isCard(d.last.top) ? d.last.top : null, bottom: isCard(d.last.bottom) ? d.last.bottom : null } : { top, bottom },
       };
     }
@@ -110,12 +120,15 @@ export interface DraftApi {
   collapseDrawer: () => void;
   swapHalves: () => void;
   setSplit: (ratio: number) => void;
+  setWidth: (px: number) => void;
   // recommendation
   settings: Settings;
   setSettings: (patch: Partial<Settings>) => void;
   result: Recommendation | undefined;
   /** The result was solved for an earlier board; a fresh solve is on its way. */
   stale: boolean;
+  /** A solve is running or the result is stale: cards show placeholders instead of it. */
+  busy: boolean;
   solver: SolverStatus | undefined;
   solving: boolean;
   solveError: string | null;
@@ -234,6 +247,7 @@ export function DraftProvider({ session, solveEvents, survival, live, children }
     [],
   );
   const setSplit = useCallback((ratio: number) => setDrawer((d) => ({ ...d, split: Math.min(0.8, Math.max(0.2, ratio)) })), []);
+  const setWidth = useCallback((px: number) => setDrawer((d) => ({ ...d, width: clampWidth(px) })), []);
 
   // ---------------------------------------------------------------- toast and sheet
   const [toast, setToast] = useState<Toast | null>(null);
@@ -285,6 +299,7 @@ export function DraftProvider({ session, solveEvents, survival, live, children }
     }
   }, [session.id, session.version, havePicks, settings.refreshOnPick, serverSolves, runSolve]);
   const solving = solveMutation.isPending || !!latest.data?.solver.running || (!!latest.data?.solver.pending && !result);
+  const busy = solving || stale;
 
   // ---------------------------------------------------------------- picks
   const draftMutation = useMutation({
@@ -421,10 +436,12 @@ export function DraftProvider({ session, solveEvents, survival, live, children }
     collapseDrawer,
     swapHalves,
     setSplit,
+    setWidth,
     settings,
     setSettings,
     result,
     stale,
+    busy,
     solver: latest.data?.solver,
     solving,
     solveError: solveMutation.error?.message ?? latest.data?.solver.last_error ?? null,
@@ -548,7 +565,7 @@ export function Hotkeys() {
           break;
         case "d": {
           const top = d.result?.candidates[0];
-          if (!top || d.solving) return;
+          if (!top || d.busy) return; // never draft from a stale answer
           d.draftPlayer(top.player, { via: "key" });
           break;
         }

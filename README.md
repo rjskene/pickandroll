@@ -52,6 +52,11 @@ cd web && npm run dev                                   # UI on :5173, proxies /
 .venv/bin/pytest                                        # tests
 ```
 
+Draft-day inputs in `data/` (gitignored): a Basketball Monster export, optionally
+`positions.csv`, and `adp.csv` with columns `player,adp` (a FantasyPros export with `Player`
+and `AVG` also loads). Without an ADP file the board falls back to Basketball Monster's value
+rank, which the UI flags: it places specialists far later than real drafts do.
+
 Data pulls:
 
 ```bash

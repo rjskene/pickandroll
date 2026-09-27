@@ -88,7 +88,7 @@ export default function SolverCard() {
           <span className="muted" style={{ fontSize: 11 }}>Plain sum of category z. Wins are still scored on the simulated league curve.</span>
         )}
         <span className="muted" style={{ fontSize: 11 }}>
-          Availability: {s.availability_source === "survival" ? `simulated survival table (${s.survival.sims} drafts${s.survival.source ? `, ${s.survival.source}` : ""})` : `ADP formula (${s.adp_source})`}.
+          Survival odds: {s.availability_source === "survival" ? `simulated survival table (${s.survival.sims} drafts${s.survival.source ? `, ${s.survival.source}` : ""})` : `ADP formula (${s.adp_source})`}.
         </span>
       </div>
 

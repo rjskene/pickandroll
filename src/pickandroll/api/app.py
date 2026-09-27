@@ -49,6 +49,7 @@ KEEPALIVE_SECONDS = 15.0
 MAX_STREAM_SECONDS = 120.0
 SURVIVAL_SUFFIXES = {".csv"}
 CURVE_SUFFIXES = {".json"}
+ADP_SUFFIXES = {".csv", ".xls", ".xlsx"}
 
 
 # --------------------------------------------------------------------------- session store
@@ -72,8 +73,10 @@ class Session:
     solver: BackgroundSolver | None = None
     solve_params: SolveParams = field(default_factory=SolveParams)
     recommendation: dict[str, Any] | None = None
-    #: First-order deviation cost per available player from the latest plan.
+    #: First-order deviation cost per available player from the latest plan, and the exact
+    #: re-solve cost for the candidates that were priced.
     prices: pd.Series | None = field(default=None, repr=False)
+    exact_prices: dict[str, float] = field(default_factory=dict, repr=False)
     prices_version: int | None = None
     #: Expected wins frozen before my first pick, and one entry per solve.
     benchmark: dict[str, Any] | None = None
@@ -324,11 +327,17 @@ def create_app(
         return _list_files(data_dir, PROJECTION_SUFFIXES)
 
     @app.get("/files")
-    def list_files(kind: Literal["survival", "curve"] = "survival") -> list[dict[str, Any]]:
-        """Saved survival tables (CSV with a ``.sims`` sidecar) or curve files (JSON) in data/."""
+    def list_files(
+        kind: Literal["survival", "curve", "adp"] = "survival",
+    ) -> list[dict[str, Any]]:
+        """Saved survival tables (CSV with a ``.sims`` sidecar), curve files (JSON) or ADP
+        files (a csv/xls whose name contains ``adp``) in data/."""
         if kind == "survival":
             files = _list_files(data_dir, SURVIVAL_SUFFIXES)
             return [f for f in files if (data_dir / (f["file"] + ".sims")).exists()]
+        if kind == "adp":
+            files = _list_files(data_dir, ADP_SUFFIXES)
+            return [f for f in files if "adp" in f["file"].lower()]
         return _list_files(data_dir, CURVE_SUFFIXES)
 
     @app.post("/sessions", status_code=201)
@@ -407,7 +416,9 @@ def create_app(
             future = [k for k in state.my_remaining_picks if k > state.next_overall]
             next_pick = future[0] if future else None
             p_next = state.availability()[next_pick] if next_pick is not None else None
-            prices = session.prices if session.prices_version == session.version else None
+            priced = session.prices_version == session.version
+            prices = session.prices if priced else None
+            exact = session.exact_prices if priced else {}
         rows = []
         for pid in z["total"].sort_values(ascending=False).index[:limit]:
             rows.append(
@@ -419,7 +430,16 @@ def create_app(
                     "games": float(df.at[pid, "games"]),
                     "adp": _float_or_none(adp.get(pid)),
                     "p_next": _float_or_none(p_next.get(pid)) if p_next is not None else None,
-                    "cost": _float_or_none(prices.get(pid)) if prices is not None else None,
+                    # The exact re-solve cost where a candidate was priced, else the
+                    # first-order estimate from the plan's slopes.
+                    "cost": (
+                        _float_or_none(exact[pid])
+                        if pid in exact
+                        else _float_or_none(prices.get(pid))
+                        if prices is not None
+                        else None
+                    ),
+                    "cost_exact": pid in exact,
                     "z": {
                         c.value: round(float(z.at[pid, c.value]), 3) for c in state.settings.cats
                     },
