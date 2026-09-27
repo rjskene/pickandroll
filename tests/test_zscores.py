@@ -44,11 +44,21 @@ def test_pool_size_iteration_changes_reference(pool):
     assert top.loc[median_player, "total"] < full.loc[median_player, "total"]
 
 
-def test_zero_games_players_score_zero(pool):
+def test_zero_games_players_score_below_the_pool(pool):
     df = pool.copy()
-    df.loc[df.index[0], "games"] = 0
+    out = df.index[0]
+    df.loc[out, "games"] = 0
+    for col in df.columns:
+        if col not in ("player", "team", "positions", "games"):
+            df.loc[out, col] = 0.0
     z = zscores(df)
-    assert (z.loc[df.index[0]] == 0).all()
+    active = z.drop(index=out)
+    assert z.loc[out, "total"] < active["total"].min()
+    # An empty line is the pool's worst in every counting category and neutral in the
+    # percentages, and the pool itself is unchanged by the zero-game row.
+    assert z.loc[out, "pts"] < active["pts"].min()
+    assert abs(z.loc[out, "fg_pct"]) < 1e-9
+    assert zscores(pool.drop(index=out))["total"].equals(active["total"])
 
 
 def test_rank_orders_descending(pool):

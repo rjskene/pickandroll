@@ -53,7 +53,9 @@ def zscores(
     """Z-score every player in ``df`` against a draft pool.
 
     Returns a DataFrame indexed like ``df`` with one column per category (higher is better) plus
-    ``total``. Players with zero games get zero in every category.
+    ``total``. The pool's mean and spread come from players with games; players with zero
+    games are scored on their (empty) line against that pool, so they land below every
+    active player instead of looking average.
     """
     if pool_size is not None and pool_size < 2:
         raise ValueError("pool_size must be at least 2")
@@ -84,13 +86,13 @@ def zscores(
             pct, mean, std = pool_stats[cat]
             if cat in PCT_CATS:
                 makes, attempts = PCT_COMPONENTS[cat]
-                raw = eligible[makes] - pct * eligible[attempts]
+                raw = df[makes] - pct * df[attempts]
             else:
-                raw = eligible[cat.value].astype(float)
+                raw = df[cat.value].astype(float)
             score = (raw - mean) / std
             if cat in NEGATIVE_CATS:
                 score = -score
-            z.loc[eligible.index, cat.value] = score * weights.get(cat, 1.0)
+            z[cat.value] = score * weights.get(cat, 1.0)
 
         z["total"] = z[[c.value for c in cats]].sum(axis=1)
         if pool_size is not None:
