@@ -58,6 +58,7 @@ def room_replay(args: argparse.Namespace) -> int:
             solve=solve,
             speed=args.speed or None,
             plan_wait=args.plan_wait,
+            lead=args.lead,
         )
     print(result["scorecard"]["markdown"], end="")
     print(f"\nlog: {result['attach']['fidelity_log']}", file=sys.stderr)
@@ -92,7 +93,8 @@ def main(argv: list[str] | None = None) -> int:
     rep.add_argument("--time-limit", type=float, default=5.0)
     rep.add_argument("--n", type=int, default=3)
     rep.add_argument("--speed", type=float, default=1.0, help="0 = back to back")
-    rep.add_argument("--plan-wait", type=float, default=10.0)
+    rep.add_argument("--plan-wait", type=float, default=20.0, help="seconds, at most 20")
+    rep.add_argument("--lead", type=float, default=60.0, help="seconds from attach to pick 1")
     rep.set_defaults(fn=room_replay)
 
     args = parser.parse_args(argv)

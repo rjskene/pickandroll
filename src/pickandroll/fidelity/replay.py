@@ -3,8 +3,9 @@
 A fixture is the pick order of a real room (overall, Yahoo id, Board label, team) and the ms
 time each pick's socket message reached the page that recorded it. Picks recorded before the
 hook was installed have no time; they are spaced at the median recorded gap. The replay
-attaches the room, posts each pick the moment the room would have sent it (``speed`` times
-faster, or back to back with ``speed=None``), marks pick 1 and each of my turns with a
+attaches the room, waits ``lead`` seconds (the entry lead before pick 1, when the first plan
+is solved), posts each pick the moment the room would have sent it (``speed`` times faster,
+or back to back with ``speed=None``), marks pick 1 and each of my turns with a
 ``turn_start`` and asks for the plan as the extension would, then reads back the status and
 the scorecard.
 
@@ -89,6 +90,7 @@ def replay(
     solve: dict[str, Any] | None = None,
     speed: float | None = None,
     plan_wait: float = 10.0,
+    lead: float = 0.0,
 ) -> dict[str, Any]:
     """Replay ``picks`` into the room ``draft_id``; returns the attach response, the plan
     served at each of my turns, the status and the scorecard."""
@@ -108,6 +110,8 @@ def replay(
     if players_file is not None:
         body["players_file"] = players_file
     attach = _ok(client.post("/rooms", json=body))
+    if lead > 0:
+        time.sleep(lead)
     offsets = timeline(picks)
     started = time.monotonic()
     plans: list[dict[str, Any]] = []
