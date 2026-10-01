@@ -77,6 +77,23 @@ ROOM_SOLVE = {
     "turn_n": 2,
     "presolve": True,
 }
+#: The plan's budget follows the room's clock (seconds per pick) when the attach gives one and
+#: no ``time_limit``: the drafter clicks with CLOCK_MARGIN_S of the clock left (at 17 s of 30),
+#: and the exact prices that correct a capped plan take up to PRICING_S after it (their 10 s
+#: budget and the solve's overhead). A 30 s clock keeps the mocks' 5 s; a longer one lets the
+#: plan converge (6-16 s in rounds 1-6), up to the plan's own 20 s budget.
+CLOCK_MARGIN_S = 13.0
+PRICING_S = 12.0
+PLAN_LIMIT_MAX = 20.0
+
+
+def plan_budget(clock_s: float | None) -> float:
+    """The plan's time limit in a room whose pick clock is ``clock_s`` seconds (none: the
+    mocks' 30 s clock)."""
+    floor = float(ROOM_SOLVE["time_limit"])
+    if clock_s is None:
+        return floor
+    return min(PLAN_LIMIT_MAX, max(floor, clock_s - CLOCK_MARGIN_S - PRICING_S))
 
 
 # --------------------------------------------------------------------------- session store
@@ -346,7 +363,12 @@ class RoomAttach(BaseModel):
     )
     n: int | None = Field(default=None, ge=1, le=30, description="candidates priced per solve")
     scenarios: int | None = Field(default=None, ge=0, le=8)
-    time_limit: float | None = Field(default=None, ge=1.0, le=600.0)
+    time_limit: float | None = Field(
+        default=None, ge=1.0, le=600.0, description="plan budget (default: from clock_s)"
+    )
+    clock_s: float | None = Field(
+        default=None, ge=10.0, le=600.0, description="the room's seconds per pick (default 30)"
+    )
     early: bool | None = Field(default=None, description="publish the plan before its prices")
     turn_time_limit: float | None = Field(
         default=None, ge=0.0, le=600.0, description="plan budget at my own turn (0: time_limit)"
@@ -896,7 +918,11 @@ def create_app(
                 turn_n=option("turn_n", ROOM_SOLVE["turn_n"]),
                 presolve=bool(option("presolve", ROOM_SOLVE["presolve"])),
             )
-            time_limit = float(option("time_limit", ROOM_SOLVE["time_limit"]))
+            clock_s = option("clock_s", None)
+            if body.time_limit is None and body.clock_s is not None:
+                time_limit = plan_budget(body.clock_s)  # a new clock outranks a logged budget
+            else:
+                time_limit = float(option("time_limit", plan_budget(clock_s)))
             path = players_path(option("players_file", None))
             state = session.state
 
@@ -925,6 +951,7 @@ def create_app(
                             "n": params.n,
                             "scenarios": params.scenarios,
                             "time_limit": time_limit,
+                            "clock_s": clock_s,
                             "early": params.early,
                             "turn_time_limit": params.turn_time_limit or 0.0,
                             "turn_n": params.turn_n,

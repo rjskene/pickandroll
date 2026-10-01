@@ -346,3 +346,17 @@ def test_a_capped_branch_is_priced_not_served(room):
     assert plan["fresh"] and _solver(client, sid)["presolve"]["hits"] == 1
     recos = [e for e in session.room.log.read() if e.get("type") == "reco" and e["board"] == 1]
     assert recos and recos[0]["priced"] is True and not any(e["branch"] for e in recos)
+
+
+def test_the_plan_budget_follows_the_clock(room):
+    client, store, _ = room
+    cases = [
+        ({}, 5.0),  # the mocks' 30 s clock
+        ({"clock_s": 30}, 5.0),
+        ({"clock_s": 40}, 15.0),
+        ({"clock_s": 90}, 20.0),
+        ({"clock_s": 90, "time_limit": 8}, 8.0),
+    ]
+    for i, (extra, want) in enumerate(cases):
+        sid = _attach(client, draft_id=f"c{i}", session=SESSION, **extra)["session_id"]
+        assert store.get(sid).state.plan_time_limit == want
