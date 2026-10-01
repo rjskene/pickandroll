@@ -42,7 +42,7 @@ For each of my seat's 13 picks k in a Yahoo draft:
 | label | meaning |
 |---|---|
 | `absent` | the seat was not under autopilot control when the turn started (late entry, disconnect, autopick mode on) |
-| `stale` | at the time the pick landed the session had not applied all picks 1..k-1, so the plan was for an older board |
+| `stale` | the drafter acted on a plan for a board older than k-1: either the session had not applied all picks 1..k-1 when the pick landed, or the drafter read the plan before the sync of pick k-1 (the plan's `board` on the attempt is < k-1) |
 | `unsolved` | synced, but no fresh recommendation for board k-1 existed before the pick landed |
 | `expired` | `ref_k` existed, no pick landed before the 30 s clock; Yahoo autopicked |
 | `fallback` | a candidate other than `ref_k` landed (row not found / click lost, took rank 2+) |
@@ -95,7 +95,7 @@ Posted by the client (`POST /rooms/{draft_id}/events`):
 ```
 {"type":"control",      "t":..., "state":"armed|mirror|absent", "slot":s, "reason":"autopick"?}
 {"type":"turn_start",   "t":..., "overall":n, "slot":s, "clock_s":30}
-{"type":"draft_attempt","t":..., "overall":n, "yid":id, "method":"row|queue|search", "attempt":k}
+{"type":"draft_attempt","t":..., "overall":n, "yid":id, "method":"row|queue|search", "attempt":k, "board":b}  // b = board of the plan the drafter acted on
 {"type":"pick_landed",  "t":..., "overall":n, "yid":id, "how":"row|queue|manual|expiry|autopick", "ms_from_turn":...}
 {"type":"intervention", "t":..., "who":"master|emissary|drone|user", "what":"..."}
 {"type":"heartbeat",    "t":..., ...}
@@ -124,7 +124,7 @@ Derivations:
   1. `manual`: `pick_landed.how == "manual"`.
   2. `compliant`: the actual player equals `ref_k`.
   3. `absent`: control was not `armed` at turn start. In mirror mode every non-compliant pick reads `absent`.
-  4. `stale`: picks 1..k-1 were not all in the session when pick k landed, judged by the first `session_pick` time per overall (§1).
+  4. `stale`: picks 1..k-1 were not all in the session when pick k landed, judged by the first `session_pick` time per overall (§1); or the first `draft_attempt` for k carries `board < k-1`. The drafter must only act on a plan whose `board == k-1`, so a `stale` label with a synced session is a drafter bug, not a sync bug.
   5. `unsolved`: synced, but no `ref_k` (no reco for board k-1 before landing).
   6. `expired`: `how` is `expiry` or `autopick`.
   7. `fallback`: the actual player is in `ref_k.cands`, or the ref had no Yahoo id.
