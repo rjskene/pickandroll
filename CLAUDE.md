@@ -44,7 +44,9 @@ as such, with the evidence.
   repo (gitignored, the pipeline plugin's convention), never as a sibling folder of `~/code/pickandroll`. The checkout itself stays on `main`. Conventional-commit titles with scope `yahoo-sync`.
   One PR per issue with `Closes #N`; the master reviews and merges. Only the master commits straight to
   `main`, and only docs.
-- Python: `.venv/bin/python -m pytest` and `.venv/bin/ruff check src tests` green before any PR.
+- Python: `.venv/bin/python -m pytest` and `.venv/bin/ruff check src tests` green before any PR. **In a worktree**
+  the editable install resolves `pickandroll` to `~/code/pickandroll/src`, so run
+  `PYTHONPATH=src ~/code/pickandroll/.venv/bin/python -m pytest` from the worktree root, or you test main's code.
   Web: `cd web && npm run build` (there is no eslint config yet; #10 adds one, then `npm run lint` too).
   Extension (#9 onward): `node --test extension/test/*.test.js` from the repo root (Node, no dependencies;
   the bare directory form fails on Node 25).
