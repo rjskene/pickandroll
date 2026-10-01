@@ -22,6 +22,8 @@
   const drop = Number(q.get("drop") || 0);
   // Seconds between picks for a human-pace room (draft day), in place of the recording's times.
   const gap = Number(q.get("gap") || 0);
+  // Seconds from the attach to pick 1 (the protocol attaches from the waiting room, >= 60 s).
+  const lead = Number(q.get("lead") || 3.5);
   const draftId = q.get("draft") || `ext-${fixture}-${Date.now().toString(36)}`;
   const API = (q.get("api") || "http://localhost:8000").replace(/\/+$/, "");
   const out = (window.__harness = { draftId, done: false, error: null, log: [] });
@@ -224,7 +226,7 @@
       log("armed");
     }
 
-    await sleep(3500); // the content script's first status call sees the room attached
+    await sleep(lead * 1000); // the content script's first status call sees the room attached
     let anchorT = performance.now();
     let anchorI = 0;
     const at = (i) => sleep(Math.max(0, anchorT + (times[i] - times[anchorI]) / speed - performance.now()));
