@@ -68,10 +68,12 @@ ROOM_SOLVE = {
     "n": 3,
     "scenarios": 0,
     "time_limit": 5.0,
-    # #13: the clock decides. Publish the plan before its prices, a shorter plan budget at my
-    # own turn (0 keeps the normal one), and plan the boards my turn can start on ahead of it.
+    # #13: the clock decides. Publish the plan before its prices and plan the boards my turn
+    # can start on ahead of it. A shorter plan budget at my own turn stays off (0): in rounds
+    # 1-6 a plan needs 6-16 s to converge, and a 3 s incumbent cost 0.72 expected category
+    # wins over a settled replay (slot 6 of room 2515267).
     "early": True,
-    "turn_time_limit": 3.0,
+    "turn_time_limit": 0.0,
     "turn_n": 2,
     "presolve": True,
 }

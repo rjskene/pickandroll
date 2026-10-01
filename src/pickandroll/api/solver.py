@@ -16,8 +16,8 @@ can land meanwhile.
 In a live room the clock decides (#13): a solve for a board that a pick has already replaced
 stops at its next stage instead of holding up the new board's; the plan can be published
 before its exact prices (``early``); my own turn can get a shorter plan budget
-(``turn_time_limit``); and the boards my turn can start on are planned before it starts
-(``presolve``, see :mod:`.presolve`).
+(``turn_time_limit``, off in rooms: a capped incumbent costs value); and the boards my turn
+can start on are planned before it starts (``presolve``, see :mod:`.presolve`).
 """
 
 from __future__ import annotations
