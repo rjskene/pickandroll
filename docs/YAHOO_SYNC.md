@@ -59,7 +59,7 @@ Baseline from drafts 5-7 (2026-09-27, scratch hook in driver mode), loose count 
 | G3 | hands-off | interventions by a human or an agent during the draft (console calls, manual relay fixes) | many | 0 |
 | G4 | manual respected | when a manual pick is made on my turn, the autopilot stands down (no draft attempt after it) and the session mirrors the manual pick within G2 | n/a | 1/1 per draft |
 | G5 | autopick mode | times Yahoo flipped the seat into autopick mode | 1 (draft 7) | 0 |
-| G6 | entry lead | seconds inside the draft client before pick 1 went on the clock | −210 s (draft 7) | ≥ 60 s |
+| G6 | entry lead | seconds inside the draft client before pick 1 went on the clock; Yahoo opens the client only when the waiting-room countdown ends, about 60 s before pick 1, so the ceiling is ~59 s | −210 s (draft 7) | ≥ 45 s |
 
 ## 3. Diagnostics (reported every draft, not pass/fail)
 
@@ -139,6 +139,11 @@ Scorecard: `pickandroll fidelity report <draft_id>` (CLI or `GET /rooms/{draft_i
 
 ## 6. Hill-climb protocol
 
+Room protocol for the drone: attach the room (`POST /rooms`, draft id = Yahoo's mlid, slot from the waiting
+room) while still in the waiting room, at least 60 s before pick 1, and confirm the attach before reporting the
+room; enter the draft client the moment it opens; Yahoo's Autodraft switch is disabled until pick 1 is on the clock.
+
+
 1. The emissary states the hypothesis and the metric it expects to move before a mock starts.
 2. The drone runs one mock, posts the scorecard (markdown from §4) on the tracker #11.
 3. Compare against the best previous scorecard. Keep the change only if compliance did not drop and no guardrail regressed. Taxonomy counts say what to fix next; the order of attack is `absent` → `stale` → `unsolved` → `expired` → `fallback` → `wrong`.
@@ -168,7 +173,7 @@ scorecard shows the failure it fixes, and the last two clean mocks before the dr
    is never mocked twice, except the acceptance pair. A failure that appears in two consecutive scorecards stops
    mocking: fix it offline (replay tier, or a harness built from the recorded room) before the next mock.
 2. **Abort early, do not ride out a lost mock.** The drone leaves the mock and writes a short scorecard (what
-   failed, at which pick) when: the seat is not inside the draft client 60 s before pick 1; sync lag p95 over
+   failed, at which pick) when: the seat is not inside the draft client 45 s before pick 1; sync lag p95 over
    the first 24 picks is above 10 s; any pick is `absent` or `wrong`. An abandoned mock seat autopicks, which is
    fine in a mock.
 3. **Drone discipline during a mock: the extension and the API do the work, the recorder keeps the evidence.**
