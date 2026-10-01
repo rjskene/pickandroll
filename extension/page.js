@@ -73,6 +73,8 @@
       else setTimeout(() => post({ dir: "wake", id: m.id }), ms);
     } else if (m.dir === "replay") {
       for (const [data, t] of frames) post({ dir: "in", data, t, replay: true });
+    } else if (m.dir === "ping") {
+      post({ dir: "ready", worker: Boolean(worker) }); // a content script that started after us
     }
   });
   post({ dir: "ready", worker: Boolean(worker) });

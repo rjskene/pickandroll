@@ -197,6 +197,7 @@
   }
 
   // ------------------------------------------------------------------ socket frames
+  let pageReady = false; // the page half's "ready" was handled (it can come twice)
   window.addEventListener("message", (e) => {
     if (e.source !== window || !e.data || e.data[KEY] !== "page") return;
     const m = e.data;
@@ -208,11 +209,17 @@
         resolve();
       }
     } else if (m.dir === "hello") S.helloSlot = m.slot;
-    else if (m.dir === "ready") {
+    else if (m.dir === "ready" && !pageReady) {
+      pageReady = true;
       S.worker = Boolean(m.worker);
       window.postMessage({ [KEY]: "content", dir: "replay" }, location.origin);
     }
   });
+  // The page half announces itself once at load; when it ran first (the order of the two worlds
+  // at document_start is not guaranteed, and the harness loads it first) that announcement is
+  // gone, so ask. Without it every timer here is a DOM timer, which a hidden tab holds back
+  // to once a minute after five minutes (harness pick 145, 2026-10-01).
+  window.postMessage({ [KEY]: "content", dir: "ping" }, location.origin);
 
   function onFrame(text, t) {
     const out = tracker.ingest(text, t);
