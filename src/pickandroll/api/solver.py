@@ -138,6 +138,43 @@ def _snapshot(session: Session) -> dict[str, Any]:
     }
 
 
+#: Objectives closer than this are equal (float noise between solves of one plan).
+OBJECTIVE_TIE = 1e-9
+
+
+def _standing(solution: HorizonSolution, table: pd.DataFrame, priced: bool) -> tuple[float, bool]:
+    """The objective behind a recommendation's #1, and whether a time limit stopped the solve
+    that found it: the best exact price when priced, else the plan's own."""
+    if priced and not table.empty:
+        top = table.iloc[0]
+        objective = float(top["objective"])
+        if top["player"] != solution.first_pick or objective > solution.objective:
+            return objective, bool(top["time_limited"])
+    return float(solution.objective), bool(solution.time_limited)
+
+
+def displaces(new: dict[str, Any], old: dict[str, Any]) -> bool:
+    """Whether ``new`` replaces ``old``, a recommendation for the same board. A reco never
+    displaces one whose objective is at least as good, except on a tie: a converged plan
+    replaces a capped one, and exact prices replace first-order ones that keep the same #1
+    (they add the drafter's fall-through order, not another pick)."""
+    a, b = new.get("top_objective"), old.get("top_objective")
+    if a is None or b is None:  # the single-roster model: exact prices win
+        return bool(new.get("priced", True)) and not old.get("priced", True)
+    if a > b + OBJECTIVE_TIE:
+        return True
+    if a < b - OBJECTIVE_TIE:
+        return False
+    if old.get("capped") and not new.get("capped"):
+        return True
+    return bool(new.get("priced", True)) and not old.get("priced", True) and _top(new) == _top(old)
+
+
+def _top(rec: dict[str, Any]) -> str | None:
+    cands = rec.get("candidates") or []
+    return cands[0]["player"] if cands else None
+
+
 def _horizon_payload(
     session: Session,
     snapshot: dict[str, Any],
@@ -172,6 +209,7 @@ def _horizon_payload(
             top=names.get(solution.first_pick) if solution.first_pick else None,
         )
         fallback = plan_fallback(problem, solution)
+        top_objective, capped = _standing(solution, table, priced)
         scale = "wins" if problem.curve is not None and fallback is None else "z"
         candidate_rows = _candidates(table, scale, state.effective_adp())
         if session.prices_version is None or version >= session.prices_version:
@@ -194,6 +232,8 @@ def _horizon_payload(
         "tie_band": TIE_BAND[scale],
         "priced": priced,
         "branch": branch,
+        "top_objective": top_objective,
+        "capped": capped,
         "fallback": fallback,
         "timings": {k: round(v, 1) for k, v in timings.items()},
         "adp_source": state.adp_source,
@@ -336,6 +376,14 @@ def compute_recommendation(
                 )
             check()
 
+        def installed() -> list[str]:
+            # The plan already serving this board (a pre-solved branch): its first pick is
+            # always priced, so the exact table can be compared with it.
+            rec = session.recommendation
+            if rec is None or rec.get("version") != snapshot["version"]:
+                return []
+            return [r["player"] for r in rec.get("plan", [])[:1]]
+
         timings: dict[str, float] = {}
         table, solution, _ = state.recommend_horizon(
             n=n,
@@ -347,6 +395,7 @@ def compute_recommendation(
             on_plan=on_plan,
             base=None if base is None else base[1],
             timings=timings,
+            include=installed,
         )
         check()
         scenarios = (
@@ -471,6 +520,11 @@ class BackgroundSolver:
         self._o_rank: tuple[Any, pd.Series | None] | None = None
         self._presolving = False
         self._presolve_again = False
+        # Branch solves not finished (pruned ones still running included), and per live solve
+        # the most of them in flight at once while it ran: D3 busy vs idle in the reco log.
+        self._branch_lock = threading.Lock()
+        self._branches: set[Any] = set()
+        self._peaks: dict[int, int] = {}
 
     @property
     def running(self) -> bool:
@@ -533,6 +587,9 @@ class BackgroundSolver:
         self.last_started = _now()
         self.last_error = None
 
+        with self._branch_lock:
+            self._peaks[gen] = len(self._branches)
+
         def early(payload: dict[str, Any]) -> None:
             loop.call_soon_threadsafe(self._publish, payload)
 
@@ -548,12 +605,14 @@ class BackgroundSolver:
                 base=base,
             ),
         )
-        future.add_done_callback(self._finished)
+        future.add_done_callback(functools.partial(self._finished, gen))
 
-    def _finished(self, future: asyncio.Future) -> None:
+    def _finished(self, gen: int, future: asyncio.Future) -> None:
         self.inflight -= 1
         self.runs += 1
         self.last_finished = _now()
+        with self._branch_lock:
+            busy = self._peaks.pop(gen, 0)
         exc = None if future.cancelled() else future.exception()
         if isinstance(exc, Superseded):
             self.abandoned += 1
@@ -561,20 +620,19 @@ class BackgroundSolver:
             self.last_error = str(exc)
             self.session.publish("solve", {"stage": "error", "message": str(exc)}, bump=False)
         elif not future.cancelled():
-            self._publish(future.result())
+            self._publish({**future.result(), "branches_running": busy})
         if self.dirty:
             self._ensure_task()
 
     def _publish(self, payload: dict[str, Any]) -> None:
-        """Make ``payload`` the recommendation unless a newer board's, or an exactly priced one
-        for the same board, is already there. Runs on the event loop."""
+        """Make ``payload`` the recommendation unless a newer board's is already there, or one
+        for the same board that it does not displace (:func:`displaces`). Runs on the event
+        loop."""
         rec = self.session.recommendation
         if rec is not None:
             if rec["version"] > payload["version"]:
                 return
-            if rec["version"] == payload["version"] and (
-                rec.get("priced", True) or not payload.get("priced", True)
-            ):
+            if rec["version"] == payload["version"] and not displaces(payload, rec):
                 return
         self.session.set_recommendation(payload)
         self.solved_version = payload["version"]
@@ -701,12 +759,21 @@ class BackgroundSolver:
         pool = background_pool()
         for branch in wanted:
             future = pool.submit(solve_branch, (branch.problem, BRANCH_TIME_LIMIT, state.plan_gap))
+            with self._branch_lock:
+                self._branches.add(future)
+                for gen, peak in self._peaks.items():
+                    self._peaks[gen] = max(peak, len(self._branches))
             entry = self.book.add(branch, future)
+            future.add_done_callback(self._branch_ended)
             future.add_done_callback(
                 lambda f, e=entry: self.book.done(
                     e, None if f.cancelled() or f.exception() is not None else f.result()
                 )
             )
+
+    def _branch_ended(self, future: Any) -> None:
+        with self._branch_lock:
+            self._branches.discard(future)
 
     def status(self) -> dict[str, Any]:
         with self._lock:
@@ -723,4 +790,5 @@ class BackgroundSolver:
             "last_finished": self.last_finished,
             "last_error": self.last_error,
             "presolve": self.book.status(),
+            "branches_running": len(self._branches),
         }

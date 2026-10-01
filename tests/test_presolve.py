@@ -23,10 +23,10 @@ from pickandroll.api.presolve import (
     branch_boards,
     likely_next,
 )
-from pickandroll.api.solver import SolveParams, Superseded, compute_recommendation
+from pickandroll.api.solver import SolveParams, Superseded, compute_recommendation, displaces
 from pickandroll.fidelity.replay import settled_replay
 from pickandroll.optim.horizon import CANDIDATE_COLUMNS, first_order_table
-from pickandroll.optim.pool import BACKGROUND_NICE, background_pool
+from pickandroll.optim.pool import BACKGROUND_NICE, LIVE_CORES, background_pool, background_size
 from pickandroll.sources.yahoo import load_players_file
 
 from .test_yahoo_room import SESSION, build_league
@@ -192,6 +192,11 @@ def test_a_presolved_board_is_the_recommendation_the_moment_it_arrives(room):
     )
     events = [e for e in session.room.log.read() if e.get("type") == "reco" and e["board"] == 1]
     assert events[0]["branch"] is True and events[-1]["priced"] is True
+    # Each reco logs the objective behind its #1, whether it was capped, and (a live solve)
+    # the pre-solves in flight while it ran.
+    assert events[0]["capped"] is False and events[0]["branches_running"] is None
+    assert events[-1]["top_objective"] >= events[0]["top_objective"]
+    assert events[-1]["branches_running"] >= 0
     # The scorecard keeps priced solve times apart from the plans that came early or ready.
     d = client.get("/rooms/p1/fidelity").json()["diagnostics"]
     priced = [
@@ -392,3 +397,55 @@ def test_branch_solves_run_below_the_live_ones():
     mine = os.nice(0)
     theirs = background_pool().submit(os.nice, 0).result(timeout=120)
     assert theirs >= min(mine + BACKGROUND_NICE, 19)
+    # And on fewer workers than cores: the live solve has cores they never take.
+    cores = os.cpu_count() or 2
+    assert background_pool()._max_workers == background_size() == max(1, cores - LIVE_CORES)
+
+
+def _reco(top, objective, *, priced=True, capped=False, version=5):
+    return {
+        "version": version,
+        "candidates": [{"player": top}],
+        "top_objective": objective,
+        "capped": capped,
+        "priced": priced,
+    }
+
+
+def test_a_reco_never_displaces_one_at_least_as_good():
+    converged = _reco("a", 6.20, priced=False)
+    # Pick 144's hypothesis (b): exact prices on a 5 s capped plan came out below the
+    # converged branch: the branch stays.
+    assert not displaces(_reco("b", 6.15, capped=True), converged)
+    assert displaces(_reco("b", 6.25, capped=True), converged)  # a better plan is better
+    # A tie: exact prices with the same #1 replace first-order ones; another #1 does not.
+    assert displaces(_reco("a", 6.20), converged)
+    assert not displaces(_reco("b", 6.20), converged)
+    # A tie: converged beats capped, never the other way.
+    assert displaces(_reco("b", 6.20, priced=False), _reco("a", 6.20, capped=True))
+    assert not displaces(_reco("b", 6.20, capped=True), _reco("a", 6.20, priced=False))
+    # Nothing priced replaces exact prices of the same objective.
+    assert not displaces(_reco("a", 6.20, priced=False), _reco("a", 6.20))
+    # The single-roster model has no objective: exact prices win, as before.
+    roster = {"version": 5, "candidates": [{"player": "a"}], "priced": True}
+    assert displaces(roster, {**roster, "priced": False})
+    assert not displaces({**roster, "priced": False}, roster)
+
+
+def test_the_exact_prices_cover_the_installed_plans_first_pick(room):
+    client, store, _ = room
+    sid = _attach(client, session=SESSION)["session_id"]
+    session = store.get(sid)
+    state = session.state
+    with session.lock:
+        listed = state.candidates(2, expected=True)
+        outsider = next(p for p in state.candidates(40, expected=True) if p not in listed)
+    # A plan already serving this board whose first pick the live list would not price.
+    session.recommendation = {
+        "version": session.version,
+        "plan": [{"pick": state.next_overall, "player": outsider}],
+    }
+    payload = compute_recommendation(session, SolveParams(n=2))
+    priced = {c["player"] for c in payload["candidates"]}
+    assert outsider in priced and set(listed) <= priced
+    assert payload["top_objective"] is not None and payload["capped"] in (True, False)

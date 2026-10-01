@@ -453,6 +453,7 @@ class DraftState:
         on_plan: Callable[[HorizonSolution, pd.DataFrame, dict[str, float]], None] | None = None,
         base: HorizonSolution | None = None,
         timings: dict[str, float] | None = None,
+        include: Callable[[], Sequence[str]] | None = None,
         **kwargs,
     ) -> tuple[pd.DataFrame, HorizonSolution, frozenset[Cat]]:
         """Candidates for my next pick priced with the waiting risk, plus the plan itself.
@@ -469,7 +470,9 @@ class DraftState:
         before any exact price is solved; it may raise to stop the solve there. ``base`` is a
         plan already solved for ``problem`` (a pre-solved branch): it is priced, not solved
         again. ``timings``, when given, is filled with this solve's stage timings (solves that
-        run at once on one state each read their own, not ``last_timings``).
+        run at once on one state each read their own, not ``last_timings``). ``include`` is
+        asked once the plan is solved for players the exact prices must also cover (the first
+        pick of a plan already serving this board).
         """
         started = time.perf_counter()
         timings = {} if timings is None else timings
@@ -504,6 +507,10 @@ class DraftState:
             so_far = {**timings, "total_ms": timings["plan_ms"]}
             self.last_timings = so_far
             on_plan(solution, early, so_far)
+        if include is not None:
+            candidates += [
+                p for p in include() if p not in candidates and p in problem.availability.index
+            ]
         if progress is not None:
             progress(
                 {
