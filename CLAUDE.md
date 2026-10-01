@@ -44,7 +44,7 @@ as such, with the evidence.
   One PR per issue with `Closes #N`; the master reviews and merges. Only the master commits straight to
   `main`, and only docs.
 - Python: `.venv/bin/python -m pytest` and `.venv/bin/ruff check src tests` green before any PR.
-  Web: `cd web && npm run lint && npm run build`.
+  Web: `cd web && npm run build` (there is no eslint config yet; #10 adds one, then `npm run lint` too).
 - Dev servers only through `~/code/.claude/launch.json` (`pickandroll-api` on :8000, `pickandroll-web`
   on :5173), never with ad-hoc shell commands. uvicorn `--reload` drops the in-memory sessions on every
   source edit, so say so before editing the API during a live mock.
