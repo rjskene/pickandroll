@@ -110,3 +110,29 @@ Scorecard: `pickandroll fidelity report <draft_id>` (CLI or `GET /rooms/{draft_i
 - Only one mock draft at a time. The user stays out of the mock room while the drone drives it.
 - Queue only for the current pick, and only when it is our turn.
 - Branch per issue, PR to main, master reviews and merges.
+
+## 8. Schedule and token budget (user decisions, 2026-10-01)
+
+**Real draft: mid-October 2026**, about two weeks out. Milestone targets: #8 merged by 10-04; #9 mirror mode by
+10-06 (first mock, mirror only, measures G1 and G2); #9 armed mode by 10-08 (compliance mocks); #10 by 10-10;
+acceptance pair of mocks 10-11 to 10-13. **Freeze on 10-12:** after that no change to the room side (#9) unless a
+scorecard shows the failure it fixes, and the last two clean mocks before the draft are the acceptance run.
+
+**Token budget is a hard constraint.** The user's weekly usage limit can be burnt in a day by draft loops, so:
+
+1. **At most two live mocks per day.** Every mock needs, before it starts: Tier 1 replay green, a hypothesis
+   naming the taxonomy label or guardrail it targets, and a code change since the previous mock. The same build
+   is never mocked twice, except the acceptance pair. A failure that appears in two consecutive scorecards stops
+   mocking: fix it offline (replay tier, or a harness built from the recorded room) before the next mock.
+2. **Abort early, do not ride out a lost mock.** The drone leaves the mock and writes a short scorecard (what
+   failed, at which pick) when: the seat is not inside the draft client 60 s before pick 1; sync lag p95 over
+   the first 24 picks is above 10 s; any pick is `absent` or `wrong`. An abandoned mock seat autopicks, which is
+   fine in a mock.
+3. **Drone discipline during a mock: the extension and the API do the work, the recorder keeps the evidence.**
+   No screenshots after arming. At most one check per round (text tools or the status endpoint, never a
+   screenshot), long waits between checks, target under 40 tool calls per mock. Read the scorecard at the end
+   instead of watching picks.
+4. **Emissary discipline.** Port from the §0 table instead of re-reading the archive; targeted tests while
+   iterating, the full suite at milestones; comments on the issues only for plan, PR and scorecard, no running
+   commentary; every iteration on #8 goes through the replay tier, not a mock.
+5. **Master discipline.** Spot checks at plan, PR and scorecard time only.
