@@ -2,8 +2,9 @@
 // on the clock, how far the API has synced, and the fidelity events (docs/YAHOO_SYNC.md §4) to
 // post. Pure: times are passed in, nothing here touches the DOM, the network or chrome.*.
 (function (root, factory) {
-  const api = factory(root.PickAndRoll || (typeof require === "function" ? require("./protocol.js") : {}));
-  if (typeof module === "object" && module.exports) module.exports = api;
+  const node = typeof module === "object" && module.exports;
+  const api = factory(node ? require("./protocol.js") : root.PickAndRoll);
+  if (node) module.exports = api;
   root.PickAndRoll = Object.assign(root.PickAndRoll || {}, api);
 })(typeof globalThis !== "undefined" ? globalThis : this, function (P) {
   "use strict";

@@ -1,7 +1,9 @@
 // pickandroll, content half (isolated world). Mirrors the Yahoo draft room into the pickandroll
 // API through the service worker: every pick the room's socket sends (page.js hands them over),
 // the pick on the clock, and the fidelity events of docs/YAHOO_SYNC.md §4. It shows a status
-// strip in the page. In this build it never clicks anything in Yahoo.
+// strip in the page. Only when the user has armed the room (mode "autopilot", set from the side
+// panel or the web app) does it draft for the seat, through lib/drafter.js; otherwise it never
+// clicks anything in Yahoo.
 (() => {
   "use strict";
   const PR = globalThis.PickAndRoll;
@@ -28,6 +30,7 @@
     plan: null,
     lastMine: null,
     handPick: null,
+    drafting: null, // what the drafter is doing on an armed turn
     autodraft: null, // Yahoo's Autodraft switch: true / false / null (not found)
     autodraftClickAt: 0,
     autopickMode: false, // Yahoo picks for the seat: the Autodraft switch is on
@@ -178,8 +181,12 @@
   }
 
   function controlState() {
-    return S.autopickMode ? "absent" : "mirror"; // this build never drafts, so never "armed"
+    if (S.autopickMode) return "absent";
+    return S.mode === "autopilot" ? "armed" : "mirror";
   }
+  // The user armed the room; the seat is drafted by us only while Yahoo's Autodraft is off.
+  const userArmed = () => S.attached === true && !S.dead && S.mode === "autopilot";
+  const armed = () => userArmed() && !S.autopickMode;
   function reportControl() {
     const state = controlState();
     if (state === S.control) return;
@@ -211,7 +218,7 @@
     const out = tracker.ingest(text, t);
     if (out.picks) flush();
     if (out.landed) {
-      const event = tracker.landedEvent(out.landed, { autodraft: S.autodraft === true });
+      const event = tracker.landedEvent(out.landed, { autodraft: autodraftOn() === true });
       if (event) emit(event);
       const top = S.plan && S.plan.for === out.landed.overall ? S.plan.candidates[0] : null;
       S.lastMine = {
@@ -222,7 +229,10 @@
       };
       if (S.handPick === out.landed.overall) S.handPick = null;
     }
-    if (out.turn !== null) refreshPlan();
+    if (out.turn !== null) {
+      if (armed()) takeTurn(out.turn, "on deck");
+      else refreshPlan();
+    }
     if (out.kind === "on_deck" || out.kind === "pick" || out.kind === "history") {
       sendEvents();
       render();
@@ -314,6 +324,172 @@
   // ------------------------------------------------------------------ Yahoo's page
   const labelOf = (el) =>
     (el.textContent.trim() || el.getAttribute("aria-label") || el.title || "").trim();
+  const tableRows = () => [...document.querySelectorAll("tr")].filter((r) => r.querySelector("td"));
+  const rowId = (r) => {
+    const img = r.querySelector("img");
+    return img ? PR.imageId(img.getAttribute("src")) : null;
+  };
+  const rowDraftButton = (row) =>
+    [...row.querySelectorAll("button, a, [role=button]")].find((b) => PR.isDraftLabel(labelOf(b)));
+  function findRow(c) {
+    const rows = tableRows();
+    const i = PR.matchRow(
+      rows.map((r) => ({ id: rowId(r), text: r.textContent })),
+      c,
+    );
+    return i >= 0 ? rows[i] : null;
+  }
+  function scroller() {
+    let el = document.querySelector("tr td");
+    while (el && el !== document.body) {
+      const cs = getComputedStyle(el);
+      if (/(auto|scroll)/.test(cs.overflowY) && el.scrollHeight > el.clientHeight + 20) return el;
+      el = el.parentElement;
+    }
+    return document.scrollingElement;
+  }
+  async function nudge() {
+    const sc = scroller();
+    const top = sc.scrollTop;
+    sc.scrollTop = top + 40;
+    await sleep(120);
+    sc.scrollTop = top;
+    await sleep(120);
+  }
+  async function scrollTo(c) {
+    const sc = scroller();
+    let row = findRow(c);
+    for (let i = 0; !row && i < 20; i++) {
+      const before = sc.scrollTop;
+      sc.scrollTop = before + Math.max(300, sc.clientHeight * 0.85);
+      await sleep(110);
+      row = findRow(c);
+      if (!row && sc.scrollTop === before) break;
+    }
+    if (row) {
+      row.scrollIntoView({ block: "center" });
+      await sleep(150);
+      row = findRow(c);
+    }
+    return row;
+  }
+  const searchBox = () =>
+    document.querySelector('input[type=search], input[placeholder*="earch"], input[aria-label*="earch"]');
+  async function setSearch(value) {
+    const box = searchBox();
+    if (!box) return false;
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set;
+    box.focus();
+    setter.call(box, value);
+    box.dispatchEvent(new Event("input", { bubbles: true }));
+    box.dispatchEvent(new Event("change", { bubbles: true }));
+    await sleep(700);
+    return true;
+  }
+  function confirmDialog() {
+    const dlg = document.querySelector("[role=dialog], [role=alertdialog]");
+    if (!dlg) return;
+    const b = [...dlg.querySelectorAll("button")].find((x) => /^(confirm|yes|draft|ok)/i.test(x.textContent.trim()));
+    if (b) b.click();
+  }
+  // Yahoo's queue panel ("Autodraft will pick from queue") and its Autodraft switch.
+  let queuePanel = null;
+  function qPanel() {
+    if (queuePanel && queuePanel.isConnected && /Autodraft will pick from queue/.test(queuePanel.textContent)) {
+      return queuePanel;
+    }
+    queuePanel =
+      [...document.querySelectorAll("div, section, aside")]
+        .filter(
+          (e) =>
+            /Autodraft will pick from queue/.test(e.textContent) &&
+            (e.querySelector("li") || /queue is empty/i.test(e.textContent)) &&
+            e.textContent.length < 2500,
+        )
+        .sort((a, b) => a.textContent.length - b.textContent.length)[0] || null;
+    return queuePanel;
+  }
+  const qItems = () => {
+    const panel = qPanel();
+    return panel
+      ? [...panel.querySelectorAll("li")].filter((li) => li.querySelector("button") && li.textContent.trim().length > 4)
+      : [];
+  };
+  async function clearQueue() {
+    for (let i = 0; i < 12; i++) {
+      const items = qItems();
+      if (!items.length) return true;
+      const b = [...items[0].querySelectorAll("button")].pop();
+      if (!b) break;
+      b.click();
+      await sleep(300);
+      if (qItems().length >= items.length) break;
+    }
+    return qItems().length === 0;
+  }
+  async function starRow(row) {
+    const b = row.children[0] && row.children[0].querySelector("button");
+    if (!b) return false;
+    b.click();
+    await sleep(350);
+    return true;
+  }
+  // Exactly this one player in Yahoo's queue, checked against the queue's text.
+  async function queueOnly(c) {
+    const k = tracker.myTurnNow();
+    await clearQueue();
+    let row = findRow(c) || (await scrollTo(c));
+    if (!row) return { ok: false, msg: "no row" };
+    for (let attempt = 0; attempt < 2; attempt++) {
+      await starRow(row);
+      const items = qItems();
+      if (items.length === 1 && PR.fold(items[0].textContent).includes(PR.fold(c.last))) return { ok: true };
+      if (k !== null && tracker.picks.has(k)) return { ok: true }; // on my turn the star drafts
+      await clearQueue();
+      await nudge();
+      row = findRow(c) || (await scrollTo(c));
+      if (!row) return { ok: false, msg: "row vanished" };
+    }
+    await clearQueue();
+    return { ok: false, msg: "queue check failed" };
+  }
+  async function setAutodraft(on) {
+    const b = autodraftButton();
+    if (!b) return null;
+    if (Boolean(b.querySelector("svg")) !== on) {
+      b.click();
+      await sleep(350);
+    }
+    return Boolean(b.querySelector("svg"));
+  }
+  const yahoo = {
+    draftable: () => tableRows().some((r) => rowDraftButton(r)),
+    find: findRow,
+    scrollTo,
+    async search(c) {
+      if (!(await setSearch(c.last))) return null;
+      return findRow(c);
+    },
+    async click(row, c) {
+      const b = rowDraftButton(row);
+      if (!b) return "none";
+      if (!PR.labelNames(labelOf(b), c)) return "mismatch";
+      b.click();
+      await sleep(400);
+      confirmDialog();
+      return "clicked";
+    },
+    nudge,
+    queueOnly,
+    setAutodraft,
+    autodraftOn: () => autodraftOn(),
+    clearQueue,
+    async reset() {
+      const box = searchBox();
+      if (box && box.value) await setSearch("");
+      scroller().scrollTop = 0;
+    },
+  };
   const autodraftButton = () =>
     [...document.querySelectorAll("button")].find((b) => /autodraft/i.test(b.textContent));
   const autodraftOn = () => {
@@ -333,6 +509,64 @@
   }
   document.addEventListener("pointerdown", onPress, true);
   document.addEventListener("click", onPress, true);
+
+  // ------------------------------------------------------------------ armed turns
+  const drafter = new PR.Drafter({
+    tracker,
+    dom: yahoo,
+    plan: async (wait) => {
+      const plan = await call("plan", { wait });
+      for (const c of [...(plan.candidates || []), ...(plan.second || [])]) {
+        names.set(String(c.yahoo_player_id), c.name);
+      }
+      S.plan = { ...plan, for: tracker.nextMine(), at: Date.now() };
+      render();
+      return plan;
+    },
+    emit,
+    sleep,
+    now: () => Date.now(),
+    log: (line) => {
+      S.drafting = line;
+      render();
+    },
+  });
+  function takeTurn(k, why) {
+    if (!armed() || S.handPick === k || drafter.busy || drafter.tried.has(k)) return;
+    S.drafting = `taking #${k}`;
+    render();
+    drafter.turn(k).then((out) => {
+      S.drafting = null;
+      if (out) {
+        const { result, attempts, fresh, waited_ms, ms } = out;
+        emit({ type: "note", what: "turn", overall: k, why, result, attempts, fresh, waited_ms, ms });
+      }
+      render();
+      const next = tracker.myTurnNow(); // back to back: the next pick may be on the clock already
+      if (next !== null && next !== k) takeTurn(next, "chain");
+    });
+  }
+  // Once a second while armed: start a turn the on-deck frame did not start, and between turns
+  // undo Yahoo's flip into autopick mode and keep its queue empty (we queue only for the pick
+  // on the clock). A switch the user turned on by hand is theirs and left alone.
+  async function guard() {
+    if (!userArmed() || drafter.busy) return;
+    const k = tracker.myTurnNow();
+    if (k !== null) {
+      takeTurn(k, "guard");
+      return;
+    }
+    if (/^your turn/i.test(document.title)) {
+      const n = tracker.nextMine();
+      if (n !== null && n === tracker.contiguous() + 1) takeTurn(n, "title");
+      return;
+    }
+    if (S.autopickMode && S.autoReason === "autopick" && autodraftOn() === true) {
+      await setAutodraft(false);
+      emit({ type: "note", what: "autodraft off by pickandroll" });
+    }
+    if (qItems().length) await clearQueue();
+  }
 
   // Yahoo's Autodraft switch. While it is on Yahoo picks for the seat, reported as control
   // absent. Only a flip Yahoo makes (a missed pick puts the seat into autopick mode) carries
@@ -454,11 +688,7 @@
     } else if (S.attached === null) {
       head = "pickandroll: connecting…";
     } else {
-      const mode = S.autopickMode
-        ? "YAHOO AUTOPICK ON"
-        : S.mode === "autopilot"
-          ? "MIRROR (armed in the API; this build does not draft)"
-          : "MIRROR";
+      const mode = S.autopickMode ? "YAHOO AUTOPICK ON" : S.mode === "autopilot" ? "ARMED" : "MIRROR";
       const sync =
         s.behind === 0
           ? `synced ${s.sent}/${s.last}`
@@ -466,6 +696,7 @@
       head = `pickandroll · ${mode} · ${sync}`;
       tone = S.autopickMode || s.behind > 2 ? "bad" : s.behind ? "warn" : "ok";
     }
+    if (S.drafting && S.attached === true) head += ` · ${S.drafting}`;
     l1.textContent = head;
     el.style.borderLeftColor = TONES[tone];
 
@@ -502,7 +733,9 @@
   connect();
   every(STATUS_EVERY_MS, refresh);
   every(WATCH_EVERY_MS, async () => {
-    if (document.body) watchYahoo();
+    if (!document.body) return;
+    watchYahoo();
+    await guard();
   });
   every(HEARTBEAT_EVERY_MS, async () => {
     const s = tracker.snapshot();

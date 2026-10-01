@@ -144,9 +144,11 @@ function render() {
   $("mode-armed").setAttribute("aria-pressed", String(armed));
   text(
     "mode-note",
-    armed
-      ? "The API says armed, but this build only mirrors: nothing drafts for you. Switch back to Mirror."
-      : "Mirror: you draft in Yahoo; pickandroll follows every pick.",
+    tab.autodraft
+      ? "Yahoo's Autodraft is on: Yahoo picks for this seat until it is switched off."
+      : armed
+        ? "Armed: on your turn pickandroll drafts its top pick in Yahoo. Draft by hand any time to take over that pick; \"Hand pick next\" in the page skips one turn."
+        : "Mirror: you draft in Yahoo; pickandroll follows every pick.",
   );
 
   const plan = tab.plan;
@@ -214,6 +216,16 @@ $("attach-btn").addEventListener("click", async () => {
   } finally {
     $("attach-btn").disabled = false;
   }
+});
+$("mode-armed").addEventListener("click", async () => {
+  if (!tab || !room || room.mode === "autopilot") return;
+  const ok = confirm(
+    "Arm pickandroll for this room?\n\nOn each of your turns it will click the Draft button for " +
+      "pickandroll's top pick in Yahoo. You can still draft by hand at any time; your pick wins.",
+  );
+  if (!ok) return;
+  await call("mode", { draft_id: tab.draft_id, mode: "autopilot" }).catch(() => {});
+  load();
 });
 $("mode-mirror").addEventListener("click", async () => {
   if (!tab || !room || room.mode === "mirror") return;

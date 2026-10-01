@@ -17,6 +17,8 @@
   const slot = Number(q.get("slot") || 1);
   const fixture = q.get("fixture") || "2515267";
   const flip = q.get("flip") === "1";
+  const armedRun = q.get("armed") === "1";
+  const drop = Number(q.get("drop") || 0);
   const draftId = q.get("draft") || `ext-${fixture}-${Date.now().toString(36)}`;
   const API = (q.get("api") || "http://localhost:8000").replace(/\/+$/, "");
   const out = (window.__harness = { draftId, done: false, error: null, log: [] });
@@ -92,6 +94,8 @@
     await load("/extension/worker.js");
     await load("/extension/page.js");
     await load("/extension/lib/room.js");
+    await load("/extension/lib/yahoo.js");
+    await load("/extension/lib/drafter.js");
     await load("/extension/content.js");
     log(`loaded; draft ${draftId}, seat ${slot}, speed ${speed}`);
 
@@ -137,25 +141,127 @@
     const owner = (k) => globalThis.PickAndRoll.pickOwner(12, k).slot;
     const ws = new window.WebSocket("wss://harness.invalid/draft");
     ws.send(`8|31822|${slot}|harness`);
+
+    // Armed: a stand-in for Yahoo's player table. Every candidate the drafter is served gets a
+    // row with a Draft button; a click on our turn is the room's pick 300 ms later (``drop`` of
+    // first clicks are lost, as Yahoo loses clicks during a re-render). A player we take that
+    // the recording gives to another team later is replaced there by the one it had at our pick.
+    const table = document.querySelector("#players tbody");
+    const taken = new Set();
+    const swap = new Map();
+    const shown = new Map();
+    const landed = new Set();
+    const ours = {};
+    let onClock = null;
+    const emitPick = (k, yid) => {
+      ws.emit(`0|${k}|${yid}|${owner(k)}|X|0`);
+      taken.add(String(yid));
+      landed.add(k);
+      const row = shown.get(String(yid));
+      if (row) row.remove();
+    };
+    const resolve = (yid) => {
+      let y = String(yid);
+      for (let n = 0; taken.has(y) && swap.has(y) && n < 20; n++) y = swap.get(y);
+      return y;
+    };
+    const addRows = (cands) => {
+      for (const c of cands || []) {
+        const yid = String(c.yahoo_player_id);
+        if (shown.has(yid) || taken.has(yid)) continue;
+        const tr = document.createElement("tr");
+        const td1 = document.createElement("td");
+        const b = document.createElement("button");
+        b.type = "button";
+        b.textContent = "Draft";
+        b.dataset.yid = yid;
+        td1.appendChild(b);
+        const td2 = document.createElement("td");
+        const img = document.createElement("img");
+        img.setAttribute("src", `/extension/test/harness/headshots/${yid}.png`);
+        img.alt = "";
+        img.hidden = true;
+        td2.append(img, `${c.ini}. ${c.last} ${c.team} - ${c.why || ""}`);
+        tr.append(td1, td2);
+        table.appendChild(tr);
+        shown.set(yid, tr);
+      }
+    };
+    if (armedRun) {
+      const send = fakeChrome.runtime.sendMessage;
+      fakeChrome.runtime.sendMessage = async (msg) => {
+        const r = await send(msg);
+        if (msg.op === "plan" && r && r.ok) {
+          addRows(r.data.candidates);
+          addRows(r.data.second);
+        }
+        return r;
+      };
+      table.addEventListener("click", (e) => {
+        const b = e.target.closest("button[data-yid]");
+        const k = onClock && onClock.slot === slot ? onClock.overall : null;
+        if (!b || k === null || landed.has(k) || taken.has(b.dataset.yid)) return;
+        out.clicks = (out.clicks || 0) + 1;
+        if (drop && !b.dataset.dropped && Math.random() < drop) {
+          b.dataset.dropped = "1";
+          out.dropped = (out.dropped || 0) + 1;
+          return;
+        }
+        const yid = b.dataset.yid;
+        setTimeout(() => {
+          if (landed.has(k) || taken.has(yid)) return;
+          ours[k] = yid;
+          emitPick(k, yid);
+          ws.emit(`D|${k + 1}|${owner(k + 1)}|30`);
+          onClock = { overall: k + 1, slot: owner(k + 1) };
+        }, 300);
+      });
+      const r = await fakeChrome.runtime.sendMessage({ op: "mode", draft_id: draftId, mode: "autopilot" });
+      if (!r.ok) throw new Error("arm: " + r.error);
+      log("armed");
+    }
+
     await sleep(3500); // the content script's first status call sees the room attached
-    const start = performance.now();
-    const at = (ms) => sleep(Math.max(0, start + ms / speed - performance.now()));
+    let anchorT = performance.now();
+    let anchorI = 0;
+    const at = (i) => sleep(Math.max(0, anchorT + (times[i] - times[anchorI]) / speed - performance.now()));
     const toggle = document.getElementById("autodraft");
     ws.emit("D|1|1|30");
+    onClock = { overall: 1, slot: 1 };
+    out.expired = 0;
     for (let i = 0; i < rows.length; i++) {
       const p = rows[i];
-      await at(times[i]);
-      const who = owner(p.overall);
-      if (who === slot) {
-        ws.emit("X|29");
-        ws.emit(`5|${slot}`);
+      const k = p.overall;
+      const who = owner(k);
+      if (armedRun && who === slot) {
+        const deadline = performance.now() + 30000; // Yahoo's clock runs in real time
+        while (!landed.has(k) && performance.now() < deadline) await sleep(100);
+        if (!landed.has(k)) {
+          ws.emit("X|29");
+          ws.emit(`5|${slot}`);
+          ours[k] = resolve(p.yid);
+          emitPick(k, ours[k]);
+          out.expired++;
+        } else if (ours[k] !== String(p.yid)) swap.set(ours[k], String(p.yid));
+        anchorT = performance.now();
+        anchorI = i;
+      } else {
+        await at(i);
+        if (who === slot) {
+          ws.emit("X|29");
+          ws.emit(`5|${slot}`);
+        }
+        emitPick(k, resolve(p.yid));
       }
-      ws.emit(`0|${p.overall}|${p.yid}|${who}|X|0`);
-      if (p.overall < rows.length) ws.emit(`D|${p.overall + 1}|${owner(p.overall + 1)}|30`);
-      if (flip && p.overall === 30) toggle.appendChild(document.createElementNS("http://www.w3.org/2000/svg", "svg"));
-      if (flip && p.overall === 33) toggle.querySelector("svg").remove();
-      if (p.overall % 12 === 0) log(`pick ${p.overall} played`);
+      if (k < rows.length && !(armedRun && who === slot && onClock.overall === k + 1)) {
+        ws.emit(`D|${k + 1}|${owner(k + 1)}|30`);
+        onClock = { overall: k + 1, slot: owner(k + 1) };
+      }
+      if (flip && k === 30) toggle.appendChild(document.createElementNS("http://www.w3.org/2000/svg", "svg"));
+      if (flip && k === 33) toggle.querySelector("svg").remove();
+      if (k % 12 === 0) log(`pick ${k} played`);
     }
+    out.ours = ours;
     out.played = rows.length;
 
     // ---- 5. results
@@ -174,6 +280,7 @@
       g: card.guardrails,
       d: card.diagnostics,
       counts: card.counts,
+      compliance: card.compliance,
       rows: card.rows.map((r) => [r.overall, r.label, r.how]),
       markdown: md,
     });
