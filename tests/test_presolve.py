@@ -4,6 +4,7 @@ players plus bench filler)."""
 
 from __future__ import annotations
 
+import os
 import threading
 import time
 from concurrent.futures import Future
@@ -25,6 +26,7 @@ from pickandroll.api.presolve import (
 from pickandroll.api.solver import SolveParams, Superseded, compute_recommendation
 from pickandroll.fidelity.replay import settled_replay
 from pickandroll.optim.horizon import CANDIDATE_COLUMNS, first_order_table
+from pickandroll.optim.pool import BACKGROUND_NICE, background_pool
 from pickandroll.sources.yahoo import load_players_file
 
 from .test_yahoo_room import SESSION, build_league
@@ -384,3 +386,9 @@ def test_the_room_follows_the_clock_it_is_shown(room):
     fixed = store.get(_attach(client, draft_id="k2", session=SESSION, time_limit=8)["session_id"])
     turn("k2", 90)
     assert fixed.state.plan_time_limit == 8.0
+
+
+def test_branch_solves_run_below_the_live_ones():
+    mine = os.nice(0)
+    theirs = background_pool().submit(os.nice, 0).result(timeout=120)
+    assert theirs >= min(mine + BACKGROUND_NICE, 19)

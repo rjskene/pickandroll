@@ -37,7 +37,7 @@ from pydantic import BaseModel, Field
 
 from ..draft.state import plan_fallback
 from ..optim.horizon import HorizonProblem, HorizonSolution, first_order_table
-from ..optim.pool import shared_pool
+from ..optim.pool import background_pool
 from .presolve import (
     BRANCH_TIME_LIMIT,
     MINE,
@@ -698,7 +698,7 @@ class BackgroundSolver:
         wanted = self.book.wanted(branches)
         if not wanted:
             return
-        pool = shared_pool()
+        pool = background_pool()
         for branch in wanted:
             future = pool.submit(solve_branch, (branch.problem, BRANCH_TIME_LIMIT, state.plan_gap))
             entry = self.book.add(branch, future)
