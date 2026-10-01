@@ -68,8 +68,49 @@ def match_players(
             result.unmatched_yahoo.append(key)
         else:
             result.unmatched_yahoo.append(key)
+    _match_short_first_names(yahoo, projections, result, used)
     result.unmatched_projection = [pid for pid in projections.index if pid not in used]
     return result
+
+
+def _match_short_first_names(
+    yahoo: pd.DataFrame, projections: pd.DataFrame, result: MatchResult, used: set[str]
+) -> None:
+    """Second pass over what is left: same last name, and one first name starts with the other
+    (Nic / Nicolas Claxton, Cam / Cameron Johnson, Lu / Luguentz Dort), unique on both sides.
+    A plain first initial is not enough: it pairs Darius Brown with Dion Brown."""
+
+    def split(name: str) -> tuple[str, str]:
+        tokens = normalize_name(name).split()
+        return (tokens[0], " ".join(tokens[1:])) if len(tokens) > 1 else ("", "")
+
+    def short(a: str, b: str) -> bool:
+        return bool(a and b) and (a.startswith(b) or b.startswith(a))
+
+    left = [pid for pid in projections.index if pid not in used]
+    by_last: dict[str, list[tuple[str, str]]] = {}
+    for pid in left:
+        first, last = split(projections.at[pid, "player"])
+        if last:
+            by_last.setdefault(last, []).append((first, pid))
+    waiting = [k for k in result.unmatched_yahoo if k not in result.ambiguous]
+    yahoo_by_last: dict[str, list[tuple[str, str]]] = {}
+    for key in waiting:
+        first, last = split(yahoo.at[key, "name"])
+        if last:
+            yahoo_by_last.setdefault(last, []).append((first, key))
+    for last, keys in yahoo_by_last.items():
+        for first, key in keys:
+            hits = [pid for f, pid in by_last.get(last, []) if short(first, f) and pid not in used]
+            if len(hits) != 1:
+                continue
+            target = projections.at[hits[0], "player"]
+            rivals = [k for f, k in keys if short(f, split(target)[0])]
+            if rivals != [key]:
+                continue
+            result.mapping[key] = hits[0]
+            result.unmatched_yahoo.remove(key)
+            used.add(hits[0])
 
 
 def load_aliases(path: Path) -> dict[str, str]:

@@ -31,8 +31,10 @@ src/pickandroll/
   draft/         league settings, snake-draft math, draft state,
                  simulated drafters, league simulation             (core)
   sources/bbm    Basketball Monster export parser and Playwright fetcher
-  sources/yahoo  Yahoo Fantasy league, players, draft results
-  api/           FastAPI app, background solver, server-sent event stream
+  sources/yahoo  Yahoo Fantasy league, players, draft results, Yahoo id map
+  fidelity/      YAHOO SYNC event log, scorecard, Tier 1 replay
+  api/           FastAPI app, background solver, server-sent event stream,
+                 Yahoo Fantasy feed and Yahoo draft room
 web/             draft-day UI
 ```
 
@@ -249,7 +251,55 @@ exact re-solve where the player was a priced candidate, flagged `cost_exact`, el
 first-order estimate), `/picks`, `/sync`, `/autopick`, `POST /recommend` (synchronous),
 `POST /solve` (queue a background solve), `GET /recommendation` (the latest, with `stale`),
 `/teams`, `/score`, `/solver`, `/events` (`pick`, `undo`, `survival`, `solve` progress,
-`recommendation`), and the Yahoo feed routes.
+`recommendation`), the Yahoo feed routes and the Yahoo draft-room routes below.
+
+## Yahoo draft room (`api.yahoo_room`, YAHOO SYNC)
+
+The Fantasy API feed waits on Yahoo's app approval; the draft room itself delivers every pick with
+the Yahoo player id the instant it happens. A client in the user's own draft page (the Chrome
+extension, #9) forwards picks to the API, and the API mirrors them into a session. The metric,
+guardrails and event schema are in `docs/YAHOO_SYNC.md`.
+
+Routes are keyed by the Yahoo draft id, not the session, so a room outlives an API restart:
+
+* `POST /rooms` attaches a room (`draft_id`, `slot`, `mode` mirror/autopilot, `num_teams`,
+  `players_file`, and `session_id` or `session` settings; solves default to n 3, no scenarios,
+  5 s). For a draft id whose log holds an attach record and has no live room, it rebuilds the
+  room: a session with the logged settings, the logged picks re-applied, a fresh solve. Any other
+  room call does the same, so a client never has to notice the restart.
+* `POST /rooms/{d}/picks` takes a batch of `{overall, yahoo_player_id | label + team, slot,
+  t_room, src}`. Idempotent by overall (resend the whole history whenever in doubt); a pick ahead
+  of a gap waits for it; a Yahoo player with no projection, or one the session already holds,
+  becomes a stand-in (the least useful player left) while the room's ledger keeps the Yahoo id.
+  The room is the truth for the board: a session pick that disagrees at the same overall is
+  replaced and logged as a `conflict`. Every applied pick is a `pick` event with
+  `source: yahoo_room`.
+* `GET /rooms/{d}/plan?wait=` lists candidates for my next turn by Yahoo id (the priced
+  candidates, the plan's next rows, then the board by cost) with initial, last name and team for
+  matching Yahoo's table rows, a second list when my slot picks twice in a row, and the board
+  version and freshness of the solve. `wait` (at most 20 s) holds for a solve of the current
+  board and starts one.
+* `POST /rooms/{d}/events` (client events: control, turn_start, draft_attempt, pick_landed,
+  intervention, heartbeat), `GET /rooms/{d}/status` (one-call mid-draft check),
+  `GET /rooms/{d}/fidelity[?format=md]` (the scorecard), `PATCH` / `DELETE /rooms/{d}`,
+  `POST /rooms/{d}/aliases` (pin a Yahoo id to a projection id) and the session view
+  `GET|POST /sessions/{id}/yahoo/room`. A session follows the Fantasy feed or a room, not both.
+
+Yahoo ids map to projection ids at attach time from the saved players file
+(`data/yahoo_players_<league>.json`) through `sources.matching`, which pairs identical
+normalized names, then the same last name where one first name starts with the other (Nic and
+Nicolas Claxton, Cam and Cameron Johnson; a bare initial is not enough, it pairs Darius with Dion
+Brown). Board labels ("S. Curry", GSW) resolve by initial, last name and team, ties to the lower
+Yahoo average pick. Pins go to `data/aliases.json`, which is gitignored: they stay on this
+machine and do not travel with the repository.
+
+The fidelity log is `data/fidelity/<draft_id>.jsonl`, one event per line: what the API saw
+(`attach`, `control`, `room_pick`, `session_pick` with its lag, `reco` for every solve,
+`conflict`, `score` at my last pick) and what the client posts. Heartbeats are written at most
+once a minute. `python -m pickandroll fidelity report <draft_id>` prints the scorecard;
+`python -m pickandroll room replay <fixture.csv> --slot N --projection-file F` replays a recorded
+room into a running API (Tier 1; `tests/fixtures/rooms/` holds the pick order and timings of room
+2515267).
 
 Candidates in a recommendation carry their ADP and a `tie` flag: when more than one candidate
 sits within `tie_band` of the best exact objective (0.05 categories, or 0.5 z on the sum

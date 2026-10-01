@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import threading
 import uuid
 from contextlib import asynccontextmanager
@@ -25,23 +26,30 @@ from pathlib import Path
 from typing import Any, Literal
 
 import pandas as pd
-from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import StreamingResponse
+from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import PlainTextResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 from ..availability.survival import SurvivalTable
 from ..draft import STRATEGIES, DraftState, LeagueSettings, Strategy, simulate
 from ..draft.league_sim import simulate_league
+from ..fidelity import FidelityLog, analyze, last_attach, markdown, read_events
+from ..fidelity import status as fidelity_status
 from ..optim.objective import CategoryCurve
 from ..optim.roster import Slot, yahoo_default_slots
 from ..projections.adp import adp_for_projections, load_adp
 from ..projections.positions import apply_positions, load_positions
 from ..projections.schema import Cat, ProjectionSet
 from ..sources.bbm import PROJECTION_SUFFIXES, load_bbm
-from ..sources.yahoo import YahooLeague
+from ..sources.matching import load_aliases
+from ..sources.yahoo import YahooLeague, build_id_map, load_players_file
+from . import yahoo_room
 from .solver import BackgroundSolver, SolveParams, compute_recommendation, solver_executor
 from .yahoo_feed import LeagueFactory, YahooFeed, attach_feed
+from .yahoo_room import YahooRoom
 
+LOG = logging.getLogger(__name__)
 DATA_DIR = Path(__file__).resolve().parents[3] / "data"
 KEEPALIVE_SECONDS = 15.0
 # Streams end on their own after this long; EventSource reconnects and the UI refreshes on
@@ -50,6 +58,13 @@ MAX_STREAM_SECONDS = 120.0
 SURVIVAL_SUFFIXES = {".csv"}
 CURVE_SUFFIXES = {".json"}
 ADP_SUFFIXES = {".csv", ".xls", ".xlsx"}
+#: Browsers that may call the API: the dev UI, other localhost tools and the Chrome extension.
+CORS_ORIGINS = r"^(chrome-extension://[a-p]{32}|https?://(localhost|127\.0\.0\.1)(:\d+)?)$"
+#: The longest a room client may hold ``/plan`` for a fresh solve (the pick clock is 30 s).
+PLAN_WAIT_MAX = 20.0
+#: Solver settings a room attaches with unless told otherwise: they kept solves inside a 30 s
+#: clock in the 2026-09-27 mocks.
+ROOM_SOLVE = {"n": 3, "scenarios": 0, "time_limit": 5.0}
 
 
 # --------------------------------------------------------------------------- session store
@@ -62,6 +77,9 @@ class Session:
     listeners: list[asyncio.Queue] = field(default_factory=list)
     log: list[dict[str, Any]] = field(default_factory=list)
     yahoo: YahooFeed | None = None
+    room: YahooRoom | None = None
+    #: The ``POST /sessions`` body, kept so a room's log can rebuild the session.
+    create_params: dict[str, Any] | None = None
     #: Guards the pick log: picks are applied and problems are built under it.
     lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
     #: Which objective the session drafts on; the curve itself lives on the state.
@@ -133,6 +151,11 @@ class Session:
             },
             bump=False,
         )
+        if self.room is not None:
+            try:
+                yahoo_room.on_recommendation(self, self.room, payload)
+            except Exception:  # the log must never break a solve
+                LOG.exception("could not log the solve for room %s", self.room.draft_id)
 
     def publish(self, event: str, data: dict[str, Any], bump: bool = True) -> None:
         """Send an event to every listener. Board changes bump the version and wake the
@@ -160,7 +183,15 @@ class Session:
 class SessionStore:
     def __init__(self) -> None:
         self.sessions: dict[str, Session] = {}
+        #: Yahoo draft id -> the session its room is attached to.
+        self.rooms: dict[str, str] = {}
         self.loop: asyncio.AbstractEventLoop | None = None
+
+    def room(self, draft_id: str) -> tuple[YahooRoom, Session] | None:
+        session = self.sessions.get(self.rooms.get(draft_id, ""))
+        if session is None or session.room is None or session.room.draft_id != draft_id:
+            return None
+        return session.room, session
 
     def create(
         self,
@@ -284,6 +315,57 @@ class YahooAttach(BaseModel):
     start: bool = True
 
 
+class RoomAttach(BaseModel):
+    """Attach a Yahoo draft room, or resume one from its fidelity log. Fields left out on a
+    resume come from the log's attach record."""
+
+    draft_id: str = Field(pattern=r"^[A-Za-z0-9_.-]{1,64}$", description="Yahoo draft id")
+    slot: int | None = Field(default=None, ge=1, le=20, description="my draft slot in the room")
+    mode: Literal["mirror", "autopilot"] | None = Field(
+        default=None, description="mirror the room (default) or let pickandroll draft when armed"
+    )
+    num_teams: int | None = Field(default=None, ge=2, le=20)
+    players_file: str | None = Field(
+        default=None, description="Yahoo players JSON in data/ (default: newest yahoo_players_*)"
+    )
+    session_id: str | None = Field(default=None, description="attach to this session")
+    session: SessionCreate | None = Field(
+        default=None, description="or create a session with these settings"
+    )
+    n: int | None = Field(default=None, ge=1, le=30, description="candidates priced per solve")
+    scenarios: int | None = Field(default=None, ge=0, le=8)
+    time_limit: float | None = Field(default=None, ge=1.0, le=600.0)
+
+
+class RoomPickIn(BaseModel):
+    overall: int = Field(ge=1)
+    yahoo_player_id: str | int | None = None
+    label: str | None = Field(default=None, description='Board label, "F. Last", with team')
+    team: str | None = None
+    slot: int | None = Field(default=None, ge=1, le=20)
+    t_room: float | str | None = Field(
+        default=None, description="when the room message arrived: epoch ms or ISO-8601"
+    )
+    src: str | None = Field(default=None, description="socket, history or board")
+
+
+class RoomPicks(BaseModel):
+    picks: list[RoomPickIn]
+
+
+class RoomEvents(BaseModel):
+    events: list[dict[str, Any]]
+
+
+class RoomPatch(BaseModel):
+    mode: Literal["mirror", "autopilot"]
+
+
+class AliasPin(BaseModel):
+    yahoo_player_id: str
+    player_id: str
+
+
 RecommendQuery = SolveParams
 
 
@@ -292,11 +374,14 @@ def create_app(
     store: SessionStore | None = None,
     data_dir: Path | None = None,
     league_factory: LeagueFactory | None = None,
+    fidelity_dir: Path | None = None,
 ) -> FastAPI:
     store = store or SessionStore()
     data_dir = data_dir or DATA_DIR
+    fidelity_dir = fidelity_dir or data_dir / "fidelity"
     league_factory = league_factory or (lambda league_id: YahooLeague(league_id))
     shutdown = asyncio.Event()
+    rooms_lock = asyncio.Lock()
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
@@ -317,6 +402,12 @@ def create_app(
 
     app = FastAPI(title="pickandroll", version="0.2.0", lifespan=lifespan)
     app.state.store = store
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origin_regex=CORS_ORIGINS,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
 
     @app.get("/health")
     def health() -> dict[str, str]:
@@ -342,6 +433,9 @@ def create_app(
 
     @app.post("/sessions", status_code=201)
     async def create_session(body: SessionCreate) -> dict[str, Any]:
+        return _summary(await make_session(body))
+
+    async def make_session(body: SessionCreate) -> Session:
         state, label, curve_source = await asyncio.to_thread(_build_state, body, data_dir)
         survival: dict[str, Any] = {"mode": body.survival, "status": "none"}
         if body.survival == "file":
@@ -388,11 +482,12 @@ def create_app(
             survival=survival,
             solve_ahead=body.solve_ahead,
         )
+        session.create_params = body.model_dump(mode="json")
         if body.survival == "simulate":
             asyncio.get_running_loop().create_task(
                 _build_survival(session, body.survival_sims, drafters, body.fit_curve)
             )
-        return _summary(session)
+        return session
 
     @app.get("/sessions")
     def list_sessions() -> list[dict[str, Any]]:
@@ -667,6 +762,8 @@ def create_app(
     @app.post("/sessions/{session_id}/yahoo", status_code=201)
     async def yahoo_attach(session_id: str, body: YahooAttach) -> dict[str, Any]:
         session = store.get(session_id)
+        if session.room is not None:
+            raise HTTPException(409, f"session follows Yahoo room {session.room.draft_id}")
         if session.yahoo and session.yahoo.running:
             session.yahoo.task.cancel()
         try:
@@ -706,6 +803,270 @@ def create_app(
             session.yahoo.task.cancel()
         session.yahoo = None
         return {"attached": False}
+
+    # ------------------------------------------------------------------ yahoo draft room
+    def room_log(draft_id: str) -> FidelityLog:
+        try:
+            return FidelityLog(fidelity_dir, draft_id)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+
+    def players_path(name: str | None) -> Path:
+        if name:
+            if name != Path(name).name or name in {".", ".."} or "\\" in name:
+                raise HTTPException(400, f"players_file must be a file name in data/: {name!r}")
+            path = data_dir / name
+            if not path.exists():
+                raise HTTPException(400, f"players file not found: {name}")
+            return path
+        files = sorted(data_dir.glob("yahoo_players_*.json"), key=lambda f: f.stat().st_mtime)
+        if not files:
+            raise HTTPException(400, "no yahoo_players_*.json in data/; pass players_file")
+        return files[-1]
+
+    async def open_room(body: RoomAttach) -> tuple[YahooRoom, Session]:
+        """Attach a room, or return the live one, or rebuild one from its log."""
+        async with rooms_lock:
+            live = store.room(body.draft_id)
+            if live is not None:
+                room, session = live
+                if body.slot is not None and body.slot != room.slot:
+                    raise HTTPException(409, f"room {room.draft_id} is attached for slot {room.slot}")
+                if body.session_id is not None and body.session_id != session.id:
+                    raise HTTPException(
+                        409, f"room {room.draft_id} is attached to session {session.id}"
+                    )
+                return room, session
+            log = room_log(body.draft_id)
+            prior = await asyncio.to_thread(log.read)
+            record = last_attach(prior) or {}
+            if body.session_id is not None:
+                session = store.get(body.session_id)
+            elif body.session is not None:
+                session = await make_session(body.session)
+            elif record.get("session"):
+                session = await make_session(SessionCreate(**record["session"]))
+            else:
+                raise HTTPException(
+                    400, "no session: pass session_id or session settings (no log to resume from)"
+                )
+            if session.yahoo is not None:
+                raise HTTPException(409, "session follows the Yahoo Fantasy API feed; detach it")
+            if session.room is not None:
+                raise HTTPException(409, f"session follows Yahoo room {session.room.draft_id}")
+            solve = record.get("solve") or {}
+
+            def option(name: str, default: Any) -> Any:
+                value = getattr(body, name)
+                if value is not None:
+                    return value
+                return record.get(name, solve.get(name, default))
+
+            slot = option("slot", None)
+            if slot is None:
+                raise HTTPException(400, "slot is required")
+            params = SolveParams(n=option("n", ROOM_SOLVE["n"]), scenarios=option("scenarios", 0))
+            time_limit = float(option("time_limit", ROOM_SOLVE["time_limit"]))
+            path = players_path(option("players_file", None))
+            state = session.state
+
+            def build() -> YahooRoom:
+                ids = build_id_map(
+                    load_players_file(path),
+                    state.projections.df,
+                    load_aliases(data_dir / "aliases.json"),
+                )
+                session.solve_params = params
+                state.plan_time_limit = time_limit
+                state.price_time_limit = min(state.price_time_limit, time_limit)
+                return yahoo_room.attach_room(
+                    session,
+                    draft_id=body.draft_id,
+                    slot=int(slot),
+                    mode=option("mode", "mirror"),
+                    num_teams=int(option("num_teams", state.settings.num_teams)),
+                    ids=ids,
+                    log=log,
+                    players_file=path.name,
+                    prior=prior,
+                    attach_record={
+                        "session": session.create_params,
+                        "solve": {
+                            "n": params.n,
+                            "scenarios": params.scenarios,
+                            "time_limit": time_limit,
+                        },
+                    },
+                )
+
+            try:
+                room = await asyncio.to_thread(build)
+            except (KeyError, ValueError) as exc:
+                raise HTTPException(400, str(exc)) from exc
+            store.rooms[body.draft_id] = session.id
+            return room, session
+
+    async def get_room(draft_id: str) -> tuple[YahooRoom, Session]:
+        """The live room; after an API restart, the room rebuilt from its log."""
+        live = store.room(draft_id)
+        if live is not None:
+            return live
+        log = room_log(draft_id)
+        if last_attach(await asyncio.to_thread(log.read)) is None:
+            raise HTTPException(404, f"no room {draft_id}")
+        return await open_room(RoomAttach(draft_id=draft_id))
+
+    def room_view(room: YahooRoom, session: Session) -> dict[str, Any]:
+        return {**yahoo_room.summary(session, room), "session": _summary(session)}
+
+    @app.post("/rooms", status_code=201)
+    async def attach_room(body: RoomAttach) -> dict[str, Any]:
+        """Attach a Yahoo draft room to a session (``session_id``, or a new one from
+        ``session``). For a draft id with a log and no live room, rebuild the room from the
+        log: same session settings, the logged picks re-applied, a fresh solve."""
+        room, session = await open_room(body)
+        return room_view(room, session)
+
+    @app.get("/rooms")
+    def list_rooms() -> list[dict[str, Any]]:
+        return [
+            yahoo_room.summary(live[1], live[0])
+            for draft_id in list(store.rooms)
+            if (live := store.room(draft_id)) is not None
+        ]
+
+    @app.get("/rooms/{draft_id}")
+    async def room_status(draft_id: str) -> dict[str, Any]:
+        room, session = await get_room(draft_id)
+        return room_view(room, session)
+
+    @app.patch("/rooms/{draft_id}")
+    async def room_mode(draft_id: str, body: RoomPatch) -> dict[str, Any]:
+        room, session = await get_room(draft_id)
+        room.mode = body.mode
+        room.control = yahoo_room.control_for(body.mode)
+        room.log.append({"type": "control", "state": room.control, "slot": room.slot, "src": "api"})
+        session.publish("room_mode", {"draft_id": draft_id, "mode": body.mode}, bump=False)
+        return room_view(room, session)
+
+    @app.delete("/rooms/{draft_id}")
+    def room_detach(draft_id: str) -> dict[str, Any]:
+        live = store.room(draft_id)
+        if live is None:
+            raise HTTPException(404, f"no live room {draft_id}")
+        room, session = live
+        room.log.append({"type": "detach", "session_id": session.id})
+        session.room = None
+        store.rooms.pop(draft_id, None)
+        return {"attached": False, "draft_id": draft_id}
+
+    @app.post("/rooms/{draft_id}/picks")
+    async def room_picks(draft_id: str, body: RoomPicks) -> dict[str, Any]:
+        """A batch of room picks by Yahoo id (or Board label and team). Idempotent by overall;
+        resend the whole history whenever in doubt."""
+        room, session = await get_room(draft_id)
+        items = [p.model_dump() for p in body.picks]
+        try:
+            return await asyncio.to_thread(yahoo_room.ingest, session, room, items)
+        except (KeyError, ValueError) as exc:
+            raise HTTPException(400, str(exc)) from exc
+
+    @app.get("/rooms/{draft_id}/plan")
+    async def room_plan(
+        draft_id: str,
+        wait: float = Query(default=0.0, ge=0.0, le=PLAN_WAIT_MAX),
+    ) -> dict[str, Any]:
+        """Candidates for my next turn by Yahoo id. ``wait`` holds up to that many seconds
+        (at most 20) for a solve of the current board and starts one if none is running."""
+        room, session = await get_room(draft_id)
+        loop = asyncio.get_running_loop()
+        started = loop.time()
+        deadline = started + wait
+        kicked = False
+        while True:
+            rec = session.recommendation
+            fresh = rec is not None and rec["version"] == session.version
+            state = session.state
+            if fresh or loop.time() >= deadline or not state.my_remaining_picks:
+                break
+            solver = session.solver
+            if solver is not None and not kicked and not solver.running:
+                kicked = solver.kick("room", force=True)
+            await asyncio.sleep(0.1)
+        payload = await asyncio.to_thread(yahoo_room.plan, session, room)
+        return {**payload, "waited_ms": round((loop.time() - started) * 1000)}
+
+    @app.post("/rooms/{draft_id}/events")
+    async def room_events(draft_id: str, body: RoomEvents) -> dict[str, Any]:
+        """Client events for the fidelity log: control, turn_start, draft_attempt,
+        pick_landed, intervention, heartbeat, note."""
+        room, _session = await get_room(draft_id)
+        try:
+            written = await asyncio.to_thread(yahoo_room.record_events, room, body.events)
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        return {"received": len(body.events), "written": written, "control": room.control}
+
+    @app.post("/rooms/{draft_id}/aliases")
+    async def room_alias(draft_id: str, body: AliasPin) -> dict[str, Any]:
+        """Pin a Yahoo player to a projection id for this room and for later ones
+        (``data/aliases.json``, which stays on this machine)."""
+        room, session = await get_room(draft_id)
+        try:
+            result = await asyncio.to_thread(
+                yahoo_room.pin, session, room, body.yahoo_player_id, body.player_id
+            )
+        except KeyError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        key = str(room.ids.players.at[body.yahoo_player_id, "player_key"])
+        path = data_dir / "aliases.json"
+        aliases = load_aliases(path)
+        aliases[key] = body.player_id
+        path.write_text(json.dumps(aliases, indent=1, sort_keys=True) + "\n")
+        return result
+
+    @app.get("/rooms/{draft_id}/status")
+    def room_fidelity_status(draft_id: str) -> dict[str, Any]:
+        """One call for a mid-draft check: the log's view (picks seen, lag so far, labels of my
+        picks so far) and, when the room is live, the session's."""
+        events = read_events(room_log(draft_id).path)
+        if not events:
+            raise HTTPException(404, f"no log for room {draft_id}")
+        try:
+            view = fidelity_status(analyze(events))
+        except ValueError as exc:
+            raise HTTPException(404, str(exc)) from exc
+        live = store.room(draft_id)
+        return {**view, "live": None if live is None else yahoo_room.summary(live[1], live[0])}
+
+    @app.get("/rooms/{draft_id}/fidelity", response_model=None)
+    def room_fidelity(
+        draft_id: str, format: Literal["json", "md"] = "json"
+    ) -> dict[str, Any] | PlainTextResponse:
+        """The scorecard from the log: compliance, labels, G1-G6, D1-D5 and every pick."""
+        events = read_events(room_log(draft_id).path)
+        if not events:
+            raise HTTPException(404, f"no log for room {draft_id}")
+        try:
+            card = analyze(events)
+        except ValueError as exc:
+            raise HTTPException(404, str(exc)) from exc
+        if format == "md":
+            return PlainTextResponse(markdown(card), media_type="text/markdown")
+        return {**card, "markdown": markdown(card)}
+
+    @app.get("/sessions/{session_id}/yahoo/room")
+    def session_room(session_id: str) -> dict[str, Any]:
+        session = store.get(session_id)
+        if session.room is None:
+            return {"attached": False}
+        return yahoo_room.summary(session, session.room)
+
+    @app.post("/sessions/{session_id}/yahoo/room", status_code=201)
+    async def session_room_attach(session_id: str, body: RoomAttach) -> dict[str, Any]:
+        store.get(session_id)
+        room, session = await open_room(body.model_copy(update={"session_id": session_id}))
+        return room_view(room, session)
 
     return app
 
