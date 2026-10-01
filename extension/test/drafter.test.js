@@ -9,7 +9,7 @@ const SLOT = 1;
 const K = 24; // my pick: round 2, slot 1
 
 /** A virtual clock, a room at pick K on the clock, a scripted draft client and a plan. */
-function world({ visible = ["101", "102", "103"], clicksToLand = 1, landMs = 300, plan = {}, planMs = 2000 } = {}) {
+function world({ visible = ["101", "102", "103"], clicksToLand = 1, landMs = 300, plan = {}, planMs = 2000, landInClick = false } = {}) {
   const clock = { t: 1_000_000 };
   const queue = [];
   const run = () => {
@@ -39,7 +39,10 @@ function world({ visible = ["101", "102", "103"], clicksToLand = 1, landMs = 300
     click(row, c) {
       log.clicks.push([clock.t, c.yahoo_player_id]);
       const mine = log.clicks.filter((x) => x[1] === c.yahoo_player_id).length;
-      if (mine === clicksToLand) at(landMs, () => !tracker.picks.has(K) && land(c.yahoo_player_id));
+      if (mine === clicksToLand && landInClick) {
+        land(c.yahoo_player_id); // the room answers before the click returns
+        log.howAtLand = tracker.how(K, { autodraft: auto });
+      } else if (mine === clicksToLand) at(landMs, () => !tracker.picks.has(K) && land(c.yahoo_player_id));
       return "clicked";
     },
     nudge: async () => {},
@@ -103,6 +106,13 @@ test("the first click lands: one attempt, how row, Autodraft untouched", async (
   assert.deepEqual(log.autodraft, []);
   assert.equal(tracker.how(K), "row");
   assert.equal(await d.turn(K), null); // a turn is taken once
+});
+
+test("a pick that lands while the click settles is still the extension's row pick", async () => {
+  const { d, log } = world({ landInClick: true });
+  const out = await d.turn(K);
+  assert.equal(out.result, "landed");
+  assert.equal(log.howAtLand, "row"); // what content.js posts in pick_landed at that moment
 });
 
 test("a click lost to a re-render is repeated on the same row at 1.8 s", async () => {

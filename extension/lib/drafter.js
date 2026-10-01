@@ -120,9 +120,9 @@
             const q = await this.dom.queueOnly(c);
             if (q.ok && !this.done(k)) {
               autodraft = true;
+              this.tracker.noteAttempt(k, "queue"); // Yahoo can pick the instant the switch is on
               await this.dom.setAutodraft(true);
               this.attempt(k, c, "queue", 1);
-              this.tracker.noteAttempt(k, "queue");
               const left = this.left();
               await this.waitDone(k, ((left === null ? 10 : Math.max(0, left)) + 3) * 1000);
             } else if (!q.ok) {
@@ -179,6 +179,8 @@
       }
       if (this.done(k)) return this.tracker.isManual(k) ? "manual" : "landed";
       if (!row) return "noRow";
+      // Noted before the click: the pick can land while the click is still settling.
+      this.tracker.noteAttempt(k, "row");
       let r = await this.dom.click(row, c);
       if (r === "mismatch") {
         await this.dom.nudge();
@@ -188,7 +190,6 @@
       if (r === "mismatch") return "mismatch";
       if (r !== "clicked") return "noButton";
       this.attempt(k, c, via, 1);
-      this.tracker.noteAttempt(k, "row");
       let n = 1;
       for (const gap of RECLICK_MS) {
         const budget = Math.min(gap, ((this.left() ?? 30) - BACKSTOP_BY_S) * 1000);
