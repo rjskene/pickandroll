@@ -45,6 +45,8 @@ as such, with the evidence.
   `main`, and only docs.
 - Python: `.venv/bin/python -m pytest` and `.venv/bin/ruff check src tests` green before any PR.
   Web: `cd web && npm run build` (there is no eslint config yet; #10 adds one, then `npm run lint` too).
+  Extension (#9 onward): `node --test extension/test/*.test.js` from the repo root (Node, no dependencies;
+  the bare directory form fails on Node 25).
 - Dev servers only through `~/code/.claude/launch.json` (`pickandroll-api` on :8000, `pickandroll-web`
   on :5173), never with ad-hoc shell commands. uvicorn `--reload` drops the in-memory sessions on every
   source edit, so say so before editing the API during a live mock.
