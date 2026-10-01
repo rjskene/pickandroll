@@ -469,6 +469,7 @@ def test_scorecard_labels_every_failure():
         "denominator": 7,
         "manual": 1,
         "my_picks_seen": 8,
+        "against_final": 1,
     }
     g = card["guardrails"]
     assert g["G1"]["agree"] == 96 and g["G2"]["max"] == 10000 and g["G3"]["interventions"] == 1
@@ -530,6 +531,88 @@ def test_scorecard_stale_when_the_session_was_behind():
     card = analyze(events)
     assert [r["label"] for r in card["rows"]] == ["stale"]
     assert card["guardrails"]["G2"]["max"] == 8000
+
+
+def test_scorecard_judges_the_reco_acted_on_and_counts_churn():
+    """Two teams, slot 1: my picks are 1 and 4. Pick 1 is drafted off the early plan, which the
+    priced table then replaces with another #1 (churn). Pick 4 is drafted off board 2's plan
+    while board 3's was there: stale, though the session was synced."""
+    events = [
+        _ev("attach", 0, slot=1, num_teams=2, rounds=2, draft_id="c"),
+        _ev("control", 0, state="armed"),
+        _ev("turn_start", 1, overall=1),
+        _ev(
+            "reco",
+            2,
+            board=0,
+            top_yid="a",
+            top_pid="pa",
+            top_name="A",
+            cands=["a", "b"],
+            priced=False,
+            branch=False,
+            solve_ms=200,
+        ),
+        _ev("draft_attempt", 3, overall=1, yid="a", method="row", attempt=1, board=0),
+        _ev(
+            "reco",
+            4,
+            board=0,
+            top_yid="b",
+            top_pid="pb",
+            top_name="B",
+            cands=["b", "a"],
+            priced=True,
+            solve_ms=500,
+            branches_running=2,
+        ),
+        _ev("pick_landed", 5, overall=1, yid="a", how="row"),
+        _ev("room_pick", 5, overall=1, yid="a"),
+        _ev("session_pick", 5, overall=1, yid="a"),
+        _ev("reco", 6, board=2, top_yid="x", top_pid="px", top_name="X", cands=["x", "d"]),
+        _ev("room_pick", 7, overall=2, yid="o2"),
+        _ev("session_pick", 7, overall=2, yid="o2"),
+        _ev("room_pick", 8, overall=3, yid="x"),
+        _ev("session_pick", 8, overall=3, yid="x"),
+        _ev("turn_start", 8, overall=4),
+        _ev(
+            "reco",
+            9,
+            board=3,
+            top_yid="c",
+            top_pid="pc",
+            top_name="C",
+            cands=["c", "e"],
+            priced=True,
+            solve_ms=300,
+            branches_running=0,
+        ),
+        _ev("draft_attempt", 10, overall=4, yid="d", method="row", attempt=1, board=2),
+        _ev("pick_landed", 11, overall=4, yid="d", how="row"),
+        _ev("room_pick", 11, overall=4, yid="d"),
+        _ev("session_pick", 11, overall=4, yid="d"),
+    ]
+    card = analyze(events)
+    first, second = card["rows"]
+    assert first["label"] == "compliant" and first["ref_name"] == "A"
+    assert first["ref_kind"] == "plan" and first["final_kind"] == "priced"
+    assert first["churn"] is True and first["final_name"] == "B"
+    assert second["label"] == "stale" and second["acted_board"] == 2
+    assert second["churn"] is False
+    assert card["compliance"]["compliant"] == 1 and card["compliance"]["against_final"] == 0
+    d = card["diagnostics"]
+    assert d["D6"] == {"churn": 1, "picks": [1]}
+    assert d["D3"]["n"] == 2 and d["D3_plan"]["n"] == 1
+    assert d["D3_busy"]["max"] == 500 and d["D3_idle"]["max"] == 300
+    text = markdown(card)
+    assert "| D6 reco churn (target 0) | 1 at 1 |" in text
+    assert "Compliance against the final reco (diagnostic): 0/2." in text
+    assert "| 1 | A | plan | B | priced |" in text
+    # Without an attempt (expiry, manual) the ref is the last reco before the landing.
+    no_attempt = [e for e in events if e["type"] != "draft_attempt"]
+    rows = analyze(no_attempt)["rows"]
+    assert rows[0]["label"] == "fallback" and rows[0]["churn"] is False
+    assert rows[1]["label"] == "wrong"  # judged against board 3's list, which lacks d
 
 
 def test_scorecard_g2_judges_the_picks_after_the_attach():

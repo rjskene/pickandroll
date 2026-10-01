@@ -1,9 +1,12 @@
 """The YAHOO SYNC scorecard (``docs/YAHOO_SYNC.md`` §1-§4) computed from a fidelity log.
 
 Pure functions over the event list. Every one of my seat's picks that has happened gets a
-reference (``ref_k``: the #1 candidate of the last recommendation solved for board ``k-1``
-before the pick landed) and a label: ``compliant``, ``manual``, or the first failure that
-applies in the order ``absent``, ``stale``, ``unsolved``, ``expired``, ``fallback``, ``wrong``.
+reference (``ref_k``: the #1 candidate of the recommendation for board ``k-1`` the drafter acted
+on, the last one logged by its first draft attempt, else before the pick landed) and a label:
+``compliant``, ``manual``, or the first failure that applies in the order ``absent``, ``stale``,
+``unsolved``, ``expired``, ``fallback``, ``wrong``. ``final_k`` is the last recommendation for
+board ``k-1`` before the pick landed; a turn whose ``final_k`` has another #1 than ``ref_k`` is
+reco churn (D6).
 """
 
 from __future__ import annotations
@@ -36,6 +39,20 @@ def stats(values: list[float]) -> dict[str, Any]:
         "p95": round(rank(0.95)),
         "max": round(ordered[-1]),
     }
+
+
+def reco_kind(reco: dict[str, Any] | None) -> str | None:
+    """``priced`` (exact prices), ``converged`` (a pre-solved branch plan) or ``plan`` (an early
+    plan priced to first order), with ``capped`` when the log says a time limit stopped it."""
+    if reco is None:
+        return None
+    if reco.get("priced", True):
+        kind = "priced"
+    elif reco.get("branch"):
+        kind = "converged"
+    else:
+        kind = "plan"
+    return f"{kind}, capped" if reco.get("capped") else kind
 
 
 def analyze(events: list[dict[str, Any]]) -> dict[str, Any]:
@@ -118,7 +135,16 @@ def analyze(events: list[dict[str, Any]]) -> dict[str, Any]:
         else:
             t_turn = None
         board = [r for r in recos if int(r.get("board", -1)) == k - 1]
-        ref = next((r for r in reversed(board) if to_ms(r["t"]) < t_land), None)
+        final = next((r for r in reversed(board) if to_ms(r["t"]) < t_land), None)
+        # The reco the drafter acted on: the last one by its first attempt. An attempt logged
+        # after the landing (the click settled late) is judged at the landing.
+        tries = attempts.get(k, [])
+        t_attempt = to_ms(tries[0]["t"]) if tries else None
+        if t_attempt is not None and t_attempt < t_land:
+            ref = next((r for r in reversed(board) if to_ms(r["t"]) <= t_attempt), None)
+        else:
+            ref = final
+        acted = tries[0].get("board") if tries else None
         ready = (to_ms(board[0]["t"]) - t_turn) if board and t_turn is not None else None
         how = land.get("how") if land else None
         ref_yid = str(ref["top_yid"]) if ref and ref.get("top_yid") is not None else None
@@ -135,7 +161,8 @@ def analyze(events: list[dict[str, Any]]) -> dict[str, Any]:
             label = "compliant"
         elif control_at(t_turn if t_turn is not None else t_land) != "armed":
             label = "absent"
-        elif synced_by.get(k - 1, math.inf) > t_land:
+        elif synced_by.get(k - 1, math.inf) > t_land or (acted is not None and int(acted) < k - 1):
+            # The session was behind, or the drafter read an older board's plan.
             label = "stale"
         elif ref is None:
             label = "unsolved"
@@ -151,6 +178,7 @@ def analyze(events: list[dict[str, Any]]) -> dict[str, Any]:
             to_land = t_land - t_turn
         else:
             to_land = None
+        churn = bool(ref and final and final.get("top_pid") != ref.get("top_pid"))
         rows.append(
             {
                 "overall": k,
@@ -158,6 +186,15 @@ def analyze(events: list[dict[str, Any]]) -> dict[str, Any]:
                 "ref_yid": ref_yid,
                 "ref_pid": ref.get("top_pid") if ref else None,
                 "ref_name": ref_name,
+                "ref_kind": reco_kind(ref),
+                "acted_board": None if acted is None else int(acted),
+                "final_yid": (
+                    str(final["top_yid"]) if final and final.get("top_yid") is not None else None
+                ),
+                "final_pid": final.get("top_pid") if final else None,
+                "final_name": final.get("top_name") if final else None,
+                "final_kind": reco_kind(final),
+                "churn": churn,
                 "actual_yid": actual,
                 "actual_name": room[k].get("name"),
                 "label": label,
@@ -171,6 +208,15 @@ def analyze(events: list[dict[str, Any]]) -> dict[str, Any]:
 
     counts = {label: sum(1 for r in rows if r["label"] == label) for label in LABELS}
     decided = len(rows) - counts["manual"]
+    # Diagnostic: compliance had the drafter been judged against the last reco before landing.
+    against_final = sum(
+        1
+        for r in rows
+        if r["label"] != "manual"
+        and r["final_yid"] is not None
+        and r["actual_yid"] == r["final_yid"]
+    )
+    priced = [r for r in recos if r.get("priced", True) and r.get("solve_ms") is not None]
 
     # G1: the session's latest pick at each overall is the room's player, by Yahoo id. A
     # stand-in holds another player in his place, so it does not agree until it is repaired.
@@ -226,6 +272,7 @@ def analyze(events: list[dict[str, Any]]) -> dict[str, Any]:
             "denominator": decided,
             "manual": counts["manual"],
             "my_picks_seen": len(rows),
+            "against_final": against_final,
         },
         "counts": counts,
         "guardrails": {
@@ -245,7 +292,35 @@ def analyze(events: list[dict[str, Any]]) -> dict[str, Any]:
             "D2": stats(
                 [r["turn_to_land_ms"] for r in landed_rows if r["turn_to_land_ms"] is not None]
             ),
-            "D3": stats([float(r["solve_ms"]) for r in recos if r.get("solve_ms") is not None]),
+            # Exactly priced solves (all of them before #13), then the plan-only early ones
+            # and the pre-solved plans installed with no solve at all.
+            "D3": stats(
+                [
+                    float(r["solve_ms"])
+                    for r in recos
+                    if r.get("priced", True) and r.get("solve_ms") is not None
+                ]
+            ),
+            "D3_plan": {
+                **stats(
+                    [
+                        float(r["solve_ms"])
+                        for r in recos
+                        if not r.get("priced", True)
+                        and not r.get("branch")
+                        and r.get("solve_ms") is not None
+                    ]
+                ),
+                "branch": sum(1 for r in recos if r.get("branch")),
+            },
+            # Priced solves while pre-solves ran in the background, and with none running (only
+            # in logs that record it).
+            "D3_busy": stats(
+                [float(r["solve_ms"]) for r in priced if (r.get("branches_running") or 0) > 0]
+            ),
+            "D3_idle": stats(
+                [float(r["solve_ms"]) for r in priced if r.get("branches_running") == 0]
+            ),
             "D4": {
                 "mean": round(sum(per_pick) / len(per_pick), 2) if per_pick else None,
                 "max": max(per_pick) if per_pick else None,
@@ -253,6 +328,10 @@ def analyze(events: list[dict[str, Any]]) -> dict[str, Any]:
             "D5": None
             if score is None
             else {k: score.get(k) for k in ("wins", "benchmark", "vs_benchmark", "best")},
+            "D6": {
+                "churn": sum(1 for r in rows if r["churn"]),
+                "picks": [r["overall"] for r in rows if r["churn"]],
+            },
         },
         "conflicts": len(conflicts),
         "standins": sum(1 for e in last_sync.values() if e.get("standin")),
@@ -336,12 +415,27 @@ def markdown(card: dict[str, Any]) -> str:
         "|---|---|",
         f"| D1 reco ready vs turn start | {ms(d['D1'])} |",
         f"| D2 turn to land | {ms(d['D2'])} |",
-        f"| D3 solve time | {ms(d['D3'])} |",
+        f"| D3 solve time, priced | {ms(d['D3'])} |",
+        (
+            f"| D3 plan only (early), and pre-solved plans installed | {ms(d['D3_plan'])}; "
+            f"pre-solved {d['D3_plan']['branch']} |"
+        ),
+        f"| D3 priced, pre-solves running | {ms(d['D3_busy'])} |",
+        f"| D3 priced, no pre-solve running | {ms(d['D3_idle'])} |",
         (
             f"| D4 attempts per landed pick | mean {_fmt(d['D4']['mean'])}, "
             f"max {_fmt(d['D4']['max'])} |"
         ),
         f"| D5 final expected categories won | {_score(d['D5'])} |",
+        (
+            f"| D6 reco churn (target 0) | {d['D6']['churn']}"
+            f"{' at ' + ', '.join(str(k) for k in d['D6']['picks']) if d['D6']['picks'] else ''} |"
+        ),
+        "",
+        (
+            f"Compliance against the final reco (diagnostic): "
+            f"{c['against_final']}/{c['denominator']}."
+        ),
         "",
         f"Stand-ins {card['standins']}, conflicts {card['conflicts']}.",
         "",
@@ -354,6 +448,20 @@ def markdown(card: dict[str, Any]) -> str:
             f"| {r['actual_name'] or r['actual_yid']} | {r['label']} | {_fmt(r['lag_ms'])} "
             f"| {_fmt(r['turn_to_land_ms'])} | {_fmt(r['reco_ready_ms'])} | {r['attempts']} |"
         )
+    churned = [r for r in card["rows"] if r["churn"]]
+    if churned:
+        lines += [
+            "",
+            "Reco churn (D6): the reco acted on, then the last one before the pick landed.",
+            "",
+            "| pick | acted on | kind | final | kind |",
+            "|---|---|---|---|---|",
+        ]
+        for r in churned:
+            lines.append(
+                f"| {r['overall']} | {r['ref_name'] or r['ref_pid'] or '-'} | {r['ref_kind']} "
+                f"| {r['final_name'] or r['final_pid'] or '-'} | {r['final_kind']} |"
+            )
     return "\n".join(lines) + "\n"
 
 
