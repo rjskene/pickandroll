@@ -91,9 +91,11 @@ const ops = {
   async events({ draft_id, events }) {
     return attachedOr(() => api(`${roomPath(draft_id)}/events`, { method: "POST", body: { events } }));
   },
-  async plan({ draft_id, wait = 0 }) {
+  async plan({ draft_id, wait = 0, board = null }) {
     const w = Math.max(0, Math.min(20, Number(wait) || 0));
-    return api(`${roomPath(draft_id)}/plan?wait=${w}`, { timeout: (w + 10) * 1000 });
+    // ``board``: hold for the solve built on that many picks, not just the API's latest board.
+    const b = Number.isInteger(board) && board >= 0 ? `&board=${board}` : "";
+    return api(`${roomPath(draft_id)}/plan?wait=${w}${b}`, { timeout: (w + 10) * 1000 });
   },
   async attach({ draft_id, slot, session_id, num_teams = 12 }) {
     const s = await settings();

@@ -29,7 +29,7 @@ function world({ visible = ["101", "102", "103"], clicksToLand = 1, landMs = 300
     for (const f of frames) tracker.ingest(f, clock.t);
     tracker.ingest(`0|${K}|${yid}|${SLOT}|X|0`, clock.t);
   };
-  const log = { clicks: [], plans: [], events: [], autodraft: [], queued: [], cleared: 0, reset: 0 };
+  const log = { clicks: [], plans: [], boards: [], events: [], autodraft: [], queued: [], cleared: 0, reset: 0 };
   let auto = false;
   const dom = {
     draftable: () => true,
@@ -66,6 +66,7 @@ function world({ visible = ["101", "102", "103"], clicksToLand = 1, landMs = 300
   };
   const served = {
     fresh: true,
+    board: K - 1,
     waited_ms: 2000,
     candidates: ["101", "102", "103", "104"].map((y) => ({ yahoo_player_id: y, name: `P ${y}`, ini: "P", last: y, team: "T" })),
     ...(Array.isArray(plan) ? {} : plan),
@@ -73,8 +74,9 @@ function world({ visible = ["101", "102", "103"], clicksToLand = 1, landMs = 300
   const d = new Drafter({
     tracker,
     dom,
-    plan: async (wait) => {
+    plan: async (wait, board) => {
       log.plans.push(wait);
+      log.boards.push(board);
       await sleep(wait ? planMs : 20);
       const next = Array.isArray(plan) ? plan[Math.min(log.plans.length, plan.length) - 1] : null;
       return next ? { ...served, ...next } : served;
@@ -87,6 +89,7 @@ function world({ visible = ["101", "102", "103"], clicksToLand = 1, landMs = 300
 }
 
 const attempts = (log) => log.events.filter((e) => e.type === "draft_attempt").map((e) => [e.yid, e.method, e.attempt]);
+const rows = (ys) => ys.map((y) => ({ yahoo_player_id: y, name: `P ${y}`, ini: "P", last: y, team: "T" }));
 
 test("plan wait: hold up to 20 s, never past 12 s left", () => {
   assert.equal(planWait(30), 18);
@@ -103,7 +106,9 @@ test("the first click lands: one attempt, how row, Autodraft untouched", async (
   assert.equal(out.yid, "101");
   assert.equal(out.how, "row");
   assert.deepEqual(log.plans, [18]);
+  assert.deepEqual(log.boards, [K - 1]); // held for the solve of picks 1..K-1
   assert.deepEqual(attempts(log), [["101", "row", 1]]);
+  assert.equal(log.events.find((e) => e.type === "draft_attempt").board, K - 1);
   assert.deepEqual(log.autodraft, []);
   assert.equal(tracker.how(K), "row");
   assert.equal(await d.turn(K), null); // a turn is taken once
@@ -167,8 +172,8 @@ test("a stale plan near the end of the clock is drafted, not waited on", async (
 
 test("a fresh plan that lands just after the wait is the one drafted", async () => {
   const top = (y) => ["101", "102", "103"].sort((a, b) => (a === y ? -1 : b === y ? 1 : 0));
-  const rows = (ys) => ys.map((y) => ({ yahoo_player_id: y, name: `P ${y}`, ini: "P", last: y, team: "T" }));
   const { d, log } = world({
+    planMs: 18000, // the API holds the whole wait
     plan: [
       { fresh: false, candidates: rows(top("101")) },
       { fresh: true, candidates: rows(top("102")) },
@@ -178,4 +183,37 @@ test("a fresh plan that lands just after the wait is the one drafted", async () 
   assert.deepEqual(log.plans, [18, 0]);
   assert.equal(out.fresh, true);
   assert.equal(out.yid, "102");
+});
+
+test("the previous board's plan is never drafted while this turn's can still come", async () => {
+  // The sync of pick K-1 is a few ms behind the turn: the API calls board K-2's plan fresh.
+  const { d, log } = world({
+    plan: [
+      { fresh: true, board: K - 2, waited_ms: 5, candidates: rows(["101", "102", "103"]) },
+      { fresh: true, board: K - 1, candidates: rows(["102", "101", "103"]) },
+    ],
+  });
+  const out = await d.turn(K);
+  assert.equal(log.plans.length, 2);
+  assert.deepEqual(log.boards, [K - 1, K - 1]);
+  assert.equal(out.fresh, true);
+  assert.equal(out.board, K - 1);
+  assert.equal(out.yid, "102");
+  assert.deepEqual(
+    log.events.filter((e) => e.type === "draft_attempt").map((e) => [e.yid, e.board]),
+    [["102", K - 1]],
+  );
+});
+
+test("an API that only ever has the older board: asks end by 12 s left, the attempt says so", async () => {
+  const { d, log, clock } = world({ plan: { fresh: true, board: K - 2, waited_ms: 5 } });
+  const start = clock.t;
+  const out = await d.turn(K);
+  assert.equal(out.fresh, false);
+  assert.equal(out.board, K - 2);
+  assert.equal(out.yid, "101");
+  assert.equal(log.plans.at(-1), 0); // the last look
+  const attempt = log.events.find((e) => e.type === "draft_attempt");
+  assert.equal(attempt.board, K - 2); // the scorecard labels this pick stale
+  assert.ok(attempt.t - start <= 19000, `first attempt ${(attempt.t - start) / 1000} s into the turn`);
 });

@@ -216,6 +216,8 @@
 
   function onFrame(text, t) {
     const out = tracker.ingest(text, t);
+    // The pick goes out before this frame's turn asks for its plan, so the API's hold for the
+    // turn's board is short; the board contract (drafter.js) keeps it correct either way.
     if (out.picks) flush();
     if (out.landed) {
       const event = tracker.landedEvent(out.landed, { autodraft: autodraftOn() === true });
@@ -514,8 +516,8 @@
   const drafter = new PR.Drafter({
     tracker,
     dom: yahoo,
-    plan: async (wait) => {
-      const plan = await call("plan", { wait });
+    plan: async (wait, board) => {
+      const plan = await call("plan", { wait, board });
       for (const c of [...(plan.candidates || []), ...(plan.second || [])]) {
         names.set(String(c.yahoo_player_id), c.name);
       }
@@ -538,8 +540,8 @@
     drafter.turn(k).then((out) => {
       S.drafting = null;
       if (out) {
-        const { result, attempts, fresh, waited_ms, ms } = out;
-        emit({ type: "note", what: "turn", overall: k, why, result, attempts, fresh, waited_ms, ms });
+        const { result, attempts, fresh, board, waited_ms, ms } = out;
+        emit({ type: "note", what: "turn", overall: k, why, result, attempts, fresh, board, waited_ms, ms });
       }
       render();
       const next = tracker.myTurnNow(); // back to back: the next pick may be on the clock already

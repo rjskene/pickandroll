@@ -1,6 +1,7 @@
 // One armed turn: take pickandroll's pick in Yahoo's draft client. A port of the hook used in the
 // September mock drafts (v16), with the deadlines of the #9 review:
-//   1. hold GET /plan?wait for a fresh solve, but stop waiting by 12 s left on the clock;
+//   1. hold GET /plan?wait&board for the solve of this turn's board (picks 1..k-1), but stop
+//      waiting by 12 s left on the clock; a plan for an older board is asked for again;
 //   2. click the first available candidate's Draft button; Yahoo drops a click that lands during
 //      a re-render and confirms a registered one within ~400 ms, so re-click the same row at
 //      1.8 s and again at 2.5 s; scroll, then search, when the row is not in view;
@@ -25,6 +26,7 @@
   const BACKSTOP_BY_S = 6; // the queue backstop is set with this much clock left
   const RECLICK_MS = [1800, 2500, 2500];
   const MAX_CANDIDATES = 4;
+  const ASK_AGAIN_MS = 250; // between asks when the API answered for an older board
 
   /** Seconds to hold /plan for a fresh solve with ``left`` seconds on the clock. */
   function planWait(left) {
@@ -40,7 +42,8 @@
      *                           async click(row, c) -> "clicked" | "mismatch" | "none", nudge(),
      *                           queueOnly(c) -> {ok, msg}, setAutodraft(on), autodraftOn(),
      *                           clearQueue(), reset()
-     * @param {function} o.plan  async (wait_s) -> GET /rooms/{d}/plan
+     * @param {function} o.plan  async (wait_s, board) -> GET /rooms/{d}/plan, held until the
+     *                           solve of ``board`` (the number of picks it was built on)
      * @param {function} o.emit  client event sink
      * @param {function} o.sleep async (ms)
      * @param {function} o.now   epoch ms
@@ -81,6 +84,7 @@
         name: c.name,
         method,
         attempt: n,
+        board: this.board, // the board of the plan acted on
       });
     }
 
@@ -91,17 +95,46 @@
       this.tried.add(k);
       this.attempts = 0;
       const t0 = this.now();
-      const out = { overall: k, result: "none", how: null, yid: null, fresh: null, waited_ms: null };
+      const out = {
+        overall: k,
+        result: "none",
+        how: null,
+        yid: null,
+        fresh: null,
+        board: null,
+        waited_ms: null,
+      };
       let autodraft = false;
+      this.board = null;
       try {
-        let plan = await this.plan(planWait(this.left()));
-        if (plan && !plan.fresh && !this.done(k)) {
-          // The solve can land just after the wait gives up: one last look before clicking.
-          const again = await this.plan(0);
-          if (again && again.fresh) plan = again;
+        // A plan is this turn's only when it was solved on picks 1..k-1. The API's own
+        // ``fresh`` is not enough: while the sync of pick k-1 is still in flight, the previous
+        // board's plan is fresh to the API (pick 144 of the 2026-10-01 harness run).
+        const board = k - 1;
+        const current = (p) => Boolean(p && p.fresh && p.board === board);
+        const first = planWait(this.left());
+        const until = this.now() + first * 1000;
+        const waitLeft = () =>
+          Math.max(0, Math.min(planWait(this.left()), Math.floor((until - this.now()) / 1000)));
+        let plan = await this.plan(first, board);
+        while (!current(plan) && !this.done(k)) {
+          const wait = waitLeft();
+          if (wait <= 0) {
+            // The solve can land just after the wait gives up: one last look before clicking.
+            const again = await this.plan(0, board);
+            if (current(again)) plan = again;
+            break;
+          }
+          // An answer for an older board came back before the wait was up (the API predates
+          // the board contract): ask again.
+          await this.sleep(ASK_AGAIN_MS);
+          const again = await this.plan(waitLeft(), board);
+          if (again) plan = again;
         }
-        out.fresh = Boolean(plan && plan.fresh);
+        out.fresh = current(plan);
+        out.board = plan && Number.isInteger(plan.board) ? plan.board : null;
         out.waited_ms = plan ? plan.waited_ms : null;
+        this.board = out.board;
         if (this.done(k)) return this.finish(out, k);
         const cands = Y.candidatesFor(plan, this.tracker.taken()).slice(0, MAX_CANDIDATES);
         if (!cands.length) {
