@@ -4,7 +4,9 @@ players plus bench filler)."""
 
 from __future__ import annotations
 
+import threading
 import time
+from concurrent.futures import Future
 
 import pandas as pd
 import pytest
@@ -288,3 +290,20 @@ def test_a_payload_keeps_its_own_timings_and_scale_when_another_solve_finishes(r
     payload = compute_recommendation(store.get(sid), SolveParams(n=2))
     assert payload["fallback"] is None and payload["scale"] == "wins"
     assert payload["timings"]["total_ms"] > 0 and "plan_ms" in payload["timings"]
+
+
+def test_pruning_a_queued_solve_does_not_deadlock_the_book(room):
+    client, store, _ = room
+    sid = _attach(client)["session_id"]
+    state = store.get(sid).state
+    branch = branch_boards(state, likely_next(state, None))[0]
+    book = BranchBook()
+    future: Future = Future()  # queued in the pool, not started
+    entry = book.add(branch, future)
+    future.add_done_callback(lambda f, e=entry: book.done(e, None))  # as _presolve wires it
+    worker = threading.Thread(
+        target=book.prune, args=((branch.key[0] + 1, branch.key[1], branch.key[2]),), daemon=True
+    )
+    worker.start()
+    worker.join(5)
+    assert not worker.is_alive() and future.cancelled() and book.status()["held"] == 0

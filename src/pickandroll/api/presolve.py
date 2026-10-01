@@ -192,11 +192,13 @@ class BranchBook:
         them, or a pick went another way) and cancel their solves that have not started, so a
         dead branch does not hold a worker the live ones need."""
         with self.lock:
-            for key in [k for k in self.entries if not reachable(board, k)]:
-                entry = self.entries.pop(key)
-                if entry.future is not None:
-                    entry.future.cancel()
+            dead = [self.entries.pop(k) for k in list(self.entries) if not reachable(board, k)]
             self.counted = {k for k in self.counted if reachable(board, k)}
+        # Outside the lock: cancelling a queued solve runs its done callback (``done``) at once,
+        # in this thread, and that takes the lock.
+        for entry in dead:
+            if entry.future is not None:
+                entry.future.cancel()
 
     def status(self) -> dict[str, Any]:
         with self.lock:
