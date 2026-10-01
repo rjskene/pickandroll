@@ -38,6 +38,25 @@ Mode = Literal["mirror", "autopilot"]
 BOARD_TAIL = 20
 #: A heartbeat reaches the log at most this often; the latest is always kept in memory.
 HEARTBEAT_EVERY_S = 60.0
+#: The plan's budget follows the room's pick clock: the drafter clicks with CLOCK_MARGIN_S of
+#: the clock left (at 17 s of 30), and the exact prices that correct a capped plan take up to
+#: PRICING_S after it (their 10 s budget and the solve's overhead). A 30 s clock (the mocks)
+#: gives the 5 s floor; a longer one lets the plan converge (6-16 s in rounds 1-6), up to the
+#: plan's own 20 s budget.
+DEFAULT_CLOCK_S = 30.0
+CLOCK_MARGIN_S = 13.0
+PRICING_S = 12.0
+PLAN_LIMIT_MIN = 5.0
+PLAN_LIMIT_MAX = 20.0
+PRICE_LIMIT_MAX = 10.0
+
+
+def plan_budget(clock_s: float | None) -> float:
+    """The plan's time limit in a room whose pick clock is ``clock_s`` seconds."""
+    clock = DEFAULT_CLOCK_S if clock_s is None else clock_s
+    return min(PLAN_LIMIT_MAX, max(PLAN_LIMIT_MIN, clock - CLOCK_MARGIN_S - PRICING_S))
+
+
 #: Event types a room client may post (the server writes room_pick, session_pick, reco,
 #: conflict, attach, detach and score itself).
 CLIENT_EVENTS = frozenset(
@@ -84,6 +103,8 @@ class YahooRoom:
     attached_at: str = field(default_factory=now_iso)
     resumed: bool = False
     scored: bool = False
+    #: The pick clock the plan budget follows (``None``: the attach fixed a time_limit).
+    clock_s: float | None = None
     lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
     @property
@@ -431,6 +452,40 @@ def record_events(room: YahooRoom, events: list[dict[str, Any]]) -> int:
         room.log.append(e)
         written += 1
     return written
+
+
+def follow_clock(session: Session, room: YahooRoom, events: list[dict[str, Any]]) -> float | None:
+    """Adopt the longest pick clock the room has shown when the attach left the plan budget
+    to the clock. The attach comes from the waiting room, before Yahoo's first ``D|`` frame;
+    the client carries that frame's clock on every turn_start. Returns the new budget when it
+    changed."""
+    if room.clock_s is None:
+        return None
+    seen = [
+        float(e["clock_s"])
+        for e in events
+        if e.get("type") == "turn_start"
+        and isinstance(e.get("clock_s"), int | float)
+        and e["clock_s"] > room.clock_s
+    ]
+    if not seen:
+        return None
+    room.clock_s = max(seen)
+    budget = plan_budget(room.clock_s)
+    with session.lock:
+        session.state.plan_time_limit = budget
+        session.state.price_time_limit = min(PRICE_LIMIT_MAX, budget)
+    room.log.append(
+        {
+            "type": "note",
+            "t": now_iso(),
+            "what": "plan_budget",
+            "clock_s": room.clock_s,
+            "time_limit": budget,
+            "src": "api",
+        }
+    )
+    return budget
 
 
 # --------------------------------------------------------------------------- plan

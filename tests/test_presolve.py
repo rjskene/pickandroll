@@ -360,3 +360,27 @@ def test_the_plan_budget_follows_the_clock(room):
     for i, (extra, want) in enumerate(cases):
         sid = _attach(client, draft_id=f"c{i}", session=SESSION, **extra)["session_id"]
         assert store.get(sid).state.plan_time_limit == want
+
+
+def test_the_room_follows_the_clock_it_is_shown(room):
+    client, store, _ = room
+    sid = _attach(client, draft_id="k1", session=SESSION)["session_id"]
+    session = store.get(sid)
+
+    def turn(draft_id: str, clock: int) -> None:
+        event = {"type": "turn_start", "overall": 1, "slot": 1, "clock_s": clock}
+        r = client.post(f"/rooms/{draft_id}/events", json={"events": [event]})
+        assert r.status_code == 200, r.text
+
+    turn("k1", 30)  # the mocks' clock: the 5 s budget stands
+    assert session.state.plan_time_limit == 5.0
+    turn("k1", 90)
+    assert session.state.plan_time_limit == 20.0 and session.state.price_time_limit == 10.0
+    turn("k1", 40)  # a reconnect mid-pick shows less time: the longest clock stands
+    assert session.state.plan_time_limit == 20.0
+    notes = [e for e in session.room.log.read() if e.get("what") == "plan_budget"]
+    assert [(n["clock_s"], n["time_limit"]) for n in notes] == [(90.0, 20.0)]
+    # A time_limit given at attach is kept, whatever the clock.
+    fixed = store.get(_attach(client, draft_id="k2", session=SESSION, time_limit=8)["session_id"])
+    turn("k2", 90)
+    assert fixed.state.plan_time_limit == 8.0

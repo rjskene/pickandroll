@@ -63,11 +63,11 @@ CORS_ORIGINS = r"^(chrome-extension://[a-p]{32}|https?://(localhost|127\.0\.0\.1
 #: The longest a room client may hold ``/plan`` for a fresh solve (the pick clock is 30 s).
 PLAN_WAIT_MAX = 20.0
 #: Solver settings a room attaches with unless told otherwise: they kept solves inside a 30 s
-#: clock in the 2026-09-27 mocks.
+#: clock in the 2026-09-27 mocks. The plan's time limit follows the room's pick clock
+#: (:func:`yahoo_room.plan_budget`, 5 s on a 30 s clock) unless the attach gives one.
 ROOM_SOLVE = {
     "n": 3,
     "scenarios": 0,
-    "time_limit": 5.0,
     # #13: the clock decides. Publish the plan before its prices and plan the boards my turn
     # can start on ahead of it. A shorter plan budget at my own turn stays off (0): in rounds
     # 1-6 a plan needs 6-16 s to converge, and a 3 s incumbent cost 0.72 expected category
@@ -77,23 +77,6 @@ ROOM_SOLVE = {
     "turn_n": 2,
     "presolve": True,
 }
-#: The plan's budget follows the room's clock (seconds per pick) when the attach gives one and
-#: no ``time_limit``: the drafter clicks with CLOCK_MARGIN_S of the clock left (at 17 s of 30),
-#: and the exact prices that correct a capped plan take up to PRICING_S after it (their 10 s
-#: budget and the solve's overhead). A 30 s clock keeps the mocks' 5 s; a longer one lets the
-#: plan converge (6-16 s in rounds 1-6), up to the plan's own 20 s budget.
-CLOCK_MARGIN_S = 13.0
-PRICING_S = 12.0
-PLAN_LIMIT_MAX = 20.0
-
-
-def plan_budget(clock_s: float | None) -> float:
-    """The plan's time limit in a room whose pick clock is ``clock_s`` seconds (none: the
-    mocks' 30 s clock)."""
-    floor = float(ROOM_SOLVE["time_limit"])
-    if clock_s is None:
-        return floor
-    return min(PLAN_LIMIT_MAX, max(floor, clock_s - CLOCK_MARGIN_S - PRICING_S))
 
 
 # --------------------------------------------------------------------------- session store
@@ -918,11 +901,17 @@ def create_app(
                 turn_n=option("turn_n", ROOM_SOLVE["turn_n"]),
                 presolve=bool(option("presolve", ROOM_SOLVE["presolve"])),
             )
+            # The plan budget follows the room's clock unless a time_limit was given (now, or
+            # by the attach a resume reads; logs from before #13 always gave one).
             clock_s = option("clock_s", None)
-            if body.time_limit is None and body.clock_s is not None:
-                time_limit = plan_budget(body.clock_s)  # a new clock outranks a logged budget
+            follow = body.time_limit is None and (
+                body.clock_s is not None
+                or bool(solve.get("follow_clock", "time_limit" not in solve))
+            )
+            if follow:
+                time_limit = yahoo_room.plan_budget(clock_s)
             else:
-                time_limit = float(option("time_limit", plan_budget(clock_s)))
+                time_limit = float(option("time_limit", yahoo_room.plan_budget(clock_s)))
             path = players_path(option("players_file", None))
             state = session.state
 
@@ -935,7 +924,7 @@ def create_app(
                 session.solve_params = params
                 state.plan_time_limit = time_limit
                 state.price_time_limit = min(state.price_time_limit, time_limit)
-                return yahoo_room.attach_room(
+                room = yahoo_room.attach_room(
                     session,
                     draft_id=body.draft_id,
                     slot=int(slot),
@@ -952,6 +941,7 @@ def create_app(
                             "scenarios": params.scenarios,
                             "time_limit": time_limit,
                             "clock_s": clock_s,
+                            "follow_clock": follow,
                             "early": params.early,
                             "turn_time_limit": params.turn_time_limit or 0.0,
                             "turn_n": params.turn_n,
@@ -959,6 +949,9 @@ def create_app(
                         },
                     },
                 )
+                if follow:
+                    room.clock_s = float(clock_s or yahoo_room.DEFAULT_CLOCK_S)
+                return room
 
             try:
                 room = await asyncio.to_thread(build)
@@ -1065,11 +1058,12 @@ def create_app(
     async def room_events(draft_id: str, body: RoomEvents) -> dict[str, Any]:
         """Client events for the fidelity log: control, turn_start, draft_attempt,
         pick_landed, intervention, heartbeat, note."""
-        room, _session = await get_room(draft_id)
+        room, session = await get_room(draft_id)
         try:
             written = await asyncio.to_thread(yahoo_room.record_events, room, body.events)
         except ValueError as exc:
             raise HTTPException(422, str(exc)) from exc
+        await asyncio.to_thread(yahoo_room.follow_clock, session, room, body.events)
         return {"received": len(body.events), "written": written, "control": room.control}
 
     @app.post("/rooms/{draft_id}/aliases")
