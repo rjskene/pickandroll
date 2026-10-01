@@ -18,6 +18,8 @@ from ..draft.settings import pick_owner, snake_picks
 from .recorder import to_ms
 
 FAILURES = ("absent", "stale", "unsolved", "expired", "fallback", "wrong")
+#: How a pick lands when the drafter made it (the queue counts: Yahoo took who it set).
+DRAFTED = frozenset({"row", "queue", "search"})
 LABELS = ("compliant", "manual", *FAILURES)
 #: Lag targets in ms (G2) and the window a manual pick must be mirrored in (G4).
 LAG_TARGETS = {"p50": 1000.0, "p95": 2000.0, "max": 5000.0}
@@ -157,9 +159,14 @@ def analyze(events: list[dict[str, Any]]) -> dict[str, Any]:
         top_hidden = bool(ref and ref.get("top_pid") in hidden)
         if top_hidden:
             ref_yid, ref_name = None, hidden[ref["top_pid"]]
+        # The drafter made the pick: a click or the queue it set, not Yahoo's autopick at expiry
+        # (which can happen to equal ref_k and is never compliant).
+        drafted = how in DRAFTED or any(
+            str(a.get("yid")) == actual and to_ms(a["t"]) < t_land for a in tries
+        )
         if how == "manual":
             label = "manual"
-        elif ref_yid is not None and actual == ref_yid:
+        elif drafted and ref_yid is not None and actual == ref_yid:
             label = "compliant"
         elif control_at(t_turn if t_turn is not None else t_land) != "armed":
             label = "absent"
@@ -266,6 +273,16 @@ def analyze(events: list[dict[str, Any]]) -> dict[str, Any]:
         entry = next((c for c in controls if c.get("state") in ("armed", "mirror")), None)
         entry_from = "attach" if entry else None
     lead = (to_ms(turns[1]["t"]) - to_ms(entry["t"])) / 1000.0 if entry and 1 in turns else None
+    # G7: the content script's timers run on the page's Worker (a DOM timer in a hidden tab can
+    # sleep through the pick clock).
+    beats = [
+        e
+        for e in events
+        if e.get("type") == "heartbeat"
+        and e.get("src", "client") != "api"
+        and to_ms(e["t"]) >= attached_at
+    ]
+    off = [e for e in beats if e.get("worker") is not True]
     landed_rows = [r for r in rows if r["label"] != "manual" and r["overall"] in landed]
     per_pick = [r["attempts"] for r in landed_rows]
     total = num_teams * rounds
@@ -296,6 +313,11 @@ def analyze(events: list[dict[str, Any]]) -> dict[str, Any]:
             "G6": {
                 "entry_lead_s": None if lead is None else round(lead, 1),
                 "entry_from": entry_from,
+            },
+            "G7": {
+                "heartbeats": len(beats),
+                "worker_off": len(off),
+                "first_off": min((e["t"] for e in off), key=to_ms, default=None),
             },
         },
         "diagnostics": {
@@ -381,6 +403,7 @@ def guardrail_pass(card: dict[str, Any]) -> dict[str, bool | None]:
         "G4": None if not g["G4"]["manual"] else g["G4"]["respected"] == g["G4"]["manual"],
         "G5": g["G5"]["autopick_flips"] == 0,
         "G6": None if g["G6"]["entry_lead_s"] is None else g["G6"]["entry_lead_s"] >= ENTRY_LEAD_S,
+        "G7": None if not g["G7"]["heartbeats"] else g["G7"]["worker_off"] == 0,
     }
 
 
@@ -435,6 +458,12 @@ def markdown(card: dict[str, Any]) -> str:
             f"| G6 entry lead | {_fmt(g['G6']['entry_lead_s'], ' s')}"
             f"{' (from attach)' if g['G6']['entry_from'] == 'attach' else ''} "
             f"| ≥ {ENTRY_LEAD_S:.0f} s | {mark('G6')} |"
+        ),
+        (
+            f"| G7 client timers on the Worker | {g['G7']['worker_off']} of "
+            f"{g['G7']['heartbeats']} heartbeats without"
+            f"{', first at ' + str(g['G7']['first_off']) if g['G7']['first_off'] else ''} "
+            f"| 0 | {mark('G7')} |"
         ),
         "",
         "| diagnostic | value |",

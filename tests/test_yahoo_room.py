@@ -19,7 +19,7 @@ from fastapi.testclient import TestClient
 
 from pickandroll.api import SessionStore, create_app
 from pickandroll.cli import main as cli_main
-from pickandroll.fidelity import analyze, markdown
+from pickandroll.fidelity import analyze, guardrail_pass, markdown
 from pickandroll.fidelity.replay import load_fixture, replay, timeline
 from pickandroll.sources.matching import match_players
 from pickandroll.sources.yahoo import build_id_map, label_key, load_players_file
@@ -626,6 +626,43 @@ def test_scorecard_judges_the_reco_acted_on_and_counts_churn():
     rows = analyze(no_attempt)["rows"]
     assert rows[0]["label"] == "fallback" and rows[0]["churn"] is False
     assert rows[1]["label"] == "wrong"  # judged against board 3's list, which lacks d
+
+
+def test_scorecard_compliant_only_when_the_drafter_made_the_pick_and_g7():
+    """Three teams, slot 1, two rounds: my picks are 1 and 6. Pick 1 expires and Yahoo's
+    autopick happens to be ref_k: expired, not compliant. Pick 6 lands from the queue the
+    drafter set: compliant. One heartbeat ran on DOM timers: G7 fails."""
+    events = [
+        _ev("attach", 0, slot=1, num_teams=3, rounds=2, draft_id="g"),
+        _ev("control", 0, state="armed"),
+        _ev("heartbeat", 1, worker=True, src="client"),
+        _ev("turn_start", 1, overall=1),
+        _ev("reco", 2, board=0, top_yid="a", cands=["a", "b"]),
+        _ev("pick_landed", 31, overall=1, yid="a", how="expiry"),
+        _ev("room_pick", 31, overall=1, yid="a"),
+        _ev("session_pick", 31, overall=1, yid="a"),
+        _ev("heartbeat", 32, worker=False, src="client"),
+    ]
+    for k in range(2, 6):
+        events += [_ev("room_pick", 32 + k, overall=k, yid=f"o{k}")]
+        events += [_ev("session_pick", 32 + k, overall=k, yid=f"o{k}")]
+    events += [
+        _ev("turn_start", 37, overall=6),
+        _ev("reco", 38, board=5, top_yid="c", cands=["c"]),
+        _ev("draft_attempt", 60, overall=6, yid="c", method="queue", attempt=1, board=5),
+        _ev("pick_landed", 61, overall=6, yid="c", how="autopick"),
+        _ev("room_pick", 61, overall=6, yid="c"),
+        _ev("session_pick", 61, overall=6, yid="c"),
+    ]
+    card = analyze(events)
+    assert [r["label"] for r in card["rows"]] == ["expired", "compliant"]
+    g7 = card["guardrails"]["G7"]
+    assert g7["heartbeats"] == 2 and g7["worker_off"] == 1
+    assert g7["first_off"] == events[8]["t"]
+    assert guardrail_pass(card)["G7"] is False
+    assert "| G7 client timers on the Worker | 1 of 2 heartbeats without, first at" in markdown(
+        card
+    )
 
 
 def test_scorecard_g2_judges_the_picks_after_the_attach():
