@@ -33,6 +33,6 @@ web/dist/
 .idea/
 
 # git worktrees of this repo (one per branch in flight); never committed
-.worktrees/
+.claude/worktrees/
 # reference material copied in by hand, ported then deleted
 scratch/
