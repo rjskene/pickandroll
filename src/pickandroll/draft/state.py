@@ -49,6 +49,12 @@ class Pick:
     player_id: str
 
 
+def plan_fallback(problem: HorizonProblem, solution: HorizonSolution) -> str | None:
+    """``"sum"`` when ``solution`` is the plain-sum fallback of a curve plan (it has no win
+    probabilities), else ``None``."""
+    return "sum" if problem.curve is not None and solution.expected_wins is None else None
+
+
 @dataclass
 class DraftState:
     settings: LeagueSettings
@@ -444,8 +450,9 @@ class DraftState:
         problem: HorizonProblem | None = None,
         candidates: Sequence[str] | None = None,
         plan_time_limit: float | None = None,
-        on_plan: Callable[[HorizonSolution, pd.DataFrame], None] | None = None,
+        on_plan: Callable[[HorizonSolution, pd.DataFrame, dict[str, float]], None] | None = None,
         base: HorizonSolution | None = None,
+        timings: dict[str, float] | None = None,
         **kwargs,
     ) -> tuple[pd.DataFrame, HorizonSolution, frozenset[Cat]]:
         """Candidates for my next pick priced with the waiting risk, plus the plan itself.
@@ -458,12 +465,14 @@ class DraftState:
         log again and picks can land meanwhile.
 
         ``plan_time_limit`` overrides the plan's budget for this solve. ``on_plan`` receives the
-        plan and its first-order candidate table (:func:`first_order_table`) before any exact
-        price is solved; it may raise to stop the solve there. ``base`` is a plan already solved
-        for ``problem`` (a pre-solved branch): it is priced, not solved again.
+        plan, its first-order candidate table (:func:`first_order_table`) and the timings so far
+        before any exact price is solved; it may raise to stop the solve there. ``base`` is a
+        plan already solved for ``problem`` (a pre-solved branch): it is priced, not solved
+        again. ``timings``, when given, is filled with this solve's stage timings (solves that
+        run at once on one state each read their own, not ``last_timings``).
         """
         started = time.perf_counter()
-        timings: dict[str, float] = {}
+        timings = {} if timings is None else timings
         self.last_punt_scan = None
         if problem is None:
             problem = self.horizon_problem(punt, **kwargs)
@@ -479,7 +488,7 @@ class DraftState:
                     "wins": solution.wins,
                     "first_pick": solution.first_pick,
                     "time_limited": solution.time_limited,
-                    "fallback": self.last_fallback,
+                    "fallback": plan_fallback(problem, solution),
                 }
             )
         candidates = (
@@ -492,8 +501,9 @@ class DraftState:
             early = first_order_table(problem, solution, candidates)
             if not early.empty:
                 early.insert(1, "name", early["player"].map(self.projections.df["player"]))
-            self.last_timings = {**timings, "total_ms": timings["plan_ms"]}
-            on_plan(solution, early)
+            so_far = {**timings, "total_ms": timings["plan_ms"]}
+            self.last_timings = so_far
+            on_plan(solution, early, so_far)
         if progress is not None:
             progress(
                 {

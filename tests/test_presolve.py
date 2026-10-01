@@ -270,3 +270,21 @@ def test_settled_replay_drafts_the_fresh_top_and_shifts_collisions(room):
         ]
     )
     assert out["score"]["final"] is not None and out["score"]["final"]["wins"] > 0
+
+
+def test_a_payload_keeps_its_own_timings_and_scale_when_another_solve_finishes(room, monkeypatch):
+    client, store, _ = room
+    sid = _attach(client, session=SESSION | {"objective": "win"})["session_id"]
+    state = store.get(sid).state
+    original = state.recommend_horizon
+
+    def then_another_solve_lands(*args, **kwargs):
+        out = original(*args, **kwargs)
+        state.last_fallback = "sum"  # what a concurrent solve on this state leaves behind
+        state.last_timings = {"total_ms": -1.0}
+        return out
+
+    monkeypatch.setattr(state, "recommend_horizon", then_another_solve_lands)
+    payload = compute_recommendation(store.get(sid), SolveParams(n=2))
+    assert payload["fallback"] is None and payload["scale"] == "wins"
+    assert payload["timings"]["total_ms"] > 0 and "plan_ms" in payload["timings"]

@@ -35,6 +35,7 @@ from typing import TYPE_CHECKING, Any, Literal
 import pandas as pd
 from pydantic import BaseModel, Field
 
+from ..draft.state import plan_fallback
 from ..optim.horizon import HorizonProblem, HorizonSolution, first_order_table
 from ..optim.pool import shared_pool
 from .presolve import (
@@ -146,6 +147,7 @@ def _horizon_payload(
     scenarios: list[dict[str, Any]],
     *,
     priced: bool,
+    timings: dict[str, float],
     branch: bool = False,
 ) -> dict[str, Any]:
     """The recommendation for ``snapshot``'s board from its plan and candidate table: exactly
@@ -168,7 +170,8 @@ def _horizon_payload(
             matchups=league["matchups_won"],
             top=names.get(solution.first_pick) if solution.first_pick else None,
         )
-        scale = "wins" if problem.curve is not None and state.last_fallback is None else "z"
+        fallback = plan_fallback(problem, solution)
+        scale = "wins" if problem.curve is not None and fallback is None else "z"
         candidate_rows = _candidates(table, scale, state.effective_adp())
         if session.prices_version is None or version >= session.prices_version:
             session.prices = prices
@@ -190,8 +193,8 @@ def _horizon_payload(
         "tie_band": TIE_BAND[scale],
         "priced": priced,
         "branch": branch,
-        "fallback": state.last_fallback,
-        "timings": {k: round(v, 1) for k, v in state.last_timings.items()},
+        "fallback": fallback,
+        "timings": {k: round(v, 1) for k, v in timings.items()},
         "adp_source": state.adp_source,
         "availability_source": state.availability_source,
         "candidates": candidate_rows,
@@ -310,15 +313,26 @@ def compute_recommendation(
 
     if problem is not None:
 
-        def on_plan(solution: HorizonSolution, table: pd.DataFrame) -> None:
+        def on_plan(
+            solution: HorizonSolution, table: pd.DataFrame, so_far: dict[str, float]
+        ) -> None:
             if on_early is not None and params.early:
                 on_early(
                     _horizon_payload(
-                        session, snapshot, objective, problem, solution, table, [], priced=False
+                        session,
+                        snapshot,
+                        objective,
+                        problem,
+                        solution,
+                        table,
+                        [],
+                        priced=False,
+                        timings=so_far,
                     )
                 )
             check()
 
+        timings: dict[str, float] = {}
         table, solution, _ = state.recommend_horizon(
             n=n,
             workers=workers,
@@ -328,6 +342,7 @@ def compute_recommendation(
             plan_time_limit=plan_limit,
             on_plan=on_plan,
             base=None if base is None else base[1],
+            timings=timings,
         )
         check()
         scenarios = (
@@ -338,7 +353,15 @@ def compute_recommendation(
             else []
         )
         payload = _horizon_payload(
-            session, snapshot, objective, problem, solution, table, scenarios, priced=True
+            session,
+            snapshot,
+            objective,
+            problem,
+            solution,
+            table,
+            scenarios,
+            priced=True,
+            timings=timings,
         )
         report({"stage": "done", "done": 1, "total": 1, "wins": payload["wins"]})
         return payload
@@ -614,10 +637,19 @@ class BackgroundSolver:
         if not table.empty:
             table.insert(1, "name", table["player"].map(state.projections.df["player"]))
         objective = session.solve_params.objective or state.objective
+        timings = {"plan_ms": entry.solve_ms or 0.0, "branch": 1.0}
         payload = _horizon_payload(
-            session, snapshot, objective, problem, solution, table, [], priced=False, branch=True
+            session,
+            snapshot,
+            objective,
+            problem,
+            solution,
+            table,
+            [],
+            priced=False,
+            timings=timings,
+            branch=True,
         )
-        payload["timings"] = {"plan_ms": round(entry.solve_ms or 0.0, 1), "branch": 1.0}
         self._publish(payload)
 
     def _schedule_presolve(self) -> None:
