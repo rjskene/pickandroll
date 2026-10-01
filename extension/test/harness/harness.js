@@ -7,7 +7,8 @@
 //      the worker's "attach" op, as the side panel does,
 //   4. plays a recorded room (tests/fixtures/rooms/<fixture>.csv) as Yahoo frames: D| when a
 //      pick goes on the clock, 0| when it lands, X|29 + 5|slot before my picks (Yahoo picking
-//      for an Autodraft seat), at the recorded pace divided by ``speed``,
+//      for an Autodraft seat), at the recorded pace divided by ``speed``, or one pick every
+//      ``gap`` seconds (a human-pace room),
 //   5. waits for the session to catch up and shows the room's status and scorecard.
 // Results land in window.__harness.
 (async () => {
@@ -19,6 +20,8 @@
   const flip = q.get("flip") === "1";
   const armedRun = q.get("armed") === "1";
   const drop = Number(q.get("drop") || 0);
+  // Seconds between picks for a human-pace room (draft day), in place of the recording's times.
+  const gap = Number(q.get("gap") || 0);
   const draftId = q.get("draft") || `ext-${fixture}-${Date.now().toString(36)}`;
   const API = (q.get("api") || "http://localhost:8000").replace(/\/+$/, "");
   const out = (window.__harness = { draftId, done: false, error: null, log: [] });
@@ -97,7 +100,7 @@
     await load("/extension/lib/yahoo.js");
     await load("/extension/lib/drafter.js");
     await load("/extension/content.js");
-    log(`loaded; draft ${draftId}, seat ${slot}, speed ${speed}`);
+    log(`loaded; draft ${draftId}, seat ${slot}, ${gap > 0 ? `a pick every ${gap} s` : `speed ${speed}`}`);
 
     // ---- 3. session + attach (the side panel's path)
     const projections = await http("/projections");
@@ -137,7 +140,7 @@
         const [overall, yid, , , t] = line.split(",").map((c) => c.trim());
         return { overall: Number(overall), yid, t: t ? Number(t) : null };
       });
-    const times = timeline(rows);
+    const times = gap > 0 ? rows.map((_, i) => i * gap * 1000) : timeline(rows);
     const owner = (k) => globalThis.PickAndRoll.pickOwner(12, k).slot;
     const ws = new window.WebSocket("wss://harness.invalid/draft");
     ws.send(`8|31822|${slot}|harness`);
