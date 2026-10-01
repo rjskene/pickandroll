@@ -118,6 +118,13 @@ def analyze(events: list[dict[str, Any]]) -> dict[str, Any]:
         ready = (to_ms(board[0]["t"]) - t_turn) if board and t_turn is not None else None
         how = land.get("how") if land else None
         ref_yid = str(ref["top_yid"]) if ref and ref.get("top_yid") is not None else None
+        ref_name = ref.get("top_name") if ref else None
+        # The solve's own first choice had no Yahoo id: the drafter could not take it, so the
+        # best it can do is a fallback.
+        hidden = {u["pid"]: u.get("name") for u in (ref or {}).get("unmapped") or []}
+        top_hidden = bool(ref and ref.get("top_pid") in hidden)
+        if top_hidden:
+            ref_yid, ref_name = None, hidden[ref["top_pid"]]
         if how == "manual":
             label = "manual"
         elif ref_yid is not None and actual == ref_yid:
@@ -130,7 +137,7 @@ def analyze(events: list[dict[str, Any]]) -> dict[str, Any]:
             label = "unsolved"
         elif how in ("expiry", "autopick"):
             label = "expired"
-        elif actual in {str(c) for c in ref.get("cands") or []}:
+        elif top_hidden or actual in {str(c) for c in ref.get("cands") or []}:
             label = "fallback"
         else:
             label = "wrong"
@@ -145,7 +152,8 @@ def analyze(events: list[dict[str, Any]]) -> dict[str, Any]:
                 "overall": k,
                 "round": pick_owner(num_teams, k)[0],
                 "ref_yid": ref_yid,
-                "ref_name": ref.get("top_name") if ref else None,
+                "ref_pid": ref.get("top_pid") if ref else None,
+                "ref_name": ref_name,
                 "actual_yid": actual,
                 "actual_name": room[k].get("name"),
                 "label": label,
@@ -160,11 +168,14 @@ def analyze(events: list[dict[str, Any]]) -> dict[str, Any]:
     counts = {label: sum(1 for r in rows if r["label"] == label) for label in LABELS}
     decided = len(rows) - counts["manual"]
 
-    # G1: the session's latest pick at each overall agrees with the room's, by Yahoo id.
+    # G1: the session's latest pick at each overall is the room's player, by Yahoo id. A
+    # stand-in holds another player in his place, so it does not agree until it is repaired.
     agree = sum(
         1
         for k, e in room.items()
-        if k in last_sync and str(last_sync[k].get("yid")) == str(e["yid"])
+        if k in last_sync
+        and str(last_sync[k].get("yid")) == str(e["yid"])
+        and not last_sync[k].get("standin")
     )
     lag = stats(list(lags.values()))
     manual_rows = [r for r in rows if r["label"] == "manual"]
@@ -174,7 +185,20 @@ def analyze(events: list[dict[str, Any]]) -> dict[str, Any]:
         late = [a for a in attempts.get(r["overall"], []) if to_ms(a["t"]) > t_manual]
         mirrored = r["lag_ms"] is not None and r["lag_ms"] <= LAG_TARGETS["max"]
         manual_ok += int(not late and mirrored)
-    entry = next((c for c in controls if c.get("state") in ("armed", "mirror")), None)
+    # G6 counts from the client's first sign of life in the draft room; the control the API
+    # writes at attach is only a fallback (the attach can come minutes before the room).
+    entry = next(
+        (
+            e
+            for e in events
+            if e.get("type") in ("control", "heartbeat") and e.get("src", "client") != "api"
+        ),
+        None,
+    )
+    entry_from = "client" if entry else None
+    if entry is None:
+        entry = next((c for c in controls if c.get("state") in ("armed", "mirror")), None)
+        entry_from = "attach" if entry else None
     lead = (to_ms(turns[1]["t"]) - to_ms(entry["t"])) / 1000.0 if entry and 1 in turns else None
     landed_rows = [r for r in rows if r["label"] != "manual" and r["overall"] in landed]
     per_pick = [r["attempts"] for r in landed_rows]
@@ -201,7 +225,10 @@ def analyze(events: list[dict[str, Any]]) -> dict[str, Any]:
             "G3": {"interventions": len(interventions)},
             "G4": {"respected": manual_ok, "manual": len(manual_rows)},
             "G5": {"autopick_flips": sum(1 for c in controls if c.get("reason") == "autopick")},
-            "G6": {"entry_lead_s": None if lead is None else round(lead, 1)},
+            "G6": {
+                "entry_lead_s": None if lead is None else round(lead, 1),
+                "entry_from": entry_from,
+            },
         },
         "diagnostics": {
             "D1": stats([r["reco_ready_ms"] for r in rows if r["reco_ready_ms"] is not None]),
@@ -285,7 +312,11 @@ def markdown(card: dict[str, Any]) -> str:
         f"| G3 interventions | {g['G3']['interventions']} | 0 | {mark('G3')} |",
         f"| G4 manual respected | {g['G4']['respected']}/{g['G4']['manual']} | 1/1 | {mark('G4')} |",
         f"| G5 autopick flips | {g['G5']['autopick_flips']} | 0 | {mark('G5')} |",
-        f"| G6 entry lead | {_fmt(g['G6']['entry_lead_s'], ' s')} | ≥ 60 s | {mark('G6')} |",
+        (
+            f"| G6 entry lead | {_fmt(g['G6']['entry_lead_s'], ' s')}"
+            f"{' (from attach)' if g['G6']['entry_from'] == 'attach' else ''} | ≥ 60 s "
+            f"| {mark('G6')} |"
+        ),
         "",
         "| diagnostic | value |",
         "|---|---|",

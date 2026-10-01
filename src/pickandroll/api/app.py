@@ -813,6 +813,8 @@ def create_app(
 
     def players_path(name: str | None) -> Path:
         if name:
+            if name != Path(name).name or name in {".", ".."} or "\\" in name:
+                raise HTTPException(400, f"players_file must be a file name in data/: {name!r}")
             path = data_dir / name
             if not path.exists():
                 raise HTTPException(400, f"players file not found: {name}")

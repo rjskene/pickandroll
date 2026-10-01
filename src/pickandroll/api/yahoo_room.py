@@ -248,56 +248,78 @@ def ingest(session: Session, room: YahooRoom, items: list[dict[str, Any]]) -> di
 
 
 def _reconcile(session: Session, room: YahooRoom) -> list[dict[str, Any]]:
-    """Walk the ledger from pick 1 and make the session agree with it. Caller holds the room
-    lock; the session lock is taken here."""
+    """Make the session agree with the ledger. A conflict or repair can free a player whose
+    pick the room recorded earlier while the session still held him elsewhere; that pick got
+    a stand-in, so walk again and put the player in his place. Caller holds the room lock; the
+    session lock is taken here."""
     state = session.state
     changes: list[dict[str, Any]] = []
     with session.lock:
-        k = 1
-        while k in room.ledger:
-            entry = room.ledger[k]
-            have = state.picks[k - 1] if k <= len(state.picks) else None
-            if have is None and k != len(state.picks) + 1:
+        for _ in range(len(room.ledger) + 1):
+            changes += _walk(state, room)
+            held = {p.player_id for p in state.picks}
+            freed = {
+                k
+                for k, s in room.standins.items()
+                if k not in room.repairs
+                and (pid := room.ids.pid(s["yid"])) is not None
+                and pid not in held
+                and pid in state.z.index
+            }
+            if not freed:
                 break
-            target = room.assigned.get(k)
-            if have is not None and target == have.player_id and k not in room.repairs:
-                k += 1
-                continue
-            want = room.ids.pid(entry.yid)
-            elsewhere = {p.player_id for p in state.picks if p.overall != k}
-            if want is not None and want not in elsewhere and want in state.z.index:
-                pid, standin = want, False
-            else:
-                pid, standin = _standin(state, elsewhere), True
-            team = state.my_team if entry.slot == room.slot else f"Team {entry.slot}"
-            t = now_iso()
-            if have is not None and have.player_id == pid and k not in room.repairs:
-                kind = "held"
-            elif have is None:
-                state.apply_pick(team, pid, k)
-                kind = "new"
-            else:
-                state.picks[k - 1] = Pick(overall=k, team=team, player_id=pid)
-                kind = "repair" if k in room.repairs else "conflict"
-            room.repairs.discard(k)
-            room.assigned[k] = pid
-            if standin:
-                room.standins[k] = {"yid": entry.yid, "name": room.ids.name(entry.yid), "as": pid}
-            else:
-                room.standins.pop(k, None)
-            changes.append(
-                {
-                    "overall": k,
-                    "kind": kind,
-                    "pid": pid,
-                    "yid": entry.yid,
-                    "standin": standin,
-                    "old": None if have is None else have.player_id,
-                    "t": t,
-                    "lag_ms": round(to_ms(t) - to_ms(entry.t)),
-                }
-            )
+            room.repairs |= freed
+    return changes
+
+
+def _walk(state, room: YahooRoom) -> list[dict[str, Any]]:
+    """One pass over the ledger from pick 1 (session lock held)."""
+    changes: list[dict[str, Any]] = []
+    k = 1
+    while k in room.ledger:
+        entry = room.ledger[k]
+        have = state.picks[k - 1] if k <= len(state.picks) else None
+        if have is None and k != len(state.picks) + 1:
+            break
+        target = room.assigned.get(k)
+        if have is not None and target == have.player_id and k not in room.repairs:
             k += 1
+            continue
+        want = room.ids.pid(entry.yid)
+        elsewhere = {p.player_id for p in state.picks if p.overall != k}
+        if want is not None and want not in elsewhere and want in state.z.index:
+            pid, standin = want, False
+        else:
+            pid, standin = _standin(state, elsewhere), True
+        team = state.my_team if entry.slot == room.slot else f"Team {entry.slot}"
+        t = now_iso()
+        if have is not None and have.player_id == pid and k not in room.repairs:
+            kind = "held"
+        elif have is None:
+            state.apply_pick(team, pid, k)
+            kind = "new"
+        else:
+            state.picks[k - 1] = Pick(overall=k, team=team, player_id=pid)
+            kind = "repair" if k in room.repairs else "conflict"
+        room.repairs.discard(k)
+        room.assigned[k] = pid
+        if standin:
+            room.standins[k] = {"yid": entry.yid, "name": room.ids.name(entry.yid), "as": pid}
+        else:
+            room.standins.pop(k, None)
+        changes.append(
+            {
+                "overall": k,
+                "kind": kind,
+                "pid": pid,
+                "yid": entry.yid,
+                "standin": standin,
+                "old": None if have is None else have.player_id,
+                "t": t,
+                "lag_ms": round(to_ms(t) - to_ms(entry.t)),
+            }
+        )
+        k += 1
     return changes
 
 
@@ -516,9 +538,20 @@ def plan(session: Session, room: YahooRoom) -> dict[str, Any]:
 
 
 def on_recommendation(session: Session, room: YahooRoom, payload: dict[str, Any]) -> None:
-    """Log a solve: the board it was built on, its top candidate and list, and its time."""
+    """Log a solve: the board it was built on, its top candidate and the list the drafter is
+    served, its time, and the recommended players the drafter cannot see because they have no
+    Yahoo id (``top_pid`` is the solve's own first choice, mapped or not)."""
     cands = candidates(session, room, payload)
     timings = payload.get("timings") or {}
+    names = session.state.projections.df["player"]
+    reverse = room.ids.reverse
+    raw = [c["player"] for c in payload.get("candidates", [])]
+    pool = raw + [r["player"] for r in payload.get("plan", [])[:3]]
+    unmapped = [
+        {"pid": pid, "name": str(names.get(pid, pid))}
+        for pid in dict.fromkeys(pool)
+        if pid not in reverse
+    ]
     room.log.append(
         {
             "type": "reco",
@@ -527,11 +560,32 @@ def on_recommendation(session: Session, room: YahooRoom, payload: dict[str, Any]
             "fresh": payload["version"] == session.version,
             "top_yid": cands[0]["yahoo_player_id"] if cands else None,
             "top_name": cands[0]["name"] if cands else None,
+            "top_pid": raw[0] if raw else None,
             "cands": [c["yahoo_player_id"] for c in cands],
+            "unmapped": unmapped,
             "solve_ms": timings.get("total_ms"),
             "mode": payload.get("mode"),
         }
     )
+
+
+def unmatched_projection(session: Session, room: YahooRoom, limit: int = 25) -> list[dict]:
+    """Projected players with no Yahoo id, best first: the ones to pin before a draft, since
+    the drafter can never take them."""
+    state = session.state
+    reverse = room.ids.reverse
+    total = state.z["total"].sort_values(ascending=False)
+    df = state.projections.df
+    rows = [pid for pid in total.index if pid not in reverse][:limit]
+    return [
+        {
+            "player_id": pid,
+            "name": str(df.at[pid, "player"]),
+            "team": str(df.at[pid, "team"] or ""),
+            "total": round(float(total[pid]), 3),
+        }
+        for pid in rows
+    ]
 
 
 def summary(session: Session, room: YahooRoom) -> dict[str, Any]:
@@ -566,6 +620,7 @@ def summary(session: Session, room: YahooRoom) -> dict[str, Any]:
         "conflicts": room.conflicts,
         "unresolved": room.unresolved,
         "unmatched_yahoo": room.ids.unmatched(limit=25),
+        "unmatched_projection": unmatched_projection(session, room, limit=25),
         "heartbeat": heartbeat,
         "heartbeat_age_s": None
         if heartbeat is None

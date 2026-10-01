@@ -73,20 +73,62 @@ Baseline from drafts 5-7 (2026-09-27, scratch hook in driver mode), loose count 
 
 ## 4. Event log (what the recorder must capture so the scorecard is computable)
 
-One JSON object per line, per draft id, written by the API (`record fidelity` in #8). Times are ISO-8601 UTC with ms; `t_room` is the room's own clock when available.
+One JSON object per line, per draft id, in `data/fidelity/<draft_id>.jsonl` (local, never committed), written by the API (#8). Times are ISO-8601 UTC with ms. Client events carry the client's `t` when it sends one (else the receive time) and `recv`, the server's receive time; `room_pick.t` is `t_room`, the room's own clock, when the client sends it. `src` is `api` on events the server writes for itself and `client` on posted ones.
+
+Written by the server:
 
 ```
-{"type":"control",      "t":..., "state":"armed|mirror|absent", "slot":s}
-{"type":"room_pick",    "t":..., "overall":n, "slot":s, "yid":id, "src":"socket|history|board"}
-{"type":"session_pick", "t":..., "overall":n, "pid":..., "yid":id, "lag_ms":...}
-{"type":"turn_start",   "t":..., "overall":n, "clock_s":30}
-{"type":"reco",         "t":..., "board":n_applied, "top_yid":id, "cands":[yid,...], "fresh":bool, "solve_ms":...}
+{"type":"attach",       "t":..., "draft_id":d, "slot":s, "mode":"mirror|autopilot", "num_teams":12, "rounds":13, "players_file":f, "session_id":..., "session":{...}, "resumed":bool, "mapped":n, "players":n}
+{"type":"detach",       "t":..., "session_id":...}
+{"type":"room_pick",    "t":..., "overall":n, "slot":s, "yid":id, "src":"socket|history|board", "name":...}
+{"type":"session_pick", "t":..., "overall":n, "pid":..., "yid":id, "lag_ms":..., "standin":bool, "kind":"new|held|conflict|repair", "resume":true?}
+{"type":"conflict",     "t":..., "overall":n, "session_pid":..., "session_yid":id, "room_yid":id, "room_pid":...}
+{"type":"reco",         "t":..., "board":n_applied, "version":v, "fresh":bool, "top_yid":id, "top_name":..., "top_pid":..., "cands":[yid,...], "unmapped":[{"pid":...,"name":...}], "solve_ms":..., "mode":...}
+{"type":"score",        "t":..., "wins":x, "benchmark":x, "vs_benchmark":x, "best":x, "matchups":{...}}
+{"type":"control",      "t":..., "state":"armed|mirror|absent", "slot":s, "src":"api"}
+```
+
+Posted by the client (`POST /rooms/{draft_id}/events`):
+
+```
+{"type":"control",      "t":..., "state":"armed|mirror|absent", "slot":s, "reason":"autopick"?}
+{"type":"turn_start",   "t":..., "overall":n, "slot":s, "clock_s":30}
 {"type":"draft_attempt","t":..., "overall":n, "yid":id, "method":"row|queue|search", "attempt":k}
 {"type":"pick_landed",  "t":..., "overall":n, "yid":id, "how":"row|queue|manual|expiry|autopick", "ms_from_turn":...}
 {"type":"intervention", "t":..., "who":"master|emissary|drone|user", "what":"..."}
+{"type":"heartbeat",    "t":..., ...}
+{"type":"note",         "t":..., "what":"..."}
 ```
 
-Derivations: `ref_k` = last `reco` with `board == k-1` and `t` < `t(pick_landed k)`; `stale` when the latest `reco` before landing has `board < k-1`; `unsolved` when `board == k-1` reco never arrived before landing; sync lag = `session_pick.t − room_pick.t` per overall; board agreement = count of overall where `session_pick.yid == room_pick.yid`.
+- `attach` carries the session settings, so `POST /rooms {draft_id}` rebuilds the room from the log after an API restart. A later `detach` stops that.
+- `session_pick.kind`:
+  - `new`: a pick the session did not have.
+  - `held`: the session already had the same player.
+  - `conflict`: the session had another player and the room wins. A `conflict` event names both players.
+  - `repair`: a stand-in replaced by the real player once he became free.
+- `standin` is true when the room's player had no projection id or was held elsewhere; the session holds the least useful free player in his place. The server writes `note` when the room reports two players for one overall, or an alias is pinned.
+- `reco.board` is the number of picks the solve saw. `top_pid` is the solve's own first choice, mapped or not. `top_yid` is the first candidate the drafter is served, which skips players with no Yahoo id. Those are listed in `unmapped`.
+- `score` (D5) is written once, when my last pick reaches the session.
+- `turn_start` is accepted for any slot. The one for pick 1 lets the scorecard check G6 when pick 1 is not mine.
+- `control` with `reason: "autopick"` counts as a G5 flip.
+- Heartbeats are kept in memory and written at most once a minute.
+
+Derivations:
+- Landing time `t_land(k)` is `pick_landed.t`, else `room_pick.t`.
+- Turn start is `turn_start.t`, else the `room_pick.t` of pick k-1.
+- `ref_k` is the last `reco` with `board == k-1` and `t < t_land(k)`. When its `top_pid` is in `unmapped`, the drafter could not take it: the ref is shown by name and the pick is at best a `fallback`.
+- Labels apply in this order:
+  1. `manual`: `pick_landed.how == "manual"`.
+  2. `compliant`: the actual player equals `ref_k`.
+  3. `absent`: control was not `armed` at turn start. In mirror mode every non-compliant pick reads `absent`.
+  4. `stale`: picks 1..k-1 were not all in the session when pick k landed, judged by the first `session_pick` time per overall (§1).
+  5. `unsolved`: synced, but no `ref_k` (no reco for board k-1 before landing).
+  6. `expired`: `how` is `expiry` or `autopick`.
+  7. `fallback`: the actual player is in `ref_k.cands`, or the ref had no Yahoo id.
+  8. `wrong`: anything else.
+- Sync lag (G2) is the first `session_pick.t − room_pick.t` per overall.
+- Board agreement (G1) counts overalls whose latest `session_pick` has the room's `yid` and is not a stand-in.
+- Entry lead (G6) is pick 1's turn start minus the first client `control` or `heartbeat`. Without one, it falls back to the `attach` control, and the scorecard says "from attach".
 
 Scorecard: `pickandroll fidelity report <draft_id>` (CLI or `GET /rooms/{draft_id}/fidelity`) prints the compliance line, the taxonomy counts, G1-G6, D1-D5, and a per-pick table (overall, ref, actual, label, lag, turn-to-land). Markdown, so it can be pasted into the tracker.
 

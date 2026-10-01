@@ -246,10 +246,39 @@ def test_ingest_is_contiguous_idempotent_and_room_wins(league):
         status = c.get("/rooms/d1").json()
         assert status["standins"][0]["overall"] == 6 and status["standins"][0]["yid"] == "999999"
         card = c.get("/rooms/d1/fidelity").json()
-        assert card["guardrails"]["G1"] == {"agree": 6, "of": 6, "total": 156}
+        # A stand-in is not the room's player: G1 counts it only once it is repaired.
+        assert card["guardrails"]["G1"] == {"agree": 5, "of": 6, "total": 156}
         assert card["standins"] == 1 and card["conflicts"] == 1
         # One source at a time.
         assert c.post(f"/sessions/{sid}/yahoo", json={"league_id": "1"}).status_code == 409
+
+
+def test_conflict_that_frees_a_player_repairs_his_standin(league):
+    """The session holds W at 1 and X at 2 (entered in pickandroll). The room says X went at 1:
+    X is held at 2, so 1 gets a stand-in. Then the room says Z went at 2: X is freed and must
+    take his place at 1, leaving no stand-in and X in no other roster."""
+    directory, picks = league
+    with app_for(directory) as c:
+        room = attach(c)
+        sid = room["session_id"]
+        players = load_players_file(directory / "yahoo_players_1.json")
+        ids = build_id_map(players, _proj(c, sid))
+        w, x, z = (picks[i].yahoo_player_id for i in (0, 1, 2))
+        feed = [[1, "Team 1", ids.pid(w)], [2, "Team 2", ids.pid(x)]]
+        assert c.post(f"/sessions/{sid}/sync", json={"picks": feed}).status_code == 200
+        r = c.post("/rooms/d1/picks", json={"picks": [{"overall": 1, "yahoo_player_id": x}]})
+        assert r.json()["replaced"] == 1
+        assert c.get("/rooms/d1").json()["standins"][0]["yid"] == x
+        r = c.post("/rooms/d1/picks", json={"picks": [{"overall": 2, "yahoo_player_id": z}]})
+        assert r.json()["replaced"] == 2  # the conflict at 2 and the repair at 1
+        held = [p["player_id"] for p in c.get(f"/sessions/{sid}/picks").json()]
+        assert held == [ids.pid(x), ids.pid(z)]
+        assert c.get("/rooms/d1").json()["standins"] == []
+        events = _events(directory, "d1")
+        kinds = [e["kind"] for e in events if e["type"] == "session_pick"]
+        assert kinds == ["conflict", "conflict", "repair"]
+        card = c.get("/rooms/d1/fidelity").json()
+        assert card["guardrails"]["G1"]["agree"] == 2 and card["standins"] == 0
 
 
 def test_alias_pin_repairs_a_standin(league):
@@ -258,6 +287,11 @@ def test_alias_pin_repairs_a_standin(league):
         room = attach(c)
         sid = room["session_id"]
         assert room["unmatched_yahoo"][0]["yahoo_player_id"] == "800000"
+        assert [p["name"] for p in room["unmatched_projection"]] == ["Ponly Person"]
+        bad = {"draft_id": "d2", "slot": 1, "session": SESSION}
+        for name in ("../yahoo_players_1.json", "sub/yahoo_players_1.json", ".."):
+            r = c.post("/rooms", json={**bad, "players_file": name})
+            assert r.status_code == 400 and "file name" in r.text
         post_picks(c, "d1", picks[:2])
         r = c.post(
             "/rooms/d1/picks", json={"picks": [{"overall": 3, "yahoo_player_id": "800000"}]}
@@ -276,6 +310,7 @@ def test_alias_pin_repairs_a_standin(league):
         assert saved == {"478.p.800000": target}
         card = c.get("/rooms/d1/fidelity").json()
         assert card["conflicts"] == 0 and card["standins"] == 0
+        assert card["guardrails"]["G1"]["agree"] == card["guardrails"]["G1"]["of"] == 3
 
 
 # --------------------------------------------------------------------------- plan and events
@@ -298,6 +333,7 @@ def test_plan_back_to_back_wait_and_bounds(league):
         reco = [e for e in _events(directory, "d1") if e["type"] == "reco"][-1]
         assert reco["board"] == 23 and reco["top_yid"] == top["yahoo_player_id"]
         assert reco["fresh"] is True and reco["solve_ms"] > 0
+        assert reco["top_pid"] == top["player_id"] and reco["unmapped"] == []
         # Without a wait the plan comes back at once, marked stale after a new pick.
         post_picks(c, "d1", picks[23:24])
         plan = c.get("/rooms/d1/plan").json()
@@ -444,6 +480,36 @@ def test_scorecard_labels_every_failure():
     assert "**Compliance 1/7**" in text and "| G5 autopick flips | 1 | 0 | **FAIL** |" in text
 
 
+def test_scorecard_unmapped_top_is_a_fallback_and_entry_lead_from_the_client():
+    base = [
+        _ev("attach", 0, slot=1, num_teams=2, rounds=1, draft_id="u"),
+        _ev("control", 0, state="armed", src="api"),
+        _ev("turn_start", 70, overall=1),
+        _ev(
+            "reco",
+            71,
+            board=0,
+            top_yid="b",
+            top_pid="ghost",
+            cands=["b"],
+            unmapped=[{"pid": "ghost", "name": "Ghost Player"}],
+        ),
+        _ev("room_pick", 72, overall=1, yid="b"),
+        _ev("session_pick", 72, overall=1, yid="b"),
+    ]
+    card = analyze(base)
+    row = card["rows"][0]
+    assert row["label"] == "fallback" and row["ref_name"] == "Ghost Player"
+    assert row["ref_pid"] == "ghost" and row["ref_yid"] is None
+    assert card["guardrails"]["G6"] == {"entry_lead_s": 70.0, "entry_from": "attach"}
+    assert "70.0 s (from attach)" in markdown(card)
+    with_client = [*base[:2], _ev("heartbeat", 10, src="client"), *base[2:]]
+    assert analyze(with_client)["guardrails"]["G6"] == {
+        "entry_lead_s": 60.0,
+        "entry_from": "client",
+    }
+
+
 def test_scorecard_stale_when_the_session_was_behind():
     events = [
         _ev("attach", 0, slot=2, num_teams=2, rounds=2, draft_id="s"),
@@ -518,6 +584,7 @@ def test_tier1_replay_synthetic(league):
     status = result["status"]
     assert status["picks_seen"] == 156 and len(status["my_picks"]) == 13
     assert status["lag_ms"]["n"] == 156 and status["live"]["picks_applied"] == 156
+    assert card["guardrails"]["G6"]["entry_from"] == "client"
     assert "| G1 board agreement | 156/156" in card["markdown"]
     # The final score is logged once my roster is full (my last pick is 145).
     events = _events(directory, "2515267-replay")

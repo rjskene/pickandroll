@@ -110,6 +110,14 @@ def replay(
     if players_file is not None:
         body["players_file"] = players_file
     attach = _ok(client.post("/rooms", json=body))
+    # The client is in the draft room from here (G6 counts from this control).
+    state = "armed" if mode == "autopilot" else "mirror"
+    _ok(
+        client.post(
+            f"/rooms/{draft_id}/events",
+            json={"events": [{"type": "control", "state": state, "slot": slot}]},
+        )
+    )
     if lead > 0:
         time.sleep(lead)
     offsets = timeline(picks)
