@@ -28,7 +28,8 @@ yahoo.com without a user gesture (why driver mode existed, and why the extension
 
 For each of my seat's 13 picks k in a Yahoo draft:
 
-- `ref_k` = the #1 candidate of the most recent pickandroll recommendation whose board contained exactly picks 1..k-1 (the fresh recommendation for my turn), computed before the pick landed. If no such recommendation existed, `ref_k` is undefined.
+- `ref_k` = the #1 candidate of the recommendation the drafter acted on: the most recent published pickandroll recommendation whose board contained exactly picks 1..k-1 (the fresh recommendation for my turn), as of the drafter's first draft attempt for pick k. When no attempt was logged (autopick, expiry, manual pick), it is the last such recommendation before the pick landed. If no such recommendation existed, `ref_k` is undefined.
+- A recommendation for one board may be refined after it is served (branch or early plan, then priced table). Compliance judges the drafter against what it was served when it acted, never against a refinement that arrived while the click was in flight. Refinements that change the #1 candidate are counted separately as churn (D6) and each one needs a root cause.
 - `actual_k` = the player Yahoo recorded for my seat at overall pick k.
 - `compliant_k` = (`actual_k` == `ref_k`), by Yahoo player id.
 
@@ -70,6 +71,7 @@ Baseline from drafts 5-7 (2026-09-27, scratch hook in driver mode), loose count 
 | D3 | solve time | wall time of each recommendation solve during the draft | sum 0.3 s; curve up to 20 s limit | fits inside D1 |
 | D4 | draft attempts | row clicks / queue uses per landed pick | up to 3 | 1 |
 | D5 | final score | expected category wins of the final roster vs the benchmark (existing `/score`) | 5.24, 5.09, 5.30 | report only |
+| D6 | reco churn | my turns where the last reco for board k-1 before the pick landed has a different #1 than `ref_k` (the reco acted on); listed per pick with both players and both reco kinds (plan / converged / priced), plus compliance recomputed against the final reco | not measured | 0; every churned turn gets a root cause before a cell or mock counts as green |
 
 ## 4. Event log (what the recorder must capture so the scorecard is computable)
 
@@ -116,7 +118,8 @@ Posted by the client (`POST /rooms/{draft_id}/events`):
 Derivations:
 - Landing time `t_land(k)` is `pick_landed.t`, else `room_pick.t`.
 - Turn start is `turn_start.t`, else the `room_pick.t` of pick k-1.
-- `ref_k` is the last `reco` with `board == k-1` and `t < t_land(k)`. When its `top_pid` is in `unmapped`, the drafter could not take it: the ref is shown by name and the pick is at best a `fallback`.
+- `ref_k` is the last `reco` with `board == k-1` and `t <= t_attempt(k)`, where `t_attempt(k)` is the first `draft_attempt` for overall k; without one, `t < t_land(k)`. When its `top_pid` is in `unmapped`, the drafter could not take it: the ref is shown by name and the pick is at best a `fallback`.
+- `final_k` is the last `reco` with `board == k-1` and `t < t_land(k)`. D6 counts turns where `final_k.top_pid != ref_k.top_pid`; the scorecard also prints compliance against `final_k` as a diagnostic line.
 - Labels apply in this order:
   1. `manual`: `pick_landed.how == "manual"`.
   2. `compliant`: the actual player equals `ref_k`.
