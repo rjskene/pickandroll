@@ -602,12 +602,25 @@ def test_scorecard_judges_the_reco_acted_on_and_counts_churn():
     assert card["compliance"]["compliant"] == 1 and card["compliance"]["against_final"] == 0
     d = card["diagnostics"]
     assert d["D6"] == {"churn": 1, "picks": [1]}
+    assert d["D1_hit"]["n"] == 0 and d["D1_miss"]["n"] == 2
+    plan = events[3]  # board 0's first reco: served from a pre-solve instead
+    hit = analyze([{**e, "branch": True} if e is plan else e for e in events])["diagnostics"]
+    assert hit["D1_hit"]["n"] == 1 and hit["D1_miss"]["n"] == 1
     assert d["D3"]["n"] == 2 and d["D3_plan"]["n"] == 1
     assert d["D3_busy"]["max"] == 500 and d["D3_idle"]["max"] == 300
     text = markdown(card)
     assert "| D6 reco churn (target 0) | 1 at 1 |" in text
     assert "Compliance against the final reco (diagnostic): 0/2." in text
-    assert "| 1 | A | plan | B | priced |" in text
+    assert "| 1 | A | plan | - | B | priced | - | to find |" in text
+    # With objectives logged, a final reco that beat the one acted on is its own cause.
+    scored = [
+        {**e, "top_objective": 6.0 if e.get("top_yid") == "a" else 6.1}
+        if e["type"] == "reco"
+        else e
+        for e in events
+    ]
+    row = analyze(scored)["rows"][0]
+    assert row["churn_cause"] == "better plan after action"
     # Without an attempt (expiry, manual) the ref is the last reco before the landing.
     no_attempt = [e for e in events if e["type"] != "draft_attempt"]
     rows = analyze(no_attempt)["rows"]

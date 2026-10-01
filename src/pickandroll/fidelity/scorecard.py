@@ -146,6 +146,8 @@ def analyze(events: list[dict[str, Any]]) -> dict[str, Any]:
             ref = final
         acted = tries[0].get("board") if tries else None
         ready = (to_ms(board[0]["t"]) - t_turn) if board and t_turn is not None else None
+        # Served from a pre-solve: the board's first reco is an installed branch plan.
+        presolved = bool(board and board[0].get("branch"))
         how = land.get("how") if land else None
         ref_yid = str(ref["top_yid"]) if ref and ref.get("top_yid") is not None else None
         ref_name = ref.get("top_name") if ref else None
@@ -179,6 +181,11 @@ def analyze(events: list[dict[str, Any]]) -> dict[str, Any]:
         else:
             to_land = None
         churn = bool(ref and final and final.get("top_pid") != ref.get("top_pid"))
+        cause = None
+        if churn:
+            a, b = (ref or {}).get("top_objective"), (final or {}).get("top_objective")
+            if a is not None and b is not None and b > a + 1e-9:
+                cause = "better plan after action"
         rows.append(
             {
                 "overall": k,
@@ -195,6 +202,9 @@ def analyze(events: list[dict[str, Any]]) -> dict[str, Any]:
                 "final_name": final.get("top_name") if final else None,
                 "final_kind": reco_kind(final),
                 "churn": churn,
+                "churn_cause": cause,
+                "ref_objective": ref.get("top_objective") if ref else None,
+                "final_objective": final.get("top_objective") if final else None,
                 "actual_yid": actual,
                 "actual_name": room[k].get("name"),
                 "label": label,
@@ -202,6 +212,7 @@ def analyze(events: list[dict[str, Any]]) -> dict[str, Any]:
                 "lag_ms": None if k not in lags else round(lags[k]),
                 "turn_to_land_ms": None if to_land is None else round(to_land),
                 "reco_ready_ms": None if ready is None else round(ready),
+                "presolved": presolved,
                 "attempts": len(attempts.get(k, [])),
             }
         )
@@ -289,6 +300,21 @@ def analyze(events: list[dict[str, Any]]) -> dict[str, Any]:
         },
         "diagnostics": {
             "D1": stats([r["reco_ready_ms"] for r in rows if r["reco_ready_ms"] is not None]),
+            # Turns served from a pre-solve and the rest: two populations under one median.
+            "D1_hit": stats(
+                [
+                    r["reco_ready_ms"]
+                    for r in rows
+                    if r["reco_ready_ms"] is not None and r["presolved"]
+                ]
+            ),
+            "D1_miss": stats(
+                [
+                    r["reco_ready_ms"]
+                    for r in rows
+                    if r["reco_ready_ms"] is not None and not r["presolved"]
+                ]
+            ),
             "D2": stats(
                 [r["turn_to_land_ms"] for r in landed_rows if r["turn_to_land_ms"] is not None]
             ),
@@ -414,6 +440,8 @@ def markdown(card: dict[str, Any]) -> str:
         "| diagnostic | value |",
         "|---|---|",
         f"| D1 reco ready vs turn start | {ms(d['D1'])} |",
+        f"| D1, turns served from a pre-solve | {ms(d['D1_hit'])} |",
+        f"| D1, the other turns | {ms(d['D1_miss'])} |",
         f"| D2 turn to land | {ms(d['D2'])} |",
         f"| D3 solve time, priced | {ms(d['D3'])} |",
         (
@@ -454,13 +482,15 @@ def markdown(card: dict[str, Any]) -> str:
             "",
             "Reco churn (D6): the reco acted on, then the last one before the pick landed.",
             "",
-            "| pick | acted on | kind | final | kind |",
-            "|---|---|---|---|---|",
+            "| pick | acted on | kind | objective | final | kind | objective | cause |",
+            "|---|---|---|---|---|---|---|---|",
         ]
         for r in churned:
             lines.append(
                 f"| {r['overall']} | {r['ref_name'] or r['ref_pid'] or '-'} | {r['ref_kind']} "
-                f"| {r['final_name'] or r['final_pid'] or '-'} | {r['final_kind']} |"
+                f"| {_fmt(_round(r['ref_objective']))} "
+                f"| {r['final_name'] or r['final_pid'] or '-'} | {r['final_kind']} "
+                f"| {_fmt(_round(r['final_objective']))} | {r['churn_cause'] or 'to find'} |"
             )
     return "\n".join(lines) + "\n"
 
@@ -490,6 +520,10 @@ def status(card: dict[str, Any]) -> dict[str, Any]:
         "conflicts": card["conflicts"],
         "standins": card["standins"],
     }
+
+
+def _round(value: float | None) -> float | None:
+    return None if value is None else round(float(value), 4)
 
 
 def _fmt(value: Any, unit: str = "") -> str:
