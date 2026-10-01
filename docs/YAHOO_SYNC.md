@@ -1,0 +1,112 @@
+# YAHOO SYNC: fidelity metrics and hill-climb protocol (2026-10-01)
+
+Owner: fantasyMASTER (analysis, plans, spot checks). Builder: fantasyEMISSARY (implements, tests). Drone: fantasyMOCK (runs the Yahoo mock drafts, one at a time, directed by the emissary or the master).
+
+## 0. What to port from the scratch archive
+
+Three live drafts (5, 6, 7 on 2026-09-27) were driven with scratch code that now lives at `~/code/pickandroll-scratch/live-drafts-2026-09-27/`
+(outside the repo; the user may copy it to `scratch/live-drafts-2026-09-27/`, nothing imports it). Its `README.md`
+explains every file and `fidelity_summary_drafts5-7.md` is the cross-draft summary. It is the proven starting
+point: port behaviour, not files.
+
+| scratch file | what it proved | goes to |
+|---|---|---|
+| `hook6.js` (v16; `hook6_v15.js` for diffing) | in-page websocket hook (`0|overall|yid|slot|pos|0` picks, `D|pick|slot|clock` on-the-clock, `P|…` history on connect), turn detection from the clock message, taken-filter, row click + same-row re-click at 1.8 s then 2.5 s (Yahoo drops clicks that land during a re-render; a registered click confirms within 400 ms), search-box and scroll fallbacks for rows not in view, queue fallback for the current pick only, Web-Worker timers (hidden tabs throttle `setTimeout` to 1/min after 5 min), board-tab backfill of missed picks | #9 extension content script |
+| `relay.py` | `/picks` idempotent + contiguous ingestion with PENDING stand-ins for gaps; `/board` "F. Last;TEAM" → Yahoo id with ADP disambiguation (S. Curry GSW, J. Williams OKC); `/reco` candidate list by Yahoo id; `/event` fidelity log per draft; `/status` | #8 API room endpoints |
+| `bridge.py create` | session creation for a room: slot, draft id; time limit 5 s, n 3, scenarios 0 kept solves inside a 30 s clock | #8 attach endpoint |
+| `report.py`, `fidelity_*.jsonl` | the scorecard and the event vocabulary; §4 below is the cleaned-up schema | #8 fidelity recorder + `fidelity report` |
+| `yahoo_map.json` | Yahoo id → pickandroll player, name, team, ADP; derived from `data/yahoo_players_31822.json` (local only) through `sources/matching.py` | built at attach time, never committed |
+| `board_*.txt`, `hook_times_*.txt` | real 156-pick orders with ms arrival times | Tier 1 replay fixtures (`tests/fixtures/rooms/`; pick order and timings only) |
+| `progress_draft*.log`, `agent7_prompt.txt`, `cycle7.py`, `drain.py`, `watch.py`, `mapdom.py` | how the driver-mode loop worked; the extension replaces that loop entirely | read once, do not port |
+
+Room facts that are not in the code: Yahoo autopicks instantly for an absent seat and at the 30 s expiry; one
+missed pick flips the seat into autopick mode (must be turned off by hand); the filtered Draft button drafts the
+wrong player; the lobby's Join button hijacks the draft tab; Chrome blocks every page→localhost request from
+yahoo.com without a user gesture (why driver mode existed, and why the extension's service worker is the fix).
+
+## 1. Primary metric: compliance
+
+For each of my seat's 13 picks k in a Yahoo draft:
+
+- `ref_k` = the #1 candidate of the most recent pickandroll recommendation whose board contained exactly picks 1..k-1 (the fresh recommendation for my turn), computed before the pick landed. If no such recommendation existed, `ref_k` is undefined.
+- `actual_k` = the player Yahoo recorded for my seat at overall pick k.
+- `compliant_k` = (`actual_k` == `ref_k`), by Yahoo player id.
+
+**Compliance = Σ compliant_k / (13 − manual picks).** A pick the user (or the drone, standing in for the user) made by hand is excluded from both numerator and denominator and reported separately. Yahoo autopicks, expiries, rank-2 fallbacks and stale-plan picks all count as failures: the denominator is always every autopilot turn, never only the turns the tool attempted.
+
+**Target: 13/13 (or 12/12 with one manual pick) in two consecutive mock drafts.**
+
+### Failure taxonomy (one label per non-compliant pick; the hill-climb works on these counts)
+
+| label | meaning |
+|---|---|
+| `absent` | the seat was not under autopilot control when the turn started (late entry, disconnect, autopick mode on) |
+| `stale` | at the time the pick landed the session had not applied all picks 1..k-1, so the plan was for an older board |
+| `unsolved` | synced, but no fresh recommendation for board k-1 existed before the pick landed |
+| `expired` | `ref_k` existed, no pick landed before the 30 s clock; Yahoo autopicked |
+| `fallback` | a candidate other than `ref_k` landed (row not found / click lost, took rank 2+) |
+| `wrong` | a player outside the candidate list landed (filter or click bug) |
+| `manual` | user-made pick; excluded, see guardrail G4 |
+
+Baseline from drafts 5-7 (2026-09-27, scratch hook in driver mode), loose count (plan top at turn start even when the session was behind): 12/13, 10/13, 4/13. Under this spec those would score lower, because the session was 1 to 15 picks behind at most turns (`stale`).
+
+## 2. Guardrails (must hold for a draft to count as a pass)
+
+| id | metric | definition | baseline (d5 / d6 / d7) | target |
+|---|---|---|---|---|
+| G1 | board agreement | session picks == Yahoo picks at draft end, by Yahoo id, all 156 | 156 only after hand fixes of 2 ambiguous names | 156/156 unaided |
+| G2 | sync lag | per pick: t(applied in session) − t(socket message in the room); p50 / p95 / max | 40.6/121/191 s; 31.9/76/108 s; 13.0/21.9/24 s steady state | p50 ≤ 1 s, p95 ≤ 2 s, max ≤ 5 s |
+| G3 | hands-off | interventions by a human or an agent during the draft (console calls, manual relay fixes) | many | 0 |
+| G4 | manual respected | when a manual pick is made on my turn, the autopilot stands down (no draft attempt after it) and the session mirrors the manual pick within G2 | n/a | 1/1 per draft |
+| G5 | autopick mode | times Yahoo flipped the seat into autopick mode | 1 (draft 7) | 0 |
+| G6 | entry lead | seconds inside the draft client before pick 1 went on the clock | −210 s (draft 7) | ≥ 60 s |
+
+## 3. Diagnostics (reported every draft, not pass/fail)
+
+| id | metric | definition | baseline | goal |
+|---|---|---|---|---|
+| D1 | reco readiness | per my pick: t(fresh reco for board k-1) − t(turn start); negative = ready before the turn | not measured | p50 ≤ 0, max ≤ 5 s |
+| D2 | turn-to-land | t(Yahoo registers my pick) − t(turn start) | 1.3-1.6 s clean, 10-13 s with re-clicks | p50 ≤ 5 s, max ≤ 15 s |
+| D3 | solve time | wall time of each recommendation solve during the draft | sum 0.3 s; curve up to 20 s limit | fits inside D1 |
+| D4 | draft attempts | row clicks / queue uses per landed pick | up to 3 | 1 |
+| D5 | final score | expected category wins of the final roster vs the benchmark (existing `/score`) | 5.24, 5.09, 5.30 | report only |
+
+## 4. Event log (what the recorder must capture so the scorecard is computable)
+
+One JSON object per line, per draft id, written by the API (`record fidelity` in #8). Times are ISO-8601 UTC with ms; `t_room` is the room's own clock when available.
+
+```
+{"type":"control",      "t":..., "state":"armed|mirror|absent", "slot":s}
+{"type":"room_pick",    "t":..., "overall":n, "slot":s, "yid":id, "src":"socket|history|board"}
+{"type":"session_pick", "t":..., "overall":n, "pid":..., "yid":id, "lag_ms":...}
+{"type":"turn_start",   "t":..., "overall":n, "clock_s":30}
+{"type":"reco",         "t":..., "board":n_applied, "top_yid":id, "cands":[yid,...], "fresh":bool, "solve_ms":...}
+{"type":"draft_attempt","t":..., "overall":n, "yid":id, "method":"row|queue|search", "attempt":k}
+{"type":"pick_landed",  "t":..., "overall":n, "yid":id, "how":"row|queue|manual|expiry|autopick", "ms_from_turn":...}
+{"type":"intervention", "t":..., "who":"master|emissary|drone|user", "what":"..."}
+```
+
+Derivations: `ref_k` = last `reco` with `board == k-1` and `t` < `t(pick_landed k)`; `stale` when the latest `reco` before landing has `board < k-1`; `unsolved` when `board == k-1` reco never arrived before landing; sync lag = `session_pick.t − room_pick.t` per overall; board agreement = count of overall where `session_pick.yid == room_pick.yid`.
+
+Scorecard: `pickandroll fidelity report <draft_id>` (CLI or `GET /rooms/{draft_id}/fidelity`) prints the compliance line, the taxonomy counts, G1-G6, D1-D5, and a per-pick table (overall, ref, actual, label, lag, turn-to-land). Markdown, so it can be pasted into the tracker.
+
+## 5. Two measurement tiers
+
+- **Tier 1, replay (offline, seconds, deterministic, runs in tests).** Replay a recorded room (`board_*.txt` pick order + `hook_times_*.txt` timings from the scratch archive (§0), 156 picks each) into the API at real or accelerated speed. Measures G1, G2 (API side), D1, D3. Every change to #8 is checked here first.
+- **Tier 2, live mock (the drone, ~45-75 min, one at a time).** A real Yahoo 12-team mock from the user's Chrome. Measures everything. Each mock includes exactly one manual pick at a turn the drone chooses (G4). No code change ships to main without a Tier 2 scorecard when it touches the room side (#9).
+
+## 6. Hill-climb protocol
+
+1. The emissary states the hypothesis and the metric it expects to move before a mock starts.
+2. The drone runs one mock, posts the scorecard (markdown from §4) on the tracker #11.
+3. Compare against the best previous scorecard. Keep the change only if compliance did not drop and no guardrail regressed. Taxonomy counts say what to fix next; the order of attack is `absent` → `stale` → `unsolved` → `expired` → `fallback` → `wrong`.
+4. Done = two consecutive mocks at 13/13 (12/12 + 1 manual) with G1-G6 green. After that, mocks continue only to test new features, at least one per week until the real draft.
+
+## 7. Standing rules for all three sessions
+
+- No superpowers skills on pickandroll work.
+- Never commit `data/`, `.env`, tokens. The Yahoo players file is data; the pick-order fixtures from the archive are fine in tests.
+- Never join the Yahoo draft socket as the user's slot from a second client. The only reader of my seat is the user's own draft page (the extension's content script).
+- Only one mock draft at a time. The user stays out of the mock room while the drone drives it.
+- Queue only for the current pick, and only when it is our turn.
+- Branch per issue, PR to main, master reviews and merges.
