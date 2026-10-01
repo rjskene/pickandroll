@@ -1033,9 +1033,16 @@ def create_app(
     async def room_plan(
         draft_id: str,
         wait: float = Query(default=0.0, ge=0.0, le=PLAN_WAIT_MAX),
+        board: int | None = Query(
+            default=None,
+            ge=0,
+            description="Hold for the solve built on this many picks: a turn's client knows "
+            "its board before the API may have applied the last pick.",
+        ),
     ) -> dict[str, Any]:
         """Candidates for my next turn by Yahoo id. ``wait`` holds up to that many seconds
-        (at most 20) for a solve of the current board and starts one if none is running."""
+        (at most 20) for a solve of the current board, or of ``board`` once the session has
+        applied that many picks, and starts one if none is running."""
         room, session = await get_room(draft_id)
         loop = asyncio.get_running_loop()
         started = loop.time()
@@ -1043,15 +1050,22 @@ def create_app(
         kicked = False
         while True:
             rec = session.recommendation
-            fresh = rec is not None and rec["version"] == session.version
             state = session.state
+            fresh = (
+                rec is not None
+                and rec["version"] == session.version
+                and (board is None or rec["next_overall"] - 1 >= board)
+            )
             if fresh or loop.time() >= deadline or not state.my_remaining_picks:
                 break
+            synced = board is None or state.next_overall - 1 >= board
             solver = session.solver
-            if solver is not None and not kicked and not solver.running:
+            if synced and solver is not None and not kicked and not solver.running:
                 kicked = solver.kick("room", force=True)
             await asyncio.sleep(0.1)
         payload = await asyncio.to_thread(yahoo_room.plan, session, room)
+        if board is not None and (payload["board"] is None or payload["board"] < board):
+            payload["fresh"] = False  # current for the API, but older than the client's board
         return {**payload, "waited_ms": round((loop.time() - started) * 1000)}
 
     @app.post("/rooms/{draft_id}/events")

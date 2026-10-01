@@ -340,6 +340,24 @@ def test_plan_back_to_back_wait_and_bounds(league):
         assert plan["fresh"] is False and plan["second_pick"] is None
 
 
+def test_plan_holds_for_the_clients_board(league):
+    """The turn's client knows pick k-1 landed before the API may have applied it: asked for
+    board k-1, the plan of board k-2 is not fresh, and the wait holds for the newer board."""
+    directory, picks = league
+    with app_for(directory) as c:
+        attach(c, num_teams=12)
+        post_picks(c, "d1", picks[:22])
+        plan = c.get("/rooms/d1/plan?wait=15").json()
+        assert plan["fresh"] is True and plan["board"] == 22
+        assert c.get("/rooms/d1/plan?board=-1").status_code == 422
+        plan = c.get("/rooms/d1/plan?wait=0.3&board=23").json()
+        assert plan["fresh"] is False and plan["board"] == 22 and plan["waited_ms"] >= 300
+        assert c.get("/rooms/d1/plan?board=22").json()["fresh"] is True
+        post_picks(c, "d1", picks[22:23])
+        plan = c.get("/rooms/d1/plan?wait=15&board=23").json()
+        assert plan["fresh"] is True and plan["board"] == 23
+
+
 def test_events_validation_heartbeats_and_control(league):
     directory, _picks = league
     with app_for(directory) as c:
