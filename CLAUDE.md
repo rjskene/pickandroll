@@ -40,7 +40,8 @@ as such, with the evidence.
 
 ## Workflow
 
-- Branch per issue off `main`: `feat/yahoo-sync-<issue>`. Conventional-commit titles with scope `yahoo-sync`.
+- Branch per issue off `main`: `feat/yahoo-sync-<issue>`, in a git worktree under `.worktrees/<name>` inside this
+  repo (gitignored), never as a sibling folder of `~/code/pickandroll`. The checkout itself stays on `main`. Conventional-commit titles with scope `yahoo-sync`.
   One PR per issue with `Closes #N`; the master reviews and merges. Only the master commits straight to
   `main`, and only docs.
 - Python: `.venv/bin/python -m pytest` and `.venv/bin/ruff check src tests` green before any PR.

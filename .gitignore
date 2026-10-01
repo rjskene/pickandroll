@@ -31,3 +31,8 @@ web/dist/
 .DS_Store
 .vscode/
 .idea/
+
+# git worktrees of this repo (one per branch in flight); never committed
+.worktrees/
+# reference material copied in by hand, ported then deleted
+scratch/
