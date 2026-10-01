@@ -120,7 +120,8 @@ scorecard shows the failure it fixes, and the last two clean mocks before the dr
 
 **Token budget is a hard constraint.** The user's weekly usage limit can be burnt in a day by draft loops, so:
 
-1. **At most two live mocks per day.** Every mock needs, before it starts: Tier 1 replay green, a hypothesis
+1. **At most two live mocks per day, hard cap.** A third mock on the same calendar day needs the user's explicit
+   approval in chat, given to the drone or the master; the emissary cannot grant it. Every mock needs, before it starts: Tier 1 replay green, a hypothesis
    naming the taxonomy label or guardrail it targets, and a code change since the previous mock. The same build
    is never mocked twice, except the acceptance pair. A failure that appears in two consecutive scorecards stops
    mocking: fix it offline (replay tier, or a harness built from the recorded room) before the next mock.

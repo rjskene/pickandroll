@@ -33,7 +33,8 @@ as such, with the evidence.
   always remain possible; they are mirrored into the session and never overridden.
 - Never connect to the Yahoo draft socket as the user's slot from a second client (Yahoo kicks the user). The
   only reader of the user's seat is the user's own draft page (the extension's content script).
-- One mock draft at a time. The user stays out of the mock room while the drone drives it. In Yahoo, queue
+- One mock draft at a time, and at most two per day; a third needs the user's explicit approval in chat (the
+  emissary cannot grant it). The user stays out of the mock room while the drone drives it. In Yahoo, queue
   only for the current pick and only when it is our turn.
 - Scratch experiments never go in `src/`. Reference material is ported, not imported; delete it once ported.
 
