@@ -68,15 +68,16 @@ function world({ visible = ["101", "102", "103"], clicksToLand = 1, landMs = 300
     fresh: true,
     waited_ms: 2000,
     candidates: ["101", "102", "103", "104"].map((y) => ({ yahoo_player_id: y, name: `P ${y}`, ini: "P", last: y, team: "T" })),
-    ...plan,
+    ...(Array.isArray(plan) ? {} : plan),
   };
   const d = new Drafter({
     tracker,
     dom,
     plan: async (wait) => {
       log.plans.push(wait);
-      await sleep(planMs);
-      return served;
+      await sleep(wait ? planMs : 20);
+      const next = Array.isArray(plan) ? plan[Math.min(log.plans.length, plan.length) - 1] : null;
+      return next ? { ...served, ...next } : served;
     },
     emit: (e) => log.events.push(e),
     sleep,
@@ -159,7 +160,22 @@ test("a stale plan near the end of the clock is drafted, not waited on", async (
   const { d, log, tracker, clock } = world({ plan: { fresh: false } });
   tracker.ingest("C|11", clock.t);
   const out = await d.turn(K);
-  assert.deepEqual(log.plans, [0]);
+  assert.deepEqual(log.plans, [0, 0]); // the wait, then one last look
   assert.equal(out.fresh, false);
   assert.equal(out.yid, "101");
+});
+
+test("a fresh plan that lands just after the wait is the one drafted", async () => {
+  const top = (y) => ["101", "102", "103"].sort((a, b) => (a === y ? -1 : b === y ? 1 : 0));
+  const rows = (ys) => ys.map((y) => ({ yahoo_player_id: y, name: `P ${y}`, ini: "P", last: y, team: "T" }));
+  const { d, log } = world({
+    plan: [
+      { fresh: false, candidates: rows(top("101")) },
+      { fresh: true, candidates: rows(top("102")) },
+    ],
+  });
+  const out = await d.turn(K);
+  assert.deepEqual(log.plans, [18, 0]);
+  assert.equal(out.fresh, true);
+  assert.equal(out.yid, "102");
 });

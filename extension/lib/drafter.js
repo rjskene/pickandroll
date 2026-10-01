@@ -94,7 +94,12 @@
       const out = { overall: k, result: "none", how: null, yid: null, fresh: null, waited_ms: null };
       let autodraft = false;
       try {
-        const plan = await this.plan(planWait(this.left()));
+        let plan = await this.plan(planWait(this.left()));
+        if (plan && !plan.fresh && !this.done(k)) {
+          // The solve can land just after the wait gives up: one last look before clicking.
+          const again = await this.plan(0);
+          if (again && again.fresh) plan = again;
+        }
         out.fresh = Boolean(plan && plan.fresh);
         out.waited_ms = plan ? plan.waited_ms : null;
         if (this.done(k)) return this.finish(out, k);
