@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Extension harness</title>
+    <style>
+      :root { --bg: #f7f8fb; --fg: #182033; --muted: #5b6577; --line: #dde2ec; color-scheme: light dark; }
+      @media (prefers-color-scheme: dark) { :root { --bg: #12141c; --fg: #e6eaf2; --muted: #9aa3b5; --line: #2a3040; } }
+      body { margin: 0; padding: 16px; background: var(--bg); color: var(--fg); font: 13px/1.5 -apple-system, system-ui, sans-serif; }
+      h1 { font-size: 16px; margin: 0 0 4px; }
+      p { margin: 4px 0; color: var(--muted); }
+      pre { white-space: pre-wrap; border: 1px solid var(--line); border-radius: 6px; padding: 8px; max-width: 100%; overflow-x: auto; }
+      table { border-collapse: collapse; margin-top: 8px; }
+      td, th { border: 1px solid var(--line); padding: 2px 8px; text-align: left; }
+    </style>
+  </head>
+  <body>
+    <h1>pickandroll extension harness</h1>
+    <p>Replays a recorded Yahoo room as socket frames through the extension's own page.js, content.js
+      and worker.js (with a stand-in for chrome.*) against the pickandroll API.
+      Query: <code>?speed=10&amp;slot=1&amp;fixture=2515267&amp;flip=0</code>.</p>
+    <!-- Yahoo's Autodraft switch, as the content script looks for it -->
+    <button id="autodraft" type="button">Autodraft</button>
+    <pre id="log">starting…</pre>
+    <div id="result"></div>
+    <script src="/extension/test/harness/fake-chrome.js"></script>
+    <script src="/extension/test/harness/harness.js"></script>
+  </body>
+</html>

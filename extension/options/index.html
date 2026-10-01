@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>pickandroll settings</title>
+    <link rel="stylesheet" href="../sidepanel/panel.css" />
+  </head>
+  <body>
+    <header><h1>pickandroll settings</h1></header>
+    <section>
+      <h2>Where pickandroll runs</h2>
+      <label for="api">API base URL</label>
+      <input id="api" type="url" placeholder="http://localhost:8000" />
+      <label for="web">Web app URL</label>
+      <input id="web" type="url" placeholder="http://localhost:5173" />
+      <h2>Yahoo players file</h2>
+      <label for="players_file">File name in the API's data/ folder (empty: the newest yahoo_players_*)</label>
+      <input id="players_file" type="text" placeholder="yahoo_players_31822.json" />
+      <button id="save" type="button">Save</button>
+      <p id="saved" class="muted" role="status"></p>
+    </section>
+    <script src="options.js"></script>
+  </body>
+</html>

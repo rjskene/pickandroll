@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Panel harness</title>
+    <link rel="stylesheet" href="/extension/sidepanel/panel.css" />
+    <style>body { max-width: 380px; }</style>
+  </head>
+  <body>
+    <p class="muted" id="harness-note">Loading the side panel against the API… (?draft=&lt;room id&gt;&amp;slot=1)</p>
+    <script src="/extension/test/harness/fake-chrome.js"></script>
+    <script>
+      // The extension's side panel, unchanged, in a normal page: the stand-in chrome.* routes its
+      // calls into worker.js, and tab 1's report is built from GET /rooms/{draft}.
+      (async () => {
+        const q = new URLSearchParams(location.search);
+        const API = (q.get("api") || "http://localhost:8000").replace(/\/+$/, "");
+        const draft = q.get("draft");
+        const slot = Number(q.get("slot") || 1);
+        const { chrome, store } = window.makeFakeChrome();
+        Object.defineProperty(window, "chrome", { value: chrome, configurable: true, writable: true });
+        window.importScripts = () => {};
+        store.local.api = API;
+        const load = (src) =>
+          new Promise((ok, fail) => {
+            const s = document.createElement("script");
+            s.src = src + (src.includes("?") ? "&" : "?") + "v=" + Date.now(); // never a cached copy
+            s.onload = ok;
+            s.onerror = fail;
+            document.head.appendChild(s);
+          });
+        await load("/extension/lib/protocol.js");
+        await load("/extension/worker.js");
+        if (draft) {
+          const r = await fetch(`${API}/rooms/${encodeURIComponent(draft)}`);
+          const room = r.ok ? await r.json() : null;
+          const last = room ? room.room_picks : 0;
+          const next = room ? room.my_next_pick : null;
+          store.session["tab:1"] = {
+            draft_id: draft,
+            slot,
+            num_teams: 12,
+            rounds: 13,
+            room_picks: last,
+            last,
+            contiguous: last,
+            sent: room ? room.synced_through : 0,
+            gap: null,
+            behind: 0,
+            on_deck: last < 156 ? { overall: last + 1, slot: PickAndRoll.pickOwner(12, last + 1).slot } : null,
+            my_turn: null,
+            next_mine: next,
+            attached: Boolean(room),
+            api: "ok",
+            mode: room ? room.mode : null,
+            control: room ? room.control : null,
+            plan: q.get("plan") ? { for: next, fresh: true, board: last, top: q.get("plan").split("|") } : null,
+            last_mine: null,
+            autodraft: q.get("autodraft") === "1",
+            api_base: API,
+            tab_id: 1,
+          };
+          store.session.last_tab = 1;
+        }
+        const html = await (await fetch("/extension/sidepanel/index.html", { cache: "no-store" })).text();
+        const doc = new DOMParser().parseFromString(html, "text/html");
+        doc.querySelectorAll("script").forEach((s) => s.remove());
+        document.getElementById("harness-note").remove();
+        document.body.prepend(...doc.body.childNodes);
+        await load("/extension/sidepanel/panel.js");
+      })();
+    </script>
+  </body>
+</html>

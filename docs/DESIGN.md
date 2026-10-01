@@ -36,6 +36,7 @@ src/pickandroll/
   api/           FastAPI app, background solver, server-sent event stream,
                  Yahoo Fantasy feed and Yahoo draft room
 web/             draft-day UI
+extension/       Chrome extension that mirrors the Yahoo draft room into the API
 ```
 
 Core packages import nothing from `sources` or `api`. `sources` never imports `api`. This keeps the
@@ -300,6 +301,35 @@ once a minute. `python -m pickandroll fidelity report <draft_id>` prints the sco
 `python -m pickandroll room replay <fixture.csv> --slot N --projection-file F` replays a recorded
 room into a running API (Tier 1; `tests/fixtures/rooms/` holds the pick order and timings of room
 2515267).
+
+### The draft-room extension (`extension/`, #9)
+
+A yahoo.com page cannot call localhost: Chrome blocks it as a local-network request until the user
+answers a prompt that needs a gesture. An MV3 extension has no such limit, so the room reaches the
+API in three hops:
+
+* `page.js` runs in the draft client's own JavaScript world at `document_start`, before Yahoo's
+  client connects. It wraps the `WebSocket` constructor and adds a message listener to the socket
+  Yahoo opens. It never opens a socket and never sends on Yahoo's: the user's seat keeps one
+  reader. It hands each text frame and its arrival time to the content script by
+  `window.postMessage`, and keeps every frame so a late listener can ask for a replay. It also
+  hosts a Web Worker timer, because a hidden tab clamps page timers to once a minute.
+* `content.js` (isolated world) feeds the frames to `RoomTracker` (`lib/room.js`, pure and
+  unit-tested). Frames: `0|` pick, `P|` history on connect, `D|` on the clock, `C|` clock,
+  `X|n` then `5|slot` before a pick Yahoo makes itself. It sends unsent picks the moment they
+  arrive, one request in flight, resending from the API's `synced_through`. It posts the client
+  events of `docs/YAHOO_SYNC.md` §4: `control` on entry and on Yahoo's Autodraft switch,
+  `turn_start` for every pick on the clock, `heartbeat`, and `pick_landed` for my picks with
+  `how` (`manual` after a trusted click on a Draft control in my turn, `expiry` or `autopick`
+  after `5|<my slot>`). It shows a status strip in the page.
+* `worker.js` (service worker, host permission for localhost only) is the only caller of the
+  API. A draft tab holds a port to it; when the port closes the worker posts `control: absent`.
+  An idle worker may be stopped, but nothing is lost: the history lives in the tab and the API
+  is idempotent. The side panel reads each tab's last report from `chrome.storage.session`.
+
+The first build only mirrors. Drafting for the user (armed) follows the hook used in the
+September mocks: hold `/plan?wait=20`, draft on `fresh`, row click with a quick re-click, then
+fallbacks.
 
 Candidates in a recommendation carry their ADP and a `tie` flag: when more than one candidate
 sits within `tie_band` of the best exact objective (0.05 categories, or 0.5 z on the sum
