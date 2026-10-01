@@ -565,6 +565,8 @@ def on_recommendation(session: Session, room: YahooRoom, payload: dict[str, Any]
             "unmapped": unmapped,
             "solve_ms": timings.get("total_ms"),
             "mode": payload.get("mode"),
+            "priced": payload.get("priced", True),
+            "branch": payload.get("branch", False),
         }
     )
 

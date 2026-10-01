@@ -323,6 +323,55 @@ def _solve_forced(
         return candidate, None
 
 
+#: Columns of a candidate table, priced exactly (:func:`horizon_pick_pool`) or to first order
+#: (:func:`first_order_table`).
+CANDIDATE_COLUMNS = [
+    "player",
+    "objective",
+    "cost_vs_best",
+    "cost_first_order",
+    "p_available_first",
+    "p_available_next",
+    "min_active_total",
+    "time_limited",
+]
+
+
+def first_order_table(
+    problem: HorizonProblem, base: HorizonSolution, candidates: Sequence[str]
+) -> pd.DataFrame:
+    """The candidate table as the plan alone prices it, before any forced re-solve: the plan's
+    first pick costs nothing and every other candidate its first-order price. Same columns as
+    :func:`horizon_pick_pool`, so it can stand in until the exact prices land."""
+    first = base.first_pick
+    ordered = list(dict.fromkeys(([first] if first else []) + list(candidates)))
+    ordered = [c for c in ordered if c in problem.z.index]
+    prices = first_order_prices(problem, base, ordered)
+    next_pick = problem.picks[1] if len(problem.picks) > 1 else None
+    rows = []
+    for c in ordered:
+        cost = 0.0 if c == first else float(prices.get(c, float("nan")))
+        rows.append(
+            {
+                "player": c,
+                "objective": base.objective - cost,  # NaN stays NaN
+                "cost_vs_best": cost,
+                "cost_first_order": cost,
+                "p_available_first": float(problem.availability.at[c, problem.picks[0]]),
+                "p_available_next": (
+                    float(problem.availability.at[c, next_pick]) if next_pick is not None else 0.0
+                ),
+                "min_active_total": base.min_active_total if c == first else float("nan"),
+                "time_limited": base.time_limited,
+            }
+        )
+    out = pd.DataFrame(rows, columns=CANDIDATE_COLUMNS)
+    # The plan's first pick leads; the rest by first-order cost, unpriced last.
+    rest = out.iloc[1:] if first else out
+    rest = rest.sort_values("cost_vs_best", na_position="last", kind="stable")
+    return pd.concat([out.iloc[:1], rest] if first else [rest]).reset_index(drop=True)
+
+
 def horizon_pick_pool(
     problem: HorizonProblem,
     candidates: Sequence[str],
@@ -391,19 +440,7 @@ def horizon_pick_pool(
             c, sol = future.result()
             collect(c, sol, done)
 
-    out = pd.DataFrame(
-        rows,
-        columns=[
-            "player",
-            "objective",
-            "cost_vs_best",
-            "cost_first_order",
-            "p_available_first",
-            "p_available_next",
-            "min_active_total",
-            "time_limited",
-        ],
-    )
+    out = pd.DataFrame(rows, columns=CANDIDATE_COLUMNS)
     if not out.empty:
         # A forced re-solve can beat a time-limited base plan; the best solve seen is the
         # reference, so the top candidate always costs nothing.

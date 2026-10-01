@@ -64,7 +64,17 @@ CORS_ORIGINS = r"^(chrome-extension://[a-p]{32}|https?://(localhost|127\.0\.0\.1
 PLAN_WAIT_MAX = 20.0
 #: Solver settings a room attaches with unless told otherwise: they kept solves inside a 30 s
 #: clock in the 2026-09-27 mocks.
-ROOM_SOLVE = {"n": 3, "scenarios": 0, "time_limit": 5.0}
+ROOM_SOLVE = {
+    "n": 3,
+    "scenarios": 0,
+    "time_limit": 5.0,
+    # #13: the clock decides. Publish the plan before its prices, a shorter plan budget at my
+    # own turn (0 keeps the normal one), and plan the boards my turn can start on ahead of it.
+    "early": True,
+    "turn_time_limit": 3.0,
+    "turn_n": 2,
+    "presolve": True,
+}
 
 
 # --------------------------------------------------------------------------- session store
@@ -335,6 +345,14 @@ class RoomAttach(BaseModel):
     n: int | None = Field(default=None, ge=1, le=30, description="candidates priced per solve")
     scenarios: int | None = Field(default=None, ge=0, le=8)
     time_limit: float | None = Field(default=None, ge=1.0, le=600.0)
+    early: bool | None = Field(default=None, description="publish the plan before its prices")
+    turn_time_limit: float | None = Field(
+        default=None, ge=0.0, le=600.0, description="plan budget at my own turn (0: time_limit)"
+    )
+    turn_n: int | None = Field(default=None, ge=1, le=30)
+    presolve: bool | None = Field(
+        default=None, description="plan the boards my turn can start on before it starts"
+    )
 
 
 class RoomPickIn(BaseModel):
@@ -831,7 +849,9 @@ def create_app(
             if live is not None:
                 room, session = live
                 if body.slot is not None and body.slot != room.slot:
-                    raise HTTPException(409, f"room {room.draft_id} is attached for slot {room.slot}")
+                    raise HTTPException(
+                        409, f"room {room.draft_id} is attached for slot {room.slot}"
+                    )
                 if body.session_id is not None and body.session_id != session.id:
                     raise HTTPException(
                         409, f"room {room.draft_id} is attached to session {session.id}"
@@ -865,7 +885,15 @@ def create_app(
             slot = option("slot", None)
             if slot is None:
                 raise HTTPException(400, "slot is required")
-            params = SolveParams(n=option("n", ROOM_SOLVE["n"]), scenarios=option("scenarios", 0))
+            turn_limit = float(option("turn_time_limit", ROOM_SOLVE["turn_time_limit"]))
+            params = SolveParams(
+                n=option("n", ROOM_SOLVE["n"]),
+                scenarios=option("scenarios", 0),
+                early=bool(option("early", ROOM_SOLVE["early"])),
+                turn_time_limit=turn_limit or None,
+                turn_n=option("turn_n", ROOM_SOLVE["turn_n"]),
+                presolve=bool(option("presolve", ROOM_SOLVE["presolve"])),
+            )
             time_limit = float(option("time_limit", ROOM_SOLVE["time_limit"]))
             path = players_path(option("players_file", None))
             state = session.state
@@ -895,6 +923,10 @@ def create_app(
                             "n": params.n,
                             "scenarios": params.scenarios,
                             "time_limit": time_limit,
+                            "early": params.early,
+                            "turn_time_limit": params.turn_time_limit or 0.0,
+                            "turn_n": params.turn_n,
+                            "presolve": params.presolve,
                         },
                     },
                 )
@@ -904,6 +936,10 @@ def create_app(
             except (KeyError, ValueError) as exc:
                 raise HTTPException(400, str(exc)) from exc
             store.rooms[body.draft_id] = session.id
+            if session.solver is not None:
+                # The room's solve settings replace the session's: solve again with them (and
+                # plan the boards ahead when the first turn is near).
+                session.solver.kick("room")
             return room, session
 
     async def get_room(draft_id: str) -> tuple[YahooRoom, Session]:

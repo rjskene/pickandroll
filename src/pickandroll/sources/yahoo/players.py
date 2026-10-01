@@ -32,7 +32,8 @@ SLOT_ONLY = {"Util", "UTIL", "BN", "IL", "IL+", "NA", "G", "F"}
 
 def load_players_file(path: Path) -> pd.DataFrame:
     """Read a saved players response into one row per player, indexed by Yahoo id (a string):
-    ``player_key, name, first, last, team, positions, adp``."""
+    ``player_key, name, first, last, team, positions, adp, o_rank``. ``o_rank`` is Yahoo's
+    own ranking, the order its autodraft (and the room's default sort) follows."""
     raw = json.loads(Path(path).read_text())
     items: Any = raw
     if isinstance(raw, dict):
@@ -52,11 +53,22 @@ def load_players_file(path: Path) -> pd.DataFrame:
                 "team": str(p.get("team_abbr") or "").upper(),
                 "positions": "/".join(positions),
                 "adp": _float(p.get("average-pick")),
+                "o_rank": _float(p.get("o_rank")),
             }
         )
     df = pd.DataFrame(
         rows,
-        columns=["yahoo_id", "player_key", "name", "first", "last", "team", "positions", "adp"],
+        columns=[
+            "yahoo_id",
+            "player_key",
+            "name",
+            "first",
+            "last",
+            "team",
+            "positions",
+            "adp",
+            "o_rank",
+        ],
     )
     return df.drop_duplicates("yahoo_id").set_index("yahoo_id")
 
