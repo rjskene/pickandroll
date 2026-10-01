@@ -147,7 +147,12 @@ room; enter the draft client the moment it opens; Yahoo's Autodraft switch is di
 1. The emissary states the hypothesis and the metric it expects to move before a mock starts.
 2. The drone runs one mock, posts the scorecard (markdown from §4) on the tracker #11.
 3. Compare against the best previous scorecard. Keep the change only if compliance did not drop and no guardrail regressed. Taxonomy counts say what to fix next; the order of attack is `absent` → `stale` → `unsolved` → `expired` → `fallback` → `wrong`.
-4. Done = two consecutive mocks at 13/13 (12/12 + 1 manual) with G1-G6 green. After that, mocks continue only to test new features, at least one per week until the real draft.
+4. **Value comparisons need a noise floor.** Under a capped plan (the 5 s limit of a 30 s clock) a single settled replay
+   varies by up to 0.7 expected wins between runs of the same code, because capped incumbents depend on CPU timing
+   and one early divergence changes the rest of the draft (measured 2026-10-01 on #13). A value gate is therefore
+   judged on 3-run means per cell, or on a deterministic comparison with both sides uncapped (time limit 60 s), never
+   on a single run. Timing measurements (harness cells) and value runs never share the CPU.
+5. Done = two consecutive mocks at 13/13 (12/12 + 1 manual) with G1-G6 green. After that, mocks continue only to test new features, at least one per week until the real draft.
 
 ## 7. Standing rules for all three sessions
 
