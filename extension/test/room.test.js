@@ -84,7 +84,11 @@ test("my pick lands: manual after a trusted click, Yahoo's own pick after 5|slot
   // Pick 49: nothing says how.
   r.ingest("D|49|1|30", T0 + 80000);
   out = r.ingest("0|49|6355|1|SF|0", T0 + 82000);
-  assert.equal(r.landedEvent(out.landed), null);
+  assert.equal(r.landedEvent(out.landed).how, "unknown");
+  // Pick 72 with Autodraft on: Yahoo picks at the turn start with no 5|slot (mock 2565888).
+  r.ingest("D|72|1|30", T0 + 90000);
+  out = r.ingest("0|72|6022|1|PG|0", T0 + 90200);
+  assert.equal(r.landedEvent(out.landed, { autodraft: true }).how, "autopick");
   // Another team's pick is never a landed pick of mine.
   assert.equal(r.ingest("0|3|6014|3|PG|0", T0 + 83000).landed, null);
 });

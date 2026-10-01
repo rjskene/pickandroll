@@ -138,12 +138,13 @@
 
     /** How a pick of mine landed, as far as the room shows it: the user's trusted click, then
      * Yahoo's own pick (announced by 5|slot; ``autodraft`` is Yahoo's Autodraft switch at
-     * landing time), then the extension's attempt. Null when nothing says. */
+     * landing time), then the extension's attempt, then the switch alone (with Autodraft on,
+     * Yahoo picks the moment the turn starts and sends no 5|slot), else "unknown". */
     how(overall, { autodraft = false } = {}) {
       if (this.isManual(overall)) return "manual";
       if (this.yahooMade.has(overall)) return autodraft ? "autopick" : "expiry";
       if (this.attempts.has(overall)) return this.attempts.get(overall);
-      return null;
+      return autodraft ? "autopick" : "unknown";
     }
 
     /** For a pick of mine that just arrived: what the caller needs to post pick_landed. */
@@ -159,11 +160,9 @@
       };
     }
 
-    /** The pick_landed event, or null when nothing says how the pick was made. */
+    /** The pick_landed event: every pick of mine gets one, so D2 and the labels see it. */
     landedEvent(rec, context) {
-      const how = this.how(rec.overall, context);
-      if (!how) return null;
-      return { type: "pick_landed", ...rec, how };
+      return { type: "pick_landed", ...rec, how: this.how(rec.overall, context) };
     }
 
     /** Picks the API has not applied yet, as POST /rooms/{d}/picks items. */

@@ -508,6 +508,13 @@ def test_scorecard_unmapped_top_is_a_fallback_and_entry_lead_from_the_client():
         "entry_lead_s": 60.0,
         "entry_from": "client",
     }
+    # The client's "entered" note was written before the attach and arrives after it: the
+    # earliest client event by time counts, whatever its place in the log.
+    entered = [*with_client, _ev("note", 5, what="entered", src="client")]
+    assert analyze(entered)["guardrails"]["G6"]["entry_lead_s"] == 65.0
+    # A note the API wrote is not the client's.
+    api_note = [*with_client, _ev("note", 1, what="alias pinned")]
+    assert analyze(api_note)["guardrails"]["G6"]["entry_lead_s"] == 60.0
 
 
 def test_scorecard_stale_when_the_session_was_behind():

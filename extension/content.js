@@ -729,6 +729,9 @@
   }
 
   // ------------------------------------------------------------------ start
+  // The moment the draft client loaded (G6 counts from here); it waits in the outbox until the
+  // room is attached.
+  emit({ type: "note", what: "entered", visible: document.visibilityState });
   window.postMessage({ [KEY]: "content", dir: "replay" }, location.origin);
   connect();
   every(STATUS_EVERY_MS, refresh);

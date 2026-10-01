@@ -190,15 +190,19 @@ def analyze(events: list[dict[str, Any]]) -> dict[str, Any]:
         late = [a for a in attempts.get(r["overall"], []) if to_ms(a["t"]) > t_manual]
         mirrored = r["lag_ms"] is not None and r["lag_ms"] <= LAG_TARGETS["max"]
         manual_ok += int(not late and mirrored)
-    # G6 counts from the client's first sign of life in the draft room; the control the API
-    # writes at attach is only a fallback (the attach can come minutes before the room).
-    entry = next(
+    # G6 counts from the client's first sign of life in the draft room (its "entered" note, or
+    # the earliest client event by time: events written before the attach arrive after it); the
+    # control the API writes at attach is only a fallback (the attach can come minutes before
+    # the room).
+    entry = min(
         (
             e
             for e in events
-            if e.get("type") in ("control", "heartbeat") and e.get("src", "client") != "api"
+            if (e.get("type") in ("control", "heartbeat") and e.get("src", "client") != "api")
+            or (e.get("type") == "note" and e.get("src") == "client")
         ),
-        None,
+        key=lambda e: to_ms(e["t"]),
+        default=None,
     )
     entry_from = "client" if entry else None
     if entry is None:
