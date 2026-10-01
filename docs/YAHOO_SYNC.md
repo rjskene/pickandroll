@@ -60,6 +60,7 @@ Baseline from drafts 5-7 (2026-09-27, scratch hook in driver mode), loose count 
 | G3 | hands-off | interventions by a human or an agent during the draft (console calls, manual relay fixes) | many | 0 |
 | G4 | manual respected | when a manual pick is made on my turn, the autopilot stands down (no draft attempt after it) and the session mirrors the manual pick within G2 | n/a | 1/1 per draft |
 | G5 | autopick mode | times Yahoo flipped the seat into autopick mode | 1 (draft 7) | 0 |
+| G7 | client timers | heartbeats while attached report `worker: true` (the page-world Worker timer host answered the content script); on `false` every drafter sleep is a DOM timer, which a hidden tab aligns to 1 s and, after minutes hidden, to 1 min, so a turn can silently miss the clock | false on all heartbeats in three harness runs (h13, h13b, h13c), true in mock 1 | true on every heartbeat |
 | G6 | entry lead | seconds inside the draft client before pick 1 went on the clock; Yahoo opens the client only when the waiting-room countdown ends, about 60 s before pick 1, so the ceiling is ~59 s | −210 s (draft 7) | ≥ 45 s |
 
 ## 3. Diagnostics (reported every draft, not pass/fail)
@@ -98,7 +99,7 @@ Posted by the client (`POST /rooms/{draft_id}/events`):
 {"type":"draft_attempt","t":..., "overall":n, "yid":id, "method":"row|queue|search", "attempt":k, "board":b}  // b = board of the plan the drafter acted on
 {"type":"pick_landed",  "t":..., "overall":n, "yid":id, "how":"row|queue|manual|expiry|autopick", "ms_from_turn":...}
 {"type":"intervention", "t":..., "who":"master|emissary|drone|user", "what":"..."}
-{"type":"heartbeat",    "t":..., ...}
+{"type":"heartbeat",    "t":..., "worker":bool, ...}  // worker: the Worker timer host is live (G7)
 {"type":"note",         "t":..., "what":"..."}
 ```
 
@@ -122,7 +123,7 @@ Derivations:
 - `final_k` is the last `reco` with `board == k-1` and `t < t_land(k)`. D6 counts turns where `final_k.top_pid != ref_k.top_pid`; the scorecard also prints compliance against `final_k` as a diagnostic line.
 - Labels apply in this order:
   1. `manual`: `pick_landed.how == "manual"`.
-  2. `compliant`: the actual player equals `ref_k`.
+  2. `compliant`: the drafter made the pick and the actual player equals `ref_k`. The drafter made the pick when `pick_landed.how` is `row`, `queue` or `search`, or a `draft_attempt` for overall k with the landed `yid` precedes `t_land(k)` (a queued player taken by Yahoo at expiry counts; D2 shows the cost). An expiry or autopick that happens to equal `ref_k` is never compliant: it goes on to the labels below, which end in `expired`.
   3. `absent`: control was not `armed` at turn start. In mirror mode every non-compliant pick reads `absent`.
   4. `stale`: picks 1..k-1 were not all in the session when pick k landed, judged by the first `session_pick` time per overall (§1); or the first `draft_attempt` for k carries `board < k-1`. The drafter must only act on a plan whose `board == k-1`, so a `stale` label with a synced session is a drafter bug, not a sync bug.
   5. `unsolved`: synced, but no `ref_k` (no reco for board k-1 before landing).
@@ -131,6 +132,7 @@ Derivations:
   8. `wrong`: anything else.
 - Sync lag (G2) is the first `session_pick.t − room_pick.t` per overall.
 - Board agreement (G1) counts overalls whose latest `session_pick` has the room's `yid` and is not a stand-in.
+- Client timers (G7): every `heartbeat` after the attach has `worker == true`; the scorecard prints the count of false heartbeats and the first time one appeared.
 - Entry lead (G6) is pick 1's turn start minus the first client `control` or `heartbeat`. Without one, it falls back to the `attach` control, and the scorecard says "from attach".
 
 Scorecard: `pickandroll fidelity report <draft_id>` (CLI or `GET /rooms/{draft_id}/fidelity`) prints the compliance line, the taxonomy counts, G1-G6, D1-D5, and a per-pick table (overall, ref, actual, label, lag, turn-to-land). Markdown, so it can be pasted into the tracker.
