@@ -39,6 +39,7 @@ from ..draft.state import plan_fallback
 from ..optim.horizon import HorizonProblem, HorizonSolution, first_order_table
 from ..optim.pool import shared_pool
 from .presolve import (
+    BRANCH_TIME_LIMIT,
     MINE,
     ONE_AWAY,
     BranchBook,
@@ -316,7 +317,10 @@ def compute_recommendation(
         def on_plan(
             solution: HorizonSolution, table: pd.DataFrame, so_far: dict[str, float]
         ) -> None:
-            if on_early is not None and params.early:
+            # Only a plan that converged goes out unpriced: a time-limited incumbent's first
+            # pick is often not the best (in rounds 1-6 the plan needs 6-16 s), and the exact
+            # prices, which force each candidate in turn, are what correct it.
+            if on_early is not None and params.early and not solution.time_limited:
                 on_early(
                     _horizon_payload(
                         session,
@@ -618,11 +622,15 @@ class BackgroundSolver:
                     lambda _f: loop.call_soon_threadsafe(self._late_branch, entry, gen, snapshot)
                 )
             return None
-        self._install(entry, snapshot)
+        # A plan that converged is the recommendation at once; one that hit its time limit is
+        # only priced (it saves the live solve its plan stage), as an early plan would be.
+        if not entry.solution.time_limited:
+            self._install(entry, snapshot)
         return entry.branch.problem, entry.solution
 
     def _late_branch(self, entry: Entry, gen: int, snapshot: dict[str, Any]) -> None:
-        if self.generation == gen and entry.solution is not None:
+        solution = entry.solution
+        if self.generation == gen and solution is not None and not solution.time_limited:
             self._install(entry, snapshot)
 
     def _install(self, entry: Entry, snapshot: dict[str, Any]) -> None:
@@ -692,9 +700,7 @@ class BackgroundSolver:
             return
         pool = shared_pool()
         for branch in wanted:
-            future = pool.submit(
-                solve_branch, (branch.problem, state.plan_time_limit, state.plan_gap)
-            )
+            future = pool.submit(solve_branch, (branch.problem, BRANCH_TIME_LIMIT, state.plan_gap))
             entry = self.book.add(branch, future)
             future.add_done_callback(
                 lambda f, e=entry: self.book.done(

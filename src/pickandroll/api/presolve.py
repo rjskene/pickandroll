@@ -32,6 +32,10 @@ from ..optim.horizon import HorizonProblem, HorizonSolution, solve_horizon
 ONE_AWAY = 6  # likely players when one pick is left before mine
 TWO_AWAY = 4  # likely players paired when two are left: C(4, 2) = 6 boards
 MINE = 2  # my own likely choices on my turn, for the pick straight after it
+#: Plan budget of a branch. It solves ahead of its board, off the clock, so it gets the plan's
+#: full budget rather than a room's: in rounds 1-6 a plan needs 6-16 s to converge, and only a
+#: converged branch is served unpriced.
+BRANCH_TIME_LIMIT = 20.0
 
 BoardKey = tuple[int, frozenset[str], frozenset[str]]
 

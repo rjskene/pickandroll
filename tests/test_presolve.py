@@ -7,6 +7,7 @@ from __future__ import annotations
 import threading
 import time
 from concurrent.futures import Future
+from dataclasses import replace
 
 import pandas as pd
 import pytest
@@ -315,3 +316,33 @@ def test_pruning_a_queued_solve_does_not_deadlock_the_book(room):
     worker.start()
     worker.join(5)
     assert not worker.is_alive() and future.cancelled() and book.status()["held"] == 0
+
+
+def test_a_capped_plan_is_not_published_before_its_prices(room, monkeypatch):
+    client, store, _ = room
+    sid = _attach(client, session=SESSION)["session_id"]
+    session = store.get(sid)
+    original = session.state.solve_plan
+
+    def capped(problem, time_limit=None):
+        return replace(original(problem, time_limit), time_limited=True)
+
+    monkeypatch.setattr(session.state, "solve_plan", capped)
+    early: list[dict] = []
+    payload = compute_recommendation(session, SolveParams(n=2, early=True), on_early=early.append)
+    assert early == [] and payload["priced"] is True
+
+
+def test_a_capped_branch_is_priced_not_served(room):
+    client, store, _ = room
+    sid = _attach(client)["session_id"]
+    session = store.get(sid)
+    _until(lambda: _solver(client, sid)["presolve"]["solved"] >= ONE_AWAY)
+    for entry in session.solver.book.entries.values():
+        entry.solution = replace(entry.solution, time_limited=True)
+    likely = likely_next(session.state, None)
+    _pick(client, 1, session.room.ids.yid(likely[0]))
+    plan = client.get("/rooms/p1/plan", params={"wait": 20}).json()
+    assert plan["fresh"] and _solver(client, sid)["presolve"]["hits"] == 1
+    recos = [e for e in session.room.log.read() if e.get("type") == "reco" and e["board"] == 1]
+    assert recos and recos[0]["priced"] is True and not any(e["branch"] for e in recos)
