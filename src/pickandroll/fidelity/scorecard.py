@@ -235,7 +235,27 @@ def analyze(events: list[dict[str, Any]]) -> dict[str, Any]:
             "D2": stats(
                 [r["turn_to_land_ms"] for r in landed_rows if r["turn_to_land_ms"] is not None]
             ),
-            "D3": stats([float(r["solve_ms"]) for r in recos if r.get("solve_ms") is not None]),
+            # Exactly priced solves (all of them before #13), then the plan-only early ones
+            # and the pre-solved plans installed with no solve at all.
+            "D3": stats(
+                [
+                    float(r["solve_ms"])
+                    for r in recos
+                    if r.get("priced", True) and r.get("solve_ms") is not None
+                ]
+            ),
+            "D3_plan": {
+                **stats(
+                    [
+                        float(r["solve_ms"])
+                        for r in recos
+                        if not r.get("priced", True)
+                        and not r.get("branch")
+                        and r.get("solve_ms") is not None
+                    ]
+                ),
+                "branch": sum(1 for r in recos if r.get("branch")),
+            },
             "D4": {
                 "mean": round(sum(per_pick) / len(per_pick), 2) if per_pick else None,
                 "max": max(per_pick) if per_pick else None,
@@ -322,7 +342,11 @@ def markdown(card: dict[str, Any]) -> str:
         "|---|---|",
         f"| D1 reco ready vs turn start | {ms(d['D1'])} |",
         f"| D2 turn to land | {ms(d['D2'])} |",
-        f"| D3 solve time | {ms(d['D3'])} |",
+        f"| D3 solve time, priced | {ms(d['D3'])} |",
+        (
+            f"| D3 plan only (early), and pre-solved plans installed | {ms(d['D3_plan'])}; "
+            f"pre-solved {d['D3_plan']['branch']} |"
+        ),
         (
             f"| D4 attempts per landed pick | mean {_fmt(d['D4']['mean'])}, "
             f"max {_fmt(d['D4']['max'])} |"

@@ -189,6 +189,14 @@ def test_a_presolved_board_is_the_recommendation_the_moment_it_arrives(room):
     )
     events = [e for e in session.room.log.read() if e.get("type") == "reco" and e["board"] == 1]
     assert events[0]["branch"] is True and events[-1]["priced"] is True
+    # The scorecard keeps priced solve times apart from the plans that came early or ready.
+    d = client.get("/rooms/p1/fidelity").json()["diagnostics"]
+    priced = [
+        e
+        for e in session.room.log.read()
+        if e.get("type") == "reco" and e["priced"] and e.get("solve_ms") is not None
+    ]
+    assert d["D3"]["n"] == len(priced) and d["D3_plan"]["branch"] == 1
 
 
 def test_a_board_nobody_planned_is_solved_as_usual(room):
