@@ -41,6 +41,11 @@ def board_key(state: DraftState) -> BoardKey:
     return (state.next_overall, state.taken, frozenset(state.my_roster))
 
 
+def reachable(board: BoardKey, key: BoardKey) -> bool:
+    """Whether the draft can still arrive at ``key`` from ``board``: nobody gone comes back."""
+    return key[0] >= board[0] and key[1] >= board[1] and key[2] >= board[2]
+
+
 def likely_next(
     state: DraftState, o_rank: pd.Series | None = None, limit: int = ONE_AWAY
 ) -> list[str]:
@@ -182,14 +187,16 @@ class BranchBook:
                     self.hits += 1
             return entry
 
-    def prune(self, next_overall: int) -> None:
-        """Forget boards the draft has moved past; cancel their solves that have not started."""
+    def prune(self, board: BoardKey) -> None:
+        """Forget the boards the draft can no longer reach from ``board`` (it has moved past
+        them, or a pick went another way) and cancel their solves that have not started, so a
+        dead branch does not hold a worker the live ones need."""
         with self.lock:
-            for key in [k for k in self.entries if k[0] < next_overall]:
+            for key in [k for k in self.entries if not reachable(board, k)]:
                 entry = self.entries.pop(key)
                 if entry.future is not None:
                     entry.future.cancel()
-            self.counted = {k for k in self.counted if k[0] >= next_overall}
+            self.counted = {k for k in self.counted if reachable(board, k)}
 
     def status(self) -> dict[str, Any]:
         with self.lock:

@@ -128,8 +128,23 @@ def test_branch_book_counts_each_turn_once_and_prunes(room):
     assert book.take(branch.key) is entry and book.take(branch.key) is entry
     assert book.take((99, frozenset(), frozenset())) is None
     assert book.status()["hits"] == 1 and book.status()["misses"] == 1
-    book.prune(branch.key[0] + 1)
+    book.prune((branch.key[0] + 1, branch.key[1], branch.key[2]))
     assert book.status()["held"] == 0
+
+
+def test_branch_book_drops_the_pairs_a_pick_ruled_out(room):
+    client, store, _ = room
+    sid = _attach(client, slot=3)["session_id"]
+    state = store.get(sid).state
+    pairs = branch_boards(state, likely_next(state, None))  # picks 1 and 2 before my 3
+    book = BranchBook()
+    for b in pairs:
+        book.add(b, future=None)
+    first = pairs[0].picks[0][2]
+    state.apply_pick("Team 1", first, 1)
+    book.prune(board_key(state))
+    kept = set(book.entries)
+    assert kept == {b.key for b in pairs if first in b.key[1]} and len(kept) == TWO_AWAY - 1
 
 
 def test_first_order_table_leads_with_the_plan_pick(room):

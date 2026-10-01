@@ -582,7 +582,7 @@ class BackgroundSolver:
             key = board_key(state)
             turn = state.on_the_clock
             snapshot = _snapshot(session)
-        self.book.prune(key[0])
+        self.book.prune(key)
         if not turn:
             return None
         entry = self.book.take(key)
