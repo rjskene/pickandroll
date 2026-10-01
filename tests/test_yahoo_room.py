@@ -525,6 +525,21 @@ def test_scorecard_stale_when_the_session_was_behind():
     assert card["guardrails"]["G2"]["max"] == 8000
 
 
+def test_scorecard_g2_judges_the_picks_after_the_attach():
+    events = [
+        _ev("room_pick", 1, overall=1, yid="a"),  # the room started before the attach
+        _ev("attach", 20, slot=2, num_teams=2, rounds=2, draft_id="late"),
+        _ev("control", 20, state="mirror"),
+        _ev("session_pick", 21, overall=1, yid="a"),
+        _ev("room_pick", 22, overall=2, yid="b"),
+        _ev("session_pick", 23, overall=2, yid="b"),
+    ]
+    g = analyze(events)["guardrails"]
+    assert g["G2"]["n"] == 1 and g["G2"]["max"] == 1000
+    assert g["G2_all"] == {"n": 2, "p50": 1000, "p95": 20000, "max": 20000, "pre_attach": 1}
+    assert "| G2 over all picks, 1 before the attach | p50 1000" in markdown(analyze(events))
+
+
 def test_fidelity_report_cli(tmp_path, capsys):
     log = tmp_path / "r1.jsonl"
     log.write_text(

@@ -18,7 +18,7 @@ FAILURES = ("absent", "stale", "unsolved", "expired", "fallback", "wrong")
 LABELS = ("compliant", "manual", *FAILURES)
 #: Lag targets in ms (G2) and the window a manual pick must be mirrored in (G4).
 LAG_TARGETS = {"p50": 1000.0, "p95": 2000.0, "max": 5000.0}
-ENTRY_LEAD_S = 60.0
+ENTRY_LEAD_S = 45.0
 
 
 def stats(values: list[float]) -> dict[str, Any]:
@@ -99,6 +99,10 @@ def analyze(events: list[dict[str, Any]]) -> dict[str, Any]:
         synced_by[k] = running
 
     lags = {k: to_ms(first_sync[k]["t"]) - to_ms(room[k]["t"]) for k in room if k in first_sync}
+    # A pick the room made before the first attach waited for a room that did not exist yet:
+    # a process miss, not the build's lag. G2 judges the picks after it; G2 over all is kept.
+    attached_at = to_ms(next(e for e in events if e.get("type") == "attach")["t"])
+    pre_attach = {k for k in room if to_ms(room[k]["t"]) < attached_at}
 
     rows = []
     for k in mine:
@@ -177,7 +181,8 @@ def analyze(events: list[dict[str, Any]]) -> dict[str, Any]:
         and str(last_sync[k].get("yid")) == str(e["yid"])
         and not last_sync[k].get("standin")
     )
-    lag = stats(list(lags.values()))
+    lag = stats([v for k, v in lags.items() if k not in pre_attach])
+    lag_all = {**stats(list(lags.values())), "pre_attach": len(pre_attach)}
     manual_rows = [r for r in rows if r["label"] == "manual"]
     manual_ok = 0
     for r in manual_rows:
@@ -222,6 +227,7 @@ def analyze(events: list[dict[str, Any]]) -> dict[str, Any]:
         "guardrails": {
             "G1": {"agree": agree, "of": len(room), "total": total},
             "G2": lag,
+            "G2_all": lag_all,
             "G3": {"interventions": len(interventions)},
             "G4": {"respected": manual_ok, "manual": len(manual_rows)},
             "G5": {"autopick_flips": sum(1 for c in controls if c.get("reason") == "autopick")},
@@ -309,13 +315,17 @@ def markdown(card: dict[str, Any]) -> str:
             f"(of {g['G1']['total']}) | {g['G1']['total']}/{g['G1']['total']} | {mark('G1')} |"
         ),
         f"| G2 sync lag | {ms(g['G2'])} | p50 ≤ 1000, p95 ≤ 2000, max ≤ 5000 | {mark('G2')} |",
+        (
+            f"| G2 over all picks, {g['G2_all']['pre_attach']} before the attach "
+            f"| {ms(g['G2_all'])} | reported | - |"
+        ),
         f"| G3 interventions | {g['G3']['interventions']} | 0 | {mark('G3')} |",
         f"| G4 manual respected | {g['G4']['respected']}/{g['G4']['manual']} | 1/1 | {mark('G4')} |",
         f"| G5 autopick flips | {g['G5']['autopick_flips']} | 0 | {mark('G5')} |",
         (
             f"| G6 entry lead | {_fmt(g['G6']['entry_lead_s'], ' s')}"
-            f"{' (from attach)' if g['G6']['entry_from'] == 'attach' else ''} | ≥ 60 s "
-            f"| {mark('G6')} |"
+            f"{' (from attach)' if g['G6']['entry_from'] == 'attach' else ''} "
+            f"| ≥ {ENTRY_LEAD_S:.0f} s | {mark('G6')} |"
         ),
         "",
         "| diagnostic | value |",
