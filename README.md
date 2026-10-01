@@ -57,6 +57,12 @@ Draft-day inputs in `data/` (gitignored): a Basketball Monster export, optionall
 and `AVG` also loads). Without an ADP file the board falls back to Basketball Monster's value
 rank, which the UI flags: it places specialists far later than real drafts do.
 
+Yahoo draft rooms (YAHOO SYNC): the API mirrors a live Yahoo draft room into a session through
+`/rooms` (see `docs/DESIGN.md`, "Yahoo draft room"). It needs `data/yahoo_players_<league>.json`,
+the draft client's players response saved from a logged-in tab. Each room writes its fidelity
+log to `data/fidelity/<draft_id>.jsonl`; `.venv/bin/python -m pickandroll fidelity report
+<draft_id>` prints its scorecard.
+
 Data pulls:
 
 ```bash
