@@ -67,7 +67,7 @@ Baseline from drafts 5-7 (2026-09-27, scratch hook in driver mode), loose count 
 
 | id | metric | definition | baseline | goal |
 |---|---|---|---|---|
-| D1 | reco readiness | per my pick: t(fresh reco for board k-1) − t(turn start); negative = ready before the turn | not measured | p50 ≤ 0, max ≤ 5 s |
+| D1 | reco readiness | per my pick: t(fresh reco for board k-1) − t(turn start); negative = ready before the turn. Split by whether a pre-solved branch covered the board (hit) or the board was solved cold at the turn (miss) | not measured | hits ≤ 1 s; misses ≤ plan budget + price limit + 1 s (11 s on a 30 s clock, where a capped cold plan lands at budget plus pricing by construction); hit rate reported, goal ≥ 9/13 at human pace |
 | D2 | turn-to-land | t(Yahoo registers my pick) − t(turn start) | 1.3-1.6 s clean, 10-13 s with re-clicks | p50 ≤ 5 s, max ≤ 15 s |
 | D3 | solve time | wall time of each recommendation solve during the draft | sum 0.3 s; curve up to 20 s limit | fits inside D1 |
 | D4 | draft attempts | row clicks / queue uses per landed pick | up to 3 | 1 |
