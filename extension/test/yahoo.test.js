@@ -70,3 +70,11 @@ test("a queue control is one labelled as the queue's, never a Draft or an unlabe
   assert.equal(Y.isQueueControl(["Draft Nikola Jokić"]), false);
   assert.equal(Y.isQueueControl(["Draft", "Add to queue"]), false); // any Draft label refuses it
 });
+
+test("a probe on a Draft control that lands nothing is a dropped click; failed is the star's", () => {
+  assert.equal(Y.probeOutcome(true, false, ["Draft"]), "drafted");
+  assert.equal(Y.probeOutcome(false, true, ["Add to Queue"]), "queued");
+  assert.equal(Y.probeOutcome(false, false, ["Draft", "Draft Nikola Jokić"]), "dropped");
+  assert.equal(Y.probeOutcome(false, false, ["Add to Queue"]), "failed");
+  assert.equal(Y.probeOutcome(false, false, ["", "", ""]), "failed"); // an unlabelled star
+});

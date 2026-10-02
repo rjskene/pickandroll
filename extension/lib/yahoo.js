@@ -65,6 +65,11 @@
     return parts.some((x) => /\bqueue\b/i.test(x)) && !parts.some(isDraftLabel);
   };
 
+  /** The queue probe's outcome. A Draft-labelled control that landed nothing lost the click
+   * ("dropped"), so "failed" is left for the star path: a star that queued nothing readable. */
+  const probeOutcome = (drafted, queued, labels) =>
+    drafted ? "drafted" : queued ? "queued" : (labels || []).some(isDraftLabel) ? "dropped" : "failed";
+
   /** The plan's candidates for a turn, best first, without players the room has taken. */
   function candidatesFor(plan, taken) {
     const out = [];
@@ -78,5 +83,5 @@
     return out;
   }
 
-  return { fold, imageId, matchRow, labelNames, isDraftLabel, isQueueControl, candidatesFor };
+  return { fold, imageId, matchRow, labelNames, isDraftLabel, isQueueControl, probeOutcome, candidatesFor };
 });

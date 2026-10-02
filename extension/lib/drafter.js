@@ -20,7 +20,8 @@
 // drafter stops at once and touches nothing more.
 // The queue probe (once per draft, ``probeRound``): on my first turn from that round on whose
 // next pick is not also mine, star the top candidate before drafting it, and log what Yahoo
-// did with it (queued, or drafted: the pick wanted either way).
+// did with it (queued, or drafted: the pick wanted either way). Nothing landing is "dropped"
+// on a Draft-labelled control (a lost click) and "failed" on any other (the star path).
 //
 // The page is reached only through ``dom`` (see content.js for Yahoo's), so node's tests run
 // the whole turn against a scripted page and a virtual clock.

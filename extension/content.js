@@ -508,16 +508,14 @@
     const row = findRow(c) || (await scrollTo(c));
     const b = row && row.children[0] && row.children[0].querySelector("button");
     if (!b) return { outcome: "no_control", panel: panelText(), control: null };
-    const control = labelsOf(b).filter(Boolean).join(" | ").replace(/\s+/g, " ").slice(0, 60);
+    const labels = labelsOf(b);
+    const control = labels.filter(Boolean).join(" | ").replace(/\s+/g, " ").slice(0, 60);
     b.click();
     // A registered click confirms within ~400 ms; give it up to the re-click gap (1.8 s).
     const drafted = () => k !== null && tracker.picks.has(k);
     const queued = () => qItems().some((li) => inQueue(li, c));
     for (let i = 0; i < 7 && !drafted() && !queued(); i++) await sleep(i ? 250 : 400);
-    const panel = panelText();
-    if (drafted()) return { outcome: "drafted", panel, control };
-    if (queued()) return { outcome: "queued", panel, control };
-    return { outcome: "failed", panel, control };
+    return { outcome: PR.probeOutcome(drafted(), queued(), labels), panel: panelText(), control };
   }
   async function setAutodraft(on) {
     const b = autodraftButton();
