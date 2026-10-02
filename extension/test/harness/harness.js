@@ -142,7 +142,8 @@
         const [overall, yid, , , t] = line.split(",").map((c) => c.trim());
         return { overall: Number(overall), yid, t: t ? Number(t) : null };
       });
-    const times = gap > 0 ? rows.map((_, i) => i * gap * 1000) : timeline(rows);
+    // ``gap`` is wall-clock seconds; ``speed`` divides only the recording's own pace.
+    const times = gap > 0 ? rows.map((_, i) => i * gap * 1000 * speed) : timeline(rows);
     const owner = (k) => globalThis.PickAndRoll.pickOwner(12, k).slot;
     const ws = new window.WebSocket("wss://harness.invalid/draft");
     ws.send(`8|31822|${slot}|harness`);
