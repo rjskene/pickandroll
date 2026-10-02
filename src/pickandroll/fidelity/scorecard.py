@@ -24,6 +24,12 @@ LABELS = ("compliant", "manual", *FAILURES)
 #: Lag targets in ms (G2) and the window a manual pick must be mirrored in (G4).
 LAG_TARGETS = {"p50": 1000.0, "p95": 2000.0, "max": 5000.0}
 ENTRY_LEAD_S = 45.0
+#: How a turn's board was covered ahead (D1): a hit is a branch solved before the turn started,
+#: pending one still solving then, a miss no branch (or a capped one, which the live solve prices).
+PRESOLVE_CLASSES = ("hit", "pending", "miss")
+#: For logs from before the API recorded ``branch_late``: a solved branch is installed when the API
+#: applies pick k-1, within tens of ms of the turn start (20-90 ms in the gap-15 cells).
+BRANCH_READY_MS = 250.0
 
 
 def stats(values: list[float]) -> dict[str, Any]:
@@ -151,8 +157,7 @@ def analyze(events: list[dict[str, Any]]) -> dict[str, Any]:
             ref = final
         acted = tries[0].get("board") if tries else None
         ready = (to_ms(board[0]["t"]) - t_turn) if board and t_turn is not None else None
-        # Served from a pre-solve: the board's first reco is an installed branch plan.
-        presolved = bool(board and board[0].get("branch"))
+        presolve = _presolve_class(board[0] if board else None, ready)
         how = land.get("how") if land else None
         ref_yid = str(ref["top_yid"]) if ref and ref.get("top_yid") is not None else None
         ref_name = ref.get("top_name") if ref else None
@@ -222,7 +227,7 @@ def analyze(events: list[dict[str, Any]]) -> dict[str, Any]:
                 "lag_ms": None if k not in lags else round(lags[k]),
                 "turn_to_land_ms": None if to_land is None else round(to_land),
                 "reco_ready_ms": None if ready is None else round(ready),
-                "presolved": presolved,
+                "presolve": presolve,
                 "attempts": len(attempts.get(k, [])),
             }
         )
@@ -325,21 +330,17 @@ def analyze(events: list[dict[str, Any]]) -> dict[str, Any]:
         },
         "diagnostics": {
             "D1": stats([r["reco_ready_ms"] for r in rows if r["reco_ready_ms"] is not None]),
-            # Turns served from a pre-solve and the rest: two populations under one median.
-            "D1_hit": stats(
-                [
-                    r["reco_ready_ms"]
-                    for r in rows
-                    if r["reco_ready_ms"] is not None and r["presolved"]
-                ]
-            ),
-            "D1_miss": stats(
-                [
-                    r["reco_ready_ms"]
-                    for r in rows
-                    if r["reco_ready_ms"] is not None and not r["presolved"]
-                ]
-            ),
+            # Hits, pending branches and misses: three populations under one median.
+            **{
+                f"D1_{kind}": stats(
+                    [
+                        r["reco_ready_ms"]
+                        for r in rows
+                        if r["reco_ready_ms"] is not None and r["presolve"] == kind
+                    ]
+                )
+                for kind in PRESOLVE_CLASSES
+            },
             "D2": stats(
                 [r["turn_to_land_ms"] for r in landed_rows if r["turn_to_land_ms"] is not None]
             ),
@@ -475,8 +476,9 @@ def markdown(card: dict[str, Any]) -> str:
         "| diagnostic | value |",
         "|---|---|",
         f"| D1 reco ready vs turn start | {ms(d['D1'])} |",
-        f"| D1, turns served from a pre-solve | {ms(d['D1_hit'])} |",
-        f"| D1, the other turns | {ms(d['D1_miss'])} |",
+        f"| D1, hits (branch solved before the turn) | {ms(d['D1_hit'])} |",
+        f"| D1, pending (branch still solving at the turn) | {ms(d['D1_pending'])} |",
+        f"| D1, misses (no branch) | {ms(d['D1_miss'])} |",
         f"| D2 turn to land | {ms(d['D2'])} |",
         f"| D3 solve time, priced | {ms(d['D3'])} |",
         (
@@ -559,8 +561,18 @@ def status(card: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _presolve_class(first: dict[str, Any] | None, ready_ms: float | None) -> str:
+    """Hit, pending or miss for a turn whose board's first reco is ``first``."""
+    if not (first and first.get("branch")):
+        return "miss"
+    late = first.get("branch_late")
+    if late is None:
+        late = ready_ms is None or ready_ms > BRANCH_READY_MS
+    return "pending" if late else "hit"
+
+
 def _probe(p: dict[str, Any] | None) -> str:
-    """What Yahoo did with the probe's star: queued, drafted, no_control or failed."""
+    """What Yahoo did with the probe's star: queued, drafted, dropped, no_control or failed."""
     if p is None:
         return "not run"
     panel = p.get("panel")

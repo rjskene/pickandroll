@@ -602,10 +602,19 @@ def test_scorecard_judges_the_reco_acted_on_and_counts_churn():
     assert card["compliance"]["compliant"] == 1 and card["compliance"]["against_final"] == 0
     d = card["diagnostics"]
     assert d["D6"] == {"churn": 1, "picks": [1]}
-    assert d["D1_hit"]["n"] == 0 and d["D1_miss"]["n"] == 2
-    plan = events[3]  # board 0's first reco: served from a pre-solve instead
-    hit = analyze([{**e, "branch": True} if e is plan else e for e in events])["diagnostics"]
-    assert hit["D1_hit"]["n"] == 1 and hit["D1_miss"]["n"] == 1
+    assert d["D1_hit"]["n"] == 0 and d["D1_pending"]["n"] == 0 and d["D1_miss"]["n"] == 2
+    plan = events[3]  # board 0's first reco (1 s into the turn): an installed branch instead
+
+    def split(**fields):
+        swap = [{**e, "branch": True, **fields} if e is plan else e for e in events]
+        out = analyze(swap)["diagnostics"]
+        return out["D1_hit"]["n"], out["D1_pending"]["n"], out["D1_miss"]["n"]
+
+    assert split(branch_late=False) == (1, 0, 1)  # solved before the turn started
+    assert split(branch_late=True) == (0, 1, 1)  # still solving then, installed when it landed
+    # A log from before branch_late: 1 s after the turn start is past a solved branch's install.
+    assert split() == (0, 1, 1)
+    assert split(t="2026-10-01T00:00:01.100+00:00") == (1, 0, 1)  # in at 100 ms: a hit
     assert d["D3"]["n"] == 2 and d["D3_plan"]["n"] == 1
     assert d["D3_busy"]["max"] == 500 and d["D3_idle"]["max"] == 300
     text = markdown(card)
