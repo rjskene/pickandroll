@@ -26,7 +26,13 @@
     <!-- Yahoo's player table, for armed runs -->
     <table id="players"><tbody></tbody></table>
     <div id="result"></div>
-    <script src="/extension/test/harness/fake-chrome.js"></script>
-    <script src="/extension/test/harness/harness.js"></script>
+    <script>
+      // Never a cached copy of the harness itself: python's http.server sends no Cache-Control,
+      // so Chrome's heuristic cache served a day-old harness.js after an edit (cell 8 of #13).
+      // The extension's scripts get the same treatment in harness.js.
+      for (const f of ["fake-chrome.js", "harness.js"]) {
+        document.write(`<script src="/extension/test/harness/${f}?v=${Date.now()}"><\/script>`);
+      }
+    </script>
   </body>
 </html>
