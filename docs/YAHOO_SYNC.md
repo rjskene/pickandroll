@@ -160,6 +160,12 @@ Queue probe (every armed draft): the Yahoo queue path (the click backstop, one e
    and one early divergence changes the rest of the draft (measured 2026-10-01 on #13). A value gate is therefore
    judged on 3-run means per cell, or on a deterministic comparison with both sides uncapped (time limit 60 s), never
    on a single run. Timing measurements (harness cells) and value runs never share the CPU.
+   The gate itself (2026-10-02): over the settled slots (both fixtures, slots 1/4/6/12), every slot 13/13 and the mean
+   Δ ≥ −0.02 expected wins. A slot below −0.05 passes only if its first divergence is a within-gap decision: the two
+   candidates' objectives on that board differ by less than the solver's MIP gap (1%), shown from the logged
+   objectives. Below the gap the solver cannot tell the two apart, and the end-of-draft difference is path dependence
+   with either sign (measured: −0.067 and +0.258 on two slots of the same change). Deterministic uncapped runs
+   reproduce such a split exactly, so repeating them does not resolve it; the within-gap check does.
 5. Done = two consecutive mocks at 13/13 (12/12 + 1 manual) with G1-G6 green. After that, mocks continue only to test new features, at least one per week until the real draft.
 
 ## 7. Standing rules for all three sessions
