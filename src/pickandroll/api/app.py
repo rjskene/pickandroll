@@ -1023,6 +1023,11 @@ def create_app(
         """A batch of room picks by Yahoo id (or Board label and team). Idempotent by overall;
         resend the whole history whenever in doubt."""
         room, session = await get_room(draft_id)
+        last = room.num_teams * room.rounds
+        outside = sorted({p.overall for p in body.picks if p.overall > last})
+        if outside:
+            # Nothing of the batch is recorded: a pick past the draft's end is no room's.
+            raise HTTPException(422, f"overall {outside} is past the draft's last pick, {last}")
         items = [p.model_dump() for p in body.picks]
         try:
             return await asyncio.to_thread(yahoo_room.ingest, session, room, items)
@@ -1071,14 +1076,17 @@ def create_app(
     @app.post("/rooms/{draft_id}/events")
     async def room_events(draft_id: str, body: RoomEvents) -> dict[str, Any]:
         """Client events for the fidelity log: control, turn_start, draft_attempt,
-        pick_landed, intervention, heartbeat, note."""
+        pick_landed, intervention, heartbeat, note. An event of another type, or one missing
+        what its type needs, is dropped and counted in ``ignored``; the rest are kept."""
         room, session = await get_room(draft_id)
-        try:
-            written = await asyncio.to_thread(yahoo_room.record_events, room, body.events)
-        except ValueError as exc:
-            raise HTTPException(422, str(exc)) from exc
+        written, ignored = await asyncio.to_thread(yahoo_room.record_events, room, body.events)
         await asyncio.to_thread(yahoo_room.follow_clock, session, room, body.events)
-        return {"received": len(body.events), "written": written, "control": room.control}
+        return {
+            "received": len(body.events),
+            "written": written,
+            "ignored": ignored,
+            "control": room.control,
+        }
 
     @app.post("/rooms/{draft_id}/aliases")
     async def room_alias(draft_id: str, body: AliasPin) -> dict[str, Any]:

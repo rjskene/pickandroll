@@ -362,10 +362,11 @@ def test_events_validation_heartbeats_and_control(league):
     directory, _picks = league
     with app_for(directory) as c:
         attach(c)
-        bad = c.post("/rooms/d1/events", json={"events": [{"type": "room_pick", "overall": 1}]})
-        assert bad.status_code == 422
-        bad = c.post("/rooms/d1/events", json={"events": [{"type": "turn_start"}]})
-        assert bad.status_code == 422
+        # A server type and an event missing its overall are dropped, not the request.
+        r = c.post("/rooms/d1/events", json={"events": [{"type": "room_pick", "overall": 1}]})
+        assert r.status_code == 200 and r.json()["written"] == 0 and r.json()["ignored"] == 1
+        r = c.post("/rooms/d1/events", json={"events": [{"type": "turn_start"}]})
+        assert r.status_code == 200 and r.json()["ignored"] == 1
         r = c.post(
             "/rooms/d1/events",
             json={"events": [{"type": "heartbeat", "vis": "visible"} for _ in range(3)]},
@@ -387,6 +388,38 @@ def test_events_validation_heartbeats_and_control(league):
         assert cors.headers["access-control-allow-origin"].startswith("chrome-extension://")
         assert c.delete("/rooms/d1").json()["attached"] is False
         assert c.get("/rooms/d1/fidelity").status_code == 200
+
+
+def test_an_unknown_event_type_never_loses_the_batch(league):
+    """An extension one event type ahead of the API: the known events are still recorded."""
+    directory, _picks = league
+    with app_for(directory) as c:
+        attach(c)
+        batch = [
+            {"type": "draft_attempt", "overall": 1, "yid": "a", "method": "row", "attempt": 1},
+            {"type": "queue_probe", "overall": 1, "outcome": "drafted"},
+            {"type": "pick_landed", "overall": 1, "yid": "a", "how": "row"},
+        ]
+        r = c.post("/rooms/d1/events", json={"events": batch})
+        assert r.status_code == 200
+        assert r.json()["written"] == 2 and r.json()["ignored"] == 1
+    events = _events(directory, "d1")
+    kinds = [e["type"] for e in events]
+    assert "draft_attempt" in kinds and "pick_landed" in kinds and "queue_probe" not in kinds
+    notes = [e for e in events if e.get("what") == "client events ignored"]
+    assert [n["ignored"] for n in notes] == [{"type 'queue_probe'": 1}]
+
+
+def test_a_pick_past_the_drafts_end_is_refused_and_not_recorded(league):
+    directory, picks = league
+    with app_for(directory) as c:
+        attach(c)
+        post_picks(c, "d1", picks[:3])
+        past = {"overall": 157, "yahoo_player_id": picks[3].yahoo_player_id}
+        r = c.post("/rooms/d1/picks", json={"picks": [past]})
+        assert r.status_code == 422 and "156" in r.json()["detail"]
+        assert c.get("/rooms/d1").json()["synced_through"] == 3
+    assert not [e for e in _events(directory, "d1") if e.get("overall") == 157]
 
 
 # --------------------------------------------------------------------------- restart

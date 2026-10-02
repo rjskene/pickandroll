@@ -426,19 +426,36 @@ def pin(session: Session, room: YahooRoom, yid: str, pid: str) -> dict[str, Any]
 
 
 # --------------------------------------------------------------------------- events
-def record_events(room: YahooRoom, events: list[dict[str, Any]]) -> int:
-    """Store client events with the server's receive time. Heartbeats are kept in memory and
-    written at most once per ``HEARTBEAT_EVERY_S``."""
+def _event_problem(e: dict[str, Any]) -> str | None:
+    """Why the API does not take a client event, or None."""
+    kind = e.get("type")
+    if kind not in CLIENT_EVENTS:
+        return f"type {kind!r}"
+    if kind in NEEDS_OVERALL and not isinstance(e.get("overall"), int):
+        return f"{kind} without an integer overall"
+    if kind == "control" and e.get("state") not in CONTROL_STATES:
+        return f"control state {e.get('state')!r}"
+    return None
+
+
+def record_events(room: YahooRoom, events: list[dict[str, Any]]) -> tuple[int, int]:
+    """Store client events with the server's receive time; returns (written, ignored).
+    Heartbeats are kept in memory and written at most once per ``HEARTBEAT_EVERY_S``.
+
+    An event the API does not take (a type it does not know, a server type, or one missing
+    what its type needs) is dropped and counted, never the batch with it: an extension one
+    event type ahead of the API must not lose the draft_attempt and pick_landed events posted
+    alongside. The log gets one note per batch that dropped any."""
     clean = []
+    dropped: dict[str, int] = {}
     for e in events:
-        kind = e.get("type")
-        if kind not in CLIENT_EVENTS:
-            raise ValueError(f"unknown event type {kind!r}; allowed: {sorted(CLIENT_EVENTS)}")
-        if kind in NEEDS_OVERALL and not isinstance(e.get("overall"), int):
-            raise ValueError(f"{kind} needs an integer overall")
-        if kind == "control" and e.get("state") not in CONTROL_STATES:
-            raise ValueError(f"control state must be one of {sorted(CONTROL_STATES)}")
+        problem = _event_problem(e)
+        if problem is not None:
+            dropped[problem] = dropped.get(problem, 0) + 1
+            continue
         clean.append({**e, "t": to_iso(e.get("t")), "src": e.get("src") or "client"})
+    if dropped:
+        room.log.append({"type": "note", "what": "client events ignored", "ignored": dropped})
     written = 0
     for e in clean:
         e["recv"] = now_iso()
@@ -451,7 +468,7 @@ def record_events(room: YahooRoom, events: list[dict[str, Any]]) -> int:
             room.control = e["state"]
         room.log.append(e)
         written += 1
-    return written
+    return written, sum(dropped.values())
 
 
 def follow_clock(session: Session, room: YahooRoom, events: list[dict[str, Any]]) -> float | None:
