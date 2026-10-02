@@ -97,7 +97,7 @@ Posted by the client (`POST /rooms/{draft_id}/events`):
 {"type":"control",      "t":..., "state":"armed|mirror|absent", "slot":s, "reason":"autopick"?}
 {"type":"turn_start",   "t":..., "overall":n, "slot":s, "clock_s":30}
 {"type":"draft_attempt","t":..., "overall":n, "yid":id, "method":"row|queue|search", "attempt":k, "board":b}  // b = board of the plan the drafter acted on
-{"type":"note", "what":"queue_probe", "t":..., "overall":n, "yid":id, "name":..., "board":b, "outcome":"queued|drafted|no_control|failed", "panel":[...], "control":"..."}  // one per armed draft, §6; a note, not a new type, so no API version drops it
+{"type":"note", "what":"queue_probe", "t":..., "overall":n, "yid":id, "name":..., "board":b, "outcome":"queued|drafted|dropped|no_control|failed", "panel":[...], "control":"..."}  // one per armed draft, §6; a note, not a new type, so no API version drops it
 {"type":"pick_landed",  "t":..., "overall":n, "yid":id, "how":"row|queue|manual|expiry|autopick", "ms_from_turn":...}
 {"type":"intervention", "t":..., "who":"master|emissary|drone|user", "what":"..."}
 {"type":"heartbeat",    "t":..., "worker":bool, ...}  // worker: the Worker timer host is live (G7)
@@ -149,7 +149,7 @@ Room protocol for the drone: attach the room (`POST /rooms`, draft id = Yahoo's 
 room) while still in the waiting room, at least 60 s before pick 1, and confirm the attach before reporting the
 room; enter the draft client the moment it opens; Yahoo's Autodraft switch is disabled until pick 1 is on the clock.
 
-Queue probe (every armed draft): the Yahoo queue path (the click backstop, one entry or two) has never been seen in a real room, and notes from drafts 5-6 say the row's first-cell button on our turn may be Draft rather than the queue star. So on one of our turns per draft, by default the first turn of round 3 that is not back-to-back, the drafter stars the plan's #1 candidate before clicking Draft, reads the queue panel, logs one `queue_probe` event and then proceeds normally. Both outcomes are harmless: the star queues our player, or it drafts the player we wanted. The scorecard prints the outcome. Configurable (round, or off) on the options page.
+Queue probe (every armed draft): the Yahoo queue path (the click backstop, one entry or two) has never been seen in a real room, and notes from drafts 5-6 say the row's first-cell button on our turn may be Draft rather than the queue star. So on one of our turns per draft, by default the first turn of round 3 that is not back-to-back, the drafter stars the plan's #1 candidate before clicking Draft, reads the queue panel, logs one `queue_probe` event and then proceeds normally. Both outcomes are harmless: the star queues our player, or it drafts the player we wanted. `dropped` means a Draft-labelled control took no effect inside 1.9 s (a lost click, as the harness simulates); `failed` is reserved for a control that was not Draft and produced neither. The scorecard prints the outcome. Configurable (round, or off) on the options page.
 
 
 1. The emissary states the hypothesis and the metric it expects to move before a mock starts.
