@@ -128,3 +128,19 @@ test("the room's team count comes from the attached room", () => {
   assert.equal(r.ingest("R|a|b|c|", T0).kind, "order");
   assert.equal(r.numTeams, 10);
 });
+
+test("nothing past the draft's last pick is mine: the frame after 156 starts no turn", () => {
+  const { pickOwner } = require("../lib/protocol.js");
+  const r = room(12); // slot 12 makes 156 and, in a 14th round, 157
+  for (let k = 1; k <= 156; k++) r.ingest(`0|${k}|${9000 + k}|${pickOwner(12, k).slot}|C|0`, T0 + k);
+  assert.equal(r.isMine(156), true);
+  assert.equal(r.isMine(157), false);
+  r.takeEvents();
+  const out = r.ingest("D|157|12|30", T0 + 200);
+  assert.equal(out.turn ?? null, null);
+  assert.equal(r.myTurnNow(), null);
+  assert.equal(r.nextMine(), null);
+  assert.deepEqual(r.takeEvents(), [], "no turn_start past the end");
+  assert.equal(r.ingest("0|157|9157|12|C|0", T0 + 300).picks, 0, "nor a pick to send");
+  assert.equal(r.unsent().some((p) => p.overall === 157), false);
+});

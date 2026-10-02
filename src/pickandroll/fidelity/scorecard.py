@@ -78,6 +78,7 @@ def analyze(events: list[dict[str, Any]]) -> dict[str, Any]:
     interventions: list[dict] = []
     conflicts: list[dict] = []
     score = None
+    probe = None  # the queue probe's note: what Yahoo did with a star on my turn
     for e in events:
         kind = e.get("type")
         if kind == "room_pick":
@@ -101,6 +102,8 @@ def analyze(events: list[dict[str, Any]]) -> dict[str, Any]:
             conflicts.append(e)
         elif kind == "score":
             score = e
+        elif kind == "note" and e.get("what") == "queue_probe":
+            probe = e
 
     def control_at(t: float) -> str:
         state = "absent"
@@ -383,6 +386,9 @@ def analyze(events: list[dict[str, Any]]) -> dict[str, Any]:
         },
         "conflicts": len(conflicts),
         "standins": sum(1 for e in last_sync.values() if e.get("standin")),
+        "queue_probe": None
+        if probe is None
+        else {k: probe.get(k) for k in ("overall", "yid", "name", "outcome", "control", "panel")},
         "rows": rows,
         "last_room_pick": room[max(room)] if room else None,
         "last_reco": recos[-1] if recos else None,
@@ -496,6 +502,8 @@ def markdown(card: dict[str, Any]) -> str:
         "",
         f"Stand-ins {card['standins']}, conflicts {card['conflicts']}.",
         "",
+        f"Queue probe (diagnostic): {_probe(card.get('queue_probe'))}.",
+        "",
         "| pick | rd | ref | actual | label | lag ms | turn→land ms | reco ready ms | tries |",
         "|---|---|---|---|---|---|---|---|---|",
     ]
@@ -549,6 +557,18 @@ def status(card: dict[str, Any]) -> dict[str, Any]:
         "conflicts": card["conflicts"],
         "standins": card["standins"],
     }
+
+
+def _probe(p: dict[str, Any] | None) -> str:
+    """What Yahoo did with the probe's star: queued, drafted, no_control or failed."""
+    if p is None:
+        return "not run"
+    panel = p.get("panel")
+    shown = "unreadable" if panel is None else (", ".join(panel) or "empty")
+    return (
+        f"pick {p.get('overall')} ({p.get('name') or p.get('yid')}) {p.get('outcome')}; "
+        f'control "{p.get("control") or "-"}"; queue panel {shown}'
+    )
 
 
 def _round(value: float | None) -> float | None:

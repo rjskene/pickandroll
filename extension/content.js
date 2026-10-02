@@ -69,15 +69,25 @@
   }
 
   // ------------------------------------------------------------------ service worker
-  async function call(op, body = {}) {
+  /** ``signal``: aborting it cancels the request in the service worker (a /plan hold of a turn
+   * that a newer one superseded); the call then fails with status 499. */
+  async function call(op, body = {}, signal = null) {
     if (S.dead) throw new Error("extension reloaded");
     let r;
+    let hold = null;
+    const cancel = () => chrome.runtime.sendMessage({ op: "cancel", hold }).catch(() => {});
+    if (signal) {
+      if (signal.aborted) throw Object.assign(new Error("cancelled"), { status: 499 });
+      hold = `${Date.now().toString(36)}.${Math.random().toString(36).slice(2, 10)}`;
+      signal.addEventListener("abort", cancel, { once: true });
+    }
     try {
       r = await chrome.runtime.sendMessage({
         op,
         draft_id: tracker.draftId,
         slot: tracker.slot,
         ...body,
+        ...(hold ? { hold } : {}),
       });
     } catch (e) {
       if (/context invalidated/i.test(String(e && e.message))) {
@@ -85,6 +95,8 @@
         render();
       }
       throw e;
+    } finally {
+      if (signal) signal.removeEventListener("abort", cancel);
     }
     if (!r) throw new Error("no answer from the service worker");
     if (!r.ok) {
@@ -285,6 +297,7 @@
     try {
       const r = await call("status");
       S.base = r.api || S.base;
+      drafter.probeRound = /^\d+$/.test(String(r.probe_round)) ? Number(r.probe_round) : null;
       if (!r.attached) {
         S.attached = false;
         S.room = null;
@@ -462,6 +475,50 @@
     await clearQueue();
     return { ok: false, msg: "queue check failed" };
   }
+  const inQueue = (li, p) => PR.fold(li.textContent).includes(PR.fold(p.last));
+  const labelsOf = (b) => [b.getAttribute("aria-label"), b.title, b.textContent];
+  /** The queue panel's entries as text, or null when the panel cannot be read. */
+  const panelText = () => (qPanel() ? qItems().map((li) => li.textContent.replace(/\s+/g, " ").trim().slice(0, 40)) : null);
+  // The back-to-back exception (user, 2026-10-02): ``c2``, my next pick's player, behind ``c``
+  // in the queue. Only a control labelled as the queue's is clicked: on my turn a row's
+  // first-cell button can be its Draft button (drafts 5-6), which would draft ``c2`` for this
+  // pick, and an unlabelled one is refused too. Autodraft takes the queue's head, so the panel
+  // must then read exactly ``c``, ``c2``. On any failure the queue is put back to ``c`` alone
+  // (``single``).
+  async function queueAlso(c2, c) {
+    const fail = async (msg) => ({ ok: false, msg, single: await queueOnly(c) });
+    if (!qPanel()) return fail("queue panel unreadable");
+    const items = qItems();
+    if (items.length !== 1 || !inQueue(items[0], c)) return fail("the queue is not this pick's player alone");
+    const row = findRow(c2) || (await scrollTo(c2));
+    if (!row) return fail("no row");
+    const b = [...row.querySelectorAll("button, [role=button]")].find((x) => PR.isQueueControl(labelsOf(x)));
+    if (!b) return fail("no control labelled as the queue's");
+    b.click();
+    await sleep(350);
+    if (!qPanel()) return fail("queue panel unreadable");
+    const now = qItems();
+    if (now.length === 2 && inQueue(now[0], c) && inQueue(now[1], c2)) return { ok: true };
+    return fail(`queue reads ${now.length} entries, not ${c.last} then ${c2.last}`);
+  }
+  // The queue probe: what the star (a row's first-cell button, the one queueOnly uses) does on
+  // my turn. Either outcome is harmless: it queues ``c``, or it drafts ``c``, the pick wanted.
+  async function probeQueue(c) {
+    const k = tracker.myTurnNow();
+    const row = findRow(c) || (await scrollTo(c));
+    const b = row && row.children[0] && row.children[0].querySelector("button");
+    if (!b) return { outcome: "no_control", panel: panelText(), control: null };
+    const control = labelsOf(b).filter(Boolean).join(" | ").replace(/\s+/g, " ").slice(0, 60);
+    b.click();
+    // A registered click confirms within ~400 ms; give it up to the re-click gap (1.8 s).
+    const drafted = () => k !== null && tracker.picks.has(k);
+    const queued = () => qItems().some((li) => inQueue(li, c));
+    for (let i = 0; i < 7 && !drafted() && !queued(); i++) await sleep(i ? 250 : 400);
+    const panel = panelText();
+    if (drafted()) return { outcome: "drafted", panel, control };
+    if (queued()) return { outcome: "queued", panel, control };
+    return { outcome: "failed", panel, control };
+  }
   async function setAutodraft(on) {
     const b = autodraftButton();
     if (!b) return null;
@@ -490,6 +547,8 @@
     },
     nudge,
     queueOnly,
+    queueAlso,
+    probeQueue,
     setAutodraft,
     autodraftOn: () => autodraftOn(),
     clearQueue,
@@ -512,8 +571,12 @@
     if (!el || el.closest("#pickandroll-strip")) return;
     const label = labelOf(el);
     if (/autodraft/i.test(label)) S.autodraftClickAt = Date.now();
-    else if (/^draft\b/i.test(label) && tracker.noteManual(Date.now(), label.slice(0, 40)) !== null) {
-      render();
+    else if (/^draft\b/i.test(label)) {
+      const k = tracker.noteManual(Date.now(), label.slice(0, 40));
+      if (k !== null) {
+        drafter.handPick(k); // the turn touches the page no more
+        render();
+      }
     }
   }
   document.addEventListener("pointerdown", onPress, true);
@@ -523,8 +586,8 @@
   const drafter = new PR.Drafter({
     tracker,
     dom: yahoo,
-    plan: async (wait, board) => {
-      const plan = await call("plan", { wait, board });
+    plan: async (wait, board, signal) => {
+      const plan = await call("plan", { wait, board }, signal);
       for (const c of [...(plan.candidates || []), ...(plan.second || [])]) {
         names.set(String(c.yahoo_player_id), c.name);
       }
@@ -540,31 +603,32 @@
       render();
     },
   });
+  // Each of my turns starts from its own turn frame (or the guard, if that frame was missed);
+  // starting it stops the previous turn wherever it is. Nothing waits for a turn to settle.
   function takeTurn(k, why) {
-    if (!armed() || S.handPick === k || drafter.busy || drafter.tried.has(k)) return;
+    if (!armed() || S.handPick === k || drafter.tried.has(k)) return;
     S.drafting = `taking #${k}`;
     render();
     drafter.turn(k).then((out) => {
-      S.drafting = null;
+      if (drafter.current && drafter.current.k === k) S.drafting = null;
       if (out) {
-        const { result, attempts, fresh, board, waited_ms, ms } = out;
-        emit({ type: "note", what: "turn", overall: k, why, result, attempts, fresh, board, waited_ms, ms });
+        const { result, attempts, fresh, board, waited_ms, ms, stopped } = out;
+        emit({ type: "note", what: "turn", overall: k, why, result, attempts, fresh, board, waited_ms, ms, stopped });
       }
       render();
-      const next = tracker.myTurnNow(); // back to back: the next pick may be on the clock already
-      if (next !== null && next !== k) takeTurn(next, "chain");
     });
   }
   // Once a second while armed: start a turn the on-deck frame did not start, and between turns
   // undo Yahoo's flip into autopick mode and keep its queue empty (we queue only for the pick
   // on the clock). A switch the user turned on by hand is theirs and left alone.
   async function guard() {
-    if (!userArmed() || drafter.busy) return;
+    if (!userArmed()) return;
     const k = tracker.myTurnNow();
     if (k !== null) {
-      takeTurn(k, "guard");
+      takeTurn(k, "guard"); // no-op once the turn frame started it
       return;
     }
+    if (drafter.busy) return; // a turn still settling owns the page
     if (/^your turn/i.test(document.title)) {
       const n = tracker.nextMine();
       if (n !== null && n === tracker.contiguous() + 1) takeTurn(n, "title");

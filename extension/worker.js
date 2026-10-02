@@ -1,7 +1,7 @@
 // pickandroll, service worker: the only part of the extension that talks to the pickandroll API
 // (host permission for localhost, so the draft page never calls localhost itself). The content
 // script and the side panel send it {op, ...}; it answers {ok, data} or {ok: false, status,
-// error}. Status 0 means the API could not be reached.
+// error}. Status 0 means the API could not be reached; 499, that the caller cancelled it.
 //
 // MV3 stops an idle worker. Nothing is lost when it does: the room's history lives in the draft
 // tab (page.js keeps every frame, the content script every pick) and is resent from the API's
@@ -13,6 +13,7 @@ const DEFAULTS = {
   api: "http://localhost:8000",
   web: "http://localhost:5173",
   players_file: "",
+  probe_round: "3", // the queue probe's round, or "off"
 };
 
 async function settings() {
@@ -31,10 +32,17 @@ class ApiError extends Error {
   }
 }
 
-async function api(path, { method = "GET", body, timeout = 8000 } = {}) {
+const CANCELLED = 499; // the caller cancelled the request (not an API failure)
+
+async function api(path, { method = "GET", body, timeout = 8000, signal = null } = {}) {
   const { api: base } = await settings();
   const ctl = new AbortController();
   const timer = setTimeout(() => ctl.abort(), timeout);
+  const cancel = () => ctl.abort();
+  if (signal) {
+    if (signal.aborted) ctl.abort();
+    else signal.addEventListener("abort", cancel, { once: true });
+  }
   try {
     const r = await fetch(base + path, {
       method,
@@ -56,11 +64,17 @@ async function api(path, { method = "GET", body, timeout = 8000 } = {}) {
     return data;
   } catch (e) {
     if (e instanceof ApiError) throw e;
+    if (signal && signal.aborted) throw new ApiError(CANCELLED, "cancelled");
     throw new ApiError(0, e.name === "AbortError" ? `no answer from ${base} in ${timeout / 1000} s` : `${base}: ${e.message}`);
   } finally {
     clearTimeout(timer);
+    if (signal) signal.removeEventListener("abort", cancel);
   }
 }
+
+// /plan holds by the caller's ``hold`` id. A turn that a newer one superseded cancels its hold,
+// so a 20 s server wait nobody will read gives its connection back at once.
+const holds = new Map();
 
 const roomPath = (d) => `/rooms/${encodeURIComponent(d)}`;
 
@@ -79,9 +93,9 @@ const ops = {
     return settings();
   },
   async status({ draft_id }) {
-    const { api: base } = await settings();
+    const { api: base, probe_round } = await settings();
     const r = await attachedOr(async () => ({ room: await api(roomPath(draft_id)) }));
-    return { ...r, api: base };
+    return { ...r, api: base, probe_round };
   },
   async picks({ draft_id, picks }) {
     return attachedOr(() =>
@@ -91,11 +105,25 @@ const ops = {
   async events({ draft_id, events }) {
     return attachedOr(() => api(`${roomPath(draft_id)}/events`, { method: "POST", body: { events } }));
   },
-  async plan({ draft_id, wait = 0, board = null }) {
+  async plan({ draft_id, wait = 0, board = null, hold = null }) {
     const w = Math.max(0, Math.min(20, Number(wait) || 0));
     // ``board``: hold for the solve built on that many picks, not just the API's latest board.
     const b = Number.isInteger(board) && board >= 0 ? `&board=${board}` : "";
-    return api(`${roomPath(draft_id)}/plan?wait=${w}${b}`, { timeout: (w + 10) * 1000 });
+    const ctl = hold ? new AbortController() : null;
+    if (ctl) holds.set(hold, ctl);
+    try {
+      return await api(`${roomPath(draft_id)}/plan?wait=${w}${b}`, {
+        timeout: (w + 10) * 1000,
+        signal: ctl && ctl.signal,
+      });
+    } finally {
+      if (ctl && holds.get(hold) === ctl) holds.delete(hold);
+    }
+  },
+  async cancel({ hold }) {
+    const ctl = holds.get(hold);
+    if (ctl) ctl.abort();
+    return { cancelled: Boolean(ctl) };
   },
   async attach({ draft_id, slot, session_id, num_teams = 12 }) {
     const s = await settings();

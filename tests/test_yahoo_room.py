@@ -665,6 +665,37 @@ def test_scorecard_compliant_only_when_the_drafter_made_the_pick_and_g7():
     )
 
 
+def test_scorecard_reports_the_queue_probe():
+    """The probe's note is a diagnostic line: what Yahoo did with the star on my turn."""
+    events = [
+        _ev("attach", 0, slot=1, num_teams=2, rounds=1, draft_id="p"),
+        _ev("room_pick", 1, overall=1, yid="a"),
+        _ev("session_pick", 1, overall=1, yid="a"),
+    ]
+    assert analyze(events)["queue_probe"] is None
+    assert "Queue probe (diagnostic): not run." in markdown(analyze(events))
+    events.append(
+        _ev(
+            "note",
+            1,
+            what="queue_probe",
+            overall=1,
+            yid="a",
+            name="A",
+            outcome="drafted",
+            control="Draft",
+            panel=None,
+            src="client",
+        )
+    )
+    card = analyze(events)
+    assert card["queue_probe"]["outcome"] == "drafted"
+    assert (
+        'Queue probe (diagnostic): pick 1 (A) drafted; control "Draft"; queue panel unreadable.'
+        in markdown(card)
+    )
+
+
 def test_scorecard_g2_judges_the_picks_after_the_attach():
     events = [
         _ev("room_pick", 1, overall=1, yid="a"),  # the room started before the attach

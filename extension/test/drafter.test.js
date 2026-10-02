@@ -29,7 +29,7 @@ function world({ visible = ["101", "102", "103"], clicksToLand = 1, landMs = 300
     for (const f of frames) tracker.ingest(f, clock.t);
     tracker.ingest(`0|${K}|${yid}|${SLOT}|X|0`, clock.t);
   };
-  const log = { clicks: [], plans: [], boards: [], events: [], autodraft: [], queued: [], cleared: 0, reset: 0 };
+  const log = { clicks: [], plans: [], boards: [], events: [], autodraft: [], queued: [], queued2: [], cleared: 0, reset: 0 };
   let auto = false;
   const dom = {
     draftable: () => true,
@@ -48,6 +48,10 @@ function world({ visible = ["101", "102", "103"], clicksToLand = 1, landMs = 300
     nudge: async () => {},
     async queueOnly(c) {
       log.queued.push(c.yahoo_player_id);
+      return { ok: true };
+    },
+    async queueAlso(c2) {
+      log.queued2.push(c2.yahoo_player_id);
       return { ok: true };
     },
     async setAutodraft(on) {
@@ -144,6 +148,7 @@ test("clicks that never register: the queue backstop by 6 s left, then Autodraft
   const out = await d.turn(K);
   assert.equal(out.result, "landed");
   assert.equal(log.queued[0], "101");
+  assert.equal(log.queued2[0], "102"); // 25 is mine too: the next candidate behind (no plan.second)
   assert.deepEqual(log.autodraft, [true, false]);
   assert.ok(log.cleared >= 1);
   assert.equal(out.how, "autopick"); // Yahoo announced it (5|slot) with Autodraft on

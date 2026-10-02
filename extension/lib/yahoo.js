@@ -58,6 +58,13 @@
 
   const isDraftLabel = (label) => /^\s*draft\b/i.test(String(label || ""));
 
+  /** A control is the queue's only when one of its labels (aria-label, title, text) names the
+   * queue and none of them is a Draft label; an unlabelled control is never the queue's. */
+  const isQueueControl = (labels) => {
+    const parts = (labels || []).map((x) => String(x || "").trim()).filter(Boolean);
+    return parts.some((x) => /\bqueue\b/i.test(x)) && !parts.some(isDraftLabel);
+  };
+
   /** The plan's candidates for a turn, best first, without players the room has taken. */
   function candidatesFor(plan, taken) {
     const out = [];
@@ -71,5 +78,5 @@
     return out;
   }
 
-  return { fold, imageId, matchRow, labelNames, isDraftLabel, candidatesFor };
+  return { fold, imageId, matchRow, labelNames, isDraftLabel, isQueueControl, candidatesFor };
 });

@@ -39,8 +39,13 @@
       return P.snakePicks(this.numTeams, this.slot, this.rounds);
     }
 
+    /** An overall of this draft: 1 .. teams x rounds (a fake room can run past the end). */
+    inDraft(overall) {
+      return Number.isInteger(overall) && overall >= 1 && overall <= this.numTeams * this.rounds;
+    }
+
     isMine(overall) {
-      return P.pickOwner(this.numTeams, overall).slot === this.slot;
+      return this.inDraft(overall) && P.pickOwner(this.numTeams, overall).slot === this.slot;
     }
 
     /** Highest overall seen. */
@@ -69,7 +74,7 @@
     /** The overall on the clock when it is mine and not made yet, else null. */
     myTurnNow() {
       const d = this.onDeck;
-      return d && d.slot === this.slot && !this.picks.has(d.overall) ? d.overall : null;
+      return d && d.slot === this.slot && this.inDraft(d.overall) && !this.picks.has(d.overall) ? d.overall : null;
     }
 
     clockLeft(t) {
@@ -93,7 +98,7 @@
       } else if (m.kind === "on_deck") {
         this.onDeck = { overall: m.overall, slot: m.slot, clock: m.clock, at: t };
         if (m.clock !== null) this.clock = { value: m.clock, at: t };
-        if (!this.turnAt.has(m.overall) && !this.picks.has(m.overall)) {
+        if (this.inDraft(m.overall) && !this.turnAt.has(m.overall) && !this.picks.has(m.overall)) {
           this.turnAt.set(m.overall, t);
           this.outbox.push({
             type: "turn_start",
@@ -103,7 +108,7 @@
             clock_s: m.clock,
           });
         }
-        if (m.slot === this.slot && !this.picks.has(m.overall)) out.turn = m.overall;
+        if (m.slot === this.slot && this.inDraft(m.overall) && !this.picks.has(m.overall)) out.turn = m.overall;
       } else if (m.kind === "clock") {
         this.clock = { value: m.clock, at: t };
       } else if (m.kind === "auto" && m.slot === this.slot) {
@@ -115,7 +120,7 @@
     }
 
     add(overall, yid, slot, t, src) {
-      if (this.picks.has(overall)) return false;
+      if (!this.inDraft(overall) || this.picks.has(overall)) return false; // never sent past the end
       this.picks.set(overall, { overall, yid: String(yid), slot, t, src });
       return true;
     }

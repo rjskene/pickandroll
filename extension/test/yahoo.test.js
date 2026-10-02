@@ -60,3 +60,13 @@ test("candidates drop taken players and duplicates", () => {
   );
   assert.deepEqual(Y.candidatesFor(null, new Set()), []);
 });
+
+test("a queue control is one labelled as the queue's, never a Draft or an unlabelled one", () => {
+  assert.equal(Y.isQueueControl(["Add to Queue", "", ""]), true);
+  assert.equal(Y.isQueueControl([null, "Add Nikola Jokić to queue", ""]), true);
+  assert.equal(Y.isQueueControl(["Add to draft queue"]), true); // names the queue, not a Draft label
+  assert.equal(Y.isQueueControl(["", "", ""]), false); // unlabelled
+  assert.equal(Y.isQueueControl([null, null, "★"]), false);
+  assert.equal(Y.isQueueControl(["Draft Nikola Jokić"]), false);
+  assert.equal(Y.isQueueControl(["Draft", "Add to queue"]), false); // any Draft label refuses it
+});
