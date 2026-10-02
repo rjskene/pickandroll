@@ -35,7 +35,11 @@ as such, with the evidence.
   only reader of the user's seat is the user's own draft page (the extension's content script).
 - One mock draft at a time, and at most two per day; a third needs the user's explicit approval in chat (the
   emissary cannot grant it). The user stays out of the mock room while the drone drives it. In Yahoo, queue
-  only for the current pick and only when it is our turn.
+  only for the current pick and only when it is our turn. One exception (user, 2026-10-02): when the click
+  backstop fires on a turn whose next pick is also ours (slots 1 and 12), it queues this pick's player and the
+  plan's player for the next pick before switching Autodraft on, so Yahoo's instant autopick takes ours.
+- Tune for the mocks, not the real league's clock (user, 2026-10-02): 30 s per pick is the design point for the
+  drafter's wait, the solve budgets and every gate.
 - Scratch experiments never go in `src/`. Reference material is ported, not imported; delete it once ported.
 
 ## Workflow

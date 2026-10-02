@@ -165,7 +165,8 @@ room; enter the draft client the moment it opens; Yahoo's Autodraft switch is di
 - Never commit `data/`, `.env`, tokens. The Yahoo players file is data; the pick-order fixtures from the archive are fine in tests.
 - Never join the Yahoo draft socket as the user's slot from a second client. The only reader of my seat is the user's own draft page (the extension's content script).
 - Only one mock draft at a time. The user stays out of the mock room while the drone drives it.
-- Queue only for the current pick, and only when it is our turn.
+- Queue only for the current pick, and only when it is our turn. One exception (user, 2026-10-02): when the click backstop fires on a turn whose next pick is also ours (slots 1 and 12), it queues this pick's player and the plan's player for the next pick before switching Autodraft on. Yahoo autopicks the next pick the instant it starts while Autodraft is on, so an empty queue there hands it Yahoo's choice. The second entry is consumed on the next frame and never sits across an opponent's pick; the attempt is logged with the plan's board and labels `stale` honestly.
+- Tune for the mocks, not the real league's clock (user, 2026-10-02): 30 s per pick is the design point for the drafter's wait, the solve budgets and every gate. The attach still adopts the room's reported clock, but no run targets another clock.
 - Branch per issue, PR to main, master reviews and merges.
 
 ## 8. Schedule and token budget (user decisions, 2026-10-01)
