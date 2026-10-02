@@ -205,7 +205,7 @@
       table.addEventListener("click", (e) => {
         const b = e.target.closest("button[data-yid]");
         const k = onClock && onClock.slot === slot ? onClock.overall : null;
-        if (!b || k === null || landed.has(k) || taken.has(b.dataset.yid)) return;
+        if (!b || k === null || k > rows.length || landed.has(k) || taken.has(b.dataset.yid)) return;
         out.clicks = (out.clicks || 0) + 1;
         if (drop && !b.dataset.dropped && Math.random() < drop) {
           b.dataset.dropped = "1";
@@ -217,8 +217,11 @@
           if (landed.has(k) || taken.has(yid)) return;
           ours[k] = yid;
           emitPick(k, yid);
-          ws.emit(`D|${k + 1}|${owner(k + 1)}|30`);
-          onClock = { overall: k + 1, slot: owner(k + 1) };
+          // The draft ends with the fixture's last pick: nothing goes on the clock after it.
+          if (k < rows.length) {
+            ws.emit(`D|${k + 1}|${owner(k + 1)}|30`);
+            onClock = { overall: k + 1, slot: owner(k + 1) };
+          } else onClock = null;
         }, 300);
       });
       const r = await fakeChrome.runtime.sendMessage({ op: "mode", draft_id: draftId, mode: "autopilot" });
