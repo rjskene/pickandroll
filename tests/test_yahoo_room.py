@@ -410,16 +410,21 @@ def test_an_unknown_event_type_never_loses_the_batch(league):
     assert [n["ignored"] for n in notes] == [{"type 'queue_probe'": 1}]
 
 
-def test_a_pick_past_the_drafts_end_is_refused_and_not_recorded(league):
+def test_a_pick_past_the_drafts_end_is_dropped_never_the_batch(league):
+    """Three picks and a pick 157 in one batch: the three are recorded, 157 is ignored."""
     directory, picks = league
     with app_for(directory) as c:
         attach(c)
-        post_picks(c, "d1", picks[:3])
-        past = {"overall": 157, "yahoo_player_id": picks[3].yahoo_player_id}
-        r = c.post("/rooms/d1/picks", json={"picks": [past]})
-        assert r.status_code == 422 and "156" in r.json()["detail"]
+        items = [{"overall": p.overall, "yahoo_player_id": p.yahoo_player_id} for p in picks[:3]]
+        items.append({"overall": 157, "yahoo_player_id": picks[3].yahoo_player_id})
+        r = c.post("/rooms/d1/picks", json={"picks": items})
+        assert r.status_code == 200
+        assert r.json()["ignored"] == 1 and r.json()["synced_through"] == 3
         assert c.get("/rooms/d1").json()["synced_through"] == 3
-    assert not [e for e in _events(directory, "d1") if e.get("overall") == 157]
+    events = _events(directory, "d1")
+    assert not [e for e in events if e.get("overall") == 157]
+    notes = [e for e in events if e.get("what") == "room picks past the end ignored"]
+    assert [n["overalls"] for n in notes] == [[157]]
 
 
 # --------------------------------------------------------------------------- restart

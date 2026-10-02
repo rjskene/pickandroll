@@ -1023,11 +1023,6 @@ def create_app(
         """A batch of room picks by Yahoo id (or Board label and team). Idempotent by overall;
         resend the whole history whenever in doubt."""
         room, session = await get_room(draft_id)
-        last = room.num_teams * room.rounds
-        outside = sorted({p.overall for p in body.picks if p.overall > last})
-        if outside:
-            # Nothing of the batch is recorded: a pick past the draft's end is no room's.
-            raise HTTPException(422, f"overall {outside} is past the draft's last pick, {last}")
         items = [p.model_dump() for p in body.picks]
         try:
             return await asyncio.to_thread(yahoo_room.ingest, session, room, items)

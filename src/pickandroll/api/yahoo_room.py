@@ -206,12 +206,22 @@ def attach_room(
 
 # --------------------------------------------------------------------------- picks
 def ingest(session: Session, room: YahooRoom, items: list[dict[str, Any]]) -> dict[str, Any]:
-    """Record a batch of room picks and bring the session level with the room."""
+    """Record a batch of room picks and bring the session level with the room. A pick past
+    the draft's last overall (num_teams x rounds) is no room's: it is dropped and counted in
+    ``ignored``, never the batch with it, and the log gets one note per batch that had any."""
     unresolved = []
     new = 0
+    last = room.num_teams * room.rounds
+    past = sorted({int(i["overall"]) for i in items if int(i["overall"]) > last})
     with room.lock:
+        if past:
+            room.log.append(
+                {"type": "note", "what": "room picks past the end ignored", "overalls": past}
+            )
         for item in items:
             overall = int(item["overall"])
+            if overall > last:
+                continue
             yid = item.get("yahoo_player_id")
             if (yid is None or yid == "") and item.get("label"):
                 yid = room.ids.resolve_label(str(item["label"]), item.get("team"))
@@ -254,6 +264,7 @@ def ingest(session: Session, room: YahooRoom, items: list[dict[str, Any]]) -> di
     state = session.state
     return {
         "received": len(items),
+        "ignored": sum(1 for i in items if int(i["overall"]) > last),
         "new": new,
         "applied": sum(1 for c in changes if c["kind"] in ("new", "held")),
         "replaced": sum(1 for c in changes if c["kind"] in ("conflict", "repair")),
