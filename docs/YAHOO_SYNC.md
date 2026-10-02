@@ -97,7 +97,7 @@ Posted by the client (`POST /rooms/{draft_id}/events`):
 {"type":"control",      "t":..., "state":"armed|mirror|absent", "slot":s, "reason":"autopick"?}
 {"type":"turn_start",   "t":..., "overall":n, "slot":s, "clock_s":30}
 {"type":"draft_attempt","t":..., "overall":n, "yid":id, "method":"row|queue|search", "attempt":k, "board":b}  // b = board of the plan the drafter acted on
-{"type":"queue_probe",  "t":..., "overall":n, "yid":id, "outcome":"queued|drafted|no_control|failed", "panel":[...]}  // one per armed draft, §6
+{"type":"note", "what":"queue_probe", "t":..., "overall":n, "yid":id, "name":..., "board":b, "outcome":"queued|drafted|no_control|failed", "panel":[...], "control":"..."}  // one per armed draft, §6; a note, not a new type, so no API version drops it
 {"type":"pick_landed",  "t":..., "overall":n, "yid":id, "how":"row|queue|manual|expiry|autopick", "ms_from_turn":...}
 {"type":"intervention", "t":..., "who":"master|emissary|drone|user", "what":"..."}
 {"type":"heartbeat",    "t":..., "worker":bool, ...}  // worker: the Worker timer host is live (G7)
