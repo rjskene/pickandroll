@@ -6,6 +6,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const { RoomTracker } = require("../lib/room.js");
 const { Drafter } = require("../lib/drafter.js");
+const { autodraftSeen } = require("../lib/yahoo.js");
 
 const SLOT = 1; // 12 teams: my picks 24 and 25 come back to back
 const START = 1_000_000;
@@ -63,6 +64,7 @@ function room({
   secondQueues = true,
   probe = "drafted", // what Yahoo does with the probe's star: "drafted" or "queued"
   probeRound = null,
+  watch = false, // content.js's switch watcher, run at every flip, and its armed gate on turn frames
 } = {}) {
   const s = scheduler();
   const tracker = new RoomTracker({ draftId: "d", slot: SLOT });
@@ -73,6 +75,19 @@ function room({
   let auto = false;
   let queue = []; // Yahoo's queue of yids, head first
   const act = (what) => log.page.push([s.clock.t - START, what]);
+  // What content.js does with a flip of the switch (watchYahoo, reportControl): a control event
+  // only when the seat changes hands; a seat handed to Yahoo refuses the next turn (takeTurn).
+  const seat = { was: false, autopick: false, events: [], refused: [] };
+  function watchSwitch() {
+    if (!watch) return;
+    const seen = autodraftSeen(seat.was, auto, { ours: d.touched.autodraft });
+    seat.was = auto;
+    if (!seen) return;
+    seat.events.push(seen.note);
+    if (seen.autopick === null || seen.autopick === seat.autopick) return;
+    seat.autopick = seen.autopick;
+    seat.events.push(seen.autopick ? `control absent ${seen.reason}` : "control armed");
+  }
   const d = new Drafter({
     tracker,
     dom: {
@@ -121,6 +136,7 @@ function room({
       async setAutodraft(on) {
         act(`autodraft ${on}`);
         if (!(autodraftSticks && !on)) auto = on;
+        watchSwitch(); // the worst case: the watcher sees the flip at once
         await s.sleep(350);
         return auto;
       },
@@ -161,6 +177,10 @@ function room({
   d.probeRound = probeRound;
   const promises = [];
   function startTurn(k) {
+    if (watch && seat.autopick) {
+      seat.refused.push(k);
+      return Promise.resolve(null);
+    }
     log.turns[k] = s.clock.t - START;
     const p = d.turn(k).then((out) => (log.turns[`${k}:out`] = out));
     promises.push(p);
@@ -184,7 +204,12 @@ function room({
     }
   }
   const pageAfter = (ms) => log.page.filter(([t, w]) => t >= ms && !w.startsWith("landed"));
-  return { s, d, tracker, log, land, startTurn, promises, pageAfter, auto: () => auto, queue: () => queue };
+  /** A missed pick: Yahoo turns the switch on itself. */
+  const yahooFlips = () => {
+    auto = true;
+    watchSwitch();
+  };
+  return { s, d, tracker, log, land, startTurn, promises, pageAfter, seat, yahooFlips, auto: () => auto, queue: () => queue };
 }
 
 test("turn k+1 starts on its frame while k waits to re-click; k clicks nothing after", async () => {
@@ -296,6 +321,26 @@ test("back-to-back backstop: the plan's player for 25 is queued behind 24's, and
   assert.equal(r.pageAfter(state.landedAt)[0][1], "autodraft false");
   assert.ok(!r.log.page.some(([, w]) => w.startsWith("click 25")));
   assert.equal(r.auto(), false);
+});
+
+test("the backstop's own Autodraft switch is not Yahoo's flip: no control event, and 25 still starts", async () => {
+  const r = room({ clicksToLand: { 24: 99, 25: 1 }, watch: true });
+  const state = backstopThenLand(r);
+  await r.s.run(r.promises);
+  assert.deepEqual(r.seat.events, ["autodraft on by pickandroll", "autodraft off"]); // no control event
+  assert.equal(r.seat.autopick, false, "the seat stayed armed");
+  assert.deepEqual(r.seat.refused, []);
+  assert.equal(r.log.turns[25], state.landedAt, "the back-to-back turn started on its frame");
+  assert.equal(r.log.turns["25:out"].yid, "104");
+  assert.equal(r.auto(), false);
+});
+
+test("a flip Yahoo makes hands the seat over: control absent, and the next turn is refused", async () => {
+  const r = room({ watch: true });
+  r.yahooFlips();
+  assert.equal(await r.startTurn(24), null);
+  assert.deepEqual(r.seat.events, ["autodraft on by Yahoo", "control absent autopick"]);
+  assert.deepEqual(r.seat.refused, [24]);
 });
 
 test("back-to-back backstop whose second entry fails: 24's player alone, and Yahoo ranks 25", async () => {

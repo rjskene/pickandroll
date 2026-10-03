@@ -1,6 +1,7 @@
 // Reading Yahoo's draft-client player table: which row is a candidate, and whether a Draft
-// button's label names the player we mean. Pure: rows are passed in as {id, text}, so node's
-// tests cover the matching that the content script runs on the live DOM.
+// button's label names the player we mean; which controls are the queue's; and what a change of
+// the Autodraft switch means. Pure: rows are passed in as {id, text}, so node's tests cover the
+// matching that the content script runs on the live DOM.
 //
 // The client's class names are hashed; rows are anchored on the headshot image id
 // (/{yahooId}.png, usually the Yahoo player id but not always) and on their text
@@ -65,6 +66,41 @@
     return parts.some((x) => /\bqueue\b/i.test(x)) && !parts.some(isDraftLabel);
   };
 
+  /** A queue entry's control that takes it off the queue: one of its labels names remove,
+   * delete or the queue, and none is a Draft label. An unlabelled control is never clicked: on
+   * my turn an entry's last button can be its Draft button. */
+  const isRemoveControl = (labels) => {
+    const parts = (labels || []).map((x) => String(x || "").trim()).filter(Boolean);
+    return parts.some((x) => /\b(remove|delete|queue)\b/i.test(x)) && !parts.some(isDraftLabel);
+  };
+
+  /** What a change of Yahoo's Autodraft switch from ``was`` to ``on`` (true, false, or null:
+   * not found) means, or null when it did not change. ``ours``: the drafter's backstop switched
+   * it; ``byHand``: a trusted click on it just before. ``autopick`` true hands the seat to Yahoo
+   * (control absent, the drafter stands down); null leaves it as it was. Only a flip nobody here
+   * made is Yahoo's ("autopick", which G5 counts); on at entry or by hand is the user's; the
+   * drafter's own is neither and leaves the seat armed. */
+  function autodraftSeen(was, on, { ours = false, byHand = false } = {}) {
+    if (on === null || on === undefined || was === on) return null;
+    if (was === null || was === undefined) {
+      return on
+        ? { autopick: true, reason: "autodraft at entry", note: "autodraft switch seen" }
+        : { autopick: null, reason: null, note: "autodraft switch seen" };
+    }
+    if (!on) return { autopick: false, reason: null, note: "autodraft off" };
+    if (ours) return { autopick: false, reason: "autodraft by pickandroll", note: "autodraft on by pickandroll" };
+    if (byHand) return { autopick: true, reason: "autodraft by hand", note: "autodraft on by hand" };
+    return { autopick: true, reason: "autopick", note: "autodraft on by Yahoo" };
+  }
+
+  /** What the guard undoes between my turns: the Autodraft switch when Yahoo flipped it (a
+   * missed pick) or the drafter left it on, and the queue, never while the switch stays on.
+   * A switch the user turned on (by hand, or on at entry) is theirs, and so is its queue. */
+  function guardActions({ on, reason, ours = false, queued = 0 }) {
+    const autodraftOff = on === true && (ours || reason === "autopick");
+    return { autodraftOff, clearQueue: queued > 0 && (on !== true || autodraftOff) };
+  }
+
   /** The queue probe's outcome. A Draft-labelled control that landed nothing lost the click
    * ("dropped"), so "failed" is left for the star path: a star that queued nothing readable. */
   const probeOutcome = (drafted, queued, labels) =>
@@ -83,5 +119,17 @@
     return out;
   }
 
-  return { fold, imageId, matchRow, labelNames, isDraftLabel, isQueueControl, probeOutcome, candidatesFor };
+  return {
+    fold,
+    imageId,
+    matchRow,
+    labelNames,
+    isDraftLabel,
+    isQueueControl,
+    isRemoveControl,
+    autodraftSeen,
+    guardActions,
+    probeOutcome,
+    candidatesFor,
+  };
 });

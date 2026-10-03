@@ -1,10 +1,14 @@
 // One armed turn: take pickandroll's pick in Yahoo's draft client. A port of the hook used in the
 // September mock drafts (v16), with the deadlines of the #9 review:
 //   1. hold GET /plan?wait&board for the solve of this turn's board (picks 1..k-1), but stop
-//      waiting by 12 s left on the clock; a plan for an older board is asked for again;
+//      waiting by 12 s left on the clock; a plan for an older board is asked for again, and so
+//      is a failed ask (the API restarting, a 5xx); when the wait is up the turn acts on the
+//      newest plan it holds, the one the page fetched ahead included (fresh only on board k-1);
 //   2. click the first available candidate's Draft button; Yahoo drops a click that lands during
 //      a re-render and confirms a registered one within ~400 ms, so re-click the same row at
-//      1.8 s and again at 2.5 s; scroll, then search, when the row is not in view;
+//      1.8 s and again at 2.5 s; scroll when the row is not in view (Yahoo's search box only
+//      with the option on: in September the filtered table's Draft button drafted the wrong
+//      player, §0);
 //   3. fall through to the next candidate;
 //   4. by 6 s left, put the best remaining candidate alone in Yahoo's queue with Autodraft on,
 //      for this pick only; after the turn Autodraft goes off and the queue is emptied. One
@@ -39,6 +43,7 @@
   const RECLICK_MS = [1800, 2500, 2500];
   const MAX_CANDIDATES = 4;
   const ASK_AGAIN_MS = 250; // between asks when the API answered for an older board
+  const RETRY_MS = 500; // between asks when /plan failed (the API restarting, a 5xx)
 
   /** Seconds to hold /plan for a fresh solve with ``left`` seconds on the clock. */
   function planWait(left) {
@@ -63,6 +68,8 @@
       signal: ctl ? ctl.signal : null,
       settled: false,
       attempts: 0,
+      planErrors: 0, // failed /plan asks
+      planError: null, // the last one's status and message
       board: null, // the board of the plan this turn acts on
       stop(why) {
         if (this.stopped) return;
@@ -86,12 +93,15 @@
      * @param {function} o.plan  async (wait_s, board, signal) -> GET /rooms/{d}/plan, held
      *                           until the solve of ``board`` (the number of picks it was built
      *                           on); ``signal`` aborts when the turn is stopped
+     * @param {function} o.held  (k) -> the newest plan the page holds for my pick k (fetched
+     *                           ahead of the turn), or null
      * @param {function} o.emit  client event sink
      * @param {function} o.sleep async (ms)
      * @param {function} o.now   epoch ms
      */
-    constructor({ tracker, dom, plan, emit, sleep, now, log }) {
+    constructor({ tracker, dom, plan, held, emit, sleep, now, log }) {
       Object.assign(this, { tracker, dom, plan, emit, sleep, now });
+      this.held = held || (() => null);
       this.log = log || (() => {});
       this.current = null; // the newest turn
       this.tried = new Set(); // overalls a turn was started for
@@ -101,6 +111,7 @@
       this.pageTail = Promise.resolve();
       this.probeRound = null; // the queue probe's round (the options page), null: off
       this.probed = null; // the pick the probe ran on
+      this.searchFallback = false; // Yahoo's search box for an off-screen row (the options page)
     }
 
     /** A turn has not settled yet. */
@@ -110,6 +121,13 @@
 
     left() {
       return this.tracker.clockLeft(this.now());
+    }
+
+    /** Seconds left, or Infinity before the room's first clock frame: the row loop then runs as
+     * if time were plenty, as planWait and the re-click budgets already do. */
+    leftOrPlenty() {
+      const left = this.left();
+      return left === null || left === undefined || Number.isNaN(left) ? Infinity : left;
     }
 
     /** The pick landed, or the user took it over. */
@@ -147,6 +165,18 @@
         if (!(await this.pause(ctx, Math.min(200, Math.max(1, end - this.now()))))) break;
       }
       return this.done(ctx.k);
+    }
+
+    /** GET /plan for this turn: the plan, STOP, or null when the ask failed (the API
+     * restarting, a 5xx, the worker gone): the turn asks again rather than ending. */
+    async ask(ctx, wait, board) {
+      try {
+        return await this.wait(ctx, this.plan(wait, board, ctx.signal));
+      } catch (e) {
+        ctx.planErrors++;
+        ctx.planError = [e && e.status, String((e && e.message) || e)].filter(Boolean).join(" ");
+        return null;
+      }
     }
 
     /** The user took pick ``k`` by hand: its turn touches the page no more (G4). */
@@ -225,23 +255,37 @@
         const until = this.now() + first * 1000;
         const waitLeft = () =>
           Math.max(0, Math.min(planWait(this.left()), Math.floor((until - this.now()) / 1000)));
-        let plan = await this.wait(ctx, this.plan(first, board, ctx.signal));
+        let plan = await this.ask(ctx, first, board);
         while (plan !== STOP && !current(plan) && this.live(ctx)) {
           const wait = waitLeft();
           if (wait <= 0) {
             // The solve can land just after the wait gives up: one last look before clicking.
-            const again = await this.wait(ctx, this.plan(0, board, ctx.signal));
+            const again = await this.ask(ctx, 0, board);
             if (current(again)) plan = again;
             break;
           }
           // An answer for an older board came back before the wait was up (the API predates
-          // the board contract): ask again.
-          if (!(await this.pause(ctx, ASK_AGAIN_MS))) break;
-          const again = await this.wait(ctx, this.plan(waitLeft(), board, ctx.signal));
+          // the board contract), or none did (the ask failed): ask again.
+          if (!(await this.pause(ctx, plan ? ASK_AGAIN_MS : RETRY_MS))) break;
+          const again = await this.ask(ctx, waitLeft(), board);
           if (again === STOP) break;
           if (again) plan = again;
         }
         if (plan === STOP) plan = null;
+        // The plan the page fetched ahead for this pick, when it is on this turn's board or the
+        // asks brought nothing at all (an older board's plan is acted on as stale).
+        const held = this.live(ctx) && !current(plan) ? this.held(k) : null;
+        if (held && (current(held) || !plan)) plan = held;
+        if (ctx.planErrors) {
+          this.emit({
+            type: "note",
+            what: "plan errors",
+            overall: k,
+            errors: ctx.planErrors,
+            msg: ctx.planError,
+            board: plan && Number.isInteger(plan.board) ? plan.board : null,
+          });
+        }
         out.fresh = current(plan);
         out.board = plan && Number.isInteger(plan.board) ? plan.board : null;
         out.waited_ms = plan ? plan.waited_ms : null;
@@ -258,12 +302,12 @@
           if (!(await this.pause(ctx, 150))) break;
         }
 
-        if (this.probeDue(k) && this.live(ctx) && this.left() > BACKSTOP_BY_S + 8) {
+        if (this.probeDue(k) && this.live(ctx) && this.leftOrPlenty() > BACKSTOP_BY_S + 8) {
           await this.probe(ctx, cands.find((x) => !this.tracker.taken().has(String(x.yahoo_player_id))));
         }
 
         for (const c of cands) {
-          if (!this.live(ctx) || this.left() <= BACKSTOP_BY_S) break;
+          if (!this.live(ctx) || this.leftOrPlenty() <= BACKSTOP_BY_S) break;
           if (this.tracker.taken().has(String(c.yahoo_player_id))) continue;
           const r = await this.rowDraft(ctx, c);
           this.log(`#${k} ${c.name}: ${r}`);
@@ -393,7 +437,7 @@
         via = "scroll";
         row = await this.page(() => this.dom.scrollTo(c));
       }
-      if (!row && this.live(ctx) && this.left() > BACKSTOP_BY_S + 2) {
+      if (!row && this.searchFallback && this.live(ctx) && this.leftOrPlenty() > BACKSTOP_BY_S + 2) {
         via = "search";
         row = await this.page(() => this.dom.search(c));
       }

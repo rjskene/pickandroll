@@ -298,6 +298,7 @@
       const r = await call("status");
       S.base = r.api || S.base;
       drafter.probeRound = /^\d+$/.test(String(r.probe_round)) ? Number(r.probe_round) : null;
+      drafter.searchFallback = r.search_fallback === "on";
       if (!r.attached) {
         S.attached = false;
         S.room = null;
@@ -437,12 +438,26 @@
       ? [...panel.querySelectorAll("li")].filter((li) => li.querySelector("button") && li.textContent.trim().length > 4)
       : [];
   };
+  let queueStuck = null; // the entry last noted as having no remove control
   async function clearQueue() {
     for (let i = 0; i < 12; i++) {
       const items = qItems();
-      if (!items.length) return true;
-      const b = [...items[0].querySelectorAll("button")].pop();
-      if (!b) break;
+      if (!items.length) {
+        queueStuck = null;
+        return true;
+      }
+      // Only a control labelled as the entry's remove: on my turn its last button can be Draft.
+      const controls = [...items[0].querySelectorAll("button, [role=button]")];
+      const b = controls.find((x) => PR.isRemoveControl(labelsOf(x)));
+      if (!b) {
+        const entry = items[0].textContent.replace(/\s+/g, " ").trim().slice(0, 40);
+        if (queueStuck !== entry) {
+          queueStuck = entry;
+          const labels = controls.map((x) => labelsOf(x).filter(Boolean).join(" | ").slice(0, 40));
+          emit({ type: "note", what: "queue entry left: no remove control", entry, labels });
+        }
+        break;
+      }
       b.click();
       await sleep(300);
       if (qItems().length >= items.length) break;
@@ -593,6 +608,7 @@
       render();
       return plan;
     },
+    held: (k) => (S.plan && S.plan.for === k ? S.plan : null),
     emit,
     sleep,
     now: () => Date.now(),
@@ -617,8 +633,9 @@
     });
   }
   // Once a second while armed: start a turn the on-deck frame did not start, and between turns
-  // undo Yahoo's flip into autopick mode and keep its queue empty (we queue only for the pick
-  // on the clock). A switch the user turned on by hand is theirs and left alone.
+  // undo Yahoo's flip into autopick mode (or a backstop's switch a turn could not undo) and keep
+  // its queue empty (we queue only for the pick on the clock). A switch the user turned on by
+  // hand is theirs and left alone, with its queue.
   async function guard() {
     if (!userArmed()) return;
     const k = tracker.myTurnNow();
@@ -632,35 +649,35 @@
       if (n !== null && n === tracker.contiguous() + 1) takeTurn(n, "title");
       return;
     }
-    if (S.autopickMode && S.autoReason === "autopick" && autodraftOn() === true) {
-      await setAutodraft(false);
+    const ours = drafter.touched.autodraft;
+    const act = PR.guardActions({ on: autodraftOn(), reason: S.autoReason, ours, queued: qItems().length });
+    if (act.autodraftOff) {
+      if ((await setAutodraft(false)) === true) return; // still on: leave the queue alone
+      if (ours) drafter.touched.autodraft = false;
       emit({ type: "note", what: "autodraft off by pickandroll" });
     }
-    if (qItems().length) await clearQueue();
+    if (act.clearQueue) await clearQueue();
   }
 
-  // Yahoo's Autodraft switch. While it is on Yahoo picks for the seat, reported as control
-  // absent. Only a flip Yahoo makes (a missed pick puts the seat into autopick mode) carries
-  // reason "autopick", which G5 counts; on at entry or by a trusted click is not a flip. Off
-  // again restores control.
+  // Yahoo's Autodraft switch. While the user or Yahoo has it on, Yahoo picks for the seat,
+  // reported as control absent. Only a flip Yahoo makes (a missed pick puts the seat into
+  // autopick mode) carries reason "autopick", which G5 counts; on at entry or by a trusted click
+  // is not a flip. The drafter's own switch (its backstop: an untrusted click) is neither: the
+  // seat stays armed, so the next turn, back to back included, still starts. Off again restores
+  // control.
   function watchYahoo() {
     const on = autodraftOn();
     const was = S.autodraft;
     S.autodraft = on;
-    if (on === null || was === on) return;
-    if (was === null) {
-      emit({ type: "note", what: "autodraft switch seen", on });
-      if (!on) return;
-      S.autoReason = "autodraft at entry";
-    } else if (on) {
-      const byHand = Date.now() - S.autodraftClickAt < BY_HAND_MS;
-      S.autoReason = byHand ? "autodraft by hand" : "autopick";
-      emit({ type: "note", what: byHand ? "autodraft on by hand" : "autodraft on by Yahoo" });
-    } else {
-      S.autoReason = null;
-      emit({ type: "note", what: "autodraft off" });
-    }
-    S.autopickMode = on;
+    const seen = PR.autodraftSeen(was, on, {
+      ours: drafter.touched.autodraft,
+      byHand: Date.now() - S.autodraftClickAt < BY_HAND_MS,
+    });
+    if (!seen) return;
+    emit({ type: "note", what: seen.note, ...(was === null ? { on } : {}) });
+    if (seen.autopick === null) return; // off at entry
+    S.autoReason = seen.reason;
+    S.autopickMode = seen.autopick;
     reportControl();
     render();
   }
@@ -669,7 +686,8 @@
     for (const r of records) {
       for (const n of r.addedNodes) {
         const text = n.nodeType === 1 || n.nodeType === 3 ? n.textContent || "" : "";
-        if (text.length < 400 && /autopick mode/i.test(text) && !S.autopickMode) {
+        // With the drafter's backstop switch on, Yahoo picking from our queue is not a flip.
+        if (text.length < 400 && /autopick mode/i.test(text) && !S.autopickMode && !drafter.touched.autodraft) {
           S.autopickMode = true;
           S.autoReason = "autopick";
           emit({ type: "note", what: "autopick banner", text: text.trim().slice(0, 120) });

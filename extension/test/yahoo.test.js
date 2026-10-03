@@ -78,3 +78,51 @@ test("a probe on a Draft control that lands nothing is a dropped click; failed i
   assert.equal(Y.probeOutcome(false, false, ["Add to Queue"]), "failed");
   assert.equal(Y.probeOutcome(false, false, ["", "", ""]), "failed"); // an unlabelled star
 });
+
+test("a queue entry is removed only through a control labelled remove or queue, never Draft", () => {
+  assert.equal(Y.isRemoveControl(["Remove", "", ""]), true);
+  assert.equal(Y.isRemoveControl([null, "Remove Nikola Jokić from queue", ""]), true);
+  assert.equal(Y.isRemoveControl(["", "Delete", ""]), true);
+  assert.equal(Y.isRemoveControl(["", "", ""]), false); // unlabelled: the old positional pick
+  assert.equal(Y.isRemoveControl([null, null, "×"]), false);
+  assert.equal(Y.isRemoveControl(["Draft"]), false);
+  assert.equal(Y.isRemoveControl(["Draft", "Remove from queue"]), false); // any Draft label refuses it
+});
+
+test("the drafter's own Autodraft switch leaves the seat armed; only Yahoo's flip is autopick", () => {
+  const off = { autopick: false, reason: null, note: "autodraft off" };
+  assert.equal(Y.autodraftSeen(false, false), null);
+  assert.equal(Y.autodraftSeen(true, null), null); // switch not found: nothing changes
+  assert.deepEqual(Y.autodraftSeen(false, true, { ours: true }), {
+    autopick: false,
+    reason: "autodraft by pickandroll",
+    note: "autodraft on by pickandroll",
+  });
+  assert.deepEqual(Y.autodraftSeen(true, false, { ours: true }), off);
+  assert.deepEqual(Y.autodraftSeen(false, true), { autopick: true, reason: "autopick", note: "autodraft on by Yahoo" });
+  assert.deepEqual(Y.autodraftSeen(false, true, { byHand: true }), {
+    autopick: true,
+    reason: "autodraft by hand",
+    note: "autodraft on by hand",
+  });
+  assert.equal(Y.autodraftSeen(null, true).reason, "autodraft at entry");
+  assert.equal(Y.autodraftSeen(null, true).autopick, true);
+  assert.equal(Y.autodraftSeen(null, false).autopick, null); // off at entry: nothing to report
+});
+
+test("the guard leaves a hand-set Autodraft and its queue alone", () => {
+  const g = (o) => Y.guardActions(o);
+  // Yahoo's flip after a missed pick: switch off, then the queue.
+  assert.deepEqual(g({ on: true, reason: "autopick", queued: 1 }), { autodraftOff: true, clearQueue: true });
+  // The user's own: on by hand, or on at entry. Neither is touched.
+  assert.deepEqual(g({ on: true, reason: "autodraft by hand", queued: 2 }), { autodraftOff: false, clearQueue: false });
+  assert.deepEqual(g({ on: true, reason: "autodraft at entry", queued: 1 }), { autodraftOff: false, clearQueue: false });
+  // A backstop switch a turn could not undo: off, then its queue.
+  assert.deepEqual(g({ on: true, reason: "autodraft by pickandroll", ours: true, queued: 1 }), {
+    autodraftOff: true,
+    clearQueue: true,
+  });
+  // Switch off: a leftover queue is emptied (we queue only for the pick on the clock).
+  assert.deepEqual(g({ on: false, reason: null, queued: 1 }), { autodraftOff: false, clearQueue: true });
+  assert.deepEqual(g({ on: false, reason: null, queued: 0 }), { autodraftOff: false, clearQueue: false });
+});

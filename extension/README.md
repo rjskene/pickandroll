@@ -33,15 +33,22 @@ open draft tab. Content scripts only start when a page loads.
 
 Click **Armed** under Mode in the side panel and confirm. On each of your turns the drafter then:
 
-1. waits for pickandroll's plan for this exact board, the board after the pick before yours;
+1. waits for pickandroll's plan for this exact board, the board after the pick before yours. If the API does not
+   answer (restarting, an error), it keeps asking until the wait is up, then acts on the newest plan it holds,
+   including the one fetched ahead of the turn;
 2. clicks the Draft button on the plan's first available player's row, checking that the row's label names that
-   player;
+   player. A row out of view is scrolled to. Yahoo's search box is used only when the search fallback is on, on
+   the options page; it is off by default because in the September drafts the filtered table's Draft button
+   drafted the wrong player;
 3. re-clicks if a re-render swallowed the click, and falls through to the next candidate;
 4. near the deadline only, falls back to Yahoo's own queue and Autodraft:
    - it queues this pick's player and switches Autodraft on;
    - when your next pick follows straight on (seats 1 and 12), it queues the plan's player for that pick too.
 
-Autodraft is switched off again after every turn.
+Autodraft is switched off again after every turn. The drafter's own switch is not Yahoo taking the seat: the room
+stays armed, and a back-to-back turn still starts. A switch you turn on yourself is yours, and so is its queue;
+the drafter leaves both alone between turns. A queue entry is removed only through a control labelled remove or
+queue; when an entry has none, it is left and a note names its controls.
 
 - **Your pick wins.** A Draft click of yours during your turn makes the pick yours, and the drafter stops at once.
 - **Hand pick next**, in the page strip, skips the drafter for your next turn. Click it again to cancel.
@@ -90,7 +97,7 @@ nothing is lost, but the seat is away for a few seconds.
 | `lib/yahoo.js` | Yahoo's player table: row matching by headshot id and name, label checks, the plan's candidates (pure) |
 | `worker.js` | service worker: the only caller of the API; per-tab state for the panel in `chrome.storage.session` |
 | `sidepanel/` | side panel: room state, attach a session, mode, plan, detach |
-| `options/` | API and web app addresses (localhost only), Yahoo players file, the queue probe's round |
+| `options/` | API and web app addresses (localhost only), Yahoo players file, the queue probe's round, the search fallback |
 | `test/*.test.js` | unit tests (`node --test extension/test/*.test.js` from the repo root) |
 | `test/harness/` | Tier 1 for the extension: a recorded room played through the real scripts against the API |
 

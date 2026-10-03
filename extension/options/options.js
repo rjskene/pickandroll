@@ -1,7 +1,7 @@
 // pickandroll settings, kept in chrome.storage.local. Only localhost addresses are allowed:
 // the extension's host permissions cover localhost and 127.0.0.1 and nothing else.
 "use strict";
-const FIELDS = ["api", "web", "players_file", "probe_round"];
+const FIELDS = ["api", "web", "players_file", "probe_round", "search_fallback"];
 const LOCAL = /^http:\/\/(localhost|127\.0\.0\.1)(:\d{1,5})?\/?$/;
 const $ = (id) => document.getElementById(id);
 

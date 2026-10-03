@@ -14,6 +14,7 @@ const DEFAULTS = {
   web: "http://localhost:5173",
   players_file: "",
   probe_round: "3", // the queue probe's round, or "off"
+  search_fallback: "off", // "on": Yahoo's search box for a row scrolling did not find
 };
 
 async function settings() {
@@ -93,9 +94,9 @@ const ops = {
     return settings();
   },
   async status({ draft_id }) {
-    const { api: base, probe_round } = await settings();
+    const { api: base, probe_round, search_fallback } = await settings();
     const r = await attachedOr(async () => ({ room: await api(roomPath(draft_id)) }));
-    return { ...r, api: base, probe_round };
+    return { ...r, api: base, probe_round, search_fallback };
   },
   async picks({ draft_id, picks }) {
     return attachedOr(() =>
