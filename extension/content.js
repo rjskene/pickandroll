@@ -26,7 +26,6 @@
     api: "unknown", // "ok" | "down"
     base: "",
     room: null, // GET /rooms/{d}
-    request: null, // the user's pending "Draft in Yahoo" from the web app (#10)
     mode: null, // the room's mode in the API: "mirror" | "autopilot"
     control: null, // what this tab last reported: "mirror" | "absent"
     plan: null,
@@ -309,7 +308,6 @@
       if (!r.attached) {
         S.attached = false;
         S.room = null;
-        S.request = null;
         drafter.offer(null);
       } else {
         const first = S.attached !== true;
@@ -327,8 +325,9 @@
         if (first || tracker.unsent().length) flush();
         sendEvents();
         if (!S.plan || !S.plan.fresh || S.plan.version !== r.room.version) refreshPlan();
-        S.request = r.room.request || null;
-        drafter.offer(S.request); // served on its turn; a newer one stops the old (drafter.js)
+        // The user's pending "Draft in Yahoo" from the web app (#10): served on its turn; a
+        // newer one stops the old (drafter.js).
+        drafter.offer(r.room.request || null);
       }
     } catch (_) {
       // S.api says why
