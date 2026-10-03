@@ -88,7 +88,7 @@ Written by the server:
 {"type":"conflict",     "t":..., "overall":n, "session_pid":..., "session_yid":id, "room_yid":id, "room_pid":...}
 {"type":"reco",         "t":..., "board":n_applied, "version":v, "fresh":bool, "top_yid":id, "top_name":..., "top_pid":..., "cands":[yid,...], "unmapped":[{"pid":...,"name":...}], "solve_ms":..., "mode":..., "model":"horizon|roster"}
 {"type":"score",        "t":..., "wins":x, "benchmark":x, "vs_benchmark":x, "best":x, "matchups":{...}}
-{"type":"control",      "t":..., "state":"armed|mirror|absent", "slot":s, "act_at_s":n|null, "src":"api"}  // act_at_s (#10): armed turns click with n s left, null at once; on every PATCH /rooms/{d}
+{"type":"control",      "t":..., "state":"armed|mirror|absent", "slot":s, "mode":"mirror|autopilot", "act_at_s":n|null, "src":"api"}  // at attach, on every PATCH /rooms/{d} and on a team-count mismatch; act_at_s (#10): armed turns click with n s left, null at once; a rebuild restores mode and act_at_s from the last one since a detach (#20)
 {"type":"note", "what":"draft request", "t":..., "overall":n, "board":b, "yid":id}  // the web app's "Draft in Yahoo" (#10), held for the draft tab
 ```
 
@@ -102,7 +102,7 @@ Posted by the client (`POST /rooms/{draft_id}/events`):
 {"type":"pick_landed",  "t":..., "overall":n, "yid":id, "how":"row|queue|manual|expiry|autopick", "ms_from_turn":...}
 {"type":"intervention", "t":..., "who":"master|emissary|drone|user", "what":"..."}
 {"type":"heartbeat",    "t":..., "worker":bool, ...}  // worker: the Worker timer host is live (G7)
-{"type":"note", "what":"request", "t":..., "overall":n, "yid":id, "result":"landed|manual|other|stopped|failed", "attempts":k}  // a "Draft in Yahoo" served (#10); "request failed" (with attempts or msg) drops it in the API and hands an armed turn back
+{"type":"note", "what":"request", "t":..., "overall":n, "yid":id, "result":"landed|manual|other|stopped|failed", "attempts":k}  // a "Draft in Yahoo" served (#10); "request failed" (with attempts or msg) drops it in the API when its overall and yid both match the pending request (a request the user replaced since is kept), and hands an armed turn back
 {"type":"note",         "t":..., "what":"..."}
 ```
 
@@ -153,7 +153,7 @@ Room protocol for the drone: attach the room (`POST /rooms`, draft id = Yahoo's 
 room) while still in the waiting room, at least 60 s before pick 1, and confirm the attach before reporting the
 room; enter the draft client the moment it opens; Yahoo's Autodraft switch is disabled until pick 1 is on the clock.
 
-Queue probe (every armed draft): the Yahoo queue path (the click backstop, one entry or two) has never been seen in a real room, and notes from drafts 5-6 say the row's first-cell button on our turn may be Draft rather than the queue star. So on one of our turns per draft, by default the first turn of round 3 that is not back-to-back, the drafter stars the plan's #1 candidate before clicking Draft, reads the queue panel, logs one `queue_probe` event and then proceeds normally. Both outcomes are harmless: the star queues our player, or it drafts the player we wanted. `dropped` means a Draft-labelled control took no effect inside 1.9 s (a lost click, as the harness simulates); `failed` is reserved for a control that was not Draft and produced neither. The scorecard prints the outcome. Configurable (round, or off) on the options page.
+Queue probe (every armed draft): the Yahoo queue path (the click backstop, one entry or two) has never been seen in a real room, and notes from drafts 5-6 say the row's first-cell button on our turn may be Draft rather than the queue star. So on one of our turns per draft, by default the first turn of round 3 that is not back-to-back, the drafter stars the plan's #1 candidate before clicking Draft, reads the queue panel, logs one `queue_probe` event and then proceeds normally. Both outcomes are harmless: the star queues our player, or it drafts the player we wanted. `dropped` means a Draft-labelled control took no effect inside 1.9 s (a lost click, as the harness simulates); `failed` is reserved for a control that was not Draft and produced neither. The scorecard prints the outcome. Configurable (round, or off) on the options page. The probe runs only with more than 14 s on the clock (8 s for it before the 6 s backstop), so with `act_at_s` at 14 s or less (#10) it never runs and the scorecard shows no probe: a draft that must probe keeps `act_at_s` null or at 16 s or more (the hold releases at 15 s or less, in 250 ms steps, and the last look's round trip comes before the probe's check). It does not run during the act_at_s hold either: on our turn the first-cell control is Draft (mock 2), so the probe would draft at once and close the window the user waits for.
 
 Plan budget and the clock (#13): unless the attach gives a `time_limit`, the plan's budget follows the room's
 pick clock. It is clock − 13 s (the drafter's margin) − 12 s (pricing), at least 5 s and at most 20 s: 30 s (the

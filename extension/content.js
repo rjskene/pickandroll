@@ -320,10 +320,18 @@
         tracker.configure({ numTeams: r.room.num_teams, rounds: r.room.rounds });
         tracker.synced(r.room);
         reportControl();
+        // At once, not 15 s on: the web shows CONNECTING until one comes, and the API takes no
+        // request. The API has none after its restart too, while this tab still reads attached.
+        if (first || !r.room.heartbeat) beat();
         if (first || tracker.unsent().length) flush();
         sendEvents();
         if (!S.plan || !S.plan.fresh || S.plan.version !== r.room.version) refreshPlan();
         S.request = r.room.request || null;
+        // The user asked for another player since: the old request stops before its next try.
+        const q = drafter.requesting;
+        if (q && S.request && S.request.overall === q.k && String(S.request.yahoo_player_id) !== q.yid) {
+          q.ctx.stop("replaced");
+        }
         serveRequest();
       }
     } catch (_) {
@@ -659,6 +667,22 @@
       render();
     });
   }
+  /** The tab is alive: the web app's sync state, and the API takes a "Draft in Yahoo" request
+   * only while beats come (#20). */
+  function beat() {
+    const s = tracker.snapshot();
+    emit({
+      type: "heartbeat",
+      vis: document.visibilityState,
+      last: s.last,
+      sent: s.sent,
+      on_deck: s.on_deck ? [s.on_deck.overall, s.on_deck.slot] : null,
+      autodraft: S.autodraft,
+      frames: s.frames,
+      worker: S.worker,
+    });
+  }
+
   // "Draft in Yahoo" from the web app (#10), in mirror and autopilot: the user's player for the
   // pick on the clock, clicked on that turn only. An armed turn stands aside while it is pending
   // and goes on if it fails (drafter.js).
@@ -671,6 +695,7 @@
       emit({ type: "note", what: "request", overall: out.overall, yid: out.yid, result: out.result, attempts: out.attempts });
       if (S.drafting === label) S.drafting = null;
       render();
+      serveRequest(); // a request that replaced this one, at once
     });
     if (drafter.requesting) {
       S.drafting = label; // set before the request's first wait
@@ -892,19 +917,7 @@
     await guard();
   });
   every(HEARTBEAT_EVERY_MS, async () => {
-    const s = tracker.snapshot();
-    if (S.attached === true) {
-      emit({
-        type: "heartbeat",
-        vis: document.visibilityState,
-        last: s.last,
-        sent: s.sent,
-        on_deck: s.on_deck ? [s.on_deck.overall, s.on_deck.slot] : null,
-        autodraft: S.autodraft,
-        frames: s.frames,
-        worker: S.worker,
-      });
-    }
+    if (S.attached === true) beat();
   });
   const onReady = () => {
     mountStrip();

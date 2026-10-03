@@ -349,7 +349,9 @@ class RoomAttach(BaseModel):
     draft_id: str = Field(pattern=r"^[A-Za-z0-9_.-]{1,64}$", description="Yahoo draft id")
     slot: int | None = Field(default=None, ge=1, le=20, description="my draft slot in the room")
     mode: Literal["mirror", "autopilot"] | None = Field(
-        default=None, description="mirror the room (default) or let pickandroll draft when armed"
+        default=None,
+        description="mirror the room (default) or let pickandroll draft when armed; left out on a "
+        "rebuild, the mode last set since the last detach",
     )
     num_teams: int | None = Field(default=None, ge=2, le=20)
     room_teams: int | None = Field(
@@ -407,7 +409,9 @@ class RoomEvents(BaseModel):
 
 
 class RoomPatch(BaseModel):
-    mode: Literal["mirror", "autopilot"]
+    """What the user sets for a room; a field left out keeps its value (at least one)."""
+
+    mode: Literal["mirror", "autopilot"] | None = None
     act_at_s: int | None = Field(
         default=None,
         ge=yahoo_room.ACT_AT_MIN_S,
@@ -1009,7 +1013,8 @@ def create_app(
                     session,
                     draft_id=body.draft_id,
                     slot=int(slot),
-                    mode=option("mode", "mirror"),
+                    # None (a rebuild): the mode last set since the room's last detach.
+                    mode=body.mode,
                     num_teams=int(option("num_teams", state.settings.num_teams)),
                     ids=ids,
                     log=log,
@@ -1102,6 +1107,10 @@ def create_app(
 
     @app.patch("/rooms/{draft_id}")
     async def room_mode(draft_id: str, body: RoomPatch) -> dict[str, Any]:
+        if not {"mode", "act_at_s"} & body.model_fields_set or (
+            "mode" in body.model_fields_set and body.mode is None
+        ):
+            raise HTTPException(422, "nothing to set: give mode, act_at_s or both")
         room, session = await get_room(draft_id)
         if body.mode == "autopilot" and room.teams_mismatch is not None:
             # The session's draft is not the room's (#17): every plan would be for the wrong picks.
@@ -1110,22 +1119,15 @@ def create_app(
                 f"room {draft_id} has {room.teams_mismatch} teams but is attached for "
                 f"{room.num_teams}: attach a session with the room's team count before arming",
             )
-        room.mode = body.mode
-        room.control = yahoo_room.control_for(body.mode)
+        if body.mode is not None:
+            room.mode = body.mode
+            room.control = yahoo_room.control_for(body.mode)
         if "act_at_s" in body.model_fields_set:
             room.act_at_s = body.act_at_s
-        room.log.append(
-            {
-                "type": "control",
-                "state": room.control,
-                "slot": room.slot,
-                "act_at_s": room.act_at_s,
-                "src": "api",
-            }
-        )
+        yahoo_room.log_control(room)
         session.publish(
             "room_mode",
-            {"draft_id": draft_id, "mode": body.mode, "act_at_s": room.act_at_s},
+            {"draft_id": draft_id, "mode": room.mode, "act_at_s": room.act_at_s},
             bump=False,
         )
         return room_view(room, session)

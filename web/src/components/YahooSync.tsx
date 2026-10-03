@@ -167,6 +167,9 @@ export function DraftInYahoo({ playerId, name }: { playerId: string; name: strin
   const s = d.session;
   const queryClient = useQueryClient();
   const room = d.room?.attached ? d.room : null;
+  const now = useNow();
+  const age = room ? heartbeatAge(room, now) : null;
+  const silent = age === null || age > SILENT_AFTER_S; // no draft tab to click it (the API refuses too)
   const myTurn = !!room && !s.complete && s.on_the_clock && room.on_the_clock && room.next_overall === s.next_overall;
   // The draft tab drafts by Yahoo id: the plan it reads has the id for each candidate.
   const plan = useQuery({
@@ -183,14 +186,16 @@ export function DraftInYahoo({ playerId, name }: { playerId: string; name: strin
   const pending = room.request && room.request.overall === s.next_overall ? room.request : null;
   const title = !myTurn
     ? "on your turn only"
-    : yid
+    : silent
+      ? "the draft tab is silent: open the Yahoo draft room in Chrome with the extension"
+      : yid
       ? `the draft tab drafts ${name} for you in Yahoo`
       : plan.isFetching
         ? "finding the player in the room"
         : "no Yahoo id for this player: pin the name on the sync card (8)";
   return (
     <>
-      <button className="primary" style={{ fontSize: 15, padding: "9px 18px" }} disabled={!myTurn || !yid || send.isPending} onClick={() => send.mutate()} title={title}>
+      <button className="primary" style={{ fontSize: 15, padding: "9px 18px" }} disabled={!myTurn || silent || !yid || send.isPending} onClick={() => send.mutate()} title={title}>
         Draft {shortName(name)} in Yahoo
       </button>
       {pending && <span className="accent" style={{ fontSize: 12 }}>sent: the draft tab is drafting {pending.name}</span>}

@@ -13,7 +13,8 @@ const K = 24; // my pick: round 2, slot 1
  * ``clockFrame``: false starts the turn before any D| frame, ``clock``: null sends pick K's D|
  * frame without its clock; ``searchable``: rows Yahoo's search box finds; ``settleMs``: a click
  * returns that long after it registers (Yahoo's ~400 ms); ``backToBack``: pick K+1 is mine too
- * and goes on the clock the moment K lands (slots 1 and 12). */
+ * and goes on the clock the moment K lands (slots 1 and 12); ``draftableAfter``: the table shows
+ * no Draft buttons until that many ms into the turn (a click on a row then finds none). */
 function world({
   visible = ["101", "102", "103"],
   clicksToLand = 1,
@@ -28,10 +29,12 @@ function world({
   searchable = [],
   settleMs = 0,
   backToBack = false,
+  draftableAfter = 0,
   dud = [], // rows whose clicks never land
   mislabeled = [], // rows whose Draft button names another player
 } = {}) {
   const clock = { t: 1_000_000 };
+  const draftable = () => clock.t >= 1_000_000 + draftableAfter;
   const queue = [];
   const run = () => {
     queue.sort((x, y) => x[0] - y[0]);
@@ -54,7 +57,7 @@ function world({
   const log = { clicks: [], plans: [], boards: [], events: [], autodraft: [], queued: [], queued2: [], searches: [], cleared: 0, reset: 0 };
   let auto = false;
   const dom = {
-    draftable: () => true,
+    draftable,
     find: (c) => (visible.includes(c.yahoo_player_id) ? { yid: c.yahoo_player_id } : null),
     scrollTo: async () => null,
     async search(c) {
@@ -62,6 +65,7 @@ function world({
       return searchable.includes(c.yahoo_player_id) ? { yid: c.yahoo_player_id } : null;
     },
     async click(row, c) {
+      if (!draftable()) return "none";
       if (mislabeled.includes(c.yahoo_player_id)) return "mismatch";
       log.clicks.push([clock.t, c.yahoo_player_id, tracker.myTurnNow()]);
       if (dud.includes(c.yahoo_player_id)) return "clicked";
@@ -558,4 +562,37 @@ test("a turn superseded while its click waits for the page clicks nothing", asyn
   assert.equal(out.result, "superseded");
   assert.deepEqual(log.clicks, [], "the queued click is a no-op");
   assert.equal(tracker.attempts.has(K), false, "and notes no attempt");
+});
+
+// ---------------------------------------------------------------- #20
+test("a request at the turn's frame waits for the Draft buttons, as a row draft does", async () => {
+  const { d, log } = world({ draftableAfter: 600 });
+  const out = await d.request(ask("103"));
+  assert.equal(out.result, "landed");
+  assert.deepEqual(attempts(log), [["103", "request", 1]], "the first try is not spent on a bare row");
+  const [[t]] = log.clicks;
+  assert.ok(t - 1_000_000 >= 600 && t - 1_000_000 < 1000, `clicked at ${t - 1_000_000} ms`);
+});
+
+test("each request is its own: the same player asked again after a failed request is served", async () => {
+  const { d, log } = world({ clicksToLand: 3 }); // the first request's two clicks land nothing
+  const first = await d.request(ask("103", { t: "t1" }));
+  assert.equal(first.result, "failed");
+  assert.equal(await d.request(ask("103", { t: "t1" })), null, "the same request is served once");
+  const again = d.request(ask("103", { t: "t2" })); // the user asks for 103 again
+  assert.equal(d.yields(K), true, "an armed turn stands aside for it");
+  assert.equal((await again).result, "landed");
+  assert.deepEqual(attempts(log), [["103", "request", 1], ["103", "request", 2], ["103", "request", 1]]);
+});
+
+test("a request replaced by the user stops before its next try, with no failure note", async () => {
+  const { d, log, at } = world({ dud: ["103"] });
+  at(1000, () => d.requesting.ctx.stop("replaced")); // the tab read the user's newer request
+  const first = await d.request(ask("103"));
+  assert.equal(first.result, "stopped");
+  assert.equal(first.attempts, 1);
+  assert.equal(log.events.some((e) => e.what === "request failed"), false);
+  const second = await d.request(ask("102"));
+  assert.equal(second.result, "landed");
+  assert.deepEqual(attempts(log), [["103", "request", 1], ["102", "request", 1]]);
 });

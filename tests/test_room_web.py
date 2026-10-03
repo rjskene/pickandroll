@@ -52,8 +52,18 @@ class Listener:
                 return out
 
     def close(self):
+        # drain() ends on a get that timed out and is still waiting: cancel it before the loop
+        # stops, or it is collected later as "Event loop is closed" in another test.
+        async def settle():
+            pending = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
+            for t in pending:
+                t.cancel()
+            await asyncio.gather(*pending, return_exceptions=True)
+
+        asyncio.run_coroutine_threadsafe(settle(), self.loop).result(2)
         self.loop.call_soon_threadsafe(self.loop.stop)
         self.thread.join(2)
+        self.loop.close()
 
 
 def test_a_publish_from_a_worker_thread_reaches_a_waiting_stream_at_once(room):

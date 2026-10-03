@@ -39,6 +39,9 @@ Mode = Literal["mirror", "autopilot"]
 BOARD_TAIL = 20
 #: A heartbeat reaches the log at most this often; the latest is always kept in memory.
 HEARTBEAT_EVERY_S = 60.0
+#: The draft tab beats every 15 s: two beats missed and it is silent (the web's NO SIGNAL), and
+#: a "Draft in Yahoo" request is refused rather than held for nobody.
+SILENT_AFTER_S = 40.0
 #: The plan's budget follows the room's pick clock: the drafter clicks with CLOCK_MARGIN_S of
 #: the clock left (at 17 s of 30), and the exact prices that correct a capped plan take up to
 #: PRICING_S after it (their 10 s budget and the solve's overhead). A 30 s clock (the mocks)
@@ -77,6 +80,35 @@ ACT_AT_MAX_S = 30
 
 def control_for(mode: Mode) -> str:
     return "armed" if mode == "autopilot" else "mirror"
+
+
+def log_control(room: YahooRoom) -> None:
+    """The API's control event: what the user set for the room (mode, act_at_s) and the
+    control it gives, the record a rebuild restores them from (#20)."""
+    room.log.append(
+        {
+            "type": "control",
+            "state": room.control,
+            "slot": room.slot,
+            "mode": room.mode,
+            "act_at_s": room.act_at_s,
+            "src": "api",
+        }
+    )
+
+
+def set_since_detach(prior: list[dict[str, Any]]) -> tuple[Mode | None, int | None]:
+    """The mode and act_at_s the API's control events last set since the room's last detach
+    (``None`` for a mode never set). Events from before #20 carry no mode: "armed" is
+    autopilot."""
+    start = max((i + 1 for i, e in enumerate(prior) if e.get("type") == "detach"), default=0)
+    set_by_api = [e for e in prior[start:] if e.get("type") == "control" and e.get("src") == "api"]
+    mode: Mode | None = None
+    if set_by_api:
+        last = set_by_api[-1]
+        mode = last.get("mode") or ("autopilot" if last.get("state") == "armed" else "mirror")
+    act_at_s = next((e["act_at_s"] for e in reversed(set_by_api) if "act_at_s" in e), None)
+    return mode, act_at_s
 
 
 @dataclass(frozen=True)
@@ -154,7 +186,7 @@ def attach_room(
     *,
     draft_id: str,
     slot: int,
-    mode: Mode,
+    mode: Mode | None,
     num_teams: int,
     ids: YahooIdMap,
     log: FidelityLog,
@@ -163,7 +195,9 @@ def attach_room(
     attach_record: dict[str, Any],
 ) -> YahooRoom:
     """Bind a room to a session, write the attach record and replay any picks already in the
-    log (a restart, or a second attach for the same draft)."""
+    log (a restart, or a second attach for the same draft). ``mode`` ``None`` is a rebuild:
+    the room takes the mode last set since its last detach (mirror when none was), from the
+    waiting room on as well as mid-draft. Any attach keeps act_at_s from the same record."""
     state = session.state
     if num_teams != state.settings.num_teams:
         raise ValueError(f"the room has {num_teams} teams, the session {state.settings.num_teams}")
@@ -175,6 +209,9 @@ def attach_room(
                 f"the session already has picks for draft position {state.my_position}"
             )
         state.my_position = slot
+    set_mode, set_act_at_s = set_since_detach(prior)
+    if mode is None:
+        mode = set_mode or "mirror"
     room = YahooRoom(
         draft_id=draft_id,
         slot=slot,
@@ -185,6 +222,7 @@ def attach_room(
         log=log,
         players_file=players_file,
     )
+    room.act_at_s = set_act_at_s
     room_picks = [e for e in prior if e.get("type") == "room_pick"]
     controls = [e for e in prior if e.get("type") == "control"]
     room.resumed = bool(room_picks)
@@ -207,18 +245,9 @@ def attach_room(
     )
     if controls and room.resumed:
         room.control = controls[-1].get("state", "absent")
-        # A restart keeps the armed turns' timing the user set.
-        room.act_at_s = next(
-            (
-                c["act_at_s"]
-                for c in reversed(controls)
-                if c.get("src") == "api" and "act_at_s" in c
-            ),
-            None,
-        )
     else:
         room.control = control_for(mode)
-        log.append({"type": "control", "state": room.control, "slot": slot, "src": "api"})
+        log_control(room)
     for e in room_picks:
         overall = int(e["overall"])
         if overall not in room.ledger:
@@ -476,6 +505,13 @@ def pin(session: Session, room: YahooRoom, yid: str, pid: str) -> dict[str, Any]
 
 
 # --------------------------------------------------------------------------- draft request
+def heartbeat_age(room: YahooRoom) -> float | None:
+    """Seconds since the draft tab's last heartbeat reached the API, None before the first."""
+    if room.heartbeat is None:
+        return None
+    return round((to_ms(now_iso()) - to_ms(room.heartbeat["recv"])) / 1000.0, 1)
+
+
 def request_pick(
     session: Session, room: YahooRoom, overall: int, board: int, yid: str
 ) -> dict[str, Any]:
@@ -493,6 +529,13 @@ def request_pick(
         )
     if board != made:
         raise ValueError(f"board {board} is not the session's: it has {made} picks")
+    age = heartbeat_age(room)
+    if age is None or age > SILENT_AFTER_S:
+        heard = "never" if age is None else f"not for {age:.0f} s"
+        raise ValueError(
+            f"the draft tab has been heard from {heard}: open the Yahoo draft room in Chrome "
+            "with the extension, or pick in Yahoo"
+        )
     yid = str(yid)
     if not room.ids.known(yid):
         raise ValueError(f"unknown Yahoo player {yid}")
@@ -577,8 +620,15 @@ def record_events(
             room.control = e["state"]
         q = room.request
         failed = e["type"] == "note" and e.get("what") == "request failed"
-        if failed and q is not None and e.get("overall") == q["overall"]:
-            room.request = None  # the tab gave up; in autopilot the drafter takes the turn
+        # The tab gave up on this request (in autopilot the drafter takes the turn back); a
+        # failure of one the user has since replaced leaves the new one standing.
+        if (
+            failed
+            and q is not None
+            and e.get("overall") == q["overall"]
+            and str(e.get("yid")) == q["yahoo_player_id"]
+        ):
+            room.request = None
         room.log.append(e)
         written += 1
     shown = [e for e in clean if e["type"] != "heartbeat"]
@@ -801,7 +851,7 @@ def check_teams(session: Session, room: YahooRoom, events: list[dict[str, Any]])
     was = room.mode
     room.mode = "mirror"
     room.control = control_for("mirror")
-    room.log.append({"type": "control", "state": room.control, "slot": room.slot, "src": "api"})
+    log_control(room)
     room.log.append(
         {
             "type": "note",
@@ -876,8 +926,6 @@ def summary(session: Session, room: YahooRoom) -> dict[str, Any]:
         "unmatched_yahoo": room.ids.unmatched(limit=25),
         "unmatched_projection": unmatched_projection(session, room, limit=25),
         "heartbeat": heartbeat,
-        "heartbeat_age_s": None
-        if heartbeat is None
-        else round((to_ms(now_iso()) - to_ms(heartbeat["recv"])) / 1000.0, 1),
+        "heartbeat_age_s": heartbeat_age(room),
         "fidelity_log": str(room.log.path),
     }
