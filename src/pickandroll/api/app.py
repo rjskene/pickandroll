@@ -363,7 +363,9 @@ class RoomAttach(BaseModel):
 
 
 class RoomPickIn(BaseModel):
-    overall: int = Field(ge=1)
+    overall: int = Field(
+        description="outside 1..num_teams x rounds: dropped and counted, not refused"
+    )
     yahoo_player_id: str | int | None = None
     label: str | None = Field(default=None, description='Board label, "F. Last", with team')
     team: str | None = None

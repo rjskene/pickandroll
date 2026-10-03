@@ -206,21 +206,26 @@ def attach_room(
 
 # --------------------------------------------------------------------------- picks
 def ingest(session: Session, room: YahooRoom, items: list[dict[str, Any]]) -> dict[str, Any]:
-    """Record a batch of room picks and bring the session level with the room. A pick past
-    the draft's last overall (num_teams x rounds) is no room's: it is dropped and counted in
-    ``ignored``, never the batch with it, and the log gets one note per batch that had any."""
+    """Record a batch of room picks and bring the session level with the room. A pick outside
+    the draft (overall below 1 or past num_teams x rounds) is no room's: it is dropped and
+    counted in ``ignored``, never the batch with it, and the log gets one note per batch that
+    had any."""
     unresolved = []
     new = 0
     last = room.num_teams * room.rounds
-    past = sorted({int(i["overall"]) for i in items if int(i["overall"]) > last})
+    outside = sorted({int(i["overall"]) for i in items if not 1 <= int(i["overall"]) <= last})
     with room.lock:
-        if past:
+        if outside:
             room.log.append(
-                {"type": "note", "what": "room picks past the end ignored", "overalls": past}
+                {
+                    "type": "note",
+                    "what": "room picks outside the draft ignored",
+                    "overalls": outside,
+                }
             )
         for item in items:
             overall = int(item["overall"])
-            if overall > last:
+            if not 1 <= overall <= last:
                 continue
             yid = item.get("yahoo_player_id")
             if (yid is None or yid == "") and item.get("label"):
@@ -264,7 +269,7 @@ def ingest(session: Session, room: YahooRoom, items: list[dict[str, Any]]) -> di
     state = session.state
     return {
         "received": len(items),
-        "ignored": sum(1 for i in items if int(i["overall"]) > last),
+        "ignored": sum(1 for i in items if not 1 <= int(i["overall"]) <= last),
         "new": new,
         "applied": sum(1 for c in changes if c["kind"] in ("new", "held")),
         "replaced": sum(1 for c in changes if c["kind"] in ("conflict", "repair")),
@@ -446,6 +451,10 @@ def _event_problem(e: dict[str, Any]) -> str | None:
         return f"{kind} without an integer overall"
     if kind == "control" and e.get("state") not in CONTROL_STATES:
         return f"control state {e.get('state')!r}"
+    try:
+        to_iso(e.get("t"))
+    except (ValueError, TypeError, OverflowError, OSError):
+        return "bad t"
     return None
 
 

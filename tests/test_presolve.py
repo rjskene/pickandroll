@@ -212,25 +212,48 @@ def test_a_presolved_board_is_the_recommendation_the_moment_it_arrives(room):
     assert d["D3"]["n"] == len(priced) and d["D3_plan"]["branch"] == 1
 
 
-def test_a_branch_still_solving_at_the_turn_is_pending_and_logged_late(room):
+def test_a_branch_still_solving_at_the_turn_is_pending_and_logged_late(room, monkeypatch):
     client, store, _ = room
     sid = _attach(client)["session_id"]
     session = store.get(sid)
-    _until(lambda: _solver(client, sid)["presolve"]["solved"] >= ONE_AWAY)
+    # The branches and board 0's live solve, all done: under load they take far longer.
+    _until(
+        lambda: (
+            _solver(client, sid)["presolve"]["solved"] >= ONE_AWAY and session.solver.inflight == 0
+        ),
+        timeout=300.0,
+    )
+    # Board 1's live solve waits for the late branch: neither can publish first by chance.
+    gate = threading.Event()
+    original = session.state.solve_plan
+
+    def gated(problem, time_limit=None):
+        gate.wait(120)
+        return original(problem, time_limit)
+
+    monkeypatch.setattr(session.state, "solve_plan", gated)
     likely = likely_next(session.state, None)
     entry = next(
         e for e in session.solver.book.entries.values() if e.branch.picks[0][2] == likely[0]
     )
     solution, entry.solution = entry.solution, None
     entry.future = Future()  # the board arrives while its branch is still solving
-    _pick(client, 1, session.room.ids.yid(likely[0]))
-    _until(lambda: _solver(client, sid)["presolve"]["pending"] == 1)
-    entry.solution = solution
-    entry.future.set_result(solution)
-    _until(lambda: session.recommendation.get("branch") and session.recommendation)
-    recos = [e for e in session.room.log.read() if e.get("type") == "reco" and e["board"] == 1]
+    try:
+        _pick(client, 1, session.room.ids.yid(likely[0]))
+        _until(lambda: session.solver.book.pending == 1)
+        entry.solution = solution
+        entry.future.set_result(solution)
+
+        def board_one():
+            return [
+                e for e in session.room.log.read() if e.get("type") == "reco" and e["board"] == 1
+            ]
+
+        recos = _until(board_one)
+    finally:
+        gate.set()
     assert recos[0]["branch"] is True and recos[0]["branch_late"] is True
-    assert _solver(client, sid)["presolve"]["hits"] == 0
+    assert session.solver.book.hits == 0
 
 
 def test_a_board_nobody_planned_is_solved_as_usual(room):

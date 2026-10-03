@@ -410,21 +410,42 @@ def test_an_unknown_event_type_never_loses_the_batch(league):
     assert [n["ignored"] for n in notes] == [{"type 'queue_probe'": 1}]
 
 
-def test_a_pick_past_the_drafts_end_is_dropped_never_the_batch(league):
-    """Three picks and a pick 157 in one batch: the three are recorded, 157 is ignored."""
+def test_an_event_with_a_bad_time_never_loses_the_batch(league):
+    """A note whose t is neither ISO-8601 nor epoch ms is dropped; the events with it stay."""
+    directory, _picks = league
+    with app_for(directory) as c:
+        attach(c)
+        batch = [
+            {"type": "draft_attempt", "overall": 1, "yid": "a", "method": "row", "attempt": 1},
+            {"type": "note", "what": "x", "t": "yesterday"},
+            {"type": "pick_landed", "overall": 1, "yid": "a", "how": "row"},
+        ]
+        r = c.post("/rooms/d1/events", json={"events": batch})
+        assert r.status_code == 200
+        assert r.json()["written"] == 2 and r.json()["ignored"] == 1
+    events = _events(directory, "d1")
+    assert not [e for e in events if e.get("what") == "x"]
+    notes = [e for e in events if e.get("what") == "client events ignored"]
+    assert [n["ignored"] for n in notes] == [{"bad t": 1}]
+
+
+def test_a_pick_outside_the_draft_is_dropped_never_the_batch(league):
+    """Three picks, a pick 0 and a pick 157 in one batch: the three are recorded, 0 and 157
+    are ignored."""
     directory, picks = league
     with app_for(directory) as c:
         attach(c)
         items = [{"overall": p.overall, "yahoo_player_id": p.yahoo_player_id} for p in picks[:3]]
         items.append({"overall": 157, "yahoo_player_id": picks[3].yahoo_player_id})
+        items.append({"overall": 0, "yahoo_player_id": picks[4].yahoo_player_id})
         r = c.post("/rooms/d1/picks", json={"picks": items})
         assert r.status_code == 200
-        assert r.json()["ignored"] == 1 and r.json()["synced_through"] == 3
+        assert r.json()["ignored"] == 2 and r.json()["synced_through"] == 3
         assert c.get("/rooms/d1").json()["synced_through"] == 3
     events = _events(directory, "d1")
-    assert not [e for e in events if e.get("overall") == 157]
-    notes = [e for e in events if e.get("what") == "room picks past the end ignored"]
-    assert [n["overalls"] for n in notes] == [[157]]
+    assert not [e for e in events if e.get("overall") in (0, 157)]
+    notes = [e for e in events if e.get("what") == "room picks outside the draft ignored"]
+    assert [n["overalls"] for n in notes] == [[0, 157]]
 
 
 # --------------------------------------------------------------------------- restart
