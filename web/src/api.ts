@@ -336,6 +336,116 @@ export interface FileEntry {
   modified: string;
 }
 
+// ---------------------------------------------------------------- YAHOO SYNC: a draft room
+export type RoomMode = "mirror" | "autopilot";
+/** What the room's client was last told: armed drafts for me, mirror only follows. */
+export type RoomControl = "armed" | "mirror" | "absent";
+
+/** One client event as the fidelity log keeps it (`recv` is the API's receive time). */
+export interface RoomEventEntry {
+  type: "control" | "turn_start" | "draft_attempt" | "pick_landed" | "intervention" | "heartbeat" | "note";
+  t?: string | number;
+  recv?: string;
+  src?: string;
+  overall?: number;
+  [key: string]: unknown;
+}
+
+export interface RoomSummary {
+  attached: true;
+  draft_id: string;
+  session_id: string;
+  slot: number;
+  mode: RoomMode;
+  control: RoomControl;
+  num_teams: number;
+  /** The room's own team count when it disagrees with the session's; arming is refused then. */
+  teams_mismatch: number | null;
+  rounds: number;
+  players_file: string;
+  attached_at: string;
+  resumed: boolean;
+  mapped: number;
+  players: number;
+  room_picks: number;
+  /** The last overall up to which the session holds every room pick. */
+  synced_through: number;
+  /** The first overall the room has not reported while a later one is in: a gap. */
+  waiting_for: number | null;
+  picks_applied: number;
+  next_overall: number;
+  my_next_pick: number | null;
+  on_the_clock: boolean;
+  complete: boolean;
+  /** Room message to session pick, per pick, the latest 24. */
+  recent_lags: { overall: number; lag_ms: number }[];
+  version: number;
+  solved_version: number | null;
+  fresh: boolean;
+  /** Room picks with no projection, held on the board by a stand-in until pinned. */
+  standins: { overall: number; yid: string; name: string; as: string }[];
+  conflicts: Record<string, unknown>[];
+  unresolved: { overall: number; label: string | null; team: string | null }[];
+  unmatched_yahoo: { yahoo_player_id: string; name: string; team: string; adp: number | null }[];
+  unmatched_projection: { player_id: string; name: string; team: string; total: number }[];
+  heartbeat: RoomEventEntry | null;
+  heartbeat_age_s: number | null;
+  fidelity_log: string;
+}
+
+export type RoomStatus = RoomSummary | { attached: false };
+
+export interface RoomAttachBody {
+  draft_id: string;
+  slot: number;
+  /** The room's own team count: an attach that disagrees with the session is refused (422). */
+  room_teams?: number | null;
+  mode?: RoomMode;
+  clock_s?: number | null;
+}
+
+export interface LagStats {
+  n: number;
+  p50: number | null;
+  p95: number | null;
+  max: number | null;
+}
+
+/** One of my picks in the scorecard: the plan's top at the turn against what landed. */
+export interface FidelityRow {
+  overall: number;
+  round: number;
+  ref_name: string | null;
+  ref_kind: string | null;
+  final_name: string | null;
+  churn: boolean;
+  actual_yid: string | null;
+  actual_name: string | null;
+  /** Where the actual pick stood in the candidates the drafter acted on (1 = the top). */
+  actual_rank: number | null;
+  label: string;
+  how: string | null;
+  lag_ms: number | null;
+  turn_to_land_ms: number | null;
+  reco_ready_ms: number | null;
+  attempts: number;
+}
+
+export interface Fidelity {
+  draft_id: string;
+  slot: number;
+  num_teams: number;
+  rounds: number;
+  mode: RoomMode | null;
+  picks_seen: number;
+  total_picks: number;
+  compliance: { compliant: number; denominator: number; manual: number; my_picks_seen: number };
+  counts: Record<string, number>;
+  guardrails: { G2: LagStats; G2_all: LagStats; [key: string]: unknown };
+  rows: FidelityRow[];
+  markdown: string;
+}
+
 const BASE = "/api";
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -376,6 +486,16 @@ export const api = {
   score: (id: string) => request<Score>(`/sessions/${id}/score`),
   eventsUrl: (id: string) => `${BASE}/sessions/${id}/events`,
   yahooStatus: (id: string) => request<{ attached: boolean; running?: boolean; league?: string; polls?: number; last_error?: string | null }>(`/sessions/${id}/yahoo`),
+  // YAHOO SYNC: the draft room open in the user's Chrome, read by the extension.
+  room: (id: string) => request<RoomStatus>(`/sessions/${id}/yahoo/room`),
+  attachRoom: (id: string, body: RoomAttachBody) =>
+    request<RoomSummary>(`/sessions/${id}/yahoo/room`, { method: "POST", body: JSON.stringify(body) }),
+  setRoomMode: (draftId: string, body: { mode: RoomMode }) =>
+    request<RoomSummary>(`/rooms/${draftId}`, { method: "PATCH", body: JSON.stringify(body) }),
+  detachRoom: (draftId: string) => request<{ attached: false; draft_id: string }>(`/rooms/${draftId}`, { method: "DELETE" }),
+  pinAlias: (draftId: string, body: { yahoo_player_id: string; player_id: string }) =>
+    request<{ yahoo_player_id: string; player_id: string; repaired: number[] }>(`/rooms/${draftId}/aliases`, { method: "POST", body: JSON.stringify(body) }),
+  fidelity: (draftId: string) => request<Fidelity>(`/rooms/${draftId}/fidelity`),
 };
 
 export function teamLabel(session: SessionSummary, position: number): string {
