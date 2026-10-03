@@ -398,7 +398,7 @@ def _publish_changes(
         }
         if resume:
             event["resume"] = True
-        else:
+        elif c["kind"] != "repair":  # a pinned stand-in is the same room pick, not a late one
             room.recent_lags.append((c["overall"], c["lag_ms"]))
         room.log.append(event)
         if c["kind"] == "conflict":

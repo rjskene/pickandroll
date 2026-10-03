@@ -139,3 +139,22 @@ def test_the_scorecard_ranks_the_actual_pick_in_the_reco_acted_on():
     rows = {r["overall"]: r for r in analyze(events)["rows"]}
     assert rows[1]["actual_rank"] == 2
     assert rows[4]["actual_rank"] == 1
+
+
+def test_a_pin_repair_is_not_a_room_lag(room):
+    """The sync card's lag is room message to session pick. A stand-in repaired by a pin
+    minutes later is the same room pick again, not a slow one."""
+    client, session, picks = room
+    items = [
+        {"overall": 1, "yahoo_player_id": picks[0].yahoo_player_id, "slot": 1},
+        {"overall": 2, "yahoo_player_id": "800000", "slot": 2},
+    ]
+    assert client.post("/rooms/w1/picks", json={"picks": items}).status_code == 200
+    assert client.get("/rooms/w1").json()["standins"][0]["overall"] == 2
+    board = client.get(f"/sessions/{session.id}/board?limit=400").json()["players"]
+    target = next(p for p in board if p["name"] == "Ponly Person")["player_id"]
+    r = client.post("/rooms/w1/aliases", json={"yahoo_player_id": "800000", "player_id": target})
+    assert r.status_code == 200 and r.json()["repaired"] == [2]
+    view = client.get("/rooms/w1").json()
+    assert view["standins"] == []
+    assert [x["overall"] for x in view["recent_lags"]] == [1, 2]
