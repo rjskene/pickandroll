@@ -29,7 +29,9 @@ as such, with the evidence.
   `.gitignore` covers these; do not loosen it. The Yahoo players file (`data/yahoo_players_31822.json`) stays local.
 - Claude never handles the user's credentials and never sees what the user types into a login form.
 - No punts anywhere: the punt is an outcome of the objective, never a goal, and never an option in the API or UI.
-- Nothing is auto-drafted for the user unless they armed it. Manual picks, in Yahoo or in pickandroll, must
+- Nothing is auto-drafted for the user unless they armed it. In a mock the user has authorized as "armed", the drone
+  arms at attach (`mode: autopilot`) under that authorization and the scorecard says so (decided 2026-10-02). On the
+  real draft day the user arms it themselves from the side panel; no session arms the real draft for them. Manual picks, in Yahoo or in pickandroll, must
   always remain possible; they are mirrored into the session and never overridden.
 - Never connect to the Yahoo draft socket as the user's slot from a second client (Yahoo kicks the user). The
   only reader of the user's seat is the user's own draft page (the extension's content script).

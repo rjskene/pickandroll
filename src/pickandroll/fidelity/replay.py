@@ -18,6 +18,7 @@ from __future__ import annotations
 import csv
 import statistics
 import time
+from collections.abc import Mapping
 from dataclasses import dataclass
 from itertools import pairwise
 from pathlib import Path
@@ -179,6 +180,132 @@ def replay(
     status = _ok(client.get(f"/rooms/{draft_id}/status"))
     card = _ok(client.get(f"/rooms/{draft_id}/fidelity"))
     return {"attach": attach, "plans": plans, "status": status, "scorecard": card}
+
+
+def settled_replay(
+    client: Any,
+    picks: list[FixturePick],
+    *,
+    draft_id: str,
+    slot: int,
+    rank: Mapping[str, float],
+    num_teams: int = 12,
+    session: dict[str, Any] | None = None,
+    players_file: str | None = None,
+    solve: dict[str, Any] | None = None,
+    plan_wait: float = 20.0,
+    patience: int = 6,
+) -> dict[str, Any]:
+    """The value and compliance proxy for #13: the room's other picks in fixture order with no
+    clock, and my picks drafted the way the armed drafter drafts them, each the top of the
+    first fresh plan for its board (waiting as long as that takes). A fixture pick whose player
+    is already gone (I took him) shifts to the best available by ``rank`` (Yahoo id -> o_rank,
+    the order Yahoo's autodraft follows). Returns my picks, the scorecard and the final score."""
+    rounds = len(picks) // num_teams
+    mine = set(snake_picks(num_teams, slot, rounds))
+    body: dict[str, Any] = {
+        "draft_id": draft_id,
+        "slot": slot,
+        "num_teams": num_teams,
+        "mode": "autopilot",
+        **(solve or {}),
+    }
+    if session is not None:
+        body["session"] = session
+    if players_file is not None:
+        body["players_file"] = players_file
+    attach = _ok(client.post("/rooms", json=body))
+    _ok(
+        client.post(
+            f"/rooms/{draft_id}/events",
+            json={"events": [{"type": "control", "state": "armed", "slot": slot}]},
+        )
+    )
+    ranked = sorted((r, yid) for yid, r in rank.items() if r and r > 0)
+    taken: set[str] = set()
+    drafted: list[dict[str, Any]] = []
+    shifted = 0
+
+    def post(overall: int, yid: str) -> None:
+        _ok(
+            client.post(
+                f"/rooms/{draft_id}/picks",
+                json={
+                    "picks": [
+                        {
+                            "overall": overall,
+                            "yahoo_player_id": yid,
+                            "slot": pick_owner(num_teams, overall)[1],
+                            "t_room": round(time.time() * 1000.0),
+                            "src": "socket",
+                        }
+                    ]
+                },
+            )
+        )
+        taken.add(yid)
+
+    for p in picks:
+        k = p.overall
+        if k in mine:
+            _ok(
+                client.post(
+                    f"/rooms/{draft_id}/events",
+                    json={
+                        "events": [
+                            {"type": "turn_start", "overall": k, "slot": slot, "clock_s": 30}
+                        ]
+                    },
+                )
+            )
+            started = time.monotonic()
+            plan: dict[str, Any] = {}
+            for _ in range(patience):
+                plan = _ok(client.get(f"/rooms/{draft_id}/plan", params={"wait": plan_wait}))
+                if plan["fresh"]:
+                    break
+            top = next(
+                (c for c in plan.get("candidates", []) if str(c["yahoo_player_id"]) not in taken),
+                None,
+            )
+            if top is None:
+                raise RuntimeError(f"no candidate to draft at pick {k}")
+            yid = str(top["yahoo_player_id"])
+            _ok(
+                client.post(
+                    f"/rooms/{draft_id}/events",
+                    json={
+                        "events": [{"type": "pick_landed", "overall": k, "yid": yid, "how": "row"}]
+                    },
+                )
+            )
+            post(k, yid)
+            drafted.append(
+                {
+                    "overall": k,
+                    "yid": yid,
+                    "name": top.get("name"),
+                    "fresh": plan["fresh"],
+                    "waited_s": round(time.monotonic() - started, 1),
+                }
+            )
+            continue
+        yid = str(p.yahoo_player_id)
+        if yid in taken:
+            yid = next(y for _, y in ranked if y not in taken)
+            shifted += 1
+        post(k, yid)
+    status = _ok(client.get(f"/rooms/{draft_id}/status"))
+    card = _ok(client.get(f"/rooms/{draft_id}/fidelity"))
+    score = _ok(client.get(f"/sessions/{attach['session_id']}/score"))
+    return {
+        "attach": attach,
+        "mine": drafted,
+        "shifted": shifted,
+        "status": status,
+        "scorecard": card,
+        "score": score,
+    }
 
 
 def _ok(response: Any) -> dict[str, Any]:

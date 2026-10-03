@@ -67,7 +67,7 @@ Baseline from drafts 5-7 (2026-09-27, scratch hook in driver mode), loose count 
 
 | id | metric | definition | baseline | goal |
 |---|---|---|---|---|
-| D1 | reco readiness | per my pick: t(fresh reco for board k-1) − t(turn start); negative = ready before the turn. Split by whether a pre-solved branch covered the board (hit) or the board was solved cold at the turn (miss) | not measured | hits ≤ 1 s; misses ≤ plan budget + price limit + 1 s (11 s on a 30 s clock, where a capped cold plan lands at budget plus pricing by construction); hit rate reported, goal ≥ 9/13 at human pace |
+| D1 | reco readiness | per my pick: t(fresh reco for board k-1) − t(turn start); negative = ready before the turn. Three classes per turn: hit = a pre-solved branch for board k-1 had converged before turn start; pending = the branch existed but was still solving at turn start (typically the own-choice branch behind the second pick of a back-to-back pair); miss = no branch, the board was solved cold at the turn | not measured | hits ≤ 1 s; pending and misses ≤ plan budget + price limit + 1 s (11 s on a 30 s clock, where a capped cold plan lands at budget plus pricing by construction); counts of all three reported, hit goal ≥ 9/13 at human pace |
 | D2 | turn-to-land | t(Yahoo registers my pick) − t(turn start) | 1.3-1.6 s clean, 10-13 s with re-clicks | p50 ≤ 5 s, max ≤ 15 s |
 | D3 | solve time | wall time of each recommendation solve during the draft | sum 0.3 s; curve up to 20 s limit | fits inside D1 |
 | D4 | draft attempts | row clicks / queue uses per landed pick | up to 3 | 1 |
@@ -151,6 +151,14 @@ room; enter the draft client the moment it opens; Yahoo's Autodraft switch is di
 
 Queue probe (every armed draft): the Yahoo queue path (the click backstop, one entry or two) has never been seen in a real room, and notes from drafts 5-6 say the row's first-cell button on our turn may be Draft rather than the queue star. So on one of our turns per draft, by default the first turn of round 3 that is not back-to-back, the drafter stars the plan's #1 candidate before clicking Draft, reads the queue panel, logs one `queue_probe` event and then proceeds normally. Both outcomes are harmless: the star queues our player, or it drafts the player we wanted. `dropped` means a Draft-labelled control took no effect inside 1.9 s (a lost click, as the harness simulates); `failed` is reserved for a control that was not Draft and produced neither. The scorecard prints the outcome. Configurable (round, or off) on the options page.
 
+Plan budget and the clock (#13): unless the attach gives a `time_limit`, the plan's budget follows the room's
+pick clock. It is clock − 13 s (the drafter's margin) − 12 s (pricing), at least 5 s and at most 20 s: 30 s (the
+mocks) gives 5 s, 40 s gives 15 s, and 45 s or more gives 20 s. The attach may pass `clock_s`. Otherwise the room
+starts at 30 s and adopts the longest clock the client reports on its `turn_start` events (Yahoo's `D|` frame),
+logging a `plan_budget` note. On a 30 s clock the plan is often a time-limited incumbent (rounds 1-6 need 6-16 s
+to converge), and only the exact prices correct its first pick, so an unpriced plan is served only when it
+converged.
+
 
 1. The emissary states the hypothesis and the metric it expects to move before a mock starts.
 2. The drone runs one mock, posts the scorecard (markdown from §4) on the tracker #11.
@@ -160,6 +168,12 @@ Queue probe (every armed draft): the Yahoo queue path (the click backstop, one e
    and one early divergence changes the rest of the draft (measured 2026-10-01 on #13). A value gate is therefore
    judged on 3-run means per cell, or on a deterministic comparison with both sides uncapped (time limit 60 s), never
    on a single run. Timing measurements (harness cells) and value runs never share the CPU.
+   The gate itself (2026-10-02): over the settled slots (both fixtures, slots 1/4/6/12), every slot 13/13 and the mean
+   Δ ≥ −0.02 expected wins. A slot below −0.05 passes only if its first divergence is a within-gap decision: the two
+   candidates' objectives on that board differ by less than the solver's MIP gap (1%), shown from the logged
+   objectives. Below the gap the solver cannot tell the two apart, and the end-of-draft difference is path dependence
+   with either sign (measured: −0.067 and +0.258 on two slots of the same change). Deterministic uncapped runs
+   reproduce such a split exactly, so repeating them does not resolve it; the within-gap check does.
 5. Done = two consecutive mocks at 13/13 (12/12 + 1 manual) with G1-G6 green. After that, mocks continue only to test new features, at least one per week until the real draft.
 
 ## 7. Standing rules for all three sessions
