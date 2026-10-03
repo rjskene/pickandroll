@@ -74,7 +74,7 @@
     const ctl = typeof AbortController === "function" ? new AbortController() : null;
     return {
       k,
-      stopped: null, // "superseded" by a newer turn, or "manual" (the user took the pick)
+      stopped: null, // "superseded" by a newer turn, "manual" (the user took the pick) or "request"
       halted,
       signal: ctl ? ctl.signal : null,
       settled: false,
@@ -124,7 +124,9 @@
       this.probed = null; // the pick the probe ran on
       this.searchFallback = false; // Yahoo's search box for an off-screen row (the options page)
       this.requesting = null; // the user's pending request: {k, yid, ctx, settled}
-      this.requests = new Set(); // requests served, each by the API's time for it
+      this.requests = new Set(); // requests served, each by the API's id for it
+      this.offered = null; // the room's pending request as the tab last read it
+      this.onRequest = () => {}; // ({start: q}) when a request is served, ({out}) when it ends
       this.actAt = null; // the room's act_at_s: seconds left when an armed turn acts, null: at once
     }
 
@@ -255,9 +257,10 @@
       const k = q ? Number(q.overall) : null;
       if (!q || !Number.isInteger(k) || this.done(k) || this.tracker.myTurnNow() !== k) return null;
       const c = { ...q, yahoo_player_id: String(q.yahoo_player_id) };
-      // Every request the user sends is its own, by the time the API took it: a re-request of
-      // a player whose first one failed, or B again after C, is served; the same one is not.
-      const key = `${k}:${c.yahoo_player_id}:${q.t ?? ""}`;
+      // Every request the user sends is its own, by the API's id for it (its time from an API
+      // before #22): a re-request of a player whose first one failed, or B again after C, is
+      // served; the same one is not.
+      const key = `${k}:${c.yahoo_player_id}:${q.id ?? q.t ?? ""}`;
       if (this.requests.has(key) || this.requesting) return null;
       this.requests.add(key);
       const ctx = turnContext(k);
@@ -268,11 +271,17 @@
       });
       this.requesting = { k, yid: c.yahoo_player_id, ctx, settled };
       const out = { overall: k, yid: c.yahoo_player_id, result: "failed", attempts: 0 };
+      // The notes name the request by the API's id: its failure drops this request only, not a
+      // newer one for the same player (#22).
+      const note = (what, extra) =>
+        this.emit({ type: "note", what, overall: k, yid: c.yahoo_player_id, request_id: q.id ?? null, ...extra });
       try {
         for (let n = 1; n <= REQUEST_TRIES && this.live(ctx) && this.tracker.myTurnNow() === k; n++) {
-          // At the turn's frame the table may not show its Draft buttons yet, as for a row draft.
+          // At the turn's frame the table may not show its Draft buttons yet, as for a row draft,
+          // but the wait leaves an armed turn its backstop line (#22).
           for (let i = 0; i < 8 && !this.dom.draftable(); i++) {
-            if (!(await this.pause(ctx, 250))) break;
+            const room = (this.leftOrPlenty() - BACKSTOP_BY_S) * 1000;
+            if (room <= 0 || !(await this.pause(ctx, Math.min(250, room)))) break;
           }
           if (!this.live(ctx)) break;
           let row = this.dom.find(c) || (await this.page(() => this.dom.scrollTo(c)));
@@ -298,18 +307,44 @@
         if (this.tracker.isManual(k)) out.result = "manual";
         else if (p) out.result = p.yid === c.yahoo_player_id ? "landed" : "other";
         else if (ctx.stopped) out.result = "stopped";
-        if (out.result === "failed") {
-          this.emit({ type: "note", what: "request failed", overall: k, yid: c.yahoo_player_id, attempts: out.attempts });
-        }
+        if (out.result === "failed") note("request failed", { attempts: out.attempts });
+        note("request", { result: out.result, attempts: out.attempts });
+        // The pick is in: the armed turn that stood aside waits for nothing more (its /plan hold
+        // included), as after a hand pick (#22).
+        const turn = this.current;
+        if (p && turn && turn.k === k) turn.stop("request");
         return out;
       } catch (e) {
-        this.emit({ type: "note", what: "request failed", overall: k, yid: c.yahoo_player_id, msg: String((e && e.message) || e) });
+        note("request failed", { msg: String((e && e.message) || e) });
         return out;
       } finally {
         this.requesting = null;
         ctx.settled = true;
         settle();
       }
+    }
+
+    /** The room's pending request as the tab last read it from the room summary (null: none;
+     * #10, #22). A request for another player of the pick being served stops that one before
+     * its next try; a request not served yet is served now, and when one ends the newest offered
+     * is served next. ``onRequest`` hears each start and end. */
+    offer(q) {
+      this.offered = q || null;
+      const cur = this.requesting;
+      if (cur && q && Number(q.overall) === cur.k && String(q.yahoo_player_id) !== cur.yid) cur.ctx.stop("replaced");
+      this.serveOffered();
+    }
+
+    serveOffered() {
+      const q = this.offered;
+      if (!q || this.requesting || this.tracker.myTurnNow() !== Number(q.overall)) return;
+      const asked = this.request(q);
+      if (!this.requesting) return; // not this turn's, or served already
+      this.onRequest({ start: q });
+      asked.then((out) => {
+        this.onRequest({ out });
+        this.serveOffered(); // a request that replaced this one, at once
+      });
     }
 
     /** A draft attempt for ``overall`` (this turn's pick, or my next one when it is queued

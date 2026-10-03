@@ -287,16 +287,19 @@ Routes are keyed by the Yahoo draft id, not the session, so a room outlives an A
   `GET /rooms/{d}/fidelity[?format=md]` (the scorecard), `PATCH` / `DELETE /rooms/{d}`,
   `POST /rooms/{d}/aliases` (pin a Yahoo id to a projection id) and the session view
   `GET|POST /sessions/{id}/yahoo/room`. A session follows the Fantasy feed or a room, not both.
-* `PATCH /rooms/{d}` takes `{mode, act_at_s}`, either or both; a field left out keeps its value.
+* `PATCH /rooms/{d}` takes `{mode, act_at_s}`, either or both; a field left out keeps its value,
+  and a null `mode` is refused (422: leave it out to keep the mode).
   `act_at_s` (12 to 30, null by default) holds an armed turn's click until the clock is down to
   that many seconds, unless the user picks first. The API's control event records both, and a
   rebuild after a restart (from the waiting room on) restores them from it unless the room was
-  detached since; the scorecard prints `act_at_s` by D2.
+  detached since; an attach that names a mode, mid-draft too, sets and records it. The scorecard
+  prints `act_at_s` by D2.
 * `POST /rooms/{d}/request` (`{overall, board, yahoo_player_id}`) is the web app's "Draft in
   Yahoo": taken only for my pick on the clock on the session's current board, held in the room
   summary for the draft tab to click (in mirror and autopilot; an armed turn stands aside), and
-  dropped when the turn ends or the tab reports that player's click failed. Refused while the
-  draft tab is silent (no heartbeat yet, or none for 40 s).
+  dropped when the turn ends or the tab reports that request's click failed. Each request has an
+  `id`: the tab serves it once by it and names it in its failure note, so a newer request for the
+  same player stands. Refused while the draft tab is silent (no heartbeat yet, or none for 40 s).
 * `POST /rooms/seen` / `GET /rooms/seen`: the draft tab reports a room no session follows
   (`{draft_id, slot, room_teams}`, kept 30 s) so the web app can offer it; attaching stays a
   click.

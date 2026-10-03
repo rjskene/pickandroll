@@ -89,7 +89,7 @@ Written by the server:
 {"type":"reco",         "t":..., "board":n_applied, "version":v, "fresh":bool, "top_yid":id, "top_name":..., "top_pid":..., "cands":[yid,...], "unmapped":[{"pid":...,"name":...}], "solve_ms":..., "mode":..., "model":"horizon|roster"}
 {"type":"score",        "t":..., "wins":x, "benchmark":x, "vs_benchmark":x, "best":x, "matchups":{...}}
 {"type":"control",      "t":..., "state":"armed|mirror|absent", "slot":s, "mode":"mirror|autopilot", "act_at_s":n|null, "src":"api"}  // at attach, on every PATCH /rooms/{d} and on a team-count mismatch; act_at_s (#10): armed turns click with n s left, null at once; a rebuild restores mode and act_at_s from the last one since a detach (#20)
-{"type":"note", "what":"draft request", "t":..., "overall":n, "board":b, "yid":id}  // the web app's "Draft in Yahoo" (#10), held for the draft tab
+{"type":"note", "what":"draft request", "t":..., "overall":n, "board":b, "yid":id, "request_id":r}  // the web app's "Draft in Yahoo" (#10), held for the draft tab; r is the request's id (#22)
 ```
 
 Posted by the client (`POST /rooms/{draft_id}/events`):
@@ -102,7 +102,7 @@ Posted by the client (`POST /rooms/{draft_id}/events`):
 {"type":"pick_landed",  "t":..., "overall":n, "yid":id, "how":"row|queue|manual|expiry|autopick", "ms_from_turn":...}
 {"type":"intervention", "t":..., "who":"master|emissary|drone|user", "what":"..."}
 {"type":"heartbeat",    "t":..., "worker":bool, ...}  // worker: the Worker timer host is live (G7)
-{"type":"note", "what":"request", "t":..., "overall":n, "yid":id, "result":"landed|manual|other|stopped|failed", "attempts":k}  // a "Draft in Yahoo" served (#10); "request failed" (with attempts or msg) drops it in the API when its overall and yid both match the pending request (a request the user replaced since is kept), and hands an armed turn back
+{"type":"note", "what":"request", "t":..., "overall":n, "yid":id, "request_id":r, "result":"landed|manual|other|stopped|failed", "attempts":k}  // a "Draft in Yahoo" served (#10); "request failed" (with attempts or msg, and request_id) drops it in the API only when it names the pending request (by request_id; overall and yid from a tab before #22), so a request the user made since, of the same player too, is kept; it hands an armed turn back, and a request that lands ends the armed turn that stood aside
 {"type":"note",         "t":..., "what":"..."}
 ```
 
