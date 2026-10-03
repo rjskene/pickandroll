@@ -21,9 +21,9 @@ function loadWorker() {
     storage: { local: { get: async () => ({ api: "http://api.test" }) }, session: {} },
     sidePanel: { setPanelBehavior: async () => {} },
   };
-  function fetch(url, { signal } = {}) {
+  function fetch(url, { signal, body } = {}) {
     return new Promise((resolve, reject) => {
-      const f = { url, aborted: false };
+      const f = { url, body: body ? JSON.parse(body) : null, aborted: false };
       f.release = (data) =>
         resolve({ ok: true, status: 200, text: async () => JSON.stringify(data) });
       fetches.push(f);
@@ -76,4 +76,34 @@ test("a hold that answered is not cancelled, and a plan without a hold is unaffe
   assert.deepEqual(await held, { ok: true, data: { board: 7, fresh: true } });
   assert.deepEqual(await bare, { ok: true, data: { board: 7, fresh: true } });
   assert.deepEqual(await w.send({ op: "cancel", hold: "h2" }), { ok: true, data: { cancelled: false } });
+});
+
+test("the attach carries the room's own team count once the room has shown it (#17)", async () => {
+  const w = loadWorker();
+  const shown = w.send({
+    op: "attach",
+    draft_id: "d",
+    slot: 1,
+    session_id: "s",
+    num_teams: 12,
+    room_teams: 10,
+  });
+  await tick();
+  assert.equal(w.fetches.length, 1);
+  assert.equal(w.fetches[0].body.room_teams, 10);
+  assert.equal(w.fetches[0].body.num_teams, 12);
+  w.fetches[0].release({ attached: true });
+  await shown;
+  const unseen = w.send({
+    op: "attach",
+    draft_id: "d",
+    slot: 1,
+    session_id: "s",
+    num_teams: 12,
+    room_teams: null,
+  });
+  await tick();
+  assert.equal("room_teams" in w.fetches[1].body, false, "not known yet: the API cannot check");
+  w.fetches[1].release({ attached: true });
+  await unseen;
 });

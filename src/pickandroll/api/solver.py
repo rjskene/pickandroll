@@ -38,6 +38,7 @@ from pydantic import BaseModel, Field
 from ..draft.state import plan_fallback
 from ..optim.horizon import HorizonProblem, HorizonSolution, first_order_table
 from ..optim.pool import background_pool
+from ..optim.roster import pick_pool, solve_roster
 from .presolve import (
     BRANCH_TIME_LIMIT,
     MINE,
@@ -345,12 +346,14 @@ def compute_recommendation(
         plan_limit = params.turn_time_limit if turn and base is None else None
         problem = None
         candidates: list[str] = []
+        roster_reason: str | None = None  # why the horizon plan could not be built
         if params.horizon and not state.complete:
             try:
                 problem = base[0] if base is not None else state.horizon_problem(curve=curve_arg)
                 candidates = state.candidates(n, expected=True)
-            except ValueError:
+            except ValueError as exc:
                 problem = None  # picks and open slots disagree: single roster below
+                roster_reason = str(exc)
 
     if problem is not None:
 
@@ -419,13 +422,35 @@ def compute_recommendation(
         report({"stage": "done", "done": 1, "total": 1, "wins": payload["wins"]})
         return payload
 
-    # Single-roster model: picks and open slots disagree, or the caller asked for it.
+    # Single-roster model: picks and open slots disagree, or the caller asked for it. Only the
+    # problem is built under the lock: a room's pick sync takes it, and a pick must never wait
+    # on a solve (mock 2: 13-30 s of these solves held every pick back). In a room the solves
+    # share one budget, the plan's and the prices' together, and a newer board ends them.
     with session.lock:
         roster_curve = (
             None if curve_arg is None else (state.curve if curve_arg == "default" else curve_arg)
         )
-        table = state.recommend(n=params.n, punt=frozenset(), curve=roster_curve)
-        best = state.best_roster(punt=frozenset(), curve=roster_curve)
+        roster = state.problem(punt=frozenset(), curve=roster_curve)
+        pool = state.candidates(params.n, frozenset())
+        in_room = session.room is not None
+        budget = state.plan_time_limit + state.price_time_limit if in_room else None
+    limit: dict[str, float] = {}  # a plain session keeps the solvers' own limits
+    deadline = None
+    if budget is not None:
+        limit = {"time_limit": budget / (len(pool) + 1)}  # the best roster, then each candidate
+        deadline = time.perf_counter() + budget
+
+    def spent() -> bool:
+        check()
+        return deadline is not None and time.perf_counter() >= deadline
+
+    best = solve_roster(roster, **limit)
+    check()
+    table = pick_pool(roster, pool, until=spent, base=best, **limit)
+    if not table.empty:
+        table.insert(1, "name", table["player"].map(names))
+    check()
+    with session.lock:
         cols = [c.value for c in state.settings.cats]
         finals = pd.Series(
             {c.value: float(best.cat_totals[c]) for c in state.settings.cats}
@@ -463,6 +488,7 @@ def compute_recommendation(
         "priced": True,
         "branch": False,
         "fallback": None,
+        "roster_reason": roster_reason,
         "timings": {"total_ms": round((time.perf_counter() - started) * 1000, 1)},
         "adp_source": state.adp_source,
         "availability_source": state.availability_source,
@@ -479,7 +505,9 @@ def compute_recommendation(
                 {**r, "name": names.at[r["player"]]} for r in best.roster.to_dict(orient="records")
             ],
             "solve_seconds": round(float(best.solve_seconds), 3),
-            "time_limited": False,
+            # PuLP calls a HiGHS solve stopped by its limit "Optimal" too: time it, as horizon does.
+            "time_limited": best.status == "Not Solved"
+            or ("time_limit" in limit and best.solve_seconds >= 0.97 * limit["time_limit"]),
         },
         "categories": categories,
         "league": league,

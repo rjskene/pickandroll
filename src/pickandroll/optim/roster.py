@@ -408,14 +408,21 @@ def pick_pool(
     time_limit: float = 5.0,
     gap: float = 0.0,
     method: str = "auto",
+    until: Callable[[], bool] | None = None,
+    base: RosterSolution | None = None,
 ) -> pd.DataFrame:
     """Rank candidate players by the best roster objective when each is forced onto the roster.
 
     The difference from the unconstrained optimum is the price of taking that player now.
+    ``until`` is asked before each candidate's solve; once it says so, the candidates priced so
+    far are the table. ``base`` is that optimum when the caller has solved ``problem`` already.
     """
-    base = solve_roster(problem, time_limit=time_limit, gap=gap, method=method)
+    if base is None:
+        base = solve_roster(problem, time_limit=time_limit, gap=gap, method=method)
     rows = []
     for p in candidates:
+        if until is not None and until():
+            break
         forced = replace(problem, locks=problem.locks | {p})
         try:
             sol = solve_roster(forced, time_limit=time_limit, gap=gap, method=method)

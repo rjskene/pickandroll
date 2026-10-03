@@ -16,6 +16,8 @@
       this.numTeams = numTeams;
       this.rounds = rounds;
       this.picks = new Map(); // overall -> {overall, yid, slot, t, src}
+      this.owners = new Map(); // overall -> the slot the room put on it (picks and turns)
+      this.orderLen = null; // entries in the room's R| frame (draft order), when one came
       this.sent = 0; // the API has applied every pick through this overall
       this.gap = null; // the API is waiting for this overall
       this.onDeck = null; // {overall, slot, clock, at}
@@ -82,6 +84,34 @@
       return this.clock.value - (t - this.clock.at) / 1000;
     }
 
+    /** Remember who the room says owns ``overall``: the evidence for teamsSeen. */
+    own(overall, slot) {
+      if (Number.isInteger(overall) && overall >= 1 && Number.isInteger(slot) && slot >= 1)
+        this.owners.set(overall, slot);
+    }
+
+    /** The room's team count from the room itself (#17): the one T in 2..20 whose snake order
+     * puts every pick and turn seen on the slot the room put it on. Null while more than one T
+     * fits (until the snake first turns, pick T+1 back on slot T) or when none does. The attach
+     * says the count; this is how the room's own count reaches the API (mock 2: a 10-team room
+     * attached as 12). */
+    teamsSeen() {
+      let found = null;
+      for (let T = 2; T <= 20; T++) {
+        let fits = true;
+        for (const [k, s] of this.owners) {
+          if (P.pickOwner(T, k).slot !== s) {
+            fits = false;
+            break;
+          }
+        }
+        if (!fits) continue;
+        if (found !== null) return null;
+        found = T;
+      }
+      return found;
+    }
+
     /** Feed one socket frame received at ``t`` (epoch ms). */
     ingest(text, t) {
       this.frames++;
@@ -95,7 +125,10 @@
         }
       } else if (m.kind === "history") {
         for (const p of m.picks) if (this.add(p.overall, p.yid, p.slot, t, "history")) out.picks++;
+      } else if (m.kind === "order") {
+        this.orderLen = m.order.length;
       } else if (m.kind === "on_deck") {
+        this.own(m.overall, m.slot);
         this.onDeck = { overall: m.overall, slot: m.slot, clock: m.clock, at: t };
         if (m.clock !== null) this.clock = { value: m.clock, at: t };
         if (this.inDraft(m.overall) && !this.turnAt.has(m.overall) && !this.picks.has(m.overall)) {
@@ -106,6 +139,7 @@
             overall: m.overall,
             slot: m.slot,
             clock_s: m.clock,
+            teams: this.teamsSeen(), // null until the room shows it
           });
         }
         if (m.slot === this.slot && this.inDraft(m.overall) && !this.picks.has(m.overall)) out.turn = m.overall;
@@ -120,6 +154,7 @@
     }
 
     add(overall, yid, slot, t, src) {
+      this.own(overall, slot);
       if (!this.inDraft(overall) || this.picks.has(overall)) return false; // never sent past the end
       this.picks.set(overall, { overall, yid: String(yid), slot, t, src });
       return true;
@@ -205,6 +240,8 @@
         draft_id: this.draftId,
         slot: this.slot,
         num_teams: this.numTeams,
+        room_teams: this.teamsSeen(),
+        order_len: this.orderLen,
         rounds: this.rounds,
         room_picks: this.picks.size,
         last: this.last(),

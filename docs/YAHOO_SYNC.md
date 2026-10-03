@@ -86,7 +86,7 @@ Written by the server:
 {"type":"room_pick",    "t":..., "overall":n, "slot":s, "yid":id, "src":"socket|history|board", "name":...}
 {"type":"session_pick", "t":..., "overall":n, "pid":..., "yid":id, "lag_ms":..., "standin":bool, "kind":"new|held|conflict|repair", "resume":true?}
 {"type":"conflict",     "t":..., "overall":n, "session_pid":..., "session_yid":id, "room_yid":id, "room_pid":...}
-{"type":"reco",         "t":..., "board":n_applied, "version":v, "fresh":bool, "top_yid":id, "top_name":..., "top_pid":..., "cands":[yid,...], "unmapped":[{"pid":...,"name":...}], "solve_ms":..., "mode":...}
+{"type":"reco",         "t":..., "board":n_applied, "version":v, "fresh":bool, "top_yid":id, "top_name":..., "top_pid":..., "cands":[yid,...], "unmapped":[{"pid":...,"name":...}], "solve_ms":..., "mode":..., "model":"horizon|roster"}
 {"type":"score",        "t":..., "wins":x, "benchmark":x, "vs_benchmark":x, "best":x, "matchups":{...}}
 {"type":"control",      "t":..., "state":"armed|mirror|absent", "slot":s, "src":"api"}
 ```
@@ -95,9 +95,9 @@ Posted by the client (`POST /rooms/{draft_id}/events`):
 
 ```
 {"type":"control",      "t":..., "state":"armed|mirror|absent", "slot":s, "reason":"autopick"?}
-{"type":"turn_start",   "t":..., "overall":n, "slot":s, "clock_s":30}
+{"type":"turn_start",   "t":..., "overall":n, "slot":s, "clock_s":30, "teams":T|null}  // T: the room's own team count, once the snake has turned
 {"type":"draft_attempt","t":..., "overall":n, "yid":id, "method":"row|queue|search", "attempt":k, "board":b}  // b = board of the plan the drafter acted on
-{"type":"note", "what":"queue_probe", "t":..., "overall":n, "yid":id, "name":..., "board":b, "outcome":"queued|drafted|dropped|no_control|failed", "panel":[...], "control":"..."}  // one per armed draft, §6; a note, not a new type, so no API version drops it
+{"type":"note", "what":"queue_probe", "t":..., "overall":n, "yid":id, "name":..., "board":b, "outcome":"queued|drafted|dropped|no_control|failed", "panel":[...], "control":"...", "panel_found":bool, "controls":[{"cell":i,"pos":j,"tag":"button","labels":"..."}]}  // one per armed draft, §6; a note, not a new type, so no API version drops it
 {"type":"pick_landed",  "t":..., "overall":n, "yid":id, "how":"row|queue|manual|expiry|autopick", "ms_from_turn":...}
 {"type":"intervention", "t":..., "who":"master|emissary|drone|user", "what":"..."}
 {"type":"heartbeat",    "t":..., "worker":bool, ...}  // worker: the Worker timer host is live (G7)
@@ -111,6 +111,8 @@ Posted by the client (`POST /rooms/{draft_id}/events`):
   - `conflict`: the session had another player and the room wins. A `conflict` event names both players.
   - `repair`: a stand-in replaced by the real player once he became free.
 - `standin` is true when the room's player had no projection id or was held elsewhere; the session holds the least useful free player in his place. The server writes `note` when the room reports two players for one overall, or an alias is pinned.
+- `reco.model` is `roster` when the horizon plan could not be built and the single-roster model answered (the session's picks and open slots disagree; in a room, the session and the room disagree on the draft). Goal 0 in a room. The first one writes a `note` `roster fallback` with the reason. Logs before #17 carry only `mode`, with the same values.
+- The attach may carry `room_teams`, the room's own team count. An attach that disagrees with it is refused (422) before a session is made. When a later `turn_start.teams` disagrees, the API sets the room to mirror once, writes a `note` `team count mismatch` and refuses to arm it again (409).
 - `reco.board` is the number of picks the solve saw. `top_pid` is the solve's own first choice, mapped or not. `top_yid` is the first candidate the drafter is served, which skips players with no Yahoo id. Those are listed in `unmapped`.
 - `score` (D5) is written once, when my last pick reaches the session.
 - `turn_start` is accepted for any slot. The one for pick 1 lets the scorecard check G6 when pick 1 is not mine.

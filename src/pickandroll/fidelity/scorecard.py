@@ -85,6 +85,7 @@ def analyze(events: list[dict[str, Any]]) -> dict[str, Any]:
     conflicts: list[dict] = []
     score = None
     probe = None  # the queue probe's note: what Yahoo did with a star on my turn
+    mismatch = None  # the API's note when the room showed another team count (#17)
     for e in events:
         kind = e.get("type")
         if kind == "room_pick":
@@ -110,6 +111,8 @@ def analyze(events: list[dict[str, Any]]) -> dict[str, Any]:
             score = e
         elif kind == "note" and e.get("what") == "queue_probe":
             probe = e
+        elif kind == "note" and e.get("what") == "team count mismatch":
+            mismatch = mismatch or e
 
     def control_at(t: float) -> str:
         state = "absent"
@@ -243,6 +246,7 @@ def analyze(events: list[dict[str, Any]]) -> dict[str, Any]:
         and r["actual_yid"] == r["final_yid"]
     )
     priced = [r for r in recos if r.get("priced", True) and r.get("solve_ms") is not None]
+    roster = [r for r in recos if (r.get("model") or r.get("mode")) == "roster"]
 
     # G1: the session's latest pick at each overall is the room's player, by Yahoo id. A
     # stand-in holds another player in his place, so it does not agree until it is repaired.
@@ -384,12 +388,31 @@ def analyze(events: list[dict[str, Any]]) -> dict[str, Any]:
                 "churn": sum(1 for r in rows if r["churn"]),
                 "picks": [r["overall"] for r in rows if r["churn"]],
             },
+            # Recos of the single-roster fallback (the session's picks and open slots
+            # disagree; in a room, the session and the room disagree on the draft). Goal 0.
+            "roster": {
+                "recos": len(roster),
+                "boards": sorted({int(r["board"]) for r in roster if r.get("board") is not None}),
+            },
         },
         "conflicts": len(conflicts),
         "standins": sum(1 for e in last_sync.values() if e.get("standin")),
         "queue_probe": None
         if probe is None
-        else {k: probe.get(k) for k in ("overall", "yid", "name", "outcome", "control", "panel")},
+        else {
+            k: probe.get(k)
+            for k in (
+                "overall",
+                "yid",
+                "name",
+                "outcome",
+                "control",
+                "panel",
+                "panel_found",
+                "controls",
+            )
+        },
+        "teams": _teams_seen(turns, num_teams, mismatch),
         "rows": rows,
         "last_room_pick": room[max(room)] if room else None,
         "last_reco": recos[-1] if recos else None,
@@ -496,6 +519,7 @@ def markdown(card: dict[str, Any]) -> str:
             f"| D6 reco churn (target 0) | {d['D6']['churn']}"
             f"{' at ' + ', '.join(str(k) for k in d['D6']['picks']) if d['D6']['picks'] else ''} |"
         ),
+        f"| Recos from the roster fallback (goal 0 in a room) | {_roster(d['roster'])} |",
         "",
         (
             f"Compliance against the final reco (diagnostic): "
@@ -505,6 +529,8 @@ def markdown(card: dict[str, Any]) -> str:
         f"Stand-ins {card['standins']}, conflicts {card['conflicts']}.",
         "",
         f"Queue probe (diagnostic): {_probe(card.get('queue_probe'))}.",
+        "",
+        f"Team count (diagnostic): {_teams(card.get('teams'))}.",
         "",
         "| pick | rd | ref | actual | label | lag ms | turn→land ms | reco ready ms | tries |",
         "|---|---|---|---|---|---|---|---|---|",
@@ -572,15 +598,62 @@ def _presolve_class(first: dict[str, Any] | None, ready_ms: float | None) -> str
 
 
 def _probe(p: dict[str, Any] | None) -> str:
-    """What Yahoo did with the probe's star: queued, drafted, dropped, no_control or failed."""
+    """What Yahoo did with the probe's star: queued, drafted, dropped, no_control or failed;
+    and, from #17, every control in the row ("cell 2.0": the third cell's first control)."""
     if p is None:
         return "not run"
     panel = p.get("panel")
     shown = "unreadable" if panel is None else (", ".join(panel) or "empty")
-    return (
+    out = (
         f"pick {p.get('overall')} ({p.get('name') or p.get('yid')}) {p.get('outcome')}; "
         f'control "{p.get("control") or "-"}"; queue panel {shown}'
     )
+    controls = p.get("controls")
+    if controls:
+        listed = "; ".join(
+            f'cell {c.get("cell")}.{c.get("pos", 0)} {c.get("tag", "?")} "{c.get("labels") or "-"}"'
+            for c in controls
+        )
+        out += f"; row controls: {listed}"
+    return out
+
+
+def _teams_seen(turns: dict[int, dict], attached: int, mismatch: dict | None) -> dict[str, Any]:
+    """The room's own team count, as the client first put it on a turn_start (#17)."""
+    shown = next(
+        (
+            (k, e["teams"])
+            for k, e in sorted(turns.items())
+            if isinstance(e.get("teams"), int) and not isinstance(e.get("teams"), bool)
+        ),
+        None,
+    )
+    return {
+        "attached": attached,
+        "room": None if shown is None else shown[1],
+        "from_pick": None if shown is None else shown[0],
+        "mismatch": None if mismatch is None else mismatch.get("room_teams"),
+    }
+
+
+def _teams(t: dict[str, Any] | None) -> str:
+    if t is None:
+        return "not judged"
+    if t["room"] is None:
+        out = f"attached for {t['attached']}; the room's own count was not seen"
+    else:
+        out = (
+            f"the room showed {t['room']} from pick {t['from_pick']}, attached for {t['attached']}"
+        )
+    if t["mismatch"] is not None:
+        out += f"; MISMATCH ({t['mismatch']} teams): the API set the room to mirror"
+    return out
+
+
+def _roster(r: dict[str, Any]) -> str:
+    if not r["recos"]:
+        return "0"
+    return f"{r['recos']} (boards {', '.join(str(b) for b in r['boards'])})"
 
 
 def _round(value: float | None) -> float | None:

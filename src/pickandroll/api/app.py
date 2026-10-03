@@ -337,6 +337,13 @@ class RoomAttach(BaseModel):
         default=None, description="mirror the room (default) or let pickandroll draft when armed"
     )
     num_teams: int | None = Field(default=None, ge=2, le=20)
+    room_teams: int | None = Field(
+        default=None,
+        ge=2,
+        le=20,
+        description="the room's own team count, as its client or the waiting room shows it: an "
+        "attach whose team count disagrees is refused (422) before anything is built",
+    )
     players_file: str | None = Field(
         default=None, description="Yahoo players JSON in data/ (default: newest yahoo_players_*)"
     )
@@ -865,10 +872,39 @@ def create_app(
                     raise HTTPException(
                         409, f"room {room.draft_id} is attached to session {session.id}"
                     )
+                if body.room_teams is not None and body.room_teams != room.num_teams:
+                    raise HTTPException(
+                        422,
+                        f"room {room.draft_id} has {body.room_teams} teams but is attached "
+                        f"for {room.num_teams}",
+                    )
                 return room, session
             log = room_log(body.draft_id)
             prior = await asyncio.to_thread(log.read)
             record = last_attach(prior) or {}
+            if body.room_teams is not None:
+                # Before any session is made or solve started: a session for the wrong number
+                # of teams credits the room's picks to the wrong teams (mock 2).
+                said = {
+                    t
+                    for t in (
+                        body.num_teams,
+                        body.session.num_teams if body.session is not None else None,
+                        store.get(body.session_id).state.settings.num_teams
+                        if body.session_id is not None
+                        else None,
+                        (record.get("session") or {}).get("num_teams")
+                        if body.session is None and body.session_id is None
+                        else None,
+                    )
+                    if t is not None
+                }
+                if said and said != {body.room_teams}:
+                    raise HTTPException(
+                        422,
+                        f"the room has {body.room_teams} teams but the attach says "
+                        f"{', '.join(str(t) for t in sorted(said))}",
+                    )
             if body.session_id is not None:
                 session = store.get(body.session_id)
             elif body.session is not None:
@@ -1003,6 +1039,13 @@ def create_app(
     @app.patch("/rooms/{draft_id}")
     async def room_mode(draft_id: str, body: RoomPatch) -> dict[str, Any]:
         room, session = await get_room(draft_id)
+        if body.mode == "autopilot" and room.teams_mismatch is not None:
+            # The session's draft is not the room's (#17): every plan would be for the wrong picks.
+            raise HTTPException(
+                409,
+                f"room {draft_id} has {room.teams_mismatch} teams but is attached for "
+                f"{room.num_teams}: attach a session with the room's team count before arming",
+            )
         room.mode = body.mode
         room.control = yahoo_room.control_for(body.mode)
         room.log.append({"type": "control", "state": room.control, "slot": room.slot, "src": "api"})
@@ -1078,6 +1121,7 @@ def create_app(
         room, session = await get_room(draft_id)
         written, ignored = await asyncio.to_thread(yahoo_room.record_events, room, body.events)
         await asyncio.to_thread(yahoo_room.follow_clock, session, room, body.events)
+        await asyncio.to_thread(yahoo_room.check_teams, session, room, body.events)
         return {
             "received": len(body.events),
             "written": written,
