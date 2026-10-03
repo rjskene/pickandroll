@@ -285,6 +285,16 @@ Routes are keyed by the Yahoo draft id, not the session, so a room outlives an A
   `GET /rooms/{d}/fidelity[?format=md]` (the scorecard), `PATCH` / `DELETE /rooms/{d}`,
   `POST /rooms/{d}/aliases` (pin a Yahoo id to a projection id) and the session view
   `GET|POST /sessions/{id}/yahoo/room`. A session follows the Fantasy feed or a room, not both.
+* `PATCH /rooms/{d}` takes `{mode, act_at_s}`: `act_at_s` (12 to 30, null by default) holds an
+  armed turn's click until the clock is down to that many seconds, unless the user picks first;
+  left out, the room keeps it. The control event records it and the scorecard prints it by D2.
+* `POST /rooms/{d}/request` (`{overall, board, yahoo_player_id}`) is the web app's "Draft in
+  Yahoo": taken only for my pick on the clock on the session's current board, held in the room
+  summary for the draft tab to click (in mirror and autopilot; an armed turn stands aside), and
+  dropped when the turn ends or the tab reports the click failed.
+* `POST /rooms/seen` / `GET /rooms/seen`: the draft tab reports a room no session follows
+  (`{draft_id, slot, room_teams}`, kept 30 s) so the web app can offer it; attaching stays a
+  click.
 
 Yahoo ids map to projection ids at attach time from the saved players file
 (`data/yahoo_players_<league>.json`) through `sources.matching`, which pairs identical
