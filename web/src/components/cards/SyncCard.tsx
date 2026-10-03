@@ -40,9 +40,10 @@ function AttachForm() {
   const queryClient = useQueryClient();
   const [draftId, setDraftId] = useState("");
   const [slot, setSlot] = useState(s.my_position);
-  const [teams, setTeams] = useState(s.num_teams);
+  const [teams, setTeams] = useState<number | null>(s.num_teams); // null: the field is empty
   // The room's team count is known when the room reported it or the user typed it; until then
   // the field only echoes the session's, and the attach's team check gets null, not that echo.
+  // A cleared field is unknown again (null), never 0.
   const [teamsKnown, setTeamsKnown] = useState(false);
   const roomTeams = teamsKnown ? teams : null;
   const seen = useSeenRooms();
@@ -84,7 +85,7 @@ function AttachForm() {
         </label>
         <label title="your draft position in the room">
           <span className="k">My slot</span>
-          <input type="number" min={1} max={teams} value={slot} onChange={(e) => setSlot(+e.target.value)} />
+          <input type="number" min={1} max={teams ?? undefined} value={slot} onChange={(e) => setSlot(+e.target.value)} />
         </label>
         <label title="the number of teams the room shows; an attach that disagrees with this session is refused">
           <span className="k">Teams in the room</span>
@@ -92,9 +93,9 @@ function AttachForm() {
             type="number"
             min={2}
             max={20}
-            value={teams}
+            value={teams ?? ""}
             onChange={(e) => {
-              setTeams(+e.target.value);
+              setTeams(e.target.value === "" ? null : +e.target.value);
               setTeamsKnown(true);
             }}
           />
@@ -103,7 +104,7 @@ function AttachForm() {
           {attach.isPending ? "Attaching…" : "Attach"}
         </button>
       </div>
-      {teams !== s.num_teams && (
+      {teams !== null && teams !== s.num_teams && (
         <p className="banner">
           This session is set up for {s.num_teams} teams. A room with {teams} needs a new session with {teams} teams: every plan here would be for the wrong picks.
         </p>

@@ -67,6 +67,10 @@ def test_act_at_s_alone_keeps_the_mode(league):
         assert r.json()["mode"] == "autopilot" and r.json()["act_at_s"] is None
         assert c.patch("/rooms/d1", json={}).status_code == 422
         assert c.patch("/rooms/d1", json={"mode": None}).status_code == 422
+        # An explicit null mode is refused with act_at_s too (#22): leave the field out.
+        r = c.patch("/rooms/d1", json={"mode": None, "act_at_s": 15})
+        assert r.status_code == 422 and "leave it out" in r.json()["detail"]
+        assert c.get("/rooms/d1").json()["act_at_s"] is None, "nothing was set"
 
 
 def test_a_rebuild_before_pick_1_restores_mode_and_act_at_s(league):
@@ -104,6 +108,26 @@ def test_an_explicit_mode_wins_over_the_log_and_act_at_s_stays(league):
     with app_for(directory) as c:
         room = attach(c, mode="mirror")  # the side panel's attach after the restart
         assert room["mode"] == "mirror" and room["act_at_s"] == 20
+
+
+def test_an_explicit_mode_on_a_resumed_room_is_logged_and_kept_by_the_next_rebuild(league):
+    """#22: the side panel's Attach (mirror) after a restart mid-draft writes an API control,
+    so a second restart rebuilds the room in mirror, not armed as before the first."""
+    directory, picks = league
+    with app_for(directory) as c:
+        attach(c)
+        post_picks(c, "d1", picks[:5])
+        assert c.patch("/rooms/d1", json={"mode": "autopilot", "act_at_s": 15}).status_code == 200
+    with app_for(directory) as c:
+        room = attach(c, mode="mirror")
+        assert room["resumed"] is True
+        assert room["mode"] == "mirror" and room["control"] == "mirror"
+    with app_for(directory) as c:
+        room = c.get("/rooms/d1").json()  # a rebuild
+        assert room["mode"] == "mirror" and room["control"] == "mirror"
+        assert room["act_at_s"] == 15
+    last = [e for e in _events(directory, "d1") if e["type"] == "control" and e["src"] == "api"]
+    assert [e["mode"] for e in last[-2:]] == ["autopilot", "mirror"], "the PATCH, then the attach"
 
 
 def test_a_restart_keeps_act_at_s(league):

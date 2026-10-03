@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import threading
 import time
+import uuid
 from collections import deque
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
@@ -197,7 +198,8 @@ def attach_room(
     """Bind a room to a session, write the attach record and replay any picks already in the
     log (a restart, or a second attach for the same draft). ``mode`` ``None`` is a rebuild:
     the room takes the mode last set since its last detach (mirror when none was), from the
-    waiting room on as well as mid-draft. Any attach keeps act_at_s from the same record."""
+    waiting room on as well as mid-draft. A given mode is set and logged, mid-draft too. Any
+    attach keeps act_at_s from the same record."""
     state = session.state
     if num_teams != state.settings.num_teams:
         raise ValueError(f"the room has {num_teams} teams, the session {state.settings.num_teams}")
@@ -210,6 +212,7 @@ def attach_room(
             )
         state.my_position = slot
     set_mode, set_act_at_s = set_since_detach(prior)
+    explicit = mode is not None
     if mode is None:
         mode = set_mode or "mirror"
     room = YahooRoom(
@@ -243,9 +246,11 @@ def attach_room(
             "players": len(ids.players),
         }
     )
-    if controls and room.resumed:
+    if controls and room.resumed and not explicit:
         room.control = controls[-1].get("state", "absent")
     else:
+        # An attach that names the mode sets it, mid-draft too, and writes it down: the next
+        # rebuild restores this mode, not the one before it (#22).
         room.control = control_for(mode)
         log_control(room)
     for e in room_picks:
@@ -552,9 +557,19 @@ def request_pick(
             "name": room.ids.name(yid),
             **room.ids.row_name(yid),
             "t": now_iso(),
+            # Its identity: the draft tab serves each request once by it and names it in its
+            # failure note, so a failure never drops a newer request for the same player (#22).
+            "id": uuid.uuid4().hex[:12],
         }
     room.log.append(
-        {"type": "note", "what": "draft request", "overall": overall, "board": board, "yid": yid}
+        {
+            "type": "note",
+            "what": "draft request",
+            "overall": overall,
+            "board": board,
+            "yid": yid,
+            "request_id": room.request["id"],
+        }
     )
     return room.request
 
@@ -571,6 +586,16 @@ def live_request(session: Session, room: YahooRoom) -> dict[str, Any] | None:
 
 
 # --------------------------------------------------------------------------- events
+def _names_request(note: dict[str, Any], q: dict[str, Any]) -> bool:
+    """A tab's note is about pending request ``q``: by its id (#22), so a newer request for
+    the same player is not, or by pick and player from a tab before #22."""
+    if note.get("overall") != q["overall"]:
+        return False
+    if note.get("request_id") is not None:
+        return note["request_id"] == q.get("id")
+    return str(note.get("yid")) == q["yahoo_player_id"]
+
+
 def _event_problem(e: dict[str, Any]) -> str | None:
     """Why the API does not take a client event, or None."""
     kind = e.get("type")
@@ -622,12 +647,7 @@ def record_events(
         failed = e["type"] == "note" and e.get("what") == "request failed"
         # The tab gave up on this request (in autopilot the drafter takes the turn back); a
         # failure of one the user has since replaced leaves the new one standing.
-        if (
-            failed
-            and q is not None
-            and e.get("overall") == q["overall"]
-            and str(e.get("yid")) == q["yahoo_player_id"]
-        ):
+        if failed and q is not None and _names_request(e, q):
             room.request = None
         room.log.append(e)
         written += 1

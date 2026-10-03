@@ -14,7 +14,8 @@ const K = 24; // my pick: round 2, slot 1
  * frame without its clock; ``searchable``: rows Yahoo's search box finds; ``settleMs``: a click
  * returns that long after it registers (Yahoo's ~400 ms); ``backToBack``: pick K+1 is mine too
  * and goes on the clock the moment K lands (slots 1 and 12); ``draftableAfter``: the table shows
- * no Draft buttons until that many ms into the turn (a click on a row then finds none). */
+ * no Draft buttons until that many ms into the turn (a click on a row then finds none);
+ * ``planHang``: a held /plan ask never answers (the solve outlives the turn). */
 function world({
   visible = ["101", "102", "103"],
   clicksToLand = 1,
@@ -30,6 +31,7 @@ function world({
   settleMs = 0,
   backToBack = false,
   draftableAfter = 0,
+  planHang = false,
   dud = [], // rows whose clicks never land
   mislabeled = [], // rows whose Draft button names another player
 } = {}) {
@@ -123,6 +125,7 @@ function world({
         await sleep(20);
         throw Object.assign(new Error("Bad Gateway"), { status: 502 });
       }
+      if (planHang && wait) return new Promise(() => {});
       await sleep(wait ? planMs : 20);
       const next = Array.isArray(plan) ? plan[Math.min(log.plans.length, plan.length) - 1] : null;
       return next ? { ...served, ...next } : served;
@@ -135,6 +138,9 @@ function world({
   return { d, tracker, log, clock, at, land };
 }
 
+const ticks = async (n) => {
+  for (let i = 0; i < n; i++) await null;
+};
 const attempts = (log) => log.events.filter((e) => e.type === "draft_attempt").map((e) => [e.yid, e.method, e.attempt]);
 const rows = (ys) => ys.map((y) => ({ yahoo_player_id: y, name: `P ${y}`, ini: "P", last: y, team: "T" }));
 
@@ -576,6 +582,7 @@ test("a request at the turn's frame waits for the Draft buttons, as a row draft 
 
 test("each request is its own: the same player asked again after a failed request is served", async () => {
   const { d, log } = world({ clicksToLand: 3 }); // the first request's two clicks land nothing
+  // By time, as an API before #22 names its requests (the id where there is one, below).
   const first = await d.request(ask("103", { t: "t1" }));
   assert.equal(first.result, "failed");
   assert.equal(await d.request(ask("103", { t: "t1" })), null, "the same request is served once");
@@ -595,4 +602,72 @@ test("a request replaced by the user stops before its next try, with no failure 
   const second = await d.request(ask("102"));
   assert.equal(second.result, "landed");
   assert.deepEqual(attempts(log), [["103", "request", 1], ["102", "request", 1]]);
+});
+
+// ---------------------------------------------------------------- #22
+test("a request's wait for the Draft buttons ends at the backstop line", async () => {
+  const { d, clock } = world({ clock: 7, draftableAfter: 60_000 }); // 7 s left, no buttons yet
+  const t0 = clock.t;
+  const out = await d.request(ask("103"));
+  assert.equal(out.result, "failed");
+  // Each try: the wait ends at 6 s left (1 s in, then at once), a click that finds no button
+  // and one confirmation (800 ms); not 2 s of waiting per try past the line.
+  assert.ok(clock.t - t0 <= 1000 + 2 * 800, `the request ended ${clock.t - t0} ms in`);
+});
+
+test("a request's notes name it by the API's id for it", async () => {
+  const { d, log } = world({ dud: ["103"] });
+  await d.request(ask("103", { id: "r1" }));
+  const notes = log.events.filter((e) => e.type === "note").map((e) => [e.what, e.yid, e.request_id]);
+  assert.deepEqual(notes, [["request failed", "103", "r1"], ["request", "103", "r1"]]);
+});
+
+test("a request that lands ends the armed turn that stood aside, its /plan hold included", async () => {
+  const { d, log } = world({ planHang: true });
+  const turn = d.turn(K); // holds /plan for the solve of picks 1..K-1, which never comes
+  const req = await d.request(ask("103", { id: "r1" }));
+  assert.equal(req.result, "landed");
+  const out = await Promise.race([turn, ticks(2000).then(() => "still holding")]);
+  assert.notEqual(out, "still holding");
+  assert.equal(out.result, "landed");
+  assert.equal(out.how, "manual");
+  assert.equal(out.attempts, 0);
+  assert.deepEqual(attempts(log), [["103", "request", 1]], "the drafter clicked nothing");
+});
+
+test("offer: a newer request for the pick stops the one being served, which hands over at once", async () => {
+  const { d, log, at } = world({ dud: ["103"] });
+  const heard = [];
+  const done = new Promise((resolve) => {
+    d.onRequest = (e) => {
+      heard.push(e.start ? ["start", e.start.yahoo_player_id] : ["end", e.out.yid, e.out.result]);
+      if (e.out && e.out.yid === "102") resolve();
+    };
+  });
+  d.offer(ask("103", { id: "r1" }));
+  d.offer(ask("103", { id: "r1" })); // the next poll reads the same request: nothing new
+  at(1000, () => d.offer(ask("102", { id: "r2" }))); // the user asked for another player
+  await Promise.race([done, ticks(5000)]);
+  assert.deepEqual(heard, [["start", "103"], ["end", "103", "stopped"], ["start", "102"], ["end", "102", "landed"]]);
+  const notes = log.events.filter((e) => e.type === "note").map((e) => [e.what, e.yid, e.result, e.request_id]);
+  assert.deepEqual(notes, [
+    ["request", "103", "stopped", "r1"],
+    ["request", "102", "landed", "r2"],
+  ]);
+  assert.deepEqual(attempts(log), [["103", "request", 1], ["102", "request", 1]]);
+});
+
+test("offer: a request read before its turn is served when the turn comes", async () => {
+  const { d, tracker, clock } = world({ clockFrame: false });
+  d.offer(ask("103", { id: "r1" }));
+  assert.equal(d.requesting, null, "pick K is not on the clock yet");
+  const done = new Promise((resolve) => {
+    d.onRequest = (e) => e.out && resolve(e.out);
+  });
+  tracker.ingest(`D|${K}|${SLOT}|30`, clock.t);
+  d.serveOffered(); // content.js on the turn frame
+  const out = await Promise.race([done, ticks(5000).then(() => null)]);
+  assert.equal(out && out.result, "landed");
+  d.offer(null);
+  assert.equal(d.offered, null);
 });

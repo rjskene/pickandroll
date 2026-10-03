@@ -255,7 +255,7 @@
     if (out.turn !== null) {
       if (armed()) takeTurn(out.turn, "on deck");
       else refreshPlan();
-      serveRequest();
+      drafter.serveOffered();
     }
     if (out.kind === "order" && !S.orderNoted) {
       S.orderNoted = true; // what Yahoo's R| frame holds is not known yet (#17); its length is the clue
@@ -310,6 +310,7 @@
         S.attached = false;
         S.room = null;
         S.request = null;
+        drafter.offer(null);
       } else {
         const first = S.attached !== true;
         S.attached = true;
@@ -327,12 +328,7 @@
         sendEvents();
         if (!S.plan || !S.plan.fresh || S.plan.version !== r.room.version) refreshPlan();
         S.request = r.room.request || null;
-        // The user asked for another player since: the old request stops before its next try.
-        const q = drafter.requesting;
-        if (q && S.request && S.request.overall === q.k && String(S.request.yahoo_player_id) !== q.yid) {
-          q.ctx.stop("replaced");
-        }
-        serveRequest();
+        drafter.offer(S.request); // served on its turn; a newer one stops the old (drafter.js)
       }
     } catch (_) {
       // S.api says why
@@ -685,23 +681,14 @@
 
   // "Draft in Yahoo" from the web app (#10), in mirror and autopilot: the user's player for the
   // pick on the clock, clicked on that turn only. An armed turn stands aside while it is pending
-  // and goes on if it fails (drafter.js).
-  function serveRequest() {
-    const q = S.request;
-    if (!q || drafter.requesting || tracker.myTurnNow() !== q.overall) return;
-    const label = `your pick: ${q.name}`;
-    drafter.request(q).then((out) => {
-      if (!out) return; // not this turn's, or served already
-      emit({ type: "note", what: "request", overall: out.overall, yid: out.yid, result: out.result, attempts: out.attempts });
-      if (S.drafting === label) S.drafting = null;
-      render();
-      serveRequest(); // a request that replaced this one, at once
-    });
-    if (drafter.requesting) {
-      S.drafting = label; // set before the request's first wait
-      render();
-    }
-  }
+  // and goes on if it fails; the drafter serves what refresh() offers it (drafter.js). The strip
+  // says what the tab is drafting meanwhile.
+  let requestLabel = null;
+  drafter.onRequest = ({ start }) => {
+    if (start) S.drafting = requestLabel = `your pick: ${start.name}`;
+    else if (S.drafting === requestLabel) S.drafting = null;
+    render();
+  };
 
   // Once a second while armed: start a turn the on-deck frame did not start, and between turns
   // undo Yahoo's flip into autopick mode (or a backstop's switch a turn could not undo) and keep

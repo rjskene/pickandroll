@@ -405,6 +405,7 @@ export interface DraftRequest {
   player_id: string | null;
   name: string;
   t: string;
+  id: string; // the draft tab serves each request once by it (#22)
 }
 
 /** What the draft tab drafts from: the plan's candidates by Yahoo id. */

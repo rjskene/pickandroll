@@ -108,6 +108,22 @@ def test_a_replaced_request_outlives_the_first_ones_failure(room):
     assert c.get("/rooms/q1").json()["request"]["yahoo_player_id"] == yids[3]
 
 
+def test_a_failure_note_drops_only_the_request_it_names(room):
+    """#22: the user asks for B again before the tab's failure note for the first B arrives:
+    the note names the first request by its id, so the second stands."""
+    c, _, yids = room
+    first = ask(c, 1, 0, yids[2]).json()["request"]
+    again = ask(c, 1, 0, yids[2]).json()["request"]
+    assert again["id"] != first["id"], "two requests in the same millisecond too"
+    failed = {"type": "note", "what": "request failed", "overall": 1, "yid": yids[2]}
+    stale = {**failed, "request_id": first["id"]}
+    assert c.post("/rooms/q1/events", json={"events": [stale]}).status_code == 200
+    assert c.get("/rooms/q1").json()["request"]["id"] == again["id"]
+    current = {**failed, "request_id": again["id"]}
+    assert c.post("/rooms/q1/events", json={"events": [current]}).status_code == 200
+    assert c.get("/rooms/q1").json()["request"] is None
+
+
 def test_a_request_is_refused_while_the_draft_tab_is_silent(tmp_path, monkeypatch):
     """#20: with no draft tab to click it, a request would show "sent" for nobody."""
     picks = build_league(tmp_path)

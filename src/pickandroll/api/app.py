@@ -411,7 +411,9 @@ class RoomEvents(BaseModel):
 class RoomPatch(BaseModel):
     """What the user sets for a room; a field left out keeps its value (at least one)."""
 
-    mode: Literal["mirror", "autopilot"] | None = None
+    mode: Literal["mirror", "autopilot"] | None = Field(
+        default=None, description="left out, the room keeps its mode; null is refused (422)"
+    )
     act_at_s: int | None = Field(
         default=None,
         ge=yahoo_room.ACT_AT_MIN_S,
@@ -1107,10 +1109,11 @@ def create_app(
 
     @app.patch("/rooms/{draft_id}")
     async def room_mode(draft_id: str, body: RoomPatch) -> dict[str, Any]:
-        if not {"mode", "act_at_s"} & body.model_fields_set or (
-            "mode" in body.model_fields_set and body.mode is None
-        ):
+        if not {"mode", "act_at_s"} & body.model_fields_set:
             raise HTTPException(422, "nothing to set: give mode, act_at_s or both")
+        if "mode" in body.model_fields_set and body.mode is None:
+            # Most likely a client's stale or empty value; leaving the field out keeps the mode.
+            raise HTTPException(422, "mode cannot be null: leave it out to keep the room's mode")
         room, session = await get_room(draft_id)
         if body.mode == "autopilot" and room.teams_mismatch is not None:
             # The session's draft is not the room's (#17): every plan would be for the wrong picks.
