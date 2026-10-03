@@ -105,6 +105,11 @@ class YahooRoom:
     scored: bool = False
     #: The pick clock the plan budget follows (``None``: the attach fixed a time_limit).
     clock_s: float | None = None
+    #: The room's own team count when its client reported one that disagrees with the
+    #: attach's (the room was then put in mirror mode, once).
+    teams_mismatch: int | None = None
+    #: The first recommendation from the single-roster model has been noted in the log.
+    roster_noted: bool = False
     lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
     @property
@@ -656,7 +661,10 @@ def on_recommendation(session: Session, room: YahooRoom, payload: dict[str, Any]
             "cands": [c["yahoo_player_id"] for c in cands],
             "unmapped": unmapped,
             "solve_ms": timings.get("total_ms"),
-            "mode": payload.get("mode"),
+            "mode": payload.get("mode"),  # before #17 the only record of the model
+            # "horizon", or "roster": the single-roster fallback (picks and open slots
+            # disagree; in a room that means the session and the room disagree on the draft).
+            "model": payload.get("mode"),
             "priced": payload.get("priced", True),
             "branch": payload.get("branch", False),
             # A branch plan still solving when its board arrived (installed when it landed).
@@ -668,6 +676,57 @@ def on_recommendation(session: Session, room: YahooRoom, payload: dict[str, Any]
             "branches_running": payload.get("branches_running"),
         }
     )
+    if payload.get("mode") == "roster" and not room.roster_noted:
+        room.roster_noted = True
+        room.log.append(
+            {
+                "type": "note",
+                "t": now_iso(),
+                "what": "roster fallback",
+                "board": int(payload["next_overall"]) - 1,
+                "reason": payload.get("roster_reason"),
+                "src": "api",
+            }
+        )
+
+
+def check_teams(session: Session, room: YahooRoom, events: list[dict[str, Any]]) -> int | None:
+    """Compare the team count the room's client derived from the room (``teams`` on
+    turn_start) with the attach's. On the first disagreement the room goes to mirror mode and
+    the log gets a loud note: every pick the session credits from then on would be wrong
+    (mock 2: a 10-team room attached as 12). Returns the room's count when it disagreed."""
+    if room.teams_mismatch is not None:
+        return None
+    said = {room.num_teams, session.state.settings.num_teams}
+    seen = [
+        int(e["teams"])
+        for e in events
+        if e.get("type") == "turn_start"
+        and isinstance(e.get("teams"), int)
+        and not isinstance(e.get("teams"), bool)
+    ]
+    wrong = next((t for t in seen if {t} != said), None)
+    if wrong is None:
+        return None
+    room.teams_mismatch = wrong
+    was = room.mode
+    room.mode = "mirror"
+    room.control = control_for("mirror")
+    room.log.append({"type": "control", "state": room.control, "slot": room.slot, "src": "api"})
+    room.log.append(
+        {
+            "type": "note",
+            "t": now_iso(),
+            "what": "team count mismatch",
+            "room_teams": wrong,
+            "num_teams": room.num_teams,
+            "session_teams": session.state.settings.num_teams,
+            "mode_was": was,
+            "src": "api",
+        }
+    )
+    session.publish("room_mode", {"draft_id": room.draft_id, "mode": "mirror"}, bump=False)
+    return wrong
 
 
 def unmatched_projection(session: Session, room: YahooRoom, limit: int = 25) -> list[dict]:
@@ -701,6 +760,7 @@ def summary(session: Session, room: YahooRoom) -> dict[str, Any]:
         "mode": room.mode,
         "control": room.control,
         "num_teams": room.num_teams,
+        "teams_mismatch": room.teams_mismatch,
         "rounds": room.rounds,
         "players_file": room.players_file,
         "attached_at": room.attached_at,

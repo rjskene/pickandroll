@@ -207,7 +207,13 @@ $("attach-btn").addEventListener("click", async () => {
   $("attach-btn").disabled = true;
   show("attach-error", false);
   try {
-    await call("attach", { draft_id: tab.draft_id, slot: tab.slot, session_id: s.id, num_teams: s.num_teams });
+    await call("attach", {
+      draft_id: tab.draft_id,
+      slot: tab.slot,
+      session_id: s.id,
+      num_teams: s.num_teams,
+      room_teams: tab.room_teams, // null until the room shows its count
+    });
     sessions = null;
     await load();
   } catch (e) {

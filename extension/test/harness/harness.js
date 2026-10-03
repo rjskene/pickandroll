@@ -24,6 +24,9 @@
   const gap = Number(q.get("gap") || 0);
   // Seconds from the attach to pick 1 (the protocol attaches from the waiting room, >= 60 s).
   const lead = Number(q.get("lead") || 3.5);
+  // The team count the session and the attach say; the recorded room keeps its own (12).
+  // teams=10 is mock 2's mismatch the other way round (#17): the session's draft is not the room's.
+  const teams = Number(q.get("teams") || 12);
   const draftId = q.get("draft") || `ext-${fixture}-${Date.now().toString(36)}`;
   const API = (q.get("api") || "http://localhost:8000").replace(/\/+$/, "");
   const out = (window.__harness = { draftId, done: false, error: null, log: [] });
@@ -102,7 +105,10 @@
     await load("/extension/lib/yahoo.js");
     await load("/extension/lib/drafter.js");
     await load("/extension/content.js");
-    log(`loaded; draft ${draftId}, seat ${slot}, ${gap > 0 ? `a pick every ${gap} s` : `speed ${speed}`}`);
+    log(
+      `loaded; draft ${draftId}, seat ${slot}, ${gap > 0 ? `a pick every ${gap} s` : `speed ${speed}`}` +
+        (teams !== 12 ? `, attached for ${teams} teams` : ""),
+    );
 
     // ---- 3. session + attach (the side panel's path)
     const projections = await http("/projections");
@@ -114,7 +120,7 @@
         projection_file: projection,
         positions_file: "positions_yahoo_31822.csv",
         adp_file: "adp_yahoo_31822.csv",
-        num_teams: 12,
+        num_teams: teams,
         my_position: slot,
         objective: q.get("objective") || "win",
         solve_ahead: true,
@@ -127,7 +133,7 @@
       draft_id: draftId,
       slot,
       session_id: session.id,
-      num_teams: 12,
+      num_teams: teams,
     });
     if (!attach.ok) throw new Error("attach: " + attach.error);
     log(`session ${session.id} (${projection}); room attached, ${attach.data.mapped} players mapped`);

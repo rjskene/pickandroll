@@ -254,6 +254,10 @@
       if (armed()) takeTurn(out.turn, "on deck");
       else refreshPlan();
     }
+    if (out.kind === "order" && !S.orderNoted) {
+      S.orderNoted = true; // what Yahoo's R| frame holds is not known yet (#17); its length is the clue
+      emit({ type: "note", what: "draft order", entries: tracker.orderLen });
+    }
     if (out.kind === "on_deck" || out.kind === "pick" || out.kind === "history") {
       sendEvents();
       render();
@@ -516,13 +520,28 @@
     if (now.length === 2 && inQueue(now[0], c) && inQueue(now[1], c2)) return { ok: true };
     return fail(`queue reads ${now.length} entries, not ${c.last} then ${c2.last}`);
   }
+  // Every control in a row, as the probe logs it (#17): its cell, its place in the cell, its
+  // tag and its labels, so a mock shows where the star and the Draft button are on my turn.
+  const rowControls = (row) =>
+    [...row.children]
+      .flatMap((cell, i) =>
+        [...cell.querySelectorAll("button, [role=button], a")].map((x, j) => ({
+          cell: i,
+          pos: j,
+          tag: x.tagName.toLowerCase(),
+          labels: labelsOf(x).filter(Boolean).join(" | ").replace(/\s+/g, " ").slice(0, 60),
+        })),
+      )
+      .slice(0, 16);
   // The queue probe: what the star (a row's first-cell button, the one queueOnly uses) does on
   // my turn. Either outcome is harmless: it queues ``c``, or it drafts ``c``, the pick wanted.
+  // The row's controls and the queue panel are read before the click.
   async function probeQueue(c) {
     const k = tracker.myTurnNow();
     const row = findRow(c) || (await scrollTo(c));
+    const seen = { controls: row ? rowControls(row) : null, panel_found: Boolean(qPanel()) };
     const b = row && row.children[0] && row.children[0].querySelector("button");
-    if (!b) return { outcome: "no_control", panel: panelText(), control: null };
+    if (!b) return { outcome: "no_control", panel: panelText(), control: null, ...seen };
     const labels = labelsOf(b);
     const control = labels.filter(Boolean).join(" | ").replace(/\s+/g, " ").slice(0, 60);
     b.click();
@@ -530,7 +549,7 @@
     const drafted = () => k !== null && tracker.picks.has(k);
     const queued = () => qItems().some((li) => inQueue(li, c));
     for (let i = 0; i < 7 && !drafted() && !queued(); i++) await sleep(i ? 250 : 400);
-    return { outcome: PR.probeOutcome(drafted(), queued(), labels), panel: panelText(), control };
+    return { outcome: PR.probeOutcome(drafted(), queued(), labels), panel: panelText(), control, ...seen };
   }
   async function setAutodraft(on) {
     const b = autodraftButton();
@@ -776,6 +795,11 @@
       tone = "warn";
     } else if (S.attached === null) {
       head = "pickandroll: connecting…";
+    } else if (S.room && S.room.teams_mismatch) {
+      head =
+        `pickandroll · MIRROR · this room has ${S.room.teams_mismatch} teams but the session ` +
+        `${S.room.num_teams}: its plans are wrong. Attach a ${S.room.teams_mismatch}-team session.`;
+      tone = "bad";
     } else {
       const mode = S.autopickMode ? "YAHOO AUTOPICK ON" : S.mode === "autopilot" ? "ARMED" : "MIRROR";
       const sync =

@@ -22,12 +22,16 @@ open draft tab. Content scripts only start when a page loads.
 ## Use it in a draft
 
 1. In the pickandroll web app create the session for the draft, with **your draft position equal to your Yahoo
-   seat**.
+   seat** and **the room's number of teams** (count the filled seats; a mock room can have fewer than 12).
 2. Enter the Yahoo draft room as usual. The extension starts on any
    `https://basketball.fantasysports.yahoo.com/draftclient/...` page and shows a strip at the bottom left.
 3. Open the side panel (toolbar icon), choose the session and click **Attach**. The strip then shows the sync
    state ("synced 57/57" or "behind 2"), your next pick and the plan's top three with its freshness.
 4. Draft in Yahoo as usual; pickandroll follows every pick.
+
+The extension works out the room's team count from where the snake turns (pick T+1 goes back to seat T). An
+attach that disagrees with a count it already knows is refused. A disagreement found later turns the room to
+mirror, and it cannot be armed again: plans for a 12-team draft are wrong in a 10-team room.
 
 ## Armed mode (opt-in)
 
@@ -55,8 +59,9 @@ queue; when an entry has none, it is left and a note names its controls.
 - **Mirror** in the side panel disarms the room.
 - **The queue probe.** Once per armed draft, by default on your first turn from round 3 whose next pick is not
   also yours, the drafter stars its top candidate before drafting it. It logs what Yahoo did: queued, drafted,
-  dropped (a lost click on a Draft control) or failed. Both real outcomes take the player wanted. Set the round,
-  or `off`, on the options page.
+  dropped (a lost click on a Draft control) or failed. Both real outcomes take the player wanted. It also logs
+  every control in the row (cell, place, labels) and whether the queue panel was found. Set the round, or `off`,
+  on the options page.
 
 The strip, by state:
 
@@ -67,6 +72,7 @@ The strip, by state:
 | `not attached` | open the side panel and attach a session |
 | `API not reachable` | start `pickandroll-api`; picks are kept and sent when it is back |
 | `YAHOO AUTOPICK ON` | Yahoo's Autodraft switch is on: Yahoo picks for this seat |
+| `this room has N teams but the session M` | the session is for another draft: attach one with the room's team count |
 | `the extension was reloaded` | reload the draft tab (only after a reload of the extension itself) |
 
 Reloading the draft tab is the last resort in a live draft: the room resends its whole history on connect, so
@@ -120,6 +126,8 @@ The harness runs in the Claude browser pane or any browser. Start `pickandroll-a
   - `slot=N` and `fixture=2515267|2565888` choose the seat and the recorded room.
   - `lead=60` sets the seconds from the attach to pick 1.
   - `gap=15` plays one pick every 15 s of wall clock in place of the recorded pace.
+  - `teams=10` creates and attaches the session for 10 teams while the recorded room keeps 12. The tracker
+    then reports the room's count, and the API turns the room to mirror at pick 13 (#17).
   - `api=` and `draft=` set the API base and the room id.
 - `http://localhost:8765/extension/test/harness/panel.html?draft=<room id>`: the side panel, unchanged, against a
   room in the API.

@@ -39,8 +39,8 @@ test("every pick on the clock is a turn_start, once; mine is a turn", () => {
   assert.equal(r.ingest("D|2|2|30", T0 + 3100).turn, 2);
   assert.equal(r.myTurnNow(), 2);
   assert.deepEqual(r.takeEvents(), [
-    { type: "turn_start", t: T0, overall: 1, slot: 1, clock_s: 30 },
-    { type: "turn_start", t: T0 + 3100, overall: 2, slot: 2, clock_s: 30 },
+    { type: "turn_start", t: T0, overall: 1, slot: 1, clock_s: 30, teams: null },
+    { type: "turn_start", t: T0 + 3100, overall: 2, slot: 2, clock_s: 30, teams: null },
   ]);
   assert.deepEqual(r.takeEvents(), []);
 });
@@ -127,6 +127,56 @@ test("the room's team count comes from the attached room", () => {
   assert.deepEqual(r.mine.slice(0, 2), [1, 20]);
   assert.equal(r.ingest("R|a|b|c|", T0).kind, "order");
   assert.equal(r.numTeams, 10);
+  assert.equal(r.orderLen, 3, "the R| frame's length is kept for a note, not used");
+  assert.equal(r.snapshot().order_len, 3);
+});
+
+// A room's frames for picks 1..n: D| as each goes on the clock, then 0| as it lands.
+const play = (r, teams, n, t = T0) => {
+  const { pickOwner } = require("../lib/protocol.js");
+  for (let k = 1; k <= n; k++) {
+    const s = pickOwner(teams, k).slot;
+    r.ingest(`D|${k}|${s}|30`, t + 2 * k);
+    r.ingest(`0|${k}|${5000 + k}|${s}|C|0`, t + 2 * k + 1);
+  }
+};
+
+test("the room's own team count shows where the snake first turns (#17)", () => {
+  const r = room(1); // attached as 12, as mock 2 was
+  assert.equal(r.teamsSeen(), null, "nothing seen: any count fits");
+  play(r, 10, 10);
+  assert.equal(r.teamsSeen(), null, "picks 1..10 on seats 1..10 fit 10 to 20 teams");
+  r.ingest("D|11|10|30", T0 + 100); // the snake turns: pick 11 back on seat 10
+  assert.equal(r.teamsSeen(), 10);
+  assert.equal(r.snapshot().room_teams, 10);
+  assert.equal(r.numTeams, 12, "the attach's count is the API's to change, not the tracker's");
+  const twelve = room(5);
+  play(twelve, 12, 13);
+  assert.equal(twelve.teamsSeen(), 12);
+});
+
+test("history alone shows the count; a pick no snake order explains shows none", () => {
+  const r = room(3);
+  r.ingest("P|1=11,1,0|2=12,2,0|3=13,3,0|4=14,4,0|5=15,4,0|6=16,3,0|", T0);
+  assert.equal(r.teamsSeen(), 4);
+  const traded = room(3);
+  play(traded, 12, 14);
+  traded.ingest("0|15|9999|7|C|0", T0 + 100); // a traded pick: 15 is seat 10's in a 12-team snake
+  assert.equal(traded.teamsSeen(), null);
+});
+
+test("each turn_start carries the room's count once it shows (#17)", () => {
+  const r = room(1);
+  play(r, 10, 10);
+  const before = r.takeEvents();
+  assert.equal(before.length, 10);
+  assert.ok(before.every((e) => e.teams === null));
+  r.ingest("D|11|10|30", T0 + 100);
+  assert.deepEqual(
+    r.takeEvents().map((e) => [e.overall, e.teams]),
+    [[11, 10]],
+    "the turn that shows the count carries it",
+  );
 });
 
 test("nothing past the draft's last pick is mine: the frame after 156 starts no turn", () => {
