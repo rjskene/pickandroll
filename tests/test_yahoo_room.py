@@ -19,7 +19,7 @@ from fastapi.testclient import TestClient
 
 from pickandroll.api import SessionStore, create_app
 from pickandroll.cli import main as cli_main
-from pickandroll.fidelity import analyze, markdown
+from pickandroll.fidelity import analyze, guardrail_pass, markdown
 from pickandroll.fidelity.replay import load_fixture, replay, timeline
 from pickandroll.sources.matching import match_players
 from pickandroll.sources.yahoo import build_id_map, label_key, load_players_file
@@ -546,6 +546,7 @@ def test_scorecard_labels_every_failure():
         "denominator": 7,
         "manual": 1,
         "my_picks_seen": 8,
+        "against_final": 1,
     }
     g = card["guardrails"]
     assert g["G1"]["agree"] == 96 and g["G2"]["max"] == 10000 and g["G3"]["interventions"] == 1
@@ -585,6 +586,13 @@ def test_scorecard_unmapped_top_is_a_fallback_and_entry_lead_from_the_client():
         "entry_lead_s": 60.0,
         "entry_from": "client",
     }
+    # The client's "entered" note was written before the attach and arrives after it: the
+    # earliest client event by time counts, whatever its place in the log.
+    entered = [*with_client, _ev("note", 5, what="entered", src="client")]
+    assert analyze(entered)["guardrails"]["G6"]["entry_lead_s"] == 65.0
+    # A note the API wrote is not the client's.
+    api_note = [*with_client, _ev("note", 1, what="alias pinned")]
+    assert analyze(api_note)["guardrails"]["G6"]["entry_lead_s"] == 60.0
 
 
 def test_scorecard_stale_when_the_session_was_behind():
@@ -600,6 +608,193 @@ def test_scorecard_stale_when_the_session_was_behind():
     card = analyze(events)
     assert [r["label"] for r in card["rows"]] == ["stale"]
     assert card["guardrails"]["G2"]["max"] == 8000
+
+
+def test_scorecard_judges_the_reco_acted_on_and_counts_churn():
+    """Two teams, slot 1: my picks are 1 and 4. Pick 1 is drafted off the early plan, which the
+    priced table then replaces with another #1 (churn). Pick 4 is drafted off board 2's plan
+    while board 3's was there: stale, though the session was synced."""
+    events = [
+        _ev("attach", 0, slot=1, num_teams=2, rounds=2, draft_id="c"),
+        _ev("control", 0, state="armed"),
+        _ev("turn_start", 1, overall=1),
+        _ev(
+            "reco",
+            2,
+            board=0,
+            top_yid="a",
+            top_pid="pa",
+            top_name="A",
+            cands=["a", "b"],
+            priced=False,
+            branch=False,
+            solve_ms=200,
+        ),
+        _ev("draft_attempt", 3, overall=1, yid="a", method="row", attempt=1, board=0),
+        _ev(
+            "reco",
+            4,
+            board=0,
+            top_yid="b",
+            top_pid="pb",
+            top_name="B",
+            cands=["b", "a"],
+            priced=True,
+            solve_ms=500,
+            branches_running=2,
+        ),
+        _ev("pick_landed", 5, overall=1, yid="a", how="row"),
+        _ev("room_pick", 5, overall=1, yid="a"),
+        _ev("session_pick", 5, overall=1, yid="a"),
+        _ev("reco", 6, board=2, top_yid="x", top_pid="px", top_name="X", cands=["x", "d"]),
+        _ev("room_pick", 7, overall=2, yid="o2"),
+        _ev("session_pick", 7, overall=2, yid="o2"),
+        _ev("room_pick", 8, overall=3, yid="x"),
+        _ev("session_pick", 8, overall=3, yid="x"),
+        _ev("turn_start", 8, overall=4),
+        _ev(
+            "reco",
+            9,
+            board=3,
+            top_yid="c",
+            top_pid="pc",
+            top_name="C",
+            cands=["c", "e"],
+            priced=True,
+            solve_ms=300,
+            branches_running=0,
+        ),
+        _ev("draft_attempt", 10, overall=4, yid="d", method="row", attempt=1, board=2),
+        _ev("pick_landed", 11, overall=4, yid="d", how="row"),
+        _ev("room_pick", 11, overall=4, yid="d"),
+        _ev("session_pick", 11, overall=4, yid="d"),
+    ]
+    card = analyze(events)
+    first, second = card["rows"]
+    assert first["label"] == "compliant" and first["ref_name"] == "A"
+    assert first["ref_kind"] == "plan" and first["final_kind"] == "priced"
+    assert first["churn"] is True and first["final_name"] == "B"
+    assert second["label"] == "stale" and second["acted_board"] == 2
+    assert second["churn"] is False
+    assert card["compliance"]["compliant"] == 1 and card["compliance"]["against_final"] == 0
+    d = card["diagnostics"]
+    assert d["D6"] == {"churn": 1, "picks": [1]}
+    assert d["D1_hit"]["n"] == 0 and d["D1_pending"]["n"] == 0 and d["D1_miss"]["n"] == 2
+    plan = events[3]  # board 0's first reco (1 s into the turn): an installed branch instead
+
+    def split(**fields):
+        swap = [{**e, "branch": True, **fields} if e is plan else e for e in events]
+        out = analyze(swap)["diagnostics"]
+        return out["D1_hit"]["n"], out["D1_pending"]["n"], out["D1_miss"]["n"]
+
+    assert split(branch_late=False) == (1, 0, 1)  # solved before the turn started
+    assert split(branch_late=True) == (0, 1, 1)  # still solving then, installed when it landed
+    # A log from before branch_late: 1 s after the turn start is past a solved branch's install.
+    assert split() == (0, 1, 1)
+    assert split(t="2026-10-01T00:00:01.100+00:00") == (1, 0, 1)  # in at 100 ms: a hit
+    assert d["D3"]["n"] == 2 and d["D3_plan"]["n"] == 1
+    assert d["D3_busy"]["max"] == 500 and d["D3_idle"]["max"] == 300
+    text = markdown(card)
+    assert "| D6 reco churn (target 0) | 1 at 1 |" in text
+    assert "Compliance against the final reco (diagnostic): 0/2." in text
+    assert "| 1 | A | plan | - | B | priced | - | to find |" in text
+    # With objectives logged, a final reco that beat the one acted on is its own cause.
+    scored = [
+        {**e, "top_objective": 6.0 if e.get("top_yid") == "a" else 6.1}
+        if e["type"] == "reco"
+        else e
+        for e in events
+    ]
+    row = analyze(scored)["rows"][0]
+    assert row["churn_cause"] == "better plan after action"
+    # Without an attempt (expiry, manual) the ref is the last reco before the landing.
+    no_attempt = [e for e in events if e["type"] != "draft_attempt"]
+    rows = analyze(no_attempt)["rows"]
+    assert rows[0]["label"] == "fallback" and rows[0]["churn"] is False
+    assert rows[1]["label"] == "wrong"  # judged against board 3's list, which lacks d
+
+
+def test_scorecard_compliant_only_when_the_drafter_made_the_pick_and_g7():
+    """Three teams, slot 1, two rounds: my picks are 1 and 6. Pick 1 expires and Yahoo's
+    autopick happens to be ref_k: expired, not compliant. Pick 6 lands from the queue the
+    drafter set: compliant. One heartbeat ran on DOM timers: G7 fails."""
+    events = [
+        _ev("attach", 0, slot=1, num_teams=3, rounds=2, draft_id="g"),
+        _ev("control", 0, state="armed"),
+        _ev("heartbeat", 1, worker=True, src="client"),
+        _ev("turn_start", 1, overall=1),
+        _ev("reco", 2, board=0, top_yid="a", cands=["a", "b"]),
+        _ev("pick_landed", 31, overall=1, yid="a", how="expiry"),
+        _ev("room_pick", 31, overall=1, yid="a"),
+        _ev("session_pick", 31, overall=1, yid="a"),
+        _ev("heartbeat", 32, worker=False, src="client"),
+    ]
+    for k in range(2, 6):
+        events += [_ev("room_pick", 32 + k, overall=k, yid=f"o{k}")]
+        events += [_ev("session_pick", 32 + k, overall=k, yid=f"o{k}")]
+    events += [
+        _ev("turn_start", 37, overall=6),
+        _ev("reco", 38, board=5, top_yid="c", cands=["c"]),
+        _ev("draft_attempt", 60, overall=6, yid="c", method="queue", attempt=1, board=5),
+        _ev("pick_landed", 61, overall=6, yid="c", how="autopick"),
+        _ev("room_pick", 61, overall=6, yid="c"),
+        _ev("session_pick", 61, overall=6, yid="c"),
+    ]
+    card = analyze(events)
+    assert [r["label"] for r in card["rows"]] == ["expired", "compliant"]
+    g7 = card["guardrails"]["G7"]
+    assert g7["heartbeats"] == 2 and g7["worker_off"] == 1
+    assert g7["first_off"] == events[8]["t"]
+    assert guardrail_pass(card)["G7"] is False
+    assert "| G7 client timers on the Worker | 1 of 2 heartbeats without, first at" in markdown(
+        card
+    )
+
+
+def test_scorecard_reports_the_queue_probe():
+    """The probe's note is a diagnostic line: what Yahoo did with the star on my turn."""
+    events = [
+        _ev("attach", 0, slot=1, num_teams=2, rounds=1, draft_id="p"),
+        _ev("room_pick", 1, overall=1, yid="a"),
+        _ev("session_pick", 1, overall=1, yid="a"),
+    ]
+    assert analyze(events)["queue_probe"] is None
+    assert "Queue probe (diagnostic): not run." in markdown(analyze(events))
+    events.append(
+        _ev(
+            "note",
+            1,
+            what="queue_probe",
+            overall=1,
+            yid="a",
+            name="A",
+            outcome="drafted",
+            control="Draft",
+            panel=None,
+            src="client",
+        )
+    )
+    card = analyze(events)
+    assert card["queue_probe"]["outcome"] == "drafted"
+    assert (
+        'Queue probe (diagnostic): pick 1 (A) drafted; control "Draft"; queue panel unreadable.'
+        in markdown(card)
+    )
+
+
+def test_scorecard_g2_judges_the_picks_after_the_attach():
+    events = [
+        _ev("room_pick", 1, overall=1, yid="a"),  # the room started before the attach
+        _ev("attach", 20, slot=2, num_teams=2, rounds=2, draft_id="late"),
+        _ev("control", 20, state="mirror"),
+        _ev("session_pick", 21, overall=1, yid="a"),
+        _ev("room_pick", 22, overall=2, yid="b"),
+        _ev("session_pick", 23, overall=2, yid="b"),
+    ]
+    g = analyze(events)["guardrails"]
+    assert g["G2"]["n"] == 1 and g["G2"]["max"] == 1000
+    assert g["G2_all"] == {"n": 2, "p50": 1000, "p95": 20000, "max": 20000, "pre_attach": 1}
+    assert "| G2 over all picks, 1 before the attach | p50 1000" in markdown(analyze(events))
 
 
 def test_fidelity_report_cli(tmp_path, capsys):

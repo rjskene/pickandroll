@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>pickandroll</title>
+    <link rel="stylesheet" href="panel.css" />
+  </head>
+  <body>
+    <header>
+      <h1>pickandroll</h1>
+      <span id="api" class="pill">API …</span>
+    </header>
+
+    <section id="none" hidden>
+      <p>Open your Yahoo draft room in this window. The panel follows the draft tab.</p>
+    </section>
+
+    <section id="room" hidden>
+      <h2 id="room-title" class="title">Room</h2>
+      <dl>
+        <dt>Room picks</dt><dd id="picks">-</dd>
+        <dt>Session</dt><dd id="sync">-</dd>
+        <dt>On the clock</dt><dd id="clock">-</dd>
+        <dt>Your next pick</dt><dd id="next">-</dd>
+        <dt>Yahoo Autodraft</dt><dd id="autodraft">-</dd>
+      </dl>
+    </section>
+
+    <section id="attach" hidden>
+      <h2>Attach a session</h2>
+      <p class="muted">Pick the pickandroll session for this room. Create one in the pickandroll app first,
+        with your draft position equal to this seat.</p>
+      <label for="session">Session</label>
+      <select id="session"></select>
+      <p id="session-warn" class="warn" hidden></p>
+      <button id="attach-btn" type="button">Attach</button>
+      <p id="attach-error" class="bad" hidden></p>
+    </section>
+
+    <section id="attached" hidden>
+      <h2>Mode</h2>
+      <div class="modes" role="group" aria-label="Mode">
+        <button id="mode-mirror" type="button" aria-pressed="true">Mirror</button>
+        <button id="mode-armed" type="button">Armed</button>
+      </div>
+      <p class="muted" id="mode-note">Mirror: you draft in Yahoo; pickandroll follows every pick.</p>
+
+      <h2>Plan</h2>
+      <ol id="plan"></ol>
+      <p id="plan-state" class="muted"></p>
+
+      <h2>Last pick of yours</h2>
+      <p id="last" class="muted">-</p>
+
+      <div id="warnings"></div>
+
+      <p class="links">
+        <a id="open-web" href="#" target="_blank" rel="noopener">Open the session in pickandroll</a>
+      </p>
+      <button id="detach-btn" type="button" class="quiet">Detach this room</button>
+    </section>
+
+    <footer>
+      <a href="#" id="options">Settings</a>
+    </footer>
+    <script src="panel.js"></script>
+  </body>
+</html>

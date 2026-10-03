@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>pickandroll settings</title>
+    <link rel="stylesheet" href="../sidepanel/panel.css" />
+  </head>
+  <body>
+    <header><h1>pickandroll settings</h1></header>
+    <section>
+      <h2>Where pickandroll runs</h2>
+      <label for="api">API base URL</label>
+      <input id="api" type="url" placeholder="http://localhost:8000" />
+      <label for="web">Web app URL</label>
+      <input id="web" type="url" placeholder="http://localhost:5173" />
+      <h2>Yahoo players file</h2>
+      <label for="players_file">File name in the API's data/ folder (empty: the newest yahoo_players_*)</label>
+      <input id="players_file" type="text" placeholder="yahoo_players_31822.json" />
+      <h2>Queue probe</h2>
+      <label for="probe_round">Once per armed draft, on my first turn from this round on whose next pick is not also mine, star the top candidate before drafting it, to see whether Yahoo queues or drafts it (a round from 1 to 13, or off; empty: 3)</label>
+      <input id="probe_round" type="text" placeholder="3" />
+      <h2>Search fallback</h2>
+      <label for="search_fallback">When a candidate's row is not in Yahoo's table even after scrolling, type his name into Yahoo's search box and draft from the filtered table. Off by default: in the September drafts the filtered table's Draft button drafted the wrong player.</label>
+      <select id="search_fallback">
+        <option value="">off</option>
+        <option value="on">on</option>
+      </select>
+      <button id="save" type="button">Save</button>
+      <p id="saved" class="muted" role="status"></p>
+    </section>
+    <script src="options.js"></script>
+  </body>
+</html>

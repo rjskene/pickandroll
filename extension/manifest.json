@@ -1,0 +1,50 @@
+{
+  "manifest_version": 3,
+  "name": "pickandroll draft room",
+  "version": "0.1.0",
+  "description": "Mirrors your Yahoo fantasy basketball draft room into a pickandroll session running on this computer.",
+  "minimum_chrome_version": "116",
+  "permissions": [
+    "storage",
+    "sidePanel"
+  ],
+  "host_permissions": [
+    "http://localhost/*",
+    "http://127.0.0.1/*"
+  ],
+  "background": {
+    "service_worker": "worker.js"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://basketball.fantasysports.yahoo.com/draftclient/*"
+      ],
+      "js": [
+        "page.js"
+      ],
+      "run_at": "document_start",
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "https://basketball.fantasysports.yahoo.com/draftclient/*"
+      ],
+      "js": [
+        "lib/protocol.js",
+        "lib/room.js",
+        "lib/yahoo.js",
+        "lib/drafter.js",
+        "content.js"
+      ],
+      "run_at": "document_start"
+    }
+  ],
+  "side_panel": {
+    "default_path": "sidepanel/index.html"
+  },
+  "options_page": "options/index.html",
+  "action": {
+    "default_title": "pickandroll: open the draft-room panel"
+  }
+}

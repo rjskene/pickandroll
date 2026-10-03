@@ -62,6 +62,9 @@ Yahoo draft rooms (YAHOO SYNC): the API mirrors a live Yahoo draft room into a s
 the draft client's players response saved from a logged-in tab. Each room writes its fidelity
 log to `data/fidelity/<draft_id>.jsonl`; `.venv/bin/python -m pickandroll fidelity report
 <draft_id>` prints its scorecard.
+The Chrome extension in `extension/` is the client in the draft page. To install it, load it
+unpacked from `chrome://extensions` (Developer mode); then attach a session from its side panel.
+`extension/README.md` has the steps and lists what it reads and sends.
 
 Data pulls:
 
