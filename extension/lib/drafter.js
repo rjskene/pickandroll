@@ -25,7 +25,9 @@
 // "Draft in Yahoo" from the web app (#10, in mirror and autopilot): ``request`` clicks the user's
 // player for the pick on the clock, with the row click's label guard, in two tries; the pick is
 // the user's (how "manual"). While it is pending an armed turn for that pick stands aside; when
-// it lands nothing, a note "request failed" drops it and the turn goes on, backstop included.
+// it lands, that turn ends, as after a hand pick; when it lands nothing, a note "request failed"
+// drops it and the turn goes on, backstop included (a second try that would cut into the
+// backstop's time is skipped).
 // ``actAt`` (the room's act_at_s, #10; null: at once): an armed turn holds its click until the
 // clock is down to that many seconds, so the user may pick first (by hand or by a request,
 // either of which ends the turn). Its plan wait stops there instead of at 12 s, and it takes its
@@ -277,9 +279,13 @@
         this.emit({ type: "note", what, overall: k, yid: c.yahoo_player_id, request_id: q.id ?? null, ...extra });
       try {
         for (let n = 1; n <= REQUEST_TRIES && this.live(ctx) && this.tracker.myTurnNow() === k; n++) {
+          // An armed turn stands aside for this request: a second try past its backstop line
+          // would take the backstop's time (#24).
+          const turn = this.current;
+          if (n > 1 && turn && turn.k === k && !turn.settled && this.leftOrPlenty() <= BACKSTOP_BY_S) break;
           // At the turn's frame the table may not show its Draft buttons yet, as for a row draft,
-          // but the wait leaves an armed turn its backstop line (#22).
-          for (let i = 0; i < 8 && !this.dom.draftable(); i++) {
+          // but the wait leaves an armed turn its backstop line (#22) and ends when the pick is in.
+          for (let i = 0; i < 8 && this.live(ctx) && !this.dom.draftable(); i++) {
             const room = (this.leftOrPlenty() - BACKSTOP_BY_S) * 1000;
             if (room <= 0 || !(await this.pause(ctx, Math.min(250, room)))) break;
           }
@@ -315,7 +321,9 @@
         if (p && turn && turn.k === k) turn.stop("request");
         return out;
       } catch (e) {
+        // A page action threw: dropped, and noted as every served request is (§4, #24).
         note("request failed", { msg: String((e && e.message) || e) });
+        note("request", { result: out.result, attempts: out.attempts });
         return out;
       } finally {
         this.requesting = null;

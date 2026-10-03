@@ -292,8 +292,9 @@ Routes are keyed by the Yahoo draft id, not the session, so a room outlives an A
   `act_at_s` (12 to 30, null by default) holds an armed turn's click until the clock is down to
   that many seconds, unless the user picks first. The API's control event records both, and a
   rebuild after a restart (from the waiting room on) restores them from it unless the room was
-  detached since; an attach that names a mode, mid-draft too, sets and records it. The scorecard
-  prints `act_at_s` by D2.
+  detached since. An attach that names a mode sets and records it when the API builds or
+  rebuilds the room, mid-draft too; an attach to a live room keeps the room's mode (PATCH sets
+  it). The scorecard prints `act_at_s` by D2.
 * `POST /rooms/{d}/request` (`{overall, board, yahoo_player_id}`) is the web app's "Draft in
   Yahoo": taken only for my pick on the clock on the session's current board, held in the room
   summary for the draft tab to click (in mirror and autopilot; an armed turn stands aside), and

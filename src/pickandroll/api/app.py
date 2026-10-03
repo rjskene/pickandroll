@@ -351,7 +351,8 @@ class RoomAttach(BaseModel):
     mode: Literal["mirror", "autopilot"] | None = Field(
         default=None,
         description="mirror the room (default) or let pickandroll draft when armed; left out on a "
-        "rebuild, the mode last set since the last detach",
+        "rebuild, the mode last set since the last detach; ignored when the room is live (PATCH "
+        "sets it)",
     )
     num_teams: int | None = Field(default=None, ge=2, le=20)
     room_teams: int | None = Field(

@@ -3,7 +3,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const { RoomTracker } = require("../lib/room.js");
-const { Drafter, planWait } = require("../lib/drafter.js");
+const { Drafter, planWait, BACKSTOP_BY_S } = require("../lib/drafter.js");
 
 const SLOT = 1;
 const K = 24; // my pick: round 2, slot 1
@@ -606,13 +606,69 @@ test("a request replaced by the user stops before its next try, with no failure 
 
 // ---------------------------------------------------------------- #22
 test("a request's wait for the Draft buttons ends at the backstop line", async () => {
-  const { d, clock } = world({ clock: 7, draftableAfter: 60_000 }); // 7 s left, no buttons yet
-  const t0 = clock.t;
+  const { d } = world({ clock: 7, draftableAfter: 60_000 }); // 7 s left, no buttons yet
+  const lefts = []; // seconds left at each try's look for the row, right after its wait
+  const find = d.dom.find;
+  d.dom.find = (c) => {
+    lefts.push(d.left());
+    return find(c);
+  };
   const out = await d.request(ask("103"));
   assert.equal(out.result, "failed");
-  // Each try: the wait ends at 6 s left (1 s in, then at once), a click that finds no button
-  // and one confirmation (800 ms); not 2 s of waiting per try past the line.
-  assert.ok(clock.t - t0 <= 1000 + 2 * 800, `the request ended ${clock.t - t0} ms in`);
+  // The first try waits down to the line (6 s left, in 250 ms steps) and no further; the
+  // second, already past it, does not wait at all.
+  assert.equal(lefts.length, 2);
+  assert.ok(lefts[0] > BACKSTOP_BY_S - 0.25 && lefts[0] <= BACKSTOP_BY_S, `first look at ${lefts[0]} s left`);
+  assert.ok(lefts[1] < lefts[0], `second look at ${lefts[1]} s left`);
+});
+
+test("a late request leaves the armed turn that stood aside its backstop: no second try", async () => {
+  const { d, log } = world({ clock: 7, draftableAfter: 60_000 }); // 7 s left, no buttons yet
+  let at = null; // seconds left when the backstop switched Autodraft on
+  const set = d.dom.setAutodraft;
+  d.dom.setAutodraft = async (on) => {
+    if (on && at === null) at = d.left();
+    return set(on);
+  };
+  const looks = [];
+  const find = d.dom.find;
+  d.dom.find = (c) => {
+    looks.push(c.yahoo_player_id);
+    return find(c);
+  };
+  const req = d.request(ask("103", { id: "r1" }));
+  const turn = d.turn(K); // armed: stands aside while the request is pending
+  assert.equal((await req).result, "failed");
+  const out = await turn;
+  assert.deepEqual(looks, ["103"], "one try: a second would cross the backstop line");
+  // The request's wait ends at 6 s left and its one try takes a confirmation (800 ms).
+  assert.ok(at !== null && at >= BACKSTOP_BY_S - 1, `backstop at ${at} s left`);
+  assert.equal(out.result, "landed");
+  assert.deepEqual(log.autodraft, [true, false]);
+});
+
+test("a request's wait for the Draft buttons ends when the pick is in", async () => {
+  const { d, clock, at, land } = world({ draftableAfter: 60_000 }); // no buttons all turn
+  const t0 = clock.t;
+  at(300, () => land("999")); // the pick lands by other means
+  const out = await d.request(ask("103"));
+  assert.equal(out.result, "other");
+  assert.ok(clock.t - t0 < 1000, `the request ended ${clock.t - t0} ms in`);
+});
+
+test("a request whose page action throws is noted like any other", async () => {
+  const { d, log } = world();
+  d.dom.find = () => {
+    throw new Error("detached node");
+  };
+  const out = await d.request(ask("103", { id: "r1" }));
+  assert.equal(out.result, "failed");
+  const notes = log.events.filter((e) => e.type === "note").map((e) => [e.what, e.result ?? null, e.request_id]);
+  assert.deepEqual(notes, [
+    ["request failed", null, "r1"],
+    ["request", "failed", "r1"],
+  ]);
+  assert.equal(d.requesting, null);
 });
 
 test("a request's notes name it by the API's id for it", async () => {

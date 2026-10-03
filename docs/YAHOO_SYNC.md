@@ -129,7 +129,7 @@ Derivations:
 - Labels apply in this order:
   1. `manual`: `pick_landed.how == "manual"`.
   2. `compliant`: the drafter made the pick and the actual player equals `ref_k`. The drafter made the pick when `pick_landed.how` is `row`, `queue` or `search`, or a `draft_attempt` for overall k with the landed `yid` precedes `t_land(k)` (a queued player taken by Yahoo at expiry counts; D2 shows the cost). An expiry or autopick that happens to equal `ref_k` is never compliant: it goes on to the labels below, which end in `expired`.
-  3. `absent`: control was not `armed` at turn start. In mirror mode every non-compliant pick reads `absent`.
+  3. `absent`: control was not `armed` at turn start, or the tab learned the pick from Yahoo's history frame (the tab was not in the room when it was made: a late entry or a reconnect). In mirror mode every non-compliant pick reads `absent`.
   4. `stale`: picks 1..k-1 were not all in the session when pick k landed, judged by the first `session_pick` time per overall (§1); or the first `draft_attempt` for k carries `board < k-1`. The drafter must only act on a plan whose `board == k-1`, so a `stale` label with a synced session is a drafter bug, not a sync bug.
   5. `unsolved`: synced, but no `ref_k` (no reco for board k-1 before landing).
   6. `expired`: `how` is `expiry` or `autopick`.
