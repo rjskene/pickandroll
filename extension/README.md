@@ -2,8 +2,9 @@
 
 Mirrors your Yahoo fantasy basketball draft room into a pickandroll session running on this computer. Every pick
 in the room reaches the session within a second or two, and pickandroll's plan for your next pick shows in the
-draft page and in a side panel. This build only mirrors: it never clicks anything in Yahoo. Drafting for you
-("armed") comes in the next build, and only you can arm it.
+draft page and in a side panel. By default it only mirrors and never clicks anything in Yahoo. When you arm a
+room from the side panel, it drafts pickandroll's pick on each of your turns. Only you can arm it, and a pick
+you make by hand always wins.
 
 Spec and metrics: `docs/YAHOO_SYNC.md`. API side: the `/rooms/{draft_id}` routes (`docs/DESIGN.md`).
 
@@ -27,6 +28,28 @@ open draft tab. Content scripts only start when a page loads.
 3. Open the side panel (toolbar icon), choose the session and click **Attach**. The strip then shows the sync
    state ("synced 57/57" or "behind 2"), your next pick and the plan's top three with its freshness.
 4. Draft in Yahoo as usual; pickandroll follows every pick.
+
+## Armed mode (opt-in)
+
+Click **Armed** under Mode in the side panel and confirm. On each of your turns the drafter then:
+
+1. waits for pickandroll's plan for this exact board, the board after the pick before yours;
+2. clicks the Draft button on the plan's first available player's row, checking that the row's label names that
+   player;
+3. re-clicks if a re-render swallowed the click, and falls through to the next candidate;
+4. near the deadline only, falls back to Yahoo's own queue and Autodraft:
+   - it queues this pick's player and switches Autodraft on;
+   - when your next pick follows straight on (seats 1 and 12), it queues the plan's player for that pick too.
+
+Autodraft is switched off again after every turn.
+
+- **Your pick wins.** A Draft click of yours during your turn makes the pick yours, and the drafter stops at once.
+- **Hand pick next**, in the page strip, skips the drafter for your next turn. Click it again to cancel.
+- **Mirror** in the side panel disarms the room.
+- **The queue probe.** Once per armed draft, by default on your first turn from round 3 whose next pick is not
+  also yours, the drafter stars its top candidate before drafting it. It logs what Yahoo did: queued, drafted,
+  dropped (a lost click on a Draft control) or failed. Both real outcomes take the player wanted. Set the round,
+  or `off`, on the options page.
 
 The strip, by state:
 
@@ -63,9 +86,11 @@ nothing is lost, but the seat is away for a few seconds.
 | `content.js` | isolated world: the room tracker, picks and events to the worker, the in-page strip |
 | `lib/protocol.js` | the room's frame format and snake-draft arithmetic (pure) |
 | `lib/room.js` | `RoomTracker`: picks, the pick on the clock, the sync cursor, how my picks landed (pure) |
+| `lib/drafter.js` | armed mode: one turn at a time, a newer turn supersedes an older one, the queue backstop and the probe (pure, through a page adapter) |
+| `lib/yahoo.js` | Yahoo's player table: row matching by headshot id and name, label checks, the plan's candidates (pure) |
 | `worker.js` | service worker: the only caller of the API; per-tab state for the panel in `chrome.storage.session` |
 | `sidepanel/` | side panel: room state, attach a session, mode, plan, detach |
-| `options/` | API and web app addresses (localhost only), Yahoo players file |
+| `options/` | API and web app addresses (localhost only), Yahoo players file, the queue probe's round |
 | `test/*.test.js` | unit tests (`node --test extension/test/*.test.js` from the repo root) |
 | `test/harness/` | Tier 1 for the extension: a recorded room played through the real scripts against the API |
 
@@ -82,5 +107,12 @@ The harness runs in the Claude browser pane or any browser. Start `pickandroll-a
   through `page.js` → `content.js` → `worker.js` (a stand-in replaces `chrome.*`), then prints the room's
   scorecard. `flip=1` also flips a stand-in Autodraft switch at pick 30 (G5 must read 1). Results are in
   `window.__harness`.
+- Armed runs add `armed=1`: a stand-in player table with Draft buttons, where a click on your turn is the room's
+  pick 300 ms later.
+  - `drop=0.3` loses that share of first clicks.
+  - `slot=N` and `fixture=2515267|2565888` choose the seat and the recorded room.
+  - `lead=60` sets the seconds from the attach to pick 1.
+  - `gap=15` plays one pick every 15 s of wall clock in place of the recorded pace.
+  - `api=` and `draft=` set the API base and the room id.
 - `http://localhost:8765/extension/test/harness/panel.html?draft=<room id>`: the side panel, unchanged, against a
   room in the API.
