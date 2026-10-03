@@ -650,6 +650,8 @@ def on_recommendation(session: Session, room: YahooRoom, payload: dict[str, Any]
             "mode": payload.get("mode"),
             "priced": payload.get("priced", True),
             "branch": payload.get("branch", False),
+            # A branch plan still solving when its board arrived (installed when it landed).
+            "branch_late": payload.get("branch_late"),
             # The objective behind the #1 and whether a time limit stopped that solve (what a
             # later reco for the board must beat), and the pre-solves in flight while it ran.
             "top_objective": payload.get("top_objective"),

@@ -157,6 +157,7 @@ class BranchBook:
     launched: int = 0
     solved: int = 0
     hits: int = 0
+    pending: int = 0
     misses: int = 0
 
     def wanted(self, branches: Sequence[Branch]) -> list[Branch]:
@@ -180,13 +181,17 @@ class BranchBook:
 
     def take(self, key: BoardKey) -> Entry | None:
         """The entry for this board (solved or still running). The first look at a board
-        counts as a hit or a miss."""
+        counts as a hit (solved), pending (still solving: installed when it lands) or a miss."""
         with self.lock:
             entry = self.entries.get(key)
             if key not in self.counted:
                 self.counted.add(key)
                 if entry is None:
                     self.misses += 1
+                elif (
+                    entry.solution is None and entry.future is not None and not entry.future.done()
+                ):
+                    self.pending += 1
                 else:
                     self.hits += 1
             return entry
@@ -210,6 +215,7 @@ class BranchBook:
                 "launched": self.launched,
                 "solved": self.solved,
                 "hits": self.hits,
+                "pending": self.pending,
                 "misses": self.misses,
                 "held": len(self.entries),
             }

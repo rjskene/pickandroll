@@ -689,9 +689,10 @@ class BackgroundSolver:
     def _late_branch(self, entry: Entry, gen: int, snapshot: dict[str, Any]) -> None:
         solution = entry.solution
         if self.generation == gen and solution is not None and not solution.time_limited:
-            self._install(entry, snapshot)
+            self._install(entry, snapshot, late=True)
 
-    def _install(self, entry: Entry, snapshot: dict[str, Any]) -> None:
+    def _install(self, entry: Entry, snapshot: dict[str, Any], late: bool = False) -> None:
+        """Publish a branch plan; ``late`` when it was still solving as its board arrived."""
         session = self.session
         state = session.state
         problem, solution = entry.branch.problem, entry.solution
@@ -716,7 +717,7 @@ class BackgroundSolver:
             timings=timings,
             branch=True,
         )
-        self._publish(payload)
+        self._publish({**payload, "branch_late": late})
 
     def _schedule_presolve(self) -> None:
         if not self.session.solve_params.presolve or not self.enabled:

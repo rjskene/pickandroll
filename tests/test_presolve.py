@@ -135,6 +135,10 @@ def test_branch_book_counts_each_turn_once_and_prunes(room):
     assert book.status()["hits"] == 1 and book.status()["misses"] == 1
     book.prune((branch.key[0] + 1, branch.key[1], branch.key[2]))
     assert book.status()["held"] == 0
+    # A branch still solving when its board is first looked at is pending, not a hit.
+    running = book.add(branch, future=Future())
+    assert book.take(branch.key) is running and book.status()["pending"] == 1
+    assert book.status()["hits"] == 1
 
 
 def test_branch_book_drops_the_pairs_a_pick_ruled_out(room):
@@ -195,6 +199,7 @@ def test_a_presolved_board_is_the_recommendation_the_moment_it_arrives(room):
     # Each reco logs the objective behind its #1, whether it was capped, and (a live solve)
     # the pre-solves in flight while it ran.
     assert events[0]["capped"] is False and events[0]["branches_running"] is None
+    assert events[0]["branch_late"] is False and events[-1]["branch_late"] is None
     assert events[-1]["top_objective"] >= events[0]["top_objective"]
     assert events[-1]["branches_running"] >= 0
     # The scorecard keeps priced solve times apart from the plans that came early or ready.
@@ -205,6 +210,27 @@ def test_a_presolved_board_is_the_recommendation_the_moment_it_arrives(room):
         if e.get("type") == "reco" and e["priced"] and e.get("solve_ms") is not None
     ]
     assert d["D3"]["n"] == len(priced) and d["D3_plan"]["branch"] == 1
+
+
+def test_a_branch_still_solving_at_the_turn_is_pending_and_logged_late(room):
+    client, store, _ = room
+    sid = _attach(client)["session_id"]
+    session = store.get(sid)
+    _until(lambda: _solver(client, sid)["presolve"]["solved"] >= ONE_AWAY)
+    likely = likely_next(session.state, None)
+    entry = next(
+        e for e in session.solver.book.entries.values() if e.branch.picks[0][2] == likely[0]
+    )
+    solution, entry.solution = entry.solution, None
+    entry.future = Future()  # the board arrives while its branch is still solving
+    _pick(client, 1, session.room.ids.yid(likely[0]))
+    _until(lambda: _solver(client, sid)["presolve"]["pending"] == 1)
+    entry.solution = solution
+    entry.future.set_result(solution)
+    _until(lambda: session.recommendation.get("branch") and session.recommendation)
+    recos = [e for e in session.room.log.read() if e.get("type") == "reco" and e["board"] == 1]
+    assert recos[0]["branch"] is True and recos[0]["branch_late"] is True
+    assert _solver(client, sid)["presolve"]["hits"] == 0
 
 
 def test_a_board_nobody_planned_is_solved_as_usual(room):
