@@ -88,19 +88,21 @@ Written by the server:
 {"type":"conflict",     "t":..., "overall":n, "session_pid":..., "session_yid":id, "room_yid":id, "room_pid":...}
 {"type":"reco",         "t":..., "board":n_applied, "version":v, "fresh":bool, "top_yid":id, "top_name":..., "top_pid":..., "cands":[yid,...], "unmapped":[{"pid":...,"name":...}], "solve_ms":..., "mode":..., "model":"horizon|roster"}
 {"type":"score",        "t":..., "wins":x, "benchmark":x, "vs_benchmark":x, "best":x, "matchups":{...}}
-{"type":"control",      "t":..., "state":"armed|mirror|absent", "slot":s, "src":"api"}
+{"type":"control",      "t":..., "state":"armed|mirror|absent", "slot":s, "act_at_s":n|null, "src":"api"}  // act_at_s (#10): armed turns click with n s left, null at once; on every PATCH /rooms/{d}
+{"type":"note", "what":"draft request", "t":..., "overall":n, "board":b, "yid":id}  // the web app's "Draft in Yahoo" (#10), held for the draft tab
 ```
 
 Posted by the client (`POST /rooms/{draft_id}/events`):
 
 ```
-{"type":"control",      "t":..., "state":"armed|mirror|absent", "slot":s, "reason":"autopick"?}
+{"type":"control",      "t":..., "state":"armed|mirror|absent", "slot":s, "reason":"autopick"?, "mode":..., "act_at_s":n|null}
 {"type":"turn_start",   "t":..., "overall":n, "slot":s, "clock_s":30, "teams":T|null}  // T: the room's own team count, once the snake has turned
-{"type":"draft_attempt","t":..., "overall":n, "yid":id, "method":"row|queue|search", "attempt":k, "board":b}  // b = board of the plan the drafter acted on
+{"type":"draft_attempt","t":..., "overall":n, "yid":id, "method":"row|queue|search|request", "attempt":k, "board":b}  // b = board of the plan the drafter acted on; request: the user's "Draft in Yahoo" (#10), landing how "manual"
 {"type":"note", "what":"queue_probe", "t":..., "overall":n, "yid":id, "name":..., "board":b, "outcome":"queued|drafted|dropped|no_control|failed", "panel":[...], "control":"...", "panel_found":bool, "controls":[{"cell":i,"pos":j,"tag":"button","labels":"..."}]}  // one per armed draft, §6; a note, not a new type, so no API version drops it
 {"type":"pick_landed",  "t":..., "overall":n, "yid":id, "how":"row|queue|manual|expiry|autopick", "ms_from_turn":...}
 {"type":"intervention", "t":..., "who":"master|emissary|drone|user", "what":"..."}
 {"type":"heartbeat",    "t":..., "worker":bool, ...}  // worker: the Worker timer host is live (G7)
+{"type":"note", "what":"request", "t":..., "overall":n, "yid":id, "result":"landed|manual|other|stopped|failed", "attempts":k}  // a "Draft in Yahoo" served (#10); "request failed" (with attempts or msg) drops it in the API and hands an armed turn back
 {"type":"note",         "t":..., "what":"..."}
 ```
 

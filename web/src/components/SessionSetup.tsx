@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, type Objective, type SessionSummary } from "../api";
 import Info from "./Info";
+import { SeenRooms, useSeenRooms } from "./YahooSync";
 
 interface Props {
   onCreated: (session: SessionSummary) => void;
@@ -30,10 +31,16 @@ export default function SessionSetup({ onCreated, onSelect }: Props) {
   const [survivalFile, setSurvivalFile] = useState("");
   const [solveAhead, setSolveAhead] = useState(true);
   const [timeLimit, setTimeLimit] = useState(20);
+  const [roomId, setRoomId] = useState("");
+  // The room's own team count when the extension has shown it: the attach is checked against it.
+  const [roomTeams, setRoomTeams] = useState<number | null>(null);
+  const seen = useSeenRooms();
+  // A session made whose room did not attach: the reason, and the way on to the draft anyway.
+  const [unattached, setUnattached] = useState<{ session: SessionSummary; error: string } | null>(null);
 
   const create = useMutation({
-    mutationFn: () =>
-      api.createSession({
+    mutationFn: async () => {
+      const session = await api.createSession({
         projection_file: file || projections.data?.[0]?.file || "",
         num_teams: numTeams,
         my_position: position,
@@ -49,10 +56,20 @@ export default function SessionSetup({ onCreated, onSelect }: Props) {
         survival_file: survival === "file" ? survivalFile || survivalFiles.data?.[0]?.file || null : null,
         solve_ahead: solveAhead,
         time_limit: timeLimit,
-      }),
-    onSuccess: (session) => {
+      });
+      if (!roomId.trim()) return { session, attachError: null };
+      try {
+        await api.attachRoom(session.id, { draft_id: roomId.trim(), slot: position, room_teams: roomTeams });
+        return { session, attachError: null };
+      } catch (e) {
+        return { session, attachError: e instanceof Error ? e.message : String(e) };
+      }
+    },
+    onMutate: () => setUnattached(null),
+    onSuccess: ({ session, attachError }) => {
       queryClient.invalidateQueries({ queryKey: ["sessions"] });
-      onCreated(session);
+      if (attachError) setUnattached({ session, error: attachError });
+      else onCreated(session);
     },
   });
   const files = projections.data ?? [];
@@ -127,6 +144,41 @@ export default function SessionSetup({ onCreated, onSelect }: Props) {
           <input value={myTeam} onChange={(e) => setMyTeam(e.target.value)} />
         </label>
       </div>
+
+      <label>
+        <span className="k">
+          Yahoo draft room <span className="muted">(optional)</span>
+          <Info title="YAHOO SYNC">
+            <b>Attach the Yahoo draft room open in Chrome as the draft starts.</b>
+            <span>The pickandroll extension in the draft tab sends the room's picks here as they are made, and the plan follows them. The room is attached in mirror for your pick above: nothing is drafted for you until you arm autopilot on the sync card (8).</span>
+            <span>The draft id is in the room's address. You can also attach later from the sync card.</span>
+          </Info>
+        </span>
+        <input
+          value={roomId}
+          onChange={(e) => {
+            setRoomId(e.target.value);
+            setRoomTeams(null);
+          }}
+          placeholder="draft id, or leave empty for manual entry"
+          spellCheck={false}
+        />
+      </label>
+      <SeenRooms
+        rooms={(seen.data ?? []).filter((r) => r.draft_id !== roomId.trim())}
+        action="Use"
+        onPick={(r) => {
+          setRoomId(r.draft_id);
+          setRoomTeams(r.room_teams);
+          if (r.room_teams) setNumTeams(r.room_teams);
+          if (r.slot) setPosition(r.slot);
+        }}
+      />
+      {roomId.trim() && roomTeams !== null && (
+        <p className="muted" style={{ margin: "-4px 0 0", fontSize: 12 }}>
+          Room {roomId.trim()} shows {roomTeams} teams{roomTeams !== numTeams ? `, not ${numTeams}: the attach will be refused` : ""}.
+        </p>
+      )}
 
       <span className="k">Strategy</span>
       <div className="row">
@@ -226,6 +278,21 @@ export default function SessionSetup({ onCreated, onSelect }: Props) {
         {create.isPending ? "Loading projections…" : "Start draft"}
       </button>
       {create.error && <p className="error">{String(create.error.message)}</p>}
+      {unattached && (
+        <div className="banner">
+          <p>
+            Draft {unattached.session.id} was made, but room {roomId.trim()} did not attach: {unattached.error}
+          </p>
+          <p className="muted" style={{ marginTop: 6 }}>
+            Open the draft and attach from the sync card (8), or start over with other settings.
+          </p>
+          <div className="row" style={{ justifyContent: "flex-start", marginTop: 8 }}>
+            <button className="small" onClick={() => onCreated(unattached.session)}>
+              Open the draft anyway
+            </button>
+          </div>
+        </div>
+      )}
       {files.length === 0 && <p className="muted">Drop a Basketball Monster export into data/.</p>}
       {(sessions.data?.length ?? 0) > 0 && (
         <>

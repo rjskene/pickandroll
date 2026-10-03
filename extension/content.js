@@ -13,6 +13,7 @@
   window[KEY + "Content"] = true;
 
   const STATUS_EVERY_MS = 3000;
+  const STATUS_TURN_MS = 1000; // on my turn: a "Draft in Yahoo" request is read this often
   const HEARTBEAT_EVERY_MS = 15000;
   const WATCH_EVERY_MS = 1000;
   const PLAN_AHEAD = 3; // fetch the plan once my pick is this many picks away
@@ -25,6 +26,7 @@
     api: "unknown", // "ok" | "down"
     base: "",
     room: null, // GET /rooms/{d}
+    request: null, // the user's pending "Draft in Yahoo" from the web app (#10)
     mode: null, // the room's mode in the API: "mirror" | "autopilot"
     control: null, // what this tab last reported: "mirror" | "absent"
     plan: null,
@@ -203,7 +205,7 @@
     const state = controlState();
     if (state === S.control) return;
     S.control = state;
-    const event = { type: "control", state, slot: tracker.slot, mode: S.mode };
+    const event = { type: "control", state, slot: tracker.slot, mode: S.mode, act_at_s: drafter.actAt };
     if (state === "absent") event.reason = S.autoReason || "autopick";
     emit(event);
   }
@@ -253,6 +255,7 @@
     if (out.turn !== null) {
       if (armed()) takeTurn(out.turn, "on deck");
       else refreshPlan();
+      serveRequest();
     }
     if (out.kind === "order" && !S.orderNoted) {
       S.orderNoted = true; // what Yahoo's R| frame holds is not known yet (#17); its length is the clue
@@ -299,24 +302,29 @@
   // ------------------------------------------------------------------ status
   async function refresh() {
     try {
-      const r = await call("status");
+      const r = await call("status", { room_teams: tracker.teamsSeen() });
       S.base = r.api || S.base;
       drafter.probeRound = /^\d+$/.test(String(r.probe_round)) ? Number(r.probe_round) : null;
       drafter.searchFallback = r.search_fallback === "on";
       if (!r.attached) {
         S.attached = false;
         S.room = null;
+        S.request = null;
       } else {
         const first = S.attached !== true;
         S.attached = true;
         S.room = r.room;
         S.mode = r.room.mode;
+        // act_at_s (#10): when an armed turn clicks, in seconds left; null, at once.
+        drafter.actAt = Number.isInteger(r.room.act_at_s) ? r.room.act_at_s : null;
         tracker.configure({ numTeams: r.room.num_teams, rounds: r.room.rounds });
         tracker.synced(r.room);
         reportControl();
         if (first || tracker.unsent().length) flush();
         sendEvents();
         if (!S.plan || !S.plan.fresh || S.plan.version !== r.room.version) refreshPlan();
+        S.request = r.room.request || null;
+        serveRequest();
       }
     } catch (_) {
       // S.api says why
@@ -645,12 +653,31 @@
     drafter.turn(k).then((out) => {
       if (drafter.current && drafter.current.k === k) S.drafting = null;
       if (out) {
-        const { result, attempts, fresh, board, waited_ms, ms, stopped } = out;
-        emit({ type: "note", what: "turn", overall: k, why, result, attempts, fresh, board, waited_ms, ms, stopped });
+        const { result, attempts, fresh, board, waited_ms, ms, stopped, act_at_s, held_ms } = out;
+        emit({ type: "note", what: "turn", overall: k, why, result, attempts, fresh, board, waited_ms, ms, stopped, act_at_s, held_ms });
       }
       render();
     });
   }
+  // "Draft in Yahoo" from the web app (#10), in mirror and autopilot: the user's player for the
+  // pick on the clock, clicked on that turn only. An armed turn stands aside while it is pending
+  // and goes on if it fails (drafter.js).
+  function serveRequest() {
+    const q = S.request;
+    if (!q || drafter.requesting || tracker.myTurnNow() !== q.overall) return;
+    const label = `your pick: ${q.name}`;
+    drafter.request(q).then((out) => {
+      if (!out) return; // not this turn's, or served already
+      emit({ type: "note", what: "request", overall: out.overall, yid: out.yid, result: out.result, attempts: out.attempts });
+      if (S.drafting === label) S.drafting = null;
+      render();
+    });
+    if (drafter.requesting) {
+      S.drafting = label; // set before the request's first wait
+      render();
+    }
+  }
+
   // Once a second while armed: start a turn the on-deck frame did not start, and between turns
   // undo Yahoo's flip into autopick mode (or a backstop's switch a turn could not undo) and keep
   // its queue empty (we queue only for the pick on the clock). A switch the user turned on by
@@ -801,7 +828,8 @@
         `${S.room.num_teams}: its plans are wrong. Attach a ${S.room.teams_mismatch}-team session.`;
       tone = "bad";
     } else {
-      const mode = S.autopickMode ? "YAHOO AUTOPICK ON" : S.mode === "autopilot" ? "ARMED" : "MIRROR";
+      const armedAs = drafter.actAt === null ? "ARMED" : `ARMED · acts at ${drafter.actAt} s left`;
+      const mode = S.autopickMode ? "YAHOO AUTOPICK ON" : S.mode === "autopilot" ? armedAs : "MIRROR";
       const sync =
         s.behind === 0
           ? `synced ${s.sent}/${s.last}`
@@ -847,7 +875,17 @@
   emit({ type: "note", what: "entered", visible: document.visibilityState });
   window.postMessage({ [KEY]: "content", dir: "replay" }, location.origin);
   connect();
-  every(STATUS_EVERY_MS, refresh);
+  // Status every 3 s, every second while my pick is on the clock (a request is read promptly).
+  (async () => {
+    while (!S.dead) {
+      try {
+        await refresh();
+      } catch (e) {
+        S.error = String((e && e.message) || e);
+      }
+      await sleep(tracker.myTurnNow() !== null ? STATUS_TURN_MS : STATUS_EVERY_MS);
+    }
+  })();
   every(WATCH_EVERY_MS, async () => {
     if (!document.body) return;
     watchYahoo();

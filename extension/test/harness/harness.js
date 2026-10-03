@@ -154,10 +154,11 @@
     const ws = new window.WebSocket("wss://harness.invalid/draft");
     ws.send(`8|31822|${slot}|harness`);
 
-    // Armed: a stand-in for Yahoo's player table. Every candidate the drafter is served gets a
-    // row with a Draft button; a click on our turn is the room's pick 300 ms later (``drop`` of
-    // first clicks are lost, as Yahoo loses clicks during a re-render). A player we take that
-    // the recording gives to another team later is replaced there by the one it had at our pick.
+    // A stand-in for Yahoo's player table. Every candidate the armed drafter is served gets a
+    // row with a Draft button, and so does the player of a "Draft in Yahoo" request (#10) in
+    // any run; a click on our turn is the room's pick 300 ms later (``drop`` of first clicks are
+    // lost, as Yahoo loses clicks during a re-render). A player we take that the recording gives
+    // to another team later is replaced there by the one it had at our pick.
     const table = document.querySelector("#players tbody");
     const taken = new Set();
     const swap = new Map();
@@ -199,38 +200,44 @@
         shown.set(yid, tr);
       }
     };
+    // ``planms``: every /plan answer is that much later, a slow solve (an armed turn waits on it).
+    const planMs = Number(q.get("planms") || 0);
+    const send = fakeChrome.runtime.sendMessage;
+    fakeChrome.runtime.sendMessage = async (msg) => {
+      if (msg.op === "plan" && planMs) await sleep(planMs);
+      const r = await send(msg);
+      if (r && r.ok && msg.op === "plan" && armedRun) {
+        addRows(r.data.candidates);
+        addRows(r.data.second);
+      }
+      if (r && r.ok && msg.op === "status" && r.data && r.data.room && r.data.room.request) {
+        addRows([r.data.room.request]);
+      }
+      return r;
+    };
+    table.addEventListener("click", (e) => {
+      const b = e.target.closest("button[data-yid]");
+      const k = onClock && onClock.slot === slot ? onClock.overall : null;
+      if (!b || k === null || k > rows.length || landed.has(k) || taken.has(b.dataset.yid)) return;
+      out.clicks = (out.clicks || 0) + 1;
+      if (drop && !b.dataset.dropped && Math.random() < drop) {
+        b.dataset.dropped = "1";
+        out.dropped = (out.dropped || 0) + 1;
+        return;
+      }
+      const yid = b.dataset.yid;
+      setTimeout(() => {
+        if (landed.has(k) || taken.has(yid)) return;
+        ours[k] = yid;
+        emitPick(k, yid);
+        // The draft ends with the fixture's last pick: nothing goes on the clock after it.
+        if (k < rows.length) {
+          ws.emit(`D|${k + 1}|${owner(k + 1)}|30`);
+          onClock = { overall: k + 1, slot: owner(k + 1) };
+        } else onClock = null;
+      }, 300);
+    });
     if (armedRun) {
-      const send = fakeChrome.runtime.sendMessage;
-      fakeChrome.runtime.sendMessage = async (msg) => {
-        const r = await send(msg);
-        if (msg.op === "plan" && r && r.ok) {
-          addRows(r.data.candidates);
-          addRows(r.data.second);
-        }
-        return r;
-      };
-      table.addEventListener("click", (e) => {
-        const b = e.target.closest("button[data-yid]");
-        const k = onClock && onClock.slot === slot ? onClock.overall : null;
-        if (!b || k === null || k > rows.length || landed.has(k) || taken.has(b.dataset.yid)) return;
-        out.clicks = (out.clicks || 0) + 1;
-        if (drop && !b.dataset.dropped && Math.random() < drop) {
-          b.dataset.dropped = "1";
-          out.dropped = (out.dropped || 0) + 1;
-          return;
-        }
-        const yid = b.dataset.yid;
-        setTimeout(() => {
-          if (landed.has(k) || taken.has(yid)) return;
-          ours[k] = yid;
-          emitPick(k, yid);
-          // The draft ends with the fixture's last pick: nothing goes on the clock after it.
-          if (k < rows.length) {
-            ws.emit(`D|${k + 1}|${owner(k + 1)}|30`);
-            onClock = { overall: k + 1, slot: owner(k + 1) };
-          } else onClock = null;
-        }, 300);
-      });
       const r = await fakeChrome.runtime.sendMessage({ op: "mode", draft_id: draftId, mode: "autopilot" });
       if (!r.ok) throw new Error("arm: " + r.error);
       log("armed");
@@ -262,13 +269,19 @@
         anchorI = i;
       } else {
         await at(i);
-        if (who === slot) {
-          ws.emit("X|29");
-          ws.emit(`5|${slot}`);
+        if (landed.has(k)) {
+          // A request's click drafted our pick (a mirror run): the recorded player goes elsewhere.
+          if (ours[k] !== String(p.yid)) swap.set(ours[k], String(p.yid));
+        } else {
+          if (who === slot) {
+            ws.emit("X|29");
+            ws.emit(`5|${slot}`);
+          }
+          emitPick(k, resolve(p.yid));
         }
-        emitPick(k, resolve(p.yid));
       }
-      if (k < rows.length && !(armedRun && who === slot && onClock.overall === k + 1)) {
+      // A click that landed our pick has put the next one on the clock already.
+      if (k < rows.length && onClock.overall !== k + 1) {
         ws.emit(`D|${k + 1}|${owner(k + 1)}|30`);
         onClock = { overall: k + 1, slot: owner(k + 1) };
       }

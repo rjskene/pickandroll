@@ -93,9 +93,15 @@ const ops = {
   async settings() {
     return settings();
   },
-  async status({ draft_id }) {
+  async status({ draft_id, slot = null, room_teams = null }) {
     const { api: base, probe_round, search_fallback } = await settings();
     const r = await attachedOr(async () => ({ room: await api(roomPath(draft_id)) }));
+    if (!r.attached) {
+      // The web app lists a room open here that no session follows (#10); the user attaches
+      // it there. Best effort: the tab's status does not wait on it.
+      const body = { draft_id, slot: slot || null, room_teams: room_teams || null };
+      api("/rooms/seen", { method: "POST", body, timeout: 3000 }).catch(() => {});
+    }
     return { ...r, api: base, probe_round, search_fallback };
   },
   async picks({ draft_id, picks }) {

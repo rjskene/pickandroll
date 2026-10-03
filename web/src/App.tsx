@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { api, pickOwner, teamLabel, type PickRow, type SolveEvent, type SurvivalEvent } from "./api";
+import { api, pickOwner, teamLabel, type PickRow, type RoomEventEntry, type RoomStatus, type SolveEvent, type SurvivalEvent } from "./api";
 import { DraftProvider, Hotkeys, useDraft } from "./draft";
 import Announcer, { type Announcement } from "./components/Announcer";
 import Board from "./components/Board";
@@ -8,6 +8,7 @@ import Drawer from "./components/Drawer";
 import KeySheet from "./components/KeySheet";
 import Rail from "./components/Rail";
 import SessionSetup from "./components/SessionSetup";
+import { RoomFeed, SyncButton } from "./components/YahooSync";
 import { Close } from "./components/icons";
 import { adpIsStandIn, adpLabel } from "./format";
 
@@ -65,12 +66,13 @@ function SolverNote() {
 
 interface ScreenProps {
   yahoo: YahooStatus | undefined;
+  room: RoomStatus | undefined;
   onSwitch: () => void;
   announce: Announcement[];
   onShown: (id: number) => void;
 }
 
-function DraftScreen({ yahoo, onSwitch, announce, onShown }: ScreenProps) {
+function DraftScreen({ yahoo, room, onSwitch, announce, onShown }: ScreenProps) {
   const d = useDraft();
   const s = d.session;
   const sinceLastPick = useTicker(s.picks_made);
@@ -88,6 +90,7 @@ function DraftScreen({ yahoo, onSwitch, announce, onShown }: ScreenProps) {
           {s.projection} · {s.num_teams} teams · you pick {s.my_position}
         </span>
         <span className="grow" />
+        <SyncButton />
         {s.complete ? (
           <span className="pill">DRAFT COMPLETE</span>
         ) : (
@@ -124,10 +127,12 @@ function DraftScreen({ yahoo, onSwitch, announce, onShown }: ScreenProps) {
       <footer className="footer">
         <span>
           Feed:{" "}
-          {yahoo?.attached ? (
+          {room?.attached ? (
+            <RoomFeed room={room} />
+          ) : yahoo?.attached ? (
             <span className={yahoo.last_error ? "bad" : "good"}>Yahoo {yahoo.league} {yahoo.running ? "polling" : "attached"}</span>
           ) : (
-            "manual entry (Yahoo pending approval)"
+            "manual entry, no Yahoo room attached"
           )}
         </span>
         <span>Objective: {s.objective === "win" ? "categories won" : "sum of z"}</span>
@@ -146,7 +151,7 @@ function DraftScreen({ yahoo, onSwitch, announce, onShown }: ScreenProps) {
         <SolverNote />
         <span className="grow" />
         <span>
-          <kbd>?</kbd> keys · <kbd>1</kbd>–<kbd>7</kbd> cards · <kbd>d</kbd> draft the pick
+          <kbd>?</kbd> keys · <kbd>1</kbd>–<kbd>8</kbd> cards · <kbd>d</kbd> draft the pick
         </span>
         <span>Session {s.id}</span>
       </footer>
@@ -163,6 +168,8 @@ export default function App() {
   const [sessionId, setSessionId] = useState<string | null>(() => new URLSearchParams(location.search).get("session"));
   const [solveEvents, setSolveEvents] = useState<SolveEvent[]>([]);
   const [survival, setSurvival] = useState<SurvivalEvent | null>(null);
+  // The extension's latest events from the room, oldest first, since this page opened.
+  const [roomEvents, setRoomEvents] = useState<RoomEventEntry[]>([]);
   // Picks waiting to be announced, oldest first; the Announcer shows them one at a time.
   const [announce, setAnnounce] = useState<Announcement[]>([]);
   const announceSeq = useRef(0);
@@ -178,6 +185,14 @@ export default function App() {
     enabled: !!sessionId,
     refetchInterval: 15000,
   });
+  // YAHOO SYNC: picks, mode and attach changes arrive on the session stream; the slow refresh
+  // only keeps the extension's heartbeat age current.
+  const room = useQuery({
+    queryKey: ["room", sessionId],
+    queryFn: () => api.room(sessionId!),
+    enabled: !!sessionId,
+    refetchInterval: (q) => (q.state.data?.attached ? 10000 : false),
+  });
 
   useEffect(() => {
     const url = new URL(location.href);
@@ -187,12 +202,14 @@ export default function App() {
   }, [sessionId]);
 
   // Live feed: any pick (manual, simulated or from Yahoo) invalidates the board, picks and
-  // session; a finished background solve invalidates the recommendation and the score.
+  // session; a finished background solve invalidates the recommendation and the score. A Yahoo
+  // room's attach and mode changes refresh the room, and its client events feed the sync card.
   useEffect(() => {
     if (!sessionId) return;
     setSolveEvents([]);
     setSurvival(null);
     setAnnounce([]);
+    setRoomEvents([]);
     const source = new EventSource(api.eventsUrl(sessionId));
     const refresh = () => {
       queryClient.invalidateQueries({ queryKey: ["session", sessionId] });
@@ -200,13 +217,16 @@ export default function App() {
       queryClient.invalidateQueries({ queryKey: ["picks", sessionId] });
       queryClient.invalidateQueries({ queryKey: ["teams", sessionId] });
       queryClient.invalidateQueries({ queryKey: ["recommendation", sessionId] });
+      queryClient.invalidateQueries({ queryKey: ["room", sessionId] });
     };
+    const refreshRoom = () => queryClient.invalidateQueries({ queryKey: ["room", sessionId] });
     source.addEventListener("solve", (e) => {
       const event = JSON.parse((e as MessageEvent).data) as SolveEvent;
       setSolveEvents((prev) => (event.stage === "start" || event.stage === "roster" ? [event] : [...prev, event]));
     });
     source.addEventListener("recommendation", () => {
       queryClient.invalidateQueries({ queryKey: ["recommendation", sessionId] });
+      queryClient.invalidateQueries({ queryKey: ["room", sessionId] });
       queryClient.invalidateQueries({ queryKey: ["score", sessionId] });
       queryClient.invalidateQueries({ queryKey: ["teams", sessionId] });
       queryClient.invalidateQueries({ queryKey: ["board", sessionId] });
@@ -223,6 +243,14 @@ export default function App() {
       setAnnounce((q) => [...q, { id: ++announceSeq.current, pick }]);
     });
     source.addEventListener("undo", refresh);
+    source.addEventListener("room_attached", refresh);
+    source.addEventListener("room_mode", refreshRoom);
+    source.addEventListener("room_detached", refreshRoom);
+    source.addEventListener("room_event", (e) => {
+      const { entry } = JSON.parse((e as MessageEvent).data) as { entry: RoomEventEntry };
+      setRoomEvents((prev) => [...prev.slice(-49), entry]);
+      if (entry.type === "control" || entry.type === "pick_landed") refreshRoom();
+    });
     return () => source.close();
   }, [sessionId, queryClient]);
 
@@ -240,8 +268,15 @@ export default function App() {
     );
   }
   return (
-    <DraftProvider session={session.data} solveEvents={solveEvents} survival={survival} live={!!yahoo.data?.attached}>
-      <DraftScreen yahoo={yahoo.data} onSwitch={() => setSessionId(null)} announce={announce} onShown={onShown} />
+    <DraftProvider
+      session={session.data}
+      solveEvents={solveEvents}
+      survival={survival}
+      live={!!yahoo.data?.attached || !!room.data?.attached}
+      room={room.data}
+      roomEvents={roomEvents}
+    >
+      <DraftScreen yahoo={yahoo.data} room={room.data} onSwitch={() => setSessionId(null)} announce={announce} onShown={onShown} />
     </DraftProvider>
   );
 }

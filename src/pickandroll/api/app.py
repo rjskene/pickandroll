@@ -18,6 +18,7 @@ import asyncio
 import json
 import logging
 import threading
+import time
 import uuid
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
@@ -62,6 +63,9 @@ ADP_SUFFIXES = {".csv", ".xls", ".xlsx"}
 CORS_ORIGINS = r"^(chrome-extension://[a-p]{32}|https?://(localhost|127\.0\.0\.1)(:\d+)?)$"
 #: The longest a room client may hold ``/plan`` for a fresh solve (the pick clock is 30 s).
 PLAN_WAIT_MAX = 20.0
+#: How long a room the extension reports as open and unattached stays listed (#10): it reports
+#: every 3 s, so a room drops off soon after its tab closes or attaches.
+SEEN_TTL_S = 30.0
 #: Solver settings a room attaches with unless told otherwise: they kept solves inside a 30 s
 #: clock in the 2026-09-27 mocks. The plan's time limit follows the room's pick clock
 #: (:func:`yahoo_room.plan_budget`, 5 s on a 30 s clock) unless the attach gives one.
@@ -86,7 +90,8 @@ class Session:
     state: DraftState
     projection_label: str
     version: int = 0
-    listeners: list[asyncio.Queue] = field(default_factory=list)
+    #: One (queue, its event loop) per open event stream.
+    listeners: list[tuple[asyncio.Queue, asyncio.AbstractEventLoop]] = field(default_factory=list)
     log: list[dict[str, Any]] = field(default_factory=list)
     yahoo: YahooFeed | None = None
     room: YahooRoom | None = None
@@ -178,8 +183,18 @@ class Session:
         payload = {"event": event, "version": self.version, "at": _now(), **data}
         if bump:
             self.log.append(payload)
-        for queue in list(self.listeners):
-            queue.put_nowait(payload)
+        # Room picks and notes are published from worker threads (asyncio.to_thread). A queue
+        # is not thread-safe there: its put would not wake the stream until the next keepalive
+        # (15 s), so a pick reached the browser late. Hand it to the stream's own loop instead.
+        try:
+            here = asyncio.get_running_loop()
+        except RuntimeError:
+            here = None
+        for queue, loop in list(self.listeners):
+            if loop is here:
+                queue.put_nowait(payload)
+            elif not loop.is_closed():
+                loop.call_soon_threadsafe(queue.put_nowait, payload)
         if bump and self.solver is not None:
             self.solver.kick(event)
 
@@ -393,6 +408,32 @@ class RoomEvents(BaseModel):
 
 class RoomPatch(BaseModel):
     mode: Literal["mirror", "autopilot"]
+    act_at_s: int | None = Field(
+        default=None,
+        ge=yahoo_room.ACT_AT_MIN_S,
+        le=yahoo_room.ACT_AT_MAX_S,
+        description="armed: act when the clock is down to this many seconds, unless I pick "
+        "first; null: at once. Left out, the room keeps its setting",
+    )
+
+
+class RoomSeen(BaseModel):
+    """A draft room open in the user's Chrome that no session follows yet, as the extension's
+    draft tab sees it."""
+
+    draft_id: str = Field(pattern=r"^[A-Za-z0-9_.-]{1,64}$")
+    slot: int | None = Field(default=None, ge=1, le=20, description="my slot, once the room says")
+    room_teams: int | None = Field(
+        default=None, ge=2, le=20, description="the room's team count, once its picks show it"
+    )
+
+
+class DraftRequest(BaseModel):
+    """The user's "Draft in Yahoo" from the web app: this player for my pick on the clock."""
+
+    overall: int = Field(ge=1)
+    board: int = Field(ge=0, description="the session's picks the request was made on")
+    yahoo_player_id: str
 
 
 class AliasPin(BaseModel):
@@ -750,13 +791,15 @@ def create_app(
     @app.get("/sessions/{session_id}/events")
     async def events(session_id: str, request: Request) -> StreamingResponse:
         """Server-sent events: one ``hello`` on connect, then ``pick`` / ``undo`` / ``created``
-        / ``survival`` / ``solve`` / ``recommendation``.
+        / ``survival`` / ``solve`` / ``recommendation``, and for a Yahoo room ``room_attached``
+        / ``room_mode`` / ``room_detached`` / ``room_event`` (a client event, heartbeats aside).
 
         A comment line is sent every ``KEEPALIVE_SECONDS`` so proxies keep the connection open.
         """
         session = store.get(session_id)
         queue: asyncio.Queue = asyncio.Queue()
-        session.listeners.append(queue)
+        listener = (queue, asyncio.get_running_loop())
+        session.listeners.append(listener)
 
         async def stream():
             stop = asyncio.ensure_future(shutdown.wait())
@@ -784,7 +827,7 @@ def create_app(
                         yield ": keepalive\n\n"
             finally:
                 stop.cancel()
-                session.listeners.remove(queue)
+                session.listeners.remove(listener)
 
         return StreamingResponse(
             stream(),
@@ -1031,6 +1074,27 @@ def create_app(
             if (live := store.room(draft_id)) is not None
         ]
 
+    # A room open in Chrome and not attached, for the web app to offer (#10). Registered before
+    # /rooms/{draft_id} so "seen" is never read as a draft id. Never attaches anything itself.
+    seen: dict[str, dict[str, Any]] = {}
+
+    @app.post("/rooms/seen")
+    def room_seen(body: RoomSeen) -> dict[str, Any]:
+        seen[body.draft_id] = {**body.model_dump(), "at": time.monotonic()}
+        return {"seen": body.draft_id}
+
+    @app.get("/rooms/seen")
+    def rooms_seen() -> list[dict[str, Any]]:
+        """Rooms the extension reported open and unattached in the last ``SEEN_TTL_S``."""
+        now = time.monotonic()
+        for draft_id in [d for d, e in seen.items() if now - e["at"] >= SEEN_TTL_S]:
+            del seen[draft_id]
+        return [
+            {**{k: v for k, v in e.items() if k != "at"}, "age_s": round(now - e["at"], 1)}
+            for e in sorted(seen.values(), key=lambda e: -e["at"])
+            if store.room(e["draft_id"]) is None
+        ]
+
     @app.get("/rooms/{draft_id}")
     async def room_status(draft_id: str) -> dict[str, Any]:
         room, session = await get_room(draft_id)
@@ -1048,8 +1112,22 @@ def create_app(
             )
         room.mode = body.mode
         room.control = yahoo_room.control_for(body.mode)
-        room.log.append({"type": "control", "state": room.control, "slot": room.slot, "src": "api"})
-        session.publish("room_mode", {"draft_id": draft_id, "mode": body.mode}, bump=False)
+        if "act_at_s" in body.model_fields_set:
+            room.act_at_s = body.act_at_s
+        room.log.append(
+            {
+                "type": "control",
+                "state": room.control,
+                "slot": room.slot,
+                "act_at_s": room.act_at_s,
+                "src": "api",
+            }
+        )
+        session.publish(
+            "room_mode",
+            {"draft_id": draft_id, "mode": body.mode, "act_at_s": room.act_at_s},
+            bump=False,
+        )
         return room_view(room, session)
 
     @app.delete("/rooms/{draft_id}")
@@ -1061,6 +1139,7 @@ def create_app(
         room.log.append({"type": "detach", "session_id": session.id})
         session.room = None
         store.rooms.pop(draft_id, None)
+        session.publish("room_detached", {"draft_id": draft_id}, bump=False)
         return {"attached": False, "draft_id": draft_id}
 
     @app.post("/rooms/{draft_id}/picks")
@@ -1119,7 +1198,11 @@ def create_app(
         pick_landed, intervention, heartbeat, note. An event of another type, or one missing
         what its type needs, is dropped and counted in ``ignored``; the rest are kept."""
         room, session = await get_room(draft_id)
-        written, ignored = await asyncio.to_thread(yahoo_room.record_events, room, body.events)
+        written, ignored, shown = await asyncio.to_thread(
+            yahoo_room.record_events, room, body.events
+        )
+        for event in shown:  # the web app's sync panel: the extension's latest doings
+            session.publish("room_event", {"draft_id": draft_id, "entry": event}, bump=False)
         await asyncio.to_thread(yahoo_room.follow_clock, session, room, body.events)
         await asyncio.to_thread(yahoo_room.check_teams, session, room, body.events)
         return {
@@ -1128,6 +1211,20 @@ def create_app(
             "ignored": ignored,
             "control": room.control,
         }
+
+    @app.post("/rooms/{draft_id}/request")
+    async def room_request(draft_id: str, body: DraftRequest) -> dict[str, Any]:
+        """Ask the draft tab to draft ``yahoo_player_id`` for my pick ``overall`` (#10), in
+        mirror and autopilot alike. Refused (409) unless that pick is mine on the clock and
+        ``board`` is the session's; dropped when the turn ends or the tab's click fails."""
+        room, session = await get_room(draft_id)
+        try:
+            q = yahoo_room.request_pick(
+                session, room, body.overall, body.board, body.yahoo_player_id
+            )
+        except ValueError as exc:
+            raise HTTPException(409, str(exc)) from exc
+        return {"request": q}
 
     @app.post("/rooms/{draft_id}/aliases")
     async def room_alias(draft_id: str, body: AliasPin) -> dict[str, Any]:

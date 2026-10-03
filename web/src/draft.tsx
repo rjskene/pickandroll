@@ -20,6 +20,8 @@ import {
   teamLabel,
   type Objective,
   type Recommendation,
+  type RoomEventEntry,
+  type RoomStatus,
   type SessionSummary,
   type SimStrategy,
   type SolveEvent,
@@ -27,7 +29,7 @@ import {
   type SurvivalEvent,
 } from "./api";
 
-export type CardId = "pick" | "cats" | "alts" | "plan" | "team" | "log" | "solver";
+export type CardId = "pick" | "cats" | "alts" | "plan" | "team" | "log" | "solver" | "sync";
 export type Half = "top" | "bottom";
 
 export const CARDS: { id: CardId; title: string; blurb: string }[] = [
@@ -38,6 +40,7 @@ export const CARDS: { id: CardId; title: string; blurb: string }[] = [
   { id: "team", title: "Team", blurb: "score, expected profile and roster" },
   { id: "log", title: "Log", blurb: "every pick so far" },
   { id: "solver", title: "Solver", blurb: "timings, objective, settings" },
+  { id: "sync", title: "Yahoo sync", blurb: "the Yahoo draft room: sync, mode, aliases, fidelity" },
 ];
 export const cardIndex = (id: CardId): number => CARDS.findIndex((c) => c.id === id);
 
@@ -146,8 +149,12 @@ export interface DraftApi {
   strategy: SimStrategy;
   setStrategy: (s: SimStrategy) => void;
   pickError: string | null;
-  /** A live feed is attached: nothing is ever drafted for me automatically and nothing is simulated. */
+  /** A live feed is attached (the Yahoo Fantasy feed or a Yahoo room): the web app never drafts
+   * for me and nothing is simulated. Manual picks stay possible. */
   live: boolean;
+  /** YAHOO SYNC: the room this session follows, and the extension's latest events from it. */
+  room: RoomStatus | undefined;
+  roomEvents: RoomEventEntry[];
   /** Mock draft: simulate the other teams and let the solver make my picks until the draft is complete. */
   mock: boolean;
   setMock: (v: boolean) => void;
@@ -181,10 +188,12 @@ interface ProviderProps {
   solveEvents: SolveEvent[];
   survival: SurvivalEvent | null;
   live: boolean;
+  room: RoomStatus | undefined;
+  roomEvents: RoomEventEntry[];
   children: ReactNode;
 }
 
-export function DraftProvider({ session, solveEvents, survival, live, children }: ProviderProps) {
+export function DraftProvider({ session, solveEvents, survival, live, room, roomEvents, children }: ProviderProps) {
   const queryClient = useQueryClient();
   const invalidate = useCallback(() => {
     queryClient.invalidateQueries({ queryKey: ["session", session.id] });
@@ -459,6 +468,8 @@ export function DraftProvider({ session, solveEvents, survival, live, children }
     setStrategy,
     pickError,
     live,
+    room,
+    roomEvents,
     mock,
     setMock,
     hideTaken,
@@ -485,14 +496,14 @@ function applyClose(d: DrawerState, id: CardId): DrawerState {
   return { ...d, top, bottom, collapsed: empty, last: empty ? d.last : { top, bottom } };
 }
 
-const SHIFTED_DIGITS: Record<string, number> = { "!": 1, "@": 2, "#": 3, "$": 4, "%": 5, "^": 6, "&": 7 };
+const SHIFTED_DIGITS: Record<string, number> = { "!": 1, "@": 2, "#": 3, "$": 4, "%": 5, "^": 6, "&": 7, "*": 8 };
 const TEXT_INPUTS = new Set(["text", "search", "number", "email", "password", "url", "tel"]);
 
-/** 1 to 7 from the physical key when the browser reports it, else from the typed character. */
+/** 1 to 8 from the physical key when the browser reports it, else from the typed character. */
 function cardDigit(e: KeyboardEvent): number | null {
-  const physical = /^Digit([1-7])$/.exec(e.code);
+  const physical = /^Digit([1-8])$/.exec(e.code);
   if (physical) return Number(physical[1]);
-  if (/^[1-7]$/.test(e.key)) return Number(e.key);
+  if (/^[1-8]$/.test(e.key)) return Number(e.key);
   return SHIFTED_DIGITS[e.key] ?? null;
 }
 

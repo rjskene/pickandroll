@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import threading
 import time
+from collections import deque
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -66,6 +67,14 @@ NEEDS_OVERALL = frozenset({"turn_start", "draft_attempt", "pick_landed"})
 CONTROL_STATES = frozenset({"armed", "mirror", "absent"})
 
 
+#: The earliest an armed turn may be told to act, in seconds left on the clock: the drafter's
+#: own plan wait ends there (START_BY_S in drafter.js), leaving its row clicks room before the
+#: backstop (6 s).
+ACT_AT_MIN_S = 12
+#: The pick clock act_at_s is counted on (the mocks' and the league's).
+ACT_AT_MAX_S = 30
+
+
 def control_for(mode: Mode) -> str:
     return "armed" if mode == "autopilot" else "mirror"
 
@@ -110,6 +119,15 @@ class YahooRoom:
     teams_mismatch: int | None = None
     #: The first recommendation from the single-roster model has been noted in the log.
     roster_noted: bool = False
+    #: (overall, ms from the room's pick to the session's) for the latest picks: the web
+    #: app's sync panel, without reading the log.
+    recent_lags: deque = field(default_factory=lambda: deque(maxlen=24), repr=False)
+    #: The user's "Draft in Yahoo" from the web app (#10), for the draft tab to click while
+    #: that pick is on the clock; see :func:`request_pick`.
+    request: dict[str, Any] | None = None
+    #: Armed: act when the clock is down to this many seconds, unless the user picks first
+    #: (#10); ``None``, at once (the default, and the mocks').
+    act_at_s: int | None = None
     lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
     @property
@@ -189,6 +207,15 @@ def attach_room(
     )
     if controls and room.resumed:
         room.control = controls[-1].get("state", "absent")
+        # A restart keeps the armed turns' timing the user set.
+        room.act_at_s = next(
+            (
+                c["act_at_s"]
+                for c in reversed(controls)
+                if c.get("src") == "api" and "act_at_s" in c
+            ),
+            None,
+        )
     else:
         room.control = control_for(mode)
         log.append({"type": "control", "state": room.control, "slot": slot, "src": "api"})
@@ -394,6 +421,8 @@ def _publish_changes(
         }
         if resume:
             event["resume"] = True
+        elif c["kind"] != "repair":  # a pinned stand-in is the same room pick, not a late one
+            room.recent_lags.append((c["overall"], c["lag_ms"]))
         room.log.append(event)
         if c["kind"] == "conflict":
             conflict = {
@@ -408,7 +437,7 @@ def _publish_changes(
         if c["kind"] == "held":
             continue
         row = _pick_row(state, next(p for p in state.picks if p.overall == c["overall"]))
-        payload: dict[str, Any] = {"pick": row, "source": "yahoo_room"}
+        payload: dict[str, Any] = {"pick": row, "source": "yahoo_room", "lag_ms": c["lag_ms"]}
         if c["old"] is not None:
             payload["replaced"] = c["old"]
         session.publish("pick", payload)
@@ -446,6 +475,58 @@ def pin(session: Session, room: YahooRoom, yid: str, pid: str) -> dict[str, Any]
     return {"yahoo_player_id": yid, "player_id": pid, "repaired": [c["overall"] for c in changes]}
 
 
+# --------------------------------------------------------------------------- draft request
+def request_pick(
+    session: Session, room: YahooRoom, overall: int, board: int, yid: str
+) -> dict[str, Any]:
+    """The user's "Draft in Yahoo" (#10): ask the draft tab to click ``yid`` for my pick
+    ``overall``. Taken only while that pick is mine on the clock and ``board`` is the session's
+    (picks 1..overall-1); a newer request replaces it. The tab clicks only while the room has
+    the pick on the clock, and in autopilot the drafter stands aside while it is pending.
+    ValueError for anything else."""
+    state = session.state
+    with session.lock:
+        next_overall, on_clock, made = state.next_overall, state.on_the_clock, len(state.picks)
+    if not on_clock or overall != next_overall:
+        raise ValueError(
+            f"pick {overall} is not mine on the clock (the next pick is {next_overall})"
+        )
+    if board != made:
+        raise ValueError(f"board {board} is not the session's: it has {made} picks")
+    yid = str(yid)
+    if not room.ids.known(yid):
+        raise ValueError(f"unknown Yahoo player {yid}")
+    with room.lock:
+        if overall in room.ledger:
+            raise ValueError(f"pick {overall} has been made in the room")
+        if any(p.yid == yid for p in room.ledger.values()):
+            raise ValueError(f"{room.ids.name(yid)} has been drafted")
+        room.request = {
+            "overall": overall,
+            "board": board,
+            "yahoo_player_id": yid,
+            "player_id": room.ids.pid(yid),
+            "name": room.ids.name(yid),
+            **room.ids.row_name(yid),
+            "t": now_iso(),
+        }
+    room.log.append(
+        {"type": "note", "what": "draft request", "overall": overall, "board": board, "yid": yid}
+    )
+    return room.request
+
+
+def live_request(session: Session, room: YahooRoom) -> dict[str, Any] | None:
+    """The pending request, or None once its turn has ended: the pick is in the room, or the
+    session has moved past it (a hand pick entered here)."""
+    q = room.request
+    if q is not None and (
+        q["overall"] in room.ledger or session.state.next_overall != q["overall"]
+    ):
+        room.request = q = None
+    return q
+
+
 # --------------------------------------------------------------------------- events
 def _event_problem(e: dict[str, Any]) -> str | None:
     """Why the API does not take a client event, or None."""
@@ -463,8 +544,11 @@ def _event_problem(e: dict[str, Any]) -> str | None:
     return None
 
 
-def record_events(room: YahooRoom, events: list[dict[str, Any]]) -> tuple[int, int]:
-    """Store client events with the server's receive time; returns (written, ignored).
+def record_events(
+    room: YahooRoom, events: list[dict[str, Any]]
+) -> tuple[int, int, list[dict[str, Any]]]:
+    """Store client events with the server's receive time; returns (written, ignored, shown):
+    ``shown`` are the events taken, heartbeats aside, for the web app's sync panel.
     Heartbeats are kept in memory and written at most once per ``HEARTBEAT_EVERY_S``.
 
     An event the API does not take (a type it does not know, a server type, or one missing
@@ -491,9 +575,14 @@ def record_events(room: YahooRoom, events: list[dict[str, Any]]) -> tuple[int, i
             room.heartbeat_logged = time.monotonic()
         if e["type"] == "control":
             room.control = e["state"]
+        q = room.request
+        failed = e["type"] == "note" and e.get("what") == "request failed"
+        if failed and q is not None and e.get("overall") == q["overall"]:
+            room.request = None  # the tab gave up; in autopilot the drafter takes the turn
         room.log.append(e)
         written += 1
-    return written, sum(dropped.values())
+    shown = [e for e in clean if e["type"] != "heartbeat"]
+    return written, sum(dropped.values()), shown
 
 
 def follow_clock(session: Session, room: YahooRoom, events: list[dict[str, Any]]) -> float | None:
@@ -759,6 +848,7 @@ def summary(session: Session, room: YahooRoom) -> dict[str, Any]:
         "slot": room.slot,
         "mode": room.mode,
         "control": room.control,
+        "act_at_s": room.act_at_s,
         "num_teams": room.num_teams,
         "teams_mismatch": room.teams_mismatch,
         "rounds": room.rounds,
@@ -774,6 +864,9 @@ def summary(session: Session, room: YahooRoom) -> dict[str, Any]:
         "next_overall": state.next_overall,
         "my_next_pick": state.my_next_pick,
         "on_the_clock": state.on_the_clock,
+        "complete": state.complete,
+        "recent_lags": [{"overall": k, "lag_ms": v} for k, v in room.recent_lags],
+        "request": live_request(session, room),
         "version": session.version,
         "solved_version": rec["version"] if rec else None,
         "fresh": rec is not None and rec["version"] == session.version,

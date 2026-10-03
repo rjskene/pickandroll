@@ -22,6 +22,14 @@
 // that is still settling never interleaves with the next turn's.
 // A trusted click by the user on any Draft control during the turn makes the pick theirs: the
 // drafter stops at once and touches nothing more.
+// "Draft in Yahoo" from the web app (#10, in mirror and autopilot): ``request`` clicks the user's
+// player for the pick on the clock, with the row click's label guard, in two tries; the pick is
+// the user's (how "manual"). While it is pending an armed turn for that pick stands aside; when
+// it lands nothing, a note "request failed" drops it and the turn goes on, backstop included.
+// ``actAt`` (the room's act_at_s, #10; null: at once): an armed turn holds its click until the
+// clock is down to that many seconds, so the user may pick first (by hand or by a request,
+// either of which ends the turn). Its plan wait stops there instead of at 12 s, and it takes its
+// last look at the plan at act time, not at the turn's start.
 // The queue probe (once per draft, ``probeRound``): on my first turn from that round on whose
 // next pick is not also mine, star the top candidate before drafting it, and log what Yahoo
 // did with it (queued, or drafted: the pick wanted either way). Nothing landing is "dropped"
@@ -44,11 +52,14 @@
   const MAX_CANDIDATES = 4;
   const ASK_AGAIN_MS = 250; // between asks when the API answered for an older board
   const RETRY_MS = 500; // between asks when /plan failed (the API restarting, a 5xx)
+  const REQUEST_TRIES = 2; // clicks for a "Draft in Yahoo" request before it is dropped
+  const REQUEST_WAIT_MS = 2500; // after each, for the pick to land (Yahoo confirms in ~400 ms)
 
-  /** Seconds to hold /plan for a fresh solve with ``left`` seconds on the clock. */
-  function planWait(left) {
+  /** Seconds to hold /plan for a fresh solve with ``left`` seconds on the clock, stopping
+   * with ``by`` seconds left. */
+  function planWait(left, by = START_BY_S) {
     if (left === null || left === undefined || Number.isNaN(left)) return PLAN_WAIT_MAX_S;
-    return Math.max(0, Math.min(PLAN_WAIT_MAX_S, Math.floor(left - START_BY_S)));
+    return Math.max(0, Math.min(PLAN_WAIT_MAX_S, Math.floor(left - by)));
   }
 
   const STOP = Symbol("stop");
@@ -112,6 +123,9 @@
       this.probeRound = null; // the queue probe's round (the options page), null: off
       this.probed = null; // the pick the probe ran on
       this.searchFallback = false; // Yahoo's search box for an off-screen row (the options page)
+      this.requesting = null; // the user's pending request: {k, ctx, settled}
+      this.requests = new Set(); // requests served, by overall and player
+      this.actAt = null; // the room's act_at_s: seconds left when an armed turn acts, null: at once
     }
 
     /** A turn has not settled yet. */
@@ -183,6 +197,112 @@
     handPick(k) {
       const ctx = this.current;
       if (ctx && ctx.k === k) ctx.stop("manual");
+      if (this.requesting && this.requesting.k === k) this.requesting.ctx.stop("manual");
+    }
+
+    /** A request of the user's is pending for pick ``k``: an armed turn stands aside. */
+    yields(k) {
+      return Boolean(this.requesting && this.requesting.k === k);
+    }
+
+    /** Wait while the user's request for this turn's pick is pending. */
+    async yieldTo(ctx) {
+      const q = this.requesting;
+      if (q && q.k === ctx.k) await this.wait(ctx, q.settled);
+    }
+
+    /** act_at_s: hold the turn until the clock is down to ``actAt`` seconds, standing aside for
+     * a request meanwhile. True when it held at all. Without a clock frame there is nothing to
+     * count down: the turn acts at once. */
+    async holdTill(ctx) {
+      let held = false;
+      for (;;) {
+        await this.yieldTo(ctx);
+        const left = this.left();
+        const at = this.actAt;
+        if (!this.live(ctx) || at === null || left === null || left === undefined || Number.isNaN(left) || left <= at) break;
+        held = true;
+        if (!(await this.pause(ctx, Math.min(250, Math.max(1, Math.ceil((left - at) * 1000)))))) break;
+      }
+      return held;
+    }
+
+    /** Click ``row`` for ``c`` once the page is free, if the turn is live and its pick still mine
+     * on the clock then. Page actions queue and a click settles in ~400 ms: a click queued behind
+     * one that drafted must not land on the next pick's frame (back to back, slots 1 and 12). The
+     * attempt is noted right before the click, since the pick can land while it settles, and
+     * taken back when nothing was clicked. */
+    clickFor(ctx, row, c, how) {
+      const k = ctx.k;
+      return this.page(async () => {
+        if (!this.live(ctx) || this.tracker.myTurnNow() !== k) return "none";
+        const before = this.tracker.attempts.get(k);
+        this.tracker.noteAttempt(k, how);
+        const r = await this.dom.click(row, c);
+        if (r !== "clicked") {
+          if (before === undefined) this.tracker.attempts.delete(k);
+          else this.tracker.noteAttempt(k, before);
+        }
+        return r;
+      });
+    }
+
+    /** The user's "Draft in Yahoo" from the web app (#10): click ``q``'s player for pick
+     * ``q.overall``, only while that pick is mine on the clock, with the row click's label
+     * guard. Resolves to a summary ("landed", "failed", "manual", "other", "stopped"), or null
+     * when the request is not this turn's or was served already; never throws. */
+    async request(q) {
+      const k = q ? Number(q.overall) : null;
+      if (!q || !Number.isInteger(k) || this.done(k) || this.tracker.myTurnNow() !== k) return null;
+      const c = { ...q, yahoo_player_id: String(q.yahoo_player_id) };
+      const key = `${k}:${c.yahoo_player_id}`;
+      if (this.requests.has(key) || this.requesting) return null;
+      this.requests.add(key);
+      const ctx = turnContext(k);
+      ctx.board = Number.isInteger(q.board) ? q.board : null;
+      let settle;
+      const settled = new Promise((resolve) => {
+        settle = resolve;
+      });
+      this.requesting = { k, ctx, settled };
+      const out = { overall: k, yid: c.yahoo_player_id, result: "failed", attempts: 0 };
+      try {
+        for (let n = 1; n <= REQUEST_TRIES && this.live(ctx) && this.tracker.myTurnNow() === k; n++) {
+          let row = this.dom.find(c) || (await this.page(() => this.dom.scrollTo(c)));
+          if (!this.live(ctx)) break;
+          if (row) {
+            // The user's pick, made through the tab (how "manual").
+            let r = await this.clickFor(ctx, row, c, "manual");
+            if (r === "mismatch" && this.live(ctx)) {
+              await this.page(() => this.dom.nudge());
+              row = this.dom.find(c);
+              r = row && this.live(ctx) ? await this.clickFor(ctx, row, c, "manual") : "none";
+            }
+            if (r === "clicked") {
+              out.attempts++;
+              this.attempt(ctx, c, "request", n);
+            }
+          }
+          // Room for the armed turn's backstop after a failure, never less than a confirmation.
+          const budget = Math.max(800, Math.min(REQUEST_WAIT_MS, (this.leftOrPlenty() - BACKSTOP_BY_S) * 1000));
+          if (await this.waitDone(ctx, budget)) break;
+        }
+        const p = this.tracker.picks.get(k);
+        if (this.tracker.isManual(k)) out.result = "manual";
+        else if (p) out.result = p.yid === c.yahoo_player_id ? "landed" : "other";
+        else if (ctx.stopped) out.result = "stopped";
+        if (out.result === "failed") {
+          this.emit({ type: "note", what: "request failed", overall: k, yid: c.yahoo_player_id, attempts: out.attempts });
+        }
+        return out;
+      } catch (e) {
+        this.emit({ type: "note", what: "request failed", overall: k, yid: c.yahoo_player_id, msg: String((e && e.message) || e) });
+        return out;
+      } finally {
+        this.requesting = null;
+        ctx.settled = true;
+        settle();
+      }
     }
 
     /** A draft attempt for ``overall`` (this turn's pick, or my next one when it is queued
@@ -240,6 +360,8 @@
         fresh: null,
         board: null,
         waited_ms: null,
+        act_at_s: this.actAt,
+        held_ms: null,
       };
       try {
         // The older turn left the page as it was when it stopped: this turn owns it now.
@@ -251,10 +373,11 @@
         // board's plan is fresh to the API (pick 144 of the 2026-10-01 harness run).
         const board = k - 1;
         const current = (p) => Boolean(p && p !== STOP && p.fresh && p.board === board);
-        const first = planWait(this.left());
+        const by = this.actAt === null ? START_BY_S : Math.max(START_BY_S, this.actAt);
+        const first = planWait(this.left(), by);
         const until = this.now() + first * 1000;
         const waitLeft = () =>
-          Math.max(0, Math.min(planWait(this.left()), Math.floor((until - this.now()) / 1000)));
+          Math.max(0, Math.min(planWait(this.left(), by), Math.floor((until - this.now()) / 1000)));
         let plan = await this.ask(ctx, first, board);
         while (plan !== STOP && !current(plan) && this.live(ctx)) {
           const wait = waitLeft();
@@ -272,6 +395,17 @@
           if (again) plan = again;
         }
         if (plan === STOP) plan = null;
+        // act_at_s: the click waits for its time unless the user picks first, then the plan is
+        // looked at once more (a pin or a re-solve on this board since).
+        if (this.actAt !== null && this.live(ctx)) {
+          const from = this.now();
+          const held = await this.holdTill(ctx);
+          out.held_ms = this.now() - from;
+          if (held && this.live(ctx)) {
+            const again = await this.ask(ctx, 0, board);
+            if (current(again)) plan = again;
+          }
+        }
         // The plan the page fetched ahead for this pick, when it is on this turn's board or the
         // asks brought nothing at all (an older board's plan is acted on as stale).
         const held = this.live(ctx) && !current(plan) ? this.held(k) : null;
@@ -302,17 +436,22 @@
           if (!(await this.pause(ctx, 150))) break;
         }
 
+        await this.yieldTo(ctx);
         if (this.probeDue(k) && this.live(ctx) && this.leftOrPlenty() > BACKSTOP_BY_S + 8) {
           await this.probe(ctx, cands.find((x) => !this.tracker.taken().has(String(x.yahoo_player_id))));
         }
 
-        for (const c of cands) {
+        for (let i = 0; i < cands.length; i++) {
+          await this.yieldTo(ctx);
           if (!this.live(ctx) || this.leftOrPlenty() <= BACKSTOP_BY_S) break;
+          const c = cands[i];
           if (this.tracker.taken().has(String(c.yahoo_player_id))) continue;
           const r = await this.rowDraft(ctx, c);
           this.log(`#${k} ${c.name}: ${r}`);
           if (r === "landed" || r === "manual" || r === "stopped") break;
+          if (r === "yielded") i--; // the user's request took the page: this row again after it
         }
+        await this.yieldTo(ctx);
         if (this.live(ctx)) {
           const c = cands.find((x) => !this.tracker.taken().has(String(x.yahoo_player_id)));
           if (c) {
@@ -424,7 +563,7 @@
     }
 
     /** Click candidate ``c``'s row; "landed", "manual", "stopped", "noRow", "mismatch",
-     * "noButton" or "notLanded". Page actions are not cut short (a click settles in ~400 ms);
+     * "noButton", "notLanded" or "yielded" (the user's request took the page). Page actions are not cut short (a click settles in ~400 ms);
      * the waits between them are. */
     async rowDraft(ctx, c) {
       const k = ctx.k;
@@ -443,13 +582,12 @@
       }
       if (!this.live(ctx)) return this.outcome(ctx);
       if (!row) return "noRow";
-      // Noted before the click: the pick can land while the click is still settling.
-      this.tracker.noteAttempt(k, "row");
-      let r = await this.page(() => this.dom.click(row, c));
+      if (this.yields(k)) return "yielded";
+      let r = await this.clickFor(ctx, row, c, "row");
       if (r === "mismatch" && this.live(ctx)) {
         await this.page(() => this.dom.nudge());
         row = this.dom.find(c);
-        r = row && this.live(ctx) ? await this.page(() => this.dom.click(row, c)) : "none";
+        r = row && this.live(ctx) ? await this.clickFor(ctx, row, c, "row") : "none";
       }
       if (r === "mismatch") return "mismatch";
       if (r !== "clicked") return this.live(ctx) ? "noButton" : this.outcome(ctx);
@@ -459,8 +597,9 @@
         const budget = Math.min(gap, ((this.left() ?? 30) - BACKSTOP_BY_S) * 1000);
         if (budget <= 0) break;
         if ((await this.waitDone(ctx, budget)) || !this.live(ctx)) break;
+        if (this.yields(k)) return "yielded";
         const again = this.dom.find(c);
-        if (!again || (await this.page(() => this.dom.click(again, c))) !== "clicked") break;
+        if (!again || (await this.clickFor(ctx, again, c, "row")) !== "clicked") break;
         n++;
         this.attempt(ctx, c, via, n);
       }

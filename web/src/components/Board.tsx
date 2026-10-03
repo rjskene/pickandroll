@@ -111,9 +111,10 @@ export default function Board() {
     );
     return sortRows(shown, sort);
   }, [board.data, search, d.hideTaken, sort]);
+  const { setVisibleRows } = d;
   useEffect(() => {
-    d.setVisibleRows(rows.filter((p) => !p.taken).map((p) => p.player_id));
-  }, [rows, d.setVisibleRows]);
+    setVisibleRows(rows.filter((p) => !p.taken).map((p) => p.player_id));
+  }, [rows, setVisibleRows]);
   useEffect(() => {
     if (d.highlight) document.querySelector("tr.hl")?.scrollIntoView({ block: "nearest" });
   }, [d.highlight]);

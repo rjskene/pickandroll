@@ -8,6 +8,7 @@ import PickCard from "./cards/PickCard";
 import PlanCard from "./cards/PlanCard";
 import SolverCard from "./cards/SolverCard";
 import TeamCard from "./cards/TeamCard";
+import SyncCard from "./cards/SyncCard";
 
 const BODIES: Record<CardId, () => ReactElement> = {
   pick: PickCard,
@@ -17,6 +18,7 @@ const BODIES: Record<CardId, () => ReactElement> = {
   team: TeamCard,
   log: LogCard,
   solver: SolverCard,
+  sync: SyncCard,
 };
 
 function CardFrame({ id, half, style }: { id: CardId; half: Half; style: CSSProperties }) {
