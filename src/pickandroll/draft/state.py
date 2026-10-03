@@ -26,6 +26,7 @@ from ..optim.horizon import (
     HorizonProblem,
     HorizonSolution,
     first_order_prices,
+    first_order_table,
     horizon_pick_pool,
     scenarios_if_gone,
     solve_horizon,
@@ -46,6 +47,12 @@ class Pick:
     overall: int
     team: str
     player_id: str
+
+
+def plan_fallback(problem: HorizonProblem, solution: HorizonSolution) -> str | None:
+    """``"sum"`` when ``solution`` is the plain-sum fallback of a curve plan (it has no win
+    probabilities), else ``None``."""
+    return "sum" if problem.curve is not None and solution.expected_wins is None else None
 
 
 @dataclass
@@ -403,19 +410,22 @@ class DraftState:
             curve=plan_curve,
         )
 
-    def solve_plan(self, problem: HorizonProblem) -> HorizonSolution:
-        """Solve the plan within the session's budget, keeping the incumbent at the time limit.
-        A curve solve that produces no incumbent at all falls back to the sum objective (noted
-        in ``last_fallback``)."""
+    def solve_plan(
+        self, problem: HorizonProblem, time_limit: float | None = None
+    ) -> HorizonSolution:
+        """Solve the plan within the session's budget (or ``time_limit``), keeping the incumbent
+        at the time limit. A curve solve that produces no incumbent at all falls back to the sum
+        objective (noted in ``last_fallback``)."""
+        limit = self.plan_time_limit if time_limit is None else time_limit
         self.last_fallback = None
         try:
-            return solve_horizon(problem, time_limit=self.plan_time_limit, gap=self.plan_gap)
+            return solve_horizon(problem, time_limit=limit, gap=self.plan_gap)
         except RuntimeError:
             if problem.curve is None:
                 raise
         self.last_fallback = "sum"
         fallback = replace(problem, curve=None, max_candidates=self.plan_candidates)
-        return solve_horizon(fallback, time_limit=self.plan_time_limit, gap=self.plan_gap)
+        return solve_horizon(fallback, time_limit=limit, gap=self.plan_gap)
 
     def plan(
         self,
@@ -439,6 +449,11 @@ class DraftState:
         progress: Callable[[dict], None] | None = None,
         problem: HorizonProblem | None = None,
         candidates: Sequence[str] | None = None,
+        plan_time_limit: float | None = None,
+        on_plan: Callable[[HorizonSolution, pd.DataFrame, dict[str, float]], None] | None = None,
+        base: HorizonSolution | None = None,
+        timings: dict[str, float] | None = None,
+        include: Callable[[], Sequence[str]] | None = None,
         **kwargs,
     ) -> tuple[pd.DataFrame, HorizonSolution, frozenset[Cat]]:
         """Candidates for my next pick priced with the waiting risk, plus the plan itself.
@@ -449,13 +464,22 @@ class DraftState:
         ``last_timings``. A caller that snapshots the board itself passes ``problem`` and
         ``candidates`` (see the API's background solver); the solve then never reads the pick
         log again and picks can land meanwhile.
+
+        ``plan_time_limit`` overrides the plan's budget for this solve. ``on_plan`` receives the
+        plan, its first-order candidate table (:func:`first_order_table`) and the timings so far
+        before any exact price is solved; it may raise to stop the solve there. ``base`` is a
+        plan already solved for ``problem`` (a pre-solved branch): it is priced, not solved
+        again. ``timings``, when given, is filled with this solve's stage timings (solves that
+        run at once on one state each read their own, not ``last_timings``). ``include`` is
+        asked once the plan is solved for players the exact prices must also cover (the first
+        pick of a plan already serving this board).
         """
         started = time.perf_counter()
-        timings: dict[str, float] = {}
+        timings = {} if timings is None else timings
         self.last_punt_scan = None
         if problem is None:
             problem = self.horizon_problem(punt, **kwargs)
-        solution = self.solve_plan(problem)
+        solution = base if base is not None else self.solve_plan(problem, plan_time_limit)
         timings["plan_ms"] = (time.perf_counter() - started) * 1000
         if progress is not None:
             progress(
@@ -467,7 +491,7 @@ class DraftState:
                     "wins": solution.wins,
                     "first_pick": solution.first_pick,
                     "time_limited": solution.time_limited,
-                    "fallback": self.last_fallback,
+                    "fallback": plan_fallback(problem, solution),
                 }
             )
         candidates = (
@@ -476,6 +500,17 @@ class DraftState:
         if solution.first_pick and solution.first_pick not in candidates:
             candidates.append(solution.first_pick)
         prices = first_order_prices(problem, solution, candidates)
+        if on_plan is not None:
+            early = first_order_table(problem, solution, candidates)
+            if not early.empty:
+                early.insert(1, "name", early["player"].map(self.projections.df["player"]))
+            so_far = {**timings, "total_ms": timings["plan_ms"]}
+            self.last_timings = so_far
+            on_plan(solution, early, so_far)
+        if include is not None:
+            candidates += [
+                p for p in include() if p not in candidates and p in problem.availability.index
+            ]
         if progress is not None:
             progress(
                 {

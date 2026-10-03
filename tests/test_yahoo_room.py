@@ -340,14 +340,33 @@ def test_plan_back_to_back_wait_and_bounds(league):
         assert plan["fresh"] is False and plan["second_pick"] is None
 
 
+def test_plan_holds_for_the_clients_board(league):
+    """The turn's client knows pick k-1 landed before the API may have applied it: asked for
+    board k-1, the plan of board k-2 is not fresh, and the wait holds for the newer board."""
+    directory, picks = league
+    with app_for(directory) as c:
+        attach(c, num_teams=12)
+        post_picks(c, "d1", picks[:22])
+        plan = c.get("/rooms/d1/plan?wait=15").json()
+        assert plan["fresh"] is True and plan["board"] == 22
+        assert c.get("/rooms/d1/plan?board=-1").status_code == 422
+        plan = c.get("/rooms/d1/plan?wait=0.3&board=23").json()
+        assert plan["fresh"] is False and plan["board"] == 22 and plan["waited_ms"] >= 300
+        assert c.get("/rooms/d1/plan?board=22").json()["fresh"] is True
+        post_picks(c, "d1", picks[22:23])
+        plan = c.get("/rooms/d1/plan?wait=15&board=23").json()
+        assert plan["fresh"] is True and plan["board"] == 23
+
+
 def test_events_validation_heartbeats_and_control(league):
     directory, _picks = league
     with app_for(directory) as c:
         attach(c)
-        bad = c.post("/rooms/d1/events", json={"events": [{"type": "room_pick", "overall": 1}]})
-        assert bad.status_code == 422
-        bad = c.post("/rooms/d1/events", json={"events": [{"type": "turn_start"}]})
-        assert bad.status_code == 422
+        # A server type and an event missing its overall are dropped, not the request.
+        r = c.post("/rooms/d1/events", json={"events": [{"type": "room_pick", "overall": 1}]})
+        assert r.status_code == 200 and r.json()["written"] == 0 and r.json()["ignored"] == 1
+        r = c.post("/rooms/d1/events", json={"events": [{"type": "turn_start"}]})
+        assert r.status_code == 200 and r.json()["ignored"] == 1
         r = c.post(
             "/rooms/d1/events",
             json={"events": [{"type": "heartbeat", "vis": "visible"} for _ in range(3)]},
@@ -369,6 +388,64 @@ def test_events_validation_heartbeats_and_control(league):
         assert cors.headers["access-control-allow-origin"].startswith("chrome-extension://")
         assert c.delete("/rooms/d1").json()["attached"] is False
         assert c.get("/rooms/d1/fidelity").status_code == 200
+
+
+def test_an_unknown_event_type_never_loses_the_batch(league):
+    """An extension one event type ahead of the API: the known events are still recorded."""
+    directory, _picks = league
+    with app_for(directory) as c:
+        attach(c)
+        batch = [
+            {"type": "draft_attempt", "overall": 1, "yid": "a", "method": "row", "attempt": 1},
+            {"type": "queue_probe", "overall": 1, "outcome": "drafted"},
+            {"type": "pick_landed", "overall": 1, "yid": "a", "how": "row"},
+        ]
+        r = c.post("/rooms/d1/events", json={"events": batch})
+        assert r.status_code == 200
+        assert r.json()["written"] == 2 and r.json()["ignored"] == 1
+    events = _events(directory, "d1")
+    kinds = [e["type"] for e in events]
+    assert "draft_attempt" in kinds and "pick_landed" in kinds and "queue_probe" not in kinds
+    notes = [e for e in events if e.get("what") == "client events ignored"]
+    assert [n["ignored"] for n in notes] == [{"type 'queue_probe'": 1}]
+
+
+def test_an_event_with_a_bad_time_never_loses_the_batch(league):
+    """A note whose t is neither ISO-8601 nor epoch ms is dropped; the events with it stay."""
+    directory, _picks = league
+    with app_for(directory) as c:
+        attach(c)
+        batch = [
+            {"type": "draft_attempt", "overall": 1, "yid": "a", "method": "row", "attempt": 1},
+            {"type": "note", "what": "x", "t": "yesterday"},
+            {"type": "pick_landed", "overall": 1, "yid": "a", "how": "row"},
+        ]
+        r = c.post("/rooms/d1/events", json={"events": batch})
+        assert r.status_code == 200
+        assert r.json()["written"] == 2 and r.json()["ignored"] == 1
+    events = _events(directory, "d1")
+    assert not [e for e in events if e.get("what") == "x"]
+    notes = [e for e in events if e.get("what") == "client events ignored"]
+    assert [n["ignored"] for n in notes] == [{"bad t": 1}]
+
+
+def test_a_pick_outside_the_draft_is_dropped_never_the_batch(league):
+    """Three picks, a pick 0 and a pick 157 in one batch: the three are recorded, 0 and 157
+    are ignored."""
+    directory, picks = league
+    with app_for(directory) as c:
+        attach(c)
+        items = [{"overall": p.overall, "yahoo_player_id": p.yahoo_player_id} for p in picks[:3]]
+        items.append({"overall": 157, "yahoo_player_id": picks[3].yahoo_player_id})
+        items.append({"overall": 0, "yahoo_player_id": picks[4].yahoo_player_id})
+        r = c.post("/rooms/d1/picks", json={"picks": items})
+        assert r.status_code == 200
+        assert r.json()["ignored"] == 2 and r.json()["synced_through"] == 3
+        assert c.get("/rooms/d1").json()["synced_through"] == 3
+    events = _events(directory, "d1")
+    assert not [e for e in events if e.get("overall") in (0, 157)]
+    notes = [e for e in events if e.get("what") == "room picks outside the draft ignored"]
+    assert [n["overalls"] for n in notes] == [[0, 157]]
 
 
 # --------------------------------------------------------------------------- restart

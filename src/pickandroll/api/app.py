@@ -63,8 +63,20 @@ CORS_ORIGINS = r"^(chrome-extension://[a-p]{32}|https?://(localhost|127\.0\.0\.1
 #: The longest a room client may hold ``/plan`` for a fresh solve (the pick clock is 30 s).
 PLAN_WAIT_MAX = 20.0
 #: Solver settings a room attaches with unless told otherwise: they kept solves inside a 30 s
-#: clock in the 2026-09-27 mocks.
-ROOM_SOLVE = {"n": 3, "scenarios": 0, "time_limit": 5.0}
+#: clock in the 2026-09-27 mocks. The plan's time limit follows the room's pick clock
+#: (:func:`yahoo_room.plan_budget`, 5 s on a 30 s clock) unless the attach gives one.
+ROOM_SOLVE = {
+    "n": 3,
+    "scenarios": 0,
+    # #13: the clock decides. Publish the plan before its prices and plan the boards my turn
+    # can start on ahead of it. A shorter plan budget at my own turn stays off (0): in rounds
+    # 1-6 a plan needs 6-16 s to converge, and a 3 s incumbent cost 0.72 expected category
+    # wins over a settled replay (slot 6 of room 2515267).
+    "early": True,
+    "turn_time_limit": 0.0,
+    "turn_n": 2,
+    "presolve": True,
+}
 
 
 # --------------------------------------------------------------------------- session store
@@ -334,11 +346,26 @@ class RoomAttach(BaseModel):
     )
     n: int | None = Field(default=None, ge=1, le=30, description="candidates priced per solve")
     scenarios: int | None = Field(default=None, ge=0, le=8)
-    time_limit: float | None = Field(default=None, ge=1.0, le=600.0)
+    time_limit: float | None = Field(
+        default=None, ge=1.0, le=600.0, description="plan budget (default: from clock_s)"
+    )
+    clock_s: float | None = Field(
+        default=None, ge=10.0, le=600.0, description="the room's seconds per pick (default 30)"
+    )
+    early: bool | None = Field(default=None, description="publish the plan before its prices")
+    turn_time_limit: float | None = Field(
+        default=None, ge=0.0, le=600.0, description="plan budget at my own turn (0: time_limit)"
+    )
+    turn_n: int | None = Field(default=None, ge=1, le=30)
+    presolve: bool | None = Field(
+        default=None, description="plan the boards my turn can start on before it starts"
+    )
 
 
 class RoomPickIn(BaseModel):
-    overall: int = Field(ge=1)
+    overall: int = Field(
+        description="outside 1..num_teams x rounds: dropped and counted, not refused"
+    )
     yahoo_player_id: str | int | None = None
     label: str | None = Field(default=None, description='Board label, "F. Last", with team')
     team: str | None = None
@@ -831,7 +858,9 @@ def create_app(
             if live is not None:
                 room, session = live
                 if body.slot is not None and body.slot != room.slot:
-                    raise HTTPException(409, f"room {room.draft_id} is attached for slot {room.slot}")
+                    raise HTTPException(
+                        409, f"room {room.draft_id} is attached for slot {room.slot}"
+                    )
                 if body.session_id is not None and body.session_id != session.id:
                     raise HTTPException(
                         409, f"room {room.draft_id} is attached to session {session.id}"
@@ -865,8 +894,26 @@ def create_app(
             slot = option("slot", None)
             if slot is None:
                 raise HTTPException(400, "slot is required")
-            params = SolveParams(n=option("n", ROOM_SOLVE["n"]), scenarios=option("scenarios", 0))
-            time_limit = float(option("time_limit", ROOM_SOLVE["time_limit"]))
+            turn_limit = float(option("turn_time_limit", ROOM_SOLVE["turn_time_limit"]))
+            params = SolveParams(
+                n=option("n", ROOM_SOLVE["n"]),
+                scenarios=option("scenarios", 0),
+                early=bool(option("early", ROOM_SOLVE["early"])),
+                turn_time_limit=turn_limit or None,
+                turn_n=option("turn_n", ROOM_SOLVE["turn_n"]),
+                presolve=bool(option("presolve", ROOM_SOLVE["presolve"])),
+            )
+            # The plan budget follows the room's clock unless a time_limit was given (now, or
+            # by the attach a resume reads; logs from before #13 always gave one).
+            clock_s = option("clock_s", None)
+            follow = body.time_limit is None and (
+                body.clock_s is not None
+                or bool(solve.get("follow_clock", "time_limit" not in solve))
+            )
+            if follow:
+                time_limit = yahoo_room.plan_budget(clock_s)
+            else:
+                time_limit = float(option("time_limit", yahoo_room.plan_budget(clock_s)))
             path = players_path(option("players_file", None))
             state = session.state
 
@@ -879,7 +926,7 @@ def create_app(
                 session.solve_params = params
                 state.plan_time_limit = time_limit
                 state.price_time_limit = min(state.price_time_limit, time_limit)
-                return yahoo_room.attach_room(
+                room = yahoo_room.attach_room(
                     session,
                     draft_id=body.draft_id,
                     slot=int(slot),
@@ -895,15 +942,28 @@ def create_app(
                             "n": params.n,
                             "scenarios": params.scenarios,
                             "time_limit": time_limit,
+                            "clock_s": clock_s,
+                            "follow_clock": follow,
+                            "early": params.early,
+                            "turn_time_limit": params.turn_time_limit or 0.0,
+                            "turn_n": params.turn_n,
+                            "presolve": params.presolve,
                         },
                     },
                 )
+                if follow:
+                    room.clock_s = float(clock_s or yahoo_room.DEFAULT_CLOCK_S)
+                return room
 
             try:
                 room = await asyncio.to_thread(build)
             except (KeyError, ValueError) as exc:
                 raise HTTPException(400, str(exc)) from exc
             store.rooms[body.draft_id] = session.id
+            if session.solver is not None:
+                # The room's solve settings replace the session's: solve again with them (and
+                # plan the boards ahead when the first turn is near).
+                session.solver.kick("room")
             return room, session
 
     async def get_room(draft_id: str) -> tuple[YahooRoom, Session]:
@@ -975,9 +1035,16 @@ def create_app(
     async def room_plan(
         draft_id: str,
         wait: float = Query(default=0.0, ge=0.0, le=PLAN_WAIT_MAX),
+        board: int | None = Query(
+            default=None,
+            ge=0,
+            description="Hold for the solve built on this many picks: a turn's client knows "
+            "its board before the API may have applied the last pick.",
+        ),
     ) -> dict[str, Any]:
         """Candidates for my next turn by Yahoo id. ``wait`` holds up to that many seconds
-        (at most 20) for a solve of the current board and starts one if none is running."""
+        (at most 20) for a solve of the current board, or of ``board`` once the session has
+        applied that many picks, and starts one if none is running."""
         room, session = await get_room(draft_id)
         loop = asyncio.get_running_loop()
         started = loop.time()
@@ -985,27 +1052,38 @@ def create_app(
         kicked = False
         while True:
             rec = session.recommendation
-            fresh = rec is not None and rec["version"] == session.version
             state = session.state
+            fresh = (
+                rec is not None
+                and rec["version"] == session.version
+                and (board is None or rec["next_overall"] - 1 >= board)
+            )
             if fresh or loop.time() >= deadline or not state.my_remaining_picks:
                 break
+            synced = board is None or state.next_overall - 1 >= board
             solver = session.solver
-            if solver is not None and not kicked and not solver.running:
+            if synced and solver is not None and not kicked and not solver.running:
                 kicked = solver.kick("room", force=True)
             await asyncio.sleep(0.1)
         payload = await asyncio.to_thread(yahoo_room.plan, session, room)
+        if board is not None and (payload["board"] is None or payload["board"] < board):
+            payload["fresh"] = False  # current for the API, but older than the client's board
         return {**payload, "waited_ms": round((loop.time() - started) * 1000)}
 
     @app.post("/rooms/{draft_id}/events")
     async def room_events(draft_id: str, body: RoomEvents) -> dict[str, Any]:
         """Client events for the fidelity log: control, turn_start, draft_attempt,
-        pick_landed, intervention, heartbeat, note."""
-        room, _session = await get_room(draft_id)
-        try:
-            written = await asyncio.to_thread(yahoo_room.record_events, room, body.events)
-        except ValueError as exc:
-            raise HTTPException(422, str(exc)) from exc
-        return {"received": len(body.events), "written": written, "control": room.control}
+        pick_landed, intervention, heartbeat, note. An event of another type, or one missing
+        what its type needs, is dropped and counted in ``ignored``; the rest are kept."""
+        room, session = await get_room(draft_id)
+        written, ignored = await asyncio.to_thread(yahoo_room.record_events, room, body.events)
+        await asyncio.to_thread(yahoo_room.follow_clock, session, room, body.events)
+        return {
+            "received": len(body.events),
+            "written": written,
+            "ignored": ignored,
+            "control": room.control,
+        }
 
     @app.post("/rooms/{draft_id}/aliases")
     async def room_alias(draft_id: str, body: AliasPin) -> dict[str, Any]:
