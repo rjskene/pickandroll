@@ -299,7 +299,7 @@
   // ------------------------------------------------------------------ status
   async function refresh() {
     try {
-      const r = await call("status");
+      const r = await call("status", { room_teams: tracker.teamsSeen() });
       S.base = r.api || S.base;
       drafter.probeRound = /^\d+$/.test(String(r.probe_round)) ? Number(r.probe_round) : null;
       drafter.searchFallback = r.search_fallback === "on";

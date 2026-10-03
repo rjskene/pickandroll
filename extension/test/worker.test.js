@@ -26,6 +26,8 @@ function loadWorker() {
       const f = { url, body: body ? JSON.parse(body) : null, aborted: false };
       f.release = (data) =>
         resolve({ ok: true, status: 200, text: async () => JSON.stringify(data) });
+      f.fail = (status, detail) =>
+        resolve({ ok: false, status, text: async () => JSON.stringify({ detail }) });
       fetches.push(f);
       if (signal) {
         signal.addEventListener("abort", () => {
@@ -106,4 +108,34 @@ test("the attach carries the room's own team count once the room has shown it (#
   assert.equal("room_teams" in w.fetches[1].body, false, "not known yet: the API cannot check");
   w.fetches[1].release({ attached: true });
   await unseen;
+});
+
+test("an unattached room is reported to the API as seen, an attached one is not (#10)", async () => {
+  const w = loadWorker();
+  const unattached = w.send({ op: "status", draft_id: "d", slot: 4, room_teams: 12 });
+  await tick();
+  assert.match(w.fetches[0].url, /\/rooms\/d$/);
+  w.fetches[0].fail(404, "no room d");
+  const r = await unattached;
+  assert.equal(r.ok, true);
+  assert.equal(r.data.attached, false);
+  await tick();
+  assert.equal(w.fetches.length, 2);
+  assert.match(w.fetches[1].url, /\/rooms\/seen$/);
+  assert.deepEqual(w.fetches[1].body, { draft_id: "d", slot: 4, room_teams: 12 });
+  w.fetches[1].fail(500, "down"); // a failed report changes nothing for the tab
+
+  const early = w.send({ op: "status", draft_id: "e", slot: null });
+  await tick();
+  w.fetches[2].fail(404, "no room e");
+  await early;
+  await tick();
+  assert.deepEqual(w.fetches[3].body, { draft_id: "e", slot: null, room_teams: null }, "not known yet");
+
+  const attached = w.send({ op: "status", draft_id: "d", slot: 4, room_teams: 12 });
+  await tick();
+  w.fetches[4].release({ draft_id: "d", mode: "mirror" });
+  assert.equal((await attached).data.attached, true);
+  await tick();
+  assert.equal(w.fetches.length, 5, "attached: nothing reported");
 });

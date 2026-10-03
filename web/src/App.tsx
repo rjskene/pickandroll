@@ -245,6 +245,7 @@ export default function App() {
     source.addEventListener("undo", refresh);
     source.addEventListener("room_attached", refresh);
     source.addEventListener("room_mode", refreshRoom);
+    source.addEventListener("room_detached", refreshRoom);
     source.addEventListener("room_event", (e) => {
       const { entry } = JSON.parse((e as MessageEvent).data) as { entry: RoomEventEntry };
       setRoomEvents((prev) => [...prev.slice(-49), entry]);

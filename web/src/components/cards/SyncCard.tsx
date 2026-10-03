@@ -4,9 +4,9 @@
 // a pick made by hand, here or in Yahoo, always stands.
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { api, type FidelityRow, type RoomMode, type RoomSummary } from "../../api";
+import { api, type FidelityRow, type RoomAttachBody, type RoomMode, type RoomSummary, type SeenRoom } from "../../api";
 import { useDraft } from "../../draft";
-import { SILENT_AFTER_S, describeEvent, eventTime, heartbeatAge, lagSeconds, medianLag, syncState, useNow } from "../YahooSync";
+import { SILENT_AFTER_S, SeenRooms, describeEvent, eventTime, heartbeatAge, lagSeconds, medianLag, syncState, useNow, useSeenRooms } from "../YahooSync";
 
 const armedKey = (sessionId: string) => `pickandroll.armed.${sessionId}`;
 
@@ -41,8 +41,9 @@ function AttachForm() {
   const [draftId, setDraftId] = useState("");
   const [slot, setSlot] = useState(s.my_position);
   const [teams, setTeams] = useState(s.num_teams);
+  const seen = useSeenRooms();
   const attach = useMutation({
-    mutationFn: () => api.attachRoom(s.id, { draft_id: draftId.trim(), slot, room_teams: teams }),
+    mutationFn: (body: RoomAttachBody) => api.attachRoom(s.id, body),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["room", s.id] });
       queryClient.invalidateQueries({ queryKey: ["session", s.id] });
@@ -55,6 +56,20 @@ function AttachForm() {
         Open the draft room in Chrome with the pickandroll extension. Once attached, the room's picks arrive here as they are made and the plan follows them.
         Mirror is the default: nothing is drafted for you until you arm autopilot. The board's pick controls stay yours either way.
       </p>
+      <SeenRooms
+        rooms={seen.data ?? []}
+        action="Attach"
+        onPick={(r: SeenRoom) => {
+          // With the slot shown the room attaches as it stands, checked against its own team
+          // count; without it the form is filled in for the slot.
+          setDraftId(r.draft_id);
+          if (r.room_teams) setTeams(r.room_teams);
+          if (r.slot) {
+            setSlot(r.slot);
+            attach.mutate({ draft_id: r.draft_id, slot: r.slot, room_teams: r.room_teams ?? teams });
+          }
+        }}
+      />
       <div className="sync-form">
         <label>
           <span className="k">Draft id</span>
@@ -68,7 +83,7 @@ function AttachForm() {
           <span className="k">Teams in the room</span>
           <input type="number" min={2} max={20} value={teams} onChange={(e) => setTeams(+e.target.value)} />
         </label>
-        <button className="primary" onClick={() => attach.mutate()} disabled={!draftId.trim() || attach.isPending}>
+        <button className="primary" onClick={() => attach.mutate({ draft_id: draftId.trim(), slot, room_teams: teams })} disabled={!draftId.trim() || attach.isPending}>
           {attach.isPending ? "Attaching…" : "Attach"}
         </button>
       </div>

@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, type Objective, type SessionSummary } from "../api";
 import Info from "./Info";
+import { SeenRooms, useSeenRooms } from "./YahooSync";
 
 interface Props {
   onCreated: (session: SessionSummary) => void;
@@ -31,6 +32,9 @@ export default function SessionSetup({ onCreated, onSelect }: Props) {
   const [solveAhead, setSolveAhead] = useState(true);
   const [timeLimit, setTimeLimit] = useState(20);
   const [roomId, setRoomId] = useState("");
+  // The room's own team count when the extension has shown it: the attach is checked against it.
+  const [roomTeams, setRoomTeams] = useState<number | null>(null);
+  const seen = useSeenRooms();
   // A session made whose room did not attach: the reason, and the way on to the draft anyway.
   const [unattached, setUnattached] = useState<{ session: SessionSummary; error: string } | null>(null);
 
@@ -55,7 +59,7 @@ export default function SessionSetup({ onCreated, onSelect }: Props) {
       });
       if (!roomId.trim()) return { session, attachError: null };
       try {
-        await api.attachRoom(session.id, { draft_id: roomId.trim(), slot: position });
+        await api.attachRoom(session.id, { draft_id: roomId.trim(), slot: position, room_teams: roomTeams });
         return { session, attachError: null };
       } catch (e) {
         return { session, attachError: e instanceof Error ? e.message : String(e) };
@@ -150,8 +154,31 @@ export default function SessionSetup({ onCreated, onSelect }: Props) {
             <span>The draft id is in the room's address. You can also attach later from the sync card.</span>
           </Info>
         </span>
-        <input value={roomId} onChange={(e) => setRoomId(e.target.value)} placeholder="draft id, or leave empty for manual entry" spellCheck={false} />
+        <input
+          value={roomId}
+          onChange={(e) => {
+            setRoomId(e.target.value);
+            setRoomTeams(null);
+          }}
+          placeholder="draft id, or leave empty for manual entry"
+          spellCheck={false}
+        />
       </label>
+      <SeenRooms
+        rooms={(seen.data ?? []).filter((r) => r.draft_id !== roomId.trim())}
+        action="Use"
+        onPick={(r) => {
+          setRoomId(r.draft_id);
+          setRoomTeams(r.room_teams);
+          if (r.room_teams) setNumTeams(r.room_teams);
+          if (r.slot) setPosition(r.slot);
+        }}
+      />
+      {roomId.trim() && roomTeams !== null && (
+        <p className="muted" style={{ margin: "-4px 0 0", fontSize: 12 }}>
+          Room {roomId.trim()} shows {roomTeams} teams{roomTeams !== numTeams ? `, not ${numTeams}: the attach will be refused` : ""}.
+        </p>
+      )}
 
       <span className="k">Strategy</span>
       <div className="row">

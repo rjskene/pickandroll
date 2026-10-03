@@ -18,6 +18,7 @@ import asyncio
 import json
 import logging
 import threading
+import time
 import uuid
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
@@ -62,6 +63,9 @@ ADP_SUFFIXES = {".csv", ".xls", ".xlsx"}
 CORS_ORIGINS = r"^(chrome-extension://[a-p]{32}|https?://(localhost|127\.0\.0\.1)(:\d+)?)$"
 #: The longest a room client may hold ``/plan`` for a fresh solve (the pick clock is 30 s).
 PLAN_WAIT_MAX = 20.0
+#: How long a room the extension reports as open and unattached stays listed (#10): it reports
+#: every 3 s, so a room drops off soon after its tab closes or attaches.
+SEEN_TTL_S = 30.0
 #: Solver settings a room attaches with unless told otherwise: they kept solves inside a 30 s
 #: clock in the 2026-09-27 mocks. The plan's time limit follows the room's pick clock
 #: (:func:`yahoo_room.plan_budget`, 5 s on a 30 s clock) unless the attach gives one.
@@ -404,6 +408,17 @@ class RoomEvents(BaseModel):
 
 class RoomPatch(BaseModel):
     mode: Literal["mirror", "autopilot"]
+
+
+class RoomSeen(BaseModel):
+    """A draft room open in the user's Chrome that no session follows yet, as the extension's
+    draft tab sees it."""
+
+    draft_id: str = Field(pattern=r"^[A-Za-z0-9_.-]{1,64}$")
+    slot: int | None = Field(default=None, ge=1, le=20, description="my slot, once the room says")
+    room_teams: int | None = Field(
+        default=None, ge=2, le=20, description="the room's team count, once its picks show it"
+    )
 
 
 class AliasPin(BaseModel):
@@ -762,7 +777,7 @@ def create_app(
     async def events(session_id: str, request: Request) -> StreamingResponse:
         """Server-sent events: one ``hello`` on connect, then ``pick`` / ``undo`` / ``created``
         / ``survival`` / ``solve`` / ``recommendation``, and for a Yahoo room ``room_attached``
-        / ``room_mode`` / ``room_event`` (a client event, heartbeats aside).
+        / ``room_mode`` / ``room_detached`` / ``room_event`` (a client event, heartbeats aside).
 
         A comment line is sent every ``KEEPALIVE_SECONDS`` so proxies keep the connection open.
         """
@@ -1044,6 +1059,27 @@ def create_app(
             if (live := store.room(draft_id)) is not None
         ]
 
+    # A room open in Chrome and not attached, for the web app to offer (#10). Registered before
+    # /rooms/{draft_id} so "seen" is never read as a draft id. Never attaches anything itself.
+    seen: dict[str, dict[str, Any]] = {}
+
+    @app.post("/rooms/seen")
+    def room_seen(body: RoomSeen) -> dict[str, Any]:
+        seen[body.draft_id] = {**body.model_dump(), "at": time.monotonic()}
+        return {"seen": body.draft_id}
+
+    @app.get("/rooms/seen")
+    def rooms_seen() -> list[dict[str, Any]]:
+        """Rooms the extension reported open and unattached in the last ``SEEN_TTL_S``."""
+        now = time.monotonic()
+        for draft_id in [d for d, e in seen.items() if now - e["at"] >= SEEN_TTL_S]:
+            del seen[draft_id]
+        return [
+            {**{k: v for k, v in e.items() if k != "at"}, "age_s": round(now - e["at"], 1)}
+            for e in sorted(seen.values(), key=lambda e: -e["at"])
+            if store.room(e["draft_id"]) is None
+        ]
+
     @app.get("/rooms/{draft_id}")
     async def room_status(draft_id: str) -> dict[str, Any]:
         room, session = await get_room(draft_id)
@@ -1074,6 +1110,7 @@ def create_app(
         room.log.append({"type": "detach", "session_id": session.id})
         session.room = None
         store.rooms.pop(draft_id, None)
+        session.publish("room_detached", {"draft_id": draft_id}, bump=False)
         return {"attached": False, "draft_id": draft_id}
 
     @app.post("/rooms/{draft_id}/picks")

@@ -1,7 +1,8 @@
 // YAHOO SYNC in the header and the footer: the state of the room this session follows, read
 // from the room summary (refreshed by the session stream) and the extension's heartbeat.
 import { useEffect, useState } from "react";
-import type { RoomEventEntry, RoomStatus, RoomSummary } from "../api";
+import { useQuery } from "@tanstack/react-query";
+import { api, type RoomEventEntry, type RoomStatus, type RoomSummary, type SeenRoom } from "../api";
 import { useDraft } from "../draft";
 
 /** The extension beats every 15 s; two missed beats and the room is called silent. */
@@ -126,4 +127,33 @@ export function eventTime(e: RoomEventEntry): string {
   const at = typeof raw === "number" ? new Date(raw) : typeof raw === "string" ? new Date(raw) : null;
   if (!at || Number.isNaN(at.getTime())) return "";
   return at.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
+}
+
+/** Rooms open in Chrome that no session follows, as the extension reports them every 3 s. */
+export function useSeenRooms(enabled = true) {
+  return useQuery({ queryKey: ["roomsSeen"], queryFn: api.seenRooms, enabled, refetchInterval: 5000 });
+}
+
+/** The rooms open in Chrome, each offered with ``action``; nothing is attached without a click. */
+export function SeenRooms({ rooms, action, onPick }: { rooms: SeenRoom[]; action: string; onPick: (room: SeenRoom) => void }) {
+  if (!rooms.length) return null;
+  return (
+    <div className="seen">
+      <span className="k">Open in Chrome</span>
+      {rooms.map((r) => (
+        <div key={r.draft_id} className="row">
+          <span>
+            Room {r.draft_id}
+            <span className="muted">
+              {" "}
+              · {r.slot ? `slot ${r.slot}` : "slot not shown yet"} · {r.room_teams ? `${r.room_teams} teams` : "team count not shown yet"}
+            </span>
+          </span>
+          <button className="small" onClick={() => onPick(r)}>
+            {action}
+          </button>
+        </div>
+      ))}
+    </div>
+  );
 }

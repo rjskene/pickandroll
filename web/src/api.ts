@@ -395,6 +395,15 @@ export interface RoomSummary {
 
 export type RoomStatus = RoomSummary | { attached: false };
 
+/** A draft room open in Chrome with the extension that no session follows yet. */
+export interface SeenRoom {
+  draft_id: string;
+  slot: number | null;
+  /** The room's own team count, once its picks have shown it. */
+  room_teams: number | null;
+  age_s: number;
+}
+
 export interface RoomAttachBody {
   draft_id: string;
   slot: number;
@@ -496,6 +505,7 @@ export const api = {
   pinAlias: (draftId: string, body: { yahoo_player_id: string; player_id: string }) =>
     request<{ yahoo_player_id: string; player_id: string; repaired: number[] }>(`/rooms/${draftId}/aliases`, { method: "POST", body: JSON.stringify(body) }),
   fidelity: (draftId: string) => request<Fidelity>(`/rooms/${draftId}/fidelity`),
+  seenRooms: () => request<SeenRoom[]>("/rooms/seen"),
 };
 
 export function teamLabel(session: SessionSummary, position: number): string {
