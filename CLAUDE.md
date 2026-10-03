@@ -53,7 +53,8 @@ as such, with the evidence.
 - Python: `.venv/bin/python -m pytest` and `.venv/bin/ruff check src tests` green before any PR. **In a worktree**
   the editable install resolves `pickandroll` to `~/code/pickandroll/src`, so run
   `PYTHONPATH=src ~/code/pickandroll/.venv/bin/python -m pytest` from the worktree root, or you test main's code.
-  Web: `cd web && npm run build` (there is no eslint config yet; #10 adds one, then `npm run lint` too).
+  Web: `cd web && npm run build && npm run lint` (ESLint flat config in `web/eslint.config.js` since #19; the
+  script carries `--max-warnings 0`).
   Extension (#9 onward): `node --test extension/test/*.test.js` from the repo root (Node, no dependencies;
   the bare directory form fails on Node 25).
 - Dev servers only through `~/code/.claude/launch.json` (`pickandroll-api` on :8000, `pickandroll-web`
