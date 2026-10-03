@@ -3,6 +3,7 @@ import { fmtCost, fmtObjective, oddsClass, pct, shortName } from "../../format";
 import CatStrip from "../CatStrip";
 import Skeleton from "../Skeleton";
 import Stepper from "../Stepper";
+import { DraftInYahoo } from "../YahooSync";
 
 export default function PickCard() {
   const d = useDraft();
@@ -86,8 +87,15 @@ export default function PickCard() {
               )}
             </div>
             {!s.complete && (
-              <div className="row">
-                <button className="primary" style={{ fontSize: 15, padding: "9px 18px" }} onClick={() => d.draftPlayer(top.player)} disabled={d.drafting} title="Draft the recommended pick (d)">
+              <div className="row" style={{ justifyContent: "flex-start", alignItems: "center" }}>
+                {d.room?.attached && <DraftInYahoo playerId={top.player} name={top.name} />}
+                <button
+                  className={d.room?.attached ? "" : "primary"}
+                  style={{ fontSize: 15, padding: "9px 18px" }}
+                  onClick={() => d.draftPlayer(top.player)}
+                  disabled={d.drafting}
+                  title={d.room?.attached ? "Enter the pick here only; the Yahoo room is not touched (d)" : "Draft the recommended pick (d)"}
+                >
                   Draft {shortName(top.name)}
                   {s.on_the_clock ? "" : ` to ${d.draftingTeam}`} <kbd>d</kbd>
                 </button>

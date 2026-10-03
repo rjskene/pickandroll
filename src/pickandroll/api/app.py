@@ -421,6 +421,14 @@ class RoomSeen(BaseModel):
     )
 
 
+class DraftRequest(BaseModel):
+    """The user's "Draft in Yahoo" from the web app: this player for my pick on the clock."""
+
+    overall: int = Field(ge=1)
+    board: int = Field(ge=0, description="the session's picks the request was made on")
+    yahoo_player_id: str
+
+
 class AliasPin(BaseModel):
     yahoo_player_id: str
     player_id: str
@@ -1182,6 +1190,20 @@ def create_app(
             "ignored": ignored,
             "control": room.control,
         }
+
+    @app.post("/rooms/{draft_id}/request")
+    async def room_request(draft_id: str, body: DraftRequest) -> dict[str, Any]:
+        """Ask the draft tab to draft ``yahoo_player_id`` for my pick ``overall`` (#10), in
+        mirror and autopilot alike. Refused (409) unless that pick is mine on the clock and
+        ``board`` is the session's; dropped when the turn ends or the tab's click fails."""
+        room, session = await get_room(draft_id)
+        try:
+            q = yahoo_room.request_pick(
+                session, room, body.overall, body.board, body.yahoo_player_id
+            )
+        except ValueError as exc:
+            raise HTTPException(409, str(exc)) from exc
+        return {"request": q}
 
     @app.post("/rooms/{draft_id}/aliases")
     async def room_alias(draft_id: str, body: AliasPin) -> dict[str, Any]:

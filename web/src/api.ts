@@ -391,6 +391,24 @@ export interface RoomSummary {
   heartbeat: RoomEventEntry | null;
   heartbeat_age_s: number | null;
   fidelity_log: string;
+  /** The user's pending "Draft in Yahoo", until the draft tab clicks it or its turn ends. */
+  request: DraftRequest | null;
+}
+
+export interface DraftRequest {
+  overall: number;
+  board: number;
+  yahoo_player_id: string;
+  player_id: string | null;
+  name: string;
+  t: string;
+}
+
+/** What the draft tab drafts from: the plan's candidates by Yahoo id. */
+export interface RoomPlan {
+  board: number | null;
+  fresh: boolean;
+  candidates: { yahoo_player_id: string; player_id: string; name: string }[];
 }
 
 export type RoomStatus = RoomSummary | { attached: false };
@@ -506,6 +524,10 @@ export const api = {
     request<{ yahoo_player_id: string; player_id: string; repaired: number[] }>(`/rooms/${draftId}/aliases`, { method: "POST", body: JSON.stringify(body) }),
   fidelity: (draftId: string) => request<Fidelity>(`/rooms/${draftId}/fidelity`),
   seenRooms: () => request<SeenRoom[]>("/rooms/seen"),
+  roomPlan: (draftId: string) => request<RoomPlan>(`/rooms/${draftId}/plan`),
+  /** "Draft in Yahoo": the draft tab clicks this player for my pick on the clock. */
+  requestPick: (draftId: string, body: { overall: number; board: number; yahoo_player_id: string }) =>
+    request<{ request: DraftRequest }>(`/rooms/${draftId}/request`, { method: "POST", body: JSON.stringify(body) }),
 };
 
 export function teamLabel(session: SessionSummary, position: number): string {

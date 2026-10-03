@@ -1,9 +1,10 @@
 // YAHOO SYNC in the header and the footer: the state of the room this session follows, read
 // from the room summary (refreshed by the session stream) and the extension's heartbeat.
 import { useEffect, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, type RoomEventEntry, type RoomStatus, type RoomSummary, type SeenRoom } from "../api";
 import { useDraft } from "../draft";
+import { shortName } from "../format";
 
 /** The extension beats every 15 s; two missed beats and the room is called silent. */
 export const SILENT_AFTER_S = 40;
@@ -116,7 +117,7 @@ export function describeEvent(e: RoomEventEntry, nameOf: (overall: number) => st
     case "intervention":
       return `intervention ${at} ${str("what") || str("kind")}`.trim();
     case "note":
-      return `${str("what")}${at ? ` ${at}` : ""}${str("msg") ? `: ${str("msg")}` : ""}`;
+      return `${str("what")}${at ? ` ${at}` : ""}${str("result") ? `: ${str("result")}` : ""}${str("msg") ? `: ${str("msg")}` : ""}`;
     default:
       return e.type;
   }
@@ -155,5 +156,44 @@ export function SeenRooms({ rooms, action, onPick }: { rooms: SeenRoom[]; action
         </div>
       ))}
     </div>
+  );
+}
+
+/** "Draft in Yahoo" (#10): the draft tab clicks this player for my pick, on my turn only, in
+ * mirror and autopilot alike. In autopilot the extension's own drafter stands aside meanwhile. */
+export function DraftInYahoo({ playerId, name }: { playerId: string; name: string }) {
+  const d = useDraft();
+  const s = d.session;
+  const queryClient = useQueryClient();
+  const room = d.room?.attached ? d.room : null;
+  const myTurn = !!room && !s.complete && s.on_the_clock && room.on_the_clock && room.next_overall === s.next_overall;
+  // The draft tab drafts by Yahoo id: the plan it reads has the id for each candidate.
+  const plan = useQuery({
+    queryKey: ["roomPlan", room?.draft_id, s.version],
+    queryFn: () => api.roomPlan(room!.draft_id),
+    enabled: myTurn,
+  });
+  const yid = plan.data?.candidates.find((c) => c.player_id === playerId)?.yahoo_player_id ?? null;
+  const send = useMutation({
+    mutationFn: () => api.requestPick(room!.draft_id, { overall: s.next_overall, board: s.picks_made, yahoo_player_id: yid! }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["room", s.id] }),
+  });
+  if (!room) return null;
+  const pending = room.request && room.request.overall === s.next_overall ? room.request : null;
+  const title = !myTurn
+    ? "on your turn only"
+    : yid
+      ? `the draft tab drafts ${name} for you in Yahoo`
+      : plan.isFetching
+        ? "finding the player in the room"
+        : "no Yahoo id for this player: pin the name on the sync card (8)";
+  return (
+    <>
+      <button className="primary" style={{ fontSize: 15, padding: "9px 18px" }} disabled={!myTurn || !yid || send.isPending} onClick={() => send.mutate()} title={title}>
+        Draft {shortName(name)} in Yahoo
+      </button>
+      {pending && <span className="accent" style={{ fontSize: 12 }}>sent: the draft tab is drafting {pending.name}</span>}
+      {send.error && <span className="error">{send.error.message}</span>}
+    </>
   );
 }

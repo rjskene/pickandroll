@@ -23,6 +23,8 @@ function world({
   held = null,
   clockFrame = true,
   searchable = [],
+  dud = [], // rows whose clicks never land
+  mislabeled = [], // rows whose Draft button names another player
 } = {}) {
   const clock = { t: 1_000_000 };
   const queue = [];
@@ -54,7 +56,9 @@ function world({
       return searchable.includes(c.yahoo_player_id) ? { yid: c.yahoo_player_id } : null;
     },
     click(row, c) {
+      if (mislabeled.includes(c.yahoo_player_id)) return "mismatch";
       log.clicks.push([clock.t, c.yahoo_player_id]);
+      if (dud.includes(c.yahoo_player_id)) return "clicked";
       const mine = log.clicks.filter((x) => x[1] === c.yahoo_player_id).length;
       if (mine === clicksToLand && landInClick) {
         land(c.yahoo_player_id); // the room answers before the click returns
@@ -325,4 +329,94 @@ test("an off-screen row is never searched for unless the option is on", async ()
   assert.deepEqual(on.log.searches, ["101"]);
   assert.deepEqual(attempts(on.log), [["101", "search", 1]]);
   assert.equal(outOn.result, "landed");
+});
+
+// ---------------------------------------------------------------- #10: "Draft in Yahoo"
+const ask = (y, extra = {}) => ({ overall: K, board: K - 1, yahoo_player_id: y, name: `P ${y}`, ini: "P", last: y, team: "T", ...extra });
+
+test("a request from the web app clicks its player on its turn; the pick is the user's (#10)", async () => {
+  const { d, log, tracker } = world();
+  const out = await d.request(ask("103"));
+  assert.equal(out.result, "landed");
+  assert.deepEqual(attempts(log), [["103", "request", 1]]);
+  assert.equal(log.events.find((e) => e.type === "draft_attempt").board, K - 1);
+  assert.equal(tracker.how(K), "manual");
+  assert.equal(await d.request(ask("103")), null, "a request is served once");
+  assert.equal(log.events.some((e) => e.what === "request failed"), false);
+});
+
+test("a request that lands nothing after two tries is dropped with a note", async () => {
+  const { d, log } = world({ dud: ["103"] });
+  const out = await d.request(ask("103"));
+  assert.equal(out.result, "failed");
+  assert.deepEqual(attempts(log), [["103", "request", 1], ["103", "request", 2]]);
+  const note = log.events.find((e) => e.what === "request failed");
+  assert.equal(note.overall, K);
+  assert.equal(note.yid, "103");
+  assert.equal(d.requesting, null);
+});
+
+test("a request clicks only while its pick is mine on the clock", async () => {
+  const early = world({ clockFrame: false }); // the room has not put pick K on the clock yet
+  assert.equal(await early.d.request(ask("103")), null);
+  const later = world();
+  assert.equal(await later.d.request(ask("103", { overall: K + 1 })), null, "my next pick, not this one");
+  assert.deepEqual(early.log.clicks.concat(later.log.clicks), []);
+});
+
+test("a request keeps the row click's label guard", async () => {
+  const { d, log } = world({ mislabeled: ["103"] });
+  const out = await d.request(ask("103"));
+  assert.equal(out.result, "failed");
+  assert.deepEqual(log.clicks, [], "a Draft button naming another player is never clicked");
+  assert.ok(log.events.find((e) => e.what === "request failed"));
+});
+
+test("armed: a pending request holds the turn, and its pick ends it", async () => {
+  const { d, log } = world({ planMs: 200 });
+  const turn = d.turn(K);
+  const asked = d.request(ask("103"));
+  const [out, req] = await Promise.all([turn, asked]);
+  assert.equal(req.result, "landed");
+  assert.equal(out.result, "landed");
+  assert.equal(out.how, "manual");
+  assert.deepEqual(attempts(log), [["103", "request", 1]], "the drafter clicked nothing");
+  assert.deepEqual(log.queued, []);
+});
+
+test("armed: after a failed request the turn goes on as usual", async () => {
+  const { d, log } = world({ planMs: 200, dud: ["103"] });
+  const turn = d.turn(K);
+  const asked = d.request(ask("103"));
+  const [out, req] = await Promise.all([turn, asked]);
+  assert.equal(req.result, "failed");
+  assert.equal(out.result, "landed");
+  assert.equal(out.yid, "101");
+  assert.deepEqual(attempts(log), [["103", "request", 1], ["103", "request", 2], ["101", "row", 1]]);
+});
+
+test("armed: a request arriving mid-turn takes over before the drafter's next click", async () => {
+  const { d, log, at } = world({ dud: ["101"], planMs: 200 });
+  // The drafter clicks 101 (a dud) and waits to re-click it; the user's request comes meanwhile.
+  let asked = null;
+  at(1200, () => {
+    asked = d.request(ask("103"));
+  });
+  const out = await d.turn(K);
+  const req = await asked;
+  assert.equal(req.result, "landed");
+  assert.equal(out.yid, "103");
+  assert.deepEqual(attempts(log), [["101", "row", 1], ["103", "request", 1]]);
+});
+
+test("a hand pick in Yahoo stops a pending request", async () => {
+  const { d, log, tracker, land, at } = world({ dud: ["103"] });
+  at(1000, () => {
+    tracker.noteManual(Date.now(), "Draft Q 105");
+    d.handPick(K);
+    land("105");
+  });
+  const req = await d.request(ask("103"));
+  assert.equal(req.result, "manual");
+  assert.equal(log.events.some((e) => e.what === "request failed"), false);
 });
