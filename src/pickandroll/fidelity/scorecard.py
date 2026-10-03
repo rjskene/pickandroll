@@ -114,6 +114,12 @@ def analyze(events: list[dict[str, Any]]) -> dict[str, Any]:
         elif kind == "note" and e.get("what") == "team count mismatch":
             mismatch = mismatch or e
 
+    # When armed turns acted (act_at_s, #10), as the API's control events set it, in order.
+    acts: list[int | None] = []
+    for c in controls:
+        if c.get("src") == "api" and "act_at_s" in c and (not acts or acts[-1] != c["act_at_s"]):
+            acts.append(c["act_at_s"])
+
     def control_at(t: float) -> str:
         state = "absent"
         for c in controls:
@@ -352,6 +358,7 @@ def analyze(events: list[dict[str, Any]]) -> dict[str, Any]:
             "D2": stats(
                 [r["turn_to_land_ms"] for r in landed_rows if r["turn_to_land_ms"] is not None]
             ),
+            "act_at_s": acts,
             # Exactly priced solves (all of them before #13), then the plan-only early ones
             # and the pre-solved plans installed with no solve at all.
             "D3": stats(
@@ -506,7 +513,7 @@ def markdown(card: dict[str, Any]) -> str:
         f"| D1, hits (branch solved before the turn) | {ms(d['D1_hit'])} |",
         f"| D1, pending (branch still solving at the turn) | {ms(d['D1_pending'])} |",
         f"| D1, misses (no branch) | {ms(d['D1_miss'])} |",
-        f"| D2 turn to land | {ms(d['D2'])} |",
+        f"| D2 turn to land | {ms(d['D2'])}; armed turns act {_act(d['act_at_s'])} |",
         f"| D3 solve time, priced | {ms(d['D3'])} |",
         (
             f"| D3 plan only (early), and pre-solved plans installed | {ms(d['D3_plan'])}; "
@@ -662,6 +669,13 @@ def _roster(r: dict[str, Any]) -> str:
 
 def _round(value: float | None) -> float | None:
     return None if value is None else round(float(value), 4)
+
+
+def _act(acts: list[int | None]) -> str:
+    """act_at_s over the draft: "at once" (the default), or each setting in turn."""
+    if all(a is None for a in acts):
+        return "at once"
+    return ", then ".join("at once" if a is None else f"at {a} s left" for a in acts)
 
 
 def _fmt(value: Any, unit: str = "") -> str:

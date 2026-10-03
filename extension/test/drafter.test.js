@@ -420,3 +420,88 @@ test("a hand pick in Yahoo stops a pending request", async () => {
   assert.equal(req.result, "manual");
   assert.equal(log.events.some((e) => e.what === "request failed"), false);
 });
+
+// ---------------------------------------------------------------- #10: act_at_s
+const T0 = 1_000_000; // the world's clock at the turn frame (30 s on the clock)
+const rowClicks = (log) => log.clicks.map(([t, y]) => [t - T0, y]);
+
+test("plan wait with act_at_s: it stops at act time", () => {
+  assert.equal(planWait(30, 20), 10);
+  assert.equal(planWait(30, 12), 18);
+  assert.equal(planWait(18, 20), 0);
+});
+
+test("act_at_s: the click waits for its time, then the plan is looked at once more", async () => {
+  // The second look finds a re-solve on the same board that puts 102 first.
+  const { d, log } = world({ plan: [{}, { candidates: rows(["102", "101"]) }] });
+  d.actAt = 20;
+  const out = await d.turn(K);
+  assert.deepEqual(log.plans, [10, 0], "the plan wait stops at act time; the last look waits for nothing");
+  assert.deepEqual(log.boards, [K - 1, K - 1]);
+  const [[t, yid]] = rowClicks(log);
+  assert.equal(yid, "102");
+  assert.ok(t >= 10000 && t < 11000, `clicked ${t / 1000} s into the turn`);
+  assert.equal(out.result, "landed");
+  assert.equal(out.act_at_s, 20);
+  assert.ok(out.held_ms >= 7000, `held ${out.held_ms} ms after the plan came`);
+});
+
+test("act_at_s: a plan still stale at act time is acted on then, not waited on to 12 s", async () => {
+  const { d, log } = world({ plan: { fresh: false } });
+  d.actAt = 20;
+  const out = await d.turn(K);
+  assert.equal(out.fresh, false);
+  const [[t]] = rowClicks(log);
+  // The world's stale answer takes 2 s whatever the wait: the last ask can run past act time.
+  assert.ok(t >= 10000 && t < 12500, `clicked ${t / 1000} s into the turn, not 18 s`);
+  assert.equal(log.plans.at(-1), 0, "one last look when the wait is up");
+});
+
+test("act_at_s: a hand pick while the click waits ends the turn", async () => {
+  const { d, log, tracker, at } = world();
+  d.actAt = 20;
+  at(5000, () => tracker.noteManual(T0 + 5000, "Draft"));
+  const out = await d.turn(K);
+  assert.equal(out.result, "manual");
+  assert.deepEqual(attempts(log), []);
+  assert.deepEqual(log.plans, [10], "no last look");
+  assert.deepEqual(log.autodraft, []);
+});
+
+test("act_at_s: a request landing while the click waits ends the turn", async () => {
+  const { d, log, at } = world();
+  d.actAt = 20;
+  let asked = null;
+  at(4000, () => {
+    asked = d.request(ask("103"));
+  });
+  const out = await d.turn(K);
+  assert.equal((await asked).result, "landed");
+  assert.equal(out.yid, "103");
+  assert.equal(out.how, "manual");
+  assert.deepEqual(attempts(log), [["103", "request", 1]], "the drafter clicked nothing");
+});
+
+test("act_at_s: after a failed request the turn still acts at its time", async () => {
+  const { d, log, at } = world({ dud: ["103"] });
+  d.actAt = 20;
+  let asked = null;
+  at(3000, () => {
+    asked = d.request(ask("103"));
+  });
+  const out = await d.turn(K);
+  assert.equal((await asked).result, "failed");
+  assert.equal(out.yid, "101");
+  assert.deepEqual(attempts(log), [["103", "request", 1], ["103", "request", 2], ["101", "row", 1]]);
+  const t = rowClicks(log).find(([, y]) => y === "101")[0];
+  assert.ok(t >= 10000 && t < 11000, `clicked ${t / 1000} s into the turn`);
+});
+
+test("act_at_s without a clock frame: nothing to count down, the turn acts at once", async () => {
+  const { d, log } = world({ clockFrame: false });
+  d.actAt = 20;
+  const out = await d.turn(K);
+  assert.equal(out.result, "landed");
+  assert.equal(out.held_ms, 0);
+  assert.equal(log.plans.length, 1);
+});

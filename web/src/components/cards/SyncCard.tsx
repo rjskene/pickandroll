@@ -169,6 +169,10 @@ function Status({ room }: { room: RoomSummary }) {
   );
 }
 
+/** When autopilot may click, in seconds left on the 30 s clock (the API's floor is 12 s: the
+ * drafter's row clicks need room before its 6 s backstop). */
+const ACT_AT_S = [25, 20, 15, 12];
+
 function ModeSwitch({ room }: { room: RoomSummary }) {
   const d = useDraft();
   const queryClient = useQueryClient();
@@ -187,7 +191,13 @@ function ModeSwitch({ room }: { room: RoomSummary }) {
     if (mode === "autopilot" && !armedBefore(d.session.id)) setConfirming(true);
     else setMode.mutate(mode);
   };
+  const setAct = useMutation({
+    mutationFn: (act_at_s: number | null) => api.setRoomMode(room.draft_id, { mode: room.mode, act_at_s }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["room", d.session.id] }),
+  });
   const locked = room.complete || setMode.isPending;
+  const act = room.act_at_s;
+  const acts = [...new Set([...ACT_AT_S, ...(act === null ? [] : [act])])].sort((a, b) => b - a);
   return (
     <div className="block">
       <div className="row">
@@ -202,9 +212,27 @@ function ModeSwitch({ room }: { room: RoomSummary }) {
           </button>
         </span>
       </div>
+      <div className="row">
+        <span className="k">Autopilot clicks</span>
+        <span className="grow" />
+        <select
+          value={act ?? ""}
+          onChange={(e) => setAct.mutate(e.target.value ? Number(e.target.value) : null)}
+          disabled={room.complete || setAct.isPending}
+          aria-label="When autopilot clicks"
+          title="Waiting leaves you time to pick first, in Yahoo or with Draft in Yahoo"
+        >
+          <option value="">at once</option>
+          {acts.map((s) => (
+            <option key={s} value={s}>
+              at {s} s left
+            </option>
+          ))}
+        </select>
+      </div>
       <p className="muted" style={{ fontSize: 12 }}>
         {room.mode === "autopilot"
-          ? "Armed: when your turn comes, the extension drafts the plan's pick in Yahoo. A pick you make first, here or in Yahoo, stands."
+          ? `Armed: when your turn comes, the extension drafts the plan's pick in Yahoo${act === null ? "" : ` once the clock is down to ${act} s`}. A pick you make first, in Yahoo or with Draft in Yahoo, stands.`
           : "Mirror: the room's picks are copied here and nothing is drafted for you. Pick in Yahoo, or here and then in Yahoo."}
       </p>
       {confirming && (
@@ -224,6 +252,7 @@ function ModeSwitch({ room }: { room: RoomSummary }) {
         </div>
       )}
       {setMode.error && <p className="error">{setMode.error.message}</p>}
+      {setAct.error && <p className="error">{setAct.error.message}</p>}
     </div>
   );
 }

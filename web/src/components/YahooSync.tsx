@@ -57,7 +57,8 @@ export function syncState(room: RoomStatus | undefined, now: number): SyncState 
     return { key: "silent", label: `${head} · NO SIGNAL`, tone: "bad", title: `${where}: no word from the extension for ${Math.round(age)} s. Is the draft tab open?` };
   }
   if (room.mode === "autopilot") {
-    return { key: "autopilot", label: "AUTOPILOT", tone: "hot", title: `${where}: armed, the extension drafts the plan's pick on my turn unless I pick first` };
+    const when = room.act_at_s === null ? "" : ` with ${room.act_at_s} s left`;
+    return { key: "autopilot", label: "AUTOPILOT", tone: "hot", title: `${where}: armed, the extension drafts the plan's pick on my turn${when} unless I pick first` };
   }
   return { key: "mirroring", label: "SYNC · MIRRORING", tone: "good", title: `${where}: the room's picks are copied here; nothing is drafted for me` };
 }

@@ -408,6 +408,13 @@ class RoomEvents(BaseModel):
 
 class RoomPatch(BaseModel):
     mode: Literal["mirror", "autopilot"]
+    act_at_s: int | None = Field(
+        default=None,
+        ge=yahoo_room.ACT_AT_MIN_S,
+        le=yahoo_room.ACT_AT_MAX_S,
+        description="armed: act when the clock is down to this many seconds, unless I pick "
+        "first; null: at once. Left out, the room keeps its setting",
+    )
 
 
 class RoomSeen(BaseModel):
@@ -1105,8 +1112,22 @@ def create_app(
             )
         room.mode = body.mode
         room.control = yahoo_room.control_for(body.mode)
-        room.log.append({"type": "control", "state": room.control, "slot": room.slot, "src": "api"})
-        session.publish("room_mode", {"draft_id": draft_id, "mode": body.mode}, bump=False)
+        if "act_at_s" in body.model_fields_set:
+            room.act_at_s = body.act_at_s
+        room.log.append(
+            {
+                "type": "control",
+                "state": room.control,
+                "slot": room.slot,
+                "act_at_s": room.act_at_s,
+                "src": "api",
+            }
+        )
+        session.publish(
+            "room_mode",
+            {"draft_id": draft_id, "mode": body.mode, "act_at_s": room.act_at_s},
+            bump=False,
+        )
         return room_view(room, session)
 
     @app.delete("/rooms/{draft_id}")

@@ -67,6 +67,14 @@ NEEDS_OVERALL = frozenset({"turn_start", "draft_attempt", "pick_landed"})
 CONTROL_STATES = frozenset({"armed", "mirror", "absent"})
 
 
+#: The earliest an armed turn may be told to act, in seconds left on the clock: the drafter's
+#: own plan wait ends there (START_BY_S in drafter.js), leaving its row clicks room before the
+#: backstop (6 s).
+ACT_AT_MIN_S = 12
+#: The pick clock act_at_s is counted on (the mocks' and the league's).
+ACT_AT_MAX_S = 30
+
+
 def control_for(mode: Mode) -> str:
     return "armed" if mode == "autopilot" else "mirror"
 
@@ -117,6 +125,9 @@ class YahooRoom:
     #: The user's "Draft in Yahoo" from the web app (#10), for the draft tab to click while
     #: that pick is on the clock; see :func:`request_pick`.
     request: dict[str, Any] | None = None
+    #: Armed: act when the clock is down to this many seconds, unless the user picks first
+    #: (#10); ``None``, at once (the default, and the mocks').
+    act_at_s: int | None = None
     lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
     @property
@@ -196,6 +207,15 @@ def attach_room(
     )
     if controls and room.resumed:
         room.control = controls[-1].get("state", "absent")
+        # A restart keeps the armed turns' timing the user set.
+        room.act_at_s = next(
+            (
+                c["act_at_s"]
+                for c in reversed(controls)
+                if c.get("src") == "api" and "act_at_s" in c
+            ),
+            None,
+        )
     else:
         room.control = control_for(mode)
         log.append({"type": "control", "state": room.control, "slot": slot, "src": "api"})
@@ -828,6 +848,7 @@ def summary(session: Session, room: YahooRoom) -> dict[str, Any]:
         "slot": room.slot,
         "mode": room.mode,
         "control": room.control,
+        "act_at_s": room.act_at_s,
         "num_teams": room.num_teams,
         "teams_mismatch": room.teams_mismatch,
         "rounds": room.rounds,

@@ -205,7 +205,7 @@
     const state = controlState();
     if (state === S.control) return;
     S.control = state;
-    const event = { type: "control", state, slot: tracker.slot, mode: S.mode };
+    const event = { type: "control", state, slot: tracker.slot, mode: S.mode, act_at_s: drafter.actAt };
     if (state === "absent") event.reason = S.autoReason || "autopick";
     emit(event);
   }
@@ -315,6 +315,8 @@
         S.attached = true;
         S.room = r.room;
         S.mode = r.room.mode;
+        // act_at_s (#10): when an armed turn clicks, in seconds left; null, at once.
+        drafter.actAt = Number.isInteger(r.room.act_at_s) ? r.room.act_at_s : null;
         tracker.configure({ numTeams: r.room.num_teams, rounds: r.room.rounds });
         tracker.synced(r.room);
         reportControl();
@@ -651,8 +653,8 @@
     drafter.turn(k).then((out) => {
       if (drafter.current && drafter.current.k === k) S.drafting = null;
       if (out) {
-        const { result, attempts, fresh, board, waited_ms, ms, stopped } = out;
-        emit({ type: "note", what: "turn", overall: k, why, result, attempts, fresh, board, waited_ms, ms, stopped });
+        const { result, attempts, fresh, board, waited_ms, ms, stopped, act_at_s, held_ms } = out;
+        emit({ type: "note", what: "turn", overall: k, why, result, attempts, fresh, board, waited_ms, ms, stopped, act_at_s, held_ms });
       }
       render();
     });
@@ -826,7 +828,8 @@
         `${S.room.num_teams}: its plans are wrong. Attach a ${S.room.teams_mismatch}-team session.`;
       tone = "bad";
     } else {
-      const mode = S.autopickMode ? "YAHOO AUTOPICK ON" : S.mode === "autopilot" ? "ARMED" : "MIRROR";
+      const armedAs = drafter.actAt === null ? "ARMED" : `ARMED · acts at ${drafter.actAt} s left`;
+      const mode = S.autopickMode ? "YAHOO AUTOPICK ON" : S.mode === "autopilot" ? armedAs : "MIRROR";
       const sync =
         s.behind === 0
           ? `synced ${s.sent}/${s.last}`

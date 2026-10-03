@@ -358,6 +358,9 @@ export interface RoomSummary {
   slot: number;
   mode: RoomMode;
   control: RoomControl;
+  /** Armed: the extension clicks when the clock is down to this many seconds, unless I pick
+   * first; null, at once. */
+  act_at_s: number | null;
   num_teams: number;
   /** The room's own team count when it disagrees with the session's; arming is refused then. */
   teams_mismatch: number | null;
@@ -517,7 +520,8 @@ export const api = {
   room: (id: string) => request<RoomStatus>(`/sessions/${id}/yahoo/room`),
   attachRoom: (id: string, body: RoomAttachBody) =>
     request<RoomSummary>(`/sessions/${id}/yahoo/room`, { method: "POST", body: JSON.stringify(body) }),
-  setRoomMode: (draftId: string, body: { mode: RoomMode }) =>
+  /** ``act_at_s`` left out keeps the room's setting. */
+  setRoomMode: (draftId: string, body: { mode: RoomMode; act_at_s?: number | null }) =>
     request<RoomSummary>(`/rooms/${draftId}`, { method: "PATCH", body: JSON.stringify(body) }),
   detachRoom: (draftId: string) => request<{ attached: false; draft_id: string }>(`/rooms/${draftId}`, { method: "DELETE" }),
   pinAlias: (draftId: string, body: { yahoo_player_id: string; player_id: string }) =>
