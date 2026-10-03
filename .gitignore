@@ -26,6 +26,8 @@ data/*
 # web
 web/node_modules/
 web/dist/
+# tsc -b's incremental state, rewritten by every build
+web/*.tsbuildinfo
 
 # os / editors
 .DS_Store
