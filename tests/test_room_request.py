@@ -4,6 +4,8 @@ the session moves past it) or when the draft tab reports the click failed."""
 
 from __future__ import annotations
 
+import importlib
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -18,7 +20,13 @@ def room(tmp_path):
     with TestClient(create_app(SessionStore(), data_dir=tmp_path)) as c:
         r = c.post("/rooms", json={"draft_id": "q1", "slot": 1, "session": SESSION})
         assert r.status_code == 201, r.text
+        beat(c)  # the draft tab is open
         yield c, r.json()["session_id"], [str(p.yahoo_player_id) for p in picks]
+
+
+def beat(c):
+    r = c.post("/rooms/q1/events", json={"events": [{"type": "heartbeat", "vis": "visible"}]})
+    assert r.status_code == 200, r.text
 
 
 def ask(c, overall, board, yid):
@@ -88,3 +96,30 @@ def test_a_failed_click_drops_the_request(room):
     failed = {"type": "note", "what": "request failed", "overall": 1, "yid": yids[2]}
     assert c.post("/rooms/q1/events", json={"events": [failed]}).status_code == 200
     assert c.get("/rooms/q1").json()["request"] is None
+
+
+def test_a_replaced_request_outlives_the_first_ones_failure(room):
+    """The user asks for B, then C while the tab still tries B: B's failure leaves C."""
+    c, _, yids = room
+    assert ask(c, 1, 0, yids[2]).status_code == 200
+    assert ask(c, 1, 0, yids[3]).status_code == 200
+    failed = {"type": "note", "what": "request failed", "overall": 1, "yid": yids[2]}
+    assert c.post("/rooms/q1/events", json={"events": [failed]}).status_code == 200
+    assert c.get("/rooms/q1").json()["request"]["yahoo_player_id"] == yids[3]
+
+
+def test_a_request_is_refused_while_the_draft_tab_is_silent(tmp_path, monkeypatch):
+    """#20: with no draft tab to click it, a request would show "sent" for nobody."""
+    picks = build_league(tmp_path)
+    yids = [str(p.yahoo_player_id) for p in picks]
+    with TestClient(create_app(SessionStore(), data_dir=tmp_path)) as c:
+        r = c.post("/rooms", json={"draft_id": "q1", "slot": 1, "session": SESSION})
+        assert r.status_code == 201, r.text
+        r = ask(c, 1, 0, yids[2])
+        assert r.status_code == 409 and "heard from never" in r.json()["detail"]
+        beat(c)
+        assert ask(c, 1, 0, yids[2]).status_code == 200
+        rooms = importlib.import_module("pickandroll.api.yahoo_room")
+        monkeypatch.setattr(rooms, "SILENT_AFTER_S", -1.0)  # the last beat is now too old
+        r = ask(c, 1, 0, yids[3])
+        assert r.status_code == 409 and "not for" in r.json()["detail"]

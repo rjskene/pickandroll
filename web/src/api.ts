@@ -520,8 +520,8 @@ export const api = {
   room: (id: string) => request<RoomStatus>(`/sessions/${id}/yahoo/room`),
   attachRoom: (id: string, body: RoomAttachBody) =>
     request<RoomSummary>(`/sessions/${id}/yahoo/room`, { method: "POST", body: JSON.stringify(body) }),
-  /** ``act_at_s`` left out keeps the room's setting. */
-  setRoomMode: (draftId: string, body: { mode: RoomMode; act_at_s?: number | null }) =>
+  /** A field left out keeps the room's setting. */
+  setRoomMode: (draftId: string, body: { mode?: RoomMode; act_at_s?: number | null }) =>
     request<RoomSummary>(`/rooms/${draftId}`, { method: "PATCH", body: JSON.stringify(body) }),
   detachRoom: (draftId: string) => request<{ attached: false; draft_id: string }>(`/rooms/${draftId}`, { method: "DELETE" }),
   pinAlias: (draftId: string, body: { yahoo_player_id: string; player_id: string }) =>

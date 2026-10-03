@@ -41,6 +41,10 @@ function AttachForm() {
   const [draftId, setDraftId] = useState("");
   const [slot, setSlot] = useState(s.my_position);
   const [teams, setTeams] = useState(s.num_teams);
+  // The room's team count is known when the room reported it or the user typed it; until then
+  // the field only echoes the session's, and the attach's team check gets null, not that echo.
+  const [teamsKnown, setTeamsKnown] = useState(false);
+  const roomTeams = teamsKnown ? teams : null;
   const seen = useSeenRooms();
   const attach = useMutation({
     mutationFn: (body: RoomAttachBody) => api.attachRoom(s.id, body),
@@ -63,10 +67,13 @@ function AttachForm() {
           // With the slot shown the room attaches as it stands, checked against its own team
           // count; without it the form is filled in for the slot.
           setDraftId(r.draft_id);
-          if (r.room_teams) setTeams(r.room_teams);
+          if (r.room_teams) {
+            setTeams(r.room_teams);
+            setTeamsKnown(true);
+          }
           if (r.slot) {
             setSlot(r.slot);
-            attach.mutate({ draft_id: r.draft_id, slot: r.slot, room_teams: r.room_teams ?? teams });
+            attach.mutate({ draft_id: r.draft_id, slot: r.slot, room_teams: r.room_teams ?? roomTeams });
           }
         }}
       />
@@ -81,9 +88,18 @@ function AttachForm() {
         </label>
         <label title="the number of teams the room shows; an attach that disagrees with this session is refused">
           <span className="k">Teams in the room</span>
-          <input type="number" min={2} max={20} value={teams} onChange={(e) => setTeams(+e.target.value)} />
+          <input
+            type="number"
+            min={2}
+            max={20}
+            value={teams}
+            onChange={(e) => {
+              setTeams(+e.target.value);
+              setTeamsKnown(true);
+            }}
+          />
         </label>
-        <button className="primary" onClick={() => attach.mutate({ draft_id: draftId.trim(), slot, room_teams: teams })} disabled={!draftId.trim() || attach.isPending}>
+        <button className="primary" onClick={() => attach.mutate({ draft_id: draftId.trim(), slot, room_teams: roomTeams })} disabled={!draftId.trim() || attach.isPending}>
           {attach.isPending ? "Attaching…" : "Attach"}
         </button>
       </div>
@@ -192,7 +208,8 @@ function ModeSwitch({ room }: { room: RoomSummary }) {
     else setMode.mutate(mode);
   };
   const setAct = useMutation({
-    mutationFn: (act_at_s: number | null) => api.setRoomMode(room.draft_id, { mode: room.mode, act_at_s }),
+    // The timing alone: a cached mode resent with it could re-arm a room just set to mirror.
+    mutationFn: (act_at_s: number | null) => api.setRoomMode(room.draft_id, { act_at_s }),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["room", d.session.id] }),
   });
   const locked = room.complete || setMode.isPending;

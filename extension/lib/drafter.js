@@ -123,7 +123,7 @@
       this.probeRound = null; // the queue probe's round (the options page), null: off
       this.probed = null; // the pick the probe ran on
       this.searchFallback = false; // Yahoo's search box for an off-screen row (the options page)
-      this.requesting = null; // the user's pending request: {k, ctx, settled}
+      this.requesting = null; // the user's pending request: {k, yid, ctx, settled}
       this.requests = new Set(); // requests served, by overall and player
       this.actAt = null; // the room's act_at_s: seconds left when an armed turn acts, null: at once
     }
@@ -264,10 +264,15 @@
       const settled = new Promise((resolve) => {
         settle = resolve;
       });
-      this.requesting = { k, ctx, settled };
+      this.requesting = { k, yid: c.yahoo_player_id, ctx, settled };
       const out = { overall: k, yid: c.yahoo_player_id, result: "failed", attempts: 0 };
       try {
         for (let n = 1; n <= REQUEST_TRIES && this.live(ctx) && this.tracker.myTurnNow() === k; n++) {
+          // At the turn's frame the table may not show its Draft buttons yet, as for a row draft.
+          for (let i = 0; i < 8 && !this.dom.draftable(); i++) {
+            if (!(await this.pause(ctx, 250))) break;
+          }
+          if (!this.live(ctx)) break;
           let row = this.dom.find(c) || (await this.page(() => this.dom.scrollTo(c)));
           if (!this.live(ctx)) break;
           if (row) {
