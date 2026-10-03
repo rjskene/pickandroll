@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import threading
 import time
+from collections import deque
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -110,6 +111,9 @@ class YahooRoom:
     teams_mismatch: int | None = None
     #: The first recommendation from the single-roster model has been noted in the log.
     roster_noted: bool = False
+    #: (overall, ms from the room's pick to the session's) for the latest picks: the web
+    #: app's sync panel, without reading the log.
+    recent_lags: deque = field(default_factory=lambda: deque(maxlen=24), repr=False)
     lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
     @property
@@ -394,6 +398,8 @@ def _publish_changes(
         }
         if resume:
             event["resume"] = True
+        else:
+            room.recent_lags.append((c["overall"], c["lag_ms"]))
         room.log.append(event)
         if c["kind"] == "conflict":
             conflict = {
@@ -408,7 +414,7 @@ def _publish_changes(
         if c["kind"] == "held":
             continue
         row = _pick_row(state, next(p for p in state.picks if p.overall == c["overall"]))
-        payload: dict[str, Any] = {"pick": row, "source": "yahoo_room"}
+        payload: dict[str, Any] = {"pick": row, "source": "yahoo_room", "lag_ms": c["lag_ms"]}
         if c["old"] is not None:
             payload["replaced"] = c["old"]
         session.publish("pick", payload)
@@ -463,8 +469,11 @@ def _event_problem(e: dict[str, Any]) -> str | None:
     return None
 
 
-def record_events(room: YahooRoom, events: list[dict[str, Any]]) -> tuple[int, int]:
-    """Store client events with the server's receive time; returns (written, ignored).
+def record_events(
+    room: YahooRoom, events: list[dict[str, Any]]
+) -> tuple[int, int, list[dict[str, Any]]]:
+    """Store client events with the server's receive time; returns (written, ignored, shown):
+    ``shown`` are the events taken, heartbeats aside, for the web app's sync panel.
     Heartbeats are kept in memory and written at most once per ``HEARTBEAT_EVERY_S``.
 
     An event the API does not take (a type it does not know, a server type, or one missing
@@ -493,7 +502,8 @@ def record_events(room: YahooRoom, events: list[dict[str, Any]]) -> tuple[int, i
             room.control = e["state"]
         room.log.append(e)
         written += 1
-    return written, sum(dropped.values())
+    shown = [e for e in clean if e["type"] != "heartbeat"]
+    return written, sum(dropped.values()), shown
 
 
 def follow_clock(session: Session, room: YahooRoom, events: list[dict[str, Any]]) -> float | None:
@@ -774,6 +784,8 @@ def summary(session: Session, room: YahooRoom) -> dict[str, Any]:
         "next_overall": state.next_overall,
         "my_next_pick": state.my_next_pick,
         "on_the_clock": state.on_the_clock,
+        "complete": state.complete,
+        "recent_lags": [{"overall": k, "lag_ms": v} for k, v in room.recent_lags],
         "version": session.version,
         "solved_version": rec["version"] if rec else None,
         "fresh": rec is not None and rec["version"] == session.version,

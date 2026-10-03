@@ -199,6 +199,9 @@ def analyze(events: list[dict[str, Any]]) -> dict[str, Any]:
         else:
             to_land = None
         churn = bool(ref and final and final.get("top_pid") != ref.get("top_pid"))
+        # Where the actual pick stood in the acted reco's candidates (1 = its top), if at all.
+        cands = [str(c) for c in (ref or {}).get("cands") or []]
+        rank = cands.index(actual) + 1 if actual in cands else None
         cause = None
         if churn:
             a, b = (ref or {}).get("top_objective"), (final or {}).get("top_objective")
@@ -225,6 +228,7 @@ def analyze(events: list[dict[str, Any]]) -> dict[str, Any]:
                 "final_objective": final.get("top_objective") if final else None,
                 "actual_yid": actual,
                 "actual_name": room[k].get("name"),
+                "actual_rank": rank,
                 "label": label,
                 "how": how,
                 "lag_ms": None if k not in lags else round(lags[k]),

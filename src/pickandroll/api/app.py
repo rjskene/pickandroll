@@ -86,7 +86,8 @@ class Session:
     state: DraftState
     projection_label: str
     version: int = 0
-    listeners: list[asyncio.Queue] = field(default_factory=list)
+    #: One (queue, its event loop) per open event stream.
+    listeners: list[tuple[asyncio.Queue, asyncio.AbstractEventLoop]] = field(default_factory=list)
     log: list[dict[str, Any]] = field(default_factory=list)
     yahoo: YahooFeed | None = None
     room: YahooRoom | None = None
@@ -178,8 +179,18 @@ class Session:
         payload = {"event": event, "version": self.version, "at": _now(), **data}
         if bump:
             self.log.append(payload)
-        for queue in list(self.listeners):
-            queue.put_nowait(payload)
+        # Room picks and notes are published from worker threads (asyncio.to_thread). A queue
+        # is not thread-safe there: its put would not wake the stream until the next keepalive
+        # (15 s), so a pick reached the browser late. Hand it to the stream's own loop instead.
+        try:
+            here = asyncio.get_running_loop()
+        except RuntimeError:
+            here = None
+        for queue, loop in list(self.listeners):
+            if loop is here:
+                queue.put_nowait(payload)
+            elif not loop.is_closed():
+                loop.call_soon_threadsafe(queue.put_nowait, payload)
         if bump and self.solver is not None:
             self.solver.kick(event)
 
@@ -750,13 +761,15 @@ def create_app(
     @app.get("/sessions/{session_id}/events")
     async def events(session_id: str, request: Request) -> StreamingResponse:
         """Server-sent events: one ``hello`` on connect, then ``pick`` / ``undo`` / ``created``
-        / ``survival`` / ``solve`` / ``recommendation``.
+        / ``survival`` / ``solve`` / ``recommendation``, and for a Yahoo room ``room_attached``
+        / ``room_mode`` / ``room_event`` (a client event, heartbeats aside).
 
         A comment line is sent every ``KEEPALIVE_SECONDS`` so proxies keep the connection open.
         """
         session = store.get(session_id)
         queue: asyncio.Queue = asyncio.Queue()
-        session.listeners.append(queue)
+        listener = (queue, asyncio.get_running_loop())
+        session.listeners.append(listener)
 
         async def stream():
             stop = asyncio.ensure_future(shutdown.wait())
@@ -784,7 +797,7 @@ def create_app(
                         yield ": keepalive\n\n"
             finally:
                 stop.cancel()
-                session.listeners.remove(queue)
+                session.listeners.remove(listener)
 
         return StreamingResponse(
             stream(),
@@ -1119,7 +1132,11 @@ def create_app(
         pick_landed, intervention, heartbeat, note. An event of another type, or one missing
         what its type needs, is dropped and counted in ``ignored``; the rest are kept."""
         room, session = await get_room(draft_id)
-        written, ignored = await asyncio.to_thread(yahoo_room.record_events, room, body.events)
+        written, ignored, shown = await asyncio.to_thread(
+            yahoo_room.record_events, room, body.events
+        )
+        for event in shown:  # the web app's sync panel: the extension's latest doings
+            session.publish("room_event", {"draft_id": draft_id, "entry": event}, bump=False)
         await asyncio.to_thread(yahoo_room.follow_clock, session, room, body.events)
         await asyncio.to_thread(yahoo_room.check_teams, session, room, body.events)
         return {
