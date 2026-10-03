@@ -227,6 +227,26 @@
       return held;
     }
 
+    /** Click ``row`` for ``c`` once the page is free, if the turn is live and its pick still mine
+     * on the clock then. Page actions queue and a click settles in ~400 ms: a click queued behind
+     * one that drafted must not land on the next pick's frame (back to back, slots 1 and 12). The
+     * attempt is noted right before the click, since the pick can land while it settles, and
+     * taken back when nothing was clicked. */
+    clickFor(ctx, row, c, how) {
+      const k = ctx.k;
+      return this.page(async () => {
+        if (!this.live(ctx) || this.tracker.myTurnNow() !== k) return "none";
+        const before = this.tracker.attempts.get(k);
+        this.tracker.noteAttempt(k, how);
+        const r = await this.dom.click(row, c);
+        if (r !== "clicked") {
+          if (before === undefined) this.tracker.attempts.delete(k);
+          else this.tracker.noteAttempt(k, before);
+        }
+        return r;
+      });
+    }
+
     /** The user's "Draft in Yahoo" from the web app (#10): click ``q``'s player for pick
      * ``q.overall``, only while that pick is mine on the clock, with the row click's label
      * guard. Resolves to a summary ("landed", "failed", "manual", "other", "stopped"), or null
@@ -251,12 +271,12 @@
           let row = this.dom.find(c) || (await this.page(() => this.dom.scrollTo(c)));
           if (!this.live(ctx)) break;
           if (row) {
-            this.tracker.noteAttempt(k, "manual"); // the user's pick, made through the tab
-            let r = await this.page(() => this.dom.click(row, c));
+            // The user's pick, made through the tab (how "manual").
+            let r = await this.clickFor(ctx, row, c, "manual");
             if (r === "mismatch" && this.live(ctx)) {
               await this.page(() => this.dom.nudge());
               row = this.dom.find(c);
-              r = row && this.live(ctx) ? await this.page(() => this.dom.click(row, c)) : "none";
+              r = row && this.live(ctx) ? await this.clickFor(ctx, row, c, "manual") : "none";
             }
             if (r === "clicked") {
               out.attempts++;
@@ -563,13 +583,11 @@
       if (!this.live(ctx)) return this.outcome(ctx);
       if (!row) return "noRow";
       if (this.yields(k)) return "yielded";
-      // Noted before the click: the pick can land while the click is still settling.
-      this.tracker.noteAttempt(k, "row");
-      let r = await this.page(() => this.dom.click(row, c));
+      let r = await this.clickFor(ctx, row, c, "row");
       if (r === "mismatch" && this.live(ctx)) {
         await this.page(() => this.dom.nudge());
         row = this.dom.find(c);
-        r = row && this.live(ctx) ? await this.page(() => this.dom.click(row, c)) : "none";
+        r = row && this.live(ctx) ? await this.clickFor(ctx, row, c, "row") : "none";
       }
       if (r === "mismatch") return "mismatch";
       if (r !== "clicked") return this.live(ctx) ? "noButton" : this.outcome(ctx);
@@ -581,7 +599,7 @@
         if ((await this.waitDone(ctx, budget)) || !this.live(ctx)) break;
         if (this.yields(k)) return "yielded";
         const again = this.dom.find(c);
-        if (!again || (await this.page(() => this.dom.click(again, c))) !== "clicked") break;
+        if (!again || (await this.clickFor(ctx, again, c, "row")) !== "clicked") break;
         n++;
         this.attempt(ctx, c, via, n);
       }
