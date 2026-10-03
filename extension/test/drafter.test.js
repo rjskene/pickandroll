@@ -574,6 +574,17 @@ test("a request at the turn's frame waits for the Draft buttons, as a row draft 
   assert.ok(t - 1_000_000 >= 600 && t - 1_000_000 < 1000, `clicked at ${t - 1_000_000} ms`);
 });
 
+test("each request is its own: the same player asked again after a failed request is served", async () => {
+  const { d, log } = world({ clicksToLand: 3 }); // the first request's two clicks land nothing
+  const first = await d.request(ask("103", { t: "t1" }));
+  assert.equal(first.result, "failed");
+  assert.equal(await d.request(ask("103", { t: "t1" })), null, "the same request is served once");
+  const again = d.request(ask("103", { t: "t2" })); // the user asks for 103 again
+  assert.equal(d.yields(K), true, "an armed turn stands aside for it");
+  assert.equal((await again).result, "landed");
+  assert.deepEqual(attempts(log), [["103", "request", 1], ["103", "request", 2], ["103", "request", 1]]);
+});
+
 test("a request replaced by the user stops before its next try, with no failure note", async () => {
   const { d, log, at } = world({ dud: ["103"] });
   at(1000, () => d.requesting.ctx.stop("replaced")); // the tab read the user's newer request

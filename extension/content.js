@@ -320,7 +320,9 @@
         tracker.configure({ numTeams: r.room.num_teams, rounds: r.room.rounds });
         tracker.synced(r.room);
         reportControl();
-        if (first) beat(); // at once, not 15 s on: the web shows CONNECTING until one comes
+        // At once, not 15 s on: the web shows CONNECTING until one comes, and the API takes no
+        // request. The API has none after its restart too, while this tab still reads attached.
+        if (first || !r.room.heartbeat) beat();
         if (first || tracker.unsent().length) flush();
         sendEvents();
         if (!S.plan || !S.plan.fresh || S.plan.version !== r.room.version) refreshPlan();

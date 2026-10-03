@@ -296,7 +296,7 @@ Routes are keyed by the Yahoo draft id, not the session, so a room outlives an A
   Yahoo": taken only for my pick on the clock on the session's current board, held in the room
   summary for the draft tab to click (in mirror and autopilot; an armed turn stands aside), and
   dropped when the turn ends or the tab reports that player's click failed. Refused while the
-  draft tab is silent (no heartbeat for 40 s).
+  draft tab is silent (no heartbeat yet, or none for 40 s).
 * `POST /rooms/seen` / `GET /rooms/seen`: the draft tab reports a room no session follows
   (`{draft_id, slot, room_teams}`, kept 30 s) so the web app can offer it; attaching stays a
   click.
