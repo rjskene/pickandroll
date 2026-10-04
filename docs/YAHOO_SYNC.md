@@ -22,7 +22,9 @@ point: port behaviour, not files.
 Room facts that are not in the code: Yahoo autopicks instantly for an absent seat and at the 30 s expiry; one
 missed pick flips the seat into autopick mode (must be turned off by hand); the filtered Draft button drafts the
 wrong player; the lobby's Join button hijacks the draft tab; Chrome blocks every page→localhost request from
-yahoo.com without a user gesture (why driver mode existed, and why the extension's service worker is the fix).
+yahoo.com without a user gesture (why driver mode existed, and why the extension's service worker is the fix);
+at the waiting-room countdown's zero Yahoo may reload the page and show an "Enter Draft" link instead of
+redirecting into the draft client, and pick 1 goes on the clock about 60 s after zero (mocks 3 and 4).
 
 ## 1. Primary metric: compliance
 
@@ -61,7 +63,7 @@ Baseline from drafts 5-7 (2026-09-27, scratch hook in driver mode), loose count 
 | G4 | manual respected | when a manual pick is made on my turn, the autopilot stands down (no draft attempt after it but the click of the user's own request, method `request`) and the session mirrors the manual pick within G2 | n/a | 1/1 per draft |
 | G5 | autopick mode | times Yahoo flipped the seat into autopick mode | 1 (draft 7) | 0 |
 | G7 | client timers | heartbeats while attached report `worker: true` (the page-world Worker timer host answered the content script); on `false` every drafter sleep is a DOM timer, which a hidden tab aligns to 1 s and, after minutes hidden, to 1 min, so a turn can silently miss the clock | false on all heartbeats in three harness runs (h13, h13b, h13c), true in mock 1 | true on every heartbeat |
-| G6 | entry lead | seconds inside the draft client before pick 1 went on the clock; Yahoo opens the client only when the waiting-room countdown ends, about 60 s before pick 1, so the ceiling is ~59 s | −210 s (draft 7) | ≥ 45 s |
+| G6 | entry lead | seconds inside the draft client before pick 1 went on the clock; Yahoo opens the client only when the waiting-room countdown ends, about 60 s before pick 1, so the ceiling is ~59 s. At zero it may instead reload the waiting room with an "Enter Draft" link (room facts), and an immediate click leaves about 45–47 s (44.8 s in mock 4). The tab needs under 5 s of it (history frame, first heartbeat, the board-0 plan solved ahead), so 30 s is the target (user, 2026-10-03) | −210 s (draft 7) | ≥ 30 s |
 
 ## 3. Diagnostics (reported every draft, not pass/fail)
 
@@ -205,7 +207,7 @@ scorecard shows the failure it fixes, and the last two clean mocks before the dr
    is never mocked twice, except the acceptance pair. A failure that appears in two consecutive scorecards stops
    mocking: fix it offline (replay tier, or a harness built from the recorded room) before the next mock.
 2. **Abort early, do not ride out a lost mock.** The drone leaves the mock and writes a short scorecard (what
-   failed, at which pick) when: the seat is not inside the draft client 45 s before pick 1; sync lag p95 over
+   failed, at which pick) when: the seat is not inside the draft client 30 s before pick 1 (G6); sync lag p95 over
    the first 24 picks is above 10 s; any pick is `absent` or `wrong`. An abandoned mock seat autopicks, which is
    fine in a mock.
 3. **Drone discipline during a mock: the extension and the API do the work, the recorder keeps the evidence.**

@@ -23,7 +23,9 @@ DRAFTED = frozenset({"row", "queue", "search"})
 LABELS = ("compliant", "manual", *FAILURES)
 #: Lag targets in ms (G2) and the window a manual pick must be mirrored in (G4).
 LAG_TARGETS = {"p50": 1000.0, "p95": 2000.0, "max": 5000.0}
-ENTRY_LEAD_S = 45.0
+#: G6: seconds inside the draft client before pick 1 (user, 2026-10-03). Entering at once through
+#: Yahoo's "Enter Draft" link leaves about 45-47 s; the tab needs under 5 s (YAHOO_SYNC §2).
+ENTRY_LEAD_S = 30.0
 #: How a turn's board was covered ahead (D1): a hit is a branch solved before the turn started,
 #: pending one still solving then, a miss no branch (or a capped one, which the live solve prices).
 PRESOLVE_CLASSES = ("hit", "pending", "miss")
