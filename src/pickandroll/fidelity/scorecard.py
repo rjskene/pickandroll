@@ -185,6 +185,10 @@ def analyze(events: list[dict[str, Any]]) -> dict[str, Any]:
             label = "manual"
         elif drafted and ref_yid is not None and actual == ref_yid:
             label = "compliant"
+        elif room[k].get("src") == "history":
+            # The tab learned this pick from Yahoo's history frame when it connected: it was
+            # made before the tab was in the room, whatever the API's control said (mock 3).
+            label = "absent"
         elif control_at(t_turn if t_turn is not None else t_land) != "armed":
             label = "absent"
         elif synced_by.get(k - 1, math.inf) > t_land or (acted is not None and int(acted) < k - 1):
@@ -273,7 +277,13 @@ def analyze(events: list[dict[str, Any]]) -> dict[str, Any]:
     manual_ok = 0
     for r in manual_rows:
         t_manual = to_ms(landed[r["overall"]]["t"])
-        late = [a for a in attempts.get(r["overall"], []) if to_ms(a["t"]) > t_manual]
+        # A request's own click is the manual pick, not an intervention: the tab notes it once
+        # the click settles, which can be after the pick it made landed (mock 4, pick 50).
+        late = [
+            a
+            for a in attempts.get(r["overall"], [])
+            if to_ms(a["t"]) > t_manual and a.get("method") != "request"
+        ]
         mirrored = r["lag_ms"] is not None and r["lag_ms"] <= LAG_TARGETS["max"]
         manual_ok += int(not late and mirrored)
     # G6 counts from the client's first sign of life in the draft room (its "entered" note, or

@@ -558,6 +558,69 @@ def test_scorecard_labels_every_failure():
     assert "**Compliance 1/7**" in text and "| G5 autopick flips | 1 | 0 | **FAIL** |" in text
 
 
+@pytest.mark.parametrize("entered_first", [True, False])
+def test_scorecard_a_pick_learned_from_history_is_absent(entered_first):
+    """Mock 3: attached armed minutes early, the tab entered at pick 19 and learned picks 1-18
+    from Yahoo's history frame (P| on connect), stamped at the tab's receipt. Pick 1, ours,
+    was Yahoo's autopick of a listed candidate: pickandroll was not there, so it is absent, not
+    a fallback, whichever came first, the tab's "entered" note or the frame."""
+    t_entry, t_frame = (100, 101) if entered_first else (101, 100)
+    events = [
+        _ev("attach", 0, slot=1, num_teams=12, rounds=13, draft_id="m3", mode="autopilot"),
+        _ev("control", 0, state="armed", src="api"),
+        _ev("reco", 5, board=0, top_yid="a", cands=["a", "b"], solve_ms=900),
+        _ev("note", t_entry, what="entered", src="client"),
+        _ev("control", t_entry, state="armed", src="client"),
+    ]
+    for k in range(1, 19):
+        yid = "b" if k == 1 else f"o{k}"
+        events.append(_ev("room_pick", t_frame, overall=k, yid=yid, src="history"))
+        events.append(_ev("session_pick", t_frame, overall=k, yid=yid))
+    # A live turn after the tab entered keeps its label.
+    for k in range(19, 24):
+        events.append(_ev("room_pick", 102 + k - 19, overall=k, yid=f"o{k}", src="socket"))
+        events.append(_ev("session_pick", 102 + k - 19, overall=k, yid=f"o{k}"))
+    events.append(_ev("turn_start", 108, overall=24))
+    events.append(_ev("reco", 109, board=23, top_yid="c", cands=["c", "d"], solve_ms=800))
+    events.append(_ev("draft_attempt", 110, overall=24, yid="c", method="row", board=23))
+    events.append(_ev("pick_landed", 111, overall=24, yid="c", how="row"))
+    events.append(_ev("room_pick", 111, overall=24, yid="c", src="socket"))
+    events.append(_ev("session_pick", 111, overall=24, yid="c"))
+    card = analyze(events)
+    assert {r["overall"]: r["label"] for r in card["rows"]} == {1: "absent", 24: "compliant"}
+    assert card["guardrails"]["G6"]["entry_from"] == "client"
+
+
+@pytest.mark.parametrize(("method", "respected"), [("request", 1), ("row", 0)])
+def test_scorecard_g4_a_request_click_noted_after_its_pick_is_not_an_intervention(
+    method, respected
+):
+    """Mock 4, pick 50: the user's Draft in Yahoo landed at 29.663 s and the tab noted the
+    request's click when it settled, 0.4 s later. That attempt is the manual pick itself; a row
+    attempt after a hand pick is still the drafter acting on the user's pick."""
+    events = [
+        _ev("attach", 0, slot=1, num_teams=12, rounds=13, draft_id="m4", mode="autopilot"),
+        _ev("control", 0, state="armed"),
+        _ev("note", 1, what="entered", src="client"),
+    ]
+    for k in range(1, 24):
+        events.append(_ev("room_pick", 2 + k, overall=k, yid=f"o{k}", src="socket"))
+        events.append(_ev("session_pick", 2 + k, overall=k, yid=f"o{k}"))
+    landed = "2026-10-01T00:00:29.663+00:00"
+    clicked = "2026-10-01T00:00:30.063+00:00"
+    events += [
+        _ev("turn_start", 26, overall=24),
+        _ev("reco", 27, board=23, top_yid="a", cands=["a", "b", "c", "m"], solve_ms=800),
+        {**_ev("pick_landed", 0, overall=24, yid="m", how="manual"), "t": landed},
+        {**_ev("room_pick", 0, overall=24, yid="m", src="socket"), "t": landed},
+        {**_ev("session_pick", 0, overall=24, yid="m"), "t": landed},
+        {**_ev("draft_attempt", 0, overall=24, yid="m", method=method, board=23), "t": clicked},
+    ]
+    card = analyze(events)
+    assert {r["overall"]: r["label"] for r in card["rows"]}[24] == "manual"
+    assert card["guardrails"]["G4"] == {"respected": respected, "manual": 1}
+
+
 def test_scorecard_unmapped_top_is_a_fallback_and_entry_lead_from_the_client():
     base = [
         _ev("attach", 0, slot=1, num_teams=2, rounds=1, draft_id="u"),

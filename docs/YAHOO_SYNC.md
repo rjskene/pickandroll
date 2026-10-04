@@ -58,7 +58,7 @@ Baseline from drafts 5-7 (2026-09-27, scratch hook in driver mode), loose count 
 | G1 | board agreement | session picks == Yahoo picks at draft end, by Yahoo id, all 156 | 156 only after hand fixes of 2 ambiguous names | 156/156 unaided |
 | G2 | sync lag | per pick: t(applied in session) − t(socket message in the room); p50 / p95 / max | 40.6/121/191 s; 31.9/76/108 s; 13.0/21.9/24 s steady state | p50 ≤ 1 s, p95 ≤ 2 s, max ≤ 5 s |
 | G3 | hands-off | interventions by a human or an agent during the draft (console calls, manual relay fixes) | many | 0 |
-| G4 | manual respected | when a manual pick is made on my turn, the autopilot stands down (no draft attempt after it) and the session mirrors the manual pick within G2 | n/a | 1/1 per draft |
+| G4 | manual respected | when a manual pick is made on my turn, the autopilot stands down (no draft attempt after it but the click of the user's own request, method `request`) and the session mirrors the manual pick within G2 | n/a | 1/1 per draft |
 | G5 | autopick mode | times Yahoo flipped the seat into autopick mode | 1 (draft 7) | 0 |
 | G7 | client timers | heartbeats while attached report `worker: true` (the page-world Worker timer host answered the content script); on `false` every drafter sleep is a DOM timer, which a hidden tab aligns to 1 s and, after minutes hidden, to 1 min, so a turn can silently miss the clock | false on all heartbeats in three harness runs (h13, h13b, h13c), true in mock 1 | true on every heartbeat |
 | G6 | entry lead | seconds inside the draft client before pick 1 went on the clock; Yahoo opens the client only when the waiting-room countdown ends, about 60 s before pick 1, so the ceiling is ~59 s | −210 s (draft 7) | ≥ 45 s |
@@ -129,7 +129,7 @@ Derivations:
 - Labels apply in this order:
   1. `manual`: `pick_landed.how == "manual"`.
   2. `compliant`: the drafter made the pick and the actual player equals `ref_k`. The drafter made the pick when `pick_landed.how` is `row`, `queue` or `search`, or a `draft_attempt` for overall k with the landed `yid` precedes `t_land(k)` (a queued player taken by Yahoo at expiry counts; D2 shows the cost). An expiry or autopick that happens to equal `ref_k` is never compliant: it goes on to the labels below, which end in `expired`.
-  3. `absent`: control was not `armed` at turn start. In mirror mode every non-compliant pick reads `absent`.
+  3. `absent`: control was not `armed` at turn start, or the tab learned the pick from Yahoo's history frame (the tab was not in the room when it was made: a late entry or a reconnect). In mirror mode every non-compliant pick reads `absent`.
   4. `stale`: picks 1..k-1 were not all in the session when pick k landed, judged by the first `session_pick` time per overall (§1); or the first `draft_attempt` for k carries `board < k-1`. The drafter must only act on a plan whose `board == k-1`, so a `stale` label with a synced session is a drafter bug, not a sync bug.
   5. `unsolved`: synced, but no `ref_k` (no reco for board k-1 before landing).
   6. `expired`: `how` is `expiry` or `autopick`.
