@@ -658,6 +658,25 @@ def test_scorecard_unmapped_top_is_a_fallback_and_entry_lead_from_the_client():
     assert analyze(api_note)["guardrails"]["G6"]["entry_lead_s"] == 60.0
 
 
+@pytest.mark.parametrize(("lead_s", "passes"), [(44.8, True), (30.0, True), (29.0, False)])
+def test_scorecard_g6_target_is_30_s(lead_s, passes):
+    """G6 (user, 2026-10-03): entering through Yahoo's "Enter Draft" link at once leaves about
+    45-47 s, 44.8 s in mock 4, which passes; under 30 s fails."""
+    entered = f"2026-10-01T00:00:{60 - lead_s:06.3f}+00:00"
+    events = [
+        _ev("attach", 0, slot=2, num_teams=2, rounds=1, draft_id="g6"),
+        _ev("control", 0, state="armed", src="api"),
+        {**_ev("note", 0, what="entered", src="client"), "t": entered},
+        _ev("turn_start", 60, overall=1),
+        _ev("room_pick", 62, overall=1, yid="x"),
+        _ev("session_pick", 62, overall=1, yid="x"),
+    ]
+    card = analyze(events)
+    assert card["guardrails"]["G6"] == {"entry_lead_s": lead_s, "entry_from": "client"}
+    assert guardrail_pass(card)["G6"] is passes
+    assert f"| ≥ 30 s | {'pass' if passes else '**FAIL**'} |" in markdown(card)
+
+
 def test_scorecard_stale_when_the_session_was_behind():
     events = [
         _ev("attach", 0, slot=2, num_teams=2, rounds=2, draft_id="s"),
