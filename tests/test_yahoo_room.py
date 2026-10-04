@@ -591,6 +591,36 @@ def test_scorecard_a_pick_learned_from_history_is_absent(entered_first):
     assert card["guardrails"]["G6"]["entry_from"] == "client"
 
 
+@pytest.mark.parametrize(("method", "respected"), [("request", 1), ("row", 0)])
+def test_scorecard_g4_a_request_click_noted_after_its_pick_is_not_an_intervention(
+    method, respected
+):
+    """Mock 4, pick 50: the user's Draft in Yahoo landed at 29.663 s and the tab noted the
+    request's click when it settled, 0.4 s later. That attempt is the manual pick itself; a row
+    attempt after a hand pick is still the drafter acting on the user's pick."""
+    events = [
+        _ev("attach", 0, slot=1, num_teams=12, rounds=13, draft_id="m4", mode="autopilot"),
+        _ev("control", 0, state="armed"),
+        _ev("note", 1, what="entered", src="client"),
+    ]
+    for k in range(1, 24):
+        events.append(_ev("room_pick", 2 + k, overall=k, yid=f"o{k}", src="socket"))
+        events.append(_ev("session_pick", 2 + k, overall=k, yid=f"o{k}"))
+    landed = "2026-10-01T00:00:29.663+00:00"
+    clicked = "2026-10-01T00:00:30.063+00:00"
+    events += [
+        _ev("turn_start", 26, overall=24),
+        _ev("reco", 27, board=23, top_yid="a", cands=["a", "b", "c", "m"], solve_ms=800),
+        {**_ev("pick_landed", 0, overall=24, yid="m", how="manual"), "t": landed},
+        {**_ev("room_pick", 0, overall=24, yid="m", src="socket"), "t": landed},
+        {**_ev("session_pick", 0, overall=24, yid="m"), "t": landed},
+        {**_ev("draft_attempt", 0, overall=24, yid="m", method=method, board=23), "t": clicked},
+    ]
+    card = analyze(events)
+    assert {r["overall"]: r["label"] for r in card["rows"]}[24] == "manual"
+    assert card["guardrails"]["G4"] == {"respected": respected, "manual": 1}
+
+
 def test_scorecard_unmapped_top_is_a_fallback_and_entry_lead_from_the_client():
     base = [
         _ev("attach", 0, slot=1, num_teams=2, rounds=1, draft_id="u"),

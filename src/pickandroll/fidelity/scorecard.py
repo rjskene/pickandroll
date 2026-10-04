@@ -277,7 +277,13 @@ def analyze(events: list[dict[str, Any]]) -> dict[str, Any]:
     manual_ok = 0
     for r in manual_rows:
         t_manual = to_ms(landed[r["overall"]]["t"])
-        late = [a for a in attempts.get(r["overall"], []) if to_ms(a["t"]) > t_manual]
+        # A request's own click is the manual pick, not an intervention: the tab notes it once
+        # the click settles, which can be after the pick it made landed (mock 4, pick 50).
+        late = [
+            a
+            for a in attempts.get(r["overall"], [])
+            if to_ms(a["t"]) > t_manual and a.get("method") != "request"
+        ]
         mirrored = r["lag_ms"] is not None and r["lag_ms"] <= LAG_TARGETS["max"]
         manual_ok += int(not late and mirrored)
     # G6 counts from the client's first sign of life in the draft room (its "entered" note, or
