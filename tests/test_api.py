@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 import pytest
@@ -186,6 +187,93 @@ def test_events_stream_receives_pick():
         thread.join(timeout=5)
 
 
+def test_events_stream_hands_over_a_burst_and_replays_what_it_missed(monkeypatch):
+    """Keeper practice run 1: a simulation landing as a stream hit its time cap lost every pick
+    but the first, and the picks published before EventSource reconnected were never sent, so
+    the web announcer went quiet. The stream now drains its queue before it ends, and a
+    reconnect with ``Last-Event-ID`` gets the board changes it missed, as they were sent live."""
+    if not (DATA / "bbm_sample_ros_totals.xls").exists():
+        pytest.skip("no Basketball Monster sample export in data/")
+    import importlib
+    import socket
+    import threading
+    import time
+
+    import httpx
+    import uvicorn
+
+    module = importlib.import_module("pickandroll.api.app")
+    monkeypatch.setattr(module, "MAX_STREAM_SECONDS", 0.3)
+    monkeypatch.setattr(module, "KEEPALIVE_SECONDS", 1.0)
+    app = create_app(SessionStore(), data_dir=DATA)
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        port = sock.getsockname()[1]
+    server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning"))
+    thread = threading.Thread(target=server.run, daemon=True)
+    thread.start()
+    deadline = time.time() + 10
+    while not server.started and time.time() < deadline:
+        time.sleep(0.05)
+    assert server.started
+
+    def read(lines) -> list[tuple[str, int | None, dict]]:
+        """(event, id, data) up to the stream's reconnect."""
+        out, event, eid = [], None, None
+        for line in lines:
+            if line.startswith("id: "):
+                eid = int(line[4:])
+            elif line.startswith("event: "):
+                event = line[7:]
+            elif line.startswith("data: "):
+                out.append((event, eid, json.loads(line[6:])))
+                if event == "reconnect":
+                    return out
+                eid = None
+        return out
+
+    def overalls(events) -> list[int]:
+        return [data["pick"]["overall"] for e, _, data in events if e == "pick"]
+
+    try:
+        with httpx.Client(base_url=f"http://127.0.0.1:{port}", timeout=10) as client:
+            probe = create(client)["id"]
+            kept = client.get(f"/sessions/{probe}/board?limit=1").json()["players"][0]["player_id"]
+            # Four teams: team 1's round-2 keeper is logged at pick 8.
+            sid = create(client, keepers=[{"position": 1, "round": 2, "player_id": kept}])["id"]
+            url = f"/sessions/{sid}/events"
+            sim = f"/sessions/{sid}/autopick"
+            with client.stream("GET", url) as stream:
+                lines = stream.iter_lines()
+                assert next(line for line in lines if line.startswith("event:")) == "event: hello"
+                time.sleep(0.5)  # past the cap, waiting on the queue
+                r = client.post(sim, json={"count": 5, "until_my_pick": False})
+                assert [p["overall"] for p in r.json()["added"]] == [1, 2, 3, 4, 5]
+                first = read(lines)
+            assert overalls(first) == [1, 2, 3, 4, 5]  # all of the burst before the cap
+            assert first[-1][0] == "reconnect"
+            # Published with no stream open: what a reconnect used to miss.
+            gap = client.post(sim, json={"count": 2, "until_my_pick": False}).json()["added"]
+            assert [(p["overall"], p["keeper"]) for p in gap] == [(6, False), (7, False), (8, True)]
+            last = max(i for _, i, _ in first if i is not None)
+            with client.stream("GET", url, headers={"Last-Event-ID": str(last)}) as stream:
+                second = read(stream.iter_lines())
+            assert [e for e, _, _ in second] == ["hello", "pick", "pick", "pick", "reconnect"]
+            replayed = [data for e, _, data in second if e == "pick"]
+            assert [d["pick"] for d in replayed] == gap  # the keeper pick as it went out live
+            assert [i for e, i, _ in second if e == "pick"] == [d["version"] for d in replayed]
+            # A new page (no Last-Event-ID), a bad id or one from the future: no history.
+            for headers in ({}, {"Last-Event-ID": "nope"}, {"Last-Event-ID": "99999"}):
+                with client.stream("GET", url, headers=headers) as stream:
+                    assert [e for e, _, _ in read(stream.iter_lines())] == ["hello", "reconnect"]
+            # Far behind: the whole log, in order.
+            with client.stream("GET", url, headers={"Last-Event-ID": "0"}) as stream:
+                assert overalls(read(stream.iter_lines())) == [1, 2, 3, 4, 5, 6, 7, 8]
+    finally:
+        server.should_exit = True
+        thread.join(timeout=5)
+
+
 def test_yahoo_feed_attach_and_poll(client):
     from pickandroll.sources.yahoo import YahooLeague
 
@@ -341,6 +429,44 @@ def test_autopick_simulates_other_teams(client):
     assert board["next_pick"] == 7
     assert 0.0 <= board["players"][0]["p_next"] <= 1.0
     assert board["players"][0]["adp"] is not None
+
+
+def test_the_score_history_follows_the_recommendation_shown():
+    """Keeper practice run 2, pick 72: the Team card read 5.36 while the Plan and Pick cards
+    showed 5.53. Every solve of a board wrote the history, including one that did not displace
+    the recommendation on show. Only the recommendation shown is recorded now."""
+    from pickandroll.api.solver import compute_recommendation
+
+    store = SessionStore()
+    with TestClient(create_app(store, data_dir=DATA)) as c:
+        sid = create(c)["id"]
+        shown = c.post(f"/sessions/{sid}/recommend", json={"n": 4, "scenarios": 0}).json()
+        session = store.get(sid)
+        assert c.get(f"/sessions/{sid}/score").json()["history"] == [shown["score"]]
+        # Another solve of the same board that is never published leaves the history alone.
+        other = compute_recommendation(session, session.solve_params)
+        assert c.get(f"/sessions/{sid}/score").json()["history"] == [shown["score"]]
+
+        def variant(delta: float, **extra) -> dict:
+            wins = round(shown["wins"] + delta, 4)
+            score = {**other["score"], "wins": wins}
+            return {
+                **other,
+                **extra,
+                "top_objective": shown["top_objective"] + delta,
+                "wins": wins,
+                "score": score,
+            }
+
+        session.solver._publish(variant(-0.17, capped=True))  # does not displace
+        score = c.get(f"/sessions/{sid}/score").json()
+        assert score["history"] == [shown["score"]]
+        assert score["current_wins"] == shown["wins"] == session.recommendation["wins"]
+        better = variant(0.17)
+        session.solver._publish(better)
+        score = c.get(f"/sessions/{sid}/score").json()
+        assert score["history"] == [better["score"]]
+        assert score["current_wins"] == better["wins"] == session.recommendation["wins"]
 
 
 def test_score_benchmark_freezes_at_my_first_pick(client):

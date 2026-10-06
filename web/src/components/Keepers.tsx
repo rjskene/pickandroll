@@ -78,6 +78,11 @@ export function parseKeeperLines(text: string, numTeams: number): { rows: Keeper
   return { rows, errors, failed };
 }
 
+/** A row of mine: no team, or the team at my pick (the API takes position == my pick as mine). */
+export function isMine(row: Pick<KeeperDraft, "position">, myPosition: number): boolean {
+  return row.position === null || row.position === myPosition;
+}
+
 /** The row an API error names (`keepers[i] …` counts the ticked rows), by its key. */
 export function erroredRow(rows: KeeperDraft[], message: string | undefined): number | null {
   const m = message?.match(/keepers\[(\d+)\]/);
@@ -98,6 +103,7 @@ interface EditorProps {
 
 export function KeeperEditor({ rows, onChange, numTeams, myPosition, rounds, options, errorKey, locked }: EditorProps) {
   const listId = useId();
+  const mine = (r: KeeperDraft) => isMine(r, myPosition);
   const [paste, setPaste] = useState<string | null>(null);
   const [pasteErrors, setPasteErrors] = useState<string[]>([]);
   const set = (key: number, patch: Partial<KeeperDraft>) => onChange(rows.map((r) => (r.key === key ? { ...r, ...patch } : r)));
@@ -137,13 +143,16 @@ export function KeeperEditor({ rows, onChange, numTeams, myPosition, rounds, opt
                     <input type="checkbox" checked={r.on} disabled={lock} aria-label="kept" onChange={(e) => set(r.key, { on: e.target.checked })} />
                   </td>
                   <td>
-                    <select value={r.position ?? 0} disabled={lock} aria-label="team" onChange={(e) => set(r.key, { position: Number(e.target.value) || null })}>
+                    {/* The team at my pick is me (the API reads it so): no "Team N" beside "Me". */}
+                    <select value={mine(r) ? 0 : (r.position ?? 0)} disabled={lock} aria-label="team" onChange={(e) => set(r.key, { position: Number(e.target.value) || null })}>
                       <option value={0}>Me</option>
-                      {Array.from({ length: numTeams }, (_, i) => (
-                        <option key={i + 1} value={i + 1}>
-                          Team {i + 1}
-                        </option>
-                      ))}
+                      {Array.from({ length: numTeams }, (_, i) => i + 1)
+                        .filter((n) => n !== myPosition)
+                        .map((n) => (
+                          <option key={n} value={n}>
+                            Team {n}
+                          </option>
+                        ))}
                     </select>
                   </td>
                   <td>

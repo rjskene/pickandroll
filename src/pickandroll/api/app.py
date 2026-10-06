@@ -71,8 +71,9 @@ from .yahoo_room import YahooRoom
 LOG = logging.getLogger(__name__)
 DATA_DIR = Path(__file__).resolve().parents[3] / "data"
 KEEPALIVE_SECONDS = 15.0
-# Streams end on their own after this long; EventSource reconnects and the UI refreshes on
-# the next hello. Bounded streams let uvicorn finish a graceful shutdown or reload.
+# Streams end on their own after this long; EventSource reconnects, the stream replays the
+# board changes it missed and the UI refreshes on the next hello. Bounded streams let uvicorn
+# finish a graceful shutdown or reload.
 MAX_STREAM_SECONDS = 120.0
 SURVIVAL_SUFFIXES = {".csv"}
 CURVE_SUFFIXES = {".json"}
@@ -140,7 +141,7 @@ class Session:
     def survival_building(self) -> bool:
         return self.survival.get("status") == "building"
 
-    def record_score(
+    def score_entry(
         self,
         snapshot: dict[str, Any],
         mode: str,
@@ -149,11 +150,10 @@ class Session:
         matchups: int,
         top: str | None,
     ) -> dict[str, Any]:
-        """Remember a solve's expected categories won (and its value on the z scale). The
-        benchmark is the latest solve made before my first pick; after that pick it never
-        changes. ``snapshot`` is the board the solve was built on."""
-        state = self.state
-        entry = {
+        """A solve's expected categories won (and its value on the z scale), for the
+        payload. ``snapshot`` is the board the solve was built on. Nothing is kept until the
+        payload becomes the recommendation (:meth:`record_score`)."""
+        return {
             "version": snapshot["version"],
             "next_overall": snapshot["next_overall"],
             "my_pick": snapshot["my_next_pick"],
@@ -166,15 +166,23 @@ class Session:
             "drafted": snapshot["drafted"],
             "at": _now(),
         }
+
+    def record_score(self, entry: dict[str, Any]) -> None:
+        """Remember the score of the recommendation shown for a board, so the Team card
+        agrees with the Plan and Pick cards: a later solve of the same board that does not
+        displace it leaves the history alone. The benchmark is the latest one recorded before
+        my first pick; after that pick it never changes."""
+        state = self.state
         self.history = [h for h in self.history if h["version"] != entry["version"]] + [entry]
         self.history.sort(key=lambda h: h["version"])
         first = state.my_picks[0] if state.my_picks else None
-        if first is not None and snapshot["next_overall"] <= first:
+        if first is not None and entry["next_overall"] <= first:
             self.benchmark = entry
-        return entry
 
     def set_recommendation(self, payload: dict[str, Any]) -> None:
         self.recommendation = payload
+        if payload.get("score") is not None:
+            self.record_score(payload["score"])
         top = payload["candidates"][0] if payload.get("candidates") else None
         self.publish(
             "recommendation",
@@ -924,19 +932,40 @@ def create_app(
         / ``room_mode`` / ``room_detached`` / ``room_event`` (a client event, heartbeats aside).
 
         A comment line is sent every ``KEEPALIVE_SECONDS`` so proxies keep the connection open.
+
+        Every event carries the session version as its id. A stream ends after
+        ``MAX_STREAM_SECONDS`` and EventSource reconnects with ``Last-Event-ID``: the board
+        changes logged since that version are sent again after the ``hello``, so the picks of a
+        simulation that lands while the browser reconnects are still announced.
         """
         session = store.get(session_id)
         queue: asyncio.Queue = asyncio.Queue()
         listener = (queue, asyncio.get_running_loop())
         session.listeners.append(listener)
+        # Listening before reading the log: a change published in between is in both, and the
+        # queue's copy is skipped.
+        missed = _missed(session, request.headers.get("last-event-id"))
+        replayed = {id(p) for p in missed}
+
+        def send(payload: dict[str, Any]) -> str | None:
+            if id(payload) in replayed:
+                return None
+            return _sse(payload["event"], payload, event_id=payload["version"])
 
         async def stream():
             stop = asyncio.ensure_future(shutdown.wait())
             started = asyncio.get_running_loop().time()
             try:
                 yield _sse("hello", {"version": session.version})
+                for payload in missed:
+                    yield _sse(payload["event"], payload, event_id=payload["version"])
                 while not shutdown.is_set() and not await request.is_disconnected():
                     if asyncio.get_running_loop().time() - started > MAX_STREAM_SECONDS:
+                        # Hand over what is queued first: a burst of picks used to lose all
+                        # but its first here.
+                        while not queue.empty():
+                            if (line := send(queue.get_nowait())) is not None:
+                                yield line
                         yield _sse("reconnect", {"version": session.version})
                         break
                     getter = asyncio.ensure_future(queue.get())
@@ -946,8 +975,8 @@ def create_app(
                         return_when=asyncio.FIRST_COMPLETED,
                     )
                     if getter in done:
-                        payload = getter.result()
-                        yield _sse(payload["event"], payload)
+                        if (line := send(getter.result())) is not None:
+                            yield line
                     else:
                         getter.cancel()
                         if stop in done:
@@ -1599,8 +1628,20 @@ def _list_files(data_dir: Path, suffixes: set[str]) -> list[dict[str, Any]]:
     ]
 
 
-def _sse(event: str, data: dict[str, Any]) -> str:
-    return f"event: {event}\ndata: {json.dumps(data, default=str)}\n\n"
+def _sse(event: str, data: dict[str, Any], event_id: int | None = None) -> str:
+    head = "" if event_id is None else f"id: {event_id}\n"
+    return f"{head}event: {event}\ndata: {json.dumps(data, default=str)}\n\n"
+
+
+def _missed(session: Session, last_event_id: str | None) -> list[dict[str, Any]]:
+    """The board changes logged after the version a reconnecting stream saw last."""
+    try:
+        seen = int(last_event_id) if last_event_id else None
+    except ValueError:
+        seen = None
+    if seen is None:
+        return []
+    return [p for p in list(session.log) if p["version"] > seen]
 
 
 def _now() -> str:
