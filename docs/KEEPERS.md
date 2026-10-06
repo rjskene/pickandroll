@@ -247,8 +247,10 @@ file whose N is my seat is a collision (slot 1 and slot 12 runs): the editor fol
 3. Web setup block, log/plan/team cards (`feat(keepers): web`).
 4. Room: fidelity `src: keeper`, scorecard denominator, extension turn guard (`feat(keepers): room`,
    #31, merged 2026-10-06 as 28b940b; #28, #29 and #30 are steps 1-3, all merged the same day).
-   Open from the practice runs: `fix/keepers-endgame` (completion state of the cards and announcer,
-   Team card history keyed to the pick made, editor folds "Team N" into "Me" when N is my seat).
+   From the practice runs: #32 (merged 2026-10-06 as b1c8fa9) fixed the event stream (drain at the
+   cap, replay from `Last-Event-ID`; the silent announcer), the cards' done state after my last pick,
+   the Team card history (named by the pick made, score recorded only for the recommendation shown)
+   and the editor's fold of the team at my pick into "Me".
 5. Phase 3 availability (`feat(keepers): market-space availability`): effective ADP, market picks,
    `spread_base` 1.5 (decided 2026-10-06, §1.1), the `survival: league` table loader with a fixture.
 6. Follow-up: a keeper the table does not know about (§2, "Open").
