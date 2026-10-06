@@ -9,6 +9,7 @@ Yahoo players files exist in data/.
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from itertools import pairwise
 from pathlib import Path
 
@@ -898,6 +899,82 @@ def test_fidelity_report_cli(tmp_path, capsys):
     assert cli_main(["fidelity", "report", "nope", "--dir", str(tmp_path)]) == 1
 
 
+# --------------------------------------------------------------------------- keepers
+def _name(p) -> str:
+    return " ".join(_names(p.label, p.team))
+
+
+def test_room_keepers_attach_hold_and_lose_conflicts(league):
+    """docs/KEEPERS.md invariants 7 and 9 in a room: a session whose pick 1 is a keeper can
+    take another seat, the room's keeper pick is held, and the room wins both ways: a keeper
+    still to come whom it records elsewhere, and someone else at my keeper's slot."""
+    directory, picks = league
+    P = {p.overall: p for p in picks}
+    store = SessionStore()
+    keepers = [
+        {"position": 1, "round": 1, "player": _name(P[1])},  # pick 1, logged at create
+        {"round": 2, "player": _name(P[30])},  # mine: pick 19 at seat 6, 22 at seat 3
+        {"position": 9, "round": 2, "player": _name(P[40])},  # pick 16
+    ]
+    with TestClient(create_app(store, data_dir=directory)) as c:
+        body = {**SESSION, "my_position": 6}
+        sid = c.post("/sessions", json={**body, "keepers": keepers}).json()["id"]
+        # A real pick for another seat still refuses the seat change, as a 400.
+        other = c.post("/sessions", json=body).json()["id"]
+        first = store.get(other).state.available[0]
+        c.post(f"/sessions/{other}/picks", json={"team": "Team 1", "player_id": first})
+        r = c.post("/rooms", json={"draft_id": "r0", "slot": 3, "session_id": other})
+        assert r.status_code == 400, r.text
+        assert r.json()["detail"] == "the session already has picks for draft position 6"
+
+        room = attach(c, "k1", slot=3, session_id=sid, session=None)
+        state = store.get(sid).state
+        df = state.projections.df
+
+        def pid(p) -> str:
+            return df.index[df["player"] == _name(p)][0]
+
+        assert state.my_position == 3 and state.is_keeper_pick(state.picks[0])
+        assert [(k["overall"], k["slot"], k["mine"], k["logged"]) for k in room["keepers"]] == [
+            (1, 1, False, True),
+            (16, 9, False, False),
+            (22, 3, True, False),
+        ]
+        assert room["keepers"][0]["yahoo_player_id"] == P[1].yahoo_player_id
+        assert room["synced_through"] == 1 and room["waiting_for"] is None
+
+        # The room's pick 1 is the keeper (held); pick 2 is team 9's keeper, drafted early.
+        stream = [P[1], P[40], *(P[k] for k in range(3, 22))]
+        out = post_picks(c, "k1", [replace(p, overall=k) for k, p in enumerate(stream, 1)])
+        assert out["synced_through"] == 22 and out["next_overall"] == 23
+        assert state.picks[1].player_id == pid(P[40])
+        assert [p.overall for p in state.picks if state.is_keeper_pick(p)] == [1, 22]
+        assert [k["overall"] for k in c.get(f"/sessions/{sid}").json()["keepers"]] == [1, 22]
+        # Pick 22 is my keeper's, logged from the table: published as a keeper pick.
+        published = [e for e in store.get(sid).log if e["event"] == "pick"]
+        assert published[-1]["source"] == "keeper" and published[-1]["pick"]["keeper"]
+        assert published[-1]["pick"]["overall"] == 22
+
+        # The room puts someone else at my keeper's slot: the room wins, my entry goes.
+        out = post_picks(c, "k1", [replace(P[2], overall=22)], slot=3)
+        assert out["replaced"] == 1 and out["synced_through"] == 22
+        assert state.picks[21].player_id == pid(P[2]) and pid(P[30]) in state.available
+        assert [k["overall"] for k in c.get(f"/sessions/{sid}").json()["keepers"]] == [1]
+        conflicts = c.get("/rooms/k1").json()["conflicts"]
+        assert [(x["overall"], x["kind"]) for x in conflicts] == [(2, "keeper"), (22, "keeper")]
+        assert [d["overall"] for x in conflicts for d in x["keepers_dropped"]] == [16, 22]
+
+    events = _events(directory, "k1")
+    held = [e for e in events if e["type"] == "room_pick" and e["overall"] == 1]
+    assert held[0]["src"] == "keeper" and held[0]["via"] == "socket"
+    synced = [(e["overall"], e["kind"]) for e in events if e["type"] == "session_pick"]
+    assert (1, "held") in synced and (22, "keeper") in synced and (22, "conflict") in synced
+    assert [e["src"] for e in events if e["type"] == "session_pick" and e["kind"] == "keeper"] == [
+        "keeper"
+    ]
+    assert sum(e["type"] == "conflict" for e in events) == 2
+
+
 # --------------------------------------------------------------------------- Tier 1 replay
 def test_fixture_timeline():
     picks = load_fixture(FIXTURE)
@@ -943,6 +1020,78 @@ def test_tier1_replay_synthetic(league):
     # The final score is logged once my roster is full (my last pick is 145).
     events = _events(directory, "2515267-replay")
     assert [e["type"] for e in events].count("score") == 1
+
+
+def keeper_board(picks: list) -> tuple[list, list[dict]]:
+    """Room 2515267 with keepers (docs/KEEPERS.md §4): my round-11 pick moves to my round 7
+    and team 6's round-9 pick to its round 2, both kept; my round-13 pick is kept where he is
+    (my last two picks back to back, the second a keeper). Rosters are unchanged."""
+    P = {p.overall: p for p in picks}
+    moved = {73: P[121], 121: P[73], 19: P[102], 102: P[19]}
+    board = [replace(moved.get(k, P[k]), overall=k) for k in sorted(P)]
+    keepers = [
+        {"round": 7, "player": _name(P[121])},
+        {"round": 13, "player": _name(P[145])},
+        {"position": 6, "round": 2, "player": _name(P[102])},
+    ]
+    return board, keepers
+
+
+@pytest.mark.parametrize("frames", ["socket", "history", "none"])
+def test_tier1_replay_with_keepers(league, frames):
+    """The keeper board replayed as the room may send it on the night (spec §0): keeper picks
+    as their slots pass ("socket", held), all on connect ("history", held when reached), or
+    never ("none": the session's own keeper picks fill the slots). The draft runs to the end
+    either way, and my keeper rounds are no turns of mine."""
+    directory, picks = league
+    board, keepers = keeper_board(picks)
+    solve = frames == "socket"  # one form proves fresh plans around keeper slots
+    draft_id = f"keepers-{frames}"
+    with app_for(directory) as c:
+        result = replay(
+            c,
+            board,
+            draft_id=draft_id,
+            slot=1,
+            session={**SESSION, "solve_ahead": solve, "keepers": keepers},
+            solve={"n": 3, "scenarios": 0, "time_limit": 3.0},
+            plan_wait=15.0 if solve else 0.0,
+            keepers=frames,
+        )
+    assert [(k["overall"], k["mine"]) for k in result["attach"]["keepers"]] == [
+        (19, False),
+        (73, True),
+        (145, True),
+    ]
+    card = result["scorecard"]
+    sent = 156 if frames != "none" else 153
+    assert card["picks_seen"] == sent and card["kept_unseen"] == 156 - sent
+    assert card["guardrails"]["G1"] == {"agree": sent, "of": sent, "total": 156}
+    assert guardrail_pass(card)["G1"] is True
+    assert card["standins"] == 0 and card["conflicts"] == 0
+    # A keeper pick has no room-to-session lag: G2 is the 153 drafted picks.
+    assert card["guardrails"]["G2"]["n"] == 153
+    assert card["my_keepers"] == [73, 145]
+    assert [r["overall"] for r in card["rows"]] == [1, 24, 25, 48, 49, 72, 96, 97, 120, 121, 144]
+    assert card["compliance"]["my_picks_seen"] == 11 and card["compliance"]["denominator"] == 11
+    assert "my keeper picks 73, 145 are not turns" in card["markdown"]
+    assert [p["overall"] for p in result["plans"]] == [r["overall"] for r in card["rows"]]
+    # Back to back only where the next pick is draftable: 72-73 and 144-145 are keepers.
+    assert [p["second"] is not None for p in result["plans"]] == [
+        k in (24, 48, 96, 120) for k in (1, 24, 25, 48, 49, 72, 96, 97, 120, 121, 144)
+    ]
+    if solve:
+        assert all(p["fresh"] for p in result["plans"])
+        assert card["diagnostics"]["D1"]["n"] == 11
+    live = result["status"]["live"]
+    assert live["picks_applied"] == 156 and live["complete"]
+    assert live["synced_through"] == 156 and live["waiting_for"] is None
+    events = _events(directory, draft_id)
+    assert [e["type"] for e in events].count("score") == 1
+    kept = [e for e in events if e["type"] == "room_pick" and e["src"] == "keeper"]
+    assert [(e["overall"], e["via"]) for e in kept] == (
+        [] if frames == "none" else [(19, frames), (73, frames), (145, frames)]
+    )
 
 
 @pytest.mark.skipif(

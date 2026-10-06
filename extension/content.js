@@ -316,7 +316,7 @@
         S.mode = r.room.mode;
         // act_at_s (#10): when an armed turn clicks, in seconds left; null, at once.
         drafter.actAt = Number.isInteger(r.room.act_at_s) ? r.room.act_at_s : null;
-        tracker.configure({ numTeams: r.room.num_teams, rounds: r.room.rounds });
+        tracker.configure({ numTeams: r.room.num_teams, rounds: r.room.rounds, keepers: r.room.keepers });
         tracker.synced(r.room);
         reportControl();
         // At once, not 15 s on: the web shows CONNECTING until one comes, and the API takes no

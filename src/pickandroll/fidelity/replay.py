@@ -9,6 +9,11 @@ or back to back with ``speed=None``), marks pick 1 and each of my turns with a
 ``turn_start`` and asks for the plan as the extension would, then reads back the status and
 the scorecard.
 
+A session with keepers (``docs/KEEPERS.md``) names its keeper slots in the attach response;
+my keeper slots are not turns. ``keepers`` says how the room sends the keepers' picks, since
+that is only known on the night: ``"socket"`` as the slots pass, like any pick; ``"history"``
+all at once on connect, as Yahoo's history frame would; ``"none"``, never.
+
 ``client`` is anything with httpx's ``get``/``post``: a FastAPI ``TestClient``, or an
 ``httpx.Client`` pointed at a running API.
 """
@@ -22,11 +27,12 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from itertools import pairwise
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from ..draft.settings import pick_owner, snake_picks
 
 DEFAULT_GAP_MS = 5000.0
+KeeperFrames = Literal["socket", "history", "none"]
 
 
 @dataclass(frozen=True)
@@ -92,11 +98,11 @@ def replay(
     speed: float | None = None,
     plan_wait: float = 10.0,
     lead: float = 0.0,
+    keepers: KeeperFrames = "socket",
 ) -> dict[str, Any]:
     """Replay ``picks`` into the room ``draft_id``; returns the attach response, the plan
     served at each of my turns, the status and the scorecard."""
     rounds = len(picks) // num_teams
-    mine = set(snake_picks(num_teams, slot, rounds))
     body: dict[str, Any] = {
         "draft_id": draft_id,
         "slot": slot,
@@ -111,6 +117,8 @@ def replay(
     if players_file is not None:
         body["players_file"] = players_file
     attach = _ok(client.post("/rooms", json=body))
+    kept = {int(k["overall"]) for k in attach.get("keepers") or []}
+    mine = set(snake_picks(num_teams, slot, rounds)) - kept
     # The client is in the draft room from here (G6 counts from this control).
     state = "armed" if mode == "autopilot" else "mirror"
     _ok(
@@ -119,6 +127,29 @@ def replay(
             json={"events": [{"type": "control", "state": state, "slot": slot}]},
         )
     )
+
+    def send(p: FixturePick, src: str) -> None:
+        _ok(
+            client.post(
+                f"/rooms/{draft_id}/picks",
+                json={
+                    "picks": [
+                        {
+                            "overall": p.overall,
+                            "yahoo_player_id": p.yahoo_player_id,
+                            "slot": pick_owner(num_teams, p.overall)[1],
+                            "t_room": round(time.time() * 1000.0),
+                            "src": src,
+                        }
+                    ]
+                },
+            )
+        )
+
+    if keepers == "history":
+        for p in picks:
+            if p.overall in kept:
+                send(p, "history")
     if lead > 0:
         time.sleep(lead)
     offsets = timeline(picks)
@@ -153,30 +184,26 @@ def replay(
                 }
             )
 
-    turn(1)
+    def on_clock(k: int) -> int:
+        """The pick the room puts on the clock after pick k - 1: k, or past keeper slots whose
+        picks it never sends as they pass."""
+        if keepers != "socket":
+            while k in kept:
+                k += 1
+        return k
+
+    turn(on_clock(1))
     for i, p in enumerate(picks):
+        if p.overall in kept and keepers != "socket":
+            continue
         if speed:
             delay = started + offsets[i] / 1000.0 / speed - time.monotonic()
             if delay > 0:
                 time.sleep(delay)
-        _ok(
-            client.post(
-                f"/rooms/{draft_id}/picks",
-                json={
-                    "picks": [
-                        {
-                            "overall": p.overall,
-                            "yahoo_player_id": p.yahoo_player_id,
-                            "slot": pick_owner(num_teams, p.overall)[1],
-                            "t_room": round(time.time() * 1000.0),
-                            "src": "socket",
-                        }
-                    ]
-                },
-            )
-        )
-        if p.overall + 1 in mine:
-            turn(p.overall + 1)
+        send(p, "socket")
+        k = on_clock(p.overall + 1)
+        if k in mine:
+            turn(k)
     status = _ok(client.get(f"/rooms/{draft_id}/status"))
     card = _ok(client.get(f"/rooms/{draft_id}/fidelity"))
     return {"attach": attach, "plans": plans, "status": status, "scorecard": card}

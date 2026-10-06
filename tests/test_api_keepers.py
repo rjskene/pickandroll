@@ -492,6 +492,36 @@ def test_yahoo_feed_stops_at_someone_else_in_a_keeper_slot(store):
         assert c.get(f"/sessions/{sid}").json()["next_overall"] == 4
 
 
+def test_yahoo_feed_attach_relabels_my_keeper_and_refuses_another_seat(store):
+    """The league's name for my team reaches my keeper pick already logged (my roster finds
+    him by it); a seat change the session cannot make is the request's 400, not Yahoo's 502."""
+    if not (DATA / SAMPLE).exists():
+        pytest.skip("no Basketball Monster sample export in data/")
+    from .fakes import FakeQuery
+
+    with yahoo_client(FakeQuery(), store) as c:
+        # Yahoo seats me 2 as "Me"; the session keeps my round-1 keeper at pick 2.
+        keepers = [{"round": 1, "player": "James Harden"}]
+        sid = create(c, num_teams=12, my_position=2, keepers=keepers)["id"]
+        state = store.get(sid).state
+        df = state.projections.df
+        kept = df.index[df["player"] == "James Harden"][0]
+        first = df.index[df["player"] == "Nikola Jokic"][0]
+        pick(c, sid, "Team 1", first)
+        assert [(p.overall, p.team) for p in state.picks] == [(1, "Team 1"), (2, "me")]
+        r = c.post(f"/sessions/{sid}/yahoo", json={"league_id": "12345", "start": False})
+        assert r.status_code == 201, r.text
+        assert state.my_team == "Me" and [p.team for p in state.picks] == ["Team 1", "Me"]
+        assert state.my_roster == [kept]
+
+        other = create(c, num_teams=12, my_position=5)["id"]
+        pick(c, other, "Team 1", first)
+        r = c.post(f"/sessions/{other}/yahoo", json={"league_id": "12345", "start": False})
+        assert r.status_code == 400, r.text
+        assert r.json()["detail"] == ("yahoo: the session already has picks for draft position 5")
+        assert store.get(other).state.my_position == 5 and store.get(other).state.my_team == "me"
+
+
 def test_projection_players_for_the_setup_typeahead(client):
     (a, name), _ = best(client, 2)
     players = client.get(f"/projections/players?file={SAMPLE}").json()
