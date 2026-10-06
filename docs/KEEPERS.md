@@ -174,9 +174,30 @@ class SessionCreate(BaseModel):
   the room status; `mine`, `isMine`, `myTurnNow` and the on-deck turn leave my keeper slots out, so a `D|`
   frame for my slot at a keeper overall arms nothing; `contiguous()` steps over keeper slots; a keeper
   slot's `turn_start` carries `keeper: true`.
-- Open (follow-up PR): a keeper the table does not know about. The walk stalls at that slot the same way;
-  the fix is a stand-in once the room's clock is past it (a ledger entry with no Yahoo id, reconcile on
-  `turn_start`, a margin against the picks/events POST race, scorecard rules for the yid-less entry).
+- Unknown keeper (next PR, `feat(keepers): gap stand-in`; design agreed 2026-10-06). A keeper the table
+  does not know about leaves a gap in the room's ledger at his slot k: no room pick, k not a logged
+  keeper slot, and the walk stalls there, parking every later pick and leaving the plan on a stale board.
+  Rules: the room keeps the API time it first saw each overall (a `turn_start` or a room pick); a gap is
+  evidenced by any later overall shown, a history batch on reconnect that lacks k included. After
+  `GAP_MARGIN_S` (4 s: a false fill is cheap, a late fill costs a stale board at my turn) the room
+  writes a ledger entry `RoomPick(k, yid=None, slot=owner, src="gap", evidence=j)` and the walk fills
+  it with a stand-in (never a pending keeper), or holds whatever the session already has there. The
+  check runs on picks ingest, on the events POST and from a `loop.call_later` scheduled at first
+  evidence (no side effect on GET; a GET fallback is acceptable if the loop handle is awkward, said in
+  the PR). A real pick for k arriving later replaces the gap entry as a `repair` (not a conflict,
+  outside the lag stats). A gap at one of my own slots gets the same stand-in on my roster. The user's
+  way out: `PATCH /sessions/{id}/keepers` may add a keeper at a reached slot whose pick is a gap
+  stand-in (the one exception to "slots not yet reached"); the stand-in is replaced by the keeper
+  (`session_pick` kind `keeper_fix`, published with `replaced`) and he leaves the board. Web: the
+  stand-in's rows carry a "?" marker ("unknown keeper at pick k, Team N round r: add him to the table")
+  that opens the Log card editor with a row pre-filled with that position and round. Fidelity: `gaps`
+  counted and listed like `kept_unseen`, part of completeness; an unfixed gap counts against G1, a
+  fixed one counts as a keeper slot (out of my turns if mine); gaps are out of G2 and of my-turn rows.
+  Extension: `contiguous()` also counts overalls at or below the API's `synced_through`; no protocol
+  change. Tests in the PR: skip k then k+1..k+3 with turn_starts (nothing before the margin, then the
+  stand-in and the rest), a racing events POST, a late real pick as repair, a held session pick,
+  PATCH at a gap slot, rebuild from the log, the scorecard counts and G1, a replay with a gap at a
+  slot of mine fixed mid-draft ending 156/156 green, and the extension's `contiguous()` with `sent`.
 
 ## 3. Web (`web/src`)
 
