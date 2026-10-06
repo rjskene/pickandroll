@@ -210,6 +210,24 @@ class SessionCreate(BaseModel):
 4. Scorecard on the tracker issue: picks planned vs made, any 400 from the API, solve times (keeper
    mode changes nothing in the MILP size, so the 30 s design point must still hold).
 
+Results (2026-10-06, main 0f69468 for slot 6, 28b940b for slots 1 and 12; all three with the practice
+file, `survival: simulate`, the top candidate drafted every turn):
+
+| slot | keeper picks applied | planned = made | max solve | capped | E[cats] | notes |
+|---|---|---|---|---|---|---|
+| 6 | 78, 150 | 11/11 | 23.4 s | 0 | 4.97 → 5.18 | announcer silent at 139, Plan card stuck after 156 |
+| 1 | 73, 145 | 11/11 | 30.6 s | 4 of 11 (rounds 2-4) | 5.31 → 5.60 | keeper right after my pick 72; 96/97 back to back handled |
+| 12 | 84, 156 | 11/11 | 25.3 s | 2 of 11 | 4.95 → 5.05 | draft ends on my keeper; completion fired from the fill |
+
+No keeper ever appeared in the candidates, the plan or the draftable board; keeper picks were
+announced mid-draft and shown as kept on the Team, Log, Plan and Board cards. Defects, all UI or
+stream, none in the keeper model: the announcer gap was the event stream's 120 s cap dropping a burst
+with no replay (fixed in the endgame PR with drain and replay); the Team card history named the
+plan's player, not the one drafted, and its "now" score could lag a solve; the Plan and Pick cards wait
+for a solve past the last pick after completion; the K badge sits against the name. Capped solves came
+from the instant sim leaving no pre-solve window, not from keeper mode. A "Team N" row in the practice
+file whose N is my seat is a collision (slot 1 and slot 12 runs): the editor folds it into "Me".
+
 ## 6. Order of work
 
 1. Invariants 1-10 in `DraftState`, `autopick.team_roster`, `league_sim.draft_once`'s guard and
