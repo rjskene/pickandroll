@@ -177,8 +177,10 @@ class SessionCreate(BaseModel):
 - Unknown keeper (next PR, `feat(keepers): gap stand-in`; design agreed 2026-10-06). A keeper the table
   does not know about leaves a gap in the room's ledger at his slot k: no room pick, k not a logged
   keeper slot, and the walk stalls there, parking every later pick and leaving the plan on a stale board.
-  Rules: the room keeps the API time it first saw each overall (a `turn_start` or a room pick); a gap is
-  evidenced by any later overall shown, a history batch on reconnect that lacks k included. After
+  Rules: the room keeps the API time it first saw each overall put on the clock (a `turn_start`) or
+  picked live (a room pick with src `socket`); a gap is evidenced by any such later overall. A history
+  frame is not evidence: Yahoo may send every keeper's pick at connect, and a keeper pick at 31 must not
+  evidence gaps at 1-30. Gaps start at `synced_through + 1` and are never a keeper-table slot. After
   `GAP_MARGIN_S` (4 s: a false fill is cheap, a late fill costs a stale board at my turn) the room
   writes a ledger entry `RoomPick(k, yid=None, slot=owner, src="gap", evidence=j)` and the walk fills
   it with a stand-in (never a pending keeper), or holds whatever the session already has there. The
