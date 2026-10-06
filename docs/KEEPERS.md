@@ -174,7 +174,7 @@ class SessionCreate(BaseModel):
   the room status; `mine`, `isMine`, `myTurnNow` and the on-deck turn leave my keeper slots out, so a `D|`
   frame for my slot at a keeper overall arms nothing; `contiguous()` steps over keeper slots; a keeper
   slot's `turn_start` carries `keeper: true`.
-- Unknown keeper (next PR, `feat(keepers): gap stand-in`; design agreed 2026-10-06). A keeper the table
+- Unknown keeper (`feat(keepers): gap stand-in`, #34, merged 2026-10-06 as bd3be28). A keeper the table
   does not know about leaves a gap in the room's ledger at his slot k: no room pick, k not a logged
   keeper slot, and the walk stalls there, parking every later pick and leaving the plan on a stale board.
   Rules: the room keeps the API time it first saw each overall put on the clock (a `turn_start`) or
@@ -248,12 +248,12 @@ class SessionCreate(BaseModel):
 3. Repeat from slots 1 and 12 (back-to-back picks around keeper slots).
 4. Scorecard on the tracker issue: picks planned vs made, any 400 from the API, solve times (keeper
    mode changes nothing in the MILP size, so the 30 s design point must still hold).
-5. Consistency runs (from run 6 on): the Sim bar set to "by ADP" with "normal" randomness before the
-   first Sim, so the other teams draft as the availability model assumes (market ADP with the session
+5. Consistency runs (from run 6 on): the Sim bar by ADP (the default since #35) with "normal"
+   randomness, so the other teams draft as the availability model assumes (market ADP with the session
    spread) and the E[cats] trajectory is a consistency check. No seed: the web has no seed control, the
    API re-seeds per Sim call, and my own picks differ between runs anyway, so runs are compared on
-   their trajectories, not their boards. The default `z` strategy (runs 1-5) ignores ADP, so its
-   trajectory says nothing about the league's spread.
+   their trajectories, not their boards. The `z` strategy (the default for runs 1-5) ignores ADP, so
+   its trajectory says nothing about the league's spread.
 
 Results (2026-10-06, main 0f69468 for slot 6, 28b940b for slots 1 and 12, then bb20d2a with #32; all with the practice
 file, `survival: simulate`, the top candidate drafted every turn):
@@ -300,9 +300,10 @@ file whose N is my seat is a collision (slot 1 and slot 12 runs): the editor fol
    `spread_growth` 0.15 shared with the simulators, `survival: league` with the table answering from
    ADP 90. The overall-space archive table is kept two folders down so only the adjusted table is
    listed (`/files?kind=league` reads data/ and one folder down).
-6. Follow-up (next): a keeper the table does not know about (§2, "Open"), with three small items:
-   no default league table when several are listed, `_in_data_dir` on `survival_file` for the file and
-   league modes, and the web's mirrored constants naming their Python source.
+6. Follow-up (#34, merged 2026-10-06 as bd3be28): a keeper the table does not know about (§2), with
+   three small items: no default league table when several are listed, `_in_data_dir` on `survival_file`
+   for the file and league modes, and the web's mirrored constants naming their Python source. #35
+   (merged 2026-10-06 as 74f20e7) makes "by ADP" the Sim bar's default strategy (§5 item 5).
 
 Issue numbers follow once the user approves filing them (the repo is public; league data stays out of
 the issues, as everywhere).
