@@ -118,7 +118,13 @@ Phase 2 (after the invariants above are green). Keepers change what the market c
   (header `adp,1..N,undrafted`, integer ADP rows 1..160, columns 1..157; anything else is a 400 naming
   the problem), interpolates between integer rows, floors each row at its `undrafted`, falls back to
   the normal model for `adp'` outside the rows, and reads conditionally as S(m)/S(m_now) clipped to
-  [0, 1] with the normal model's floor. The table is league data (gitignored); the loader is product
+  [0, 1] with the normal model's floor. **Hybrid (decided 2026-10-06):** the table answers only for
+  `adp' >= 90`; below that the normal model (1.5 + 0.15·ADP) answers, through the same fill-in. The
+  leave-one-season-out MAE of S by bucket is 0.015 normal vs 0.047 kernel at ADP 61-84 and 0.074 vs
+  0.078 at 85-108 (the kernel's smoothing blurs sharp early survival), but 0.098 vs 0.034 at 109-132
+  and 0.077 vs 0.049 at 133-156, where the normal has no undrafted mass (P(undrafted | adp') is 0.22
+  at 90, 0.39 at 100, 0.54 at 110). The real draft runs `survival: league` with the archive table;
+  mock rooms (no keepers) keep `simulate`. The table is league data (gitignored); the loader is product
   code and gets a small fixture in the same shape.
 
 ## 2. API (`api/app.py`)
