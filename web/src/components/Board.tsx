@@ -16,9 +16,10 @@ const NOISE = [
   { value: 1, label: "normal randomness" },
   { value: 2, label: "wild" },
 ];
+/** The default (draft.tsx) first: the other teams draft as the availability model assumes. */
 const STRATEGIES: { value: SimStrategy; label: string; title: string }[] = [
+  { value: "adp", label: "by ADP", title: "Each team takes the earliest noisy ADP slot: market ADP (keepers out of the market) with the session's spread, as the survival formula assumes" },
   { value: "z", label: "by z-score", title: "Each team takes one of the best players by total z; randomness favours the ones closest to the top" },
-  { value: "adp", label: "by ADP", title: "Each team takes the earliest noisy ADP slot, the spread the survival formula assumes" },
   { value: "lp", label: "by LP", title: "Each team solves its own roster problem (with a punt of its own) and takes the best new player from it" },
 ];
 
