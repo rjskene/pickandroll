@@ -246,6 +246,10 @@ class SessionCreate(BaseModel):
 3. Repeat from slots 1 and 12 (back-to-back picks around keeper slots).
 4. Scorecard on the tracker issue: picks planned vs made, any 400 from the API, solve times (keeper
    mode changes nothing in the MILP size, so the 30 s design point must still hold).
+5. Like-for-like runs (from run 6 on): the Sim strategy set to `adp` with noise 1.0 and a fixed seed
+   (2026) before the first Sim, so the other teams draft as the availability model assumes (market
+   ADP with the session spread) and the E[cats] trajectory is a consistency check. The default `z`
+   strategy (runs 1-5) ignores ADP, so its trajectory says nothing about the league's spread.
 
 Results (2026-10-06, main 0f69468 for slot 6, 28b940b for slots 1 and 12, then bb20d2a with #32; all with the practice
 file, `survival: simulate`, the top candidate drafted every turn):
@@ -256,6 +260,14 @@ file, `survival: simulate`, the top candidate drafted every turn):
 | 1 | 73, 145 | 11/11 | 30.6 s | 4 of 11 (rounds 2-4) | 5.31 → 5.60 | keeper right after my pick 72; 96/97 back to back handled |
 | 12 | 84, 156 | 11/11 | 25.3 s | 2 of 11 | 4.95 → 5.05 | draft ends on my keeper; completion fired from the fill |
 | 12 (confirmation, b1c8fa9 + #32) | 84, 156 | 11/11 | 25.1 s | 0 | 5.10 → 5.24 | done state on every card between 133 and 156 and at completion; announcer replayed 118-156 once each; history rows name the drafted players |
+| 12 (phase 3, d7fa029, `survival: league`) | 84, 156 | 10/11 (one deliberate tie pick at 61) | 21.3 s | 1 | 5.16 → 4.79 | mechanics all pass (market-space board column, league source text, history hover); E[cats] fell during the other teams' sims for the first time: the local sim's z and roster drafters ignore ADP, so a model calibrated to the league's ADP noise (1.5 + 0.15) is optimistic against them; not evidence about the league, see the note below |
+
+Note on run 5: the first four runs rose during the draft because the old spread (3.0 + 0.15) was
+pessimistic against the local sim, so targets survived more than planned; run 5 fell (−0.37, all of it
+during the other teams' sims, none at my picks) because the fitted spread expects the league's ADP
+discipline while the local drafters (z, adp and roster-model mix) do not follow ADP. The archive is the
+evidence about the league; the practice sim is not. Like-for-like practice comparisons need the other
+teams drafted by the `adp` strategy with the session spread and a fixed seed (§5 item 5).
 
 No keeper ever appeared in the candidates, the plan or the draftable board; keeper picks were
 announced mid-draft and shown as kept on the Team, Log, Plan and Board cards. Defects, all UI or
