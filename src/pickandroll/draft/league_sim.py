@@ -68,7 +68,7 @@ def draft_once(
 ) -> tuple[list[tuple[str, int]], list[dict]]:
     """Run one draft on a fresh state in which every team is a simulated drafter. Returns the
     ``(player, overall)`` record and each team's category totals."""
-    if state.picks:
+    if any(not state.is_keeper_pick(p) for p in state.picks):
         raise ValueError("draft_once needs a state with no picks")
     if not strategies:
         raise ValueError("at least one drafter strategy is needed")

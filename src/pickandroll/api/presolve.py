@@ -101,7 +101,10 @@ def branch_boards(
         return team if overall in my_picks else f"Team {state.owner_of(overall)[1]}"
 
     paths: list[tuple[tuple[int, str, str], ...]] = []
-    between = list(range(k, my_next))
+    # A keeper's slot is decided: the board passes it without a branch (his pick is logged
+    # when the draft reaches it), so a keeper between makes my turn one pick nearer.
+    kept = state.keeper_slots
+    between = [o for o in range(k, my_next) if o not in kept]
     if not between:
         # On the clock: when my next pick follows straight on, branch on my own choice.
         if my_next + 1 in my_picks:
@@ -109,11 +112,13 @@ def branch_boards(
     elif any(o in my_picks for o in between):
         return []
     elif len(between) == 1:
-        paths = [((k, owner(k), p),) for p in list(likely)[:ONE_AWAY]]
+        (a,) = between
+        paths = [((a, owner(a), p),) for p in list(likely)[:ONE_AWAY]]
     elif len(between) == 2:
+        a, b = between
         paths = [
-            ((k, owner(k), a), (k + 1, owner(k + 1), b))
-            for a, b in combinations(list(likely)[:TWO_AWAY], 2)
+            ((a, owner(a), x), (b, owner(b), y))
+            for x, y in combinations(list(likely)[:TWO_AWAY], 2)
         ]
     out = []
     for path in paths:

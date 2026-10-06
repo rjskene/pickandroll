@@ -24,11 +24,13 @@ from pickandroll.api.presolve import (
     likely_next,
 )
 from pickandroll.api.solver import SolveParams, Superseded, compute_recommendation, displaces
+from pickandroll.draft import Keeper
 from pickandroll.fidelity.replay import settled_replay
 from pickandroll.optim.horizon import CANDIDATE_COLUMNS, first_order_table
 from pickandroll.optim.pool import BACKGROUND_NICE, LIVE_CORES, background_pool, background_size
 from pickandroll.sources.yahoo import load_players_file
 
+from .test_draft_state import make_state
 from .test_yahoo_room import SESSION, build_league
 
 LIVE = {**SESSION, "solve_ahead": True}
@@ -498,3 +500,34 @@ def test_the_exact_prices_cover_the_installed_plans_first_pick(room):
     priced = {c["player"] for c in payload["candidates"]}
     assert outsider in priced and set(listed) <= priced
     assert payload["top_objective"] is not None and payload["capped"] in (True, False)
+
+
+# --------------------------------------------------------------------------- keepers
+def test_branch_boards_pass_a_keeper_slot_without_branching_on_it(pool):
+    """Four teams, my seat 3, picks 4 to move: pick 5 is team 4's keeper, so my turn (6) is
+    one real pick away, not two."""
+    best = make_state(pool).z["total"].nlargest(4).index.tolist()
+    kept = best[0]
+    state = make_state(pool, position=3, num_teams=4, keepers=[Keeper(4, 2, kept)])
+    state.sync([(1, "Team 1", best[1]), (2, "Team 2", best[2]), (3, "me", best[3])])
+    assert (state.next_overall, state.my_next_pick) == (4, 6)
+    likely = likely_next(state, limit=ONE_AWAY)
+    assert kept not in likely
+    branches = branch_boards(state, likely)
+    assert len(branches) == len(likely) == ONE_AWAY
+    assert all(len(b.picks) == 1 and b.picks[0][0] == 4 for b in branches)
+    assert all(b.key[0] == 6 and kept in b.key[1] for b in branches)
+
+
+def test_my_keeper_right_after_my_pick_is_not_back_to_back(pool):
+    """Seat 4 of 4 owns picks 4 and 5; with my round-2 keeper at 5 there is no second pick of
+    mine to branch on."""
+    best = make_state(pool).z["total"].nlargest(5).index.tolist()
+    mine = best[3:]
+    plain = make_state(pool, position=4, num_teams=4)
+    plain.sync([(1, "Team 1", best[0]), (2, "Team 2", best[1]), (3, "Team 3", best[2])])
+    assert plain.on_the_clock and branch_boards(plain, [], mine)
+    kept = make_state(pool, position=4, num_teams=4, keepers=[Keeper(None, 2, best[4])])
+    kept.sync([(1, "Team 1", best[0]), (2, "Team 2", best[1]), (3, "Team 3", best[2])])
+    assert kept.on_the_clock and kept.my_picks[:2] == [4, 12]
+    assert branch_boards(kept, [], mine[:1]) == []

@@ -1,3 +1,4 @@
+from pickandroll.draft import Keeper
 from pickandroll.draft.league_sim import draft_once, simulate_league
 
 from .test_draft_state import make_state
@@ -13,6 +14,20 @@ def test_draft_once_fills_every_team(pool):
     assert all(t["strategy"] in {"z", "adp"} for t in totals)
     again = make_state(pool, position=1, num_teams=4)
     assert draft_once(again, seed=3, strategies=("z", "adp"))[0] == picks
+
+
+def test_draft_once_with_keepers_leaves_them_out_of_the_record(pool):
+    ids = make_state(pool).z["total"].nlargest(3).index.tolist()
+    # My round-1 keeper is logged at construction (pick 1): draft_once still runs.
+    keepers = [Keeper(None, 1, ids[0]), Keeper(2, 3, ids[1]), Keeper(4, 5, ids[2])]
+    state = make_state(pool, position=1, num_teams=4, keepers=keepers)
+    assert [p.overall for p in state.picks] == [1]
+    picks, totals = draft_once(state, seed=3, strategies=("z", "adp", "lp"))
+    kept = {state.keeper_overall(k) for k in keepers}
+    assert kept == {1, 10, 20}
+    assert [k for _, k in picks] == [k for k in range(1, 53) if k not in kept]
+    assert not {p for p, _ in picks} & set(ids)
+    assert (state.team_totals()["picks"] == 13).all() and len(totals) == 4
 
 
 def test_simulate_league_fits_table_and_curve(pool):

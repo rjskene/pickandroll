@@ -56,7 +56,10 @@ def team_label(state: DraftState, position: int) -> str:
 
 
 def team_roster(state: DraftState, team: str) -> list[str]:
-    return [p.player_id for p in state.picks if p.team == team]
+    """A team's players: its picks and its keepers still to come."""
+    drafted = [p.player_id for p in state.picks if p.team == team]
+    kept = [k.player_id for k in state.pending_keepers.values() if state.keeper_team(k) == team]
+    return drafted + kept
 
 
 def latent_slots(state: DraftState, rng: np.random.Generator, noise: float = 1.0) -> pd.Series:
