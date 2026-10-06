@@ -287,7 +287,11 @@ export default function Board() {
                   </td>
                   <td>{p.positions || <span className="dim">?</span>}</td>
                   <td className="num">{Math.round(p.games)}</td>
-                  {wide && <td className="num">{p.adp == null ? "" : p.adp.toFixed(1)}</td>}
+                  {wide && (
+                    <td className="num" title={p.keepers_ahead > 0 ? `Yahoo ADP ${p.adp?.toFixed(1)}; ${p.keepers_ahead > 1 ? `${p.keepers_ahead} keepers ranked ahead of him are` : "a keeper ranked ahead of him is"} out of the market, so it reaches him at ${p.adp_eff?.toFixed(1)}` : undefined}>
+                      {p.adp == null ? "" : p.keepers_ahead > 0 && p.adp_eff != null ? `${p.adp.toFixed(0)} → ${p.adp_eff.toFixed(0)}` : p.adp.toFixed(1)}
+                    </td>
+                  )}
                   <td className="num strong">{p.total.toFixed(1)}</td>
                   {CATS.map((c) => (
                     <td key={c} className="num">

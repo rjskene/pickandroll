@@ -1,4 +1,23 @@
-import type { Scale, WinLabel } from "./api";
+import type { AvailabilitySource, Scale, SessionSummary, WinLabel } from "./api";
+
+/** Where the survival odds come from, in a few words. */
+export function oddsSource(source: AvailabilitySource): string {
+  return source === "survival" ? "simulated drafts" : source === "league" ? "the league's drafts" : "the ADP formula";
+}
+
+/** The session's survival odds in a sentence: where they come from and the spread they use. */
+export function survivalDetail(s: SessionSummary): string {
+  const source =
+    s.availability_source === "survival"
+      ? `simulated survival table (${s.survival.sims} drafts${s.survival.source ? `, ${s.survival.source}` : ""})`
+      : s.availability_source === "league"
+        ? `this league's drafts by ADP (${s.survival.source}), the normal model under ADP ${s.survival.from_adp} and past ADP ${s.survival.max_adp}`
+        : `ADP formula (${s.adp_source})`;
+  // A simulated table is read by player and overall pick; the ADP model and the league table count
+  // only the market.
+  const market = s.availability_source !== "survival" && s.adp_keepers_ahead ? `, read in market space (${s.adp_keepers_ahead} keepers out of the market)` : "";
+  return `${source}${market}; spread ${s.spread_base} + ${s.spread_growth} × ADP picks.`;
+}
 
 export function fmtMs(ms: number | undefined): string {
   if (ms === undefined) return "";

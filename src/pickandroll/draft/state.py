@@ -22,9 +22,11 @@ import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 
+import numpy as np
 import pandas as pd
 
-from ..availability.adp import conditional_availability, pseudo_adp
+from ..availability.adp import SPREAD_BASE, SPREAD_GROWTH, conditional_availability, pseudo_adp
+from ..availability.league import LeagueSurvivalTable
 from ..availability.survival import SurvivalTable
 from ..optim.horizon import (
     HorizonProblem,
@@ -102,6 +104,11 @@ class DraftState:
     curve: CategoryCurve | None = None
     #: Simulated survival curves; ``None`` keeps the ADP model for availability.
     survival: SurvivalTable | None = None
+    #: The league's own survival by ADP, read in market space (``availability``).
+    league_survival: LeagueSurvivalTable | None = None
+    #: The ADP model's spread, ``spread_base + spread_growth * adp`` picks.
+    spread_base: float = SPREAD_BASE
+    spread_growth: float = SPREAD_GROWTH
     #: Candidates per pick the plan considers (``HorizonProblem.max_candidates``); ``None``
     #: means every plausible player for the sum objective and 80 under the curve.
     plan_candidates: int | None = None
@@ -395,23 +402,66 @@ class DraftState:
             return fallback
         return self.adp.fillna(fallback)
 
+    def keepers_ahead(self, adp: pd.Series | None = None) -> pd.Series:
+        """For each player, the keepers whose ADP is below his: they are not in the market, so
+        the market reaches him that many picks sooner. Every keeper in the table counts, his
+        slot reached or not, as every keeper slot counts in :meth:`market_pick`."""
+        full = self.effective_adp()
+        return self._keepers_ahead(full, full if adp is None else adp)
+
+    def _keepers_ahead(self, full: pd.Series, adp: pd.Series) -> pd.Series:
+        kept = np.sort(full.reindex([k.player_id for k in self.keepers]).dropna().to_numpy(float))
+        ahead = np.searchsorted(kept, adp.to_numpy(float), side="left")
+        return pd.Series(ahead, index=adp.index, dtype=int)
+
+    def market_adp(self, adp: pd.Series | None = None) -> pd.Series:
+        """ADP in keeper-adjusted space: the market's ADP minus the keepers ranked ahead. Equal to
+        :meth:`effective_adp` without keepers."""
+        full = self.effective_adp()
+        adp = full if adp is None else adp
+        return adp - self._keepers_ahead(full, adp)
+
+    def market_pick(self, overall: int) -> int:
+        """Overall pick ``overall`` counted among the market's picks: minus the keeper slots
+        before it."""
+        return overall - sum(1 for slot in self.keeper_slots if slot < overall)
+
+    def spread(self, adp: pd.Series) -> pd.Series:
+        """The ADP model's spread of each player's draft slot, in picks."""
+        return self.spread_base + self.spread_growth * adp.astype(float)
+
     def availability(self, players: Sequence[str] | None = None) -> pd.DataFrame:
-        """P(available at each of my remaining picks | still on the board now), from the
-        survival table when one is loaded (the ADP model fills in any player it lacks)."""
+        """P(available at each of my remaining picks | still on the board now).
+
+        The ADP model and the league table are read in market space (keeper-adjusted ADP at
+        market picks), so keepers neither count as picks nor stand ahead of anyone. A simulated
+        survival table already drafts the keepers at their slots and is read at overall picks.
+        Either table overrides the ADP model where it knows the player."""
         adp = self.effective_adp()
         if players is not None:
             adp = adp.reindex(players)
-        frame = conditional_availability(adp, now=self.next_overall, picks=self.my_remaining_picks)
+        market = self.market_adp(adp)
+        picks = self.my_remaining_picks
+        now = self.market_pick(self.next_overall)
+        at = [self.market_pick(k) for k in picks]
+        frame = conditional_availability(market, now=now, picks=at, spread=self.spread(market))
+        frame.columns = picks
+        if self.league_survival is not None:
+            league = self.league_survival.conditional(market, now=now, picks=at)
+            league.columns = picks
+            frame.update(league)
         if self.survival is not None:
             simulated = self.survival.conditional(
-                list(adp.index), now=self.next_overall, picks=self.my_remaining_picks
+                list(adp.index), now=self.next_overall, picks=picks
             )
             frame.update(simulated)
         return frame
 
     @property
     def availability_source(self) -> str:
-        return "survival" if self.survival is not None else "adp"
+        if self.survival is not None:
+            return "survival"
+        return "league" if self.league_survival is not None else "adp"
 
     # ------------------------------------------------------------------ mutation
     def apply_pick(self, team: str, player_id: str, overall: int | None = None) -> Pick:

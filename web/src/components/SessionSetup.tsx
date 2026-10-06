@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { api, type Objective, type SessionSummary } from "../api";
+import { api, LEAGUE_FROM_ADP, SPREAD, type Objective, type SessionSummary, type SurvivalMode } from "../api";
 import Info from "./Info";
 import { erroredRow, isMine, KeeperEditor, keeperDraft, keepersIn, nameOptions, type KeeperDraft } from "./Keepers";
 import { SeenRooms, useSeenRooms } from "./YahooSync";
@@ -15,6 +15,7 @@ export default function SessionSetup({ onCreated, onSelect }: Props) {
   const projections = useQuery({ queryKey: ["projections"], queryFn: api.projections });
   const sessions = useQuery({ queryKey: ["sessions"], queryFn: api.sessions });
   const survivalFiles = useQuery({ queryKey: ["files", "survival"], queryFn: () => api.files("survival") });
+  const leagueFiles = useQuery({ queryKey: ["files", "league"], queryFn: () => api.files("league") });
   const curveFiles = useQuery({ queryKey: ["files", "curve"], queryFn: () => api.files("curve") });
   const adpFiles = useQuery({ queryKey: ["files", "adp"], queryFn: () => api.files("adp") });
   const keeperFiles = useQuery({ queryKey: ["files", "keepers"], queryFn: () => api.files("keepers") });
@@ -28,9 +29,10 @@ export default function SessionSetup({ onCreated, onSelect }: Props) {
   const [objective, setObjective] = useState<Objective>("win");
   const [sigmaScale, setSigmaScale] = useState(1);
   const [curveFile, setCurveFile] = useState("");
-  const [survival, setSurvival] = useState<"none" | "simulate" | "file">("none");
+  const [survival, setSurvival] = useState<SurvivalMode>("none");
   const [survivalSims, setSurvivalSims] = useState(300);
   const [survivalFile, setSurvivalFile] = useState("");
+  const [leagueFile, setLeagueFile] = useState("");
   const [solveAhead, setSolveAhead] = useState(true);
   const [timeLimit, setTimeLimit] = useState(20);
   const [roomId, setRoomId] = useState("");
@@ -78,7 +80,12 @@ export default function SessionSetup({ onCreated, onSelect }: Props) {
         curve_file: curveFile || null,
         survival,
         survival_sims: survivalSims,
-        survival_file: survival === "file" ? survivalFile || survivalFiles.data?.[0]?.file || null : null,
+        survival_file:
+          survival === "file"
+            ? survivalFile || survivalFiles.data?.[0]?.file || null
+            : survival === "league"
+              ? leagueFile || leagueFiles.data?.[0]?.file || null
+              : null,
         solve_ahead: solveAhead,
         time_limit: timeLimit,
         keepers: keepersOpen ? keepersIn(keepers, options) : [],
@@ -302,16 +309,32 @@ export default function SessionSetup({ onCreated, onSelect }: Props) {
             <b>The chance a player is still on the board at each of your picks.</b>
             <span>The plan weights every future pick by them, so they decide who to take now and who can wait.</span>
             <span><b>ADP formula (instant):</b> a normal spread around each player's ADP. With no ADP file the ADP is a value rank, which puts specialists far later than real drafts do.</span>
-            <span><b>Simulate this league:</b> runs full drafts with z-score, ADP and roster-model drafters (some punting) and counts how often each player survives to each pick. Catches specialists going early and position runs. About 1 s per draft per core. The curve's μ and σ are refitted from the same drafts.</span>
+            <span><b>Simulated drafts against this board:</b> runs full drafts with z-score, ADP and roster-model drafters (some punting) and counts how often each player survives to each pick. Catches specialists going early and position runs. About 1 s per draft per core. The curve's μ and σ are refitted from the same drafts.</span>
             <span><b>Saved table:</b> a CSV from an earlier simulation in data/.</span>
+            <span><b>This league's drafts by ADP:</b> how often players at each keeper-adjusted ADP lasted to each pick in this league's past drafts (a CSV headed adp, picks…, undrafted), with the share never drafted at all. It answers from ADP {LEAGUE_FROM_ADP}; earlier players, whose survival is sharper than the table shows, and players past its last ADP use the ADP formula.</span>
+            <span><b>Spread</b> {SPREAD.base} + {SPREAD.growth} × ADP, from the league's nine drafts: the ADP formula, the simulated drafters and the league table's fill-in all use it.</span>
+            <span>With keepers, the ADP formula and the league's table count only the market: a player's ADP drops by the keepers ranked ahead of him, and keeper slots are not picks.</span>
           </Info>
         </span>
-        <select value={survival} onChange={(e) => setSurvival(e.target.value as "none" | "simulate" | "file")}>
+        <select value={survival} onChange={(e) => setSurvival(e.target.value as SurvivalMode)}>
           <option value="none">ADP formula (instant)</option>
-          <option value="simulate">simulate this league before the draft (recommended)</option>
+          <option value="simulate">simulated drafts against this board</option>
+          {!!leagueFiles.data?.length && <option value="league">this league's drafts by ADP (keeper-adjusted), normal model under ADP {LEAGUE_FROM_ADP}</option>}
           <option value="file" disabled={!survivalFiles.data?.length}>saved survival table in data/</option>
         </select>
       </label>
+      {survival === "league" && (
+        <label>
+          <span className="k">League table</span>
+          <select value={leagueFile || leagueFiles.data?.[0]?.file || ""} onChange={(e) => setLeagueFile(e.target.value)}>
+            {(leagueFiles.data ?? []).map((f) => (
+              <option key={f.file} value={f.file}>
+                {f.file}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
       {survival === "simulate" && (
         <div className="row">
           <label>
@@ -377,7 +400,7 @@ export default function SessionSetup({ onCreated, onSelect }: Props) {
                 </button>{" "}
                 <span className="muted">
                   {s.num_teams} teams, pick {s.my_position}, {s.picks_made}/{s.num_teams * s.roster_size} made · {s.objective === "win" ? "categories won" : "sum of z"}
-                  {s.survival.status === "building" ? " · simulating league" : s.availability_source === "survival" ? " · simulated odds" : ""}
+                  {s.survival.status === "building" ? " · simulating league" : s.availability_source === "survival" ? " · simulated odds" : s.availability_source === "league" ? " · league odds" : ""}
                 </span>
               </li>
             ))}
