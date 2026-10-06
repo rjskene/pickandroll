@@ -599,3 +599,10 @@ def test_market_space_on_the_api(data_dir):
         r = create(c, 400, survival="league", survival_file="headless.csv")
         assert "could not read headless.csv" in r["detail"] and "undrafted" in r["detail"]
         r = create(c, 422, spread_base=0)
+        # No session file escapes data/: the survival file of either mode, or any other.
+        for mode in ("league", "file"):
+            for escape in ("../league.csv", str(data_dir / "league.csv")):
+                r = create(c, 400, survival=mode, survival_file=escape)
+                assert r["detail"] == f"survival_file must be a path inside data/: {escape}"
+        r = create(c, 400, adp_file="history/../../adp.csv")
+        assert "adp_file must be a path inside data/" in r["detail"]

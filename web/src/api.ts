@@ -19,10 +19,11 @@ export interface CurveSpec {
 
 export type SurvivalMode = "none" | "simulate" | "file" | "league";
 /** The ADP model's spread of a draft slot, SPREAD.base + SPREAD.growth × ADP picks, fitted on the
- * league's nine drafts (availability/adp.py). A session reports the values it runs on. */
+ * league's nine drafts, for the setup's text. A session reports the values it runs on. */
+// Mirrors SPREAD_BASE / SPREAD_GROWTH in src/pickandroll/availability/adp.py: change both.
 export const SPREAD = { base: 1.5, growth: 0.15 } as const;
-/** A league table answers from this keeper-adjusted ADP on; earlier players keep the normal model
- * (availability/league.py). */
+/** A league table answers from this keeper-adjusted ADP on; earlier players keep the normal model. */
+// Mirrors LEAGUE_FROM_ADP in src/pickandroll/availability/league.py: change both.
 export const LEAGUE_FROM_ADP = 90;
 export type AvailabilitySource = "adp" | "survival" | "league";
 

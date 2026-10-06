@@ -1510,8 +1510,16 @@ def _keepers_file_rows(data_dir: Path, file: str) -> list[Labelled]:
         raise HTTPException(400, str(exc)) from exc
 
 
+#: The session's files, each a path inside data/ (the keepers file is checked where it is read).
+DATA_FILE_FIELDS = ("projection_file", "positions_file", "adp_file", "curve_file", "survival_file")
+
+
 def _build_state(body: SessionCreate, data_dir: Path) -> tuple[DraftState, str, str]:
     """Load projections, positions, ADP and the curve for a new session (blocking I/O)."""
+    for name in DATA_FILE_FIELDS:
+        file = getattr(body, name)
+        if file and not _in_data_dir(file):
+            raise HTTPException(400, f"{name} must be a path inside data/: {file}")
     path = data_dir / body.projection_file
     if not path.exists() or path.suffix.lower() not in PROJECTION_SUFFIXES:
         raise HTTPException(400, f"projection file not found: {body.projection_file}")
