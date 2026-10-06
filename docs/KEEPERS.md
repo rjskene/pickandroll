@@ -70,9 +70,21 @@ Invariants, in `DraftState` (`draft/state.py`):
    says which; a keeper pick alone is never the undo target (it would be re-applied at once).
 7. **`apply_pick` at a keeper slot** accepts only the keeper himself (idempotent, returns the existing
    pick) and rejects any other player with `ValueError("pick N is a keeper slot: <player>")`. The room
-   wins on a genuine conflict: `_walk` replaces the pick in place as it does today and logs `conflict`,
-   because the Yahoo record is the truth and the keeper table was wrong; the keeper entry is then
-   dropped from the table and the event says so.
+   wins on a genuine conflict, in either direction: another player recorded at the keeper's slot, or a
+   pending keeper recorded at some other team's slot. `_walk` replaces or applies the room's pick as it
+   does today, logs `conflict`, and the keeper entry is dropped (`DraftState.drop_keeper`) because the
+   Yahoo record is the truth and the table was wrong; the event says so. `sync()` stays strict: a feed
+   that names someone else at a filled keeper slot is a 400 naming the slot and the keeper.
+8. **Keeper picks are recognised through the table** (overall -> entry), never by a flag that could
+   outlive a conflict. `team_names()` skips them, so an auto-applied `Team N` label never overwrites a
+   real team name from the feed. `solver_players`' remaining count and `replacement_level`'s window
+   count pending keeper slots as spent.
+9. **`set_my_position(slot)`** replaces the bare assignment in `attach_room`: it refuses only when real
+   (non-keeper) picks exist, re-derives my keepers' overalls and re-runs the auto-append (a round-1
+   keeper of mine at the new slot). `draft_once`'s "no picks" guard tests real picks the same way.
+10. **presolve `branch_boards`** leaves keeper slots out of `between` (they are decided), so a keeper
+    between now and my pick makes a one-away branch rather than a silently dropped two-away one; its
+    back-to-back test reads the draftable `my_picks`.
 
 ### 1.1 Availability in keeper space
 
@@ -115,12 +127,14 @@ class SessionCreate(BaseModel):
   `session.create_params`, so a room rebuild after an API restart keeps them.
 - `GET /sessions/{id}` summary adds `keepers: [{position, round, overall, player_id, team, mine,
   applied}]`, and `my_picks` now means draftable picks; add `my_slots` for the full snake list.
-- `PATCH /sessions/{id}/keepers` replaces the keeper table before pick 1 only (409 once picks exist;
-  the room's conflict path handles the rest). This is what the user fills in on draft night when the
-  order is drawn and the other teams' keepers are visible on the board.
+- `PATCH /sessions/{id}/keepers` replaces the keeper table for slots not yet reached at any time (409
+  only for an applied keeper, which only the room's conflict path can change). This is what the user
+  fills in on draft night when the order is drawn and the other teams' keepers are visible on the
+  board, and the manual way out of a wrong entry in a practice session.
 - `GET /sessions/{id}/board` rows carry `keeper: team | null`; a keeper row is `taken`.
-- `POST /sessions/{id}/picks` and `/sync` behave per invariant 7; `/autopick` and `league_sim` fill
-  keeper slots through the invariant without code of their own (add a test that proves it).
+- `POST /sessions/{id}/picks` and `/sync` behave per invariant 7; `_pick_row` carries `keeper: bool`;
+  `/autopick` and `league_sim` fill keeper slots through the invariant without code of their own (add a
+  test that proves it).
 - Room (`api/yahoo_room.py`): `attach_room` keeps `position=None` keepers on the new slot; `ingest` and
   `_walk` need no change beyond invariant 7's conflict handling. Record keeper picks in the fidelity log
   with `src: "keeper"` and exclude my keeper rounds from compliance's denominator
@@ -176,7 +190,9 @@ class SessionCreate(BaseModel):
 
 ## 6. Order of work
 
-1. Invariants 1-7 in `DraftState` with tests (one PR, `feat(keepers): draft state`).
+1. Invariants 1-10 in `DraftState`, `autopick.team_roster`, `league_sim.draft_once`'s guard and
+   `presolve.branch_boards`, with tests; `undo()` and `drop_keeper()` as state methods (one PR,
+   `feat(keepers): draft state`, branch `feat/keepers-state`; agreed with the emissary 2026-10-06).
 2. API fields, summary, PATCH, undo, board flag, autopick/sim test (`feat(keepers): api`).
 3. Web setup block, log/plan/team cards (`feat(keepers): web`).
 4. Room: fidelity `src: keeper`, scorecard denominator, extension turn guard (`feat(keepers): room`).
