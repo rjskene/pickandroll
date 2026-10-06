@@ -60,7 +60,9 @@ as such, with the evidence.
   the bare directory form fails on Node 25).
 - Dev servers only through `~/code/.claude/launch.json` (`pickandroll-api` on :8000, `pickandroll-web`
   on :5173), never with ad-hoc shell commands. uvicorn `--reload` drops the in-memory sessions on every
-  source edit, so say so before editing the API during a live mock.
+  source edit, and a `git pull` into this checkout is a source edit: no pulls, checkouts or `src/` edits
+  while a practice run or a mock is on the server (ask fantasyMOCK first; it wiped a finished run on
+  2026-10-06). Draft night runs `pickandroll-api-draft` (same port, no `--reload`) on a frozen checkout.
 - Core packages `src/pickandroll/{projections,draft,optim,availability}` stay free of I/O.
 - A change to #8 passes the Tier 1 replay (`docs/YAHOO_SYNC.md` §5) before review. A change to the room side
   (#9) ships with a Tier 2 scorecard from a live mock. The scorecard goes on #11 as a comment.
