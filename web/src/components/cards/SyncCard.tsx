@@ -4,7 +4,7 @@
 // a pick made by hand, here or in Yahoo, always stands.
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { api, type FidelityRow, type RoomAttachBody, type RoomMode, type RoomSummary, type SeenRoom } from "../../api";
+import { api, unmatchedStandins, type FidelityRow, type RoomAttachBody, type RoomMode, type RoomSummary, type SeenRoom } from "../../api";
 import { useDraft } from "../../draft";
 import { SILENT_AFTER_S, SeenRooms, describeEvent, eventTime, heartbeatAge, lagSeconds, medianLag, syncState, useNow, useSeenRooms } from "../YahooSync";
 
@@ -300,12 +300,14 @@ function Pins({ room }: { room: RoomSummary }) {
   const board = useQuery({ queryKey: ["board", d.session.id], queryFn: () => api.board(d.session.id) });
   const picks = useQuery({ queryKey: ["picks", d.session.id], queryFn: () => api.picks(d.session.id) });
   const [all, setAll] = useState(false);
-  if (!room.standins.length && !room.unmatched_yahoo.length) return null;
+  // A gap's stand-in has no Yahoo name to pin: its keeper is named on the log card.
+  const standins = unmatchedStandins(room);
+  if (!standins.length && !room.unmatched_yahoo.length) return null;
   // The stand-in holds the room pick's place on the board: its name is that pick's.
   const placed = new Map((picks.data ?? []).map((p) => [p.overall, p.name]));
   const loose = new Set(room.unmatched_projection.map((p) => p.player_id));
   const others = (board.data?.players ?? []).filter((p) => !p.taken && !loose.has(p.player_id)).sort((a, b) => a.name.localeCompare(b.name));
-  const standing = new Set(room.standins.map((x) => x.yid));
+  const standing = new Set(standins.map((x) => x.yid));
   // Stand-ins are on the board now; the rest only matter if the room drafts them, so a few show.
   const waiting = room.unmatched_yahoo.filter((u) => !standing.has(u.yahoo_player_id));
   const shown = all ? waiting : waiting.slice(0, 3);
@@ -334,7 +336,7 @@ function Pins({ room }: { room: RoomSummary }) {
       </datalist>
       <table className="pins">
         <tbody>
-          {room.standins.map((x) => (
+          {standins.map((x) => (
             <PinRow key={`s${x.overall}`} room={room} yid={x.yid} name={x.name} note={`#${x.overall}, held by ${placed.get(x.overall) ?? x.as}`} choices={choices} />
           ))}
           {shown.map((u) => (

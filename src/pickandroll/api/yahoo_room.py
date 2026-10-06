@@ -13,7 +13,11 @@ room keeps a ledger of what Yahoo reported per overall pick and reconciles the s
 * a keeper's pick is the session's own (``docs/KEEPERS.md``): logged from its keeper table when
   the draft reaches the slot, it needs no room pick (the walk steps over a gap there, since a
   room may never send it), and the room still wins a conflict either way, dropping the keeper
-  entry it contradicts.
+  entry it contradicts;
+* a pick the room never sends at all (a keeper the table does not know about) is a gap: once
+  the room's clock is past it for ``GAP_MARGIN_S`` the ledger records a pick with no Yahoo id
+  and the session a stand-in there, so the board advances; the room's own record of the pick
+  repairs it, and the user can name the keeper (``PATCH /sessions/{id}/keepers``).
 
 Everything the room sees goes to the fidelity log (:mod:`pickandroll.fidelity`), and so does
 every solve, so the scorecard can be computed without the session and a room can be rebuilt
@@ -22,6 +26,8 @@ from its log after the API restarts.
 
 from __future__ import annotations
 
+import asyncio
+import math
 import threading
 import time
 import uuid
@@ -57,6 +63,12 @@ PRICING_S = 12.0
 PLAN_LIMIT_MIN = 5.0
 PLAN_LIMIT_MAX = 20.0
 PRICE_LIMIT_MAX = 10.0
+#: A pick the room never sends (a keeper the session's table does not know about) gets a
+#: stand-in once the room's clock has been past it this long: a turn_start for a later pick, or
+#: a later pick sent live. The picks and events POSTs race, and a false fill is cheap (the worst
+#: player left, repaired when the room's pick lands) where a late one leaves the plan for my
+#: turn on a stale board (docs/KEEPERS.md §2).
+GAP_MARGIN_S = 4.0
 
 
 def plan_budget(clock_s: float | None) -> float:
@@ -167,6 +179,12 @@ class YahooRoom:
     #: Keeper slots whose pick the session logged from its keeper table: no gap in the ledger,
     #: until the room records someone at one.
     kept: frozenset[int] = frozenset()
+    #: Overalls the room's clock has shown (a turn_start, a pick sent live): when the API first
+    #: saw each (monotonic) and the event's own time. A history frame is no evidence: it can
+    #: carry keepers' picks far ahead of the clock.
+    shown: dict[int, tuple[float, str]] = field(default_factory=dict)
+    #: The app's event loop: the gap check due ``GAP_MARGIN_S`` after new evidence runs on it.
+    loop: asyncio.AbstractEventLoop | None = field(default=None, repr=False)
     lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
     @property
@@ -262,14 +280,20 @@ def attach_room(
         log_control(room)
     for e in room_picks:
         overall = int(e["overall"])
-        if overall not in room.ledger:
+        seen = room.ledger.get(overall)
+        if seen is None or (seen.src == "gap" and e.get("src") != "gap"):
+            gap = e.get("src") == "gap"
             room.ledger[overall] = RoomPick(
-                overall, str(e["yid"]), int(e["slot"]), e["t"], e.get("src", "log")
+                overall,
+                "" if gap else str(e["yid"]),
+                int(e["slot"]),
+                e["t"],
+                e.get("src", "log"),
             )
     session.room = room
     with room.lock:
         changes = _reconcile(session, room)
-    _publish_changes(session, room, changes, resume=True)
+    publish_changes(session, room, changes, resume=True)
     session.publish(
         "room_attached",
         {"draft_id": draft_id, "slot": slot, "mode": mode, "resumed": room.resumed},
@@ -302,6 +326,8 @@ def ingest(session: Session, room: YahooRoom, items: list[dict[str, Any]]) -> di
             overall = int(item["overall"])
             if not 1 <= overall <= last:
                 continue
+            if (item.get("src") or "socket") == "socket":
+                _note_shown(room, overall, to_iso(item.get("t_room")))
             yid = item.get("yahoo_player_id")
             if (yid is None or yid == "") and item.get("label"):
                 yid = room.ids.resolve_label(str(item["label"]), item.get("team"))
@@ -312,7 +338,12 @@ def ingest(session: Session, room: YahooRoom, items: list[dict[str, Any]]) -> di
                     room.unresolved.append(miss)
                 continue
             yid = str(yid)
+            via = item.get("src") or "socket"
             seen = room.ledger.get(overall)
+            if seen is not None and seen.src == "gap":
+                # The room's own record of a pick it had skipped: it repairs the stand-in.
+                room.repairs.add(overall)
+                seen = None
             if seen is not None:
                 if seen.yid != yid:
                     note = {"overall": overall, "kept": seen.yid, "reported": yid, "kind": "room"}
@@ -323,7 +354,6 @@ def ingest(session: Session, room: YahooRoom, items: list[dict[str, Any]]) -> di
                         )
                 continue
             slot = int(item.get("slot") or pick_owner(room.num_teams, overall)[1])
-            via = item.get("src") or "socket"
             # The room's record of a keeper at his slot: src "keeper" (the scorecard leaves it
             # out of my turns and the lag), and how it came (history on connect, or a frame).
             kept = slots.get(overall) is not None and slots[overall] == room.ids.pid(yid)
@@ -345,7 +375,9 @@ def ingest(session: Session, room: YahooRoom, items: list[dict[str, Any]]) -> di
             room.log.append(event)
             new += 1
         changes = _reconcile(session, room)
-    _publish_changes(session, room, changes)
+        changes += _fill_gaps(session, room)
+    publish_changes(session, room, changes)
+    _schedule_gap_check(session, room)
     state = session.state
     return {
         "received": len(items),
@@ -379,6 +411,7 @@ def _reconcile(session: Session, room: YahooRoom) -> list[dict[str, Any]]:
                 k
                 for k, s in room.standins.items()
                 if k not in room.repairs
+                and s["yid"] is not None
                 and (pid := room.ids.pid(s["yid"])) is not None
                 and pid not in held
                 and pid in state.z.index
@@ -401,7 +434,8 @@ def _walk(state, room: YahooRoom) -> list[dict[str, Any]]:
     when it is the keeper, and otherwise wins like any conflict. A player the room records
     while the session still has him kept at a later slot is the room's: that keeper entry is
     dropped too, and so is the entry for a keeper whose slot the room fills with someone
-    else (``docs/KEEPERS.md`` invariant 7)."""
+    else (``docs/KEEPERS.md`` invariant 7). A gap entry says someone was picked, not who: the
+    session's pick there stands, and an empty slot gets a stand-in."""
     changes: list[dict[str, Any]] = []
     k = 1
     while True:
@@ -418,10 +452,13 @@ def _walk(state, room: YahooRoom) -> list[dict[str, Any]]:
         if have is not None and target == have.player_id and k not in room.repairs:
             k += 1
             continue
-        want = room.ids.pid(entry.yid)
+        gap = entry.src == "gap"
+        want = None if gap else room.ids.pid(entry.yid)
         elsewhere = {p.player_id for p in state.picks if p.overall != k}
         pending = {kp.player_id: o for o, kp in state.pending_keepers.items()}
-        if want is not None and want not in elsewhere and want in state.z.index:
+        if gap and have is not None:
+            pid, standin = have.player_id, have.player_id == room.standins.get(k, {}).get("as")
+        elif want is not None and want not in elsewhere and want in state.z.index:
             pid, standin = want, False
         else:
             # Never a keeper still to come: his slot is spoken for.
@@ -430,7 +467,7 @@ def _walk(state, room: YahooRoom) -> list[dict[str, Any]]:
         t = now_iso()
         dropped = []
         filled = []
-        if have is not None and have.player_id == pid and k not in room.repairs:
+        if have is not None and have.player_id == pid:
             kind = "held"
         elif have is None:
             if pid in pending:
@@ -443,7 +480,9 @@ def _walk(state, room: YahooRoom) -> list[dict[str, Any]]:
             kind = "repair" if k in room.repairs else "conflict"
         room.repairs.discard(k)
         room.assigned[k] = pid
-        if standin:
+        if standin and gap:
+            room.standins[k] = {"yid": None, "name": None, "as": pid, "gap": True}
+        elif standin:
             room.standins[k] = {"yid": entry.yid, "name": room.ids.name(entry.yid), "as": pid}
         else:
             room.standins.pop(k, None)
@@ -455,8 +494,11 @@ def _walk(state, room: YahooRoom) -> list[dict[str, Any]]:
             "standin": standin,
             "old": None if have is None else have.player_id,
             "t": t,
-            "lag_ms": round(to_ms(t) - to_ms(entry.t)),
+            # A gap has no room pick to be late for.
+            "lag_ms": None if gap else round(to_ms(t) - to_ms(entry.t)),
         }
+        if gap:
+            change["gap"] = True
         if dropped:
             change["keepers_dropped"] = [_keeper_note(state, kp) for kp in dropped]
         changes.append(change)
@@ -497,7 +539,124 @@ def _standin(state, taken: set[str]) -> str:
     return min(left, key=lambda p: (float(games.get(p, 0.0)) > 0.0, float(total[p]), p))
 
 
-def _publish_changes(
+# --------------------------------------------------------------------------- gaps
+def _note_shown(room: YahooRoom, overall: int, t: str) -> None:
+    """The room's clock has shown ``overall``: the evidence for a gap below it."""
+    if overall not in room.shown:
+        room.shown[overall] = (time.monotonic(), t)
+
+
+def open_gaps(room: YahooRoom, slots: set[int], now: float) -> list[tuple[int, int, str]]:
+    """Overalls the room's clock has been past for ``GAP_MARGIN_S`` with no pick for them:
+    ``(overall, the first later overall shown, its time)``. A keeper slot is never a gap: the
+    session logs its pick. ``slots``: the keeper table's overalls."""
+    if not room.shown:
+        return []
+    top = max(room.shown)
+    out = []
+    for k in range(room.synced_through + 1, top):
+        if k in room.ledger or k in room.kept or k in slots:
+            continue
+        at, j, t = min((at, j, t) for j, (at, t) in room.shown.items() if j > k)
+        if now - at >= GAP_MARGIN_S:
+            out.append((k, j, t))
+    return out
+
+
+def _fill_gaps(session: Session, room: YahooRoom) -> list[dict[str, Any]]:
+    """Record the gaps due as picks with no Yahoo id and walk them in (room lock held)."""
+    with session.lock:
+        slots = set(session.state.keeper_slots)
+    gaps = open_gaps(room, slots, time.monotonic())
+    for k, j, t in gaps:
+        slot = pick_owner(room.num_teams, k)[1]
+        room.ledger[k] = RoomPick(k, "", slot, t, "gap")
+        room.log.append(
+            {
+                "type": "room_pick",
+                "t": t,
+                "overall": k,
+                "slot": slot,
+                "yid": None,
+                "src": "gap",
+                "evidence": j,
+            }
+        )
+    return _reconcile(session, room) if gaps else []
+
+
+def check_gaps(session: Session, room: YahooRoom) -> list[dict[str, Any]]:
+    """Fill the gaps due and publish them; a no-op once the room is detached."""
+    if session.room is not room:
+        return []
+    with room.lock:
+        changes = _fill_gaps(session, room)
+    publish_changes(session, room, changes)
+    _schedule_gap_check(session, room)
+    return changes
+
+
+def gap_standins(room: YahooRoom) -> dict[int, str]:
+    """The gaps whose pick is still the stand-in, by overall (room lock held): the slots a
+    keeper the user names may take (``DraftState.set_keepers(fixable=...)``)."""
+    return {
+        k: s["as"]
+        for k, s in room.standins.items()
+        if s.get("gap") and k in room.ledger and room.ledger[k].src == "gap"
+    }
+
+
+def keepers_fixed(session: Session, room: YahooRoom, gaps: dict[int, str]) -> list[dict]:
+    """The keepers the user named at gaps (room lock held, the table already set): each
+    replaced the stand-in in place, a ``keeper_fix`` the log and the scorecard read as the
+    keeper's slot from here on."""
+    state = session.state
+    changes: list[dict[str, Any]] = []
+    t = now_iso()
+    with session.lock:
+        for k, standin in sorted(gaps.items()):
+            pid = state.picks[k - 1].player_id
+            if pid == standin:
+                continue
+            room.assigned[k] = pid
+            room.standins.pop(k, None)
+            changes.append(
+                {
+                    "overall": k,
+                    "kind": "keeper_fix",
+                    "pid": pid,
+                    "yid": room.ids.yid(pid),
+                    "standin": False,
+                    "gap": True,
+                    "old": standin,
+                    "t": t,
+                    "lag_ms": None,
+                }
+            )
+        room.kept = kept_slots(state)
+    return changes
+
+
+def _schedule_gap_check(session: Session, room: YahooRoom) -> None:
+    """Run :func:`check_gaps` on the app's loop when the soonest open gap falls due."""
+    loop = room.loop
+    if loop is None or loop.is_closed():
+        return
+    with session.lock:
+        slots = set(session.state.keeper_slots)
+    pending = open_gaps(room, slots, math.inf)  # every open gap, due or not
+    if not pending:
+        return
+    due = min(room.shown[j][0] for _, j, _ in pending) + GAP_MARGIN_S
+    delay = max(0.0, due - time.monotonic()) + 0.1
+
+    def later() -> None:
+        loop.run_in_executor(None, check_gaps, session, room)
+
+    loop.call_soon_threadsafe(loop.call_later, delay, later)
+
+
+def publish_changes(
     session: Session, room: YahooRoom, changes: list[dict[str, Any]], resume: bool = False
 ) -> None:
     from .app import _pick_row, _score
@@ -514,17 +673,20 @@ def _publish_changes(
             "standin": c["standin"],
             "kind": c["kind"],
         }
+        if c.get("gap"):
+            event["gap"] = True
         dropped = c.get("keepers_dropped")
-        if c["kind"] == "keeper":
-            # Logged from the keeper table when the draft reached the slot, not from the room.
+        if c["kind"] in ("keeper", "keeper_fix"):
+            # Logged from the keeper table when the draft reached the slot (or, at a gap, when
+            # the user named the keeper), not from the room.
             event["src"] = "keeper"
         if dropped:
             event["keepers_dropped"] = dropped
         if resume:
             event["resume"] = True
-        elif c["kind"] not in ("repair", "keeper"):
-            # A pinned stand-in is the same room pick, not a late one; a keeper pick has no
-            # room pick to be late for.
+        elif c["kind"] != "repair" and c["lag_ms"] is not None:
+            # A pinned stand-in is the same room pick, not a late one; a keeper pick and a gap
+            # have no room pick to be late for.
             room.recent_lags.append((c["overall"], c["lag_ms"]))
         room.log.append(event)
         if c["kind"] == "conflict" or dropped:
@@ -544,7 +706,7 @@ def _publish_changes(
         if c["kind"] == "held":
             continue
         row = _pick_row(state, next(p for p in state.picks if p.overall == c["overall"]))
-        source = "keeper" if c["kind"] == "keeper" else "yahoo_room"
+        source = "keeper" if c["kind"] in ("keeper", "keeper_fix") else "yahoo_room"
         payload: dict[str, Any] = {"pick": row, "source": source, "lag_ms": c["lag_ms"]}
         if c["old"] is not None:
             payload["replaced"] = c["old"]
@@ -580,7 +742,7 @@ def pin(session: Session, room: YahooRoom, yid: str, pid: str) -> dict[str, Any]
         room.ids.pin(yid, pid)
         room.repairs |= {k for k, s in room.standins.items() if s["yid"] == yid}
         changes = _reconcile(session, room)
-    _publish_changes(session, room, changes)
+    publish_changes(session, room, changes)
     room.log.append({"type": "note", "what": "alias pinned", "yid": yid, "pid": pid})
     return {"yahoo_player_id": yid, "player_id": pid, "repaired": [c["overall"] for c in changes]}
 
@@ -719,6 +881,8 @@ def record_events(
             room.heartbeat_logged = time.monotonic()
         if e["type"] == "control":
             room.control = e["state"]
+        if e["type"] == "turn_start" and 1 <= e["overall"] <= room.num_teams * room.rounds:
+            _note_shown(room, e["overall"], e["t"])
         q = room.request
         failed = e["type"] == "note" and e.get("what") == "request failed"
         # The tab gave up on this request (in autopilot the drafter takes the turn back); a

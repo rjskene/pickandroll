@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { api, CAT_LABEL, type CategoryRow, type ScoreEntry } from "../../api";
 import { useDraft } from "../../draft";
 import { labelClass, oddsClass, pct, signed } from "../../format";
+import { GapMark } from "../Keepers";
 import { useMyRoster } from "./myRoster";
 
 /** Expected categories won before my first pick against the best plan seen and the latest,
@@ -107,9 +108,11 @@ function Profile({ rows, title, note }: { rows: CategoryRow[]; title: string; no
 /** My picks are made: the final score, the roster's own profile and the roster in draft order
  * (the last plan would show a player planned for a pick already made). */
 function MadeTeam({ rosterNote }: { rosterNote: string }) {
-  const s = useDraft().session;
+  const d = useDraft();
+  const s = d.session;
   const score = useQuery({ queryKey: ["score", s.id], queryFn: () => api.score(s.id) });
   const rows = useMyRoster();
+  const gaps = new Map(d.gaps.map((g) => [g.overall, g]));
   const final = score.data?.final;
   return (
     <>
@@ -126,7 +129,10 @@ function MadeTeam({ rosterNote }: { rosterNote: string }) {
           {(rows ?? []).map((r) => (
             <li key={r.overall} className="mine">
               <span className="slot">#{r.overall}</span>
-              <span className="who">{r.name}</span>
+              <span className="who">
+                {gaps.has(r.overall) && <GapMark gap={gaps.get(r.overall)!} />}
+                {r.name}
+              </span>
               <span className="good" title={r.kept ? `keeper: pick ${r.overall}${r.toCome ? ", logged when the draft reaches it" : ""}` : undefined}>
                 {r.kept ? `kept · R${r.round}` : "drafted"}
               </span>
@@ -144,6 +150,7 @@ export default function TeamCard() {
   const result = d.result;
   // My keepers are on the roster from pick one, each with the round he costs.
   const kept = new Map(s.keepers.filter((k) => k.mine).map((k) => [k.player_id, k]));
+  const gapOf = new Map(d.gaps.map((g) => [g.standin, g]));
   const drafted = s.my_roster.length;
   const rosterNote = `${drafted} of ${s.roster_size} on the roster${kept.size ? ` · ${kept.size} kept` : ""}`;
   if (d.done) return <MadeTeam rosterNote={rosterNote} />;
@@ -182,7 +189,10 @@ export default function TeamCard() {
             return (
               <li key={`${r.slot}-${r.slot_index}`} className={mine ? "mine" : "planned"}>
                 <span className="slot">{r.slot}</span>
-                <span className="who">{r.name}</span>
+                <span className="who">
+                  {gapOf.has(r.player) && <GapMark gap={gapOf.get(r.player)!} />}
+                  {r.name}
+                </span>
                 {!mine && pick && <span className="muted">#{pick}</span>}
                 {k ? (
                   <span className="good" title={`keeper: pick ${k.overall}${k.applied ? "" : ", logged when the draft reaches it"}`}>

@@ -444,8 +444,10 @@ export interface RoomSummary {
   version: number;
   solved_version: number | null;
   fresh: boolean;
-  /** Room picks with no projection, held on the board by a stand-in until pinned. */
-  standins: { overall: number; yid: string; name: string; as: string }[];
+  /** Room picks with no projection, held on the board by a stand-in until pinned; and gaps, picks
+   * the room never sent (a keeper the table does not know about), held by a stand-in until the
+   * keeper is named. */
+  standins: Standin[];
   conflicts: Record<string, unknown>[];
   unresolved: { overall: number; label: string | null; team: string | null }[];
   unmatched_yahoo: { yahoo_player_id: string; name: string; team: string; adp: number | null }[];
@@ -602,6 +604,38 @@ export const api = {
   requestPick: (draftId: string, body: { overall: number; board: number; yahoo_player_id: string }) =>
     request<{ request: DraftRequest }>(`/rooms/${draftId}/request`, { method: "POST", body: JSON.stringify(body) }),
 };
+
+export type Standin =
+  | { overall: number; yid: string; name: string; as: string; gap?: false }
+  | { overall: number; yid: null; name: null; as: string; gap: true };
+
+/** A pick the room never sent: whose it was (the team and round are known, the player is not)
+ * and the stand-in holding it. */
+export interface GapPick {
+  overall: number;
+  position: number;
+  round: number;
+  standin: string;
+}
+
+/** The room's gaps still held by a stand-in. */
+export function gapPicks(room: RoomStatus | undefined, numTeams: number): GapPick[] {
+  if (!room?.attached) return [];
+  return room.standins
+    .filter((x) => x.gap)
+    .map((x) => ({ overall: x.overall, ...pickOwner(numTeams, x.overall), standin: x.as }));
+}
+
+/** The room's stand-ins for Yahoo players the projections do not match (pinning repairs them). */
+export function unmatchedStandins(room: RoomSummary): Extract<Standin, { gap?: false }>[] {
+  return room.standins.filter((x): x is Extract<Standin, { gap?: false }> => !x.gap);
+}
+
+/** The marker's text for a gap. */
+export function gapText(session: SessionSummary, g: GapPick): string {
+  const whose = g.position === session.my_position ? "my" : teamLabel(session, g.position);
+  return `unknown keeper at pick ${g.overall}, ${whose} round ${g.round}: add him to the table`;
+}
 
 export function teamLabel(session: SessionSummary, position: number): string {
   return position === session.my_position ? session.my_team : `Team ${position}`;

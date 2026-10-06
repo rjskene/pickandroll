@@ -16,8 +16,10 @@ import {
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   api,
+  gapPicks,
   pickOwner,
   teamLabel,
+  type GapPick,
   type Objective,
   type Recommendation,
   type RoomEventEntry,
@@ -158,6 +160,14 @@ export interface DraftApi {
   /** YAHOO SYNC: the room this session follows, and the extension's latest events from it. */
   room: RoomStatus | undefined;
   roomEvents: RoomEventEntry[];
+  /** The room's gaps (picks it never sent: keepers the table does not know about) held by a
+   * stand-in, and the user's way to name one: the Log card's keeper editor opens with a row
+   * for that team and round. */
+  gaps: GapPick[];
+  nameKeeper: (gap: GapPick) => void;
+  /** A request to name a gap's keeper, until the keeper editor takes it. */
+  keeperRequest: GapPick | null;
+  clearKeeperRequest: () => void;
   /** Mock draft: simulate the other teams and let the solver make my picks until the draft is complete. */
   mock: boolean;
   setMock: (v: boolean) => void;
@@ -443,6 +453,17 @@ export function DraftProvider({ session, solveEvents, survival, live, room, room
     });
   }, []);
   const searchRef = useRef<HTMLInputElement | null>(null);
+  const gaps = useMemo(() => gapPicks(room, session.num_teams), [room, session.num_teams]);
+  const [keeperRequest, setKeeperRequest] = useState<GapPick | null>(null);
+  const logShown = drawerOpen && (drawer.top === "log" || drawer.bottom === "log");
+  const nameKeeper = useCallback(
+    (gap: GapPick) => {
+      setKeeperRequest({ ...gap });
+      if (!logShown) openCard("log");
+    },
+    [logShown, openCard],
+  );
+  const clearKeeperRequest = useCallback(() => setKeeperRequest(null), []);
 
   const value: DraftApi = {
     session,
@@ -483,6 +504,10 @@ export function DraftProvider({ session, solveEvents, survival, live, room, room
     live,
     room,
     roomEvents,
+    gaps,
+    nameKeeper,
+    keeperRequest,
+    clearKeeperRequest,
     mock,
     setMock,
     hideTaken,

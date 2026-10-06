@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { api } from "../../api";
 import { useDraft } from "../../draft";
-import { SessionKeepers } from "../Keepers";
+import { GapMark, SessionKeepers } from "../Keepers";
 
 export default function LogCard() {
   const d = useDraft();
@@ -10,6 +10,7 @@ export default function LogCard() {
   const rows = [...(picks.data ?? [])].reverse();
   // A keeper's pick is never the undo target: it would be logged again at once.
   const realPicks = rows.filter((p) => !p.keeper).length;
+  const gaps = new Map(d.gaps.map((g) => [g.overall, g]));
   return (
     <>
       <SessionKeepers />
@@ -34,6 +35,7 @@ export default function LogCard() {
                 K
               </span>
             )}
+            {gaps.has(p.overall) && <GapMark gap={gaps.get(p.overall)!} />}
             <span>{p.name}</span>
             <span className="muted" style={{ marginLeft: "auto" }}>{p.team}</span>
           </li>
