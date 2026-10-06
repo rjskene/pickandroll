@@ -90,12 +90,18 @@ Invariants, in `DraftState` (`draft/state.py`):
 
 Phase 2 (after the invariants above are green). Keepers change what the market can take:
 
-- **Effective ADP.** `adp'(p) = adp(p) - #{keepers q : adp(q) < adp(p)}`, computed over the keepers not
-  yet in the log. `effective_adp()` returns `adp'` when keepers exist (`adp_source` unchanged, add
-  `adp_keepers_ahead` to the summary for the UI).
-- **Market picks.** `m(k) = k - #{keeper slots s : s < k}`. `availability()` calls
+- **Effective ADP.** `adp'(p) = adp(p) - #{keepers q : adp(q) < adp(p)}`, over every keeper in the
+  table, logged or still to come (a keeper dropped on a room conflict leaves the count; decided
+  2026-10-06: counting only pending keepers would move every later player's `adp'` by one at the moment
+  a keeper slot is logged while `m(now)` stays put). `effective_adp()` returns `adp'` when keepers
+  exist (`adp_source` unchanged). Board rows carry `keepers_ahead` and `adp_eff`; `adp` stays Yahoo's
+  number on rows and candidates ("ADP 52 → 49" on the board); the summary carries the count.
+- **Market picks.** `m(k) = k - #{keeper slots s : s < k}`, over the same keepers. `availability()` calls
   `conditional_availability(adp', now=m(next_overall), picks=[m(k) for k in my_remaining_picks])` and
-  the survival table likewise, so the normal model and a league table are read in market space.
+  the league table likewise, so the normal model and the league table are read in market space.
+  Simulated and file survival tables (`survival: simulate | file`) come from drafts that include the
+  keepers and stay keyed by real overall pick. The simulators (`autopick.latent_slots`, the survival
+  build's drafters) use the session's spread too: one spread for model and simulation.
 - **Spread.** The league's robust sd of pick minus ADP is about `0.9 + 0.136*ADP`; the product's
   `spread_for_adp` is `3.0 + 0.15*adp` (2.7x too wide at ADP 1-12, right from ADP ~60). Make `base` and
   `growth` settable on the state and expose them on `SessionCreate` (`spread_base`, `spread_growth`).
@@ -106,10 +112,14 @@ Phase 2 (after the invariants above are green). Keepers change what the market c
   0.065 against a nominal 0.046, while the robust fit 0.9 + 0.136 under-covers the tails (0.103) and the
   censored MLE 0.5 + 0.265 is far too wide late (MAE 0.021). Scan: `data/scratch/spread_scan.py`.
 - **League survival table.** `data/yahoo_history/survival_by_adp_adjusted.csv` is S(market pick |
-  effective ADP) for this league, 2017-2025, keepers removed, with a `undrafted` column. A
-  `survival: league` option that reads such a table (rows ADP 1..160, columns 1..157) and looks players
-  up by `adp'` gives the late rounds their real undrafted mass. The table is league data (gitignored);
-  the loader is product code and gets a fixture.
+  effective ADP) for this league, 2017-2025, keepers removed, with an `undrafted` column; a player never
+  drafted survives every pick (the `SurvivalTable` convention, regenerated 2026-10-06), so S never
+  rises with m and S(m) >= undrafted in every row. A `survival: league` option reads such a table
+  (header `adp,1..N,undrafted`, integer ADP rows 1..160, columns 1..157; anything else is a 400 naming
+  the problem), interpolates between integer rows, floors each row at its `undrafted`, falls back to
+  the normal model for `adp'` outside the rows, and reads conditionally as S(m)/S(m_now) clipped to
+  [0, 1] with the normal model's floor. The table is league data (gitignored); the loader is product
+  code and gets a small fixture in the same shape.
 
 ## 2. API (`api/app.py`)
 
