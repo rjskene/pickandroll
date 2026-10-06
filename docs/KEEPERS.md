@@ -135,12 +135,28 @@ class SessionCreate(BaseModel):
 - `POST /sessions/{id}/picks` and `/sync` behave per invariant 7; `_pick_row` carries `keeper: bool`;
   `/autopick` and `league_sim` fill keeper slots through the invariant without code of their own (add a
   test that proves it).
-- Room (`api/yahoo_room.py`): `attach_room` keeps `position=None` keepers on the new slot; `ingest` and
-  `_walk` need no change beyond invariant 7's conflict handling. Record keeper picks in the fidelity log
-  with `src: "keeper"` and exclude my keeper rounds from compliance's denominator
-  (`fidelity/scorecard.py` uses `snake_picks` for "my turns"; `fidelity/replay.py` the same).
-- Extension (`extension/lib/room.js` `mine`, `content.js takeTurn`): a `D|` frame for my slot at a keeper
-  overall must not arm a draft attempt. The room's keeper overalls come from the attach response.
+- Room (`api/yahoo_room.py`, done in #31): `attach_room` calls `set_my_position(slot)`, so `position=None`
+  keepers follow the seat; `_walk` applies invariant 7 both ways (`replace_pick` at a keeper slot the room
+  fills with someone else, `drop_keeper` for a keeper still to come whom the room records elsewhere), lists
+  the dropped entries in `keepers_dropped` and never uses a pending keeper as a stand-in. Keeper picks the
+  session logs from its table are `session_pick` `kind: keeper` / `src: keeper`, published with
+  `source: keeper` and no lag. Insurance for a room that never sends a keeper's pick: `_walk` steps over a
+  ledger gap at a logged keeper slot, `synced_through` counts those slots and a late room pick there is
+  `held` or a `conflict`. A `room_pick` of the keeper at his slot carries `src: keeper` and `via`
+  (socket | history), which settles on the night how Yahoo sends them; `waiting_for` ignores keeper picks
+  sent ahead. The room summary and the attach record list the keeper slots (`keepers`).
+- Fidelity (done in #31): `fidelity/scorecard.py` leaves my keeper slots out of the compliance denominator
+  and the per-pick rows (`my_keepers`), counts keeper picks the room never sent towards G1
+  (`kept_unseen`), leaves keeper slots out of G2, and treats a keeper pick logged before the attach as
+  synced from the start; `fidelity/replay.py` takes `keepers="socket" | "history" | "none"` for the three
+  ways a room may send keeper picks. Event fields in `docs/YAHOO_SYNC.md` §4.
+- Extension (`extension/lib/room.js`, `content.js`, done in #31): the tracker takes the keeper slots from
+  the room status; `mine`, `isMine`, `myTurnNow` and the on-deck turn leave my keeper slots out, so a `D|`
+  frame for my slot at a keeper overall arms nothing; `contiguous()` steps over keeper slots; a keeper
+  slot's `turn_start` carries `keeper: true`.
+- Open (follow-up PR): a keeper the table does not know about. The walk stalls at that slot the same way;
+  the fix is a stand-in once the room's clock is past it (a ledger entry with no Yahoo id, reconcile on
+  `turn_start`, a margin against the picks/events POST race, scorecard rules for the yid-less entry).
 
 ## 3. Web (`web/src`)
 
@@ -165,12 +181,14 @@ class SessionCreate(BaseModel):
   keeper slot appends the keeper; undo semantics; `replacement_level` window shifts.
 - `tests/test_autopick.py`, `tests/test_league_sim.py`: a full simulated draft with keepers on three teams
   gives every team 13 players, keepers at their rounds, no keeper drafted elsewhere.
-- `tests/test_api.py`: create with `keepers`, summary shows them, board marks them, sync of a Yahoo feed
-  that includes the keeper pick at its slot is idempotent, a conflicting room pick at a keeper slot is
-  logged as `conflict` and the keeper entry is dropped.
-- `tests/test_yahoo_room.py`: Tier 1 replay fixture with two keeper slots (synthesised from an existing
-  board file: move two picks to the owner's earlier round and mark them keepers), compliance excludes my
-  keeper rounds.
+- `tests/test_api_keepers.py` (#29, #31): create with `keepers`, summary shows them, board marks them,
+  sync of a Yahoo feed that includes the keeper pick at its slot is idempotent, the feed attach relabels
+  my logged keeper pick and refuses another seat with a 400.
+- `tests/test_yahoo_room.py` (#31): a conflicting room pick at a keeper slot is logged as `conflict` and
+  the keeper entry is dropped (both directions); Tier 1 replay of room 2515267 with three keeper slots
+  (two picks moved to the owner's earlier round, one kept in place so my last two picks are back to
+  back) in the socket, history and none forms, compliance excludes my keeper rounds, G1 green in all
+  three.
 - `tests/test_presolve.py`: `branch_boards` across a keeper slot (my next pick two away, the pick in
   between a keeper) yields the right boards.
 - Phase 2: `conditional_availability` in market space equals the unadjusted call when there are no
@@ -195,7 +213,10 @@ class SessionCreate(BaseModel):
    `feat(keepers): draft state`, branch `feat/keepers-state`; agreed with the emissary 2026-10-06).
 2. API fields, summary, PATCH, undo, board flag, autopick/sim test (`feat(keepers): api`).
 3. Web setup block, log/plan/team cards (`feat(keepers): web`).
-4. Room: fidelity `src: keeper`, scorecard denominator, extension turn guard (`feat(keepers): room`).
+4. Room: fidelity `src: keeper`, scorecard denominator, extension turn guard (`feat(keepers): room`,
+   #31, merged 2026-10-06 as 28b940b; #28, #29 and #30 are steps 1-3, all merged the same day).
+   Open from the practice runs: `fix/keepers-endgame` (completion state of the cards and announcer,
+   Team card history keyed to the pick made, editor folds "Team N" into "Me" when N is my seat).
 5. Phase 2 availability (`feat(keepers): market-space availability`), after a master decision on the
    spread base from the practice runs.
 
