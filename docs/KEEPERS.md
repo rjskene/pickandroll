@@ -98,9 +98,13 @@ Phase 2 (after the invariants above are green). Keepers change what the market c
   the survival table likewise, so the normal model and a league table are read in market space.
 - **Spread.** The league's robust sd of pick minus ADP is about `0.9 + 0.136*ADP`; the product's
   `spread_for_adp` is `3.0 + 0.15*adp` (2.7x too wide at ADP 1-12, right from ADP ~60). Make `base` and
-  `growth` settable on the state (`spread_base`, default 3.0 for now) and expose them on
-  `SessionCreate`; the master will set the practice default after a keeper sim comparison (candidate
-  1.5).
+  `growth` settable on the state and expose them on `SessionCreate` (`spread_base`, `spread_growth`).
+  **Decision (master, 2026-10-06): default `spread_base` 1.5, `spread_growth` 0.15 unchanged**, for every
+  session (the archive is this league; mock rooms are a test bed). Evidence, keeper-adjusted space,
+  nine seasons: MAE of S(market pick | effective ADP) for ADP <= 84 falls from 0.0124 (3.0 + 0.15) to
+  0.0096 (1.5 + 0.15); the PIT deciles lose the mid hump (0.17 peak -> 0.14) with the |z| > 2 share at
+  0.065 against a nominal 0.046, while the robust fit 0.9 + 0.136 under-covers the tails (0.103) and the
+  censored MLE 0.5 + 0.265 is far too wide late (MAE 0.021). Scan: `data/scratch/spread_scan.py`.
 - **League survival table.** `data/yahoo_history/survival_by_adp_adjusted.csv` is S(market pick |
   effective ADP) for this league, 2017-2025, keepers removed, with a `undrafted` column. A
   `survival: league` option that reads such a table (rows ADP 1..160, columns 1..157) and looks players
@@ -217,8 +221,9 @@ class SessionCreate(BaseModel):
    #31, merged 2026-10-06 as 28b940b; #28, #29 and #30 are steps 1-3, all merged the same day).
    Open from the practice runs: `fix/keepers-endgame` (completion state of the cards and announcer,
    Team card history keyed to the pick made, editor folds "Team N" into "Me" when N is my seat).
-5. Phase 2 availability (`feat(keepers): market-space availability`), after a master decision on the
-   spread base from the practice runs.
+5. Phase 3 availability (`feat(keepers): market-space availability`): effective ADP, market picks,
+   `spread_base` 1.5 (decided 2026-10-06, §1.1), the `survival: league` table loader with a fixture.
+6. Follow-up: a keeper the table does not know about (§2, "Open").
 
 Issue numbers follow once the user approves filing them (the repo is public; league data stays out of
 the issues, as everywhere).
