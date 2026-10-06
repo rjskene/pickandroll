@@ -47,9 +47,11 @@ product. Formulations in `docs/DESIGN.md`.
 
 ## Keepers (2026-10-06)
 
-League 31822 is a keeper league and the tool has no keeper support. `docs/KEEPERS.md` is the build
-spec: keeper picks pre-decided per team and round, excluded from the market, locked on my roster,
-then availability in keeper-adjusted market space from the league's own eleven-season archive.
+League 31822 is a keeper league. `docs/KEEPERS.md` is the build spec, delivered 2026-10-06 in #28-#33:
+keeper picks pre-decided per team and round, excluded from the market, locked on my roster, the room
+and extension aware of keeper slots, and availability in keeper-adjusted market space (spread 1.5 +
+0.15·ADP, the league's own survival table from effective ADP 90) from the eleven-season archive. Open:
+a keeper the table does not know about (a stand-in once the room's clock is past the slot).
 
 ## Checks before drafting on it
 

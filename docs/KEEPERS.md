@@ -258,9 +258,14 @@ file whose N is my seat is a collision (slot 1 and slot 12 runs): the editor fol
    cap, replay from `Last-Event-ID`; the silent announcer), the cards' done state after my last pick,
    the Team card history (named by the pick made, score recorded only for the recommendation shown)
    and the editor's fold of the team at my pick into "Me".
-5. Phase 3 availability (`feat(keepers): market-space availability`): effective ADP, market picks,
-   `spread_base` 1.5 (decided 2026-10-06, §1.1), the `survival: league` table loader with a fixture.
-6. Follow-up: a keeper the table does not know about (§2, "Open").
+5. Phase 3 availability (`feat(keepers): market-space availability`, #33, merged 2026-10-06 as
+   d7fa029): effective ADP and market picks over every keeper in the table, `spread_base` 1.5 /
+   `spread_growth` 0.15 shared with the simulators, `survival: league` with the table answering from
+   ADP 90. The overall-space archive table is kept two folders down so only the adjusted table is
+   listed (`/files?kind=league` reads data/ and one folder down).
+6. Follow-up (next): a keeper the table does not know about (§2, "Open"), with three small items:
+   no default league table when several are listed, `_in_data_dir` on `survival_file` for the file and
+   league modes, and the web's mirrored constants naming their Python source.
 
 Issue numbers follow once the user approves filing them (the repo is public; league data stays out of
 the issues, as everywhere).
