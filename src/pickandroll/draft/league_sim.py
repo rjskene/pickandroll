@@ -27,6 +27,7 @@ from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 
+from ..availability.adp import SPREAD_BASE, SPREAD_GROWTH
 from ..availability.survival import SurvivalTable
 from ..optim.objective import CategoryCurve
 from ..optim.pool import shared_pool
@@ -132,9 +133,16 @@ def _fresh_state(
     projections: ProjectionSet,
     adp: pd.Series | None,
     keepers: tuple[Keeper, ...] = (),
+    spread: tuple[float, float] = (SPREAD_BASE, SPREAD_GROWTH),
 ) -> DraftState:
     state = DraftState(
-        settings=settings, projections=projections, my_team="me", my_position=1, keepers=keepers
+        settings=settings,
+        projections=projections,
+        my_team="me",
+        my_position=1,
+        keepers=keepers,
+        spread_base=spread[0],
+        spread_growth=spread[1],
     )
     if adp is not None:
         state.set_adp(adp, "given")
@@ -149,10 +157,11 @@ def _job(
         int,
         tuple[Strategy, ...],
         tuple[Keeper, ...],
+        tuple[float, float],
     ],
 ) -> tuple[int, list[tuple[str, int]], list[dict]]:
-    settings, projections, adp, seed, strategies, keepers = args
-    state = _fresh_state(settings, projections, adp, keepers)
+    settings, projections, adp, seed, strategies, keepers, spread = args
+    state = _fresh_state(settings, projections, adp, keepers, spread)
     picks, totals = draft_once(state, seed, strategies)
     return seed, picks, totals
 
@@ -167,6 +176,7 @@ def simulate_league(
     workers: int | None = None,
     progress: Callable[[dict], None] | None = None,
     keepers: Sequence[Keeper] = (),
+    spread: tuple[float, float] = (SPREAD_BASE, SPREAD_GROWTH),
 ) -> LeagueSimulation:
     """Run ``sims`` all-auto drafts and fit the survival table and the category curve.
 
@@ -174,6 +184,8 @@ def simulate_league(
     ``None``). ``progress`` is called after every finished draft with ``done`` and ``total``.
     ``keepers`` (each with its team's position: the simulated league has no "me") take their
     slots in every draft, so no drafter takes them and the record leaves their picks out.
+    ``spread`` is the ADP drafters' ``(base, growth)``: the session's, so the simulated league
+    drafts with the noise the availability model assumes.
     """
     if sims < 1:
         raise ValueError("sims must be positive")
@@ -184,8 +196,11 @@ def simulate_league(
     if not strategies or any(s not in STRATEGIES for s in strategies):
         raise ValueError(f"strategies must be drawn from {STRATEGIES}")
     started = time.perf_counter()
-    base = _fresh_state(settings, projections, adp, keepers)
-    jobs = [(settings, projections, adp, first_seed + i, strategies, keepers) for i in range(sims)]
+    base = _fresh_state(settings, projections, adp, keepers, spread)
+    jobs = [
+        (settings, projections, adp, first_seed + i, strategies, keepers, spread)
+        for i in range(sims)
+    ]
     rows: list[dict] = []
     totals: list[dict] = []
 

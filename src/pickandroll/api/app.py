@@ -32,6 +32,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
+from ..availability.adp import SPREAD_BASE, SPREAD_GROWTH
+from ..availability.league import LEAGUE_FROM_ADP, LeagueSurvivalTable
 from ..availability.survival import SurvivalTable
 from ..draft import (
     STRATEGIES,
@@ -319,12 +321,21 @@ class SessionCreate(BaseModel):
     curve_file: str | None = Field(
         default=None, description="optional JSON inside data/ with per-category mu and sigma"
     )
-    survival: Literal["none", "simulate", "file"] = Field(
+    survival: Literal["none", "simulate", "file", "league"] = Field(
         default="none",
-        description="availability: ADP formula, a simulated table built now, or a saved table",
+        description="availability: ADP formula, a simulated table built now, a saved table, or "
+        "the league's own survival by ADP (survival_file: adp,1..N,undrafted)",
     )
     survival_sims: int = Field(default=300, ge=10, le=5000)
     survival_file: str | None = Field(default=None, description="survival CSV inside data/")
+    spread_base: float = Field(
+        default=SPREAD_BASE,
+        gt=0.0,
+        le=20.0,
+        description="the ADP model's spread of a draft slot is spread_base + spread_growth * ADP "
+        "picks; it also drives the simulated drafters",
+    )
+    spread_growth: float = Field(default=SPREAD_GROWTH, ge=0.0, le=1.0)
     drafters: list[Strategy] | None = Field(
         default=None, description="drafter mix for the simulation (default z, adp and lp)"
     )
@@ -571,11 +582,14 @@ def create_app(
 
     @app.get("/files")
     def list_files(
-        kind: Literal["survival", "curve", "adp", "keepers"] = "survival",
+        kind: Literal["survival", "league", "curve", "adp", "keepers"] = "survival",
     ) -> list[dict[str, Any]]:
-        """Saved survival tables (CSV with a ``.sims`` sidecar), curve files (JSON), ADP
+        """Saved survival tables (CSV with a ``.sims`` sidecar), league survival tables (a CSV
+        headed ``adp,1..N,undrafted``, in data/ or one folder down), curve files (JSON), ADP
         files (a csv/xls whose name contains ``adp``) or keeper tables (a csv whose name
         contains ``keeper``) in data/."""
+        if kind == "league":
+            return _league_tables(data_dir)
         if kind == "survival":
             files = _list_files(data_dir, SURVIVAL_SUFFIXES)
             return [f for f in files if (data_dir / (f["file"] + ".sims")).exists()]
@@ -606,7 +620,31 @@ def create_app(
     async def make_session(body: SessionCreate) -> Session:
         state, label, curve_source = await asyncio.to_thread(_build_state, body, data_dir)
         survival: dict[str, Any] = {"mode": body.survival, "status": "none"}
-        if body.survival == "file":
+        if body.survival == "league":
+            if not body.survival_file:
+                raise HTTPException(400, "survival=league needs survival_file")
+            path = data_dir / body.survival_file
+            if not path.exists():
+                raise HTTPException(400, f"survival file not found: {body.survival_file}")
+            try:
+                league = await asyncio.to_thread(_load_league_survival, path)
+            except (OSError, ValueError) as exc:
+                raise HTTPException(400, f"could not read {path.name}: {exc}") from exc
+            if league.picks < state.settings.total_picks:
+                raise HTTPException(
+                    400,
+                    f"{path.name} covers {league.picks} picks, the draft has "
+                    f"{state.settings.total_picks}",
+                )
+            state.league_survival = league
+            survival = {
+                "mode": "league",
+                "status": "ready",
+                "source": f"league:{path.name}",
+                "from_adp": LEAGUE_FROM_ADP,
+                "max_adp": league.max_adp,
+            }
+        elif body.survival == "file":
             if not body.survival_file:
                 raise HTTPException(400, "survival=file needs survival_file")
             path = data_dir / body.survival_file
@@ -680,6 +718,8 @@ def create_app(
             taken = state.taken
             kept = {k["player_id"]: k["team"] for k in keeper_rows(state)}
             adp = state.effective_adp()
+            ahead = state.keepers_ahead(adp)
+            adp_eff = adp - ahead
             # Odds each player lasts to my next pick after the current one (the board's
             # question while I am on the clock is "can I wait on this player?").
             future = [k for k in state.my_remaining_picks if k > state.next_overall]
@@ -698,6 +738,9 @@ def create_app(
                     "positions": df.at[pid, "positions"],
                     "games": float(df.at[pid, "games"]),
                     "adp": _float_or_none(adp.get(pid)),
+                    # Keeper-adjusted: the market reaches him this many picks sooner.
+                    "adp_eff": _float_or_none(adp_eff.get(pid)),
+                    "keepers_ahead": int(ahead.get(pid, 0)),
                     "p_next": _float_or_none(p_next.get(pid)) if p_next is not None else None,
                     # The exact re-solve cost where a candidate was priced, else the
                     # first-order estimate from the plan's slopes.
@@ -1536,6 +1579,8 @@ def _build_state(body: SessionCreate, data_dir: Path) -> tuple[DraftState, str, 
         raise HTTPException(400, f"ADP file not found: {body.adp_file}")
     state.plan_time_limit = body.time_limit
     state.price_time_limit = min(state.price_time_limit, body.time_limit)
+    state.spread_base = body.spread_base
+    state.spread_growth = body.spread_growth
     curve_source = "none"
     if body.objective == "win":
         if body.curve_file:
@@ -1554,6 +1599,11 @@ def _build_state(body: SessionCreate, data_dir: Path) -> tuple[DraftState, str, 
         state.curve = curve.scaled(body.sigma_scale)
         curve_source = state.curve.source
     return state, projections.label, curve_source
+
+
+def _load_league_survival(path: Path) -> LeagueSurvivalTable:
+    """The league's survival by ADP from a CSV in data/ (``adp,1..N,undrafted``)."""
+    return LeagueSurvivalTable.from_frame(pd.read_csv(path))
 
 
 async def _build_survival(
@@ -1585,6 +1635,7 @@ async def _build_survival(
                 drafters,
                 progress=progress,
                 keepers=keepers,
+                spread=(state.spread_base, state.spread_growth),
             ),
         )
     except Exception as exc:  # noqa: BLE001 - report, keep the session usable
@@ -1610,6 +1661,28 @@ async def _build_survival(
 
 
 # --------------------------------------------------------------------------- helpers
+def _league_tables(data_dir: Path) -> list[dict[str, Any]]:
+    """League survival tables in data/ or one folder down, by their header: ``file`` is the
+    path inside data/."""
+    if not data_dir.exists():
+        return []
+    folders = [data_dir] + sorted(
+        p for p in data_dir.iterdir() if p.is_dir() and not p.name.startswith((".", "_"))
+    )
+    out = []
+    for folder in folders:
+        for f in _list_files(folder, SURVIVAL_SUFFIXES):
+            path = folder / f["file"]
+            try:
+                with path.open() as fh:
+                    head = fh.readline().strip().split(",")
+            except (OSError, UnicodeDecodeError):
+                continue
+            if head[0] == "adp" and head[-1] == "undrafted":
+                out.append({**f, "file": str(path.relative_to(data_dir))})
+    return out
+
+
 def _list_files(data_dir: Path, suffixes: set[str]) -> list[dict[str, Any]]:
     if not data_dir.exists():
         return []
@@ -1686,6 +1759,10 @@ def _summary(session: Session) -> dict[str, Any]:
         ),
         "adp_source": state.adp_source,
         "adp_known": int(state.adp.notna().sum()) if state.adp is not None else 0,
+        # Keepers out of the market: each moves every player ranked behind him up a pick.
+        "adp_keepers_ahead": len(state.keepers),
+        "spread_base": state.spread_base,
+        "spread_growth": state.spread_growth,
         "objective": state.objective,
         "curve": None if curve is None else curve.to_dict(),
         "sigma_scale": session.sigma_scale,

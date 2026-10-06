@@ -26,7 +26,6 @@ from typing import Literal
 import numpy as np
 import pandas as pd
 
-from ..availability.adp import spread_for_adp
 from ..optim.roster import RosterProblem, solve_roster
 from ..projections.schema import Cat
 from .state import DraftState, Pick
@@ -63,9 +62,10 @@ def team_roster(state: DraftState, team: str) -> list[str]:
 
 
 def latent_slots(state: DraftState, rng: np.random.Generator, noise: float = 1.0) -> pd.Series:
-    """One noisy draft slot per available player (the ``adp`` drafter)."""
-    adp = state.effective_adp().reindex(state.available).astype(float)
-    sd = adp.map(spread_for_adp)
+    """One noisy draft slot per available player (the ``adp`` drafter), in market space: the
+    keeper-adjusted ADP with the session's spread, as the availability model reads it."""
+    adp = state.market_adp().reindex(state.available).astype(float)
+    sd = state.spread(adp)
     eps = rng.standard_normal(len(adp))
     return adp + noise * sd * eps
 

@@ -17,8 +17,17 @@ export interface CurveSpec {
   source: string;
 }
 
+export type SurvivalMode = "none" | "simulate" | "file" | "league";
+/** The ADP model's spread of a draft slot, SPREAD.base + SPREAD.growth × ADP picks, fitted on the
+ * league's nine drafts (availability/adp.py). A session reports the values it runs on. */
+export const SPREAD = { base: 1.5, growth: 0.15 } as const;
+/** A league table answers from this keeper-adjusted ADP on; earlier players keep the normal model
+ * (availability/league.py). */
+export const LEAGUE_FROM_ADP = 90;
+export type AvailabilitySource = "adp" | "survival" | "league";
+
 export interface SurvivalStatus {
-  mode: "none" | "simulate" | "file";
+  mode: SurvivalMode;
   status: "none" | "building" | "ready" | "failed";
   sims?: number;
   done?: number;
@@ -26,6 +35,9 @@ export interface SurvivalStatus {
   error?: string;
   seconds?: number;
   drafters?: string[];
+  /** A league table: it answers from ADP from_adp to max_adp; the ADP model covers the rest. */
+  from_adp?: number;
+  max_adp?: number;
 }
 
 export interface SolverStatus {
@@ -85,10 +97,15 @@ export interface SessionSummary {
   unknown_positions: number;
   adp_source: string;
   adp_known: number;
+  /** Keepers out of the market: each moves every player ranked behind him up a pick. */
+  adp_keepers_ahead: number;
+  /** The ADP model's spread of a draft slot: spread_base + spread_growth * ADP picks. */
+  spread_base: number;
+  spread_growth: number;
   objective: Objective;
   curve: CurveSpec | null;
   sigma_scale: number;
-  availability_source: "adp" | "survival";
+  availability_source: AvailabilitySource;
   survival: SurvivalStatus;
   solver: SolverStatus;
 }
@@ -100,6 +117,9 @@ export interface BoardPlayer {
   positions: string;
   games: number;
   adp: number | null;
+  /** ADP minus the keepers ranked ahead of him: where the market reaches him. */
+  adp_eff: number | null;
+  keepers_ahead: number;
   p_next: number | null;
   /** Cost of taking this player with my next pick instead of the plan's choice: the exact
    * re-solve for priced candidates, else the first-order estimate from the plan's slopes. */
@@ -228,7 +248,7 @@ export interface Recommendation {
   fallback: string | null;
   timings: Record<string, number>;
   adp_source: string;
-  availability_source: "adp" | "survival";
+  availability_source: AvailabilitySource;
   candidates: Candidate[];
   plan: PlanRow[];
   scenarios: Scenario[];
@@ -353,7 +373,7 @@ export interface SessionCreateBody {
   objective: Objective;
   sigma_scale: number;
   curve_file: string | null;
-  survival: "none" | "simulate" | "file";
+  survival: SurvivalMode;
   survival_sims: number;
   survival_file: string | null;
   solve_ahead: boolean;
@@ -536,7 +556,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 export const api = {
   projections: () => request<FileEntry[]>("/projections"),
-  files: (kind: "survival" | "curve" | "adp" | "keepers") => request<FileEntry[]>(`/files?kind=${kind}`),
+  files: (kind: "survival" | "league" | "curve" | "adp" | "keepers") => request<FileEntry[]>(`/files?kind=${kind}`),
   /** A keepers CSV in data/, its rows as written with their line labels. */
   keepersFile: (file: string) =>
     request<{ file: string; rows: (KeeperIn & { label: string })[] }>(`/keepers-file?file=${encodeURIComponent(file)}`),

@@ -10,7 +10,7 @@ import Rail from "./components/Rail";
 import SessionSetup from "./components/SessionSetup";
 import { RoomFeed, SyncButton } from "./components/YahooSync";
 import { Close } from "./components/icons";
-import { adpIsStandIn, adpLabel } from "./format";
+import { adpIsStandIn, adpLabel, survivalDetail } from "./format";
 
 function useTicker(resetKey: number): number {
   const [seconds, setSeconds] = useState(0);
@@ -137,7 +137,9 @@ function DraftScreen({ yahoo, room, onSwitch, announce, onShown }: ScreenProps) 
           )}
         </span>
         <span>Objective: {s.objective === "win" ? "categories won" : "sum of z"}</span>
-        <span>Survival: {s.availability_source === "survival" ? `simulated (${s.survival.sims} drafts)` : "ADP formula"}</span>
+        <span title={`Survival odds: ${survivalDetail(s)}`}>
+          Survival: {s.availability_source === "survival" ? `simulated (${s.survival.sims} drafts)` : s.availability_source === "league" ? "league's drafts" : "ADP formula"}
+        </span>
         <span
           className={adpIsStandIn(s.adp_source) ? "bad" : ""}
           title={

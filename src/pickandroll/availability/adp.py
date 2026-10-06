@@ -18,8 +18,14 @@ import pandas as pd
 
 _SQRT2 = math.sqrt(2.0)
 
+#: The spread of a player's draft slot around his ADP, ``base + growth * adp`` picks. Fitted on
+#: league 31822's drafts 2017-2025 in keeper-adjusted space (docs/KEEPERS.md §1.1): the base was
+#: 3.0, which made the first rounds about twice as uncertain as they are.
+SPREAD_BASE = 1.5
+SPREAD_GROWTH = 0.15
 
-def spread_for_adp(adp: float, base: float = 3.0, growth: float = 0.15) -> float:
+
+def spread_for_adp(adp: float, base: float = SPREAD_BASE, growth: float = SPREAD_GROWTH) -> float:
     """Standard deviation of a player's draft slot as a function of their ADP."""
     return base + growth * adp
 

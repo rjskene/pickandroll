@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { api } from "../../api";
 import { useDraft } from "../../draft";
-import { fmtCost, fmtObjective, oddsClass, pct, shortName } from "../../format";
+import { fmtCost, fmtObjective, oddsClass, oddsSource, pct, shortName } from "../../format";
 import CatStrip from "../CatStrip";
 import Skeleton from "../Skeleton";
 import Stepper from "../Stepper";
@@ -64,7 +64,7 @@ export default function PickCard() {
             <CatStrip rows={result.categories} />
             <div className="muted" style={{ fontSize: 12 }}>
               {result.mode === "horizon" ? "rolling-horizon plan" : "single roster"} · {result.objective === "win" ? "expected categories won" : "sum of z"}
-              {result.fallback ? " · sum fallback (no incumbent in time)" : ""} · survival odds from {result.availability_source === "survival" ? "simulated drafts" : "the ADP formula"}
+              {result.fallback ? " · sum fallback (no incumbent in time)" : ""} · survival odds from {oddsSource(result.availability_source)}
             </div>
             <div className="stats">
               <div className="stat" title="expected number of the nine categories won if the plan holds">

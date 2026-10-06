@@ -532,3 +532,70 @@ def test_projection_players_for_the_setup_typeahead(client):
     assert client.get("/projections/players?file=nope.xls").status_code == 400
     assert client.get(f"/projections/players?file=../data/{SAMPLE}").status_code == 400
     assert client.get(f"/projections/players?file={DATA / SAMPLE}").status_code == 400
+
+
+def _league_csv(path, rows=6, picks=53, drop=None):
+    """A league survival table in the archive's shape (adp,1..picks,undrafted)."""
+    cols = ["adp", *(str(m) for m in range(1, picks + 1)), "undrafted"]
+    lines = [",".join(c for c in cols if c != drop)]
+    for a in range(1, rows + 1):
+        cells = [str(a)]
+        for m in range(1, picks + 1):
+            if str(m) != drop:
+                cells.append(f"{max(0.0, min(1.0, 1.0 - (m - a) / 5.0)):.4f}")
+        if drop != "undrafted":
+            cells.append("0.0")
+        lines.append(",".join(cells))
+    path.write_text("\n".join(lines) + "\n")
+
+
+def test_market_space_on_the_api(data_dir):
+    """Phase 3: the spread on the session, the league table as a survival mode, and the board's
+    keeper-adjusted ADP."""
+    _league_csv(data_dir / "league.csv")
+    _league_csv(data_dir / "short.csv", picks=40)
+    _league_csv(data_dir / "headless.csv", drop="undrafted")
+    (data_dir / "history").mkdir()
+    _league_csv(data_dir / "history" / "by_adp.csv")
+    with TestClient(create_app(SessionStore(), data_dir=data_dir)) as c:
+        listed = {f["file"] for f in c.get("/files?kind=league").json()}
+        assert listed == {"league.csv", "short.csv", "history/by_adp.csv"}
+        assert (
+            create(c, survival="league", survival_file="history/by_adp.csv")["survival"]["source"]
+            == "league:by_adp.csv"
+        )
+        plain = create(c)
+        assert (plain["spread_base"], plain["spread_growth"]) == (1.5, 0.15)
+        assert plain["availability_source"] == "adp" and plain["adp_keepers_ahead"] == 0
+        board = c.get(f"/sessions/{plain['id']}/board?limit=60").json()["players"]
+        by_adp = sorted((p for p in board if p["adp"] is not None), key=lambda p: p["adp"])
+        first, later = by_adp[0], by_adp[-1]
+        assert all(p["keepers_ahead"] == 0 and p["adp_eff"] == p["adp"] for p in board)
+
+        s = create(
+            c,
+            survival="league",
+            survival_file="league.csv",
+            spread_base=2.0,
+            spread_growth=0.1,
+            keepers=[{"position": 1, "round": 2, "player_id": first["player_id"]}],
+        )
+        assert (s["spread_base"], s["spread_growth"]) == (2.0, 0.1)
+        assert s["availability_source"] == "league" and s["adp_keepers_ahead"] == 1
+        assert s["survival"]["mode"] == "league" and s["survival"]["source"] == "league:league.csv"
+        assert (s["survival"]["from_adp"], s["survival"]["max_adp"]) == (90, 6)
+        rows = {
+            p["player_id"]: p
+            for p in c.get(f"/sessions/{s['id']}/board?limit=60").json()["players"]
+        }
+        row = rows[later["player_id"]]
+        assert row["adp"] == later["adp"] and row["keepers_ahead"] == 1
+        assert row["adp_eff"] == pytest.approx(later["adp"] - 1)
+
+        r = create(c, 400, survival="league")
+        assert "needs survival_file" in r["detail"]
+        r = create(c, 400, survival="league", survival_file="short.csv")
+        assert "covers 40 picks" in r["detail"]
+        r = create(c, 400, survival="league", survival_file="headless.csv")
+        assert "could not read headless.csv" in r["detail"] and "undrafted" in r["detail"]
+        r = create(c, 422, spread_base=0)

@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api, CAT_LABEL, type Cat, type CategoryRow } from "../../api";
 import { useDraft } from "../../draft";
-import { fmtSlope, labelClass, pct } from "../../format";
+import { fmtSlope, labelClass, oddsSource, pct } from "../../format";
 import CatStrip from "../CatStrip";
 import Skeleton from "../Skeleton";
 
@@ -41,7 +41,7 @@ export default function CategoriesCard() {
             {d.done
               ? "my roster as made, on every team's projected finals"
               : result
-                ? `if the plan holds · survival odds ${result.availability_source === "survival" ? "simulated" : "from the ADP formula"}`
+                ? `if the plan holds · survival odds from ${oddsSource(result.availability_source)}`
                 : d.solving
                   ? "solving…"
                   : "appears after the first solve"}
