@@ -1,6 +1,50 @@
 import { useDraft } from "../../draft";
 import { fmtObjective, oddsClass, pct } from "../../format";
 import Skeleton from "../Skeleton";
+import { useMyRoster } from "./myRoster";
+
+/** Nothing left to plan: my roster as made, in draft order, keepers to come included. */
+function MadeRoster() {
+  const s = useDraft().session;
+  const rows = useMyRoster();
+  if (!rows) return <p className="muted">Loading the roster…</p>;
+  const toCome = rows.filter((r) => r.toCome).length;
+  return (
+    <>
+      <div className="row">
+        <span className="k">{s.complete ? `Final roster · ${rows.length} players` : `No picks left to plan · ${rows.length} of ${s.roster_size} on the roster`}</span>
+        <span className="muted" style={{ fontSize: 11 }}>
+          {s.complete ? "the draft is complete" : toCome ? `${toCome} keeper pick${toCome > 1 ? "s" : ""} to come` : "the other teams are still picking"}
+        </span>
+      </div>
+      <table className="plan">
+        <thead>
+          <tr>
+            <th className="num">Pick</th>
+            <th>Player</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((r) => (
+            <tr key={r.overall} className="mine">
+              <td className="num dim">#{r.overall}</td>
+              <td>
+                {r.kept && (
+                  <span className="kmark" title={`keeper: costs round ${r.round}`}>
+                    K
+                  </span>
+                )}
+                {r.name}
+              </td>
+              <td className="good">{r.kept ? `kept · R${r.round}${r.toCome ? " · to come" : ""}` : "drafted"}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </>
+  );
+}
 
 /** The whole roster as one table, one player per row: the picks already made, then the plan
  * for every remaining pick with the odds the player is still there when it comes. */
@@ -8,6 +52,7 @@ export default function PlanCard() {
   const d = useDraft();
   const s = d.session;
   const result = d.result;
+  if (d.done) return <MadeRoster />;
   if (!result) return <p className="muted">{d.solving ? "Solving…" : "Appears after the first solve."}</p>;
   if (d.busy) return <Skeleton rows={s.roster_size} note={`Re-planning for pick ${s.next_overall}…`} />;
   const slotOf = new Map(result.best_roster.roster.map((r) => [r.player, r.slot]));

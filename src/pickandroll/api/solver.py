@@ -201,13 +201,14 @@ def _horizon_payload(
         wins = state.expected_wins(finals)
         value = float(solution.expected_totals.sum())
         prices = state.board_prices(problem, solution)
-        entry = session.record_score(
+        entry = session.score_entry(
             snapshot,
             mode="horizon",
             wins=wins,
             value=value,
             matchups=league["matchups_won"],
-            top=names.get(solution.first_pick) if solution.first_pick else None,
+            # The Pick card's #1 (what `d` drafts), which can differ from the plan's first pick.
+            top=names.get(table.iloc[0]["player"] if len(table) else solution.first_pick),
         )
         fallback = plan_fallback(problem, solution)
         top_objective, capped = _standing(solution, table, priced)
@@ -466,7 +467,7 @@ def compute_recommendation(
             .sum()
             .sum()
         )
-        entry = session.record_score(
+        entry = session.score_entry(
             snapshot,
             mode="roster",
             wins=wins,

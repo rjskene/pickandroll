@@ -58,6 +58,7 @@ function SolverNote() {
     return <span className="accent">Simulating the league {done}/{total} drafts</span>;
   }
   if (s.survival.status === "failed") return <span className="bad">League simulation failed: {s.survival.error}</span>;
+  if (d.done) return <span>Solver: done · {s.complete ? "the draft is complete" : "no picks left"}</span>;
   if (!s.solver.enabled) return <span>Solver: on demand (r)</span>;
   if (d.solver?.running) return <span className="accent">Solver: re-planning for pick {s.next_overall}…</span>;
   if (d.result && !d.stale) return <span className="good">Solver: ready for pick {s.next_overall}</span>;
@@ -218,6 +219,9 @@ export default function App() {
       queryClient.invalidateQueries({ queryKey: ["teams", sessionId] });
       queryClient.invalidateQueries({ queryKey: ["recommendation", sessionId] });
       queryClient.invalidateQueries({ queryKey: ["room", sessionId] });
+      // After my last pick no solve follows (its event refreshed the score): the final score
+      // and categories come from the picks themselves.
+      queryClient.invalidateQueries({ queryKey: ["score", sessionId] });
     };
     const refreshRoom = () => queryClient.invalidateQueries({ queryKey: ["room", sessionId] });
     source.addEventListener("solve", (e) => {

@@ -1,3 +1,5 @@
+import { useQuery } from "@tanstack/react-query";
+import { api } from "../../api";
 import { useDraft } from "../../draft";
 import { fmtCost, fmtObjective, oddsClass, pct, shortName } from "../../format";
 import CatStrip from "../CatStrip";
@@ -16,8 +18,8 @@ export default function PickCard() {
   const scale = result?.scale;
   // While a solve runs, or the answer is for an earlier board, the hero shows the solver's
   // progress instead of a name that may just have been drafted.
-  const ready = !!result && !!top && !d.busy;
-  const ties = result && !d.busy ? result.candidates.filter((c) => c.tie) : [];
+  const ready = !!result && !!top && !d.busy && !d.done;
+  const ties = result && !d.busy && !d.done ? result.candidates.filter((c) => c.tie) : [];
   const tied = ties.length > 1;
   const band = result ? (scale === "z" ? `${result.tie_band.toFixed(1)} z` : `${result.tie_band.toFixed(2)} cats`) : "";
 
@@ -32,7 +34,7 @@ export default function PickCard() {
             </span>
           )}
           <span className="grow" />
-          <button className="small" onClick={d.solve} disabled={d.solving} title="Re-solve (r)">
+          <button className="small" onClick={d.solve} disabled={d.solving || d.done} title="Re-solve (r)">
             {d.solving ? "Solving…" : "Re-solve"} <kbd>r</kbd>
           </button>
         </div>
@@ -109,7 +111,7 @@ export default function PickCard() {
                 Re-planning for pick {s.next_overall}…
               </span>
             )}
-            <Stepper />
+            {d.done ? <Made /> : <Stepper />}
           </>
         )}
         {d.pickError && <p className="error">{d.pickError}</p>}
@@ -185,6 +187,35 @@ export default function PickCard() {
           <Skeleton rows={4} />
         </div>
       )}
+    </>
+  );
+}
+
+/** My picks are made: the roster's final score instead of a recommendation for a board that
+ * no longer comes. */
+function Made() {
+  const s = useDraft().session;
+  const score = useQuery({ queryKey: ["score", s.id], queryFn: () => api.score(s.id) });
+  const final = score.data?.final;
+  return (
+    <>
+      {final && (
+        <div className="stats">
+          <div className="stat" title="expected number of the nine categories won by the roster as made">
+            <span className="k">Final · expected cats won</span>
+            <span className="v accent">{final.wins.toFixed(2)}</span>
+          </div>
+          <div className="stat" title="opponents beaten in a majority of categories on every team's projected finals">
+            <span className="k">Matchups</span>
+            <span className="v">
+              {final.matchups} of {s.num_teams - 1}
+            </span>
+          </div>
+        </div>
+      )}
+      <span className="muted" style={{ fontSize: 12 }}>
+        Your roster is made: the Plan card (4) lists it and the Team card (5) has the final profile.
+      </span>
     </>
   );
 }

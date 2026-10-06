@@ -8,6 +8,7 @@ export default function AltsCard() {
   const result = d.result;
   const nextPick = s.my_next_pick;
   const pickAfter = s.my_picks.find((k) => nextPick !== null && k > nextPick);
+  if (d.done) return <p className="muted">{s.complete ? "The draft is complete" : "No picks left"}: no alternatives to weigh.</p>;
   if (!result) return <p className="muted">{d.solving ? "Solving…" : "Appears after the first solve."}</p>;
   if (d.busy) return <Skeleton rows={10} note={`Re-planning for pick ${s.next_overall}…`} />;
   const scale = result.scale;

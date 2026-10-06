@@ -122,7 +122,7 @@ export default function SolverCard() {
           <label>
             <input type="checkbox" checked={settings.horizon} onChange={(e) => setSettings({ horizon: e.target.checked })} /> plan all remaining picks
           </label>
-          <button className="small" onClick={d.solve} disabled={d.solving}>
+          <button className="small" onClick={d.solve} disabled={d.solving || d.done}>
             {d.solving ? "Solving…" : "Re-solve"} <kbd>r</kbd>
           </button>
         </div>

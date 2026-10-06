@@ -132,6 +132,9 @@ export interface DraftApi {
   stale: boolean;
   /** A solve is running or the result is stale: cards show placeholders instead of it. */
   busy: boolean;
+  /** I have no picks left (or the draft is complete): nothing is solved again, so the cards
+   * show the roster and the final score instead of the last plan. */
+  done: boolean;
   solver: SolverStatus | undefined;
   solving: boolean;
   solveError: string | null;
@@ -296,9 +299,12 @@ export function DraftProvider({ session, solveEvents, survival, live, room, room
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["recommendation", session.id] }),
   });
   const { mutate: runSolve } = solveMutation;
-  const solve = useCallback(() => runSolve(), [runSolve]);
-  const solvedFor = useRef("");
   const havePicks = session.my_next_pick !== null && !session.complete;
+  // Nothing is solved past my last pick: there is no board left to plan for.
+  const solve = useCallback(() => {
+    if (havePicks) runSolve();
+  }, [havePicks, runSolve]);
+  const solvedFor = useRef("");
   const serverSolves = session.solver.enabled;
   useEffect(() => {
     const key = `${session.id}:${session.version}`;
@@ -308,7 +314,10 @@ export function DraftProvider({ session, solveEvents, survival, live, room, room
     }
   }, [session.id, session.version, havePicks, settings.refreshOnPick, serverSolves, runSolve]);
   const solving = solveMutation.isPending || !!latest.data?.solver.running || (!!latest.data?.solver.pending && !result);
-  const busy = solving || stale;
+  // The API solves only while I have picks to make: after my last one the latest result stays
+  // stale for good, and waiting for a fresh one would show placeholders to the end.
+  const done = !havePicks;
+  const busy = !done && (solving || stale);
 
   // ---------------------------------------------------------------- picks
   const draftMutation = useMutation({
@@ -454,6 +463,7 @@ export function DraftProvider({ session, solveEvents, survival, live, room, room
     result,
     stale,
     busy,
+    done,
     solver: latest.data?.solver,
     solving,
     solveError: solveMutation.error?.message ?? latest.data?.solver.last_error ?? null,
@@ -579,7 +589,7 @@ export function Hotkeys() {
           break;
         case "d": {
           const top = d.result?.candidates[0];
-          if (!top || d.busy) return; // never draft from a stale answer
+          if (!top || d.busy || d.done) return; // never draft from a stale answer
           d.draftPlayer(top.player, { via: "key" });
           break;
         }

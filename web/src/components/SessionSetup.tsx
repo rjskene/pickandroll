@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, type Objective, type SessionSummary } from "../api";
 import Info from "./Info";
-import { erroredRow, KeeperEditor, keeperDraft, keepersIn, nameOptions, type KeeperDraft } from "./Keepers";
+import { erroredRow, isMine, KeeperEditor, keeperDraft, keepersIn, nameOptions, type KeeperDraft } from "./Keepers";
 import { SeenRooms, useSeenRooms } from "./YahooSync";
 
 interface Props {
@@ -56,7 +56,8 @@ export default function SessionSetup({ onCreated, onSelect }: Props) {
     onSuccess: (r) =>
       setKeepers(
         r.rows.map((row) =>
-          keeperDraft({ on: row.position !== null, position: row.position, round: row.round, player: row.player ?? row.player_id ?? "", player_id: row.player_id ?? null, label: row.label }),
+          // My rows (no team, or the team at my pick) come unticked until I decide.
+          keeperDraft({ on: !isMine(row, position), position: row.position, round: row.round, player: row.player ?? row.player_id ?? "", player_id: row.player_id ?? null, label: row.label }),
         ),
       ),
   });
@@ -212,7 +213,7 @@ export default function SessionSetup({ onCreated, onSelect }: Props) {
         <Info title="keepers">
           <b>Each keeper takes his team's pick in the round he costs.</b>
           <span>His pick is logged when the draft reaches it, nobody else can draft him, and the plan counts my keepers on my roster from the start.</span>
-          <span>Rows from a keepers file in data/ (position,round,player; position me for mine) come with my own keepers unticked until I decide. On draft night, add the other teams' keepers here or later from the log card (6).</span>
+          <span>Rows from a keepers file in data/ (position,round,player; position me for mine) come with my own keepers unticked until I decide; a row for the team at my pick is mine too. On draft night, add the other teams' keepers here or later from the log card (6).</span>
         </Info>
       </label>
       {keepersOpen && (

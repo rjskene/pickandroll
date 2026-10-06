@@ -1,7 +1,8 @@
 import { useQuery } from "@tanstack/react-query";
-import { api, CAT_LABEL, type ScoreEntry } from "../../api";
+import { api, CAT_LABEL, type CategoryRow, type ScoreEntry } from "../../api";
 import { useDraft } from "../../draft";
 import { labelClass, oddsClass, pct, signed } from "../../format";
+import { useMyRoster } from "./myRoster";
 
 /** Expected categories won before my first pick against the best plan seen and the latest,
  * and at the end the final roster's odds and its head-to-head tally. */
@@ -9,8 +10,12 @@ function ScoreBlock() {
   const d = useDraft();
   const s = d.session;
   const score = useQuery({ queryKey: ["score", s.id], queryFn: () => api.score(s.id) });
+  const picks = useQuery({ queryKey: ["picks", s.id], queryFn: () => api.picks(s.id) });
   const sc = score.data;
   if (!sc) return null;
+  // A turn's row names the player drafted there; the recommendation's #1 until the pick is made.
+  const made = new Map((picks.data ?? []).map((p) => [p.overall, p.name]));
+  const named = (h: ScoreEntry) => (h.on_the_clock ? made.get(h.next_overall) : undefined) ?? h.top ?? "";
   const bench = sc.benchmark;
   const current = sc.current_wins;
   const delta = sc.vs_benchmark;
@@ -56,7 +61,7 @@ function ScoreBlock() {
             {sc.history.filter((h) => h.on_the_clock || h === sc.history[sc.history.length - 1]).map((h) => (
               <tr key={h.version}>
                 <td className="dim">#{h.next_overall}</td>
-                <td>{h.top ?? ""}</td>
+                <td title={h.top && named(h) !== h.top ? `recommended: ${h.top}` : undefined}>{named(h)}</td>
                 <td className="num">{h.wins.toFixed(2)}</td>
                 <td className={`num ${bench ? cls(h.wins - bench.wins) : ""}`}>{bench ? signed(h.wins - bench.wins) : ""}</td>
                 <td className="dim num" style={{ fontSize: 11 }}>{h.matchups}/{opponents} · {h.value.toFixed(0)} z</td>
@@ -69,6 +74,70 @@ function ScoreBlock() {
   );
 }
 
+/** Final or expected z totals per category, with the odds of winning each. */
+function Profile({ rows, title, note }: { rows: CategoryRow[]; title: string; note: string }) {
+  const s = useDraft().session;
+  return (
+    <div className="block">
+      <div className="row">
+        <span className="k">{title}</span>
+        <span className="muted" style={{ fontSize: 11 }}>
+          {note}
+        </span>
+      </div>
+      <div className="profile">
+        {rows.map((r) => {
+          const width = Math.min(100, Math.max(2, (r.expected + 20) * 2));
+          return (
+            <div key={r.cat} className={`row ${r.label === "conceded" ? "punted" : ""}`} title={`${pct(r.odds)} to win · beats ${r.beaten_expected} of ${s.num_teams - 1} projected`}>
+              <span className="lbl">{CAT_LABEL[r.cat]}</span>
+              <div className="bar" style={{ flexGrow: 1 }}>
+                <span className={r.expected < 0 ? "bad" : ""} style={{ width: `${width}%` }} />
+              </div>
+              <span className="val">{r.expected.toFixed(1)}</span>
+              <span className={`val ${labelClass(r.label)}`}>{pct(r.odds)}</span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+/** My picks are made: the final score, the roster's own profile and the roster in draft order
+ * (the last plan would show a player planned for a pick already made). */
+function MadeTeam({ rosterNote }: { rosterNote: string }) {
+  const s = useDraft().session;
+  const score = useQuery({ queryKey: ["score", s.id], queryFn: () => api.score(s.id) });
+  const rows = useMyRoster();
+  const final = score.data?.final;
+  return (
+    <>
+      <ScoreBlock />
+      {final && <Profile rows={final.categories} title="Final profile" note="z totals of the roster as made · conceded rows dimmed" />}
+      <div className="block">
+        <div className="row">
+          <span className="k">Roster · {rosterNote}</span>
+          <span className="muted" style={{ fontSize: 11 }}>
+            in draft order
+          </span>
+        </div>
+        <ul className="roster slots">
+          {(rows ?? []).map((r) => (
+            <li key={r.overall} className="mine">
+              <span className="slot">#{r.overall}</span>
+              <span className="who">{r.name}</span>
+              <span className="good" title={r.kept ? `keeper: pick ${r.overall}${r.toCome ? ", logged when the draft reaches it" : ""}` : undefined}>
+                {r.kept ? `kept · R${r.round}` : "drafted"}
+              </span>
+            </li>
+          ))}
+        </ul>
+      </div>
+    </>
+  );
+}
+
 export default function TeamCard() {
   const d = useDraft();
   const s = d.session;
@@ -77,6 +146,7 @@ export default function TeamCard() {
   const kept = new Map(s.keepers.filter((k) => k.mine).map((k) => [k.player_id, k]));
   const drafted = s.my_roster.length;
   const rosterNote = `${drafted} of ${s.roster_size} on the roster${kept.size ? ` · ${kept.size} kept` : ""}`;
+  if (d.done) return <MadeTeam rosterNote={rosterNote} />;
   if (!result) {
     return (
       <>
@@ -94,29 +164,7 @@ export default function TeamCard() {
   return (
     <>
       <ScoreBlock />
-      <div className="block">
-        <div className="row">
-          <span className="k">Expected profile</span>
-          <span className="muted" style={{ fontSize: 11 }}>
-            final z totals if the plan holds · conceded rows dimmed
-          </span>
-        </div>
-        <div className="profile">
-          {result.categories.map((r) => {
-            const width = Math.min(100, Math.max(2, (r.expected + 20) * 2));
-            return (
-              <div key={r.cat} className={`row ${r.label === "conceded" ? "punted" : ""}`} title={`${pct(r.odds)} to win · beats ${r.beaten_expected} of ${s.num_teams - 1} projected`}>
-                <span className="lbl">{CAT_LABEL[r.cat]}</span>
-                <div className="bar" style={{ flexGrow: 1 }}>
-                  <span className={r.expected < 0 ? "bad" : ""} style={{ width: `${width}%` }} />
-                </div>
-                <span className="val">{r.expected.toFixed(1)}</span>
-                <span className={`val ${labelClass(r.label)}`}>{pct(r.odds)}</span>
-              </div>
-            );
-          })}
-        </div>
-      </div>
+      <Profile rows={result.categories} title="Expected profile" note="final z totals if the plan holds · conceded rows dimmed" />
       <div className="block">
         <div className="row">
           <span className="k">Roster · {rosterNote}</span>

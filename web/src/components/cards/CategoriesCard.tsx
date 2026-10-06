@@ -20,17 +20,31 @@ export default function CategoriesCard() {
   const result = d.result;
   const teams = useQuery({ queryKey: ["teams", s.id], queryFn: () => api.teams(s.id) });
   const [view, setView] = useState<"totals" | "projected">("projected");
-  const rows: CategoryRow[] | undefined = result?.categories;
+  // Once my picks are made nothing is solved again: the rows are the final score's, my roster
+  // as made, not the last plan's.
+  const score = useQuery({ queryKey: ["score", s.id], queryFn: () => api.score(s.id), enabled: d.done });
+  const final = d.done ? (score.data?.final ?? null) : null;
+  const rows: CategoryRow[] | undefined = d.done ? final?.categories : result?.categories;
   const opponents = s.num_teams - 1;
   return (
     <>
       <div className="block">
         <div className="row">
           <span className="k">
-            {result ? `Expected ${result.wins.toFixed(2)} of ${s.cats.length} categories · ${result.league.matchups_won} of ${opponents} matchups` : "Categories"}
+            {final
+              ? `Final ${final.wins.toFixed(2)} of ${s.cats.length} categories · ${final.matchups} of ${opponents} matchups`
+              : result && !d.done
+                ? `Expected ${result.wins.toFixed(2)} of ${s.cats.length} categories · ${result.league.matchups_won} of ${opponents} matchups`
+                : "Categories"}
           </span>
           <span className="muted" style={{ fontSize: 11 }}>
-            {result ? `if the plan holds · survival odds ${result.availability_source === "survival" ? "simulated" : "from the ADP formula"}` : d.solving ? "solving…" : "appears after the first solve"}
+            {d.done
+              ? "my roster as made, on every team's projected finals"
+              : result
+                ? `if the plan holds · survival odds ${result.availability_source === "survival" ? "simulated" : "from the ADP formula"}`
+                : d.solving
+                  ? "solving…"
+                  : "appears after the first solve"}
           </span>
         </div>
         {rows && d.busy && <Skeleton rows={9} note={`Re-planning for pick ${s.next_overall}…`} />}
