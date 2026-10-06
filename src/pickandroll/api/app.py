@@ -15,6 +15,7 @@ formula unless a survival table is simulated at setup or loaded from a file.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 import threading
@@ -821,26 +822,36 @@ def create_app(
     @app.patch("/sessions/{session_id}/keepers")
     def set_keepers(session_id: str, body: KeepersIn) -> dict[str, Any]:
         """Replace the keeper table: all of it before the first pick, then the slots the draft
-        has not reached (409 for a change to a keeper already in the log)."""
+        has not reached (409 for a change to a keeper already in the log). In a room, a keeper
+        may also name the player at a gap, a pick the room never sent: he replaces the
+        stand-in there (docs/KEEPERS.md §2)."""
         session = store.get(session_id)
-        with session.lock:
-            state = session.state
-            rows = listed(body.keepers)
-            try:
-                state.set_keepers(resolve_keepers(rows, state.projections.df))
-            except KeeperLogged as exc:
-                raise HTTPException(409, str(exc)) from exc
-            except KeeperInvalid as exc:
-                raise HTTPException(400, keeper_error(rows, exc)) from exc
-            except ValueError as exc:
-                raise HTTPException(400, str(exc)) from exc
-            if session.create_params is not None:
-                session.create_params = {
-                    **session.create_params,
-                    "keepers": keeper_params(state.keepers),
-                    "keepers_file": None,
-                }
-            table = keeper_rows(state)
+        room = session.room
+        with room.lock if room is not None else contextlib.nullcontext():
+            with session.lock:
+                state = session.state
+                rows = listed(body.keepers)
+                gaps = yahoo_room.gap_standins(room) if room is not None else {}
+                try:
+                    state.set_keepers(
+                        resolve_keepers(rows, state.projections.df), fixable=frozenset(gaps)
+                    )
+                except KeeperLogged as exc:
+                    raise HTTPException(409, str(exc)) from exc
+                except KeeperInvalid as exc:
+                    raise HTTPException(400, keeper_error(rows, exc)) from exc
+                except ValueError as exc:
+                    raise HTTPException(400, str(exc)) from exc
+                if session.create_params is not None:
+                    session.create_params = {
+                        **session.create_params,
+                        "keepers": keeper_params(state.keepers),
+                        "keepers_file": None,
+                    }
+                table = keeper_rows(state)
+            changes = yahoo_room.keepers_fixed(session, room, gaps) if room is not None else []
+        if room is not None:
+            yahoo_room.publish_changes(session, room, changes)
         session.publish("keepers", {"keepers": table})
         return {"keepers": table, "version": session.version}
 
@@ -1242,6 +1253,7 @@ def create_app(
                 room = await asyncio.to_thread(build)
             except (KeyError, ValueError) as exc:
                 raise HTTPException(400, str(exc)) from exc
+            room.loop = asyncio.get_running_loop()  # the gap checks run on it
             store.rooms[body.draft_id] = session.id
             if session.solver is not None:
                 # The room's solve settings replace the session's: solve again with them (and
@@ -1407,6 +1419,7 @@ def create_app(
             session.publish("room_event", {"draft_id": draft_id, "entry": event}, bump=False)
         await asyncio.to_thread(yahoo_room.follow_clock, session, room, body.events)
         await asyncio.to_thread(yahoo_room.check_teams, session, room, body.events)
+        await asyncio.to_thread(yahoo_room.check_gaps, session, room)
         return {
             "received": len(body.events),
             "written": written,
@@ -1510,8 +1523,16 @@ def _keepers_file_rows(data_dir: Path, file: str) -> list[Labelled]:
         raise HTTPException(400, str(exc)) from exc
 
 
+#: The session's files, each a path inside data/ (the keepers file is checked where it is read).
+DATA_FILE_FIELDS = ("projection_file", "positions_file", "adp_file", "curve_file", "survival_file")
+
+
 def _build_state(body: SessionCreate, data_dir: Path) -> tuple[DraftState, str, str]:
     """Load projections, positions, ADP and the curve for a new session (blocking I/O)."""
+    for name in DATA_FILE_FIELDS:
+        file = getattr(body, name)
+        if file and not _in_data_dir(file):
+            raise HTTPException(400, f"{name} must be a path inside data/: {file}")
     path = data_dir / body.projection_file
     if not path.exists() or path.suffix.lower() not in PROJECTION_SUFFIXES:
         raise HTTPException(400, f"projection file not found: {body.projection_file}")

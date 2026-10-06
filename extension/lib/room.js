@@ -68,9 +68,10 @@
     }
 
     /** Highest k such that picks 1..k are all known; a keeper slot counts as known (the room
-     * may never send its pick). */
+     * may never send its pick), and so does a pick the API has synced through without one (a
+     * gap: a keeper the table does not know about, filled with a stand-in). */
     contiguous() {
-      let k = 0;
+      let k = this.sent;
       while (this.picks.has(k + 1) || this.isKeeper(k + 1)) k++;
       return k;
     }

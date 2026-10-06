@@ -236,3 +236,15 @@ test("a keeper slot the room never sends counts as known, so the turn after it i
   r.configure({ keepers: [] });
   assert.equal(r.isMine(24), true, "an emptied keeper table gives the slot back");
 });
+
+test("a pick the room never sent counts as known once the API has synced past it", () => {
+  const r = room(1);
+  throughPick(r, 23, [19]); // 19: a keeper the table does not know about
+  assert.equal(r.contiguous(), 18, "the tracker alone stalls at the gap");
+  r.synced({ synced_through: 18, waiting_for: 19 });
+  assert.equal(r.contiguous(), 18);
+  r.synced({ synced_through: 23, waiting_for: null }); // the API filled 19 with a stand-in
+  assert.equal(r.contiguous(), 23);
+  assert.equal(r.nextMine(), r.contiguous() + 1, "the title guard's test holds on my next pick");
+  assert.deepEqual(r.unsent(), [], "nothing to resend: the gap has no pick to send");
+});

@@ -64,6 +64,10 @@ export default function SessionSetup({ onCreated, onSelect }: Props) {
       ),
   });
   const keptCount = keepers.filter((k) => k.on).length;
+  // One league table is the table; with several the user picks one (an overall-space table
+  // listed beside the keeper-adjusted one must never be taken by default).
+  const leagueTable = leagueFile || (leagueFiles.data?.length === 1 ? leagueFiles.data[0].file : "");
+  const needsTable = survival === "league" && !leagueTable;
 
   const create = useMutation({
     mutationFn: async () => {
@@ -84,7 +88,7 @@ export default function SessionSetup({ onCreated, onSelect }: Props) {
           survival === "file"
             ? survivalFile || survivalFiles.data?.[0]?.file || null
             : survival === "league"
-              ? leagueFile || leagueFiles.data?.[0]?.file || null
+              ? leagueTable || null
               : null,
         solve_ahead: solveAhead,
         time_limit: timeLimit,
@@ -326,7 +330,12 @@ export default function SessionSetup({ onCreated, onSelect }: Props) {
       {survival === "league" && (
         <label>
           <span className="k">League table</span>
-          <select value={leagueFile || leagueFiles.data?.[0]?.file || ""} onChange={(e) => setLeagueFile(e.target.value)}>
+          <select value={leagueTable} onChange={(e) => setLeagueFile(e.target.value)} className={needsTable ? "bad" : ""}>
+            {!leagueTable && (
+              <option value="" disabled>
+                choose one of {leagueFiles.data?.length ?? 0} tables
+              </option>
+            )}
             {(leagueFiles.data ?? []).map((f) => (
               <option key={f.file} value={f.file}>
                 {f.file}
@@ -369,7 +378,7 @@ export default function SessionSetup({ onCreated, onSelect }: Props) {
         </label>
       </div>
 
-      <button className="primary" onClick={() => create.mutate()} disabled={create.isPending || !files.length}>
+      <button className="primary" onClick={() => create.mutate()} disabled={create.isPending || !files.length || needsTable} title={needsTable ? "choose the league table first" : undefined}>
         {create.isPending ? "Loading projections…" : "Start draft"}
       </button>
       {create.error && <p className="error">{String(create.error.message)}</p>}

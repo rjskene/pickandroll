@@ -12,7 +12,10 @@ the scorecard.
 A session with keepers (``docs/KEEPERS.md``) names its keeper slots in the attach response;
 my keeper slots are not turns. ``keepers`` says how the room sends the keepers' picks, since
 that is only known on the night: ``"socket"`` as the slots pass, like any pick; ``"history"``
-all at once on connect, as Yahoo's history frame would; ``"none"``, never.
+all at once on connect, as Yahoo's history frame would; ``"none"``, never. ``unsent`` are picks
+the room never sends at all (a keeper the session's table does not know about): the room puts
+the next pick on the clock, and ``after_pick(overall)`` runs after each pick is posted (a test
+names the keeper there, as the user would).
 
 ``client`` is anything with httpx's ``get``/``post``: a FastAPI ``TestClient``, or an
 ``httpx.Client`` pointed at a running API.
@@ -23,7 +26,7 @@ from __future__ import annotations
 import csv
 import statistics
 import time
-from collections.abc import Mapping
+from collections.abc import Callable, Collection, Mapping
 from dataclasses import dataclass
 from itertools import pairwise
 from pathlib import Path
@@ -99,6 +102,8 @@ def replay(
     plan_wait: float = 10.0,
     lead: float = 0.0,
     keepers: KeeperFrames = "socket",
+    unsent: Collection[int] = (),
+    after_pick: Callable[[int], None] | None = None,
 ) -> dict[str, Any]:
     """Replay ``picks`` into the room ``draft_id``; returns the attach response, the plan
     served at each of my turns, the status and the scorecard."""
@@ -184,25 +189,31 @@ def replay(
                 }
             )
 
+    def silent(k: int) -> bool:
+        """The room never sends pick k as it passes."""
+        return (k in kept and keepers != "socket") or k in unsent
+
     def on_clock(k: int) -> int:
-        """The pick the room puts on the clock after pick k - 1: k, or past keeper slots whose
+        """The pick the room puts on the clock after pick k - 1: k, or past the slots whose
         picks it never sends as they pass."""
-        if keepers != "socket":
-            while k in kept:
-                k += 1
+        while silent(k):
+            k += 1
         return k
 
     turn(on_clock(1))
     for i, p in enumerate(picks):
-        if p.overall in kept and keepers != "socket":
+        if silent(p.overall):
             continue
         if speed:
             delay = started + offsets[i] / 1000.0 / speed - time.monotonic()
             if delay > 0:
                 time.sleep(delay)
         send(p, "socket")
+        if after_pick is not None:
+            after_pick(p.overall)
         k = on_clock(p.overall + 1)
-        if k in mine:
+        # The turn after a pick the room never sent is the API's sign that it was made.
+        if k in mine or any(o in unsent for o in range(p.overall + 1, k)):
             turn(k)
     status = _ok(client.get(f"/rooms/{draft_id}/status"))
     card = _ok(client.get(f"/rooms/{draft_id}/fidelity"))

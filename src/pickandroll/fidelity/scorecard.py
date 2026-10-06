@@ -76,6 +76,7 @@ def analyze(events: list[dict[str, Any]]) -> dict[str, Any]:
     mine = snake_picks(num_teams, slot, rounds)
 
     room: dict[int, dict] = {}
+    gap_picks: set[int] = set()  # picks the room never sent, recorded after its clock passed
     first_sync: dict[int, dict] = {}
     last_sync: dict[int, dict] = {}
     turns: dict[int, dict] = {}
@@ -90,7 +91,9 @@ def analyze(events: list[dict[str, Any]]) -> dict[str, Any]:
     mismatch = None  # the API's note when the room showed another team count (#17)
     for e in events:
         kind = e.get("type")
-        if kind == "room_pick":
+        if kind == "room_pick" and e.get("src") == "gap":
+            gap_picks.add(int(e["overall"]))
+        elif kind == "room_pick":
             room.setdefault(int(e["overall"]), e)
         elif kind == "session_pick":
             first_sync.setdefault(int(e["overall"]), e)
@@ -129,6 +132,11 @@ def analyze(events: list[dict[str, Any]]) -> dict[str, Any]:
     }
     kept |= {k for k, e in first_sync.items() if e.get("src") == "keeper"}
     kept |= {k for k, e in room.items() if e.get("src") == "keeper"}
+    # A gap the user named the keeper for is that keeper's slot from the fix on; one never
+    # named holds a stand-in, which no board agreement can count (docs/KEEPERS.md §2).
+    fixed = {k for k, e in last_sync.items() if e.get("kind") == "keeper_fix"}
+    kept |= fixed
+    gaps = sorted(gap_picks - room.keys() - kept)
     kept_unseen = len(kept - room.keys())
 
     # When armed turns acted (act_at_s, #10), as the API's control events set it, in order.
@@ -351,8 +359,12 @@ def analyze(events: list[dict[str, Any]]) -> dict[str, Any]:
         "control": control_at(math.inf),
         "picks_seen": len(room),
         "total_picks": total,
-        # Keeper picks the session logged that the room never sent (a silent keeper slot).
+        # Keeper picks the session logged that the room never sent (a silent keeper slot),
+        # with the gaps the user named a keeper for.
         "kept_unseen": kept_unseen,
+        "gaps_fixed": sorted(fixed - room.keys()),
+        # Picks the room never sent and no keeper was named for: a stand-in holds each.
+        "gaps": gaps,
         "my_keepers": sorted(k for k in kept if k in mine),
         "compliance": {
             "compliant": counts["compliant"],
@@ -471,7 +483,7 @@ def guardrail_pass(card: dict[str, Any]) -> dict[str, bool | None]:
     """Pass/fail per guardrail; ``None`` when there is nothing to judge yet."""
     g = card["guardrails"]
     unseen = card.get("kept_unseen", 0)
-    complete = card["picks_seen"] + unseen >= card["total_picks"]
+    complete = card["picks_seen"] + unseen + len(card.get("gaps") or []) >= card["total_picks"]
     lag = g["G2"]
     return {
         "G1": (g["G1"]["agree"] + unseen == card["total_picks"]) if complete else None,
@@ -503,6 +515,8 @@ def markdown(card: dict[str, Any]) -> str:
 
     keepers = card.get("my_keepers") or []
     unseen = card.get("kept_unseen", 0)
+    gaps = card.get("gaps") or []
+    fixed = card.get("gaps_fixed") or []
 
     lines = [
         f"## Room {card['draft_id']}: fidelity scorecard",
@@ -530,6 +544,18 @@ def markdown(card: dict[str, Any]) -> str:
             f"| G1 board agreement | {g['G1']['agree']}/{g['G1']['of']} "
             f"(of {g['G1']['total']})"
             + (f", {unseen} keeper picks the room never sent" if unseen else "")
+            + (
+                f" ({len(fixed)} named at {'a gap' if len(fixed) == 1 else 'gaps'}: "
+                f"{_picks(fixed)})"
+                if fixed
+                else ""
+            )
+            + (
+                f", {len(gaps)} {'gap' if len(gaps) == 1 else 'gaps'} with a stand-in: "
+                f"{_picks(gaps)}"
+                if gaps
+                else ""
+            )
             + f" | {g['G1']['total']}/{g['G1']['total']} | {mark('G1')} |"
         ),
         f"| G2 sync lag | {ms(g['G2'])} | p50 ≤ 1000, p95 ≤ 2000, max ≤ 5000 | {mark('G2')} |",
@@ -640,7 +666,12 @@ def status(card: dict[str, Any]) -> dict[str, Any]:
         ],
         "conflicts": card["conflicts"],
         "standins": card["standins"],
+        "gaps": card.get("gaps") or [],
     }
+
+
+def _picks(overalls: list[int]) -> str:
+    return ", ".join(str(k) for k in overalls)
 
 
 def _presolve_class(first: dict[str, Any] | None, ready_ms: float | None) -> str:

@@ -19,7 +19,7 @@ until then he counts as taken and, for his team, as rostered.
 from __future__ import annotations
 
 import time
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 
 import numpy as np
@@ -210,12 +210,13 @@ class DraftState:
     def _only_keepers_logged(self) -> bool:
         return all(self.is_keeper_pick(p) for p in self.picks)
 
-    def set_keepers(self, keepers: Sequence[Keeper]) -> None:
+    def set_keepers(self, keepers: Sequence[Keeper], fixable: Collection[int] = ()) -> None:
         """Replace the keeper table. Before the first real pick the whole table may change (the
         keeper picks logged are re-derived); after it, only the slots the draft has not reached:
         a keeper in the log stays as he is (only the room's record can change him, see
-        :meth:`replace_pick`)."""
-        old, n = self.keepers, self.next_overall
+        :meth:`replace_pick`). ``fixable``: reached picks with no keeper that a new keeper may
+        take, his pick replacing the one logged there (a room's gap, a pick it never sent)."""
+        old, n, picks = self.keepers, self.next_overall, list(self.picks)
         fresh = self._only_keepers_logged()
         logged = {o: k.player_id for o, k in self.keeper_slots.items() if o < n}
         if fresh:
@@ -228,11 +229,18 @@ class DraftState:
                 changed = sorted(
                     o for o in logged.keys() | reached.keys() if logged.get(o) != reached.get(o)
                 )
+                fixes = [o for o in changed if o in fixable and o not in logged]
+                changed = [o for o in changed if o not in fixes]
                 if changed:
                     raise KeeperLogged(f"pick {changed[0]} is in the log: its keeper cannot change")
+                for o in fixes:
+                    keeper = self.keeper_slots[o]
+                    self.picks[o - 1] = Pick(o, self.keeper_team(keeper), keeper.player_id)
             self._check_log()
         except ValueError:
             self.keepers = old
+            if not fresh:
+                self.picks[:] = picks
             raise
         finally:
             self._fill_keepers()

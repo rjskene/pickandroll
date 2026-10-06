@@ -1,9 +1,9 @@
 // Keepers (docs/KEEPERS.md §3): the editor the setup screen and the log card share, and the
 // session's keeper table on the log card. A keeper takes his team's pick in the round he costs;
 // the API logs that pick when the draft reaches it and nobody else can draft him.
-import { useId, useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { api, snakeOverall, type KeeperIn, type ProjectedPlayer } from "../api";
+import { api, gapText, snakeOverall, type GapPick, type KeeperIn, type ProjectedPlayer } from "../api";
 import { useDraft } from "../draft";
 import { Close } from "./icons";
 
@@ -213,6 +213,26 @@ export function KeeperEditor({ rows, onChange, numTeams, myPosition, rounds, opt
   );
 }
 
+/** The mark on a gap's stand-in (a pick the room never sent): clicking it opens the keeper
+ * editor with a row for that team and round, for the name on Yahoo's board. */
+export function GapMark({ gap }: { gap: GapPick }) {
+  const d = useDraft();
+  const text = gapText(d.session, gap);
+  return (
+    <button
+      className="kmark gapmark"
+      title={text}
+      aria-label={text}
+      onClick={(e) => {
+        e.stopPropagation();
+        d.nameKeeper(gap);
+      }}
+    >
+      ?
+    </button>
+  );
+}
+
 /** The session's keeper table on the log card, with an editor for draft night: the order is
  * drawn and the other teams' keepers show on the Yahoo board. */
 export function SessionKeepers() {
@@ -230,10 +250,26 @@ export function SessionKeepers() {
       for (const key of ["session", "board", "picks", "teams"]) queryClient.invalidateQueries({ queryKey: [key, s.id] });
     },
   });
+  const current = () => s.keepers.map((k) => keeperDraft({ position: k.mine ? null : k.position, round: k.round, player: k.name, player_id: k.player_id, applied: k.applied }));
   const start = () => {
     save.reset();
-    setEditing(s.keepers.map((k) => keeperDraft({ position: k.mine ? null : k.position, round: k.round, player: k.name, player_id: k.player_id, applied: k.applied })));
+    setEditing(current());
   };
+  // A gap's mark asked for its keeper (each click a new request, taken once): the table plus a
+  // row for that team and round, the player left for the user to type from Yahoo's board.
+  const request = d.keeperRequest;
+  const [answered, setAnswered] = useState<GapPick | null>(null);
+  if (request !== answered) {
+    setAnswered(request);
+    if (request !== null) {
+      const row = keeperDraft({ position: request.position === s.my_position ? null : request.position, round: request.round, player: "", player_id: null });
+      setEditing([...(editing ?? current()), row]);
+    }
+  }
+  const { clearKeeperRequest } = d;
+  useEffect(() => {
+    if (request !== null) clearKeeperRequest();
+  }, [request, clearKeeperRequest]);
   return (
     <div className="block">
       <div className="row">
@@ -254,6 +290,15 @@ export function SessionKeepers() {
           </>
         )}
       </div>
+      {d.gaps.length > 0 && editing === null && (
+        <ul className="gaps">
+          {d.gaps.map((g) => (
+            <li key={g.overall}>
+              <GapMark gap={g} /> {gapText(s, g)}
+            </li>
+          ))}
+        </ul>
+      )}
       {editing !== null ? (
         <>
           <KeeperEditor

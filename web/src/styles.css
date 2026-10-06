@@ -205,6 +205,11 @@ table.plan .survival .bar { width: 60px; }
 .picklog li.mine { background: var(--mine); }
 /* ---- keepers: the K mark, and the editor on the setup screen and the log card ---- */
 .kmark { display: inline-block; min-width: 16px; margin-right: 5px; padding: 0 4px; border-radius: 3px; font-size: 10px; font-weight: 700; line-height: 16px; text-align: center; text-decoration: none; background: var(--panel-2); border: 1px solid var(--line-2); color: var(--accent); }
+/* A gap's stand-in (a pick the room never sent): the mark opens the keeper editor for its slot. */
+.gapmark { cursor: pointer; color: var(--bad); border-color: var(--bad); font-family: inherit; }
+.gapmark:hover { background: rgba(239, 107, 107, 0.12); }
+ul.gaps { margin: 4px 0 0; padding: 0; list-style: none; font-size: 12px; color: var(--bad); }
+ul.gaps li { display: flex; align-items: center; gap: 2px; padding: 2px 0; }
 .keeper-editor { display: grid; gap: 8px; }
 table.keepers { width: 100%; border-collapse: collapse; }
 table.keepers th, table.keepers td { padding: 2px 4px; text-align: left; }
