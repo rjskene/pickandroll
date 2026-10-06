@@ -45,6 +45,12 @@ product. Formulations in `docs/DESIGN.md`.
   weeks: there is one draft, then a season of weekly matchups, and the in-season module is
   issue #4. Price reliability (time-limited forced solves inflating candidate costs) is issue #6.
 
+## Keepers (2026-10-06)
+
+League 31822 is a keeper league and the tool has no keeper support. `docs/KEEPERS.md` is the build
+spec: keeper picks pre-decided per team and round, excluded from the market, locked on my roster,
+then availability in keeper-adjusted market space from the league's own eleven-season archive.
+
 ## Checks before drafting on it
 
 - Rebuild the survival table from opponents that resemble the real league once its drafters

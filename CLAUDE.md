@@ -7,6 +7,7 @@ Current programme: **YAHOO SYNC**, tracker #11, built as #8 (API room endpoints)
 and #10 (web UI). The metric, guardrails, event schema and hill-climb protocol are in `docs/YAHOO_SYNC.md`;
 the proven scratch code to port is described in its §0 (archive at
 `~/code/pickandroll-scratch/live-drafts-2026-09-27/`, outside the repo).
+Next programme: **KEEPERS** (`docs/KEEPERS.md`, 2026-10-06): keeper-league support before the real draft on 2026-10-14.
 
 ## Roles
 
