@@ -226,7 +226,7 @@ class SessionCreate(BaseModel):
 4. Scorecard on the tracker issue: picks planned vs made, any 400 from the API, solve times (keeper
    mode changes nothing in the MILP size, so the 30 s design point must still hold).
 
-Results (2026-10-06, main 0f69468 for slot 6, 28b940b for slots 1 and 12; all three with the practice
+Results (2026-10-06, main 0f69468 for slot 6, 28b940b for slots 1 and 12, then bb20d2a with #32; all with the practice
 file, `survival: simulate`, the top candidate drafted every turn):
 
 | slot | keeper picks applied | planned = made | max solve | capped | E[cats] | notes |
@@ -234,6 +234,7 @@ file, `survival: simulate`, the top candidate drafted every turn):
 | 6 | 78, 150 | 11/11 | 23.4 s | 0 | 4.97 → 5.18 | announcer silent at 139, Plan card stuck after 156 |
 | 1 | 73, 145 | 11/11 | 30.6 s | 4 of 11 (rounds 2-4) | 5.31 → 5.60 | keeper right after my pick 72; 96/97 back to back handled |
 | 12 | 84, 156 | 11/11 | 25.3 s | 2 of 11 | 4.95 → 5.05 | draft ends on my keeper; completion fired from the fill |
+| 12 (confirmation, b1c8fa9 + #32) | 84, 156 | 11/11 | 25.1 s | 0 | 5.10 → 5.24 | done state on every card between 133 and 156 and at completion; announcer replayed 118-156 once each; history rows name the drafted players |
 
 No keeper ever appeared in the candidates, the plan or the draftable board; keeper picks were
 announced mid-draft and shown as kept on the Team, Log, Plan and Board cards. Defects, all UI or
