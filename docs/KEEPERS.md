@@ -305,5 +305,8 @@ file whose N is my seat is a collision (slot 1 and slot 12 runs): the editor fol
    for the file and league modes, and the web's mirrored constants naming their Python source. #35
    (merged 2026-10-06 as 74f20e7) makes "by ADP" the Sim bar's default strategy (§5 item 5).
 
-Issue numbers follow once the user approves filing them (the repo is public; league data stays out of
-the issues, as everywhere).
+Issues (filed 2026-10-06 after the merges, at the user's request, so the history matches the yahoo-sync
+tracker #11; league data stays out of them, as everywhere): tracker #47; one issue per step, closed by
+its PR: #36 (#28 state), #37 (#29 api), #38 (#30 web), #39 (#31 room), #40 (#32 stream and endgame),
+#41 (#33 availability), #42 (#34 gap stand-in), #43 (#35 Sim default). Open follow-ups: #44 (two
+timing-dependent tests), #45 (API autopick default still `z`), #46 ("Re-planning" seen once, watch item).
