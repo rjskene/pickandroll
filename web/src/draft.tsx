@@ -353,7 +353,8 @@ export function DraftProvider({ session, solveEvents, survival, live, room, room
     if (realPicks > 0) runUndo();
   }, [realPicks, runUndo]);
   const [noise, setNoise] = useState(1);
-  const [strategy, setStrategy] = useState<SimStrategy>("z");
+  // The Sim bar starts by ADP, so simulated teams draft as the availability model assumes.
+  const [strategy, setStrategy] = useState<SimStrategy>("adp");
   const simRef = useRef({ noise, strategy });
   simRef.current = { noise, strategy };
   const simMutation = useMutation({
