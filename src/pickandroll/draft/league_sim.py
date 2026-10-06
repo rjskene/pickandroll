@@ -41,7 +41,7 @@ from .autopick import (
     team_label,
 )
 from .settings import LeagueSettings
-from .state import DraftState
+from .state import DraftState, Keeper
 
 NOISE = 1.0
 FIRST_SEED = 100_000
@@ -128,19 +128,31 @@ def draft_once(
 
 
 def _fresh_state(
-    settings: LeagueSettings, projections: ProjectionSet, adp: pd.Series | None
+    settings: LeagueSettings,
+    projections: ProjectionSet,
+    adp: pd.Series | None,
+    keepers: tuple[Keeper, ...] = (),
 ) -> DraftState:
-    state = DraftState(settings=settings, projections=projections, my_team="me", my_position=1)
+    state = DraftState(
+        settings=settings, projections=projections, my_team="me", my_position=1, keepers=keepers
+    )
     if adp is not None:
         state.set_adp(adp, "given")
     return state
 
 
 def _job(
-    args: tuple[LeagueSettings, ProjectionSet, pd.Series | None, int, tuple[Strategy, ...]],
+    args: tuple[
+        LeagueSettings,
+        ProjectionSet,
+        pd.Series | None,
+        int,
+        tuple[Strategy, ...],
+        tuple[Keeper, ...],
+    ],
 ) -> tuple[int, list[tuple[str, int]], list[dict]]:
-    settings, projections, adp, seed, strategies = args
-    state = _fresh_state(settings, projections, adp)
+    settings, projections, adp, seed, strategies, keepers = args
+    state = _fresh_state(settings, projections, adp, keepers)
     picks, totals = draft_once(state, seed, strategies)
     return seed, picks, totals
 
@@ -154,20 +166,26 @@ def simulate_league(
     first_seed: int = FIRST_SEED,
     workers: int | None = None,
     progress: Callable[[dict], None] | None = None,
+    keepers: Sequence[Keeper] = (),
 ) -> LeagueSimulation:
     """Run ``sims`` all-auto drafts and fit the survival table and the category curve.
 
     ``adp`` is the market ADP the ``adp`` drafters follow (the projection ranking when
     ``None``). ``progress`` is called after every finished draft with ``done`` and ``total``.
+    ``keepers`` (each with its team's position: the simulated league has no "me") take their
+    slots in every draft, so no drafter takes them and the record leaves their picks out.
     """
     if sims < 1:
         raise ValueError("sims must be positive")
+    keepers = tuple(keepers)
+    if any(k.position is None for k in keepers):
+        raise ValueError("a simulated league needs every keeper's position")
     strategies = tuple(strategies)
     if not strategies or any(s not in STRATEGIES for s in strategies):
         raise ValueError(f"strategies must be drawn from {STRATEGIES}")
     started = time.perf_counter()
-    base = _fresh_state(settings, projections, adp)
-    jobs = [(settings, projections, adp, first_seed + i, strategies) for i in range(sims)]
+    base = _fresh_state(settings, projections, adp, keepers)
+    jobs = [(settings, projections, adp, first_seed + i, strategies, keepers) for i in range(sims)]
     rows: list[dict] = []
     totals: list[dict] = []
 

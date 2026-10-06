@@ -21,7 +21,7 @@ import threading
 import time
 import uuid
 from contextlib import asynccontextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
@@ -33,7 +33,15 @@ from fastapi.responses import PlainTextResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 from ..availability.survival import SurvivalTable
-from ..draft import STRATEGIES, DraftState, LeagueSettings, Strategy, simulate
+from ..draft import (
+    STRATEGIES,
+    DraftState,
+    KeeperInvalid,
+    KeeperLogged,
+    LeagueSettings,
+    Strategy,
+    simulate,
+)
 from ..draft.league_sim import simulate_league
 from ..fidelity import FidelityLog, analyze, last_attach, markdown, read_events
 from ..fidelity import status as fidelity_status
@@ -46,6 +54,16 @@ from ..sources.bbm import PROJECTION_SUFFIXES, load_bbm
 from ..sources.matching import load_aliases
 from ..sources.yahoo import YahooLeague, build_id_map, load_players_file
 from . import yahoo_room
+from .keepers import (
+    KeeperIn,
+    Labelled,
+    keeper_error,
+    keeper_params,
+    keeper_rows,
+    listed,
+    read_keepers_file,
+    resolve_keepers,
+)
 from .solver import BackgroundSolver, SolveParams, compute_recommendation, solver_executor
 from .yahoo_feed import LeagueFactory, YahooFeed, attach_feed
 from .yahoo_room import YahooRoom
@@ -59,6 +77,7 @@ MAX_STREAM_SECONDS = 120.0
 SURVIVAL_SUFFIXES = {".csv"}
 CURVE_SUFFIXES = {".json"}
 ADP_SUFFIXES = {".csv", ".xls", ".xlsx"}
+KEEPER_SUFFIXES = {".csv"}
 #: Browsers that may call the API: the dev UI, other localhost tools and the Chrome extension.
 CORS_ORIGINS = r"^(chrome-extension://[a-p]{32}|https?://(localhost|127\.0\.0\.1)(:\d+)?)$"
 #: The longest a room client may hold ``/plan`` for a fresh solve (the pick clock is 30 s).
@@ -313,6 +332,18 @@ class SessionCreate(BaseModel):
         le=600.0,
         description="seconds per plan solve; the incumbent is kept when it is hit",
     )
+    keepers: list[KeeperIn] = Field(
+        default_factory=list, description="keepers: team position (none: mine), round, player"
+    )
+    keepers_file: str | None = Field(
+        default=None,
+        description="CSV inside data/ with position,round,player rows (position me: mine), "
+        "taken before the keepers list",
+    )
+
+
+class KeepersIn(BaseModel):
+    keepers: list[KeeperIn]
 
 
 class PickIn(BaseModel):
@@ -501,17 +532,33 @@ def create_app(
 
     @app.get("/files")
     def list_files(
-        kind: Literal["survival", "curve", "adp"] = "survival",
+        kind: Literal["survival", "curve", "adp", "keepers"] = "survival",
     ) -> list[dict[str, Any]]:
-        """Saved survival tables (CSV with a ``.sims`` sidecar), curve files (JSON) or ADP
-        files (a csv/xls whose name contains ``adp``) in data/."""
+        """Saved survival tables (CSV with a ``.sims`` sidecar), curve files (JSON), ADP
+        files (a csv/xls whose name contains ``adp``) or keeper tables (a csv whose name
+        contains ``keeper``) in data/."""
         if kind == "survival":
             files = _list_files(data_dir, SURVIVAL_SUFFIXES)
             return [f for f in files if (data_dir / (f["file"] + ".sims")).exists()]
         if kind == "adp":
             files = _list_files(data_dir, ADP_SUFFIXES)
             return [f for f in files if "adp" in f["file"].lower()]
+        if kind == "keepers":
+            files = _list_files(data_dir, KEEPER_SUFFIXES)
+            return [f for f in files if "keeper" in f["file"].lower()]
         return _list_files(data_dir, CURVE_SUFFIXES)
+
+    @app.get("/keepers-file")
+    def keepers_file(file: str) -> dict[str, Any]:
+        """A keepers CSV's rows as written (players by name, position null for mine), for the
+        setup screen to offer before a session exists."""
+        return {
+            "file": file,
+            "rows": [
+                {"label": label, **row.model_dump()}
+                for label, row in _keepers_file_rows(data_dir, file)
+            ],
+        }
 
     @app.post("/sessions", status_code=201)
     async def create_session(body: SessionCreate) -> dict[str, Any]:
@@ -564,7 +611,12 @@ def create_app(
             survival=survival,
             solve_ahead=body.solve_ahead,
         )
-        session.create_params = body.model_dump(mode="json")
+        # The keeper table as resolved, by id: a rebuild after a restart does not re-read the file.
+        session.create_params = {
+            **body.model_dump(mode="json"),
+            "keepers": keeper_params(state.keepers),
+            "keepers_file": None,
+        }
         if body.survival == "simulate":
             asyncio.get_running_loop().create_task(
                 _build_survival(session, body.survival_sims, drafters, body.fit_curve)
@@ -587,6 +639,7 @@ def create_app(
         df = state.projections.df
         with session.lock:
             taken = state.taken
+            kept = {k["player_id"]: k["team"] for k in keeper_rows(state)}
             adp = state.effective_adp()
             # Odds each player lasts to my next pick after the current one (the board's
             # question while I am on the clock is "can I wait on this player?").
@@ -622,6 +675,7 @@ def create_app(
                     },
                     "total": round(float(z.at[pid, "total"]), 3),
                     "taken": pid in taken,
+                    "keeper": kept.get(pid),
                 }
             )
         return {
@@ -641,37 +695,72 @@ def create_app(
     def add_pick(session_id: str, body: PickIn) -> dict[str, Any]:
         session = store.get(session_id)
         with session.lock:
+            before = len(session.state.picks)
             try:
                 pick = session.state.apply_pick(body.team, body.player_id, body.overall)
             except (KeyError, ValueError) as exc:
                 raise HTTPException(400, str(exc)) from exc
-        row = _pick_row(session.state, pick)
-        session.publish("pick", {"pick": row})
+            row = _pick_row(session.state, pick)
+            # The pick and the keeper picks logged after it.
+            rows = [_pick_row(session.state, p) for p in session.state.picks[before:]]
+        for logged in rows:
+            session.publish("pick", {"pick": logged})
         return row
 
     @app.post("/sessions/{session_id}/sync")
     def sync(session_id: str, body: SyncIn) -> dict[str, Any]:
         session = store.get(session_id)
         with session.lock:
+            before = len(session.state.picks)
             try:
-                added = session.state.sync(body.picks)
+                session.state.sync(body.picks)
             except (KeyError, ValueError) as exc:
                 raise HTTPException(400, str(exc)) from exc
-        rows = [_pick_row(session.state, p) for p in added]
+            # The feed's new picks and the keeper picks logged on the way.
+            rows = [_pick_row(session.state, p) for p in session.state.picks[before:]]
         for row in rows:
             session.publish("pick", {"pick": row})
         return {"added": rows, "version": session.version}
 
     @app.delete("/sessions/{session_id}/picks/last")
     def undo_pick(session_id: str) -> dict[str, Any]:
+        """Take back the last real pick and the keeper picks logged after it (they come back
+        when the draft reaches their slots again)."""
         session = store.get(session_id)
         with session.lock:
-            if not session.state.picks:
-                raise HTTPException(400, "no picks to undo")
-            pick = session.state.picks.pop()
-        row = _pick_row(session.state, pick)
-        session.publish("undo", {"pick": row})
-        return row
+            try:
+                undone = session.state.undo()
+            except ValueError as exc:
+                raise HTTPException(400, str(exc)) from exc
+            row, *kept = [_pick_row(session.state, p) for p in undone]
+        session.publish("undo", {"pick": row, "keepers": kept})
+        return {**row, "keepers_undone": kept}
+
+    @app.patch("/sessions/{session_id}/keepers")
+    def set_keepers(session_id: str, body: KeepersIn) -> dict[str, Any]:
+        """Replace the keeper table: all of it before the first pick, then the slots the draft
+        has not reached (409 for a change to a keeper already in the log)."""
+        session = store.get(session_id)
+        with session.lock:
+            state = session.state
+            rows = listed(body.keepers)
+            try:
+                state.set_keepers(resolve_keepers(rows, state.projections.df))
+            except KeeperLogged as exc:
+                raise HTTPException(409, str(exc)) from exc
+            except KeeperInvalid as exc:
+                raise HTTPException(400, keeper_error(rows, exc)) from exc
+            except ValueError as exc:
+                raise HTTPException(400, str(exc)) from exc
+            if session.create_params is not None:
+                session.create_params = {
+                    **session.create_params,
+                    "keepers": keeper_params(state.keepers),
+                    "keepers_file": None,
+                }
+            table = keeper_rows(state)
+        session.publish("keepers", {"keepers": table})
+        return {"keepers": table, "version": session.version}
 
     @app.post("/sessions/{session_id}/autopick")
     def autopick(session_id: str, body: AutoPickIn) -> dict[str, Any]:
@@ -682,7 +771,8 @@ def create_app(
         if body.until_my_pick and body.count is None and session.state.on_the_clock:
             raise HTTPException(400, "you are on the clock; make your pick first")
         with session.lock:
-            made = simulate(
+            before = len(session.state.picks)
+            simulate(
                 session.state,
                 count=body.count,
                 until_my_pick=body.until_my_pick,
@@ -690,7 +780,8 @@ def create_app(
                 seed=body.seed,
                 strategy=body.strategy,
             )
-        rows = [_pick_row(session.state, p) for p in made]
+            # The simulated picks and the keeper picks logged on the way.
+            rows = [_pick_row(session.state, p) for p in session.state.picks[before:]]
         for row in rows:
             session.publish("pick", {"pick": row})
         return {"added": rows, "version": session.version}
@@ -1297,6 +1388,23 @@ def create_app(
 
 
 # --------------------------------------------------------------------------- session setup
+def _in_data_dir(file: str) -> bool:
+    """A relative name that stays inside data/ (symlinks in data/ are the user's own)."""
+    name = Path(file)
+    return not name.is_absolute() and ".." not in name.parts
+
+
+def _keepers_file_rows(data_dir: Path, file: str) -> list[Labelled]:
+    """A keepers CSV inside ``data_dir``, labelled by line (400 if missing or unreadable)."""
+    path = data_dir / file
+    if not _in_data_dir(file) or not path.is_file() or path.suffix.lower() not in KEEPER_SUFFIXES:
+        raise HTTPException(400, f"keepers file not found: {file}")
+    try:
+        return read_keepers_file(path)
+    except (OSError, ValueError) as exc:  # a bad encoding is a ValueError too
+        raise HTTPException(400, str(exc)) from exc
+
+
 def _build_state(body: SessionCreate, data_dir: Path) -> tuple[DraftState, str, str]:
     """Load projections, positions, ADP and the curve for a new session (blocking I/O)."""
     path = data_dir / body.projection_file
@@ -1339,13 +1447,19 @@ def _build_state(body: SessionCreate, data_dir: Path) -> tuple[DraftState, str, 
         slots=slots,
         cats=tuple(body.cats) if body.cats else LeagueSettings.cats,
     )
+    # The file's rows first, then the request's list; errors name the line or the index.
+    rows = _keepers_file_rows(data_dir, body.keepers_file) if body.keepers_file else []
+    rows += listed(body.keepers)
     try:
         state = DraftState(
             settings=settings,
             projections=projections,
             my_team=body.my_team,
             my_position=body.my_position,
+            keepers=tuple(resolve_keepers(rows, projections.df)),
         )
+    except KeeperInvalid as exc:
+        raise HTTPException(400, keeper_error(rows, exc)) from exc
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
     adp_path = data_dir / body.adp_file if body.adp_file else data_dir / "adp.csv"
@@ -1386,6 +1500,10 @@ async def _build_survival(
     """Simulate the league in a worker thread, then install the table (and the fitted curve)
     and wake the solver."""
     state = session.state
+    # The simulated league has no "me": my keepers go in at my seat.
+    keepers = [
+        replace(k, position=state.my_position) if k.position is None else k for k in state.keepers
+    ]
 
     def progress(update: dict[str, Any]) -> None:
         session.survival["done"] = update["done"]
@@ -1404,6 +1522,7 @@ async def _build_survival(
                 state.adp,
                 drafters,
                 progress=progress,
+                keepers=keepers,
             ),
         )
     except Exception as exc:  # noqa: BLE001 - report, keep the session usable
@@ -1480,6 +1599,8 @@ def _summary(session: Session) -> dict[str, Any]:
         "my_team": state.my_team,
         "my_position": state.my_position,
         "my_picks": state.my_picks,
+        "my_slots": state.my_slots,
+        "keepers": keeper_rows(state),
         "picks_made": len(state.picks),
         "next_overall": state.next_overall,
         "my_next_pick": state.my_next_pick,
@@ -1555,6 +1676,7 @@ def _pick_row(state: DraftState, pick) -> dict[str, Any]:
         "team": pick.team,
         "player_id": pick.player_id,
         "name": state.projections.df.at[pick.player_id, "player"],
+        "keeper": state.is_keeper_pick(pick),
     }
 
 
