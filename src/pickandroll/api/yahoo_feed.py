@@ -24,6 +24,11 @@ if TYPE_CHECKING:
 LeagueFactory = Callable[[str], YahooLeague]
 
 
+class SeatRefused(ValueError):
+    """The league puts me in a seat the session cannot move to (it has real picks for another
+    seat, or the seat does not fit its keepers): the request's fault, not Yahoo's."""
+
+
 @dataclass
 class YahooFeed:
     league: YahooLeague
@@ -145,10 +150,14 @@ def attach_feed(
             session.state.set_adp(adp.astype(float), "yahoo")
     mine = next((t for t in teams if t.is_mine), None)
     if mine is not None:
-        session.state.my_team = mine.name
-        if mine.draft_position:
-            with session.lock:
-                session.state.set_my_position(int(mine.draft_position))
+        with session.lock:
+            if mine.draft_position:
+                try:
+                    session.state.set_my_position(int(mine.draft_position))
+                except ValueError as exc:
+                    raise SeatRefused(str(exc)) from exc
+            # My keeper picks already logged take the league's team name with the rest.
+            session.state.set_my_team(mine.name)
     feed = YahooFeed(
         league=league,
         league_name=info.name,

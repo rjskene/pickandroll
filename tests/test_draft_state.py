@@ -401,3 +401,14 @@ def test_the_rooms_record_wins_over_a_wrong_keeper_entry(pool):
     state = make_state(pool, keepers=[Keeper(2, 2, b)])
     assert state.drop_keeper(b) == Keeper(2, 2, b) and state.drop_keeper(b) is None
     assert state.apply_pick("Team 1", b).overall == 1
+
+
+def test_renaming_my_team_relabels_my_logged_picks(pool):
+    a, b = _best(pool, 2)
+    state = make_state(pool, position=1, keepers=[Keeper(None, 1, a)])
+    assert state.picks[0].team == "me" and state.my_roster == [a]
+    state.apply_pick("Team 2", b)
+    state.set_my_team("Me")  # a feed attach: the league's name for my team
+    assert [p.team for p in state.picks] == ["Me", "Team 2"]
+    assert state.my_team == "Me" and state.my_roster == [a]
+    assert state.is_keeper_pick(state.picks[0])

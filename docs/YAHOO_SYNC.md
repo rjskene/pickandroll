@@ -83,11 +83,11 @@ One JSON object per line, per draft id, in `data/fidelity/<draft_id>.jsonl` (loc
 Written by the server:
 
 ```
-{"type":"attach",       "t":..., "draft_id":d, "slot":s, "mode":"mirror|autopilot", "num_teams":12, "rounds":13, "players_file":f, "session_id":..., "session":{...}, "resumed":bool, "mapped":n, "players":n}
+{"type":"attach",       "t":..., "draft_id":d, "slot":s, "mode":"mirror|autopilot", "num_teams":12, "rounds":13, "players_file":f, "session_id":..., "session":{...}, "resumed":bool, "mapped":n, "players":n, "keepers":[{"overall":n, "slot":s, "round":r, "player_id":..., "yahoo_player_id":id|null, "mine":bool, "logged":bool}]}
 {"type":"detach",       "t":..., "session_id":...}
-{"type":"room_pick",    "t":..., "overall":n, "slot":s, "yid":id, "src":"socket|history|board", "name":...}
-{"type":"session_pick", "t":..., "overall":n, "pid":..., "yid":id, "lag_ms":..., "standin":bool, "kind":"new|held|conflict|repair", "resume":true?}
-{"type":"conflict",     "t":..., "overall":n, "session_pid":..., "session_yid":id, "room_yid":id, "room_pid":...}
+{"type":"room_pick",    "t":..., "overall":n, "slot":s, "yid":id, "src":"socket|history|board|keeper", "via":"socket|history"?, "name":...}  // keeper: the keeper at his slot; via: how it came
+{"type":"session_pick", "t":..., "overall":n, "pid":..., "yid":id, "lag_ms":..., "standin":bool, "kind":"new|held|conflict|repair|keeper", "src":"keeper"?, "keepers_dropped":[...]?, "resume":true?}
+{"type":"conflict",     "t":..., "overall":n, "session_pid":...|null, "session_yid":id|null, "room_yid":id, "room_pid":..., "keepers_dropped":[{"player_id":..., "position":s|null, "round":r, "overall":n}]?}
 {"type":"reco",         "t":..., "board":n_applied, "version":v, "fresh":bool, "top_yid":id, "top_name":..., "top_pid":..., "cands":[yid,...], "unmapped":[{"pid":...,"name":...}], "solve_ms":..., "mode":..., "model":"horizon|roster"}
 {"type":"score",        "t":..., "wins":x, "benchmark":x, "vs_benchmark":x, "best":x, "matchups":{...}}
 {"type":"control",      "t":..., "state":"armed|mirror|absent", "slot":s, "mode":"mirror|autopilot", "act_at_s":n|null, "src":"api"}  // at attach, on every PATCH /rooms/{d} and on a team-count mismatch; act_at_s (#10): armed turns click with n s left, null at once; a rebuild restores mode and act_at_s from the last one since a detach (#20)
@@ -114,6 +114,8 @@ Posted by the client (`POST /rooms/{draft_id}/events`):
   - `held`: the session already had the same player.
   - `conflict`: the session had another player and the room wins. A `conflict` event names both players.
   - `repair`: a stand-in replaced by the real player once he became free.
+  - `keeper` (`src: "keeper"`, KEEPERS): a keeper's pick, logged from the session's keeper table when the draft reached his slot. The room need not send it: the walk steps over a gap at a logged keeper slot, and `synced_through` counts it. A room pick for that overall later is `held` (the keeper) or a `conflict`.
+- Keepers (`docs/KEEPERS.md`): the room wins a conflict either way and the keeper entry it contradicts is dropped, named in `keepers_dropped`: someone else at a keeper's slot, or a keeper still to come whom the room records at another slot (then the `session_pick` is `new` and a `conflict` event with `session_pid: null` names the dropped entry). A `room_pick` of the keeper at his slot has `src: "keeper"` and `via`, the client's src (to settle on the night whether Yahoo sends keeper picks in its history frame or as frames); one sent ahead waits in the ledger and never counts as a gap (`waiting_for`). The room summary lists the keeper slots (`keepers`); the draft tab never takes a turn at one of mine.
 - `standin` is true when the room's player had no projection id or was held elsewhere; the session holds the least useful free player in his place. The server writes `note` when the room reports two players for one overall, or an alias is pinned.
 - `reco.model` is `roster` when the horizon plan could not be built and the single-roster model answered (the session's picks and open slots disagree; in a room, the session and the room disagree on the draft). Goal 0 in a room. The first one writes a `note` `roster fallback` with the reason. Logs before #17 carry only `mode`, with the same values.
 - The attach may carry `room_teams`, the room's own team count. An attach that disagrees with it is refused (422) before a session is made. When a later `turn_start.teams` disagrees, the API sets the room to mirror once, writes a `note` `team count mismatch` and refuses to arm it again (409).
@@ -137,8 +139,9 @@ Derivations:
   6. `expired`: `how` is `expiry` or `autopick`.
   7. `fallback`: the actual player is in `ref_k.cands`, or the ref had no Yahoo id.
   8. `wrong`: anything else.
-- Sync lag (G2) is the first `session_pick.t − room_pick.t` per overall.
-- Board agreement (G1) counts overalls whose latest `session_pick` has the room's `yid` and is not a stand-in.
+- Sync lag (G2) is the first `session_pick.t − room_pick.t` per overall, keeper slots aside (a keeper pick is the session's own).
+- Board agreement (G1) counts overalls whose latest `session_pick` has the room's `yid` and is not a stand-in. A keeper pick the room never sent (`kept_unseen` on the card) counts towards the 156.
+- Keeper slots are the `logged` ones in any `attach`, the `session_pick`s with `src: "keeper"` and the `room_pick`s with `src: "keeper"`. Mine are not turns: the compliance denominator and the per-pick table leave them out (`my_keepers` on the card). A keeper pick logged before the attach (no `session_pick`) counts as in the session from the start for the `stale` test.
 - Client timers (G7): every `heartbeat` after the attach has `worker == true`; the scorecard prints the count of false heartbeats and the first time one appeared.
 - Entry lead (G6) is pick 1's turn start minus the first client `control` or `heartbeat`. Without one, it falls back to the `attach` control, and the scorecard says "from attach".
 

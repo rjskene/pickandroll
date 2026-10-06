@@ -194,3 +194,45 @@ test("nothing past the draft's last pick is mine: the frame after 156 starts no 
   assert.equal(r.ingest("0|157|9157|12|C|0", T0 + 300).picks, 0, "nor a pick to send");
   assert.equal(r.unsent().some((p) => p.overall === 157), false);
 });
+
+// Keepers (docs/KEEPERS.md): slot 1 keeps at pick 24 (round 2), slot 6 at pick 19.
+const KEPT = [{ overall: 19, slot: 6 }, { overall: 24, slot: 1 }];
+function throughPick(r, last, skip = []) {
+  const { pickOwner } = require("../lib/protocol.js");
+  for (let k = 1; k <= last; k++) {
+    if (!skip.includes(k)) r.ingest(`0|${k}|${9000 + k}|${pickOwner(12, k).slot}|C|0`, T0 + k);
+  }
+}
+
+test("a keeper slot of mine on the clock is no turn: no draft attempt and no landing", () => {
+  const r = room(1);
+  r.configure({ keepers: KEPT });
+  assert.deepEqual(r.mine.slice(0, 3), [1, 25, 48], "my keeper slot is not a pick of mine");
+  assert.equal(r.isMine(24), false);
+  throughPick(r, 23);
+  r.takeEvents();
+  assert.equal(r.nextMine(), 25);
+  const out = r.ingest("D|24|1|30", T0 + 100);
+  assert.equal(out.turn, null, "the frame arms nothing");
+  assert.equal(r.myTurnNow(), null);
+  assert.deepEqual(r.takeEvents(), [
+    { type: "turn_start", t: T0 + 100, overall: 24, slot: 1, clock_s: 30, teams: 12, keeper: true },
+  ]);
+  const kept = r.ingest("0|24|7777|1|C|0", T0 + 200);
+  assert.equal(kept.picks, 1, "the keeper's pick still goes to the API");
+  assert.equal(kept.landed, null, "and is no landing of mine");
+  assert.equal(r.ingest("D|25|1|30", T0 + 300).turn, 25, "the pick after it is my turn");
+});
+
+test("a keeper slot the room never sends counts as known, so the turn after it is found", () => {
+  const r = room(1);
+  r.configure({ keepers: KEPT });
+  throughPick(r, 23, [19]);
+  assert.equal(r.contiguous(), 24, "19 and 24 are kept: picks through 24 are known");
+  assert.equal(r.nextMine(), 25);
+  assert.equal(r.nextMine(), r.contiguous() + 1, "the title guard's test holds on my next pick");
+  assert.equal(r.ingest("D|25|1|30", T0 + 300).turn, 25);
+  assert.deepEqual(r.snapshot().keepers, [19, 24]);
+  r.configure({ keepers: [] });
+  assert.equal(r.isMine(24), true, "an emptied keeper table gives the slot back");
+});

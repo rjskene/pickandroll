@@ -116,6 +116,21 @@ def analyze(events: list[dict[str, Any]]) -> dict[str, Any]:
         elif kind == "note" and e.get("what") == "team count mismatch":
             mismatch = mismatch or e
 
+    # Keeper slots (docs/KEEPERS.md): the ones logged by an attach, the session's keeper picks
+    # and the room's records of keepers at their slots. None of mine is a turn; a keeper pick
+    # is the session's own, so it is in sync from the moment it is logged and has no lag, and
+    # one the room never sent still fills its overall.
+    kept = {
+        int(k["overall"])
+        for e in events
+        if e.get("type") == "attach"
+        for k in e.get("keepers") or []
+        if k.get("logged")
+    }
+    kept |= {k for k, e in first_sync.items() if e.get("src") == "keeper"}
+    kept |= {k for k, e in room.items() if e.get("src") == "keeper"}
+    kept_unseen = len(kept - room.keys())
+
     # When armed turns acted (act_at_s, #10), as the API's control events set it, in order.
     acts: list[int | None] = []
     for c in controls:
@@ -133,11 +148,18 @@ def analyze(events: list[dict[str, Any]]) -> dict[str, Any]:
     synced_by: dict[int, float] = {0: -math.inf}
     running = -math.inf
     for k in range(1, (max(room) if room else 0) + 1):
-        t = to_ms(first_sync[k]["t"]) if k in first_sync else math.inf
+        if k in first_sync:
+            t = to_ms(first_sync[k]["t"])
+        else:
+            t = -math.inf if k in kept else math.inf
         running = max(running, t)
         synced_by[k] = running
 
-    lags = {k: to_ms(first_sync[k]["t"]) - to_ms(room[k]["t"]) for k in room if k in first_sync}
+    lags = {
+        k: to_ms(first_sync[k]["t"]) - to_ms(room[k]["t"])
+        for k in room
+        if k in first_sync and k not in kept
+    }
     # A pick the room made before the first attach waited for a room that did not exist yet:
     # a process miss, not the build's lag. G2 judges the picks after it; G2 over all is kept.
     attached_at = to_ms(next(e for e in events if e.get("type") == "attach")["t"])
@@ -145,7 +167,7 @@ def analyze(events: list[dict[str, Any]]) -> dict[str, Any]:
 
     rows = []
     for k in mine:
-        if k not in room:
+        if k not in room or k in kept:
             continue
         actual = str(room[k]["yid"])
         land = landed.get(k)
@@ -329,6 +351,9 @@ def analyze(events: list[dict[str, Any]]) -> dict[str, Any]:
         "control": control_at(math.inf),
         "picks_seen": len(room),
         "total_picks": total,
+        # Keeper picks the session logged that the room never sent (a silent keeper slot).
+        "kept_unseen": kept_unseen,
+        "my_keepers": sorted(k for k in kept if k in mine),
         "compliance": {
             "compliant": counts["compliant"],
             "denominator": decided,
@@ -445,10 +470,11 @@ def analyze(events: list[dict[str, Any]]) -> dict[str, Any]:
 def guardrail_pass(card: dict[str, Any]) -> dict[str, bool | None]:
     """Pass/fail per guardrail; ``None`` when there is nothing to judge yet."""
     g = card["guardrails"]
-    complete = card["picks_seen"] >= card["total_picks"]
+    unseen = card.get("kept_unseen", 0)
+    complete = card["picks_seen"] + unseen >= card["total_picks"]
     lag = g["G2"]
     return {
-        "G1": (g["G1"]["agree"] == card["total_picks"]) if complete else None,
+        "G1": (g["G1"]["agree"] + unseen == card["total_picks"]) if complete else None,
         "G2": None
         if not lag["n"]
         else all(lag[k] <= LAG_TARGETS[k] for k in ("p50", "p95", "max")),
@@ -475,6 +501,9 @@ def markdown(card: dict[str, Any]) -> str:
             return "n/a"
         return f"p50 {s['p50']} / p95 {s['p95']} / max {s['max']} ms (n {s['n']})"
 
+    keepers = card.get("my_keepers") or []
+    unseen = card.get("kept_unseen", 0)
+
     lines = [
         f"## Room {card['draft_id']}: fidelity scorecard",
         "",
@@ -486,7 +515,9 @@ def markdown(card: dict[str, Any]) -> str:
         "",
         (
             f"**Compliance {c['compliant']}/{c['denominator']}** (manual {c['manual']}, "
-            f"my picks seen {c['my_picks_seen']} of {card['rounds']})"
+            f"my picks seen {c['my_picks_seen']} of {card['rounds'] - len(keepers)}"
+            + (f"; my keeper picks {', '.join(map(str, keepers))} are not turns" if keepers else "")
+            + ")"
         ),
         "",
         "| label | " + " | ".join(LABELS) + " |",
@@ -497,7 +528,9 @@ def markdown(card: dict[str, Any]) -> str:
         "|---|---|---|---|",
         (
             f"| G1 board agreement | {g['G1']['agree']}/{g['G1']['of']} "
-            f"(of {g['G1']['total']}) | {g['G1']['total']}/{g['G1']['total']} | {mark('G1')} |"
+            f"(of {g['G1']['total']})"
+            + (f", {unseen} keeper picks the room never sent" if unseen else "")
+            + f" | {g['G1']['total']}/{g['G1']['total']} | {mark('G1')} |"
         ),
         f"| G2 sync lag | {ms(g['G2'])} | p50 ≤ 1000, p95 ≤ 2000, max ≤ 5000 | {mark('G2')} |",
         (

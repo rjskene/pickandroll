@@ -27,18 +27,27 @@
       this.attempts = new Map(); // overall -> how the extension drafted it ("row" | "queue")
       this.yahooMade = new Set(); // my overalls Yahoo announced it would pick itself (5|slot)
       this.landed = new Set();
+      // Keeper slots, from the API's room (docs/KEEPERS.md): never a turn of mine, and filled
+      // whether or not the room sends their picks.
+      this.keepers = new Set();
       this.outbox = [];
       this.frames = 0;
     }
 
-    configure({ slot, numTeams, rounds } = {}) {
+    configure({ slot, numTeams, rounds, keepers } = {}) {
       if (slot) this.slot = slot;
       if (numTeams) this.numTeams = numTeams;
       if (rounds) this.rounds = rounds;
+      if (Array.isArray(keepers)) this.keepers = new Set(keepers.map((k) => Number(k.overall)));
     }
 
+    /** My draftable picks: my snake picks without my keeper slots. */
     get mine() {
-      return P.snakePicks(this.numTeams, this.slot, this.rounds);
+      return P.snakePicks(this.numTeams, this.slot, this.rounds).filter((k) => !this.keepers.has(k));
+    }
+
+    isKeeper(overall) {
+      return this.keepers.has(overall);
     }
 
     /** An overall of this draft: 1 .. teams x rounds (a fake room can run past the end). */
@@ -46,8 +55,9 @@
       return Number.isInteger(overall) && overall >= 1 && overall <= this.numTeams * this.rounds;
     }
 
+    /** A turn of mine: my slot's pick, not a keeper slot. */
     isMine(overall) {
-      return this.inDraft(overall) && P.pickOwner(this.numTeams, overall).slot === this.slot;
+      return this.inDraft(overall) && P.pickOwner(this.numTeams, overall).slot === this.slot && !this.isKeeper(overall);
     }
 
     /** Highest overall seen. */
@@ -57,10 +67,11 @@
       return m;
     }
 
-    /** Highest k such that picks 1..k are all known. */
+    /** Highest k such that picks 1..k are all known; a keeper slot counts as known (the room
+     * may never send its pick). */
     contiguous() {
       let k = 0;
-      while (this.picks.has(k + 1)) k++;
+      while (this.picks.has(k + 1) || this.isKeeper(k + 1)) k++;
       return k;
     }
 
@@ -73,10 +84,11 @@
       return this.mine.find((k) => !this.picks.has(k)) ?? null;
     }
 
-    /** The overall on the clock when it is mine and not made yet, else null. */
+    /** The overall on the clock when it is mine and not made yet, else null. A keeper slot of
+     * mine on the clock is never my turn: its pick is the keeper. */
     myTurnNow() {
       const d = this.onDeck;
-      return d && d.slot === this.slot && this.inDraft(d.overall) && !this.picks.has(d.overall) ? d.overall : null;
+      return d && d.slot === this.slot && this.isMine(d.overall) && !this.picks.has(d.overall) ? d.overall : null;
     }
 
     clockLeft(t) {
@@ -133,16 +145,19 @@
         if (m.clock !== null) this.clock = { value: m.clock, at: t };
         if (this.inDraft(m.overall) && !this.turnAt.has(m.overall) && !this.picks.has(m.overall)) {
           this.turnAt.set(m.overall, t);
-          this.outbox.push({
+          const start = {
             type: "turn_start",
             t,
             overall: m.overall,
             slot: m.slot,
             clock_s: m.clock,
             teams: this.teamsSeen(), // null until the room shows it
-          });
+          };
+          // Whether the room puts keeper slots on the clock is to be seen on the night.
+          if (this.isKeeper(m.overall)) start.keeper = true;
+          this.outbox.push(start);
         }
-        if (m.slot === this.slot && this.inDraft(m.overall) && !this.picks.has(m.overall)) out.turn = m.overall;
+        if (m.slot === this.slot && this.isMine(m.overall) && !this.picks.has(m.overall)) out.turn = m.overall;
       } else if (m.kind === "clock") {
         this.clock = { value: m.clock, at: t };
       } else if (m.kind === "auto" && m.slot === this.slot) {
@@ -243,6 +258,7 @@
         room_teams: this.teamsSeen(),
         order_len: this.orderLen,
         rounds: this.rounds,
+        keepers: [...this.keepers].sort((a, b) => a - b),
         room_picks: this.picks.size,
         last: this.last(),
         contiguous: this.contiguous(),

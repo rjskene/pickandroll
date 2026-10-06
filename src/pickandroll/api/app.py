@@ -65,7 +65,7 @@ from .keepers import (
     resolve_keepers,
 )
 from .solver import BackgroundSolver, SolveParams, compute_recommendation, solver_executor
-from .yahoo_feed import LeagueFactory, YahooFeed, attach_feed
+from .yahoo_feed import LeagueFactory, SeatRefused, YahooFeed, attach_feed
 from .yahoo_room import YahooRoom
 
 LOG = logging.getLogger(__name__)
@@ -977,6 +977,8 @@ def create_app(
             feed = await asyncio.to_thread(
                 attach_feed, session, league, body.interval, data_dir / "aliases.json"
             )
+        except SeatRefused as exc:
+            raise HTTPException(400, f"yahoo: {exc}") from exc
         except Exception as exc:
             raise HTTPException(502, f"yahoo: {exc}") from exc
         session.yahoo = feed

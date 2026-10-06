@@ -250,6 +250,15 @@ class DraftState:
         finally:
             self._fill_keepers()
 
+    def set_my_team(self, name: str) -> None:
+        """Rename my team (a feed attach): my picks already in the log, keeper picks included,
+        take the new name, since :attr:`my_roster` finds them by it."""
+        old = self.my_team
+        self.picks[:] = [
+            Pick(p.overall, name, p.player_id) if p.team == old else p for p in self.picks
+        ]
+        self.my_team = name
+
     def drop_keeper(self, player_id: str) -> Keeper | None:
         """Remove a player's keeper entry (the room drafted him elsewhere: the table was
         wrong). Returns the entry removed, if any."""
