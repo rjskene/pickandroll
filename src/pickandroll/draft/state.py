@@ -53,6 +53,20 @@ class Pick:
     player_id: str
 
 
+class KeeperLogged(ValueError):
+    """A keeper table change that would rewrite a keeper pick already in the log."""
+
+
+class KeeperInvalid(ValueError):
+    """A keeper table entry that cannot stand: ``index`` is its place in the table and
+    ``reason`` says why (the message names the keeper too)."""
+
+    def __init__(self, index: int, keeper: Keeper, reason: str) -> None:
+        super().__init__(f"keeper {keeper}: {reason}")
+        self.index = index
+        self.reason = reason
+
+
 @dataclass(frozen=True)
 class Keeper:
     """A player kept by the team in draft ``position`` (``None``: mine, wherever my seat is), who
@@ -142,28 +156,42 @@ class DraftState:
     def _check_keepers(self) -> None:
         """Every keeper names a known player in a round of the draft and a seat in the league,
         one keeper per player and per slot, and agrees with the picks already logged."""
+        self._check_table()
+        self._check_log()
+
+    def _check_table(self) -> None:
+        """One keeper per player and per slot, each a known player in a round and a seat."""
         slots: dict[int, Keeper] = {}
-        players: set[str] = set()
-        for k in self.keepers:
+        index: dict[str, int] = {}
+        for i, k in enumerate(self.keepers):
             if k.player_id not in self.z.index:
-                raise ValueError(f"keeper {k}: unknown player")
+                raise KeeperInvalid(i, k, "unknown player")
             if not 1 <= k.round <= self.settings.roster_size:
-                raise ValueError(f"keeper {k}: round outside 1-{self.settings.roster_size}")
+                raise KeeperInvalid(i, k, f"round outside 1-{self.settings.roster_size}")
             if k.position is not None and not 1 <= k.position <= self.settings.num_teams:
-                raise ValueError(f"keeper {k}: position outside 1-{self.settings.num_teams}")
-            if k.player_id in players:
-                raise ValueError(f"keeper {k}: the player is kept twice")
+                raise KeeperInvalid(i, k, f"position outside 1-{self.settings.num_teams}")
+            if k.player_id in index:
+                raise KeeperInvalid(i, k, "the player is kept twice")
             overall = self.keeper_overall(k)
             if overall in slots:
-                raise ValueError(f"keeper {k}: pick {overall} is already {slots[overall]}")
-            players.add(k.player_id)
+                raise KeeperInvalid(i, k, f"pick {overall} is already {slots[overall]}")
+            index[k.player_id] = i
             slots[overall] = k
+
+    def _check_log(self) -> None:
+        """The picks already logged agree with the keeper table."""
+        slots = self.keeper_slots
+        index = {k.player_id: i for i, k in enumerate(self.keepers)}
         for pick in self.picks:
             keeper = slots.get(pick.overall)
             if keeper is not None and keeper.player_id != pick.player_id:
-                raise ValueError(f"keeper {keeper}: pick {pick.overall} is {pick.player_id}")
-            if pick.player_id in players and (keeper is None or keeper.player_id != pick.player_id):
-                raise ValueError(f"keeper {pick.player_id!r} was drafted with pick {pick.overall}")
+                i = index[keeper.player_id]
+                raise KeeperInvalid(i, keeper, f"pick {pick.overall} is {pick.player_id}")
+            if pick.player_id in index and (keeper is None or keeper.player_id != pick.player_id):
+                i = index[pick.player_id]
+                raise KeeperInvalid(
+                    i, self.keepers[i], f"the player was drafted with pick {pick.overall}"
+                )
 
     def _fill_keepers(self) -> None:
         """Log the keepers' picks while the next pick is a keeper slot (two can follow on)."""
@@ -187,14 +215,15 @@ class DraftState:
             self.picks.clear()
         self.keepers = tuple(keepers)
         try:
-            self._check_keepers()
+            self._check_table()
             if not fresh:
                 reached = {o: k.player_id for o, k in self.keeper_slots.items() if o < n}
                 changed = sorted(
                     o for o in logged.keys() | reached.keys() if logged.get(o) != reached.get(o)
                 )
                 if changed:
-                    raise ValueError(f"pick {changed[0]} is in the log: its keeper cannot change")
+                    raise KeeperLogged(f"pick {changed[0]} is in the log: its keeper cannot change")
+            self._check_log()
         except ValueError:
             self.keepers = old
             raise

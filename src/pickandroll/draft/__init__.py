@@ -1,11 +1,13 @@
 from .autopick import STRATEGIES, Strategy, auto_pick, latent_slots, simulate, team_label
 from .settings import LeagueSettings, pick_owner, snake_picks
-from .state import DraftState, Keeper, Pick
+from .state import DraftState, Keeper, KeeperInvalid, KeeperLogged, Pick
 
 __all__ = [
     "STRATEGIES",
     "DraftState",
     "Keeper",
+    "KeeperInvalid",
+    "KeeperLogged",
     "LeagueSettings",
     "Pick",
     "Strategy",

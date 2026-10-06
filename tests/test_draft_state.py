@@ -2,7 +2,7 @@ from datetime import UTC, datetime
 
 import pytest
 
-from pickandroll.draft import DraftState, Keeper, LeagueSettings
+from pickandroll.draft import DraftState, Keeper, KeeperInvalid, KeeperLogged, LeagueSettings
 from pickandroll.projections import Cat, ProjectionSet
 
 
@@ -331,18 +331,19 @@ def test_team_names_are_not_taken_from_keeper_picks(pool):
 
 
 @pytest.mark.parametrize(
-    ("keepers", "message"),
+    ("keepers", "message", "index"),
     [
-        ([Keeper(None, 7, "nobody")], "unknown player"),
-        ([Keeper(None, 14, "p1")], "round outside"),
-        ([Keeper(5, 7, "p1")], "position outside"),
-        ([Keeper(None, 7, "p1"), Keeper(1, 3, "p1")], "kept twice"),
-        ([Keeper(None, 7, "p1"), Keeper(3, 7, "p2")], "pick 27 is already"),
+        ([Keeper(None, 7, "nobody")], "unknown player", 0),
+        ([Keeper(None, 14, "p1")], "round outside", 0),
+        ([Keeper(5, 7, "p1")], "position outside", 0),
+        ([Keeper(None, 7, "p1"), Keeper(1, 3, "p1")], "kept twice", 1),
+        ([Keeper(None, 7, "p1"), Keeper(3, 7, "p2")], "pick 27 is already", 1),
     ],
 )
-def test_a_wrong_keeper_table_is_refused(pool, keepers, message):
-    with pytest.raises(ValueError, match=message):
+def test_a_wrong_keeper_table_is_refused(pool, keepers, message, index):
+    with pytest.raises(KeeperInvalid, match=message) as refused:
         make_state(pool, keepers=keepers)
+    assert refused.value.index == index  # the API names the row with it
 
 
 def test_my_keepers_follow_my_seat_until_the_first_real_pick(pool):
@@ -372,9 +373,17 @@ def test_set_keepers_changes_only_the_slots_not_reached(pool):
     assert state.picks[1].player_id == b
     state.set_keepers([Keeper(2, 1, b), Keeper(1, 2, d)])  # pick 8 is not reached yet
     assert d in state.taken
-    with pytest.raises(ValueError, match="pick 2 is in the log"):
+    with pytest.raises(KeeperLogged, match="pick 2 is in the log"):
         state.set_keepers([Keeper(1, 2, d)])
+    # A new keeper at a slot already drafted is a change to the log too (the API's 409).
+    with pytest.raises(KeeperLogged, match="pick 1 is in the log"):
+        state.set_keepers([Keeper(2, 1, b), Keeper(1, 1, c)])
+    # A player already drafted cannot be kept at a later slot (the API's 400, by row).
+    with pytest.raises(KeeperInvalid, match="drafted with pick 1") as refused:
+        state.set_keepers([Keeper(2, 1, b), Keeper(1, 2, c)])
+    assert refused.value.index == 1
     assert state.keepers == (Keeper(2, 1, b), Keeper(1, 2, d))
+    assert [p.player_id for p in state.picks] == [c, b]
 
 
 def test_the_rooms_record_wins_over_a_wrong_keeper_entry(pool):

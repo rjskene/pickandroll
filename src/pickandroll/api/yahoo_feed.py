@@ -82,25 +82,31 @@ class YahooFeed:
                 )
                 continue
             feed.append((overall, self.teams.get(team_key, team_key), pid))
-        # Picks must be contiguous from 1 for DraftState; stop at the first gap.
+        # Picks must be contiguous from 1 for DraftState; stop at the first gap. A keeper's
+        # slot fills itself when the draft reaches it, so the feed need not carry it; when it
+        # does, it must name the keeper (apply_pick checks), and anyone else stops the feed.
         applied = []
-        expected = session.state.next_overall
-        known = {p.overall for p in session.state.picks}
         for overall, team, pid in sorted(feed):
-            if overall in known:
-                continue
-            if overall != expected:
-                break
-            try:
-                with session.lock:
-                    pick = session.state.apply_pick(team, pid, overall)
-            except (KeyError, ValueError) as exc:
-                self.last_error = f"pick {overall}: {exc}"
-                break
-            expected += 1
-            row = _row(session, pick)
-            applied.append(row)
-            session.publish("pick", {"pick": row, "source": "yahoo"})
+            rows = []
+            with session.lock:
+                state = session.state
+                if overall < state.next_overall and not state.is_keeper_pick(
+                    state.picks[overall - 1]
+                ):
+                    continue
+                if overall > state.next_overall:
+                    break
+                before = len(state.picks)
+                try:
+                    state.apply_pick(team, pid, overall)
+                except (KeyError, ValueError) as exc:
+                    self.last_error = f"pick {overall}: {exc}"
+                    break
+                # The pick and the keeper picks logged after it.
+                rows = [_row(session, p) for p in state.picks[before:]]
+            for row in rows:
+                applied.append(row)
+                session.publish("pick", {"pick": row, "source": "yahoo"})
         self.polls += 1
         self.last_poll = datetime.now(tz=UTC).isoformat()
         return applied
@@ -141,7 +147,8 @@ def attach_feed(
     if mine is not None:
         session.state.my_team = mine.name
         if mine.draft_position:
-            session.state.my_position = int(mine.draft_position)
+            with session.lock:
+                session.state.set_my_position(int(mine.draft_position))
     feed = YahooFeed(
         league=league,
         league_name=info.name,
