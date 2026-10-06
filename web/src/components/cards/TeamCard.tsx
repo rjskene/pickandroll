@@ -73,15 +73,16 @@ export default function TeamCard() {
   const d = useDraft();
   const s = d.session;
   const result = d.result;
+  // My keepers are on the roster from pick one, each with the round he costs.
+  const kept = new Map(s.keepers.filter((k) => k.mine).map((k) => [k.player_id, k]));
   const drafted = s.my_roster.length;
+  const rosterNote = `${drafted} of ${s.roster_size} on the roster${kept.size ? ` · ${kept.size} kept` : ""}`;
   if (!result) {
     return (
       <>
         <ScoreBlock />
         <div className="row">
-          <span className="k">
-            {drafted} of {s.roster_size} drafted
-          </span>
+          <span className="k">{rosterNote}</span>
         </div>
         <p className="muted">{d.solving ? "Solving…" : "Profile and planned roster appear after the first solve."}</p>
       </>
@@ -118,9 +119,7 @@ export default function TeamCard() {
       </div>
       <div className="block">
         <div className="row">
-          <span className="k">
-            Roster · {drafted} of {s.roster_size} drafted
-          </span>
+          <span className="k">Roster · {rosterNote}</span>
           <span className="muted" style={{ fontSize: 11 }}>
             italic = planned · odds still there
           </span>
@@ -131,12 +130,23 @@ export default function TeamCard() {
             const pick = planPick.get(r.player);
             const p = availability.get(r.player);
             const now = !mine && pick === s.next_overall && s.on_the_clock;
+            const k = kept.get(r.player);
             return (
               <li key={`${r.slot}-${r.slot_index}`} className={mine ? "mine" : "planned"}>
                 <span className="slot">{r.slot}</span>
                 <span className="who">{r.name}</span>
                 {!mine && pick && <span className="muted">#{pick}</span>}
-                {mine ? <span className="good">drafted</span> : now ? <span className="accent">now</span> : <span className={oddsClass(p)}>{pct(p)}</span>}
+                {k ? (
+                  <span className="good" title={`keeper: pick ${k.overall}${k.applied ? "" : ", logged when the draft reaches it"}`}>
+                    kept · R{k.round}
+                  </span>
+                ) : mine ? (
+                  <span className="good">drafted</span>
+                ) : now ? (
+                  <span className="accent">now</span>
+                ) : (
+                  <span className={oddsClass(p)}>{pct(p)}</span>
+                )}
               </li>
             );
           })}

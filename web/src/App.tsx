@@ -243,6 +243,7 @@ export default function App() {
       setAnnounce((q) => [...q, { id: ++announceSeq.current, pick }]);
     });
     source.addEventListener("undo", refresh);
+    source.addEventListener("keepers", refresh);
     source.addEventListener("room_attached", refresh);
     source.addEventListener("room_mode", refreshRoom);
     source.addEventListener("room_detached", refreshRoom);

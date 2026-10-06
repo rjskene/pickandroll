@@ -528,7 +528,38 @@ def create_app(
 
     @app.get("/projections")
     def list_projections() -> list[dict[str, Any]]:
-        return _list_files(data_dir, PROJECTION_SUFFIXES)
+        # A keepers CSV is never a projection: left out, it cannot become the default.
+        files = _list_files(data_dir, PROJECTION_SUFFIXES)
+        return [f for f in files if "keeper" not in f["file"].lower()]
+
+    names_cache: dict[tuple[str, float], list[dict[str, str]]] = {}
+
+    @app.get("/projections/players")
+    def projection_players(file: str) -> list[dict[str, str]]:
+        """A projection file's players (id, name, team) by name, for the setup screen's keeper
+        typeahead before a session exists. Cached per file version."""
+        path = data_dir / file
+        if (
+            not _in_data_dir(file)
+            or not path.is_file()
+            or path.suffix.lower() not in PROJECTION_SUFFIXES
+        ):
+            raise HTTPException(400, f"projection file not found: {file}")
+        key = (file, path.stat().st_mtime)
+        if key not in names_cache:
+            try:
+                df = load_bbm(path).df
+            except ValueError as exc:
+                raise HTTPException(400, f"could not parse {file}: {exc}") from exc
+            names_cache.clear()
+            names_cache[key] = sorted(
+                (
+                    {"player_id": str(pid), "name": str(row["player"]), "team": str(row["team"])}
+                    for pid, row in df[["player", "team"]].iterrows()
+                ),
+                key=lambda r: r["name"],
+            )
+        return names_cache[key]
 
     @app.get("/files")
     def list_files(

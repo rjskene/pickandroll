@@ -89,6 +89,8 @@ export default function Board() {
   const s = d.session;
   const board = useQuery({ queryKey: ["board", s.id], queryFn: () => api.board(s.id) });
   const [search, setSearch] = useState("");
+  // Keepers are taken, so "hide drafted" hides them too; this shows them anyway.
+  const [showKeepers, setShowKeepers] = useState(false);
   const wide = !d.drawerOpen;
   // No highlight while a solve runs or the answer is stale: the name may just have been drafted.
   const recommended = d.busy ? null : (d.result?.candidates[0]?.player ?? null);
@@ -107,10 +109,10 @@ export default function Board() {
   const rows = useMemo(() => {
     const needle = search.trim().toLowerCase();
     const shown = (board.data?.players ?? []).filter(
-      (p) => (!d.hideTaken || !p.taken) && (!needle || p.name.toLowerCase().includes(needle)),
+      (p) => (!d.hideTaken || !p.taken || (showKeepers && p.keeper)) && (!needle || p.name.toLowerCase().includes(needle)),
     );
     return sortRows(shown, sort);
-  }, [board.data, search, d.hideTaken, sort]);
+  }, [board.data, search, d.hideTaken, showKeepers, sort]);
   const { setVisibleRows } = d;
   useEffect(() => {
     setVisibleRows(rows.filter((p) => !p.taken).map((p) => p.player_id));
@@ -171,6 +173,19 @@ export default function Board() {
           />{" "}
           hide drafted
         </label>
+        {d.hideTaken && s.keepers.length > 0 && (
+          <label className="inline muted" title="Show the keepers while drafted players are hidden">
+            <input
+              type="checkbox"
+              checked={showKeepers}
+              onChange={(e) => {
+                setShowKeepers(e.target.checked);
+                e.currentTarget.blur();
+              }}
+            />{" "}
+            show keepers
+          </label>
+        )}
         {!s.complete && !d.live && (
           <span className="inline muted sim" title="Simulate the other teams' picks">
             <span className="k">Sim</span>
@@ -262,7 +277,13 @@ export default function Board() {
               return (
                 <tr key={p.player_id} className={cls} onClick={() => !p.taken && d.setHighlight(p.player_id)}>
                   <td className={p.player_id === recommended ? "strong" : ""}>
+                    {p.keeper && (
+                      <span className="kmark" title={`kept by ${p.keeper}`}>
+                        K
+                      </span>
+                    )}
                     {p.name} <span className="dim">{p.team}</span>
+                    {p.keeper && <span className="dim"> · {p.keeper}</span>}
                   </td>
                   <td>{p.positions || <span className="dim">?</span>}</td>
                   <td className="num">{Math.round(p.games)}</td>

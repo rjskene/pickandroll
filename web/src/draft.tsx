@@ -333,13 +333,16 @@ export function DraftProvider({ session, solveEvents, survival, live, room, room
     mutationFn: () => api.undoPick(session.id),
     onSuccess: (row) => {
       invalidate();
-      showToast({ message: `Undid ${row.name} (${row.team})` });
+      const kept = row.keepers_undone.map((k) => `#${k.overall}`).join(", ");
+      showToast({ message: `Undid ${row.name} (${row.team})${kept ? `; keeper ${kept} comes back when the draft reaches it` : ""}` });
     },
   });
   const { mutate: runUndo } = undoMutation;
+  // Keeper picks are never the undo target: with only those in the log there is nothing to undo.
+  const realPicks = session.picks_made - session.keepers.filter((k) => k.applied).length;
   const undo = useCallback(() => {
-    if (session.picks_made > 0) runUndo();
-  }, [session.picks_made, runUndo]);
+    if (realPicks > 0) runUndo();
+  }, [realPicks, runUndo]);
   const [noise, setNoise] = useState(1);
   const [strategy, setStrategy] = useState<SimStrategy>("z");
   const simRef = useRef({ noise, strategy });

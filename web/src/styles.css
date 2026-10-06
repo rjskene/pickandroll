@@ -203,6 +203,21 @@ table.plan .survival .bar { width: 60px; }
 .picklog { list-style: none; padding: 0; margin: 0; }
 .picklog li { padding: 3px 4px; border-bottom: 1px solid var(--line); display: flex; gap: 8px; align-items: center; }
 .picklog li.mine { background: var(--mine); }
+/* ---- keepers: the K mark, and the editor on the setup screen and the log card ---- */
+.kmark { display: inline-block; min-width: 16px; margin-right: 5px; padding: 0 4px; border-radius: 3px; font-size: 10px; font-weight: 700; line-height: 16px; text-align: center; text-decoration: none; background: var(--panel-2); border: 1px solid var(--line-2); color: var(--accent); }
+.keeper-editor { display: grid; gap: 8px; }
+table.keepers { width: 100%; border-collapse: collapse; }
+table.keepers th, table.keepers td { padding: 2px 4px; text-align: left; }
+table.keepers td.num, table.keepers th.num { text-align: right; }
+table.keepers input:not([type="checkbox"]), table.keepers select { width: 100%; padding: 3px 6px; }
+table.keepers td:nth-child(1) { width: 20px; }
+table.keepers td:nth-child(2) { width: 104px; }
+table.keepers td:nth-child(3) { width: 62px; }
+table.keepers td:nth-child(5) { width: 44px; }
+table.keepers td:nth-child(6) { width: 30px; }
+table.keepers tr.off td { opacity: 0.45; }
+table.keepers tr.err td { background: rgba(239, 107, 107, 0.14); }
+.keeper-editor textarea { width: 100%; box-sizing: border-box; font: inherit; font-size: 12px; background: var(--panel-2); color: var(--text); border: 1px solid var(--line-2); border-radius: 6px; padding: 6px 8px; }
 
 /* toast and key sheet */
 .toast { position: fixed; left: 24px; bottom: 52px; z-index: 20; display: flex; align-items: center; gap: 12px; padding: 10px 10px 10px 16px; background: var(--panel); border: 1px solid var(--line-2); border-radius: 10px; box-shadow: 0 18px 50px rgba(0, 0, 0, 0.6); }

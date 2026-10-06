@@ -11,11 +11,21 @@ export default function PlanCard() {
   if (!result) return <p className="muted">{d.solving ? "Solving…" : "Appears after the first solve."}</p>;
   if (d.busy) return <Skeleton rows={s.roster_size} note={`Re-planning for pick ${s.next_overall}…`} />;
   const slotOf = new Map(result.best_roster.roster.map((r) => [r.player, r.slot]));
-  const mine = result.best_roster.roster.filter((r) => s.my_roster.includes(r.player)).sort((a, b) => s.my_roster.indexOf(a.player) - s.my_roster.indexOf(b.player));
-  const pastPicks = s.my_picks.filter((k) => k < s.next_overall);
+  // My roster in draft order: the picks logged at my slots (real and kept), then my keepers
+  // still to come. Pair them with their overalls, so a keeper shows at the pick he costs.
+  const kept = new Map(s.keepers.filter((k) => k.mine).map((k) => [k.player_id, k]));
+  const overalls = [...s.my_slots.filter((k) => k < s.next_overall), ...s.keepers.filter((k) => k.mine && !k.applied).map((k) => k.overall)].sort((a, b) => a - b);
+  const overallOf = new Map(s.my_roster.map((pid, i) => [pid, overalls[i]]));
+  const mine = result.best_roster.roster
+    .filter((r) => s.my_roster.includes(r.player))
+    .map((r) => ({ ...r, pick: overallOf.get(r.player) ?? 0 }));
   const planned = result.plan.length
     ? result.plan
     : result.best_roster.roster.filter((r) => !s.my_roster.includes(r.player)).map((r) => ({ pick: 0, player: r.player, name: r.name, availability: 1 }));
+  // One table in pick order: a keeper still to come sits between the planned picks.
+  const order = (pick: number) => pick || Number.MAX_SAFE_INTEGER;
+  const rows = [...mine.map((r) => ({ kind: "mine" as const, ...r })), ...planned.map((p) => ({ kind: "plan" as const, ...p }))].sort((a, b) => order(a.pick) - order(b.pick));
+  const nowPlayer = s.on_the_clock && result.plan.length > 0 ? result.plan[0].player : null;
   return (
     <>
       <div className="row">
@@ -35,16 +45,26 @@ export default function PlanCard() {
           </tr>
         </thead>
         <tbody>
-          {mine.map((r, i) => (
-            <tr key={r.player} className="mine">
-              <td className="num dim">{pastPicks[i] ? `#${pastPicks[i]}` : ""}</td>
-              <td>{r.name}</td>
-              <td className="muted">{r.slot}</td>
-              <td className="good">drafted</td>
-            </tr>
-          ))}
-          {planned.map((p, i) => {
-            const now = i === 0 && s.on_the_clock && result.plan.length > 0;
+          {rows.map((p) => {
+            if (p.kind === "mine") {
+              const k = kept.get(p.player);
+              return (
+                <tr key={p.player} className="mine">
+                  <td className="num dim">{p.pick ? `#${p.pick}` : ""}</td>
+                  <td>
+                    {k && (
+                      <span className="kmark" title={`keeper: costs round ${k.round}`}>
+                        K
+                      </span>
+                    )}
+                    {p.name}
+                  </td>
+                  <td className="muted">{p.slot}</td>
+                  <td className="good">{k ? `kept · R${k.round}` : "drafted"}</td>
+                </tr>
+              );
+            }
+            const now = p.player === nowPlayer;
             return (
               <tr key={p.player} className={now ? "now" : ""}>
                 <td className="num">{p.pick ? `#${p.pick}` : ""}</td>

@@ -1,7 +1,8 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, type Objective, type SessionSummary } from "../api";
 import Info from "./Info";
+import { erroredRow, KeeperEditor, keeperDraft, keepersIn, nameOptions, type KeeperDraft } from "./Keepers";
 import { SeenRooms, useSeenRooms } from "./YahooSync";
 
 interface Props {
@@ -16,6 +17,7 @@ export default function SessionSetup({ onCreated, onSelect }: Props) {
   const survivalFiles = useQuery({ queryKey: ["files", "survival"], queryFn: () => api.files("survival") });
   const curveFiles = useQuery({ queryKey: ["files", "curve"], queryFn: () => api.files("curve") });
   const adpFiles = useQuery({ queryKey: ["files", "adp"], queryFn: () => api.files("adp") });
+  const keeperFiles = useQuery({ queryKey: ["files", "keepers"], queryFn: () => api.files("keepers") });
   const [file, setFile] = useState("");
   const [positionsFile, setPositionsFile] = useState("");
   const [adpFile, setAdpFile] = useState("");
@@ -37,11 +39,33 @@ export default function SessionSetup({ onCreated, onSelect }: Props) {
   const seen = useSeenRooms();
   // A session made whose room did not attach: the reason, and the way on to the draft anyway.
   const [unattached, setUnattached] = useState<{ session: SessionSummary; error: string } | null>(null);
+  // Keepers: rows from a file in data/ (mine unticked until I decide), added by hand or pasted.
+  const [keepersOpen, setKeepersOpen] = useState(false);
+  const [keeperFile, setKeeperFile] = useState("");
+  const [keepers, setKeepers] = useState<KeeperDraft[]>([]);
+  const projectionFile = file || projections.data?.[0]?.file || "";
+  const names = useQuery({
+    queryKey: ["projection-players", projectionFile],
+    queryFn: () => api.projectionPlayers(projectionFile),
+    enabled: keepersOpen && !!projectionFile,
+    staleTime: Infinity,
+  });
+  const options = useMemo(() => nameOptions(names.data ?? []), [names.data]);
+  const loadKeepers = useMutation({
+    mutationFn: api.keepersFile,
+    onSuccess: (r) =>
+      setKeepers(
+        r.rows.map((row) =>
+          keeperDraft({ on: row.position !== null, position: row.position, round: row.round, player: row.player ?? row.player_id ?? "", player_id: row.player_id ?? null, label: row.label }),
+        ),
+      ),
+  });
+  const keptCount = keepers.filter((k) => k.on).length;
 
   const create = useMutation({
     mutationFn: async () => {
       const session = await api.createSession({
-        projection_file: file || projections.data?.[0]?.file || "",
+        projection_file: projectionFile,
         num_teams: numTeams,
         my_position: position,
         my_team: myTeam,
@@ -56,6 +80,7 @@ export default function SessionSetup({ onCreated, onSelect }: Props) {
         survival_file: survival === "file" ? survivalFile || survivalFiles.data?.[0]?.file || null : null,
         solve_ahead: solveAhead,
         time_limit: timeLimit,
+        keepers: keepersOpen ? keepersIn(keepers, options) : [],
       });
       if (!roomId.trim()) return { session, attachError: null };
       try {
@@ -178,6 +203,52 @@ export default function SessionSetup({ onCreated, onSelect }: Props) {
         <p className="muted" style={{ margin: "-4px 0 0", fontSize: 12 }}>
           Room {roomId.trim()} shows {roomTeams} teams{roomTeams !== numTeams ? `, not ${numTeams}: the attach will be refused` : ""}.
         </p>
+      )}
+
+      <label className="inline">
+        <input type="checkbox" checked={keepersOpen} onChange={(e) => setKeepersOpen(e.target.checked)} />
+        <span className="k">Keepers</span>
+        <span className="muted">{keepersOpen && keptCount ? `${keptCount} kept` : "(keeper league)"}</span>
+        <Info title="keepers">
+          <b>Each keeper takes his team's pick in the round he costs.</b>
+          <span>His pick is logged when the draft reaches it, nobody else can draft him, and the plan counts my keepers on my roster from the start.</span>
+          <span>Rows from a keepers file in data/ (position,round,player; position me for mine) come with my own keepers unticked until I decide. On draft night, add the other teams' keepers here or later from the log card (6).</span>
+        </Info>
+      </label>
+      {keepersOpen && (
+        <>
+          {(keeperFiles.data?.length ?? 0) > 0 && (
+            <label>
+              <span className="k">From a file in data/</span>
+              <select
+                value={keeperFile}
+                onChange={(e) => {
+                  setKeeperFile(e.target.value);
+                  if (e.target.value) loadKeepers.mutate(e.target.value);
+                  else setKeepers([]);
+                }}
+              >
+                <option value="">none</option>
+                {keeperFiles.data!.map((f) => (
+                  <option key={f.file} value={f.file}>
+                    {f.file}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+          {loadKeepers.error && <p className="error">{loadKeepers.error.message}</p>}
+          <KeeperEditor
+            rows={keepers}
+            onChange={setKeepers}
+            numTeams={numTeams}
+            myPosition={position}
+            // The default Yahoo slots: ten starters and the bench.
+            rounds={10 + bench}
+            options={options}
+            errorKey={erroredRow(keepers, create.error?.message)}
+          />
+        </>
       )}
 
       <span className="k">Strategy</span>
