@@ -267,6 +267,7 @@ def test_keepers_file_rows_listing_and_errors(data_dir):
         )
         assert c.get("/keepers-file?file=nope.csv").status_code == 400
         assert c.get("/keepers-file?file=../keepers_test.csv").status_code == 400
+        assert c.get(f"/keepers-file?file={data_dir / 'keepers_test.csv'}").status_code == 400
 
         # The file's rows come first, then the list; an error names the line or the index.
         s = create(

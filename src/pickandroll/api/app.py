@@ -1388,14 +1388,16 @@ def create_app(
 
 
 # --------------------------------------------------------------------------- session setup
+def _in_data_dir(file: str) -> bool:
+    """A relative name that stays inside data/ (symlinks in data/ are the user's own)."""
+    name = Path(file)
+    return not name.is_absolute() and ".." not in name.parts
+
+
 def _keepers_file_rows(data_dir: Path, file: str) -> list[Labelled]:
     """A keepers CSV inside ``data_dir``, labelled by line (400 if missing or unreadable)."""
     path = data_dir / file
-    if (
-        not path.is_file()
-        or path.suffix.lower() not in KEEPER_SUFFIXES
-        or not path.resolve().is_relative_to(data_dir.resolve())
-    ):
+    if not _in_data_dir(file) or not path.is_file() or path.suffix.lower() not in KEEPER_SUFFIXES:
         raise HTTPException(400, f"keepers file not found: {file}")
     try:
         return read_keepers_file(path)
