@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from pickandroll.draft import auto_pick, simulate
+from pickandroll.draft import Keeper, auto_pick, simulate
 from pickandroll.draft.autopick import draw_team_punts, softmax_choice, team_roster
 
 from .test_draft_state import make_state
@@ -73,3 +73,44 @@ def test_simulate_count_and_completion(pool):
         auto_pick(state, np.random.default_rng(0))
     with pytest.raises(ValueError):
         auto_pick(make_state(pool), strategy="nope")  # type: ignore[arg-type]
+
+
+def _keepers(state):
+    """Keepers on three teams, mine included: two of mine, two of team 1's, one of team 2's."""
+    ids = state.z["total"].nlargest(5).index.tolist()
+    return [
+        Keeper(None, 7, ids[0]),
+        Keeper(None, 13, ids[1]),
+        Keeper(1, 2, ids[2]),
+        Keeper(1, 6, ids[3]),
+        Keeper(2, 4, ids[4]),
+    ]
+
+
+@pytest.mark.parametrize("strategy", ["z", "adp"])
+def test_a_simulated_draft_with_keepers_fills_every_roster(pool, strategy):
+    keepers = _keepers(make_state(pool))
+    state = make_state(pool, position=3, num_teams=4, keepers=keepers)
+    assert team_roster(state, "Team 1") == [keepers[2].player_id, keepers[3].player_id]
+    assert team_roster(state, "me") == [keepers[0].player_id, keepers[1].player_id]
+    made = simulate(state, until_my_pick=False, seed=1, strategy=strategy)
+    assert state.complete and len(made) == state.settings.total_picks - len(keepers)
+    assert (state.team_totals()["picks"] == state.settings.roster_size).all()
+    for k in keepers:
+        pick = state.picks[state.keeper_overall(k) - 1]
+        assert (pick.player_id, pick.team) == (k.player_id, state.keeper_team(k))
+    assert len({p.player_id for p in state.picks}) == len(state.picks)
+    assert not {k.player_id for k in keepers} & {p.player_id for p in made}
+
+
+def test_simulate_passes_my_keeper_slot_and_stops_at_my_next_draft_pick(pool):
+    keepers = _keepers(make_state(pool))
+    state = make_state(pool, position=3, num_teams=4, keepers=keepers)
+    while state.my_next_pick != 22:  # my round-6 pick; round 7 (pick 27) is my keeper
+        if state.on_the_clock:
+            state.apply_pick("me", state.available[0])
+        simulate(state, seed=2)
+    state.apply_pick("me", state.available[0])
+    simulate(state, seed=2)
+    assert state.next_overall == 30 and state.on_the_clock
+    assert state.picks[26].player_id == keepers[0].player_id

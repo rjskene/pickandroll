@@ -10,6 +10,10 @@ The default objective is the category-win curve (:attr:`DraftState.curve`): the 
 the expected number of categories won and concedes a category only when the board has made it
 unwinnable. No punt is ever chosen on this path; the punt arguments remain for studies. With
 ``curve`` set to ``None`` the plan maximizes the plain sum of category totals instead.
+
+Keepers (``docs/KEEPERS.md``): a :class:`Keeper` takes his team's pick in the round he was kept
+for. The log stays contiguous: his pick is appended the moment the draft reaches that slot, and
+until then he counts as taken and, for his team, as rostered.
 """
 
 from __future__ import annotations
@@ -49,6 +53,16 @@ class Pick:
     player_id: str
 
 
+@dataclass(frozen=True)
+class Keeper:
+    """A player kept by the team in draft ``position`` (``None``: mine, wherever my seat is), who
+    takes that team's pick in ``round``."""
+
+    position: int | None
+    round: int
+    player_id: str
+
+
 def plan_fallback(problem: HorizonProblem, solution: HorizonSolution) -> str | None:
     """``"sum"`` when ``solution`` is the plain-sum fallback of a curve plan (it has no win
     probabilities), else ``None``."""
@@ -64,6 +78,7 @@ class DraftState:
     z: pd.DataFrame = field(init=False)
     positions: Mapping[str, Sequence[str]] = field(init=False)
     picks: list[Pick] = field(default_factory=list)
+    keepers: tuple[Keeper, ...] = ()
     pool_size: int | None = None
     adp: pd.Series | None = None
     adp_source: str = "none"
@@ -93,15 +108,161 @@ class DraftState:
         self.z = zscores(self.projections.df, cats=self.settings.cats, pool_size=pool)
         self.positions = self.projections.positions()
         self.effective_adp()  # records adp_source
+        self.keepers = tuple(self.keepers)
+        self._check_keepers()
+        self._fill_keepers()
+
+    # ------------------------------------------------------------------ keepers
+    def keeper_overall(self, keeper: Keeper) -> int:
+        """The overall pick a keeper takes: his team's pick in his round."""
+        position = self.my_position if keeper.position is None else keeper.position
+        return snake_picks(self.settings.num_teams, position, self.settings.roster_size)[
+            keeper.round - 1
+        ]
+
+    def keeper_team(self, keeper: Keeper) -> str:
+        """The team label a keeper's pick is logged under (as ``autopick.team_label``)."""
+        mine = keeper.position is None or keeper.position == self.my_position
+        return self.my_team if mine else f"Team {keeper.position}"
+
+    @property
+    def keeper_slots(self) -> dict[int, Keeper]:
+        """Overall pick to the keeper who takes it."""
+        return {self.keeper_overall(k): k for k in self.keepers}
+
+    @property
+    def pending_keepers(self) -> dict[int, Keeper]:
+        """The keepers whose slots the draft has not reached yet, by overall pick."""
+        return {o: k for o, k in self.keeper_slots.items() if o >= self.next_overall}
+
+    def is_keeper_pick(self, pick: Pick) -> bool:
+        keeper = self.keeper_slots.get(pick.overall)
+        return keeper is not None and keeper.player_id == pick.player_id
+
+    def _check_keepers(self) -> None:
+        """Every keeper names a known player in a round of the draft and a seat in the league,
+        one keeper per player and per slot, and agrees with the picks already logged."""
+        slots: dict[int, Keeper] = {}
+        players: set[str] = set()
+        for k in self.keepers:
+            if k.player_id not in self.z.index:
+                raise ValueError(f"keeper {k}: unknown player")
+            if not 1 <= k.round <= self.settings.roster_size:
+                raise ValueError(f"keeper {k}: round outside 1-{self.settings.roster_size}")
+            if k.position is not None and not 1 <= k.position <= self.settings.num_teams:
+                raise ValueError(f"keeper {k}: position outside 1-{self.settings.num_teams}")
+            if k.player_id in players:
+                raise ValueError(f"keeper {k}: the player is kept twice")
+            overall = self.keeper_overall(k)
+            if overall in slots:
+                raise ValueError(f"keeper {k}: pick {overall} is already {slots[overall]}")
+            players.add(k.player_id)
+            slots[overall] = k
+        for pick in self.picks:
+            keeper = slots.get(pick.overall)
+            if keeper is not None and keeper.player_id != pick.player_id:
+                raise ValueError(f"keeper {keeper}: pick {pick.overall} is {pick.player_id}")
+            if pick.player_id in players and (keeper is None or keeper.player_id != pick.player_id):
+                raise ValueError(f"keeper {pick.player_id!r} was drafted with pick {pick.overall}")
+
+    def _fill_keepers(self) -> None:
+        """Log the keepers' picks while the next pick is a keeper slot (two can follow on)."""
+        slots = self.keeper_slots
+        while not self.complete and self.next_overall in slots:
+            keeper = slots[self.next_overall]
+            self.picks.append(Pick(self.next_overall, self.keeper_team(keeper), keeper.player_id))
+
+    def _only_keepers_logged(self) -> bool:
+        return all(self.is_keeper_pick(p) for p in self.picks)
+
+    def set_keepers(self, keepers: Sequence[Keeper]) -> None:
+        """Replace the keeper table. Before the first real pick the whole table may change (the
+        keeper picks logged are re-derived); after it, only the slots the draft has not reached:
+        a keeper in the log stays as he is (only the room's record can change him, see
+        :meth:`replace_pick`)."""
+        old, n = self.keepers, self.next_overall
+        fresh = self._only_keepers_logged()
+        logged = {o: k.player_id for o, k in self.keeper_slots.items() if o < n}
+        if fresh:
+            self.picks.clear()
+        self.keepers = tuple(keepers)
+        try:
+            self._check_keepers()
+            if not fresh:
+                reached = {o: k.player_id for o, k in self.keeper_slots.items() if o < n}
+                changed = sorted(
+                    o for o in logged.keys() | reached.keys() if logged.get(o) != reached.get(o)
+                )
+                if changed:
+                    raise ValueError(f"pick {changed[0]} is in the log: its keeper cannot change")
+        except ValueError:
+            self.keepers = old
+            raise
+        finally:
+            self._fill_keepers()
+
+    def set_my_position(self, position: int) -> None:
+        """Move my seat (a room attach). Only before the first real pick: my keepers follow the
+        seat, so the keeper picks already logged are re-derived."""
+        if not 1 <= position <= self.settings.num_teams:
+            raise ValueError("my_position must be within the number of teams")
+        if position == self.my_position:
+            return
+        if not self._only_keepers_logged():
+            raise ValueError(f"the session already has picks for draft position {self.my_position}")
+        old = self.my_position
+        self.picks.clear()
+        self.my_position = position
+        try:
+            self._check_keepers()
+        except ValueError:
+            self.my_position = old
+            raise
+        finally:
+            self._fill_keepers()
+
+    def drop_keeper(self, player_id: str) -> Keeper | None:
+        """Remove a player's keeper entry (the room drafted him elsewhere: the table was
+        wrong). Returns the entry removed, if any."""
+        dropped = next((k for k in self.keepers if k.player_id == player_id), None)
+        if dropped is not None:
+            self.keepers = tuple(k for k in self.keepers if k is not dropped)
+        return dropped
+
+    def replace_pick(self, overall: int, team: str, player_id: str) -> list[Keeper]:
+        """The room's record wins over the log at ``overall`` (a conflict): the pick is replaced
+        in place, and the keeper entries it contradicts (the keeper of that slot, a keeper entry
+        for the player now taken there) are dropped. Returns them."""
+        if not 1 <= overall < self.next_overall:
+            raise ValueError(f"pick {overall} is not in the log")
+        dropped = []
+        keeper = self.keeper_slots.get(overall)
+        if keeper is not None and keeper.player_id != player_id:
+            dropped.append(self.drop_keeper(keeper.player_id))
+        if self.keeper_slots.get(overall) is None:
+            mine = self.drop_keeper(player_id)
+            if mine is not None:
+                dropped.append(mine)
+        self.picks[overall - 1] = Pick(overall=overall, team=team, player_id=player_id)
+        return [k for k in dropped if k is not None]
 
     # ------------------------------------------------------------------ board state
     @property
     def taken(self) -> frozenset[str]:
-        return frozenset(p.player_id for p in self.picks)
+        """Drafted players and the keepers still to come."""
+        logged = {p.player_id for p in self.picks}
+        return frozenset(logged | {k.player_id for k in self.pending_keepers.values()})
 
     @property
     def my_roster(self) -> list[str]:
-        return [p.player_id for p in self.picks if p.team == self.my_team]
+        """My picks and my keepers still to come, in draft order."""
+        mine = [(p.overall, p.player_id) for p in self.picks if p.team == self.my_team]
+        mine += [
+            (o, k.player_id)
+            for o, k in self.pending_keepers.items()
+            if self.keeper_team(k) == self.my_team
+        ]
+        return [pid for _, pid in sorted(mine)]
 
     @property
     def available(self) -> list[str]:
@@ -112,7 +273,7 @@ class DraftState:
         """Players worth modelling: my roster plus the best available by total z, enough to
         fill every remaining pick in the draft with a margin. Deep bench names only slow the
         solver down and never enter an optimal roster."""
-        remaining = self.settings.total_picks - len(self.picks)
+        remaining = self.settings.total_picks - len(self.picks) - len(self.pending_keepers)
         keep = remaining + self.solver_margin
         best = self.z.loc[self.available, "total"].nlargest(keep).index.tolist()
         return list(dict.fromkeys(self.my_roster + best))
@@ -122,8 +283,15 @@ class DraftState:
         return len(self.picks) + 1
 
     @property
-    def my_picks(self) -> list[int]:
+    def my_slots(self) -> list[int]:
+        """Every pick my seat owns in the snake, keeper rounds included."""
         return snake_picks(self.settings.num_teams, self.my_position, self.settings.roster_size)
+
+    @property
+    def my_picks(self) -> list[int]:
+        """The picks I draft with: my slots less my keeper rounds."""
+        kept = self.keeper_slots
+        return [k for k in self.my_slots if k not in kept]
 
     @property
     def my_next_pick(self) -> int | None:
@@ -161,7 +329,7 @@ class DraftState:
         names[self.my_position] = self.my_team
         for pick in self.picks:
             _, pos = self.owner_of(pick.overall)
-            if pos != self.my_position:
+            if pos != self.my_position and not self.is_keeper_pick(pick):
                 names[pos] = pick.team
         return names
 
@@ -209,27 +377,55 @@ class DraftState:
 
     # ------------------------------------------------------------------ mutation
     def apply_pick(self, team: str, player_id: str, overall: int | None = None) -> Pick:
-        """Record a pick. ``overall`` defaults to the next pick number."""
+        """Record a pick. ``overall`` defaults to the next pick number. A keeper's slot takes
+        only the keeper (his pick, logged when the draft reached it, is returned); any keeper
+        whose slot comes next is logged at once."""
         if player_id not in self.z.index:
             raise KeyError(f"unknown player {player_id!r}")
+        overall = self.next_overall if overall is None else overall
+        keeper = self.keeper_slots.get(overall)
+        if keeper is not None and overall < self.next_overall:
+            if player_id != keeper.player_id:
+                name = self.projections.df["player"].get(keeper.player_id, keeper.player_id)
+                raise ValueError(f"pick {overall} is a keeper slot: {name}")
+            return self.picks[overall - 1]
+        kept = {k.player_id: o for o, k in self.pending_keepers.items()}
+        if player_id in kept:
+            raise ValueError(f"{player_id!r} is kept with pick {kept[player_id]}")
         if player_id in self.taken:
             raise ValueError(f"{player_id!r} was already drafted")
-        overall = self.next_overall if overall is None else overall
         if overall != self.next_overall:
             raise ValueError(f"expected pick {self.next_overall}, got {overall}")
         pick = Pick(overall=overall, team=team, player_id=player_id)
         self.picks.append(pick)
+        self._fill_keepers()
         return pick
 
     def sync(self, picks: Sequence[tuple[int, str, str]]) -> list[Pick]:
-        """Apply any picks from a full ``(overall, team, player_id)`` feed not yet recorded."""
-        known = {p.overall for p in self.picks}
+        """Apply any picks from a full ``(overall, team, player_id)`` feed not yet recorded.
+        A keeper's pick in the feed is checked against the keeper, never added twice."""
+        known = {p.overall for p in self.picks if not self.is_keeper_pick(p)}
         added = []
         for overall, team, player_id in sorted(picks):
             if overall in known:
                 continue
-            added.append(self.apply_pick(team, player_id, overall))
+            kept = overall in self.keeper_slots
+            pick = self.apply_pick(team, player_id, overall)
+            if not kept:
+                added.append(pick)
         return added
+
+    def undo(self) -> list[Pick]:
+        """Take back the last real pick and the keeper picks logged after it, which come back
+        when the draft reaches their slots again. Returns them in draft order."""
+        cut = len(self.picks)
+        while cut and self.is_keeper_pick(self.picks[cut - 1]):
+            cut -= 1
+        if cut == 0:
+            raise ValueError("no picks to undo")
+        undone = self.picks[cut - 1 :]
+        del self.picks[cut - 1 :]
+        return undone
 
     # ------------------------------------------------------------------ solving
     def problem(
@@ -311,7 +507,8 @@ class DraftState:
         for planning are measured above this line so that a likely-available bench player is
         worth a little and an unlikely star is not worth more than nothing."""
         order = self.z.loc[self.available, "total"].sort_values(ascending=False).index
-        start = max(0, self.settings.total_picks - len(self.picks) - 1)
+        # The keepers still to come take their slots without leaving the available board.
+        start = max(0, self.settings.total_picks - len(self.picks) - len(self.pending_keepers) - 1)
         window = order[start : start + self.replacement_window]
         if len(window) == 0:
             window = order[-self.replacement_window :]
@@ -581,12 +778,15 @@ class DraftState:
 
     def team_totals(self) -> pd.DataFrame:
         """Every team's drafted category totals (raw z), indexed by team name, with the
-        number of picks made and the draft position."""
+        number of players on the roster (picks made and keepers still to come) and the draft
+        position."""
         cols = [c.value for c in self.settings.cats]
         names = self.team_names()
+        pending = self.pending_keepers
         rows = {}
         for pos, team in names.items():
             roster = [p.player_id for p in self.picks if self.owner_of(p.overall)[1] == pos]
+            roster += [k.player_id for o, k in pending.items() if self.owner_of(o)[1] == pos]
             totals = self.z.loc[roster, cols].sum() if roster else pd.Series(0.0, index=cols)
             rows[team] = {"position": pos, "picks": len(roster), **totals.to_dict()}
         frame = pd.DataFrame.from_dict(rows, orient="index")
