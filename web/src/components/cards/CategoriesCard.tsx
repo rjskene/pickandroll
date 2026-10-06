@@ -85,7 +85,9 @@ export default function CategoriesCard() {
               <thead>
                 <tr>
                   <th>Team</th>
-                  <th className="num">#</th>
+                  <th className="num" title="players on the roster: drafted, kept and keepers still to come">
+                    Players
+                  </th>
                   {teams.data.cats.map((c) => (
                     <th key={c} className="num">
                       {CAT_LABEL[c as Cat]}

@@ -242,6 +242,8 @@ def test_keepers_file_rows_listing_and_errors(data_dir):
         (data_dir / "notes.csv").write_text("a,b\n")
         files = {f["file"] for f in c.get("/files?kind=keepers").json()}
         assert files == {"keepers_test.csv", "keepers_bad.csv", "keepers_dup.csv"}
+        # Never offered as projections (the newest CSV is the setup screen's default).
+        assert {f["file"] for f in c.get("/projections").json()} == {SAMPLE, "notes.csv"}
 
         rows = c.get("/keepers-file?file=keepers_test.csv").json()["rows"]
         assert rows == [
@@ -488,3 +490,15 @@ def test_yahoo_feed_stops_at_someone_else_in_a_keeper_slot(store):
         # The next poll stops at the same place: nothing applied, the error still shown.
         assert c.post(f"/sessions/{sid}/yahoo/poll").json()["applied"] == []
         assert c.get(f"/sessions/{sid}").json()["next_overall"] == 4
+
+
+def test_projection_players_for_the_setup_typeahead(client):
+    (a, name), _ = best(client, 2)
+    players = client.get(f"/projections/players?file={SAMPLE}").json()
+    assert [p["name"] for p in players] == sorted(p["name"] for p in players)
+    (row,) = [p for p in players if p["player_id"] == a]
+    assert row["name"] == name and row["team"]
+    assert client.get(f"/projections/players?file={SAMPLE}").json() == players  # cached
+    assert client.get("/projections/players?file=nope.xls").status_code == 400
+    assert client.get(f"/projections/players?file=../data/{SAMPLE}").status_code == 400
+    assert client.get(f"/projections/players?file={DATA / SAMPLE}").status_code == 400

@@ -40,6 +40,27 @@ export interface SolverStatus {
   recommendation_version: number | null;
 }
 
+/** A keeper in the session's table, in draft order (docs/KEEPERS.md). */
+export interface KeeperRow {
+  position: number;
+  round: number;
+  overall: number;
+  player_id: string;
+  name: string;
+  team: string;
+  mine: boolean;
+  /** His pick is in the log: the draft has reached his slot. */
+  applied: boolean;
+}
+
+/** A keeper as the API takes it: no position is mine; the player by id or by name. */
+export interface KeeperIn {
+  position: number | null;
+  round: number;
+  player_id?: string | null;
+  player?: string | null;
+}
+
 export interface SessionSummary {
   id: string;
   version: number;
@@ -50,7 +71,11 @@ export interface SessionSummary {
   slots: string[];
   my_team: string;
   my_position: number;
+  /** My draftable picks: my keepers' rounds are not among them. */
   my_picks: number[];
+  /** Every pick of mine in the snake, keeper rounds included. */
+  my_slots: number[];
+  keepers: KeeperRow[];
   picks_made: number;
   next_overall: number;
   my_next_pick: number | null;
@@ -83,6 +108,8 @@ export interface BoardPlayer {
   z: Record<Cat, number>;
   total: number;
   taken: boolean;
+  /** The team keeping him, if he is a keeper. */
+  keeper: string | null;
 }
 
 export interface BoardResponse {
@@ -110,6 +137,8 @@ export interface PickRow {
   team: string;
   player_id: string;
   name: string;
+  /** A keeper's pick, logged when the draft reached his slot. */
+  keeper: boolean;
 }
 
 export interface Candidate {
@@ -257,6 +286,7 @@ export interface Score {
 export interface TeamRow {
   team: string;
   position: number;
+  /** Players on the roster: drafted, kept, and keepers still to come. */
   picks: number;
   mine: boolean;
   totals: Record<Cat, number>;
@@ -328,6 +358,14 @@ export interface SessionCreateBody {
   survival_file: string | null;
   solve_ahead: boolean;
   time_limit: number;
+  keepers?: KeeperIn[];
+  keepers_file?: string | null;
+}
+
+export interface ProjectedPlayer {
+  player_id: string;
+  name: string;
+  team: string;
 }
 
 export interface FileEntry {
@@ -498,7 +536,12 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 export const api = {
   projections: () => request<FileEntry[]>("/projections"),
-  files: (kind: "survival" | "curve" | "adp") => request<FileEntry[]>(`/files?kind=${kind}`),
+  files: (kind: "survival" | "curve" | "adp" | "keepers") => request<FileEntry[]>(`/files?kind=${kind}`),
+  /** A keepers CSV in data/, its rows as written with their line labels. */
+  keepersFile: (file: string) =>
+    request<{ file: string; rows: (KeeperIn & { label: string })[] }>(`/keepers-file?file=${encodeURIComponent(file)}`),
+  /** A projection file's players by name, for the keeper typeahead before a session exists. */
+  projectionPlayers: (file: string) => request<ProjectedPlayer[]>(`/projections/players?file=${encodeURIComponent(file)}`),
   sessions: () => request<SessionSummary[]>("/sessions"),
   session: (id: string) => request<SessionSummary>(`/sessions/${id}`),
   createSession: (body: SessionCreateBody) => request<SessionSummary>("/sessions", { method: "POST", body: JSON.stringify(body) }),
@@ -506,7 +549,11 @@ export const api = {
   picks: (id: string) => request<PickRow[]>(`/sessions/${id}/picks`),
   addPick: (id: string, body: { team: string; player_id: string }) =>
     request<PickRow>(`/sessions/${id}/picks`, { method: "POST", body: JSON.stringify(body) }),
-  undoPick: (id: string) => request<PickRow>(`/sessions/${id}/picks/last`, { method: "DELETE" }),
+  /** Takes back the last real pick and the keeper picks logged behind it. */
+  undoPick: (id: string) => request<PickRow & { keepers_undone: PickRow[] }>(`/sessions/${id}/picks/last`, { method: "DELETE" }),
+  /** Replace the keeper table: any slot the draft has not reached (409 for one in the log). */
+  setKeepers: (id: string, keepers: KeeperIn[]) =>
+    request<{ keepers: KeeperRow[]; version: number }>(`/sessions/${id}/keepers`, { method: "PATCH", body: JSON.stringify({ keepers }) }),
   autopick: (id: string, body: AutoPickParams) =>
     request<{ added: PickRow[]; version: number }>(`/sessions/${id}/autopick`, { method: "POST", body: JSON.stringify(body) }),
   /** Queue a background solve; the result arrives as a `recommendation` event. */
@@ -537,6 +584,11 @@ export const api = {
 
 export function teamLabel(session: SessionSummary, position: number): string {
   return position === session.my_position ? session.my_team : `Team ${position}`;
+}
+
+/** The overall pick of a team's round in the snake. */
+export function snakeOverall(numTeams: number, position: number, round: number): number {
+  return (round - 1) * numTeams + (round % 2 === 1 ? position : numTeams + 1 - position);
 }
 
 export function pickOwner(numTeams: number, overall: number): { round: number; position: number } {

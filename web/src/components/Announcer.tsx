@@ -42,9 +42,10 @@ export default function Announcer({ queue, onShown }: { queue: Announcement[]; o
   const mine = pick.position === s.my_position;
   return (
     <div className={`announce ${leaving ? "out" : "in"} ${mine ? "mine" : ""}`} role="status" aria-live="polite">
-      <span className="k">Pick {pick.overall}</span>
-      <span className="team">{pick.team}</span>
+      <span className="k">{pick.keeper ? `Keeper · pick ${pick.overall}` : `Pick ${pick.overall}`}</span>
+      <span className="team">{pick.keeper ? `${pick.team} keeps` : pick.team}</span>
       <span className="name">{pick.name}</span>
+      {pick.keeper && <span className="meta">R{pick.round}</span>}
       {player && (
         <span className="meta">
           {player.team}
