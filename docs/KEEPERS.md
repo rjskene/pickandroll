@@ -246,10 +246,12 @@ class SessionCreate(BaseModel):
 3. Repeat from slots 1 and 12 (back-to-back picks around keeper slots).
 4. Scorecard on the tracker issue: picks planned vs made, any 400 from the API, solve times (keeper
    mode changes nothing in the MILP size, so the 30 s design point must still hold).
-5. Like-for-like runs (from run 6 on): the Sim strategy set to `adp` with noise 1.0 and a fixed seed
-   (2026) before the first Sim, so the other teams draft as the availability model assumes (market
-   ADP with the session spread) and the E[cats] trajectory is a consistency check. The default `z`
-   strategy (runs 1-5) ignores ADP, so its trajectory says nothing about the league's spread.
+5. Consistency runs (from run 6 on): the Sim bar set to "by ADP" with "normal" randomness before the
+   first Sim, so the other teams draft as the availability model assumes (market ADP with the session
+   spread) and the E[cats] trajectory is a consistency check. No seed: the web has no seed control, the
+   API re-seeds per Sim call, and my own picks differ between runs anyway, so runs are compared on
+   their trajectories, not their boards. The default `z` strategy (runs 1-5) ignores ADP, so its
+   trajectory says nothing about the league's spread.
 
 Results (2026-10-06, main 0f69468 for slot 6, 28b940b for slots 1 and 12, then bb20d2a with #32; all with the practice
 file, `survival: simulate`, the top candidate drafted every turn):
