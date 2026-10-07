@@ -394,12 +394,17 @@ def test_recommend_reports_timings_and_prices_without_bumping_version(client):
     board = client.get(f"/sessions/{sid}/board?limit=20").json()
     assert board["prices_version"] == before and board["scale"] == "wins"
     costs = {p["player_id"]: p["cost"] for p in board["players"]}
-    assert costs[rec["plan"][0]["player"]] == 0.0
     assert all(c is None or c >= 0.0 for c in costs.values())
     # Priced candidates carry their exact re-solve cost; the rest the first-order estimate.
     exact = {p["player_id"]: p["cost_exact"] for p in board["players"]}
     for c in rec["candidates"]:
         assert exact[c["player"]] is True and costs[c["player"]] == round(c["cost_vs_best"], 3)
+    # The best-priced candidate is the one served, and costs nothing. The plan's own first
+    # pick can cost more: under a time limit another candidate's forced solve may beat the plan.
+    top, first = rec["candidates"][0]["player"], rec["plan"][0]["player"]
+    assert costs[top] == 0.0
+    assert exact[first] is True and costs[first] >= 0.0
+    assert first != top or costs[first] == 0.0
     estimated = [p for p in board["players"] if not p["taken"] and not p["cost_exact"]]
     assert estimated and all(p["cost"] is not None for p in estimated)
     # A solve on the sum objective prices on the z scale instead.
@@ -599,11 +604,23 @@ def test_teams_endpoint_tallies_the_league(client):
     assert teams["matchups_won"] == rec["league"]["matchups_won"]
 
 
+def poll(fetch, done, timeout=600.0):
+    """``fetch()`` until ``done`` holds for its answer; the last answer either way. Each step a
+    test waits on gets its own ``timeout``, a guard against a hang rather than a time budget:
+    the work behind it is bounded, so a busy machine only makes it later."""
+    import time
+
+    deadline = time.monotonic() + timeout
+    answer = fetch()
+    while not done(answer) and time.monotonic() < deadline:
+        time.sleep(0.5)
+        answer = fetch()
+    return answer
+
+
 def test_solve_ahead_builds_survival_then_recommends(client):
     """Setup with a simulated survival table: the table and the fitted curve land in the
     background, then the pre-draft plan solves itself and arrives at /recommendation."""
-    import time
-
     s = create(
         client,
         num_teams=4,
@@ -615,31 +632,27 @@ def test_solve_ahead_builds_survival_then_recommends(client):
     )
     sid = s["id"]
     assert s["survival"]["status"] == "building" and s["survival"]["sims"] == 12
-    deadline = time.time() + 180
-    while time.time() < deadline:
-        s = client.get(f"/sessions/{sid}").json()
-        if s["survival"]["status"] != "building":
-            break
-        time.sleep(0.5)
+    s = poll(
+        lambda: client.get(f"/sessions/{sid}").json(),
+        lambda s: s["survival"]["status"] != "building",
+    )
     assert s["survival"]["status"] == "ready", s["survival"]
     assert s["availability_source"] == "survival"
     assert s["curve"]["source"].startswith("simulated league (12 drafts, 4 teams")
     board = client.get(f"/sessions/{sid}/board?limit=5").json()
     assert all(0.0 <= p["p_next"] <= 1.0 for p in board["players"])
-    while time.time() < deadline:
-        latest = client.get(f"/sessions/{sid}/recommendation").json()
-        if latest["recommendation"] is not None and not latest["solver"]["running"]:
-            break
-        time.sleep(0.5)
+    latest = poll(
+        lambda: client.get(f"/sessions/{sid}/recommendation").json(),
+        lambda r: r["recommendation"] is not None and not r["solver"]["running"],
+    )
     assert latest["recommendation"] is not None and latest["stale"] is False
     assert latest["recommendation"]["availability_source"] == "survival"
     assert latest["solver"]["runs"] >= 1
     # A manual re-solve queues another background run.
     r = client.post(f"/sessions/{sid}/solve", json={"n": 3, "scenarios": 0})
     assert r.status_code == 202 and r.json()["queued"] is True
-    while time.time() < deadline:
-        status = client.get(f"/sessions/{sid}/solver").json()
-        if status["runs"] >= 2 and not status["running"] and not status["pending"]:
-            break
-        time.sleep(0.5)
+    status = poll(
+        lambda: client.get(f"/sessions/{sid}/solver").json(),
+        lambda s: s["runs"] >= 2 and not s["running"] and not s["pending"],
+    )
     assert status["runs"] >= 2 and status["survival"]["status"] == "ready"

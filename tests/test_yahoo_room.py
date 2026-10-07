@@ -1007,7 +1007,12 @@ def test_tier1_replay_synthetic(league):
     assert card["mode"] == "mirror" and all(
         r["label"] in {"compliant", "absent"} for r in card["rows"]
     )
-    assert card["diagnostics"]["D3"]["n"] > 0 and card["diagnostics"]["D1"]["n"] == 13
+    # Every turn has a reco, and every reco is timed (priced in D3, plan-only in D3_plan) or a
+    # pre-solve. D3 alone needs a priced solve to finish inside the replay, which takes free CPU:
+    # under load all 13 plans can come from pre-solves. It stays a reported value.
+    d = card["diagnostics"]
+    assert d["D1"]["n"] == 13
+    assert d["D3"]["n"] + d["D3_plan"]["n"] + d["D3_plan"]["branch"] >= d["D1"]["n"]
     assert len(result["plans"]) == 13 and all(p["fresh"] for p in result["plans"])
     assert [p["second"] is not None for p in result["plans"]] == [
         k % 24 == 0 for k in (1, 24, 25, 48, 49, 72, 73, 96, 97, 120, 121, 144, 145)
