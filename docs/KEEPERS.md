@@ -281,6 +281,14 @@ plan's player, not the one drafted, and its "now" score could lag a solve; the P
 for a solve past the last pick after completion; the K badge sits against the name. Capped solves came
 from the instant sim leaving no pre-solve window, not from keeper mode. A "Team N" row in the practice
 file whose N is my seat is a collision (slot 1 and slot 12 runs): the editor folds it into "Me".
+Mock 6 (2026-10-06, Yahoo mock room 2639201, slot 8, armed with act_at_s 15, main 0382a51 on the no-reload
+`pickandroll-api-draft` entry, Keepers empty): the keeper-era room code in a live room without keepers.
+Scorecard 13/13, every guardrail green (G2 max 118 ms, G6 54.7 s, D2 max 15.1 s, D6 0). Hypothesis held: all
+156 room picks are `src socket`, no gap stand-in, no `kept`, no repair, stand-ins 0. Baseline for #14 at bot
+pace (other teams p50 1.0 s): D1 hits 3 / pending 2 / misses 8, p50 2.47 s, max 10.73 s (pick 8, capped cold
+solve with six branches running, 0.27 s inside the 11 s goal); D3 priced p50 2.09 s, p95 10.43 s. Scorecard
+posted on #47.
+
 
 ## 6. Order of work
 
