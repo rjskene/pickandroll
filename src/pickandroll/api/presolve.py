@@ -17,7 +17,7 @@ from __future__ import annotations
 import copy
 import threading
 import time
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from concurrent.futures import Future
 from dataclasses import dataclass, field
 from itertools import combinations
@@ -32,6 +32,12 @@ from ..optim.horizon import HorizonProblem, HorizonSolution, solve_horizon
 ONE_AWAY = 6  # likely players when one pick is left before mine
 TWO_AWAY = 4  # likely players paired when two are left: C(4, 2) = 6 boards
 MINE = 2  # my own likely choices on my turn, for the pick straight after it
+#: A board that stays on the table this long is not a bot room's (bots pick about 2.3 s
+#: apart): the one-away set then grows by one likely player per idle pool worker, up to
+#: ``ONE_AWAY_MAX`` (#14 lever 5; see :func:`may_grow`). In mock 6 the pick one away from each
+#: of my turns stood 2nd to 12th in :func:`likely_next`'s order.
+GROW_AFTER_S = 4.0
+ONE_AWAY_MAX = 12
 #: Plan budget of a branch. It solves ahead of its board, off the clock, so it gets the plan's
 #: full budget rather than a room's: in rounds 1-6 a plan needs 6-16 s to converge, and only a
 #: converged branch is served unpriced.
@@ -73,6 +79,21 @@ def likely_next(
     return out
 
 
+def may_grow(state: DraftState) -> bool:
+    """Whether this board's one-away set may grow: exactly one pick, someone else's, is left
+    before my next turn (keeper slots pass without a pick), and that turn is not the first of a
+    back-to-back pair. A pair's own-choice boards for its second pick launch when its first goes
+    on the clock, and grown branches still solving then hold the workers they need: in the #14
+    slot-12 cell they queued behind them and came in after the live solve."""
+    my_next = state.my_next_pick
+    if my_next is None:
+        return False
+    mine = set(state.my_picks)
+    kept = state.keeper_slots
+    between = [o for o in range(state.next_overall, my_next) if o not in kept]
+    return len(between) == 1 and between[0] not in mine and my_next + 1 not in mine
+
+
 @dataclass(frozen=True)
 class Branch:
     """A board my turn can start on: the picks that lead to it from the current one."""
@@ -87,9 +108,15 @@ def branch_boards(
     likely: Sequence[str],
     mine: Sequence[str] = (),
     curve: Any = "default",
+    *,
+    one_away: int = ONE_AWAY,
+    skip: Callable[[BoardKey], bool] | None = None,
 ) -> list[Branch]:
     """The boards to solve ahead from the current one; empty when my turn is not within two
-    picks or the picks before it include one of mine."""
+    picks or the picks before it include one of mine.
+
+    ``one_away``: likely players branched on with one pick left before mine. ``skip``: boards
+    already planned, whose problems are not built again."""
     k = state.next_overall
     my_next = state.my_next_pick
     if my_next is None:
@@ -113,7 +140,7 @@ def branch_boards(
         return []
     elif len(between) == 1:
         (a,) = between
-        paths = [((a, owner(a), p),) for p in list(likely)[:ONE_AWAY]]
+        paths = [((a, owner(a), p),) for p in list(likely)[:one_away]]
     elif len(between) == 2:
         a, b = between
         paths = [
@@ -127,10 +154,13 @@ def branch_boards(
         try:
             for overall, who, pid in path:
                 board.apply_pick(who, pid, overall)
+            key = board_key(board)
+            if skip is not None and skip(key):
+                continue
             problem = board.horizon_problem(curve=curve)
         except (KeyError, ValueError):
             continue
-        out.append(Branch(picks=path, key=board_key(board), problem=problem))
+        out.append(Branch(picks=path, key=key, problem=problem))
     return out
 
 
@@ -164,6 +194,11 @@ class BranchBook:
     hits: int = 0
     pending: int = 0
     misses: int = 0
+
+    def known(self, key: BoardKey) -> bool:
+        """Whether this board is solved or in flight."""
+        with self.lock:
+            return key in self.entries
 
     def wanted(self, branches: Sequence[Branch]) -> list[Branch]:
         """The branches not solved or in flight yet."""

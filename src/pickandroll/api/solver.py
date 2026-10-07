@@ -37,17 +37,21 @@ from pydantic import BaseModel, Field
 
 from ..draft.state import plan_fallback
 from ..optim.horizon import HorizonProblem, HorizonSolution, first_order_table
-from ..optim.pool import background_pool
+from ..optim.pool import background_pool, background_size
 from ..optim.roster import pick_pool, solve_roster
 from .presolve import (
     BRANCH_TIME_LIMIT,
+    GROW_AFTER_S,
     MINE,
     ONE_AWAY,
+    ONE_AWAY_MAX,
+    BoardKey,
     BranchBook,
     Entry,
     board_key,
     branch_boards,
     likely_next,
+    may_grow,
     solve_branch,
 )
 
@@ -63,6 +67,8 @@ TIE_BAND = {"wins": 0.05, "z": 0.5}
 #: Background solves run here rather than in the event loop's default executor, which
 #: ``asyncio.run`` waits for at shutdown: a server reload must not wait out a 20 s solve.
 _EXECUTOR = ThreadPoolExecutor(max_workers=4, thread_name_prefix="solve")
+#: A pre-solved plan's payload is built here, off the event loop and never behind a solve.
+_INSTALLER = ThreadPoolExecutor(max_workers=1, thread_name_prefix="install")
 
 
 def solver_executor() -> ThreadPoolExecutor:
@@ -159,6 +165,8 @@ def displaces(new: dict[str, Any], old: dict[str, Any]) -> bool:
     displaces one whose objective is at least as good, except on a tie: a converged plan
     replaces a capped one, and exact prices replace first-order ones that keep the same #1
     (they add the drafter's fall-through order, not another pick)."""
+    if old.get("opening"):
+        return True  # the plan solved before the draft stood in for this board's own
     a, b = new.get("top_objective"), old.get("top_objective")
     if a is None or b is None:  # the single-roster model: exact prices win
         return bool(new.get("priced", True)) and not old.get("priced", True)
@@ -276,6 +284,63 @@ def _horizon_payload(
         "wins": round(wins, 4),
         "value": round(value, 3),
         "score": entry,
+    }
+
+
+def opening_payload(
+    opening: dict[str, Any],
+    prices: pd.Series | None,
+    snapshot: dict[str, Any],
+    taken: frozenset[str],
+    names: pd.Series,
+) -> dict[str, Any] | None:
+    """My first pick from the plan solved on the empty board (``opening``, priced exactly) for
+    the board my turn starts on: its candidates still available, then the best of the rest by
+    that plan's first-order prices, as many as it priced. ``None`` when nobody is left."""
+    rows = [dict(c) for c in opening["candidates"] if c["player"] not in taken]
+    want = max(len(opening["candidates"]), 1)
+    if prices is not None:
+        listed = {r["player"] for r in rows}
+        for pid, cost in prices.dropna().sort_values().items():
+            if len(rows) >= want:
+                break
+            if pid in taken or pid in listed:
+                continue
+            rows.append(
+                {
+                    "player": pid,
+                    "name": names.get(pid, pid),
+                    "objective": None,
+                    "cost_vs_best": None,
+                    "cost_first_order": round(float(cost), 4),
+                    "p_available_first": None,
+                    "p_available_next": None,
+                    "min_active_total": None,
+                    "time_limited": None,
+                    "adp": None,
+                    "tie": False,
+                }
+            )
+    if not rows:
+        return None
+    best = rows[0].get("cost_vs_best")
+    if best is not None:
+        for r in rows:
+            if r.get("cost_vs_best") is not None:
+                r["cost_vs_best"] = round(max(0.0, r["cost_vs_best"] - best), 4)
+    return {
+        **opening,
+        **snapshot,
+        "candidates": rows,
+        "plan": [r for r in opening.get("plan", []) if r["player"] not in taken],
+        "scenarios": [],
+        "priced": False,
+        "branch": False,
+        "opening": True,
+        "top_objective": None,
+        "capped": None,
+        "timings": {"opening": 1.0},
+        "score": None,  # the board's own solve records the score
     }
 
 
@@ -554,6 +619,13 @@ class BackgroundSolver:
         self._branch_lock = threading.Lock()
         self._branches: set[Any] = set()
         self._peaks: dict[int, int] = {}
+        # The board the pre-solves are for: when it arrived, its one-away set's size and whether
+        # that set may grow (:func:`may_grow`); and the board whose growth check is timed.
+        self._board: tuple[BoardKey, float, int, bool] | None = None
+        self._grow_timed: BoardKey | None = None
+        # The exactly priced plan for the empty board and its first-order prices: my first
+        # pick, in round 1, is served from it the moment my turn starts (#14 lever 4).
+        self._opening: tuple[dict[str, Any], pd.Series | None] | None = None
 
     @property
     def running(self) -> bool:
@@ -605,6 +677,7 @@ class BackgroundSolver:
             self.generation += 1
             gen = self.generation
             base = self._take_branch(gen)
+            self._open(base)
             self._start(gen, base)
             self._schedule_presolve()
             await asyncio.sleep(0)
@@ -665,6 +738,14 @@ class BackgroundSolver:
                 return
         self.session.set_recommendation(payload)
         self.solved_version = payload["version"]
+        if (
+            payload.get("priced")
+            and payload.get("mode") == "horizon"
+            and payload["next_overall"] == 1
+        ):
+            session = self.session
+            prices = session.prices if session.prices_version == payload["version"] else None
+            self._opening = (payload, prices)
         if payload["version"] == self.session.version:
             self._schedule_presolve()
 
@@ -715,13 +796,57 @@ class BackgroundSolver:
             self._install(entry, snapshot)
         return entry.branch.problem, entry.solution
 
+    def _open(self, base: tuple[HorizonProblem, HorizonSolution] | None) -> None:
+        """Serve my first pick, in round 1, from the plan solved before the draft, the moment
+        my turn starts: in round 1 the planner adds nothing over that plan (the leverage study),
+        and a converged branch is the only faster answer. Any reco solved for the board
+        displaces it (:func:`displaces`)."""
+        session = self.session
+        if self._opening is None or not session.solve_params.presolve:
+            return
+        if base is not None and not base[1].time_limited:
+            return  # a converged branch is being installed for this board
+        state = session.state
+        with session.lock:
+            mine = state.my_picks
+            first = mine[0] if mine else None
+            if first is None or first > state.settings.num_teams or state.next_overall != first:
+                return
+            snapshot = _snapshot(session)
+            taken = state.taken
+        rec = session.recommendation
+        if rec is not None and rec["version"] == snapshot["version"]:
+            return  # the board has its reco already (my first pick is pick 1)
+        opening, prices = self._opening
+        payload = opening_payload(opening, prices, snapshot, taken, state.projections.df["player"])
+        if payload is not None:
+            self._publish(payload)
+
     def _late_branch(self, entry: Entry, gen: int, snapshot: dict[str, Any]) -> None:
         solution = entry.solution
         if self.generation == gen and solution is not None and not solution.time_limited:
             self._install(entry, snapshot, late=True)
 
     def _install(self, entry: Entry, snapshot: dict[str, Any], late: bool = False) -> None:
-        """Publish a branch plan; ``late`` when it was still solving as its board arrived."""
+        """Publish a branch plan; ``late`` when it was still solving as its board arrived. Its
+        payload (candidate table, category report, board prices) is built in a thread, so a hit
+        never stalls the event loop's /plan polls, pushes and pick posts; the publish comes
+        back to the loop."""
+        future = asyncio.get_running_loop().run_in_executor(
+            _INSTALLER, self._branch_payload, entry, snapshot
+        )
+
+        def done(f: asyncio.Future) -> None:  # on the event loop
+            if f.cancelled():
+                return
+            if f.exception() is not None:
+                self.last_error = f"install: {f.exception()}"
+                return
+            self._publish({**f.result(), "branch_late": late})
+
+        future.add_done_callback(done)
+
+    def _branch_payload(self, entry: Entry, snapshot: dict[str, Any]) -> dict[str, Any]:
         session = self.session
         state = session.state
         problem, solution = entry.branch.problem, entry.solution
@@ -734,7 +859,7 @@ class BackgroundSolver:
             table.insert(1, "name", table["player"].map(state.projections.df["player"]))
         objective = session.solve_params.objective or state.objective
         timings = {"plan_ms": entry.solve_ms or 0.0, "branch": 1.0}
-        payload = _horizon_payload(
+        return _horizon_payload(
             session,
             snapshot,
             objective,
@@ -746,7 +871,6 @@ class BackgroundSolver:
             timings=timings,
             branch=True,
         )
-        self._publish({**payload, "branch_late": late})
 
     def _schedule_presolve(self) -> None:
         if not self.session.solve_params.presolve or not self.enabled:
@@ -769,7 +893,10 @@ class BackgroundSolver:
         future.add_done_callback(done)
 
     def _presolve(self) -> None:
-        """Launch plan-only solves in the pool for the boards my turn can start on."""
+        """Launch plan-only solves in the pool for the boards my turn can start on. A board one
+        pick from my turn that stays past a bot room's pace (``GROW_AFTER_S``) also gets one more
+        likely player per idle worker (#14 lever 5), unless that turn starts a back-to-back
+        pair."""
         session = self.session
         state = session.state
         rec = session.recommendation
@@ -780,15 +907,47 @@ class BackgroundSolver:
             board.picks = list(state.picks)
             fresh = rec is not None and rec["version"] == session.version
             mine = [c["player"] for c in rec["candidates"][:MINE]] if fresh else []
+        key = board_key(board)
+        now = time.monotonic()
+        with self._branch_lock:
+            if self._board is None or self._board[0] != key:
+                self._board = (key, now, ONE_AWAY, may_grow(board))
+            _, arrived, one_away, grows = self._board
+        waited = now - arrived
         curve: Any = None if session.solve_params.objective == "sum" else "default"
-        likely = likely_next(board, self._o_rank_series(), limit=ONE_AWAY)
-        branches = branch_boards(board, likely, mine, curve=curve)
-        wanted = self.book.wanted(branches)
-        if not wanted:
+        likely = likely_next(
+            board, self._o_rank_series(), limit=ONE_AWAY_MAX if grows else ONE_AWAY
+        )
+
+        def launch(size: int) -> None:
+            branches = branch_boards(
+                board,
+                likely,
+                mine,
+                curve=curve,
+                one_away=size,
+                skip=self.book.known,
+            )
+            self._launch(self.book.wanted(branches), state.plan_gap)
+
+        launch(one_away)
+        if not grows:
             return
+        if waited < GROW_AFTER_S:
+            self._grow_later(key, GROW_AFTER_S - waited)
+            return
+        with self._branch_lock:
+            idle = background_size() - len(self._branches)
+            grown = min(ONE_AWAY_MAX, one_away + max(0, idle))
+            if self._board is not None and self._board[0] == key:
+                self._board = (key, arrived, grown, grows)
+        if grown > one_away:
+            launch(grown)
+
+    def _launch(self, branches: list[Any], gap: float) -> None:
         pool = background_pool()
-        for branch in wanted:
-            future = pool.submit(solve_branch, (branch.problem, BRANCH_TIME_LIMIT, state.plan_gap))
+        for branch in branches:
+            future = pool.submit(solve_branch, (branch.problem, BRANCH_TIME_LIMIT, gap))
             with self._branch_lock:
                 self._branches.add(future)
                 for gen, peak in self._peaks.items():
@@ -801,9 +960,29 @@ class BackgroundSolver:
                 )
             )
 
+    def _grow_later(self, key: BoardKey, delay: float) -> None:
+        """Look at the pre-solves again once ``key`` has stayed on the table ``GROW_AFTER_S``."""
+        loop = self.loop
+        with self._branch_lock:
+            if self._grow_timed == key:
+                return
+            self._grow_timed = key
+        if loop is None or loop.is_closed():
+            return
+        loop.call_soon_threadsafe(loop.call_later, delay + 0.05, self._schedule_presolve)
+
     def _branch_ended(self, future: Any) -> None:
+        """A worker is free: a board waiting past a bot room's pace may take one more branch."""
         with self._branch_lock:
             self._branches.discard(future)
+            board = self._board
+        if board is None or not board[3] or board[2] >= ONE_AWAY_MAX:
+            return
+        if time.monotonic() - board[1] < GROW_AFTER_S:
+            return
+        loop = self.loop
+        if loop is not None and not loop.is_closed():
+            loop.call_soon_threadsafe(self._schedule_presolve)
 
     def status(self) -> dict[str, Any]:
         with self._lock:
