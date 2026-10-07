@@ -1,7 +1,8 @@
 // A stand-in for the chrome.* APIs the extension uses, for the harness pages: runtime messaging
 // and ports between the page's scripts (sender = tab 1), storage.local / storage.session in
 // memory, and the calls the side panel makes. worker.js loaded into the same page answers it.
-window.makeFakeChrome = function makeFakeChrome() {
+// ``manifest``: what runtime.getManifest() returns (the harness passes the extension's own).
+window.makeFakeChrome = function makeFakeChrome(manifest) {
   "use strict";
   const listeners = { message: [], connect: [], changed: [] };
   const store = { local: {}, session: {} };
@@ -52,6 +53,7 @@ window.makeFakeChrome = function makeFakeChrome() {
         return contentSide;
       },
       openOptionsPage() {},
+      getManifest: () => manifest || { version: "harness" },
     },
     storage: { local: area("local"), session: area("session"), onChanged: evt(listeners.changed) },
     tabs: {

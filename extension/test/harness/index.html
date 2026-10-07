@@ -13,18 +13,33 @@
       pre { white-space: pre-wrap; border: 1px solid var(--line); border-radius: 6px; padding: 8px; max-width: 100%; overflow-x: auto; }
       table { border-collapse: collapse; margin-top: 8px; }
       td, th { border: 1px solid var(--line); padding: 2px 8px; text-align: left; }
+      #views { display: flex; gap: 4px; list-style: none; padding: 0; margin: 8px 0 4px; }
+      #views [aria-selected="true"] { font-weight: 600; }
+      #list { max-height: 300px; overflow-y: auto; border: 1px solid var(--line); }
+      #list table { margin-top: 0; }
+      #players tr { height: 24px; }
     </style>
   </head>
   <body>
     <h1>pickandroll extension harness</h1>
     <p>Replays a recorded Yahoo room as socket frames through the extension's own page.js, content.js
       and worker.js (with a stand-in for chrome.*) against the pickandroll API.
-      Query: <code>?speed=10&amp;slot=1&amp;fixture=2515267&amp;flip=0&amp;armed=0&amp;drop=0&amp;gap=0&amp;lead=3.5&amp;planms=0&amp;lostreq=0</code>.</p>
+      Query: <code>?speed=10&amp;slot=1&amp;fixture=2515267&amp;flip=0&amp;armed=0&amp;drop=0&amp;gap=0&amp;lead=3.5&amp;planms=0&amp;lostreq=0&amp;view=&amp;hide=10</code>
+      (<code>view</code>: <code>v</code>, <code>w</code> or <code>wg</code>, Yahoo's view at my turns; see harness.js).</p>
     <!-- Yahoo's Autodraft switch, as the content script looks for it -->
     <button id="autodraft" type="button">Autodraft</button>
     <pre id="log">starting…</pre>
-    <!-- Yahoo's player table: the armed drafter's candidates and a "Draft in Yahoo" request's player -->
-    <table id="players"><tbody></tbody></table>
+    <!-- Yahoo's view tabs and filters, as the content script reads them (mock 7's page) -->
+    <ul role="tablist" id="views">
+      <li role="presentation"><button role="tab" type="button" data-id="players" aria-selected="true">Players</button></li>
+      <li role="presentation"><button role="tab" type="button" data-id="board" aria-selected="false">Board</button></li>
+      <li role="presentation"><button role="tab" type="button" data-id="results" aria-selected="false">Results</button></li>
+    </ul>
+    <select name="position-filter"><option selected>All Positions</option><option>PG</option></select>
+    <select name="adp-filter"><option selected>ADP</option></select>
+    <!-- Yahoo's player table: the armed drafter's candidates and a "Draft in Yahoo" request's
+         player, in a list that scrolls on its own, as Yahoo's does -->
+    <div id="list"><div id="pad-top"></div><table id="players"><tbody></tbody></table><div id="pad-bottom"></div></div>
     <div id="result"></div>
     <script>
       // Never a cached copy of the harness itself: python's http.server sends no Cache-Control,

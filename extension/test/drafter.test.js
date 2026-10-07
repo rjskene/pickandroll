@@ -18,7 +18,10 @@ const K = 24; // my pick: round 2, slot 1
  * ``planHang``: a held /plan ask never answers (the solve outlives the turn); ``unqueueable``:
  * rows the queue cannot take; ``switchMs``: the Autodraft switch returns that long after it is
  * thrown, and Yahoo picks from the queue ``autoLandMs`` after it is; ``starDrafts``: on my turn
- * a row's star drafts its player (the harness's table, and the probe's "drafted"). */
+ * a row's star drafts its player (the harness's table, and the probe's "drafted");
+ * ``scrolledAway``: the list is scrolled past every row until the view is reset (V of mock 7's
+ * pick 68); ``rowsAfter``: the table shows no row until that many ms into the turn, nor its
+ * Draft buttons, unless Yahoo's Players tab is clicked (``tabFixes``; W). */
 function world({
   visible = ["101", "102", "103"],
   clicksToLand = 1,
@@ -41,9 +44,14 @@ function world({
   switchMs = 0,
   autoLandMs = 500,
   starDrafts = false,
+  scrolledAway = false,
+  rowsAfter = 0,
+  tabFixes = false,
 } = {}) {
   const clock = { t: 1_000_000 };
-  const draftable = () => clock.t >= 1_000_000 + draftableAfter;
+  const view = { top: !scrolledAway, players: !tabFixes }; // tabFixes: another view is selected
+  const shown = () => clock.t >= 1_000_000 + rowsAfter || (tabFixes && view.players);
+  const draftable = () => clock.t >= 1_000_000 + draftableAfter && shown();
   const queue = [];
   const run = () => {
     queue.sort((x, y) => x[0] - y[0]);
@@ -63,12 +71,12 @@ function world({
     tracker.ingest(`0|${K}|${yid}|${SLOT}|X|0`, clock.t);
     if (backToBack) tracker.ingest(`D|${K + 1}|${SLOT}|30`, clock.t);
   };
-  const log = { clicks: [], plans: [], boards: [], events: [], autodraft: [], queued: [], queued2: [], searches: [], cleared: 0, reset: 0 };
+  const log = { clicks: [], plans: [], boards: [], events: [], autodraft: [], queued: [], queued2: [], searches: [], cleared: 0, reset: 0, tabs: [] };
   let auto = false;
   const dom = {
     draftable,
-    find: (c) => (visible.includes(c.yahoo_player_id) ? { yid: c.yahoo_player_id } : null),
-    scrollTo: async () => null,
+    find: (c) => (view.top && shown() && visible.includes(c.yahoo_player_id) ? { yid: c.yahoo_player_id } : null),
+    scrollTo: async () => null, // a scroll from where the view is finds nothing (V)
     async search(c) {
       log.searches.push(c.yahoo_player_id);
       return searchable.includes(c.yahoo_player_id) ? { yid: c.yahoo_player_id } : null;
@@ -95,6 +103,7 @@ function world({
     nudge: async () => {},
     async queueOnly(c) {
       if (unqueueable.includes(c.yahoo_player_id)) return { ok: false, msg: "no row" };
+      if ((rowsAfter || scrolledAway) && !dom.find(c)) return { ok: false, msg: "no row" };
       log.queued.push(c.yahoo_player_id);
       if (starDrafts && !tracker.picks.has(K)) land(c.yahoo_player_id);
       return { ok: true };
@@ -116,7 +125,15 @@ function world({
     },
     async reset() {
       log.reset++;
+      view.top = true;
     },
+    async showPlayers() {
+      const r = view.players ? "selected" : "clicked";
+      log.tabs.push([clock.t, r]);
+      view.players = true;
+      return r;
+    },
+    summary: () => ({ rows: shown() ? visible.length : 0, draftable: draftable(), views: [view.players ? "players" : "board"] }),
   };
   const served = {
     fresh: true,
@@ -230,8 +247,21 @@ test("a hand pick during the plan wait: no attempt, and the page is left alone",
   const out = await d.turn(K);
   assert.equal(out.result, "manual");
   assert.deepEqual(attempts(log), []);
-  assert.equal(log.reset, 0);
+  assert.equal(log.reset, 0, "not while the user's pick is still settling");
   assert.deepEqual(log.autodraft, []);
+});
+
+test("a hand pick that is in: the view is put back to the top of the list, nothing else", async () => {
+  const { d, log, tracker, at, land } = world({ planMs: 4000 });
+  at(1000, () => tracker.noteManual(1_001_000, "Draft"));
+  at(1400, () => land("777"));
+  const out = await d.turn(K);
+  assert.equal(out.result, "manual");
+  assert.deepEqual(attempts(log), []);
+  assert.equal(log.reset, 1, "a search left in the box is §0's filtered table at the next turn");
+  assert.equal(log.cleared, 0, "the user's queue is left alone");
+  assert.deepEqual(log.autodraft, []);
+  assert.deepEqual(log.tabs, []);
 });
 
 test("a stale plan near the end of the clock is drafted, not waited on", async () => {
@@ -371,6 +401,111 @@ test("an off-screen row is never searched for unless the option is on", async ()
   assert.deepEqual(on.log.searches, ["101"]);
   assert.deepEqual(attempts(on.log), [["101", "search", 1]]);
   assert.equal(outOn.result, "landed");
+});
+
+// ---------------------------------------------------------------- mock 7, pick 68: no row
+const miss = (log) => notes(log, "row miss").map((e) => [e.yid, e.result, e.via]);
+
+test("a list left scrolled away is put back to its top before the first look (V)", async () => {
+  const { d, log } = world({ scrolledAway: true });
+  const out = await d.turn(K);
+  assert.equal(out.result, "landed");
+  assert.equal(out.yid, "101");
+  assert.deepEqual(attempts(log), [["101", "row", 1]]);
+  assert.deepEqual(miss(log), []);
+  assert.deepEqual(log.queued, []);
+});
+
+test("the top four have no row: a later candidate the table shows is drafted without scrolling", async () => {
+  const { d, log } = world({ visible: ["105"], plan: { candidates: rows(["101", "102", "103", "104", "105", "106"]) } });
+  const out = await d.turn(K);
+  assert.equal(out.yid, "105");
+  assert.deepEqual(attempts(log), [["105", "row", 1]]);
+  assert.deepEqual(miss(log), [
+    ["101", "noRow", "scroll"],
+    ["102", "noRow", "scroll"],
+    ["103", "noRow", "scroll"],
+    ["104", "noRow", "scroll"],
+  ]);
+  const [first] = notes(log, "row miss");
+  assert.deepEqual(first.dom, { rows: 1, draftable: true, views: ["players"] }, "what the page showed");
+  assert.equal(first.name, "P 101");
+  assert.deepEqual(log.queued, []);
+});
+
+test("the backstop stars the first candidate with a row when the top has none", async () => {
+  const { d, log } = world({ visible: ["102"], dud: ["102"], planMs: 9000 });
+  const out = await d.turn(K);
+  assert.deepEqual(log.queued, ["102"]);
+  assert.deepEqual(log.queued2, ["101"], "back to back: the plan's next player behind");
+  assert.equal(out.yid, "102");
+  assert.equal(log.clicks.filter((c) => c[1] === "102").length, 4, "a row clicked and not landed is not clicked again");
+  assert.deepEqual(miss(log).slice(0, 2), [
+    ["101", "noRow", "scroll"],
+    ["102", "notLanded", "scroll"],
+  ]);
+  const [passes] = notes(log, "row passes");
+  assert.ok(passes.passes > 1 && passes.tried === 0, JSON.stringify(passes));
+});
+
+test("no Draft button at act time: Yahoo's Players tab is clicked, then the row drafted (W)", async () => {
+  const { d, log, clock } = world({ rowsAfter: 60_000, tabFixes: true });
+  const start = clock.t;
+  const out = await d.turn(K);
+  assert.equal(out.yid, "101");
+  assert.deepEqual(attempts(log), [["101", "row", 1]]);
+  assert.deepEqual(log.tabs.map(([, r]) => r), ["clicked"]);
+  const [note] = notes(log, "view reset");
+  assert.equal(note.why, "no Draft button");
+  assert.equal(note.tab, "clicked");
+  assert.deepEqual(note.dom, { rows: 0, draftable: false, views: ["board"] });
+  const at = log.events.find((e) => e.type === "draft_attempt").t - start;
+  assert.ok(at < 5000, `drafted ${at / 1000} s into the turn`);
+});
+
+test("a table with no rows for 10 s: the view is reset every 2 s and the row drafted when it is back", async () => {
+  const { d, log, clock } = world({ rowsAfter: 10_000 });
+  const start = clock.t;
+  const out = await d.turn(K);
+  assert.equal(out.yid, "101");
+  assert.deepEqual(attempts(log), [["101", "row", 1]]);
+  const resets = notes(log, "view reset");
+  assert.ok(resets.length >= 3 && resets.every((e) => e.tab === "selected"), JSON.stringify(resets.map((e) => e.tab)));
+  const gaps = log.tabs.slice(1).map(([t], i) => t - log.tabs[i][0]);
+  assert.ok(gaps.every((g) => g >= 2000), `resets ${gaps} ms apart`);
+  assert.ok(log.events.find((e) => e.type === "draft_attempt").t - start >= 10_000);
+  assert.deepEqual(log.queued, []);
+});
+
+test("no row before the backstop line: it keeps looking, then stars the first candidate to show one", async () => {
+  const { d, log, clock } = world({ rowsAfter: 26_000 }); // rows with 4 s left
+  const start = clock.t;
+  const out = await d.turn(K);
+  assert.deepEqual(log.queued, ["101"]);
+  assert.equal(out.yid, "101");
+  assert.deepEqual(log.autodraft, [true, false]);
+  assert.ok(notes(log, "view reset").some((e) => e.why === "backstop: no candidate's row"));
+  const queued = log.events.find((e) => e.method === "queue");
+  assert.ok(queued.t - start >= 26_000 && queued.t - start <= 28_000, `queued ${(queued.t - start) / 1000} s in`);
+  assert.equal(notes(log, "queue backstop failed").length, 0);
+});
+
+test("no row all turn: the backstop gives up 2 s before the clock runs out, with a note", async () => {
+  const { d, log, clock } = world({ rowsAfter: 600_000 });
+  const start = clock.t;
+  await d.turn(K);
+  assert.deepEqual(log.queued, []);
+  assert.deepEqual(log.autodraft, []);
+  const [failed] = notes(log, "queue backstop failed");
+  assert.equal(failed.msg, "no row");
+  assert.ok(clock.t - start <= 30_000, `the turn ran ${(clock.t - start) / 1000} s`);
+});
+
+test("no clock from the room and no row: the turn's look ends", async () => {
+  const { d, log } = world({ clock: null, visible: [] });
+  const out = await d.turn(K);
+  assert.equal(out.result, "landed", "the backstop's queue, as before");
+  assert.deepEqual(log.queued, ["101"]);
 });
 
 // ---------------------------------------------------------------- #10: "Draft in Yahoo"

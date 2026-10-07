@@ -420,6 +420,11 @@ class RoomAttach(BaseModel):
     session: SessionCreate | None = Field(
         default=None, description="or create a session with these settings"
     )
+    ext_version: str | None = Field(
+        default=None,
+        max_length=32,
+        description="the extension's version, when it attaches: written to the attach record",
+    )
     n: int | None = Field(default=None, ge=1, le=30, description="candidates priced per solve")
     scenarios: int | None = Field(default=None, ge=0, le=8)
     time_limit: float | None = Field(
@@ -1231,6 +1236,7 @@ def create_app(
                     players_file=path.name,
                     prior=prior,
                     attach_record={
+                        **({"ext_version": body.ext_version} if body.ext_version else {}),
                         "session": session.create_params,
                         "solve": {
                             "n": params.n,

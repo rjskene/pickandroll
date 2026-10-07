@@ -32,6 +32,13 @@
   // The team count the session and the attach say; the recorded room keeps its own (12).
   // teams=10 is mock 2's mismatch the other way round (#17): the session's draft is not the room's.
   const teams = Number(q.get("teams") || 12);
+  // Yahoo's view at each of my turns, from the frame that puts it on the clock (mock 7, pick 68):
+  // ``v``: the list scrolled away from its top, and like a virtualized list it mounts only the
+  // rows near the view (200 other players below the candidates); ``w``: the Board view for
+  // ``hide`` seconds, the table unmounted (the Players tab brings it back at once); ``wg``: the
+  // table unmounted for ``hide`` seconds with the Players tab still selected.
+  const viewMode = q.get("view") || "";
+  const hideS = Number(q.get("hide") || 10);
   const draftId = q.get("draft") || `ext-${fixture}-${Date.now().toString(36)}`;
   const API = (q.get("api") || "http://localhost:8000").replace(/\/+$/, "");
   const out = (window.__harness = { draftId, done: false, error: null, log: [] });
@@ -95,7 +102,8 @@
     }
     window.WebSocket = FakeSocket;
 
-    const { chrome: fakeChrome, store } = window.makeFakeChrome();
+    const manifest = await (await fetch("/extension/manifest.json", { cache: "no-store" })).json();
+    const { chrome: fakeChrome, store } = window.makeFakeChrome(manifest);
     Object.defineProperty(window, "chrome", { value: fakeChrome, configurable: true, writable: true });
     window.importScripts = () => {};
     store.local.api = API;
@@ -112,7 +120,9 @@
     await load("/extension/content.js");
     log(
       `loaded; draft ${draftId}, seat ${slot}, ${gap > 0 ? `a pick every ${gap} s` : `speed ${speed}`}` +
-        (teams !== 12 ? `, attached for ${teams} teams` : ""),
+        (teams !== 12 ? `, attached for ${teams} teams` : "") +
+        (viewMode ? `, view ${viewMode}` : "") +
+        `, extension ${manifest.version}`,
     );
 
     // ---- 3. session + attach (the side panel's path)
@@ -165,9 +175,12 @@
     // lost, as Yahoo loses clicks during a re-render). A player we take that the recording gives
     // to another team later is replaced there by the one it had at our pick.
     const table = document.querySelector("#players tbody");
+    const tableEl = document.getElementById("players");
+    const list = document.getElementById("list");
     const taken = new Set();
     const swap = new Map();
     const shown = new Map();
+    const order = []; // the candidates' rows, in the order served (above the other players)
     const landed = new Set();
     const ours = {};
     let onClock = null;
@@ -177,6 +190,7 @@
       landed.add(k);
       const row = shown.get(String(yid));
       if (row) row.remove();
+      if (viewMode === "v") renderList();
     };
     const resolve = (yid) => {
       let y = String(yid);
@@ -201,10 +215,78 @@
         img.hidden = true;
         td2.append(img, `${c.ini}. ${c.last} ${c.team} - ${c.why || ""}`);
         tr.append(td1, td2);
-        table.appendChild(tr);
         shown.set(yid, tr);
+        order.push(yid);
+        if (viewMode !== "v") table.appendChild(tr);
       }
+      if (viewMode === "v") renderList();
     };
+    // view=v: 200 other players below the candidates, and only the rows near the view mounted.
+    const fillers = [];
+    if (viewMode === "v") {
+      for (let i = 0; i < 200; i++) {
+        const tr = document.createElement("tr");
+        const td1 = document.createElement("td");
+        const b = document.createElement("button");
+        b.type = "button";
+        b.textContent = "Draft";
+        td1.appendChild(b);
+        const td2 = document.createElement("td");
+        td2.textContent = `Z. Other${i} FA - other`;
+        tr.append(td1, td2);
+        fillers.push(tr);
+      }
+    }
+    let rowH = 24; // measured from a mounted row (a narrow pane wraps them)
+    function renderList() {
+      const all = [...order.filter((y) => !taken.has(y)).map((y) => shown.get(y)), ...fillers];
+      const tr = table.firstElementChild;
+      if (tr && tr.offsetHeight) rowH = tr.offsetHeight;
+      const span = Math.ceil(list.clientHeight / rowH) + 10;
+      const first = Math.max(0, Math.min(all.length - span, Math.floor(list.scrollTop / rowH) - 5));
+      const last = Math.min(all.length, first + span);
+      document.getElementById("pad-top").style.height = `${first * rowH}px`;
+      document.getElementById("pad-bottom").style.height = `${(all.length - last) * rowH}px`;
+      table.replaceChildren(...all.slice(first, last));
+      out.mounted = [first, last, all.length];
+    }
+    if (viewMode === "v") {
+      renderList();
+      list.addEventListener("scroll", renderList);
+      // A hidden pane may hold scroll events back: render on the pacer's timer too.
+      (async () => {
+        while (!out.done && !out.error) {
+          renderList();
+          await sleep(100);
+        }
+      })();
+    }
+    // view=w / wg: the table unmounted from my turn's frame for ``hide`` seconds.
+    const tabs = [...document.querySelectorAll("#views [role=tab]")];
+    const select = (id) => tabs.forEach((b) => b.setAttribute("aria-selected", String(b.dataset.id === id)));
+    let hidden = 0; // the hide in force (its number), 0: the table is shown
+    const showTable = (n) => {
+      if (n !== hidden) return;
+      hidden = 0;
+      select("players");
+      if (!tableEl.isConnected) document.getElementById("pad-top").after(tableEl);
+    };
+    let hides = 0;
+    async function hideTable(k) {
+      const n = (hidden = ++hides);
+      tableEl.remove();
+      if (viewMode === "w") select("board");
+      out.hides = (out.hides || 0) + 1;
+      log(`pick ${k}: table unmounted (${viewMode}) for ${hideS} s`);
+      await sleep(hideS * 1000);
+      showTable(n);
+    }
+    document.getElementById("views").addEventListener("click", (e) => {
+      const b = e.target.closest("[role=tab]");
+      if (!b || b.dataset.id !== "players") return;
+      out.playersClicks = (out.playersClicks || 0) + 1;
+      if (viewMode === "w" && hidden) showTable(hidden);
+    });
     // ``planms``: every /plan answer is that much later, a slow solve (an armed turn waits on it).
     const planMs = Number(q.get("planms") || 0);
     const send = fakeChrome.runtime.sendMessage;
@@ -268,6 +350,13 @@
     function putOnClock(k) {
       ws.emit(`D|${k}|${owner(k)}|30`);
       onClock = { overall: k, slot: owner(k), at: performance.now() };
+      if (owner(k) === slot && viewMode === "v") {
+        list.scrollTop = list.scrollHeight;
+        renderList();
+        out.away = (out.away || 0) + 1;
+        log(`pick ${k}: list scrolled away, rows ${out.mounted.join("-")} mounted`);
+      }
+      if (owner(k) === slot && (viewMode === "w" || viewMode === "wg")) hideTable(k);
       if (armedRun && k === lostReq && owner(k) === slot) requestLost(k);
     }
     if (armedRun) {
