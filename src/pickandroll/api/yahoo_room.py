@@ -1066,6 +1066,8 @@ def on_recommendation(session: Session, room: YahooRoom, payload: dict[str, Any]
             "model": payload.get("mode"),
             "priced": payload.get("priced", True),
             "branch": payload.get("branch", False),
+            # My first pick served from the plan solved before the draft (#14 lever 4).
+            "opening": payload.get("opening", False),
             # A branch plan still solving when its board arrived (installed when it landed).
             "branch_late": payload.get("branch_late"),
             # The objective behind the #1 and whether a time limit stopped that solve (what a

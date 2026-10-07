@@ -15,15 +15,26 @@ import pytest
 from fastapi.testclient import TestClient
 
 from pickandroll.api import SessionStore, create_app
+from pickandroll.api import solver as solver_module
 from pickandroll.api.presolve import (
+    MINE,
     ONE_AWAY,
+    ONE_AWAY_MAX,
+    OWN_EARLY,
     TWO_AWAY,
     BranchBook,
     board_key,
     branch_boards,
     likely_next,
+    one_pick_left,
 )
-from pickandroll.api.solver import SolveParams, Superseded, compute_recommendation, displaces
+from pickandroll.api.solver import (
+    SolveParams,
+    Superseded,
+    compute_recommendation,
+    displaces,
+    opening_payload,
+)
 from pickandroll.draft import Keeper
 from pickandroll.fidelity.replay import settled_replay
 from pickandroll.optim.horizon import CANDIDATE_COLUMNS, first_order_table
@@ -188,7 +199,8 @@ def test_a_presolved_board_is_the_recommendation_the_moment_it_arrives(room):
     status = _until(
         lambda: (s := _solver(client, sid))["presolve"]["solved"] >= ONE_AWAY and s or None
     )
-    assert status["presolve"]["launched"] == ONE_AWAY
+    # Past a bot room's pace the set grows on idle workers (#14 lever 5), never past the cap.
+    assert ONE_AWAY <= status["presolve"]["launched"] <= ONE_AWAY_MAX
     likely = likely_next(session.state, None)
     yid = session.room.ids.yid(likely[0])
     _pick(client, 1, yid)
@@ -248,15 +260,14 @@ def test_a_branch_still_solving_at_the_turn_is_pending_and_logged_late(room, mon
         entry.solution = solution
         entry.future.set_result(solution)
 
-        def board_one():
-            return [
-                e for e in session.room.log.read() if e.get("type") == "reco" and e["board"] == 1
-            ]
-
-        recos = _until(board_one)
+        recos = _until(lambda: (r := _recos(session, 1)) and any(e["branch"] for e in r) and r)
     finally:
         gate.set()
-    assert recos[0]["branch"] is True and recos[0]["branch_late"] is True
+    # My first pick is in round 1: the plan solved before the draft stands in at once (#14
+    # lever 4), and the branch replaces it the moment it lands.
+    assert recos[0]["opening"] is True
+    branch = next(e for e in recos if e["branch"])
+    assert branch["branch_late"] is True
     assert session.solver.book.hits == 0
 
 
@@ -265,7 +276,8 @@ def test_a_board_nobody_planned_is_solved_as_usual(room):
     sid = _attach(client)["session_id"]
     session = store.get(sid)
     _until(lambda: _solver(client, sid)["presolve"]["solved"] >= ONE_AWAY)
-    likely = set(likely_next(session.state, None))
+    # The one-away set may have grown while the board waited (#14 lever 5).
+    likely = set(likely_next(session.state, None, limit=ONE_AWAY_MAX))
     outsider = next(p for p in picks[30:] if session.room.ids.pid(p.yahoo_player_id) not in likely)
     _pick(client, 1, outsider.yahoo_player_id)
     plan = client.get("/rooms/p1/plan", params={"wait": 20}).json()
@@ -404,8 +416,11 @@ def test_a_capped_branch_is_priced_not_served(room):
     _pick(client, 1, session.room.ids.yid(likely[0]))
     plan = client.get("/rooms/p1/plan", params={"wait": 20}).json()
     assert plan["fresh"] and _solver(client, sid)["presolve"]["hits"] == 1
-    recos = _recos(session, 1)
-    assert recos and recos[0]["priced"] is True and not any(e["branch"] for e in recos)
+    # My first pick is in round 1: the plan solved before the draft stands in (#14 lever 4)
+    # until the live solve prices the capped branch's plan.
+    recos = _until(lambda: (r := _recos(session, 1)) and len(r) > 1 and r, timeout=300.0)
+    assert recos[0]["opening"] is True
+    assert recos[1]["priced"] is True and not any(e["branch"] for e in recos)
 
 
 def test_the_plan_budget_follows_the_clock(room):
@@ -533,3 +548,131 @@ def test_my_keeper_right_after_my_pick_is_not_back_to_back(pool):
     kept.sync([(1, "Team 1", best[0]), (2, "Team 2", best[1]), (3, "Team 3", best[2])])
     assert kept.on_the_clock and kept.my_picks[:2] == [4, 12]
     assert branch_boards(kept, [], mine[:1]) == []
+
+
+# --------------------------------------------------------------------------- #14 coverage
+def test_one_away_grows_and_a_pairs_own_choice_starts_one_pick_early(room):
+    """Slot 12 with pick 11 on the clock: one board per likely player (as many as the waiting
+    allows), and, past a bot room's pace, the boards for pick 13 behind the likeliest picks at
+    11 and my likely choices at 12, a choice the opponent took giving way to the next one."""
+    client, store, _ = room
+    state = store.get(_attach(client, slot=12, draft_id="p12")["session_id"]).state
+    for k in range(1, 11):
+        state.apply_pick(f"Team {k}", likely_next(state, None, limit=1)[0], k)
+    assert state.next_overall == 11 and one_pick_left(state)
+    likely = likely_next(state, None, limit=ONE_AWAY_MAX)
+    mine = [likely[0], likely[7], likely[8]]
+    plain = branch_boards(state, likely, mine)
+    assert len(plain) == ONE_AWAY and all(len(b.picks) == 1 for b in plain)
+    grown = branch_boards(state, likely, mine, one_away=ONE_AWAY_MAX, early=True)
+    one = [b for b in grown if len(b.picks) == 1]
+    own = [b for b in grown if len(b.picks) == 2]
+    assert [b.picks[0][2] for b in one] == likely[:ONE_AWAY_MAX]
+    assert len(own) == OWN_EARLY * MINE and all(b.key[0] == 13 for b in own)
+    pairs = [(b.picks[0][2], b.picks[1][2]) for b in own]
+    assert pairs[:MINE] == [(likely[0], likely[7]), (likely[0], likely[8])]
+    assert pairs[MINE : 2 * MINE] == [(likely[1], likely[0]), (likely[1], likely[7])]
+    assert all(b.picks[1][1] == state.my_team and b.picks[1][0] == 12 for b in own)
+    # Boards already planned are not built again.
+    known = {b.key for b in plain}
+    rest = branch_boards(
+        state, likely, mine, one_away=ONE_AWAY_MAX, early=True, skip=known.__contains__
+    )
+    assert {b.key for b in rest} == {b.key for b in grown} - known
+    # Two picks before mine, or my pick on the clock: no one-away growth applies.
+    state.apply_pick("Team 11", likely[0], 11)
+    assert not one_pick_left(state)
+
+
+def test_the_early_own_choice_set_needs_a_real_second_pick(pool):
+    """Seat 4 of 4 with pick 3 on the clock: picks 4 and 5 are a pair, unless 5 is my keeper's
+    round (keeper slots stay out of the branches)."""
+    best = make_state(pool).z["total"].nlargest(6).index.tolist()
+    plain = make_state(pool, position=4, num_teams=4)
+    plain.sync([(1, "Team 1", best[0]), (2, "Team 2", best[1])])
+    assert one_pick_left(plain)
+    boards = branch_boards(plain, best[2:5], best[2:5], early=True)
+    assert any(len(b.picks) == 2 for b in boards)
+    kept = make_state(pool, position=4, num_teams=4, keepers=[Keeper(None, 2, best[5])])
+    kept.sync([(1, "Team 1", best[0]), (2, "Team 2", best[1])])
+    boards = branch_boards(kept, best[2:5], best[2:5], early=True)
+    assert boards and all(len(b.picks) == 1 for b in boards)
+
+
+def test_a_board_that_waits_grows_its_one_away_set_on_idle_workers(room, monkeypatch):
+    """With no bot-pace grace and room on the pool, slot 2's board 0 ends with one branch per
+    likely player up to the cap; slot 2 has no pair, so no own-choice boards."""
+    monkeypatch.setattr(solver_module, "GROW_AFTER_S", 0.0)
+    monkeypatch.setattr(solver_module, "background_size", lambda: ONE_AWAY + 2)
+    client, store, _ = room
+    sid = _attach(client)["session_id"]
+    session = store.get(sid)
+    _until(lambda: _solver(client, sid)["presolve"]["launched"] >= ONE_AWAY_MAX, timeout=300.0)
+    time.sleep(1.0)  # nothing more comes
+    assert _solver(client, sid)["presolve"]["launched"] == ONE_AWAY_MAX
+    picks = [e.branch.picks for e in session.solver.book.entries.values()]
+    assert all(len(p) == 1 and p[0][0] == 1 for p in picks)
+    likely = likely_next(session.state, None, limit=ONE_AWAY_MAX)
+    assert sorted(p[0][2] for p in picks) == sorted(likely)
+
+
+def test_opening_payload_serves_the_first_pick_from_the_pre_draft_plan():
+    opening = {
+        "version": 1,
+        "next_overall": 1,
+        "mode": "horizon",
+        "priced": True,
+        "top_objective": 6.0,
+        "candidates": [
+            {"player": "a", "cost_vs_best": 0.0, "tie": False},
+            {"player": "b", "cost_vs_best": 0.1, "tie": False},
+            {"player": "c", "cost_vs_best": 0.3, "tie": False},
+        ],
+        "plan": [{"pick": 3, "player": "a"}, {"pick": 4, "player": "d"}],
+        "score": {"version": 1},
+    }
+    prices = pd.Series({"a": 0.0, "b": 0.05, "c": 0.2, "d": 0.25, "e": 0.4, "f": float("nan")})
+    snapshot = {"version": 7, "next_overall": 3, "on_the_clock": True, "my_next_pick": 3}
+    names = pd.Series({p: p.upper() for p in "abcdef"})
+    out = opening_payload(opening, prices, snapshot, frozenset({"a", "e"}), names)
+    assert out is not None and out["opening"] is True and out["priced"] is False
+    assert out["version"] == 7 and out["next_overall"] == 3 and out["score"] is None
+    assert out["top_objective"] is None and out["branch"] is False
+    rows = [(r["player"], r["cost_vs_best"]) for r in out["candidates"]]
+    assert rows == [("b", 0.0), ("c", 0.2), ("d", None)]
+    assert out["candidates"][2]["cost_first_order"] == 0.25
+    assert [r["player"] for r in out["plan"]] == ["d"]
+    assert opening_payload(opening, None, snapshot, frozenset("abc"), names) is None
+    # Whatever is solved for the board replaces it, plan-only or capped.
+    assert displaces(_reco("x", 1.0, priced=False, capped=True), out)
+
+
+def test_my_first_pick_is_served_from_the_pre_draft_plan_at_once(room):
+    """Slot 3: picks 1 and 2 go to players no branch planned for, so board 2 is a miss. My
+    turn still has a reco at once, from the plan solved before the draft, and the board's own
+    solve replaces it."""
+    client, store, _ = room
+    sid = _attach(client, slot=3)["session_id"]
+    session = store.get(sid)
+    state = session.state
+    _until(
+        lambda: (
+            (rec := session.recommendation) is not None
+            and rec["priced"]
+            and rec["next_overall"] == 1
+        ),
+        timeout=300.0,
+    )
+    deep = [p for p in likely_next(state, None, limit=40)][ONE_AWAY_MAX:]
+    yid = session.room.ids.yid
+    _pick(client, 1, yid(deep[0]))
+    _pick(client, 2, yid(deep[1]))
+    plan = client.get("/rooms/p1/plan", params={"wait": 2}).json()
+    assert plan["fresh"] and plan["waited_ms"] < 1000 and plan["next_overall"] == 3
+    first = [e for e in session.room.log.read() if e.get("type") == "reco" and e["board"] == 2]
+    assert first[0]["opening"] is True and first[0]["top_pid"] not in (deep[0], deep[1])
+    _until(lambda: session.recommendation.get("opening") is not True, timeout=300.0)
+    assert session.recommendation["version"] == plan["version"]
+    _pick(client, 3, yid(first[0]["top_pid"]))
+    rows = client.get("/rooms/p1/fidelity").json()["rows"]
+    assert rows[0]["overall"] == 3 and rows[0]["presolve"] == "opening"
