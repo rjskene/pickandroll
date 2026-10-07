@@ -460,6 +460,17 @@ test("a request's attempt is stamped when its click is made, not when it settles
   assert.equal(attempt.t, click[0]);
 });
 
+test("a row's attempts are stamped when each click is made, not when it settles (#26)", async () => {
+  // A reco can land while a click settles; the scorecard judges the pick by the reco before
+  // its first attempt, so the attempt carries the click's own time.
+  const { d, log } = world({ settleMs: 400, clicksToLand: 2 });
+  const out = await d.turn(K);
+  assert.equal(out.result, "landed");
+  const stamps = log.events.filter((e) => e.type === "draft_attempt").map((e) => [e.method, e.attempt, e.t]);
+  assert.equal(log.clicks.length, 2);
+  assert.deepEqual(stamps, log.clicks.map(([t], i) => ["row", i + 1, t]));
+});
+
 /** An armed turn whose clicks never land, with the user's request for 103 coming at 9 s left:
  * both its clicks are lost (#26). Pick 25 is mine too unless ``single`` (then a keeper's). */
 async function lostRequest({ single = false, ...opts } = {}) {

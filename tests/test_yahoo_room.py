@@ -602,6 +602,47 @@ def test_scorecard_a_pick_learned_from_history_is_absent(entered_first, posted):
     assert d["D2"]["n"] == 1 and d["D4"] == {"mean": 1.0, "max": 1}
 
 
+@pytest.mark.parametrize(("stamp_ms", "label"), [(2030, "compliant"), (2437, "fallback")])
+def test_scorecard_a_reco_landing_while_the_click_settles_is_after_the_choice(stamp_ms, label):
+    """Pick 115 of the #14 bot-pace cell: the drafter clicked a converged branch's #1 at
+    +1.03 s, a priced reco with another #1 landed at +1.41 s, and the click settled at +1.44 s.
+    The pick is judged by the last reco before its first attempt, so the attempt carries the
+    click's own time (#26) and the pick is compliant; stamped at the settle, as row attempts were
+    before #26, it read as a fallback."""
+
+    def at(ms, kind, **fields):
+        return {
+            "type": kind,
+            "t": f"2026-10-01T00:00:{ms // 1000:02d}.{ms % 1000:03d}+00:00",
+            **fields,
+        }
+
+    events = [
+        at(0, "attach", slot=1, num_teams=12, rounds=13, draft_id="c", mode="autopilot"),
+        at(0, "control", state="armed"),
+        at(1000, "turn_start", overall=1),
+        at(
+            1050,
+            "reco",
+            board=0,
+            top_yid="a",
+            cands=["a", "b"],
+            priced=False,
+            branch=True,
+            branch_late=False,
+        ),
+        at(2410, "reco", board=0, top_yid="b", cands=["b", "a"], priced=True, solve_ms=1369),
+        at(stamp_ms, "draft_attempt", overall=1, yid="a", method="row", attempt=1, board=0),
+        at(2737, "pick_landed", overall=1, yid="a", how="row"),
+        at(2737, "room_pick", overall=1, yid="a"),
+        at(2737, "session_pick", overall=1, yid="a"),
+    ]
+    events.sort(key=lambda e: e["t"])
+    (row,) = analyze(events)["rows"]
+    assert row["label"] == label and row["presolve"] == "hit"
+    assert row["ref_yid"] == ("a" if label == "compliant" else "b")
+
+
 @pytest.mark.parametrize(("method", "respected"), [("request", 1), ("row", 0)])
 def test_scorecard_g4_a_request_click_noted_after_its_pick_is_not_an_intervention(
     method, respected

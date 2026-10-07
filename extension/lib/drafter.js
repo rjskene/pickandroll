@@ -709,7 +709,9 @@
       }
       if (r === "mismatch") return "mismatch";
       if (r !== "clicked") return this.live(ctx) ? "noButton" : this.outcome(ctx);
-      this.attempt(ctx, c, via, 1);
+      // Stamped at the click, not when it settled: a reco that lands while it settles came
+      // after the choice (the scorecard judges the pick by the reco before its first attempt).
+      this.attempt(ctx, c, via, 1, k, ctx.clickAt);
       let n = 1;
       for (const gap of RECLICK_MS) {
         const budget = Math.min(gap, ((this.left() ?? 30) - BACKSTOP_BY_S) * 1000);
@@ -719,7 +721,7 @@
         const again = this.dom.find(c);
         if (!again || (await this.clickFor(ctx, again, c, "row")) !== "clicked") break;
         n++;
-        this.attempt(ctx, c, via, n);
+        this.attempt(ctx, c, via, n, k, ctx.clickAt);
       }
       if (!this.live(ctx)) return this.outcome(ctx);
       const rest = ((this.left() ?? 30) - BACKSTOP_BY_S) * 1000;
