@@ -67,6 +67,13 @@ def _until(fn, timeout=60.0):
     raise AssertionError("timed out")
 
 
+def _recos(session, board):
+    """The recos logged for ``board``. A reco is logged just after it is set
+    (``Session.set_recommendation``): a test that sees it set from its own thread, not through
+    an API call, waits for its log entry."""
+    return [e for e in session.room.log.read() if e.get("type") == "reco" and e["board"] == board]
+
+
 def _pick(client, overall, yid):
     r = client.post(
         "/rooms/p1/picks", json={"picks": [{"overall": overall, "yahoo_player_id": yid}]}
@@ -191,12 +198,7 @@ def test_a_presolved_board_is_the_recommendation_the_moment_it_arrives(room):
     assert rec["branch"] is True and rec["priced"] is False and rec["next_overall"] == 2
     assert _solver(client, sid)["presolve"]["hits"] == 1
     # The live solve then prices the same plan exactly.
-    _until(
-        lambda: (
-            session.recommendation["priced"] and session.recommendation["version"] == rec["version"]
-        )
-    )
-    events = [e for e in session.room.log.read() if e.get("type") == "reco" and e["board"] == 1]
+    events = _until(lambda: (ev := _recos(session, 1)) and ev[-1]["priced"] and ev)
     assert events[0]["branch"] is True and events[-1]["priced"] is True
     # Each reco logs the objective behind its #1, whether it was capped, and (a live solve)
     # the pre-solves in flight while it ran.
@@ -402,7 +404,7 @@ def test_a_capped_branch_is_priced_not_served(room):
     _pick(client, 1, session.room.ids.yid(likely[0]))
     plan = client.get("/rooms/p1/plan", params={"wait": 20}).json()
     assert plan["fresh"] and _solver(client, sid)["presolve"]["hits"] == 1
-    recos = [e for e in session.room.log.read() if e.get("type") == "reco" and e["board"] == 1]
+    recos = _recos(session, 1)
     assert recos and recos[0]["priced"] is True and not any(e["branch"] for e in recos)
 
 

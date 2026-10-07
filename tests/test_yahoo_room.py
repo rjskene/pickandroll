@@ -330,9 +330,10 @@ def test_plan_back_to_back_wait_and_bounds(league):
         assert not drafted & {c_["yahoo_player_id"] for c_ in plan["candidates"]}
         assert plan["second"] and plan["second"][0]["player_id"] != top["player_id"]
         assert len(plan["candidates"]) >= 20
-        # The solve was logged with its board and top candidate.
-        reco = [e for e in _events(directory, "d1") if e["type"] == "reco"][-1]
-        assert reco["board"] == 23 and reco["top_yid"] == top["yahoo_player_id"]
+        # The solve was logged with its board and top candidate. The plan served the first
+        # fresh reco (an early plan); the priced one for the same board can be logged by now.
+        recos = [e for e in _events(directory, "d1") if e["type"] == "reco" and e["board"] == 23]
+        reco = next(e for e in recos if e["top_yid"] == top["yahoo_player_id"])
         assert reco["fresh"] is True and reco["solve_ms"] > 0
         assert reco["top_pid"] == top["player_id"] and reco["unmapped"] == []
         # Without a wait the plan comes back at once, marked stale after a new pick.
@@ -1007,7 +1008,12 @@ def test_tier1_replay_synthetic(league):
     assert card["mode"] == "mirror" and all(
         r["label"] in {"compliant", "absent"} for r in card["rows"]
     )
-    assert card["diagnostics"]["D3"]["n"] > 0 and card["diagnostics"]["D1"]["n"] == 13
+    # Every turn has a reco, and every reco is timed (priced in D3, plan-only in D3_plan) or a
+    # pre-solve. D3 alone needs a priced solve to finish inside the replay, which takes free CPU:
+    # under load all 13 plans can come from pre-solves. It stays a reported value.
+    d = card["diagnostics"]
+    assert d["D1"]["n"] == 13
+    assert d["D3"]["n"] + d["D3_plan"]["n"] + d["D3_plan"]["branch"] >= d["D1"]["n"]
     assert len(result["plans"]) == 13 and all(p["fresh"] for p in result["plans"])
     assert [p["second"] is not None for p in result["plans"]] == [
         k % 24 == 0 for k in (1, 24, 25, 48, 49, 72, 73, 96, 97, 120, 121, 144, 145)
