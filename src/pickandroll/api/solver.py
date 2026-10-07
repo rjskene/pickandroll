@@ -165,8 +165,6 @@ def displaces(new: dict[str, Any], old: dict[str, Any]) -> bool:
     displaces one whose objective is at least as good, except on a tie: a converged plan
     replaces a capped one, and exact prices replace first-order ones that keep the same #1
     (they add the drafter's fall-through order, not another pick)."""
-    if old.get("opening"):
-        return True  # the plan solved before the draft stood in for this board's own
     a, b = new.get("top_objective"), old.get("top_objective")
     if a is None or b is None:  # the single-roster model: exact prices win
         return bool(new.get("priced", True)) and not old.get("priced", True)
@@ -284,63 +282,6 @@ def _horizon_payload(
         "wins": round(wins, 4),
         "value": round(value, 3),
         "score": entry,
-    }
-
-
-def opening_payload(
-    opening: dict[str, Any],
-    prices: pd.Series | None,
-    snapshot: dict[str, Any],
-    taken: frozenset[str],
-    names: pd.Series,
-) -> dict[str, Any] | None:
-    """My first pick from the plan solved on the empty board (``opening``, priced exactly) for
-    the board my turn starts on: its candidates still available, then the best of the rest by
-    that plan's first-order prices, as many as it priced. ``None`` when nobody is left."""
-    rows = [dict(c) for c in opening["candidates"] if c["player"] not in taken]
-    want = max(len(opening["candidates"]), 1)
-    if prices is not None:
-        listed = {r["player"] for r in rows}
-        for pid, cost in prices.dropna().sort_values().items():
-            if len(rows) >= want:
-                break
-            if pid in taken or pid in listed:
-                continue
-            rows.append(
-                {
-                    "player": pid,
-                    "name": names.get(pid, pid),
-                    "objective": None,
-                    "cost_vs_best": None,
-                    "cost_first_order": round(float(cost), 4),
-                    "p_available_first": None,
-                    "p_available_next": None,
-                    "min_active_total": None,
-                    "time_limited": None,
-                    "adp": None,
-                    "tie": False,
-                }
-            )
-    if not rows:
-        return None
-    best = rows[0].get("cost_vs_best")
-    if best is not None:
-        for r in rows:
-            if r.get("cost_vs_best") is not None:
-                r["cost_vs_best"] = round(max(0.0, r["cost_vs_best"] - best), 4)
-    return {
-        **opening,
-        **snapshot,
-        "candidates": rows,
-        "plan": [r for r in opening.get("plan", []) if r["player"] not in taken],
-        "scenarios": [],
-        "priced": False,
-        "branch": False,
-        "opening": True,
-        "top_objective": None,
-        "capped": None,
-        "timings": {"opening": 1.0},
-        "score": None,  # the board's own solve records the score
     }
 
 
@@ -623,9 +564,6 @@ class BackgroundSolver:
         # that set may grow (:func:`may_grow`); and the board whose growth check is timed.
         self._board: tuple[BoardKey, float, int, bool] | None = None
         self._grow_timed: BoardKey | None = None
-        # The exactly priced plan for the empty board and its first-order prices: my first
-        # pick, in round 1, is served from it the moment my turn starts (#14 lever 4).
-        self._opening: tuple[dict[str, Any], pd.Series | None] | None = None
 
     @property
     def running(self) -> bool:
@@ -677,7 +615,6 @@ class BackgroundSolver:
             self.generation += 1
             gen = self.generation
             base = self._take_branch(gen)
-            self._open(base)
             self._start(gen, base)
             self._schedule_presolve()
             await asyncio.sleep(0)
@@ -738,14 +675,6 @@ class BackgroundSolver:
                 return
         self.session.set_recommendation(payload)
         self.solved_version = payload["version"]
-        if (
-            payload.get("priced")
-            and payload.get("mode") == "horizon"
-            and payload["next_overall"] == 1
-        ):
-            session = self.session
-            prices = session.prices if session.prices_version == payload["version"] else None
-            self._opening = (payload, prices)
         if payload["version"] == self.session.version:
             self._schedule_presolve()
 
@@ -795,32 +724,6 @@ class BackgroundSolver:
         if not entry.solution.time_limited:
             self._install(entry, snapshot)
         return entry.branch.problem, entry.solution
-
-    def _open(self, base: tuple[HorizonProblem, HorizonSolution] | None) -> None:
-        """Serve my first pick, in round 1, from the plan solved before the draft, the moment
-        my turn starts: in round 1 the planner adds nothing over that plan (the leverage study),
-        and a converged branch is the only faster answer. Any reco solved for the board
-        displaces it (:func:`displaces`)."""
-        session = self.session
-        if self._opening is None or not session.solve_params.presolve:
-            return
-        if base is not None and not base[1].time_limited:
-            return  # a converged branch is being installed for this board
-        state = session.state
-        with session.lock:
-            mine = state.my_picks
-            first = mine[0] if mine else None
-            if first is None or first > state.settings.num_teams or state.next_overall != first:
-                return
-            snapshot = _snapshot(session)
-            taken = state.taken
-        rec = session.recommendation
-        if rec is not None and rec["version"] == snapshot["version"]:
-            return  # the board has its reco already (my first pick is pick 1)
-        opening, prices = self._opening
-        payload = opening_payload(opening, prices, snapshot, taken, state.projections.df["player"])
-        if payload is not None:
-            self._publish(payload)
 
     def _late_branch(self, entry: Entry, gen: int, snapshot: dict[str, Any]) -> None:
         solution = entry.solution

@@ -28,7 +28,7 @@ LAG_TARGETS = {"p50": 1000.0, "p95": 2000.0, "max": 5000.0}
 ENTRY_LEAD_S = 30.0
 #: How a turn's board was covered ahead (D1): a hit is a branch solved before the turn started,
 #: pending one still solving then, a miss no branch (or a capped one, which the live solve prices).
-PRESOLVE_CLASSES = ("hit", "pending", "miss", "opening")
+PRESOLVE_CLASSES = ("hit", "pending", "miss")
 #: For logs from before the API recorded ``branch_late``: a solved branch is installed when the API
 #: applies pick k-1, within tens of ms of the turn start (20-90 ms in the gap-15 cells).
 BRANCH_READY_MS = 250.0
@@ -589,7 +589,6 @@ def markdown(card: dict[str, Any]) -> str:
         f"| D1, hits (branch solved before the turn) | {ms(d['D1_hit'])} |",
         f"| D1, pending (branch still solving at the turn) | {ms(d['D1_pending'])} |",
         f"| D1, misses (no branch) | {ms(d['D1_miss'])} |",
-        f"| D1, my first pick from the pre-draft plan | {ms(d.get('D1_opening') or {})} |",
         f"| D2 turn to land | {ms(d['D2'])}; armed turns act {_act(d['act_at_s'])} |",
         f"| D3 solve time, priced | {ms(d['D3'])} |",
         (
@@ -681,10 +680,7 @@ def _picks(overalls: list[int]) -> str:
 
 
 def _presolve_class(first: dict[str, Any] | None, ready_ms: float | None) -> str:
-    """Hit, pending or miss for a turn whose board's first reco is ``first``; ``opening``
-    when it was my first pick served from the plan solved before the draft."""
-    if first and first.get("opening"):
-        return "opening"
+    """Hit, pending or miss for a turn whose board's first reco is ``first``."""
     if not (first and first.get("branch")):
         return "miss"
     late = first.get("branch_late")
