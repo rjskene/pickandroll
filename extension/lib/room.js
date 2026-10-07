@@ -25,6 +25,7 @@
       this.turnAt = new Map(); // overall -> when it went on the clock
       this.manual = null; // {overall, at, label}: a trusted click on a Draft control on my turn
       this.attempts = new Map(); // overall -> how the extension drafted it ("row" | "queue")
+      this.requested = new Map(); // overall -> the player of a failed request the backstop queued
       this.yahooMade = new Set(); // my overalls Yahoo announced it would pick itself (5|slot)
       this.landed = new Set();
       // Keeper slots, from the API's room (docs/KEEPERS.md): never a turn of mine, and filled
@@ -129,7 +130,8 @@
     ingest(text, t) {
       this.frames++;
       const m = P.parseMessage(text);
-      const out = { kind: m ? m.kind : null, picks: 0, turn: null, landed: null };
+      // landed: a pick of mine from a pick frame; history: mine from Yahoo's history frame (#26).
+      const out = { kind: m ? m.kind : null, picks: 0, turn: null, landed: null, history: [] };
       if (!m) return out;
       if (m.kind === "pick") {
         if (this.add(m.overall, m.yid, m.slot, t, "socket")) {
@@ -137,7 +139,13 @@
           out.landed = this.landedRecord(m.overall, t);
         }
       } else if (m.kind === "history") {
-        for (const p of m.picks) if (this.add(p.overall, p.yid, p.slot, t, "history")) out.picks++;
+        for (const p of m.picks) {
+          if (!this.add(p.overall, p.yid, p.slot, t, "history")) continue;
+          out.picks++;
+          // Its t is when the frame came, not when the pick was made: no time from the turn.
+          const rec = this.landedRecord(p.overall, t);
+          if (rec) out.history.push({ ...rec, ms_from_turn: null });
+        }
       } else if (m.kind === "order") {
         this.orderLen = m.order.length;
       } else if (m.kind === "on_deck") {
@@ -192,12 +200,23 @@
       this.attempts.set(overall, how);
     }
 
+    /** The backstop queued ``yid``, the player of the user's request that failed, first for
+     * ``overall``: if Yahoo takes that player there, the pick is the user's (#26). */
+    noteRequested(overall, yid) {
+      this.requested.set(overall, String(yid));
+    }
+
     /** How a pick of mine landed, as far as the room shows it: the user's trusted click, then
+     * Yahoo's history frame (the tab was not in the room when it was made), then the player of
+     * the user's failed request taken from the backstop's queue (the user's pick), then
      * Yahoo's own pick (announced by 5|slot; ``autodraft`` is Yahoo's Autodraft switch at
      * landing time), then the extension's attempt, then the switch alone (with Autodraft on,
      * Yahoo picks the moment the turn starts and sends no 5|slot), else "unknown". */
     how(overall, { autodraft = false } = {}) {
       if (this.isManual(overall)) return "manual";
+      const p = this.picks.get(overall);
+      if (p && p.src === "history") return "history";
+      if (p && this.requested.get(overall) === p.yid) return "manual";
       if (this.yahooMade.has(overall)) return autodraft ? "autopick" : "expiry";
       if (this.attempts.has(overall)) return this.attempts.get(overall);
       return autodraft ? "autopick" : "unknown";
@@ -216,7 +235,8 @@
       };
     }
 
-    /** The pick_landed event: every pick of mine gets one, so D2 and the labels see it. */
+    /** The pick_landed event: every pick of mine gets one, so D2 and the labels see it; one
+     * from the history frame says how "history", and D2 leaves it out. */
     landedEvent(rec, context) {
       return { type: "pick_landed", ...rec, how: this.how(rec.overall, context) };
     }

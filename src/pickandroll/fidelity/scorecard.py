@@ -81,6 +81,7 @@ def analyze(events: list[dict[str, Any]]) -> dict[str, Any]:
     last_sync: dict[int, dict] = {}
     turns: dict[int, dict] = {}
     landed: dict[int, dict] = {}
+    heard: dict[int, dict] = {}  # picks of mine the tab learned from Yahoo's history frame
     attempts: dict[int, list[dict]] = {}
     recos: list[dict] = []
     controls: list[dict] = []
@@ -100,6 +101,10 @@ def analyze(events: list[dict[str, Any]]) -> dict[str, Any]:
             last_sync[int(e["overall"])] = e
         elif kind == "turn_start":
             turns.setdefault(int(e["overall"]), e)
+        elif kind == "pick_landed" and e.get("how") == "history":
+            # Its t is when the history frame came, not when the pick was made (#26): it stays
+            # out of D2 and D4, as before the tab posted one.
+            heard[int(e["overall"])] = e
         elif kind == "pick_landed":
             landed[int(e["overall"])] = e
         elif kind == "draft_attempt":
@@ -199,7 +204,7 @@ def analyze(events: list[dict[str, Any]]) -> dict[str, Any]:
         acted = tries[0].get("board") if tries else None
         ready = (to_ms(board[0]["t"]) - t_turn) if board and t_turn is not None else None
         presolve = _presolve_class(board[0] if board else None, ready)
-        how = land.get("how") if land else None
+        how = land.get("how") if land else (heard.get(k) or {}).get("how")
         ref_yid = str(ref["top_yid"]) if ref and ref.get("top_yid") is not None else None
         ref_name = ref.get("top_name") if ref else None
         # The solve's own first choice had no Yahoo id: the drafter could not take it, so the
@@ -309,8 +314,8 @@ def analyze(events: list[dict[str, Any]]) -> dict[str, Any]:
     manual_ok = 0
     for r in manual_rows:
         t_manual = to_ms(landed[r["overall"]]["t"])
-        # A request's own click is the manual pick, not an intervention: the tab notes it once
-        # the click settles, which can be after the pick it made landed (mock 4, pick 50).
+        # A request's own click is the manual pick, not an intervention: a tab before #26 noted
+        # it once the click settled, which can be after the pick it made landed (mock 4, pick 50).
         late = [
             a
             for a in attempts.get(r["overall"], [])

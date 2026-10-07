@@ -251,6 +251,9 @@
       };
       if (S.handPick === out.landed.overall) S.handPick = null;
     }
+    // Picks of mine learned from Yahoo's history frame (a late entry or a reconnect), said as
+    // such: their t is when the frame came (#26).
+    for (const rec of out.history) emit(tracker.landedEvent(rec));
     if (out.turn !== null) {
       if (armed()) takeTurn(out.turn, "on deck");
       else refreshPlan();

@@ -20,6 +20,11 @@
   const flip = q.get("flip") === "1";
   const armedRun = q.get("armed") === "1";
   const drop = Number(q.get("drop") || 0);
+  // An armed run's lost request (#26): on my pick ``lostreq`` the user's "Draft in Yahoo" for the
+  // plan's second candidate comes a second into the turn, and Yahoo loses every Draft click made
+  // on that turn with more than 6 s on the clock (the request's two tries and the drafter's
+  // own), so the queue backstop takes the pick.
+  const lostReq = Number(q.get("lostreq") || 0);
   // Seconds between picks for a human-pace room (draft day), in place of the recording's times.
   const gap = Number(q.get("gap") || 0);
   // Seconds from the attach to pick 1 (the protocol attaches from the waiting room, >= 60 s).
@@ -203,9 +208,11 @@
     // ``planms``: every /plan answer is that much later, a slow solve (an armed turn waits on it).
     const planMs = Number(q.get("planms") || 0);
     const send = fakeChrome.runtime.sendMessage;
+    let lastPlan = null; // the newest plan served to the tab
     fakeChrome.runtime.sendMessage = async (msg) => {
       if (msg.op === "plan" && planMs) await sleep(planMs);
       const r = await send(msg);
+      if (r && r.ok && msg.op === "plan" && r.data) lastPlan = r.data;
       if (r && r.ok && msg.op === "plan" && armedRun) {
         addRows(r.data.candidates);
         addRows(r.data.second);
@@ -220,6 +227,10 @@
       const k = onClock && onClock.slot === slot ? onClock.overall : null;
       if (!b || k === null || k > rows.length || landed.has(k) || taken.has(b.dataset.yid)) return;
       out.clicks = (out.clicks || 0) + 1;
+      if (k === lostReq && performance.now() - onClock.at < 24000) {
+        out.lost = (out.lost || 0) + 1;
+        return;
+      }
       if (drop && !b.dataset.dropped && Math.random() < drop) {
         b.dataset.dropped = "1";
         out.dropped = (out.dropped || 0) + 1;
@@ -231,12 +242,34 @@
         ours[k] = yid;
         emitPick(k, yid);
         // The draft ends with the fixture's last pick: nothing goes on the clock after it.
-        if (k < rows.length) {
-          ws.emit(`D|${k + 1}|${owner(k + 1)}|30`);
-          onClock = { overall: k + 1, slot: owner(k + 1) };
-        } else onClock = null;
+        if (k < rows.length) putOnClock(k + 1);
+        else onClock = null;
       }, 300);
     });
+    const requestLost = async (k) => {
+      await sleep(1000);
+      for (let i = 0; i < 40 && !(lastPlan && lastPlan.board === k - 1); i++) await sleep(250);
+      const c = lastPlan && lastPlan.board === k - 1 ? (lastPlan.candidates || [])[1] : null;
+      if (!c) return log(`lostreq ${k}: no second candidate`);
+      const yid = String(c.yahoo_player_id);
+      out.requested = { overall: k, yid, name: c.name };
+      addRows([c]);
+      try {
+        await http(`/rooms/${encodeURIComponent(draftId)}/request`, {
+          method: "POST",
+          body: { overall: k, board: k - 1, yahoo_player_id: yid },
+        });
+        log(`lostreq ${k}: requested ${c.name}`);
+      } catch (e) {
+        out.requested.error = String(e.message || e);
+        log(`lostreq ${k}: ${out.requested.error}`);
+      }
+    };
+    function putOnClock(k) {
+      ws.emit(`D|${k}|${owner(k)}|30`);
+      onClock = { overall: k, slot: owner(k), at: performance.now() };
+      if (armedRun && k === lostReq && owner(k) === slot) requestLost(k);
+    }
     if (armedRun) {
       const r = await fakeChrome.runtime.sendMessage({ op: "mode", draft_id: draftId, mode: "autopilot" });
       if (!r.ok) throw new Error("arm: " + r.error);
@@ -248,8 +281,7 @@
     let anchorI = 0;
     const at = (i) => sleep(Math.max(0, anchorT + (times[i] - times[anchorI]) / speed - performance.now()));
     const toggle = document.getElementById("autodraft");
-    ws.emit("D|1|1|30");
-    onClock = { overall: 1, slot: 1 };
+    putOnClock(1);
     out.expired = 0;
     for (let i = 0; i < rows.length; i++) {
       const p = rows[i];
@@ -281,10 +313,7 @@
         }
       }
       // A click that landed our pick has put the next one on the clock already.
-      if (k < rows.length && onClock.overall !== k + 1) {
-        ws.emit(`D|${k + 1}|${owner(k + 1)}|30`);
-        onClock = { overall: k + 1, slot: owner(k + 1) };
-      }
+      if (k < rows.length && onClock.overall !== k + 1) putOnClock(k + 1);
       if (flip && k === 30) toggle.appendChild(document.createElementNS("http://www.w3.org/2000/svg", "svg"));
       if (flip && k === 33) toggle.querySelector("svg").remove();
       if (k % 12 === 0) log(`pick ${k} played`);
