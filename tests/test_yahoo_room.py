@@ -330,9 +330,10 @@ def test_plan_back_to_back_wait_and_bounds(league):
         assert not drafted & {c_["yahoo_player_id"] for c_ in plan["candidates"]}
         assert plan["second"] and plan["second"][0]["player_id"] != top["player_id"]
         assert len(plan["candidates"]) >= 20
-        # The solve was logged with its board and top candidate.
-        reco = [e for e in _events(directory, "d1") if e["type"] == "reco"][-1]
-        assert reco["board"] == 23 and reco["top_yid"] == top["yahoo_player_id"]
+        # The solve was logged with its board and top candidate. The plan served the first
+        # fresh reco (an early plan); the priced one for the same board can be logged by now.
+        recos = [e for e in _events(directory, "d1") if e["type"] == "reco" and e["board"] == 23]
+        reco = next(e for e in recos if e["top_yid"] == top["yahoo_player_id"])
         assert reco["fresh"] is True and reco["solve_ms"] > 0
         assert reco["top_pid"] == top["player_id"] and reco["unmapped"] == []
         # Without a wait the plan comes back at once, marked stale after a new pick.
