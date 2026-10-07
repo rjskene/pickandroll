@@ -17,16 +17,14 @@ from fastapi.testclient import TestClient
 from pickandroll.api import SessionStore, create_app
 from pickandroll.api import solver as solver_module
 from pickandroll.api.presolve import (
-    MINE,
     ONE_AWAY,
     ONE_AWAY_MAX,
-    OWN_EARLY,
     TWO_AWAY,
     BranchBook,
     board_key,
     branch_boards,
     likely_next,
-    one_pick_left,
+    may_grow,
 )
 from pickandroll.api.solver import (
     SolveParams,
@@ -551,57 +549,47 @@ def test_my_keeper_right_after_my_pick_is_not_back_to_back(pool):
 
 
 # --------------------------------------------------------------------------- #14 coverage
-def test_one_away_grows_and_a_pairs_own_choice_starts_one_pick_early(room):
-    """Slot 12 with pick 11 on the clock: one board per likely player (as many as the waiting
-    allows), and, past a bot room's pace, the boards for pick 13 behind the likeliest picks at
-    11 and my likely choices at 12, a choice the opponent took giving way to the next one."""
+def test_one_away_grows_one_pick_from_my_turn_except_before_a_pair(room):
+    """Slot 6 with pick 5 on the clock: one board per likely player, as many as the waiting
+    allows, boards already planned not built again. Slot 12 with pick 11 on the clock: no
+    growth, the turn starts a back-to-back pair whose own-choice boards need the workers."""
     client, store, _ = room
-    state = store.get(_attach(client, slot=12, draft_id="p12")["session_id"]).state
-    for k in range(1, 11):
+    state = store.get(_attach(client, slot=6, draft_id="p6")["session_id"]).state
+    for k in range(1, 5):
         state.apply_pick(f"Team {k}", likely_next(state, None, limit=1)[0], k)
-    assert state.next_overall == 11 and one_pick_left(state)
+    assert state.next_overall == 5 and may_grow(state)
     likely = likely_next(state, None, limit=ONE_AWAY_MAX)
-    mine = [likely[0], likely[7], likely[8]]
-    plain = branch_boards(state, likely, mine)
+    plain = branch_boards(state, likely)
     assert len(plain) == ONE_AWAY and all(len(b.picks) == 1 for b in plain)
-    grown = branch_boards(state, likely, mine, one_away=ONE_AWAY_MAX, early=True)
-    one = [b for b in grown if len(b.picks) == 1]
-    own = [b for b in grown if len(b.picks) == 2]
-    assert [b.picks[0][2] for b in one] == likely[:ONE_AWAY_MAX]
-    assert len(own) == OWN_EARLY * MINE and all(b.key[0] == 13 for b in own)
-    pairs = [(b.picks[0][2], b.picks[1][2]) for b in own]
-    assert pairs[:MINE] == [(likely[0], likely[7]), (likely[0], likely[8])]
-    assert pairs[MINE : 2 * MINE] == [(likely[1], likely[0]), (likely[1], likely[7])]
-    assert all(b.picks[1][1] == state.my_team and b.picks[1][0] == 12 for b in own)
-    # Boards already planned are not built again.
+    grown = branch_boards(state, likely, one_away=ONE_AWAY_MAX)
+    assert [b.picks[0][2] for b in grown] == likely[:ONE_AWAY_MAX]
     known = {b.key for b in plain}
-    rest = branch_boards(
-        state, likely, mine, one_away=ONE_AWAY_MAX, early=True, skip=known.__contains__
-    )
+    rest = branch_boards(state, likely, one_away=ONE_AWAY_MAX, skip=known.__contains__)
     assert {b.key for b in rest} == {b.key for b in grown} - known
-    # Two picks before mine, or my pick on the clock: no one-away growth applies.
-    state.apply_pick("Team 11", likely[0], 11)
-    assert not one_pick_left(state)
+    # My pick on the clock, or two picks before it: no one-away set to grow.
+    state.apply_pick("Team 5", likely[0], 5)
+    assert not may_grow(state)
+    pair = store.get(_attach(client, slot=12, draft_id="p12")["session_id"]).state
+    for k in range(1, 11):
+        pair.apply_pick(f"Team {k}", likely_next(pair, None, limit=1)[0], k)
+    assert pair.next_overall == 11 and not may_grow(pair)
 
 
-def test_the_early_own_choice_set_needs_a_real_second_pick(pool):
+def test_a_pair_ahead_stops_the_growth_unless_its_second_pick_is_a_keepers(pool):
     """Seat 4 of 4 with pick 3 on the clock: picks 4 and 5 are a pair, unless 5 is my keeper's
-    round (keeper slots stay out of the branches)."""
+    round (keeper slots pass without a pick)."""
     best = make_state(pool).z["total"].nlargest(6).index.tolist()
     plain = make_state(pool, position=4, num_teams=4)
     plain.sync([(1, "Team 1", best[0]), (2, "Team 2", best[1])])
-    assert one_pick_left(plain)
-    boards = branch_boards(plain, best[2:5], best[2:5], early=True)
-    assert any(len(b.picks) == 2 for b in boards)
+    assert plain.next_overall == 3 and not may_grow(plain)
     kept = make_state(pool, position=4, num_teams=4, keepers=[Keeper(None, 2, best[5])])
     kept.sync([(1, "Team 1", best[0]), (2, "Team 2", best[1])])
-    boards = branch_boards(kept, best[2:5], best[2:5], early=True)
-    assert boards and all(len(b.picks) == 1 for b in boards)
+    assert kept.next_overall == 3 and may_grow(kept)
 
 
 def test_a_board_that_waits_grows_its_one_away_set_on_idle_workers(room, monkeypatch):
     """With no bot-pace grace and room on the pool, slot 2's board 0 ends with one branch per
-    likely player up to the cap; slot 2 has no pair, so no own-choice boards."""
+    likely player up to the cap."""
     monkeypatch.setattr(solver_module, "GROW_AFTER_S", 0.0)
     monkeypatch.setattr(solver_module, "background_size", lambda: ONE_AWAY + 2)
     client, store, _ = room

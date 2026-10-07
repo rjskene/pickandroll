@@ -34,12 +34,10 @@ TWO_AWAY = 4  # likely players paired when two are left: C(4, 2) = 6 boards
 MINE = 2  # my own likely choices on my turn, for the pick straight after it
 #: A board that stays on the table this long is not a bot room's (bots pick about 2.3 s
 #: apart): the one-away set then grows by one likely player per idle pool worker, up to
-#: ``ONE_AWAY_MAX``, and a back-to-back pair's own-choice boards start one pick early, behind
-#: the likeliest ``OWN_EARLY`` opponent picks (#14 levers 5 and 6). In mock 6 the pick one
-#: away from each of my turns stood 2nd to 12th in :func:`likely_next`'s order.
+#: ``ONE_AWAY_MAX`` (#14 lever 5; see :func:`may_grow`). In mock 6 the pick one away from each
+#: of my turns stood 2nd to 12th in :func:`likely_next`'s order.
 GROW_AFTER_S = 4.0
 ONE_AWAY_MAX = 12
-OWN_EARLY = 3
 #: Plan budget of a branch. It solves ahead of its board, off the clock, so it gets the plan's
 #: full budget rather than a room's: in rounds 1-6 a plan needs 6-16 s to converge, and only a
 #: converged branch is served unpriced.
@@ -81,15 +79,19 @@ def likely_next(
     return out
 
 
-def one_pick_left(state: DraftState) -> bool:
-    """Whether exactly one pick, someone else's, is left before my next turn (keeper slots
-    pass without a pick)."""
+def may_grow(state: DraftState) -> bool:
+    """Whether this board's one-away set may grow: exactly one pick, someone else's, is left
+    before my next turn (keeper slots pass without a pick), and that turn is not the first of a
+    back-to-back pair. A pair's own-choice boards for its second pick launch when its first goes
+    on the clock, and grown branches still solving then hold the workers they need: in the #14
+    slot-12 cell they queued behind them and came in after the live solve."""
     my_next = state.my_next_pick
     if my_next is None:
         return False
+    mine = set(state.my_picks)
     kept = state.keeper_slots
     between = [o for o in range(state.next_overall, my_next) if o not in kept]
-    return len(between) == 1 and between[0] not in set(state.my_picks)
+    return len(between) == 1 and between[0] not in mine and my_next + 1 not in mine
 
 
 @dataclass(frozen=True)
@@ -108,17 +110,13 @@ def branch_boards(
     curve: Any = "default",
     *,
     one_away: int = ONE_AWAY,
-    early: bool = False,
     skip: Callable[[BoardKey], bool] | None = None,
 ) -> list[Branch]:
     """The boards to solve ahead from the current one; empty when my turn is not within two
     picks or the picks before it include one of mine.
 
-    ``one_away``: likely players branched on with one pick left before mine. ``early``: with one
-    pick left before the first of a back-to-back pair, also the boards for the second, after
-    each of the ``OWN_EARLY`` likeliest picks and my ``MINE`` likely choices (``mine``, best
-    first; one the opponent took is replaced by the next). ``skip``: boards already planned,
-    whose problems are not built again."""
+    ``one_away``: likely players branched on with one pick left before mine. ``skip``: boards
+    already planned, whose problems are not built again."""
     k = state.next_overall
     my_next = state.my_next_pick
     if my_next is None:
@@ -143,10 +141,6 @@ def branch_boards(
     elif len(between) == 1:
         (a,) = between
         paths = [((a, owner(a), p),) for p in list(likely)[:one_away]]
-        if early and my_next + 1 in my_picks:
-            for p in list(likely)[:OWN_EARLY]:
-                choices = [c for c in mine if c != p][:MINE]
-                paths += [((a, owner(a), p), (my_next, team, c)) for c in choices]
     elif len(between) == 2:
         a, b = between
         paths = [

@@ -51,7 +51,7 @@ from .presolve import (
     board_key,
     branch_boards,
     likely_next,
-    one_pick_left,
+    may_grow,
     solve_branch,
 )
 
@@ -619,8 +619,8 @@ class BackgroundSolver:
         self._branch_lock = threading.Lock()
         self._branches: set[Any] = set()
         self._peaks: dict[int, int] = {}
-        # The board the pre-solves are for: when it arrived, its one-away set's size, whether
-        # one pick is left before mine, and whether the growth check is already timed.
+        # The board the pre-solves are for: when it arrived, its one-away set's size and whether
+        # that set may grow (:func:`may_grow`); and the board whose growth check is timed.
         self._board: tuple[BoardKey, float, int, bool] | None = None
         self._grow_timed: BoardKey | None = None
         # The exactly priced plan for the empty board and its first-order prices: my first
@@ -893,9 +893,10 @@ class BackgroundSolver:
         future.add_done_callback(done)
 
     def _presolve(self) -> None:
-        """Launch plan-only solves in the pool for the boards my turn can start on. A board that
-        stays past a bot room's pace (``GROW_AFTER_S``) also gets the back-to-back pair's
-        own-choice boards and then one more likely player per idle worker (#14 levers 5, 6)."""
+        """Launch plan-only solves in the pool for the boards my turn can start on. A board one
+        pick from my turn that stays past a bot room's pace (``GROW_AFTER_S``) also gets one more
+        likely player per idle worker (#14 lever 5), unless that turn starts a back-to-back
+        pair."""
         session = self.session
         state = session.state
         rec = session.recommendation
@@ -905,17 +906,18 @@ class BackgroundSolver:
             board = copy.copy(state)
             board.picks = list(state.picks)
             fresh = rec is not None and rec["version"] == session.version
-            mine = [c["player"] for c in rec["candidates"][: MINE + 1]] if fresh else []
+            mine = [c["player"] for c in rec["candidates"][:MINE]] if fresh else []
         key = board_key(board)
         now = time.monotonic()
         with self._branch_lock:
             if self._board is None or self._board[0] != key:
-                self._board = (key, now, ONE_AWAY, one_pick_left(board))
-            _, arrived, one_away, one_left = self._board
+                self._board = (key, now, ONE_AWAY, may_grow(board))
+            _, arrived, one_away, grows = self._board
         waited = now - arrived
-        late = waited >= GROW_AFTER_S
         curve: Any = None if session.solve_params.objective == "sum" else "default"
-        likely = likely_next(board, self._o_rank_series(), limit=ONE_AWAY_MAX)
+        likely = likely_next(
+            board, self._o_rank_series(), limit=ONE_AWAY_MAX if grows else ONE_AWAY
+        )
 
         def launch(size: int) -> None:
             branches = branch_boards(
@@ -924,22 +926,21 @@ class BackgroundSolver:
                 mine,
                 curve=curve,
                 one_away=size,
-                early=late,
                 skip=self.book.known,
             )
             self._launch(self.book.wanted(branches), state.plan_gap)
 
         launch(one_away)
-        if not one_left:
+        if not grows:
             return
-        if not late:
+        if waited < GROW_AFTER_S:
             self._grow_later(key, GROW_AFTER_S - waited)
             return
         with self._branch_lock:
             idle = background_size() - len(self._branches)
             grown = min(ONE_AWAY_MAX, one_away + max(0, idle))
             if self._board is not None and self._board[0] == key:
-                self._board = (key, arrived, grown, one_left)
+                self._board = (key, arrived, grown, grows)
         if grown > one_away:
             launch(grown)
 
