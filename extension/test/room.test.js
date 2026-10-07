@@ -110,6 +110,49 @@ test("an attempt by the extension says how the pick landed", () => {
   assert.equal(r.landedEvent(out.landed).how, "row");
 });
 
+test("picks of mine from the history frame land how history, with no time from the turn (#26)", () => {
+  const r = room(1);
+  r.ingest("D|1|1|30", T0); // the tab saw pick 1 go on the clock, then lost the room
+  // A reconnect: Yahoo's history frame brings picks 1 (mine), 2 and 24 (mine).
+  const out = r.ingest("P|1=10094,1,0|2=5352,2,0|24=6022,1,0|", T0 + 60000);
+  assert.equal(out.landed, null);
+  assert.deepEqual(
+    out.history.map((rec) => r.landedEvent(rec)),
+    [1, 24].map((overall, i) => ({
+      type: "pick_landed",
+      overall,
+      yid: ["10094", "6022"][i],
+      t: T0 + 60000,
+      ms_from_turn: null,
+      how: "history",
+    })),
+  );
+  // Each is posted once: the same frame again, or the pick from the socket after it, adds none.
+  assert.deepEqual(r.ingest("P|1=10094,1,0|24=6022,1,0|", T0 + 61000).history, []);
+  assert.equal(r.ingest("0|24|6022|1|PG|0", T0 + 61500).landed, null);
+  // A pick of mine from the socket is unchanged.
+  r.ingest("D|25|1|30", T0 + 62000);
+  assert.equal(r.landedEvent(r.ingest("0|25|6512|1|SF|0", T0 + 63000).landed).ms_from_turn, 1000);
+});
+
+test("the player of a failed request taken from the backstop's queue is the user's pick (#26)", () => {
+  const r = room(1);
+  r.ingest("D|1|1|30", T0);
+  r.noteAttempt(1, "queue");
+  r.noteRequested(1, 10094);
+  r.ingest("X|29", T0 + 25000);
+  r.ingest("5|1", T0 + 25010);
+  let out = r.ingest("0|1|10094|1|C|0", T0 + 25100);
+  assert.equal(r.landedEvent(out.landed, { autodraft: true }).how, "manual");
+  // Yahoo took the best candidate queued second: the backstop's pick, as before.
+  r.ingest("D|24|1|30", T0 + 30000);
+  r.noteAttempt(24, "queue");
+  r.noteRequested(24, 6022);
+  r.ingest("5|1", T0 + 55010);
+  out = r.ingest("0|24|6512|1|SF|0", T0 + 55100);
+  assert.equal(r.landedEvent(out.landed, { autodraft: true }).how, "autopick");
+});
+
 test("next pick of mine and the snapshot", () => {
   const r = room(12);
   assert.equal(r.nextMine(), 12);
