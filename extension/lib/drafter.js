@@ -9,9 +9,17 @@
 //      1.8 s and again at 2.5 s; scroll when the row is not in view (Yahoo's search box only
 //      with the option on: in September the filtered table's Draft button drafted the wrong
 //      player, §0);
-//   3. fall through to the next candidate;
+//   3. fall through to the next candidate; after the top four, look for rows without scrolling
+//      over all of the plan's candidates in priced order, pass after pass, to the backstop line
+//      (mock 7, pick 68: the top four had no row while Yahoo's table was not its Players list);
+//      the turn starts from the top of that list (the search box cleared, the list at its top),
+//      and while the table shows no Draft button or no candidate's row, Yahoo's Players tab is
+//      selected again and the view reset, every 2 s; each candidate that misses is noted with
+//      what the page showed;
 //   4. by 6 s left, put the best remaining candidate alone in Yahoo's queue with Autodraft on,
-//      for this pick only; after the turn Autodraft goes off and the queue is emptied. One
+//      for this pick only (the first candidate with a row, and while none has one the turn
+//      keeps looking until 2 s before the clock runs out); after the turn Autodraft goes off,
+//      the queue is emptied and the view reset (after a hand pick, once it is in). One
 //      exception (user, 2026-10-02): when my next pick follows this one (slots 1 and 12), the
 //      plan's player for it goes in behind, so Yahoo's instant autopick at that turn's start
 //      takes ours rather than its own ranking's. After the user's request for this pick failed
@@ -58,6 +66,13 @@
   const RETRY_MS = 500; // between asks when /plan failed (the API restarting, a 5xx)
   const REQUEST_TRIES = 2; // clicks for a "Draft in Yahoo" request before it is dropped
   const REQUEST_WAIT_MS = 2500; // after each, for the pick to land (Yahoo confirms in ~400 ms)
+  const LAST_LOOK_S = 2; // the backstop looks for a row until this much clock is left
+  const RECOVER_MS = 2000; // between view resets while the table shows no row to take
+  const SETTLE_MS = 1000; // Draft buttons missing for this long at act time: reset the view
+  const PASS_MS = 250; // between find-only passes
+  const ENDS = new Set(["landed", "manual", "stopped"]);
+  const NO_ROW = new Set(["no row", "row vanished"]); // queueOnly found no row to star
+  const MISSES = new Set(["noRow", "noButton", "mismatch", "notLanded"]);
 
   /** Seconds to hold /plan for a fresh solve with ``left`` seconds on the clock, stopping
    * with ``by`` seconds left. */
@@ -99,12 +114,16 @@
     /**
      * @param {object} o
      * @param {object} o.tracker RoomTracker of this room
-     * @param {object} o.dom     the draft client: draftable(), find(c), scrollTo(c), search(c),
-     *                           async click(row, c) -> "clicked" | "mismatch" | "none", nudge(),
-     *                           queueOnly(c) -> {ok, msg}, queueAlso(c2, c) -> {ok, msg, single}
-     *                           (c2 behind c; on failure ``single`` is queueOnly(c) redone),
-     *                           probeQueue(c) -> {outcome, panel, control},
-     *                           setAutodraft(on), autodraftOn(), clearQueue(), reset()
+     * @param {object} o.dom     the draft client: draftable(), find(c), scrollTo(c, until),
+     *                           search(c), async click(row, c) -> "clicked" | "mismatch" |
+     *                           "none", nudge(), queueOnly(c, until) -> {ok, msg},
+     *                           queueAlso(c2, c, until) -> {ok, msg, single} (c2 behind c; on
+     *                           failure ``single`` is queueOnly(c) redone), probeQueue(c) ->
+     *                           {outcome, panel, control}, setAutodraft(on), autodraftOn(),
+     *                           clearQueue(), reset() (the search box cleared, the list at its
+     *                           top), showPlayers() -> "selected" | "clicked" | "none" (Yahoo's
+     *                           Players tab), summary() -> what the page shows (read only);
+     *                           ``until``: epoch ms a scroll for a row gives up at
      * @param {function} o.plan  async (wait_s, board, signal) -> GET /rooms/{d}/plan, held
      *                           until the solve of ``board`` (the number of picks it was built
      *                           on); ``signal`` aborts when the turn is stopped
@@ -149,6 +168,33 @@
     leftOrPlenty() {
       const left = this.left();
       return left === null || left === undefined || Number.isNaN(left) ? Infinity : left;
+    }
+
+    /** The turn is short of the line ``s`` seconds before its clock runs out. With no clock from
+     * the room, it is for at most 30 - ``s`` seconds from the turn's first look at the table
+     * (Yahoo's 30 s clock), so that a look that finds nothing ends. */
+    before(ctx, s) {
+      const left = this.left();
+      if (left !== null && left !== undefined && !Number.isNaN(left)) return left > s;
+      if (ctx.blind === undefined) ctx.blind = this.now();
+      return this.now() - ctx.blind < (30 - s) * 1000;
+    }
+
+    /** Epoch ms at which the clock shows ``s`` seconds left; Infinity before the room's first
+     * clock frame. */
+    clockAt(s) {
+      const left = this.left();
+      if (left === null || left === undefined || Number.isNaN(left)) return Infinity;
+      return this.now() + (left - s) * 1000;
+    }
+
+    /** What the page shows, for a note: read only, and never throws. */
+    summary() {
+      try {
+        return this.dom.summary ? this.dom.summary() : null;
+      } catch (e) {
+        return { error: String((e && e.message) || e) };
+      }
     }
 
     /** The pick landed, or the user took it over. */
@@ -294,7 +340,7 @@
             if (room <= 0 || !(await this.pause(ctx, Math.min(250, room)))) break;
           }
           if (!this.live(ctx)) break;
-          let row = this.dom.find(c) || (await this.page(() => this.dom.scrollTo(c)));
+          let row = this.dom.find(c) || (await this.page(() => this.dom.scrollTo(c, this.clockAt(BACKSTOP_BY_S + 1))));
           if (!this.live(ctx)) break;
           if (row) {
             // The user's pick, made through the tab (how "manual").
@@ -381,8 +427,10 @@
 
     /** Undo what the drafter switched on: Autodraft off first (with it on, Yahoo picks from the
      * queue) and only then the queue, never the queue while Autodraft is still on. After a hand
-     * pick the page is the user's: only what the drafter switched on is undone. */
-    async tidy(manual) {
+     * pick the page is the user's: only what the drafter switched on is undone, and once the
+     * pick is in (``landed``), the view is put back to the top of the Players list as after any
+     * turn (a search left in the box is the filtered table of §0). */
+    async tidy(manual, landed = false) {
       if (this.touched.autodraft || (!manual && this.dom.autodraftOn() === true)) {
         const on = await this.page(() => this.dom.setAutodraft(false));
         if (on === true) return; // still on: leave the queue alone
@@ -392,7 +440,99 @@
         await this.page(() => this.dom.clearQueue());
         this.touched.queue = false;
       }
-      if (!manual) await this.page(() => this.dom.reset());
+      // After a hand pick, only once it is in: a reset while the user's click settles would
+      // re-render the table under it.
+      if (!manual || landed) await this.page(() => this.dom.reset());
+    }
+
+    /** Act time: the view at the top of Yahoo's Players list, and while the table shows no Draft
+     * button (past Yahoo's usual re-render), the Players tab and the reset every 2 s, up to the
+     * backstop line. */
+    async view(ctx) {
+      await this.page(() => this.dom.reset());
+      const from = this.now();
+      while (this.live(ctx) && !this.dom.draftable() && this.before(ctx, BACKSTOP_BY_S)) {
+        if (this.now() - from >= SETTLE_MS) await this.recover(ctx, "no Draft button");
+        if (!(await this.pause(ctx, PASS_MS))) break;
+      }
+    }
+
+    /** At most every 2 s a turn: Yahoo's Players tab when another view is selected, then the
+     * reset; noted with what the page showed before. */
+    async recover(ctx, why) {
+      if (ctx.recoveredAt !== undefined && this.now() - ctx.recoveredAt < RECOVER_MS) return;
+      ctx.recoveredAt = this.now();
+      const dom = this.summary();
+      const tab = await this.page(() => (this.dom.showPlayers ? this.dom.showPlayers() : "none"));
+      await this.page(() => this.dom.reset());
+      ctx.recovered = (ctx.recovered || 0) + 1;
+      this.emit({ type: "note", what: "view reset", overall: ctx.k, why, tab, dom });
+    }
+
+    /** One candidate's row draft, noted when it misses: the outcome and what the page showed.
+     * A row that was clicked, or refused by the label guard, is not tried again this turn. */
+    async tryRow(ctx, c, scroll, skip) {
+      const r = await this.rowDraft(ctx, c, scroll);
+      this.log(`#${ctx.k} ${c.name}: ${r}`);
+      if (MISSES.has(r)) {
+        if (r !== "noRow" && !(r === "noButton" && !this.dom.draftable())) skip.add(String(c.yahoo_player_id));
+        this.emit({
+          type: "note",
+          what: "row miss",
+          overall: ctx.k,
+          yid: String(c.yahoo_player_id),
+          name: c.name,
+          result: r,
+          via: scroll ? "scroll" : "find",
+          dom: this.summary(),
+        });
+      }
+      return r;
+    }
+
+    /** From act time to the backstop line: the top four candidates, scrolled for; then passes
+     * over all of the plan's candidates in priced order, each row only where the table already
+     * shows it (no scrolling: the time is the backstop's), until one lands or the line comes. A
+     * pass that finds no candidate's row resets the view (the Players tab included). */
+    async rows(ctx, plan, cands) {
+      const skip = new Set();
+      const time = () => this.live(ctx) && this.before(ctx, BACKSTOP_BY_S);
+      for (let i = 0; i < cands.length; i++) {
+        await this.yieldTo(ctx);
+        if (!time()) return;
+        const c = cands[i];
+        if (this.tracker.taken().has(String(c.yahoo_player_id))) continue;
+        const r = await this.tryRow(ctx, c, true, skip);
+        if (ENDS.has(r)) return;
+        if (r === "yielded") i--; // the user's request took the page: this row again after it
+      }
+      let passes = 0;
+      let tried = 0;
+      for (;;) {
+        await this.yieldTo(ctx);
+        if (!time()) break;
+        passes++;
+        let found = false;
+        for (const c of Y.candidatesFor(plan, this.tracker.taken())) {
+          if (!time()) break;
+          if (skip.has(c.yahoo_player_id) || !this.dom.find(c)) continue;
+          found = true;
+          tried++;
+          const r = await this.tryRow(ctx, c, false, skip);
+          if (ENDS.has(r)) return;
+          if (r === "yielded") break; // the next pass starts again from the top
+        }
+        if (!found && time()) await this.recover(ctx, "no candidate's row");
+        if (!(await this.pause(ctx, PASS_MS))) break;
+      }
+      if (passes && this.live(ctx)) {
+        this.emit({ type: "note", what: "row passes", overall: ctx.k, passes, tried, resets: ctx.recovered || 0 });
+      }
+    }
+
+    /** The first of the plan's candidates, in priced order, whose row the table shows now. */
+    firstWithRow(plan) {
+      return Y.candidatesFor(plan, this.tracker.taken()).find((x) => this.dom.find(x)) || null;
     }
 
     /** Take pick ``k``. Resolves to a summary; never throws. Starting it stops an older turn
@@ -402,7 +542,7 @@
       if (this.tried.has(k) || (prev && prev.k >= k)) return null;
       if (this.done(k)) {
         // Taken before its turn began: only undo what an older turn left switched on.
-        if (this.touched.autodraft || this.touched.queue) await this.tidy(this.tracker.isManual(k));
+        if (this.touched.autodraft || this.touched.queue) await this.tidy(this.tracker.isManual(k), true);
         return null;
       }
       this.tried.add(k);
@@ -495,20 +635,12 @@
         }
 
         await this.yieldTo(ctx);
+        if (this.live(ctx)) await this.view(ctx);
+        await this.yieldTo(ctx);
         if (this.probeDue(k) && this.live(ctx) && this.leftOrPlenty() > BACKSTOP_BY_S + 8) {
           await this.probe(ctx, cands.find((x) => !this.tracker.taken().has(String(x.yahoo_player_id))));
         }
-
-        for (let i = 0; i < cands.length; i++) {
-          await this.yieldTo(ctx);
-          if (!this.live(ctx) || this.leftOrPlenty() <= BACKSTOP_BY_S) break;
-          const c = cands[i];
-          if (this.tracker.taken().has(String(c.yahoo_player_id))) continue;
-          const r = await this.rowDraft(ctx, c);
-          this.log(`#${k} ${c.name}: ${r}`);
-          if (r === "landed" || r === "manual" || r === "stopped") break;
-          if (r === "yielded") i--; // the user's request took the page: this row again after it
-        }
+        await this.rows(ctx, plan, cands);
         await this.yieldTo(ctx);
         if (this.live(ctx)) await this.backstop(ctx, plan, cands);
         return this.finish(out, ctx);
@@ -519,7 +651,7 @@
         // A superseded turn leaves the page to the newer one, which tidies it before acting.
         if (ctx.stopped !== "superseded") {
           try {
-            await this.tidy(this.tracker.isManual(k));
+            await this.tidy(this.tracker.isManual(k), this.tracker.picks.has(k));
           } catch (_) {
             // the guard loop retries between turns
           }
@@ -542,7 +674,7 @@
     async backstop(ctx, plan, cands) {
       const k = ctx.k;
       const taken = this.tracker.taken();
-      const top = cands.find((x) => !taken.has(String(x.yahoo_player_id))) || null;
+      const top = cands.find((x) => !taken.has(String(x.yahoo_player_id))) || Y.candidatesFor(plan, taken)[0] || null;
       const f = this.failed;
       const asked = f && f.k === k && !taken.has(f.c.yahoo_player_id) ? f.c : null;
       if (!top && !asked) return;
@@ -555,8 +687,9 @@
       let head = null;
       let q = { ok: false, msg: "nothing queued" };
       let t = this.now();
+      const until = this.clockAt(LAST_LOOK_S);
       if (asked) {
-        q = await this.page(() => this.dom.queueOnly(asked));
+        q = await this.page(() => this.dom.queueOnly(asked, until));
         if (q.ok) head = asked;
         else {
           this.emit({
@@ -569,9 +702,29 @@
         }
       }
       if (!head && top && this.live(ctx)) {
-        t = this.now();
-        q = await this.page(() => this.dom.queueOnly(top));
-        if (q.ok) head = top;
+        // The first candidate whose row the reset view shows, in priced order (mock 7, pick 68:
+        // the top had none); with none, the top, which the queue scrolls for. While no candidate
+        // has a row, the turn keeps looking until 2 s before the clock runs out: an expiry is
+        // the same outcome as giving up.
+        await this.page(() => this.dom.reset());
+        let c = this.firstWithRow(plan) || top;
+        for (;;) {
+          t = this.now();
+          q = await this.page(() => this.dom.queueOnly(c, until));
+          if (q.ok) {
+            head = c;
+            break;
+          }
+          if (!NO_ROW.has(q.msg)) break;
+          let next = null;
+          while (!next && this.live(ctx) && this.before(ctx, LAST_LOOK_S)) {
+            await this.recover(ctx, "backstop: no candidate's row");
+            if (!(await this.pause(ctx, PASS_MS))) break;
+            next = this.firstWithRow(plan);
+          }
+          if (!next || !this.live(ctx)) break;
+          c = next;
+        }
       }
       const drafted = () => {
         const p = this.tracker.picks.get(k);
@@ -588,11 +741,11 @@
       if (drafted()) return landedRequest(); // the star drafted the head
       // Behind the head: the best candidate after a failed request, for this pick too;
       // otherwise, back to back, the plan's player for my next pick.
-      const also = head === asked && top && String(top.yahoo_player_id) !== asked.yahoo_player_id ? top : null;
+      const also = head && head === asked && top && String(top.yahoo_player_id) !== asked.yahoo_player_id ? top : null;
       let behind = null;
       if (head && q.ok && this.live(ctx)) {
         const want = also || (backToBack ? this.nextFor(plan, k, head) : null);
-        const q2 = want ? await this.page(() => this.dom.queueAlso(want, head)) : null;
+        const q2 = want ? await this.page(() => this.dom.queueAlso(want, head, until)) : null;
         if (q2 && q2.ok) behind = want;
         else if (q2) {
           if (drafted()) return landedRequest();
@@ -638,7 +791,7 @@
       const t = this.now();
       let r;
       try {
-        r = await this.page(() => this.dom.probeQueue(c));
+        r = await this.page(() => this.dom.probeQueue(c, this.clockAt(BACKSTOP_BY_S + 2)));
       } catch (e) {
         r = { outcome: "failed", panel: null, control: null, msg: String((e && e.message) || e) };
       }
@@ -681,20 +834,22 @@
     }
 
     /** Click candidate ``c``'s row; "landed", "manual", "stopped", "noRow", "mismatch",
-     * "noButton", "notLanded" or "yielded" (the user's request took the page). Page actions are not cut short (a click settles in ~400 ms);
-     * the waits between them are. */
-    async rowDraft(ctx, c) {
+     * "noButton", "notLanded" or "yielded" (the user's request took the page). ``scroll``: look
+     * for a row the table does not show by scrolling Yahoo's list (to a second before the
+     * backstop line). Page actions are not cut short (a click settles in ~400 ms); the waits
+     * between them are. */
+    async rowDraft(ctx, c, scroll = true) {
       const k = ctx.k;
       for (let i = 0; i < 8 && !this.dom.draftable(); i++) {
         if (!(await this.pause(ctx, 250)) || !this.live(ctx)) return this.outcome(ctx);
       }
       let via = "row";
       let row = this.dom.find(c);
-      if (!row) {
+      if (!row && scroll) {
         via = "scroll";
-        row = await this.page(() => this.dom.scrollTo(c));
+        row = await this.page(() => this.dom.scrollTo(c, this.clockAt(BACKSTOP_BY_S + 1)));
       }
-      if (!row && this.searchFallback && this.live(ctx) && this.leftOrPlenty() > BACKSTOP_BY_S + 2) {
+      if (!row && scroll && this.searchFallback && this.live(ctx) && this.leftOrPlenty() > BACKSTOP_BY_S + 2) {
         via = "search";
         row = await this.page(() => this.dom.search(c));
       }

@@ -392,6 +392,28 @@ def test_events_validation_heartbeats_and_control(league):
         assert c.get("/rooms/d1/fidelity").status_code == 200
 
 
+def test_the_extension_version_is_logged_and_heads_the_scorecard(league):
+    """The extension's version comes with its attach, its entry note and its heartbeats: the
+    scorecard says which builds ran (mock 7 ran an older build than main)."""
+    directory, _picks = league
+    with app_for(directory) as c:
+        attach(c, ext_version="0.2.0")
+        events = [
+            {"type": "note", "what": "entered", "ext_version": "0.2.0"},
+            {"type": "heartbeat", "vis": "visible", "ext_version": "0.2.1"},
+        ]
+        assert c.post("/rooms/d1/events", json={"events": events}).json()["written"] == 2
+        logged = _events(directory, "d1")
+        assert next(e for e in logged if e["type"] == "attach")["ext_version"] == "0.2.0"
+        assert c.get("/rooms/d1/fidelity").json()["ext_version"] == ["0.2.0", "0.2.1"]
+        assert "; extension 0.2.0 then 0.2.1." in c.get("/rooms/d1/fidelity?format=md").text
+        attach(c, draft_id="d2")
+        attached = next(e for e in _events(directory, "d2") if e["type"] == "attach")
+        assert "ext_version" not in attached
+    old = [_ev("attach", 0, slot=1, num_teams=2, rounds=1, draft_id="o")]
+    assert "; extension version not reported (before 0.2.0)." in markdown(analyze(old))
+
+
 def test_an_unknown_event_type_never_loses_the_batch(league):
     """An extension one event type ahead of the API: the known events are still recorded."""
     directory, _picks = league

@@ -19,6 +19,15 @@
   const PLAN_AHEAD = 3; // fetch the plan once my pick is this many picks away
   const PLAN_WAIT_S = 20; // on my turn, hold this long for a fresh solve
   const BY_HAND_MS = 3000; // a switch flip this soon after a trusted click on it is the user's
+  // The extension's own version (manifest.json), on the entry note and every heartbeat: a
+  // scorecard states which build ran.
+  const EXT_VERSION = (() => {
+    try {
+      return chrome.runtime.getManifest().version;
+    } catch (_) {
+      return null;
+    }
+  })();
 
   const tracker = new PR.RoomTracker({ draftId: where.draft_id, slot: where.slot });
   const S = {
@@ -397,15 +406,30 @@
     sc.scrollTop = top;
     await sleep(120);
   }
-  async function scrollTo(c) {
+  const CHUNK_MS = 1600; // Yahoo appends 50 rows to its list ~1.5 s after it reaches the bottom
+  // ``c``'s row, scrolling Yahoo's list from its top (the view may have been left scrolled):
+  // a step at a time, and at the bottom, wait for the next chunk to append. It stops when the
+  // list no longer grows, or at ``until`` (epoch ms).
+  async function scrollTo(c, until = Infinity) {
     const sc = scroller();
+    if (sc.scrollTop > 0) {
+      sc.scrollTop = 0;
+      await sleep(150);
+    }
     let row = findRow(c);
-    for (let i = 0; !row && i < 20; i++) {
+    for (let i = 0; !row && i < 60 && Date.now() < until; i++) {
       const before = sc.scrollTop;
       sc.scrollTop = before + Math.max(300, sc.clientHeight * 0.85);
       await sleep(110);
       row = findRow(c);
-      if (!row && sc.scrollTop === before) break;
+      if (row || sc.scrollTop !== before) continue;
+      const size = [sc.scrollHeight, tableRows().length];
+      const grew = () => sc.scrollHeight !== size[0] || tableRows().length !== size[1];
+      const end = Math.min(until, Date.now() + CHUNK_MS);
+      while (!grew() && Date.now() < end) await sleep(100);
+      if (!grew()) break; // the end of the list
+      await sleep(150); // the chunk renders
+      row = findRow(c);
     }
     if (row) {
       row.scrollIntoView({ block: "center" });
@@ -490,10 +514,11 @@
     return true;
   }
   // Exactly this one player in Yahoo's queue, checked against the queue's text.
-  async function queueOnly(c) {
+  async function queueOnly(c, until = Infinity) {
     const k = tracker.myTurnNow();
     await clearQueue();
-    let row = findRow(c) || (await scrollTo(c));
+    await reset();
+    let row = findRow(c) || (await scrollTo(c, until));
     if (!row) return { ok: false, msg: "no row" };
     for (let attempt = 0; attempt < 2; attempt++) {
       await starRow(row);
@@ -502,7 +527,7 @@
       if (k !== null && tracker.picks.has(k)) return { ok: true }; // on my turn the star drafts
       await clearQueue();
       await nudge();
-      row = findRow(c) || (await scrollTo(c));
+      row = findRow(c) || (await scrollTo(c, until));
       if (!row) return { ok: false, msg: "row vanished" };
     }
     await clearQueue();
@@ -518,12 +543,13 @@
   // pick, and an unlabelled one is refused too. Autodraft takes the queue's head, so the panel
   // must then read exactly ``c``, ``c2``. On any failure the queue is put back to ``c`` alone
   // (``single``).
-  async function queueAlso(c2, c) {
-    const fail = async (msg) => ({ ok: false, msg, single: await queueOnly(c) });
+  async function queueAlso(c2, c, until = Infinity) {
+    const fail = async (msg) => ({ ok: false, msg, single: await queueOnly(c, until) });
     if (!qPanel()) return fail("queue panel unreadable");
     const items = qItems();
     if (items.length !== 1 || !inQueue(items[0], c)) return fail("the queue is not this pick's player alone");
-    const row = findRow(c2) || (await scrollTo(c2));
+    await reset();
+    const row = findRow(c2) || (await scrollTo(c2, until));
     if (!row) return fail("no row");
     const b = [...row.querySelectorAll("button, [role=button]")].find((x) => PR.isQueueControl(labelsOf(x)));
     if (!b) return fail("no control labelled as the queue's");
@@ -550,9 +576,9 @@
   // The queue probe: what the star (a row's first-cell button, the one queueOnly uses) does on
   // my turn. Either outcome is harmless: it queues ``c``, or it drafts ``c``, the pick wanted.
   // The row's controls and the queue panel are read before the click.
-  async function probeQueue(c) {
+  async function probeQueue(c, until = Infinity) {
     const k = tracker.myTurnNow();
-    const row = findRow(c) || (await scrollTo(c));
+    const row = findRow(c) || (await scrollTo(c, until));
     const seen = { controls: row ? rowControls(row) : null, panel_found: Boolean(qPanel()) };
     const b = row && row.children[0] && row.children[0].querySelector("button");
     if (!b) return { outcome: "no_control", panel: panelText(), control: null, ...seen };
@@ -564,6 +590,50 @@
     const queued = () => qItems().some((li) => inQueue(li, c));
     for (let i = 0; i < 7 && !drafted() && !queued(); i++) await sleep(i ? 250 : 400);
     return { outcome: PR.probeOutcome(drafted(), queued(), labels), panel: panelText(), control, ...seen };
+  }
+  // The top of Yahoo's Players list: the search box cleared (a filtered table's Draft button
+  // drafted the wrong player, §0) and the list at its top.
+  async function reset() {
+    const box = searchBox();
+    if (box && box.value) await setSearch("");
+    const sc = scroller();
+    if (sc.scrollTop > 0) {
+      sc.scrollTop = 0;
+      await sleep(150);
+    }
+  }
+  // Yahoo's view tabs (Players, Board, Results, Standings): buttons role=tab in a tablist,
+  // the selected one aria-selected (mock 7's page).
+  const viewTabs = () => [...document.querySelectorAll("[role=tablist] [role=tab]")];
+  const viewName = (b) => b.getAttribute("data-id") || labelOf(b).toLowerCase();
+  async function showPlayers() {
+    const tab = viewTabs().find((b) => viewName(b) === "players");
+    if (!tab) return "none";
+    if (tab.getAttribute("aria-selected") === "true") return "selected";
+    tab.click();
+    await sleep(400);
+    return "clicked";
+  }
+  // What the page shows, for a "row miss" or "view reset" note: read only.
+  function summary() {
+    const rows = tableRows();
+    const text = (r) => (r ? r.textContent.replace(/\s+/g, " ").trim().slice(0, 60) : null);
+    const sc = scroller();
+    const box = searchBox();
+    return {
+      rows: rows.length,
+      first: text(rows[0]),
+      last: text(rows[rows.length - 1]),
+      draftable: rows.some((r) => rowDraftButton(r)),
+      search: box ? box.value : null,
+      scroll: [Math.round(sc.scrollTop), sc.scrollHeight, sc.clientHeight],
+      views: viewTabs()
+        .filter((b) => b.getAttribute("aria-selected") === "true")
+        .map(viewName),
+      selects: [...document.querySelectorAll("select")]
+        .slice(0, 8)
+        .map((x) => (x.selectedOptions && x.selectedOptions[0] ? x.selectedOptions[0].textContent.trim() : x.value)),
+    };
   }
   async function setAutodraft(on) {
     const b = autodraftButton();
@@ -598,11 +668,9 @@
     setAutodraft,
     autodraftOn: () => autodraftOn(),
     clearQueue,
-    async reset() {
-      const box = searchBox();
-      if (box && box.value) await setSearch("");
-      scroller().scrollTop = 0;
-    },
+    reset,
+    showPlayers,
+    summary,
   };
   const autodraftButton = () =>
     [...document.querySelectorAll("button")].find((b) => /autodraft/i.test(b.textContent));
@@ -678,6 +746,7 @@
       autodraft: S.autodraft,
       frames: s.frames,
       worker: S.worker,
+      ext_version: EXT_VERSION,
     });
   }
 
@@ -886,7 +955,7 @@
   // ------------------------------------------------------------------ start
   // The moment the draft client loaded (G6 counts from here); it waits in the outbox until the
   // room is attached.
-  emit({ type: "note", what: "entered", visible: document.visibilityState });
+  emit({ type: "note", what: "entered", visible: document.visibilityState, ext_version: EXT_VERSION });
   window.postMessage({ [KEY]: "content", dir: "replay" }, location.origin);
   connect();
   // Status every 3 s, every second while my pick is on the clock (a request is read promptly).

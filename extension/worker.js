@@ -26,6 +26,16 @@ async function settings() {
   return s;
 }
 
+/** The extension's version (manifest.json): the attach logs it, so a scorecard states which
+ * build ran. */
+function version() {
+  try {
+    return chrome.runtime.getManifest().version;
+  } catch (_) {
+    return null;
+  }
+}
+
 class ApiError extends Error {
   constructor(status, message) {
     super(message);
@@ -134,7 +144,7 @@ const ops = {
   },
   async attach({ draft_id, slot, session_id, num_teams = 12, room_teams = null }) {
     const s = await settings();
-    const body = { draft_id, slot, num_teams, mode: "mirror", session_id };
+    const body = { draft_id, slot, num_teams, mode: "mirror", session_id, ext_version: version() };
     if (room_teams) body.room_teams = room_teams; // the API refuses an attach that disagrees (#17)
     if (s.players_file) body.players_file = s.players_file;
     return api("/rooms", { method: "POST", body, timeout: 60000 });

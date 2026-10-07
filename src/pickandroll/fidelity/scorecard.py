@@ -352,6 +352,15 @@ def analyze(events: list[dict[str, Any]]) -> dict[str, Any]:
         and to_ms(e["t"]) >= attached_at
     ]
     off = [e for e in beats if e.get("worker") is not True]
+    # The extension builds that ran (manifest.json's version, from 0.2.0 on): the attach
+    # record's and the client's own (its entry note, its heartbeats), in the order first seen.
+    versions = list(
+        dict.fromkeys(
+            str(e["ext_version"])
+            for e in events
+            if e.get("ext_version") and e.get("type") in ("attach", "heartbeat", "note")
+        )
+    )
     landed_rows = [r for r in rows if r["label"] != "manual" and r["overall"] in landed]
     per_pick = [r["attempts"] for r in landed_rows]
     total = num_teams * rounds
@@ -361,6 +370,7 @@ def analyze(events: list[dict[str, Any]]) -> dict[str, Any]:
         "num_teams": num_teams,
         "rounds": rounds,
         "mode": attach.get("mode"),
+        "ext_version": versions,
         "control": control_at(math.inf),
         "picks_seen": len(room),
         "total_picks": total,
@@ -519,6 +529,7 @@ def markdown(card: dict[str, Any]) -> str:
         return f"p50 {s['p50']} / p95 {s['p95']} / max {s['max']} ms (n {s['n']})"
 
     keepers = card.get("my_keepers") or []
+    versions = card.get("ext_version") or []
     unseen = card.get("kept_unseen", 0)
     gaps = card.get("gaps") or []
     fixed = card.get("gaps_fixed") or []
@@ -529,7 +540,9 @@ def markdown(card: dict[str, Any]) -> str:
         (
             f"Slot {card['slot']} of {card['num_teams']}, {card['rounds']} rounds, mode "
             f"{card['mode']}, control now {card['control']}; picks seen "
-            f"{card['picks_seen']}/{card['total_picks']}."
+            f"{card['picks_seen']}/{card['total_picks']}; extension "
+            + (" then ".join(versions) if versions else "version not reported (before 0.2.0)")
+            + "."
         ),
         "",
         (
