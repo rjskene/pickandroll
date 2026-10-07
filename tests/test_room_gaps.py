@@ -67,7 +67,9 @@ def test_a_skipped_pick_waits_for_the_margin_then_gets_a_stand_in(league, monkey
         assert out["synced_through"] == 4 and out["waiting_for"] == 5
         room, session = room_state(c)
         assert room.standins == {} and session.state.next_overall == 5
-        assert wait_for(lambda: room.synced_through == 8)
+        # The fill applies 5-8 under the room lock, then publishes them one by one (lags, log):
+        # wait for the last one published, not just applied.
+        assert wait_for(lambda: room.synced_through == 8 and room.recent_lags[-1][0] == 8)
         assert session.state.next_overall == 9
         status = c.get("/rooms/d1").json()
         assert status["waiting_for"] is None
