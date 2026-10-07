@@ -14,7 +14,9 @@
 //      for this pick only; after the turn Autodraft goes off and the queue is emptied. One
 //      exception (user, 2026-10-02): when my next pick follows this one (slots 1 and 12), the
 //      plan's player for it goes in behind, so Yahoo's instant autopick at that turn's start
-//      takes ours rather than its own ranking's.
+//      takes ours rather than its own ranking's. After the user's request for this pick failed
+//      (its clicks were lost), the requested player goes first and the best candidate second
+//      (#26): Yahoo takes the head for this pick, and back to back the next one for mine.
 // Turns are independent. Each starts from its own turn frame, and starting turn k stops
 // whatever turn k-1 still has pending (a re-click wait, a /plan hold, a sleep) without waiting
 // for it: the newer turn owns the page and first undoes what the older one left switched on
@@ -126,6 +128,7 @@
       this.probed = null; // the pick the probe ran on
       this.searchFallback = false; // Yahoo's search box for an off-screen row (the options page)
       this.requesting = null; // the user's pending request: {k, yid, ctx, settled}
+      this.failed = null; // the user's last request that landed nothing: {k, c, id}, for the backstop
       this.requests = new Set(); // requests served, each by the API's id for it
       this.offered = null; // the room's pending request as the tab last read it
       this.onRequest = () => {}; // ({start: q}) when a request is served, ({out}) when it ends
@@ -242,6 +245,7 @@
         if (!this.live(ctx) || this.tracker.myTurnNow() !== k) return "none";
         const before = this.tracker.attempts.get(k);
         this.tracker.noteAttempt(k, how);
+        ctx.clickAt = this.now(); // the click's own time: it settles ~400 ms later (#26)
         const r = await this.dom.click(row, c);
         if (r !== "clicked") {
           if (before === undefined) this.tracker.attempts.delete(k);
@@ -302,7 +306,7 @@
             }
             if (r === "clicked") {
               out.attempts++;
-              this.attempt(ctx, c, "request", n);
+              this.attempt(ctx, c, "request", n, k, ctx.clickAt);
             }
           }
           // Room for the armed turn's backstop after a failure, never less than a confirmation.
@@ -313,7 +317,10 @@
         if (this.tracker.isManual(k)) out.result = "manual";
         else if (p) out.result = p.yid === c.yahoo_player_id ? "landed" : "other";
         else if (ctx.stopped) out.result = "stopped";
-        if (out.result === "failed") note("request failed", { attempts: out.attempts });
+        if (out.result === "failed") {
+          this.failed = { k, c, id: q.id ?? null };
+          note("request failed", { attempts: out.attempts });
+        }
         note("request", { result: out.result, attempts: out.attempts });
         // The pick is in: the armed turn that stood aside waits for nothing more (its /plan hold
         // included), as after a hand pick (#22).
@@ -322,6 +329,7 @@
         return out;
       } catch (e) {
         // A page action threw: dropped, and noted as every served request is (§4, #24).
+        this.failed = { k, c, id: q.id ?? null };
         note("request failed", { msg: String((e && e.message) || e) });
         note("request", { result: out.result, attempts: out.attempts });
         return out;
@@ -502,36 +510,7 @@
           if (r === "yielded") i--; // the user's request took the page: this row again after it
         }
         await this.yieldTo(ctx);
-        if (this.live(ctx)) {
-          const c = cands.find((x) => !this.tracker.taken().has(String(x.yahoo_player_id)));
-          if (c) {
-            this.touched.queue = true;
-            let q = await this.page(() => this.dom.queueOnly(c));
-            let next = null; // my next pick's player, queued behind (the back-to-back exception)
-            if (q.ok && this.live(ctx) && this.tracker.mine.includes(k + 1)) {
-              next = this.nextFor(plan, k, c);
-              const q2 = next ? await this.page(() => this.dom.queueAlso(next, c)) : null;
-              if (q2 && !q2.ok) {
-                this.emit({ type: "note", what: "queue backstop: second entry failed", overall: k + 1, msg: q2.msg });
-                next = null;
-                q = q2.single; // the adapter put this pick's player back alone, or could not
-              }
-            }
-            if (q.ok && this.live(ctx)) {
-              this.touched.autodraft = true;
-              this.tracker.noteAttempt(k, "queue"); // Yahoo can pick the instant the switch is on
-              if (next) this.tracker.noteAttempt(k + 1, "queue");
-              await this.page(() => this.dom.setAutodraft(true));
-              this.attempt(ctx, c, "queue", 1);
-              // Logged on this turn's board, k-1: the scorecard labels pick k+1 stale.
-              if (next) this.attempt(ctx, next, "queue", 1, k + 1);
-              const left = this.left();
-              await this.waitDone(ctx, ((left === null ? 10 : Math.max(0, left)) + 3) * 1000);
-            } else if (!q.ok) {
-              this.emit({ type: "note", what: "queue backstop failed", overall: k, msg: q.msg });
-            }
-          }
-        }
+        if (this.live(ctx)) await this.backstop(ctx, plan, cands);
         return this.finish(out, ctx);
       } catch (e) {
         this.emit({ type: "note", what: "turn error", overall: k, msg: String((e && e.message) || e) });
@@ -550,6 +529,95 @@
         out.ms = this.now() - t0;
         this.last = out;
       }
+    }
+
+    /** By 6 s left: the best remaining candidate alone in Yahoo's queue with Autodraft on, for
+     * this pick only; when my next pick follows (slots 1 and 12), the plan's player for it
+     * behind. When the user's request for this pick landed nothing, the requested player goes
+     * first and the best candidate second, for this pick and, back to back, for the next
+     * (#26); if the requested player cannot be queued, the backstop is the usual one. The
+     * attempts are stamped as the switch is thrown: Yahoo can pick before the switch returns.
+     * On my turn a row's star can draft its player (as the queue probe found): then the pick
+     * is in and the backstop ends there. */
+    async backstop(ctx, plan, cands) {
+      const k = ctx.k;
+      const taken = this.tracker.taken();
+      const top = cands.find((x) => !taken.has(String(x.yahoo_player_id))) || null;
+      const f = this.failed;
+      const asked = f && f.k === k && !taken.has(f.c.yahoo_player_id) ? f.c : null;
+      if (!top && !asked) return;
+      const backToBack = this.tracker.mine.includes(k + 1);
+      this.touched.queue = true;
+      this.tracker.noteAttempt(k, "queue"); // the star may draft
+      // Before the requested player's star too: if Yahoo takes that player for this pick, by
+      // the queue or the star, the pick is the user's.
+      if (asked) this.tracker.noteRequested(k, asked.yahoo_player_id);
+      let head = null;
+      let q = { ok: false, msg: "nothing queued" };
+      let t = this.now();
+      if (asked) {
+        q = await this.page(() => this.dom.queueOnly(asked));
+        if (q.ok) head = asked;
+        else {
+          this.emit({
+            type: "note",
+            what: "queue backstop: requested player failed",
+            overall: k,
+            yid: asked.yahoo_player_id,
+            msg: q.msg,
+          });
+        }
+      }
+      if (!head && top && this.live(ctx)) {
+        t = this.now();
+        q = await this.page(() => this.dom.queueOnly(top));
+        if (q.ok) head = top;
+      }
+      const drafted = () => {
+        const p = this.tracker.picks.get(k);
+        if (!p || !head || p.yid !== String(head.yahoo_player_id)) return false;
+        this.attempt(ctx, head, "queue", 1, k, t);
+        return true;
+      };
+      const landedRequest = () => {
+        const p = this.tracker.picks.get(k);
+        if (head === asked && p && p.yid === asked.yahoo_player_id) {
+          this.emit({ type: "note", what: "backstop landed the request", overall: k, yid: p.yid, request_id: f.id });
+        }
+      };
+      if (drafted()) return landedRequest(); // the star drafted the head
+      // Behind the head: the best candidate after a failed request, for this pick too;
+      // otherwise, back to back, the plan's player for my next pick.
+      const also = head === asked && top && String(top.yahoo_player_id) !== asked.yahoo_player_id ? top : null;
+      let behind = null;
+      if (head && q.ok && this.live(ctx)) {
+        const want = also || (backToBack ? this.nextFor(plan, k, head) : null);
+        const q2 = want ? await this.page(() => this.dom.queueAlso(want, head)) : null;
+        if (q2 && q2.ok) behind = want;
+        else if (q2) {
+          if (drafted()) return landedRequest();
+          this.emit({ type: "note", what: "queue backstop: second entry failed", overall: also ? k : k + 1, msg: q2.msg });
+          q = q2.single; // the adapter put the head back alone, or could not
+        }
+      }
+      if (drafted()) return landedRequest();
+      if (!head || !q.ok) {
+        this.emit({ type: "note", what: "queue backstop failed", overall: k, msg: q.msg });
+        return;
+      }
+      if (!this.live(ctx)) return;
+      const next = backToBack ? behind : null; // Yahoo's pick for my next turn: the queue's next
+      this.touched.autodraft = true;
+      if (next) this.tracker.noteAttempt(k + 1, "queue");
+      t = this.now();
+      await this.page(() => this.dom.setAutodraft(true));
+      this.attempt(ctx, head, "queue", 1, k, t);
+      if (behind && behind === also) this.attempt(ctx, behind, "queue", 2, k, t);
+      // Logged on this turn's board, k-1: the scorecard labels pick k+1 stale.
+      if (next) this.attempt(ctx, next, "queue", 1, k + 1, t);
+      const left = this.left();
+      await this.waitDone(ctx, ((left === null ? 10 : Math.max(0, left)) + 3) * 1000);
+      landedRequest();
     }
 
     /** The probe runs once per draft: on my first turn from ``probeRound`` on whose next pick

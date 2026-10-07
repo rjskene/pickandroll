@@ -15,7 +15,10 @@ const K = 24; // my pick: round 2, slot 1
  * returns that long after it registers (Yahoo's ~400 ms); ``backToBack``: pick K+1 is mine too
  * and goes on the clock the moment K lands (slots 1 and 12); ``draftableAfter``: the table shows
  * no Draft buttons until that many ms into the turn (a click on a row then finds none);
- * ``planHang``: a held /plan ask never answers (the solve outlives the turn). */
+ * ``planHang``: a held /plan ask never answers (the solve outlives the turn); ``unqueueable``:
+ * rows the queue cannot take; ``switchMs``: the Autodraft switch returns that long after it is
+ * thrown, and Yahoo picks from the queue ``autoLandMs`` after it is; ``starDrafts``: on my turn
+ * a row's star drafts its player (the harness's table, and the probe's "drafted"). */
 function world({
   visible = ["101", "102", "103"],
   clicksToLand = 1,
@@ -34,6 +37,10 @@ function world({
   planHang = false,
   dud = [], // rows whose clicks never land
   mislabeled = [], // rows whose Draft button names another player
+  unqueueable = [],
+  switchMs = 0,
+  autoLandMs = 500,
+  starDrafts = false,
 } = {}) {
   const clock = { t: 1_000_000 };
   const draftable = () => clock.t >= 1_000_000 + draftableAfter;
@@ -87,7 +94,9 @@ function world({
     },
     nudge: async () => {},
     async queueOnly(c) {
+      if (unqueueable.includes(c.yahoo_player_id)) return { ok: false, msg: "no row" };
       log.queued.push(c.yahoo_player_id);
+      if (starDrafts && !tracker.picks.has(K)) land(c.yahoo_player_id);
       return { ok: true };
     },
     async queueAlso(c2) {
@@ -97,7 +106,8 @@ function world({
     async setAutodraft(on) {
       log.autodraft.push(on);
       auto = on;
-      if (on) at(500, () => !tracker.picks.has(K) && land(log.queued.at(-1), ["X|29", `5|${SLOT}`]));
+      if (on) at(autoLandMs, () => !tracker.picks.has(K) && land(log.queued.at(-1), ["X|29", `5|${SLOT}`]));
+      if (switchMs) await sleep(switchMs);
       return on;
     },
     autodraftOn: () => auto,
@@ -203,6 +213,15 @@ test("clicks that never register: the queue backstop by 6 s left, then Autodraft
   assert.equal(out.how, "autopick"); // Yahoo announced it (5|slot) with Autodraft on
   const queuedAt = log.events.find((e) => e.method === "queue").t;
   assert.ok(queuedAt - start <= 24000, `queue set ${(queuedAt - start) / 1000} s into the turn`);
+});
+
+test("the backstop's attempts are stamped as the switch is thrown, before Yahoo picks (#26)", async () => {
+  // Yahoo picks 100 ms after the switch is thrown; the switch returns 400 ms after it is.
+  const { d, log, tracker } = world({ clicksToLand: 99, planMs: 9000, switchMs: 400, autoLandMs: 100 });
+  await d.turn(K);
+  const queued = log.events.filter((e) => e.method === "queue");
+  assert.deepEqual(queued.map((e) => [e.overall, e.yid]), [[K, "101"], [K + 1, "102"]]);
+  assert.ok(queued.every((e) => e.t < tracker.picks.get(K).t), "logged before the pick it made");
 });
 
 test("a hand pick during the plan wait: no attempt, and the page is left alone", async () => {
@@ -430,6 +449,85 @@ test("armed: a request arriving mid-turn takes over before the drafter's next cl
   assert.equal(req.result, "landed");
   assert.equal(out.yid, "103");
   assert.deepEqual(attempts(log), [["101", "row", 1], ["103", "request", 1]]);
+});
+
+test("a request's attempt is stamped when its click is made, not when it settles (#26)", async () => {
+  const { d, log } = world({ settleMs: 400 });
+  await d.request(ask("103"));
+  const [click] = log.clicks;
+  const attempt = log.events.find((e) => e.type === "draft_attempt");
+  assert.equal(attempt.method, "request");
+  assert.equal(attempt.t, click[0]);
+});
+
+/** An armed turn whose clicks never land, with the user's request for 103 coming at 9 s left:
+ * both its clicks are lost (#26). Pick 25 is mine too unless ``single`` (then a keeper's). */
+async function lostRequest({ single = false, ...opts } = {}) {
+  const w = world({ clicksToLand: 99, planMs: 9000, dud: ["103"], ...opts });
+  if (single) w.tracker.configure({ keepers: [{ overall: K + 1 }] });
+  let asked = null;
+  w.at(21000, () => {
+    asked = w.d.request(ask("103", { id: "r7" }));
+  });
+  const out = await w.d.turn(K);
+  return { ...w, out, req: await asked };
+}
+
+test("armed: after a lost request click the backstop queues the requested player first (#26)", async () => {
+  const { out, req, log, tracker } = await lostRequest({ single: true });
+  assert.equal(req.result, "failed");
+  assert.equal(req.attempts, 2);
+  assert.deepEqual(log.queued, ["103"], "the requested player alone, then");
+  assert.deepEqual(log.queued2, ["101"], "the plan's top second");
+  assert.equal(out.yid, "103");
+  assert.equal(out.how, "manual", "the user's pick, as a request that lands");
+  assert.equal(tracker.how(K, { autodraft: true }), "manual");
+  const queued = log.events.filter((e) => e.method === "queue").map((e) => [e.overall, e.yid, e.attempt]);
+  assert.deepEqual(queued, [[K, "103", 1], [K, "101", 2]], "the attempt log names both");
+  const note = log.events.find((e) => e.what === "backstop landed the request");
+  assert.deepEqual([note.overall, note.yid, note.request_id], [K, "103", "r7"]);
+  assert.deepEqual(log.autodraft, [true, false]);
+});
+
+test("armed, back to back: the requested player for this pick, the plan's top for the next (#26)", async () => {
+  const { out, log } = await lostRequest({ backToBack: true, plan: { second_pick: K + 1, second: rows(["104"]) } });
+  assert.equal(out.yid, "103");
+  assert.deepEqual(log.queued, ["103"]);
+  assert.deepEqual(log.queued2, ["101"], "no third entry: Yahoo's next autopick takes 101");
+  const queued = log.events.filter((e) => e.method === "queue").map((e) => [e.overall, e.yid, e.attempt]);
+  assert.deepEqual(queued, [[K, "103", 1], [K, "101", 2], [K + 1, "101", 1]]);
+});
+
+test("armed: a requested player the queue cannot take leaves the usual backstop, with a note (#26)", async () => {
+  const { out, log } = await lostRequest({ backToBack: true, unqueueable: ["103"] });
+  const note = log.events.find((e) => e.what === "queue backstop: requested player failed");
+  assert.deepEqual([note.overall, note.yid, note.msg], [K, "103", "no row"]);
+  assert.deepEqual(log.queued, ["101"]);
+  assert.deepEqual(log.queued2, ["102"], "the plan's player for my next pick, as before");
+  assert.equal(out.yid, "101");
+  assert.equal(out.how, "autopick");
+  assert.equal(log.events.some((e) => e.what === "backstop landed the request"), false);
+});
+
+test("armed: a star that drafts the requested player ends the backstop there (#26)", async () => {
+  const { out, log } = await lostRequest({ starDrafts: true });
+  assert.equal(out.yid, "103");
+  assert.equal(out.how, "manual");
+  assert.deepEqual(log.queued, ["103"]);
+  assert.deepEqual(log.queued2, [], "nothing behind a pick that is in");
+  assert.deepEqual(log.autodraft, [], "and no Autodraft switch");
+  const queued = log.events.filter((e) => e.method === "queue").map((e) => [e.overall, e.yid, e.attempt]);
+  assert.deepEqual(queued, [[K, "103", 1]]);
+  assert.ok(log.events.find((e) => e.what === "backstop landed the request"));
+  assert.equal(log.events.some((e) => /queue backstop/.test(e.what || "")), false, "no failure note");
+});
+
+test("a request that failed on an earlier pick leaves this pick's backstop alone (#26)", async () => {
+  const { d, log } = world({ clicksToLand: 99, planMs: 9000 });
+  d.failed = { k: K - 12, c: ask("103", { overall: K - 12 }), id: "r1" };
+  const out = await d.turn(K);
+  assert.deepEqual(log.queued, ["101"]);
+  assert.equal(out.yid, "101");
 });
 
 test("a hand pick in Yahoo stops a pending request", async () => {

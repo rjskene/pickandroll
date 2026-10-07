@@ -560,12 +560,15 @@ def test_scorecard_labels_every_failure():
     assert "**Compliance 1/7**" in text and "| G5 autopick flips | 1 | 0 | **FAIL** |" in text
 
 
+@pytest.mark.parametrize("posted", [True, False])
 @pytest.mark.parametrize("entered_first", [True, False])
-def test_scorecard_a_pick_learned_from_history_is_absent(entered_first):
+def test_scorecard_a_pick_learned_from_history_is_absent(entered_first, posted):
     """Mock 3: attached armed minutes early, the tab entered at pick 19 and learned picks 1-18
     from Yahoo's history frame (P| on connect), stamped at the tab's receipt. Pick 1, ours,
     was Yahoo's autopick of a listed candidate: pickandroll was not there, so it is absent, not
-    a fallback, whichever came first, the tab's "entered" note or the frame."""
+    a fallback, whichever came first, the tab's "entered" note or the frame. A tab since #26
+    posts its pick_landed how "history" (``posted``): the row says so, and D2 and D4 leave it
+    out, its time being the frame's receipt."""
     t_entry, t_frame = (100, 101) if entered_first else (101, 100)
     events = [
         _ev("attach", 0, slot=1, num_teams=12, rounds=13, draft_id="m3", mode="autopilot"),
@@ -578,6 +581,8 @@ def test_scorecard_a_pick_learned_from_history_is_absent(entered_first):
         yid = "b" if k == 1 else f"o{k}"
         events.append(_ev("room_pick", t_frame, overall=k, yid=yid, src="history"))
         events.append(_ev("session_pick", t_frame, overall=k, yid=yid))
+    if posted:
+        events.append(_ev("pick_landed", t_frame, overall=1, yid="b", how="history"))
     # A live turn after the tab entered keeps its label.
     for k in range(19, 24):
         events.append(_ev("room_pick", 102 + k - 19, overall=k, yid=f"o{k}", src="socket"))
@@ -591,6 +596,10 @@ def test_scorecard_a_pick_learned_from_history_is_absent(entered_first):
     card = analyze(events)
     assert {r["overall"]: r["label"] for r in card["rows"]} == {1: "absent", 24: "compliant"}
     assert card["guardrails"]["G6"]["entry_from"] == "client"
+    row = card["rows"][0]
+    assert row["how"] == ("history" if posted else None) and row["turn_to_land_ms"] is None
+    d = card["diagnostics"]
+    assert d["D2"]["n"] == 1 and d["D4"] == {"mean": 1.0, "max": 1}
 
 
 @pytest.mark.parametrize(("method", "respected"), [("request", 1), ("row", 0)])
