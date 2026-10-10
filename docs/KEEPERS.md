@@ -289,6 +289,17 @@ pace (other teams p50 1.0 s): D1 hits 3 / pending 2 / misses 8, p50 2.47 s, max 
 solve with six branches running, 0.27 s inside the 11 s goal); D3 priced p50 2.09 s, p95 10.43 s. Scorecard
 posted on #47.
 
+Mock 9 (2026-10-10, Yahoo mock room 2690281, seat 4, armed with act_at_s 15, main 9b53b2b on the no-reload
+entry, extension 0.2.0): the first live room with entries in the keeper table, my own round-7 and round-13
+entries (Yahoo mocks have no keepers, so both players stayed on the board for the bots). Attach listed slots 76
+and 148 as mine and `my_picks` started at 11. Invariant 7 held both times: at pick 24 another seat drafted the
+round-7 entry and at pick 128 the round-13 entry; each time the room walk logged the pick to that seat with
+`keepers_dropped` (lag 45 ms, no stall, no stand-in), the slot returned to `my_picks`, the plan re-solved, and the
+extension's next status poll made the slot a normal armed turn, drafted by row on the first attempt at the act
+time (76 at 14.9 s, 148 at 15.0 s). Two `conflict` events of kind `keeper` (designed; session conflicts 0).
+Scorecard 12/12 plus 1 manual (the round-4 request), G1-G7 green (G2 max 160 ms, G6 57.1 s, D2 max 15.1 s).
+Posted on #47. Follow-up: the scorecard should split `conflicts` by kind.
+
 
 ## 6. Order of work
 
