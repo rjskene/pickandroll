@@ -46,6 +46,17 @@ def test_create_session_and_board(client):
     board = client.get(f"/sessions/{s['id']}/board?limit=5").json()
     assert len(board["players"]) == 5
     assert board["players"][0]["total"] >= board["players"][1]["total"]
+    assert all(p["taken_by"] is None for p in board["players"])
+
+    # A drafted player stays on the board, marked with who took him and with which pick.
+    first, second = board["players"][0]["player_id"], board["players"][1]["player_id"]
+    r = client.post(f"/sessions/{s['id']}/picks", json={"team": "Team 1", "player_id": second})
+    assert r.status_code == 201
+    after = client.get(f"/sessions/{s['id']}/board?limit=5").json()["players"]
+    rows = {p["player_id"]: p for p in after}
+    assert rows[second]["taken"] and rows[second]["taken_by"] == {"team": "Team 1", "overall": 1}
+    assert not rows[first]["taken"] and rows[first]["taken_by"] is None
+    assert [p["player_id"] for p in board["players"]] == list(rows), "drafted rows keep their place"
 
 
 def test_adp_file_listing(tmp_path):

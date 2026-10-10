@@ -89,6 +89,13 @@ def test_keepers_on_create_show_in_summary_board_and_picks(client, store):
         d: None,
     }
     assert all(board[pid]["taken"] for pid in (a, b, c)) and not board[d]["taken"]
+    # A keeper is taken by his team with his slot's pick, logged (pick 1) or still to come.
+    assert {pid: board[pid]["taken_by"] for pid in (a, b, c, d)} == {
+        a: {"team": "me", "overall": 7},
+        b: {"team": "Team 1", "overall": 1},
+        c: {"team": "Team 3", "overall": 3},
+        d: None,
+    }
 
     # My pick 2 logs team 3's keeper at pick 3 behind it; both are published.
     row = pick(client, sid, "me", d)
@@ -106,6 +113,9 @@ def test_keepers_on_create_show_in_summary_board_and_picks(client, store):
     s = client.get(f"/sessions/{sid}").json()
     assert s["next_overall"] == 4 and s["my_roster"] == [d, a]
     assert [k["applied"] for k in s["keepers"]] == [True, True, False]
+    board = {p["player_id"]: p for p in client.get(f"/sessions/{sid}/board").json()["players"]}
+    assert board[d]["taken_by"] == {"team": "me", "overall": 2}
+    assert board[c]["taken_by"] == {"team": "Team 3", "overall": 3}
 
 
 def test_undo_takes_back_the_real_pick_and_the_keepers_behind_it(client, store):

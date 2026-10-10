@@ -90,7 +90,7 @@ export default function Board() {
   const s = d.session;
   const board = useQuery({ queryKey: ["board", s.id], queryFn: () => api.board(s.id) });
   const [search, setSearch] = useState("");
-  // Keepers are taken, so "hide drafted" hides them too; this shows them anyway.
+  // Keepers are taken, so "available only" leaves them out too; this lists them anyway.
   const [showKeepers, setShowKeepers] = useState(false);
   const wide = !d.drawerOpen;
   // No highlight while a solve runs or the answer is stale: the name may just have been drafted.
@@ -110,10 +110,10 @@ export default function Board() {
   const rows = useMemo(() => {
     const needle = search.trim().toLowerCase();
     const shown = (board.data?.players ?? []).filter(
-      (p) => (!d.hideTaken || !p.taken || (showKeepers && p.keeper)) && (!needle || p.name.toLowerCase().includes(needle)),
+      (p) => (!d.availableOnly || !p.taken || (showKeepers && p.keeper)) && (!needle || p.name.toLowerCase().includes(needle)),
     );
     return sortRows(shown, sort);
-  }, [board.data, search, d.hideTaken, showKeepers, sort]);
+  }, [board.data, search, d.availableOnly, showKeepers, sort]);
   const { setVisibleRows } = d;
   useEffect(() => {
     setVisibleRows(rows.filter((p) => !p.taken).map((p) => p.player_id));
@@ -123,6 +123,7 @@ export default function Board() {
   }, [d.highlight]);
 
   const teams = Array.from({ length: s.num_teams }, (_, i) => teamLabel(s, i + 1));
+  const who = (team: string) => (team === s.my_team ? "me" : team);
   const draftFirstMatch = () => {
     const first = rows.find((p) => !p.taken);
     if (first && search.trim()) d.draftPlayer(first.player_id, { via: "key" });
@@ -163,19 +164,19 @@ export default function Board() {
           onChange={(e) => setSearch(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && draftFirstMatch()}
         />
-        <label className="inline muted" title="Hide drafted players (h)">
+        <label className="inline muted" title="List only the players still available (h); otherwise drafted players stay listed, struck through, with who took them">
           <input
             type="checkbox"
-            checked={d.hideTaken}
+            checked={d.availableOnly}
             onChange={(e) => {
-              d.setHideTaken(e.target.checked);
+              d.setAvailableOnly(e.target.checked);
               e.currentTarget.blur();
             }}
           />{" "}
-          hide drafted
+          available only
         </label>
-        {d.hideTaken && s.keepers.length > 0 && (
-          <label className="inline muted" title="Show the keepers while drafted players are hidden">
+        {d.availableOnly && s.keepers.length > 0 && (
+          <label className="inline muted" title="List the keepers too while only available players are listed">
             <input
               type="checkbox"
               checked={showKeepers}
@@ -284,7 +285,14 @@ export default function Board() {
                       </span>
                     )}
                     {p.name} <span className="dim">{p.team}</span>
-                    {p.keeper && <span className="dim"> · {p.keeper}</span>}
+                    {p.taken_by ? (
+                      <span className="dim by" title={`${p.keeper ? "kept" : "drafted"} by ${who(p.taken_by.team)} at pick ${p.taken_by.overall}`}>
+                        {" "}
+                        · {who(p.taken_by.team)} #{p.taken_by.overall}
+                      </span>
+                    ) : (
+                      p.keeper && <span className="dim"> · {p.keeper}</span>
+                    )}
                   </td>
                   <td>{p.positions || <span className="dim">?</span>}</td>
                   <td className="num">{Math.round(p.games)}</td>
