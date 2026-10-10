@@ -129,6 +129,8 @@ export interface BoardPlayer {
   z: Record<Cat, number>;
   total: number;
   taken: boolean;
+  /** The team that took him and its pick (a keeper's slot for a keeper); null while he is available. */
+  taken_by: { team: string; overall: number } | null;
   /** The team keeping him, if he is a keeper. */
   keeper: string | null;
 }

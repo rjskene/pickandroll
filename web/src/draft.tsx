@@ -92,6 +92,17 @@ function loadDrawer(): DrawerState {
   return DEFAULT_DRAWER;
 }
 
+/** The board's "available only" filter, for every session: drafted players are listed by default. */
+const AVAILABLE_ONLY_KEY = "pickandroll.board.availableOnly";
+
+function loadAvailableOnly(): boolean {
+  try {
+    return JSON.parse(localStorage.getItem(AVAILABLE_ONLY_KEY) ?? "false") === true;
+  } catch {
+    return false; /* blocked storage or a bad value: everyone listed */
+  }
+}
+
 export interface Settings {
   /** Candidates priced exactly. */
   n: number;
@@ -172,9 +183,10 @@ export interface DraftApi {
   mock: boolean;
   setMock: (v: boolean) => void;
   // board
-  hideTaken: boolean;
-  setHideTaken: (v: boolean) => void;
-  toggleHideTaken: () => void;
+  /** The board lists only the players still available (h); off by default, remembered. */
+  availableOnly: boolean;
+  setAvailableOnly: (v: boolean) => void;
+  toggleAvailableOnly: () => void;
   highlight: string | null;
   setHighlight: (id: string | null) => void;
   moveHighlight: (delta: number) => void;
@@ -436,8 +448,15 @@ export function DraftProvider({ session, solveEvents, survival, live, room, room
   }, [simMutation.error, draftMutation.error]);
 
   // ---------------------------------------------------------------- board
-  const [hideTaken, setHideTaken] = useState(true);
-  const toggleHideTaken = useCallback(() => setHideTaken((v) => !v), []);
+  const [availableOnly, setAvailableOnly] = useState<boolean>(loadAvailableOnly);
+  useEffect(() => {
+    try {
+      localStorage.setItem(AVAILABLE_ONLY_KEY, JSON.stringify(availableOnly));
+    } catch {
+      /* storage unavailable */
+    }
+  }, [availableOnly]);
+  const toggleAvailableOnly = useCallback(() => setAvailableOnly((v) => !v), []);
   const [highlight, setHighlight] = useState<string | null>(null);
   const visibleRows = useRef<string[]>([]);
   const setVisibleRows = useCallback((ids: string[]) => {
@@ -511,9 +530,9 @@ export function DraftProvider({ session, solveEvents, survival, live, room, room
     clearKeeperRequest,
     mock,
     setMock,
-    hideTaken,
-    setHideTaken,
-    toggleHideTaken,
+    availableOnly,
+    setAvailableOnly,
+    toggleAvailableOnly,
     highlight,
     setHighlight,
     moveHighlight,
@@ -623,7 +642,7 @@ export function Hotkeys() {
           d.undo();
           break;
         case "h":
-          d.toggleHideTaken();
+          d.toggleAvailableOnly();
           break;
         case "r":
           d.solve();

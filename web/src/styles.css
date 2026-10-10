@@ -95,6 +95,8 @@ th { position: sticky; top: 0; background: var(--panel); font-family: var(--disp
 td.num, th.num { text-align: right; }
 td.strong { font-weight: 600; color: #ffffff; }
 tr.taken td { color: var(--dim); text-decoration: line-through; }
+/* Who took a drafted player: left unstruck so it reads (an inline block stops the line). */
+tr.taken td .by { display: inline-block; text-decoration: none; white-space: pre; }
 tr.reco td { background-image: linear-gradient(rgba(245, 185, 66, 0.08), rgba(245, 185, 66, 0.08)); }
 tr.hl td { background-image: linear-gradient(rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0.05)); }
 tr.hl td:first-child { box-shadow: inset 3px 0 0 var(--accent); }

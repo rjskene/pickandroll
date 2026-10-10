@@ -722,7 +722,14 @@ def create_app(
         df = state.projections.df
         with session.lock:
             taken = state.taken
-            kept = {k["player_id"]: k["team"] for k in keeper_rows(state)}
+            keepers = keeper_rows(state)
+            kept = {k["player_id"]: k["team"] for k in keepers}
+            # Who took each drafted player and with which pick; a keeper's slot is his team's
+            # pick, logged or still to come, under the same label as ``keeper``.
+            taken_by = {p.player_id: {"team": p.team, "overall": p.overall} for p in state.picks}
+            taken_by.update(
+                {k["player_id"]: {"team": k["team"], "overall": k["overall"]} for k in keepers}
+            )
             adp = state.effective_adp()
             ahead = state.keepers_ahead(adp)
             adp_eff = adp - ahead
@@ -763,6 +770,7 @@ def create_app(
                     },
                     "total": round(float(z.at[pid, "total"]), 3),
                     "taken": pid in taken,
+                    "taken_by": taken_by.get(pid),
                     "keeper": kept.get(pid),
                 }
             )

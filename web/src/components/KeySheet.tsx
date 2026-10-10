@@ -25,7 +25,7 @@ const GROUPS: { title: string; rows: [string[], string][] }[] = [
       [["Enter"], "draft the highlighted player to the team on the clock"],
       [["d"], "draft the recommended pick"],
       [["z"], "undo the last pick"],
-      [["h"], "hide or show drafted players"],
+      [["h"], "available players only, or everyone (drafted players marked)"],
     ],
   },
   {
