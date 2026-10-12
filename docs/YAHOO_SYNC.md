@@ -56,6 +56,16 @@ mocks never showed, none used: `A|` at entry (autopick flags per team id), `w|72
 `O|draft-labels|<overall>|<json>` (about 1.5 kB, on the seat's own turns only), and `C|` counting down to the
 draft from entry every 6 s.
 
+What that rehearsal measured (mirror only, nobody drafted the seat, extension 0.2.0): sync held, 130 room picks from
+the socket, contiguous, 130 session picks all `new`, lag p50 41 ms, p95 54 ms, max 111 ms, none over 2 s, no
+conflict, stand-in, repair or replace, 130 `turn_start`s at 60 s, 78 heartbeats with the Worker. The room's team
+count was not inferable from the frames (`turn_start` never carried `teams`): the attach's count carried it. Entry
+mechanics: the order is drawn about 30 minutes before the start and shown on the league's draft-results page; the
+league page's "Enter live league draft" button (`enterdraft` → `draftclient`) opens the room, there is no lobby
+Join; the clock was 60 s. Yahoo's autopick mode, once on, took 10-11 s per pick for the idle seat and for a team
+that had it on before the draft. Room log `data/fidelity/222017.jsonl`, frame dump
+`data/fidelity/real_222017_2026-10-11/frames.txt`, both local.
+
 ## 1. Primary metric: compliance
 
 For each of my seat's 13 picks k in a Yahoo draft:
