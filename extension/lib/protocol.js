@@ -11,8 +11,12 @@
 //   C|clock                           the clock, seconds left
 //   X|n, then 5|team                  Yahoo is about to make the pick for that team itself
 //                                     (expiry, or the seat is on Autodraft)
-//   R|...                             the draft order: one entry per overall pick, read as the
-//                                     team id on it (checked before use: orderSeats)
+//   R|team|team|...|                  the draft order: the team id on each overall pick, in snake
+//                                     order, ~100 ms after entry (league 222017: 130 entries);
+//                                     checked before use (orderSeats)
+// Seen in a league room and not used: A| (autopick flags per team id) and w|7200|30 at entry,
+// H|S|60|0|0|<state> (0 before, 1 during, 2 after the draft), J| and L| (presence),
+// O|draft-labels|<overall>|<json> on my own turns, and C| counting down to the draft every 6 s.
 // Outgoing, the client's hello is 8|<league>|<team>|<user agent>|...; only the team is kept.
 (function (root, factory) {
   const api = factory();

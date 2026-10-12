@@ -384,6 +384,8 @@ test("league room with no title and no R|: the seat is found at my own round-1 t
 
 test("league room: a valid R| places every team before pick 1", () => {
   const r = leagueRoom(10);
+  // The form league 222017 sent, 106 ms after entry (the drone's capture).
+  assert.ok(orderFrame(LEAGUE).startsWith("R|10|2|9|5|8|4|1|7|6|3|3|6|7|1|4|8|5|9|2|10|10|2|"));
   const out = r.ingest(orderFrame(LEAGUE), T0);
   assert.equal(out.kind, "order");
   assert.equal(out.seat, 1);

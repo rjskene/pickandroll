@@ -34,7 +34,8 @@ position only in mock rooms, whose lobby numbers teams by seat. In a league the 
 draft position is learned from, in order of arrival,
 1. the tab title "You pick 1st | Live NBA Draft", taken only before the first pick (until then a seat, a next
    overall and a count of picks to go all read the same; the title is "YOUR TURN, DRAFT NOW" on the turn);
-2. the `R|` frame at connect, read as the team id on each overall pick, used only when it checks out (all
+2. the `R|` frame at connect: the team id on each overall pick in snake order (league 222017: 130 entries,
+   `R|10|2|9|5|8|4|1|7|6|3|3|6|7|…`, 106 ms after the first frame), used only when it checks out (all
    integers, teams × rounds entries with teams in 2..20, each team once in round 1 and no other team later);
 3. round 1: a frame that puts team T on overall k ≤ teams, T on no earlier overall, places T at k, in time for my
    own first turn at the latest.
@@ -49,7 +50,11 @@ panel will not attach ("seat not known yet, waiting for the draft order"). Also 
 autopicked the idle seat's pick 1 at exactly 60.0 s with no `X|` or `5|` frame first; at later expiries it sent
 `X|29` then `5|<team id>`; after the second missed turn it put the seat into autopick mode ("You have been put
 into autopick mode due to inactivity"), and its next pick for the seat took 11 s, not the instant pick of a
-mock room. The pick rows have an enabled "Draft" button in cell 0, as in mocks.
+mock room. The pick rows have an enabled "Draft" button in cell 0, as in mocks. Frames a league room sends that
+mocks never showed, none used: `A|` at entry (autopick flags per team id), `w|7200|30` at entry,
+`H|S|60|0|0|<state>` (0 before, 1 during, 2 after the draft), `J|` and `L|` presence frames,
+`O|draft-labels|<overall>|<json>` (about 1.5 kB, on the seat's own turns only), and `C|` counting down to the
+draft from entry every 6 s.
 
 ## 1. Primary metric: compliance
 
