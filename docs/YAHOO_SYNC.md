@@ -42,7 +42,9 @@ draft position is learned from, in order of arrival,
 Every frame's team id is turned into its position before anything else reads it, so turns, owners, the team
 count and the picks posted to the API are all by position (a team not placed yet goes as slot null and the API
 takes the snake owner). A round-1 frame overrides the title or `R|`; otherwise the first answer stands, and
-every disagreement is a `seat conflict` note. Until my position is known the tab takes no turn, and the side
+every disagreement is a `seat conflict` note. Round 1 is read against the tracker's team count when the frame
+comes (12 until the attach), so a larger room attached after round 1 places positions 13 and up only from `R|`
+or a reconnect's `P|`. Until my position is known the tab takes no turn, and the side
 panel will not attach ("seat not known yet, waiting for the draft order"). Also seen in that room: Yahoo
 autopicked the idle seat's pick 1 at exactly 60.0 s with no `X|` or `5|` frame first; at later expiries it sent
 `X|29` then `5|<team id>`; after the second missed turn it put the seat into autopick mode ("You have been put
