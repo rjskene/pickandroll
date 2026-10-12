@@ -170,7 +170,8 @@ test("the room's team count comes from the attached room", () => {
   assert.deepEqual(r.mine.slice(0, 2), [1, 20]);
   assert.equal(r.ingest("R|a|b|c|", T0).kind, "order");
   assert.equal(r.numTeams, 10);
-  assert.equal(r.orderLen, 3, "the R| frame's length is kept for a note, not used");
+  assert.equal(r.orderLen, 3, "the R| frame's length is kept for a note");
+  assert.equal(r.order.error, "3 entries for 13 rounds", "and it does not check out: not used");
   assert.equal(r.snapshot().order_len, 3);
 });
 
@@ -290,4 +291,185 @@ test("a pick the room never sent counts as known once the API has synced past it
   assert.equal(r.contiguous(), 23);
   assert.equal(r.nextMine(), r.contiguous() + 1, "the title guard's test holds on my next pick");
   assert.deepEqual(r.unsent(), [], "nothing to resend: the gap has no pick to send");
+});
+
+// ---------------------------------------------------------------- league rooms: Yahoo team ids
+// In a league room the draft path and every frame name a team by its Yahoo team id, which the
+// mock lobby makes equal to the seat but a league does not. League 222017 (10 teams, 13 rounds,
+// 2026-10-11): the user drew position 1 as team 10. Position -> team id in round 1:
+const LEAGUE = [null, 10, 2, 9, 5, 8, 4, 1, 7, 6, 3];
+const leagueRoom = (teamId = 10) => {
+  const r = new RoomTracker({ draftId: "222017", teamId });
+  r.configure({ numTeams: 10, rounds: 13 }); // what the attached room says
+  return r;
+};
+/** The R| frame read as the team id on each overall: snake order over ``seats`` (position ->
+ * team id), ``rounds`` rounds. */
+const orderFrame = (seats, rounds = 13) => {
+  const first = seats.slice(1);
+  const out = [];
+  for (let r = 1; r <= rounds; r++) out.push(...(r % 2 ? first : [...first].reverse()));
+  return `R|${out.join("|")}|`;
+};
+const notes = (events, what) => events.filter((e) => e.type === "note" && e.what === what);
+
+test("league room (2026-10-11 frames): the title places team 10 at pick 1, every frame is read by position", () => {
+  const { roomFromPath, titlePosition } = require("../lib/protocol.js");
+  const where = roomFromPath("/draftclient/nba/222017/10");
+  const r = new RoomTracker({ draftId: where.draft_id, teamId: where.team });
+  r.configure({ numTeams: 10, rounds: 13 });
+  assert.equal(r.slot, null, "the path's 10 is the team id: no seat yet");
+  assert.deepEqual(r.mine, []);
+  assert.equal(r.nextMine(), null);
+  assert.equal(r.fromTitle(titlePosition("You pick 1st | Live NBA Draft"), T0 - 60000), true);
+  assert.equal(r.slot, 1);
+  assert.deepEqual(r.mine.slice(0, 3), [1, 20, 21]);
+
+  assert.equal(r.ingest("D|1|10|60", T0).turn, 1, "my first turn");
+  const mine = r.ingest("0|1|5352|10|C|0", T0 + 30000);
+  assert.equal(mine.landed.overall, 1, "pick 1 is mine");
+  r.ingest("D|2|2|60", T0 + 30100);
+  r.ingest("0|2|10094|2|C|0", T0 + 60000);
+  assert.equal(r.ingest("D|3|9|60", T0 + 60100).turn, null);
+  r.ingest("0|7|5185|1|C|0", T0 + 200000); // team 1 on pick 7: position 7
+  assert.equal(r.ingest("D|20|10|60", T0 + 500000).turn, 20, "round 2 comes back to me at 20");
+  r.ingest("X|29", T0 + 530000);
+  r.ingest("5|10", T0 + 530010); // Yahoo picks for team 10: mine
+  const twenty = r.ingest("0|20|6022|10|PG|0", T0 + 560000);
+  assert.equal(r.landedEvent(twenty.landed).how, "expiry");
+  assert.equal(r.ingest("D|21|10|60", T0 + 560100).turn, 21, "and at 21, back to back");
+  assert.equal(r.teamsSeen(), 10, "the snake turns at 20 and 21 on position 1");
+
+  assert.deepEqual(
+    r.unsent().map((p) => [p.overall, p.slot]),
+    [[1, 1], [2, 2], [7, 7], [20, 1]],
+    "the API gets positions: my picks on 1, team 1's pick 7 on 7",
+  );
+  const events = r.takeEvents();
+  const turns = events.filter((e) => e.type === "turn_start");
+  assert.deepEqual(
+    turns.map((e) => [e.overall, e.slot, e.team]),
+    [[1, 1, 10], [2, 2, undefined], [3, 3, 9], [20, 1, 10], [21, 1, 10]],
+    "turn_start says the position, and Yahoo's team id when it differs",
+  );
+  assert.deepEqual(
+    notes(events, "seat").map((e) => [e.team, e.slot, e.src]),
+    [[10, 1, "title"]],
+  );
+  assert.deepEqual(notes(events, "seat conflict"), [], "round 1 agrees with the title");
+  assert.equal(r.snapshot().team_id, 10);
+  assert.equal(r.snapshot().seat_src, "title");
+});
+
+test("league room with no title and no R|: the seat is found at my own round-1 turn", () => {
+  const r = leagueRoom(5); // position 4
+  for (let k = 1; k <= 3; k++) {
+    assert.equal(r.ingest(`D|${k}|${LEAGUE[k]}|60`, T0 + k).turn, null);
+    r.ingest(`0|${k}|${5000 + k}|${LEAGUE[k]}|C|0`, T0 + k + 1);
+    assert.equal(r.slot, null);
+    assert.equal(r.myTurnNow(), null);
+  }
+  r.ingest("5|5", T0 + 9); // nothing to say while the seat is unknown, and no error
+  assert.equal(r.yahooMade.size, 0);
+  const out = r.ingest("D|4|5|60", T0 + 10);
+  assert.equal(out.seat, 4);
+  assert.equal(out.turn, 4, "just in time");
+  assert.equal(r.myTurnNow(), 4);
+  assert.deepEqual(r.mine.slice(0, 3), [4, 17, 24]);
+  assert.deepEqual(
+    notes(r.takeEvents(), "seat").map((e) => [e.slot, e.src]),
+    [[4, "frame"]],
+  );
+});
+
+test("league room: a valid R| places every team before pick 1", () => {
+  const r = leagueRoom(10);
+  const out = r.ingest(orderFrame(LEAGUE), T0);
+  assert.equal(out.kind, "order");
+  assert.equal(out.seat, 1);
+  assert.equal(r.slot, 1);
+  assert.deepEqual(r.order, { entries: 130, teams: 10 });
+  for (let p = 1; p <= 10; p++) assert.equal(r.seatOf(LEAGUE[p]), p);
+  assert.equal(r.ingest("D|1|10|60", T0 + 10).turn, 1);
+  r.fromTitle(1, T0 + 20); // agrees
+  const events = r.takeEvents();
+  assert.deepEqual(notes(events, "seat").map((e) => e.src), ["order"]);
+  assert.deepEqual(notes(events, "seat conflict"), []);
+});
+
+test("league room: an R| that does not check out is ignored, and round 1 places the seat", () => {
+  for (const [frame, error] of [
+    ["R|a|b|c|", "3 entries for 13 rounds"],
+    [`R|${Array(130).fill("x").join("|")}|`, "not all integers"],
+    [orderFrame([null, 10, 2, 9, 5, 8, 4, 1, 7, 6, 10]), "the first round repeats a team"],
+    [orderFrame(LEAGUE).replace(/\|3\|$/, "|99|"), "a team outside the first round"],
+    [orderFrame(LEAGUE).replace(/\|3\|$/, "|"), "129 entries for 13 rounds"],
+  ]) {
+    const r = leagueRoom(10);
+    r.ingest(frame, T0);
+    assert.equal(r.order.error, error, frame.slice(0, 30));
+    assert.equal(r.slot, null);
+    assert.equal(r.seats.size, 0);
+    assert.equal(r.ingest("D|1|10|60", T0 + 10).turn, 1, "round 1 still finds it");
+  }
+});
+
+test("league room: a round-1 frame overrides the title; the title after pick 1 is only noted", () => {
+  const r = leagueRoom(10);
+  r.fromTitle(2, T0); // a wrong reading
+  assert.equal(r.slot, 2);
+  const out = r.ingest("D|1|10|60", T0 + 10);
+  assert.equal(out.seat, 1);
+  assert.equal(out.turn, 1);
+  const [conflict] = notes(r.takeEvents(), "seat conflict");
+  assert.deepEqual(
+    [conflict.team, conflict.position, conflict.src, conflict.kept, conflict.had],
+    [10, 1, "frame", "new", [{ team: 10, position: 2, src: "title" }]],
+  );
+  r.ingest("0|1|5352|10|C|0", T0 + 20);
+  assert.equal(r.fromTitle(19, T0 + 30), false, "once a pick is in, the title is not a seat");
+  assert.equal(r.slot, 1);
+  assert.deepEqual(
+    notes(r.takeEvents(), "title seat").map((e) => [e.position, e.slot, e.last]),
+    [[19, 1, 1]],
+  );
+  r.fromTitle(19, T0 + 40);
+  assert.deepEqual(notes(r.takeEvents(), "title seat"), [], "each value once");
+});
+
+test("league room: a team placed late puts its position on the picks already kept", () => {
+  const r = leagueRoom(10);
+  r.ingest("P|1=5352,10,0|2=10094,2,0|", T0); // a reconnect: history, round 1 so far
+  assert.equal(r.slot, 1);
+  r.ingest("0|16|7001|8|C|0", T0 + 10); // team 8 (position 5) before anything placed it
+  assert.equal(r.unsent().find((p) => p.overall === 16).slot, null, "the API falls back to the snake owner");
+  r.ingest(orderFrame(LEAGUE), T0 + 20);
+  assert.equal(r.unsent().find((p) => p.overall === 16).slot, 5, "R| placed team 8 at 5");
+  assert.equal(r.owners.get(16), 5);
+});
+
+test("mock room (team ids = seats): seats learned from the room match a tracker told its seat", () => {
+  const { pickOwner } = require("../lib/protocol.js");
+  const ids = [null, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
+  const frames = [];
+  for (let k = 1; k <= 40; k++) {
+    const s = pickOwner(12, k).slot;
+    frames.push(`D|${k}|${s}|30`, `0|${k}|${5000 + k}|${s}|C|0`);
+  }
+  for (const order of [true, false]) {
+    const told = new RoomTracker({ draftId: "m", slot: 3 });
+    const learned = new RoomTracker({ draftId: "m", teamId: 3 });
+    const outs = [[], []];
+    if (order) for (const r of [told, learned]) r.ingest(orderFrame(ids), T0);
+    frames.forEach((f, i) => {
+      outs[0].push(told.ingest(f, T0 + i).turn);
+      outs[1].push(learned.ingest(f, T0 + i).turn);
+    });
+    assert.deepEqual(outs[1], outs[0], `turns, R| ${order}`);
+    const strip = (es) => es.filter((e) => e.type !== "note");
+    assert.deepEqual(strip(learned.takeEvents()), strip(told.takeEvents()), `events, R| ${order}`);
+    assert.deepEqual(learned.unsent(), told.unsent());
+    assert.equal(learned.teamsSeen(), 12);
+    assert.equal(learned.slot, 3);
+  }
 });

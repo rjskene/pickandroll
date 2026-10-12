@@ -7,6 +7,8 @@ const { Drafter, planWait, BACKSTOP_BY_S } = require("../lib/drafter.js");
 
 const SLOT = 1;
 const K = 24; // my pick: round 2, slot 1
+// A league room numbers teams by Yahoo team id, not by seat: position p is team TEAM_OF[p].
+const TEAM_OF = [null, 7, 3, 12, 1, 9, 5, 11, 2, 10, 4, 8, 6];
 
 /** A virtual clock, a room at pick K on the clock, a scripted draft client and a plan. ``fail``:
  * how many /plan asks fail first (a 502); ``held``: the plan the page fetched ahead for pick K;
@@ -21,7 +23,8 @@ const K = 24; // my pick: round 2, slot 1
  * a row's star drafts its player (the harness's table, and the probe's "drafted");
  * ``scrolledAway``: the list is scrolled past every row until the view is reset (V of mock 7's
  * pick 68); ``rowsAfter``: the table shows no row until that many ms into the turn, nor its
- * Draft buttons, unless Yahoo's Players tab is clicked (``tabFixes``; W). */
+ * Draft buttons, unless Yahoo's Players tab is clicked (``tabFixes``; W); ``league``: the frames
+ * name teams by Yahoo team id (TEAM_OF) and the tab knows only its own (a league room). */
 function world({
   visible = ["101", "102", "103"],
   clicksToLand = 1,
@@ -47,7 +50,9 @@ function world({
   scrolledAway = false,
   rowsAfter = 0,
   tabFixes = false,
+  league = false,
 } = {}) {
+  const id = (pos) => (league ? TEAM_OF[pos] : pos);
   const clock = { t: 1_000_000 };
   const view = { top: !scrolledAway, players: !tabFixes }; // tabFixes: another view is selected
   const shown = () => clock.t >= 1_000_000 + rowsAfter || (tabFixes && view.players);
@@ -63,13 +68,15 @@ function world({
     run();
     await null;
   };
-  const tracker = new RoomTracker({ draftId: "d", slot: SLOT });
-  for (let k = 1; k < K; k++) tracker.ingest(`0|${k}|${900 + k}|${k <= 12 ? k : 25 - k}|X|0`, clock.t - 5000);
-  if (clockFrame) tracker.ingest(`D|${K}|${SLOT}${clockValue === null ? "" : `|${clockValue}`}`, clock.t);
+  const tracker = league
+    ? new RoomTracker({ draftId: "d", teamId: id(SLOT) })
+    : new RoomTracker({ draftId: "d", slot: SLOT });
+  for (let k = 1; k < K; k++) tracker.ingest(`0|${k}|${900 + k}|${id(k <= 12 ? k : 25 - k)}|X|0`, clock.t - 5000);
+  if (clockFrame) tracker.ingest(`D|${K}|${id(SLOT)}${clockValue === null ? "" : `|${clockValue}`}`, clock.t);
   const land = (yid, frames = []) => {
     for (const f of frames) tracker.ingest(f, clock.t);
-    tracker.ingest(`0|${K}|${yid}|${SLOT}|X|0`, clock.t);
-    if (backToBack) tracker.ingest(`D|${K + 1}|${SLOT}|30`, clock.t);
+    tracker.ingest(`0|${K}|${yid}|${id(SLOT)}|X|0`, clock.t);
+    if (backToBack) tracker.ingest(`D|${K + 1}|${id(SLOT)}|30`, clock.t);
   };
   const log = { clicks: [], plans: [], boards: [], events: [], autodraft: [], queued: [], queued2: [], searches: [], cleared: 0, reset: 0, tabs: [] };
   let auto = false;
@@ -115,7 +122,7 @@ function world({
     async setAutodraft(on) {
       log.autodraft.push(on);
       auto = on;
-      if (on) at(autoLandMs, () => !tracker.picks.has(K) && land(log.queued.at(-1), ["X|29", `5|${SLOT}`]));
+      if (on) at(autoLandMs, () => !tracker.picks.has(K) && land(log.queued.at(-1), ["X|29", `5|${id(SLOT)}`]));
       if (switchMs) await sleep(switchMs);
       return on;
     },
@@ -192,6 +199,27 @@ test("the first click lands: one attempt, how row, Autodraft untouched", async (
   assert.deepEqual(log.autodraft, []);
   assert.equal(tracker.how(K), "row");
   assert.equal(await d.turn(K), null); // a turn is taken once
+});
+
+test("a league room (team ids are not seats): my position's turn is drafted by row", async () => {
+  const { d, log, tracker } = world({ league: true });
+  assert.equal(tracker.teamId, 7);
+  assert.equal(tracker.slot, 1, "round 1 put team 7 on pick 1");
+  assert.equal(tracker.myTurnNow(), K);
+  const out = await d.turn(K);
+  assert.equal(out.result, "landed");
+  assert.equal(out.how, "row");
+  assert.deepEqual(attempts(log), [["101", "row", 1]]);
+  assert.equal(tracker.picks.get(K).slot, 1, "the API gets the position, not the team id");
+});
+
+test("a league room: Yahoo's own pick from the backstop's queue (5|team id) is the extension's", async () => {
+  const { d, log, tracker } = world({ league: true, visible: [] });
+  const out = await d.turn(K);
+  assert.equal(log.autodraft[0], true, "the backstop switched Autodraft on");
+  assert.ok(tracker.picks.has(K));
+  assert.ok(tracker.yahooMade.has(K), "5|7 is my team's: Yahoo announced my pick");
+  assert.notEqual(out, null);
 });
 
 test("a pick that lands while the click settles is still the extension's row pick", async () => {

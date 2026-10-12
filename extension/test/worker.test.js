@@ -110,6 +110,17 @@ test("the attach carries the room's own team count once the room has shown it (#
   await unseen;
 });
 
+test("no attach without a seat: a league room's tab waits for the draft order", async () => {
+  const w = loadWorker();
+  for (const slot of [null, undefined, 0]) {
+    const r = await w.send({ op: "attach", draft_id: "222017", slot, session_id: "s", num_teams: 10 });
+    assert.equal(r.ok, false);
+    assert.equal(r.status, 400);
+    assert.equal(r.error, "seat not known yet, waiting for the draft order");
+  }
+  assert.equal(w.fetches.length, 0, "nothing reached the API");
+});
+
 test("an unattached room is reported to the API as seen, an attached one is not (#10)", async () => {
   const w = loadWorker();
   const unattached = w.send({ op: "status", draft_id: "d", slot: 4, room_teams: 12 });

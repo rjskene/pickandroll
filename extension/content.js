@@ -29,7 +29,9 @@
     }
   })();
 
-  const tracker = new PR.RoomTracker({ draftId: where.draft_id, slot: where.slot });
+  // The path names my Yahoo team id; my draft position (tracker.slot) is learned from the
+  // title, the R| frame or round 1, and stays null until then (lib/room.js).
+  const tracker = new PR.RoomTracker({ draftId: where.draft_id, teamId: where.team });
   const S = {
     attached: null, // null until the API answers, then true / false
     api: "unknown", // "ok" | "down"
@@ -45,7 +47,8 @@
     autodraftClickAt: 0,
     autopickMode: false, // Yahoo picks for the seat: the Autodraft switch is on
     autoReason: null, // "autopick" (Yahoo flipped it: G5), "autodraft at entry", "autodraft by hand"
-    helloSlot: null,
+    helloTeam: null, // the team id in the client's hello frame
+    seatMismatch: null, // the attached room's slot when it is not the seat the room shows
     worker: false,
     dead: false,
     error: null,
@@ -121,9 +124,16 @@
 
   // The port tells the service worker this tab holds the seat; when it closes (tab closed or
   // reloaded) the worker posts control: absent. A worker restart also closes it: reconnect.
+  let port = null;
+  const postSeat = () => {
+    try {
+      if (port) port.postMessage({ draft_id: tracker.draftId, slot: tracker.slot });
+    } catch (_) {
+      // a closed port reconnects below
+    }
+  };
   function connect() {
     if (S.dead) return;
-    let port;
     try {
       port = chrome.runtime.connect({ name: "room" });
     } catch (_) {
@@ -131,9 +141,10 @@
       render();
       return;
     }
-    port.postMessage({ draft_id: tracker.draftId, slot: tracker.slot });
+    postSeat();
     port.onDisconnect.addListener(() => {
       void chrome.runtime.lastError;
+      port = null;
       // The worker may have posted control: absent for this port; say again who holds the seat.
       S.control = null;
       sleep(1000).then(() => {
@@ -202,13 +213,15 @@
     }
   }
 
+  // A room attached for another seat than the one the room shows is never drafted from: its
+  // plans are for that other seat (the strip says so until it is attached again).
   function controlState() {
     if (S.autopickMode) return "absent";
-    return S.mode === "autopilot" ? "armed" : "mirror";
+    return S.mode === "autopilot" && S.seatMismatch === null ? "armed" : "mirror";
   }
   // The user armed the room; the seat is drafted by us only while Yahoo's Autodraft is off.
   const userArmed = () => S.attached === true && !S.dead && S.mode === "autopilot";
-  const armed = () => userArmed() && !S.autopickMode;
+  const armed = () => userArmed() && !S.autopickMode && S.seatMismatch === null;
   function reportControl() {
     const state = controlState();
     if (state === S.control) return;
@@ -230,7 +243,7 @@
         wakes.delete(m.id);
         resolve();
       }
-    } else if (m.dir === "hello") S.helloSlot = m.slot;
+    } else if (m.dir === "hello") S.helloTeam = m.slot;
     else if (m.dir === "ready" && !pageReady) {
       pageReady = true;
       S.worker = Boolean(m.worker);
@@ -243,8 +256,41 @@
   // to once a minute after five minutes (harness pick 145, 2026-10-01).
   window.postMessage({ [KEY]: "content", dir: "ping" }, location.origin);
 
+  // The API drafts for the slot it was attached with; the room shows mine. Said once, and on
+  // the strip, when both are known and differ.
+  function checkSeat() {
+    const roomSlot = S.room && Number.isInteger(S.room.slot) ? S.room.slot : null;
+    const mismatch = roomSlot !== null && tracker.slot !== null && roomSlot !== tracker.slot ? roomSlot : null;
+    if (mismatch !== null && S.seatMismatch !== mismatch)
+      emit({ type: "note", what: "seat mismatch", room_slot: mismatch, slot: tracker.slot, team: tracker.teamId });
+    S.seatMismatch = mismatch;
+  }
+  // My draft position became known (or changed): the worker's seat for its "tab closed"
+  // event, the control event the API logs, the strip and the side panel all take it.
+  function seatKnown() {
+    postSeat();
+    if (S.attached === true) {
+      checkSeat();
+      S.control = null;
+      reportControl();
+      refreshPlan();
+    }
+    sendEvents();
+    report();
+    render();
+  }
+  // Yahoo's title says "You pick 1st | Live NBA Draft" before the draft; it is read whenever it
+  // has that form (the tracker takes it as my seat only before the first pick).
+  function readTitle() {
+    const n = PR.titlePosition(document.title);
+    if (n !== null && tracker.fromTitle(n, Date.now())) seatKnown();
+  }
+
+  let orderHead = null;
   function onFrame(text, t) {
+    if (!orderHead && typeof text === "string" && text.startsWith("R|")) orderHead = text.slice(0, 120);
     const out = tracker.ingest(text, t);
+    if (out.seat !== undefined) seatKnown();
     // The pick goes out before this frame's turn asks for its plan, so the API's hold for the
     // turn's board is short; the board contract (drafter.js) keeps it correct either way.
     if (out.picks) flush();
@@ -269,8 +315,10 @@
       drafter.serveOffered();
     }
     if (out.kind === "order" && !S.orderNoted) {
-      S.orderNoted = true; // what Yahoo's R| frame holds is not known yet (#17); its length is the clue
-      emit({ type: "note", what: "draft order", entries: tracker.orderLen });
+      // The R| frame, read as the team id on each overall: its teams when it checks out, or why
+      // it did not (lib/protocol.js orderSeats); a sample of its entries until its form is known.
+      S.orderNoted = true;
+      emit({ type: "note", what: "draft order", entries: tracker.orderLen, ...tracker.order, head: orderHead });
     }
     if (out.kind === "on_deck" || out.kind === "pick" || out.kind === "history") {
       sendEvents();
@@ -330,6 +378,7 @@
         drafter.actAt = Number.isInteger(r.room.act_at_s) ? r.room.act_at_s : null;
         tracker.configure({ numTeams: r.room.num_teams, rounds: r.room.rounds, keepers: r.room.keepers });
         tracker.synced(r.room);
+        checkSeat();
         reportControl();
         // At once, not 15 s on: the web shows CONNECTING until one comes, and the API takes no
         // request. The API has none after its restart too, while this tab still reads attached.
@@ -365,7 +414,7 @@
         last_mine: S.lastMine,
         autodraft: S.autodraft,
         autopick_mode: S.autopickMode,
-        hello_slot: S.helloSlot,
+        hello_team: S.helloTeam,
         error: S.error,
       },
     }).catch(() => {});
@@ -900,11 +949,21 @@
     } else if (S.api === "down") {
       head = `pickandroll: API not reachable${S.base ? " at " + S.base : ""} · room has ${s.last} picks (kept)`;
       tone = "bad";
+    } else if (S.attached === false && s.slot === null) {
+      head =
+        `pickandroll: room ${tracker.draftId} is not attached, and your seat is not known yet ` +
+        `(Yahoo team ${tracker.teamId}): waiting for the draft order · ${s.last} picks so far (kept)`;
+      tone = "warn";
     } else if (S.attached === false) {
       head = `pickandroll: room ${tracker.draftId} is not attached. Attach a session in the side panel · ${s.last} picks so far (kept)`;
       tone = "warn";
     } else if (S.attached === null) {
       head = "pickandroll: connecting…";
+    } else if (S.seatMismatch !== null) {
+      head =
+        `pickandroll · this room puts you at pick ${s.slot} but the session was attached for ` +
+        `${S.seatMismatch}: detach and attach again.`;
+      tone = "bad";
     } else if (S.room && S.room.teams_mismatch) {
       head =
         `pickandroll · MIRROR · this room has ${S.room.teams_mismatch} teams but the session ` +
@@ -925,7 +984,9 @@
     el.style.borderLeftColor = TONES[tone];
 
     let mine = "";
-    if (S.attached === true && s.next_mine !== null) {
+    if (S.attached === true && s.slot === null) {
+      mine = `your seat: not known yet (Yahoo team ${tracker.teamId}), waiting for the draft order`;
+    } else if (S.attached === true && s.next_mine !== null) {
       const away = s.next_mine - s.contiguous - 1;
       mine = s.my_turn !== null ? `YOUR PICK #${s.my_turn}` : `your pick #${s.next_mine} in ${away}`;
       if (S.handPick === s.next_mine) mine += " · by hand";
@@ -970,6 +1031,7 @@
     }
   })();
   every(WATCH_EVERY_MS, async () => {
+    readTitle();
     if (!document.body) return;
     watchYahoo();
     await guard();
@@ -978,6 +1040,7 @@
     if (S.attached === true) beat();
   });
   const onReady = () => {
+    readTitle();
     mountStrip();
     banner.observe(document.body, { childList: true, subtree: true });
   };

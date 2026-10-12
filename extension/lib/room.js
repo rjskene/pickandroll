@@ -9,15 +9,30 @@
 })(typeof globalThis !== "undefined" ? globalThis : this, function (P) {
   "use strict";
 
+  // How far each source of a team's draft position is trusted. A round-1 frame is the room
+  // putting that team on overall k; the title and the R| frame say so before the draft. A
+  // source replaces a different answer only from a weaker one; an equal one keeps the first.
+  const SEAT_TRUST = { title: 1, order: 1, frame: 2, given: 2 };
+
   class RoomTracker {
-    constructor({ draftId, slot, numTeams = 12, rounds = 13 }) {
+    /** ``teamId``: my Yahoo team id (the draft path's last number), which the room's frames
+     * use. ``slot``: my draft position when it is already known (tests); otherwise it comes
+     * from the title, the R| frame or round 1 (seat sources below). */
+    constructor({ draftId, teamId = null, slot = null, numTeams = 12, rounds = 13 }) {
       this.draftId = draftId;
-      this.slot = slot;
+      this.teamId = teamId ?? slot;
       this.numTeams = numTeams;
       this.rounds = rounds;
-      this.picks = new Map(); // overall -> {overall, yid, slot, t, src}
+      // Yahoo team id -> {pos, src}: the draft position the room gives each team, and pos ->
+      // team id. Everything below the frames is positional; a team not placed yet has slot null.
+      this.seats = new Map();
+      this.byPos = new Map();
+      this.firstSeen = new Map(); // team id -> the lowest overall a frame put it on
+      this.titleSeen = new Set(); // "You pick Nth" values noted once the draft is on
+      this.picks = new Map(); // overall -> {overall, yid, team, slot, t, src}
       this.owners = new Map(); // overall -> the slot the room put on it (picks and turns)
       this.orderLen = null; // entries in the room's R| frame (draft order), when one came
+      this.order = null; // what the R| frame gave: {entries, teams} or {entries, error}
       this.sent = 0; // the API has applied every pick through this overall
       this.gap = null; // the API is waiting for this overall
       this.onDeck = null; // {overall, slot, clock, at}
@@ -33,18 +48,112 @@
       this.keepers = new Set();
       this.outbox = [];
       this.frames = 0;
+      if (slot) this.learn(this.teamId, slot, "given", null);
     }
 
-    configure({ slot, numTeams, rounds, keepers } = {}) {
-      if (slot) this.slot = slot;
+    /** My draft position, or null while no source has placed my team. */
+    get slot() {
+      const s = this.seats.get(this.teamId);
+      return s ? s.pos : null;
+    }
+
+    /** Where my position came from: "title" | "order" | "frame" | "given", or null. */
+    get seatSource() {
+      const s = this.seats.get(this.teamId);
+      return s ? s.src : null;
+    }
+
+    /** The draft position of Yahoo team ``team``, or null while it is not known. */
+    seatOf(team) {
+      const s = this.seats.get(team);
+      return s ? s.pos : null;
+    }
+
+    /** Place ``team`` at draft position ``pos`` on the word of ``src``. A different answer
+     * already held (for the team or for the position) is a "seat conflict" note; the new one
+     * replaces it only when ``src`` is trusted more. Returns true when the map changed. */
+    learn(team, pos, src, t) {
+      if (!Number.isInteger(team) || team < 1 || !Number.isInteger(pos) || pos < 1 || pos > 20) return false;
+      const had = this.seats.get(team);
+      if (had && had.pos === pos) return false;
+      const holder = this.byPos.get(pos);
+      const rivals = [];
+      if (had) rivals.push({ team, position: had.pos, src: had.src });
+      if (holder !== undefined && holder !== team)
+        rivals.push({ team: holder, position: pos, src: this.seats.get(holder).src });
+      if (rivals.length) {
+        const wins = rivals.every((r) => SEAT_TRUST[src] > SEAT_TRUST[r.src]);
+        this.outbox.push({ type: "note", t, what: "seat conflict", team, position: pos, src, had: rivals, kept: wins ? "new" : "old" });
+        if (!wins) return false;
+        for (const r of rivals) {
+          this.seats.delete(r.team);
+          this.byPos.delete(r.position);
+        }
+      }
+      const mine = this.slot;
+      this.seats.set(team, { pos, src });
+      this.byPos.set(pos, team);
+      for (const r of rivals) if (r.team !== team) this.place(r.team);
+      this.place(team);
+      if (this.slot !== mine && src !== "given")
+        this.outbox.push({ type: "note", t, what: "seat", team: this.teamId, slot: this.slot, src });
+      return true;
+    }
+
+    /** Put ``team``'s current position on its picks, the pick on the clock and the owners. */
+    place(team) {
+      const pos = this.seatOf(team);
+      for (const p of this.picks.values()) {
+        if (p.team !== team) continue;
+        p.slot = pos;
+        if (pos === null) this.owners.delete(p.overall);
+        else this.own(p.overall, pos);
+      }
+      const d = this.onDeck;
+      if (d && d.team === team) {
+        d.slot = pos;
+        if (pos === null) this.owners.delete(d.overall);
+        else this.own(d.overall, pos);
+      }
+    }
+
+    /** A frame put ``team`` on ``overall``. In round 1 (k <= teams, the team on no earlier
+     * overall) that is the team's draft position: in time for my first turn when nothing
+     * earlier said it. */
+    seen(overall, team, t) {
+      if (!Number.isInteger(overall) || !Number.isInteger(team)) return;
+      const first = this.firstSeen.get(team);
+      if (overall <= this.numTeams && overall >= 1 && (first === undefined || first >= overall))
+        this.learn(team, overall, "frame", t);
+      if (first === undefined || overall < first) this.firstSeen.set(team, overall);
+    }
+
+    /** The tab title's "You pick Nth" (protocol.titlePosition). Before the first pick it can
+     * only mean my seat; once a pick is in, Yahoo may mean the next overall or the picks to
+     * go, so it is noted once per value and not used. Returns true when my seat changed. */
+    fromTitle(n, t) {
+      if (!Number.isInteger(n)) return false;
+      const mine = this.slot;
+      if (!this.picks.size) this.learn(this.teamId, n, "title", t);
+      else if (n !== this.slot && !this.titleSeen.has(n) && this.titleSeen.size < 30) {
+        this.titleSeen.add(n);
+        this.outbox.push({ type: "note", t, what: "title seat", position: n, slot: this.slot, last: this.last() });
+      }
+      return this.slot !== mine;
+    }
+
+    configure({ numTeams, rounds, keepers } = {}) {
       if (numTeams) this.numTeams = numTeams;
       if (rounds) this.rounds = rounds;
       if (Array.isArray(keepers)) this.keepers = new Set(keepers.map((k) => Number(k.overall)));
     }
 
-    /** My draftable picks: my snake picks without my keeper slots. */
+    /** My draftable picks: my snake picks without my keeper slots; none while my seat is not
+     * known. */
     get mine() {
-      return P.snakePicks(this.numTeams, this.slot, this.rounds).filter((k) => !this.keepers.has(k));
+      const slot = this.slot;
+      if (slot === null || slot > this.numTeams) return [];
+      return P.snakePicks(this.numTeams, slot, this.rounds).filter((k) => !this.keepers.has(k));
     }
 
     isKeeper(overall) {
@@ -58,7 +167,8 @@
 
     /** A turn of mine: my slot's pick, not a keeper slot. */
     isMine(overall) {
-      return this.inDraft(overall) && P.pickOwner(this.numTeams, overall).slot === this.slot && !this.isKeeper(overall);
+      const slot = this.slot;
+      return slot !== null && this.inDraft(overall) && P.pickOwner(this.numTeams, overall).slot === slot && !this.isKeeper(overall);
     }
 
     /** Highest overall seen. */
@@ -90,7 +200,9 @@
      * mine on the clock is never my turn: its pick is the keeper. */
     myTurnNow() {
       const d = this.onDeck;
-      return d && d.slot === this.slot && this.isMine(d.overall) && !this.picks.has(d.overall) ? d.overall : null;
+      return d && d.slot !== null && d.slot === this.slot && this.isMine(d.overall) && !this.picks.has(d.overall)
+        ? d.overall
+        : null;
     }
 
     clockLeft(t) {
@@ -133,14 +245,20 @@
       // landed: a pick of mine from a pick frame; history: mine from Yahoo's history frame (#26).
       const out = { kind: m ? m.kind : null, picks: 0, turn: null, landed: null, history: [] };
       if (!m) return out;
+      // Frames name teams by Yahoo team id; each is placed (seatOf) before anything below reads
+      // it, so owners, turns, my picks and the API's picks are all by draft position.
+      const mine = this.slot;
       if (m.kind === "pick") {
-        if (this.add(m.overall, m.yid, m.slot, t, "socket")) {
+        this.seen(m.overall, m.team, t);
+        if (this.add(m.overall, m.yid, m.team, t, "socket")) {
           out.picks = 1;
           out.landed = this.landedRecord(m.overall, t);
         }
       } else if (m.kind === "history") {
-        for (const p of m.picks) {
-          if (!this.add(p.overall, p.yid, p.slot, t, "history")) continue;
+        const picks = [...m.picks].sort((a, b) => a.overall - b.overall);
+        for (const p of picks) this.seen(p.overall, p.team, t);
+        for (const p of picks) {
+          if (!this.add(p.overall, p.yid, p.team, t, "history")) continue;
           out.picks++;
           // Its t is when the frame came, not when the pick was made: no time from the turn.
           const rec = this.landedRecord(p.overall, t);
@@ -148,9 +266,12 @@
         }
       } else if (m.kind === "order") {
         this.orderLen = m.order.length;
+        this.fromOrder(m.order, t);
       } else if (m.kind === "on_deck") {
-        this.own(m.overall, m.slot);
-        this.onDeck = { overall: m.overall, slot: m.slot, clock: m.clock, at: t };
+        this.seen(m.overall, m.team, t);
+        const slot = this.seatOf(m.team);
+        this.own(m.overall, slot);
+        this.onDeck = { overall: m.overall, slot, team: m.team, clock: m.clock, at: t };
         if (m.clock !== null) this.clock = { value: m.clock, at: t };
         if (this.inDraft(m.overall) && !this.turnAt.has(m.overall) && !this.picks.has(m.overall)) {
           this.turnAt.set(m.overall, t);
@@ -158,29 +279,39 @@
             type: "turn_start",
             t,
             overall: m.overall,
-            slot: m.slot,
+            slot,
             clock_s: m.clock,
             teams: this.teamsSeen(), // null until the room shows it
           };
+          if (m.team !== slot) start.team = m.team; // a league room: Yahoo's team id
           // Whether the room puts keeper slots on the clock is to be seen on the night.
           if (this.isKeeper(m.overall)) start.keeper = true;
           this.outbox.push(start);
         }
-        if (m.slot === this.slot && this.isMine(m.overall) && !this.picks.has(m.overall)) out.turn = m.overall;
+        if (slot !== null && slot === this.slot && this.isMine(m.overall) && !this.picks.has(m.overall)) out.turn = m.overall;
       } else if (m.kind === "clock") {
         this.clock = { value: m.clock, at: t };
-      } else if (m.kind === "auto" && m.slot === this.slot) {
+      } else if (m.kind === "auto" && this.slot !== null && this.seatOf(m.team) === this.slot) {
         const d = this.onDeck;
         const k = d && d.slot === this.slot && !this.picks.has(d.overall) ? d.overall : this.nextMine();
         if (k !== null) this.yahooMade.add(k);
       }
+      if (this.slot !== mine) out.seat = this.slot;
       return out;
     }
 
-    add(overall, yid, slot, t, src) {
+    /** The R| frame: every team's position when its entries check out (protocol.orderSeats). */
+    fromOrder(order, t) {
+      const r = P.orderSeats(order, this.rounds);
+      this.order = r.error ? { entries: order.length, error: r.error } : { entries: order.length, teams: r.teams };
+      if (!r.error) for (const [team, pos] of r.seats) this.learn(team, pos, "order", t);
+    }
+
+    add(overall, yid, team, t, src) {
+      const slot = this.seatOf(team);
       this.own(overall, slot);
       if (!this.inDraft(overall) || this.picks.has(overall)) return false; // never sent past the end
-      this.picks.set(overall, { overall, yid: String(yid), slot, t, src });
+      this.picks.set(overall, { overall, yid: String(yid), team, slot, t, src });
       return true;
     }
 
@@ -275,9 +406,12 @@
       return {
         draft_id: this.draftId,
         slot: this.slot,
+        team_id: this.teamId,
+        seat_src: this.seatSource,
         num_teams: this.numTeams,
         room_teams: this.teamsSeen(),
         order_len: this.orderLen,
+        order: this.order,
         rounds: this.rounds,
         keepers: [...this.keepers].sort((a, b) => a - b),
         room_picks: this.picks.size,
