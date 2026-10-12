@@ -26,6 +26,36 @@ yahoo.com without a user gesture (why driver mode existed, and why the extension
 at the waiting-room countdown's zero Yahoo may reload the page and show an "Enter Draft" link instead of
 redirecting into the draft client, and pick 1 goes on the clock about 60 s after zero (mocks 3 and 4).
 
+Seats and Yahoo team ids (league 222017 rehearsal, 2026-10-11). The draft client's path
+(`/draftclient/nba/<draft>/<n>`) and the team field of every frame (`0|overall|yid|team|pos|0`,
+`P|overall=yid,team,0|…`, `D|overall|team|clock`, `5|team`) carry the **Yahoo team id**, which equals the draft
+position only in mock rooms, whose lobby numbers teams by seat. In a league the user drew position 1 as team 10
+(`D|1|10|60`, `0|1|5352|10|C|0`). From 0.3.0 the extension keeps the two apart: the path gives my team id, and my
+draft position is learned from, in order of arrival,
+1. the tab title "You pick 1st | Live NBA Draft", taken only before the first pick (until then a seat, a next
+   overall and a count of picks to go all read the same; the title is "YOUR TURN, DRAFT NOW" on the turn);
+2. the `R|` frame at connect: the team id on each overall pick in snake order (league 222017: 130 entries,
+   `R|10|2|9|5|8|4|1|7|6|3|3|6|7|…`, 106 ms after the first frame), used only when it checks out (all
+   integers, teams × rounds entries with teams in 2..20, each team once in round 1 and no other team later);
+3. round 1: a frame that puts team T on overall k ≤ teams, T on no earlier overall, places T at k, in time for my
+   own first turn at the latest.
+
+Every frame's team id is turned into its position before anything else reads it, so turns, owners, the team
+count and the picks posted to the API are all by position (a team not placed yet goes as slot null and the API
+takes the snake owner). A round-1 frame overrides the title or `R|`; otherwise the first answer stands, and
+every disagreement is a `seat conflict` note. Round 1 is read against the tracker's team count when the frame
+comes (12 until the attach), so a larger room attached after round 1 places positions 13 and up only from `R|`
+or a reconnect's `P|`. Until my position is known the tab takes no turn, and the side
+panel will not attach ("seat not known yet, waiting for the draft order"). Also seen in that room: Yahoo
+autopicked the idle seat's pick 1 at exactly 60.0 s with no `X|` or `5|` frame first; at later expiries it sent
+`X|29` then `5|<team id>`; after the second missed turn it put the seat into autopick mode ("You have been put
+into autopick mode due to inactivity"), and its next pick for the seat took 11 s, not the instant pick of a
+mock room. The pick rows have an enabled "Draft" button in cell 0, as in mocks. Frames a league room sends that
+mocks never showed, none used: `A|` at entry (autopick flags per team id), `w|7200|30` at entry,
+`H|S|60|0|0|<state>` (0 before, 1 during, 2 after the draft), `J|` and `L|` presence frames,
+`O|draft-labels|<overall>|<json>` (about 1.5 kB, on the seat's own turns only), and `C|` counting down to the
+draft from entry every 6 s.
+
 ## 1. Primary metric: compliance
 
 For each of my seat's 13 picks k in a Yahoo draft:
@@ -98,7 +128,12 @@ Posted by the client (`POST /rooms/{draft_id}/events`):
 
 ```
 {"type":"control",      "t":..., "state":"armed|mirror|absent", "slot":s, "reason":"autopick"?, "mode":..., "act_at_s":n|null}
-{"type":"turn_start",   "t":..., "overall":n, "slot":s, "clock_s":30, "teams":T|null}  // T: the room's own team count, once the snake has turned
+{"type":"turn_start",   "t":..., "overall":n, "slot":s|null, "clock_s":30, "teams":T|null, "team":id?}  // T: the room's own team count, once the snake has turned; slot: the draft position (null while that team is not placed); team: Yahoo's team id when it is not the position (a league room, 0.3.0)
+{"type":"note", "what":"seat",          "t":..., "team":id, "slot":p, "src":"title|order|frame"}  // my draft position learned or changed (0.3.0)
+{"type":"note", "what":"seat conflict", "t":..., "team":id, "position":p, "src":"title|order|frame", "had":[{"team":id,"position":p,"src":...}], "kept":"new|old"}  // two sources disagree; a round-1 frame overrides the title or R|
+{"type":"note", "what":"title seat",    "t":..., "position":n, "slot":p, "last":k}  // "You pick Nth" after the first pick, where it disagrees with my seat: noted once per value, not used
+{"type":"note", "what":"seat mismatch", "t":..., "room_slot":s, "slot":p, "team":id}  // the API's room was attached for slot s, the room shows p
+{"type":"note", "what":"draft order",   "t":..., "entries":n, "teams":T?, "error":"..."?, "head":"R|…"}  // the R| frame: its team count when it checks out, else why not; its first 120 characters
 {"type":"draft_attempt","t":..., "overall":n, "yid":id, "method":"row|queue|search|request", "attempt":k, "board":b}  // b = board of the plan the drafter acted on; t = the click's own time, not its settle (#26); request: the user's "Draft in Yahoo" (#10), landing how "manual"
 {"type":"note", "what":"queue_probe", "t":..., "overall":n, "yid":id, "name":..., "board":b, "outcome":"queued|drafted|dropped|no_control|failed", "panel":[...], "control":"...", "panel_found":bool, "controls":[{"cell":i,"pos":j,"tag":"button","labels":"..."}]}  // one per armed draft, §6; a note, not a new type, so no API version drops it
 {"type":"note", "what":"row miss",    "t":..., "overall":n, "yid":id, "name":..., "result":"noRow|noButton|mismatch|notLanded", "via":"scroll|find", "dom":{"rows":n,"first":"...","last":"...","draftable":bool,"search":"...","scroll":[top,height,client],"views":[...],"selects":[...]}}  // one per candidate the armed turn could not take (#52); dom = what Yahoo's page showed, read only
@@ -106,7 +141,7 @@ Posted by the client (`POST /rooms/{draft_id}/events`):
 {"type":"note", "what":"row passes",  "t":..., "overall":n, "passes":n, "tried":n, "resets":n}  // find-only passes over the plan's candidates after the top four, to the backstop line (#52)
 {"type":"pick_landed",  "t":..., "overall":n, "yid":id, "how":"row|queue|manual|expiry|autopick|history", "ms_from_turn":...}  // history: a pick of mine learned from Yahoo's history frame (a late entry or a reconnect), t = the frame's receipt, ms_from_turn null, out of D2 and D4 (#26); the player of a failed request taken from the backstop's queue lands how "manual" (#26)
 {"type":"intervention", "t":..., "who":"master|emissary|drone|user", "what":"..."}
-{"type":"heartbeat",    "t":..., "worker":bool, "ext_version":"0.2.0", ...}  // worker: the Worker timer host is live (G7); ext_version: the extension build (manifest.json), also on the attach record and the "entered" note from 0.2.0, named in the scorecard header (#52; mock 7 ran an older build than main without the log saying so)
+{"type":"heartbeat",    "t":..., "worker":bool, "ext_version":"0.3.0", ...}  // worker: the Worker timer host is live (G7); ext_version: the extension build (manifest.json), also on the attach record and the "entered" note from 0.2.0, named in the scorecard header (#52; mock 7 ran an older build than main without the log saying so)
 {"type":"note", "what":"request", "t":..., "overall":n, "yid":id, "request_id":r, "result":"landed|manual|other|stopped|failed", "attempts":k}  // a "Draft in Yahoo" served (#10); "request failed" (with attempts or msg, and request_id) drops it in the API only when it names the pending request (by request_id; overall and yid from a tab before #22), so a request the user made since, of the same player too, is kept; it hands an armed turn back, and a request that lands ends the armed turn that stood aside
 {"type":"note",         "t":..., "what":"..."}
 ```

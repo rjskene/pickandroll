@@ -24,7 +24,10 @@ Facts from the league's Yahoo archive (`data/yahoo_history/`, local; report in
 - Yahoo's draft results list keeper picks as ordinary picks at those slots. In the draft room the pick
   is recorded for the team when the clock reaches the slot (**to verify on the night: whether the room
   pre-fills keeper picks in the `P|` history on connect, or emits `0|overall|yid|slot` frames as the
-  slots pass; the extension must survive both**).
+  slots pass; the extension must survive both**). **Also to verify on the night:** the frames name teams by
+  Yahoo team id, not by seat (league 222017, 2026-10-11); the extension 0.3.0 turns them into draft
+  positions (`docs/YAHOO_SYNC.md` §0); check that the side panel shows the drawn position as the seat
+  (with the team id beside it) before attaching.
 - Keepers are bargains: pick minus ADP averaged +22 to +58 picks per season. They remove good players
   from the market, so every remaining player's effective ADP moves up by the number of keepers ranked
   ahead of him; in that adjusted space the league drafts to ADP with no bias (|mean| <= 1.6 picks in

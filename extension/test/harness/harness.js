@@ -38,6 +38,13 @@
   // ``hide`` seconds, the table unmounted (the Players tab brings it back at once); ``wg``: the
   // table unmounted for ``hide`` seconds with the Players tab still selected.
   const viewMode = q.get("view") || "";
+  // ``league=1``: a league room (2026-10-11): the path and every frame name a team by its Yahoo
+  // team id (a fixed shuffle of the 12 seats), and the title says "You pick Nth" before the
+  // draft; ``order=1`` also sends the R| frame at connect as the team id on each overall.
+  const league = q.get("league") === "1";
+  const sendOrder = q.get("order") === "1";
+  const TEAM_OF = league ? [null, 7, 3, 12, 1, 9, 5, 11, 2, 10, 4, 8, 6] : [null, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
+  const tid = (seat) => TEAM_OF[seat];
   const hideS = Number(q.get("hide") || 10);
   const draftId = q.get("draft") || `ext-${fixture}-${Date.now().toString(36)}`;
   const API = (q.get("api") || "http://localhost:8000").replace(/\/+$/, "");
@@ -110,7 +117,8 @@
     out.store = store;
 
     // ---- 2. the extension's scripts, on a draft-client path
-    history.replaceState(null, "", `/draftclient/nba/${draftId}/${slot}`);
+    history.replaceState(null, "", `/draftclient/nba/${draftId}/${tid(slot)}`);
+    if (league) document.title = `You pick ${slot}${["th", "st", "nd", "rd"][slot % 10 > 3 || [11, 12, 13].includes(slot % 100) ? 0 : slot % 10]} | Live NBA Draft`;
     await load("/extension/lib/protocol.js");
     await load("/extension/worker.js");
     await load("/extension/page.js");
@@ -122,6 +130,7 @@
       `loaded; draft ${draftId}, seat ${slot}, ${gap > 0 ? `a pick every ${gap} s` : `speed ${speed}`}` +
         (teams !== 12 ? `, attached for ${teams} teams` : "") +
         (viewMode ? `, view ${viewMode}` : "") +
+        (league ? `, league room (team id ${tid(slot)}${sendOrder ? ", R| sent" : ""})` : "") +
         `, extension ${manifest.version}`,
     );
 
@@ -167,7 +176,12 @@
     const times = gap > 0 ? rows.map((_, i) => i * gap * 1000 * speed) : timeline(rows);
     const owner = (k) => globalThis.PickAndRoll.pickOwner(12, k).slot;
     const ws = new window.WebSocket("wss://harness.invalid/draft");
-    ws.send(`8|31822|${slot}|harness`);
+    ws.send(`8|31822|${tid(slot)}|harness`);
+    if (sendOrder) {
+      const order = [];
+      for (let k = 1; k <= rows.length; k++) order.push(tid(owner(k)));
+      ws.emit(`R|${order.join("|")}|`);
+    }
 
     // A stand-in for Yahoo's player table. Every candidate the armed drafter is served gets a
     // row with a Draft button, and so does the player of a "Draft in Yahoo" request (#10) in
@@ -185,7 +199,7 @@
     const ours = {};
     let onClock = null;
     const emitPick = (k, yid) => {
-      ws.emit(`0|${k}|${yid}|${owner(k)}|X|0`);
+      ws.emit(`0|${k}|${yid}|${tid(owner(k))}|X|0`);
       taken.add(String(yid));
       landed.add(k);
       const row = shown.get(String(yid));
@@ -348,7 +362,7 @@
       }
     };
     function putOnClock(k) {
-      ws.emit(`D|${k}|${owner(k)}|30`);
+      ws.emit(`D|${k}|${tid(owner(k))}|30`);
       onClock = { overall: k, slot: owner(k), at: performance.now() };
       if (owner(k) === slot && viewMode === "v") {
         list.scrollTop = list.scrollHeight;
@@ -381,7 +395,7 @@
         while (!landed.has(k) && performance.now() < deadline) await sleep(100);
         if (!landed.has(k)) {
           ws.emit("X|29");
-          ws.emit(`5|${slot}`);
+          ws.emit(`5|${tid(slot)}`);
           ours[k] = resolve(p.yid);
           emitPick(k, ours[k]);
           out.expired++;
@@ -396,7 +410,7 @@
         } else {
           if (who === slot) {
             ws.emit("X|29");
-            ws.emit(`5|${slot}`);
+            ws.emit(`5|${tid(slot)}`);
           }
           emitPick(k, resolve(p.yid));
         }

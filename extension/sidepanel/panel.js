@@ -95,11 +95,13 @@ async function loadSessions() {
 function checkSession() {
   const s = (sessions || []).find((x) => x.id === $("session").value);
   let warn = "";
-  if (s && tab && s.my_position !== tab.slot) warn = `This session drafts from position ${s.my_position}; this seat is ${tab.slot}.`;
+  const unknown = Boolean(tab) && tab.slot == null;
+  if (unknown) warn = `Seat not known yet, waiting for the draft order (Yahoo team ${tab.team_id}).`;
+  else if (s && tab && s.my_position !== tab.slot) warn = `This session drafts from position ${s.my_position}; this seat is ${tab.slot}.`;
   if (s && s.picks_made > 0) warn += ` It already has ${s.picks_made} picks; the room's picks win.`;
   text("session-warn", warn.trim());
   show("session-warn", Boolean(warn));
-  $("attach-btn").disabled = !s;
+  $("attach-btn").disabled = !s || unknown;
 }
 
 function render() {
@@ -108,8 +110,10 @@ function render() {
   show("attach", Boolean(tab) && !room && tab.attached !== true);
   show("attached", Boolean(room));
   if (!tab) return;
+  if (!room) checkSession(); // the seat may have become known since the sessions loaded
 
-  text("room-title", `Room ${tab.draft_id} · seat ${tab.slot}`);
+  const team = tab.team_id != null && tab.team_id !== tab.slot ? ` · Yahoo team ${tab.team_id}` : "";
+  text("room-title", `Room ${tab.draft_id} · seat ${tab.slot ?? "not known yet"}${team}`);
   text("picks", `${tab.last} (${tab.room_picks} seen)`);
   const synced = room ? room.synced_through : tab.sent;
   const behind = Math.max(0, tab.last - synced);
@@ -123,14 +127,16 @@ function render() {
   text("sync", sync);
   $("sync").className = room ? (behind > 2 ? "bad" : behind ? "warn" : "ok") : "warn";
   const d = tab.on_deck;
-  text("clock", d ? `#${d.overall}, seat ${d.slot}` : "-");
+  text("clock", d ? `#${d.overall}, seat ${d.slot ?? "?"}` : "-");
   text(
     "next",
     tab.my_turn != null
       ? `#${tab.my_turn}: your turn`
-      : tab.next_mine != null
-        ? `#${tab.next_mine}, in ${tab.next_mine - tab.contiguous - 1}`
-        : "roster full",
+      : tab.slot == null
+        ? "seat not known yet"
+        : tab.next_mine != null
+          ? `#${tab.next_mine}, in ${tab.next_mine - tab.contiguous - 1}`
+          : "roster full",
   );
   text(
     "autodraft",
@@ -204,6 +210,11 @@ $("session").addEventListener("change", checkSession);
 $("attach-btn").addEventListener("click", async () => {
   const s = (sessions || []).find((x) => x.id === $("session").value);
   if (!s || !tab) return;
+  if (tab.slot == null) {
+    text("attach-error", "seat not known yet, waiting for the draft order");
+    show("attach-error", true);
+    return;
+  }
   $("attach-btn").disabled = true;
   show("attach-error", false);
   try {
