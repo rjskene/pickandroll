@@ -66,6 +66,22 @@ Join; the clock was 60 s. Yahoo's autopick mode, once on, took 10-11 s per pick 
 that had it on before the draft. Room log `data/fidelity/222017.jsonl`, frame dump
 `data/fidelity/real_222017_2026-10-11/frames.txt`, both local.
 
+Second rehearsal (2026-10-12, extension 0.3.0 after #54): two full public 10-team leagues, 212738 (6:30 pm PT) and
+223339 (9:00 pm PT), mirror only by the user's choice. The seat fix held in both. The seat's Yahoo team ids were 7
+and 8 and the drawn positions 1 and 3, so ids and positions differed for every team; the `seat` note came from the
+`R|` frame in both rooms and agreed with the title's "You pick Nth"; all 130 team ids in the `0|` and `D|` frames
+matched `R|`, every room pick's slot equalled its `R|` position, each team ended with 13 picks, the session's
+roster for the seat equalled the Yahoo roster 13/13, and no `seat conflict` or `seat mismatch` note was written.
+Sync: 130/130 in both rooms, lag p50 51 / p95 67 / max 94 ms and p50 44 / p95 79 / max 99 ms, no conflict, repair or
+replace; the team count was inferred from the frames once round 2 began (`turn_start` carried `teams` from pick
+11). In 223339 the socket re-sent its entry burst (`H|S`, `R|`, `A|`, `J|`, `P|`, `w|`) about 17 minutes after
+entry, before pick 1: a reconnect the tracker absorbed with the seat unchanged. Two more entry facts: Yahoo
+dissolves an under-filled public league at the order draw (two leagues at 5 of 10 vanished 30 minutes before their
+start, errors 115 and 152, members dropped), so only a full league can rehearse; and a seat left in mirror is
+flipped to Yahoo's autopick after its second missed turn (picks 1 and 20 at 60 s, then 10-11 s per pick). Logs
+`data/fidelity/212738.jsonl` and `data/fidelity/223339.jsonl`, frames `data/fidelity/real_212738_2026-10-12/` and
+`data/fidelity/real_223339_2026-10-12/frames.txt`, all local.
+
 ## 1. Primary metric: compliance
 
 For each of my seat's 13 picks k in a Yahoo draft:
