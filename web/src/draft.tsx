@@ -17,7 +17,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   api,
   gapPicks,
-  pickOwner,
+  ownerOf,
   teamLabel,
   type GapPick,
   type Objective,
@@ -228,7 +228,7 @@ export function DraftProvider({ session, solveEvents, survival, live, room, room
     queryClient.invalidateQueries({ queryKey: ["teams", session.id] });
   }, [queryClient, session.id]);
 
-  const owner = pickOwner(session.num_teams, session.next_overall);
+  const owner = ownerOf(session, session.next_overall);
   const onClockTeam = teamLabel(session, owner.position);
   const [teamOverride, setTeamOverride] = useState<string | null>(null);
   const draftingTeam = teamOverride ?? onClockTeam;
@@ -473,7 +473,7 @@ export function DraftProvider({ session, solveEvents, survival, live, room, room
     });
   }, []);
   const searchRef = useRef<HTMLInputElement | null>(null);
-  const gaps = useMemo(() => gapPicks(room, session.num_teams), [room, session.num_teams]);
+  const gaps = useMemo(() => gapPicks(room, session), [room, session]);
   const [keeperRequest, setKeeperRequest] = useState<GapPick | null>(null);
   const logShown = drawerOpen && (drawer.top === "log" || drawer.bottom === "log");
   const nameKeeper = useCallback(

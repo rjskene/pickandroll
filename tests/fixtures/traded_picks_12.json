@@ -1,0 +1,17 @@
+{
+  "note": "An anonymised 12-team, 13-round snake with ten traded picks, in the shape of a real league's order: two positions swap a pair of early picks for a pair of late ones (1 and 4), two swap one pick each (7 and 10, 5 and 12), and two picks move one way (2 to 6, 9 to 3). Keys are overall picks, values the position that owns them instead of the snake's. Shared by the Python and the extension tests.",
+  "num_teams": 12,
+  "rounds": 13,
+  "trades": {
+    "28": 1,
+    "45": 1,
+    "144": 4,
+    "145": 4,
+    "55": 10,
+    "106": 7,
+    "36": 5,
+    "68": 12,
+    "122": 6,
+    "88": 3
+  }
+}

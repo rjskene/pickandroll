@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { api, pickOwner, teamLabel, type PickRow, type RoomEventEntry, type RoomStatus, type SolveEvent, type SurvivalEvent } from "./api";
+import { api, ownerOf, teamLabel, type PickRow, type RoomEventEntry, type RoomStatus, type SolveEvent, type SurvivalEvent } from "./api";
 import { DraftProvider, Hotkeys, useDraft } from "./draft";
 import Announcer, { type Announcement } from "./components/Announcer";
 import Board from "./components/Board";
@@ -77,7 +77,7 @@ function DraftScreen({ yahoo, room, onSwitch, announce, onShown }: ScreenProps) 
   const d = useDraft();
   const s = d.session;
   const sinceLastPick = useTicker(s.picks_made);
-  const owner = pickOwner(s.num_teams, s.next_overall);
+  const owner = ownerOf(s, s.next_overall);
   const onClockTeam = teamLabel(s, owner.position);
   const mm = Math.floor(sinceLastPick / 60);
   const ss = String(sinceLastPick % 60).padStart(2, "0");
@@ -89,6 +89,9 @@ function DraftScreen({ yahoo, room, onSwitch, announce, onShown }: ScreenProps) 
         </div>
         <span className="muted">
           {s.projection} · {s.num_teams} teams · you pick {s.my_position}
+          {s.traded_picks.length > 0 && (
+            <span title={`picks owned by another team than the snake's: ${s.traded_picks.join(", ")}`}> · {s.traded_picks.length} traded picks</span>
+          )}
         </span>
         <span className="grow" />
         <SyncButton />

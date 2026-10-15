@@ -364,6 +364,11 @@ class SessionCreate(BaseModel):
         description="CSV inside data/ with position,round,player rows (position me: mine), "
         "taken before the keepers list",
     )
+    pick_owners: list[int] | None = Field(
+        default=None,
+        description="traded picks: the draft position (1..num_teams) that owns each overall "
+        "pick, pick 1 first, num_teams x roster size entries; left out, a pure snake",
+    )
 
 
 class KeepersIn(BaseModel):
@@ -428,6 +433,12 @@ class RoomAttach(BaseModel):
         default=None,
         max_length=32,
         description="the extension's version, when it attaches: written to the attach record",
+    )
+    pick_owners: list[int] | None = Field(
+        default=None,
+        description="the room's draft order with its traded picks: the draft position on each "
+        "overall pick, pick 1 first (the extension reads it from Yahoo's order frame); the "
+        "session takes it as its owner map; left out on a rebuild, the one last logged",
     )
     n: int | None = Field(default=None, ge=1, le=30, description="candidates priced per solve")
     scenarios: int | None = Field(default=None, ge=0, le=8)
@@ -856,7 +867,8 @@ def create_app(
                 gaps = yahoo_room.gap_standins(room) if room is not None else {}
                 try:
                     state.set_keepers(
-                        resolve_keepers(rows, state.projections.df), fixable=frozenset(gaps)
+                        resolve_keepers(rows, state.projections.df, state.settings.num_teams),
+                        fixable=frozenset(gaps),
                     )
                 except KeeperLogged as exc:
                     raise HTTPException(409, str(exc)) from exc
@@ -1194,20 +1206,6 @@ def create_app(
                         f"the room has {body.room_teams} teams but the attach says "
                         f"{', '.join(str(t) for t in sorted(said))}",
                     )
-            if body.session_id is not None:
-                session = store.get(body.session_id)
-            elif body.session is not None:
-                session = await make_session(body.session)
-            elif record.get("session"):
-                session = await make_session(SessionCreate(**record["session"]))
-            else:
-                raise HTTPException(
-                    400, "no session: pass session_id or session settings (no log to resume from)"
-                )
-            if session.yahoo is not None:
-                raise HTTPException(409, "session follows the Yahoo Fantasy API feed; detach it")
-            if session.room is not None:
-                raise HTTPException(409, f"session follows Yahoo room {session.room.draft_id}")
             solve = record.get("solve") or {}
 
             def option(name: str, default: Any) -> Any:
@@ -1219,6 +1217,36 @@ def create_app(
             slot = option("slot", None)
             if slot is None:
                 raise HTTPException(400, "slot is required")
+            # The room's draft order with its traded picks: the body's, else the last one the
+            # log holds (the attach record's, or a note the client's order frame was taken from).
+            pick_owners = (
+                body.pick_owners
+                if body.pick_owners is not None
+                else yahoo_room.logged_pick_owners(prior)
+            )
+
+            def for_room(create: SessionCreate) -> SessionCreate:
+                # A session made for the room is made at its seat and on its owner map, so a
+                # keeper in a pick the map gives me (traded) checks out from the start.
+                update: dict[str, Any] = {"my_position": int(slot)}
+                if pick_owners is not None and create.pick_owners is None:
+                    update["pick_owners"] = list(pick_owners)
+                return create.model_copy(update=update)
+
+            if body.session_id is not None:
+                session = store.get(body.session_id)
+            elif body.session is not None:
+                session = await make_session(for_room(body.session))
+            elif record.get("session"):
+                session = await make_session(for_room(SessionCreate(**record["session"])))
+            else:
+                raise HTTPException(
+                    400, "no session: pass session_id or session settings (no log to resume from)"
+                )
+            if session.yahoo is not None:
+                raise HTTPException(409, "session follows the Yahoo Fantasy API feed; detach it")
+            if session.room is not None:
+                raise HTTPException(409, f"session follows Yahoo room {session.room.draft_id}")
             turn_limit = float(option("turn_time_limit", ROOM_SOLVE["turn_time_limit"]))
             params = SolveParams(
                 n=option("n", ROOM_SOLVE["n"]),
@@ -1258,6 +1286,7 @@ def create_app(
                     # None (a rebuild): the mode last set since the room's last detach.
                     mode=body.mode,
                     num_teams=int(option("num_teams", state.settings.num_teams)),
+                    pick_owners=pick_owners,
                     ids=ids,
                     log=log,
                     players_file=path.name,
@@ -1452,6 +1481,7 @@ def create_app(
             session.publish("room_event", {"draft_id": draft_id, "entry": event}, bump=False)
         await asyncio.to_thread(yahoo_room.follow_clock, session, room, body.events)
         await asyncio.to_thread(yahoo_room.check_teams, session, room, body.events)
+        await asyncio.to_thread(yahoo_room.adopt_order, session, room, body.events)
         await asyncio.to_thread(yahoo_room.check_gaps, session, room)
         return {
             "received": len(body.events),
@@ -1615,7 +1645,8 @@ def _build_state(body: SessionCreate, data_dir: Path) -> tuple[DraftState, str, 
             projections=projections,
             my_team=body.my_team,
             my_position=body.my_position,
-            keepers=tuple(resolve_keepers(rows, projections.df)),
+            keepers=tuple(resolve_keepers(rows, projections.df, body.num_teams)),
+            pick_owners=body.pick_owners,
         )
     except KeeperInvalid as exc:
         raise HTTPException(400, keeper_error(rows, exc)) from exc
@@ -1846,6 +1877,9 @@ def _summary(session: Session) -> dict[str, Any]:
         "my_position": state.my_position,
         "my_picks": state.my_picks,
         "my_slots": state.my_slots,
+        # Traded picks: the position on every overall pick, and the picks the snake gets wrong.
+        "pick_owners": None if state.pick_owners is None else list(state.pick_owners),
+        "traded_picks": state.traded_picks,
         "keepers": keeper_rows(state),
         "picks_made": len(state.picks),
         "next_overall": state.next_overall,

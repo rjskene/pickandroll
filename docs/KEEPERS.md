@@ -41,9 +41,14 @@ Facts from the league's Yahoo archive (`data/yahoo_history/`, local; report in
 
 ## 1. Model
 
-A keeper is `(team position, round, player)`. The derived overall pick is
-`snake_picks(num_teams, position, roster_size)[round - 1]` (`draft/settings.py`). My keepers are given
-with `position = None`, meaning "my position", so that they follow `my_position` when a room attach
+A keeper is `(team position, round, player)`. The derived overall pick is the team's pick in that round:
+`snake_picks(num_teams, position, roster_size)[round - 1]` (`draft/settings.py`) in a pure snake, and with
+traded picks (`DraftState.pick_owners`, the draft position on each overall pick, `docs/YAHOO_SYNC.md` §4)
+the first pick the map gives the team in that round. A team may hold two picks in a round or none there, so
+a keeper may name his pick outright instead (`overall`, in the API's `KeeperIn` and as an `overall` column
+in a keepers CSV; the round then follows): it must be that team's pick in that round, and it stays put when
+the map changes, where a keeper by round moves with his team's pick. My keepers are given with
+`position = None`, meaning "my position", so that they follow `my_position` when a room attach
 changes it (`api/yahoo_room.py::attach_room` overwrites `state.my_position = slot`).
 
 Invariants, in `DraftState` (`draft/state.py`):

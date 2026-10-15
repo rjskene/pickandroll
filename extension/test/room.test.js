@@ -390,7 +390,7 @@ test("league room: a valid R| places every team before pick 1", () => {
   assert.equal(out.kind, "order");
   assert.equal(out.seat, 1);
   assert.equal(r.slot, 1);
-  assert.deepEqual(r.order, { entries: 130, teams: 10 });
+  assert.deepEqual(r.order, { entries: 130, teams: 10, traded: 0 });
   for (let p = 1; p <= 10; p++) assert.equal(r.seatOf(LEAGUE[p]), p);
   assert.equal(r.ingest("D|1|10|60", T0 + 10).turn, 1);
   r.fromTitle(1, T0 + 20); // agrees
@@ -403,8 +403,8 @@ test("league room: an R| that does not check out is ignored, and round 1 places 
   for (const [frame, error] of [
     ["R|a|b|c|", "3 entries for 13 rounds"],
     [`R|${Array(130).fill("x").join("|")}|`, "not all integers"],
-    [orderFrame([null, 10, 2, 9, 5, 8, 4, 1, 7, 6, 10]), "the first round repeats a team"],
-    [orderFrame(LEAGUE).replace(/\|3\|$/, "|99|"), "a team outside the first round"],
+    [orderFrame([null, 10, 2, 9, 5, 8, 4, 1, 7, 6, 10]), "9 teams in 10 x 13 entries"],
+    [orderFrame(LEAGUE).replace(/\|3\|$/, "|99|"), "11 teams in 10 x 13 entries"],
     [orderFrame(LEAGUE).replace(/\|3\|$/, "|"), "129 entries for 13 rounds"],
   ]) {
     const r = leagueRoom(10);
@@ -448,6 +448,120 @@ test("league room: a team placed late puts its position on the picks already kep
   r.ingest(orderFrame(LEAGUE), T0 + 20);
   assert.equal(r.unsent().find((p) => p.overall === 16).slot, 5, "R| placed team 8 at 5");
   assert.equal(r.owners.get(16), 5);
+});
+
+// ---------------------------------------------------------------- traded picks (2026-10-14)
+// The real draft's shape (tests/fixtures/traded_picks_12.json): 12 teams, 13 rounds, ten picks
+// owned by another position than the snake's. Position 1 gave picks 28 and 45 to position 4 for
+// 144 and 145; the R| frame names the owner of every pick, so a round repeats a team.
+const TEAM_OF = [null, 7, 3, 12, 1, 9, 5, 11, 2, 10, 4, 8, 6];
+const TRADES = { 28: 1, 45: 1, 144: 4, 145: 4, 55: 10, 106: 7, 36: 5, 68: 12, 122: 6, 88: 3 };
+const tradedOwner = (k, trades = TRADES) => trades[k] || require("../lib/protocol.js").pickOwner(12, k).slot;
+const tradedFrame = (trades = TRADES) => {
+  const out = [];
+  for (let k = 1; k <= 156; k++) out.push(TEAM_OF[tradedOwner(k, trades)]);
+  return `R|${out.join("|")}|`;
+};
+const tradedRoom = (position) => {
+  const r = new RoomTracker({ draftId: "t", teamId: TEAM_OF[position] });
+  r.configure({ numTeams: 12, rounds: 13 });
+  return r;
+};
+const POS4 = [4, 21, 52, 69, 76, 93, 100, 117, 124, 141, 144, 145, 148];
+const POS1 = [1, 24, 25, 28, 45, 48, 49, 72, 73, 96, 97, 120, 121];
+
+test("traded picks: the R| frame gives my real picks, not the snake's", () => {
+  const r = tradedRoom(4);
+  const out = r.ingest(tradedFrame(), T0);
+  assert.equal(out.kind, "order");
+  assert.equal(r.slot, 4);
+  assert.deepEqual(r.order, { entries: 156, teams: 12, traded: 10 });
+  assert.equal(r.teamsSeen(), 12);
+  assert.deepEqual(r.mine, POS4, "picks 144 and 145 acquired, 52 and 69 kept, 28 and 45 never mine");
+  assert.equal(r.isMine(28), false);
+  assert.equal(r.isMine(145), true);
+  assert.equal(r.ownerSlot(28), 1);
+  assert.equal(r.ownerSlot(145), 4);
+  assert.equal(r.ownerSlot(5), 5, "an untraded pick is the snake's");
+  const s = r.snapshot();
+  assert.equal(s.pick_owners.length, 156);
+  assert.equal(s.pick_owners[27], 1);
+  assert.equal(s.pick_owners[144], 4);
+  assert.equal(s.traded, 10);
+  assert.deepEqual(notes(r.takeEvents(), "seat conflict"), []);
+  const one = tradedRoom(1);
+  one.ingest(tradedFrame(), T0);
+  assert.deepEqual(one.mine, POS1);
+  assert.equal(one.nextMine(), 1);
+});
+
+test("traded picks: turns and picks on the traded slots go to their owners, with no seat noise", () => {
+  const r = tradedRoom(4);
+  r.ingest(tradedFrame(), T0);
+  for (let k = 1; k < 28; k++) r.ingest(`0|${k}|${5000 + k}|${TEAM_OF[tradedOwner(k)]}|C|0`, T0 + k);
+  // Pick 28, the snake's slot 4, is position 1's: the room puts team TEAM_OF[1] on the clock.
+  assert.equal(r.ingest(`D|28|${TEAM_OF[1]}|60`, T0 + 100).turn, null, "not my turn");
+  assert.equal(r.nextMine(), 52);
+  const pick = r.ingest(`0|28|5028|${TEAM_OF[1]}|C|0`, T0 + 101);
+  assert.equal(pick.landed, null, "not mine");
+  assert.equal(r.unsent().find((p) => p.overall === 28).slot, 1, "the API gets the real owner");
+  assert.equal(r.owners.get(28), 1);
+  // Pick 52 is mine as the snake has it.
+  assert.equal(r.ingest(`D|52|${TEAM_OF[4]}|60`, T0 + 200).turn, 52);
+  for (let k = 29; k < 145; k++) r.ingest(`0|${k}|${5000 + k}|${TEAM_OF[tradedOwner(k)]}|C|0`, T0 + 300 + k);
+  // Picks 144 and 145 (the snake's 1 and 1): both mine, back to back.
+  assert.equal(r.ingest(`D|145|${TEAM_OF[4]}|30`, T0 + 600).turn, 145);
+  assert.equal(r.nextMine(), 145);
+  const mine = r.ingest(`0|145|5145|${TEAM_OF[4]}|C|0`, T0 + 601);
+  assert.equal(mine.landed.overall, 145);
+  assert.equal(r.unsent().find((p) => p.overall === 145).slot, 4);
+  const events = r.takeEvents();
+  assert.deepEqual(notes(events, "seat conflict"), [], "a repeated team in a round is not a conflict");
+  assert.deepEqual(
+    events.filter((e) => e.type === "turn_start").map((e) => [e.overall, e.slot, e.team]),
+    [[28, 1, TEAM_OF[1]], [52, 4, TEAM_OF[4]], [145, 4, TEAM_OF[4]]],
+  );
+});
+
+test("traded picks: a round-1 pick traded away does not re-seat its owner once the R| placed everyone", () => {
+  const trades = { 2: 6, 118: 2 }; // position 2 gave pick 2 to position 6 for pick 118
+  const r = tradedRoom(6);
+  r.ingest(tradedFrame(trades), T0);
+  assert.equal(r.slot, 6);
+  assert.deepEqual(r.mine.slice(0, 3), [2, 6, 19]);
+  assert.equal(r.ingest(`D|1|${TEAM_OF[1]}|60`, T0 + 1).turn, null);
+  r.ingest(`0|1|5001|${TEAM_OF[1]}|C|0`, T0 + 2);
+  assert.equal(r.ingest(`D|2|${TEAM_OF[6]}|60`, T0 + 3).turn, 2, "my acquired pick 2 is my turn");
+  const out = r.ingest(`0|2|5002|${TEAM_OF[6]}|C|0`, T0 + 4);
+  assert.equal(out.landed.overall, 2);
+  assert.equal(r.seatOf(TEAM_OF[6]), 6, "still position 6, not 2");
+  assert.equal(r.seatOf(TEAM_OF[2]), 2);
+  assert.equal(r.unsent().find((p) => p.overall === 2).slot, 6);
+  assert.deepEqual(notes(r.takeEvents(), "seat conflict"), []);
+});
+
+test("traded picks: a tab that never read the R| frame drafts on the API room's owner map", () => {
+  const owners = [];
+  for (let k = 1; k <= 156; k++) owners.push(tradedOwner(k));
+  const r = tradedRoom(4);
+  r.configure({ numTeams: 12, rounds: 13, pickOwners: owners });
+  assert.deepEqual(r.mine, [], "no seat yet");
+  assert.equal(r.ownerSlot(28), 1, "the map answers owners before my seat is known");
+  r.fromTitle(4, T0);
+  assert.deepEqual(r.mine, POS4);
+  assert.equal(r.isMine(28), false);
+  assert.equal(r.isMine(145), true);
+  assert.equal(r.ingest(`D|145|${TEAM_OF[4]}|30`, T0 + 1).turn, 145);
+  assert.equal(r.snapshot().traded, null, "the frame's count is not known");
+  // The frame, when it comes, is kept over the room's map.
+  r.ingest(tradedFrame(), T0 + 2);
+  assert.deepEqual(r.mine, POS4);
+  assert.equal(r.snapshot().traded, 10);
+  // A room without a map changes nothing.
+  const plain = tradedRoom(4);
+  plain.configure({ numTeams: 12, rounds: 13, pickOwners: null });
+  plain.fromTitle(4, T0);
+  assert.deepEqual(plain.mine, [4, 21, 28, 45, 52, 69, 76, 93, 100, 117, 124, 141, 148]);
 });
 
 test("mock room (team ids = seats): seats learned from the room match a tracker told its seat", () => {

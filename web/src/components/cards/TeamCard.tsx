@@ -20,10 +20,20 @@ function ScoreBlock() {
   // A turn's row names the player drafted there; the recommendation's #1 until the pick is made.
   const made = new Map((picks.data ?? []).map((p) => [p.overall, p.name]));
   const named = (h: ScoreEntry) => (h.on_the_clock ? made.get(h.next_overall) : undefined) ?? h.top ?? "";
-  const isTurn = turnFilter(picks.data, s.my_team);
+  const isTurn = turnFilter(picks.data, s.my_team, s.my_slots);
   // Best during the draft, over my real turns only (the server's best counts every solve).
   const turns = sc.history.filter(isTurn);
-  const best = turns.length ? turns.reduce((a, b) => (b.wins > a.wins ? b : a)) : null;
+  // And only the turns that ran the benchmark's model: a single-roster fallback's score is not
+  // comparable with a plan's.
+  const base = sc.benchmark?.mode ?? "horizon";
+  const comparable = turns.filter((h) => h.mode === base);
+  const best = comparable.length ? comparable.reduce((a, b) => (b.wins > a.wins ? b : a)) : null;
+  const mixed = sc.history.some((h) => h.mode !== base);
+  const bestTitle = best
+    ? `${best.value.toFixed(1)} z · ${best.matchups} of ${s.num_teams - 1} matchups`
+    : turns.length
+      ? `none of my turns ran the ${base} model, and the other model's scores are not comparable with it`
+      : "";
   const bench = sc.benchmark;
   const current = sc.current_wins;
   const delta = sc.vs_benchmark;
@@ -50,8 +60,11 @@ function ScoreBlock() {
           <span className="k">Before pick 1{when(bench)}</span>
           <span className="v">{bench ? bench.wins.toFixed(2) : "—"}</span>
         </div>
-        <div className="stat" title={best ? `${best.value.toFixed(1)} z · ${best.matchups} of ${opponents} matchups` : ""}>
-          <span className="k">Best during draft{when(best)}</span>
+        <div className="stat" title={bestTitle}>
+          <span className="k">
+            Best during draft{mixed ? ` (${base})` : ""}
+            {when(best)}
+          </span>
           <span className="v">{best ? best.wins.toFixed(2) : "—"}</span>
         </div>
         <div className="stat" title={sc.final ? `${sc.final.value.toFixed(1)} z · ${sc.final.matchups} of ${opponents} matchups won on projected finals` : sc.latest ? `${sc.latest.value.toFixed(1)} z · ${sc.latest.matchups} of ${opponents} matchups` : ""}>

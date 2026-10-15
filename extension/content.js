@@ -315,10 +315,20 @@
       drafter.serveOffered();
     }
     if (out.kind === "order" && !S.orderNoted) {
-      // The R| frame, read as the team id on each overall: its teams when it checks out, or why
-      // it did not (lib/protocol.js orderSeats); a sample of its entries until its form is known.
+      // The R| frame, read as the team id on each overall: its teams and the owner of every
+      // pick when it checks out (the team ids, and the draft positions the API drafts on: a
+      // session attached before the frame came adopts them), or why it did not
+      // (lib/protocol.js orderSeats); a sample of its entries until its form is known.
       S.orderNoted = true;
-      emit({ type: "note", what: "draft order", entries: tracker.orderLen, ...tracker.order, head: orderHead });
+      emit({
+        type: "note",
+        what: "draft order",
+        entries: tracker.orderLen,
+        ...tracker.order,
+        head: orderHead,
+        owners: tracker.orderTeams,
+        pick_owners: tracker.pickOwners,
+      });
     }
     if (out.kind === "on_deck" || out.kind === "pick" || out.kind === "history") {
       sendEvents();
@@ -376,7 +386,7 @@
         S.mode = r.room.mode;
         // act_at_s (#10): when an armed turn clicks, in seconds left; null, at once.
         drafter.actAt = Number.isInteger(r.room.act_at_s) ? r.room.act_at_s : null;
-        tracker.configure({ numTeams: r.room.num_teams, rounds: r.room.rounds, keepers: r.room.keepers });
+        tracker.configure({ numTeams: r.room.num_teams, rounds: r.room.rounds, keepers: r.room.keepers, pickOwners: r.room.pick_owners });
         tracker.synced(r.room);
         checkSeat();
         reportControl();

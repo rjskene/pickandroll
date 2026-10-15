@@ -1,11 +1,14 @@
 import type { PickRow, Score, ScoreEntry } from "../../api";
 
-/** Whether a solve's board was one of my real turns: on the clock by the snake, and the pick at
- * that overall made by my team or not made yet. A slot the snake calls mine that another team
- * picked at (a traded pick) is not my turn. */
-export function turnFilter(picks: PickRow[] | undefined, myTeam: string): (h: ScoreEntry) => boolean {
+/** Whether a solve's board was one of my real turns: on the clock, the overall one of my slots
+ * by the session's owner map (`mySlots`, traded picks included; every on-the-clock solve when
+ * the slots are not given), and the pick at that overall made by my team or not made yet. A
+ * slot the snake calls mine that another team picked at (a traded pick the session never
+ * learned of) is not my turn. */
+export function turnFilter(picks: PickRow[] | undefined, myTeam: string, mySlots?: Iterable<number> | null): (h: ScoreEntry) => boolean {
   const madeBy = new Map((picks ?? []).map((p) => [p.overall, p.team]));
-  return (h) => h.on_the_clock && (madeBy.get(h.next_overall) ?? myTeam) === myTeam;
+  const slots = mySlots ? new Set(mySlots) : null;
+  return (h) => h.on_the_clock && (slots === null || slots.has(h.next_overall)) && (madeBy.get(h.next_overall) ?? myTeam) === myTeam;
 }
 
 /** One point of the score chart: before pick 1, each of my real turns, then the latest solve

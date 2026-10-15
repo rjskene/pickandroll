@@ -64,12 +64,16 @@ export interface KeeperRow {
   mine: boolean;
   /** His pick is in the log: the draft has reached his slot. */
   applied: boolean;
+  /** The table named his pick outright (a traded pick): it does not move with the owner map. */
+  by_overall: boolean;
 }
 
-/** A keeper as the API takes it: no position is mine; the player by id or by name. */
+/** A keeper as the API takes it: no position is mine; the player by id or by name. With traded
+ * picks a team may hold two picks in a round or none: `overall` names the pick outright. */
 export interface KeeperIn {
   position: number | null;
   round: number;
+  overall?: number | null;
   player_id?: string | null;
   player?: string | null;
 }
@@ -86,8 +90,12 @@ export interface SessionSummary {
   my_position: number;
   /** My draftable picks: my keepers' rounds are not among them. */
   my_picks: number[];
-  /** Every pick of mine in the snake, keeper rounds included. */
+  /** Every pick of mine (by the owner map, else the snake), keeper rounds included. */
   my_slots: number[];
+  /** The draft position that owns each overall pick, pick 1 first; null is a pure snake. */
+  pick_owners: number[] | null;
+  /** The picks the owner map gives to another position than the snake's. */
+  traded_picks: number[];
   keepers: KeeperRow[];
   picks_made: number;
   next_overall: number;
@@ -623,11 +631,11 @@ export interface GapPick {
 }
 
 /** The room's gaps still held by a stand-in. */
-export function gapPicks(room: RoomStatus | undefined, numTeams: number): GapPick[] {
+export function gapPicks(room: RoomStatus | undefined, session: OwnerMap): GapPick[] {
   if (!room?.attached) return [];
   return room.standins
     .filter((x) => x.gap)
-    .map((x) => ({ overall: x.overall, ...pickOwner(numTeams, x.overall), standin: x.as }));
+    .map((x) => ({ overall: x.overall, ...ownerOf(session, x.overall), standin: x.as }));
 }
 
 /** The room's stand-ins for Yahoo players the projections do not match (pinning repairs them). */
@@ -655,4 +663,24 @@ export function pickOwner(numTeams: number, overall: number): { round: number; p
   const idx = (overall - 1) % numTeams;
   const position = round % 2 === 0 ? idx + 1 : numTeams - idx;
   return { round: round + 1, position };
+}
+
+/** What the owner helpers need of a session: the team count and the owner map, if any. */
+export type OwnerMap = Pick<SessionSummary, "num_teams" | "pick_owners">;
+
+/** The round and the draft position that owns `overall`: the owner map's (traded picks), else
+ * the snake's. */
+export function ownerOf(session: OwnerMap, overall: number): { round: number; position: number } {
+  const owners = session.pick_owners;
+  const round = Math.floor((overall - 1) / session.num_teams) + 1;
+  if (owners && overall >= 1 && overall <= owners.length) return { round, position: owners[overall - 1] };
+  return pickOwner(session.num_teams, overall);
+}
+
+/** The first pick a team holds in a round: by the owner map (null when it holds none there),
+ * else the snake's. */
+export function positionPick(owners: number[] | null | undefined, numTeams: number, position: number, round: number): number | null {
+  if (!owners) return snakeOverall(numTeams, position, round);
+  for (let k = (round - 1) * numTeams + 1; k <= round * numTeams && k <= owners.length; k++) if (owners[k - 1] === position) return k;
+  return null;
 }
