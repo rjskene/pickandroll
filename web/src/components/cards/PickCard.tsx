@@ -3,6 +3,7 @@ import { api } from "../../api";
 import { useDraft } from "../../draft";
 import { fmtCost, fmtObjective, oddsClass, oddsSource, pct, shortName } from "../../format";
 import CatStrip from "../CatStrip";
+import ModelFlag from "../ModelFlag";
 import Skeleton from "../Skeleton";
 import Stepper from "../Stepper";
 import { DraftInYahoo } from "../YahooSync";
@@ -33,6 +34,7 @@ export default function PickCard() {
               TIE
             </span>
           )}
+          <ModelFlag />
           <span className="grow" />
           <button className="small" onClick={d.solve} disabled={d.solving || d.done} title="Re-solve (r)">
             {d.solving ? "Solving…" : "Re-solve"} <kbd>r</kbd>

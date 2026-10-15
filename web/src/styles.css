@@ -11,6 +11,8 @@
   --accent-ink: #141413;
   --good: #3ddc84;
   --bad: #ef6b6b;
+  /* The single-roster fallback flag: a bright red that white text reads on. */
+  --alert: #e11d2a;
   --mine: rgba(245, 185, 66, 0.12);
   --display: "Barlow Condensed", "Arial Narrow", sans-serif;
   --body: "IBM Plex Sans", system-ui, sans-serif;
@@ -310,6 +312,17 @@ tr.tie td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
 /* ---- YAHOO SYNC: header pill, sync card ---- */
 .pill.good { border-color: var(--good); color: var(--good); }
 .pill.bad { border-color: var(--bad); color: var(--bad); }
+
+/* which model produced the latest solve */
+.model-flag { display: inline-flex; align-items: center; gap: 4px 8px; flex-wrap: wrap; font-size: 12px; text-transform: none; letter-spacing: 0; }
+.model-flag .badge { display: inline-block; padding: 2px 9px; border-radius: 999px; font-family: var(--display); font-size: 12px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; white-space: nowrap; }
+.model-flag.horizon .badge { border: 1px solid var(--line-2); background: var(--panel-2); color: var(--dim); }
+.model-flag.roster .badge { padding: 3px 11px; font-size: 14px; font-weight: 700; background: var(--alert); border: 1px solid var(--alert); color: #ffffff; box-shadow: 0 0 0 3px rgba(225, 29, 42, 0.28); }
+.model-flag.roster .why { color: var(--bad); font-weight: 600; }
+.model-flag .sum { color: var(--muted); font-size: 11px; }
+.model-flag.banner { display: flex; width: 100%; padding: 8px 10px; border: 1px solid var(--alert); border-radius: 8px; background: rgba(225, 29, 42, 0.14); }
+.model-flag.banner .why { color: var(--text); }
+.model-count { margin: 0; font-size: 11px; color: var(--bad); }
 .sync-pill { white-space: nowrap; }
 .seg { display: inline-flex; border: 1px solid var(--line-2); border-radius: 6px; overflow: hidden; }
 .seg button { border: 0; border-radius: 0; background: transparent; padding: 4px 12px; }

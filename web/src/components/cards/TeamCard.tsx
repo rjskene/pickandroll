@@ -3,6 +3,7 @@ import { api, CAT_LABEL, type CategoryRow, type ScoreEntry } from "../../api";
 import { useDraft } from "../../draft";
 import { labelClass, oddsClass, pct, signed } from "../../format";
 import { GapMark } from "../Keepers";
+import ModelFlag from "../ModelFlag";
 import { useMyRoster } from "./myRoster";
 import ScoreChart from "./ScoreChart";
 import { scorePoints, turnFilter } from "./scoreTurns";
@@ -29,6 +30,7 @@ function ScoreBlock() {
   const opponents = s.num_teams - 1;
   const cls = (x: number | null) => (x === null ? "" : x < -0.005 ? "bad" : "good");
   const when = (h: ScoreEntry | null) => (h ? ` · pick ${h.next_overall}` : "");
+  const fellBack = sc.history.filter((h) => h.mode === "roster").length;
   return (
     <div className="block score">
       <div className="row">
@@ -37,6 +39,12 @@ function ScoreBlock() {
           expected categories won of {s.cats.length}
         </span>
       </div>
+      <ModelFlag banner />
+      {fellBack > 0 && (
+        <p className="model-count">
+          {fellBack} of the {sc.history.length} boards scored ran the single-roster fallback: their scores are not comparable with the horizon plan's.
+        </p>
+      )}
       <div className="stats">
         <div className="stat" title={bench ? `${bench.value.toFixed(1)} z above replacement · ${bench.matchups} of ${opponents} matchups` : ""}>
           <span className="k">Before pick 1{when(bench)}</span>
