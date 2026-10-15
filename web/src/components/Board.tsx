@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { api, CAT_LABEL, CATS, teamLabel, type BoardPlayer, type Cat, type SimStrategy } from "../api";
 import { useDraft } from "../draft";
 import { adpIsStandIn, adpLabel, fmtCost, oddsClass } from "../format";
+import ModelFlag from "./ModelFlag";
 
 function heat(z: number): string | undefined {
   if (Math.abs(z) < 0.5) return undefined;
@@ -155,6 +156,7 @@ export default function Board() {
     <section className="panel board">
       <header className="board-head">
         <h2>BOARD</h2>
+        <ModelFlag />
         <input
           ref={d.searchRef}
           type="search"

@@ -249,6 +249,8 @@ export interface Recommendation {
   /** Candidates this close to the best are a tie the model cannot separate. */
   tie_band: number;
   fallback: string | null;
+  /** Why the horizon plan could not be built (mode "roster"); null otherwise. */
+  roster_reason?: string | null;
   timings: Record<string, number>;
   adp_source: string;
   availability_source: AvailabilitySource;
