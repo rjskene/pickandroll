@@ -117,6 +117,23 @@ export interface SessionSummary {
   availability_source: AvailabilitySource;
   survival: SurvivalStatus;
   solver: SolverStatus;
+  /** The settings the next solve starts with: background, room and manual solves alike. */
+  solve_params: SessionSolveParams;
+}
+
+/** The server's solve settings. A room sets its own budget (early, turn_time_limit, turn_n,
+ * presolve); the candidate counts change with setSolveParams. */
+export interface SessionSolveParams {
+  /** Candidates priced exactly. */
+  n: number;
+  /** Candidates priced at my turn; null: n. */
+  turn_n: number | null;
+  horizon: boolean;
+  scenarios: number;
+  objective: Objective | null;
+  early: boolean;
+  turn_time_limit: number | null;
+  presolve: boolean;
 }
 
 export interface BoardPlayer {
@@ -368,8 +385,9 @@ export interface SurvivalEvent {
   error?: string;
 }
 
+/** A manual solve's settings; the ones left out (the candidate counts among them) keep their
+ * session values. */
 export interface SolveParams {
-  n: number;
   horizon: boolean;
   scenarios: number;
   objective: Objective | null;
@@ -591,6 +609,10 @@ export const api = {
     request<{ keepers: KeeperRow[]; version: number }>(`/sessions/${id}/keepers`, { method: "PATCH", body: JSON.stringify({ keepers }) }),
   autopick: (id: string, body: AutoPickParams) =>
     request<{ added: PickRow[]; version: number }>(`/sessions/${id}/autopick`, { method: "POST", body: JSON.stringify(body) }),
+  /** Candidates priced exactly, for every solve that starts from now on (a running one keeps
+   * its own). */
+  setSolveParams: (id: string, patch: { n?: number; turn_n?: number | null }) =>
+    request<{ solve_params: SessionSolveParams; version: number }>(`/sessions/${id}/solve-params`, { method: "PATCH", body: JSON.stringify(patch) }),
   /** Queue a background solve; the result arrives as a `recommendation` event. */
   solve: (id: string, params: SolveParams) =>
     request<{ queued: boolean; version: number; solver: SolverStatus }>(`/sessions/${id}/solve`, { method: "POST", body: JSON.stringify(params) }),

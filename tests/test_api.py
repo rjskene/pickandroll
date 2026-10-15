@@ -667,3 +667,43 @@ def test_solve_ahead_builds_survival_then_recommends(client):
         lambda s: s["runs"] >= 2 and not s["running"] and not s["pending"],
     )
     assert status["runs"] >= 2 and status["survival"]["status"] == "ready"
+
+
+def test_solve_params_patch_applies_to_the_next_solve_and_keeps_the_rest():
+    if not (DATA / "bbm_sample_ros_totals.xls").exists():
+        pytest.skip("no Basketball Monster sample export in data/")
+    from pickandroll.api.solver import SolveParams
+
+    store = SessionStore()
+    with TestClient(create_app(store, data_dir=DATA)) as client:
+        sid = create(client)["id"]
+        # A room's budget settings, as the attach sets them.
+        store.get(sid).solve_params = SolveParams(
+            n=3, scenarios=0, early=True, turn_n=2, presolve=True
+        )
+        assert client.get(f"/sessions/{sid}").json()["solve_params"]["n"] == 3
+
+        r = client.patch(f"/sessions/{sid}/solve-params", json={"n": 6, "turn_n": 4})
+        assert r.status_code == 200, r.text
+        params = store.get(sid).solve_params
+        assert (params.n, params.turn_n) == (6, 4)
+        # The room's settings stay.
+        assert params.early and params.presolve and params.scenarios == 0
+        shown = client.get(f"/sessions/{sid}").json()["solve_params"]
+        assert (shown["n"], shown["turn_n"]) == (6, 4)
+
+        # A solve that names other settings leaves the candidate counts and the room's alone.
+        rec = client.post(f"/sessions/{sid}/recommend", json={"horizon": True, "scenarios": 0})
+        assert rec.status_code == 200, rec.text
+        params = store.get(sid).solve_params
+        assert (params.n, params.turn_n, params.early, params.presolve) == (6, 4, True, True)
+        assert 1 < len(rec.json()["candidates"]) <= 6
+
+        # turn_n null: my turn prices as many as any other solve; n cannot be cleared.
+        r = client.patch(f"/sessions/{sid}/solve-params", json={"turn_n": None})
+        assert r.status_code == 200
+        assert store.get(sid).solve_params.turn_n is None and store.get(sid).solve_params.n == 6
+        assert client.patch(f"/sessions/{sid}/solve-params", json={"n": None}).status_code == 422
+        assert client.patch(f"/sessions/{sid}/solve-params", json={"n": 0}).status_code == 422
+        assert client.patch(f"/sessions/{sid}/solve-params", json={"n": 31}).status_code == 422
+        assert store.get(sid).solve_params.n == 6

@@ -1,5 +1,6 @@
 import { useDraft } from "../../draft";
 import { adpLabel, fmtCost, fmtObjective, oddsClass, pct, shortName } from "../../format";
+import CandidatesInput from "../CandidatesInput";
 import Skeleton from "../Skeleton";
 
 export default function AltsCard() {
@@ -9,8 +10,22 @@ export default function AltsCard() {
   const nextPick = s.my_next_pick;
   const pickAfter = s.my_picks.find((k) => nextPick !== null && k > nextPick);
   if (d.done) return <p className="muted">{s.complete ? "The draft is complete" : "No picks left"}: no alternatives to weigh.</p>;
-  if (!result) return <p className="muted">{d.solving ? "Solving…" : "Appears after the first solve."}</p>;
-  if (d.busy) return <Skeleton rows={10} note={`Re-planning for pick ${s.next_overall}…`} />;
+  // The count stays in reach while a solve runs (in a live room, nearly always).
+  const control = (
+    <div className="muted alts-count">
+      <CandidatesInput label="candidates priced" />
+      <button className="small" onClick={d.solve} disabled={d.solving}>
+        re-solve
+      </button>
+    </div>
+  );
+  if (!result || d.busy)
+    return (
+      <>
+        {!result ? <p className="muted">{d.solving ? "Solving…" : "Appears after the first solve."}</p> : <Skeleton rows={10} note={`Re-planning for pick ${s.next_overall}…`} />}
+        {control}
+      </>
+    );
   const scale = result.scale;
   const top = result.candidates[0];
   const tied = result.candidates.filter((c) => c.tie).length > 1;
@@ -100,11 +115,7 @@ export default function AltsCard() {
           </table>
         </div>
       )}
-      <label className="inline muted" style={{ fontSize: 12 }}>
-        candidates priced
-        <input type="number" min={3} max={20} value={d.settings.n} onChange={(e) => d.setSettings({ n: Number(e.target.value) })} />
-        <button className="small" onClick={d.solve}>re-solve</button>
-      </label>
+      {control}
     </>
   );
 }

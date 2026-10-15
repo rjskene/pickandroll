@@ -371,6 +371,15 @@ class KeepersIn(BaseModel):
     keepers: list[KeeperIn]
 
 
+class SolveParamsPatch(BaseModel):
+    """How many candidates the solver prices exactly, changed for the solves that follow."""
+
+    n: int | None = Field(default=None, ge=1, le=30, description="candidates priced")
+    turn_n: int | None = Field(
+        default=None, ge=1, le=30, description="candidates priced at my turn (null: n)"
+    )
+
+
 class PickIn(BaseModel):
     team: str
     player_id: str
@@ -914,9 +923,9 @@ def create_app(
         when my remaining picks and open slots disagree.
         """
         session = store.get(session_id)
-        session.solve_params = body
+        params = session.solve_params = _merged(session, body)
         try:
-            payload = compute_recommendation(session, body, session.publish_threadsafe_solve)
+            payload = compute_recommendation(session, params, session.publish_threadsafe_solve)
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
         except RuntimeError as exc:
@@ -927,13 +936,29 @@ def create_app(
     @app.post("/sessions/{session_id}/solve", status_code=202)
     def solve(session_id: str, body: RecommendQuery) -> dict[str, Any]:
         """Queue a background solve with these settings; the result arrives as a
-        ``recommendation`` event and at ``/recommendation``."""
+        ``recommendation`` event and at ``/recommendation``. Settings the body leaves out keep
+        their session values."""
         session = store.get(session_id)
-        session.solve_params = body
+        session.solve_params = _merged(session, body)
         if not session.state.my_remaining_picks:
             raise HTTPException(400, "you have no picks left; the final score is at /score")
         queued = session.solver.kick("manual", force=True) if session.solver else False
         return {"queued": queued, "version": session.version, "solver": _solver_status(session)}
+
+    @app.patch("/sessions/{session_id}/solve-params")
+    def set_solve_params(session_id: str, body: SolveParamsPatch) -> dict[str, Any]:
+        """Change how many candidates the solver prices exactly: ``n``, and ``turn_n`` at my
+        turn (null: ``n``). Every solve that starts from now on uses it, the background and
+        the room's among them; one in flight keeps what it started with, so nothing is
+        re-solved for it. The other solve settings (a room's budget among them) stay."""
+        session = store.get(session_id)
+        patch = body.model_dump(exclude_unset=True)
+        if "n" in patch and patch["n"] is None:
+            raise HTTPException(422, "n cannot be null")
+        session.solve_params = session.solve_params.model_copy(update=patch)
+        params = session.solve_params.model_dump()
+        session.publish("solve_params", {"solve_params": params}, bump=False)
+        return {"solve_params": params, "version": session.version}
 
     @app.get("/sessions/{session_id}/recommendation")
     def recommendation(session_id: str) -> dict[str, Any]:
@@ -1007,8 +1032,9 @@ def create_app(
     @app.get("/sessions/{session_id}/events")
     async def events(session_id: str, request: Request) -> StreamingResponse:
         """Server-sent events: one ``hello`` on connect, then ``pick`` / ``undo`` / ``created``
-        / ``survival`` / ``solve`` / ``recommendation``, and for a Yahoo room ``room_attached``
-        / ``room_mode`` / ``room_detached`` / ``room_event`` (a client event, heartbeats aside).
+        / ``survival`` / ``solve`` / ``recommendation`` / ``solve_params``, and for a Yahoo room
+        ``room_attached`` / ``room_mode`` / ``room_detached`` / ``room_event`` (a client event,
+        heartbeats aside).
 
         A comment line is sent every ``KEEPALIVE_SECONDS`` so proxies keep the connection open.
 
@@ -1793,6 +1819,12 @@ def _float_or_none(value: Any) -> float | None:
     return round(float(value), 3)
 
 
+def _merged(session: Session, body: SolveParams) -> SolveParams:
+    """The session's solve settings with the fields a request set: the candidate counts set
+    with PATCH /solve-params and a room's budget settings stay unless the request names them."""
+    return session.solve_params.model_copy(update=body.model_dump(exclude_unset=True))
+
+
 def _solver_status(session: Session) -> dict[str, Any]:
     status = session.solver.status() if session.solver is not None else {"enabled": False}
     return {**status, "recommendation_version": (session.recommendation or {}).get("version")}
@@ -1838,6 +1870,7 @@ def _summary(session: Session) -> dict[str, Any]:
         "availability_source": state.availability_source,
         "survival": session.survival,
         "solver": _solver_status(session),
+        "solve_params": session.solve_params.model_dump(),
     }
 
 
