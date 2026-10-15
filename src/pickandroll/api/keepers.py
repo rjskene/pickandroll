@@ -137,9 +137,15 @@ def keeper_error(rows: Sequence[Labelled], exc: KeeperInvalid) -> str:
 
 
 def keeper_params(keepers: Sequence[Keeper]) -> list[dict[str, Any]]:
-    """A keeper table as session-create rows, by projection id (a rebuild resolves them)."""
+    """A keeper table as session-create rows, by projection id (a rebuild resolves them). A
+    keeper by round has no ``overall`` key, as rows read before traded picks."""
     return [
-        {"position": k.position, "round": k.round, "overall": k.overall, "player_id": k.player_id}
+        {
+            "position": k.position,
+            "round": k.round,
+            **({"overall": k.overall} if k.overall is not None else {}),
+            "player_id": k.player_id,
+        }
         for k in keepers
     ]
 
