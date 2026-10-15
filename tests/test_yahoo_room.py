@@ -117,6 +117,7 @@ SESSION = {
     "objective": "sum",
     "solve_ahead": False,
     "time_limit": 3.0,
+    "survival": "none",
 }
 
 
@@ -503,6 +504,31 @@ def test_room_survives_an_api_restart(league):
             json={"picks": [{"overall": 61, "yahoo_player_id": picks[60].yahoo_player_id}]},
         )
         assert r.status_code == 200 and r.json()["synced_through"] == 61
+
+
+def test_room_attach_defaults_to_the_league_table_and_keeps_it(league):
+    """An attach whose session names no survival gets the session default (the league's table
+    when data/ holds it), and a rebuild from the log keeps it."""
+    directory, picks = league
+    table = directory / "yahoo_history" / "survival_by_adp_adjusted.csv"
+    table.parent.mkdir()
+    cols = ["adp", *(str(m) for m in range(1, 158)), "undrafted"]
+    rows = [
+        [str(a), *(f"{max(0.0, min(1.0, 1.0 - (m - a) / 20.0)):.4f}" for m in range(1, 158)), "0.0"]
+        for a in range(1, 161)
+    ]
+    table.write_text("\n".join(",".join(r) for r in [cols, *rows]) + "\n")
+    session = {k: v for k, v in SESSION.items() if k != "survival"}
+    source = "league:survival_by_adp_adjusted.csv"
+    with app_for(directory) as c:
+        room = attach(c, session=session)
+        assert room["session"]["availability_source"] == "league"
+        assert room["session"]["survival"]["source"] == source
+        post_picks(c, "d1", picks[:12])
+    with app_for(directory) as c:
+        room = c.post("/rooms", json={"draft_id": "d1"}).json()
+        assert room["resumed"] is True and room["picks_applied"] == 12
+        assert room["session"]["survival"]["source"] == source
 
 
 # --------------------------------------------------------------------------- scorecard

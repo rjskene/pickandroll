@@ -48,6 +48,7 @@ def test_session_uses_adp_file(tmp_path):
                 "num_teams": 4,
                 "my_position": 1,
                 "solve_ahead": False,
+                "survival": "none",
             },
         )
         assert r.status_code == 201, r.text

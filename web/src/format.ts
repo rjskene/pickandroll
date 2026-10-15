@@ -16,7 +16,8 @@ export function survivalDetail(s: SessionSummary): string {
   // A simulated table is read by player and overall pick; the ADP model and the league table count
   // only the market.
   const market = s.availability_source !== "survival" && s.adp_keepers_ahead ? `, read in market space (${s.adp_keepers_ahead} keepers out of the market)` : "";
-  return `${source}${market}; spread ${s.spread_base} + ${s.spread_growth} × ADP picks.`;
+  const note = s.survival.note ? ` Default: ${s.survival.note}.` : "";
+  return `${source}${market}; spread ${s.spread_base} + ${s.spread_growth} × ADP picks.${note}`;
 }
 
 export function fmtMs(ms: number | undefined): string {

@@ -55,7 +55,8 @@ function SolverNote() {
   if (s.survival.status === "building") {
     const done = surv?.done ?? s.survival.done ?? 0;
     const total = surv?.total ?? s.survival.sims ?? 0;
-    return <span className="accent">Simulating the league {done}/{total} drafts</span>;
+    const why = s.survival.note ? ` (${s.survival.note})` : "";
+    return <span className="accent">Simulating the league {done}/{total} drafts{why}</span>;
   }
   if (s.survival.status === "failed") return <span className="bad">League simulation failed: {s.survival.error}</span>;
   if (d.done) return <span>Solver: done · {s.complete ? "the draft is complete" : "no picks left"}</span>;

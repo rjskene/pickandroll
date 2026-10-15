@@ -83,6 +83,9 @@ SURVIVAL_SUFFIXES = {".csv"}
 CURVE_SUFFIXES = {".json"}
 ADP_SUFFIXES = {".csv", ".xls", ".xlsx"}
 KEEPER_SUFFIXES = {".csv"}
+# The league's own survival by ADP, keeper-adjusted: a session that names no survival uses it
+# when data/ holds it (the web's LEAGUE_SURVIVAL_DEFAULT mirrors this: change both).
+LEAGUE_SURVIVAL_DEFAULT = "yahoo_history/survival_by_adp_adjusted.csv"
 #: Browsers that may call the API: the dev UI, other localhost tools and the Chrome extension.
 CORS_ORIGINS = r"^(chrome-extension://[a-p]{32}|https?://(localhost|127\.0\.0\.1)(:\d+)?)$"
 #: The longest a room client may hold ``/plan`` for a fresh solve (the pick clock is 30 s).
@@ -326,10 +329,13 @@ class SessionCreate(BaseModel):
     curve_file: str | None = Field(
         default=None, description="optional JSON inside data/ with per-category mu and sigma"
     )
-    survival: Literal["none", "simulate", "file", "league"] = Field(
-        default="none",
+    survival: Literal["none", "simulate", "file", "league"] | None = Field(
+        default=None,
         description="availability: ADP formula, a simulated table built now, a saved table, or "
-        "the league's own survival by ADP (survival_file: adp,1..N,undrafted)",
+        "the league's own survival by ADP (survival_file: adp,1..N,undrafted); left out, the "
+        f"league's table ({LEAGUE_SURVIVAL_DEFAULT}, or survival_file when given) when data/ "
+        "holds it and it covers the draft, else a simulation, with the reason in the "
+        "session's survival note",
     )
     survival_sims: int = Field(default=300, ge=10, le=5000)
     survival_file: str | None = Field(default=None, description="survival CSV inside data/")
@@ -649,6 +655,11 @@ def create_app(
 
     async def make_session(body: SessionCreate) -> Session:
         state, label, curve_source = await asyncio.to_thread(_build_state, body, data_dir)
+        note = None
+        if body.survival is None:
+            body, note = await asyncio.to_thread(
+                _default_survival, body, data_dir, state.settings.total_picks
+            )
         survival: dict[str, Any] = {"mode": body.survival, "status": "none"}
         if body.survival == "league":
             if not body.survival_file:
@@ -709,6 +720,8 @@ def create_app(
                 "drafters": list(drafters),
                 "source": None,
             }
+        if note:
+            survival["note"] = note
         session = store.create(
             state,
             label,
@@ -719,6 +732,7 @@ def create_app(
             solve_ahead=body.solve_ahead,
         )
         # The keeper table as resolved, by id: a rebuild after a restart does not re-read the file.
+        # The survival as resolved too, so a rebuild keeps the mode the session started on.
         session.create_params = {
             **body.model_dump(mode="json"),
             "keepers": keeper_params(state.keepers),
@@ -1715,6 +1729,33 @@ def _build_state(body: SessionCreate, data_dir: Path) -> tuple[DraftState, str, 
 def _load_league_survival(path: Path) -> LeagueSurvivalTable:
     """The league's survival by ADP from a CSV in data/ (``adp,1..N,undrafted``)."""
     return LeagueSurvivalTable.from_frame(pd.read_csv(path))
+
+
+def _default_survival(
+    body: SessionCreate, data_dir: Path, total_picks: int
+) -> tuple[SessionCreate, str | None]:
+    """The survival of a session whose request names none: the league's table when data/ holds
+    one that covers the draft, else a simulation and the reason. A survival_file in the request
+    is a league table the caller chose: it is used as given, and its errors are the caller's."""
+    if body.survival_file:
+        return body.model_copy(update={"survival": "league"}), None
+    path = data_dir / LEAGUE_SURVIVAL_DEFAULT
+    if not path.exists():
+        note = f"no league survival table in data/ ({LEAGUE_SURVIVAL_DEFAULT}): simulated"
+    else:
+        try:
+            league = _load_league_survival(path)
+        except (OSError, ValueError) as exc:
+            note = f"could not read {LEAGUE_SURVIVAL_DEFAULT} ({exc}): simulated"
+        else:
+            if league.picks >= total_picks:
+                update = {"survival": "league", "survival_file": LEAGUE_SURVIVAL_DEFAULT}
+                return body.model_copy(update=update), None
+            note = (
+                f"{LEAGUE_SURVIVAL_DEFAULT} covers {league.picks} picks, the draft has "
+                f"{total_picks}: simulated"
+            )
+    return body.model_copy(update={"survival": "simulate"}), note
 
 
 def _restart_survival(session: Session) -> tuple[int, int, tuple[Strategy, ...], bool]:
