@@ -224,6 +224,7 @@ $("attach-btn").addEventListener("click", async () => {
       session_id: s.id,
       num_teams: s.num_teams,
       room_teams: tab.room_teams, // null until the room shows its count
+      pick_owners: tab.pick_owners, // the room's draft order (traded picks), null until the R| frame
     });
     sessions = null;
     await load();

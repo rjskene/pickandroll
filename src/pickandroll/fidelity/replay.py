@@ -17,6 +17,9 @@ the room never sends at all (a keeper the session's table does not know about): 
 the next pick on the clock, and ``after_pick(overall)`` runs after each pick is posted (a test
 names the keeper there, as the user would).
 
+``pick_owners`` is the room's draft order with its traded picks (the position on each overall
+pick): the attach carries it, and the room's picks and turns are attributed by it.
+
 ``client`` is anything with httpx's ``get``/``post``: a FastAPI ``TestClient``, or an
 ``httpx.Client`` pointed at a running API.
 """
@@ -26,7 +29,7 @@ from __future__ import annotations
 import csv
 import statistics
 import time
-from collections.abc import Callable, Collection, Mapping
+from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass
 from itertools import pairwise
 from pathlib import Path
@@ -104,10 +107,10 @@ def replay(
     keepers: KeeperFrames = "socket",
     unsent: Collection[int] = (),
     after_pick: Callable[[int], None] | None = None,
+    pick_owners: Sequence[int] | None = None,
 ) -> dict[str, Any]:
     """Replay ``picks`` into the room ``draft_id``; returns the attach response, the plan
     served at each of my turns, the status and the scorecard."""
-    rounds = len(picks) // num_teams
     body: dict[str, Any] = {
         "draft_id": draft_id,
         "slot": slot,
@@ -121,9 +124,16 @@ def replay(
         body["session"] = session
     if players_file is not None:
         body["players_file"] = players_file
+    if pick_owners is not None:
+        body["pick_owners"] = list(pick_owners)
     attach = _ok(client.post("/rooms", json=body))
     kept = {int(k["overall"]) for k in attach.get("keepers") or []}
-    mine = set(snake_picks(num_teams, slot, rounds)) - kept
+    owners = attach.get("pick_owners") or None
+
+    def owner(overall: int) -> int:
+        return int(owners[overall - 1]) if owners else pick_owner(num_teams, overall)[1]
+
+    mine = {k for k in range(1, len(picks) + 1) if owner(k) == slot} - kept
     # The client is in the draft room from here (G6 counts from this control).
     state = "armed" if mode == "autopilot" else "mirror"
     _ok(
@@ -142,7 +152,7 @@ def replay(
                         {
                             "overall": p.overall,
                             "yahoo_player_id": p.yahoo_player_id,
-                            "slot": pick_owner(num_teams, p.overall)[1],
+                            "slot": owner(p.overall),
                             "t_room": round(time.time() * 1000.0),
                             "src": src,
                         }
@@ -162,13 +172,17 @@ def replay(
     plans: list[dict[str, Any]] = []
 
     def turn(overall: int) -> None:
-        owner = pick_owner(num_teams, overall)[1]
         _ok(
             client.post(
                 f"/rooms/{draft_id}/events",
                 json={
                     "events": [
-                        {"type": "turn_start", "overall": overall, "slot": owner, "clock_s": 30}
+                        {
+                            "type": "turn_start",
+                            "overall": overall,
+                            "slot": owner(overall),
+                            "clock_s": 30,
+                        }
                     ]
                 },
             )

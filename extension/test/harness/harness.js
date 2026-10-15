@@ -41,8 +41,12 @@
   // ``league=1``: a league room (2026-10-11): the path and every frame name a team by its Yahoo
   // team id (a fixed shuffle of the 12 seats), and the title says "You pick Nth" before the
   // draft; ``order=1`` also sends the R| frame at connect as the team id on each overall.
+  // ``trades=1``: ten picks belong to another position than the snake's (the shape of the
+  // 2026-10-14 draft; tests/fixtures/traded_picks_12.json), and the R| frame says so.
   const league = q.get("league") === "1";
-  const sendOrder = q.get("order") === "1";
+  const trades = q.get("trades") === "1";
+  const sendOrder = q.get("order") === "1" || trades;
+  const TRADED = trades ? { 28: 1, 45: 1, 144: 4, 145: 4, 55: 10, 106: 7, 36: 5, 68: 12, 122: 6, 88: 3 } : {};
   const TEAM_OF = league ? [null, 7, 3, 12, 1, 9, 5, 11, 2, 10, 4, 8, 6] : [null, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
   const tid = (seat) => TEAM_OF[seat];
   const hideS = Number(q.get("hide") || 10);
@@ -131,6 +135,7 @@
         (teams !== 12 ? `, attached for ${teams} teams` : "") +
         (viewMode ? `, view ${viewMode}` : "") +
         (league ? `, league room (team id ${tid(slot)}${sendOrder ? ", R| sent" : ""})` : "") +
+        (trades ? ", traded picks" : "") +
         `, extension ${manifest.version}`,
     );
 
@@ -174,7 +179,7 @@
       });
     // ``gap`` is wall-clock seconds; ``speed`` divides only the recording's own pace.
     const times = gap > 0 ? rows.map((_, i) => i * gap * 1000 * speed) : timeline(rows);
-    const owner = (k) => globalThis.PickAndRoll.pickOwner(12, k).slot;
+    const owner = (k) => TRADED[k] || globalThis.PickAndRoll.pickOwner(12, k).slot;
     const ws = new window.WebSocket("wss://harness.invalid/draft");
     ws.send(`8|31822|${tid(slot)}|harness`);
     if (sendOrder) {

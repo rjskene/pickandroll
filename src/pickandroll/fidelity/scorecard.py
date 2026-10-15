@@ -73,7 +73,14 @@ def analyze(events: list[dict[str, Any]]) -> dict[str, Any]:
     slot = int(attach["slot"])
     num_teams = int(attach.get("num_teams", 12))
     rounds = int(attach.get("rounds", 13))
-    mine = snake_picks(num_teams, slot, rounds)
+    # My picks: by the attach's owner map (traded picks), else the snake's.
+    owners = attach.get("pick_owners") or None
+    mine = (
+        [k for k, o in enumerate(owners, 1) if int(o) == slot]
+        if owners
+        else snake_picks(num_teams, slot, rounds)
+    )
+    traded = attach.get("traded_picks") or []
 
     room: dict[int, dict] = {}
     gap_picks: set[int] = set()  # picks the room never sent, recorded after its clock passed
@@ -370,6 +377,9 @@ def analyze(events: list[dict[str, Any]]) -> dict[str, Any]:
         "num_teams": num_teams,
         "rounds": rounds,
         "mode": attach.get("mode"),
+        # Traded picks (the attach's owner map): how many, and my picks under it.
+        "traded_picks": len(traded),
+        "my_picks": mine,
         "ext_version": versions,
         "control": control_at(math.inf),
         "picks_seen": len(room),
@@ -538,8 +548,9 @@ def markdown(card: dict[str, Any]) -> str:
         f"## Room {card['draft_id']}: fidelity scorecard",
         "",
         (
-            f"Slot {card['slot']} of {card['num_teams']}, {card['rounds']} rounds, mode "
-            f"{card['mode']}, control now {card['control']}; picks seen "
+            f"Slot {card['slot']} of {card['num_teams']}, {card['rounds']} rounds"
+            + (f" ({card['traded_picks']} traded picks)" if card.get("traded_picks") else "")
+            + f", mode {card['mode']}, control now {card['control']}; picks seen "
             f"{card['picks_seen']}/{card['total_picks']}; extension "
             + (" then ".join(versions) if versions else "version not reported (before 0.2.0)")
             + "."

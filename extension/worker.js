@@ -143,13 +143,16 @@ const ops = {
     if (ctl) ctl.abort();
     return { cancelled: Boolean(ctl) };
   },
-  async attach({ draft_id, slot, session_id, num_teams = 12, room_teams = null }) {
+  async attach({ draft_id, slot, session_id, num_teams = 12, room_teams = null, pick_owners = null }) {
     // The tab's slot is my draft position, null until the room shows it (a league room's path
     // names the Yahoo team id instead): never attach without one.
     if (!(Number.isInteger(slot) && slot >= 1)) throw new ApiError(400, SEAT_UNKNOWN);
     const s = await settings();
     const body = { draft_id, slot, num_teams, mode: "mirror", session_id, ext_version: version() };
     if (room_teams) body.room_teams = room_teams; // the API refuses an attach that disagrees (#17)
+    // The room's draft order (the position on each overall, from the R| frame): the session
+    // drafts on it, so traded picks are their owners' and not the snake's.
+    if (Array.isArray(pick_owners) && pick_owners.length) body.pick_owners = pick_owners;
     if (s.players_file) body.players_file = s.players_file;
     return api("/rooms", { method: "POST", body, timeout: 60000 });
   },

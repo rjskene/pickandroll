@@ -12,8 +12,9 @@
 //   X|n, then 5|team                  Yahoo is about to make the pick for that team itself
 //                                     (expiry, or the seat is on Autodraft)
 //   R|team|team|...|                  the draft order: the team id on each overall pick, in snake
-//                                     order, ~100 ms after entry (league 222017: 130 entries);
-//                                     checked before use (orderSeats)
+//                                     order with the league's traded picks moved (league 31822,
+//                                     2026-10-14: ten of them), ~100 ms after entry (league
+//                                     222017: 130 entries); checked before use (orderSeats)
 // Seen in a league room and not used: A| (autopick flags per team id) and w|7200|30 at entry,
 // H|S|60|0|0|<state> (0 before, 1 during, 2 after the draft), J| and L| (presence),
 // O|draft-labels|<overall>|<json> on my own turns, and C| counting down to the draft every 6 s.
@@ -45,11 +46,14 @@
     return n >= 1 && n <= 20 ? n : null;
   }
 
-  /** The draft position of each team from the R| frame's entries, read as the team id on each
-   * overall pick: {teams, seats: [[team, position], ...]} when the frame checks out, else
-   * {error}. It checks out when every entry is an integer, there are teams x ``rounds`` of them
-   * with teams in 2..20, the first round names each team once, and every later entry is one
-   * of those teams. */
+  /** The draft order behind the R| frame's entries, read as the team id on each overall pick:
+   * {teams, seats: [[team, position], ...], owners: [team, ...], traded} when the frame
+   * checks out, else {error}. It checks out when every entry is an integer, there are
+   * teams x ``rounds`` of them with teams in 2..20 (as many distinct teams), and every team
+   * has a settled draft position: the snake slot most of its picks fall on (a traded pick is
+   * the odd one out), the positions a permutation of 1..teams. A round may repeat a team
+   * (traded picks); ``traded`` counts the entries on another position's snake slot, and
+   * ``owners`` is the frame itself as numbers. */
   function orderSeats(order, rounds) {
     const n = Array.isArray(order) ? order.length : 0;
     if (!n || !(rounds >= 1) || n % rounds) return { error: `${n} entries for ${rounds} rounds` };
@@ -57,11 +61,28 @@
     if (teams < 2 || teams > 20) return { error: `${teams} teams` };
     if (!order.every((e) => /^\d{1,6}$/.test(String(e)))) return { error: "not all integers" };
     const ids = order.map(Number);
-    const first = ids.slice(0, teams);
-    if (new Set(first).size !== teams) return { error: "the first round repeats a team" };
-    const known = new Set(first);
-    if (!ids.every((t) => known.has(t))) return { error: "a team outside the first round" };
-    return { teams, seats: first.map((t, i) => [t, i + 1]) };
+    const distinct = new Set(ids).size;
+    if (distinct !== teams) return { error: `${distinct} teams in ${teams} x ${rounds} entries` };
+    const tally = new Map(); // team -> Map(snake slot -> picks on it)
+    ids.forEach((team, i) => {
+      const slot = pickOwner(teams, i + 1).slot;
+      if (!tally.has(team)) tally.set(team, new Map());
+      tally.get(team).set(slot, (tally.get(team).get(slot) || 0) + 1);
+    });
+    const seats = [];
+    const byPos = new Map();
+    for (const [team, slots] of tally) {
+      const most = Math.max(...slots.values());
+      const top = [...slots].filter(([, c]) => c === most).map(([slot]) => slot);
+      if (top.length !== 1) return { error: `team ${team} has no settled position` };
+      if (byPos.has(top[0])) return { error: `position ${top[0]} is held by two teams` };
+      byPos.set(top[0], team);
+      seats.push([team, top[0]]);
+    }
+    seats.sort((a, b) => a[1] - b[1]);
+    const posOf = new Map(seats);
+    const traded = ids.filter((team, i) => posOf.get(team) !== pickOwner(teams, i + 1).slot).length;
+    return { teams, seats, owners: ids, traded };
   }
 
   const int = (s) => (/^\d+$/.test(s) ? Number(s) : null);

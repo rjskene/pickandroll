@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import numpy as np
@@ -9,6 +10,22 @@ import pytest
 FINE_POSITIONS = ("PG", "SG", "SF", "PF", "C")
 
 DATA = Path(__file__).resolve().parents[1] / "data"
+FIXTURES = Path(__file__).resolve().parent / "fixtures"
+#: An anonymised 12-team order with ten traded picks (shared with the extension's tests).
+TRADED = json.loads((FIXTURES / "traded_picks_12.json").read_text())
+
+
+def traded_owners(
+    num_teams: int = TRADED["num_teams"],
+    rounds: int = TRADED["rounds"],
+    trades: dict | None = None,
+) -> list[int]:
+    """The draft position on each overall pick: the snake with ``trades`` (overall -> position,
+    the fixture's when ``None``) moved."""
+    from pickandroll.draft import pick_owner
+
+    moved = {int(k): int(v) for k, v in (TRADED["trades"] if trades is None else trades).items()}
+    return [moved.get(k, pick_owner(num_teams, k)[1]) for k in range(1, num_teams * rounds + 1)]
 
 
 def synthetic_pool(n: int = 60, seed: int = 7) -> pd.DataFrame:
@@ -52,6 +69,11 @@ def pool() -> pd.DataFrame:
 
 
 @pytest.fixture
+def traded() -> list[int]:
+    return traded_owners()
+
+
+@pytest.fixture
 def bbm_totals_path() -> Path:
     path = DATA / "bbm_sample_ros_totals.xls"
     if not path.exists():
@@ -65,3 +87,9 @@ def bbm_pergame_path() -> Path:
     if not path.exists():
         pytest.skip("no Basketball Monster sample export in data/")
     return path
+
+
+@pytest.fixture
+def big_pool() -> pd.DataFrame:
+    """Enough players for a 12-team, 13-round draft (traded-pick tests)."""
+    return synthetic_pool(220, seed=3)

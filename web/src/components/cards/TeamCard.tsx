@@ -20,7 +20,7 @@ function ScoreBlock() {
   // A turn's row names the player drafted there; the recommendation's #1 until the pick is made.
   const made = new Map((picks.data ?? []).map((p) => [p.overall, p.name]));
   const named = (h: ScoreEntry) => (h.on_the_clock ? made.get(h.next_overall) : undefined) ?? h.top ?? "";
-  const isTurn = turnFilter(picks.data, s.my_team);
+  const isTurn = turnFilter(picks.data, s.my_team, s.my_slots);
   // Best during the draft, over my real turns only (the server's best counts every solve).
   const turns = sc.history.filter(isTurn);
   // And only the turns that ran the benchmark's model: a single-roster fallback's score is not

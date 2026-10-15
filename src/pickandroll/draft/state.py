@@ -14,6 +14,12 @@ unwinnable. No punt is ever chosen on this path; the punt arguments remain for s
 Keepers (``docs/KEEPERS.md``): a :class:`Keeper` takes his team's pick in the round he was kept
 for. The log stays contiguous: his pick is appended the moment the draft reaches that slot, and
 until then he counts as taken and, for his team, as rostered.
+
+Traded picks: the draft is a snake unless :attr:`DraftState.pick_owners` says otherwise, the
+draft position that owns each overall pick (a league's draft order with its traded picks, as
+the Yahoo room's order frame gives it). Every owner question (:meth:`DraftState.owner_of`,
+:attr:`DraftState.my_slots`, a keeper's slot by position and round) reads the map first and the
+snake arithmetic when there is none; a keeper may also name his overall pick outright.
 """
 
 from __future__ import annotations
@@ -41,11 +47,21 @@ from ..optim.objective import CategoryCurve, win_label
 from ..optim.roster import RosterProblem, RosterSolution, pick_pool, punt_scan, solve_roster
 from ..projections.schema import Cat, ProjectionSet
 from ..projections.zscores import zscores
-from .settings import LeagueSettings, pick_owner, snake_picks
+from .settings import (
+    LeagueSettings,
+    check_pick_owners,
+    pick_owner,
+    position_pick,
+    position_picks,
+    round_of,
+    traded_picks,
+)
 
 #: Candidates per pick the plan keeps under the curve objective (see the 2026-09-23 study:
 #: objective loss 0.008 of 5.2 at pick one, solve time a third).
 CURVE_PLAN_CANDIDATES = 80
+#: "Keep the owner map" for :meth:`DraftState.set_my_position`.
+_KEEP = object()
 
 
 @dataclass(frozen=True)
@@ -72,11 +88,13 @@ class KeeperInvalid(ValueError):
 @dataclass(frozen=True)
 class Keeper:
     """A player kept by the team in draft ``position`` (``None``: mine, wherever my seat is), who
-    takes that team's pick in ``round``."""
+    takes that team's pick in ``round``. With traded picks a team may hold two picks in a round
+    or none: ``overall`` names the pick outright (it must be that team's, in that round)."""
 
     position: int | None
     round: int
     player_id: str
+    overall: int | None = None
 
 
 def plan_fallback(problem: HorizonProblem, solution: HorizonSolution) -> str | None:
@@ -95,6 +113,8 @@ class DraftState:
     positions: Mapping[str, Sequence[str]] = field(init=False)
     picks: list[Pick] = field(default_factory=list)
     keepers: tuple[Keeper, ...] = ()
+    #: The draft position on each overall pick, pick 1 first (traded picks); ``None``: a snake.
+    pick_owners: tuple[int, ...] | None = None
     pool_size: int | None = None
     adp: pd.Series | None = None
     adp_source: str = "none"
@@ -129,17 +149,55 @@ class DraftState:
         self.z = zscores(self.projections.df, cats=self.settings.cats, pool_size=pool)
         self.positions = self.projections.positions()
         self.effective_adp()  # records adp_source
+        self.pick_owners = check_pick_owners(
+            self.pick_owners, self.settings.num_teams, self.settings.roster_size
+        )
         self.keepers = tuple(self.keepers)
         self._check_keepers()
         self._fill_keepers()
 
+    # ------------------------------------------------------------------ pick owners
+    @property
+    def traded_picks(self) -> list[int]:
+        """The picks the owner map gives to another position than the snake would."""
+        return traded_picks(self.pick_owners, self.settings.num_teams)
+
+    def set_pick_owners(self, owners: Sequence[int] | None) -> int:
+        """Replace the pick-owner map (``None``: a pure snake), at any point of the draft. The
+        map decides who owns every pick, the ones logged included: a pick booked to another
+        team under the old map is relabelled (a history frame read before the room's order
+        books a traded pick to the snake's owner). Returns how many picks changed team. The
+        keeper table must still hold under the map (a keeper by position and round moves with
+        his team's pick; one already logged cannot move), else the change is refused and
+        nothing changes."""
+        self.set_my_position(self.my_position, owners)
+        names = self.team_names()
+        changed = 0
+        for i, p in enumerate(self.picks):
+            label = names[self.owner_of(p.overall)[1]]
+            if p.team != label:
+                self.picks[i] = Pick(p.overall, label, p.player_id)
+                changed += 1
+        return changed
+
     # ------------------------------------------------------------------ keepers
     def keeper_overall(self, keeper: Keeper) -> int:
-        """The overall pick a keeper takes: his team's pick in his round."""
+        """The overall pick a keeper takes: the one he names, else his team's pick in his
+        round (the first of them, with traded picks). ``ValueError`` when the team has no pick
+        in that round."""
+        if keeper.overall is not None:
+            return keeper.overall
         position = self.my_position if keeper.position is None else keeper.position
-        return snake_picks(self.settings.num_teams, position, self.settings.roster_size)[
-            keeper.round - 1
-        ]
+        overall = position_pick(
+            self.pick_owners,
+            self.settings.num_teams,
+            position,
+            keeper.round,
+            self.settings.roster_size,
+        )
+        if overall is None:
+            raise ValueError(f"position {position} has no pick in round {keeper.round}")
+        return overall
 
     def keeper_team(self, keeper: Keeper) -> str:
         """The team label a keeper's pick is logged under (as ``autopick.team_label``)."""
@@ -167,9 +225,11 @@ class DraftState:
         self._check_log()
 
     def _check_table(self) -> None:
-        """One keeper per player and per slot, each a known player in a round and a seat."""
+        """One keeper per player and per slot, each a known player in a round and a seat; a
+        keeper who names his pick names one of his team's, in his round."""
         slots: dict[int, Keeper] = {}
         index: dict[str, int] = {}
+        total = self.settings.total_picks
         for i, k in enumerate(self.keepers):
             if k.player_id not in self.z.index:
                 raise KeeperInvalid(i, k, "unknown player")
@@ -179,7 +239,19 @@ class DraftState:
                 raise KeeperInvalid(i, k, f"position outside 1-{self.settings.num_teams}")
             if k.player_id in index:
                 raise KeeperInvalid(i, k, "the player is kept twice")
-            overall = self.keeper_overall(k)
+            if k.overall is not None:
+                if not 1 <= k.overall <= total:
+                    raise KeeperInvalid(i, k, f"pick outside 1-{total}")
+                rnd, owner = self.owner_of(k.overall)
+                if rnd != k.round:
+                    raise KeeperInvalid(i, k, f"pick {k.overall} is in round {rnd}")
+                want = self.my_position if k.position is None else k.position
+                if owner != want:
+                    raise KeeperInvalid(i, k, f"pick {k.overall} is position {owner}'s")
+            try:
+                overall = self.keeper_overall(k)
+            except ValueError as exc:
+                raise KeeperInvalid(i, k, str(exc)) from None
             if overall in slots:
                 raise KeeperInvalid(i, k, f"pick {overall} is already {slots[overall]}")
             index[k.player_id] = i
@@ -245,22 +317,38 @@ class DraftState:
         finally:
             self._fill_keepers()
 
-    def set_my_position(self, position: int) -> None:
-        """Move my seat (a room attach). Only before the first real pick: my keepers follow the
-        seat, so the keeper picks already logged are re-derived."""
+    def set_my_position(
+        self, position: int, pick_owners: Sequence[int] | None | object = _KEEP
+    ) -> None:
+        """Move my seat (a room attach), and with ``pick_owners`` replace the owner map in the
+        same step (a keeper of mine by overall is checked against both at once). A seat change
+        is only possible before the first real pick: my keepers follow the seat, so the keeper
+        picks already logged are re-derived. Nothing changes when the table does not hold."""
         if not 1 <= position <= self.settings.num_teams:
             raise ValueError("my_position must be within the number of teams")
-        if position == self.my_position:
+        owners = (
+            self.pick_owners
+            if pick_owners is _KEEP
+            else check_pick_owners(pick_owners, self.settings.num_teams, self.settings.roster_size)
+        )
+        if position == self.my_position and owners == self.pick_owners:
             return
-        if not self._only_keepers_logged():
+        fresh = self._only_keepers_logged()
+        if position != self.my_position and not fresh:
             raise ValueError(f"the session already has picks for draft position {self.my_position}")
-        old = self.my_position
-        self.picks.clear()
-        self.my_position = position
+        old = (self.my_position, self.pick_owners)
+        picks = list(self.picks)
+        if fresh:
+            self.picks.clear()
+        self.my_position, self.pick_owners = position, owners
         try:
+            # A keeper pick already logged whose slot the new map moves fails the log check
+            # (his player is in the log at another pick than his slot).
             self._check_keepers()
         except ValueError:
-            self.my_position = old
+            self.my_position, self.pick_owners = old
+            if fresh:
+                self.picks[:] = picks
             raise
         finally:
             self._fill_keepers()
@@ -337,8 +425,10 @@ class DraftState:
 
     @property
     def my_slots(self) -> list[int]:
-        """Every pick my seat owns in the snake, keeper rounds included."""
-        return snake_picks(self.settings.num_teams, self.my_position, self.settings.roster_size)
+        """Every pick my seat owns (by the owner map, else the snake), keeper rounds included."""
+        return position_picks(
+            self.pick_owners, self.settings.num_teams, self.my_position, self.settings.roster_size
+        )
 
     @property
     def my_picks(self) -> list[int]:
@@ -360,6 +450,11 @@ class DraftState:
         return len(self.picks) >= self.settings.total_picks
 
     def owner_of(self, overall: int) -> tuple[int, int]:
+        """``(round, draft position)`` that owns an overall pick: the owner map's answer when
+        there is one (a pick past the draft falls back to the snake), else the snake's."""
+        owners = self.pick_owners
+        if owners is not None and 1 <= overall <= len(owners):
+            return round_of(self.settings.num_teams, overall), owners[overall - 1]
         return pick_owner(self.settings.num_teams, overall)
 
     @property
@@ -377,14 +472,28 @@ class DraftState:
 
     def team_names(self) -> dict[int, str]:
         """Draft position to team name: my team, the names seen in the pick log, and
-        ``Team N`` for a position that has not picked yet."""
+        ``Team N`` for a position that has not picked yet. A pick carrying another position's
+        own label (``Team 7`` or my team at position 1's slot: a traded pick the owner map
+        does not know) names nobody, so two positions never share a name."""
         names = {pos: f"Team {pos}" for pos in range(1, self.settings.num_teams + 1)}
         names[self.my_position] = self.my_team
+        standard = {name: pos for pos, name in names.items()}
         for pick in self.picks:
             _, pos = self.owner_of(pick.overall)
-            if pos != self.my_position and not self.is_keeper_pick(pick):
+            if pos == self.my_position or self.is_keeper_pick(pick):
+                continue
+            if standard.get(pick.team, pos) == pos:
                 names[pos] = pick.team
         return names
+
+    def team_positions(self) -> dict[str, int]:
+        """Team name to draft position (the inverse of :meth:`team_names`)."""
+        return {name: pos for pos, name in self.team_names().items()}
+
+    def pick_position(self, pick: Pick) -> int:
+        """The draft position a logged pick belongs to: the team it was booked to (the room's
+        word, or the user's) when that names a team, else the owner of its slot."""
+        return self.team_positions().get(pick.team, self.owner_of(pick.overall)[1])
 
     # ------------------------------------------------------------------ availability
     def set_adp(self, adp: pd.Series, source: str) -> None:
@@ -677,7 +786,8 @@ class DraftState:
         curve: CategoryCurve | None | str = "default",
     ) -> HorizonProblem:
         """Plan over my remaining picks. Raises ``ValueError`` when picks and open slots differ
-        (traded picks, odd manual entry), in which case callers fall back to the roster model.
+        (a pick-owner map the session was not given, odd manual entry), in which case callers
+        fall back to the roster model.
         ``curve`` overrides the session's (``None`` plans on the sum objective)."""
         players = self.solver_players()
         cols = [c.value for c in self.settings.cats]
@@ -878,10 +988,15 @@ class DraftState:
         position."""
         cols = [c.value for c in self.settings.cats]
         names = self.team_names()
+        positions = {name: pos for pos, name in names.items()}
         pending = self.pending_keepers
         rows = {}
         for pos, team in names.items():
-            roster = [p.player_id for p in self.picks if self.owner_of(p.overall)[1] == pos]
+            roster = [
+                p.player_id
+                for p in self.picks
+                if positions.get(p.team, self.owner_of(p.overall)[1]) == pos
+            ]
             roster += [k.player_id for o, k in pending.items() if self.owner_of(o)[1] == pos]
             totals = self.z.loc[roster, cols].sum() if roster else pd.Series(0.0, index=cols)
             rows[team] = {"position": pos, "picks": len(roster), **totals.to_dict()}

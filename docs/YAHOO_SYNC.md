@@ -136,10 +136,19 @@ Baseline from drafts 5-7 (2026-09-27, scratch hook in driver mode), loose count 
 
 One JSON object per line, per draft id, in `data/fidelity/<draft_id>.jsonl` (local, never committed), written by the API (#8). Times are ISO-8601 UTC with ms. Client events carry the client's `t` when it sends one (else the receive time) and `recv`, the server's receive time; `room_pick.t` is `t_room`, the room's own clock, when the client sends it. `src` is `api` on events the server writes for itself and `client` on posted ones.
 
+Traded picks (0.4.0, after the 2026-10-14 draft, which had ten): a league's order is the snake with the traded
+picks moved, so the owner of an overall pick is not arithmetic. The room's `R|` frame names the owner of all
+`teams x rounds` picks and a round may repeat a team; the extension reads it (`protocol.orderSeats`: a team's
+position is the snake slot most of its picks fall on), sends the positions as `pick_owners` on the attach and in
+the `draft order` note, and the session drafts on that map (`DraftState.pick_owners`: `my_picks`, `owner_of`, the
+keeper slots, every team's roster; `GET /sessions/{id}` and `GET /rooms/{d}` carry `pick_owners` and
+`traded_picks`). A room pick is booked to the map's owner whatever slot its frame carried. Without a map
+everything is the snake, as before.
+
 Written by the server:
 
 ```
-{"type":"attach",       "t":..., "draft_id":d, "slot":s, "mode":"mirror|autopilot", "num_teams":12, "rounds":13, "players_file":f, "session_id":..., "session":{...}, "resumed":bool, "mapped":n, "players":n, "keepers":[{"overall":n, "slot":s, "round":r, "player_id":..., "yahoo_player_id":id|null, "mine":bool, "logged":bool}]}
+{"type":"attach",       "t":..., "draft_id":d, "slot":s, "mode":"mirror|autopilot", "num_teams":12, "rounds":13, "players_file":f, "session_id":..., "session":{...}, "resumed":bool, "mapped":n, "players":n, "keepers":[{"overall":n, "slot":s, "round":r, "player_id":..., "yahoo_player_id":id|null, "mine":bool, "logged":bool}], "pick_owners":[p,...]|null, "traded_picks":[n,...]}  // pick_owners: the draft position on each overall pick (traded picks), the session's map; null is the snake. A rebuild reads it (0.4.0)
 {"type":"detach",       "t":..., "session_id":...}
 {"type":"room_pick",    "t":..., "overall":n, "slot":s, "yid":id, "src":"socket|history|board|keeper", "via":"socket|history"?, "name":...}  // keeper: the keeper at his slot; via: how it came
 {"type":"session_pick", "t":..., "overall":n, "pid":..., "yid":id, "lag_ms":..., "standin":bool, "kind":"new|held|conflict|repair|keeper", "src":"keeper"?, "keepers_dropped":[...]?, "resume":true?}
@@ -148,6 +157,10 @@ Written by the server:
 {"type":"score",        "t":..., "wins":x, "benchmark":x, "vs_benchmark":x, "best":x, "matchups":{...}}
 {"type":"control",      "t":..., "state":"armed|mirror|absent", "slot":s, "mode":"mirror|autopilot", "act_at_s":n|null, "src":"api"}  // at attach, on every PATCH /rooms/{d} and on a team-count mismatch; act_at_s (#10): armed turns click with n s left, null at once; a rebuild restores mode and act_at_s from the last one since a detach (#20)
 {"type":"note", "what":"draft request", "t":..., "overall":n, "board":b, "yid":id, "request_id":r}  // the web app's "Draft in Yahoo" (#10), held for the draft tab; r is the request's id (#22)
+{"type":"note", "what":"pick owners",   "t":..., "pick_owners":[p,...], "traded_picks":[n,...], "relabelled":n, "src":"api"}  // the owner map taken from the client's "draft order" note by a session attached without one; relabelled: picks already logged that changed team under it; a rebuild reads the last one (0.4.0)
+{"type":"note", "what":"draft order differs", "t":..., "differs_at":[n,...], "entries":n, "src":"api"}  // the client's order is not the session's map: the map is kept (0.4.0)
+{"type":"note", "what":"draft order refused", "t":..., "reason":"...", "entries":n, "src":"api"}  // the client's order does not fit the session (length, a keeper it moves): nothing changes (0.4.0)
+{"type":"note", "what":"pick owner differs", "t":..., "overall":n, "room_slot":s, "owner":p, "src":"api"}  // the room's record put the pick on another position than the owner map (a history frame read before the seats were known): the map's owner is booked (0.4.0)
 ```
 
 Posted by the client (`POST /rooms/{draft_id}/events`):
@@ -159,7 +172,7 @@ Posted by the client (`POST /rooms/{draft_id}/events`):
 {"type":"note", "what":"seat conflict", "t":..., "team":id, "position":p, "src":"title|order|frame", "had":[{"team":id,"position":p,"src":...}], "kept":"new|old"}  // two sources disagree; a round-1 frame overrides the title or R|
 {"type":"note", "what":"title seat",    "t":..., "position":n, "slot":p, "last":k}  // "You pick Nth" after the first pick, where it disagrees with my seat: noted once per value, not used
 {"type":"note", "what":"seat mismatch", "t":..., "room_slot":s, "slot":p, "team":id}  // the API's room was attached for slot s, the room shows p
-{"type":"note", "what":"draft order",   "t":..., "entries":n, "teams":T?, "error":"..."?, "head":"R|…"}  // the R| frame: its team count when it checks out, else why not; its first 120 characters
+{"type":"note", "what":"draft order",   "t":..., "entries":n, "teams":T?, "traded":n?, "error":"..."?, "head":"R|…", "owners":[team,...]|null, "pick_owners":[p,...]|null}  // the R| frame: when it checks out its team count, how many picks sit on another position's snake slot, and the owner of every pick as Yahoo team ids and as draft positions (the map a session attached before the frame adopts, 0.4.0); else why not; its first 120 characters
 {"type":"draft_attempt","t":..., "overall":n, "yid":id, "method":"row|queue|search|request", "attempt":k, "board":b}  // b = board of the plan the drafter acted on; t = the click's own time, not its settle (#26); request: the user's "Draft in Yahoo" (#10), landing how "manual"
 {"type":"note", "what":"queue_probe", "t":..., "overall":n, "yid":id, "name":..., "board":b, "outcome":"queued|drafted|dropped|no_control|failed", "panel":[...], "control":"...", "panel_found":bool, "controls":[{"cell":i,"pos":j,"tag":"button","labels":"..."}]}  // one per armed draft, §6; a note, not a new type, so no API version drops it
 {"type":"note", "what":"row miss",    "t":..., "overall":n, "yid":id, "name":..., "result":"noRow|noButton|mismatch|notLanded", "via":"scroll|find", "dom":{"rows":n,"first":"...","last":"...","draftable":bool,"search":"...","scroll":[top,height,client],"views":[...],"selects":[...]}}  // one per candidate the armed turn could not take (#52); dom = what Yahoo's page showed, read only
