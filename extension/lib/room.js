@@ -12,7 +12,9 @@
   // How far each source of a team's draft position is trusted. A round-1 frame is the room
   // putting that team on overall k; the title and the R| frame say so before the draft. A
   // source replaces a different answer only from a weaker one; an equal one keeps the first.
-  const SEAT_TRUST = { title: 1, order: 1, frame: 2, given: 2 };
+  // An R| frame that checks out is the room's whole order (traded picks included): it resets
+  // the map (fromOrder), and no later frame places a team.
+  const SEAT_TRUST = { title: 1, order: 2, frame: 2, given: 2 };
 
   class RoomTracker {
     /** ``teamId``: my Yahoo team id (the draft path's last number), which the room's frames
@@ -32,7 +34,12 @@
       this.picks = new Map(); // overall -> {overall, yid, team, slot, t, src}
       this.owners = new Map(); // overall -> the slot the room put on it (picks and turns)
       this.orderLen = null; // entries in the room's R| frame (draft order), when one came
-      this.order = null; // what the R| frame gave: {entries, teams} or {entries, error}
+      this.order = null; // what the R| frame gave: {entries, teams, traded} or {entries, error}
+      // The owner of every overall pick, pick 1 first, when known: the R| frame's team ids,
+      // and the draft positions (from the frame, or from the API's room). Traded picks live
+      // here; without them the snake arithmetic answers.
+      this.orderTeams = null;
+      this.pickOwners = null;
       this.sent = 0; // the API has applied every pick through this overall
       this.gap = null; // the API is waiting for this overall
       this.onDeck = null; // {overall, slot, clock, at}
@@ -119,8 +126,10 @@
 
     /** A frame put ``team`` on ``overall``. In round 1 (k <= teams, the team on no earlier
      * overall) that is the team's draft position: in time for my first turn when nothing
-     * earlier said it. */
+     * earlier said it. Once the R| frame has placed every team, a frame says nothing new (a
+     * traded round-1 pick would place its owner twice). */
     seen(overall, team, t) {
+      if (this.orderTeams) return;
       if (!Number.isInteger(overall) || !Number.isInteger(team)) return;
       const first = this.firstSeen.get(team);
       if (overall <= this.numTeams && overall >= 1 && (first === undefined || first >= overall))
@@ -142,15 +151,43 @@
       return this.slot !== mine;
     }
 
-    configure({ numTeams, rounds, keepers } = {}) {
+    /** What the API's room says: the team count, the rounds, the keeper slots, and the owner
+     * map it drafts on (``pickOwners``, the position on each overall) when this tab never read
+     * the R| frame itself (the frame, the room's own word, is kept over it). */
+    configure({ numTeams, rounds, keepers, pickOwners } = {}) {
       if (numTeams) this.numTeams = numTeams;
       if (rounds) this.rounds = rounds;
       if (Array.isArray(keepers)) this.keepers = new Set(keepers.map((k) => Number(k.overall)));
+      if (Array.isArray(pickOwners) && pickOwners.length && !this.orderTeams) this.pickOwners = pickOwners.map(Number);
     }
 
-    /** My draftable picks: my snake picks without my keeper slots; none while my seat is not
-     * known. */
+    /** The draft position that owns ``overall``: by the owner map when there is one (the
+     * frame's team placed, or the API's positions), else the snake's. */
+    ownerSlot(overall) {
+      const k = overall - 1;
+      if (this.pickOwners && k >= 0 && k < this.pickOwners.length) return this.pickOwners[k];
+      if (this.orderTeams && k >= 0 && k < this.orderTeams.length) return this.seatOf(this.orderTeams[k]);
+      return P.pickOwner(this.numTeams, overall).slot;
+    }
+
+    /** Whether ``overall`` is my team's by the owner map (the frame's team ids first, then
+     * the API's positions), or null when there is no map. */
+    mapMine(overall) {
+      const k = overall - 1;
+      if (this.orderTeams && k >= 0 && k < this.orderTeams.length) return this.orderTeams[k] === this.teamId;
+      if (this.pickOwners && k >= 0 && k < this.pickOwners.length) return this.slot !== null && this.pickOwners[k] === this.slot;
+      return null;
+    }
+
+    /** My draftable picks without my keeper slots: by the owner map (traded picks), else my
+     * snake picks; none while neither the map nor my seat says. */
     get mine() {
+      const total = this.numTeams * this.rounds;
+      if (this.orderTeams || this.pickOwners) {
+        const out = [];
+        for (let k = 1; k <= total; k++) if (this.mapMine(k) && !this.keepers.has(k)) out.push(k);
+        return out;
+      }
       const slot = this.slot;
       if (slot === null || slot > this.numTeams) return [];
       return P.snakePicks(this.numTeams, slot, this.rounds).filter((k) => !this.keepers.has(k));
@@ -165,10 +202,14 @@
       return Number.isInteger(overall) && overall >= 1 && overall <= this.numTeams * this.rounds;
     }
 
-    /** A turn of mine: my slot's pick, not a keeper slot. */
+    /** A turn of mine: my pick by the owner map (else my slot's in the snake), not a keeper
+     * slot. */
     isMine(overall) {
+      if (!this.inDraft(overall) || this.isKeeper(overall)) return false;
+      const mapped = this.mapMine(overall);
+      if (mapped !== null) return mapped;
       const slot = this.slot;
-      return slot !== null && this.inDraft(overall) && P.pickOwner(this.numTeams, overall).slot === slot && !this.isKeeper(overall);
+      return slot !== null && P.pickOwner(this.numTeams, overall).slot === slot;
     }
 
     /** Highest overall seen. */
@@ -196,13 +237,18 @@
       return this.mine.find((k) => !this.picks.has(k)) ?? null;
     }
 
-    /** The overall on the clock when it is mine and not made yet, else null. A keeper slot of
-     * mine on the clock is never my turn: its pick is the keeper. */
+    /** The overall on the clock when it is mine and not made yet, else null: the room put my
+     * team on it and the owner map (or the snake) agrees. A keeper slot of mine on the clock
+     * is never my turn: its pick is the keeper. */
     myTurnNow() {
       const d = this.onDeck;
-      return d && d.slot !== null && d.slot === this.slot && this.isMine(d.overall) && !this.picks.has(d.overall)
-        ? d.overall
-        : null;
+      return d && this.onDeckMine(d) && !this.picks.has(d.overall) ? d.overall : null;
+    }
+
+    /** The D| frame's pick is mine: its team is my team (the mock lobby's team ids are the
+     * seats, so this reads my slot there), and the pick is mine by the map or the snake. */
+    onDeckMine(d) {
+      return d.team === this.teamId && this.isMine(d.overall);
     }
 
     clockLeft(t) {
@@ -216,12 +262,13 @@
         this.owners.set(overall, slot);
     }
 
-    /** The room's team count from the room itself (#17): the one T in 2..20 whose snake order
-     * puts every pick and turn seen on the slot the room put it on. Null while more than one T
-     * fits (until the snake first turns, pick T+1 back on slot T) or when none does. The attach
-     * says the count; this is how the room's own count reaches the API (mock 2: a 10-team room
-     * attached as 12). */
+    /** The room's team count from the room itself (#17): the R| frame's when it checked out,
+     * else the one T in 2..20 whose snake order puts every pick and turn seen on the slot the
+     * room put it on. Null while more than one T fits (until the snake first turns, pick T+1
+     * back on slot T) or when none does. The attach says the count; this is how the room's own
+     * count reaches the API (mock 2: a 10-team room attached as 12). */
     teamsSeen() {
+      if (this.order && this.order.teams) return this.order.teams;
       let found = null;
       for (let T = 2; T <= 20; T++) {
         let fits = true;
@@ -288,23 +335,43 @@
           if (this.isKeeper(m.overall)) start.keeper = true;
           this.outbox.push(start);
         }
-        if (slot !== null && slot === this.slot && this.isMine(m.overall) && !this.picks.has(m.overall)) out.turn = m.overall;
+        if (this.onDeckMine(this.onDeck) && !this.picks.has(m.overall)) out.turn = m.overall;
       } else if (m.kind === "clock") {
         this.clock = { value: m.clock, at: t };
-      } else if (m.kind === "auto" && this.slot !== null && this.seatOf(m.team) === this.slot) {
+      } else if (m.kind === "auto" && m.team === this.teamId) {
         const d = this.onDeck;
-        const k = d && d.slot === this.slot && !this.picks.has(d.overall) ? d.overall : this.nextMine();
+        const k = d && d.team === this.teamId && !this.picks.has(d.overall) ? d.overall : this.nextMine();
         if (k !== null) this.yahooMade.add(k);
       }
       if (this.slot !== mine) out.seat = this.slot;
       return out;
     }
 
-    /** The R| frame: every team's position when its entries check out (protocol.orderSeats). */
+    /** The R| frame: the room's whole order when its entries check out (protocol.orderSeats):
+     * every team's position (the map is rebuilt from it; a team an earlier source placed
+     * elsewhere is noted as a seat conflict the frame wins) and the owner of every pick, so a
+     * traded pick is its owner's and not the snake's. */
     fromOrder(order, t) {
       const r = P.orderSeats(order, this.rounds);
-      this.order = r.error ? { entries: order.length, error: r.error } : { entries: order.length, teams: r.teams };
-      if (!r.error) for (const [team, pos] of r.seats) this.learn(team, pos, "order", t);
+      this.order = r.error ? { entries: order.length, error: r.error } : { entries: order.length, teams: r.teams, traded: r.traded };
+      if (r.error) return;
+      const had = new Map(this.seats);
+      const mine = this.slot;
+      this.seats.clear();
+      this.byPos.clear();
+      for (const [team, pos] of r.seats) {
+        const h = had.get(team);
+        if (h && h.pos !== pos) {
+          this.outbox.push({ type: "note", t, what: "seat conflict", team, position: pos, src: "order", had: [{ team, position: h.pos, src: h.src }], kept: "new" });
+        }
+        this.seats.set(team, { pos, src: h && h.pos === pos ? h.src : "order" });
+        this.byPos.set(pos, team);
+      }
+      const posOf = new Map(r.seats);
+      this.orderTeams = r.owners;
+      this.pickOwners = r.owners.map((team) => posOf.get(team));
+      for (const team of new Set([...had.keys(), ...posOf.keys()])) this.place(team);
+      if (this.slot !== mine) this.outbox.push({ type: "note", t, what: "seat", team: this.teamId, slot: this.slot, src: "order" });
     }
 
     add(overall, yid, team, t, src) {
@@ -412,6 +479,9 @@
         room_teams: this.teamsSeen(),
         order_len: this.orderLen,
         order: this.order,
+        // The owner map (the position on each overall) for the API's attach, when one is known.
+        pick_owners: this.pickOwners,
+        traded: this.order && this.order.traded !== undefined ? this.order.traded : null,
         rounds: this.rounds,
         keepers: [...this.keepers].sort((a, b) => a - b),
         room_picks: this.picks.size,

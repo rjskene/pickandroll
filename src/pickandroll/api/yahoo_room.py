@@ -17,7 +17,11 @@ room keeps a ledger of what Yahoo reported per overall pick and reconciles the s
 * a pick the room never sends at all (a keeper the table does not know about) is a gap: once
   the room's clock is past it for ``GAP_MARGIN_S`` the ledger records a pick with no Yahoo id
   and the session a stand-in there, so the board advances; the room's own record of the pick
-  repairs it, and the user can name the keeper (``PATCH /sessions/{id}/keepers``).
+  repairs it, and the user can name the keeper (``PATCH /sessions/{id}/keepers``);
+* the room's draft order with its traded picks (Yahoo's order frame, the owner of every overall
+  pick) is the session's owner map: given at attach (``pick_owners``) or adopted from the
+  client's ``draft order`` note (:func:`adopt_order`); every owner the room code needs comes
+  from the session (``state.owner_of``), the snake only where the session has no map.
 
 Everything the room sees goes to the fidelity log (:mod:`pickandroll.fidelity`), and so does
 every solve, so the scorecard can be computed without the session and a room can be rebuilt
@@ -37,8 +41,7 @@ from typing import TYPE_CHECKING, Any, Literal
 
 import pandas as pd
 
-from ..draft.settings import pick_owner, snake_picks
-from ..fidelity import FidelityLog, now_iso, to_iso, to_ms
+from ..fidelity import FidelityLog, last_attach, now_iso, to_iso, to_ms
 from ..sources.yahoo.players import YahooIdMap
 
 if TYPE_CHECKING:
@@ -188,10 +191,6 @@ class YahooRoom:
     lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
     @property
-    def my_picks(self) -> list[int]:
-        return snake_picks(self.num_teams, self.slot, self.rounds)
-
-    @property
     def synced_through(self) -> int:
         k = 0
         while k + 1 in self.ledger or k + 1 in self.kept:
@@ -207,6 +206,21 @@ class YahooRoom:
 
 
 # --------------------------------------------------------------------------- attach
+def logged_pick_owners(prior: list[dict[str, Any]]) -> list[int] | None:
+    """The owner map a room's log last holds: the current attach record's ``pick_owners``, or
+    a later ``pick owners`` note the API wrote when it adopted the client's order frame."""
+    owners = None
+    since = -1
+    record = last_attach(prior)
+    if record is not None:
+        owners = record.get("pick_owners")
+        since = prior.index(record)
+    for e in prior[since + 1 :]:
+        if e.get("type") == "note" and e.get("what") == "pick owners" and e.get("src") == "api":
+            owners = e.get("pick_owners")
+    return list(owners) if owners else None
+
+
 def attach_room(
     session: Session,
     *,
@@ -219,20 +233,30 @@ def attach_room(
     players_file: str,
     prior: list[dict[str, Any]],
     attach_record: dict[str, Any],
+    pick_owners: list[int] | None = None,
 ) -> YahooRoom:
     """Bind a room to a session, write the attach record and replay any picks already in the
     log (a restart, or a second attach for the same draft). ``mode`` ``None`` is a rebuild:
     the room takes the mode last set since its last detach (mirror when none was), from the
     waiting room on as well as mid-draft. A given mode is set and logged, mid-draft too. Any
-    attach keeps act_at_s from the same record."""
+    attach keeps act_at_s from the same record. ``pick_owners``, the room's draft order with
+    its traded picks, becomes the session's owner map (one it already has stays when none is
+    given) and goes on the attach record."""
     state = session.state
     if num_teams != state.settings.num_teams:
         raise ValueError(f"the room has {num_teams} teams, the session {state.settings.num_teams}")
     if not 1 <= slot <= num_teams:
         raise ValueError(f"slot must be between 1 and {num_teams}")
     with session.lock:
-        # Refused once real picks exist for another seat; my keepers follow the seat.
-        state.set_my_position(slot)
+        # Refused once real picks exist for another seat; my keepers follow the seat, and the
+        # owner map is checked with it (a keeper of mine by overall must be my pick under both).
+        if pick_owners is not None:
+            state.set_my_position(slot, pick_owners)
+        else:
+            state.set_my_position(slot)
+        owners = None if state.pick_owners is None else list(state.pick_owners)
+    if session.create_params is not None and session.create_params.get("pick_owners") != owners:
+        session.create_params = {**session.create_params, "pick_owners": owners}
     set_mode, set_act_at_s = set_since_detach(prior)
     explicit = mode is not None
     if mode is None:
@@ -269,6 +293,9 @@ def attach_room(
             # The keeper slots: the scorecard leaves mine out of my turns, and counts a keeper
             # pick logged before the attach as synced from the start.
             "keepers": keepers(session, room),
+            # The owner map (traded picks): the scorecard's "mine", and a rebuild's map.
+            "pick_owners": owners,
+            "traded_picks": state.traded_picks,
         }
     )
     if controls and room.resumed and not explicit:
@@ -353,7 +380,7 @@ def ingest(session: Session, room: YahooRoom, items: list[dict[str, Any]]) -> di
                             {"type": "note", "what": "room reported two players", **note}
                         )
                 continue
-            slot = int(item.get("slot") or pick_owner(room.num_teams, overall)[1])
+            slot = int(item.get("slot") or session.state.owner_of(overall)[1])
             # The room's record of a keeper at his slot: src "keeper" (the scorecard leaves it
             # out of my turns and the lag), and how it came (history on connect, or a frame).
             kept = slots.get(overall) is not None and slots[overall] == room.ids.pid(yid)
@@ -463,7 +490,11 @@ def _walk(state, room: YahooRoom) -> list[dict[str, Any]]:
         else:
             # Never a keeper still to come: his slot is spoken for.
             pid, standin = _standin(state, elsewhere | set(pending)), True
-        team = state.my_team if entry.slot == room.slot else f"Team {entry.slot}"
+        # The pick's owner: the owner map's when the session has one (a traded pick is its
+        # owner's whatever the room's record says: a history frame before the seats were
+        # known carries the snake's position), else the room's word.
+        owner = state.owner_of(k)[1] if state.pick_owners is not None else entry.slot
+        team = state.my_team if owner == room.slot else f"Team {owner}"
         t = now_iso()
         dropped = []
         filled = []
@@ -478,6 +509,18 @@ def _walk(state, room: YahooRoom) -> list[dict[str, Any]]:
         else:
             dropped = state.replace_pick(k, team, pid)
             kind = "repair" if k in room.repairs else "conflict"
+        if owner != entry.slot:
+            room.log.append(
+                {
+                    "type": "note",
+                    "t": t,
+                    "what": "pick owner differs",
+                    "overall": k,
+                    "room_slot": entry.slot,
+                    "owner": owner,
+                    "src": "api",
+                }
+            )
         room.repairs.discard(k)
         room.assigned[k] = pid
         if standin and gap:
@@ -569,7 +612,7 @@ def _fill_gaps(session: Session, room: YahooRoom) -> list[dict[str, Any]]:
         slots = set(session.state.keeper_slots)
     gaps = open_gaps(room, slots, time.monotonic())
     for k, j, t in gaps:
-        slot = pick_owner(room.num_teams, k)[1]
+        slot = session.state.owner_of(k)[1]
         room.ledger[k] = RoomPick(k, "", slot, t, "gap")
         room.log.append(
             {
@@ -1128,6 +1171,79 @@ def check_teams(session: Session, room: YahooRoom, events: list[dict[str, Any]])
     return wrong
 
 
+def adopt_order(session: Session, room: YahooRoom, events: list[dict[str, Any]]) -> list | None:
+    """The room's draft order as the client read it: a ``draft order`` note with
+    ``pick_owners``, the draft position on each overall pick (traded picks included). A session
+    with no owner map takes it, so my picks, the keeper slots and every owner follow the room;
+    one that has a map keeps it (a different one is noted, loudly). The map taken is written
+    as a ``pick owners`` note, which a rebuild reads (:func:`logged_pick_owners`). Returns the
+    map adopted, else ``None``."""
+    notes = [
+        e
+        for e in events
+        if e.get("type") == "note"
+        and e.get("what") == "draft order"
+        and isinstance(e.get("pick_owners"), list)
+    ]
+    if not notes:
+        return None
+    owners = [int(o) for o in notes[-1]["pick_owners"] if isinstance(o, int)]
+    state = session.state
+    with session.lock:
+        had = None if state.pick_owners is None else list(state.pick_owners)
+        if had is not None:
+            if had != owners:
+                room.log.append(
+                    {
+                        "type": "note",
+                        "t": now_iso(),
+                        "what": "draft order differs",
+                        "differs_at": [
+                            k
+                            for k, (a, b) in enumerate(zip(had, owners, strict=False), 1)
+                            if a != b
+                        ][:20],
+                        "entries": len(owners),
+                        "src": "api",
+                    }
+                )
+            return None
+        try:
+            relabelled = state.set_pick_owners(owners)
+        except ValueError as exc:
+            room.log.append(
+                {
+                    "type": "note",
+                    "t": now_iso(),
+                    "what": "draft order refused",
+                    "reason": str(exc),
+                    "entries": len(owners),
+                    "src": "api",
+                }
+            )
+            return None
+        traded = state.traded_picks
+    if session.create_params is not None:
+        session.create_params = {**session.create_params, "pick_owners": owners}
+    room.log.append(
+        {
+            "type": "note",
+            "t": now_iso(),
+            "what": "pick owners",
+            "pick_owners": owners,
+            "traded_picks": traded,
+            "relabelled": relabelled,
+            "src": "api",
+        }
+    )
+    # A board change for the UI and the solver: my picks may have moved.
+    session.publish(
+        "pick_owners",
+        {"draft_id": room.draft_id, "traded_picks": traded, "my_picks": state.my_picks},
+    )
+    return owners
+
+
 def unmatched_projection(session: Session, room: YahooRoom, limit: int = 25) -> list[dict]:
     """Projected players with no Yahoo id, best first: the ones to pin before a draft, since
     the drafter can never take them."""
@@ -1159,11 +1275,11 @@ def keepers(session: Session, room: YahooRoom) -> list[dict[str, Any]]:
     return [
         {
             "overall": o,
-            "slot": pick_owner(room.num_teams, o)[1],
+            "slot": state.owner_of(o)[1],
             "round": k.round,
             "player_id": k.player_id,
             "yahoo_player_id": room.ids.yid(k.player_id),
-            "mine": pick_owner(room.num_teams, o)[1] == room.slot,
+            "mine": state.owner_of(o)[1] == room.slot,
             "logged": o < nxt,
         }
         for o, k in slots
@@ -1186,6 +1302,9 @@ def summary(session: Session, room: YahooRoom) -> dict[str, Any]:
         "num_teams": room.num_teams,
         "teams_mismatch": room.teams_mismatch,
         "rounds": room.rounds,
+        # Traded picks: the owner map the session drafts on, and the picks it moves.
+        "pick_owners": None if state.pick_owners is None else list(state.pick_owners),
+        "traded_picks": state.traded_picks,
         "players_file": room.players_file,
         "attached_at": room.attached_at,
         "resumed": room.resumed,

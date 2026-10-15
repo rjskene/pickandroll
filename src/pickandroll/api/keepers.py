@@ -1,7 +1,8 @@
 """Keeper tables for a session (``docs/KEEPERS.md`` §2): the rows a request or a CSV inside
 ``data/`` gives, resolved to projection ids. A row names the team by draft position (``me`` or
 none for mine), the round the keeper takes, and the player by projection id or by name (matched
-like ADP names, with :func:`normalize_name`).
+like ADP names, with :func:`normalize_name`). With traded picks a team can hold two picks in a
+round, so a row may name the overall pick instead (``overall``); the round then follows from it.
 
 Every row travels with a label (``keepers.csv line 3``, ``keepers[0]``) so an error names the
 row to fix and the reason."""
@@ -17,6 +18,7 @@ import pandas as pd
 from pydantic import BaseModel, Field, ValidationError
 
 from ..draft import DraftState, Keeper, KeeperInvalid
+from ..draft.settings import round_of
 from ..projections.names import normalize_name
 
 KEEPER_COLUMNS = ("position", "round", "player")
@@ -24,7 +26,13 @@ KEEPER_COLUMNS = ("position", "round", "player")
 
 class KeeperIn(BaseModel):
     position: int | None = Field(default=None, ge=1, description="draft slot; None = my position")
-    round: int = Field(ge=1)
+    round: int | None = Field(default=None, ge=1, description="the round of his pick")
+    overall: int | None = Field(
+        default=None,
+        ge=1,
+        description="his pick outright (a team with two picks in a round, traded picks); the "
+        "round follows from it when left out",
+    )
     player_id: str | None = Field(default=None, description="projection id")
     player: str | None = Field(default=None, description="or a name, matched like ADP names")
 
@@ -39,7 +47,8 @@ def listed(rows: Sequence[KeeperIn]) -> list[Labelled]:
 
 
 def read_keepers_file(path: Path) -> list[Labelled]:
-    """The rows of a keepers CSV (``position,round,player``; position ``me`` or empty for
+    """The rows of a keepers CSV (``position,round,player``, and an optional ``overall``
+    column naming the pick outright, the round then optional; position ``me`` or empty for
     mine), labelled by line; blank lines are skipped. Raises ``ValueError`` naming the line
     that does not read."""
     rows: list[Labelled] = []
@@ -55,10 +64,12 @@ def read_keepers_file(path: Path) -> list[Labelled]:
             label = f"{path.name} line {reader.line_num}"
             rec = {c: v.strip() for c, v in zip(header, record, strict=False)}
             position, rnd = rec.get("position", ""), rec.get("round", "")
+            overall = rec.get("overall", "")
             try:
                 row = KeeperIn(
                     position=None if position.lower() in {"", "me"} else _number(position),
-                    round=_number(rnd),
+                    round=_number(rnd) if rnd or not overall else None,
+                    overall=_number(overall) if overall else None,
                     player=rec.get("player") or None,
                 )
             except ValidationError as exc:
@@ -79,12 +90,17 @@ def _number(text: str) -> int:
 
 def describe(label: str, row: KeeperIn) -> str:
     team = "me" if row.position is None else f"position {row.position}"
-    return f"{label} ({team}, round {row.round}, {row.player_id or row.player!r})"
+    where = f"pick {row.overall}" if row.overall is not None else f"round {row.round}"
+    return f"{label} ({team}, {where}, {row.player_id or row.player!r})"
 
 
-def resolve_keepers(rows: Sequence[Labelled], df: pd.DataFrame) -> list[Keeper]:
+def resolve_keepers(
+    rows: Sequence[Labelled], df: pd.DataFrame, num_teams: int | None = None
+) -> list[Keeper]:
     """Rows to keepers on the projection set ``df`` (index: projection id, column ``player``),
-    in order. Raises ``ValueError`` naming the row whose player is unknown or ambiguous."""
+    in order; a row that names its pick and not its round gets the round from ``num_teams``.
+    Raises ``ValueError`` naming the row whose player is unknown or ambiguous, or that names
+    neither round nor pick."""
     by_name: dict[str, list[str]] = {}
     for pid, name in df["player"].items():
         by_name.setdefault(normalize_name(name), []).append(str(pid))
@@ -104,7 +120,14 @@ def resolve_keepers(rows: Sequence[Labelled], df: pd.DataFrame) -> list[Keeper]:
             (pid,) = ids
         else:
             raise ValueError(f"{where}: give player_id or player")
-        out.append(Keeper(row.position, row.round, pid))
+        rnd = row.round
+        if rnd is None:
+            if row.overall is None:
+                raise ValueError(f"{where}: give round or overall")
+            if num_teams is None:
+                raise ValueError(f"{where}: give round")
+            rnd = round_of(num_teams, row.overall)
+        out.append(Keeper(row.position, rnd, pid, row.overall))
     return out
 
 
@@ -115,7 +138,10 @@ def keeper_error(rows: Sequence[Labelled], exc: KeeperInvalid) -> str:
 
 def keeper_params(keepers: Sequence[Keeper]) -> list[dict[str, Any]]:
     """A keeper table as session-create rows, by projection id (a rebuild resolves them)."""
-    return [{"position": k.position, "round": k.round, "player_id": k.player_id} for k in keepers]
+    return [
+        {"position": k.position, "round": k.round, "overall": k.overall, "player_id": k.player_id}
+        for k in keepers
+    ]
 
 
 def keeper_rows(state: DraftState) -> list[dict[str, Any]]:
@@ -135,6 +161,9 @@ def keeper_rows(state: DraftState) -> list[dict[str, Any]]:
                 "team": teams[position],
                 "mine": position == state.my_position,
                 "applied": overall < state.next_overall,
+                # The table named his pick outright (traded picks): it stays put when the
+                # owner map changes, where a keeper by round moves with his team's pick.
+                "by_overall": k.overall is not None,
             }
         )
     return rows

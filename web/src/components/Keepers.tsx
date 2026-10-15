@@ -3,7 +3,7 @@
 // the API logs that pick when the draft reaches it and nobody else can draft him.
 import { useEffect, useId, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { api, gapText, snakeOverall, type GapPick, type KeeperIn, type ProjectedPlayer } from "../api";
+import { api, gapText, positionPick, type GapPick, type KeeperIn, type ProjectedPlayer } from "../api";
 import { useDraft } from "../draft";
 import { Close } from "./icons";
 
@@ -15,6 +15,9 @@ export interface KeeperDraft {
   /** The team's draft position; null is mine. */
   position: number | null;
   round: number;
+  /** The pick he takes, when the table named it outright (a traded pick); null: his team's
+   * pick in the round. Cleared when the team or the round is edited. */
+  overall?: number | null;
   player: string;
   player_id: string | null;
   /** Where the row came from (a file's line), shown on hover. */
@@ -43,7 +46,8 @@ export function keepersIn(rows: KeeperDraft[], options: Map<string, string>): Ke
     .filter((r) => r.on)
     .map((r) => {
       const id = r.player_id ?? options.get(r.player.trim()) ?? null;
-      return id ? { position: r.position, round: r.round, player_id: id } : { position: r.position, round: r.round, player: r.player.trim() || null };
+      const slot = r.overall ? { position: r.position, round: r.round, overall: r.overall } : { position: r.position, round: r.round };
+      return id ? { ...slot, player_id: id } : { ...slot, player: r.player.trim() || null };
     });
 }
 
@@ -94,6 +98,8 @@ interface EditorProps {
   onChange: (rows: KeeperDraft[]) => void;
   numTeams: number;
   myPosition: number;
+  /** The session's owner map (traded picks), for the Pick column; the snake without one. */
+  pickOwners?: number[] | null;
   rounds: number;
   options: Map<string, string>;
   errorKey?: number | null;
@@ -101,7 +107,7 @@ interface EditorProps {
   locked?: (row: KeeperDraft) => boolean;
 }
 
-export function KeeperEditor({ rows, onChange, numTeams, myPosition, rounds, options, errorKey, locked }: EditorProps) {
+export function KeeperEditor({ rows, onChange, numTeams, myPosition, pickOwners, rounds, options, errorKey, locked }: EditorProps) {
   const listId = useId();
   const mine = (r: KeeperDraft) => isMine(r, myPosition);
   const [paste, setPaste] = useState<string | null>(null);
@@ -136,7 +142,7 @@ export function KeeperEditor({ rows, onChange, numTeams, myPosition, rounds, opt
           <tbody>
             {rows.map((r) => {
               const lock = locked?.(r) ?? false;
-              const overall = snakeOverall(numTeams, r.position ?? myPosition, r.round);
+              const overall = r.overall ?? positionPick(pickOwners, numTeams, r.position ?? myPosition, r.round) ?? 0;
               return (
                 <tr key={r.key} className={[r.on ? "" : "off", r.key === errorKey ? "err" : ""].filter(Boolean).join(" ")} title={lock ? "in the log: only the room's record can change it" : r.label}>
                   <td>
@@ -144,7 +150,7 @@ export function KeeperEditor({ rows, onChange, numTeams, myPosition, rounds, opt
                   </td>
                   <td>
                     {/* The team at my pick is me (the API reads it so): no "Team N" beside "Me". */}
-                    <select value={mine(r) ? 0 : (r.position ?? 0)} disabled={lock} aria-label="team" onChange={(e) => set(r.key, { position: Number(e.target.value) || null })}>
+                    <select value={mine(r) ? 0 : (r.position ?? 0)} disabled={lock} aria-label="team" onChange={(e) => set(r.key, { position: Number(e.target.value) || null, overall: null })}>
                       <option value={0}>Me</option>
                       {Array.from({ length: numTeams }, (_, i) => i + 1)
                         .filter((n) => n !== myPosition)
@@ -156,7 +162,7 @@ export function KeeperEditor({ rows, onChange, numTeams, myPosition, rounds, opt
                     </select>
                   </td>
                   <td>
-                    <input type="number" min={1} max={rounds} value={r.round} disabled={lock} aria-label="round" style={{ width: 54 }} onChange={(e) => set(r.key, { round: Number(e.target.value) })} />
+                    <input type="number" min={1} max={rounds} value={r.round} disabled={lock} aria-label="round" style={{ width: 54 }} onChange={(e) => set(r.key, { round: Number(e.target.value), overall: null })} />
                   </td>
                   <td>
                     <input
@@ -169,7 +175,7 @@ export function KeeperEditor({ rows, onChange, numTeams, myPosition, rounds, opt
                       onChange={(e) => set(r.key, { player: e.target.value, player_id: options.get(e.target.value) ?? null })}
                     />
                   </td>
-                  <td className="num dim">{overall >= 1 && overall <= numTeams * rounds ? `#${overall}` : ""}</td>
+                  <td className="num dim" title={overall >= 1 ? undefined : "this team has no pick in that round"}>{overall >= 1 && overall <= numTeams * rounds ? `#${overall}` : overall === 0 && pickOwners ? "none" : ""}</td>
                   <td>
                     {!lock && (
                       <button className="icon" aria-label="Remove the keeper" title="Remove" onClick={() => onChange(rows.filter((x) => x.key !== r.key))}>
@@ -250,7 +256,8 @@ export function SessionKeepers() {
       for (const key of ["session", "board", "picks", "teams"]) queryClient.invalidateQueries({ queryKey: [key, s.id] });
     },
   });
-  const current = () => s.keepers.map((k) => keeperDraft({ position: k.mine ? null : k.position, round: k.round, player: k.name, player_id: k.player_id, applied: k.applied }));
+  const current = () =>
+    s.keepers.map((k) => keeperDraft({ position: k.mine ? null : k.position, round: k.round, overall: k.by_overall ? k.overall : null, player: k.name, player_id: k.player_id, applied: k.applied }));
   const start = () => {
     save.reset();
     setEditing(current());
@@ -306,6 +313,7 @@ export function SessionKeepers() {
             onChange={setEditing}
             numTeams={s.num_teams}
             myPosition={s.my_position}
+            pickOwners={s.pick_owners}
             rounds={s.roster_size}
             options={options}
             errorKey={erroredRow(editing, save.error?.message)}
