@@ -8,8 +8,9 @@ and #10 (web UI). The metric, guardrails, event schema and hill-climb protocol a
 the proven scratch code to port is described in its §0 (archive at
 `~/code/pickandroll-scratch/live-drafts-2026-09-27/`, outside the repo).
 KEEPERS (`docs/KEEPERS.md`) shipped 2026-10-06; the real draft ran on 2026-10-14 (`docs/ROADMAP.md`, "Real draft").
-Now: the **ownership map** for traded picks and the dashboard fixes from draft night, then **ADD/DROP**
-(`docs/ADD_DROP.md`), the in-season waiver engine.
+The ownership map for traded picks and the draft-night dashboard fixes are merged (#55-#59). Now:
+**survival from the league's own drafts** as the default, **more leagues**, and **ADD/DROP**
+(`docs/ADD_DROP.md`), the in-season waiver engine (`docs/ROADMAP.md`, "Next programmes").
 
 ## Roles
 

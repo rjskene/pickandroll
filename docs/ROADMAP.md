@@ -63,24 +63,31 @@ no gaps, no stand-ins. What the night exposed, and the programme that follows fr
   league table and matchups). Two of my snake slots belonged to another team, so from pick 30
   the solver fell back to the single-roster model (its score is not comparable with the horizon
   plan's and showed as a jump), a pre-logged keeper at a traded slot was booked to the snake
-  owner, and the league table lost two teams to name collisions. Fix in flight: a per-pick
+  owner, and the league table lost two teams to name collisions. Fixed in #59: a per-pick
   ownership map, defaulting to the snake, supplied from Yahoo's order frame or the pasted draft
-  grid, used by engine, API and extension.
-- **Reading the dashboard.** The model in use must be unmissable (a red flag for the fallback),
-  the Team card shows expected categories won per real turn as a chart with the fallback solves
-  marked, the log sorts by team with keepers inline at the pick they cost, and a keeper change
-  rebuilds the survival table instead of leaving a stale one.
+  grid, used by engine, API and extension (0.4.0). The draft replayed on it afterwards runs the
+  horizon plan at every one of my turns, with 156 of 156 picks agreeing with the ledger.
+- **Reading the dashboard.** The model in use must be unmissable (a red flag for the fallback,
+  #56), the Team card shows expected categories won per real turn as a chart with the fallback
+  solves marked (#55), the log sorts by team with keepers inline at the pick they cost (#57), and
+  a keeper change rebuilds the survival table instead of leaving a stale one (#58). The candidate
+  count stays editable while a solve runs and applies to the solves that follow (PR pending).
 - **Data.** The ledger and end-of-draft snapshots are kept under `data/fidelity/` (local). The
   analysis of the draft (sync, compliance, availability calibration, ADP error, the score story)
   is the input to the next survival decision: fit the spread of pick minus ADP from this draft
-  and the league archive, and weigh the league's own history against Yahoo ADP.
+  and the league archive, and weigh the league's own history against Yahoo ADP. Done the same
+  night: the draft joined the archive (153 of 156 picks matched to ADP), the refit moves the
+  keeper-adjusted survival table by at most a few hundredths at any cell, and the room drafted
+  ahead of ADP through the first seven rounds as the archive's bias term predicts.
 
 ## Next programmes (2026-10-15)
 
-1. **Ownership map** (above), merged first.
-2. **Survival from real drafts.** Decide from the analysis which predictor and spread the
-   availability model should use for this league; a keeper-adjusted blend of Yahoo ADP and the
-   league's own drafts is the candidate.
+1. **Ownership map** (above), merged as #59.
+2. **Survival from real drafts.** Decided from the analysis: the keeper-adjusted table built from
+   the league's own drafts (`survival: league`) should be the session default, with the refit
+   that includes this draft promoted once confirmed; players missing from Yahoo's ADP list need
+   a rank-based fallback (never the projection rank), and the single-roster fallback must not
+   price without availability.
 3. **More leagues.** The user expects to join cash leagues: a session per league with its own
    settings (teams, roster slots, categories, keepers, traded picks), the extension keyed by
    draft id as today, league files under `data/leagues/`.
