@@ -53,6 +53,39 @@ and extension aware of keeper slots, and availability in keeper-adjusted market 
 0.15·ADP, the league's own survival table from effective ADP 90) from the eleven-season archive. Open:
 a keeper the table does not know about (a stand-in once the room's clock is past the slot).
 
+## Real draft (2026-10-14)
+
+League 31822's draft ran on the mirror: 156 of 156 picks synced, median lag 33 ms, worst 118 ms,
+no gaps, no stand-ins. What the night exposed, and the programme that follows from it:
+
+- **Traded picks.** The engine assumed a pure snake everywhere an owner matters (my slots, on the
+  clock, keeper slot to overall, the pick count the horizon plan needs, team grouping for the
+  league table and matchups). Two of my snake slots belonged to another team, so from pick 30
+  the solver fell back to the single-roster model (its score is not comparable with the horizon
+  plan's and showed as a jump), a pre-logged keeper at a traded slot was booked to the snake
+  owner, and the league table lost two teams to name collisions. Fix in flight: a per-pick
+  ownership map, defaulting to the snake, supplied from Yahoo's order frame or the pasted draft
+  grid, used by engine, API and extension.
+- **Reading the dashboard.** The model in use must be unmissable (a red flag for the fallback),
+  the Team card shows expected categories won per real turn as a chart with the fallback solves
+  marked, the log sorts by team with keepers inline at the pick they cost, and a keeper change
+  rebuilds the survival table instead of leaving a stale one.
+- **Data.** The ledger and end-of-draft snapshots are kept under `data/fidelity/` (local). The
+  analysis of the draft (sync, compliance, availability calibration, ADP error, the score story)
+  is the input to the next survival decision: fit the spread of pick minus ADP from this draft
+  and the league archive, and weigh the league's own history against Yahoo ADP.
+
+## Next programmes (2026-10-15)
+
+1. **Ownership map** (above), merged first.
+2. **Survival from real drafts.** Decide from the analysis which predictor and spread the
+   availability model should use for this league; a keeper-adjusted blend of Yahoo ADP and the
+   league's own drafts is the candidate.
+3. **More leagues.** The user expects to join cash leagues: a session per league with its own
+   settings (teams, roster slots, categories, keepers, traded picks), the extension keyed by
+   draft id as today, league files under `data/leagues/`.
+4. **ADD/DROP.** The in-season waiver engine, `docs/ADD_DROP.md` (design sketch; issue #4).
+
 ## Checks before drafting on it
 
 - Rebuild the survival table from opponents that resemble the real league once its drafters

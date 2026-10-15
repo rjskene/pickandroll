@@ -7,7 +7,9 @@ Current programme: **YAHOO SYNC**, tracker #11, built as #8 (API room endpoints)
 and #10 (web UI). The metric, guardrails, event schema and hill-climb protocol are in `docs/YAHOO_SYNC.md`;
 the proven scratch code to port is described in its §0 (archive at
 `~/code/pickandroll-scratch/live-drafts-2026-09-27/`, outside the repo).
-Next programme: **KEEPERS** (`docs/KEEPERS.md`, 2026-10-06): keeper-league support before the real draft on 2026-10-14.
+KEEPERS (`docs/KEEPERS.md`) shipped 2026-10-06; the real draft ran on 2026-10-14 (`docs/ROADMAP.md`, "Real draft").
+Now: the **ownership map** for traded picks and the dashboard fixes from draft night, then **ADD/DROP**
+(`docs/ADD_DROP.md`), the in-season waiver engine.
 
 ## Roles
 
@@ -54,8 +56,8 @@ as such, with the evidence.
 - Python: `.venv/bin/python -m pytest` and `.venv/bin/ruff check src tests` green before any PR. **In a worktree**
   the editable install resolves `pickandroll` to `~/code/pickandroll/src`, so run
   `PYTHONPATH=src ~/code/pickandroll/.venv/bin/python -m pytest` from the worktree root, or you test main's code.
-  Web: `cd web && npm run build && npm run lint` (ESLint flat config in `web/eslint.config.js` since #19; the
-  script carries `--max-warnings 0`).
+  Web: `cd web && npm run build && npm run lint && npm test` (ESLint flat config in `web/eslint.config.js` since #19;
+  the script carries `--max-warnings 0`; `npm test` runs `node --test` over `src/**/*.test.ts`, since #55).
   Extension (#9 onward): `node --test extension/test/*.test.js` from the repo root (Node, no dependencies;
   the bare directory form fails on Node 25).
 - Dev servers only through `~/code/.claude/launch.json` (`pickandroll-api` on :8000, `pickandroll-web`
