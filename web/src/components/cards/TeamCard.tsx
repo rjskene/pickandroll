@@ -4,6 +4,8 @@ import { useDraft } from "../../draft";
 import { labelClass, oddsClass, pct, signed } from "../../format";
 import { GapMark } from "../Keepers";
 import { useMyRoster } from "./myRoster";
+import ScoreChart from "./ScoreChart";
+import { scorePoints, turnFilter } from "./scoreTurns";
 
 /** Expected categories won before my first pick against the best plan seen and the latest,
  * and at the end the final roster's odds and its head-to-head tally. */
@@ -17,6 +19,10 @@ function ScoreBlock() {
   // A turn's row names the player drafted there; the recommendation's #1 until the pick is made.
   const made = new Map((picks.data ?? []).map((p) => [p.overall, p.name]));
   const named = (h: ScoreEntry) => (h.on_the_clock ? made.get(h.next_overall) : undefined) ?? h.top ?? "";
+  const isTurn = turnFilter(picks.data, s.my_team);
+  // Best during the draft, over my real turns only (the server's best counts every solve).
+  const turns = sc.history.filter(isTurn);
+  const best = turns.length ? turns.reduce((a, b) => (b.wins > a.wins ? b : a)) : null;
   const bench = sc.benchmark;
   const current = sc.current_wins;
   const delta = sc.vs_benchmark;
@@ -36,9 +42,9 @@ function ScoreBlock() {
           <span className="k">Before pick 1{when(bench)}</span>
           <span className="v">{bench ? bench.wins.toFixed(2) : "—"}</span>
         </div>
-        <div className="stat" title={sc.best ? `${sc.best.value.toFixed(1)} z · ${sc.best.matchups} of ${opponents} matchups` : ""}>
-          <span className="k">Best during draft{when(sc.best)}</span>
-          <span className="v">{sc.best ? sc.best.wins.toFixed(2) : "—"}</span>
+        <div className="stat" title={best ? `${best.value.toFixed(1)} z · ${best.matchups} of ${opponents} matchups` : ""}>
+          <span className="k">Best during draft{when(best)}</span>
+          <span className="v">{best ? best.wins.toFixed(2) : "—"}</span>
         </div>
         <div className="stat" title={sc.final ? `${sc.final.value.toFixed(1)} z · ${sc.final.matchups} of ${opponents} matchups won on projected finals` : sc.latest ? `${sc.latest.value.toFixed(1)} z · ${sc.latest.matchups} of ${opponents} matchups` : ""}>
           <span className="k">{sc.final ? "Final" : `Now · pick ${s.next_overall}`}</span>
@@ -55,11 +61,12 @@ function ScoreBlock() {
           </div>
         )}
       </div>
+      <ScoreChart points={scorePoints(sc, isTurn)} bench={bench} named={named} opponents={opponents} />
       {!bench && <p className="muted" style={{ fontSize: 11 }}>Frozen at the last solve before your first pick.</p>}
       {sc.history.length > 1 && (
         <table className="history">
           <tbody>
-            {sc.history.filter((h) => h.on_the_clock || h === sc.history[sc.history.length - 1]).map((h) => (
+            {sc.history.filter((h) => isTurn(h) || h === sc.history[sc.history.length - 1]).map((h) => (
               <tr key={h.version}>
                 <td className="dim">#{h.next_overall}</td>
                 <td title={h.top && named(h) !== h.top ? `recommended: ${h.top}` : undefined}>{named(h)}</td>
