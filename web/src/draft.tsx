@@ -103,9 +103,9 @@ function loadAvailableOnly(): boolean {
   }
 }
 
+/** Solve settings held in the browser and sent with a manual solve. The candidate counts are
+ * the server's (session.solve_params), so background and room solves use them too. */
 export interface Settings {
-  /** Candidates priced exactly. */
-  n: number;
   /** "If he is gone" plans solved while someone else is on the clock. */
   scenarios: number;
   /** Ask the server to re-solve on every pick when its own solve-ahead is off. */
@@ -114,7 +114,7 @@ export interface Settings {
   /** Override the session's objective; null keeps it. */
   objective: Objective | null;
 }
-const DEFAULT_SETTINGS: Settings = { n: 8, scenarios: 3, refreshOnPick: true, horizon: true, objective: null };
+const DEFAULT_SETTINGS: Settings = { scenarios: 3, refreshOnPick: true, horizon: true, objective: null };
 
 export interface Toast {
   id: number;
@@ -304,7 +304,7 @@ export function DraftProvider({ session, solveEvents, survival, live, room, room
   const [settings, setSettingsState] = useState<Settings>(DEFAULT_SETTINGS);
   const setSettings = useCallback((patch: Partial<Settings>) => setSettingsState((s) => ({ ...s, ...patch })), []);
   const params = useMemo(
-    () => ({ n: settings.n, horizon: settings.horizon, scenarios: settings.scenarios, objective: settings.objective }),
+    () => ({ horizon: settings.horizon, scenarios: settings.scenarios, objective: settings.objective }),
     [settings],
   );
   const paramsRef = useRef(params);

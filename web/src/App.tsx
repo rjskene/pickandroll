@@ -253,6 +253,7 @@ export default function App() {
     });
     source.addEventListener("undo", refresh);
     source.addEventListener("keepers", refresh);
+    source.addEventListener("solve_params", () => queryClient.invalidateQueries({ queryKey: ["session", sessionId] }));
     source.addEventListener("room_attached", refresh);
     source.addEventListener("room_mode", refreshRoom);
     source.addEventListener("room_detached", refreshRoom);

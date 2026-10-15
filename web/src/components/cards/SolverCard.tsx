@@ -1,6 +1,7 @@
 import { CAT_LABEL, CATS } from "../../api";
 import { useDraft } from "../../draft";
 import { fmtMs, survivalDetail } from "../../format";
+import CandidatesInput from "../CandidatesInput";
 import Stepper from "../Stepper";
 
 export default function SolverCard() {
@@ -108,9 +109,7 @@ export default function SolverCard() {
               <option value="sum">sum of z</option>
             </select>
           </label>
-          <label>
-            candidates <input type="number" min={3} max={20} value={settings.n} onChange={(e) => setSettings({ n: Number(e.target.value) })} />
-          </label>
+          <CandidatesInput />
           <label title="plans solved ahead for the candidates likely to be taken before your pick">
             if-gone scenarios <input type="number" min={0} max={8} value={settings.scenarios} onChange={(e) => setSettings({ scenarios: Number(e.target.value) })} />
           </label>
