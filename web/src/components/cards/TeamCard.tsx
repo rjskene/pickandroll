@@ -21,11 +21,11 @@ function ScoreBlock() {
   const made = new Map((picks.data ?? []).map((p) => [p.overall, p.name]));
   const named = (h: ScoreEntry) => (h.on_the_clock ? made.get(h.next_overall) : undefined) ?? h.top ?? "";
   const isTurn = turnFilter(picks.data, s.my_team);
-  const bench = sc.benchmark;
-  // Best during the draft, over my real turns in the benchmark's model only: the server's best
-  // counts every solve, and a single-roster fallback's score is not comparable with a plan's.
-  const base = bench?.mode ?? "horizon";
+  // Best during the draft, over my real turns only (the server's best counts every solve).
   const turns = sc.history.filter(isTurn);
+  // And only the turns that ran the benchmark's model: a single-roster fallback's score is not
+  // comparable with a plan's.
+  const base = sc.benchmark?.mode ?? "horizon";
   const comparable = turns.filter((h) => h.mode === base);
   const best = comparable.length ? comparable.reduce((a, b) => (b.wins > a.wins ? b : a)) : null;
   const mixed = sc.history.some((h) => h.mode !== base);
@@ -34,6 +34,7 @@ function ScoreBlock() {
     : turns.length
       ? `none of my turns ran the ${base} model, and the other model's scores are not comparable with it`
       : "";
+  const bench = sc.benchmark;
   const current = sc.current_wins;
   const delta = sc.vs_benchmark;
   const opponents = s.num_teams - 1;
