@@ -232,11 +232,23 @@ def test_each_reco_logs_its_model_and_the_first_roster_one_why(room):
     notes = [e for e in events if e.get("what") == "roster fallback"]
     assert len(notes) == 1 and notes[0]["board"] == 21
     assert "remaining picks" in notes[0]["reason"] and "open roster slots" in notes[0]["reason"]
+    # Every reco logs its #1's objective in its own model, and the scale it is on; the plan's
+    # top_objective (what a later reco must beat) stays the plan's alone.
+    for r in recos:
+        assert r["top_value"] is not None and r["scale"] in ("wins", "z")
+        if r["model"] == "roster":
+            assert r["top_objective"] is None
+        elif r["top_objective"] is not None:
+            assert r["top_value"] == r["top_objective"]
     card = analyze(events)
-    assert card["diagnostics"]["roster"] == {"recos": 2, "boards": [21, 22]}
-    assert "| Recos from the roster fallback (goal 0 in a room) | 2 (boards 21, 22) |" in (
-        markdown(card)
-    )
+    roster = card["diagnostics"]["roster"]
+    assert (roster["recos"], roster["boards"]) == (2, [21, 22])
+    assert roster["value"]["n"] == 2
+    assert roster["value"]["last"] == round(recos[-1]["top_value"], 4)
+    assert card["diagnostics"]["horizon"]["recos"] == card["diagnostics"]["horizon"]["value"]["n"]
+    assert card["diagnostics"]["horizon"]["recos"] >= 1
+    line = "| Recos from the roster fallback (goal 0 in a room) | 2 (boards 21, 22); #1 value mean "
+    assert line in markdown(card) and "vs the plan's" in markdown(card)
 
 
 def test_the_scorecard_shows_the_rooms_count_and_the_probes_row():

@@ -309,6 +309,13 @@ class SessionCreate(BaseModel):
         default=None,
         description="optional file inside data/ with player names and ADP (csv or xls)",
     )
+    adp_fallback_file: str | None = Field(
+        default=None,
+        description="ranks for the players the ADP file lacks, mapped onto its scale: a Yahoo "
+        "players JSON in data/ (Yahoo's o_rank) or a player,adp csv/xls whose values rank "
+        "them; left out, the newest data/yahoo_players_*.json (a room's session: the room's "
+        "players file); none there, the players the ADP file lacks keep the value-rank stand-in",
+    )
     horizon: str = "season"
     num_teams: int = 12
     my_position: int = 1
@@ -769,6 +776,7 @@ def create_app(
                 {k["player_id"]: {"team": k["team"], "overall": k["overall"]} for k in keepers}
             )
             adp = state.effective_adp()
+            origin = state.adp_origin()
             ahead = state.keepers_ahead(adp)
             adp_eff = adp - ahead
             # Odds each player lasts to my next pick after the current one (the board's
@@ -791,6 +799,9 @@ def create_app(
                     "adp": _float_or_none(adp.get(pid)),
                     # Keeper-adjusted: the market reaches him this many picks sooner.
                     "adp_eff": _float_or_none(adp_eff.get(pid)),
+                    # market (the ADP list), rank (mapped from the rank source), end (neither
+                    # knows him) or stand-in (no rank source: a value rank).
+                    "adp_from": str(origin.get(pid, "stand-in")),
                     "keepers_ahead": int(ahead.get(pid, 0)),
                     "p_next": _float_or_none(p_next.get(pid)) if p_next is not None else None,
                     # The exact re-solve cost where a candidate was priced, else the
@@ -1265,12 +1276,17 @@ def create_app(
                 else yahoo_room.logged_pick_owners(prior)
             )
 
+            path = players_path(option("players_file", None))
+
             def for_room(create: SessionCreate) -> SessionCreate:
                 # A session made for the room is made at its seat and on its owner map, so a
-                # keeper in a pick the map gives me (traded) checks out from the start.
+                # keeper in a pick the map gives me (traded) checks out from the start; the
+                # players the ADP list lacks are ranked by the room's own players file.
                 update: dict[str, Any] = {"my_position": int(slot)}
                 if pick_owners is not None and create.pick_owners is None:
                     update["pick_owners"] = list(pick_owners)
+                if create.adp_fallback_file is None:
+                    update["adp_fallback_file"] = path.name
                 return create.model_copy(update=update)
 
             if body.session_id is not None:
@@ -1307,7 +1323,6 @@ def create_app(
                 time_limit = yahoo_room.plan_budget(clock_s)
             else:
                 time_limit = float(option("time_limit", yahoo_room.plan_budget(clock_s)))
-            path = players_path(option("players_file", None))
             state = session.state
 
             def build() -> YahooRoom:
@@ -1627,7 +1642,14 @@ def _keepers_file_rows(data_dir: Path, file: str) -> list[Labelled]:
 
 
 #: The session's files, each a path inside data/ (the keepers file is checked where it is read).
-DATA_FILE_FIELDS = ("projection_file", "positions_file", "adp_file", "curve_file", "survival_file")
+DATA_FILE_FIELDS = (
+    "projection_file",
+    "positions_file",
+    "adp_file",
+    "adp_fallback_file",
+    "curve_file",
+    "survival_file",
+)
 
 
 def _build_state(body: SessionCreate, data_dir: Path) -> tuple[DraftState, str, str]:
@@ -1702,6 +1724,14 @@ def _build_state(body: SessionCreate, data_dir: Path) -> tuple[DraftState, str, 
             state.set_adp(adp, f"file:{adp_path.name}")
     elif body.adp_file:
         raise HTTPException(400, f"ADP file not found: {body.adp_file}")
+    # The players the ADP list lacks: their rank from another source, never the projections'.
+    rank_path = _adp_rank_path(body, data_dir)
+    if rank_path is not None and state.adp is not None:
+        try:
+            rank, source = _adp_ranks(rank_path, state.projections.df, data_dir)
+        except (OSError, ValueError, KeyError) as exc:
+            raise HTTPException(400, f"could not read ranks from {rank_path.name}: {exc}") from exc
+        state.set_adp_rank(rank, source)
     state.plan_time_limit = body.time_limit
     state.price_time_limit = min(state.price_time_limit, body.time_limit)
     state.spread_base = body.spread_base
@@ -1724,6 +1754,34 @@ def _build_state(body: SessionCreate, data_dir: Path) -> tuple[DraftState, str, 
         state.curve = curve.scaled(body.sigma_scale)
         curve_source = state.curve.source
     return state, projections.label, curve_source
+
+
+def _adp_rank_path(body: SessionCreate, data_dir: Path) -> Path | None:
+    """The file that ranks the players the ADP list lacks: the request's, else the newest
+    Yahoo players file in data/, else none."""
+    if body.adp_fallback_file:
+        path = data_dir / body.adp_fallback_file
+        if not path.exists():
+            raise HTTPException(400, f"ADP fallback file not found: {body.adp_fallback_file}")
+        return path
+    files = sorted(data_dir.glob("yahoo_players_*.json"), key=lambda f: f.stat().st_mtime)
+    return files[-1] if files else None
+
+
+def _adp_ranks(path: Path, projections: pd.DataFrame, data_dir: Path) -> tuple[pd.Series, str]:
+    """Ranks by projection id: a Yahoo players file's ``o_rank`` (Yahoo's own order, the one
+    its autodraft follows) through the room's id map, or the ADP-like column of a csv/xls taken
+    as a rank."""
+    if path.suffix.lower() == ".json":
+        players = load_players_file(path)
+        ids = build_id_map(players, projections, load_aliases(data_dir / "aliases.json"))
+        ranks: dict[str, float] = {}
+        for yid, rank in players["o_rank"].dropna().items():
+            pid = ids.pid(str(yid))
+            if pid is not None and rank > 0:
+                ranks[pid] = min(float(rank), ranks.get(pid, float("inf")))
+        return pd.Series(ranks, dtype=float), f"o_rank:{path.name}"
+    return adp_for_projections(projections, load_adp(path)), f"rank:{path.name}"
 
 
 def _load_league_survival(path: Path) -> LeagueSurvivalTable:
@@ -1824,7 +1882,9 @@ async def _build_survival(
                 state.settings,
                 state.projections,
                 sims,
-                state.adp,
+                # With a rank source, the drafters see the ADP the session prices on: the list's,
+                # and the rank map's for the players it lacks.
+                state.adp if state.adp_rank is None else state.effective_adp(),
                 drafters,
                 progress=progress,
                 keepers=keepers,
@@ -1965,6 +2025,10 @@ def _summary(session: Session) -> dict[str, Any]:
         ),
         "adp_source": state.adp_source,
         "adp_known": int(state.adp.notna().sum()) if state.adp is not None else 0,
+        # Players the ADP list lacks whose ADP is their rank mapped onto its scale, and where
+        # the ranks come from.
+        "adp_fallback": int((state.adp_origin() == "rank").sum()),
+        "adp_fallback_source": state.adp_rank_source,
         # Keepers out of the market: each moves every player ranked behind him up a pick.
         "adp_keepers_ahead": len(state.keepers),
         "spread_base": state.spread_base,

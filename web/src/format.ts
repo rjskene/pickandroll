@@ -1,4 +1,4 @@
-import type { AvailabilitySource, Scale, SessionSummary, WinLabel } from "./api";
+import type { AvailabilitySource, BoardPlayer, Scale, SessionSummary, WinLabel } from "./api";
 
 /** Where the survival odds come from, in a few words. */
 export function oddsSource(source: AvailabilitySource): string {
@@ -78,6 +78,37 @@ export function adpLabel(source: string): string {
 }
 
 /** True when the ADP is a stand-in ranking rather than draft-position data. */
+/** Where the ranks for players missing from the ADP list come from, in a few words. */
+export function rankLabel(source: string | null): string {
+  if (!source) return "";
+  const [kind, file] = source.split(":", 2);
+  return kind === "o_rank" ? `Yahoo's rank (o_rank, ${file})` : `ranks in ${file ?? source}`;
+}
+
+/** The ADP cell: "≈" marks a rank mapped onto the ADP scale (he is not on the list), "—" a
+ * player neither list knows (placed past the end of the draft). */
+export function adpCell(p: BoardPlayer): string {
+  if (p.adp == null) return "";
+  if (p.adp_from === "end") return "—";
+  const mark = p.adp_from === "rank" ? "≈" : "";
+  return p.keepers_ahead > 0 && p.adp_eff != null ? `${mark}${p.adp.toFixed(0)} → ${p.adp_eff.toFixed(0)}` : `${mark}${p.adp.toFixed(1)}`;
+}
+
+/** Where the ADP cell's number comes from, and the keepers it skips. */
+export function adpTitle(p: BoardPlayer, rankSource: string | null): string | undefined {
+  const from =
+    p.adp_from === "rank"
+      ? `not on the ADP list: ${rankLabel(rankSource)} mapped onto its scale, ADP ${p.adp?.toFixed(1)}`
+      : p.adp_from === "end"
+        ? "on neither the ADP list nor the rank source: placed past the end of the draft"
+        : null;
+  const kept =
+    p.keepers_ahead > 0 && p.adp_from !== "end"
+      ? `${p.adp_from === "market" ? `Yahoo ADP ${p.adp?.toFixed(1)}; ` : ""}${p.keepers_ahead > 1 ? `${p.keepers_ahead} keepers ranked ahead of him are` : "a keeper ranked ahead of him is"} out of the market, so it reaches him at ${p.adp_eff?.toFixed(1)}`
+      : null;
+  return [from, kept].filter(Boolean).join("; ") || undefined;
+}
+
 export function adpIsStandIn(source: string): boolean {
   return source === "bbm_rank" || source === "z_total" || source === "none";
 }

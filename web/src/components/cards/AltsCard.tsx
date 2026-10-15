@@ -27,6 +27,9 @@ export default function AltsCard() {
       </>
     );
   const scale = result.scale;
+  // The single-roster fallback prices no availability: no survival odds, and its cost is not the
+  // price of waiting.
+  const roster = result.mode === "roster";
   const top = result.candidates[0];
   const tied = result.candidates.filter((c) => c.tie).length > 1;
   const band = scale === "z" ? `${result.tie_band.toFixed(1)} z` : `${result.tie_band.toFixed(2)} cats`;
@@ -37,7 +40,7 @@ export default function AltsCard() {
           {result.candidates.length - 1} alternatives to {top?.name}
         </span>
         <span className="muted" style={{ fontSize: 11 }}>
-          cost = {scale === "z" ? "z lost" : "categories won lost"} · ~ = time limit hit
+          {roster ? "roster cost, no availability: not the price of waiting" : `cost = ${scale === "z" ? "z lost" : "categories won lost"}`} · ~ = time limit hit
         </span>
       </div>
       {tied && (
@@ -50,18 +53,25 @@ export default function AltsCard() {
           <tr>
             <th>Player</th>
             <th className="num">{scale === "z" ? "Value" : "Cats won"}</th>
-            <th className="num" title="exact re-solve with this player taken first, against the best plan · hover a cell for the first-order estimate">
-              Cost
+            <th
+              className="num"
+              title={
+                roster
+                  ? "the single-roster fallback: the best roster's value lost with this player on it, with no availability in it"
+                  : "exact re-solve with this player taken first, against the best plan · hover a cell for the first-order estimate"
+              }
+            >
+              {roster ? "Roster cost" : "Cost"}
             </th>
             <th className="num" title={`average draft position: ${adpLabel(s.adp_source)}`}>
               ADP
             </th>
-            {!s.on_the_clock && nextPick && (
+            {!s.on_the_clock && nextPick && !roster && (
               <th className="num" title={`chance he is still on the board at your pick ${nextPick}`}>
                 At #{nextPick}
               </th>
             )}
-            {pickAfter && <th title={`chance he is still on the board at your following pick, #${pickAfter}`}>Survives to #{pickAfter}</th>}
+            {pickAfter && !roster && <th title={`chance he is still on the board at your following pick, #${pickAfter}`}>Survives to #{pickAfter}</th>}
           </tr>
         </thead>
         <tbody>
@@ -80,8 +90,8 @@ export default function AltsCard() {
                 {fmtCost(c.cost_vs_best, scale)}
               </td>
               <td className="num muted">{c.adp == null ? "" : c.adp.toFixed(0)}</td>
-              {!s.on_the_clock && nextPick && <td className={`num ${oddsClass(c.p_available_first)}`}>{pct(c.p_available_first)}</td>}
-              {pickAfter && (
+              {!s.on_the_clock && nextPick && !roster && <td className={`num ${oddsClass(c.p_available_first)}`}>{pct(c.p_available_first)}</td>}
+              {pickAfter && !roster && (
                 <td>
                   <span className="survival">
                     <span className="bar">

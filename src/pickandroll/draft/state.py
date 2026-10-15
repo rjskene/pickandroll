@@ -31,7 +31,13 @@ from dataclasses import dataclass, field, replace
 import numpy as np
 import pandas as pd
 
-from ..availability.adp import SPREAD_BASE, SPREAD_GROWTH, conditional_availability, pseudo_adp
+from ..availability.adp import (
+    SPREAD_BASE,
+    SPREAD_GROWTH,
+    conditional_availability,
+    pseudo_adp,
+    rank_to_adp,
+)
 from ..availability.league import LeagueSurvivalTable
 from ..availability.survival import SurvivalTable
 from ..optim.horizon import (
@@ -118,6 +124,10 @@ class DraftState:
     pool_size: int | None = None
     adp: pd.Series | None = None
     adp_source: str = "none"
+    #: Ranks (lower is earlier) for the players the market's ADP list lacks, from a source other
+    #: than the projections (Yahoo's own rank): mapped onto the ADP scale (``effective_adp``).
+    adp_rank: pd.Series | None = None
+    adp_rank_source: str | None = None
     solver_margin: int = 60
     replacement_window: int = 24
     #: Category-win objective for every solve; ``None`` keeps the sum of category totals.
@@ -141,6 +151,10 @@ class DraftState:
     last_timings: dict[str, float] = field(default_factory=dict, repr=False)
     #: ``"sum"`` when the last plan fell back from the curve to the sum objective.
     last_fallback: str | None = field(default=None, repr=False)
+    #: The rank map's last answer and the ADP and ranks it was for (``adp_fallback``).
+    _fallback: tuple[pd.Series, pd.Series, pd.Series] | None = field(
+        default=None, init=False, repr=False
+    )
 
     def __post_init__(self) -> None:
         if not 1 <= self.my_position <= self.settings.num_teams:
@@ -497,13 +511,49 @@ class DraftState:
 
     # ------------------------------------------------------------------ availability
     def set_adp(self, adp: pd.Series, source: str) -> None:
-        """Market ADP keyed by projection id (for example from Yahoo). Missing players fall
-        back to the pseudo ranking."""
+        """Market ADP keyed by projection id (for example from Yahoo). Missing players take
+        their rank's map (``set_adp_rank``), else the pseudo ranking."""
         self.adp = adp.reindex(self.z.index)
         self.adp_source = source
 
+    def set_adp_rank(self, rank: pd.Series, source: str) -> None:
+        """Ranks keyed by projection id (lower is earlier) for the players the market's ADP
+        list lacks: each takes the ADP his rank maps to on the market's scale."""
+        self.adp_rank = rank.reindex(self.z.index).dropna().astype(float)
+        self.adp_rank_source = source
+
+    def adp_fallback(self) -> pd.Series:
+        """ADP from the rank map (``rank_to_adp``) for the ranked players the market's list
+        lacks; empty without both. Recomputed only when the ADP or the ranks change."""
+        if self.adp is None or self.adp_rank is None:
+            return pd.Series(dtype=float)
+        cached = self._fallback
+        if cached is None or cached[0] is not self.adp or cached[1] is not self.adp_rank:
+            cached = (self.adp, self.adp_rank, rank_to_adp(self.adp_rank, self.adp))
+            self._fallback = cached
+        return cached[2]
+
+    def adp_origin(self) -> pd.Series:
+        """Where each player's ADP comes from: ``market`` (the ADP list), ``rank`` (his rank
+        mapped onto its scale), ``end`` (neither knows him: past the end of the draft) or
+        ``stand-in`` (no rank source: a value rank)."""
+        origin = pd.Series("stand-in", index=self.z.index, dtype=object)
+        if self.adp is None:
+            return origin
+        if self.adp_rank is not None:
+            origin[:] = "end"
+            origin[self.adp_fallback().index] = "rank"
+        origin[self.adp.notna()] = "market"
+        return origin
+
     def effective_adp(self) -> pd.Series:
-        """ADP for every player: market data where known, else a rank-based stand-in."""
+        """ADP for every player: market data where known. With a rank source, a player the
+        list lacks takes the ADP his rank maps to, and one neither knows goes past the end of
+        the draft (the market does not draft him). Without one, a rank-based stand-in."""
+        if self.adp is not None and self.adp_rank is not None and self.adp.notna().any():
+            known = self.adp.fillna(self.adp_fallback().reindex(self.adp.index))
+            end = max(float(known.max()), float(self.settings.total_picks)) + 1.0
+            return known.fillna(end)
         df = self.projections.df
         if "bbm_rank" in df.columns and df["bbm_rank"].notna().any():
             fallback = pseudo_adp(-df["bbm_rank"].astype(float).fillna(df["bbm_rank"].max() + 1))

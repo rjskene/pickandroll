@@ -29,6 +29,7 @@ export const LEAGUE_FROM_ADP = 90;
 // Mirrors LEAGUE_SURVIVAL_DEFAULT in src/pickandroll/api/app.py: change both.
 export const LEAGUE_SURVIVAL_DEFAULT = "yahoo_history/survival_by_adp_adjusted.csv";
 export type AvailabilitySource = "adp" | "survival" | "league";
+export type AdpFrom = "market" | "rank" | "end" | "stand-in";
 
 export interface SurvivalStatus {
   mode: SurvivalMode;
@@ -111,6 +112,10 @@ export interface SessionSummary {
   unknown_positions: number;
   adp_source: string;
   adp_known: number;
+  /** Players the ADP list lacks whose ADP is their rank mapped onto its scale, and the ranks'
+   * source ("o_rank:<players file>" for Yahoo's own rank; null without one). */
+  adp_fallback: number;
+  adp_fallback_source: string | null;
   /** Keepers out of the market: each moves every player ranked behind him up a pick. */
   adp_keepers_ahead: number;
   /** The ADP model's spread of a draft slot: spread_base + spread_growth * ADP picks. */
@@ -150,6 +155,9 @@ export interface BoardPlayer {
   adp: number | null;
   /** ADP minus the keepers ranked ahead of him: where the market reaches him. */
   adp_eff: number | null;
+  /** market: the ADP list; rank: his rank mapped onto its scale (he is not on the list); end:
+   * neither knows him (past the end of the draft); stand-in: no rank source, a value rank. */
+  adp_from: AdpFrom;
   keepers_ahead: number;
   p_next: number | null;
   /** Cost of taking this player with my next pick instead of the plan's choice: the exact
@@ -281,6 +289,8 @@ export interface Recommendation {
   fallback: string | null;
   /** Why the horizon plan could not be built (mode "roster"); null otherwise. */
   roster_reason?: string | null;
+  /** Mode "roster": the single roster's value with the #1 on it (no availability in it). */
+  roster_objective?: number;
   timings: Record<string, number>;
   adp_source: string;
   availability_source: AvailabilitySource;
