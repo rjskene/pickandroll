@@ -699,6 +699,21 @@ def test_solve_params_patch_applies_to_the_next_solve_and_keeps_the_rest():
         assert (params.n, params.turn_n, params.early, params.presolve) == (6, 4, True, True)
         assert 1 < len(rec.json()["candidates"]) <= 6
 
+        # A manual Re-solve (the web's body) keeps them too; it used to replace the session's
+        # settings wholesale and wipe a room's turn_n, early and presolve.
+        r = client.post(
+            f"/sessions/{sid}/solve", json={"horizon": True, "scenarios": 0, "objective": None}
+        )
+        assert r.status_code == 202, r.text
+        params = store.get(sid).solve_params
+        assert (params.n, params.turn_n, params.early, params.presolve) == (6, 4, True, True)
+        # A field the body names is set; the rest stay.
+        rec = client.post(f"/sessions/{sid}/recommend", json={"n": 3, "scenarios": 0})
+        assert rec.status_code == 200, rec.text
+        params = store.get(sid).solve_params
+        assert (params.n, params.turn_n, params.early, params.presolve) == (3, 4, True, True)
+        client.patch(f"/sessions/{sid}/solve-params", json={"n": 6})
+
         # turn_n null: my turn prices as many as any other solve; n cannot be cleared.
         r = client.patch(f"/sessions/{sid}/solve-params", json={"turn_n": None})
         assert r.status_code == 200
