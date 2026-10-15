@@ -146,6 +146,28 @@ tr.hl td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
 .score .stat .k { display: block; margin-bottom: 2px; }
 .score .stat .v { font-family: var(--display); font-size: 22px; font-weight: 600; color: #ffffff; line-height: 1; }
 .score .history td { padding: 2px 6px; font-size: 12px; }
+.score-chart { position: relative; margin: 10px 0 6px; }
+.score-chart svg { display: block; width: 100%; height: auto; overflow: visible; outline: none; touch-action: none; }
+.score-chart svg:focus-visible { outline: 1px solid var(--line-2); outline-offset: 2px; border-radius: 4px; }
+.score-chart .grid { stroke: var(--line); stroke-width: 1; }
+.score-chart .band { fill: var(--line-2); opacity: 0.45; }
+.score-chart .tick { fill: var(--dim); font-size: 10px; font-family: var(--body); }
+.score-chart .ref { stroke: var(--dim); stroke-width: 1; stroke-dasharray: 4 3; }
+.score-chart .ref-label { fill: var(--muted); font-size: 10px; font-family: var(--body); }
+.score-chart .crosshair { stroke: var(--line-2); stroke-width: 1; }
+.score-chart .line { fill: none; stroke: var(--accent); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.score-chart .line.provisional { stroke-dasharray: 3 3; opacity: 0.7; }
+.score-chart .dot { fill: var(--accent); stroke: var(--panel); stroke-width: 2; }
+.score-chart .dot.hollow { fill: var(--panel); stroke: var(--accent); }
+.score-chart .dot.on { stroke: var(--text); }
+.score-chart .end-label { fill: var(--text); font-size: 11px; font-weight: 600; font-family: var(--body); }
+.score-chart .tip { position: absolute; z-index: 5; pointer-events: none; min-width: 150px; max-width: 240px; padding: 6px 9px; background: var(--panel-2); border: 1px solid var(--line-2); border-radius: 6px; box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5); font-size: 11px; line-height: 1.4; white-space: normal; }
+.score-chart .tip .v { font-family: var(--display); font-size: 18px; font-weight: 600; color: var(--text); line-height: 1.1; }
+.score-chart .key { display: flex; gap: 14px; flex-wrap: wrap; margin-top: 4px; font-size: 11px; }
+.score-chart .key span { display: inline-flex; align-items: center; gap: 4px; }
+.score-chart .dot-key { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--accent); }
+.score-chart .dot-key.hollow { background: var(--panel); border: 2px solid var(--accent); }
+.score-chart .band-key { display: inline-block; width: 12px; height: 10px; border-radius: 2px; background: var(--line-2); opacity: 0.8; }
 
 /* controls */
 .controls { display: flex; flex-wrap: wrap; gap: 10px 14px; align-items: center; font-size: 12px; color: var(--muted); }
