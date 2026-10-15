@@ -50,9 +50,12 @@ export function logItems(picks: PickRow[], keepers: KeeperRow[], myTeam: string)
   return [...made, ...toCome].sort((a, b) => a.overall - b.overall || Number(a.toCome) - Number(b.toCome));
 }
 
-/** Draft order, newest first: keepers to come sit above the picks made, at their overall. */
-export function draftOrder(items: LogItem[]): LogItem[] {
-  return [...items].reverse();
+/** Draft order, newest first. Keepers to come within the next round (overall up to
+ * ``nextOverall + numTeams``) sit above the picks made at their overall; the ones further
+ * ahead are held back in ``ahead`` (newest first too), so the latest picks stay at the top. */
+export function draftOrder(items: LogItem[], nextOverall: number, numTeams: number): { ahead: LogItem[]; rows: LogItem[] } {
+  const far = (i: LogItem) => i.toCome && i.overall > nextOverall + numTeams;
+  return { ahead: items.filter(far).reverse(), rows: items.filter((i) => !far(i)).reverse() };
 }
 
 export interface TeamGroup {

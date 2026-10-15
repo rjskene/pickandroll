@@ -232,6 +232,8 @@ table.plan .survival .bar { width: 60px; }
 .picklog li.to-come { color: var(--dim); }
 .picklog li.to-come .slot { color: var(--dim); }
 .picklog .tag-to-come { font-size: 11px; }
+.picklog li.ahead .link { color: var(--dim); font-size: 12px; }
+.picklog li.ahead .link:hover { color: var(--muted); }
 .picklog li.team-head { margin-top: 8px; padding: 4px; border-bottom: 1px solid var(--line-2); font-family: var(--display); font-weight: 600; letter-spacing: 0.04em; font-size: 14px; }
 .picklog li.team-head:first-child { margin-top: 0; }
 .keeper-disclosure { margin-top: 12px; }

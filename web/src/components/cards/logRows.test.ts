@@ -37,9 +37,31 @@ test("keepers to come sit at their overall among the picks made", () => {
       [5, true],
     ],
   );
+  const { ahead, rows } = draftOrder(items, 3, 3);
+  assert.deepEqual(ahead, []);
   assert.deepEqual(
-    draftOrder(items).map((i) => i.overall),
+    rows.map((i) => i.overall),
     [5, 2, 1],
+  );
+});
+
+test("draft order holds back the keepers to come more than a round ahead", () => {
+  const picks = [pick(1, "Team 1", "a"), pick(2, ME, "b"), pick(3, "Team 3", "c")];
+  // Next pick 4, three teams: keepers up to pick 7 stay inline; 8 and later are held back.
+  const keepers = [keeper(7, ME, "near", false), keeper(8, "Team 1", "edge", false), keeper(12, "Team 3", "far", false)];
+  const { ahead, rows } = draftOrder(logItems(picks, keepers, ME), 4, 3);
+  assert.deepEqual(
+    ahead.map((i) => i.overall),
+    [12, 8],
+  );
+  assert.deepEqual(
+    rows.map((i) => [i.overall, i.toCome]),
+    [
+      [7, true],
+      [3, false],
+      [2, false],
+      [1, false],
+    ],
   );
 });
 

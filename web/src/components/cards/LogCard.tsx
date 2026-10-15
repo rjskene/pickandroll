@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { Fragment, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import { api, teamLabel, type GapPick } from "../../api";
 import { useDraft } from "../../draft";
 import { GapMark, SessionKeepers } from "../Keepers";
@@ -36,7 +36,13 @@ export default function LogCard() {
   };
   // The keeper editor sits behind a disclosure; a gap's mark asking for its keeper opens it.
   const [editOpen, setEditOpen] = useState(false);
-  if (d.keeperRequest !== null && !editOpen) setEditOpen(true);
+  const request = d.keeperRequest;
+  useEffect(() => {
+    if (request !== null) setEditOpen(true);
+  }, [request]);
+  // Keepers to come more than a round ahead fold into one row, so the latest picks stay on top.
+  const [showAhead, setShowAhead] = useState(false);
+  const { ahead, rows } = draftOrder(items, s.next_overall, s.num_teams);
   const teams = Array.from({ length: s.num_teams }, (_, i) => teamLabel(s, i + 1));
   return (
     <>
@@ -60,7 +66,16 @@ export default function LogCard() {
       {items.length === 0 && <p className="muted" style={{ margin: 0 }}>No picks yet.</p>}
       {order === "draft" ? (
         <ol className="picklog">
-          {draftOrder(items).map((item) => (
+          {ahead.length > 0 && (
+            <li className="to-come ahead">
+              <button className="link" onClick={() => setShowAhead((v) => !v)} aria-expanded={showAhead}>
+                {showAhead ? "▾" : "▸"} {ahead.length} {ahead.length === 1 ? "keeper" : "keepers"} to come
+              </button>
+              <span style={{ marginLeft: "auto" }}>from #{ahead[ahead.length - 1].overall}</span>
+            </li>
+          )}
+          {showAhead && ahead.map((item) => <LogLine key={item.key} item={item} gap={gaps.get(item.overall)} />)}
+          {rows.map((item) => (
             <LogLine key={item.key} item={item} gap={gaps.get(item.overall)} />
           ))}
         </ol>
