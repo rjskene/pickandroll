@@ -27,6 +27,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
 
+import anyio
 import pandas as pd
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -128,6 +129,9 @@ class Session:
     curve_source: str = "none"
     #: Survival availability: ``mode`` none/simulate/file, ``status`` none/building/ready/failed.
     survival: dict[str, Any] = field(default_factory=lambda: {"mode": "none", "status": "none"})
+    #: The simulated survival table's build: a keeper change starts a new one, and a build
+    #: whose number is no longer current is dropped when it lands.
+    survival_build: int = 0
     solver: BackgroundSolver | None = None
     solve_params: SolveParams = field(default_factory=SolveParams)
     recommendation: dict[str, Any] | None = None
@@ -837,12 +841,17 @@ def create_app(
         """Replace the keeper table: all of it before the first pick, then the slots the draft
         has not reached (409 for a change to a keeper already in the log). In a room, a keeper
         may also name the player at a gap, a pick the room never sent: he replaces the
-        stand-in there (docs/KEEPERS.md §2)."""
+        stand-in there (docs/KEEPERS.md §2).
+
+        A simulated survival table has the keepers baked in: a change rebuilds it in the
+        background, as setup does, and availability uses the ADP formula until it lands."""
         session = store.get(session_id)
         room = session.room
+        rebuild: tuple[int, int, tuple[Strategy, ...], bool] | None = None
         with room.lock if room is not None else contextlib.nullcontext():
             with session.lock:
                 state = session.state
+                before = keeper_params(state.keepers)
                 rows = listed(body.keepers)
                 gaps = yahoo_room.gap_standins(room) if room is not None else {}
                 try:
@@ -861,10 +870,20 @@ def create_app(
                         "keepers": keeper_params(state.keepers),
                         "keepers_file": None,
                     }
+                if session.survival.get("mode") == "simulate" and (
+                    keeper_params(state.keepers) != before
+                ):
+                    rebuild = _restart_survival(session)
                 table = keeper_rows(state)
             changes = yahoo_room.keepers_fixed(session, room, gaps) if room is not None else []
         if room is not None:
             yahoo_room.publish_changes(session, room, changes)
+        if rebuild is not None:
+            generation, sims, drafters, fit_curve = rebuild
+            session.publish("survival", {"status": "building", "sims": sims, "done": 0}, False)
+            anyio.from_thread.run_sync(
+                _start_survival_build, session, sims, drafters, fit_curve, generation
+            )
         session.publish("keepers", {"keepers": table})
         return {"keepers": table, "version": session.version}
 
@@ -1641,18 +1660,59 @@ def _load_league_survival(path: Path) -> LeagueSurvivalTable:
     return LeagueSurvivalTable.from_frame(pd.read_csv(path))
 
 
+def _restart_survival(session: Session) -> tuple[int, int, tuple[Strategy, ...], bool]:
+    """Under the session lock, after a keeper change: drop the simulated table (the ADP formula
+    until the new one lands), report the build, and return what to start it with."""
+    session.survival_build += 1
+    session.state.survival = None
+    sims = int(session.survival.get("sims") or 300)
+    drafters = tuple(session.survival.get("drafters") or STRATEGIES)
+    fit_curve = bool((session.create_params or {}).get("fit_curve", True))
+    session.survival = {
+        **session.survival,
+        "status": "building",
+        "done": 0,
+        "sims": sims,
+        "drafters": list(drafters),
+        "source": None,
+        "reason": "keepers changed",
+    }
+    session.survival.pop("error", None)
+    return session.survival_build, sims, drafters, fit_curve
+
+
+def _start_survival_build(
+    session: Session, sims: int, drafters: tuple[Strategy, ...], fit_curve: bool, generation: int
+) -> None:
+    """On the event loop: start a survival build in the background."""
+    asyncio.get_running_loop().create_task(
+        _build_survival(session, sims, drafters, fit_curve, generation)
+    )
+
+
 async def _build_survival(
-    session: Session, sims: int, drafters: tuple[Strategy, ...], fit_curve: bool
+    session: Session,
+    sims: int,
+    drafters: tuple[Strategy, ...],
+    fit_curve: bool,
+    generation: int = 0,
 ) -> None:
     """Simulate the league in a worker thread, then install the table (and the fitted curve)
-    and wake the solver."""
+    and wake the solver. A build that a keeper change has superseded (``generation`` is no
+    longer the session's) is dropped: the newer one reports and installs."""
     state = session.state
+
+    def current() -> bool:
+        return session.survival_build == generation
+
     # The simulated league has no "me": my keepers go in at my seat.
     keepers = [
         replace(k, position=state.my_position) if k.position is None else k for k in state.keepers
     ]
 
     def progress(update: dict[str, Any]) -> None:
+        if not current():
+            return
         session.survival["done"] = update["done"]
         loop = session.solver.loop if session.solver else None
         payload = {"status": "building", **update}
@@ -1674,21 +1734,25 @@ async def _build_survival(
             ),
         )
     except Exception as exc:  # noqa: BLE001 - report, keep the session usable
-        session.survival = {**session.survival, "status": "failed", "error": str(exc)}
-        session.publish("survival", {"status": "failed", "error": str(exc)})
+        if current():
+            session.survival = {**session.survival, "status": "failed", "error": str(exc)}
+            session.publish("survival", {"status": "failed", "error": str(exc)})
         return
     with session.lock:
+        if not current():
+            return
         state.survival = result.survival
         if fit_curve and session.objective == "win":
             state.curve = result.curve.scaled(session.sigma_scale)
             session.curve_source = state.curve.source
-    session.survival = {
-        **session.survival,
-        "status": "ready",
-        "done": sims,
-        "source": result.curve.source,
-        "seconds": round(result.seconds, 1),
-    }
+        # Under the lock: a keeper change right after it reports its own build, not this one.
+        session.survival = {
+            **session.survival,
+            "status": "ready",
+            "done": sims,
+            "source": result.curve.source,
+            "seconds": round(result.seconds, 1),
+        }
     session.publish(
         "survival",
         {"status": "ready", "sims": sims, "seconds": round(result.seconds, 1)},
