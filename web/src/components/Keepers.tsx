@@ -234,8 +234,9 @@ export function GapMark({ gap }: { gap: GapPick }) {
 }
 
 /** The session's keeper table on the log card, with an editor for draft night: the order is
- * drawn and the other teams' keepers show on the Yahoo board. */
-export function SessionKeepers() {
+ * drawn and the other teams' keepers show on the Yahoo board. ``list={false}`` leaves the
+ * table out where the log already shows each keeper at his pick. */
+export function SessionKeepers({ list = true }: { list?: boolean }) {
   const d = useDraft();
   const s = d.session;
   const queryClient = useQueryClient();
@@ -314,6 +315,7 @@ export function SessionKeepers() {
           {save.error && <p className="error">{save.error.message}</p>}
         </>
       ) : (
+        list &&
         s.keepers.length > 0 && (
           <ol className="picklog">
             {s.keepers.map((k) => (
