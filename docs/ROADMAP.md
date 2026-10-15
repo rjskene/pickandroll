@@ -71,7 +71,7 @@ no gaps, no stand-ins. What the night exposed, and the programme that follows fr
   #56), the Team card shows expected categories won per real turn as a chart with the fallback
   solves marked (#55), the log sorts by team with keepers inline at the pick they cost (#57), and
   a keeper change rebuilds the survival table instead of leaving a stale one (#58). The candidate
-  count stays editable while a solve runs and applies to the solves that follow (PR pending).
+  count stays editable while a solve runs and applies to the solves that follow (#60).
 - **Data.** The ledger and end-of-draft snapshots are kept under `data/fidelity/` (local). The
   analysis of the draft (sync, compliance, availability calibration, ADP error, the score story)
   is the input to the next survival decision: fit the spread of pick minus ADP from this draft
