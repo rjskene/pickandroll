@@ -56,6 +56,20 @@ test("a slot the snake calls mine that another team picked at is not my turn", (
   assert.equal(isTurn(entry(2, 21, true, 5)), false);
 });
 
+test("with the session's owner map, only my slots are turns: an acquired pick is, a traded-away one is not", () => {
+  // Position 4 gave the snake's 28 and 45 to position 1 for 144 and 145 (traded picks).
+  const mine = [4, 21, 52, 69, 76, 93, 100, 117, 124, 141, 144, 145, 148];
+  const isTurn = turnFilter([pick(4, ME)], ME, mine);
+  assert.equal(isTurn(entry(2, 28, true, 5)), false, "28 is position 1's whatever the snake says");
+  assert.equal(isTurn(entry(3, 144, true, 5)), true, "144 is mine by the map");
+  assert.equal(isTurn(entry(4, 52, true, 5)), true);
+  assert.equal(isTurn(entry(5, 52, false, 5)), false, "still off the clock is no turn");
+  // The booked team still rules out a slot the map calls mine that another team picked at.
+  assert.equal(turnFilter([pick(21, "t9")], ME, mine)(entry(6, 21, true, 5)), false);
+  // No map given (null): the booked team alone decides, as before.
+  assert.equal(turnFilter([pick(4, ME)], ME, null)(entry(7, 28, true, 5)), true);
+});
+
 test("no picks loaded yet: every on-the-clock solve counts", () => {
   assert.equal(turnFilter(undefined, ME)(entry(1, 4, true, 5)), true);
 });
