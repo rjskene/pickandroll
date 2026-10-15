@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { api, LEAGUE_FROM_ADP, SPREAD, type Objective, type SessionSummary, type SurvivalMode } from "../api";
+import { api, LEAGUE_FROM_ADP, LEAGUE_SURVIVAL_DEFAULT, SPREAD, type Objective, type SessionSummary, type SurvivalMode } from "../api";
 import Info from "./Info";
 import { erroredRow, isMine, KeeperEditor, keeperDraft, keepersIn, nameOptions, type KeeperDraft } from "./Keepers";
 import { SeenRooms, useSeenRooms } from "./YahooSync";
@@ -29,7 +29,8 @@ export default function SessionSetup({ onCreated, onSelect }: Props) {
   const [objective, setObjective] = useState<Objective>("win");
   const [sigmaScale, setSigmaScale] = useState(1);
   const [curveFile, setCurveFile] = useState("");
-  const [survival, setSurvival] = useState<SurvivalMode>("none");
+  // null until the user picks: the form then shows, and leaves to the server, its default.
+  const [survivalChoice, setSurvival] = useState<SurvivalMode | null>(null);
   const [survivalSims, setSurvivalSims] = useState(300);
   const [survivalFile, setSurvivalFile] = useState("");
   const [leagueFile, setLeagueFile] = useState("");
@@ -64,10 +65,17 @@ export default function SessionSetup({ onCreated, onSelect }: Props) {
       ),
   });
   const keptCount = keepers.filter((k) => k.on).length;
-  // One league table is the table; with several the user picks one (an overall-space table
-  // listed beside the keeper-adjusted one must never be taken by default).
-  const leagueTable = leagueFile || (leagueFiles.data?.length === 1 ? leagueFiles.data[0].file : "");
+  // The server's default: the league's own table when data/ holds it, else a simulation.
+  const hasDefaultTable = !!leagueFiles.data?.some((f) => f.file === LEAGUE_SURVIVAL_DEFAULT);
+  const survival: SurvivalMode = survivalChoice ?? (hasDefaultTable ? "league" : "simulate");
+  // The default table, else one league table is the table; with several the user picks one (an
+  // overall-space table listed beside the keeper-adjusted one must never be taken by default).
+  const leagueTable =
+    leagueFile || (hasDefaultTable ? LEAGUE_SURVIVAL_DEFAULT : leagueFiles.data?.length === 1 ? leagueFiles.data[0].file : "");
   const needsTable = survival === "league" && !leagueTable;
+  // Untouched, the request names no survival: the server resolves it, and says why when the
+  // league table cannot serve the draft (too few picks for the teams, say) and it simulates.
+  const survivalChosen = survivalChoice !== null || leagueFile !== "";
 
   const create = useMutation({
     mutationFn: async () => {
@@ -82,14 +90,18 @@ export default function SessionSetup({ onCreated, onSelect }: Props) {
         objective,
         sigma_scale: sigmaScale,
         curve_file: curveFile || null,
-        survival,
+        ...(survivalChosen
+          ? {
+              survival,
+              survival_file:
+                survival === "file"
+                  ? survivalFile || survivalFiles.data?.[0]?.file || null
+                  : survival === "league"
+                    ? leagueTable || null
+                    : null,
+            }
+          : {}),
         survival_sims: survivalSims,
-        survival_file:
-          survival === "file"
-            ? survivalFile || survivalFiles.data?.[0]?.file || null
-            : survival === "league"
-              ? leagueTable || null
-              : null,
         solve_ahead: solveAhead,
         time_limit: timeLimit,
         keepers: keepersOpen ? keepersIn(keepers, options) : [],
@@ -316,6 +328,7 @@ export default function SessionSetup({ onCreated, onSelect }: Props) {
             <span><b>Simulated drafts against this board:</b> runs full drafts with z-score, ADP and roster-model drafters (some punting) and counts how often each player survives to each pick. Catches specialists going early and position runs. About 1 s per draft per core. The curve's μ and σ are refitted from the same drafts.</span>
             <span><b>Saved table:</b> a CSV from an earlier simulation in data/.</span>
             <span><b>This league's drafts by ADP:</b> how often players at each keeper-adjusted ADP lasted to each pick in this league's past drafts (a CSV headed adp, picks…, undrafted), with the share never drafted at all. It answers from ADP {LEAGUE_FROM_ADP}; earlier players, whose survival is sharper than the table shows, and players past its last ADP use the ADP formula.</span>
+            <span><b>Default:</b> this league's drafts when data/ holds {LEAGUE_SURVIVAL_DEFAULT}, else simulated drafts (and the session says why).</span>
             <span><b>Spread</b> {SPREAD.base} + {SPREAD.growth} × ADP, from the league's nine drafts: the ADP formula, the simulated drafters and the league table's fill-in all use it.</span>
             <span>With keepers, the ADP formula and the league's table count only the market: a player's ADP drops by the keepers ranked ahead of him, and keeper slots are not picks.</span>
           </Info>

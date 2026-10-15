@@ -27,6 +27,7 @@ def create(client, **overrides):
         "my_position": 2,
         "solve_ahead": False,
         "time_limit": 4.0,
+        "survival": "none",
     }
     body.update(overrides)
     r = client.post("/sessions", json=body)
@@ -543,7 +544,12 @@ def test_session_options_sum_objective_curve_file_and_sigma(tmp_path):
     (tmp_path / "curve.json").write_text(json.dumps({"mu": mu, "sigma": dict.fromkeys(mu, 3.0)}))
     app = create_app(SessionStore(), data_dir=tmp_path)
     with TestClient(app) as client:
-        base = {"projection_file": sample.name, "num_teams": 4, "solve_ahead": False}
+        base = {
+            "projection_file": sample.name,
+            "num_teams": 4,
+            "solve_ahead": False,
+            "survival": "none",
+        }
         plain = client.post("/sessions", json={**base, "objective": "sum"}).json()
         assert plain["objective"] == "sum" and plain["curve"] is None
         curved = client.post(

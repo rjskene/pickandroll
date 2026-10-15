@@ -84,10 +84,11 @@ no gaps, no stand-ins. What the night exposed, and the programme that follows fr
 
 1. **Ownership map** (above), merged as #59.
 2. **Survival from real drafts.** Decided from the analysis: the keeper-adjusted table built from
-   the league's own drafts (`survival: league`) should be the session default, with the refit
-   that includes this draft promoted once confirmed; players missing from Yahoo's ADP list need
-   a rank-based fallback (never the projection rank), and the single-roster fallback must not
-   price without availability.
+   the league's own drafts (`survival: league`) is the session default (done: a session or room
+   that names no survival gets it when data/ holds it, else a simulation and the reason), and
+   the refit that includes this draft is promoted in the local data. Left: players missing from
+   Yahoo's ADP list need a rank-based fallback (never the projection rank), and the single-roster
+   fallback must not price without availability.
 3. **More leagues.** The user expects to join cash leagues: a session per league with its own
    settings (teams, roster slots, categories, keepers, traded picks), the extension keyed by
    draft id as today, league files under `data/leagues/`.

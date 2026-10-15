@@ -36,6 +36,7 @@ def create(client, status=201, **overrides):
         "my_position": 2,
         "solve_ahead": False,
         "time_limit": 4.0,
+        "survival": "none",
     }
     body.update(overrides)
     r = client.post("/sessions", json=body)
@@ -618,3 +619,86 @@ def test_market_space_on_the_api(data_dir):
                 assert r["detail"] == f"survival_file must be a path inside data/: {escape}"
         r = create(c, 400, adp_file="history/../../adp.csv")
         assert "adp_file must be a path inside data/" in r["detail"]
+
+
+DEFAULT_TABLE = "yahoo_history/survival_by_adp_adjusted.csv"
+# A session body that names no survival (the create helper's says "none").
+NO_SURVIVAL = {"projection_file": SAMPLE, "num_teams": 4, "my_position": 2, "solve_ahead": False}
+
+
+def _settled(client, sid):
+    """The session once its survival is no longer building."""
+    deadline = time.time() + 120
+    s = client.get(f"/sessions/{sid}").json()
+    while s["survival"]["status"] == "building" and time.time() < deadline:
+        time.sleep(0.2)
+        s = client.get(f"/sessions/{sid}").json()
+    return s
+
+
+def test_survival_defaults_to_the_league_table(data_dir):
+    """A session that names no survival takes the league's own table when data/ holds it and it
+    covers the draft; an explicit survival, or a league table the request names, wins."""
+    (data_dir / "yahoo_history").mkdir()
+    _league_csv(data_dir / DEFAULT_TABLE)
+    _league_csv(data_dir / "other.csv")
+    store = SessionStore()
+    with TestClient(create_app(store, data_dir=data_dir)) as c:
+        r = c.post("/sessions", json=NO_SURVIVAL)
+        assert r.status_code == 201, r.text
+        s = r.json()
+        assert s["availability_source"] == "league"
+        assert s["survival"] == {
+            "mode": "league",
+            "status": "ready",
+            "source": "league:survival_by_adp_adjusted.csv",
+            "from_adp": 90,
+            "max_adp": 6,
+        }
+        # Recorded as resolved: a rebuild from the log keeps the league table.
+        params = store.get(s["id"]).create_params
+        assert (params["survival"], params["survival_file"]) == ("league", DEFAULT_TABLE)
+
+        # An explicit survival wins.
+        s = create(c, survival="none")
+        assert s["availability_source"] == "adp" and s["survival"]["mode"] == "none"
+        s = create(c, survival="simulate", survival_sims=10, fit_curve=False)
+        assert s["survival"]["mode"] == "simulate" and "note" not in s["survival"]
+        assert _settled(c, s["id"])["survival"]["status"] == "ready"
+        # So does a league table the request names, and a missing one is the caller's error.
+        r = c.post("/sessions", json={**NO_SURVIVAL, "survival_file": "other.csv"})
+        assert r.status_code == 201, r.text
+        assert r.json()["survival"]["source"] == "league:other.csv"
+        r = c.post("/sessions", json={**NO_SURVIVAL, "survival_file": "nope.csv"})
+        assert r.status_code == 400 and "survival file not found" in r.json()["detail"]
+
+        # A table too short for the draft: a simulation, and why.
+        body = {**NO_SURVIVAL, "num_teams": 6, "survival_sims": 10, "fit_curve": False}
+        s = c.post("/sessions", json=body).json()
+        assert s["survival"]["mode"] == "simulate"
+        note = f"{DEFAULT_TABLE} covers 53 picks, the draft has 78: simulated"
+        assert s["survival"]["note"] == note
+        assert _settled(c, s["id"])["survival"]["status"] == "ready"
+
+
+def test_survival_defaults_to_a_simulation_without_the_league_table(data_dir):
+    """No league table in data/ (or one that cannot be read): the session simulates the league,
+    and its survival status says why."""
+    with TestClient(create_app(SessionStore(), data_dir=data_dir)) as c:
+        body = {**NO_SURVIVAL, "survival_sims": 10, "fit_curve": False}
+        r = c.post("/sessions", json=body)
+        assert r.status_code == 201, r.text
+        s = r.json()
+        assert (s["survival"]["mode"], s["survival"]["status"]) == ("simulate", "building")
+        note = f"no league survival table in data/ ({DEFAULT_TABLE}): simulated"
+        assert s["survival"]["note"] == note
+        s = _settled(c, s["id"])
+        assert s["survival"]["status"] == "ready" and s["survival"]["note"] == note
+        assert s["availability_source"] == "survival"
+
+        (data_dir / "yahoo_history").mkdir()
+        _league_csv(data_dir / DEFAULT_TABLE, drop="undrafted")
+        s = c.post("/sessions", json=body).json()
+        assert s["survival"]["mode"] == "simulate"
+        assert s["survival"]["note"].startswith(f"could not read {DEFAULT_TABLE} (")
+        assert _settled(c, s["id"])["survival"]["status"] == "ready"

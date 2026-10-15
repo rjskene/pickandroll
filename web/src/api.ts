@@ -25,6 +25,9 @@ export const SPREAD = { base: 1.5, growth: 0.15 } as const;
 /** A league table answers from this keeper-adjusted ADP on; earlier players keep the normal model. */
 // Mirrors LEAGUE_FROM_ADP in src/pickandroll/availability/league.py: change both.
 export const LEAGUE_FROM_ADP = 90;
+/** The league table a session that names no survival uses, when data/ holds it (else it simulates). */
+// Mirrors LEAGUE_SURVIVAL_DEFAULT in src/pickandroll/api/app.py: change both.
+export const LEAGUE_SURVIVAL_DEFAULT = "yahoo_history/survival_by_adp_adjusted.csv";
 export type AvailabilitySource = "adp" | "survival" | "league";
 
 export interface SurvivalStatus {
@@ -39,6 +42,8 @@ export interface SurvivalStatus {
   /** A league table: it answers from ADP from_adp to max_adp; the ADP model covers the rest. */
   from_adp?: number;
   max_adp?: number;
+  /** The session named no survival and the league table could not serve it: why it simulates. */
+  note?: string;
 }
 
 export interface SolverStatus {
@@ -404,9 +409,10 @@ export interface SessionCreateBody {
   objective: Objective;
   sigma_scale: number;
   curve_file: string | null;
-  survival: SurvivalMode;
+  /** Left out: the league's table when data/ holds one that covers the draft, else a simulation. */
+  survival?: SurvivalMode;
   survival_sims: number;
-  survival_file: string | null;
+  survival_file?: string | null;
   solve_ahead: boolean;
   time_limit: number;
   keepers?: KeeperIn[];

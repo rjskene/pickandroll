@@ -205,6 +205,17 @@ table (`survival: file`), or keeps the formula. Players a table lacks fall back 
 In the study the table changed nothing under the sum objective and recovered 2.5 z of value
 under the curve with better-calibrated odds (Brier 0.07 against 0.11).
 
+`availability.league.LeagueSurvivalTable` (`survival: league`) is the league's own record: how
+often a player at each keeper-adjusted ADP lasted to each market pick in its past drafts, with
+the share never drafted (a CSV headed `adp,1..N,undrafted`, `docs/KEEPERS.md` §1). It answers
+from ADP `LEAGUE_FROM_ADP` to its last row; earlier and later players use the formula. It is
+the session default: a request that names no survival gets
+`data/yahoo_history/survival_by_adp_adjusted.csv` when data/ holds it and its picks cover the
+draft, else a simulation, with the reason in the session's survival `note`. A named
+`survival` always wins, and a `survival_file` without one is taken as the league table to use.
+A room's session follows the same rule, and the attach record keeps the mode as resolved, so a
+rebuild from the log runs on it.
+
 ## Solve ahead of the clock (`api.solver`)
 
 Time limits are a safety net, not the budget. The board before the draft is known, so the
@@ -246,7 +257,8 @@ pick number), wakes the background solver and pushes the recommendation to the U
 server-sent events. Manual pick entry covers leagues on other platforms.
 
 API surface: `POST /sessions` (projection, positions and ADP files, league shape, `objective`,
-`sigma_scale`, `curve_file`, `survival` none/simulate/file, `solve_ahead`, `time_limit`),
+`sigma_scale`, `curve_file`, `survival` none/simulate/file/league (left out: the league table, else a
+simulation), `solve_ahead`, `time_limit`),
 `/files?kind=survival|curve|adp` (what data/ holds), `/board` (with a `cost` per player: the
 exact re-solve where the player was a priced candidate, flagged `cost_exact`, else the
 first-order estimate), `/picks`, `/sync`, `/autopick`, `POST /recommend` (synchronous),
