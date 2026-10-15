@@ -667,3 +667,62 @@ def test_solve_ahead_builds_survival_then_recommends(client):
         lambda s: s["runs"] >= 2 and not s["running"] and not s["pending"],
     )
     assert status["runs"] >= 2 and status["survival"]["status"] == "ready"
+
+
+def test_keeper_patch_rebuilds_the_simulated_survival_table():
+    """A simulated survival table has the keepers baked in: after a keeper change it is
+    rebuilt in the background, availability uses the ADP formula meanwhile, and a PATCH that
+    changes nothing leaves the table alone."""
+    if not (DATA / "bbm_sample_ros_totals.xls").exists():
+        pytest.skip("no Basketball Monster sample export in data/")
+    store = SessionStore()
+    with TestClient(create_app(store, data_dir=DATA)) as client:
+        probe = create(client)["id"]
+        top = client.get(f"/sessions/{probe}/board?limit=1").json()["players"][0]["player_id"]
+        # Four teams: team 4's round-3 keeper is logged at pick 12, so the best player is
+        # never available to the others before it.
+        kept = [{"position": 4, "round": 3, "player_id": top}]
+        sid = create(client, survival="simulate", survival_sims=12, keepers=kept)["id"]
+        url = f"/sessions/{sid}"
+        s = poll(lambda: client.get(url).json(), lambda s: s["survival"]["status"] != "building")
+        assert s["survival"]["status"] == "ready", s["survival"]
+        assert store.get(sid).state.survival.survival([top], 5).iloc[0] == 1.0
+
+        # The same table again: nothing to rebuild.
+        assert client.patch(f"{url}/keepers", json={"keepers": kept}).status_code == 200
+        s = client.get(url).json()
+        assert s["survival"]["status"] == "ready" and store.get(sid).survival_build == 0
+
+        # He is not kept after all: the old table would still hold him to pick 12.
+        r = client.patch(f"{url}/keepers", json={"keepers": []})
+        assert r.status_code == 200, r.text
+        s = client.get(url).json()
+        if s["survival"]["status"] == "building":
+            assert s["availability_source"] == "adp"
+            assert s["survival"]["reason"] == "keepers changed"
+        s = poll(lambda: client.get(url).json(), lambda s: s["survival"]["status"] != "building")
+        assert s["survival"]["status"] == "ready", s["survival"]
+        assert s["availability_source"] == "survival"
+        assert store.get(sid).survival_build == 1
+        assert store.get(sid).state.survival.survival([top], 5).iloc[0] < 0.5
+
+
+def test_a_superseded_survival_build_is_dropped():
+    """Two keeper changes in a row: only the second build installs its table."""
+    if not (DATA / "bbm_sample_ros_totals.xls").exists():
+        pytest.skip("no Basketball Monster sample export in data/")
+    import asyncio
+
+    from pickandroll.api.app import _build_survival
+
+    store = SessionStore()
+    with TestClient(create_app(store, data_dir=DATA)) as client:
+        sid = create(client, survival="simulate", survival_sims=12)["id"]
+        url = f"/sessions/{sid}"
+        poll(lambda: client.get(url).json(), lambda s: s["survival"]["status"] != "building")
+        session = store.get(sid)
+        installed = session.state.survival
+        session.survival_build = 3  # a newer build is in flight
+        asyncio.run(_build_survival(session, 12, ("z",), False, generation=2))
+        assert session.state.survival is installed, "the superseded build did not install"
+        assert session.survival["status"] == "ready"
