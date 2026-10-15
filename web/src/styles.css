@@ -229,6 +229,14 @@ table.plan .survival .bar { width: 60px; }
 .picklog { list-style: none; padding: 0; margin: 0; }
 .picklog li { padding: 3px 4px; border-bottom: 1px solid var(--line); display: flex; gap: 8px; align-items: center; }
 .picklog li.mine { background: var(--mine); }
+.picklog li.to-come { color: var(--dim); }
+.picklog li.to-come .slot { color: var(--dim); }
+.picklog .tag-to-come { font-size: 11px; }
+.picklog li.team-head { margin-top: 8px; padding: 4px; border-bottom: 1px solid var(--line-2); font-family: var(--display); font-weight: 600; letter-spacing: 0.04em; font-size: 14px; }
+.picklog li.team-head:first-child { margin-top: 0; }
+.keeper-disclosure { margin-top: 12px; }
+.keeper-disclosure > summary { cursor: pointer; padding: 4px 0; }
+.keeper-disclosure[open] > summary { margin-bottom: 6px; }
 /* ---- keepers: the K mark, and the editor on the setup screen and the log card ---- */
 .kmark { display: inline-block; min-width: 16px; margin-right: 5px; padding: 0 4px; border-radius: 3px; font-size: 10px; font-weight: 700; line-height: 16px; text-align: center; text-decoration: none; background: var(--panel-2); border: 1px solid var(--line-2); color: var(--accent); }
 /* A gap's stand-in (a pick the room never sent): the mark opens the keeper editor for its slot. */
