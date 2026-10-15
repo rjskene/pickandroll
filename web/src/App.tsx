@@ -10,7 +10,7 @@ import Rail from "./components/Rail";
 import SessionSetup from "./components/SessionSetup";
 import { RoomFeed, SyncButton } from "./components/YahooSync";
 import { Close } from "./components/icons";
-import { adpIsStandIn, adpLabel, survivalDetail } from "./format";
+import { adpIsStandIn, adpLabel, rankLabel, survivalDetail } from "./format";
 
 function useTicker(resetKey: number): number {
   const [seconds, setSeconds] = useState(0);
@@ -149,10 +149,13 @@ function DraftScreen({ yahoo, room, onSwitch, announce, onShown }: ScreenProps) 
           title={
             adpIsStandIn(s.adp_source)
               ? "No ADP file loaded: the board's ADP is a value rank, which places specialists far later than real drafts do. Save one as data/adp.csv (player,adp)."
-              : "average draft position source"
+              : s.adp_fallback > 0
+                ? `average draft position source; ${s.adp_fallback} players it lacks take ${rankLabel(s.adp_fallback_source)} mapped onto its scale (≈ on the board)`
+                : "average draft position source"
           }
         >
           ADP: {adpLabel(s.adp_source)}
+          {s.adp_fallback > 0 ? ` + ${s.adp_fallback} by rank` : ""}
         </span>
         <span>Positions: {s.unknown_positions === 0 ? "all known" : `${s.unknown_positions} unknown`}</span>
         <SolverNote />

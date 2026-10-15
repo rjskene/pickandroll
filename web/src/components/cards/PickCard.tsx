@@ -12,6 +12,9 @@ export default function PickCard() {
   const d = useDraft();
   const s = d.session;
   const result = d.result;
+  // The single-roster fallback prices no availability: its costs are not the price of waiting
+  // and its candidates carry no survival odds, so neither is shown as if they were.
+  const roster = result?.mode === "roster";
   const top = result?.candidates[0];
   const nextPick = s.my_next_pick;
   const pickAfter = s.my_picks.find((k) => nextPick !== null && k > nextPick);
@@ -77,13 +80,13 @@ export default function PickCard() {
                 <span className="k">Matchups</span>
                 <span className="v">{result.league.matchups_won} of {result.league.opponents.length}</span>
               </div>
-              {!s.on_the_clock && nextPick && (
+              {!s.on_the_clock && nextPick && !roster && (
                 <div className="stat" title={`chance he is still on the board at your pick ${nextPick}`}>
                   <span className="k">Survives to #{nextPick}</span>
                   <span className={`v ${oddsClass(top.p_available_first)}`}>{pct(top.p_available_first)}</span>
                 </div>
               )}
-              {pickAfter && (
+              {pickAfter && !roster && (
                 <div className="stat" title={`chance he is still on the board at your following pick, #${pickAfter}`}>
                   <span className="k">Survives to #{pickAfter}</span>
                   <span className={`v ${oddsClass(top.p_available_next)}`}>{pct(top.p_available_next)}</span>
@@ -123,8 +126,10 @@ export default function PickCard() {
         <div className="block">
           <div className="row">
             <span className="k">Next best</span>
-            <span className="muted" style={{ fontSize: 11 }}>
-              cost = {scale === "z" ? "z lost" : "categories won lost"}{pickAfter ? ` · survives to #${pickAfter}` : ""}
+            <span className="muted" style={{ fontSize: 11 }} title={roster ? "the single-roster fallback: one best roster, with no availability in it" : undefined}>
+              {roster
+                ? `roster cost = ${scale === "z" ? "z" : "categories won"} lost by the single roster, no availability: not the price of waiting`
+                : `cost = ${scale === "z" ? "z lost" : "categories won lost"}${pickAfter ? ` · survives to #${pickAfter}` : ""}`}
             </span>
           </div>
           <table>
@@ -140,7 +145,7 @@ export default function PickCard() {
                   <td className="num" title={c.cost_first_order == null ? "exact re-solve" : `exact re-solve · first-order estimate ${fmtCost(c.cost_first_order, scale, true)}`}>
                     {fmtCost(c.cost_vs_best, scale)}
                   </td>
-                  {pickAfter && (
+                  {pickAfter && !roster && (
                     <td>
                       <span className="survival">
                         <span className="bar">

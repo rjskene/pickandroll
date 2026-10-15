@@ -79,3 +79,52 @@ def pseudo_adp(order: pd.Series) -> pd.Series:
     return pd.Series(np.arange(1, len(ranked) + 1, dtype=float), index=ranked.index).reindex(
         order.index
     )
+
+
+def _increasing_fit(y: np.ndarray) -> np.ndarray:
+    """The non-decreasing sequence closest to ``y`` in least squares (pool adjacent
+    violators): each run that breaks the order is replaced by its mean."""
+    means: list[float] = []
+    sizes: list[int] = []
+    for value in y.astype(float):
+        means.append(value)
+        sizes.append(1)
+        while len(means) > 1 and means[-2] > means[-1]:
+            size = sizes[-2] + sizes[-1]
+            means[-2] = (means[-2] * sizes[-2] + means[-1] * sizes[-1]) / size
+            sizes[-2] = size
+            means.pop()
+            sizes.pop()
+    return np.repeat(means, sizes)
+
+
+def rank_to_adp(rank: pd.Series, adp: pd.Series) -> pd.Series:
+    """ADP on the market's scale for ranked players the ADP list lacks.
+
+    ``rank`` and ``adp`` are keyed by player (lower is earlier in both). The players both know
+    give the map: the best non-decreasing fit of ADP on rank over them, read between their ranks
+    by linear interpolation and, past the last of them, one pick per rank. A listed player ranked
+    past the list's length (the market took him far ahead of the rank) is left out of the fit:
+    pooled with the list's last picks, he would flatten the map for every player ranked between.
+    Returns the players with a rank and no ADP; empty when fewer than two players are in both."""
+    rank = rank.dropna().astype(float)
+    adp = adp.dropna().astype(float)
+    both = rank.index.intersection(adp.index)
+    missing = rank.index.difference(adp.index)
+    if len(both) < 2 or missing.empty:
+        return pd.Series(dtype=float)
+    pairs = pd.DataFrame({"rank": rank[both], "adp": adp[both]}).sort_values(["rank", "adp"])
+    inside = pairs[pairs["rank"] <= len(pairs)]
+    if len(inside) >= 2:
+        pairs = inside
+    # One point per rank: tied ranks share their mean ADP before the fit.
+    pairs = pairs.groupby("rank", sort=True)["adp"].mean()
+    xs = pairs.index.to_numpy(float)
+    ys = _increasing_fit(pairs.to_numpy(float))
+    wanted = rank[missing].to_numpy(float)
+    mapped = np.interp(wanted, xs, ys)
+    past = wanted > xs[-1]
+    mapped[past] = ys[-1] + (wanted[past] - xs[-1])
+    before = wanted < xs[0]
+    mapped[before] = np.maximum(1.0, ys[0] - (xs[0] - wanted[before]))
+    return pd.Series(mapped, index=missing, dtype=float)

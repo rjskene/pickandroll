@@ -496,6 +496,11 @@ def compute_recommendation(
         "branch": False,
         "fallback": None,
         "roster_reason": roster_reason,
+        # The single roster's value with the #1 on it: no availability, so it is not comparable
+        # with a plan's top_objective (which stays None here: see ``displaces``).
+        "roster_objective": round(
+            float(table.iloc[0]["objective"]) if len(table) else float(best.objective), 6
+        ),
         "timings": {"total_ms": round((time.perf_counter() - started) * 1000, 1)},
         "adp_source": state.adp_source,
         "availability_source": state.availability_source,

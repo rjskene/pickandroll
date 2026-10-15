@@ -1114,6 +1114,12 @@ def on_recommendation(session: Session, room: YahooRoom, payload: dict[str, Any]
             # The objective behind the #1 and whether a time limit stopped that solve (what a
             # later reco for the board must beat), and the pre-solves in flight while it ran.
             "top_objective": payload.get("top_objective"),
+            # The #1's objective in either model (the roster's has no availability in it) and
+            # its scale, so the scorecard can set the roster fallback's recos beside the plan's.
+            "top_value": payload.get("top_objective")
+            if payload.get("top_objective") is not None
+            else payload.get("roster_objective"),
+            "scale": payload.get("scale"),
             "capped": payload.get("capped"),
             "branches_running": payload.get("branches_running"),
         }

@@ -51,6 +51,20 @@ def stats(values: list[float]) -> dict[str, Any]:
     }
 
 
+def values(recos: list[dict[str, Any]]) -> dict[str, Any]:
+    """The #1's objective over some recos (``top_value``, in logs that record it): count, mean
+    and last, with the scales they were on."""
+    seen = [r for r in recos if r.get("top_value") is not None]
+    if not seen:
+        return {"n": 0, "mean": None, "last": None, "scales": []}
+    return {
+        "n": len(seen),
+        "mean": round(sum(float(r["top_value"]) for r in seen) / len(seen), 4),
+        "last": round(float(seen[-1]["top_value"]), 4),
+        "scales": sorted({str(r.get("scale")) for r in seen}),
+    }
+
+
 def reco_kind(reco: dict[str, Any] | None) -> str | None:
     """``priced`` (exact prices), ``converged`` (a pre-solved branch plan) or ``plan`` (an early
     plan priced to first order), with ``capped`` when the log says a time limit stopped it."""
@@ -279,6 +293,10 @@ def analyze(events: list[dict[str, Any]]) -> dict[str, Any]:
                 "churn": churn,
                 "churn_cause": cause,
                 "ref_objective": ref.get("top_objective") if ref else None,
+                # The acted reco's model and its #1's objective in that model (a roster
+                # fallback's has no availability in it: not comparable with a plan's).
+                "ref_model": (ref.get("model") or ref.get("mode")) if ref else None,
+                "ref_value": ref.get("top_value") if ref else None,
                 "final_objective": final.get("top_objective") if final else None,
                 "actual_yid": actual,
                 "actual_name": room[k].get("name"),
@@ -305,6 +323,7 @@ def analyze(events: list[dict[str, Any]]) -> dict[str, Any]:
     )
     priced = [r for r in recos if r.get("priced", True) and r.get("solve_ms") is not None]
     roster = [r for r in recos if (r.get("model") or r.get("mode")) == "roster"]
+    horizon = [r for r in recos if (r.get("model") or r.get("mode")) == "horizon"]
 
     # G1: the session's latest pick at each overall is the room's player, by Yahoo id. A
     # stand-in holds another player in his place, so it does not agree until it is repaired.
@@ -478,7 +497,11 @@ def analyze(events: list[dict[str, Any]]) -> dict[str, Any]:
             "roster": {
                 "recos": len(roster),
                 "boards": sorted({int(r["board"]) for r in roster if r.get("board") is not None}),
+                "value": values(roster),
             },
+            # The plan's recos beside them: a jump in value where the model switches is the
+            # switch, not a better roster.
+            "horizon": {"recos": len(horizon), "value": values(horizon)},
         },
         "conflicts": len(conflicts),
         "standins": sum(1 for e in last_sync.values() if e.get("standin")),
@@ -630,7 +653,7 @@ def markdown(card: dict[str, Any]) -> str:
             f"| D6 reco churn (target 0) | {d['D6']['churn']}"
             f"{' at ' + ', '.join(str(k) for k in d['D6']['picks']) if d['D6']['picks'] else ''} |"
         ),
-        f"| Recos from the roster fallback (goal 0 in a room) | {_roster(d['roster'])} |",
+        f"| Recos from the roster fallback (goal 0 in a room) | {_roster(d['roster'], d.get('horizon'))} |",
         "",
         (
             f"Compliance against the final reco (diagnostic): "
@@ -766,10 +789,16 @@ def _teams(t: dict[str, Any] | None) -> str:
     return out
 
 
-def _roster(r: dict[str, Any]) -> str:
+def _roster(r: dict[str, Any], plan: dict[str, Any] | None = None) -> str:
     if not r["recos"]:
         return "0"
-    return f"{r['recos']} (boards {', '.join(str(b) for b in r['boards'])})"
+    text = f"{r['recos']} (boards {', '.join(str(b) for b in r['boards'])})"
+    mine, theirs = r.get("value") or {}, (plan or {}).get("value") or {}
+    if mine.get("n"):
+        text += f"; #1 value mean {mine['mean']}"
+        if theirs.get("n"):
+            text += f" vs the plan's {theirs['mean']} (no availability in the roster's)"
+    return text
 
 
 def _round(value: float | None) -> float | None:

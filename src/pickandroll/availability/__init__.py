@@ -3,6 +3,7 @@ from .adp import (
     availability_curve,
     conditional_availability,
     pseudo_adp,
+    rank_to_adp,
     spread_for_adp,
 )
 from .league import LEAGUE_FROM_ADP, LeagueSurvivalTable
@@ -16,5 +17,6 @@ __all__ = [
     "availability_curve",
     "conditional_availability",
     "pseudo_adp",
+    "rank_to_adp",
     "spread_for_adp",
 ]

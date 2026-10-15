@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api, CAT_LABEL, CATS, teamLabel, type BoardPlayer, type Cat, type SimStrategy } from "../api";
 import { useDraft } from "../draft";
-import { adpIsStandIn, adpLabel, fmtCost, oddsClass } from "../format";
+import { adpCell, adpIsStandIn, adpLabel, adpTitle, fmtCost, oddsClass } from "../format";
 import ModelFlag from "./ModelFlag";
 
 function heat(z: number): string | undefined {
@@ -131,6 +131,8 @@ export default function Board() {
   };
   const nextPick = board.data?.next_pick ?? null;
   const priced = board.data?.prices_version != null;
+  // The single-roster fallback prices no availability: the cost column has nothing to say.
+  const roster = d.result?.mode === "roster";
   const scale = board.data?.scale ?? undefined;
   const busy = d.drafting || d.simulating;
   const draftRow = (p: BoardPlayer) => d.draftPlayer(p.player_id);
@@ -268,9 +270,11 @@ export default function Board() {
                 th("p_next", nextPick ? `Survives to #${nextPick}` : "Survives", {
                   title: nextPick ? `chance he is still on the board at your pick ${nextPick}` : "survival odds",
                 })}
-              {th("cost", "Cost", {
+              {th("cost", roster ? "Cost n/a" : "Cost", {
                 className: "num",
-                title: "cost of taking this player with your next pick instead of the plan's choice, on the objective's scale: exact re-solve for priced candidates, ≈ first-order estimate for the rest",
+                title: roster
+                  ? "the single-roster fallback prices no availability, so there is no cost of taking a player now instead of later"
+                  : "cost of taking this player with your next pick instead of the plan's choice, on the objective's scale: exact re-solve for priced candidates, ≈ first-order estimate for the rest",
               })}
               <th></th>
             </tr>
@@ -299,8 +303,8 @@ export default function Board() {
                   <td>{p.positions || <span className="dim">?</span>}</td>
                   <td className="num">{Math.round(p.games)}</td>
                   {wide && (
-                    <td className="num" title={p.keepers_ahead > 0 ? `Yahoo ADP ${p.adp?.toFixed(1)}; ${p.keepers_ahead > 1 ? `${p.keepers_ahead} keepers ranked ahead of him are` : "a keeper ranked ahead of him is"} out of the market, so it reaches him at ${p.adp_eff?.toFixed(1)}` : undefined}>
-                      {p.adp == null ? "" : p.keepers_ahead > 0 && p.adp_eff != null ? `${p.adp.toFixed(0)} → ${p.adp_eff.toFixed(0)}` : p.adp.toFixed(1)}
+                    <td className={`num${p.adp_from === "rank" || p.adp_from === "end" ? " dim" : ""}`} title={adpTitle(p, s.adp_fallback_source)}>
+                      {adpCell(p)}
                     </td>
                   )}
                   <td className="num strong">{p.total.toFixed(1)}</td>
