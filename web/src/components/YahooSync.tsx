@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, type RoomEventEntry, type RoomStatus, type RoomSummary, type SeenRoom } from "../api";
 import { useDraft } from "../draft";
-import { shortName } from "../format";
+import { clockNote, shortName } from "../format";
 
 /** The extension beats every 15 s; two missed beats and the room is called silent. */
 export const SILENT_AFTER_S = 40;
@@ -94,6 +94,7 @@ export function RoomFeed({ room }: { room: RoomSummary }) {
   return (
     <span className={state.tone === "bad" ? "bad" : "good"} title={state.title}>
       Yahoo room {room.draft_id} · {room.complete ? "finished" : room.mode === "autopilot" ? "autopilot" : "mirroring"}
+      {clockNote(room)}
       {last ? ` · last pick in ${lagSeconds(last.lag_ms)}` : ""}
     </span>
   );

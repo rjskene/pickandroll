@@ -445,10 +445,19 @@ def test_the_room_follows_the_clock_it_is_shown(room):
     assert session.state.plan_time_limit == 20.0
     notes = [e for e in session.room.log.read() if e.get("what") == "plan_budget"]
     assert [(n["clock_s"], n["time_limit"]) for n in notes] == [(90.0, 20.0)]
+    # The room's status shows the clock and the budgets it gives (#66).
+    status = client.get("/rooms/k1").json()
+    assert (status["clock_s"], status["plan_time_limit"], status["price_time_limit"]) == (
+        90.0,
+        20.0,
+        10.0,
+    )
     # A time_limit given at attach is kept, whatever the clock.
     fixed = store.get(_attach(client, draft_id="k2", session=SESSION, time_limit=8)["session_id"])
     turn("k2", 90)
     assert fixed.state.plan_time_limit == 8.0
+    status = client.get("/rooms/k2").json()
+    assert status["clock_s"] is None and status["plan_time_limit"] == 8.0
 
 
 def test_branch_solves_run_below_the_live_ones():

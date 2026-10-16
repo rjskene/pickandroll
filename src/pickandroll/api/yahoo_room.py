@@ -41,6 +41,7 @@ from typing import TYPE_CHECKING, Any, Literal
 
 import pandas as pd
 
+from ..draft.clock import plan_budget, price_budget
 from ..fidelity import FidelityLog, last_attach, now_iso, to_iso, to_ms
 from ..sources.yahoo.players import YahooIdMap
 
@@ -55,29 +56,12 @@ HEARTBEAT_EVERY_S = 60.0
 #: The draft tab beats every 15 s: two beats missed and it is silent (the web's NO SIGNAL), and
 #: a "Draft in Yahoo" request is refused rather than held for nobody.
 SILENT_AFTER_S = 40.0
-#: The plan's budget follows the room's pick clock: the drafter clicks with CLOCK_MARGIN_S of
-#: the clock left (at 17 s of 30), and the exact prices that correct a capped plan take up to
-#: PRICING_S after it (their 10 s budget and the solve's overhead). A 30 s clock (the mocks)
-#: gives the 5 s floor; a longer one lets the plan converge (6-16 s in rounds 1-6), up to the
-#: plan's own 20 s budget.
-DEFAULT_CLOCK_S = 30.0
-CLOCK_MARGIN_S = 13.0
-PRICING_S = 12.0
-PLAN_LIMIT_MIN = 5.0
-PLAN_LIMIT_MAX = 20.0
-PRICE_LIMIT_MAX = 10.0
 #: A pick the room never sends (a keeper the session's table does not know about) gets a
 #: stand-in once the room's clock has been past it this long: a turn_start for a later pick, or
 #: a later pick sent live. The picks and events POSTs race, and a false fill is cheap (the worst
 #: player left, repaired when the room's pick lands) where a late one leaves the plan for my
 #: turn on a stale board (docs/KEEPERS.md §2).
 GAP_MARGIN_S = 4.0
-
-
-def plan_budget(clock_s: float | None) -> float:
-    """The plan's time limit in a room whose pick clock is ``clock_s`` seconds."""
-    clock = DEFAULT_CLOCK_S if clock_s is None else clock_s
-    return min(PLAN_LIMIT_MAX, max(PLAN_LIMIT_MIN, clock - CLOCK_MARGIN_S - PRICING_S))
 
 
 #: Event types a room client may post (the server writes room_pick, session_pick, reco,
@@ -1023,7 +1007,7 @@ def follow_clock(session: Session, room: YahooRoom, events: list[dict[str, Any]]
     budget = plan_budget(room.clock_s)
     with session.lock:
         session.state.plan_time_limit = budget
-        session.state.price_time_limit = min(PRICE_LIMIT_MAX, budget)
+        session.state.price_time_limit = price_budget(room.clock_s)
     room.log.append(
         {
             "type": "note",
@@ -1370,6 +1354,11 @@ def summary(session: Session, room: YahooRoom) -> dict[str, Any]:
         "mode": room.mode,
         "control": room.control,
         "act_at_s": room.act_at_s,
+        # The pick clock the plan budget follows, as the room reported it (None: the attach
+        # fixed a time_limit), and the budgets it gives (#66, draft/clock.py).
+        "clock_s": room.clock_s,
+        "plan_time_limit": state.plan_time_limit,
+        "price_time_limit": state.price_time_limit,
         "num_teams": room.num_teams,
         "teams_mismatch": room.teams_mismatch,
         "pre_armed": room.pre_armed,
