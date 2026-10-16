@@ -1,4 +1,4 @@
-import type { AvailabilityBias, AvailabilitySource, BoardPlayer, Scale, SessionSummary, WinLabel } from "./api";
+import type { AvailabilityBias, AvailabilitySource, BoardPlayer, CurveFit, Scale, SessionSummary, WinLabel } from "./api";
 
 /** Where the survival odds come from, in a few words. */
 export function oddsSource(source: AvailabilitySource, bias?: AvailabilityBias | null): string {
@@ -148,4 +148,15 @@ export function armLabel(armed: { at: string } | null): string {
   if (!armed) return "not armed";
   const t = Date.parse(armed.at);
   return Number.isNaN(t) ? "armed" : `armed ${new Date(t).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}`;
+}
+
+/** The league curve's fit in a line: what it was fitted on, and the seasons the standings
+ * check reads ("12 rosters from 2026; standings check 2016-17 to 2025-26"). */
+export function curveFitNote(fit: CurveFit): string {
+  const rosters = fit.seasons.reduce((n, s) => n + s.rosters, 0);
+  const years = fit.seasons.map((s) => s.year).join(", ");
+  const unscored = fit.seasons.reduce((n, s) => n + s.picks - s.scored, 0);
+  const seasons = fit.check_seasons;
+  const check = seasons.length ? `standings check ${seasons[0]}${seasons.length > 1 ? ` to ${seasons[seasons.length - 1]}` : ""}` : "no standings check";
+  return `${rosters} rosters from ${years}${unscored ? ` (${unscored} picks unscored)` : ""}; ${check}`;
 }

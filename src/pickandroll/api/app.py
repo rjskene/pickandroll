@@ -58,10 +58,11 @@ from ..optim.roster import Slot, yahoo_default_slots
 from ..projections.adp import adp_for_projections, load_adp
 from ..projections.positions import apply_positions, load_positions
 from ..projections.schema import POINTS_CAT, Cat, ProjectionSet, fantasy_points
+from ..projections.zscores import zscores
 from ..sources.bbm import PROJECTION_SUFFIXES, load_bbm
 from ..sources.matching import load_aliases
 from ..sources.yahoo import YahooLeague, build_id_map, load_players_file
-from . import leagues, yahoo_room
+from . import league_curve, leagues, yahoo_room
 from .keepers import (
     KeeperIn,
     Labelled,
@@ -150,6 +151,8 @@ class Session:
     objective: str = "win"
     sigma_scale: float = 1.0
     curve_source: str = "none"
+    #: ``curve: league``: the seasons fitted and the standings check (#65).
+    curve_fit: dict[str, Any] | None = None
     #: Survival availability: ``mode`` none/simulate/file, ``status`` none/building/ready/failed.
     survival: dict[str, Any] = field(default_factory=lambda: {"mode": "none", "status": "none"})
     #: The simulated survival table's build: a keeper change starts a new one, and a build
@@ -369,6 +372,14 @@ class SessionCreate(BaseModel):
     )
     curve_file: str | None = Field(
         default=None, description="optional JSON inside data/ with per-category mu and sigma"
+    )
+    curve: Literal["simulated", "league"] = Field(
+        default="simulated",
+        description="where the win curve's mu and sigma come from without a curve_file: the "
+        "simulated league, or the league's own drafted rosters (league = the archive beside the "
+        f"league's survival table, {league_curve.PICKS}: every season with a draft and a "
+        "projection file, each roster's total on its season's projections; the standings in z "
+        "units are the check)",
     )
     survival: Literal["none", "simulate", "file", "league"] | None = Field(
         default=None,
@@ -707,7 +718,9 @@ def create_app(
 
     async def make_session(body: SessionCreate) -> Session:
         body = await asyncio.to_thread(_with_league, body, data_dir)
-        state, label, curve_source = await asyncio.to_thread(_build_state, body, data_dir)
+        state, label, curve_source, curve_fit = await asyncio.to_thread(
+            _build_state, body, data_dir
+        )
         note = None
         if body.survival is None:
             body, note = await asyncio.to_thread(
@@ -794,6 +807,14 @@ def create_app(
                 f"fit_curve fits the curve from a simulated survival run, and survival is "
                 f"{body.survival or 'none'}: pass survival=simulate, or leave fit_curve out",
             )
+        if body.fit_curve and "fit_curve" in body.model_fields_set and body.curve == "league":
+            raise HTTPException(
+                400,
+                "fit_curve refits the curve from the simulated drafts, and curve=league fits it "
+                "from the league's rosters: leave fit_curve out",
+            )
+        # The league's own curve stands: a simulation only measures survival.
+        fit_curve = body.fit_curve and body.survival == "simulate" and body.curve != "league"
         session = store.create(
             state,
             label,
@@ -803,6 +824,7 @@ def create_app(
             survival=survival,
             solve_ahead=body.solve_ahead,
         )
+        session.curve_fit = curve_fit
         # The keeper table as resolved, by id: a rebuild after a restart does not re-read the file.
         # The survival as resolved too, so a rebuild keeps the mode the session started on.
         session.create_params = {
@@ -810,11 +832,11 @@ def create_app(
             "keepers": keeper_params(state.keepers),
             "keepers_file": None,
             # Only a simulation fits the curve: a rebuild must not ask a league table to.
-            "fit_curve": body.fit_curve and body.survival == "simulate",
+            "fit_curve": fit_curve,
         }
         if body.survival == "simulate":
             asyncio.get_running_loop().create_task(
-                _build_survival(session, body.survival_sims, drafters, body.fit_curve)
+                _build_survival(session, body.survival_sims, drafters, fit_curve)
             )
         return session
 
@@ -1796,8 +1818,11 @@ DATA_FILE_FIELDS = (
 )
 
 
-def _build_state(body: SessionCreate, data_dir: Path) -> tuple[DraftState, str, str]:
-    """Load projections, positions, ADP and the curve for a new session (blocking I/O)."""
+def _build_state(
+    body: SessionCreate, data_dir: Path
+) -> tuple[DraftState, str, str, dict[str, Any] | None]:
+    """Load projections, positions, ADP and the curve for a new session (blocking I/O); the
+    last item is the league fit's report under ``curve: league``."""
     for name in DATA_FILE_FIELDS:
         file = getattr(body, name)
         if file and not _in_data_dir(file):
@@ -1901,8 +1926,19 @@ def _build_state(body: SessionCreate, data_dir: Path) -> tuple[DraftState, str, 
     state.spread_base = body.spread_base
     state.spread_growth = body.spread_growth
     curve_source = "none"
+    curve_fit = None
     if body.objective == "win":
-        if body.curve_file:
+        if body.curve == "league":
+            if body.curve_file:
+                raise HTTPException(
+                    400,
+                    "curve=league fits the curve from the league's rosters, and curve_file names "
+                    "one: pass one or the other",
+                )
+            fit = _league_curve(body, data_dir, state)
+            curve = fit.curve
+            curve_fit = fit.to_dict()
+        elif body.curve_file:
             curve_path = data_dir / body.curve_file
             if not curve_path.exists():
                 raise HTTPException(400, f"curve file not found: {body.curve_file}")
@@ -1917,7 +1953,43 @@ def _build_state(body: SessionCreate, data_dir: Path) -> tuple[DraftState, str, 
             curve = CategoryCurve.simulated(settings.cats)
         state.curve = curve.scaled(body.sigma_scale)
         curve_source = state.curve.source
-    return state, projections.label, curve_source
+    return state, projections.label, curve_source, curve_fit
+
+
+def _league_curve(
+    body: SessionCreate, data_dir: Path, state: DraftState
+) -> league_curve.LeagueCurveFit:
+    """``curve: league``: the curve from the drafted rosters in the archive beside the league's
+    survival table. The session's projections score their own season's draft; an earlier
+    season needs its own file there (``projections_<year>.csv``), scored the session's way."""
+    folder = data_dir / _league_table_dir(body)
+    season = league_curve.draft_year(state.projections.as_of)
+    pool = state.pool_size or state.settings.total_picks
+
+    def scores(year: int) -> tuple[pd.DataFrame, pd.DataFrame] | None:
+        if year == season:
+            return state.projections.df, state.z
+        path = folder / league_curve.SEASON_PROJECTIONS.format(year=year)
+        if not path.exists():
+            return None
+        df = load_bbm(path, horizon=body.horizon).df  # type: ignore[arg-type]
+        if body.points:
+            df = df.copy()
+            df[Cat.FPTS.value] = fantasy_points(df, _point_weights(body.points))
+        return df, zscores(df, cats=state.settings.cats, pool_size=pool)
+
+    try:
+        return league_curve.fit_league_curve(
+            folder,
+            scores,
+            state.settings.cats,
+            state.settings.num_teams,
+            state.settings.roster_size,
+            season,
+            aliases=load_aliases(data_dir / "aliases.json"),
+        )
+    except (OSError, KeyError, ValueError) as exc:
+        raise HTTPException(400, f"curve=league: {exc}") from exc
 
 
 #: Yahoo's names for the stats a points league scores, and the projection's columns.
@@ -1998,17 +2070,20 @@ def _adp_ranks(path: Path, projections: pd.DataFrame, data_dir: Path) -> tuple[p
     return adp_for_projections(projections, load_adp(path)), f"rank:{path.name}"
 
 
-def _adp_bias_path(body: SessionCreate, data_dir: Path) -> Path:
-    """The bias table beside the session's league table: its survival_file's folder under
+def _league_table_dir(body: SessionCreate) -> Path:
+    """The folder of the session's league table, inside data/: its survival_file's under
     survival=league, else the league folder of a session that names one, else the default
     table's (yahoo_history)."""
     if body.survival == "league" and body.survival_file:
-        folder = Path(body.survival_file).parent
-    elif body.league is not None:
-        folder = Path(leagues.LEAGUES_DIR) / body.league
-    else:
-        folder = Path(LEAGUE_SURVIVAL_DEFAULT).parent
-    return data_dir / folder / ADP_BIAS_FILE
+        return Path(body.survival_file).parent
+    if body.league is not None:
+        return Path(leagues.LEAGUES_DIR) / body.league
+    return Path(LEAGUE_SURVIVAL_DEFAULT).parent
+
+
+def _adp_bias_path(body: SessionCreate, data_dir: Path) -> Path:
+    """The bias table beside the session's league table."""
+    return data_dir / _league_table_dir(body) / ADP_BIAS_FILE
 
 
 def _load_adp_bias(path: Path) -> AdpBias:
@@ -2274,6 +2349,8 @@ def _summary(session: Session) -> dict[str, Any]:
         "spread_growth": state.spread_growth,
         "objective": state.objective,
         "curve": None if curve is None else curve.to_dict(),
+        # curve=league: the seasons fitted and the standings' sigma in z units beside it.
+        "curve_fit": session.curve_fit,
         "sigma_scale": session.sigma_scale,
         "availability_source": state.availability_source,
         # The league's shift of the ADP formula, where it came from and how it was fit (#64).

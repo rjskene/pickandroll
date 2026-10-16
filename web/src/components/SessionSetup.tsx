@@ -6,6 +6,9 @@ import Leagues from "./Leagues";
 import { erroredRow, isMine, KeeperEditor, keeperDraft, keepersIn, nameOptions, type KeeperDraft } from "./Keepers";
 import { SeenRooms, useSeenRooms } from "./YahooSync";
 
+/** The curve select's value for the league's own drafted rosters (curve=league). */
+const LEAGUE_ROSTERS = "@league-rosters";
+
 interface Props {
   onCreated: (session: SessionSummary) => void;
   onSelect: (id: string) => void;
@@ -90,7 +93,9 @@ export default function SessionSetup({ onCreated, onSelect }: Props) {
         adp_file: adpFile || null,
         objective,
         sigma_scale: sigmaScale,
-        curve_file: curveFile || null,
+        // "league" is the league's own drafted rosters; anything else names a curve file.
+        curve_file: curveFile && curveFile !== LEAGUE_ROSTERS ? curveFile : null,
+        ...(curveFile === LEAGUE_ROSTERS ? { curve: "league" as const } : {}),
         ...(survivalChosen
           ? {
               survival,
@@ -307,11 +312,12 @@ export default function SessionSetup({ onCreated, onSelect }: Props) {
             <Info title="league curve">
               <b>Per category: where the league's final totals land (μ) and how spread out they are (σ), in z.</b>
               <span>A category counts for Φ((total − μ) / σ), the chance of beating a team drawn from the league. Expected categories won adds those up.</span>
-              <span>Sources: the built-in fit from 3000 simulated drafts; a refit from this session's own league simulation (choose "simulate this league" below); or a JSON file in data/. Spread × is applied on top.</span>
+              <span>Sources: the built-in fit from 3000 simulated drafts; a refit from this session's own league simulation (choose "simulate this league" below); this league's own drafted rosters, each scored on its season's projections (the archive's picks.csv beside the league's survival table, with the standings in z units as a check); or a JSON file in data/. Spread × is applied on top.</span>
             </Info>
           </span>
           <select value={curveFile} onChange={(e) => setCurveFile(e.target.value)}>
             <option value="">simulated league (3000 drafts, BBM 2026-09-21){survival === "simulate" ? ", refitted from the simulation below" : ""}</option>
+            <option value={LEAGUE_ROSTERS}>this league's drafted rosters (archive, on these projections)</option>
             {(curveFiles.data ?? []).map((f) => (
               <option key={f.file} value={f.file}>
                 {f.file}

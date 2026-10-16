@@ -7,7 +7,8 @@ drawn from the league, so the objective reads as the expected number of categori
 ``mu_c`` and ``sigma_c`` are the mean and spread of team totals in the league
 (:meth:`CategoryCurve.from_totals`). :meth:`CategoryCurve.simulated` carries the fit from 3000
 simulated twelve-team drafts on Basketball Monster projections (the 2026-09-23 study), which is
-the default curve for a session; :meth:`CategoryCurve.default` is the flat zero-mean fallback.
+the default curve for a session; :meth:`CategoryCurve.from_rosters` fits it from a league's
+own drafted rosters instead (#65); :meth:`CategoryCurve.default` is the flat zero-mean fallback.
 
 ``Phi`` is S-shaped, so the models use a piecewise-linear version with breakpoints at a few
 multiples of sigma (:attr:`CategoryCurve.breaks`). The total is split into one bounded piece
@@ -153,6 +154,19 @@ class CategoryCurve:
         return cls(mu=mu, sigma=sigma, source=source)
 
     @classmethod
+    def from_rosters(
+        cls,
+        z: pd.DataFrame,
+        rosters: Mapping[Any, Sequence[str]],
+        cats: Iterable[Cat],
+        source: str = "rosters",
+    ) -> CategoryCurve:
+        """Fit mu and sigma from drafted rosters: each roster's total is the sum of its players'
+        z (``z`` indexed by player id, one column per category), as :func:`roster_totals`."""
+        cats = list(cats)
+        return cls.from_totals(roster_totals(z, rosters, cats), cats, source=source)
+
+    @classmethod
     def from_dict(cls, spec: Mapping[str, Any], cats: Iterable[Cat] | None = None) -> CategoryCurve:
         """Inverse of :meth:`to_dict`; ``cats`` restricts and orders the categories."""
         mu = {Cat(c): float(v) for c, v in spec["mu"].items()}
@@ -226,6 +240,19 @@ class CategoryCurve:
         """Value of a total under the piecewise-linear curve on ``[lo, hi]``."""
         base, segments = self.segments(cat, lo, hi)
         return base + sum(s.slope * min(max(total - s.start, 0.0), s.width) for s in segments)
+
+
+def roster_totals(
+    z: pd.DataFrame, rosters: Mapping[Any, Sequence[str]], cats: Iterable[Cat]
+) -> pd.DataFrame:
+    """One row per roster (indexed by its key), one column per category: the sum of the z of
+    its players. A player ``z`` lacks raises: the caller decides what an unscored pick means."""
+    cols = [c.value for c in cats]
+    missing = sorted({p for players in rosters.values() for p in players if p not in z.index})
+    if missing:
+        raise KeyError(f"no z for {missing}")
+    rows = {key: z.loc[list(players), cols].sum() for key, players in rosters.items()}
+    return pd.DataFrame.from_dict(rows, orient="index", columns=cols)
 
 
 def total_bounds(value: pd.DataFrame, roster_size: int) -> tuple[pd.Series, pd.Series]:
