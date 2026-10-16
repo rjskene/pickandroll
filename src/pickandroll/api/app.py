@@ -38,6 +38,7 @@ from fastapi.responses import PlainTextResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 from ..availability.adp import SPREAD_BASE, SPREAD_GROWTH
+from ..availability.bias import AdpBias
 from ..availability.league import LEAGUE_FROM_ADP, LeagueSurvivalTable
 from ..availability.survival import SurvivalTable
 from ..draft import (
@@ -89,6 +90,9 @@ KEEPER_SUFFIXES = {".csv"}
 # The league's own survival by ADP, keeper-adjusted: a session that names no survival uses it
 # when data/ holds it (the web's LEAGUE_SURVIVAL_DEFAULT mirrors this: change both).
 LEAGUE_SURVIVAL_DEFAULT = "yahoo_history/survival_by_adp_adjusted.csv"
+# The league's shift of the ADP formula by keeper-adjusted ADP (#64, scripts/fit_adp_bias.py),
+# read from the folder of the session's league table.
+ADP_BIAS_FILE = "adp_bias.json"
 #: Browsers that may call the API: the dev UI, other localhost tools and the Chrome extension.
 CORS_ORIGINS = r"^(chrome-extension://[a-p]{32}|https?://(localhost|127\.0\.0\.1)(:\d+)?)$"
 
@@ -384,6 +388,11 @@ class SessionCreate(BaseModel):
         "picks; it also drives the simulated drafters",
     )
     spread_growth: float = Field(default=SPREAD_GROWTH, ge=0.0, le=1.0)
+    adp_bias: bool = Field(
+        default=True,
+        description=f"shift the ADP formula by the league's bias table ({ADP_BIAS_FILE} beside the "
+        "league's survival table: the league folder's, or yahoo_history's) when there is one",
+    )
     drafters: list[Strategy] | None = Field(
         default=None, description="drafter mix for the simulation (default z, adp and lp)"
     )
@@ -764,6 +773,17 @@ def create_app(
                 "drafters": list(drafters),
                 "source": None,
             }
+        if body.adp_bias:
+            path = _adp_bias_path(body, data_dir)
+            if path.exists():
+                name = path.relative_to(data_dir).as_posix()
+                try:
+                    state.adp_bias = await asyncio.to_thread(_load_adp_bias, path)
+                    state.adp_bias_source = f"bias:{name}"
+                except (OSError, ValueError) as exc:
+                    # The draft goes on without the shift; the session says why.
+                    unread = f"could not read {name} ({exc}): no ADP bias"
+                    note = unread if note is None else f"{note}; {unread}"
         if note:
             survival["note"] = note
         if body.fit_curve and "fit_curve" in body.model_fields_set and body.survival != "simulate":
@@ -1978,6 +1998,28 @@ def _adp_ranks(path: Path, projections: pd.DataFrame, data_dir: Path) -> tuple[p
     return adp_for_projections(projections, load_adp(path)), f"rank:{path.name}"
 
 
+def _adp_bias_path(body: SessionCreate, data_dir: Path) -> Path:
+    """The bias table beside the session's league table: its survival_file's folder under
+    survival=league, else the league folder of a session that names one, else the default
+    table's (yahoo_history)."""
+    if body.survival == "league" and body.survival_file:
+        folder = Path(body.survival_file).parent
+    elif body.league is not None:
+        folder = Path(leagues.LEAGUES_DIR) / body.league
+    else:
+        folder = Path(LEAGUE_SURVIVAL_DEFAULT).parent
+    return data_dir / folder / ADP_BIAS_FILE
+
+
+def _load_adp_bias(path: Path) -> AdpBias:
+    """A bias table written by scripts/fit_adp_bias.py."""
+    try:
+        data = json.loads(path.read_text())
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"not JSON: {exc}") from exc
+    return AdpBias.from_dict(data)
+
+
 def _load_league_survival(path: Path) -> LeagueSurvivalTable:
     """The league's survival by ADP from a CSV in data/ (``adp,1..N,undrafted``)."""
     return LeagueSurvivalTable.from_frame(pd.read_csv(path))
@@ -2234,6 +2276,8 @@ def _summary(session: Session) -> dict[str, Any]:
         "curve": None if curve is None else curve.to_dict(),
         "sigma_scale": session.sigma_scale,
         "availability_source": state.availability_source,
+        # The league's shift of the ADP formula, where it came from and how it was fit (#64).
+        "availability_bias": state.availability_bias,
         "survival": session.survival,
         "solver": _solver_status(session),
         "solve_params": session.solve_params.model_dump(),

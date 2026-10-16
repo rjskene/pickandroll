@@ -38,6 +38,7 @@ from ..availability.adp import (
     pseudo_adp,
     rank_to_adp,
 )
+from ..availability.bias import AdpBias
 from ..availability.league import LeagueSurvivalTable
 from ..availability.survival import SurvivalTable
 from ..optim.horizon import (
@@ -136,6 +137,9 @@ class DraftState:
     survival: SurvivalTable | None = None
     #: The league's own survival by ADP, read in market space (``availability``).
     league_survival: LeagueSurvivalTable | None = None
+    #: The league's mean shift of the ADP model by keeper-adjusted ADP; ``None``: no shift.
+    adp_bias: AdpBias | None = None
+    adp_bias_source: str | None = None
     #: The ADP model's spread, ``spread_base + spread_growth * adp`` picks.
     spread_base: float = SPREAD_BASE
     spread_growth: float = SPREAD_GROWTH
@@ -601,9 +605,11 @@ class DraftState:
         """P(available at each of my remaining picks | still on the board now).
 
         The ADP model and the league table are read in market space (keeper-adjusted ADP at
-        market picks), so keepers neither count as picks nor stand ahead of anyone. A simulated
-        survival table already drafts the keepers at their slots and is read at overall picks.
-        Either table overrides the ADP model where it knows the player."""
+        market picks), so keepers neither count as picks nor stand ahead of anyone. With a bias
+        table the ADP model centres each player on his keeper-adjusted ADP plus the league's
+        shift there, its spread taken at the shifted ADP; the league table is keyed by the ADP
+        itself. A simulated survival table already drafts the keepers at their slots and is read
+        at overall picks. Either table overrides the ADP model where it knows the player."""
         adp = self.effective_adp()
         if players is not None:
             adp = adp.reindex(players)
@@ -611,7 +617,8 @@ class DraftState:
         picks = self.my_remaining_picks
         now = self.market_pick(self.next_overall)
         at = [self.market_pick(k) for k in picks]
-        frame = conditional_availability(market, now=now, picks=at, spread=self.spread(market))
+        centre = market if self.adp_bias is None else self.adp_bias.apply(market)
+        frame = conditional_availability(centre, now=now, picks=at, spread=self.spread(centre))
         frame.columns = picks
         if self.league_survival is not None:
             league = self.league_survival.conditional(market, now=now, picks=at)
@@ -629,6 +636,21 @@ class DraftState:
         if self.survival is not None:
             return "survival"
         return "league" if self.league_survival is not None else "adp"
+
+    @property
+    def availability_bias(self) -> dict[str, object] | None:
+        """The ADP model's shift as a session reports it: where the table came from and how it
+        was fit; ``None`` without one."""
+        if self.adp_bias is None:
+            return None
+        bias = self.adp_bias
+        return {
+            "source": self.adp_bias_source,
+            "from_adp": bias.from_adp,
+            "half_life": bias.half_life,
+            "seasons": list(bias.seasons),
+            "target": bias.target,
+        }
 
     # ------------------------------------------------------------------ mutation
     def apply_pick(self, team: str, player_id: str, overall: int | None = None) -> Pick:

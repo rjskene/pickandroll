@@ -134,6 +134,12 @@ Phase 2 (after the invariants above are green). Keepers change what the market c
   at 90, 0.39 at 100, 0.54 at 110). The real draft runs `survival: league` with the archive table;
   mock rooms (no keepers) keep `simulate`. The table is league data (gitignored); the loader is product
   code and gets a small fixture in the same shape.
+- **ADP bias (#64, 2026-10-16).** Where the normal model answers, it centres on `adp' + bias(adp')`.
+  The bias is the league's mean market-pick residual by effective-ADP bucket, from
+  `adp_bias.json` beside the league table (`scripts/fit_adp_bias.py`, `docs/DESIGN.md`). Holding
+  out each season in turn chose a one-season half-life with no shift before ADP 72. The held-out
+  Brier is no worse in any bucket, and lower from 72 on (0.111 to 0.104 at 84-96, 0.105 to 0.094 at
+  96-108). The 2026 draft's pick MAE is 9.47 against 10.42.
 
 ## 2. API (`api/app.py`)
 

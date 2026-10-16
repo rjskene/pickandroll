@@ -246,6 +246,7 @@ def _horizon_payload(
         "timings": {k: round(v, 1) for k, v in timings.items()},
         "adp_source": state.adp_source,
         "availability_source": state.availability_source,
+        "availability_bias": state.availability_bias,
         "candidates": candidate_rows,
         "plan": [
             {
@@ -504,6 +505,7 @@ def compute_recommendation(
         "timings": {"total_ms": round((time.perf_counter() - started) * 1000, 1)},
         "adp_source": state.adp_source,
         "availability_source": state.availability_source,
+        "availability_bias": state.availability_bias,
         "candidates": _candidates(table, scale, state.effective_adp()),
         "plan": [],
         "scenarios": [],

@@ -216,6 +216,34 @@ draft, else a simulation, with the reason in the session's survival `note`. A na
 A room's session follows the same rule, and the attach record keeps the mode as resolved, so a
 rebuild from the log runs on it.
 
+`availability.bias.AdpBias` (#64) is the league's mean shift of the formula. The league runs
+behind the market late in the draft, so the formula centres each player on his keeper-adjusted ADP
+plus the league's mean residual (market pick minus ADP) at that ADP. The spread is taken at the
+shifted value. The residual is averaged by effective-ADP bucket, read linearly between the bucket
+centres and flat past the ends. The shift applies wherever the formula answers: below the league
+table's first row, past its last, in a session without a table, and for players a simulated
+table lacks. The league table itself is still read at the unshifted ADP, and the simulated
+drafters (`autopick`) draft on it unshifted.
+
+`scripts/fit_adp_bias.py` fits the table from the history archive and writes
+`adp_bias.json` beside the league table. It chooses the season half-life and the first ADP with
+a shift by holding out each season in turn. The rule is the lowest Brier of `S(m)` over every
+market pick, among the fits no worse than the plain formula in any bucket. On 2017-2026 that is a
+one-season half-life and a shift from ADP 72. With the fit on the other seasons, the 2026 draft's
+pick error is 9.5 picks against 10.4 for keeper-adjusted ADP.
+
+A session reads `adp_bias.json` from the folder of its league table: the `survival_file`'s
+folder under `survival: league`, else its league folder (`data/leagues/<id>/`), else
+`yahoo_history/`. No file means no shift. Another league's archive is not this league's market, so
+the cash leagues have no shift until their folders hold a table. `adp_bias: false` on the
+request turns the shift off, and the session reports it in `availability_bias`: the table's
+file, its first ADP, its half-life and its seasons, or null. A table that cannot be read leaves
+the session without the shift, and the survival `note` says why.
+
+The mean shift moves no probability into "never drafted". In 2026, 14 percent of effective ADP
+60-90 went undrafted, and the formula gives that range about 0.1 percent at the last pick, shifted
+or not.
+
 ## Solve ahead of the clock (`api.solver`)
 
 Time limits are a safety net, not the budget. The board before the draft is known, so the

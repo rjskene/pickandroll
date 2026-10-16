@@ -6,11 +6,13 @@ from .adp import (
     rank_to_adp,
     spread_for_adp,
 )
+from .bias import AdpBias
 from .league import LEAGUE_FROM_ADP, LeagueSurvivalTable
 from .survival import SurvivalTable
 
 __all__ = [
     "LEAGUE_FROM_ADP",
+    "AdpBias",
     "LeagueSurvivalTable",
     "SurvivalTable",
     "availability",

@@ -1,8 +1,19 @@
-import type { AvailabilitySource, BoardPlayer, Scale, SessionSummary, WinLabel } from "./api";
+import type { AvailabilityBias, AvailabilitySource, BoardPlayer, Scale, SessionSummary, WinLabel } from "./api";
 
 /** Where the survival odds come from, in a few words. */
-export function oddsSource(source: AvailabilitySource): string {
-  return source === "survival" ? "simulated drafts" : source === "league" ? "the league's drafts" : "the ADP formula";
+export function oddsSource(source: AvailabilitySource, bias?: AvailabilityBias | null): string {
+  if (source === "survival") return "simulated drafts";
+  // The league table answers late; before its first row the formula does, shifted by the bias.
+  if (source === "league") return bias ? "the league's drafts and the ADP formula + league bias" : "the league's drafts";
+  return bias ? "the ADP formula + league bias" : "the ADP formula";
+}
+
+/** The ADP formula's shift in a clause: from which ADP, fit on which seasons, from which file. */
+export function biasDetail(bias: AvailabilityBias): string {
+  const seasons = bias.seasons.length ? `, fit on ${bias.seasons[0]}-${bias.seasons[bias.seasons.length - 1]}` : "";
+  const weight = bias.half_life != null ? ` (half-life ${bias.half_life} season${bias.half_life === 1 ? "" : "s"})` : "";
+  const source = bias.source ? ` from ${bias.source.replace(/^bias:/, "")}` : "";
+  return `the ADP formula centred on ADP plus the league's bias from ADP ${bias.from_adp}${seasons}${weight}${source}`;
 }
 
 /** The session's survival odds in a sentence: where they come from and the spread they use. */
@@ -17,7 +28,8 @@ export function survivalDetail(s: SessionSummary): string {
   // only the market.
   const market = s.availability_source !== "survival" && s.adp_keepers_ahead ? `, read in market space (${s.adp_keepers_ahead} keepers out of the market)` : "";
   const note = s.survival.note ? ` Default: ${s.survival.note}.` : "";
-  return `${source}${market}; spread ${s.spread_base} + ${s.spread_growth} × ADP picks.${note}`;
+  const bias = s.availability_bias ? `; ${biasDetail(s.availability_bias)}` : "";
+  return `${source}${market}${bias}; spread ${s.spread_base} + ${s.spread_growth} × ADP picks.${note}`;
 }
 
 export function fmtMs(ms: number | undefined): string {
