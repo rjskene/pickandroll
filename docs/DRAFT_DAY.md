@@ -116,6 +116,14 @@ Use the Claude in Chrome tools: load them in one ToolSearch call, then call `tab
    extension is not running in the tab. Reload the draft tab once; before the draft starts that is safe.
 7. Close the other tabs this session opened (the NBA home and the league page) once the draft tab is in the room.
 
+Open the draft tab well before the draw, not at the start. The scheduled task fires at T−30, before Yahoo draws
+the order, which leaves the tab minutes in the room before pick 1. The 2026-10-16 points mock entered 30 s before
+its start, and its G6 entry lead failed.
+
+In mirror (a league the user did not arm), the extension clicks nothing. When a turn of the user's runs out, Yahoo
+autopicks it and switches the seat to autodraft for inactivity. That is the expected autopick path, not a fault:
+the scorecard counts it as a G5 autopick flip, so say why in the report. Leave autodraft as Yahoo set it.
+
 ### 4. While the draft runs
 
 The run prints a line per pick, with the mode, the user's next pick and the tab's heartbeat age. It also prints
@@ -185,6 +193,15 @@ is the league still there? Once the tab shows the room, run `draft_day.py attach
 
 Yahoo says the draft is over but the room is missing picks. The tab stopped syncing at some point. `finish` still
 runs and saves what the room has. Report the gap.
+
+### An earlier run's log (exit 8)
+
+`data/fidelity/<league>.jsonl` was first attached six hours or more before this draft. It is an earlier run's log,
+for example a rehearsal under the league's id. Rebuilt, it would bring back that run's session and mode. The
+user's pre-arm is read only at a log's first attach, so the room would keep that run's mode, not the user's
+pre-arm. `attach` and `run` stop before touching the API, and the message gives the `mv` that moves the log aside.
+Run that `mv`. If `GET /rooms` lists the league's room, `DELETE /rooms/<league>` first. Then start `run` again in
+the background. Say in the report that an earlier log was moved aside, and name the file.
 
 ## Before the user leaves (the user's checklist)
 

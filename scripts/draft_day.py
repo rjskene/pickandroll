@@ -14,7 +14,7 @@ Nothing here signs in anywhere: Yahoo's settings, draft status and players endpo
 
 Exit codes: 0 done, 1 error, 2 the league is gone (dissolved at the draw), 3 the draft moved,
 4 the servers are down or predate #67, 5 no draft tab with a seat in time, 6 the draft tab went
-quiet, 7 Yahoo finished the draft before the room did.
+quiet, 7 Yahoo finished the draft before the room did, 8 the room's log is an earlier run's.
 """
 
 from __future__ import annotations
@@ -36,6 +36,7 @@ from zoneinfo import ZoneInfo
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
+from pickandroll.fidelity import read_events
 from pickandroll.sources.yahoo import load_players_file
 
 DATA = ROOT / "data"
@@ -45,12 +46,15 @@ LAUNCH = Path.home() / "code" / ".claude" / "launch.json"
 YAHOO = "https://pub-api.fantasysports.yahoo.com/fantasy/v3"
 #: A moved draft this many hours off or more is the master's to reschedule, not this run's.
 MOVE_WAIT_H = 6.0
+#: A room log first attached this many hours or more before the draft is an earlier run's (a
+#: rehearsal under the league's id): rebuilt, it would bring back that run's session and mode.
+STALE_LOG_H = 6.0
 #: The attach waits for the draft tab until this long after the draft's start.
 ATTACH_GRACE_S = 15 * 60
 #: The leagues' draft times are Pacific; the Mac may keep another zone.
 PACIFIC = ZoneInfo("America/Los_Angeles")
 
-OK, ERROR, GONE, MOVED, DOWN, NO_TAB, QUIET, YAHOO_DONE = range(8)
+OK, ERROR, GONE, MOVED, DOWN, NO_TAB, QUIET, YAHOO_DONE, STALE = range(9)
 
 
 class Stop(Exception):
@@ -279,11 +283,41 @@ def live_room(league: str) -> dict[str, Any] | None:
     return None
 
 
+def check_log(league: str, mine: dict[str, Any]) -> None:
+    """Stop (exit 8) when the league's room log was first attached ``STALE_LOG_H`` or more before
+    this draft. The attach would rebuild that run's room from it, with its session and mode, and
+    the user's pre-arm is read only at a log's first attach."""
+    path = DATA / "fidelity" / f"{league}.jsonl"
+    planned = (mine.get("draft") or {}).get("time")
+    if not path.exists() or not planned:
+        return
+    first = next(
+        (e["t"] for e in read_events(path) if e.get("type") == "attach" and e.get("t")), None
+    )
+    if first is None:
+        return
+    attached = datetime.fromisoformat(str(first))
+    draft = datetime.fromisoformat(planned)
+    hours = (draft - attached).total_seconds() / 3600
+    if hours < STALE_LOG_H:
+        return
+    aside = path.with_name(f"{league}_{attached.astimezone(PACIFIC):%Y-%m-%d}_earlier.jsonl")
+    raise Stop(
+        STALE,
+        f"{path.relative_to(ROOT)} is an earlier run's log: first attached "
+        f"{attached.astimezone(PACIFIC):%a %Y-%m-%d %H:%M %Z}, {hours:.0f} h before this draft "
+        f"({draft.astimezone(PACIFIC):%a %H:%M %Z}). Move it aside "
+        f"(mv {path.relative_to(ROOT)} {aside.relative_to(ROOT)}; if GET /rooms lists room "
+        f"{league}, DELETE /rooms/{league} first) and run again",
+    )
+
+
 def attach(league: str, wait_s: float | None) -> int:
     """Attach the league's draft room once the user's draft tab reports its seat (waiting
     ``wait_s``, by default until 15 minutes after the draft's start). Names no mode: the user's
-    pre-arm, or mirror."""
+    pre-arm, or mirror. An earlier run's log under the league's id stops it (``check_log``)."""
     mine = settings(league)
+    check_log(league, mine)
     if wait_s is None:
         start = datetime.fromisoformat(mine["draft"]["time"])
         wait_s = max(600.0, (start - datetime.now(UTC)).total_seconds() + ATTACH_GRACE_S)
