@@ -766,6 +766,14 @@ def create_app(
             }
         if note:
             survival["note"] = note
+        if body.fit_curve and "fit_curve" in body.model_fields_set and body.survival != "simulate":
+            # The curve is fitted from the simulated drafts: with none, the request would get
+            # the curve it named and a flag that did nothing (the 10-14 rebuild, #63).
+            raise HTTPException(
+                400,
+                f"fit_curve fits the curve from a simulated survival run, and survival is "
+                f"{body.survival or 'none'}: pass survival=simulate, or leave fit_curve out",
+            )
         session = store.create(
             state,
             label,
@@ -781,6 +789,8 @@ def create_app(
             **body.model_dump(mode="json"),
             "keepers": keeper_params(state.keepers),
             "keepers_file": None,
+            # Only a simulation fits the curve: a rebuild must not ask a league table to.
+            "fit_curve": body.fit_curve and body.survival == "simulate",
         }
         if body.survival == "simulate":
             asyncio.get_running_loop().create_task(
@@ -956,6 +966,18 @@ def create_app(
                         "keepers": keeper_params(state.keepers),
                         "keepers_file": None,
                     }
+                if room is not None:
+                    # The resolved table in the room's ledger: a rebuild from the log drafts on
+                    # it, not on the one the attach recorded (#63).
+                    room.log.append(
+                        {
+                            "type": "keepers",
+                            "keepers": keeper_params(state.keepers),
+                            "overalls": sorted(state.keeper_slots),
+                            "changed": keeper_params(state.keepers) != before,
+                            "src": "api",
+                        }
+                    )
                 if session.survival.get("mode") == "simulate" and (
                     keeper_params(state.keepers) != before
                 ):
@@ -1353,7 +1375,8 @@ def create_app(
             elif body.session is not None:
                 session = await make_session(for_room(body.session))
             elif record.get("session"):
-                session = await make_session(for_room(SessionCreate(**record["session"])))
+                create = yahoo_room.logged_session(prior)
+                session = await make_session(for_room(SessionCreate(**create)))
             else:
                 raise HTTPException(
                     400, "no session: pass session_id or session settings (no log to resume from)"

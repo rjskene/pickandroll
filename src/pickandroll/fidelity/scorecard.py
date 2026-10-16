@@ -87,13 +87,7 @@ def analyze(events: list[dict[str, Any]]) -> dict[str, Any]:
     slot = int(attach["slot"])
     num_teams = int(attach.get("num_teams", 12))
     rounds = int(attach.get("rounds", 13))
-    # My picks: by the attach's owner map (traded picks), else the snake's.
     owners = attach.get("pick_owners") or None
-    mine = (
-        [k for k, o in enumerate(owners, 1) if int(o) == slot]
-        if owners
-        else snake_picks(num_teams, slot, rounds)
-    )
     traded = attach.get("traded_picks") or []
 
     room: dict[int, dict] = {}
@@ -162,8 +156,40 @@ def analyze(events: list[dict[str, Any]]) -> dict[str, Any]:
     # named holds a stand-in, which no board agreement can count (docs/KEEPERS.md §2).
     fixed = {k for k, e in last_sync.items() if e.get("kind") == "keeper_fix"}
     kept |= fixed
+    # A keeper slot the room filled with someone else: the room's pick won and dropped the
+    # keeper there (invariant 7), so it is a pick like any other, a turn of mine if mine (#63).
+    overridden = {
+        k
+        for k, e in last_sync.items()
+        if e.get("kind") == "conflict"
+        and any(d.get("overall") == k for d in e.get("keepers_dropped") or [])
+        and room.get(k, {}).get("src") != "keeper"
+    }
+    kept -= overridden
     gaps = sorted(gap_picks - room.keys() - kept)
     kept_unseen = len(kept - room.keys())
+
+    # My picks, the turns the scorecard judges: by the attach's owner map (traded picks), else
+    # by the room's own record of who made each pick it sent (a log from before the owner map:
+    # the night of 10-14), else by the snake. A pick_landed for a pick of someone else's is the
+    # tab's mistake, not a turn of mine: it is counted, never a row (#63).
+    if owners:
+        mine = [k for k, o in enumerate(owners, 1) if int(o) == slot]
+    else:
+        snake = set(snake_picks(num_teams, slot, rounds))
+        mine = [
+            k
+            for k in range(1, num_teams * rounds + 1)
+            if (int(room[k]["slot"]) == slot if room.get(k, {}).get("slot") else k in snake)
+        ]
+    landed_unowned = sorted(set(landed) - set(mine))
+
+    # Picks the room sent in Yahoo's history frame (the tab learned them on connect), by the
+    # room's label or the session's: their time is the frame's, so neither the sync lag (G2)
+    # nor the reco timing (D1) can be read from them (#63).
+    history = {k for k, e in room.items() if "history" in (e.get("src"), e.get("via"))}
+    history |= {k for k, e in last_sync.items() if e.get("src") == "history"}
+    history |= {k for k, e in first_sync.items() if e.get("src") == "history"}
 
     # When armed turns acted (act_at_s, #10), as the API's control events set it, in order.
     acts: list[int | None] = []
@@ -189,10 +215,12 @@ def analyze(events: list[dict[str, Any]]) -> dict[str, Any]:
         running = max(running, t)
         synced_by[k] = running
 
+    # An overridden keeper slot is in sync from the conflict that took the room's player.
+    synced_at = {**first_sync, **{k: last_sync[k] for k in overridden}}
     lags = {
-        k: to_ms(first_sync[k]["t"]) - to_ms(room[k]["t"])
+        k: to_ms(synced_at[k]["t"]) - to_ms(room[k]["t"])
         for k in room
-        if k in first_sync and k not in kept
+        if k in synced_at and k not in kept and k not in history
     }
     # A pick the room made before the first attach waited for a room that did not exist yet:
     # a process miss, not the build's lag. G2 judges the picks after it; G2 over all is kept.
@@ -223,8 +251,11 @@ def analyze(events: list[dict[str, Any]]) -> dict[str, Any]:
         else:
             ref = final
         acted = tries[0].get("board") if tries else None
-        ready = (to_ms(board[0]["t"]) - t_turn) if board and t_turn is not None else None
-        presolve = _presolve_class(board[0] if board else None, ready)
+        # A turn the history frame dates (the pick, or the pick before with no turn_start)
+        # has no start to time the reco from.
+        timed = k not in history and (k in turns or k - 1 not in history)
+        ready = (to_ms(board[0]["t"]) - t_turn) if board and t_turn is not None and timed else None
+        presolve = _presolve_class(board[0] if board else None, ready) if timed else None
         how = land.get("how") if land else (heard.get(k) or {}).get("how")
         ref_yid = str(ref["top_yid"]) if ref and ref.get("top_yid") is not None else None
         ref_name = ref.get("top_name") if ref else None
@@ -410,6 +441,10 @@ def analyze(events: list[dict[str, Any]]) -> dict[str, Any]:
         # Picks the room never sent and no keeper was named for: a stand-in holds each.
         "gaps": gaps,
         "my_keepers": sorted(k for k in kept if k in mine),
+        # pick_landed events for picks my seat does not own (left out of the rows), and the
+        # picks the room sent in its history frame (left out of G2 and D1).
+        "landed_unowned": landed_unowned,
+        "history_picks": len(history),
         "compliance": {
             "compliant": counts["compliant"],
             "denominator": decided,
@@ -485,9 +520,22 @@ def analyze(events: list[dict[str, Any]]) -> dict[str, Any]:
                 "mean": round(sum(per_pick) / len(per_pick), 2) if per_pick else None,
                 "max": max(per_pick) if per_pick else None,
             },
+            # The final roster's score on the session's curve; the benchmark and the best are
+            # solves, with their model (logged since #63; an older log's score may be a solve's).
             "D5": None
             if score is None
-            else {k: score.get(k) for k in ("wins", "benchmark", "vs_benchmark", "best")},
+            else {
+                k: score.get(k)
+                for k in (
+                    "wins",
+                    "model",
+                    "benchmark",
+                    "benchmark_model",
+                    "vs_benchmark",
+                    "best",
+                    "best_model",
+                )
+            },
             "D6": {
                 "churn": sum(1 for r in rows if r["churn"]),
                 "picks": [r["overall"] for r in rows if r["churn"]],
@@ -612,8 +660,13 @@ def markdown(card: dict[str, Any]) -> str:
         ),
         f"| G2 sync lag | {ms(g['G2'])} | p50 ≤ 1000, p95 ≤ 2000, max ≤ 5000 | {mark('G2')} |",
         (
-            f"| G2 over all picks, {g['G2_all']['pre_attach']} before the attach "
-            f"| {ms(g['G2_all'])} | reported | - |"
+            f"| G2 over all picks, {g['G2_all']['pre_attach']} before the attach"
+            + (
+                f", {card['history_picks']} from the history frame left out"
+                if card.get("history_picks")
+                else ""
+            )
+            + f" | {ms(g['G2_all'])} | reported | - |"
         ),
         f"| G3 interventions | {g['G3']['interventions']} | 0 | {mark('G3')} |",
         f"| G4 manual respected | {g['G4']['respected']}/{g['G4']['manual']} | 1/1 | {mark('G4')} |",
@@ -662,16 +715,31 @@ def markdown(card: dict[str, Any]) -> str:
         "",
         f"Stand-ins {card['standins']}, conflicts {card['conflicts']}.",
         "",
+        *(
+            [
+                (
+                    "Landed reports for picks my seat does not own (no turns of mine): "
+                    f"{_picks(card['landed_unowned'])}."
+                ),
+                "",
+            ]
+            if card.get("landed_unowned")
+            else []
+        ),
         f"Queue probe (diagnostic): {_probe(card.get('queue_probe'))}.",
         "",
         f"Team count (diagnostic): {_teams(card.get('teams'))}.",
         "",
-        "| pick | rd | ref | actual | label | lag ms | turn→land ms | reco ready ms | tries |",
-        "|---|---|---|---|---|---|---|---|---|",
+        (
+            "| pick | rd | ref | model | actual | label | lag ms | turn→land ms "
+            "| reco ready ms | tries |"
+        ),
+        "|---|---|---|---|---|---|---|---|---|---|",
     ]
     for r in card["rows"]:
         lines.append(
             f"| {r['overall']} | {r['round']} | {r['ref_name'] or r['ref_yid'] or '-'} "
+            f"| {_fmt(r.get('ref_model'))} "
             f"| {r['actual_name'] or r['actual_yid']} | {r['label']} | {_fmt(r['lag_ms'])} "
             f"| {_fmt(r['turn_to_land_ms'])} | {_fmt(r['reco_ready_ms'])} | {r['attempts']} |"
         )
@@ -817,9 +885,26 @@ def _fmt(value: Any, unit: str = "") -> str:
 
 
 def _score(score: dict[str, Any] | None) -> str:
+    """D5: the final roster's score, then the benchmark and the best solve with their model. A
+    roster-model solve has no availability in it: it is not comparable with the final."""
     if not score:
         return "n/a"
-    out = f"{score.get('wins')}"
+    if score.get("model") != "final":
+        out = f"{score.get('wins')} as logged"
+        if score.get("benchmark") is not None:
+            out += f" (benchmark {score['benchmark']}, {score.get('vs_benchmark'):+})"
+        return out + "; models not recorded before #63, the score may be a solve's"
+    out = f"{score['wins']}, the final roster on the session's curve"
     if score.get("benchmark") is not None:
-        out += f" (benchmark {score['benchmark']}, {score.get('vs_benchmark'):+})"
+        out += f"; benchmark {score['benchmark']} {_model(score.get('benchmark_model'))}"
+        if score.get("benchmark_model") != "roster" and score.get("vs_benchmark") is not None:
+            out += f", {score['vs_benchmark']:+}"
+    if score.get("best") is not None:
+        out += f"; best solve {score['best']} {_model(score.get('best_model'))}"
     return out
+
+
+def _model(model: str | None) -> str:
+    if model == "roster":
+        return "from the roster model (no availability: not comparable)"
+    return f"from the {model} model" if model else "(model not recorded)"

@@ -197,10 +197,11 @@ def test_naming_the_keeper_at_a_gap_replaces_the_stand_in(league, monkeypatch):
     fixes = [
         e for e in _events(directory, "d1") if e["type"] == "session_pick" and e["overall"] == 5
     ]
+    # The room's record came in Yahoo's history frame: labelled so, out of the lag (#63).
     assert [(e["kind"], e.get("src"), e["pid"]) for e in fixes] == [
         ("new", None, standin),
         ("keeper_fix", "keeper", kept),
-        ("held", None, kept),
+        ("held", "history", kept),
     ]
 
 
