@@ -2,8 +2,8 @@
 // since the web app has no Node types.
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import type { AvailabilityBias, BoardPlayer, SessionSummary } from "./api";
-import { adpCell, adpTitle, armLabel, biasDetail, clockNote, draftWhen, oddsSource, rankLabel, survivalDetail } from "./format.ts";
+import type { AvailabilityBias, BoardPlayer, CurveFit, SessionSummary } from "./api";
+import { adpCell, adpTitle, armLabel, biasDetail, clockNote, curveFitNote, draftWhen, oddsSource, rankLabel, survivalDetail } from "./format.ts";
 
 const row = (adp_from: BoardPlayer["adp_from"], adp: number | null, keepers_ahead = 0): BoardPlayer =>
   ({ adp, adp_eff: adp == null ? null : adp - keepers_ahead, adp_from, keepers_ahead }) as BoardPlayer;
@@ -63,6 +63,23 @@ test("the survival odds say when the ADP formula is shifted by the league's bias
   } as unknown as SessionSummary;
   assert.equal(survivalDetail(s), "ADP formula (file:adp.csv); spread 1.5 + 0.15 × ADP picks.");
   assert.match(survivalDetail({ ...s, availability_bias: bias }), /^ADP formula \(file:adp\.csv\); the ADP formula centred on ADP plus the league's bias from ADP 72, .*; spread 1\.5/);
+});
+
+test("the league curve says what it was fitted on and which seasons the standings check reads", () => {
+  const fit: CurveFit = {
+    seasons: [{ year: 2026, rosters: 12, picks: 156, scored: 156, unmatched: [] }],
+    skipped: [{ year: 2016, reason: "12 teams x 12 rounds, the session drafts 12 x 13" }],
+    check: { pts: 3.58, fg_pct: null },
+    check_seasons: ["2016-17", "2017-18", "2025-26"],
+  };
+  assert.equal(curveFitNote(fit), "12 rosters from 2026; standings check 2016-17 to 2025-26");
+  const two: CurveFit = {
+    ...fit,
+    seasons: [...fit.seasons, { year: 2025, rosters: 12, picks: 156, scored: 154, unmatched: ["A", "B"] }],
+    check: {},
+    check_seasons: [],
+  };
+  assert.equal(curveFitNote(two), "24 rosters from 2026, 2025 (2 picks unscored); no standings check");
 });
 
 test("the footer shows the room's pick clock and the plan budget it gives", () => {

@@ -21,6 +21,17 @@ export interface CurveSpec {
 }
 
 export type SurvivalMode = "none" | "simulate" | "file" | "league";
+/** Where the win curve's μ and σ come from without a curve file: the simulated league, or the
+ * league's own drafted rosters on the projections (#65). */
+export type CurveChoice = "simulated" | "league";
+/** curve=league: the seasons fitted, those left out and why, and the standings' σ in z units
+ * (null for a category the standings cannot convert: the percentages). */
+export interface CurveFit {
+  seasons: { year: number; rosters: number; picks: number; scored: number; unmatched: string[] }[];
+  skipped: { year: number; reason: string }[];
+  check: Partial<Record<Cat, number | null>>;
+  check_seasons: string[];
+}
 /** The ADP model's spread of a draft slot, SPREAD.base + SPREAD.growth × ADP picks, fitted on the
  * league's nine drafts, for the setup's text. A session reports the values it runs on. */
 // Mirrors SPREAD_BASE / SPREAD_GROWTH in src/pickandroll/availability/adp.py: change both.
@@ -138,6 +149,7 @@ export interface SessionSummary {
   spread_growth: number;
   objective: Objective;
   curve: CurveSpec | null;
+  curve_fit?: CurveFit | null;
   sigma_scale: number;
   availability_source: AvailabilitySource;
   /** The ADP formula's shift, where the formula answers; null without a bias table. */
@@ -439,6 +451,7 @@ export interface SessionCreateBody {
   objective: Objective;
   sigma_scale: number;
   curve_file: string | null;
+  curve?: CurveChoice;
   /** Left out: the league's table when data/ holds one that covers the draft, else a simulation. */
   survival?: SurvivalMode;
   survival_sims: number;

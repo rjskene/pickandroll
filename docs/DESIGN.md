@@ -285,8 +285,10 @@ pick number), wakes the background solver and pushes the recommendation to the U
 server-sent events. Manual pick entry covers leagues on other platforms.
 
 API surface: `POST /sessions` (projection, positions and ADP files, league shape, `objective`,
-`sigma_scale`, `curve_file`, `survival` none/simulate/file/league (left out: the league table, else a
-simulation), `solve_ahead`, `time_limit`),
+`sigma_scale`, `curve_file`, `curve` simulated/league (the league's drafted rosters, each on its season's
+projections, from the archive's `picks.csv` beside the league table, #65; the session reports `curve_fit`:
+the seasons fitted and the standings' sigma in z units as the check), `survival` none/simulate/file/league
+(left out: the league table, else a simulation), `solve_ahead`, `time_limit`),
 `/files?kind=survival|curve|adp` (what data/ holds), `/board` (with a `cost` per player: the
 exact re-solve where the player was a priced candidate, flagged `cost_exact`, else the
 first-order estimate), `/picks`, `/sync`, `/autopick`, `POST /recommend` (synchronous),

@@ -1,6 +1,6 @@
 import { CAT_LABEL } from "../../api";
 import { useDraft } from "../../draft";
-import { fmtMs, survivalDetail } from "../../format";
+import { curveFitNote, fmtMs, survivalDetail } from "../../format";
 import CandidatesInput from "../CandidatesInput";
 import Stepper from "../Stepper";
 
@@ -63,6 +63,7 @@ export default function SolverCard() {
           <>
             <span className="muted" style={{ fontSize: 11 }}>
               Curve: {curve.source}. A category counts for Φ((total − μ) / σ), the chance of beating a team drawn from the league.
+              {s.curve_fit ? ` Fitted on ${curveFitNote(s.curve_fit)}.` : ""}
             </span>
             <table className="curve">
               <tbody>
@@ -82,6 +83,16 @@ export default function SolverCard() {
                     </td>
                   ))}
                 </tr>
+                {s.curve_fit && Object.keys(s.curve_fit.check).length > 0 && (
+                  <tr title="The standings' team spread in z units: the managed rosters' seasons, so wider than the drafted rosters'. No conversion for the percentages.">
+                    <td className="dim">σ standings</td>
+                    {s.cats.map((c) => (
+                      <td key={c} className="num dim" title={CAT_LABEL[c]}>
+                        {s.curve_fit?.check[c]?.toFixed(1) ?? "–"}
+                      </td>
+                    ))}
+                  </tr>
+                )}
               </tbody>
             </table>
           </>
