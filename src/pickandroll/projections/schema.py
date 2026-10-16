@@ -8,6 +8,7 @@ from makes and attempts.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import date, datetime
 from enum import StrEnum
@@ -17,7 +18,7 @@ import pandas as pd
 
 
 class Cat(StrEnum):
-    """The nine standard head-to-head categories."""
+    """The nine standard head-to-head categories, and a points league's one (``FPTS``)."""
 
     PTS = "pts"
     THREES = "threes"
@@ -28,9 +29,23 @@ class Cat(StrEnum):
     TOV = "tov"
     FG_PCT = "fg_pct"
     FT_PCT = "ft_pct"
+    #: A points league's fantasy points: the league's weights over the counting stats
+    #: (:func:`fantasy_points`), a column the session adds to its projections.
+    FPTS = "fpts"
 
 
-NINE_CAT: tuple[Cat, ...] = tuple(Cat)
+NINE_CAT: tuple[Cat, ...] = (
+    Cat.PTS,
+    Cat.THREES,
+    Cat.REB,
+    Cat.AST,
+    Cat.STL,
+    Cat.BLK,
+    Cat.TOV,
+    Cat.FG_PCT,
+    Cat.FT_PCT,
+)
+POINTS_CAT: tuple[Cat, ...] = (Cat.FPTS,)
 COUNTING_CATS: tuple[Cat, ...] = (Cat.PTS, Cat.THREES, Cat.REB, Cat.AST, Cat.STL, Cat.BLK, Cat.TOV)
 PCT_CATS: tuple[Cat, ...] = (Cat.FG_PCT, Cat.FT_PCT)
 NEGATIVE_CATS: tuple[Cat, ...] = (Cat.TOV,)
@@ -112,6 +127,19 @@ def validate(df: pd.DataFrame) -> None:
             split_positions(value)
         except ValueError as exc:
             raise ValueError(f"player {pid!r}: {exc}") from exc
+
+
+def fantasy_points(df: pd.DataFrame, weights: Mapping[str, float]) -> pd.Series:
+    """A points league's fantasy points: ``weights`` (stat column to points per unit, Yahoo's
+    "Stat Category Value") over the projection's totals. Raises ``ValueError`` for a stat the
+    projections do not carry."""
+    unknown = sorted(set(weights) - set(STAT_COLS))
+    if unknown:
+        raise ValueError(f"no projection column for scoring stats {unknown}; known: {STAT_COLS}")
+    total = pd.Series(0.0, index=df.index)
+    for stat, weight in weights.items():
+        total = total + float(weight) * df[stat].astype(float)
+    return total
 
 
 def per_game_to_totals(df: pd.DataFrame, games_col: str = "games") -> pd.DataFrame:

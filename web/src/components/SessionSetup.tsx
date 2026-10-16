@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, LEAGUE_FROM_ADP, LEAGUE_SURVIVAL_DEFAULT, SPREAD, type Objective, type SessionSummary, type SurvivalMode } from "../api";
 import Info from "./Info";
+import Leagues from "./Leagues";
 import { erroredRow, isMine, KeeperEditor, keeperDraft, keepersIn, nameOptions, type KeeperDraft } from "./Keepers";
 import { SeenRooms, useSeenRooms } from "./YahooSync";
 
@@ -130,6 +131,7 @@ export default function SessionSetup({ onCreated, onSelect }: Props) {
   return (
     <section className="panel setup">
       <h2>NEW DRAFT</h2>
+      <Leagues />
       <label>
         <span className="k">Projections</span>
         <select value={file || files[0]?.file || ""} onChange={(e) => setFile(e.target.value)}>

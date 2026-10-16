@@ -1,7 +1,7 @@
 import pytest
 
 from pickandroll.optim import RosterProblem, Slot, pick_pool, solve_roster, yahoo_default_slots
-from pickandroll.projections import Cat, ProjectionSet, zscores
+from pickandroll.projections import NINE_CAT, Cat, ProjectionSet, zscores
 from pickandroll.projections.schema import split_positions
 
 
@@ -120,8 +120,8 @@ def test_projection_set_round_trip(pool):
 def test_punt_sets_count():
     from pickandroll.optim import punt_sets
 
-    assert len(punt_sets(list(Cat), 2)) == 1 + 9 + 36
-    assert len(punt_sets(list(Cat), 0)) == 1
+    assert len(punt_sets(list(NINE_CAT), 2)) == 1 + 9 + 36
+    assert len(punt_sets(list(NINE_CAT), 0)) == 1
 
 
 def test_punt_scan_matches_single_model_auto_punt(pool):

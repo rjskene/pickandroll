@@ -1,0 +1,256 @@
+# Draft day: the cash-league runbook (#67)
+
+This is the runbook a scheduled Claude session follows for one Yahoo league's live draft. It is written for a fresh
+session that has seen nothing else. A person running a draft by hand follows the same steps. The API side is
+`scripts/draft_day.py`; the browser side is a few clicks in the user's own Chrome with the Claude in Chrome tools.
+
+Paths are relative to the main checkout, `~/code/pickandroll`. Run the script with
+`.venv/bin/python scripts/draft_day.py <command> <league>` from there.
+
+## The drafts
+
+| league | format | draft (PDT) | on this Mac (CDT) | scheduled task fires (PDT) |
+|---|---|---|---|---|
+| 238174 | H2H points | Sat 2026-10-17 11:00 | 13:00 | 10:30 (`draft-day-238174`) |
+| 15953 | H2H points | Sun 2026-10-18 11:00 | 13:00 | 10:30 (`draft-day-15953`) |
+| 208649 | H2H points | Sun 2026-10-18 14:00 | 16:00 | 13:30 (`draft-day-208649`) |
+| 230585 | H2H categories | Mon 2026-10-19 18:00 | 20:00 | 17:30 (`draft-day-230585`) |
+
+All four have 12 teams, 13 rounds and a 60-second pick clock. Each league's folder `data/leagues/<id>/` (local,
+never committed) holds `settings.json` (scoring, roster, points weights or categories, draft time, the user's
+Yahoo team id `my_team_id`), `yahoo_players.json` (Yahoo's public player list for the league), and
+`armed.json` once the user has armed the draft.
+
+## Rules for the session
+
+- **Arm nothing.** The room comes up in autopilot only if the user armed the league in the dashboard
+  (`armed.json`, their own click; CLAUDE.md, the 2026-10-16 exception). The script's attach names no mode, so the
+  user's choice decides. A league the user did not arm runs in mirror, and Yahoo autopicks the user's turns. Never
+  call `PATCH /rooms`, `PUT /leagues/<id>/arm` or the dashboard's arm buttons. Never click Yahoo's Draft button, its
+  queue or its Autodraft switch. The scheduled task's prompt says "the runbook arms it". In this runbook, that arm
+  is the user's pre-arm, nothing more.
+- **Credentials.** Never type or handle credentials. If Yahoo shows a sign-in page, stop the browser steps and
+  write that down (see "Report").
+- **One client per seat.** Open the draft room in one tab of the user's Chrome only. Never open a second draft tab
+  for the same league, and never connect to the draft socket any other way. Yahoo kicks the user's seat when a second
+  client joins.
+- **Servers.** Start dev servers only from `~/code/.claude/launch.json`: `pickandroll-api-draft`
+  (:8000, no reload) and `pickandroll-web` (:5173). No pulls, checkouts or `src/` edits while any room is live.
+  Never restart the API while another league's room is live: on Sunday the 11:00 draft can still be running when the
+  14:00 task fires.
+- Do not use the superpowers plugin. Never commit anything under `data/`.
+
+## Steps
+
+### 1. Check the league
+
+```
+.venv/bin/python scripts/draft_day.py status <league> --accept-move
+```
+
+This prints Yahoo's public view of the league: teams joined, draft status and draft time. It also prints
+whether the user armed it.
+
+- Exit 2, "Yahoo has no such league now": the league dissolved. Go to "Dissolved league".
+- Exit 3, "the draft moved": the new time is six hours away or more, or already past. Go to "Draft moved".
+- "Yahoo says the draft is over": go to "Report" and say so.
+- A move of under six hours: `--accept-move` writes Yahoo's time into `settings.json`, and the run below waits
+  for it.
+
+### 2. Servers and the run
+
+Start both servers with `preview_start` and the names `pickandroll-api-draft` and `pickandroll-web`. If they are
+already up, they are reused. Then check them:
+
+```
+.venv/bin/python scripts/draft_day.py servers
+```
+
+- Exit 0 means both answer, and the API has the league endpoints (#67). It also lists any live rooms.
+- Exit 4 with "predates #67" means the API on :8000 runs older code. Restart it on main only if `servers`
+  listed no live room: `preview_stop` it if this session started it, otherwise stop that one process by its PID
+  (`lsof -ti tcp:8000 -sTCP:LISTEN`), then `preview_start` it again.
+- Exit 4 with "down": if `preview_start` is not available, `servers --start` starts the missing ones from the
+  same launch.json entries.
+
+Then start the API side in the background. The Bash tool's `run_in_background` re-invokes the session when it
+exits:
+
+```
+.venv/bin/python scripts/draft_day.py run <league> --accept-move
+```
+
+`run` does the following in order:
+
+1. Refreshes `yahoo_players.json` from Yahoo's public endpoint. A bad response keeps the file on disk.
+2. Waits for the draft tab (step 3) to report its seat. It waits until 15 minutes after the draft's start, and
+   checks every 2 minutes that the league still exists.
+3. Attaches the room with the league's settings and the newest `data/bbm_projections_*.csv`.
+4. Monitors the draft to the last pick, with the Mac kept awake (`caffeinate -dimsu`).
+5. Saves the ledger and the snapshots and writes the comment for #67.
+
+Its log is the background task's output, and `data/fidelity/draft_day_<league>.log` keeps a copy. The attach
+prints the mode: `autopilot (the user's pre-arm)` or `mirror (not armed)`.
+
+### 3. Open the draft room in the user's Chrome
+
+Use the Claude in Chrome tools: load them in one ToolSearch call, then call `tabs_context_mcp` first.
+
+1. If a tab is already on `https://basketball.fantasysports.yahoo.com/draftclient/nba/<league>/...`, that is the
+   draft tab. Do not open another one; skip to item 5.
+2. Open a new tab at `https://basketball.fantasysports.yahoo.com/nba`, the user's Yahoo NBA home. It lists the
+   user's leagues. A sign-in page here means stop: see "Report".
+3. Click the league whose link goes to `https://basketball.fantasysports.yahoo.com/nba/<league>`, or navigate to
+   that URL.
+4. On the league page, click **Enter Live Draft** (Yahoo also words it "Enter live league draft"; its link goes
+   through `enterdraft` to the draft client). The draft client opens at
+   `https://basketball.fantasysports.yahoo.com/draftclient/nba/<league>/<my_team_id>`, where `my_team_id` is in
+   `settings.json`. If there is no button yet, the room is not open: wait two minutes and reload the league page.
+   If the button opens a new tab, use that tab. Navigating straight to the draftclient URL also works.
+5. Leave the draft tab alone. Click nothing in it, do not navigate it, and do not reload it once the draft has
+   started. Keep it open in its window until the run has finished. The extension (pickandroll 0.4.0) runs in that
+   tab, and its timers run on a Worker, so the tab need not stay in front. Yahoo draws the order about 30 minutes
+   before the start. The tab reports the seat once the order is known, and within seconds the run log says
+   `attaching room <league>: seat N of 12`.
+6. If after 5 minutes on the draftclient page the run log still says `waiting for the draft tab: not seen`, the
+   extension is not running in the tab. Reload the draft tab once; before the draft starts that is safe.
+7. Close the other tabs this session opened (the NBA home and the league page) once the draft tab is in the room.
+
+### 4. While the draft runs
+
+The run prints a line per pick, with the mode, the user's next pick and the tab's heartbeat age. It also prints
+`the draft tab runs extension X.Y.Z` once. An extension older than 0.3.0 is an ALERT: the seat may be wrong in a
+real league room (the team-id fix, #54). Write it in the report.
+
+- `ALERT the draft tab has been quiet`: see "Quiet tab".
+- `ALERT the room does not answer`: the API is down. Start it again (`preview_start pickandroll-api-draft`),
+  then run `draft_day.py attach <league>`, which rebuilds the room from its log with the mode it had. Then run
+  `draft_day.py monitor <league>` in the background, and `draft_day.py finish <league>` when it exits 0.
+
+### 5. Report
+
+When `run` exits 0, post its comment:
+
+```
+gh issue comment 67 --repo rjskene/pickandroll --body-file data/fidelity/<league>_<date>_session_<sid>/comment.md
+```
+
+`run` prints the exact path. The comment is the room's scorecard under one line: league, format, mode (armed by
+the user or not) and picks taken. It has no team names; keep it that way.
+
+For any other outcome, post a short comment on #67 that says what happened, with the exit code and the last
+lines of the run log. Write the same lines to `data/fidelity/draft_day_<league>.log`. Then send fantasyMASTER a
+one-line note if it is listed by `ListAgents`. End with a short written summary.
+
+## When it goes wrong
+
+### Dissolved league
+
+Yahoo dissolves an under-filled public league at the order draw, about 30 minutes before the start. The members
+are dropped, and the league page shows an error (115 and 152 were seen on 2026-10-12). `status` or the run
+then exits 2. Confirm in Chrome:
+
+- the league is gone from `https://basketball.fantasysports.yahoo.com/nba`, or
+- its page shows the error.
+
+Then post "League <id> dissolved at the draw; nothing was drafted" on #67 and stop. Leave `data/leagues/<id>/` as
+it is.
+
+### Draft moved
+
+- Under six hours away: `--accept-move` handles it. The run waits for the new time, and the report says the
+  draft moved.
+- Six hours or more away, or on another day: post the new time on #67, tell fantasyMASTER (its scheduled task
+  needs a new time), and stop. A session does not create or change scheduled tasks.
+
+### Quiet tab (exit 6)
+
+The draft tab has sent no heartbeat for 20 minutes. Look at Chrome with `tabs_context_mcp`:
+
+- If the draft tab is gone, open exactly one new one at the draftclient URL. The old client is gone, so this is not
+  a second client.
+- If the tab is there but frozen, reload it once.
+
+Then run `draft_day.py monitor <league>` in the background, and `draft_day.py finish <league>` when it ends.
+Yahoo autopicks any of the user's turns that pass meanwhile, from the plan's queue when the extension had queued
+it.
+
+### No seat in time (exit 5)
+
+No draft tab reported a seat by 15 minutes after the start. Check Chrome: is the tab on the draftclient page, and
+is the league still there? Once the tab shows the room, run `draft_day.py attach <league> --wait 600`. Then run
+`monitor` and `finish`.
+
+### Yahoo finished first (exit 7)
+
+Yahoo says the draft is over but the room is missing picks. The tab stopped syncing at some point. `finish` still
+runs and saves what the room has. Report the gap.
+
+## Before the user leaves (the user's checklist)
+
+These are the user's own steps. A session cannot do them.
+
+- **Arm each league you want drafted for you.** On the dashboard's setup page (http://localhost:5173), the
+  **Leagues** list sits at the top. Click **Arm draft**, then **Confirm: arm <id>**. Disarm the same way.
+  - The arm is read once, at the first attach, so arm before the scheduled task fires (T−30).
+  - After the attach, the room's Sync card arms or disarms the live room.
+  - An unarmed league mirrors, and Yahoo autopicks your turns.
+- Chrome is open and signed in to Yahoo. The pickandroll extension shows 0.4.0 at `chrome://extensions`; if it
+  shows an older version, load `~/code/pickandroll/extension` and reload it.
+- The Claude desktop app is open: scheduled tasks fire only while it runs. The Mac is plugged in and awake at
+  each T−30. The run keeps it awake from then on, but cannot wake a sleeping Mac. To keep it awake until Monday
+  night, run `caffeinate -ims -t 320000` in a terminal (about 89 hours).
+- Do not open a draft room in the Yahoo app on your phone while the Mac's tab is in it: that is a second client,
+  and Yahoo kicks one of them. Follow the draft on the dashboard instead (next section).
+
+## Following the draft from a phone (tailnet)
+
+The dashboard is the web app on :5173. It calls the API through Vite's proxy at the relative path `/api`, so
+the page's own origin is the API base, and only :5173 has to reach the phone. The API stays on 127.0.0.1. A
+config value, `VITE_PICKANDROLL_API_BASE` at build time, points the app at an API elsewhere. An API called
+directly that way admits the extra origins in `PICKANDROLL_CORS_ORIGINS`, an exact comma-separated list.
+
+On the Mac (Tailscale is installed; it was stopped on 2026-10-16):
+
+1. Connect Tailscale from its menu bar icon, with the phone on the same tailnet.
+2. **Tailscale Serve (recommended).** The Mac keeps `localhost`, and only the tailnet sees the dashboard, over
+   HTTPS:
+   - Run `tailscale serve --bg 5173` in a terminal. The first time, it links to the admin console to turn on
+     HTTPS certificates.
+   - Vite checks the Host header, so the web server must allow the tailnet's names. Add this launch.json entry
+     (the user or fantasyMASTER adds it; sessions do not edit launch.json; `<home>` is the absolute home folder,
+     as in the other entries) and start it instead of `pickandroll-web`:
+
+     ```json
+     {
+       "name": "pickandroll-web-tailnet",
+       "runtimeExecutable": "/usr/bin/env",
+       "runtimeArgs": ["PICKANDROLL_WEB_ALLOWED_HOSTS=.ts.net", "npm", "run", "dev", "--prefix",
+                       "<home>/code/pickandroll/web", "--", "--host", "127.0.0.1"],
+       "port": 5173
+     }
+     ```
+
+   - The phone opens `https://<mac-name>.<tailnet>.ts.net/`. `tailscale serve status` prints the address.
+3. **Without Serve.** Bind Vite to the Mac's tailnet address. Use a launch entry like the one above with
+   `--host <tailnet IPv4>` (`tailscale ip -4`), or set `PICKANDROLL_WEB_HOST` with no `--host`. The phone then
+   opens `http://<tailnet IPv4>:5173/`. Vite admits a bare IP without `allowedHosts`. On the Mac the dashboard is
+   then at that address too, not `localhost`. Avoid `--host 0.0.0.0`, which also opens the dashboard to the local
+   network.
+
+The dashboard has no sign-in. Anyone who reaches it can arm or disarm a room, which is why it is kept to the
+tailnet.
+
+## What a cloud VM would take (not this weekend)
+
+The sync side cannot leave the Mac: the draft room has to run in the user's own signed-in Chrome, where the
+extension reads the seat. A VM could host only the API and the dashboard. That needs:
+
+- The extension's `host_permissions` and API base pointed at the VM, over HTTPS on the tailnet.
+- An API with authentication. Today anyone who reaches it can arm a room.
+- `data/` on the VM: projections, league folders and survival tables. That is subscriber data, which must stay
+  private and off git.
+- Enough CPU for the solver's process pool.
+- The round trip inside the sync budget: G2 lag p95 under 2 s, measured today on localhost at under 100 ms.
+
+The Mac and its browser stay in the loop either way.

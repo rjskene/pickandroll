@@ -168,6 +168,9 @@ class YahooRoom:
     #: The room's own team count when its client reported one that disagrees with the
     #: attach's (the room was then put in mirror mode, once).
     teams_mismatch: int | None = None
+    #: The user's pre-arm of the league's draft (#67) the room's first attach came up armed
+    #: by, kept through rebuilds for the status; ``None`` when the attach was not pre-armed.
+    pre_armed: dict[str, Any] | None = None
     #: The first recommendation from the single-roster model has been noted in the log.
     roster_noted: bool = False
     #: (overall, ms from the room's pick to the session's) for the latest picks: the web
@@ -1307,6 +1310,7 @@ def summary(session: Session, room: YahooRoom) -> dict[str, Any]:
         "act_at_s": room.act_at_s,
         "num_teams": room.num_teams,
         "teams_mismatch": room.teams_mismatch,
+        "pre_armed": room.pre_armed,
         "rounds": room.rounds,
         # Traded picks: the owner map the session drafts on, and the picks it moves.
         "pick_owners": None if state.pick_owners is None else list(state.pick_owners),

@@ -6,6 +6,7 @@ import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, unmatchedStandins, type FidelityRow, type RoomAttachBody, type RoomMode, type RoomSummary, type SeenRoom } from "../../api";
 import { useDraft } from "../../draft";
+import { armLabel } from "../../format";
 import { SILENT_AFTER_S, SeenRooms, describeEvent, eventTime, heartbeatAge, lagSeconds, medianLag, syncState, useNow, useSeenRooms } from "../YahooSync";
 
 const armedKey = (sessionId: string) => `pickandroll.armed.${sessionId}`;
@@ -248,6 +249,12 @@ function ModeSwitch({ room }: { room: RoomSummary }) {
           ))}
         </select>
       </div>
+      {room.pre_armed && (
+        <p className="muted" style={{ fontSize: 12 }}>
+          <span className="tag good">{armLabel(room.pre_armed)}</span> You armed this league's draft in the dashboard before it began; the room
+          came up in autopilot. Mirror disarms it.
+        </p>
+      )}
       <p className="muted" style={{ fontSize: 12 }}>
         {room.mode === "autopilot"
           ? `Armed: when your turn comes, the extension drafts the plan's pick in Yahoo${act === null ? "" : ` once the clock is down to ${act} s`}. A pick you make first, in Yahoo or with Draft in Yahoo, stands.`

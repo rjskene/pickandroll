@@ -3,7 +3,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { BoardPlayer } from "./api";
-import { adpCell, adpTitle, rankLabel } from "./format.ts";
+import { adpCell, adpTitle, armLabel, draftWhen, rankLabel } from "./format.ts";
 
 const row = (adp_from: BoardPlayer["adp_from"], adp: number | null, keepers_ahead = 0): BoardPlayer =>
   ({ adp, adp_eff: adp == null ? null : adp - keepers_ahead, adp_from, keepers_ahead }) as BoardPlayer;
@@ -26,4 +26,16 @@ test("the ADP cell's hover says where a mapped number comes from", () => {
   assert.match(adpTitle(row("end", 157), source) ?? "", /past the end of the draft/);
   assert.match(adpTitle(row("rank", 118.6, 1), source) ?? "", /; a keeper ranked ahead of him is out of the market, so it reaches him at 117\.6$/);
   assert.match(adpTitle(row("market", 30, 2), source) ?? "", /^Yahoo ADP 30\.0; 2 keepers ranked ahead/);
+});
+
+test("the leagues list says when a draft is and whether the user armed it", () => {
+  const now = Date.parse("2026-10-17T10:00:00-07:00");
+  assert.match(draftWhen("2026-10-17T11:00:00-07:00", now), /\(in 60 min\)$/);
+  assert.match(draftWhen("2026-10-18T14:00:00-07:00", now), /\(in 28 h\)$/);
+  assert.match(draftWhen("2026-10-17T09:30:00-07:00", now), /\(30 min ago\)$/);
+  assert.equal(draftWhen(null, now), "draft time unknown");
+  assert.equal(draftWhen("soon", now), "soon");
+  assert.equal(armLabel(null), "not armed");
+  assert.match(armLabel({ at: "2026-10-17T16:00:00+00:00" }), /^armed \S/);
+  assert.equal(armLabel({ at: "?" }), "armed");
 });

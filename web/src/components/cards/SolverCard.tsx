@@ -1,4 +1,4 @@
-import { CAT_LABEL, CATS } from "../../api";
+import { CAT_LABEL } from "../../api";
 import { useDraft } from "../../draft";
 import { fmtMs, survivalDetail } from "../../format";
 import CandidatesInput from "../CandidatesInput";
@@ -68,7 +68,7 @@ export default function SolverCard() {
               <tbody>
                 <tr>
                   <td className="dim">μ</td>
-                  {CATS.map((c) => (
+                  {s.cats.map((c) => (
                     <td key={c} className="num" title={CAT_LABEL[c]}>
                       {curve.mu[c]?.toFixed(1)}
                     </td>
@@ -76,7 +76,7 @@ export default function SolverCard() {
                 </tr>
                 <tr>
                   <td className="dim">σ</td>
-                  {CATS.map((c) => (
+                  {s.cats.map((c) => (
                     <td key={c} className="num" title={CAT_LABEL[c]}>
                       {curve.sigma[c]?.toFixed(1)}
                     </td>

@@ -362,3 +362,8 @@ tr.tie td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
 .fidelity td:nth-child(2), .fidelity td:nth-child(3) { white-space: normal; min-width: 80px; }
 .seen { display: grid; gap: 4px; padding: 8px 10px; border: 1px solid var(--line-2); border-radius: 8px; background: var(--panel-2); }
 .seen .row { align-items: center; }
+.leagues { display: grid; gap: 6px; padding: 8px 10px; border: 1px solid var(--line-2); border-radius: 8px; background: var(--panel-2); }
+.leagues .row { align-items: baseline; flex-wrap: wrap; }
+.leagues table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.leagues td { padding: 3px 6px 3px 0; vertical-align: middle; }
+.leagues td:last-child { text-align: right; white-space: nowrap; }
