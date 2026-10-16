@@ -125,7 +125,7 @@ Baseline from drafts 5-7 (2026-09-27, scratch hook in driver mode), loose count 
 
 | id | metric | definition | baseline | goal |
 |---|---|---|---|---|
-| D1 | reco readiness | per my pick: t(fresh reco for board k-1) − t(turn start); negative = ready before the turn. Three classes per turn: hit = a pre-solved branch for board k-1 had converged before turn start; pending = the branch existed but was still solving at turn start (typically the own-choice branch behind the second pick of a back-to-back pair); miss = no branch, the board was solved cold at the turn | not measured | hits ≤ 1 s; pending and misses ≤ plan budget + price limit + 1 s (11 s on a 30 s clock, where a capped cold plan lands at budget plus pricing by construction); counts of all three reported, hit goal ≥ 9/13 at human pace |
+| D1 | reco readiness | per my pick: t(fresh reco for board k-1) − t(turn start); negative = ready before the turn. Three classes per turn: hit = a pre-solved branch for board k-1 had converged before turn start; pending = the branch existed but was still solving at turn start (typically the own-choice branch behind the second pick of a back-to-back pair); miss = no branch, the board was solved cold at the turn | not measured | hits ≤ 1 s; pending and misses ≤ plan budget + price limit + 1 s (11 s on a 30 s clock, where a capped cold plan lands at budget plus pricing by construction; 31 s on 60 s); a turn whose reco comes after the drafter acts (13 s before the clock ends) is missed. Judged on the clock each turn reported (`turn_start.clock_s`, else the attach's, else 30 s), with the 30 s design point in a second column (#66; the mapping is `pickandroll.draft.clock`); counts of all three reported, hit goal ≥ 9/13 at human pace |
 | D2 | turn-to-land | t(Yahoo registers my pick) − t(turn start) | 1.3-1.6 s clean, 10-13 s with re-clicks | p50 ≤ 5 s, max ≤ 15 s |
 | D3 | solve time | wall time of each recommendation solve during the draft | sum 0.3 s; curve up to 20 s limit | fits inside D1 |
 | D4 | draft attempts | row clicks / queue uses per landed pick | up to 3 | 1 |
@@ -246,7 +246,9 @@ mocks) gives 5 s, 40 s gives 15 s, and 45 s or more gives 20 s. The attach may p
 starts at 30 s and adopts the longest clock the client reports on its `turn_start` events (Yahoo's `D|` frame),
 logging a `plan_budget` note. On a 30 s clock the plan is often a time-limited incumbent (rounds 1-6 need 6-16 s
 to converge), and only the exact prices correct its first pick, so an unpriced plan is served only when it
-converged.
+converged. The mapping and its table live in `pickandroll.draft.clock` (#66). The room's status carries
+`clock_s` (null when the attach fixed a `time_limit`), `plan_time_limit` and `price_time_limit`, and the
+dashboard footer shows them by the feed ("60 s clock, plan 20 s").
 
 
 1. The emissary states the hypothesis and the metric it expects to move before a mock starts.

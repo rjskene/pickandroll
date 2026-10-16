@@ -3,7 +3,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { AvailabilityBias, BoardPlayer, CurveFit, SessionSummary } from "./api";
-import { adpCell, adpTitle, armLabel, biasDetail, curveFitNote, draftWhen, oddsSource, rankLabel, survivalDetail } from "./format.ts";
+import { adpCell, adpTitle, armLabel, biasDetail, clockNote, curveFitNote, draftWhen, oddsSource, rankLabel, survivalDetail } from "./format.ts";
 
 const row = (adp_from: BoardPlayer["adp_from"], adp: number | null, keepers_ahead = 0): BoardPlayer =>
   ({ adp, adp_eff: adp == null ? null : adp - keepers_ahead, adp_from, keepers_ahead }) as BoardPlayer;
@@ -80,4 +80,11 @@ test("the league curve says what it was fitted on and which seasons the standing
     check_seasons: [],
   };
   assert.equal(curveFitNote(two), "24 rosters from 2026, 2025 (2 picks unscored); no standings check");
+});
+
+test("the footer shows the room's pick clock and the plan budget it gives", () => {
+  assert.equal(clockNote({ clock_s: 60, plan_time_limit: 20 }), " · 60 s clock, plan 20 s");
+  assert.equal(clockNote({ clock_s: 30, plan_time_limit: 5 }), " · 30 s clock, plan 5 s");
+  assert.equal(clockNote({ clock_s: null, plan_time_limit: 8 }), " · plan 8 s (fixed)");
+  assert.equal(clockNote({}), "");
 });

@@ -1,4 +1,4 @@
-import type { AvailabilityBias, AvailabilitySource, BoardPlayer, CurveFit, Scale, SessionSummary, WinLabel } from "./api";
+import type { AvailabilityBias, AvailabilitySource, BoardPlayer, CurveFit, RoomSummary, Scale, SessionSummary, WinLabel } from "./api";
 
 /** Where the survival odds come from, in a few words. */
 export function oddsSource(source: AvailabilitySource, bias?: AvailabilityBias | null): string {
@@ -159,4 +159,11 @@ export function curveFitNote(fit: CurveFit): string {
   const seasons = fit.check_seasons;
   const check = seasons.length ? `standings check ${seasons[0]}${seasons.length > 1 ? ` to ${seasons[seasons.length - 1]}` : ""}` : "no standings check";
   return `${rosters} rosters from ${years}${unscored ? ` (${unscored} picks unscored)` : ""}; ${check}`;
+}
+
+/** The room's pick clock and the plan budget it gives, for the footer's feed note (#66). */
+export function clockNote(room: Pick<RoomSummary, "clock_s" | "plan_time_limit">): string {
+  const plan = room.plan_time_limit != null ? `plan ${room.plan_time_limit} s` : "";
+  if (room.clock_s != null) return ` · ${room.clock_s} s clock${plan ? `, ${plan}` : ""}`;
+  return plan ? ` · ${plan} (fixed)` : "";
 }

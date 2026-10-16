@@ -502,6 +502,10 @@ export interface RoomSummary {
   /** Armed: the extension clicks when the clock is down to this many seconds, unless I pick
    * first; null, at once. */
   act_at_s: number | null;
+  /** The pick clock the plan budget follows, as the room reported it; null when the attach fixed the budget. */
+  clock_s?: number | null;
+  plan_time_limit?: number;
+  price_time_limit?: number;
   num_teams: number;
   /** The room's own team count when it disagrees with the session's; arming is refused then. */
   teams_mismatch: number | null;
