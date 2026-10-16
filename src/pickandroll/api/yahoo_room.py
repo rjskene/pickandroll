@@ -137,6 +137,13 @@ class RoomPick:
     slot: int
     t: str
     src: str
+    #: How the room sent it, for a keeper's pick (``src`` is then "keeper"); else ``src``.
+    via: str | None = None
+
+    @property
+    def from_history(self) -> bool:
+        """Sent in Yahoo's history frame: its time is the frame's, not the pick's."""
+        return "history" in (self.src, self.via)
 
 
 @dataclass
@@ -163,6 +170,8 @@ class YahooRoom:
     attached_at: str = field(default_factory=now_iso)
     resumed: bool = False
     scored: bool = False
+    #: My roster when the score was logged (``None``: a log from before #63, or none yet).
+    scored_roster: tuple[str, ...] | None = None
     #: The pick clock the plan budget follows (``None``: the attach fixed a time_limit).
     clock_s: float | None = None
     #: The room's own team count when its client reported one that disagrees with the
@@ -224,6 +233,21 @@ def logged_pick_owners(prior: list[dict[str, Any]]) -> list[int] | None:
     return list(owners) if owners else None
 
 
+def logged_session(prior: list[dict[str, Any]]) -> dict[str, Any]:
+    """The session settings a rebuild starts from: the current attach record's, with the keeper
+    table of the last ``keepers`` event after it (a PATCH since the attach, #63). A record from
+    before #63 always carries ``fit_curve``; it only ever applied to a simulation."""
+    record = last_attach(prior) or {}
+    create = dict(record.get("session") or {})
+    since = prior.index(record) if record in prior else -1
+    for e in prior[since + 1 :]:
+        if e.get("type") == "keepers" and e.get("src") == "api":
+            create = {**create, "keepers": e.get("keepers") or [], "keepers_file": None}
+    if create.get("survival") != "simulate":
+        create.pop("fit_curve", None)
+    return create
+
+
 def attach_room(
     session: Session,
     *,
@@ -278,7 +302,10 @@ def attach_room(
     room_picks = [e for e in prior if e.get("type") == "room_pick"]
     controls = [e for e in prior if e.get("type") == "control"]
     room.resumed = bool(room_picks)
-    room.scored = any(e.get("type") == "score" for e in prior)
+    scores = [e for e in prior if e.get("type") == "score"]
+    room.scored = bool(scores)
+    # A score logged before #63 has no roster: it stands, as it did then.
+    room.scored_roster = tuple(scores[-1]["roster"]) if scores and "roster" in scores[-1] else None
     log.append(
         {
             "type": "attach",
@@ -319,6 +346,7 @@ def attach_room(
                 int(e["slot"]),
                 e["t"],
                 e.get("src", "log"),
+                e.get("via"),
             )
     session.room = room
     with room.lock:
@@ -388,7 +416,7 @@ def ingest(session: Session, room: YahooRoom, items: list[dict[str, Any]]) -> di
             # out of my turns and the lag), and how it came (history on connect, or a frame).
             kept = slots.get(overall) is not None and slots[overall] == room.ids.pid(yid)
             pick = RoomPick(
-                overall, yid, slot, to_iso(item.get("t_room")), "keeper" if kept else via
+                overall, yid, slot, to_iso(item.get("t_room")), "keeper" if kept else via, via
             )
             room.ledger[overall] = pick
             event = {
@@ -483,6 +511,7 @@ def _walk(state, room: YahooRoom) -> list[dict[str, Any]]:
             k += 1
             continue
         gap = entry.src == "gap"
+        history = entry.from_history
         want = None if gap else room.ids.pid(entry.yid)
         elsewhere = {p.player_id for p in state.picks if p.overall != k}
         pending = {kp.player_id: o for o, kp in state.pending_keepers.items()}
@@ -540,11 +569,14 @@ def _walk(state, room: YahooRoom) -> list[dict[str, Any]]:
             "standin": standin,
             "old": None if have is None else have.player_id,
             "t": t,
-            # A gap has no room pick to be late for.
-            "lag_ms": None if gap else round(to_ms(t) - to_ms(entry.t)),
+            # A gap has no room pick to be late for, and a pick from the history frame no time
+            # of its own (a keeper's can wait there for the whole draft to reach his slot).
+            "lag_ms": None if gap or history else round(to_ms(t) - to_ms(entry.t)),
         }
         if gap:
             change["gap"] = True
+        if history:
+            change["history"] = True
         if dropped:
             change["keepers_dropped"] = [_keeper_note(state, kp) for kp in dropped]
         changes.append(change)
@@ -705,7 +737,7 @@ def _schedule_gap_check(session: Session, room: YahooRoom) -> None:
 def publish_changes(
     session: Session, room: YahooRoom, changes: list[dict[str, Any]], resume: bool = False
 ) -> None:
-    from .app import _pick_row, _score
+    from .app import _pick_row
 
     state = session.state
     for c in changes:
@@ -726,6 +758,10 @@ def publish_changes(
             # Logged from the keeper table when the draft reached the slot (or, at a gap, when
             # the user named the keeper), not from the room.
             event["src"] = "keeper"
+        elif c.get("history"):
+            # The room's pick came in Yahoo's history frame: the scorecard keeps it out of the
+            # lag (G2) and the reco timing (D1) by this label, whatever its kind (#63).
+            event["src"] = "history"
         if dropped:
             event["keepers_dropped"] = dropped
         if resume:
@@ -759,23 +795,46 @@ def publish_changes(
         if dropped:
             payload["keepers_dropped"] = dropped
         session.publish("pick", payload)
-    if not room.scored and state.my_picks and not state.my_remaining_picks:
-        with session.lock:
-            score = _score(session)
-        room.scored = True
-        final = score.get("final") or {}
-        benchmark = score.get("benchmark") or {}
-        best = score.get("best") or {}
-        room.log.append(
-            {
-                "type": "score",
-                "wins": final.get("wins", score.get("current_wins")),
-                "benchmark": benchmark.get("wins"),
-                "vs_benchmark": score.get("vs_benchmark"),
-                "best": best.get("wins"),
-                "matchups": final.get("matchups"),
-            }
-        )
+    log_score(session, room)
+
+
+def log_score(session: Session, room: YahooRoom) -> None:
+    """Log the final roster's score once the draft is past every slot of mine, keeper slots
+    included (a keeper still to come is no roster yet), and again if my roster changes after
+    it (a repair, a traded pick learned late). The score is ``/score``'s final, on the
+    session's curve; the benchmark and the best are solves, logged with their model (#63)."""
+    from .app import _score
+
+    state = session.state
+    with session.lock:
+        slots = state.my_slots
+        if not slots or state.next_overall <= max(slots):
+            return
+        roster = tuple(state.my_roster)
+        if room.scored and room.scored_roster in (None, roster):
+            return
+        score = _score(session)
+    final = score.get("final")
+    if final is None:
+        return
+    room.scored = True
+    room.scored_roster = roster
+    benchmark = score.get("benchmark") or {}
+    best = score.get("best") or {}
+    room.log.append(
+        {
+            "type": "score",
+            "wins": final["wins"],
+            "model": "final",
+            "benchmark": benchmark.get("wins"),
+            "benchmark_model": benchmark.get("mode"),
+            "vs_benchmark": score.get("vs_benchmark"),
+            "best": best.get("wins"),
+            "best_model": best.get("mode"),
+            "matchups": final.get("matchups"),
+            "roster": list(roster),
+        }
+    )
 
 
 def pin(session: Session, room: YahooRoom, yid: str, pid: str) -> dict[str, Any]:
