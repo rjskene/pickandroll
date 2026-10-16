@@ -37,6 +37,10 @@ as such, with the evidence.
   arms at attach (`mode: autopilot`) under that authorization and the scorecard says so (decided 2026-10-02). On the
   real draft day the user arms it themselves from the side panel; no session arms the real draft for them. Manual picks, in Yahoo or in pickandroll, must
   always remain possible; they are mirrored into the session and never overridden.
+  Exception (user, 2026-10-16) for the four cash leagues drafting 2026-10-17 to 2026-10-19 (238174, 15953, 208649,
+  230585): the user may be away, so they pre-arm each league from the dashboard before its draft (their own click,
+  recorded in `data/leagues/<id>/armed.json`, issue #67); the scheduled draft-day session then attaches, monitors and
+  saves, and arms nothing itself. A league the user did not pre-arm runs in mirror and Yahoo autopicks their turns.
 - Never connect to the Yahoo draft socket as the user's slot from a second client (Yahoo kicks the user). The
   only reader of the user's seat is the user's own draft page (the extension's content script).
 - One mock draft at a time, and at most two per day; a third needs the user's explicit approval in chat (the
