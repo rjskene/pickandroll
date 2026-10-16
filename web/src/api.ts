@@ -1,10 +1,13 @@
 // Thin typed client for the pickandroll API. Vite proxies /api to the FastAPI server.
 
-export type Cat = "pts" | "threes" | "reb" | "ast" | "stl" | "blk" | "tov" | "fg_pct" | "ft_pct";
+/** The nine categories, and a points league's one: fpts, the league's weights over the stats. */
+export type Cat = "pts" | "threes" | "reb" | "ast" | "stl" | "blk" | "tov" | "fg_pct" | "ft_pct" | "fpts";
 export const CATS: Cat[] = ["pts", "threes", "reb", "ast", "stl", "blk", "tov", "fg_pct", "ft_pct"];
 export const CAT_LABEL: Record<Cat, string> = {
-  pts: "PTS", threes: "3PM", reb: "REB", ast: "AST", stl: "STL", blk: "BLK", tov: "TO", fg_pct: "FG%", ft_pct: "FT%",
+  pts: "PTS", threes: "3PM", reb: "REB", ast: "AST", stl: "STL", blk: "BLK", tov: "TO", fg_pct: "FG%", ft_pct: "FT%", fpts: "FPTS",
 };
+/** A points league's session: its one category is fpts. */
+export const isPoints = (cats: readonly Cat[]): boolean => cats.length === 1 && cats[0] === "fpts";
 
 export type Objective = "win" | "sum";
 export type Scale = "wins" | "z";
@@ -92,6 +95,10 @@ export interface SessionSummary {
   roster_size: number;
   cats: Cat[];
   slots: string[];
+  /** The league folder the session was made from (data/leagues/<id>/), if any. */
+  league: string | null;
+  /** A points league's scoring: stat to points per unit. */
+  points: Record<string, number> | null;
   my_team: string;
   my_position: number;
   /** My draftable picks: my keepers' rounds are not among them. */
@@ -166,6 +173,8 @@ export interface BoardPlayer {
   cost_exact: boolean;
   z: Record<Cat, number>;
   total: number;
+  /** A points league's projected fantasy points over the projection's games. */
+  fpts?: number | null;
   taken: boolean;
   /** The team that took him and its pick (a keeper's slot for a keeper); null while he is available. */
   taken_by: { team: string; overall: number } | null;
@@ -462,6 +471,9 @@ export interface RoomSummary {
   session_id: string;
   slot: number;
   mode: RoomMode;
+  /** The user's pre-arm of the league's draft in the dashboard (#67) that armed this room's
+   * first attach; kept when the mode is switched later. */
+  pre_armed?: { armed: true; at: string; by: string } | null;
   control: RoomControl;
   /** Armed: the extension clicks when the clock is down to this many seconds, unless I pick
    * first; null, at once. */
@@ -584,7 +596,10 @@ export interface Fidelity {
   markdown: string;
 }
 
-const BASE = "/api";
+// The page's own origin by default: Vite proxies /api to the API, so a phone on the tailnet
+// that opens the dashboard reaches the API through it. VITE_PICKANDROLL_API_BASE (a full URL)
+// points the app at an API elsewhere, which must then allow this page's origin (CORS).
+const BASE: string = (import.meta.env?.VITE_PICKANDROLL_API_BASE as string | undefined) || "/api";
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(BASE + path, {
@@ -603,7 +618,23 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+/** A league folder in data/leagues/ (#67): its settings and the user's own pre-arm. */
+export interface LeagueSummary {
+  league: string;
+  scoring: "points" | "categories";
+  num_teams: number | null;
+  draft_time: string | null;
+  pick_seconds: number | null;
+  players_file: boolean;
+  survival_file: boolean;
+  armed: { armed: true; at: string; by: string } | null;
+}
+
 export const api = {
+  leagues: () => request<LeagueSummary[]>("/leagues"),
+  /** The user's own click: arm (or disarm) a league's draft before it starts. */
+  armLeague: (league: string, armed: boolean) =>
+    request<LeagueSummary>(`/leagues/${encodeURIComponent(league)}/arm`, { method: "PUT", body: JSON.stringify({ armed }) }),
   projections: () => request<FileEntry[]>("/projections"),
   files: (kind: "survival" | "league" | "curve" | "adp" | "keepers") => request<FileEntry[]>(`/files?kind=${kind}`),
   /** A keepers CSV in data/, its rows as written with their line labels. */

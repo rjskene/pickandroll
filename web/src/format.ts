@@ -112,3 +112,28 @@ export function adpTitle(p: BoardPlayer, rankSource: string | null): string | un
 export function adpIsStandIn(source: string): boolean {
   return source === "bbm_rank" || source === "z_total" || source === "none";
 }
+
+/** A league's draft time for the leagues list: local day and time, and how far off it is. */
+export function draftWhen(iso: string | null, now: number): string {
+  if (!iso) return "draft time unknown";
+  const t = Date.parse(iso);
+  if (Number.isNaN(t)) return iso;
+  const when = new Date(t).toLocaleString(undefined, {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    timeZoneName: "short",
+  });
+  const minutes = Math.round((t - now) / 60_000);
+  const span = (m: number) => (m >= 120 ? `${Math.round(m / 60)} h` : `${m} min`);
+  return minutes >= 0 ? `${when} (in ${span(minutes)})` : `${when} (${span(-minutes)} ago)`;
+}
+
+/** The user's pre-arm as the leagues list shows it. */
+export function armLabel(armed: { at: string } | null): string {
+  if (!armed) return "not armed";
+  const t = Date.parse(armed.at);
+  return Number.isNaN(t) ? "armed" : `armed ${new Date(t).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}`;
+}

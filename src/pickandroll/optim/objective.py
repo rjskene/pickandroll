@@ -127,7 +127,14 @@ class CategoryCurve:
         cats = list(cats)
         mu = {c: SIMULATED_MU.get(c, 0.0) for c in cats}
         sigma = {c: SIMULATED_SIGMA.get(c, DEFAULT_SIGMA) for c in cats}
-        return cls(mu=mu, sigma=sigma, source=SIMULATED_SOURCE).scaled(sigma_scale)
+        flat = [c.value for c in cats if c not in SIMULATED_MU]
+        if not flat:
+            source = SIMULATED_SOURCE
+        elif len(flat) == len(cats):
+            source = f"flat default (mu 0, sigma {DEFAULT_SIGMA:g}) for {', '.join(flat)}"
+        else:
+            source = f"{SIMULATED_SOURCE}; flat default for {', '.join(flat)}"
+        return cls(mu=mu, sigma=sigma, source=source).scaled(sigma_scale)
 
     @classmethod
     def from_totals(

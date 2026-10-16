@@ -291,9 +291,12 @@ def test_alias_pin_repairs_a_standin(league):
         assert room["unmatched_yahoo"][0]["yahoo_player_id"] == "800000"
         assert [p["name"] for p in room["unmatched_projection"]] == ["Ponly Person"]
         bad = {"draft_id": "d2", "slot": 1, "session": SESSION}
-        for name in ("../yahoo_players_1.json", "sub/yahoo_players_1.json", ".."):
+        for name in ("../yahoo_players_1.json", ".."):
             r = c.post("/rooms", json={**bad, "players_file": name})
-            assert r.status_code == 400 and "file name" in r.text
+            assert r.status_code == 400 and "path inside data/" in r.text
+        # A subfolder of data/ is allowed (a league's, #67); this one does not exist.
+        r = c.post("/rooms", json={**bad, "players_file": "sub/yahoo_players_1.json"})
+        assert r.status_code == 400 and "not found" in r.text
         post_picks(c, "d1", picks[:2])
         r = c.post(
             "/rooms/d1/picks", json={"picks": [{"overall": 3, "yahoo_player_id": "800000"}]}

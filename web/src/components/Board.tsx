@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { api, CAT_LABEL, CATS, teamLabel, type BoardPlayer, type Cat, type SimStrategy } from "../api";
+import { api, CAT_LABEL, isPoints, teamLabel, type BoardPlayer, type Cat, type SimStrategy } from "../api";
 import { useDraft } from "../draft";
 import { adpCell, adpIsStandIn, adpLabel, adpTitle, fmtCost, oddsClass } from "../format";
 import ModelFlag from "./ModelFlag";
@@ -26,7 +26,7 @@ const STRATEGIES: { value: SimStrategy; label: string; title: string }[] = [
 
 // ---------------------------------------------------------------- sorting
 /** Any column but the Draft button. Categories sort by their z. */
-type SortKey = "name" | "positions" | "games" | "adp" | "total" | "p_next" | "cost" | Cat;
+type SortKey = "name" | "positions" | "games" | "adp" | "total" | "fpts" | "fppg" | "p_next" | "cost" | Cat;
 type Dir = "asc" | "desc";
 interface Sort {
   key: SortKey;
@@ -63,12 +63,16 @@ function sortValue(p: BoardPlayer, key: SortKey): number | string | null {
       return p.adp;
     case "total":
       return p.total;
+    case "fpts":
+      return p.fpts ?? null;
+    case "fppg":
+      return p.fpts != null && p.games > 0 ? p.fpts / p.games : null;
     case "p_next":
       return p.taken ? null : p.p_next;
     case "cost":
       return p.taken ? null : p.cost;
     default:
-      return p.z[key];
+      return p.z[key] ?? null;
   }
 }
 
@@ -94,6 +98,9 @@ export default function Board() {
   // Keepers are taken, so "available only" leaves them out too; this lists them anyway.
   const [showKeepers, setShowKeepers] = useState(false);
   const wide = !d.drawerOpen;
+  // A points league scores one category, fpts: the board shows the points, not z columns.
+  const points = isPoints(s.cats);
+  const cats: Cat[] = points ? [] : s.cats;
   // No highlight while a solve runs or the answer is stale: the name may just have been drafted.
   const recommended = d.busy ? null : (d.result?.candidates[0]?.player ?? null);
 
@@ -265,7 +272,9 @@ export default function Board() {
               {th("games", "GP", { className: "num" })}
               {wide && th("adp", `ADP${adpIsStandIn(s.adp_source) ? "*" : ""}`, { className: "num", title: `average draft position: ${adpLabel(s.adp_source)}` })}
               {th("total", "Z", { className: "num" })}
-              {CATS.map((c) => th(c, CAT_LABEL[c], { className: "num" }))}
+              {points && th("fpts", "FPTS", { className: "num", title: "projected fantasy points over the season, on the league's scoring" })}
+              {points && th("fppg", "FP/G", { className: "num", title: "projected fantasy points per game" })}
+              {cats.map((c) => th(c, CAT_LABEL[c], { className: "num" }))}
               {wide &&
                 th("p_next", nextPick ? `Survives to #${nextPick}` : "Survives", {
                   title: nextPick ? `chance he is still on the board at your pick ${nextPick}` : "survival odds",
@@ -308,10 +317,12 @@ export default function Board() {
                     </td>
                   )}
                   <td className="num strong">{p.total.toFixed(1)}</td>
-                  {CATS.map((c) => (
+                  {points && <td className="num">{p.fpts != null ? Math.round(p.fpts) : ""}</td>}
+                  {points && <td className="num">{p.fpts != null && p.games > 0 ? (p.fpts / p.games).toFixed(1) : ""}</td>}
+                  {cats.map((c) => (
                     <td key={c} className="num">
-                      <span className="cell" style={{ background: heat(p.z[c]) }}>
-                        {p.z[c].toFixed(1)}
+                      <span className="cell" style={{ background: heat(p.z[c] ?? 0) }}>
+                        {p.z[c]?.toFixed(1)}
                       </span>
                     </td>
                   ))}

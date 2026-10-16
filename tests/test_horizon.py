@@ -4,7 +4,7 @@ import pytest
 from pickandroll.availability import conditional_availability, pseudo_adp
 from pickandroll.optim import HorizonProblem, horizon_pick_pool, punt_scan_horizon, solve_horizon
 from pickandroll.projections import Cat, zscores
-from pickandroll.projections.schema import split_positions
+from pickandroll.projections.schema import NINE_CAT, split_positions
 
 # Position 1 in a 4-team, 13-round snake draft: 60 synthetic players cover 52 picks.
 FOUR_TEAM_PICKS = [1, 8, 9, 16, 17, 24, 25, 32, 33, 40, 41, 48, 49]
@@ -134,7 +134,7 @@ def test_availability_can_be_zero_everywhere_for_gone_players(pool):
 def test_expected_totals_cover_punted_categories(pool):
     problem = make(pool, FOUR_TEAM_PICKS, punt=frozenset({Cat.TOV}))
     sol = solve_horizon(problem)
-    assert set(sol.expected_totals.index) == set(Cat)
+    assert set(sol.expected_totals.index) == set(NINE_CAT)
     assert sol.min_active_total == min(v for c, v in sol.expected_totals.items() if c != Cat.TOV)
 
 

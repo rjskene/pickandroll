@@ -18,6 +18,8 @@ import asyncio
 import contextlib
 import json
 import logging
+import os
+import re
 import threading
 import time
 import uuid
@@ -30,6 +32,7 @@ from typing import Any, Literal
 import anyio
 import pandas as pd
 from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi import Path as FastPath
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse, StreamingResponse
 from pydantic import BaseModel, Field
@@ -53,11 +56,11 @@ from ..optim.objective import CategoryCurve
 from ..optim.roster import Slot, yahoo_default_slots
 from ..projections.adp import adp_for_projections, load_adp
 from ..projections.positions import apply_positions, load_positions
-from ..projections.schema import Cat, ProjectionSet
+from ..projections.schema import POINTS_CAT, Cat, ProjectionSet, fantasy_points
 from ..sources.bbm import PROJECTION_SUFFIXES, load_bbm
 from ..sources.matching import load_aliases
 from ..sources.yahoo import YahooLeague, build_id_map, load_players_file
-from . import yahoo_room
+from . import leagues, yahoo_room
 from .keepers import (
     KeeperIn,
     Labelled,
@@ -88,6 +91,19 @@ KEEPER_SUFFIXES = {".csv"}
 LEAGUE_SURVIVAL_DEFAULT = "yahoo_history/survival_by_adp_adjusted.csv"
 #: Browsers that may call the API: the dev UI, other localhost tools and the Chrome extension.
 CORS_ORIGINS = r"^(chrome-extension://[a-p]{32}|https?://(localhost|127\.0\.0\.1)(:\d+)?)$"
+
+
+def cors_origins(extra: str | None = None) -> str:
+    """The origins the API answers cross-origin: the extension and localhost, plus the exact
+    origins in ``PICKANDROLL_CORS_ORIGINS`` (comma-separated, e.g. the dashboard on the Mac's
+    tailnet address) for a page that calls the API directly instead of through Vite's proxy."""
+    extra = os.environ.get("PICKANDROLL_CORS_ORIGINS", "") if extra is None else extra
+    origins = [o.strip().rstrip("/") for o in extra.split(",") if o.strip()]
+    if not origins:
+        return CORS_ORIGINS
+    return CORS_ORIGINS[:-2] + "|" + "|".join(re.escape(o) for o in origins) + ")$"
+
+
 #: The longest a room client may hold ``/plan`` for a fresh solve (the pick clock is 30 s).
 PLAN_WAIT_MAX = 20.0
 #: How long a room the extension reports as open and unattached stays listed (#10): it reports
@@ -300,6 +316,20 @@ class SlotIn(BaseModel):
 class SessionCreate(BaseModel):
     projection_file: str = Field(
         description="file name inside data/ (Basketball Monster .xls or .csv)"
+    )
+    league: str | None = Field(
+        default=None,
+        pattern=leagues.LEAGUE_ID,
+        description="a Yahoo league folder, data/leagues/<id>/: its settings.json gives the "
+        "teams, roster and scoring, its yahoo_players.json the ADP, positions and ranks, and "
+        "survival is simulated unless the folder holds survival_by_adp.csv; fields set in "
+        "the request win",
+    )
+    points: dict[str, float] | None = Field(
+        default=None,
+        description="a points league's scoring, stat to points per unit (pts, reb, ast, stl, "
+        "blk, tov, threes, fgm, fga, ftm, fta, or Yahoo's PTS, REB, AST, ST, BLK, TO, 3PTM, "
+        "...): the session's one category is fpts, those points over the projections",
     )
     positions_file: str | None = Field(
         default=None,
@@ -517,6 +547,12 @@ class RoomPatch(BaseModel):
     )
 
 
+class LeagueArm(BaseModel):
+    """The user's own pre-arm of a league's draft (#67), from the dashboard's control."""
+
+    armed: bool
+
+
 class RoomSeen(BaseModel):
     """A draft room open in the user's Chrome that no session follows yet, as the extension's
     draft tab sees it."""
@@ -579,7 +615,7 @@ def create_app(
     app.state.store = store
     app.add_middleware(
         CORSMiddleware,
-        allow_origin_regex=CORS_ORIGINS,
+        allow_origin_regex=cors_origins(),
         allow_methods=["*"],
         allow_headers=["*"],
     )
@@ -661,6 +697,7 @@ def create_app(
         return _summary(await make_session(body))
 
     async def make_session(body: SessionCreate) -> Session:
+        body = await asyncio.to_thread(_with_league, body, data_dir)
         state, label, curve_source = await asyncio.to_thread(_build_state, body, data_dir)
         note = None
         if body.survival is None:
@@ -765,6 +802,7 @@ def create_app(
         state = session.state
         z = state.z
         df = state.projections.df
+        points = Cat.FPTS in state.settings.cats and Cat.FPTS.value in df.columns
         with session.lock:
             taken = state.taken
             keepers = keeper_rows(state)
@@ -818,6 +856,8 @@ def create_app(
                         c.value: round(float(z.at[pid, c.value]), 3) for c in state.settings.cats
                     },
                     "total": round(float(z.at[pid, "total"]), 3),
+                    # A points league's projected fantasy points (the league's scoring).
+                    **({"fpts": round(float(df.at[pid, Cat.FPTS.value]), 1)} if points else {}),
                     "taken": pid in taken,
                     "taken_by": taken_by.get(pid),
                     "keeper": kept.get(pid),
@@ -1199,8 +1239,9 @@ def create_app(
 
     def players_path(name: str | None) -> Path:
         if name:
-            if name != Path(name).name or name in {".", ".."} or "\\" in name:
-                raise HTTPException(400, f"players_file must be a file name in data/: {name!r}")
+            # A file in data/, or a league folder's (leagues/<id>/yahoo_players.json).
+            if not _in_data_dir(name) or name in {".", ".."} or "\\" in name:
+                raise HTTPException(400, f"players_file must be a path inside data/: {name!r}")
             path = data_dir / name
             if not path.exists():
                 raise HTTPException(400, f"players file not found: {name}")
@@ -1276,7 +1317,25 @@ def create_app(
                 else yahoo_room.logged_pick_owners(prior)
             )
 
-            path = players_path(option("players_file", None))
+            # A league's room reads the league folder's players file (#67).
+            league = (
+                body.session.league
+                if body.session is not None
+                else (
+                    store.get(body.session_id).create_params or {}
+                    if body.session_id is not None
+                    else record.get("session") or {}
+                ).get("league")
+            )
+            league_players = (
+                leagues.league_dir(data_dir, league) / leagues.PLAYERS if league else None
+            )
+            if option("players_file", None) is None and league_players is not None:
+                if not league_players.exists():
+                    raise HTTPException(400, f"league {league} has no {leagues.PLAYERS}")
+                path = league_players
+            else:
+                path = players_path(option("players_file", None))
 
             def for_room(create: SessionCreate) -> SessionCreate:
                 # A session made for the room is made at its seat and on its owner map, so a
@@ -1286,7 +1345,7 @@ def create_app(
                 if pick_owners is not None and create.pick_owners is None:
                     update["pick_owners"] = list(pick_owners)
                 if create.adp_fallback_file is None:
-                    update["adp_fallback_file"] = path.name
+                    update["adp_fallback_file"] = str(path.relative_to(data_dir))
                 return create.model_copy(update=update)
 
             if body.session_id is not None:
@@ -1324,6 +1383,17 @@ def create_app(
             else:
                 time_limit = float(option("time_limit", yahoo_room.plan_budget(clock_s)))
             state = session.state
+            # The user's own pre-arm (#67): a first attach of their league's draft room comes
+            # up armed when they armed it in the dashboard and the attach names no mode. A
+            # rebuild keeps the mode last set (the pre-arm stays on record for the status), and
+            # nothing here arms a room by itself.
+            arm_now = (
+                leagues.armed(data_dir, league)
+                if league and body.draft_id == str(league) and not record and body.mode is None
+                else None
+            )
+            mode = "autopilot" if arm_now else body.mode
+            pre_armed = arm_now or record.get("pre_armed")
 
             def build() -> YahooRoom:
                 ids = build_id_map(
@@ -1339,15 +1409,16 @@ def create_app(
                     draft_id=body.draft_id,
                     slot=int(slot),
                     # None (a rebuild): the mode last set since the room's last detach.
-                    mode=body.mode,
+                    mode=mode,
                     num_teams=int(option("num_teams", state.settings.num_teams)),
                     pick_owners=pick_owners,
                     ids=ids,
                     log=log,
-                    players_file=path.name,
+                    players_file=str(path.relative_to(data_dir)),
                     prior=prior,
                     attach_record={
                         **({"ext_version": body.ext_version} if body.ext_version else {}),
+                        **({"pre_armed": pre_armed} if pre_armed else {}),
                         "session": session.create_params,
                         "solve": {
                             "n": params.n,
@@ -1364,6 +1435,7 @@ def create_app(
                 )
                 if follow:
                     room.clock_s = float(clock_s or yahoo_room.DEFAULT_CLOCK_S)
+                room.pre_armed = pre_armed
                 return room
 
             try:
@@ -1398,6 +1470,35 @@ def create_app(
         log: same session settings, the logged picks re-applied, a fresh solve."""
         room, session = await open_room(body)
         return room_view(room, session)
+
+    # ------------------------------------------------------------------ leagues (#67)
+    def league_view(league: str) -> dict[str, Any]:
+        try:
+            return leagues.summary(data_dir, league)
+        except leagues.LeagueError as exc:
+            raise HTTPException(404, str(exc)) from exc
+
+    @app.get("/leagues")
+    def list_leagues() -> list[dict[str, Any]]:
+        """The league folders in data/leagues/ with their settings and the user's arm."""
+        return [league_view(league) for league in leagues.leagues(data_dir)]
+
+    @app.get("/leagues/{league}")
+    def get_league(league: str = FastPath(pattern=leagues.LEAGUE_ID)) -> dict[str, Any]:
+        return league_view(league)
+
+    @app.put("/leagues/{league}/arm")
+    def arm_league(
+        body: LeagueArm, league: str = FastPath(pattern=leagues.LEAGUE_ID)
+    ) -> dict[str, Any]:
+        """The dashboard's "arm this league's draft" control, the user's own click: the first
+        attach of the league's draft room comes up in autopilot. ``armed: false`` withdraws it.
+        No session or script calls this (CLAUDE.md, the 2026-10-16 exception)."""
+        try:
+            leagues.set_armed(data_dir, league, body.armed, by="dashboard")
+        except leagues.LeagueError as exc:
+            raise HTTPException(404, str(exc)) from exc
+        return league_view(league)
 
     @app.get("/rooms")
     def list_rooms() -> list[dict[str, Any]]:
@@ -1670,8 +1771,13 @@ def _build_state(body: SessionCreate, data_dir: Path) -> tuple[DraftState, str, 
     )
     if positions_path.exists() and positions_path != path:
         try:
-            df, _missing = apply_positions(projections.df, load_positions(positions_path))
-        except ValueError as exc:
+            if positions_path.suffix.lower() == ".json":
+                # A league's Yahoo players file: Yahoo's eligibility is the league's own, so it
+                # replaces the projection's positions wherever Yahoo lists the player.
+                df = _yahoo_positions(projections.df, positions_path, data_dir)
+            else:
+                df, _missing = apply_positions(projections.df, load_positions(positions_path))
+        except (OSError, KeyError, ValueError) as exc:
             raise HTTPException(
                 400, f"could not read positions from {positions_path.name}: {exc}"
             ) from exc
@@ -1693,11 +1799,21 @@ def _build_state(body: SessionCreate, data_dir: Path) -> tuple[DraftState, str, 
         if body.slots
         else tuple(yahoo_default_slots(bench=body.bench))
     )
-    settings = LeagueSettings(
-        num_teams=body.num_teams,
-        slots=slots,
-        cats=tuple(body.cats) if body.cats else LeagueSettings.cats,
-    )
+    cats = tuple(body.cats) if body.cats else LeagueSettings.cats
+    if body.points:
+        if body.cats:
+            raise HTTPException(400, "a points league has one category (fpts): leave cats out")
+        try:
+            weights = _point_weights(body.points)
+            df = projections.df.copy()
+            df[Cat.FPTS.value] = fantasy_points(df, weights)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        projections = replace(projections, df=df)
+        cats = POINTS_CAT
+    elif Cat.FPTS in cats:
+        raise HTTPException(400, "fpts needs the league's points weights (points)")
+    settings = LeagueSettings(num_teams=body.num_teams, slots=slots, cats=cats)
     # The file's rows first, then the request's list; errors name the line or the index.
     rows = _keepers_file_rows(data_dir, body.keepers_file) if body.keepers_file else []
     rows += listed(body.keepers)
@@ -1717,8 +1833,13 @@ def _build_state(body: SessionCreate, data_dir: Path) -> tuple[DraftState, str, 
     adp_path = data_dir / body.adp_file if body.adp_file else data_dir / "adp.csv"
     if adp_path.exists() and adp_path != path:
         try:
-            adp = adp_for_projections(state.projections.df, load_adp(adp_path))
-        except ValueError as exc:
+            if adp_path.suffix.lower() == ".json":
+                # Yahoo's average pick from a league's players file, by the room's id map.
+                frame = leagues.players_frame(adp_path, state.projections.df, data_dir)
+                adp = frame["adp"].dropna().astype(float)
+            else:
+                adp = adp_for_projections(state.projections.df, load_adp(adp_path))
+        except (OSError, KeyError, ValueError) as exc:
             raise HTTPException(400, f"could not read ADP from {adp_path.name}: {exc}") from exc
         if not adp.empty:
             state.set_adp(adp, f"file:{adp_path.name}")
@@ -1754,6 +1875,56 @@ def _build_state(body: SessionCreate, data_dir: Path) -> tuple[DraftState, str, 
         state.curve = curve.scaled(body.sigma_scale)
         curve_source = state.curve.source
     return state, projections.label, curve_source
+
+
+#: Yahoo's names for the stats a points league scores, and the projection's columns.
+YAHOO_POINT_STATS: dict[str, str] = {
+    "PTS": "pts",
+    "REB": "reb",
+    "AST": "ast",
+    "ST": "stl",
+    "STL": "stl",
+    "BLK": "blk",
+    "TO": "tov",
+    "TOV": "tov",
+    "3PTM": "threes",
+    "FGM": "fgm",
+    "FGA": "fga",
+    "FTM": "ftm",
+    "FTA": "fta",
+}
+
+
+def _point_weights(points: dict[str, float]) -> dict[str, float]:
+    """A points league's weights by projection column (Yahoo's stat names accepted)."""
+    out: dict[str, float] = {}
+    for stat, weight in points.items():
+        column = YAHOO_POINT_STATS.get(stat.upper(), stat.lower())
+        out[column] = out.get(column, 0.0) + float(weight)
+    return out
+
+
+def _with_league(body: SessionCreate, data_dir: Path) -> SessionCreate:
+    """The request with its league folder's settings filled in where it set nothing itself."""
+    if body.league is None:
+        return body
+    try:
+        defaults = leagues.session_defaults(data_dir, body.league)
+    except leagues.LeagueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    given = body.model_dump(exclude_unset=True)
+    if "cats" in given and "points" not in given:
+        defaults.pop("points", None)
+    return SessionCreate(**{**defaults, **given})
+
+
+def _yahoo_positions(projections: pd.DataFrame, path: Path, data_dir: Path) -> pd.DataFrame:
+    """The projections with Yahoo's eligibility from a players JSON where Yahoo lists one."""
+    yahoo = leagues.players_frame(path, projections, data_dir)["positions"]
+    yahoo = yahoo[yahoo.fillna("").astype(str).str.strip() != ""]
+    out = projections.copy()
+    out.loc[yahoo.index, "positions"] = yahoo
+    return out
 
 
 def _adp_rank_path(body: SessionCreate, data_dir: Path) -> Path | None:
@@ -2023,6 +2194,9 @@ def _summary(session: Session) -> dict[str, Any]:
         "unknown_positions": int(
             (state.projections.df["positions"].fillna("").str.strip() == "").sum()
         ),
+        # The league folder the session was made from (#67), and a points league's weights.
+        "league": (session.create_params or {}).get("league"),
+        "points": (session.create_params or {}).get("points"),
         "adp_source": state.adp_source,
         "adp_known": int(state.adp.notna().sum()) if state.adp is not None else 0,
         # Players the ADP list lacks whose ADP is their rank mapped onto its scale, and where
