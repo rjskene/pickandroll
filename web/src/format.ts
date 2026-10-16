@@ -1,4 +1,4 @@
-import type { AvailabilityBias, AvailabilitySource, BoardPlayer, Scale, SessionSummary, WinLabel } from "./api";
+import type { AvailabilityBias, AvailabilitySource, BoardPlayer, RoomSummary, Scale, SessionSummary, WinLabel } from "./api";
 
 /** Where the survival odds come from, in a few words. */
 export function oddsSource(source: AvailabilitySource, bias?: AvailabilityBias | null): string {
@@ -148,4 +148,11 @@ export function armLabel(armed: { at: string } | null): string {
   if (!armed) return "not armed";
   const t = Date.parse(armed.at);
   return Number.isNaN(t) ? "armed" : `armed ${new Date(t).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}`;
+}
+
+/** The room's pick clock and the plan budget it gives, for the footer's feed note (#66). */
+export function clockNote(room: Pick<RoomSummary, "clock_s" | "plan_time_limit">): string {
+  const plan = room.plan_time_limit != null ? `plan ${room.plan_time_limit} s` : "";
+  if (room.clock_s != null) return ` · ${room.clock_s} s clock${plan ? `, ${plan}` : ""}`;
+  return plan ? ` · ${plan} (fixed)` : "";
 }

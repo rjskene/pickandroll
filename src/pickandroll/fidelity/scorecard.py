@@ -14,6 +14,7 @@ from __future__ import annotations
 import math
 from typing import Any
 
+from ..draft.clock import DEFAULT_CLOCK_S, acts_at_s, d1_limit_s
 from ..draft.settings import pick_owner, snake_picks
 from .recorder import to_ms
 
@@ -89,6 +90,8 @@ def analyze(events: list[dict[str, Any]]) -> dict[str, Any]:
     rounds = int(attach.get("rounds", 13))
     owners = attach.get("pick_owners") or None
     traded = attach.get("traded_picks") or []
+    # The clock the attach gave (a turn's own clock_s, from Yahoo's frame, wins: #66).
+    attach_clock = _clock((attach.get("solve") or {}).get("clock_s"))
 
     room: dict[int, dict] = {}
     gap_picks: set[int] = set()  # picks the room never sent, recorded after its clock passed
@@ -338,6 +341,8 @@ def analyze(events: list[dict[str, Any]]) -> dict[str, Any]:
                 "turn_to_land_ms": None if to_land is None else round(to_land),
                 "reco_ready_ms": None if ready is None else round(ready),
                 "presolve": presolve,
+                # The pick clock the turn ran on, as the room reported it (None: not reported).
+                "clock_s": _clock((turns.get(k) or {}).get("clock_s")) or attach_clock,
                 "attempts": len(attempts.get(k, [])),
             }
         )
@@ -472,6 +477,8 @@ def analyze(events: list[dict[str, Any]]) -> dict[str, Any]:
         },
         "diagnostics": {
             "D1": stats([r["reco_ready_ms"] for r in rows if r["reco_ready_ms"] is not None]),
+            # The D1 gate on each turn's own clock, and at the 30 s design point (#66).
+            "D1_gate": {"room": d1_gate(rows), "design": d1_gate(rows, DEFAULT_CLOCK_S)},
             # Hits, pending branches and misses: three populations under one median.
             **{
                 f"D1_{kind}": stats(
@@ -572,6 +579,37 @@ def analyze(events: list[dict[str, Any]]) -> dict[str, Any]:
         "rows": rows,
         "last_room_pick": room[max(room)] if room else None,
         "last_reco": recos[-1] if recos else None,
+    }
+
+
+def _clock(value: Any) -> float | None:
+    return float(value) if isinstance(value, int | float) and value > 0 else None
+
+
+def d1_gate(rows: list[dict[str, Any]], clock_s: float | None = None) -> dict[str, Any]:
+    """D1 judged per timed turn (docs/YAHOO_SYNC.md §1): a hit's reco within 1 s of the turn's
+    start, any other within the plan budget plus the price limit plus one second
+    (:func:`~pickandroll.draft.clock.d1_limit_s`). A turn is missed when its reco came after
+    the drafter acts (the clock less its margin). ``clock_s`` judges every turn on that clock;
+    ``None`` on the clock each turn reported (30 s where none was)."""
+    timed = [r for r in rows if r["reco_ready_ms"] is not None]
+    over, missed, clocks = [], [], set()
+    for r in timed:
+        clock = clock_s or r.get("clock_s") or DEFAULT_CLOCK_S
+        clocks.add(clock)
+        if r["reco_ready_ms"] > 1000.0 * d1_limit_s(clock, hit=r["presolve"] == "hit"):
+            over.append(r["overall"])
+        if r["reco_ready_ms"] > 1000.0 * acts_at_s(clock):
+            missed.append(r["overall"])
+    reported = any(r.get("clock_s") for r in timed)
+    return {
+        "clocks": sorted(clocks),
+        "reported": reported,
+        "timed": len(timed),
+        "untimed": [r["overall"] for r in rows if r["reco_ready_ms"] is None],
+        "over": over,
+        "missed": missed,
+        "pass": None if not timed else not over and not missed,
     }
 
 
@@ -708,6 +746,7 @@ def markdown(card: dict[str, Any]) -> str:
         ),
         f"| Recos from the roster fallback (goal 0 in a room) | {_roster(d['roster'], d.get('horizon'))} |",
         "",
+        *_d1_table(d.get("D1_gate")),
         (
             f"Compliance against the final reco (diagnostic): "
             f"{c['against_final']}/{c['denominator']}."
@@ -792,6 +831,49 @@ def status(card: dict[str, Any]) -> dict[str, Any]:
 
 def _picks(overalls: list[int]) -> str:
     return ", ".join(str(k) for k in overalls)
+
+
+def _d1_table(gate: dict[str, Any] | None) -> list[str]:
+    """The D1 gate on the room's own clock beside the 30 s design point (#66)."""
+    if not gate or not gate["room"]["timed"]:
+        return []
+    room, design = gate["room"], gate["design"]
+
+    def span(values: list[float]) -> str:
+        """Seconds, or the range of them over turns on different clocks."""
+        low, high = min(values), max(values)
+        return f"{low:g} s" if low == high else f"{low:g}-{high:g} s"
+
+    def clock(g: dict[str, Any]) -> str:
+        return span(g["clocks"])
+
+    def limits(g: dict[str, Any]) -> str:
+        return span([d1_limit_s(c) for c in g["clocks"]])
+
+    def acts(g: dict[str, Any]) -> str:
+        return span([acts_at_s(c) for c in g["clocks"]])
+
+    def turns(picks: list[int]) -> str:
+        return f"{len(picks)}: {_picks(picks)}" if picks else "none"
+
+    def result(g: dict[str, Any]) -> str:
+        return {True: "pass", False: "**FAIL**", None: "n/a"}[g["pass"]]
+
+    head = f"room's clock ({clock(room)}" + ("" if room["reported"] else ", none reported") + ")"
+    lines = [
+        f"| D1 gate, {room['timed']} timed turns | {head} | design point ({clock(design)}) |",
+        "|---|---|---|",
+        f"| limit: hits / pending and misses | 1 s / {limits(room)} | 1 s / {limits(design)} |",
+        f"| over the limit | {turns(room['over'])} | {turns(design['over'])} |",
+        (
+            f"| missed: ready after the drafter acts ({acts(room)} / {acts(design)}) "
+            f"| {turns(room['missed'])} | {turns(design['missed'])} |"
+        ),
+        f"| result | {result(room)} | {result(design)} |",
+    ]
+    if room["untimed"]:
+        lines.append(f"\nNo reco timing (not judged): {_picks(room['untimed'])}.")
+    return [*lines, ""]
 
 
 def _presolve_class(first: dict[str, Any] | None, ready_ms: float | None) -> str:

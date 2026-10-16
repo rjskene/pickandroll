@@ -50,6 +50,7 @@ from ..draft import (
     Strategy,
     simulate,
 )
+from ..draft.clock import DEFAULT_CLOCK_S, plan_budget
 from ..draft.league_sim import simulate_league
 from ..fidelity import FidelityLog, analyze, last_attach, markdown, read_events
 from ..fidelity import status as fidelity_status
@@ -115,7 +116,7 @@ PLAN_WAIT_MAX = 20.0
 SEEN_TTL_S = 30.0
 #: Solver settings a room attaches with unless told otherwise: they kept solves inside a 30 s
 #: clock in the 2026-09-27 mocks. The plan's time limit follows the room's pick clock
-#: (:func:`yahoo_room.plan_budget`, 5 s on a 30 s clock) unless the attach gives one.
+#: (:func:`~pickandroll.draft.clock.plan_budget`, 5 s on a 30 s clock) unless the attach gives one.
 ROOM_SOLVE = {
     "n": 3,
     "scenarios": 0,
@@ -1422,9 +1423,9 @@ def create_app(
                 or bool(solve.get("follow_clock", "time_limit" not in solve))
             )
             if follow:
-                time_limit = yahoo_room.plan_budget(clock_s)
+                time_limit = plan_budget(clock_s)
             else:
-                time_limit = float(option("time_limit", yahoo_room.plan_budget(clock_s)))
+                time_limit = float(option("time_limit", plan_budget(clock_s)))
             state = session.state
             # The user's own pre-arm (#67): a first attach of their league's draft room comes
             # up armed when they armed it in the dashboard and the attach names no mode. A
@@ -1477,7 +1478,7 @@ def create_app(
                     },
                 )
                 if follow:
-                    room.clock_s = float(clock_s or yahoo_room.DEFAULT_CLOCK_S)
+                    room.clock_s = float(clock_s or DEFAULT_CLOCK_S)
                 room.pre_armed = pre_armed
                 return room
 

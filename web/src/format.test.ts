@@ -3,7 +3,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { AvailabilityBias, BoardPlayer, SessionSummary } from "./api";
-import { adpCell, adpTitle, armLabel, biasDetail, draftWhen, oddsSource, rankLabel, survivalDetail } from "./format.ts";
+import { adpCell, adpTitle, armLabel, biasDetail, clockNote, draftWhen, oddsSource, rankLabel, survivalDetail } from "./format.ts";
 
 const row = (adp_from: BoardPlayer["adp_from"], adp: number | null, keepers_ahead = 0): BoardPlayer =>
   ({ adp, adp_eff: adp == null ? null : adp - keepers_ahead, adp_from, keepers_ahead }) as BoardPlayer;
@@ -63,4 +63,11 @@ test("the survival odds say when the ADP formula is shifted by the league's bias
   } as unknown as SessionSummary;
   assert.equal(survivalDetail(s), "ADP formula (file:adp.csv); spread 1.5 + 0.15 × ADP picks.");
   assert.match(survivalDetail({ ...s, availability_bias: bias }), /^ADP formula \(file:adp\.csv\); the ADP formula centred on ADP plus the league's bias from ADP 72, .*; spread 1\.5/);
+});
+
+test("the footer shows the room's pick clock and the plan budget it gives", () => {
+  assert.equal(clockNote({ clock_s: 60, plan_time_limit: 20 }), " · 60 s clock, plan 20 s");
+  assert.equal(clockNote({ clock_s: 30, plan_time_limit: 5 }), " · 30 s clock, plan 5 s");
+  assert.equal(clockNote({ clock_s: null, plan_time_limit: 8 }), " · plan 8 s (fixed)");
+  assert.equal(clockNote({}), "");
 });
