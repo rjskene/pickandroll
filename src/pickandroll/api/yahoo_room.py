@@ -236,7 +236,8 @@ def logged_pick_owners(prior: list[dict[str, Any]]) -> list[int] | None:
 def logged_session(prior: list[dict[str, Any]]) -> dict[str, Any]:
     """The session settings a rebuild starts from: the current attach record's, with the keeper
     table of the last ``keepers`` event after it (a PATCH since the attach, #63). A record from
-    before #63 always carries ``fit_curve``; it only ever applied to a simulation."""
+    before #63 always carries ``fit_curve``; it only ever applied to a simulation. One from before
+    #64 ran without the ADP bias."""
     record = last_attach(prior) or {}
     create = dict(record.get("session") or {})
     since = prior.index(record) if record in prior else -1
@@ -245,6 +246,8 @@ def logged_session(prior: list[dict[str, Any]]) -> dict[str, Any]:
             create = {**create, "keepers": e.get("keepers") or [], "keepers_file": None}
     if create.get("survival") != "simulate":
         create.pop("fit_curve", None)
+    if create:
+        create.setdefault("adp_bias", False)
     return create
 
 

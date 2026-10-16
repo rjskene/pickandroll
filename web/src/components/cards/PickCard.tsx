@@ -69,7 +69,7 @@ export default function PickCard() {
             <CatStrip rows={result.categories} />
             <div className="muted" style={{ fontSize: 12 }}>
               {result.mode === "horizon" ? "rolling-horizon plan" : "single roster"} · {result.objective === "win" ? "expected categories won" : "sum of z"}
-              {result.fallback ? " · sum fallback (no incumbent in time)" : ""} · survival odds from {oddsSource(result.availability_source)}
+              {result.fallback ? " · sum fallback (no incumbent in time)" : ""} · survival odds from {oddsSource(result.availability_source, result.availability_bias)}
             </div>
             <div className="stats">
               <div className="stat" title="expected number of the nine categories won if the plan holds">

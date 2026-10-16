@@ -32,6 +32,14 @@ export const LEAGUE_FROM_ADP = 90;
 // Mirrors LEAGUE_SURVIVAL_DEFAULT in src/pickandroll/api/app.py: change both.
 export const LEAGUE_SURVIVAL_DEFAULT = "yahoo_history/survival_by_adp_adjusted.csv";
 export type AvailabilitySource = "adp" | "survival" | "league";
+/** The league's shift of the ADP formula by keeper-adjusted ADP (#64): the table's file and fit. */
+export interface AvailabilityBias {
+  source: string | null;
+  from_adp: number;
+  half_life: number | null;
+  seasons: number[];
+  target: number | null;
+}
 export type AdpFrom = "market" | "rank" | "end" | "stand-in";
 
 export interface SurvivalStatus {
@@ -132,6 +140,8 @@ export interface SessionSummary {
   curve: CurveSpec | null;
   sigma_scale: number;
   availability_source: AvailabilitySource;
+  /** The ADP formula's shift, where the formula answers; null without a bias table. */
+  availability_bias?: AvailabilityBias | null;
   survival: SurvivalStatus;
   solver: SolverStatus;
   /** The settings the next solve starts with: background, room and manual solves alike. */
@@ -303,6 +313,7 @@ export interface Recommendation {
   timings: Record<string, number>;
   adp_source: string;
   availability_source: AvailabilitySource;
+  availability_bias?: AvailabilityBias | null;
   candidates: Candidate[];
   plan: PlanRow[];
   scenarios: Scenario[];
