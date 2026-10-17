@@ -63,7 +63,7 @@ from pickandroll.sources.yahoo import load_players_file
 HELP = "refit <league>: archive finished drafts, refit the survival table and the curve's sources"
 LEAGUE = True
 
-PICKS = "picks.csv"
+PICKS = leagues.PICKS
 ADP = "adp.csv"
 REPORT = leagues.SURVIVAL_REPORT
 CROSS_FORMAT_WEIGHT = leagues.CROSS_FORMAT_WEIGHT
@@ -282,8 +282,7 @@ def rel(runbook: Any, path: Path) -> str:
 
 
 # --------------------------------------------------------------------------- the refit
-def other_format(scoring: str) -> str:
-    return "categories" if scoring == "points" else "points"
+other_format = leagues.other_format
 
 
 def drafts_text(d: float) -> str:
@@ -409,25 +408,13 @@ def refit(runbook: Any, league: str, args: argparse.Namespace | None = None) -> 
 
 def league_curve_ready(runbook: Any, league: str, args: Any = None) -> float | None:
     """The drafts (the sum of their weights) behind the shared table when a league's attach
-    should ask for ``curve: league``: its own folder has no table (the session then reads its
-    format's shared one and the rosters of both formats' archives), and the shared table and
-    its report stand."""
-    mine = runbook.settings(league)
-    if (runbook.folder(league) / leagues.SURVIVAL).exists():
-        return None
-    scoring = str(mine.get("scoring", ""))
-    shared = leagues.shared_dir(runbook.DATA, scoring)
+    should ask for ``curve: league``. The rule is ``leagues.league_curve_drafts``, which the
+    dashboard's form reads too (#74)."""
+    runbook.folder(league)
     try:
-        report = json.loads((shared / REPORT).read_text())
-    except (OSError, ValueError):
-        return None
-    if not (shared / leagues.SURVIVAL).exists() or not report.get("blend"):
-        return None
-    archives = (shared, leagues.shared_dir(runbook.DATA, other_format(scoring)))
-    if not any((folder / PICKS).exists() for folder in archives):
-        return None
-    drafts = float(report["blend"].get("drafts") or 0.0)
-    return drafts if drafts > 0 else None
+        return leagues.league_curve_drafts(runbook.DATA, league)
+    except leagues.LeagueError:
+        return None  # the attach's own POST says what is wrong with the folder
 
 
 # --------------------------------------------------------------------------- hooks

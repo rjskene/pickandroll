@@ -414,8 +414,16 @@ def test_a_league_without_a_table_simulates_with_the_archive_in_its_note(tmp_pat
 # --------------------------------------------------------------------------- the curve
 def test_a_leagues_attach_asks_for_the_league_curve_once_its_format_has_a_table(runbook, capsys):
     module = refit_module(runbook)
+
+    def fields(league):
+        """The attach's fields, and the dashboard's form resolving the same curve (#74)."""
+        out = module.session_fields(runbook, league)
+        curve = leagues.summary(runbook.DATA, league)["resolved"]["curve"]
+        assert curve == ("league" if out else "simulated")
+        return out
+
     league_folder(runbook, "888")
-    assert module.session_fields(runbook, "888") == {}, "nothing archived"
+    assert fields("888") == {}, "nothing archived"
     league_folder(runbook, "111", scoring="categories")
     module.archive(runbook, "111", finished_draft(runbook, "111"))
     league_folder(runbook, "999", scoring="categories", day="2026-10-18")
@@ -424,20 +432,20 @@ def test_a_leagues_attach_asks_for_the_league_curve_once_its_format_has_a_table(
         "curve: league, from the rosters of 1 draft, blended toward today's simulated run"
         in capsys.readouterr().out
     )
-    assert module.session_fields(runbook, "999") == {"curve": "league"}
+    assert fields("999") == {"curve": "league"}
     assert "curve: league, from the archive's 1 draft, blended toward" in capsys.readouterr().out
     # The points league has only the categories draft at half weight: no table, no curve.
     module.refit(runbook, "888")
     assert "curve: simulated (archive: 0.5 drafts, " in capsys.readouterr().out
-    assert module.session_fields(runbook, "888") == {}
+    assert fields("888") == {}
     league_folder(runbook, "222", day="2026-10-18")
     module.archive(runbook, "222", finished_draft(runbook, "222", seed=2, day="2026-10-18"))
     module.refit(runbook, "888")
-    assert module.session_fields(runbook, "888") == {"curve": "league"}
+    assert fields("888") == {"curve": "league"}
     assert "from the archive's 1.5 drafts" in capsys.readouterr().out
     # A league with its own table reads its own folder: no shared rosters beside it.
     write_table(runbook.DATA / "leagues" / "999")
-    assert module.session_fields(runbook, "999") == {}
+    assert fields("999") == {}
 
 
 def test_the_attach_falls_back_to_the_simulated_curve(runbook, monkeypatch, capsys):

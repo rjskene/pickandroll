@@ -2,8 +2,8 @@
 // since the web app has no Node types.
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import type { AdjustmentRow, AvailabilityBias, BoardPlayer, CurveFit, LeagueSummary, RoomSummary, SessionSummary } from "./api";
-import { adpCell, adpTitle, armLabel, biasDetail, blendDetail, blendLabel, clockNote, clockText, curveFitNote, draftWhen, haircutLabel, haircutTitle, haircutWeeks, nextDraft, oddsSource, rankLabel, roomOrder, survivalDetail, turnFlag, weeksToGames } from "./format.ts";
+import type { AdjustmentRow, AvailabilityBias, BoardPlayer, CurveFit, LeagueResolved, LeagueSummary, RoomSummary, SessionSummary } from "./api";
+import { adpCell, adpTitle, armLabel, biasDetail, blendDetail, blendLabel, clockNote, clockText, curveFitNote, draftWhen, haircutLabel, leagueSurvivalText, haircutTitle, haircutWeeks, nextDraft, oddsSource, rankLabel, roomOrder, survivalDetail, turnFlag, weeksToGames } from "./format.ts";
 
 const row = (adp_from: BoardPlayer["adp_from"], adp: number | null, keepers_ahead = 0): BoardPlayer =>
   ({ adp, adp_eff: adp == null ? null : adp - keepers_ahead, adp_from, keepers_ahead }) as BoardPlayer;
@@ -204,4 +204,19 @@ test("the live panel lists live rooms by my next turn, finished rooms last, and 
   const leagues = [league("past", "2026-10-17T18:00:00Z"), league("later", "2026-10-18T18:00:00Z"), league("next", "2026-10-18T03:00:00Z"), league("unknown", null)];
   assert.equal(nextDraft(leagues, now)?.league, "next");
   assert.equal(nextDraft([league("past", "2026-10-17T18:00:00Z")], now), null);
+});
+
+test("the form says what a league session's survival resolves to", () => {
+  const base: LeagueResolved = {
+    survival: "simulate", survival_file: null, note: null, blend: null, curve: "simulated",
+    curve_drafts: null, adp_file: "leagues/1/yahoo_players.json", positions_file: "leagues/1/yahoo_players.json", rounds: 13,
+  };
+  assert.equal(leagueSurvivalText(base), "simulated drafts against the league's board");
+  assert.equal(leagueSurvivalText({ ...base, note: "archive: no drafts of 12 x 13 yet" }), "simulated drafts against the league's board (archive: no drafts of 12 x 13 yet)");
+  const blend = { drafts: 1.5, same_format: 1, other_format: 1, weight: 0.5 };
+  assert.equal(
+    leagueSurvivalText({ ...base, survival: "league", survival_file: "leagues/_shared/categories/survival_by_adp.csv", blend }),
+    "the format's drafts by ADP (blend: 1.5 drafts: 1 of the format + 1 of the other format at ×0.5, 40% ADP formula)",
+  );
+  assert.equal(leagueSurvivalText({ ...base, survival: "league", survival_file: "leagues/1/survival_by_adp.csv" }), "this league's own drafts by ADP (leagues/1/survival_by_adp.csv)");
 });
