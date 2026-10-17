@@ -49,6 +49,8 @@ SURVIVAL = "survival_by_adp.csv"
 SHARED = "_shared"
 #: The refit's report beside the shared table (or in its place, with the reason there is none).
 SURVIVAL_REPORT = "survival_by_adp.json"
+#: The archive's drafted rosters, one row per pick: the league curve's source (#65, #77).
+PICKS = "picks.csv"
 #: The weight of the other format's drafts in a format's survival table and curve (#77): its
 #: market's ADP is another one, its rosters were drafted for another scoring.
 CROSS_FORMAT_WEIGHT = 0.5
@@ -199,13 +201,70 @@ def archive_note(data_dir: Path, league: str) -> str | None:
     there is no shared table (``archive: no drafts of 12 x 13 yet``); ``None`` without a report
     or with a table."""
     try:
-        scoring = load_settings(data_dir, league)["scoring"]
-        report = json.loads((shared_dir(data_dir, scoring) / SURVIVAL_REPORT).read_text())
-    except (LeagueError, OSError, ValueError):
+        report = shared_report(data_dir, load_settings(data_dir, league)["scoring"])
+    except LeagueError:
         return None
-    if not isinstance(report, dict) or report.get("table") or not report.get("reason"):
+    if report is None or report.get("table") or not report.get("reason"):
         return None
     return f"archive: {report['reason']}"
+
+
+def shared_report(data_dir: Path, scoring: str) -> dict[str, Any] | None:
+    """The refit's report beside a format's shared table; ``None`` before the first refit."""
+    try:
+        report = json.loads((shared_dir(data_dir, scoring) / SURVIVAL_REPORT).read_text())
+    except (OSError, ValueError):
+        return None
+    return report if isinstance(report, dict) else None
+
+
+def other_format(scoring: str) -> str:
+    return "categories" if scoring == "points" else "points"
+
+
+def league_curve_drafts(data_dir: Path, league: str) -> float | None:
+    """The drafts (the sum of their weights) behind the league curve when a session for
+    ``league`` should ask for ``curve: league`` (#77), else ``None``. It should when its own
+    folder has no table (the session then reads its format's shared one and the rosters of both
+    formats' archives), the shared table and its blended report stand, and an archive holds
+    rosters. The draft-day attach (``scripts/draft_prep/refit.py``) and the dashboard's form
+    (``resolved``) both ask this."""
+    scoring = load_settings(data_dir, league)["scoring"]
+    if (league_dir(data_dir, league) / SURVIVAL).exists():
+        return None
+    shared = shared_dir(data_dir, scoring)
+    report = shared_report(data_dir, scoring)
+    if report is None or not report.get("blend") or not (shared / SURVIVAL).exists():
+        return None
+    archives = (shared, shared_dir(data_dir, other_format(scoring)))
+    if not any((folder / PICKS).exists() for folder in archives):
+        return None
+    drafts = float(report["blend"].get("drafts") or 0.0)
+    return drafts if drafts > 0 else None
+
+
+def resolved(data_dir: Path, league: str) -> dict[str, Any]:
+    """What a session for ``league`` resolves to from its folder and its format's archive, for
+    the dashboard's form (#74): the survival and its source, the curve the draft-day attach
+    asks for, the players file behind ADP, positions and rank, and the rounds drafted."""
+    settings = load_settings(data_dir, league)
+    defaults = session_defaults(data_dir, league)
+    survival_file = defaults.get("survival_file")
+    shared = bool(survival_file) and survival_file.startswith(f"{LEAGUES_DIR}/{SHARED}/")
+    report = shared_report(data_dir, settings["scoring"]) if shared else None
+    drafts = league_curve_drafts(data_dir, league)
+    picks = draft_picks(settings)
+    return {
+        "survival": defaults["survival"],
+        "survival_file": survival_file,
+        "note": archive_note(data_dir, league) if defaults["survival"] == "simulate" else None,
+        "blend": (report or {}).get("blend"),
+        "curve": "simulated" if drafts is None else "league",
+        "curve_drafts": drafts,
+        "adp_file": defaults.get("adp_file"),
+        "positions_file": defaults.get("positions_file"),
+        "rounds": None if picks is None else picks // defaults["num_teams"],
+    }
 
 
 def _covers(path: Path, picks: int | None) -> bool:
@@ -259,9 +318,16 @@ def set_armed(data_dir: Path, league: str, on: bool, by: str) -> dict[str, Any] 
 
 
 def summary(data_dir: Path, league: str) -> dict[str, Any]:
-    """One league for the dashboard: its settings, its files and the user's arm."""
+    """One league for the dashboard: its settings, its files, the user's arm and what its
+    session resolves to (``None``, with the ``error``, when the folder's roster does not read:
+    the league still lists)."""
     settings = load_settings(data_dir, league)
     folder = league_dir(data_dir, league)
+    try:
+        session: dict[str, Any] | None = resolved(data_dir, league)
+        error = None
+    except LeagueError as exc:
+        session, error = None, str(exc)
     return {
         "league": str(league),
         "scoring": settings["scoring"],
@@ -271,6 +337,8 @@ def summary(data_dir: Path, league: str) -> dict[str, Any]:
         "players_file": (folder / PLAYERS).exists(),
         "survival_file": (folder / SURVIVAL).exists(),
         "armed": armed(data_dir, league),
+        "resolved": session,
+        "error": error,
     }
 
 

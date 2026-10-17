@@ -466,6 +466,11 @@ What the phone shows (#74):
   pick, then again" when your next pick follows at once.
 - **The log card (6).** The picks are listed in draft order, the earliest at the top. The list stays where you
   scrolled while picks come in and follows them only while it shows the latest; **Latest** jumps back there.
+- **The start form's League chooser.** A draft started by hand for a league takes what the runbook's attach
+  takes: the teams, roster and scoring from its folder, ADP and positions from its `yahoo_players.json`, the
+  survival its folder and format resolve to, and the league curve once the format's table has rosters. The form
+  shows each before the start (`GET /leagues` carries them as `resolved`). When the league curve cannot be fit,
+  the draft is made on the simulated curve and the form says why, as the attach does.
 
 The dashboard has no sign-in. Anyone who reaches it can arm or disarm a room, which is why it is kept to the
 tailnet.

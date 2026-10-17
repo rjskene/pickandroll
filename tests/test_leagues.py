@@ -167,6 +167,61 @@ def test_a_points_session_is_checked(league):
         assert s["cats"] == ["pts", "reb"] and s["points"] is None
 
 
+# --------------------------------------------------------------------------- the form (#74)
+def test_the_dashboard_lists_what_a_league_session_resolves_to(tmp_path):
+    (tmp_path / "yahoo_players_1.json").write_text("[]")
+    write_league(tmp_path)
+    write_league(tmp_path, "556", roster=["PG", "Rover"])
+
+    def resolved():
+        with app_for(tmp_path) as c:
+            rows = {row["league"]: row for row in c.get("/leagues").json()}
+        # A roster that does not read lists the league with the reason, not a failed list.
+        assert rows["556"]["resolved"] is None and "unknown roster slot" in rows["556"]["error"]
+        assert rows["555"]["error"] is None
+        return rows["555"]["resolved"]
+
+    players = "leagues/555/yahoo_players.json"
+    r = resolved()
+    assert (r["survival"], r["survival_file"], r["note"], r["blend"]) == (
+        "simulate",
+        None,
+        None,
+        None,
+    )
+    assert (r["curve"], r["curve_drafts"], r["rounds"]) == ("simulated", None, 13)
+    assert (r["adp_file"], r["positions_file"]) == (players, players)
+
+    shared = leagues.shared_dir(tmp_path, "points")
+    shared.mkdir(parents=True)
+    report = {"table": None, "reason": "0.5 drafts, 18.5 players near ADP 90, under 20"}
+    (shared / leagues.SURVIVAL_REPORT).write_text(json.dumps(report))
+    assert resolved()["note"] == "archive: 0.5 drafts, 18.5 players near ADP 90, under 20"
+
+    # The format's table, blended, with rosters in the other format's archive: league odds and
+    # the league curve, as the draft-day attach asks for them.
+    header = ",".join(["adp", *map(str, range(1, 157)), "undrafted"])
+    (shared / leagues.SURVIVAL).write_text(header + "\n")
+    blend = {"drafts": 1.5, "same_format": 1, "other_format": 1, "weight": 0.5}
+    (shared / leagues.SURVIVAL_REPORT).write_text(json.dumps({"table": "t", "blend": blend}))
+    assert resolved()["curve"] == "simulated", "no rosters in either archive yet"
+    other = leagues.shared_dir(tmp_path, "categories")
+    other.mkdir(parents=True)
+    (other / leagues.PICKS).write_text("overall\n")
+    r = resolved()
+    assert (r["survival"], r["survival_file"]) == (
+        "league",
+        "leagues/_shared/points/survival_by_adp.csv",
+    )
+    assert (r["note"], r["blend"], r["curve"], r["curve_drafts"]) == (None, blend, "league", 1.5)
+
+    # The league's own table: its own odds, no blend, the simulated curve.
+    (tmp_path / "leagues" / "555" / leagues.SURVIVAL).write_text(header + "\n")
+    r = resolved()
+    assert (r["survival"], r["survival_file"]) == ("league", "leagues/555/survival_by_adp.csv")
+    assert (r["blend"], r["curve"]) == (None, "simulated")
+
+
 # --------------------------------------------------------------------------- the user's arm
 def test_the_dashboard_arms_and_disarms_a_league(league):
     with app_for(league) as c:

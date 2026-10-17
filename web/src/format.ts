@@ -1,4 +1,4 @@
-import type { AdjustmentRow, AvailabilityBias, AvailabilitySource, BoardPlayer, CurveFit, LeagueSummary, RoomSummary, Scale, SessionSummary, SurvivalBlend, WinLabel } from "./api";
+import type { AdjustmentRow, AvailabilityBias, AvailabilitySource, BoardPlayer, CurveFit, LeagueResolved, LeagueSummary, RoomSummary, Scale, SessionSummary, SurvivalBlend, WinLabel } from "./api";
 
 /** "blend: 1.5 drafts": the drafts behind a blended table or curve, the sum of their weights. */
 export function blendLabel(drafts: number): string {
@@ -22,6 +22,13 @@ export function blendDetail(blend: SurvivalBlend): string {
   const other = blend.other_format ? ` + ${blend.other_format} of the other format at ×${blend.weight}` : "";
   const prior = Math.round((1000 / (blend.drafts + 1))) / 10;
   return `${blendLabel(blend.drafts)}: ${blend.same_format} of the format${other}, ${prior}% ADP formula`;
+}
+
+/** A league session's survival as the form shows it before the session exists (#74). */
+export function leagueSurvivalText(r: LeagueResolved): string {
+  if (r.survival === "simulate") return `simulated drafts against the league's board${r.note ? ` (${r.note})` : ""}`;
+  if (r.blend) return `the format's drafts by ADP (${blendDetail(r.blend)})`;
+  return `this league's own drafts by ADP (${r.survival_file})`;
 }
 
 /** The ADP formula's shift in a clause: from which ADP, fit on which seasons, from which file. */

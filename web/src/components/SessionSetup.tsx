@@ -1,7 +1,8 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { api, LEAGUE_FROM_ADP, LEAGUE_SURVIVAL_DEFAULT, SPREAD, type Objective, type SessionSummary, type SurvivalMode } from "../api";
-import { blendLabel } from "../format";
+import { api, LEAGUE_FROM_ADP, LEAGUE_SURVIVAL_DEFAULT, SPREAD, type LeagueSummary, type Objective, type SessionCreateBody, type SessionSummary, type SurvivalMode } from "../api";
+import { blendLabel, draftWhen, leagueSurvivalText } from "../format";
+import { createWithCurveFallback } from "../sessionRequest";
 import Info from "./Info";
 import { erroredRow, isMine, KeeperEditor, keeperDraft, keepersIn, nameOptions, type KeeperDraft } from "./Keepers";
 import { SeenRooms, useSeenRooms } from "./YahooSync";
@@ -23,6 +24,10 @@ export default function SessionSetup({ onCreated, onSelect }: Props) {
   const curveFiles = useQuery({ queryKey: ["files", "curve"], queryFn: () => api.files("curve") });
   const adpFiles = useQuery({ queryKey: ["files", "adp"], queryFn: () => api.files("adp") });
   const keeperFiles = useQuery({ queryKey: ["files", "keepers"], queryFn: () => api.files("keepers") });
+  const leagueFolders = useQuery({ queryKey: ["leagues"], queryFn: api.leagues });
+  // A league folder (#67): its session takes the teams, roster, scoring, players file and
+  // survival from data/leagues/<id>/ and its format's archive, as the draft-day attach does.
+  const [leagueId, setLeagueId] = useState("");
   const [file, setFile] = useState("");
   const [positionsFile, setPositionsFile] = useState("");
   const [adpFile, setAdpFile] = useState("");
@@ -32,7 +37,8 @@ export default function SessionSetup({ onCreated, onSelect }: Props) {
   const [bench, setBench] = useState(3);
   const [objective, setObjective] = useState<Objective>("win");
   const [sigmaScale, setSigmaScale] = useState(1);
-  const [curveFile, setCurveFile] = useState("");
+  // null until the user picks: the league's resolved curve, else the simulated one.
+  const [curveFile, setCurveFile] = useState<string | null>(null);
   // null until the user picks: the form then shows, and leaves to the server, its default.
   const [survivalChoice, setSurvival] = useState<SurvivalMode | null>(null);
   const [survivalSims, setSurvivalSims] = useState(300);
@@ -44,8 +50,9 @@ export default function SessionSetup({ onCreated, onSelect }: Props) {
   // The room's own team count when the extension has shown it: the attach is checked against it.
   const [roomTeams, setRoomTeams] = useState<number | null>(null);
   const seen = useSeenRooms();
-  // A session made whose room did not attach: the reason, and the way on to the draft anyway.
-  const [unattached, setUnattached] = useState<{ session: SessionSummary; error: string } | null>(null);
+  // A session made whose room did not attach, or that fell back to the simulated curve: the
+  // reasons, and the way on to the draft.
+  const [made, setMade] = useState<{ session: SessionSummary; attachError: string | null; curveNote: string | null } | null>(null);
   // Keepers: rows from a file in data/ (mine unticked until I decide), added by hand or pasted.
   const [keepersOpen, setKeepersOpen] = useState(false);
   const [keeperFile, setKeeperFile] = useState("");
@@ -69,33 +76,41 @@ export default function SessionSetup({ onCreated, onSelect }: Props) {
       ),
   });
   const keptCount = keepers.filter((k) => k.on).length;
-  // The server's default: the league's own table when data/ holds it, else a simulation.
+  const league: LeagueSummary | undefined = leagueId ? leagueFolders.data?.find((l) => l.league === leagueId && l.resolved) : undefined;
+  const resolved = league?.resolved ?? null;
+  const teams = resolved ? (league?.num_teams ?? 12) : numTeams;
+  // The server's default: a league's resolved survival; by hand, the home league's own table
+  // when data/ holds it, else a simulation.
   const hasDefaultTable = !!leagueFiles.data?.some((f) => f.file === LEAGUE_SURVIVAL_DEFAULT);
-  const survival: SurvivalMode = survivalChoice ?? (hasDefaultTable ? "league" : "simulate");
+  const survival: SurvivalMode = survivalChoice ?? (resolved ? resolved.survival : hasDefaultTable ? "league" : "simulate");
   // The default table, else one league table is the table; with several the user picks one (an
   // overall-space table listed beside the keeper-adjusted one must never be taken by default).
   const leagueTable =
     leagueFile || (hasDefaultTable ? LEAGUE_SURVIVAL_DEFAULT : leagueFiles.data?.length === 1 ? leagueFiles.data[0].file : "");
-  const needsTable = survival === "league" && !leagueTable;
+  // A league's table is its folder's or its format's: only a draft set up by hand picks one.
+  const pickTable = !resolved && survival === "league";
+  const needsTable = pickTable && !leagueTable;
   // Untouched, the request names no survival: the server resolves it, and says why when the
   // league table cannot serve the draft (too few picks for the teams, say) and it simulates.
-  const survivalChosen = survivalChoice !== null || leagueFile !== "";
+  const survivalChosen = survivalChoice !== null || (!resolved && leagueFile !== "");
+  const curve = curveFile ?? (resolved?.curve === "league" ? LEAGUE_ROSTERS : "");
+  const leagueCurve = objective === "win" && curve === LEAGUE_ROSTERS;
 
   const create = useMutation({
     mutationFn: async () => {
-      const session = await api.createSession({
+      const body: SessionCreateBody = {
         projection_file: projectionFile,
-        num_teams: numTeams,
+        // A league's fields are left out: a field sent, even null, wins over its folder's.
+        ...(league
+          ? { league: league.league }
+          : { num_teams: numTeams, bench, positions_file: positionsFile || null, adp_file: adpFile || null }),
         my_position: position,
         my_team: myTeam,
-        bench,
-        positions_file: positionsFile || null,
-        adp_file: adpFile || null,
         objective,
         sigma_scale: sigmaScale,
         // "league" is the league's own drafted rosters; anything else names a curve file.
-        curve_file: curveFile && curveFile !== LEAGUE_ROSTERS ? curveFile : null,
-        ...(curveFile === LEAGUE_ROSTERS ? { curve: "league" as const } : {}),
+        curve_file: curve && curve !== LEAGUE_ROSTERS ? curve : null,
+        ...(leagueCurve ? { curve: "league" as const } : {}),
         ...(survivalChosen
           ? {
               survival,
@@ -111,20 +126,23 @@ export default function SessionSetup({ onCreated, onSelect }: Props) {
         solve_ahead: solveAhead,
         time_limit: timeLimit,
         keepers: keepersOpen ? keepersIn(keepers, options) : [],
-      });
-      if (!roomId.trim()) return { session, attachError: null };
+      };
+      // The league curve the folder resolved falls back to the simulated one when it cannot be
+      // fit (the draft-day attach's rule); one the user chose fails as it is.
+      const { session, curveNote } = await createWithCurveFallback(api.createSession, body, leagueCurve && curveFile === null);
+      if (!roomId.trim()) return { session, attachError: null, curveNote };
       try {
         await api.attachRoom(session.id, { draft_id: roomId.trim(), slot: position, room_teams: roomTeams });
-        return { session, attachError: null };
+        return { session, attachError: null, curveNote };
       } catch (e) {
-        return { session, attachError: e instanceof Error ? e.message : String(e) };
+        return { session, attachError: e instanceof Error ? e.message : String(e), curveNote };
       }
     },
-    onMutate: () => setUnattached(null),
-    onSuccess: ({ session, attachError }) => {
+    onMutate: () => setMade(null),
+    onSuccess: (result) => {
       queryClient.invalidateQueries({ queryKey: ["sessions"] });
-      if (attachError) setUnattached({ session, error: attachError });
-      else onCreated(session);
+      if (result.attachError || result.curveNote) setMade(result);
+      else onCreated(result.session);
     },
   });
   const files = projections.data ?? [];
@@ -136,6 +154,43 @@ export default function SessionSetup({ onCreated, onSelect }: Props) {
   return (
     <section className="panel setup">
       <h2>NEW DRAFT</h2>
+      {(leagueFolders.data?.length ?? 0) > 0 && (
+        <label>
+          <span className="k">
+            League <span className="muted">(optional)</span>
+            <Info title="league">
+              <b>A Yahoo league in data/leagues/: its folder sets the draft up.</b>
+              <span>The teams, roster and scoring come from its settings.json; ADP, positions and Yahoo's rank from its yahoo_players.json. Survival comes from the league's own table, else its format's table fit from this season's earlier drafts, else a simulation against this board; another league's table never serves it.</span>
+              <span>The league curve is chosen once its format's table has the drafted rosters, as the draft-day attach does; when it cannot be fit the draft goes on with the simulated one and says why.</span>
+            </Info>
+          </span>
+          <select
+            value={league ? leagueId : ""}
+            onChange={(e) => {
+              setLeagueId(e.target.value);
+              // A league's survival and curve are its own: what was picked by hand starts over.
+              setSurvival(null);
+              setLeagueFile("");
+              setCurveFile(null);
+            }}
+          >
+            <option value="">none: set the draft up by hand</option>
+            {[...leagueFolders.data!]
+              .sort((a, b) => (a.draft_time ? Date.parse(a.draft_time) : Infinity) - (b.draft_time ? Date.parse(b.draft_time) : Infinity))
+              .map((l) => (
+                <option key={l.league} value={l.league} disabled={!l.resolved} title={l.error ?? undefined}>
+                  {l.league} · {l.scoring === "points" ? "H2H points" : "H2H categories"} · {draftWhen(l.draft_time, Date.now())}
+                  {l.error ? " (its folder does not read)" : ""}
+                </option>
+              ))}
+          </select>
+        </label>
+      )}
+      {resolved && (
+        <p className="muted" style={{ margin: "-4px 0 0", fontSize: 12 }}>
+          {teams} teams, {resolved.rounds ?? "?"} rounds, {league!.scoring === "points" ? "H2H points: one category, fantasy points by the league's weights" : "H2H categories: the league's categories"}. Survival: {leagueSurvivalText(resolved)}.
+        </p>
+      )}
       <label>
         <span className="k">Projections</span>
         <select value={file || files[0]?.file || ""} onChange={(e) => setFile(e.target.value)}>
@@ -146,54 +201,75 @@ export default function SessionSetup({ onCreated, onSelect }: Props) {
           ))}
         </select>
       </label>
-      <label>
-        <span className="k">Positions from <span className="muted">(optional)</span></span>
-        <select value={positionsFile} onChange={(e) => setPositionsFile(e.target.value)}>
-          <option value="">none, use data/positions.csv if present</option>
-          {files.map((p) => (
-            <option key={p.file} value={p.file}>
-              {p.file}
-            </option>
-          ))}
-        </select>
-      </label>
-      <label>
-        <span className="k">ADP from <span className="muted">(optional, Yahoo replaces it)</span></span>
-        <select value={adpFile} onChange={(e) => setAdpFile(e.target.value)}>
-          <option value="">{hasDefaultAdp ? "data/adp.csv" : "none: rank by projected value"}</option>
-          {(adpFiles.data ?? [])
-            .filter((f) => f.file !== "adp.csv")
-            .map((f) => (
-              <option key={f.file} value={f.file}>
-                {f.file}
-              </option>
-            ))}
-          {files.map((p) => (
-            <option key={p.file} value={p.file}>
-              {p.file}
-            </option>
-          ))}
-        </select>
-      </label>
-      {!adpFile && !hasDefaultAdp && (
-        <p className="warn">
-          No ADP file in data/. The board's ADP will be Basketball Monster's value rank, which puts specialists far later than real drafts do.
-          Save one as data/adp.csv with columns player,adp (a FantasyPros export works too).
-        </p>
+      {resolved ? (
+        resolved.adp_file ? (
+          <p className="muted" style={{ margin: 0, fontSize: 12 }}>
+            ADP, positions and rank: {resolved.adp_file}
+          </p>
+        ) : (
+          <p className="warn">
+            League {league!.league} has no yahoo_players.json: the board's ADP will be Basketball Monster's value rank. Fetch it with scripts/draft_day.py refresh {league!.league}.
+          </p>
+        )
+      ) : (
+        <>
+          <label>
+            <span className="k">Positions from <span className="muted">(optional)</span></span>
+            <select value={positionsFile} onChange={(e) => setPositionsFile(e.target.value)}>
+              <option value="">none, use data/positions.csv if present</option>
+              {files.map((p) => (
+                <option key={p.file} value={p.file}>
+                  {p.file}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            <span className="k">ADP from <span className="muted">(optional, Yahoo replaces it)</span></span>
+            <select value={adpFile} onChange={(e) => setAdpFile(e.target.value)}>
+              <option value="">{hasDefaultAdp ? "data/adp.csv" : "none: rank by projected value"}</option>
+              {(adpFiles.data ?? [])
+                .filter((f) => f.file !== "adp.csv")
+                .map((f) => (
+                  <option key={f.file} value={f.file}>
+                    {f.file}
+                  </option>
+                ))}
+              {files.map((p) => (
+                <option key={p.file} value={p.file}>
+                  {p.file}
+                </option>
+              ))}
+            </select>
+          </label>
+          {!adpFile && !hasDefaultAdp && (
+            <p className="warn">
+              No ADP file in data/. The board's ADP will be Basketball Monster's value rank, which puts specialists far later than real drafts do.
+              Save one as data/adp.csv with columns player,adp (a FantasyPros export works too).
+            </p>
+          )}
+        </>
       )}
       <div className="row">
         <label>
           <span className="k">Teams</span>
-          <input type="number" min={2} max={20} value={numTeams} onChange={(e) => setNumTeams(+e.target.value)} />
+          <input type="number" min={2} max={20} value={teams} disabled={!!resolved} title={resolved ? "from the league's settings" : undefined} onChange={(e) => setNumTeams(+e.target.value)} />
         </label>
         <label>
           <span className="k">My pick</span>
-          <input type="number" min={1} max={numTeams} value={position} onChange={(e) => setPosition(+e.target.value)} />
+          <input type="number" min={1} max={teams} value={position} onChange={(e) => setPosition(+e.target.value)} />
         </label>
-        <label>
-          <span className="k">Bench</span>
-          <input type="number" min={0} max={6} value={bench} onChange={(e) => setBench(+e.target.value)} />
-        </label>
+        {resolved ? (
+          <label title="from the league's roster">
+            <span className="k">Rounds</span>
+            <input type="number" value={resolved.rounds ?? ""} disabled />
+          </label>
+        ) : (
+          <label>
+            <span className="k">Bench</span>
+            <input type="number" min={0} max={6} value={bench} onChange={(e) => setBench(+e.target.value)} />
+          </label>
+        )}
         <label style={{ flexGrow: 1 }}>
           <span className="k">My team name</span>
           <input value={myTeam} onChange={(e) => setMyTeam(e.target.value)} />
@@ -231,7 +307,7 @@ export default function SessionSetup({ onCreated, onSelect }: Props) {
       />
       {roomId.trim() && roomTeams !== null && (
         <p className="muted" style={{ margin: "-4px 0 0", fontSize: 12 }}>
-          Room {roomId.trim()} shows {roomTeams} teams{roomTeams !== numTeams ? `, not ${numTeams}: the attach will be refused` : ""}.
+          Room {roomId.trim()} shows {roomTeams} teams{roomTeams !== teams ? `, not ${teams}: the attach will be refused` : ""}.
         </p>
       )}
 
@@ -271,10 +347,10 @@ export default function SessionSetup({ onCreated, onSelect }: Props) {
           <KeeperEditor
             rows={keepers}
             onChange={setKeepers}
-            numTeams={numTeams}
+            numTeams={teams}
             myPosition={position}
-            // The default Yahoo slots: ten starters and the bench.
-            rounds={10 + bench}
+            // The league's roster, else the default Yahoo slots: ten starters and the bench.
+            rounds={resolved?.rounds ?? 10 + bench}
             options={options}
             errorKey={erroredRow(keepers, create.error?.message)}
           />
@@ -314,9 +390,16 @@ export default function SessionSetup({ onCreated, onSelect }: Props) {
               <span>Sources: the built-in fit from 3000 simulated drafts; a refit from this session's own league simulation (choose "simulate this league" below); this league's own drafted rosters, each scored on its season's projections (the archive's picks.csv beside the league's survival table, with the standings in z units as a check); or a JSON file in data/. Spread × is applied on top.</span>
             </Info>
           </span>
-          <select value={curveFile} onChange={(e) => setCurveFile(e.target.value)}>
-            <option value="">simulated league (3000 drafts, BBM 2026-09-21){survival === "simulate" ? ", refitted from the simulation below" : ""}</option>
-            <option value={LEAGUE_ROSTERS}>this league's drafted rosters (archive, on these projections)</option>
+          <select value={curve} onChange={(e) => setCurveFile(e.target.value)}>
+            <option value="">
+              {league?.scoring === "points" ? "flat default for fantasy points" : "simulated league (3000 drafts, BBM 2026-09-21)"}
+              {survival === "simulate" ? ", refitted from the simulation below" : ""}
+            </option>
+            <option value={LEAGUE_ROSTERS}>
+              {resolved?.curve === "league" && resolved.curve_drafts != null
+                ? `the archive's drafted rosters (${blendLabel(resolved.curve_drafts)}, toward a simulated run; the league's default)`
+                : "this league's drafted rosters (archive, on these projections)"}
+            </option>
             {(curveFiles.data ?? []).map((f) => (
               <option key={f.file} value={f.file}>
                 {f.file}
@@ -340,14 +423,18 @@ export default function SessionSetup({ onCreated, onSelect }: Props) {
             <span>With keepers, the ADP formula and the league's table count only the market: a player's ADP drops by the keepers ranked ahead of him, and keeper slots are not picks.</span>
           </Info>
         </span>
-        <select value={survival} onChange={(e) => setSurvival(e.target.value as SurvivalMode)}>
+        <select
+          value={resolved ? (survivalChoice ?? "") : survival}
+          onChange={(e) => setSurvival(e.target.value ? (e.target.value as SurvivalMode) : null)}
+        >
+          {resolved && <option value="">the league's: {leagueSurvivalText(resolved)}</option>}
           <option value="none">ADP formula (instant)</option>
           <option value="simulate">simulated drafts against this board</option>
-          {!!leagueFiles.data?.length && <option value="league">this league's drafts by ADP (keeper-adjusted), normal model under ADP {LEAGUE_FROM_ADP}</option>}
+          {!resolved && !!leagueFiles.data?.length && <option value="league">this league's drafts by ADP (keeper-adjusted), normal model under ADP {LEAGUE_FROM_ADP}</option>}
           <option value="file" disabled={!survivalFiles.data?.length}>saved survival table in data/</option>
         </select>
       </label>
-      {survival === "league" && (
+      {pickTable && (
         <label>
           <span className="k">League table</span>
           <select value={leagueTable} onChange={(e) => setLeagueFile(e.target.value)} className={needsTable ? "bad" : ""}>
@@ -402,17 +489,26 @@ export default function SessionSetup({ onCreated, onSelect }: Props) {
         {create.isPending ? "Loading projections…" : "Start draft"}
       </button>
       {create.error && <p className="error">{String(create.error.message)}</p>}
-      {unattached && (
+      {made && (
         <div className="banner">
-          <p>
-            Draft {unattached.session.id} was made, but room {roomId.trim()} did not attach: {unattached.error}
-          </p>
-          <p className="muted" style={{ marginTop: 6 }}>
-            Open the draft and attach from the sync card (8), or start over with other settings.
-          </p>
+          {made.curveNote && (
+            <p>
+              Draft {made.session.id} was made on the simulated curve: the league curve could not be fit ({made.curveNote}).
+            </p>
+          )}
+          {made.attachError && (
+            <p>
+              Draft {made.session.id} was made, but room {roomId.trim()} did not attach: {made.attachError}
+            </p>
+          )}
+          {made.attachError && (
+            <p className="muted" style={{ marginTop: 6 }}>
+              Open the draft and attach from the sync card (8), or start over with other settings.
+            </p>
+          )}
           <div className="row" style={{ justifyContent: "flex-start", marginTop: 8 }}>
-            <button className="small" onClick={() => onCreated(unattached.session)}>
-              Open the draft anyway
+            <button className="small" onClick={() => onCreated(made.session)}>
+              {made.attachError ? "Open the draft anyway" : "Open the draft"}
             </button>
           </div>
         </div>

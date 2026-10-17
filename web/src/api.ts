@@ -494,12 +494,14 @@ export interface SolveParams {
 
 export interface SessionCreateBody {
   projection_file: string;
-  num_teams: number;
+  /** A league folder (#67): the fields left out come from it; a field sent, even null, wins. */
+  league?: string;
+  num_teams?: number;
   my_position: number;
   my_team: string;
-  bench: number;
-  positions_file: string | null;
-  adp_file: string | null;
+  bench?: number;
+  positions_file?: string | null;
+  adp_file?: string | null;
   objective: Objective;
   sigma_scale: number;
   curve_file: string | null;
@@ -708,6 +710,27 @@ export interface LeagueSummary {
   players_file: boolean;
   survival_file: boolean;
   armed: { armed: true; at: string; by: string } | null;
+  /** What a session for the league resolves to (#74); null, with the error, when its folder's
+   * roster does not read. */
+  resolved: LeagueResolved | null;
+  error: string | null;
+}
+
+/** A league session's defaults from its folder and its format's archive (`leagues.resolved`). */
+export interface LeagueResolved {
+  survival: "league" | "simulate";
+  /** The table under data/: the league's own, or its format's shared one. */
+  survival_file: string | null;
+  /** Why it simulates although its format has an archive. */
+  note: string | null;
+  /** The shared table's blend toward the ADP formula; null for the league's own table. */
+  blend: SurvivalBlend | null;
+  /** The curve the draft-day attach asks for: league once the shared table has rosters. */
+  curve: CurveChoice;
+  curve_drafts: number | null;
+  adp_file: string | null;
+  positions_file: string | null;
+  rounds: number | null;
 }
 
 export const api = {
