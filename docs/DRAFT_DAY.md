@@ -244,8 +244,9 @@ Each finished draft is evidence for the next one in its format. The archive is
   `--min-drafts`, or `"refit": {"min_drafts": N}`. The curve comes from those drafts' rosters on the session's
   projections. Below that, the simulated curve stands. If the league curve cannot be fit at the attach, the run
   prints an ALERT and attaches with the simulated curve.
-- **Sunday's order.** 238174 (Saturday) is the points archive's first draft, so it feeds 15953, which feeds
-  208649. In categories, 252098 starts the archive, so it feeds 31153, which feeds 224319 and then 230585.
+- **This weekend's order.** In points, 238174 (Saturday 11:00) is the archive's first draft, then 15953 and
+  208649. In categories, 251146 (Saturday 20:00) starts the archive, then 252098, 31153, 224319 and 230585.
+  Each draft feeds the ones after it.
 
 ## Projections (#75)
 
