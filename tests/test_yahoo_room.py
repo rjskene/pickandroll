@@ -18,7 +18,7 @@ import pandas as pd
 import pytest
 from fastapi.testclient import TestClient
 
-from pickandroll.api import SessionStore, create_app
+from pickandroll.api import SessionStore, create_app, yahoo_room
 from pickandroll.cli import main as cli_main
 from pickandroll.fidelity import analyze, guardrail_pass, markdown
 from pickandroll.fidelity.replay import load_fixture, replay, timeline
@@ -507,6 +507,42 @@ def test_room_survives_an_api_restart(league):
             json={"picks": [{"overall": 61, "yahoo_player_id": picks[60].yahoo_player_id}]},
         )
         assert r.status_code == 200 and r.json()["synced_through"] == 61
+
+
+def test_a_finished_draft_is_not_rebuilt_from_its_log(league):
+    """After a restart the extension keeps calling from a finished draft page: no room call
+    rebuilds a draft whose log holds every pick, an attach that would resume it is refused, and
+    an explicit replay (draft_day.py finish) still resumes it."""
+    directory, picks = league
+    with app_for(directory) as c:
+        attach(c)
+        post_picks(c, "d1", picks)
+        assert c.get("/rooms/d1").json()["complete"] is True
+    with app_for(directory) as c:
+        r = c.get("/rooms/d1")
+        assert r.status_code == 404 and "its draft is complete (156 picks" in r.json()["detail"]
+        r = c.post("/rooms/d1/events", json={"events": [{"type": "heartbeat"}]})
+        assert r.status_code == 404
+        r = c.post("/rooms", json={"draft_id": "d1"})
+        assert r.status_code == 409 and r.json()["detail"].startswith("draft complete")
+        assert c.get("/rooms").json() == []
+        room = c.post("/rooms", json={"draft_id": "d1", "replay": True})
+        assert room.status_code == 201, room.text
+        assert room.json()["resumed"] is True and room.json()["picks_applied"] == 156
+        assert [r["draft_id"] for r in c.get("/rooms").json()] == ["d1"]
+    # An attach that brings its own session replays the finished log as before.
+    with app_for(directory) as c:
+        assert attach(c)["picks_applied"] == 156
+
+
+def test_logged_complete_reads_the_ledger_against_the_attach_record():
+    record = {"type": "attach", "num_teams": 2, "rounds": 2}
+    picks = [{"type": "room_pick", "overall": k} for k in (1, 2, 3)]
+    assert yahoo_room.logged_complete([]) is None
+    assert yahoo_room.logged_complete([record, *picks]) is None
+    done = [record, *picks, {"type": "room_pick", "overall": 4}, {"type": "detach"}]
+    assert yahoo_room.logged_complete(done) == 4
+    assert yahoo_room.logged_complete([{"type": "attach"}, *picks]) is None
 
 
 def test_room_attach_defaults_to_the_league_table_and_keeps_it(league):

@@ -85,7 +85,8 @@ already up, they are reused. Then check them:
 .venv/bin/python scripts/draft_day.py servers
 ```
 
-- Exit 0 means both answer, and the API has the league endpoints (#67). It also lists any live rooms.
+- Exit 0 means both answer, and the API has the league endpoints (#67). It also lists any live rooms. A complete
+  room the API still holds is listed apart, as not live: it does not stop a restart.
 - Exit 4 with "predates #67" means the API on :8000 runs older code. Restart it on main only if `servers`
   listed no live room: `preview_stop` it if this session started it, otherwise stop that one process by its PID
   (`lsof -ti tcp:8000 -sTCP:LISTEN`), then `preview_start` it again.
@@ -159,6 +160,9 @@ real league room (the team-id fix, #54). Write it in the report.
 - `ALERT the room does not answer`: the API is down. Start it again (`preview_start pickandroll-api-draft`),
   then run `draft_day.py attach <league>`, which rebuilds the room from its log with the mode it had. Then run
   `draft_day.py monitor <league>` in the background, and `draft_day.py finish <league>` when it exits 0.
+- A draft whose log already holds every pick is not rebuilt after a restart. The draft tab's calls get "no
+  room" and the tab reads not attached. `attach` and `monitor` say it is complete, and `finish` replays it from
+  its log to save it.
 
 ### 5. Report
 

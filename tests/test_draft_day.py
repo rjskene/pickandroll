@@ -86,7 +86,12 @@ def test_this_runs_log_rebuilds_the_room(runbook, monkeypatch):
         calls.append((method, path, body))
         return [] if method == "GET" else {"mode": "autopilot", "picks_applied": 40}
 
+    def call(method, url, body=None, timeout=30.0):
+        calls.append((method, url.removeprefix(runbook.API), body))
+        return 201, {"mode": "autopilot", "picks_applied": 40}
+
     monkeypatch.setattr(runbook, "api", api)
+    monkeypatch.setattr(runbook, "call", call)
     assert runbook.attach(LEAGUE, None) == runbook.OK
     assert calls == [("GET", "/rooms", None), ("POST", "/rooms", {"draft_id": LEAGUE})]
 
@@ -103,3 +108,61 @@ def test_the_guard_reads_the_first_attach_against_the_draft_time(runbook):
     with pytest.raises(runbook.Stop, match="6 h before this draft"):
         runbook.check_log(LEAGUE, mine)
     runbook.check_log(LEAGUE, {**mine, "draft": {}})  # no draft time: nothing to judge
+
+
+# --------------------------------------------------------------------------- a finished room
+def test_servers_does_not_count_a_complete_room_as_live(runbook, monkeypatch, capsys):
+    monkeypatch.setattr(runbook, "call", lambda *a, **k: (200, {}))
+    rooms = [{"draft_id": LEAGUE, "complete": True}, {"draft_id": "15953", "complete": False}]
+    monkeypatch.setattr(runbook, "api", lambda *a, **k: rooms)
+    assert runbook.servers() == runbook.OK
+    out = capsys.readouterr().out
+    assert "live rooms on the API: 15953\n" in out
+    assert f"complete rooms on the API (not live): {LEAGUE}" in out
+    monkeypatch.setattr(runbook, "api", lambda *a, **k: rooms[:1])
+    runbook.servers()
+    assert "live rooms" not in capsys.readouterr().out
+
+
+def test_the_attach_says_a_complete_room_is_complete(runbook, monkeypatch, capsys):
+    write_log(runbook, "2026-10-17T17:30:00Z")
+    monkeypatch.setattr(runbook, "api", lambda *a, **k: [])
+    detail = {"detail": f"draft complete: room {LEAGUE}'s log holds all 156 picks; not resumed"}
+    monkeypatch.setattr(runbook, "call", lambda *a, **k: (409, detail))
+    assert runbook.attach(LEAGUE, None) == runbook.OK
+    assert f"room {LEAGUE} complete: its log holds every pick" in capsys.readouterr().out
+    monkeypatch.setattr(runbook, "call", lambda *a, **k: (500, {"detail": "boom"}))
+    with pytest.raises(runbook.Stop, match="POST /rooms: 500 boom"):
+        runbook.attach(LEAGUE, None)
+
+
+def test_the_monitor_ends_on_a_room_complete_before_a_restart(runbook, monkeypatch):
+    detail = {"detail": f"no room {LEAGUE}: its draft is complete (156 picks in its log)"}
+    monkeypatch.setattr(runbook, "keep_awake", lambda: None)
+    monkeypatch.setattr(runbook, "call", lambda *a, **k: (404, detail))
+    assert runbook.monitor(LEAGUE, 180, 1200, 3600) == runbook.OK
+
+
+def test_finish_replays_a_complete_room_after_a_restart(runbook, monkeypatch):
+    write_log(runbook, "2026-10-17T17:30:00Z")
+    room = {"session_id": "s1", "mode": "autopilot", "picks_applied": 156, "num_teams": 12}
+    room |= {"rounds": 13, "complete": True}
+    calls = []
+
+    def call(method, url, body=None, timeout=30.0):
+        calls.append((method, url.removeprefix(runbook.API), body))
+        if (method, url) == ("GET", f"{runbook.API}/rooms/{LEAGUE}") and len(calls) == 1:
+            return 404, {"detail": f"no room {LEAGUE}: its draft is complete (156 picks)"}
+        if method == "POST":
+            return 201, room
+        return 200, room
+
+    monkeypatch.setattr(runbook, "call", call)
+    monkeypatch.setattr(runbook, "hooks", lambda name: [])
+    assert runbook.finish(LEAGUE) == runbook.OK
+    assert calls[:2] == [
+        ("GET", f"/rooms/{LEAGUE}", None),
+        ("POST", "/rooms", {"draft_id": LEAGUE, "replay": True}),
+    ]
+    saved = list((runbook.DATA / "fidelity").glob(f"{LEAGUE}_*_session_s1"))
+    assert len(saved) == 1 and (saved[0] / "ledger.jsonl").exists()
