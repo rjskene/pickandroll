@@ -333,7 +333,9 @@ def refit(runbook: Any, league: str, args: argparse.Namespace | None = None) -> 
     other = [d for d in drafts if d["format"] != scoring]
     total = sum(d["weight"] for d in drafts)
     names = ", ".join(f"{d['league']} {d['date']}" for d in same) or "none"
-    line = f"archive {rel(runbook, shared)}: {drafts_text(len(same))} of {teams} x {rounds} ({names})"
+    line = (
+        f"archive {rel(runbook, shared)}: {drafts_text(len(same))} of {teams} x {rounds} ({names})"
+    )
     if other:
         line += (
             f"; {other_format(scoring)}: {drafts_text(len(other))} at x{cross:g} "
@@ -363,7 +365,9 @@ def refit(runbook: Any, league: str, args: argparse.Namespace | None = None) -> 
             weights=rows["weight"].to_numpy(float),
         )
         near = float(counts[LEAGUE_FROM_ADP])
-        reason = f"{drafts_text(total)}, {near:g} players near ADP {LEAGUE_FROM_ADP}, under {min_count}"
+        reason = (
+            f"{drafts_text(total)}, {near:g} players near ADP {LEAGUE_FROM_ADP}, under {min_count}"
+        )
         if raw is not None:
             table = blend_with_formula(raw, total)
     blend = {

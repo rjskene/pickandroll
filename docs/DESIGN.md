@@ -224,24 +224,46 @@ earlier real drafts in that format (#77):
 
 - **The archive.** `scripts/draft_day.py finish` archives each finished room: `picks.csv` holds every
   pick, and `adp.csv` holds Yahoo's ADP and rank list from the league's players file at draft time.
-- **The fit.** `draft_day.py refit`, run before every attach, fits the table from the drafts of the
-  league's size with `availability.league.fit_survival_table`. The fit uses the archive's kernel
-  (bandwidth 5 + 0.08 ADP). These leagues keep no keepers, so the overall pick is the market pick.
-- **Two minimums.** The archive gives no table until it holds `MIN_DRAFTS` (3) drafts of the
-  size. One draft gives one player per ADP value, and Yahoo's ADP is already the market these
-  leagues draft by, so a thin table would be worse than the formula. Below that, league sessions
-  simulate, and their survival `note` names the archive (`archive: 1 draft, below the minimum
-  of 3`). Past the draft minimum, rows answer from `LEAGUE_FROM_ADP` only while at least
-  `MIN_COUNT` (20) observed players lie within their bandwidth. The last such row is the table's
-  `max_adp`, and the formula answers past it.
+- **The fit.** `draft_day.py refit`, run before every attach, fits the table with
+  `availability.league.fit_survival_table` from the archived drafts of the league's size in both
+  formats. The league's own format counts at weight 1 and the other at `cross_format_weight`
+  (`CROSS_FORMAT_WEIGHT`, 0.5; `"refit": {"cross_format_weight": W}` in `settings.json`), and
+  every pick and every undrafted player of a draft counts at its draft's weight. The fit uses the
+  archive's kernel (bandwidth 5 + 0.08 ADP). These leagues keep no keepers, so the overall pick is
+  the market pick.
+- **The blend.** `availability.league.blend_with_formula` blends the fit toward the ADP formula
+  from the first draft. With `D` the sum of the drafts' weights, each row is `D/(D+1)` of the
+  drafts plus `1/(D+1)` of the formula, and the undrafted share is `D/(D+1)` of the drafts'. The
+  prior is worth one draft, and the prior is the ADP model the simulation drafts with
+  (`spread_base + spread_growth * ADP`). One draft is half the formula; three are a quarter.
+  Mixing two curves that fall with the pick keeps every row monotone, and no row falls below the
+  blended undrafted share.
+- **The boundary.** A row carries the drafts from `LEAGUE_FROM_ADP` only while at least `MIN_COUNT`
+  (20) weighted players lie within its bandwidth. The last such row is the table's `max_adp`, and
+  the formula answers alone past it. With no draft of the size, or a first row already thin (half
+  a draft, from the other format alone), there is no table: league sessions simulate, and their
+  survival `note` names the archive (`archive: no drafts of 12 x 13 yet`, or `archive: 0.5
+  drafts, N players near ADP 90, under 20`).
 - **The session.** It names the table by its path in its survival `source`
-  (`league:leagues/_shared/points/survival_by_adp.csv`). Its survival `fit` carries the refit's
-  report: the drafts, the minimum and the boundary. The UI already words `max_adp` as "the normal
-  model ... past ADP N".
-- **The curve.** For a categories league the attach asks for `curve: league` under the same draft
-  minimum. The curve is fit from the `picks.csv` beside that table, with each
-  league's draft fitted on its own (a `league_id` column groups them). Below that number the
-  simulated curve stands. A curve that cannot be fit at the attach falls back to the simulated one.
+  (`league:leagues/_shared/points/survival_by_adp.csv`), and `availability_source` stays
+  `league`. Its survival `fit` carries the refit's report: the drafts with their format and
+  weight, the boundary and the blend. `survival.blend` is that blend, `{drafts, same_format,
+  other_format, weight}`, or null for a raw table (a league folder's own, or `yahoo_history`'s).
+  The recommendation carries it as `availability_blend`, and the UI words the odds' source as
+  "the league's drafts (blend: 1.5 drafts)". The UI already words `max_adp` as "the normal model
+  ... past ADP N".
+- **The curve.** Once its format has a table, the attach of a league in either format asks for
+  `curve: league`. The curve is fit from the rosters of both formats' archives on the session's
+  projections, at the same weights, each league's draft on its own (a `league_id` column groups
+  them). A points roster is scored on the nine categories for a categories session, and a
+  categories roster on fpts for a points one. The fit is blended toward a prior by the same
+  `D/(D+1)`, and the prior curve is today's simulated run: a session on a league table with
+  `fit_curve` (the default) runs the usual background simulation on today's projections for its
+  curve alone. It keeps that curve and never installs the run's survival table
+  (`survival.curve_run` reports the run; a `curve` event says it landed). Until it lands, the
+  static simulated curve (categories) or the flat curve (fpts) stands in as the prior. Without
+  `curve: league`, the run's curve is the session's curve, as under `survival: simulate`. A
+  curve that cannot be fit at the attach falls back to the simulated one.
 - **No bias.** The shared folder holds no `adp_bias.json`, so these sessions run the formula unshifted.
 
 `availability.bias.AdpBias` (#64) is the league's mean shift of the formula. The league runs
@@ -316,8 +338,10 @@ API surface: `POST /sessions` (projection, positions and ADP files, league shape
 `sigma_scale`, `curve_file`, `curve` simulated/league (the league's drafted rosters, each on its season's
 projections, from the archive's `picks.csv` beside the league table, #65, or the format's shared archive,
 #77; the session reports `curve_fit`: the seasons or drafts fitted and the standings' sigma in z units as
-the check), `survival` none/simulate/file/league
-(left out: the league table, else a simulation), `solve_ahead`, `time_limit`),
+the check, and the blend toward its prior), `survival` none/simulate/file/league
+(left out: the league table, else a simulation), `fit_curve` (the simulation's curve: under
+`survival: simulate` from its own run, beside a league table from a run for the curve alone, #77),
+`solve_ahead`, `time_limit`),
 `/files?kind=survival|curve|adp` (what data/ holds), `/board` (with a `cost` per player: the
 exact re-solve where the player was a priced candidate, flagged `cost_exact`, else the
 first-order estimate), `/picks`, `/sync`, `/autopick`, `POST /recommend` (synchronous),

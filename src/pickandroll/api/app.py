@@ -2186,7 +2186,9 @@ def _league_curve(
     if folder.parent.name == leagues.SHARED:
         report = _survival_fit(folder / leagues.SURVIVAL) or {}
         weight = float(report.get("cross_format_weight", leagues.CROSS_FORMAT_WEIGHT))
-        others = [(f, weight) for f in sorted(folder.parent.iterdir()) if f.is_dir() and f != folder]
+        others = [
+            (f, weight) for f in sorted(folder.parent.iterdir()) if f.is_dir() and f != folder
+        ]
     try:
         return league_curve.fit_league_curve(
             folder,
@@ -2504,9 +2506,7 @@ async def _build_curve(session: Session, sims: int, drafters: tuple[Strategy, ..
         run.update(
             status="ready", done=sims, source=result.curve.source, seconds=round(result.seconds, 1)
         )
-    session.publish(
-        "curve", {"status": "ready", "sims": sims, "seconds": round(result.seconds, 1)}
-    )
+    session.publish("curve", {"status": "ready", "sims": sims, "seconds": round(result.seconds, 1)})
 
 
 # --------------------------------------------------------------------------- helpers
