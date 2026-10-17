@@ -1,0 +1,191 @@
+{
+ "timestamp": "2026-10-17T21:00:00Z",
+ "status": "success",
+ "injuries": [
+  {
+   "id": "1",
+   "displayName": "Team AAA",
+   "injuries": [
+    {
+     "id": "-101",
+     "status": "Out",
+     "date": "2026-10-17T18:00Z",
+     "athlete": {
+      "firstName": "Ari",
+      "lastName": "Ash",
+      "displayName": "Ari Ash",
+      "links": [
+       {
+        "rel": [
+         "playercard"
+        ],
+        "href": "https://www.espn.com/nba/player/_/id/101/x"
+       }
+      ],
+      "team": {
+       "abbreviation": "AAA",
+       "displayName": "Team AAA"
+      }
+     },
+     "shortComment": "Synthetic comment.",
+     "type": {
+      "description": "out"
+     },
+     "details": {
+      "type": "Ankle",
+      "returnDate": "2026-11-10"
+     }
+    },
+    {
+     "id": "-102",
+     "status": "Day-To-Day",
+     "date": "2026-10-16T18:00Z",
+     "athlete": {
+      "firstName": "Bo",
+      "lastName": "Birch",
+      "displayName": "Bo Birch",
+      "links": [
+       {
+        "rel": [
+         "playercard"
+        ],
+        "href": "https://www.espn.com/nba/player/_/id/102/x"
+       }
+      ],
+      "team": {
+       "abbreviation": "AAA",
+       "displayName": "Team AAA"
+      }
+     },
+     "shortComment": "Synthetic comment.",
+     "type": {
+      "description": "day-to-day"
+     },
+     "details": {
+      "type": "Knee"
+     }
+    },
+    {
+     "id": "-103",
+     "status": "Out",
+     "date": "2026-10-17T19:30Z",
+     "athlete": {
+      "firstName": "Cal",
+      "lastName": "Cedar",
+      "displayName": "Cal Cedar",
+      "links": [
+       {
+        "rel": [
+         "playercard"
+        ],
+        "href": "https://www.espn.com/nba/player/_/id/103/x"
+       }
+      ],
+      "team": {
+       "abbreviation": "AAA",
+       "displayName": "Team AAA"
+      }
+     },
+     "shortComment": "Synthetic comment.",
+     "type": {
+      "description": "out"
+     },
+     "details": {
+      "type": "Back"
+     }
+    }
+   ]
+  },
+  {
+   "id": "2",
+   "displayName": "Team BBB",
+   "injuries": [
+    {
+     "id": "-104",
+     "status": "Out",
+     "date": "2026-10-17T20:00Z",
+     "athlete": {
+      "firstName": "Zed",
+      "lastName": "Nobody",
+      "displayName": "Zed Nobody",
+      "links": [
+       {
+        "rel": [
+         "playercard"
+        ],
+        "href": "https://www.espn.com/nba/player/_/id/104/x"
+       }
+      ],
+      "team": {
+       "abbreviation": "BBB",
+       "displayName": "Team BBB"
+      }
+     },
+     "shortComment": "Synthetic comment.",
+     "type": {
+      "description": "out"
+     },
+     "details": {
+      "type": "Hand"
+     }
+    },
+    {
+     "id": "-105",
+     "status": "Day-To-Day",
+     "date": "2026-10-17T17:00Z",
+     "athlete": {
+      "firstName": "Dax",
+      "lastName": "Dune Jr.",
+      "displayName": "Dax Dune Jr.",
+      "links": [
+       {
+        "rel": [
+         "playercard"
+        ],
+        "href": "https://www.espn.com/nba/player/_/id/105/x"
+       }
+      ],
+      "team": {
+       "abbreviation": "BBB",
+       "displayName": "Team BBB"
+      }
+     },
+     "shortComment": "Synthetic comment.",
+     "type": {
+      "description": "day-to-day"
+     }
+    },
+    {
+     "id": "-109",
+     "status": "Out",
+     "date": "2026-10-17T16:00Z",
+     "athlete": {
+      "firstName": "Ivan",
+      "lastName": "Iris",
+      "displayName": "Ivan Iris",
+      "links": [
+       {
+        "rel": [
+         "playercard"
+        ],
+        "href": "https://www.espn.com/nba/player/_/id/109/x"
+       }
+      ],
+      "team": {
+       "abbreviation": "BBB",
+       "displayName": "Team BBB"
+      }
+     },
+     "shortComment": "Synthetic comment.",
+     "type": {
+      "description": "out"
+     },
+     "details": {
+      "type": "Foot",
+      "returnDate": "2026-12-01"
+     }
+    }
+   ]
+  }
+ ]
+}

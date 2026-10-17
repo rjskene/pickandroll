@@ -171,6 +171,11 @@ not re-deriving rankings from headlines.
 3. **Games-played override.** Projections are per game times games, so the honest on-the-fly
    adjustment is a per-player games haircut from the UI ("out four weeks" means about fifteen
    fewer games); z and the plan update at once. This is the manual counterpart to the alert.
+
+   Items 2 and 3 shipped for the cash leagues as #76 (2026-10-17): a pre-draft sweep,
+   `draft_day.py news <league>`, rather than a poll during the draft, and the haircut by
+   `PATCH /sessions/{id}/adjustments`, the board's "out N weeks" and a league's
+   `adjustments.json` (docs/DRAFT_DAY.md, "News sweep and games haircuts").
 4. **Eligibility check.** Flag players whose Yahoo position eligibility differs from the BBM
    export's coarse G/F/C, since slot feasibility depends on it.
 

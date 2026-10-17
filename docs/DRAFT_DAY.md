@@ -60,6 +60,21 @@ whether the user armed it, and the newest projection file with its export time.
 - "Yahoo says the draft is over": go to "Report" and say so.
 - A move of under six hours: `--accept-move` writes Yahoo's time into `settings.json`, and the run below waits
   for it.
+- `adjustments.json: N games haircuts applied at attach (...)`: the user prepared haircuts for this league (see
+  "News sweep and games haircuts"). An `ALERT adjustments.json` line names an entry the attach will skip; the
+  attach goes ahead without it. Say so in the report.
+
+Then sweep the news and post the block on the league's issue (#67 for the cash leagues):
+
+```
+.venv/bin/python scripts/draft_day.py news <league>
+gh issue comment 67 --repo rjskene/pickandroll --body-file data/draft_day/<league>/news_<stamp>.md
+```
+
+The command prints the file it saved. The block lists the injury news newer than the projection file for the
+players the plan may take (see "News sweep and games haircuts"). The session posts it and changes nothing: a
+haircut is the user's call. An `ALERT news` line means a page did not read; the block says which, and the sweep
+still runs on the other. Exit 1 means neither page read: post that one line instead.
 
 ### 2. Servers and the run
 
@@ -299,6 +314,68 @@ logs in to that profile once, in a headed window: `.venv/bin/python scripts/bbm_
   That export is the page's Excel file (`.xls`), the layout the session's other loader reads. It is not the CSV
   the user downloads.
 
+## News sweep and games haircuts (#76)
+
+Basketball Monster folds news into its projections within hours. The sweep covers the gap between this morning's
+export and the draft, and the haircut is how the user acts on what it finds.
+
+### The sweep
+
+```
+.venv/bin/python scripts/draft_day.py news <league>                  # read both pages now
+.venv/bin/python scripts/draft_day.py news <league> --news-from DIR  # saved pages instead
+```
+
+- **What it reads.** Two public pages, without signing in: ESPN's NBA injuries page, through the JSON it is
+  built from, and Rotowire's latest NBA headlines. `--news-from DIR` reads `espn_injuries.json` and
+  `rotowire_news.html` from DIR instead.
+- **Who it lists.** Every player among the top 200 by projected value on the league's own scoring (`--news-top N`
+  for another count) whose news is newer than the projection file's export time. A Rotowire headline has a day,
+  not a time, so one dated the export's day counts as newer.
+- **What it prints.** A markdown block, newest first: name, status, date and source. ESPN's status carries the
+  injury and the estimated return where ESPN gives them. There are no player stats: a headline that reads like a
+  game line is printed as "game line (not shown)", and the block has no projection numbers or ranks. The block is
+  also saved as `data/draft_day/<league>/news_<stamp>.md`.
+- **Names.** Names are matched to the projections the way the room matches Yahoo's, through
+  `data/aliases.json`. A name nothing matches is listed under the table, not dropped. If it is a projected player
+  under another name, pin it there: the source's key (`espn:<id>`, `rotowire:<id>`) or the name, to the
+  projection id.
+- A headline is not a projection. The sweep suggests nothing; the user decides what, if anything, to cut.
+
+### The haircut
+
+A haircut scales one player's projected totals to the games he is now expected to play. Projections are per
+game times games, so every counting stat, the makes and attempts, the minutes and the games are scaled together;
+his per-game line and his percentages stay as projected. The z-scores are recomputed over the whole pool and the
+plan solves again. The pick log is never touched.
+
+Each entry names a player, by name or projection id, and either `games_out` (the games he misses) or
+`games_fraction` (the share of his projected games he plays). "Out about four weeks" is about fifteen games out
+(3.75 a week). `note` is optional free text.
+
+- **Before the draft:** write `data/leagues/<id>/adjustments.json`, a list of entries. It is applied when the
+  league's session is made, at the room's attach. `status` checks it against the newest projections. An entry
+  that does not read or match is skipped with its reason, never stopping the attach, and the room view lists the
+  skipped ones.
+
+  ```json
+  [
+    {"player": "First Last", "games_out": 15, "note": "out 4 weeks"},
+    {"player": "Other Name", "games_fraction": 0.8}
+  ]
+  ```
+
+- **During the draft:** the board's **Out** column sets "out N weeks" on a row (N × 3.75 games, rounded). "—"
+  clears it. The GP cell then shows the games left, and the room's Sync card lists the active haircuts, each with
+  a **clear** button. The API call is `PATCH /sessions/<id>/adjustments` with
+  `{"adjustments": [...], "replace": false}`. Each row sets or clears its player's haircut; a row of no games out,
+  or a fraction of one, clears it. `replace: true` makes the rows the whole table. A session can also be created
+  with `adjustments` in its body.
+- **The record.** Each PATCH in a room writes an `adjustments` event to the room's ledger: the table, the names,
+  the players changed and the board it was set on. A rebuild after an API restart drafts on the last table. The
+  attach record names the haircuts the room started under. The session summary lists them, and the scorecard
+  adds a "Games haircuts" line naming the turns of mine that were solved under one.
+
 ## Before the user leaves (the user's checklist)
 
 These are the user's own steps. A session cannot do them.
@@ -306,6 +383,10 @@ These are the user's own steps. A session cannot do them.
 - **Export this morning's projections, then run `projections`.** On basketballmonster.com, go to Member,
   Projections 26-27, Export CSV. Then run `.venv/bin/python scripts/draft_day.py projections` in
   `~/code/pickandroll`. It prints the file it saved and the movers. A refusal says why (see "Projections").
+- **Optional: haircuts from the news.** Run `.venv/bin/python scripts/draft_day.py news <league>` and read the
+  block. Where the news is clear (out for weeks), add the player to `data/leagues/<id>/adjustments.json` (see
+  "News sweep and games haircuts"). The scheduled session posts the sweep again at T−30, but it never writes
+  haircuts.
 - **Arm each league you want drafted for you.** On the dashboard's setup page (http://localhost:5173), the
   **Leagues** list sits at the top. Click **Arm draft**, then **Confirm: arm <id>**. Disarm the same way.
   - The arm is read once, at the first attach, so arm before the scheduled task fires (T−30).

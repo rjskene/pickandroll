@@ -1,4 +1,4 @@
-import type { AvailabilityBias, AvailabilitySource, BoardPlayer, CurveFit, RoomSummary, Scale, SessionSummary, WinLabel } from "./api";
+import type { AdjustmentRow, AvailabilityBias, AvailabilitySource, BoardPlayer, CurveFit, RoomSummary, Scale, SessionSummary, WinLabel } from "./api";
 
 /** Where the survival odds come from, in a few words. */
 export function oddsSource(source: AvailabilitySource, bias?: AvailabilityBias | null): string {
@@ -167,4 +167,36 @@ export function clockNote(room: Pick<RoomSummary, "clock_s" | "plan_time_limit">
   const plan = room.plan_time_limit != null ? `plan ${room.plan_time_limit} s` : "";
   if (room.clock_s != null) return ` · ${room.clock_s} s clock${plan ? `, ${plan}` : ""}`;
   return plan ? ` · ${plan} (fixed)` : "";
+}
+
+/** Games a team plays in a week, about: "out about four weeks" is about fifteen games (#76). */
+export const GAMES_PER_WEEK = 3.75;
+
+/** The weeks the board's "out" control offers. */
+export const OUT_WEEKS = [1, 2, 3, 4, 6, 8, 12];
+
+/** Games out for "out N weeks". */
+export function weeksToGames(weeks: number): number {
+  return Math.round(weeks * GAMES_PER_WEEK);
+}
+
+/** The weeks a haircut set by the board's control stands for (its note), else null. */
+export function haircutWeeks(a: AdjustmentRow | null | undefined): number | null {
+  const m = a?.note?.match(/^out (\d+) weeks?$/);
+  return m ? Number(m[1]) : null;
+}
+
+/** A haircut in a few characters for the board row and the room view. */
+export function haircutLabel(a: AdjustmentRow): string {
+  const weeks = haircutWeeks(a);
+  if (weeks !== null) return `out ${weeks} wk`;
+  if (a.games_out != null) return `−${Math.round(a.games_out)} GP`;
+  return `×${a.fraction.toFixed(2)} GP`;
+}
+
+/** The haircut in a sentence, for a hover. */
+export function haircutTitle(a: AdjustmentRow): string {
+  const given = a.games_out != null ? `${Math.round(a.games_out)} games out` : `${Math.round(a.fraction * 100)}% of his games`;
+  const note = a.note ? ` (${a.note})` : "";
+  return `games haircut: ${given}${note}, ${Math.round(a.games_left)} of ${Math.round(a.games)} projected games; his totals are scaled and z recomputed`;
 }

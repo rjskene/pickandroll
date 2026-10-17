@@ -52,6 +52,7 @@ from ..optim.horizon import (
 )
 from ..optim.objective import CategoryCurve, win_label
 from ..optim.roster import RosterProblem, RosterSolution, pick_pool, punt_scan, solve_roster
+from ..projections.adjustments import scale_games
 from ..projections.schema import Cat, ProjectionSet
 from ..projections.zscores import zscores
 from .settings import (
@@ -159,12 +160,16 @@ class DraftState:
     _fallback: tuple[pd.Series, pd.Series, pd.Series] | None = field(
         default=None, init=False, repr=False
     )
+    #: Games haircuts (``set_adjustments``): the share of his projected games each listed
+    #: player keeps, and the projections as loaded, before any haircut.
+    adjustments: dict[str, float] = field(default_factory=dict, init=False)
+    base_projections: ProjectionSet = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
         if not 1 <= self.my_position <= self.settings.num_teams:
             raise ValueError("my_position must be within the number of teams")
-        pool = self.pool_size or self.settings.total_picks
-        self.z = zscores(self.projections.df, cats=self.settings.cats, pool_size=pool)
+        self.base_projections = self.projections
+        self.z = self._zscores()
         self.positions = self.projections.positions()
         self.effective_adp()  # records adp_source
         self.pick_owners = check_pick_owners(
@@ -173,6 +178,23 @@ class DraftState:
         self.keepers = tuple(self.keepers)
         self._check_keepers()
         self._fill_keepers()
+
+    def _zscores(self) -> pd.DataFrame:
+        pool = self.pool_size or self.settings.total_picks
+        return zscores(self.projections.df, cats=self.settings.cats, pool_size=pool)
+
+    # ------------------------------------------------------------------ games haircuts
+    def set_adjustments(self, fractions: Mapping[str, float]) -> None:
+        """Replace the games haircuts: each listed player keeps ``fractions[pid]`` of his
+        projected games (``projections.adjustments``), so his totals are scaled from the
+        projections as loaded and the z-scores are recomputed over the scaled table. A fraction
+        of one is no haircut and is dropped. The pick log, the keepers and the ADP are not
+        touched; a drafted player may be cut too (his team's totals move with him)."""
+        kept = {str(pid): float(f) for pid, f in fractions.items() if float(f) != 1.0}
+        df = scale_games(self.base_projections.df, kept)
+        self.projections = replace(self.base_projections, df=df)
+        self.adjustments = kept
+        self.z = self._zscores()
 
     # ------------------------------------------------------------------ pick owners
     @property

@@ -107,6 +107,33 @@ export interface KeeperIn {
   player?: string | null;
 }
 
+/** A games haircut in the session's table (#76): his totals are scaled to the games it leaves. */
+export interface AdjustmentRow {
+  player_id: string;
+  name: string;
+  team: string;
+  /** As given: the share of his projected games he plays, or the games he misses. */
+  games_fraction: number | null;
+  games_out: number | null;
+  note: string | null;
+  /** The share of his projected games he keeps. */
+  fraction: number;
+  /** Projected games, and the games the haircut leaves him. */
+  games: number;
+  games_left: number;
+  taken: boolean;
+}
+
+/** A haircut as the API takes it: the player by id or name; games out or a games fraction. A
+ * haircut of nothing (no games out, a fraction of one) clears the player's. */
+export interface AdjustmentIn {
+  player_id?: string | null;
+  player?: string | null;
+  games_out?: number | null;
+  games_fraction?: number | null;
+  note?: string | null;
+}
+
 export interface SessionSummary {
   id: string;
   version: number;
@@ -130,6 +157,9 @@ export interface SessionSummary {
   /** The picks the owner map gives to another position than the snake's. */
   traded_picks: number[];
   keepers: KeeperRow[];
+  /** Games haircuts (#76), and the league file's entries that were skipped. */
+  adjustments: AdjustmentRow[];
+  adjustments_note: string[];
   picks_made: number;
   next_overall: number;
   my_next_pick: number | null;
@@ -203,6 +233,8 @@ export interface BoardPlayer {
   taken_by: { team: string; overall: number } | null;
   /** The team keeping him, if he is a keeper. */
   keeper: string | null;
+  /** His games haircut (#76); games above are what it leaves him. */
+  adjustment: AdjustmentRow | null;
 }
 
 export interface BoardResponse {
@@ -683,6 +715,13 @@ export const api = {
   /** Replace the keeper table: any slot the draft has not reached (409 for one in the log). */
   setKeepers: (id: string, keepers: KeeperIn[]) =>
     request<{ keepers: KeeperRow[]; version: number }>(`/sessions/${id}/keepers`, { method: "PATCH", body: JSON.stringify({ keepers }) }),
+  /** Games haircuts mid-draft: each row sets or clears its player's (`replace`: the whole
+   * table). Totals are scaled, z recomputed and the plan solves again; the picks stay. */
+  setAdjustments: (id: string, adjustments: AdjustmentIn[], replace = false) =>
+    request<{ adjustments: AdjustmentRow[]; changed: string[]; version: number }>(`/sessions/${id}/adjustments`, {
+      method: "PATCH",
+      body: JSON.stringify({ adjustments, replace }),
+    }),
   autopick: (id: string, body: AutoPickParams) =>
     request<{ added: PickRow[]; version: number }>(`/sessions/${id}/autopick`, { method: "POST", body: JSON.stringify(body) }),
   /** Candidates priced exactly, for every solve that starts from now on (a running one keeps
