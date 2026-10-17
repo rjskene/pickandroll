@@ -48,6 +48,31 @@ def test_curve_construction_fit_and_shift():
         CategoryCurve.from_totals(totals[["pts"]], NINE_CAT)
 
 
+def test_weighted_totals_and_the_blend_toward_a_prior():
+    """Teams of a half-weight draft count half in mu and sigma; equal weights give the plain fit;
+    the blend mixes mu and sigma by its weight."""
+    totals = pd.DataFrame({"pts": [0.0, 2.0, 4.0, 10.0], "reb": [1.0, 1.0, 3.0, 3.0]})
+    plain = CategoryCurve.from_totals(totals, [Cat.PTS, Cat.REB])
+    even = CategoryCurve.from_totals(totals, [Cat.PTS, Cat.REB], weights=[2.0] * 4)
+    for c in (Cat.PTS, Cat.REB):
+        assert even.mu[c] == pytest.approx(plain.mu[c])
+        assert even.sigma[c] == pytest.approx(plain.sigma[c])
+    half = CategoryCurve.from_totals(totals, [Cat.PTS], weights=[1.0, 1.0, 1.0, 0.5])
+    assert half.mu[Cat.PTS] == pytest.approx((0 + 2 + 4 + 5) / 3.5)
+    assert half.mu[Cat.PTS] < plain.mu[Cat.PTS]
+    with pytest.raises(ValueError, match="one weight"):
+        CategoryCurve.from_totals(totals, [Cat.PTS], weights=[1.0, 1.0])
+    prior = CategoryCurve(mu={Cat.PTS: 0.0, Cat.REB: -1.0}, sigma={Cat.PTS: 4.0, Cat.REB: 2.0})
+    mixed = plain.blend(prior, 0.6, source="blend")
+    assert mixed.mu[Cat.PTS] == pytest.approx(0.6 * plain.mu[Cat.PTS])
+    assert mixed.sigma[Cat.REB] == pytest.approx(0.6 * plain.sigma[Cat.REB] + 0.4 * 2.0)
+    assert mixed.source == "blend" and mixed.breaks == plain.breaks
+    with pytest.raises(ValueError, match="prior lacks"):
+        plain.blend(CategoryCurve.default([Cat.PTS]), 0.5, source="x")
+    with pytest.raises(ValueError, match="weight"):
+        plain.blend(prior, 1.5, source="x")
+
+
 def test_piecewise_curve_tracks_phi():
     curve = CategoryCurve.default([Cat.PTS], sigma=4.0)
     lo, hi = -30.0, 30.0

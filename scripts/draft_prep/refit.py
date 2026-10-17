@@ -18,20 +18,23 @@ is ``data/leagues/_shared/<points|categories>/``:
     draft_date, player_id, player, adp, rank, overall`` (empty when undrafted). The undrafted
     are the survival fit's censored players.
 ``survival_by_adp.csv``, ``survival_by_adp.json``
-    The survival table fit from the drafts of the league's size (no keepers in these leagues,
-    so the overall pick is the market pick), and the fit's report. Two minimums apply together:
-    the archive needs ``MIN_DRAFTS`` drafts of the size before there is a table at all (one
-    draft gives one player per ADP value, noisier than the ADP formula of the market these
-    leagues draft by), and a row answers only where ``MIN_COUNT`` players have an ADP within
-    its bandwidth, the ADP formula past the boundary (``fit_survival_table``). Without a table
-    the report stays, with the reason, and a league session simulates and says why. A league
-    session reads the table after its own folder's and before simulating
+    The survival table of the league's format and the fit's report. The table is fit from every
+    archived draft of the league's size in both formats, its own at weight one and the other's
+    at ``CROSS_FORMAT_WEIGHT`` (no keepers in these leagues, so the overall pick is the market
+    pick), and blended toward the ADP formula by ``D/(D+1)``, ``D`` the sum of the weights: one
+    draft is half the formula, a prior worth one draft (``blend_with_formula``; the prior is the
+    ADP model the simulated drafters draft with). A row carries the drafts only where
+    ``MIN_COUNT`` weighted players have an ADP within its bandwidth; past the boundary the ADP
+    formula answers alone (``fit_survival_table``). With no draft of the size, or a first row
+    already thin, the report stays with the reason and a league session simulates and says why.
+    A league session reads the table after its own folder's and before simulating
     (``leagues.session_defaults``).
 
 Real drafts only: a draft is archived from a finished room's folder of a league with a folder
-under ``data/leagues/``, whose ledger holds every pick; mocks have no league folder. For a
-categories league the attach asks for ``curve: league`` (fit from ``picks.csv`` beside the
-table, #65) under the same draft minimum, and says so.
+under ``data/leagues/``, whose ledger holds every pick; mocks have no league folder. A league's
+attach asks for ``curve: league`` once its format has a table: the curve is fit from both
+formats' rosters at the same weights (#65) and blended toward today's simulated run by the same
+``D/(D+1)`` (the session runs the simulation for the curve alone).
 """
 
 from __future__ import annotations
@@ -47,7 +50,13 @@ import pandas as pd
 
 from pickandroll.api import leagues
 from pickandroll.api.league_curve import draft_year
-from pickandroll.availability import LEAGUE_FROM_ADP, MIN_COUNT, fit_survival_table, survival_frame
+from pickandroll.availability import (
+    LEAGUE_FROM_ADP,
+    MIN_COUNT,
+    blend_with_formula,
+    fit_survival_table,
+    survival_frame,
+)
 from pickandroll.fidelity import read_events
 from pickandroll.sources.yahoo import load_players_file
 
@@ -57,9 +66,9 @@ LEAGUE = True
 PICKS = "picks.csv"
 ADP = "adp.csv"
 REPORT = leagues.SURVIVAL_REPORT
-#: The archive's drafts of a size before it gives a survival table, and before a categories
-#: attach asks for the league curve.
-MIN_DRAFTS = 3
+#: The weight of a draft of the other format, in the survival table and the curve: its market's
+#: ADP is another one, its rosters were drafted for another scoring.
+CROSS_FORMAT_WEIGHT = 0.5
 PICK_COLUMNS = [
     "season",
     "draft_year",
@@ -105,10 +114,11 @@ def add_arguments(parser: argparse.ArgumentParser) -> None:
         "or the league's settings.json refit.min_count)",
     )
     parser.add_argument(
-        "--min-drafts",
-        type=int,
-        help=f"refit, run: drafts before the archive gives a survival table and a categories "
-        f"attach the league curve (default {MIN_DRAFTS}, or settings.json refit.min_drafts)",
+        "--cross-format-weight",
+        type=float,
+        help="refit, run: the weight of the other format's drafts in the survival table and "
+        f"the curve (default {CROSS_FORMAT_WEIGHT:g}, or settings.json "
+        "refit.cross_format_weight)",
     )
 
 
@@ -122,11 +132,13 @@ def shape(mine: dict[str, Any]) -> tuple[str, int, int]:
     return str(mine["scoring"]), teams, picks // teams
 
 
-def minimum(mine: dict[str, Any], args: argparse.Namespace | None, name: str, default: int) -> int:
+def setting(mine: dict[str, Any], args: argparse.Namespace | None, name: str, default: Any) -> Any:
+    """The refit's knob: the command line's, else the league's settings.json ``refit``, else
+    the default; of the default's type."""
     given = getattr(args, name, None) if args is not None else None
-    if given is not None:
-        return int(given)
-    return int((mine.get("refit") or {}).get(name, default))
+    if given is None:
+        given = (mine.get("refit") or {}).get(name, default)
+    return type(default)(given)
 
 
 def draft_day(mine: dict[str, Any]) -> str:
@@ -272,98 +284,148 @@ def rel(runbook: Any, path: Path) -> str:
 
 
 # --------------------------------------------------------------------------- the refit
+def other_format(scoring: str) -> str:
+    return "categories" if scoring == "points" else "points"
+
+
+def drafts_text(d: float) -> str:
+    return f"{d:g} draft{'' if d == 1 else 's'}"
+
+
+def pooled(
+    runbook: Any, scoring: str, teams: int, rounds: int, cross: float
+) -> tuple[list[dict[str, Any]], pd.DataFrame, int]:
+    """Every archived draft of the league's size in both formats, its own at weight one and the
+    other's at ``cross``; their ADP rows with each draft's weight; the drafts of another size
+    left out."""
+    drafts: list[dict[str, Any]] = []
+    rows: list[pd.DataFrame] = []
+    others = 0
+    for fmt in (scoring, other_format(scoring)):
+        weight = 1.0 if fmt == scoring else float(cross)
+        picks, adp = read_archive(leagues.shared_dir(runbook.DATA, fmt))
+        same = picks[(picks["n_teams"] == teams) & (picks["rounds"] == rounds)]
+        keys = same.drop_duplicates(DRAFT)[DRAFT].astype(str).to_numpy().tolist()
+        others += len(picks.drop_duplicates(DRAFT)) - len(keys)
+        if weight <= 0:
+            continue
+        drafts += [{"league": k[0], "date": k[1], "format": fmt, "weight": weight} for k in keys]
+        chosen = {tuple(k) for k in keys}
+        rows.append(
+            adp[[tuple(k) in chosen for k in adp[DRAFT].astype(str).to_numpy()]].assign(
+                weight=weight
+            )
+        )
+    frame = pd.concat(rows, ignore_index=True) if rows else pd.DataFrame(columns=ADP_COLUMNS)
+    return drafts, frame, others
+
+
 def refit(runbook: Any, league: str, args: argparse.Namespace | None = None) -> dict[str, Any]:
-    """Report the archive for the league's format and size and rewrite the survival table (or
-    remove a stale one when no row answers); the report written beside it."""
+    """Report the archive for the league's size, both formats pooled, and rewrite the league's
+    format's survival table blended toward the ADP formula (or remove a stale one when no row
+    answers); the report written beside it."""
     mine = runbook.settings(league)
     scoring, teams, rounds = shape(mine)
     shared = leagues.shared_dir(runbook.DATA, scoring)
     table_path, report_path = shared / leagues.SURVIVAL, shared / REPORT
-    min_count = minimum(mine, args, "min_count", MIN_COUNT)
-    min_drafts = minimum(mine, args, "min_drafts", MIN_DRAFTS)
-    picks, adp = read_archive(shared)
-    same = picks[(picks["n_teams"] == teams) & (picks["rounds"] == rounds)]
-    drafts = same.drop_duplicates(DRAFT)[DRAFT].astype(str).to_numpy().tolist()
-    others = len(picks.drop_duplicates(DRAFT)) - len(drafts)
-    names = ", ".join(f"{d[0]} {d[1]}" for d in drafts) or "none"
-    runbook.say(
-        f"archive {rel(runbook, shared)}: {len(drafts)} draft{'s' if len(drafts) != 1 else ''} "
-        f"of {teams} x {rounds} ({names})"
-        + (f"; {others} of another size left out" if others else "")
-    )
+    min_count = setting(mine, args, "min_count", MIN_COUNT)
+    cross = setting(mine, args, "cross_format_weight", CROSS_FORMAT_WEIGHT)
+    drafts, rows, others = pooled(runbook, scoring, teams, rounds, cross)
+    same = [d for d in drafts if d["format"] == scoring]
+    other = [d for d in drafts if d["format"] != scoring]
+    total = sum(d["weight"] for d in drafts)
+    names = ", ".join(f"{d['league']} {d['date']}" for d in same) or "none"
+    line = f"archive {rel(runbook, shared)}: {drafts_text(len(same))} of {teams} x {rounds} ({names})"
+    if other:
+        line += (
+            f"; {other_format(scoring)}: {drafts_text(len(other))} at x{cross:g} "
+            f"({', '.join(f'{d["league"]} {d["date"]}' for d in other)})"
+        )
+    runbook.say(line + (f"; {others} of another size left out" if others else ""))
     report: dict[str, Any] = {
         "built": datetime.now(UTC).isoformat(timespec="seconds"),
         "format": scoring,
         "teams": teams,
         "rounds": rounds,
-        "drafts": [{"league": d[0], "date": d[1]} for d in drafts],
+        "drafts": drafts,
         "min_count": min_count,
+        "cross_format_weight": cross,
         "from_adp": LEAGUE_FROM_ADP,
         "max_adp": None,
-        "curve_min_drafts": min_drafts,
+        "blend": None,
     }
-    chosen = {tuple(d) for d in drafts}
-    rows = adp[[tuple(k) in chosen for k in adp[DRAFT].astype(str).to_numpy()]]
     table = None
-    many = f"{len(drafts)} draft{'s' if len(drafts) != 1 else ''}"
-    reason = f"{many}, below the minimum of {min_drafts}"
-    if len(drafts) >= min_drafts and len(rows):
-        table, counts = fit_survival_table(
+    reason = f"no drafts of {teams} x {rounds} yet"
+    if total > 0 and len(rows):
+        raw, counts = fit_survival_table(
             rows["adp"].to_numpy(float),
             pd.to_numeric(rows["overall"], errors="coerce").to_numpy(float),
             picks=teams * rounds,
             min_count=min_count,
+            weights=rows["weight"].to_numpy(float),
         )
-        near = int(counts[LEAGUE_FROM_ADP])
-        reason = f"{many}, {near} players near ADP {LEAGUE_FROM_ADP}, under {min_count}"
+        near = float(counts[LEAGUE_FROM_ADP])
+        reason = f"{drafts_text(total)}, {near:g} players near ADP {LEAGUE_FROM_ADP}, under {min_count}"
+        if raw is not None:
+            table = blend_with_formula(raw, total)
+    blend = {
+        "drafts": round(total, 3),
+        "same_format": len(same),
+        "other_format": len(other),
+        "weight": cross,
+    }
     if table is None:
         table_path.unlink(missing_ok=True)
         report.update(table=None, reason=reason)
         shared.mkdir(parents=True, exist_ok=True)
         report_path.write_text(json.dumps(report, indent=1) + "\n")
         runbook.say(f"  survival: no table (archive: {reason}): league sessions simulate")
-    else:
-        write_csv(survival_frame(table).round(4), table_path)
-        report.update(
-            table=rel(runbook, table_path),
-            max_adp=table.max_adp,
-            counts={
-                "at_from_adp": int(counts[LEAGUE_FROM_ADP]),
-                "at_max_adp": int(counts[table.max_adp]),
-            },
-        )
-        report_path.write_text(json.dumps(report, indent=1) + "\n")
-        runbook.say(
-            f"  survival: wrote {rel(runbook, table_path)}, answering ADP {LEAGUE_FROM_ADP}-"
-            f"{table.max_adp} (at least {min_count} players within the bandwidth); the ADP "
-            "formula elsewhere"
-        )
-    if scoring == "categories":
-        if table is not None:
-            runbook.say(f"  curve: league, from the {many}' rosters (#65)")
-        else:
-            runbook.say(f"  curve: simulated (archive: {reason})")
+        runbook.say(f"  curve: simulated (archive: {reason})")
+        return report
+    write_csv(survival_frame(table).round(4), table_path)
+    report.update(
+        table=rel(runbook, table_path),
+        max_adp=table.max_adp,
+        blend=blend,
+        counts={
+            "at_from_adp": round(float(counts[LEAGUE_FROM_ADP]), 2),
+            "at_max_adp": round(float(counts[table.max_adp]), 2),
+        },
+    )
+    report_path.write_text(json.dumps(report, indent=1) + "\n")
+    runbook.say(
+        f"  survival: wrote {rel(runbook, table_path)}, answering ADP {LEAGUE_FROM_ADP}-"
+        f"{table.max_adp} (at least {min_count} players within the bandwidth), blend: "
+        f"{drafts_text(total)} toward the ADP formula; the ADP formula elsewhere"
+    )
+    runbook.say(
+        f"  curve: league, from the {drafts_text(total)}' rosters, blended toward today's "
+        "simulated run"
+    )
     return report
 
 
-def league_curve_ready(runbook: Any, league: str, args: Any = None) -> int | None:
-    """The drafts behind the shared table when a categories league's attach should ask for
-    ``curve: league``: its own folder has no table (the session then reads the shared one and
-    the ``picks.csv`` beside it), the shared report names at least the minimum of drafts."""
+def league_curve_ready(runbook: Any, league: str, args: Any = None) -> float | None:
+    """The drafts (the sum of their weights) behind the shared table when a league's attach
+    should ask for ``curve: league``: its own folder has no table (the session then reads its
+    format's shared one and the rosters of both formats' archives), and the shared table and
+    its report stand."""
     mine = runbook.settings(league)
-    if mine.get("scoring") != "categories":
-        return None
     if (runbook.folder(league) / leagues.SURVIVAL).exists():
         return None
-    shared = leagues.shared_dir(runbook.DATA, "categories")
+    scoring = str(mine.get("scoring", ""))
+    shared = leagues.shared_dir(runbook.DATA, scoring)
     try:
         report = json.loads((shared / REPORT).read_text())
     except (OSError, ValueError):
         return None
-    if not (shared / leagues.SURVIVAL).exists() or not (shared / PICKS).exists():
+    if not (shared / leagues.SURVIVAL).exists() or not report.get("blend"):
         return None
-    drafts = len(report.get("drafts") or [])
-    return drafts if drafts >= minimum(mine, args, "min_drafts", MIN_DRAFTS) else None
+    archives = (shared, leagues.shared_dir(runbook.DATA, other_format(scoring)))
+    if not any((folder / PICKS).exists() for folder in archives):
+        return None
+    drafts = float(report["blend"].get("drafts") or 0.0)
+    return drafts if drafts > 0 else None
 
 
 # --------------------------------------------------------------------------- hooks
@@ -378,9 +440,12 @@ def on_status(runbook: Any, league: str) -> None:
     if not report.get("table"):
         runbook.say(f"  archive {rel(runbook, shared)}: {report.get('reason')}: no survival table")
         return
+    blend = report.get("blend") or {}
     runbook.say(
-        f"  archive {rel(runbook, shared)}: {len(report.get('drafts') or [])} drafts, the survival "
-        f"table answering ADP {report.get('from_adp')}-{report.get('max_adp')}"
+        f"  archive {rel(runbook, shared)}: the survival table answering ADP "
+        f"{report.get('from_adp')}-{report.get('max_adp')}, blend: "
+        f"{drafts_text(float(blend.get('drafts') or 0))} ({blend.get('same_format')} of the "
+        f"format, {blend.get('other_format')} of the other at x{blend.get('weight')})"
     )
 
 
@@ -395,7 +460,10 @@ def session_fields(runbook: Any, league: str, args: Any = None) -> dict[str, Any
     drafts = league_curve_ready(runbook, league, args)
     if drafts is None:
         return {}
-    runbook.say(f"curve: league, from the archive's {drafts} drafts")
+    runbook.say(
+        f"curve: league, from the archive's {drafts_text(drafts)}, blended toward today's "
+        "simulated run"
+    )
     return {"curve": "league"}
 
 

@@ -26,6 +26,11 @@ table (``data/yahoo_history`` for the user's league):
 
 A season is used only when its draft has the session's team count and roster size: a total
 over twelve rounds is not on the scale of one over thirteen.
+
+The shared archive pools the formats (#77): a categories league's fit takes the points
+leagues' rosters too, scored the session's way, each at a lighter weight (``others``), and
+vice versa. ``drafts`` is the sum of the weights fitted, the ``D`` the session blends the fit
+toward the simulated league with (``CategoryCurve.blend``).
 """
 
 from __future__ import annotations
@@ -62,6 +67,8 @@ class LeagueCurveFit:
     #: for a category the standings cannot put in z units.
     check: dict[str, float | None] = field(default_factory=dict)
     check_seasons: list[str] = field(default_factory=list)
+    #: The sum of the fitted drafts' weights (one each in the folder's own archive).
+    drafts: float = 0.0
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -69,6 +76,7 @@ class LeagueCurveFit:
             "skipped": self.skipped,
             "check": {c: None if v is None else round(float(v), 3) for c, v in self.check.items()},
             "check_seasons": self.check_seasons,
+            "drafts": round(float(self.drafts), 3),
         }
 
 
@@ -136,9 +144,25 @@ def standings_check(
 
 
 def _draft_label(entry: Mapping[str, Any]) -> str:
-    """A fitted or skipped draft as the source names it: its year, and its league in a shared
-    archive."""
-    return f"{entry['year']} {entry['league']}" if "league" in entry else str(entry["year"])
+    """A fitted or skipped draft as the source names it: its year, its league in a shared
+    archive, and the format and weight of a draft pooled from another format's archive."""
+    label = f"{entry['year']} {entry['league']}" if "league" in entry else str(entry["year"])
+    if "format" in entry:
+        label += f" ({entry['format']} x{entry['weight']:g})"
+    return label
+
+
+def _archive(folder: Path) -> pd.DataFrame | None:
+    path = folder / PICKS
+    if not path.exists():
+        return None
+    picks = pd.read_csv(path)
+    needed = {"draft_year", "n_teams", "round", "overall", "player", "team"}
+    if not needed <= set(picks.columns):
+        raise ValueError(
+            f"{folder.name}/{path.name} lacks columns {sorted(needed - set(picks.columns))}"
+        )
+    return picks
 
 
 def fit_league_curve(
@@ -149,19 +173,73 @@ def fit_league_curve(
     roster_size: int,
     season: int,
     aliases: Mapping[str, str] | None = None,
+    others: Sequence[tuple[Path, float]] = (),
 ) -> LeagueCurveFit:
-    """The curve from the archive in ``folder``. ``scores(year)`` gives a season's projections
-    and z (``season``'s are the session's own); the check's pool spread is ``season``'s.
-    Raises ``ValueError`` when no season can be fitted, naming why for each."""
-    path = folder / PICKS
-    if not path.exists():
-        raise ValueError(f"no drafted rosters: {path.name} is not in {folder.name}/")
-    picks = pd.read_csv(path)
-    needed = {"draft_year", "n_teams", "round", "overall", "player", "team"}
-    if not needed <= set(picks.columns):
-        raise ValueError(f"{path.name} lacks columns {sorted(needed - set(picks.columns))}")
+    """The curve from the archive in ``folder``, and from each of ``others`` (another format's
+    archive) at its weight. ``scores(year)`` gives a season's projections and z (``season``'s
+    are the session's own); the check's pool spread is ``season``'s. Raises ``ValueError``
+    when no season can be fitted, naming why for each."""
+    archives = [(folder, 1.0, _archive(folder))]
+    archives += [(other, float(w), _archive(other)) for other, w in others if w > 0]
+    if all(picks is None for _, _, picks in archives):
+        raise ValueError(f"no drafted rosters: {PICKS} is not in {folder.name}/")
     totals: list[pd.DataFrame] = []
+    weights: list[float] = []
     seasons: list[dict[str, Any]] = []
+    skipped: list[dict[str, Any]] = []
+    for where, weight, picks in archives:
+        if picks is None:
+            continue
+        fitted = _fit_archive(
+            picks, scores, cats, num_teams, roster_size, aliases, where.name, weight
+        )
+        for frame, entry in fitted[0]:
+            totals.append(frame)
+            weights += [weight] * len(frame)
+            seasons.append(entry)
+        skipped += fitted[1]
+    if not totals:
+        why = "; ".join(f"{_draft_label(s)}: {s['reason']}" for s in skipped) or "no drafts"
+        raise ValueError(f"no season to fit the curve on ({why})")
+    years = ", ".join(_draft_label(s) for s in seasons)
+    rosters = sum(s["rosters"] for s in seasons)
+    scored = sum(s["scored"] for s in seasons)
+    every = sum(s["picks"] for s in seasons)
+    source = f"league rosters {years} ({rosters} rosters, {scored} of {every} picks scored)"
+    pooled = len(archives) > 1
+    curve = CategoryCurve.from_totals(
+        pd.concat(totals), cats, source=source, weights=weights if pooled else None
+    )
+    check: dict[str, float | None] = {}
+    check_seasons: list[str] = []
+    standings = folder / STANDINGS
+    own = scores(season)
+    if standings.exists() and own is not None:
+        spread = pool_spread(own[0], own[1], cats)
+        check, check_seasons = standings_check(pd.read_csv(standings), spread, cats, num_teams)
+    return LeagueCurveFit(
+        curve=curve,
+        seasons=seasons,
+        skipped=skipped,
+        check=check,
+        check_seasons=check_seasons,
+        drafts=sum(s.get("weight", 1.0) for s in seasons),
+    )
+
+
+def _fit_archive(
+    picks: pd.DataFrame,
+    scores: SeasonScores,
+    cats: Sequence[Cat],
+    num_teams: int,
+    roster_size: int,
+    aliases: Mapping[str, str] | None,
+    name: str,
+    weight: float,
+) -> tuple[list[tuple[pd.DataFrame, dict[str, Any]]], list[dict[str, Any]]]:
+    """One archive's drafts: each fitted draft's roster totals with its entry, and the skipped.
+    A draft of another archive than the folder's own carries its archive's name and weight."""
+    fitted: list[tuple[pd.DataFrame, dict[str, Any]]] = []
     skipped: list[dict[str, Any]] = []
     by = ["draft_year", "league_id"] if "league_id" in picks.columns else ["draft_year"]
     for key, draft in picks.groupby(by, sort=True):
@@ -170,7 +248,9 @@ def fit_league_curve(
         which: dict[str, Any] = {"year": year}
         if len(key) > 1:
             which["league"] = str(key[1])
-        label = ":".join(str(v) for v in which.values())
+        if weight != 1.0:
+            which.update(format=name, weight=weight)
+        label = ":".join(str(v) for v in (name, *key))
         teams, rounds = int(draft["n_teams"].iloc[0]), int(draft["round"].max())
         if teams != num_teams or rounds != roster_size:
             skipped.append(
@@ -183,8 +263,8 @@ def fit_league_curve(
             continue
         scored = scores(year)
         if scored is None:
-            name = SEASON_PROJECTIONS.format(year=year)
-            skipped.append({**which, "reason": f"no projection file ({name})"})
+            missing = SEASON_PROJECTIONS.format(year=year)
+            skipped.append({**which, "reason": f"no projection file ({missing})"})
             continue
         projections, z = scored
         rosters, unmatched = season_rosters(draft, projections, aliases)
@@ -193,32 +273,12 @@ def fit_league_curve(
             continue
         frame = roster_totals(z, rosters, cats)
         frame.index = [f"{label}:{team}" for team in frame.index]
-        totals.append(frame)
-        seasons.append(
-            {
-                **which,
-                "rosters": len(rosters),
-                "picks": len(draft),
-                "scored": len(draft) - len(unmatched),
-                "unmatched": unmatched,
-            }
-        )
-    if not totals:
-        why = "; ".join(f"{_draft_label(s)}: {s['reason']}" for s in skipped) or "no drafts"
-        raise ValueError(f"no season to fit the curve on ({why})")
-    years = ", ".join(_draft_label(s) for s in seasons)
-    rosters = sum(s["rosters"] for s in seasons)
-    scored = sum(s["scored"] for s in seasons)
-    every = sum(s["picks"] for s in seasons)
-    source = f"league rosters {years} ({rosters} rosters, {scored} of {every} picks scored)"
-    curve = CategoryCurve.from_totals(pd.concat(totals), cats, source=source)
-    check: dict[str, float | None] = {}
-    check_seasons: list[str] = []
-    standings = folder / STANDINGS
-    own = scores(season)
-    if standings.exists() and own is not None:
-        spread = pool_spread(own[0], own[1], cats)
-        check, check_seasons = standings_check(pd.read_csv(standings), spread, cats, num_teams)
-    return LeagueCurveFit(
-        curve=curve, seasons=seasons, skipped=skipped, check=check, check_seasons=check_seasons
-    )
+        entry = {
+            **which,
+            "rosters": len(rosters),
+            "picks": len(draft),
+            "scored": len(draft) - len(unmatched),
+            "unmatched": unmatched,
+        }
+        fitted.append((frame, entry))
+    return fitted, skipped

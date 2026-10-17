@@ -31,6 +31,7 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
+import numpy as np
 import pandas as pd
 import pulp
 
@@ -139,19 +140,51 @@ class CategoryCurve:
 
     @classmethod
     def from_totals(
-        cls, totals: pd.DataFrame, cats: Iterable[Cat], source: str = "fitted"
+        cls,
+        totals: pd.DataFrame,
+        cats: Iterable[Cat],
+        source: str = "fitted",
+        weights: Sequence[float] | None = None,
     ) -> CategoryCurve:
         """Fit mu and sigma from a table of team totals, one row per team, one column per
-        category (named by ``Cat.value``)."""
+        category (named by ``Cat.value``). ``weights``, one per team (its draft's weight), make
+        the mean and the spread weighted ones; equal weights give the plain fit."""
         cats = list(cats)
         missing = [c.value for c in cats if c.value not in totals.columns]
         if missing:
             raise ValueError(f"totals lack columns {missing}")
         if len(totals) < 2:
             raise ValueError("at least two teams are needed to fit a curve")
-        mu = {c: float(totals[c.value].mean()) for c in cats}
-        sigma = {c: float(totals[c.value].std(ddof=1)) for c in cats}
+        if weights is None:
+            mu = {c: float(totals[c.value].mean()) for c in cats}
+            sigma = {c: float(totals[c.value].std(ddof=1)) for c in cats}
+            return cls(mu=mu, sigma=sigma, source=source)
+        w = np.asarray(weights, dtype=float)
+        if w.shape != (len(totals),) or (w < 0).any() or w.sum() <= 0:
+            raise ValueError("needs one weight of zero or more per team, not all zero")
+        # Reliability weights: the plain ddof=1 spread when the weights are equal.
+        v1, v2 = float(w.sum()), float((w**2).sum())
+        mu, sigma = {}, {}
+        for c in cats:
+            x = totals[c.value].to_numpy(float)
+            mu[c] = float(w @ x / v1)
+            sigma[c] = float(np.sqrt(w @ (x - mu[c]) ** 2 / (v1 - v2 / v1)))
         return cls(mu=mu, sigma=sigma, source=source)
+
+    def blend(self, prior: CategoryCurve, weight: float, source: str) -> CategoryCurve:
+        """``weight`` of this curve and ``1 - weight`` of ``prior`` in every category's mu and
+        sigma: the league's rosters shrunk toward the simulated league by ``D/(D+1)``."""
+        if not 0.0 <= weight <= 1.0:
+            raise ValueError("weight must lie in 0..1")
+        missing = [c.value for c in self.mu if c not in prior.mu]
+        if missing:
+            raise ValueError(f"the prior lacks {missing}")
+        mu = {c: weight * float(m) + (1 - weight) * float(prior.mu[c]) for c, m in self.mu.items()}
+        sigma = {
+            c: weight * float(s) + (1 - weight) * float(prior.sigma[c])
+            for c, s in self.sigma.items()
+        }
+        return CategoryCurve(mu=mu, sigma=sigma, breaks=self.breaks, source=source)
 
     @classmethod
     def from_rosters(

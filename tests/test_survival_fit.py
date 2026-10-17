@@ -9,6 +9,8 @@ import pytest
 from pickandroll.availability import (
     LEAGUE_FROM_ADP,
     LeagueSurvivalTable,
+    availability,
+    blend_with_formula,
     fit_survival_table,
     survival_counts,
     survival_frame,
@@ -75,6 +77,36 @@ def test_the_counts_count_players_within_the_bandwidth():
     counts = survival_counts([90.0, 95.0, 101.0, 140.0], [90, 140])
     assert bandwidth(90) == pytest.approx(12.2)
     assert counts.to_dict() == {90: 3, 140: 1}
+    # Each at its draft's weight: another format's draft counts half.
+    weighted = survival_counts([90.0, 95.0, 101.0, 140.0], [90, 140], [1.0, 0.5, 0.5, 0.5])
+    assert weighted.to_dict() == {90: 2.0, 140: 0.5}
+
+
+def test_a_draft_counts_at_its_weight():
+    """Two drafts that disagree: a weight of a half pulls the share a third of the way, not half,
+    toward the lighter draft; weights of zero drop it; the invariants hold either way."""
+    adps = np.arange(1, 201, dtype=float)
+    a1, y1 = drafts(1, adps, seed=1)
+    # The second draft takes everyone about 15 picks after their ADP.
+    _, y2 = drafts(1, adps + 15.0, seed=2)
+    a2 = adps.copy()
+    adp, overall = np.concatenate([a1, a2]), np.concatenate([y1, y2])
+    w = np.concatenate([np.ones(len(a1)), np.full(len(a2), 0.5)])
+    one, _ = fit_survival_table(a1, y1, PICKS)
+    other, _ = fit_survival_table(a2, y2, PICKS)
+    pooled, counts = fit_survival_table(adp, overall, PICKS, weights=w)
+    zero = np.concatenate([np.ones(len(a1)), np.zeros(len(a2))])
+    alone, _ = fit_survival_table(adp, overall, PICKS, weights=zero)
+    cell = (110, 100)
+    expected = (2 * one.table.loc[cell] + other.table.loc[cell]) / 3
+    assert pooled.table.loc[cell] == pytest.approx(expected, abs=1e-9)
+    assert alone.table.loc[cell] == pytest.approx(one.table.loc[cell], abs=1e-9)
+    assert counts[100] == pytest.approx(1.5 * survival_counts(adps, [100])[100])
+    s = pooled.table.to_numpy()
+    assert (np.diff(s, axis=1) <= 1e-12).all()
+    assert (s >= pooled.undrafted.to_numpy()[:, None] - 1e-12).all()
+    with pytest.raises(ValueError, match="one weight"):
+        fit_survival_table(adp, overall, PICKS, weights=w[:-1])
 
 
 def test_the_written_table_reads_back():
@@ -84,6 +116,31 @@ def test_the_written_table_reads_back():
     back = LeagueSurvivalTable.from_frame(frame)
     pd.testing.assert_frame_equal(back.table, table.table, check_names=False)
     assert back.undrafted.to_numpy() == pytest.approx(table.undrafted.to_numpy())
+
+
+def test_the_blend_shrinks_each_cell_toward_the_formula_by_one_draft():
+    table, _ = fit_survival_table(*drafts(1, np.arange(1, 201, dtype=float)), PICKS)
+    one, three = blend_with_formula(table, 1), blend_with_formula(table, 3)
+    for a, k in ((95, 80), (110, 120), (130, PICKS)):
+        formula = availability(pd.Series([float(a)]), k).iloc[0]
+        # One draft is half the drafts' share, half the formula's; three drafts are 75/25.
+        assert one.table.loc[a, k] == pytest.approx(0.5 * table.table.loc[a, k] + 0.5 * formula)
+        assert three.table.loc[a, k] == pytest.approx(0.75 * table.table.loc[a, k] + 0.25 * formula)
+    # The formula has no undrafted mass: the undrafted share shrinks by the same weight.
+    assert one.undrafted.to_numpy() == pytest.approx(0.5 * table.undrafted.to_numpy())
+    for blended in (one, three):
+        s = blended.table.to_numpy()
+        assert (np.diff(s, axis=1) <= 1e-12).all(), "S never rises with the pick"
+        assert (s >= blended.undrafted.to_numpy()[:, None] - 1e-12).all()
+        assert blended.picks == table.picks and blended.max_adp == table.max_adp
+    # A fractional D (another format's draft at half weight): 1.5 drafts is 60/40.
+    mixed = blend_with_formula(table, 1.5)
+    formula = availability(pd.Series([110.0]), 120).iloc[0]
+    assert mixed.table.loc[110, 120] == pytest.approx(
+        0.6 * table.table.loc[110, 120] + 0.4 * formula
+    )
+    with pytest.raises(ValueError, match="drafts must be"):
+        blend_with_formula(table, 0)
 
 
 def test_bad_observations_are_refused():

@@ -154,6 +154,9 @@ class Session:
     curve_source: str = "none"
     #: ``curve: league``: the seasons fitted and the standings check (#65).
     curve_fit: dict[str, Any] | None = None
+    #: ``curve: league``: the rosters' curve and the drafts behind it (the sum of their
+    #: weights), blended toward the simulated league by ``D/(D+1)`` (#77).
+    league_curve: tuple[CategoryCurve, float] | None = None
     #: Survival availability: ``mode`` none/simulate/file, ``status`` none/building/ready/failed.
     survival: dict[str, Any] = field(default_factory=lambda: {"mode": "none", "status": "none"})
     #: The simulated survival table's build: a keeper change starts a new one, and a build
@@ -719,7 +722,7 @@ def create_app(
 
     async def make_session(body: SessionCreate) -> Session:
         body = await asyncio.to_thread(_with_league, body, data_dir)
-        state, label, curve_source, curve_fit = await asyncio.to_thread(
+        state, label, curve_source, curve_fit, league_fit = await asyncio.to_thread(
             _build_state, body, data_dir
         )
         note = None
@@ -760,6 +763,8 @@ def create_app(
             fit = await asyncio.to_thread(_survival_fit, path)
             if fit is not None:
                 survival["fit"] = fit
+                # The table's blend toward the ADP formula: the drafts behind it (#77).
+                survival["blend"] = fit.get("blend")
         elif body.survival == "file":
             if not body.survival_file:
                 raise HTTPException(400, "survival=file needs survival_file")
@@ -808,22 +813,26 @@ def create_app(
                     note = unread if note is None else f"{note}; {unread}"
         if note:
             survival["note"] = note
-        if body.fit_curve and "fit_curve" in body.model_fields_set and body.survival != "simulate":
+        if (
+            body.fit_curve
+            and "fit_curve" in body.model_fields_set
+            and body.survival not in ("simulate", "league")
+        ):
             # The curve is fitted from the simulated drafts: with none, the request would get
             # the curve it named and a flag that did nothing (the 10-14 rebuild, #63).
             raise HTTPException(
                 400,
-                f"fit_curve fits the curve from a simulated survival run, and survival is "
-                f"{body.survival or 'none'}: pass survival=simulate, or leave fit_curve out",
+                f"fit_curve fits the curve from a simulated run, and survival is "
+                f"{body.survival or 'none'}: pass survival=simulate or league, or leave "
+                "fit_curve out",
             )
-        if body.fit_curve and "fit_curve" in body.model_fields_set and body.curve == "league":
-            raise HTTPException(
-                400,
-                "fit_curve refits the curve from the simulated drafts, and curve=league fits it "
-                "from the league's rosters: leave fit_curve out",
-            )
-        # The league's own curve stands: a simulation only measures survival.
-        fit_curve = body.fit_curve and body.survival == "simulate" and body.curve != "league"
+        # The simulation's curve: the curve itself, or the prior the league's rosters blend
+        # toward (curve=league). Beside a league table it runs for the curve alone (#77); a
+        # curve file stands on its own there.
+        fit_curve = bool(body.fit_curve) and (
+            body.survival == "simulate" or (body.survival == "league" and not body.curve_file)
+        )
+        curve_only = fit_curve and body.survival == "league" and body.objective == "win"
         session = store.create(
             state,
             label,
@@ -834,18 +843,35 @@ def create_app(
             solve_ahead=body.solve_ahead,
         )
         session.curve_fit = curve_fit
+        if league_fit is not None:
+            session.league_curve = (league_fit.curve, league_fit.drafts)
         # The keeper table as resolved, by id: a rebuild after a restart does not re-read the file.
         # The survival as resolved too, so a rebuild keeps the mode the session started on.
         session.create_params = {
             **body.model_dump(mode="json"),
             "keepers": keeper_params(state.keepers),
             "keepers_file": None,
-            # Only a simulation fits the curve: a rebuild must not ask a league table to.
+            # Only a simulation fits the curve: a rebuild must not ask a table to.
             "fit_curve": fit_curve,
+            # A league table's session ran the simulation for its curve (#77): a rebuild of
+            # one from before did not, and does not.
+            "curve_run": curve_only,
         }
         if body.survival == "simulate":
             asyncio.get_running_loop().create_task(
                 _build_survival(session, body.survival_sims, drafters, fit_curve)
+            )
+        elif curve_only:
+            drafters = tuple(body.drafters) if body.drafters else STRATEGIES
+            if any(d not in STRATEGIES for d in drafters):
+                raise HTTPException(400, f"drafters must be drawn from {STRATEGIES}")
+            session.survival["curve_run"] = {
+                "status": "building",
+                "sims": body.survival_sims,
+                "done": 0,
+            }
+            asyncio.get_running_loop().create_task(
+                _build_survival(session, body.survival_sims, drafters, True, curve_only=True)
             )
         return session
 
@@ -1936,6 +1962,7 @@ def _build_state(
     state.spread_growth = body.spread_growth
     curve_source = "none"
     curve_fit = None
+    league_fit = None
     if body.objective == "win":
         if body.curve == "league":
             if body.curve_file:
@@ -1944,9 +1971,12 @@ def _build_state(
                     "curve=league fits the curve from the league's rosters, and curve_file names "
                     "one: pass one or the other",
                 )
-            fit = _league_curve(body, data_dir, state)
-            curve = fit.curve
-            curve_fit = fit.to_dict()
+            league_fit = _league_curve(body, data_dir, state)
+            # Toward the simulated league until today's run lands (the static fit for the
+            # categories, flat for fpts), then toward the run (#77).
+            curve, curve_fit = _blended_curve(
+                league_fit, CategoryCurve.simulated(settings.cats), "static"
+            )
         elif body.curve_file:
             curve_path = data_dir / body.curve_file
             if not curve_path.exists():
@@ -1962,7 +1992,24 @@ def _build_state(
             curve = CategoryCurve.simulated(settings.cats)
         state.curve = curve.scaled(body.sigma_scale)
         curve_source = state.curve.source
-    return state, projections.label, curve_source, curve_fit
+    return state, projections.label, curve_source, curve_fit, league_fit
+
+
+def _blended_curve(
+    fit: league_curve.LeagueCurveFit, prior: CategoryCurve, status: str
+) -> tuple[CategoryCurve, dict[str, Any]]:
+    """The league's rosters' curve shrunk toward ``prior`` by ``D/(D+1)``, ``D`` the drafts
+    behind it (the sum of their weights), and the fit's report with the blend (#77)."""
+    weight = fit.drafts / (fit.drafts + 1.0)
+    source = f"{fit.curve.source}, blend: {fit.drafts:g} drafts toward {prior.source}"
+    report = fit.to_dict()
+    report["blend"] = {
+        "drafts": round(float(fit.drafts), 3),
+        "weight": round(weight, 4),
+        "prior": prior.source,
+        "prior_status": status,
+    }
+    return fit.curve.blend(prior, weight, source=source), report
 
 
 def _league_curve(
@@ -1987,6 +2034,12 @@ def _league_curve(
             df[Cat.FPTS.value] = fantasy_points(df, _point_weights(body.points))
         return df, zscores(df, cats=state.settings.cats, pool_size=pool)
 
+    # The shared archive of a format pools the other's rosters at the refit's weight (#77).
+    others: list[tuple[Path, float]] = []
+    if folder.parent.name == leagues.SHARED:
+        report = _survival_fit(folder / leagues.SURVIVAL) or {}
+        weight = float(report.get("cross_format_weight", league_curve.CROSS_FORMAT_WEIGHT))
+        others = [(f, weight) for f in sorted(folder.parent.iterdir()) if f.is_dir() and f != folder]
     try:
         return league_curve.fit_league_curve(
             folder,
@@ -1996,6 +2049,7 @@ def _league_curve(
             state.settings.roster_size,
             season,
             aliases=load_aliases(data_dir / "aliases.json"),
+            others=others,
         )
     except (OSError, KeyError, ValueError) as exc:
         raise HTTPException(400, f"curve=league: {exc}") from exc
@@ -2183,14 +2237,20 @@ async def _build_survival(
     drafters: tuple[Strategy, ...],
     fit_curve: bool,
     generation: int = 0,
+    curve_only: bool = False,
 ) -> None:
     """Simulate the league in a worker thread, then install the table (and the fitted curve)
     and wake the solver. A build that a keeper change has superseded (``generation`` is no
-    longer the session's) is dropped: the newer one reports and installs."""
+    longer the session's) is dropped: the newer one reports and installs. ``curve_only``
+    beside a league table (#77): the run's curve is installed, or the prior the league's
+    rosters blend toward, and its table is dropped."""
     state = session.state
 
     def current() -> bool:
         return session.survival_build == generation
+
+    if curve_only:
+        return await _build_curve(session, sims, drafters)
 
     # The simulated league has no "me": my keepers go in at my seat.
     keepers = [
@@ -2245,6 +2305,58 @@ async def _build_survival(
     session.publish(
         "survival",
         {"status": "ready", "sims": sims, "seconds": round(result.seconds, 1)},
+    )
+
+
+async def _build_curve(session: Session, sims: int, drafters: tuple[Strategy, ...]) -> None:
+    """The simulation behind a league table's session, for its curve alone (#77): the league
+    table stays the survival, the run's curve becomes the session's or, under curve=league,
+    the prior the rosters' curve blends toward. Reported as ``survival.curve_run``."""
+    state = session.state
+    run = session.survival.setdefault("curve_run", {"status": "building", "sims": sims})
+
+    def progress(update: dict[str, Any]) -> None:
+        run["done"] = update["done"]
+
+    try:
+        result = await asyncio.get_running_loop().run_in_executor(
+            solver_executor(),
+            lambda: simulate_league(
+                state.settings,
+                state.projections,
+                sims,
+                state.adp if state.adp_rank is None else state.effective_adp(),
+                drafters,
+                progress=progress,
+                keepers=[
+                    replace(k, position=state.my_position) if k.position is None else k
+                    for k in state.keepers
+                ],
+                spread=(state.spread_base, state.spread_growth),
+            ),
+        )
+    except Exception as exc:  # noqa: BLE001 - report, keep the session on its standing curve
+        run.update(status="failed", error=str(exc))
+        session.publish("curve", {"status": "failed", "error": str(exc)})
+        return
+    with session.lock:
+        if session.league_curve is not None:
+            rosters, drafts = session.league_curve
+            fit = league_curve.LeagueCurveFit(
+                curve=rosters, seasons=[], drafts=drafts
+            )
+            curve, report = _blended_curve(fit, result.curve, "ready")
+            if session.curve_fit is not None:
+                session.curve_fit = {**session.curve_fit, "blend": report["blend"]}
+        else:
+            curve = result.curve
+        state.curve = curve.scaled(session.sigma_scale)
+        session.curve_source = state.curve.source
+        run.update(
+            status="ready", done=sims, source=result.curve.source, seconds=round(result.seconds, 1)
+        )
+    session.publish(
+        "curve", {"status": "ready", "sims": sims, "seconds": round(result.seconds, 1)}
     )
 
 
