@@ -6,11 +6,13 @@ import Announcer, { type Announcement } from "./components/Announcer";
 import Board from "./components/Board";
 import Drawer from "./components/Drawer";
 import KeySheet from "./components/KeySheet";
+import Leagues from "./components/Leagues";
+import LiveDrafts from "./components/LiveDrafts";
 import Rail from "./components/Rail";
 import SessionSetup from "./components/SessionSetup";
 import { RoomFeed, SyncButton } from "./components/YahooSync";
 import { Close } from "./components/icons";
-import { adpIsStandIn, adpLabel, blendLabel, rankLabel, survivalDetail } from "./format";
+import { adpIsStandIn, adpLabel, blendLabel, rankLabel, survivalDetail, turnFlag } from "./format";
 
 function useTicker(resetKey: number): number {
   const [seconds, setSeconds] = useState(0);
@@ -82,6 +84,9 @@ function DraftScreen({ yahoo, room, onSwitch, announce, onShown }: ScreenProps) 
   const onClockTeam = teamLabel(s, owner.position);
   const mm = Math.floor(sinceLastPick / 60);
   const ss = String(sinceLastPick % 60).padStart(2, "0");
+  // The count to my next turn, with the room's pick clock left on my turn (#74).
+  const clockLeft = room?.attached && room.clock_s != null ? room.clock_s - sinceLastPick : null;
+  const turn = turnFlag(s, !!room?.attached, clockLeft);
   return (
     <main className="shell">
       <header className="topbar">
@@ -116,6 +121,11 @@ function DraftScreen({ yahoo, room, onSwitch, announce, onShown }: ScreenProps) 
               </svg>
               {mm}:{ss}
             </span>
+            {turn && (
+              <span className={`turn-flag ${turn.tone}`} role="status" title="picks before my next turn, by the room's draft order">
+                {turn.text}
+              </span>
+            )}
           </>
         )}
         <button className="link" onClick={onSwitch}>
@@ -204,6 +214,17 @@ export default function App() {
     refetchInterval: (q) => (q.state.data?.attached ? 10000 : false),
   });
 
+  // A live room opens straight into its draft the first time the page loads without a session
+  // (#74); "switch draft" comes back to the landing page and stays there.
+  const autoOpened = useRef(!!sessionId);
+  const rooms = useQuery({ queryKey: ["rooms"], queryFn: api.rooms, enabled: !sessionId, refetchInterval: 5000 });
+  useEffect(() => {
+    if (autoOpened.current || sessionId || !rooms.data) return;
+    autoOpened.current = true;
+    const live = rooms.data.filter((r) => !r.complete);
+    if (live.length === 1) setSessionId(live[0].session_id);
+  }, [rooms.data, sessionId]);
+
   useEffect(() => {
     const url = new URL(location.href);
     if (sessionId) url.searchParams.set("session", sessionId);
@@ -281,7 +302,13 @@ export default function App() {
           </div>
         </header>
         {session.error && <p className="error" style={{ padding: "0 24px" }}>{session.error.message}</p>}
-        <SessionSetup onCreated={(s) => setSessionId(s.id)} onSelect={setSessionId} />
+        <div className="landing">
+          <div className="landing-live">
+            <LiveDrafts onOpen={setSessionId} />
+            <Leagues />
+          </div>
+          <SessionSetup onCreated={(s) => setSessionId(s.id)} onSelect={setSessionId} />
+        </div>
       </main>
     );
   }

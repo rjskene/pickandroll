@@ -79,9 +79,43 @@ button.primary kbd { background: rgba(0, 0, 0, 0.18); border-color: rgba(0, 0, 0
 .footer { display: flex; gap: 18px; padding: 8px 24px; border-top: 1px solid var(--line); font-size: 12px; color: var(--muted); flex-shrink: 0; align-items: center; }
 
 /* setup */
-.setup { max-width: 520px; margin: 40px auto; display: grid; gap: 12px; }
-.setup label { display: grid; gap: 4px; }
+/* One track no wider than the card: a select's longest option no longer widens the form past it (#74). */
+.setup { max-width: 520px; margin: 40px auto; display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; }
+.setup label { display: grid; gap: 4px; min-width: 0; }
 .setup .row { display: flex; gap: 10px; }
+.setup .row > label { min-width: 0; }
+.setup select, .setup input:not([type="checkbox"]):not([type="number"]) { width: 100%; min-width: 0; max-width: 100%; }
+
+/* landing (#74): the live drafts and the leagues beside the start form; one column on a phone,
+   the live drafts first */
+.landing { flex: 1; min-height: 0; overflow: auto; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 520px); gap: 20px; align-items: start; align-content: start; width: 100%; max-width: 1180px; margin: 0 auto; padding: 24px; }
+.landing-live { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; min-width: 0; }
+/* Beside the form a league row wraps its draft time rather than widen the column. */
+.landing-live .leagues { grid-template-columns: minmax(0, 1fr); }
+.landing-live .leagues td:nth-child(3) { white-space: normal; }
+.landing .setup { margin: 0; max-width: none; }
+.live { display: grid; gap: 10px; }
+.room-card { display: grid; gap: 8px; padding: 10px 12px; border: 1px solid var(--line-2); border-radius: 8px; background: var(--panel-2); }
+.room-card.done { opacity: 0.6; }
+.room-card .row { align-items: center; }
+.room-facts { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin: 0; }
+.room-facts dt { font-family: var(--display); font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); font-size: 11px; }
+.room-facts dd { margin: 0; font-family: var(--display); font-size: 22px; font-weight: 700; color: #ffffff; }
+@media (max-width: 860px) {
+  .landing { grid-template-columns: minmax(0, 1fr); padding: 12px 16px; }
+  /* On a phone the top bar wraps, so the turn flag and "switch draft" stay on screen. */
+  .topbar { flex-wrap: wrap; gap: 6px 14px; padding: 8px 16px; }
+  /* and a league's row stacks: its id, format and arm control, then the draft time. */
+  .landing-live .leagues table, .landing-live .leagues tbody { display: block; }
+  .landing-live .leagues tr { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 8px; padding: 6px 0; border-bottom: 1px solid var(--line); }
+  .landing-live .leagues td { display: block; padding: 0; border: 0; }
+  .landing-live .leagues td:empty { display: none; }
+  .landing-live .leagues td:last-child { margin-left: auto; }
+  .landing-live .leagues td:nth-child(3) { order: 1; flex-basis: 100%; color: var(--muted); }
+}
+/* The top bar's count to my next turn (#74); the warning colour on my turn. */
+.turn-flag { font-family: var(--display); font-size: 18px; font-weight: 600; color: var(--muted); white-space: nowrap; }
+.turn-flag.warn { color: var(--accent); }
 .setup .warn { color: var(--accent); font-size: 12px; margin: -4px 0 0; }
 .sessions { list-style: none; padding: 0; margin: 0; display: grid; gap: 4px; }
 
@@ -235,6 +269,8 @@ table.plan .survival .bar { width: 60px; }
 .roster.slots .planned .who { font-style: italic; color: var(--muted); }
 .slot { display: inline-block; min-width: 40px; color: var(--muted); font-size: 12px; }
 .picklog { list-style: none; padding: 0; margin: 0; }
+/* The log's controls stay at the top of the card as the list scrolls, "Latest" among them (#74). */
+.log-head { position: sticky; top: -12px; z-index: 2; margin: -12px 0 0; padding: 12px 0 6px; background: var(--panel); }
 .picklog li { padding: 3px 4px; border-bottom: 1px solid var(--line); display: flex; gap: 8px; align-items: center; }
 .picklog li.mine { background: var(--mine); }
 .picklog li.to-come { color: var(--dim); }

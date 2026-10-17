@@ -767,6 +767,8 @@ export const api = {
     request<{ yahoo_player_id: string; player_id: string; repaired: number[] }>(`/rooms/${draftId}/aliases`, { method: "POST", body: JSON.stringify(body) }),
   fidelity: (draftId: string) => request<Fidelity>(`/rooms/${draftId}/fidelity`),
   seenRooms: () => request<SeenRoom[]>("/rooms/seen"),
+  /** Every attached room, live or finished: the landing page's live-draft panel (#74). */
+  rooms: () => request<RoomSummary[]>("/rooms"),
   roomPlan: (draftId: string) => request<RoomPlan>(`/rooms/${draftId}/plan`),
   /** "Draft in Yahoo": the draft tab clicks this player for my pick on the clock. */
   requestPick: (draftId: string, body: { overall: number; board: number; yahoo_player_id: string }) =>
