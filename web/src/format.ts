@@ -1,11 +1,27 @@
-import type { AdjustmentRow, AvailabilityBias, AvailabilitySource, BoardPlayer, CurveFit, RoomSummary, Scale, SessionSummary, WinLabel } from "./api";
+import type { AdjustmentRow, AvailabilityBias, AvailabilitySource, BoardPlayer, CurveFit, RoomSummary, Scale, SessionSummary, SurvivalBlend, WinLabel } from "./api";
+
+/** "blend: 1.5 drafts": the drafts behind a blended table or curve, the sum of their weights. */
+export function blendLabel(drafts: number): string {
+  const d = Math.round(drafts * 1000) / 1000;
+  return `blend: ${d} draft${d === 1 ? "" : "s"}`;
+}
 
 /** Where the survival odds come from, in a few words. */
-export function oddsSource(source: AvailabilitySource, bias?: AvailabilityBias | null): string {
+export function oddsSource(source: AvailabilitySource, bias?: AvailabilityBias | null, blend?: SurvivalBlend | null): string {
   if (source === "survival") return "simulated drafts";
   // The league table answers late; before its first row the formula does, shifted by the bias.
-  if (source === "league") return bias ? "the league's drafts and the ADP formula + league bias" : "the league's drafts";
+  if (source === "league") {
+    const drafts = blend ? `the league's drafts (${blendLabel(blend.drafts)})` : "the league's drafts";
+    return bias ? `${drafts} and the ADP formula + league bias` : drafts;
+  }
   return bias ? "the ADP formula + league bias" : "the ADP formula";
+}
+
+/** A blended table's makeup: its drafts by format and how much of each cell is the ADP formula. */
+export function blendDetail(blend: SurvivalBlend): string {
+  const other = blend.other_format ? ` + ${blend.other_format} of the other format at ×${blend.weight}` : "";
+  const prior = Math.round((1000 / (blend.drafts + 1))) / 10;
+  return `${blendLabel(blend.drafts)}: ${blend.same_format} of the format${other}, ${prior}% ADP formula`;
 }
 
 /** The ADP formula's shift in a clause: from which ADP, fit on which seasons, from which file. */
@@ -22,7 +38,7 @@ export function survivalDetail(s: SessionSummary): string {
     s.availability_source === "survival"
       ? `simulated survival table (${s.survival.sims} drafts${s.survival.source ? `, ${s.survival.source}` : ""})`
       : s.availability_source === "league"
-        ? `this league's drafts by ADP (${s.survival.source}), the normal model under ADP ${s.survival.from_adp} and past ADP ${s.survival.max_adp}`
+        ? `this league's drafts by ADP (${s.survival.source}${s.survival.blend ? `, ${blendDetail(s.survival.blend)}` : ""}), the normal model under ADP ${s.survival.from_adp} and past ADP ${s.survival.max_adp}`
         : `ADP formula (${s.adp_source})`;
   // A simulated table is read by player and overall pick; the ADP model and the league table count
   // only the market.
@@ -155,11 +171,18 @@ export function armLabel(armed: { at: string } | null): string {
  * drafts name their league ("24 rosters from 2026 252098, 2026 31153"). */
 export function curveFitNote(fit: CurveFit): string {
   const rosters = fit.seasons.reduce((n, s) => n + s.rosters, 0);
-  const years = fit.seasons.map((s) => (s.league ? `${s.year} ${s.league}` : `${s.year}`)).join(", ");
+  const label = (s: CurveFit["seasons"][number]) => {
+    const draft = s.league ? `${s.year} ${s.league}` : `${s.year}`;
+    return s.format ? `${draft} (${s.format} ×${s.weight})` : draft;
+  };
+  const years = fit.seasons.map(label).join(", ");
   const unscored = fit.seasons.reduce((n, s) => n + s.picks - s.scored, 0);
   const seasons = fit.check_seasons;
   const check = seasons.length ? `standings check ${seasons[0]}${seasons.length > 1 ? ` to ${seasons[seasons.length - 1]}` : ""}` : "no standings check";
-  return `${rosters} rosters from ${years}${unscored ? ` (${unscored} picks unscored)` : ""}; ${check}`;
+  const blend = fit.blend
+    ? `; ${blendLabel(fit.blend.drafts)} toward ${fit.blend.prior_status === "ready" ? "today's simulated run" : "the static fit until today's run lands"}`
+    : "";
+  return `${rosters} rosters from ${years}${unscored ? ` (${unscored} picks unscored)` : ""}; ${check}${blend}`;
 }
 
 /** The room's pick clock and the plan budget it gives, for the footer's feed note (#66). */

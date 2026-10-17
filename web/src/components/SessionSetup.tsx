@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, LEAGUE_FROM_ADP, LEAGUE_SURVIVAL_DEFAULT, SPREAD, type Objective, type SessionSummary, type SurvivalMode } from "../api";
+import { blendLabel } from "../format";
 import Info from "./Info";
 import Leagues from "./Leagues";
 import { erroredRow, isMine, KeeperEditor, keeperDraft, keepersIn, nameOptions, type KeeperDraft } from "./Keepers";
@@ -430,7 +431,7 @@ export default function SessionSetup({ onCreated, onSelect }: Props) {
                 </button>{" "}
                 <span className="muted">
                   {s.num_teams} teams, pick {s.my_position}, {s.picks_made}/{s.num_teams * s.roster_size} made · {s.objective === "win" ? "categories won" : "sum of z"}
-                  {s.survival.status === "building" ? " · simulating league" : s.availability_source === "survival" ? " · simulated odds" : s.availability_source === "league" ? " · league odds" : ""}
+                  {s.survival.status === "building" ? " · simulating league" : s.availability_source === "survival" ? " · simulated odds" : s.availability_source === "league" ? ` · league odds${s.survival.blend ? ` (${blendLabel(s.survival.blend.drafts)})` : ""}` : ""}
                 </span>
               </li>
             ))}

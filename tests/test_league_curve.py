@@ -192,34 +192,46 @@ def test_curve_league_runs_through_sessions(tmp_path, sample):
         r = client.post("/sessions", json={**base, "curve": "league"})
         assert r.status_code == 201, r.text
         s = r.json()
-        assert s["curve"]["source"] == f"league rosters {year} (4 rosters, 52 of 52 picks scored)"
+        # One draft: half the rosters, half the simulated league (#77); with survival none,
+        # no run, so the static fit stands in.
+        static = CategoryCurve.simulated(NINE_CAT)
+        assert s["curve"]["source"] == (
+            f"league rosters {year} (4 rosters, 52 of 52 picks scored), blend: 1 draft toward "
+            f"{static.source}"
+        )
         assert s["curve_fit"]["seasons"][0]["scored"] == 52 and s["curve_fit"]["check"] == {}
+        assert s["curve_fit"]["drafts"] == 1 and s["curve_fit"]["blend"] == {
+            "drafts": 1,
+            "weight": 0.5,
+            "prior": static.source,
+            "prior_status": "static",
+        }
         rosters, _ = season_rosters(pd.read_csv(archive / "picks.csv"), proj.df)
         totals = roster_totals(z, rosters, NINE_CAT)
-        assert s["curve"]["sigma"]["pts"] == pytest.approx(totals["pts"].std(ddof=1), abs=1e-4)
-        assert s["curve"]["mu"]["ast"] == pytest.approx(totals["ast"].mean(), abs=1e-4)
+        sd = totals["pts"].std(ddof=1)
+        assert s["curve"]["sigma"]["pts"] == pytest.approx(
+            0.5 * sd + 0.5 * static.sigma[Cat.PTS], abs=1e-4
+        )
+        assert s["curve"]["mu"]["ast"] == pytest.approx(
+            0.5 * totals["ast"].mean() + 0.5 * static.mu[Cat.AST], abs=1e-4
+        )
         assert store.sessions[s["id"]].create_params["curve"] == "league"
         # The default stays the simulated league, with no fit to report.
         plain = client.post("/sessions", json=base).json()
         assert plain["curve"]["source"].startswith("simulated league")
         assert plain["curve_fit"] is None
-        # A simulation measures survival only: the league's curve stands.
+        # A simulation's curve is the prior the rosters blend toward (#77).
         sim = client.post(
             "/sessions",
             json={**base, "curve": "league", "survival": "simulate", "survival_sims": 10},
         ).json()
-        assert store.sessions[sim["id"]].create_params["fit_curve"] is False
+        assert store.sessions[sim["id"]].create_params["fit_curve"] is True
         # One curve at a time, and a league folder without an archive says so.
         (tmp_path / "curve.json").write_text(
             json.dumps({"mu": {"pts": 0.0}, "sigma": {"pts": 1.0}})
         )
         r = client.post("/sessions", json={**base, "curve": "league", "curve_file": "curve.json"})
         assert r.status_code == 400 and "pass one or the other" in r.json()["detail"]
-        r = client.post(
-            "/sessions",
-            json={**base, "curve": "league", "survival": "simulate", "fit_curve": True},
-        )
-        assert r.status_code == 400 and "leave fit_curve out" in r.json()["detail"]
         (archive / "picks.csv").unlink()
         r = client.post("/sessions", json={**base, "curve": "league"})
         assert r.status_code == 400

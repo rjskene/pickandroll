@@ -10,7 +10,7 @@ import Rail from "./components/Rail";
 import SessionSetup from "./components/SessionSetup";
 import { RoomFeed, SyncButton } from "./components/YahooSync";
 import { Close } from "./components/icons";
-import { adpIsStandIn, adpLabel, rankLabel, survivalDetail } from "./format";
+import { adpIsStandIn, adpLabel, blendLabel, rankLabel, survivalDetail } from "./format";
 
 function useTicker(resetKey: number): number {
   const [seconds, setSeconds] = useState(0);
@@ -142,7 +142,7 @@ function DraftScreen({ yahoo, room, onSwitch, announce, onShown }: ScreenProps) 
         </span>
         <span>Objective: {s.objective === "win" ? "categories won" : "sum of z"}</span>
         <span title={`Survival odds: ${survivalDetail(s)}`}>
-          Survival: {s.availability_source === "survival" ? `simulated (${s.survival.sims} drafts)` : s.availability_source === "league" ? "league's drafts" : "ADP formula"}
+          Survival: {s.availability_source === "survival" ? `simulated (${s.survival.sims} drafts)` : s.availability_source === "league" ? `league's drafts${s.survival.blend ? ` (${blendLabel(s.survival.blend.drafts)})` : ""}` : "ADP formula"}
         </span>
         <span
           className={adpIsStandIn(s.adp_source) ? "bad" : ""}
@@ -249,6 +249,8 @@ export default function App() {
       setSurvival(event);
       if (event.status !== "building") refresh();
     });
+    // The simulation run beside a league table for its curve alone (#77) has landed.
+    source.addEventListener("curve", refresh);
     source.addEventListener("hello", refresh);
     source.addEventListener("pick", (e) => {
       refresh();

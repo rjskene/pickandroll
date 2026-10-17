@@ -235,7 +235,7 @@ def test_fit_curve_asks_for_a_simulation(league):
     with app_for(directory) as c:
         r = c.post("/sessions", json=body)
         assert r.status_code == 400
-        assert "fit_curve fits the curve from a simulated survival run" in r.json()["detail"]
+        assert "fit_curve fits the curve from a simulated run" in r.json()["detail"]
         assert "survival is none" in r.json()["detail"]
         r = c.post("/rooms", json={"draft_id": "fc", "slot": 1, "session": body})
         assert r.status_code == 400 and "survival is none" in r.json()["detail"]

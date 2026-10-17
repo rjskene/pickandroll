@@ -27,11 +27,17 @@ export type CurveChoice = "simulated" | "league";
 /** curve=league: the seasons fitted, those left out and why, and the standings' σ in z units
  * (null for a category the standings cannot convert: the percentages). */
 export interface CurveFit {
-  /** A draft of the shared archive (#77) names its league too. */
-  seasons: { year: number; league?: string; rosters: number; picks: number; scored: number; unmatched: string[] }[];
-  skipped: { year: number; league?: string; reason: string }[];
+  /** A draft of the shared archive (#77) names its league too; one pooled from the other
+   * format's archive, that format and its weight. */
+  seasons: { year: number; league?: string; format?: string; weight?: number; rosters: number; picks: number; scored: number; unmatched: string[] }[];
+  skipped: { year: number; league?: string; format?: string; weight?: number; reason: string }[];
   check: Partial<Record<Cat, number | null>>;
   check_seasons: string[];
+  /** The sum of the fitted drafts' weights (#77). */
+  drafts?: number;
+  /** The rosters' curve shrunk toward the simulated league by weight = D/(D+1): toward the
+   * static fit until today's run lands ("static"), then toward the run ("ready"). */
+  blend?: { drafts: number; weight: number; prior: string; prior_status: "static" | "ready" } | null;
 }
 /** The ADP model's spread of a draft slot, SPREAD.base + SPREAD.growth × ADP picks, fitted on the
  * league's nine drafts, for the setup's text. A session reports the values it runs on. */
@@ -44,6 +50,14 @@ export const LEAGUE_FROM_ADP = 90;
 // Mirrors LEAGUE_SURVIVAL_DEFAULT in src/pickandroll/api/app.py: change both.
 export const LEAGUE_SURVIVAL_DEFAULT = "yahoo_history/survival_by_adp_adjusted.csv";
 export type AvailabilitySource = "adp" | "survival" | "league";
+/** A league table's blend toward the ADP formula (#77): D drafts behind it, the sum of their
+ * weights (the other format's at ``weight``); D/(D+1) of each cell is the drafts'. */
+export interface SurvivalBlend {
+  drafts: number;
+  same_format: number;
+  other_format: number;
+  weight: number;
+}
 /** The league's shift of the ADP formula by keeper-adjusted ADP (#64): the table's file and fit. */
 export interface AvailabilityBias {
   source: string | null;
@@ -68,6 +82,10 @@ export interface SurvivalStatus {
   max_adp?: number;
   /** The session named no survival and the league table could not serve it: why it simulates. */
   note?: string;
+  /** A league table: its blend toward the ADP formula, null for a raw table (#77). */
+  blend?: SurvivalBlend | null;
+  /** Beside a league table: the simulation run for the curve alone (#77). */
+  curve_run?: { status: "building" | "ready" | "failed"; sims?: number; done?: number; source?: string; seconds?: number; error?: string };
 }
 
 export interface SolverStatus {
@@ -359,6 +377,7 @@ export interface Recommendation {
   adp_source: string;
   availability_source: AvailabilitySource;
   availability_bias?: AvailabilityBias | null;
+  availability_blend?: SurvivalBlend | null;
   candidates: Candidate[];
   plan: PlanRow[];
   scenarios: Scenario[];

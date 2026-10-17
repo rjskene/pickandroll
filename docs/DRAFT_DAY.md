@@ -253,27 +253,42 @@ Each finished draft is evidence for the next one in its format. The archive is
   the league's `yahoo_players.json`, refreshed at T−30, and a copy goes into the draft's folder in
   `data/fidelity/`. Archiving a draft again replaces its rows. An incomplete room says `not archived (...)`, and
   `finish` goes on.
-- **Survival.** `refit` fits the table from the archive's drafts of the league's size, then reports the drafts
-  and the ADP rows the table answers for. Two minimums apply together:
-  - **Drafts.** The archive needs 3 drafts of the size before it gives a table at all: `--min-drafts`, or
-    `"refit": {"min_drafts": N}` in the league's `settings.json`. One draft gives one player per ADP value, and
-    Yahoo's ADP is already the market these leagues draft by, so a thin table would be worse than the formula.
-  - **Players per row.** A row answers only while at least 20 players have an ADP within its bandwidth:
-    `--min-count`, or `"refit": {"min_count": N}`. Past the last such row the ADP formula answers.
+- **Survival.** `refit` fits the table from the archived drafts of the league's size in both formats, then
+  reports the drafts and the ADP rows the table answers for:
 
-  Without a table, `refit` removes any old one and keeps the report with its reason. The league's sessions then
-  simulate, and their survival note says why, for example `archive: 1 draft, below the minimum of 3`. `status`
-  prints the same line.
+  ```
+  archive _shared/points: 1 draft of 12 x 13 (238174 2026-10-17); categories: 1 draft at x0.5 (251146 2026-10-17)
+    survival: wrote ..., answering ADP 90-N (at least 20 players within the bandwidth), blend: 1.5 drafts toward the ADP formula; the ADP formula elsewhere
+    curve: league, from the rosters of 1.5 drafts, blended toward today's simulated run
+  ```
+
+  - **Pooling.** The league's own format counts at weight 1 and the other format at 0.5:
+    `--cross-format-weight`, or `"refit": {"cross_format_weight": W}` in the league's `settings.json`. `D`, the
+    drafts, is the sum of the weights.
+  - **Blend.** The table is `D/(D+1)` of the drafts and `1/(D+1)` of the ADP formula, the ADP model the
+    simulation drafts with, so the first draft already counts, at half. The undrafted share is `D/(D+1)` of the
+    drafts'.
+  - **Players per row.** A row carries the drafts only while at least 20 weighted players have an ADP within its
+    bandwidth: `--min-count`, or `"refit": {"min_count": N}`. Past the last such row the ADP formula answers
+    alone.
+
+  Without a table (no draft of the size, or a first row already thin, as with half a draft from the other format
+  alone), `refit` removes any old one and keeps the report with its reason. The league's sessions then simulate,
+  and their survival note says why, for example `archive: no drafts of 12 x 13 yet`. `status` prints the reason,
+  or the table's rows and its blend: `blend: 1.5 drafts (1 of the format, 1 of the other at x0.5)`.
 - **Which table a session reads.** The league's own folder's table first, then this shared one if it covers
-  the draft, then a simulation. The session's survival `source` names the file.
-- **Curve.** A categories league asks for `curve: league` under the same draft minimum. The curve comes from
-  those drafts' rosters on the session's projections. Below that, the simulated curve stands. If the league curve cannot be fit at the attach, the run
+  the draft, then a simulation. The session's survival `source` names the file, its `availability_source` is
+  `league`, and `survival.blend` carries the blend. The dashboard words the odds as "the league's drafts
+  (blend: 1.5 drafts)".
+- **Curve.** Once its format has a table, a league in either format asks for `curve: league`. The curve comes
+  from both formats' rosters on the session's projections, at the same weights, blended toward today's simulated
+  run by the same `D/(D+1)`. The session runs that simulation in the background for its curve alone and keeps
+  the league table as its survival. The static curve (categories) or the flat one (points) stands in until the
+  run lands, and the dashboard refreshes when it does. If the league curve cannot be fit at the attach, the run
   prints an ALERT and attaches with the simulated curve.
 - **This weekend's order.** In points, 238174 (Saturday 11:00) is the archive's first draft, then 15953 and
   208649. In categories, 251146 (Saturday 20:00) starts the archive, then 252098, 31153, 224319 and 230585.
-  Each draft is archived for the ones after it. Under the draft minimum, the points leagues this weekend simulate
-  (two drafts at most before 208649). In categories, 230585 on Monday is the first draft with three before it.
-  A blend of the archive with the ADP formula, so that one draft already counts, is a follow-up.
+  Each draft is archived for the ones after it and counts from the first, the other format's at half weight.
 
 ## Projections (#75)
 

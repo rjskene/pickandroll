@@ -24,6 +24,8 @@ from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 
+from .adp import SPREAD_BASE, SPREAD_GROWTH, availability, spread_for_adp
+
 #: The first (keeper-adjusted) ADP the table answers for; earlier players are left to the normal model.
 LEAGUE_FROM_ADP = 90
 
@@ -118,13 +120,17 @@ def bandwidth(adp: float) -> float:
     return 5.0 + 0.08 * float(adp)
 
 
-def survival_counts(adp: Sequence[float], rows: Sequence[int]) -> pd.Series:
-    """For each ADP row, the observed players whose ADP lies within the row's bandwidth."""
+def survival_counts(
+    adp: Sequence[float], rows: Sequence[int], weights: Sequence[float] | None = None
+) -> pd.Series:
+    """For each ADP row, the observed players whose ADP lies within the row's bandwidth, each
+    counted at its draft's weight (one by default)."""
     x = np.asarray(adp, dtype=float)
+    w = np.ones_like(x) if weights is None else np.asarray(weights, dtype=float)
     return pd.Series(
-        [int((np.abs(x - a) <= bandwidth(a)).sum()) for a in rows],
+        [float(w[np.abs(x - a) <= bandwidth(a)].sum()) for a in rows],
         index=pd.Index(list(rows), name="adp"),
-        dtype=int,
+        dtype=float,
     )
 
 
@@ -132,24 +138,29 @@ def fit_survival_table(
     adp: Sequence[float],
     overall: Sequence[float],
     picks: int,
-    min_count: int = MIN_COUNT,
+    min_count: float = MIN_COUNT,
+    weights: Sequence[float] | None = None,
 ) -> tuple[LeagueSurvivalTable | None, pd.Series]:
     """``S(m | a)`` from observed drafts, one observation per player with an ADP per draft:
     his ADP and the overall pick that took him (NaN when he went undrafted, so he survives
-    every pick). Each row is the kernel-weighted share of players still on the board, the
+    every pick), at his draft's weight (``weights``, one by default: a draft of another format
+    counts for less). Each row is the kernel-weighted share of players still on the board, the
     archive's smoothing (``bandwidth``). The table keeps the rows from ADP 1 up to the last of
-    an unbroken run, from :data:`LEAGUE_FROM_ADP` on, whose counts clear ``min_count``
-    (``survival_counts``); past it, and before :data:`LEAGUE_FROM_ADP`, the ADP formula answers.
-    Returns the table (``None`` when the first row it would answer is already thin) and the
-    counts of every row looked at."""
+    an unbroken run, from :data:`LEAGUE_FROM_ADP` on, whose weighted counts clear
+    ``min_count`` (``survival_counts``); past it, and before :data:`LEAGUE_FROM_ADP`, the ADP
+    formula answers. Returns the table (``None`` when the first row it would answer is already
+    thin) and the counts of every row looked at."""
     a_obs = np.asarray(adp, dtype=float)
     y = np.asarray(overall, dtype=float)
     if a_obs.shape != y.shape or not len(a_obs) or np.isnan(a_obs).any():
         raise ValueError("needs one ADP and one pick (NaN if undrafted) per observation")
     if picks < 1:
         raise ValueError("picks must be at least 1")
+    draft_w = np.ones_like(a_obs) if weights is None else np.asarray(weights, dtype=float)
+    if draft_w.shape != a_obs.shape or np.isnan(draft_w).any() or (draft_w < 0).any():
+        raise ValueError("needs one weight of zero or more per observation")
     top = max(int(np.ceil(a_obs.max() + bandwidth(a_obs.max()))), LEAGUE_FROM_ADP)
-    counts = survival_counts(a_obs, range(1, top + 1))
+    counts = survival_counts(a_obs, range(1, top + 1), draft_w)
     last = None
     for a in range(LEAGUE_FROM_ADP, top + 1):
         if counts[a] < min_count:
@@ -162,7 +173,7 @@ def fit_survival_table(
     alive = ((y[:, None] >= ks[None, :]) | undrafted[:, None]).astype(float)
     rows, und = {}, {}
     for a in range(1, last + 1):
-        w = np.exp(-0.5 * ((a_obs - a) / bandwidth(a)) ** 2)
+        w = draft_w * np.exp(-0.5 * ((a_obs - a) / bandwidth(a)) ** 2)
         total = float(w.sum())
         if total <= 0.0:
             raise ValueError(f"no observation weighs on ADP {a}")
@@ -172,6 +183,30 @@ def fit_survival_table(
     table = pd.DataFrame.from_dict(rows, orient="index", columns=[int(k) for k in ks])
     table.index = pd.Index(list(rows), name="adp")
     return LeagueSurvivalTable(table=table, undrafted=pd.Series(und)), counts
+
+
+def blend_with_formula(
+    table: LeagueSurvivalTable,
+    drafts: float,
+    base: float = SPREAD_BASE,
+    growth: float = SPREAD_GROWTH,
+) -> LeagueSurvivalTable:
+    """The table shrunk toward the ADP formula: each cell is ``D/(D+1)`` of the drafts' share and
+    ``1/(D+1)`` of the formula's survival at the row's ADP and the cell's pick, a prior worth one
+    draft's observations for ``D`` drafts (the sum of the drafts' weights, so fractional with
+    another format's drafts in). The prior is the ADP model the simulated drafters draft with.
+    The formula has no undrafted mass, so the undrafted share shrinks toward nothing by the same
+    weight. Rows stay non-increasing in the pick and never fall below the shrunk undrafted
+    share."""
+    if not drafts > 0:
+        raise ValueError("drafts must be above 0")
+    weight = drafts / (drafts + 1)
+    rows = table.table.index
+    adp = pd.Series(rows.to_numpy(float), index=rows)
+    spread = adp.map(lambda a: spread_for_adp(a, base, growth))
+    formula = pd.DataFrame({k: availability(adp, k, spread=spread) for k in table.table.columns})
+    blended = (weight * table.table + (1.0 - weight) * formula).clip(0.0, 1.0)
+    return LeagueSurvivalTable(table=blended, undrafted=weight * table.undrafted)
 
 
 def survival_frame(table: LeagueSurvivalTable) -> pd.DataFrame:
