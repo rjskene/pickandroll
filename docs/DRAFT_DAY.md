@@ -406,8 +406,9 @@ These are the user's own steps. A session cannot do them.
   block. Where the news is clear (out for weeks), add the player to `data/leagues/<id>/adjustments.json` (see
   "News sweep and games haircuts"). The scheduled session posts the sweep again at T−30, but it never writes
   haircuts.
-- **Arm each league you want drafted for you.** On the dashboard's setup page (http://localhost:5173), the
-  **Leagues** list sits at the top. Click **Arm draft**, then **Confirm: arm <id>**. Disarm the same way.
+- **Arm each league you want drafted for you.** On the dashboard's landing page (http://localhost:5173), the
+  **Leagues** list sits under the live drafts, beside the start form. Click **Arm draft**, then **Confirm: arm
+  <id>**. Disarm the same way.
   - The arm is read once, at the first attach, so arm before the scheduled task fires (T−30).
   - After the attach, the room's Sync card arms or disarms the live room.
   - An unarmed league mirrors, and Yahoo autopicks your turns.
@@ -453,6 +454,18 @@ On the Mac (Tailscale is installed; it was stopped on 2026-10-16):
    opens `http://<tailnet IPv4>:5173/`. Vite admits a bare IP without `allowedHosts`. On the Mac the dashboard is
    then at that address too, not `localhost`. Avoid `--host 0.0.0.0`, which also opens the dashboard to the local
    network.
+
+What the phone shows (#74):
+
+- **The landing page.** It leads with the live drafts, one card per attached room: the league, your seat, the
+  room's mode and your pre-arm, the picks made, your next pick, the clock, and **Open draft**. With no room it
+  names the next league draft. The Leagues list follows, and the start form sits beside them (below on a phone).
+  When exactly one room is live, the page opens straight into its draft; **switch draft** comes back.
+- **The draft's top bar.** Beside the time since the last pick, it counts the picks to your turn: "7 picks to
+  your turn", "you're next", then "your pick" with the pick clock's time left in the warning colour, or "your
+  pick, then again" when your next pick follows at once.
+- **The log card (6).** The picks are listed in draft order, the earliest at the top. The list stays where you
+  scrolled while picks come in and follows them only while it shows the latest; **Latest** jumps back there.
 
 The dashboard has no sign-in. Anyone who reaches it can arm or disarm a room, which is why it is kept to the
 tailnet.

@@ -1,4 +1,4 @@
-import type { AdjustmentRow, AvailabilityBias, AvailabilitySource, BoardPlayer, CurveFit, RoomSummary, Scale, SessionSummary, SurvivalBlend, WinLabel } from "./api";
+import type { AdjustmentRow, AvailabilityBias, AvailabilitySource, BoardPlayer, CurveFit, LeagueSummary, RoomSummary, Scale, SessionSummary, SurvivalBlend, WinLabel } from "./api";
 
 /** "blend: 1.5 drafts": the drafts behind a blended table or curve, the sum of their weights. */
 export function blendLabel(drafts: number): string {
@@ -222,4 +222,55 @@ export function haircutTitle(a: AdjustmentRow): string {
   const given = a.games_out != null ? `${Math.round(a.games_out)} games out` : `${Math.round(a.fraction * 100)}% of his games`;
   const note = a.note ? ` (${a.note})` : "";
   return `games haircut: ${given}${note}, ${Math.round(a.games_left)} of ${Math.round(a.games)} projected games; his totals are scaled and z recomputed`;
+}
+
+/** Seconds as m:ss. */
+export function clockText(seconds: number): string {
+  const s = Math.max(0, Math.floor(seconds));
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+}
+
+/** What the turn flag needs of a session or a room: its board and my next draftable pick
+ * (`my_picks`, keeper rounds left out, tells the snake's turnaround; a room's summary lacks it). */
+export interface TurnBoard {
+  next_overall: number;
+  my_next_pick: number | null;
+  complete: boolean;
+  my_picks?: number[];
+}
+
+export interface TurnFlag {
+  text: string;
+  /** "warn" on my turn, in the warning colour. */
+  tone: "" | "warn";
+}
+
+/** The top bar's count to my next turn (#74): the picks other teams make before it, "you're
+ * next" at one, and "your pick" on my turn, "your pick, then again" when my next pick follows
+ * at once (the snake's turnaround), with the pick clock's seconds left when known. Null with no
+ * room attached, a complete draft, or no pick of mine left. */
+export function turnFlag(board: TurnBoard, attached: boolean, clockLeftS: number | null = null): TurnFlag | null {
+  if (!attached || board.complete || board.my_next_pick == null) return null;
+  const ahead = board.my_next_pick - board.next_overall;
+  if (ahead < 0) return null;
+  if (ahead === 0) {
+    const again = board.my_picks?.includes(board.next_overall + 1) ?? false;
+    const clock = clockLeftS == null ? "" : ` · ${clockText(clockLeftS)} left`;
+    return { text: `${again ? "your pick, then again" : "your pick"}${clock}`, tone: "warn" };
+  }
+  return { text: ahead === 1 ? "you're next" : `${ahead} picks to your turn`, tone: "" };
+}
+
+/** Live rooms first (my turn soonest first), finished ones after. */
+export function roomOrder(rooms: RoomSummary[]): RoomSummary[] {
+  const turnIn = (r: RoomSummary) => (r.complete || r.my_next_pick == null ? Infinity : r.my_next_pick - r.next_overall);
+  return [...rooms].sort((a, b) => Number(a.complete) - Number(b.complete) || turnIn(a) - turnIn(b));
+}
+
+/** The league whose draft comes next, among those not yet past. */
+export function nextDraft(leagues: LeagueSummary[], now: number): LeagueSummary | null {
+  const upcoming = leagues
+    .filter((l) => l.draft_time && Date.parse(l.draft_time) > now)
+    .sort((a, b) => Date.parse(a.draft_time!) - Date.parse(b.draft_time!));
+  return upcoming[0] ?? null;
 }

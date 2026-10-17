@@ -2,8 +2,8 @@
 // since the web app has no Node types.
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import type { AdjustmentRow, AvailabilityBias, BoardPlayer, CurveFit, SessionSummary } from "./api";
-import { adpCell, adpTitle, armLabel, biasDetail, blendDetail, blendLabel, clockNote, curveFitNote, draftWhen, haircutLabel, haircutTitle, haircutWeeks, oddsSource, rankLabel, survivalDetail, weeksToGames } from "./format.ts";
+import type { AdjustmentRow, AvailabilityBias, BoardPlayer, CurveFit, LeagueSummary, RoomSummary, SessionSummary } from "./api";
+import { adpCell, adpTitle, armLabel, biasDetail, blendDetail, blendLabel, clockNote, clockText, curveFitNote, draftWhen, haircutLabel, haircutTitle, haircutWeeks, nextDraft, oddsSource, rankLabel, roomOrder, survivalDetail, turnFlag, weeksToGames } from "./format.ts";
 
 const row = (adp_from: BoardPlayer["adp_from"], adp: number | null, keepers_ahead = 0): BoardPlayer =>
   ({ adp, adp_eff: adp == null ? null : adp - keepers_ahead, adp_from, keepers_ahead }) as BoardPlayer;
@@ -148,4 +148,60 @@ test("a haircut reads as the weeks the board set, else as given", () => {
   assert.equal(haircutLabel(cut({ games_out: 10, note: "sweep: ESPN" })), "−10 GP");
   assert.equal(haircutWeeks(cut({ games_out: 10, note: "sweep: ESPN" })), null);
   assert.equal(haircutLabel(cut({ games_fraction: 0.8, fraction: 0.8 })), "×0.80 GP");
+});
+
+// Seat 4 and seat 12 of a 12-team, 13-round snake: seat 4 picks 4, 21, 28, ...; seat 12 picks 12
+// and 13, 36 and 37, ... (the turnaround).
+const snake = (seat: number, teams = 12, rounds = 13) =>
+  Array.from({ length: rounds }, (_, r) => r * teams + (r % 2 === 0 ? seat : teams + 1 - seat));
+
+test("the turn flag counts the picks to my turn down to you're next and your pick", () => {
+  const my_picks = snake(4);
+  const at = (next_overall: number) => turnFlag({ next_overall, my_next_pick: my_picks.find((k) => k >= next_overall) ?? null, complete: false, my_picks }, true);
+  assert.deepEqual(at(1), { text: "3 picks to your turn", tone: "" });
+  assert.deepEqual(at(3), { text: "you're next", tone: "" });
+  assert.deepEqual(at(4), { text: "your pick", tone: "warn" });
+  // After my pick the count starts again from the next one: 21 - 5 = 16.
+  assert.deepEqual(at(5), { text: "16 picks to your turn", tone: "" });
+  assert.equal(at(20)?.text, "you're next");
+});
+
+test("at the snake's turnaround my pick comes back at once: your pick, then again", () => {
+  const my_picks = snake(12);
+  const flag = (next_overall: number, clock: number | null = null) =>
+    turnFlag({ next_overall, my_next_pick: my_picks.find((k) => k >= next_overall) ?? null, complete: false, my_picks }, true, clock);
+  assert.deepEqual(flag(11), { text: "you're next", tone: "" });
+  assert.deepEqual(flag(12, 42), { text: "your pick, then again · 0:42 left", tone: "warn" });
+  assert.deepEqual(flag(13, 59), { text: "your pick · 0:59 left", tone: "warn" });
+  assert.equal(flag(14)?.text, "22 picks to your turn");
+  // A keeper in the second slot of the pair is no pick of mine: no "then again".
+  const kept = my_picks.filter((k) => k !== 13);
+  assert.equal(turnFlag({ next_overall: 12, my_next_pick: 12, complete: false, my_picks: kept }, true)?.text, "your pick");
+  // A room's summary has no pick list: the plain flag.
+  assert.equal(turnFlag({ next_overall: 12, my_next_pick: 12, complete: false }, true)?.text, "your pick");
+});
+
+test("the turn flag hides without a room, after my last pick and when the draft is complete", () => {
+  const board = { next_overall: 5, my_next_pick: 8, complete: false };
+  assert.equal(turnFlag(board, false), null);
+  assert.equal(turnFlag({ ...board, my_next_pick: null }, true), null);
+  assert.equal(turnFlag({ ...board, complete: true }, true), null);
+  // The clock never reads below zero.
+  assert.equal(turnFlag({ next_overall: 8, my_next_pick: 8, complete: false }, true, -3)?.text, "your pick · 0:00 left");
+  assert.equal(clockText(125), "2:05");
+});
+
+test("the live panel lists live rooms by my next turn, finished rooms last, and names the next draft", () => {
+  const room = (draft_id: string, next_overall: number, my_next_pick: number | null, complete = false) =>
+    ({ draft_id, next_overall, my_next_pick, complete }) as RoomSummary;
+  const order = roomOrder([room("done", 157, null, true), room("far", 10, 20), room("soon", 10, 11), room("over", 150, null)]);
+  assert.deepEqual(
+    order.map((r) => r.draft_id),
+    ["soon", "far", "over", "done"],
+  );
+  const league = (id: string, draft_time: string | null) => ({ league: id, draft_time }) as LeagueSummary;
+  const now = Date.parse("2026-10-17T20:00:00Z");
+  const leagues = [league("past", "2026-10-17T18:00:00Z"), league("later", "2026-10-18T18:00:00Z"), league("next", "2026-10-18T03:00:00Z"), league("unknown", null)];
+  assert.equal(nextDraft(leagues, now)?.league, "next");
+  assert.equal(nextDraft([league("past", "2026-10-17T18:00:00Z")], now), null);
 });

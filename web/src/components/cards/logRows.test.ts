@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { KeeperRow, PickRow } from "../../api";
-import { byTeam, draftOrder, logItems } from "./logRows.ts";
+import { byTeam, draftOrder, latestPick, logItems } from "./logRows.ts";
 
 const ME = "me";
 const TEAMS = ["Team 1", ME, "Team 3"];
@@ -39,10 +39,13 @@ test("keepers to come sit at their overall among the picks made", () => {
   );
   const { ahead, rows } = draftOrder(items, 3, 3);
   assert.deepEqual(ahead, []);
+  // Earliest pick first (#74): the latest made pick, 2, is the last row before the keeper.
   assert.deepEqual(
     rows.map((i) => i.overall),
-    [5, 2, 1],
+    [1, 2, 5],
   );
+  assert.equal(latestPick(rows), "pick-2");
+  assert.equal(latestPick(draftOrder(logItems([], [], ME), 1, 3).rows), null);
 });
 
 test("draft order holds back the keepers to come more than a round ahead", () => {
@@ -52,15 +55,15 @@ test("draft order holds back the keepers to come more than a round ahead", () =>
   const { ahead, rows } = draftOrder(logItems(picks, keepers, ME), 4, 3);
   assert.deepEqual(
     ahead.map((i) => i.overall),
-    [12, 8],
+    [8, 12],
   );
   assert.deepEqual(
     rows.map((i) => [i.overall, i.toCome]),
     [
-      [7, true],
-      [3, false],
-      [2, false],
       [1, false],
+      [2, false],
+      [3, false],
+      [7, true],
     ],
   );
 });
