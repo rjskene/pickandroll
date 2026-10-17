@@ -160,6 +160,14 @@ def _standing(solution: HorizonSolution, table: pd.DataFrame, priced: bool) -> t
     return float(solution.objective), bool(solution.time_limited)
 
 
+def _availability_blend(session: Session) -> dict[str, Any] | None:
+    """A league table's blend toward the ADP formula, the drafts behind it (#77); ``None`` for
+    a raw table or when the odds come from elsewhere."""
+    if session.state.availability_source != "league":
+        return None
+    return session.survival.get("blend")
+
+
 def displaces(new: dict[str, Any], old: dict[str, Any]) -> bool:
     """Whether ``new`` replaces ``old``, a recommendation for the same board. A reco never
     displaces one whose objective is at least as good, except on a tie: a converged plan
@@ -247,6 +255,7 @@ def _horizon_payload(
         "adp_source": state.adp_source,
         "availability_source": state.availability_source,
         "availability_bias": state.availability_bias,
+        "availability_blend": _availability_blend(session),
         "candidates": candidate_rows,
         "plan": [
             {
@@ -506,6 +515,7 @@ def compute_recommendation(
         "adp_source": state.adp_source,
         "availability_source": state.availability_source,
         "availability_bias": state.availability_bias,
+        "availability_blend": _availability_blend(session),
         "candidates": _candidates(table, scale, state.effective_adp()),
         "plan": [],
         "scenarios": [],

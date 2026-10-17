@@ -2097,7 +2097,8 @@ def _blended_curve(
     """The league's rosters' curve shrunk toward ``prior`` by ``D/(D+1)``, ``D`` the drafts
     behind it (the sum of their weights), and the fit's report with the blend (#77)."""
     weight = fit.drafts / (fit.drafts + 1.0)
-    source = f"{fit.curve.source}, blend: {fit.drafts:g} drafts toward {prior.source}"
+    many = f"{fit.drafts:g} draft{'' if fit.drafts == 1 else 's'}"
+    source = f"{fit.curve.source}, blend: {many} toward {prior.source}"
     report = fit.to_dict()
     report["blend"] = {
         "drafts": round(float(fit.drafts), 3),
@@ -2162,7 +2163,7 @@ def _league_curve(
     others: list[tuple[Path, float]] = []
     if folder.parent.name == leagues.SHARED:
         report = _survival_fit(folder / leagues.SURVIVAL) or {}
-        weight = float(report.get("cross_format_weight", league_curve.CROSS_FORMAT_WEIGHT))
+        weight = float(report.get("cross_format_weight", leagues.CROSS_FORMAT_WEIGHT))
         others = [(f, weight) for f in sorted(folder.parent.iterdir()) if f.is_dir() and f != folder]
     try:
         return league_curve.fit_league_curve(
@@ -2416,8 +2417,7 @@ async def _build_survival(
             return
         state.survival = result.survival
         if fit_curve and session.objective == "win":
-            state.curve = result.curve.scaled(session.sigma_scale)
-            session.curve_source = state.curve.source
+            _install_run_curve(session, result.curve)
         # Under the lock: a keeper change right after it reports its own build, not this one.
         session.survival = {
             **session.survival,
@@ -2430,6 +2430,20 @@ async def _build_survival(
         "survival",
         {"status": "ready", "sims": sims, "seconds": round(result.seconds, 1)},
     )
+
+
+def _install_run_curve(session: Session, run: CategoryCurve) -> None:
+    """Under the session lock: a simulated run's curve becomes the session's, or under
+    curve=league the prior the rosters' curve blends toward (#77)."""
+    curve = run
+    if session.league_curve is not None:
+        rosters, drafts = session.league_curve
+        fit = league_curve.LeagueCurveFit(curve=rosters, seasons=[], drafts=drafts)
+        curve, report = _blended_curve(fit, run, "ready")
+        if session.curve_fit is not None:
+            session.curve_fit = {**session.curve_fit, "blend": report["blend"]}
+    session.state.curve = curve.scaled(session.sigma_scale)
+    session.curve_source = session.state.curve.source
 
 
 async def _build_curve(session: Session, sims: int, drafters: tuple[Strategy, ...]) -> None:
@@ -2464,18 +2478,7 @@ async def _build_curve(session: Session, sims: int, drafters: tuple[Strategy, ..
         session.publish("curve", {"status": "failed", "error": str(exc)})
         return
     with session.lock:
-        if session.league_curve is not None:
-            rosters, drafts = session.league_curve
-            fit = league_curve.LeagueCurveFit(
-                curve=rosters, seasons=[], drafts=drafts
-            )
-            curve, report = _blended_curve(fit, result.curve, "ready")
-            if session.curve_fit is not None:
-                session.curve_fit = {**session.curve_fit, "blend": report["blend"]}
-        else:
-            curve = result.curve
-        state.curve = curve.scaled(session.sigma_scale)
-        session.curve_source = state.curve.source
+        _install_run_curve(session, result.curve)
         run.update(
             status="ready", done=sims, source=result.curve.source, seconds=round(result.seconds, 1)
         )

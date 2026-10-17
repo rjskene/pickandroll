@@ -221,8 +221,9 @@ def logged_session(prior: list[dict[str, Any]]) -> dict[str, Any]:
     """The session settings a rebuild starts from: the current attach record's, with the keeper
     table of the last ``keepers`` event after it (a PATCH since the attach, #63) and the games
     haircuts of the last ``adjustments`` event (#76). A record from before #63 always carries
-    ``fit_curve``; it only ever applied to a simulation. One from before #64 ran without the ADP
-    bias."""
+    ``fit_curve``; it only ever applied to a simulation. One beside a table that does not say it
+    ran the simulation for its curve (``curve_run``, #77) did not. One from before #64 ran
+    without the ADP bias."""
     record = last_attach(prior) or {}
     create = dict(record.get("session") or {})
     since = prior.index(record) if record in prior else -1
@@ -231,8 +232,10 @@ def logged_session(prior: list[dict[str, Any]]) -> dict[str, Any]:
             create = {**create, "keepers": e.get("keepers") or [], "keepers_file": None}
         elif e.get("type") == "adjustments" and e.get("src") == "api":
             create = {**create, "adjustments": e.get("adjustments") or [], "adjustments_file": None}
-    if create.get("survival") != "simulate":
-        create.pop("fit_curve", None)
+    curve_run = create.pop("curve_run", False)
+    if create and create.get("survival") != "simulate" and not curve_run:
+        # Beside a table, a session from before #77 ran no simulation for its curve.
+        create["fit_curve"] = False
     if create:
         create.setdefault("adp_bias", False)
     return create

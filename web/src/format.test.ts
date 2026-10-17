@@ -3,7 +3,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { AdjustmentRow, AvailabilityBias, BoardPlayer, CurveFit, SessionSummary } from "./api";
-import { adpCell, adpTitle, armLabel, biasDetail, clockNote, curveFitNote, draftWhen, haircutLabel, haircutTitle, haircutWeeks, oddsSource, rankLabel, survivalDetail, weeksToGames } from "./format.ts";
+import { adpCell, adpTitle, armLabel, biasDetail, blendDetail, blendLabel, clockNote, curveFitNote, draftWhen, haircutLabel, haircutTitle, haircutWeeks, oddsSource, rankLabel, survivalDetail, weeksToGames } from "./format.ts";
 
 const row = (adp_from: BoardPlayer["adp_from"], adp: number | null, keepers_ahead = 0): BoardPlayer =>
   ({ adp, adp_eff: adp == null ? null : adp - keepers_ahead, adp_from, keepers_ahead }) as BoardPlayer;
@@ -47,6 +47,15 @@ test("the survival odds say when the ADP formula is shifted by the league's bias
   assert.equal(oddsSource("league"), "the league's drafts");
   assert.equal(oddsSource("league", bias), "the league's drafts and the ADP formula + league bias");
   assert.equal(oddsSource("survival", bias), "simulated drafts");
+  // A blended league table names the drafts behind it (#77).
+  const blend = { drafts: 1.5, same_format: 1, other_format: 1, weight: 0.5 };
+  assert.equal(oddsSource("league", null, blend), "the league's drafts (blend: 1.5 drafts)");
+  assert.equal(oddsSource("league", bias, blend), "the league's drafts (blend: 1.5 drafts) and the ADP formula + league bias");
+  assert.equal(oddsSource("adp", null, blend), "the ADP formula");
+  assert.equal(blendLabel(1), "blend: 1 draft");
+  assert.equal(blendLabel(2.5), "blend: 2.5 drafts");
+  assert.equal(blendDetail(blend), "blend: 1.5 drafts: 1 of the format + 1 of the other format at ×0.5, 40% ADP formula");
+  assert.equal(blendDetail({ ...blend, drafts: 3, same_format: 3, other_format: 0 }), "blend: 3 drafts: 3 of the format, 25% ADP formula");
   assert.equal(
     biasDetail(bias),
     "the ADP formula centred on ADP plus the league's bias from ADP 72, fit on 2017-2026 (half-life 1 season) from yahoo_history/adp_bias.json",
@@ -63,6 +72,22 @@ test("the survival odds say when the ADP formula is shifted by the league's bias
   } as unknown as SessionSummary;
   assert.equal(survivalDetail(s), "ADP formula (file:adp.csv); spread 1.5 + 0.15 × ADP picks.");
   assert.match(survivalDetail({ ...s, availability_bias: bias }), /^ADP formula \(file:adp\.csv\); the ADP formula centred on ADP plus the league's bias from ADP 72, .*; spread 1\.5/);
+  const shared = {
+    ...s,
+    availability_source: "league",
+    survival: {
+      mode: "league",
+      status: "ready",
+      source: "league:leagues/_shared/points/survival_by_adp.csv",
+      from_adp: 90,
+      max_adp: 133,
+      blend: { drafts: 1.5, same_format: 1, other_format: 1, weight: 0.5 },
+    },
+  } as unknown as SessionSummary;
+  assert.equal(
+    survivalDetail(shared),
+    "this league's drafts by ADP (league:leagues/_shared/points/survival_by_adp.csv, blend: 1.5 drafts: 1 of the format + 1 of the other format at ×0.5, 40% ADP formula), the normal model under ADP 90 and past ADP 133; spread 1.5 + 0.15 × ADP picks.",
+  );
 });
 
 test("the league curve says what it was fitted on and which seasons the standings check reads", () => {
@@ -85,6 +110,18 @@ test("the league curve says what it was fitted on and which seasons the standing
     seasons: two.seasons.map((s, i) => ({ ...s, year: 2026, league: ["111", "222"][i] })),
   };
   assert.equal(curveFitNote(shared), "24 rosters from 2026 111, 2026 222 (2 picks unscored); no standings check");
+  // Pooled from the other format at half weight, and blended toward the simulated league (#77).
+  const pooled: CurveFit = {
+    ...shared,
+    seasons: shared.seasons.map((s, i) => (i ? { ...s, format: "points", weight: 0.5 } : s)),
+    drafts: 1.5,
+    blend: { drafts: 1.5, weight: 0.6, prior: "flat default", prior_status: "static" },
+  };
+  assert.equal(
+    curveFitNote(pooled),
+    "24 rosters from 2026 111, 2026 222 (points ×0.5) (2 picks unscored); no standings check; blend: 1.5 drafts toward the static fit until today's run lands",
+  );
+  assert.match(curveFitNote({ ...pooled, blend: { ...pooled.blend!, prior_status: "ready" } }), /blend: 1\.5 drafts toward today's simulated run$/);
 });
 
 test("the footer shows the room's pick clock and the plan budget it gives", () => {

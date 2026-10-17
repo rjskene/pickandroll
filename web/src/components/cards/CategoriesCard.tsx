@@ -41,7 +41,7 @@ export default function CategoriesCard() {
             {d.done
               ? "my roster as made, on every team's projected finals"
               : result
-                ? `if the plan holds · survival odds from ${oddsSource(result.availability_source, result.availability_bias)}`
+                ? `if the plan holds · survival odds from ${oddsSource(result.availability_source, result.availability_bias, result.availability_blend)}`
                 : d.solving
                   ? "solving…"
                   : "appears after the first solve"}

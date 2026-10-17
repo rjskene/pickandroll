@@ -1,11 +1,13 @@
 """#77 (scripts/draft_prep/refit.py): a finished real draft goes into its format's archive,
-``refit`` rewrites the shared survival table from the drafts of the league's size, a league
-session reads its own table, then the shared one, then simulates, and a categories attach asks
-for the league curve once the archive holds enough drafts. Synthetic drafts and players only."""
+``refit`` rewrites the format's survival table from the drafts of the league's size in both
+formats (the other's at half weight), blended toward the ADP formula by ``D/(D+1)``, a league
+session reads its own table, then the shared one, then simulates, and a league's attach asks
+for the league curve once its format has a table. Synthetic drafts and players only."""
 
 import importlib.util
 import json
 import sys
+import time
 from pathlib import Path
 
 import numpy as np
@@ -15,7 +17,13 @@ from fastapi.testclient import TestClient
 
 from pickandroll.api import SessionStore, create_app, leagues
 from pickandroll.api.league_curve import fit_league_curve
-from pickandroll.availability import LeagueSurvivalTable, fit_survival_table, survival_frame
+from pickandroll.availability import (
+    LeagueSurvivalTable,
+    availability,
+    blend_with_formula,
+    fit_survival_table,
+    survival_frame,
+)
 
 from .test_league_curve import CATS, picks, projections
 from .test_leagues import QUICK, write_league
@@ -229,17 +237,20 @@ def test_refit_writes_the_table_from_the_drafts_of_the_leagues_size(runbook, cap
     table = LeagueSurvivalTable.from_frame(pd.read_csv(shared / "survival_by_adp.csv"))
     assert table.picks == 156 and table.max_adp == report["max_adp"]
     assert f"answering ADP 90-{table.max_adp}" in out
+    assert "blend: 3 drafts toward the ADP formula" in out
     written = json.loads((shared / "survival_by_adp.json").read_text())
     assert [d["league"] for d in written["drafts"]] == ["111", "222", "333"]
     assert written["min_count"] == 20 and written["counts"]["at_max_adp"] >= 20
-    # The same fit as the core's on the archive's ADP list.
+    assert written["blend"] == {"drafts": 3, "same_format": 3, "other_format": 0, "weight": 0.5}
+    # The core's fit on the archive's ADP list, three parts drafts to one part formula.
     adp = pd.read_csv(shared / "adp.csv")
     adp = adp[adp["league_id"] != 555]
-    expected, _ = fit_survival_table(
-        adp["adp"].to_numpy(float), adp["overall"].to_numpy(float), 156
-    )
+    raw, _ = fit_survival_table(adp["adp"].to_numpy(float), adp["overall"].to_numpy(float), 156)
+    expected = blend_with_formula(raw, 3)
     assert table.max_adp == expected.max_adp
     assert table.table.to_numpy() == pytest.approx(expected.table.to_numpy(), abs=1e-4)
+    cell = 0.75 * raw.table.loc[100, 110] + 0.25 * availability(pd.Series([100.0]), 110).iloc[0]
+    assert table.table.loc[100, 110] == pytest.approx(cell, abs=1e-4)
 
 
 def test_a_thin_archive_writes_no_table_and_drops_a_stale_one(runbook, capsys):
@@ -253,35 +264,63 @@ def test_a_thin_archive_writes_no_table_and_drops_a_stale_one(runbook, capsys):
     assert report["reason"].startswith("3 drafts, ") and report["reason"].endswith(", under 10000")
     assert json.loads((shared / "survival_by_adp.json").read_text())["reason"] == report["reason"]
     assert "survival: no table (archive: 3 drafts, " in capsys.readouterr().out
-    # An empty archive is no table either.
-    league_folder(runbook, "777", scoring="categories")
-    assert refit_module(runbook).refit(runbook, "777")["drafts"] == []
+    # No draft of the league's size is no table either.
+    league_folder(runbook, "777", scoring="categories", teams=10)
+    report = refit_module(runbook).refit(runbook, "777")
+    assert report["drafts"] == [] and report["reason"] == "no drafts of 10 x 13 yet"
 
 
-def test_below_the_draft_minimum_the_league_simulates_and_says_why(runbook, capsys):
-    """One draft gives one player per ADP value: no table until the archive holds three."""
+def test_one_draft_is_half_the_formula_and_the_formats_pool(runbook, capsys):
+    """From the first draft the table is the blend: one draft is half the ADP formula. Another
+    format's draft counts half (``D`` 1.5), or as the league sets it; half a draft alone is too
+    thin near ADP 90, and the league simulates and says why."""
     module = refit_module(runbook)
     league_folder(runbook, "111")
     module.archive(runbook, "111", finished_draft(runbook, "111"))
     league_folder(runbook, "222", day="2026-10-18")
     report = module.refit(runbook, "222")
-    assert report["table"] is None and report["reason"] == "1 draft, below the minimum of 3"
-    assert (
-        "survival: no table (archive: 1 draft, below the minimum of 3)" in capsys.readouterr().out
-    )
+    assert report["table"] == "_shared/points/survival_by_adp.csv"
+    assert report["blend"] == {"drafts": 1, "same_format": 1, "other_format": 0, "weight": 0.5}
     shared = archive_dir(runbook)
-    assert not (shared / "survival_by_adp.csv").exists()
-    assert leagues.session_defaults(runbook.DATA, "222")["survival"] == "simulate"
-    assert leagues.archive_note(runbook.DATA, "222") == "archive: 1 draft, below the minimum of 3"
-    module.on_status(runbook, "222")
-    assert "archive _shared/points: 1 draft, below the minimum of 3: no survival table" in (
-        capsys.readouterr().out
+    table = LeagueSurvivalTable.from_frame(pd.read_csv(shared / "survival_by_adp.csv"))
+    adp = pd.read_csv(shared / "adp.csv")
+    raw, _ = fit_survival_table(adp["adp"].to_numpy(float), adp["overall"].to_numpy(float), 156)
+    formula = availability(pd.Series([95.0]), 100).iloc[0]
+    assert table.table.loc[95, 100] == pytest.approx(
+        0.5 * raw.table.loc[95, 100] + 0.5 * formula, abs=1e-4
     )
-    # The minimum is the league's to set.
-    league_folder(runbook, "222", day="2026-10-18", refit={"min_drafts": 1})
-    assert module.refit(runbook, "222")["table"] == "_shared/points/survival_by_adp.csv"
     assert leagues.session_defaults(runbook.DATA, "222")["survival"] == "league"
     assert leagues.archive_note(runbook.DATA, "222") is None
+    capsys.readouterr()
+    # A categories draft joins the points table at half weight.
+    league_folder(runbook, "333", scoring="categories", day="2026-10-19")
+    module.archive(runbook, "333", finished_draft(runbook, "333", seed=3, day="2026-10-19"))
+    report = module.refit(runbook, "222")
+    out = capsys.readouterr().out
+    assert report["blend"] == {"drafts": 1.5, "same_format": 1, "other_format": 1, "weight": 0.5}
+    assert [(d["league"], d["format"], d["weight"]) for d in report["drafts"]] == [
+        ("111", "points", 1.0),
+        ("333", "categories", 0.5),
+    ]
+    assert (
+        "archive _shared/points: 1 draft of 12 x 13 (111 2026-10-17); categories: 1 draft at x0.5 "
+        "(333 2026-10-19)" in out
+    )
+    assert "blend: 1.5 drafts toward the ADP formula" in out
+    module.on_status(runbook, "222")
+    assert "blend: 1.5 drafts (1 of the format, 1 of the other at x0.5)" in capsys.readouterr().out
+    # The league sets the other format's weight; at zero it is left out.
+    league_folder(runbook, "222", day="2026-10-18", refit={"cross_format_weight": 0})
+    assert module.refit(runbook, "222")["blend"]["drafts"] == 1
+    # A categories league with only the points draft at half weight: too thin near ADP 90.
+    league_folder(runbook, "444", scoring="categories", teams=12, day="2026-10-20")
+    (archive_dir(runbook, "categories") / "adp.csv").unlink()
+    (archive_dir(runbook, "categories") / "picks.csv").unlink()
+    report = module.refit(runbook, "444")
+    assert report["table"] is None and report["blend"] is None
+    assert report["reason"].startswith("0.5 drafts, ") and report["reason"].endswith(", under 20")
+    assert leagues.session_defaults(runbook.DATA, "444")["survival"] == "simulate"
+    assert leagues.archive_note(runbook.DATA, "444") == f"archive: {report['reason']}"
 
 
 def test_the_command_archives_then_refits(runbook, monkeypatch, capsys):
@@ -329,7 +368,13 @@ def test_a_league_session_names_the_shared_table_and_its_fit(tmp_path):
     write_league(tmp_path)
     shared = leagues.shared_dir(tmp_path, "points")
     write_table(shared)
-    report = {"drafts": [{"league": "111", "date": "2026-10-17"}], "min_count": 20, "max_adp": 140}
+    blend = {"drafts": 1.5, "same_format": 1, "other_format": 1, "weight": 0.5}
+    report = {
+        "drafts": [{"league": "111", "date": "2026-10-17"}],
+        "min_count": 20,
+        "max_adp": 140,
+        "blend": blend,
+    }
     (shared / "survival_by_adp.json").write_text(json.dumps(report))
     quick = {k: v for k, v in QUICK.items() if k != "survival"}
     with TestClient(create_app(SessionStore(), data_dir=tmp_path)) as client:
@@ -339,15 +384,16 @@ def test_a_league_session_names_the_shared_table_and_its_fit(tmp_path):
     assert s["availability_source"] == "league"
     assert s["survival"]["source"] == "league:leagues/_shared/points/survival_by_adp.csv"
     assert s["survival"]["fit"]["drafts"] == report["drafts"]
+    assert s["survival"]["blend"] == blend
     assert s["survival"]["from_adp"] == 90 and s["survival"]["max_adp"] > 90
 
 
-def test_a_league_below_the_minimum_simulates_with_the_archive_in_its_note(tmp_path):
+def test_a_league_without_a_table_simulates_with_the_archive_in_its_note(tmp_path):
     build_league(tmp_path)
     write_league(tmp_path)
     shared = leagues.shared_dir(tmp_path, "points")
     shared.mkdir(parents=True)
-    report = {"table": None, "reason": "1 draft, below the minimum of 3"}
+    report = {"table": None, "reason": "0.5 drafts, 18.5 players near ADP 90, under 20"}
     (shared / "survival_by_adp.json").write_text(json.dumps(report))
     quick = {k: v for k, v in QUICK.items() if k != "survival"}
     with TestClient(create_app(SessionStore(), data_dir=tmp_path)) as client:
@@ -355,28 +401,33 @@ def test_a_league_below_the_minimum_simulates_with_the_archive_in_its_note(tmp_p
         assert r.status_code == 201, r.text
         s = r.json()
     assert s["survival"]["mode"] == "simulate"
-    assert s["survival"]["note"] == "archive: 1 draft, below the minimum of 3"
+    assert s["survival"]["note"] == "archive: 0.5 drafts, 18.5 players near ADP 90, under 20"
 
 
 # --------------------------------------------------------------------------- the curve
-def test_a_categories_attach_asks_for_the_league_curve_from_enough_drafts(runbook, capsys):
+def test_a_leagues_attach_asks_for_the_league_curve_once_its_format_has_a_table(runbook, capsys):
     module = refit_module(runbook)
     league_folder(runbook, "888")
-    assert module.session_fields(runbook, "888") == {}, "a points league has no curve"
-    for i, league in enumerate(("111", "222")):
-        league_folder(runbook, league, scoring="categories", day=f"2026-10-1{7 + i}")
-        module.archive(
-            runbook, league, finished_draft(runbook, league, seed=i, day=f"2026-10-1{7 + i}")
-        )
-    league_folder(runbook, "999", scoring="categories")
+    assert module.session_fields(runbook, "888") == {}, "nothing archived"
+    league_folder(runbook, "111", scoring="categories")
+    module.archive(runbook, "111", finished_draft(runbook, "111"))
+    league_folder(runbook, "999", scoring="categories", day="2026-10-18")
     module.refit(runbook, "999")
-    assert "curve: simulated (archive: 2 drafts, below the minimum of 3)" in capsys.readouterr().out
-    assert module.session_fields(runbook, "999") == {}
-    league_folder(runbook, "999", scoring="categories", refit={"min_drafts": 2})
-    module.refit(runbook, "999")
-    assert "curve: league, from the 2 drafts' rosters" in capsys.readouterr().out
+    assert (
+        "curve: league, from the rosters of 1 draft, blended toward today's simulated run"
+        in capsys.readouterr().out
+    )
     assert module.session_fields(runbook, "999") == {"curve": "league"}
-    assert "curve: league, from the archive's 2 drafts" in capsys.readouterr().out
+    assert "curve: league, from the archive's 1 draft, blended toward" in capsys.readouterr().out
+    # The points league has only the categories draft at half weight: no table, no curve.
+    module.refit(runbook, "888")
+    assert "curve: simulated (archive: 0.5 drafts, " in capsys.readouterr().out
+    assert module.session_fields(runbook, "888") == {}
+    league_folder(runbook, "222", day="2026-10-18")
+    module.archive(runbook, "222", finished_draft(runbook, "222", seed=2, day="2026-10-18"))
+    module.refit(runbook, "888")
+    assert module.session_fields(runbook, "888") == {"curve": "league"}
+    assert "from the archive's 1.5 drafts" in capsys.readouterr().out
     # A league with its own table reads its own folder: no shared rosters beside it.
     write_table(runbook.DATA / "leagues" / "999")
     assert module.session_fields(runbook, "999") == {}
@@ -458,3 +509,87 @@ def test_the_shared_archive_fits_each_leagues_draft_on_its_own(tmp_path):
     assert (
         fit.curve.source == "league rosters 2026 111, 2026 222 (8 rosters, 24 of 24 picks scored)"
     )
+
+
+def test_the_curve_pools_the_other_formats_rosters_at_their_weight(tmp_path):
+    """A categories archive and a points archive: the points league's four rosters count half,
+    the fit's ``drafts`` is 1.5, and the curve is the weighted fit over all eight."""
+    df, z = projections(30, 26)
+    names = [f"Player {i}" for i in range(30)]
+    own, other = tmp_path / "categories", tmp_path / "points"
+    own.mkdir()
+    other.mkdir()
+    picks(2026, 4, 3, names[:12]).assign(league_id=111).to_csv(own / "picks.csv", index=False)
+    picks(2026, 4, 3, names[12:24]).assign(league_id=222).to_csv(other / "picks.csv", index=False)
+    scores = {2026: (df, z)}.get
+    fit = fit_league_curve(own, scores, CATS, 4, 3, 2026, others=[(other, 0.5)])
+    assert fit.drafts == 1.5 and fit.to_dict()["drafts"] == 1.5
+    assert [(s["league"], s.get("format"), s.get("weight")) for s in fit.seasons] == [
+        ("111", None, None),
+        ("222", "points", 0.5),
+    ]
+    assert fit.curve.source.startswith("league rosters 2026 111, 2026 222 (points x0.5) (8 rosters")
+    alone = fit_league_curve(own, scores, CATS, 4, 3, 2026)
+    half = fit_league_curve(other, scores, CATS, 4, 3, 2026)
+    # The weighted mean of the two drafts' rosters: two parts own to one part other.
+    expected = (2 * alone.curve.mu[CATS[0]] + half.curve.mu[CATS[0]]) / 3
+    assert fit.curve.mu[CATS[0]] == pytest.approx(expected)
+    assert alone.drafts == 1.0
+    # Only the other format's archive: it alone is fitted, at its weight.
+    (own / "picks.csv").unlink()
+    only = fit_league_curve(own, scores, CATS, 4, 3, 2026, others=[(other, 0.5)])
+    assert only.drafts == 0.5 and only.curve.mu[CATS[0]] == pytest.approx(half.curve.mu[CATS[0]])
+
+
+def test_a_league_tables_session_runs_the_simulation_for_its_curve(tmp_path):
+    """Beside the shared table the session runs the simulation for its curve alone: the table
+    stays the survival, the run's curve becomes the prior the rosters blend toward (the flat
+    fpts curve stands in until it lands), and a rebuild of an older log runs none."""
+    build_league(tmp_path)
+    write_league(tmp_path)
+    shared = leagues.shared_dir(tmp_path, "points")
+    write_table(shared)
+    blend = {"drafts": 1, "same_format": 1, "other_format": 0, "weight": 0.5}
+    (shared / "survival_by_adp.json").write_text(json.dumps({"blend": blend}))
+    proj = pd.read_csv(tmp_path / "proj.csv")
+    names = (proj["first_name"] + " " + proj["last_name"]).tolist()
+    picks(2026, 12, 13, names).assign(league_id=111).to_csv(shared / "picks.csv", index=False)
+    quick = {k: v for k, v in QUICK.items() if k != "survival"}
+    store = SessionStore()
+    with TestClient(create_app(store, data_dir=tmp_path)) as client:
+        body = {**quick, "league": "555", "curve": "league", "survival_sims": 10}
+        r = client.post("/sessions", json=body)
+        assert r.status_code == 201, r.text
+        s = r.json()
+        assert s["availability_source"] == "league" and s["survival"]["blend"] == blend
+        assert s["curve_fit"]["blend"]["prior_status"] == "static"
+        assert s["curve_fit"]["blend"]["prior"].startswith("flat default")
+        deadline = time.time() + 60
+        while s["survival"]["curve_run"]["status"] == "building" and time.time() < deadline:
+            time.sleep(0.1)
+            s = client.get(f"/sessions/{s['id']}").json()
+        assert s["survival"]["curve_run"]["status"] == "ready", s["survival"]
+        assert (s["survival"]["status"], s["availability_source"]) == ("ready", "league")
+        assert s["curve_fit"]["blend"]["prior_status"] == "ready"
+        prior = s["curve_fit"]["blend"]["prior"]
+        assert prior.startswith("simulated league (10 drafts")
+        assert s["curve"]["source"].endswith(f"blend: 1 draft toward {prior}")
+        session = store.get(s["id"])
+        assert session.state.survival is None, "the run's table is dropped"
+        assert session.league_curve[1] == 1
+        assert (session.create_params["fit_curve"], session.create_params["curve_run"]) == (
+            True,
+            True,
+        )
+    # A rebuild keeps what the session ran on: a record from before #77 beside a table ran no
+    # simulation for its curve, a record that says it did runs it again.
+    from pickandroll.api import yahoo_room
+
+    old = [{"type": "attach", "session": {**body, "survival": "league", "fit_curve": True}}]
+    assert yahoo_room.logged_session(old)["fit_curve"] is False
+    new = [{"type": "attach", "session": {**body, "survival": "league", "fit_curve": True}}]
+    new[0]["session"]["curve_run"] = True
+    rebuilt = yahoo_room.logged_session(new)
+    assert rebuilt["fit_curve"] is True and "curve_run" not in rebuilt
+    simulated = [{"type": "attach", "session": {**body, "survival": "simulate", "fit_curve": True}}]
+    assert yahoo_room.logged_session(simulated)["fit_curve"] is True

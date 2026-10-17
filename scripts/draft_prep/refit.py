@@ -66,9 +66,7 @@ LEAGUE = True
 PICKS = "picks.csv"
 ADP = "adp.csv"
 REPORT = leagues.SURVIVAL_REPORT
-#: The weight of a draft of the other format, in the survival table and the curve: its market's
-#: ADP is another one, its rosters were drafted for another scoring.
-CROSS_FORMAT_WEIGHT = 0.5
+CROSS_FORMAT_WEIGHT = leagues.CROSS_FORMAT_WEIGHT
 PICK_COLUMNS = [
     "season",
     "draft_year",
@@ -399,7 +397,7 @@ def refit(runbook: Any, league: str, args: argparse.Namespace | None = None) -> 
         f"{drafts_text(total)} toward the ADP formula; the ADP formula elsewhere"
     )
     runbook.say(
-        f"  curve: league, from the {drafts_text(total)}' rosters, blended toward today's "
+        f"  curve: league, from the rosters of {drafts_text(total)}, blended toward today's "
         "simulated run"
     )
     return report
