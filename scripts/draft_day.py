@@ -7,6 +7,10 @@
     python scripts/draft_day.py monitor 238174    # follow the room to the last pick, Mac kept awake
     python scripts/draft_day.py finish 238174     # save the ledger and snapshots, write the scorecard
     python scripts/draft_day.py run 238174        # all of it, in that order (run it in the background)
+    python scripts/draft_day.py projections       # import this morning's Basketball Monster export (#75)
+
+The draft-prep commands (#75-#77) live one module each under scripts/draft_prep/ and are registered
+in ``PREP_MODULES``; ``status`` and ``run`` call their hooks (scripts/draft_prep/__init__.py).
 
 Nothing here arms a room: the attach names no mode, so the room comes up in autopilot only when the
 user pre-armed the league in the dashboard (data/leagues/<id>/armed.json), and mirrors otherwise.
@@ -20,6 +24,7 @@ quiet, 7 Yahoo finished the draft before the room did, 8 the room's log is an ea
 from __future__ import annotations
 
 import argparse
+import importlib
 import json
 import os
 import shutil
@@ -35,6 +40,7 @@ from zoneinfo import ZoneInfo
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
+sys.path.insert(0, str(ROOT / "scripts"))
 
 from pickandroll.fidelity import read_events
 from pickandroll.sources.yahoo import load_players_file
@@ -55,6 +61,29 @@ ATTACH_GRACE_S = 15 * 60
 PACIFIC = ZoneInfo("America/Los_Angeles")
 
 OK, ERROR, GONE, MOVED, DOWN, NO_TAB, QUIET, YAHOO_DONE, STALE = range(9)
+
+#: The draft-prep commands, one module each under scripts/draft_prep/, one line each.
+PREP_MODULES = (
+    "projections",  # 75
+)
+PREP = {name: importlib.import_module(f"draft_prep.{name}") for name in PREP_MODULES}
+
+
+class Runbook:
+    """This script as the draft-prep modules see it: its names, read when used."""
+
+    def __getattr__(self, name: str) -> Any:
+        try:
+            return globals()[name]
+        except KeyError:
+            raise AttributeError(name) from None
+
+
+RUNBOOK = Runbook()
+
+
+def hooks(name: str) -> list[Any]:
+    return [getattr(m, name) for m in PREP.values() if hasattr(m, name)]
 
 
 class Stop(Exception):
@@ -132,10 +161,10 @@ def settings(league: str) -> dict[str, Any]:
 
 
 def newest_projections() -> str:
-    files = sorted(DATA.glob("bbm_projections_*.csv"))
-    if not files:
-        raise Stop(ERROR, "no data/bbm_projections_*.csv")
-    return files[-1].name
+    path = PREP["projections"].newest(DATA)
+    if path is None:
+        raise Stop(ERROR, "no data/bbm_projections_* file")
+    return path.name
 
 
 def run_dir(league: str) -> Path:
@@ -178,6 +207,8 @@ def status(league: str, accept_move: bool = False) -> str:
             else "MISSING"
         )
     )
+    for hook in hooks("on_status"):
+        hook(RUNBOOK, league)
     if y.get("draft_status") == "postdraft":
         say(f"  Yahoo says the draft of {league} is over")
         return "postdraft"
@@ -501,7 +532,9 @@ def main() -> int:
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
     parser.add_argument(
-        "command", choices=["status", "servers", "refresh", "attach", "monitor", "finish", "run"]
+        "command",
+        choices=["status", "servers", "refresh", "attach", "monitor", "finish", "run", *PREP],
+        help="; ".join(m.HELP for m in PREP.values()),
     )
     parser.add_argument("league", nargs="?", help="the Yahoo league id (data/leagues/<id>/)")
     parser.add_argument("--start", action="store_true", help="servers: start what is down")
@@ -522,8 +555,11 @@ def main() -> int:
     parser.add_argument(
         "--limit", type=float, default=5 * 3600, help="monitor: longest draft, seconds"
     )
+    for module in PREP.values():
+        module.add_arguments(parser)
     args = parser.parse_args()
-    if args.command != "servers" and not args.league:
+    no_league = {"servers", *(name for name, m in PREP.items() if not m.LEAGUE)}
+    if args.command not in no_league and not args.league:
         parser.error(f"{args.command} needs a league id")
     if args.league and not str(args.league).isdigit():
         parser.error(f"a Yahoo league id is digits, not {args.league!r}")
@@ -533,6 +569,8 @@ def main() -> int:
         LOG = DATA / "fidelity" / f"draft_day_{league}.log"
         say(f"draft_day {args.command} {league}")
     try:
+        if args.command in PREP:
+            return PREP[args.command].run(RUNBOOK, args)
         if args.command == "status":
             status(league, args.accept_move)
             return OK
@@ -551,6 +589,8 @@ def main() -> int:
             return OK
         servers(start=True)
         refresh(league)
+        for hook in hooks("before_attach"):
+            hook(RUNBOOK, league, args)
         attach(league, args.wait)
         code = OK
         try:

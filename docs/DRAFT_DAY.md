@@ -49,7 +49,11 @@ Yahoo team id `my_team_id`), `yahoo_players.json` (Yahoo's public player list fo
 ```
 
 This prints Yahoo's public view of the league: teams joined, draft status and draft time. It also prints
-whether the user armed it.
+whether the user armed it, and the newest projection file with its export time.
+
+- `ALERT projections ...` means that file is more than two days old. A session cannot export a fresh one, because
+  that needs the user's sign-in to Basketball Monster. The run goes ahead on the newest file, and the report says
+  so.
 
 - Exit 2, "Yahoo has no such league now": the league dissolved. Go to "Dissolved league".
 - Exit 3, "the draft moved": the new time is six hours away or more, or already past. Go to "Draft moved".
@@ -83,11 +87,14 @@ exits:
 `run` does the following in order:
 
 1. Refreshes `yahoo_players.json` from Yahoo's public endpoint. A bad response keeps the file on disk.
-2. Waits for the draft tab (step 3) to report its seat. It waits until 15 minutes after the draft's start, and
+2. Repeats the projections ALERT, if there is one. With `--bbm-fetch`, it first refreshes the projections
+   headless (see "Projections"). That flag is off by default.
+3. Waits for the draft tab (step 3) to report its seat. It waits until 15 minutes after the draft's start, and
    checks every 2 minutes that the league still exists.
-3. Attaches the room with the league's settings and the newest `data/bbm_projections_*.csv`.
-4. Monitors the draft to the last pick, with the Mac kept awake (`caffeinate -dimsu`).
-5. Saves the ledger and the snapshots and writes the comment for #67.
+4. Attaches the room with the league's settings and the newest `data/bbm_projections_*` file, and prints its
+   name.
+5. Monitors the draft to the last pick, with the Mac kept awake (`caffeinate -dimsu`).
+6. Saves the ledger and the snapshots and writes the comment for #67.
 
 Its log is the background task's output, and `data/fidelity/draft_day_<league>.log` keeps a copy. The attach
 prints the mode: `autopilot (the user's pre-arm)` or `mirror (not armed)`.
@@ -203,10 +210,56 @@ pre-arm. `attach` and `run` stop before touching the API, and the message gives 
 Run that `mv`. If `GET /rooms` lists the league's room, `DELETE /rooms/<league>` first. Then start `run` again in
 the background. Say in the report that an earlier log was moved aside, and name the file.
 
+## Projections (#75)
+
+Every draft should run on that morning's Basketball Monster export. The user exports it by hand. Nothing in
+the project signs in to Basketball Monster.
+
+```
+.venv/bin/python scripts/draft_day.py projections                 # the newest Projections*.csv
+.venv/bin/python scripts/draft_day.py projections --export FILE   # this file instead
+```
+
+- **Where it looks.** The newest `Projections*.csv` by file time, in `~/Downloads` or the checkout's root
+  (`PICKANDROLL_DOWNLOADS` names another folder). The root's copy is gitignored.
+- **What it saves.** It loads the export with the session's own loader, then copies it to
+  `data/bbm_projections_<date>.csv`, dated by the export's file time. The copy keeps that time, which the session
+  reads as the projections' `as_of`. A second export on the same day gets the time in its name as well. The
+  attach takes the newest file by the date in its name.
+- **What it refuses**, saying why and saving nothing:
+  - a file that fails the schema;
+  - a file with under 300 players who have games (a filtered page, or a cut-off download);
+  - an export older than the newest saved file.
+- **An identical export.** One equal to the newest saved file saves nothing either: Basketball Monster has not
+  changed its projections. The newest file stands, and is dated at the new export's time, so it counts as this
+  morning's.
+- **The movers.** It lists the players whose games or value moved most since the previous file. Value here is
+  nine-category total z over a 12-team, 13-round pool, and the lists come from the top 200 by value in either
+  file. Each list holds up to eight names: games down, games up, value down, value up, new to the export, gone
+  from it. Names and directions only, no numbers. A player listed for games is not listed again for value.
+- **Staleness.** `status` prints the newest file and its export time. When the file is more than two days old,
+  the line starts with `ALERT`, and `run` repeats it before the attach.
+
+### The headless refresh (`--bbm-fetch`, off by default)
+
+`scripts/bbm_fetch.py` drives Basketball Monster through its own browser profile, `data/bbm-profile`. The user
+logs in to that profile once, in a headed window: `.venv/bin/python scripts/bbm_fetch.py --ros`.
+
+- **What it does.** With `--bbm-fetch`, `run` downloads the projections page's export through that profile
+  before the attach (T−30), and imports it as above. `projections --bbm-fetch` does the same by hand.
+- **The fallback.** With no profile, a logged-out profile, or any failure, it prints an `ALERT --bbm-fetch` line
+  and the newest file on disk stands. It never signs in on its own.
+- **Not yet tested.** The flag stays off until the headed login has been done and tested against the live site.
+  That export is the page's Excel file (`.xls`), the layout the session's other loader reads. It is not the CSV
+  the user downloads.
+
 ## Before the user leaves (the user's checklist)
 
 These are the user's own steps. A session cannot do them.
 
+- **Export this morning's projections, then run `projections`.** On basketballmonster.com, go to Member,
+  Projections 26-27, Export CSV. Then run `.venv/bin/python scripts/draft_day.py projections` in
+  `~/code/pickandroll`. It prints the file it saved and the movers. A refusal says why (see "Projections").
 - **Arm each league you want drafted for you.** On the dashboard's setup page (http://localhost:5173), the
   **Leagues** list sits at the top. Click **Arm draft**, then **Confirm: arm <id>**. Disarm the same way.
   - The arm is read once, at the first attach, so arm before the scheduled task fires (T−30).

@@ -22,6 +22,8 @@ data/*
 !data/.gitkeep
 *.xls
 *.xlsx
+# the export dropped in the checkout by hand; `draft_day.py projections` copies it into data/
+/Projections*.csv
 
 # web
 web/node_modules/
