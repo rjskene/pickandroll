@@ -80,6 +80,11 @@ test("the league curve says what it was fitted on and which seasons the standing
     check_seasons: [],
   };
   assert.equal(curveFitNote(two), "24 rosters from 2026, 2025 (2 picks unscored); no standings check");
+  const shared: CurveFit = {
+    ...two,
+    seasons: two.seasons.map((s, i) => ({ ...s, year: 2026, league: ["111", "222"][i] })),
+  };
+  assert.equal(curveFitNote(shared), "24 rosters from 2026 111, 2026 222 (2 picks unscored); no standings check");
 });
 
 test("the footer shows the room's pick clock and the plan budget it gives", () => {

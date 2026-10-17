@@ -151,10 +151,11 @@ export function armLabel(armed: { at: string } | null): string {
 }
 
 /** The league curve's fit in a line: what it was fitted on, and the seasons the standings
- * check reads ("12 rosters from 2026; standings check 2016-17 to 2025-26"). */
+ * check reads ("12 rosters from 2026; standings check 2016-17 to 2025-26"). A shared archive's
+ * drafts name their league ("24 rosters from 2026 252098, 2026 31153"). */
 export function curveFitNote(fit: CurveFit): string {
   const rosters = fit.seasons.reduce((n, s) => n + s.rosters, 0);
-  const years = fit.seasons.map((s) => s.year).join(", ");
+  const years = fit.seasons.map((s) => (s.league ? `${s.year} ${s.league}` : `${s.year}`)).join(", ");
   const unscored = fit.seasons.reduce((n, s) => n + s.picks - s.scored, 0);
   const seasons = fit.check_seasons;
   const check = seasons.length ? `standings check ${seasons[0]}${seasons.length > 1 ? ` to ${seasons[seasons.length - 1]}` : ""}` : "no standings check";

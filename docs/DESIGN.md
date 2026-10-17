@@ -216,6 +216,30 @@ draft, else a simulation, with the reason in the session's survival `note`. A na
 A room's session follows the same rule, and the attach record keeps the mode as resolved, so a
 rebuild from the log runs on it.
 
+A league session (`league` names `data/leagues/<id>/`, #67) has no history of its own. It reads
+its folder's `survival_by_adp.csv`, then its format's shared table,
+`data/leagues/_shared/<points|categories>/survival_by_adp.csv`, when that covers the draft's picks,
+and simulates otherwise (`leagues.session_defaults`). The shared table comes from the season's
+earlier real drafts in that format (#77):
+
+- **The archive.** `scripts/draft_day.py finish` archives each finished room: `picks.csv` holds every
+  pick, and `adp.csv` holds Yahoo's ADP and rank list from the league's players file at draft time.
+- **The fit.** `draft_day.py refit`, run before every attach, fits the table from the drafts of the
+  league's size with `availability.league.fit_survival_table`. The fit uses the archive's kernel
+  (bandwidth 5 + 0.08 ADP). These leagues keep no keepers, so the overall pick is the market pick.
+- **The minimum-count rule.** With few drafts the table is thin. Its rows answer from
+  `LEAGUE_FROM_ADP` only while at least `MIN_COUNT` (20) observed players lie within their
+  bandwidth. The last such row is the table's `max_adp`, and the formula answers past it.
+- **The session.** It names the table by its path in its survival `source`
+  (`league:leagues/_shared/points/survival_by_adp.csv`). Its survival `fit` carries the refit's
+  report: the drafts, the minimum and the boundary. The UI already words `max_adp` as "the normal
+  model ... past ADP N".
+- **The curve.** For a categories league the attach asks for `curve: league` once the shared report
+  names `MIN_DRAFTS` (3) drafts. The curve is fit from the `picks.csv` beside that table, with each
+  league's draft fitted on its own (a `league_id` column groups them). Below that number the
+  simulated curve stands. A curve that cannot be fit at the attach falls back to the simulated one.
+- **No bias.** The shared folder holds no `adp_bias.json`, so these sessions run the formula unshifted.
+
 `availability.bias.AdpBias` (#64) is the league's mean shift of the formula. The league runs
 behind the market late in the draft, so the formula centres each player on his keeper-adjusted ADP
 plus the league's mean residual (market pick minus ADP) at that ADP. The spread is taken at the
@@ -286,8 +310,9 @@ server-sent events. Manual pick entry covers leagues on other platforms.
 
 API surface: `POST /sessions` (projection, positions and ADP files, league shape, `objective`,
 `sigma_scale`, `curve_file`, `curve` simulated/league (the league's drafted rosters, each on its season's
-projections, from the archive's `picks.csv` beside the league table, #65; the session reports `curve_fit`:
-the seasons fitted and the standings' sigma in z units as the check), `survival` none/simulate/file/league
+projections, from the archive's `picks.csv` beside the league table, #65, or the format's shared archive,
+#77; the session reports `curve_fit`: the seasons or drafts fitted and the standings' sigma in z units as
+the check), `survival` none/simulate/file/league
 (left out: the league table, else a simulation), `solve_ahead`, `time_limit`),
 `/files?kind=survival|curve|adp` (what data/ holds), `/board` (with a `cost` per player: the
 exact re-solve where the player was a priced candidate, flagged `cost_exact`, else the
