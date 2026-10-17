@@ -217,6 +217,25 @@ def logged_pick_owners(prior: list[dict[str, Any]]) -> list[int] | None:
     return list(owners) if owners else None
 
 
+def logged_complete(prior: list[dict[str, Any]]) -> int | None:
+    """The draft's pick count when the log's ledger already holds every pick of the draft its
+    latest attach record describes (``num_teams`` x ``rounds``), a detach after it or not;
+    ``None`` while picks remain or no record says the draft's size."""
+    records = [e for e in prior if e.get("type") == "attach"]
+    if not records:
+        return None
+    teams, rounds = records[-1].get("num_teams"), records[-1].get("rounds")
+    if not teams or not rounds:
+        return None
+    total = int(teams) * int(rounds)
+    seen = {
+        int(e["overall"])
+        for e in prior
+        if e.get("type") == "room_pick" and isinstance(e.get("overall"), int)
+    }
+    return total if seen >= set(range(1, total + 1)) else None
+
+
 def logged_session(prior: list[dict[str, Any]]) -> dict[str, Any]:
     """The session settings a rebuild starts from: the current attach record's, with the keeper
     table of the last ``keepers`` event after it (a PATCH since the attach, #63). A record from

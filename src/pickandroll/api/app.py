@@ -507,6 +507,11 @@ class RoomAttach(BaseModel):
         max_length=32,
         description="the extension's version, when it attaches: written to the attach record",
     )
+    replay: bool = Field(
+        default=False,
+        description="resume from the log even when its draft is complete (draft_day.py finish "
+        "after a restart); a complete draft is otherwise not resumed",
+    )
     pick_owners: list[int] | None = Field(
         default=None,
         description="the room's draft order with its traded picks: the draft position on each "
@@ -1348,6 +1353,16 @@ def create_app(
             log = room_log(body.draft_id)
             prior = await asyncio.to_thread(log.read)
             record = last_attach(prior) or {}
+            if body.session is None and body.session_id is None and not body.replay:
+                # A finished draft is not resumed from its log unless asked: after a restart the
+                # extension keeps calling from a finished draft page (the 238174 tab, 2026-10-17).
+                done = yahoo_room.logged_complete(prior)
+                if done is not None:
+                    raise HTTPException(
+                        409,
+                        f"draft complete: room {body.draft_id}'s log holds all {done} "
+                        "picks; not resumed (attach with a session to replay it)",
+                    )
             if body.room_teams is not None:
                 # Before any session is made or solve started: a session for the wrong number
                 # of teams credits the room's picks to the wrong teams (mock 2).
@@ -1530,8 +1545,15 @@ def create_app(
         if live is not None:
             return live
         log = room_log(draft_id)
-        if last_attach(await asyncio.to_thread(log.read)) is None:
+        prior = await asyncio.to_thread(log.read)
+        if last_attach(prior) is None:
             raise HTTPException(404, f"no room {draft_id}")
+        done = yahoo_room.logged_complete(prior)
+        if done is not None:
+            # No room: the extension reads a 404 as "not attached" and stops sending.
+            raise HTTPException(
+                404, f"no room {draft_id}: its draft is complete ({done} picks in its log)"
+            )
         return await open_room(RoomAttach(draft_id=draft_id))
 
     def room_view(room: YahooRoom, session: Session) -> dict[str, Any]:
