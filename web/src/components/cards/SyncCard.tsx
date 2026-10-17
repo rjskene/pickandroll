@@ -6,7 +6,7 @@ import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, unmatchedStandins, type FidelityRow, type RoomAttachBody, type RoomMode, type RoomSummary, type SeenRoom } from "../../api";
 import { useDraft } from "../../draft";
-import { armLabel } from "../../format";
+import { armLabel, haircutLabel, haircutTitle, haircutWeeks } from "../../format";
 import { SILENT_AFTER_S, SeenRooms, describeEvent, eventTime, heartbeatAge, lagSeconds, medianLag, syncState, useNow, useSeenRooms } from "../YahooSync";
 
 const armedKey = (sessionId: string) => `pickandroll.armed.${sessionId}`;
@@ -126,6 +126,7 @@ function Attached({ room }: { room: RoomSummary }) {
         </p>
       )}
       <ModeSwitch room={room} />
+      <Haircuts />
       <Problems room={room} />
       <Pins room={room} />
       <Events />
@@ -278,6 +279,47 @@ function ModeSwitch({ room }: { room: RoomSummary }) {
       )}
       {setMode.error && <p className="error">{setMode.error.message}</p>}
       {setAct.error && <p className="error">{setAct.error.message}</p>}
+    </div>
+  );
+}
+
+/** The games haircuts the plan solves under (#76): set on the board ("out N weeks") or read
+ * from the league's adjustments.json at attach, with the file's entries that were skipped. */
+function Haircuts() {
+  const d = useDraft();
+  const queryClient = useQueryClient();
+  const clear = useMutation({
+    mutationFn: (player_id: string) => api.setAdjustments(d.session.id, [{ player_id, games_out: 0 }]),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["session", d.session.id] });
+      queryClient.invalidateQueries({ queryKey: ["board", d.session.id] });
+    },
+  });
+  const cuts = d.session.adjustments ?? [];
+  const skipped = d.session.adjustments_note ?? [];
+  if (!cuts.length && !skipped.length) return null;
+  return (
+    <div className="block">
+      <span className="k">Games haircuts</span>
+      {cuts.map((a) => (
+        <div key={a.player_id} className="row" style={{ fontSize: 12 }} title={haircutTitle(a)}>
+          <span>
+            {a.name} <span className="dim">{a.team}</span> · {haircutLabel(a)}
+            {a.note && haircutWeeks(a) === null ? ` · ${a.note}` : ""}
+            {a.taken ? <span className="dim"> · drafted</span> : null}
+          </span>
+          <span className="grow" />
+          <button className="small" onClick={() => clear.mutate(a.player_id)} disabled={clear.isPending} title="clear this haircut: his projected games again">
+            clear
+          </button>
+        </div>
+      ))}
+      {skipped.map((line) => (
+        <div key={line} className="bad" style={{ fontSize: 12 }}>
+          {line}
+        </div>
+      ))}
+      {clear.error && <p className="error">{clear.error.message}</p>}
     </div>
   );
 }
