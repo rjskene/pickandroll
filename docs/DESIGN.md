@@ -227,15 +227,19 @@ earlier real drafts in that format (#77):
 - **The fit.** `draft_day.py refit`, run before every attach, fits the table from the drafts of the
   league's size with `availability.league.fit_survival_table`. The fit uses the archive's kernel
   (bandwidth 5 + 0.08 ADP). These leagues keep no keepers, so the overall pick is the market pick.
-- **The minimum-count rule.** With few drafts the table is thin. Its rows answer from
-  `LEAGUE_FROM_ADP` only while at least `MIN_COUNT` (20) observed players lie within their
-  bandwidth. The last such row is the table's `max_adp`, and the formula answers past it.
+- **Two minimums.** The archive gives no table until it holds `MIN_DRAFTS` (3) drafts of the
+  size. One draft gives one player per ADP value, and Yahoo's ADP is already the market these
+  leagues draft by, so a thin table would be worse than the formula. Below that, league sessions
+  simulate, and their survival `note` names the archive (`archive: 1 draft, below the minimum
+  of 3`). Past the draft minimum, rows answer from `LEAGUE_FROM_ADP` only while at least
+  `MIN_COUNT` (20) observed players lie within their bandwidth. The last such row is the table's
+  `max_adp`, and the formula answers past it.
 - **The session.** It names the table by its path in its survival `source`
   (`league:leagues/_shared/points/survival_by_adp.csv`). Its survival `fit` carries the refit's
   report: the drafts, the minimum and the boundary. The UI already words `max_adp` as "the normal
   model ... past ADP N".
-- **The curve.** For a categories league the attach asks for `curve: league` once the shared report
-  names `MIN_DRAFTS` (3) drafts. The curve is fit from the `picks.csv` beside that table, with each
+- **The curve.** For a categories league the attach asks for `curve: league` under the same draft
+  minimum. The curve is fit from the `picks.csv` beside that table, with each
   league's draft fitted on its own (a `league_id` column groups them). Below that number the
   simulated curve stands. A curve that cannot be fit at the attach falls back to the simulated one.
 - **No bias.** The shared folder holds no `adp_bias.json`, so these sessions run the formula unshifted.

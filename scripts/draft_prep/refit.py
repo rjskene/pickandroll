@@ -19,15 +19,19 @@ is ``data/leagues/_shared/<points|categories>/``:
     are the survival fit's censored players.
 ``survival_by_adp.csv``, ``survival_by_adp.json``
     The survival table fit from the drafts of the league's size (no keepers in these leagues,
-    so the overall pick is the market pick), and the fit's report. A row answers only where
-    ``MIN_COUNT`` players have an ADP within its bandwidth; past the boundary the ADP formula
-    does (``fit_survival_table``). A league session reads it after its own folder's table and
-    before simulating (``leagues.session_defaults``).
+    so the overall pick is the market pick), and the fit's report. Two minimums apply together:
+    the archive needs ``MIN_DRAFTS`` drafts of the size before there is a table at all (one
+    draft gives one player per ADP value, noisier than the ADP formula of the market these
+    leagues draft by), and a row answers only where ``MIN_COUNT`` players have an ADP within
+    its bandwidth, the ADP formula past the boundary (``fit_survival_table``). Without a table
+    the report stays, with the reason, and a league session simulates and says why. A league
+    session reads the table after its own folder's and before simulating
+    (``leagues.session_defaults``).
 
 Real drafts only: a draft is archived from a finished room's folder of a league with a folder
 under ``data/leagues/``, whose ledger holds every pick; mocks have no league folder. For a
 categories league the attach asks for ``curve: league`` (fit from ``picks.csv`` beside the
-table, #65) once the archive holds ``MIN_DRAFTS`` drafts of its size, and says so.
+table, #65) under the same draft minimum, and says so.
 """
 
 from __future__ import annotations
@@ -52,8 +56,9 @@ LEAGUE = True
 
 PICKS = "picks.csv"
 ADP = "adp.csv"
-REPORT = "survival_by_adp.json"
-#: The attach of a categories league asks for the league curve from this many drafts on.
+REPORT = leagues.SURVIVAL_REPORT
+#: The archive's drafts of a size before it gives a survival table, and before a categories
+#: attach asks for the league curve.
 MIN_DRAFTS = 3
 PICK_COLUMNS = [
     "season",
@@ -102,8 +107,8 @@ def add_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--min-drafts",
         type=int,
-        help=f"refit, run: drafts before a categories attach asks for the league curve (default "
-        f"{MIN_DRAFTS}, or settings.json refit.min_drafts)",
+        help=f"refit, run: drafts before the archive gives a survival table and a categories "
+        f"attach the league curve (default {MIN_DRAFTS}, or settings.json refit.min_drafts)",
     )
 
 
@@ -300,25 +305,23 @@ def refit(runbook: Any, league: str, args: argparse.Namespace | None = None) -> 
     chosen = {tuple(d) for d in drafts}
     rows = adp[[tuple(k) in chosen for k in adp[DRAFT].astype(str).to_numpy()]]
     table = None
-    if len(rows):
+    many = f"{len(drafts)} draft{'s' if len(drafts) != 1 else ''}"
+    reason = f"{many}, below the minimum of {min_drafts}"
+    if len(drafts) >= min_drafts and len(rows):
         table, counts = fit_survival_table(
             rows["adp"].to_numpy(float),
             pd.to_numeric(rows["overall"], errors="coerce").to_numpy(float),
             picks=teams * rounds,
             min_count=min_count,
         )
+        near = int(counts[LEAGUE_FROM_ADP])
+        reason = f"{many}, {near} players near ADP {LEAGUE_FROM_ADP}, under {min_count}"
     if table is None:
-        for path in (table_path, report_path):
-            path.unlink(missing_ok=True)
-        thin = (
-            f"{int(counts[LEAGUE_FROM_ADP])} players near ADP {LEAGUE_FROM_ADP}"
-            if len(rows)
-            else "no draft"
-        )
-        runbook.say(
-            f"  survival: no table ({thin}, under {min_count}): a session for {league} simulates"
-        )
-        report["table"] = None
+        table_path.unlink(missing_ok=True)
+        report.update(table=None, reason=reason)
+        shared.mkdir(parents=True, exist_ok=True)
+        report_path.write_text(json.dumps(report, indent=1) + "\n")
+        runbook.say(f"  survival: no table (archive: {reason}): league sessions simulate")
     else:
         write_csv(survival_frame(table).round(4), table_path)
         report.update(
@@ -336,13 +339,10 @@ def refit(runbook: Any, league: str, args: argparse.Namespace | None = None) -> 
             "formula elsewhere"
         )
     if scoring == "categories":
-        if table is not None and len(drafts) >= min_drafts:
-            runbook.say(f"  curve: league, from the {len(drafts)} drafts' rosters (#65)")
+        if table is not None:
+            runbook.say(f"  curve: league, from the {many}' rosters (#65)")
         else:
-            runbook.say(
-                f"  curve: simulated ({len(drafts)} of the {min_drafts} drafts the league curve "
-                "needs" + ("" if table is not None else ", and no survival table") + ")"
-            )
+            runbook.say(f"  curve: simulated (archive: {reason})")
     return report
 
 
@@ -373,7 +373,10 @@ def on_status(runbook: Any, league: str) -> None:
     try:
         report = json.loads((shared / REPORT).read_text())
     except (OSError, ValueError):
-        runbook.say(f"  archive {rel(runbook, shared)}: no survival table yet")
+        runbook.say(f"  archive {rel(runbook, shared)}: not refit yet")
+        return
+    if not report.get("table"):
+        runbook.say(f"  archive {rel(runbook, shared)}: {report.get('reason')}: no survival table")
         return
     runbook.say(
         f"  archive {rel(runbook, shared)}: {len(report.get('drafts') or [])} drafts, the survival "

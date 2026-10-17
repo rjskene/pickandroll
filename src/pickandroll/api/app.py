@@ -727,6 +727,9 @@ def create_app(
             body, note = await asyncio.to_thread(
                 _default_survival, body, data_dir, state.settings.total_picks
             )
+        if note is None and body.league is not None and body.survival == "simulate":
+            # A format archive too small for a table (#77) says so beside the simulation.
+            note = await asyncio.to_thread(leagues.archive_note, data_dir, body.league)
         survival: dict[str, Any] = {"mode": body.survival, "status": "none"}
         if body.survival == "league":
             if not body.survival_file:

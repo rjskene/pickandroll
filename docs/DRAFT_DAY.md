@@ -235,18 +235,26 @@ Each finished draft is evidence for the next one in its format. The archive is
   `data/fidelity/`. Archiving a draft again replaces its rows. An incomplete room says `not archived (...)`, and
   `finish` goes on.
 - **Survival.** `refit` fits the table from the archive's drafts of the league's size, then reports the drafts
-  and the ADP rows the table answers for. A row answers only while at least 20 players have an ADP within its
-  bandwidth: `--min-count`, or `"refit": {"min_count": N}` in the league's `settings.json`. Past the last such
-  row the ADP formula answers. With no answering row, `refit` removes the table and the session simulates.
+  and the ADP rows the table answers for. Two minimums apply together:
+  - **Drafts.** The archive needs 3 drafts of the size before it gives a table at all: `--min-drafts`, or
+    `"refit": {"min_drafts": N}` in the league's `settings.json`. One draft gives one player per ADP value, and
+    Yahoo's ADP is already the market these leagues draft by, so a thin table would be worse than the formula.
+  - **Players per row.** A row answers only while at least 20 players have an ADP within its bandwidth:
+    `--min-count`, or `"refit": {"min_count": N}`. Past the last such row the ADP formula answers.
+
+  Without a table, `refit` removes any old one and keeps the report with its reason. The league's sessions then
+  simulate, and their survival note says why, for example `archive: 1 draft, below the minimum of 3`. `status`
+  prints the same line.
 - **Which table a session reads.** The league's own folder's table first, then this shared one if it covers
   the draft, then a simulation. The session's survival `source` names the file.
-- **Curve.** A categories league asks for `curve: league` once the archive holds 3 drafts of its size:
-  `--min-drafts`, or `"refit": {"min_drafts": N}`. The curve comes from those drafts' rosters on the session's
-  projections. Below that, the simulated curve stands. If the league curve cannot be fit at the attach, the run
+- **Curve.** A categories league asks for `curve: league` under the same draft minimum. The curve comes from
+  those drafts' rosters on the session's projections. Below that, the simulated curve stands. If the league curve cannot be fit at the attach, the run
   prints an ALERT and attaches with the simulated curve.
 - **This weekend's order.** In points, 238174 (Saturday 11:00) is the archive's first draft, then 15953 and
   208649. In categories, 251146 (Saturday 20:00) starts the archive, then 252098, 31153, 224319 and 230585.
-  Each draft feeds the ones after it.
+  Each draft is archived for the ones after it. Under the draft minimum, the points leagues this weekend simulate
+  (two drafts at most before 208649). In categories, 230585 on Monday is the first draft with three before it.
+  A blend of the archive with the ADP formula, so that one draft already counts, is a follow-up.
 
 ## Projections (#75)
 

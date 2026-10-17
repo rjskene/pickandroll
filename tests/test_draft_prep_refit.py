@@ -51,6 +51,7 @@ def league_folder(runbook, league, scoring="points", teams=12, day="2026-10-17",
         "num_teams": teams,
         "draft": {"time": f"{day}T11:00:00-07:00", "pick_seconds": 60},
         "roster": ROSTER,
+        **({"points": {"pts": 1.0, "reb": 1.2, "ast": 1.5}} if scoring == "points" else {}),
         **extra,
     }
     (folder / "settings.json").write_text(json.dumps(settings))
@@ -248,15 +249,39 @@ def test_a_thin_archive_writes_no_table_and_drops_a_stale_one(runbook, capsys):
     refit_module(runbook).refit(runbook, "111")
     assert (shared / "survival_by_adp.csv").exists()
     report = refit_module(runbook).refit(runbook, "666")
-    assert report["table"] is None
-    assert (
-        not (shared / "survival_by_adp.csv").exists()
-        and not (shared / "survival_by_adp.json").exists()
-    )
-    assert "survival: no table (" in capsys.readouterr().out
+    assert report["table"] is None and not (shared / "survival_by_adp.csv").exists()
+    assert report["reason"].startswith("3 drafts, ") and report["reason"].endswith(", under 10000")
+    assert json.loads((shared / "survival_by_adp.json").read_text())["reason"] == report["reason"]
+    assert "survival: no table (archive: 3 drafts, " in capsys.readouterr().out
     # An empty archive is no table either.
     league_folder(runbook, "777", scoring="categories")
     assert refit_module(runbook).refit(runbook, "777")["drafts"] == []
+
+
+def test_below_the_draft_minimum_the_league_simulates_and_says_why(runbook, capsys):
+    """One draft gives one player per ADP value: no table until the archive holds three."""
+    module = refit_module(runbook)
+    league_folder(runbook, "111")
+    module.archive(runbook, "111", finished_draft(runbook, "111"))
+    league_folder(runbook, "222", day="2026-10-18")
+    report = module.refit(runbook, "222")
+    assert report["table"] is None and report["reason"] == "1 draft, below the minimum of 3"
+    assert (
+        "survival: no table (archive: 1 draft, below the minimum of 3)" in capsys.readouterr().out
+    )
+    shared = archive_dir(runbook)
+    assert not (shared / "survival_by_adp.csv").exists()
+    assert leagues.session_defaults(runbook.DATA, "222")["survival"] == "simulate"
+    assert leagues.archive_note(runbook.DATA, "222") == "archive: 1 draft, below the minimum of 3"
+    module.on_status(runbook, "222")
+    assert "archive _shared/points: 1 draft, below the minimum of 3: no survival table" in (
+        capsys.readouterr().out
+    )
+    # The minimum is the league's to set.
+    league_folder(runbook, "222", day="2026-10-18", refit={"min_drafts": 1})
+    assert module.refit(runbook, "222")["table"] == "_shared/points/survival_by_adp.csv"
+    assert leagues.session_defaults(runbook.DATA, "222")["survival"] == "league"
+    assert leagues.archive_note(runbook.DATA, "222") is None
 
 
 def test_the_command_archives_then_refits(runbook, monkeypatch, capsys):
@@ -317,6 +342,22 @@ def test_a_league_session_names_the_shared_table_and_its_fit(tmp_path):
     assert s["survival"]["from_adp"] == 90 and s["survival"]["max_adp"] > 90
 
 
+def test_a_league_below_the_minimum_simulates_with_the_archive_in_its_note(tmp_path):
+    build_league(tmp_path)
+    write_league(tmp_path)
+    shared = leagues.shared_dir(tmp_path, "points")
+    shared.mkdir(parents=True)
+    report = {"table": None, "reason": "1 draft, below the minimum of 3"}
+    (shared / "survival_by_adp.json").write_text(json.dumps(report))
+    quick = {k: v for k, v in QUICK.items() if k != "survival"}
+    with TestClient(create_app(SessionStore(), data_dir=tmp_path)) as client:
+        r = client.post("/sessions", json={**quick, "league": "555", "survival_sims": 10})
+        assert r.status_code == 201, r.text
+        s = r.json()
+    assert s["survival"]["mode"] == "simulate"
+    assert s["survival"]["note"] == "archive: 1 draft, below the minimum of 3"
+
+
 # --------------------------------------------------------------------------- the curve
 def test_a_categories_attach_asks_for_the_league_curve_from_enough_drafts(runbook, capsys):
     module = refit_module(runbook)
@@ -329,9 +370,11 @@ def test_a_categories_attach_asks_for_the_league_curve_from_enough_drafts(runboo
         )
     league_folder(runbook, "999", scoring="categories")
     module.refit(runbook, "999")
-    assert "curve: simulated (2 of the 3 drafts the league curve needs)" in capsys.readouterr().out
+    assert "curve: simulated (archive: 2 drafts, below the minimum of 3)" in capsys.readouterr().out
     assert module.session_fields(runbook, "999") == {}
     league_folder(runbook, "999", scoring="categories", refit={"min_drafts": 2})
+    module.refit(runbook, "999")
+    assert "curve: league, from the 2 drafts' rosters" in capsys.readouterr().out
     assert module.session_fields(runbook, "999") == {"curve": "league"}
     assert "curve: league, from the archive's 2 drafts" in capsys.readouterr().out
     # A league with its own table reads its own folder: no shared rosters beside it.

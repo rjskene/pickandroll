@@ -44,6 +44,8 @@ SURVIVAL = "survival_by_adp.csv"
 #: The archive of each format's real drafts and the tables fit from it (#77):
 #: data/leagues/_shared/<points|categories>/.
 SHARED = "_shared"
+#: The refit's report beside the shared table (or in its place, with the reason there is none).
+SURVIVAL_REPORT = "survival_by_adp.json"
 ARMED = "armed.json"
 #: A league id as Yahoo prints it, and as the draft client's path carries it.
 LEAGUE_ID = r"^[0-9]{1,12}$"
@@ -181,6 +183,20 @@ def session_defaults(data_dir: Path, league: str) -> dict[str, Any]:
         # Another league's table (31822's archive) is not this league's market.
         out["survival"] = "simulate"
     return out
+
+
+def archive_note(data_dir: Path, league: str) -> str | None:
+    """Why a league session simulates although its format has an archive: the refit's reason
+    there is no shared table (``archive: 1 draft, below the minimum of 3``); ``None`` without a
+    report or with a table."""
+    try:
+        scoring = load_settings(data_dir, league)["scoring"]
+        report = json.loads((shared_dir(data_dir, scoring) / SURVIVAL_REPORT).read_text())
+    except (LeagueError, OSError, ValueError):
+        return None
+    if not isinstance(report, dict) or report.get("table") or not report.get("reason"):
+        return None
+    return f"archive: {report['reason']}"
 
 
 def _covers(path: Path, picks: int | None) -> bool:
