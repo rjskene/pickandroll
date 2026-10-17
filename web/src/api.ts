@@ -27,8 +27,9 @@ export type CurveChoice = "simulated" | "league";
 /** curve=league: the seasons fitted, those left out and why, and the standings' σ in z units
  * (null for a category the standings cannot convert: the percentages). */
 export interface CurveFit {
-  seasons: { year: number; rosters: number; picks: number; scored: number; unmatched: string[] }[];
-  skipped: { year: number; reason: string }[];
+  /** A draft of the shared archive (#77) names its league too. */
+  seasons: { year: number; league?: string; rosters: number; picks: number; scored: number; unmatched: string[] }[];
+  skipped: { year: number; league?: string; reason: string }[];
   check: Partial<Record<Cat, number | null>>;
   check_seasons: string[];
 }

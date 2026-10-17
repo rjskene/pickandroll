@@ -10,7 +10,10 @@ table (``data/yahoo_history`` for the user's league):
 ``picks.csv``
     Every archived draft, one row per pick: ``draft_year``, ``n_teams``, ``round``,
     ``overall``, ``player`` (Yahoo's name) and ``team`` (the team that made the pick, so a
-    traded pick lands on the roster that used it; keepers are ordinary picks).
+    traded pick lands on the roster that used it; keepers are ordinary picks). The shared
+    archive of a format (``data/leagues/_shared/<format>/``, #77) holds many leagues' drafts
+    of one season, told apart by a ``league_id`` column: each league's draft is a draft of its
+    own there, as each season is in the user's league's archive.
 ``projections_<year>.csv`` (optional)
     That season's preseason projections, in the session's projection format. The session's
     own projections score the season they are for, so the season being drafted needs no file.
@@ -132,6 +135,12 @@ def standings_check(
     return check, [str(s) for s in rows["season"]]
 
 
+def _draft_label(entry: Mapping[str, Any]) -> str:
+    """A fitted or skipped draft as the source names it: its year, and its league in a shared
+    archive."""
+    return f"{entry['year']} {entry['league']}" if "league" in entry else str(entry["year"])
+
+
 def fit_league_curve(
     folder: Path,
     scores: SeasonScores,
@@ -154,13 +163,19 @@ def fit_league_curve(
     totals: list[pd.DataFrame] = []
     seasons: list[dict[str, Any]] = []
     skipped: list[dict[str, Any]] = []
-    for year, draft in picks.groupby("draft_year", sort=True):
-        year = int(year)
+    by = ["draft_year", "league_id"] if "league_id" in picks.columns else ["draft_year"]
+    for key, draft in picks.groupby(by, sort=True):
+        key = key if isinstance(key, tuple) else (key,)
+        year = int(key[0])
+        which: dict[str, Any] = {"year": year}
+        if len(key) > 1:
+            which["league"] = str(key[1])
+        label = ":".join(str(v) for v in which.values())
         teams, rounds = int(draft["n_teams"].iloc[0]), int(draft["round"].max())
         if teams != num_teams or rounds != roster_size:
             skipped.append(
                 {
-                    "year": year,
+                    **which,
                     "reason": f"{teams} teams x {rounds} rounds, the session drafts "
                     f"{num_teams} x {roster_size}",
                 }
@@ -169,19 +184,19 @@ def fit_league_curve(
         scored = scores(year)
         if scored is None:
             name = SEASON_PROJECTIONS.format(year=year)
-            skipped.append({"year": year, "reason": f"no projection file ({name})"})
+            skipped.append({**which, "reason": f"no projection file ({name})"})
             continue
         projections, z = scored
         rosters, unmatched = season_rosters(draft, projections, aliases)
         if len(rosters) < 2:
-            skipped.append({"year": year, "reason": "fewer than two rosters scored"})
+            skipped.append({**which, "reason": "fewer than two rosters scored"})
             continue
         frame = roster_totals(z, rosters, cats)
-        frame.index = [f"{year}:{team}" for team in frame.index]
+        frame.index = [f"{label}:{team}" for team in frame.index]
         totals.append(frame)
         seasons.append(
             {
-                "year": year,
+                **which,
                 "rosters": len(rosters),
                 "picks": len(draft),
                 "scored": len(draft) - len(unmatched),
@@ -189,9 +204,9 @@ def fit_league_curve(
             }
         )
     if not totals:
-        why = "; ".join(f"{s['year']}: {s['reason']}" for s in skipped) or "no drafts"
+        why = "; ".join(f"{_draft_label(s)}: {s['reason']}" for s in skipped) or "no drafts"
         raise ValueError(f"no season to fit the curve on ({why})")
-    years = ", ".join(str(s["year"]) for s in seasons)
+    years = ", ".join(_draft_label(s) for s in seasons)
     rosters = sum(s["rosters"] for s in seasons)
     scored = sum(s["scored"] for s in seasons)
     every = sum(s["picks"] for s in seasons)

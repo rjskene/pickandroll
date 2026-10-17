@@ -8,6 +8,7 @@
     python scripts/draft_day.py finish 238174     # save the ledger and snapshots, write the scorecard
     python scripts/draft_day.py run 238174        # all of it, in that order (run it in the background)
     python scripts/draft_day.py projections       # import this morning's Basketball Monster export (#75)
+    python scripts/draft_day.py refit 15953       # refit the survival table from earlier drafts (#77)
 
 The draft-prep commands (#75-#77) live one module each under scripts/draft_prep/ and are registered
 in ``PREP_MODULES``; ``status`` and ``run`` call their hooks (scripts/draft_prep/__init__.py).
@@ -65,6 +66,7 @@ OK, ERROR, GONE, MOVED, DOWN, NO_TAB, QUIET, YAHOO_DONE, STALE = range(9)
 #: The draft-prep commands, one module each under scripts/draft_prep/, one line each.
 PREP_MODULES = (
     "projections",  # 75
+    "refit",  # 77
     "news",  # 76
 )
 PREP = {name: importlib.import_module(f"draft_prep.{name}") for name in PREP_MODULES}
@@ -388,6 +390,8 @@ def attach(league: str, wait_s: float | None) -> int:
     slot, room_teams = int(seen[0]["slot"]), seen[0].get("room_teams")
     teams = int(room_teams or mine.get("num_teams") or 12)
     session = {"projection_file": newest_projections(), "league": league, "num_teams": teams}
+    for hook in hooks("session_fields"):
+        session.update(hook(RUNBOOK, league))
     body: dict[str, Any] = {
         "draft_id": league,
         "slot": slot,
@@ -399,7 +403,16 @@ def attach(league: str, wait_s: float | None) -> int:
     say(
         f"attaching room {league}: seat {slot} of {teams}, projections {session['projection_file']}"
     )
-    room = api("POST", "/rooms", body, timeout=300)
+    try:
+        room = api("POST", "/rooms", body, timeout=300)
+    except Stop as exc:
+        # The league curve is fit at the attach: when it cannot be, the draft goes on with the
+        # simulated one rather than without a room.
+        if session.get("curve") != "league" or "curve=league" not in str(exc):
+            raise
+        say(f"ALERT {exc}: attaching with the simulated curve")
+        session.pop("curve")
+        room = api("POST", "/rooms", body, timeout=300)
     armed = room["mode"] == "autopilot"
     say(
         f"attached: session {room['session_id']}, mode {room['mode']} "
@@ -521,6 +534,8 @@ def finish(league: str) -> int:
         + ". Ledger and snapshots saved locally.\n\n"
     )
     (out / "comment.md").write_text(head + card)
+    for hook in hooks("after_finish"):
+        hook(RUNBOOK, league, out)
     say(f"saved {out.relative_to(ROOT)}: " + ", ".join(sorted(p.name for p in out.iterdir())))
     say(f"post it: gh issue comment 67 --body-file {out / 'comment.md'}")
     print(head + card)

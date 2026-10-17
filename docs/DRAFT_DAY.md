@@ -104,12 +104,15 @@ exits:
 1. Refreshes `yahoo_players.json` from Yahoo's public endpoint. A bad response keeps the file on disk.
 2. Repeats the projections ALERT, if there is one. With `--bbm-fetch`, it first refreshes the projections
    headless (see "Projections"). That flag is off by default.
-3. Waits for the draft tab (step 3) to report its seat. It waits until 15 minutes after the draft's start, and
+3. Refits the format's survival table from the season's earlier drafts and reports what the archive holds (see
+   "Refit"). A failure prints `ALERT refit failed` and the tables on disk stand.
+4. Waits for the draft tab (step 3) to report its seat. It waits until 15 minutes after the draft's start, and
    checks every 2 minutes that the league still exists.
-4. Attaches the room with the league's settings and the newest `data/bbm_projections_*` file, and prints its
-   name.
-5. Monitors the draft to the last pick, with the Mac kept awake (`caffeinate -dimsu`).
-6. Saves the ledger and the snapshots and writes the comment for #67.
+5. Attaches the room with the league's settings and the newest `data/bbm_projections_*` file, and prints its
+   name. A categories league with enough drafts in the archive asks for the league curve and says so.
+6. Monitors the draft to the last pick, with the Mac kept awake (`caffeinate -dimsu`).
+7. Saves the ledger and the snapshots and writes the comment for #67. A finished draft goes into its format's
+   archive.
 
 Its log is the background task's output, and `data/fidelity/draft_day_<league>.log` keeps a copy. The attach
 prints the mode: `autopilot (the user's pre-arm)` or `mirror (not armed)`.
@@ -224,6 +227,49 @@ user's pre-arm is read only at a log's first attach, so the room would keep that
 pre-arm. `attach` and `run` stop before touching the API, and the message gives the `mv` that moves the log aside.
 Run that `mv`. If `GET /rooms` lists the league's room, `DELETE /rooms/<league>` first. Then start `run` again in
 the background. Say in the report that an earlier log was moved aside, and name the file.
+
+## Refit (#77)
+
+Each finished draft is evidence for the next one in its format. The archive is
+`data/leagues/_shared/<points|categories>/` (local, never committed):
+
+- `picks.csv`: every pick of every archived draft, in the history archive's shape. It records the season, the
+  league, the draft date, the round, the overall pick, the seat, the Yahoo team, the Yahoo player id and name,
+  and Yahoo's ADP and rank at draft time.
+- `adp.csv`: Yahoo's ADP list at draft time for each draft, drafted or not.
+- `survival_by_adp.csv` and `survival_by_adp.json`: the survival table, and the refit's report on it.
+
+```
+.venv/bin/python scripts/draft_day.py refit <league>                   # report the archive, rewrite the table
+.venv/bin/python scripts/draft_day.py refit <league> --add-draft DIR   # archive a finished draft first
+```
+
+- **Archive.** `finish` archives the draft it just saved. Only a real draft goes in: one of a league with a
+  folder under `data/leagues/`, whose ledger holds every pick. Mocks have no league folder. The ADP comes from
+  the league's `yahoo_players.json`, refreshed at T−30, and a copy goes into the draft's folder in
+  `data/fidelity/`. Archiving a draft again replaces its rows. An incomplete room says `not archived (...)`, and
+  `finish` goes on.
+- **Survival.** `refit` fits the table from the archive's drafts of the league's size, then reports the drafts
+  and the ADP rows the table answers for. Two minimums apply together:
+  - **Drafts.** The archive needs 3 drafts of the size before it gives a table at all: `--min-drafts`, or
+    `"refit": {"min_drafts": N}` in the league's `settings.json`. One draft gives one player per ADP value, and
+    Yahoo's ADP is already the market these leagues draft by, so a thin table would be worse than the formula.
+  - **Players per row.** A row answers only while at least 20 players have an ADP within its bandwidth:
+    `--min-count`, or `"refit": {"min_count": N}`. Past the last such row the ADP formula answers.
+
+  Without a table, `refit` removes any old one and keeps the report with its reason. The league's sessions then
+  simulate, and their survival note says why, for example `archive: 1 draft, below the minimum of 3`. `status`
+  prints the same line.
+- **Which table a session reads.** The league's own folder's table first, then this shared one if it covers
+  the draft, then a simulation. The session's survival `source` names the file.
+- **Curve.** A categories league asks for `curve: league` under the same draft minimum. The curve comes from
+  those drafts' rosters on the session's projections. Below that, the simulated curve stands. If the league curve cannot be fit at the attach, the run
+  prints an ALERT and attaches with the simulated curve.
+- **This weekend's order.** In points, 238174 (Saturday 11:00) is the archive's first draft, then 15953 and
+  208649. In categories, 251146 (Saturday 20:00) starts the archive, then 252098, 31153, 224319 and 230585.
+  Each draft is archived for the ones after it. Under the draft minimum, the points leagues this weekend simulate
+  (two drafts at most before 208649). In categories, 230585 on Monday is the first draft with three before it.
+  A blend of the archive with the ADP formula, so that one draft already counts, is a follow-up.
 
 ## Projections (#75)
 

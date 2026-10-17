@@ -11,7 +11,10 @@ A league folder holds what a session for that league needs, all local and never 
     Yahoo's players response for the league (``/fantasy/v3/players/nba/<id>``, public): the
     Yahoo ids the draft room speaks, eligible positions, Yahoo's ADP and ``o_rank``.
 ``survival_by_adp.csv`` (optional)
-    The league's own survival table; without one a league session simulates its survival.
+    The league's own survival table. Without one a league session reads its format's shared
+    table, ``data/leagues/_shared/<points|categories>/survival_by_adp.csv`` (fit from the
+    season's earlier drafts by ``scripts/draft_day.py refit``, #77) when that covers the draft,
+    and simulates its survival otherwise.
 ``armed.json`` (optional)
     Written only by the user's own click in the dashboard (``PUT /leagues/{id}/arm``): the room
     for this league's draft comes up in autopilot. Nothing else writes it.
@@ -41,6 +44,11 @@ LEAGUES_DIR = "leagues"
 SETTINGS = "settings.json"
 PLAYERS = "yahoo_players.json"
 SURVIVAL = "survival_by_adp.csv"
+#: The archive of each format's real drafts and the tables fit from it (#77):
+#: data/leagues/_shared/<points|categories>/.
+SHARED = "_shared"
+#: The refit's report beside the shared table (or in its place, with the reason there is none).
+SURVIVAL_REPORT = "survival_by_adp.json"
 ARMED = "armed.json"
 ADJUSTMENTS = "adjustments.json"
 #: A league id as Yahoo prints it, and as the draft client's path carries it.
@@ -68,6 +76,26 @@ class LeagueError(ValueError):
 
 def league_dir(data_dir: Path, league: str) -> Path:
     return data_dir / LEAGUES_DIR / str(league)
+
+
+def shared_dir(data_dir: Path, scoring: str) -> Path:
+    """The shared archive of a format's drafts (``points`` or ``categories``)."""
+    return data_dir / LEAGUES_DIR / SHARED / str(scoring)
+
+
+def table_picks(path: Path) -> int:
+    """The picks a survival table covers, from its header (``adp, 1..N, undrafted``)."""
+    columns = pd.read_csv(path, nrows=0).columns
+    picks = [int(c) for c in columns if str(c).isdigit()]
+    return max(picks, default=0)
+
+
+def draft_picks(settings: dict[str, Any]) -> int | None:
+    """The picks a league's draft makes (teams times drafted roster slots); ``None`` when its
+    settings list no roster."""
+    if not settings.get("roster"):
+        return None
+    return int(settings.get("num_teams") or 12) * len(league_slots(list(settings["roster"])))
 
 
 def load_settings(data_dir: Path, league: str) -> dict[str, Any]:
@@ -146,14 +174,42 @@ def session_defaults(data_dir: Path, league: str) -> dict[str, Any]:
     if (league_dir(data_dir, league) / PLAYERS).exists():
         players = f"{folder}/{PLAYERS}"
         out.update(adp_file=players, positions_file=players, adp_fallback_file=players)
+    shared = shared_dir(data_dir, settings["scoring"]) / SURVIVAL
     if (league_dir(data_dir, league) / SURVIVAL).exists():
         out.update(survival="league", survival_file=f"{folder}/{SURVIVAL}")
+    elif shared.exists() and _covers(shared, draft_picks(settings)):
+        # The format's shared table: this season's earlier drafts in leagues like this one.
+        out.update(
+            survival="league",
+            survival_file=f"{LEAGUES_DIR}/{SHARED}/{settings['scoring']}/{SURVIVAL}",
+        )
     else:
         # Another league's table (31822's archive) is not this league's market.
         out["survival"] = "simulate"
     if (league_dir(data_dir, league) / ADJUSTMENTS).exists():
         out["adjustments_file"] = f"{folder}/{ADJUSTMENTS}"
     return out
+
+
+def archive_note(data_dir: Path, league: str) -> str | None:
+    """Why a league session simulates although its format has an archive: the refit's reason
+    there is no shared table (``archive: 1 draft, below the minimum of 3``); ``None`` without a
+    report or with a table."""
+    try:
+        scoring = load_settings(data_dir, league)["scoring"]
+        report = json.loads((shared_dir(data_dir, scoring) / SURVIVAL_REPORT).read_text())
+    except (LeagueError, OSError, ValueError):
+        return None
+    if not isinstance(report, dict) or report.get("table") or not report.get("reason"):
+        return None
+    return f"archive: {report['reason']}"
+
+
+def _covers(path: Path, picks: int | None) -> bool:
+    try:
+        return picks is not None and table_picks(path) >= picks
+    except (OSError, ValueError):
+        return False
 
 
 def players_frame(path: Path, projections: pd.DataFrame, data_dir: Path) -> pd.DataFrame:
