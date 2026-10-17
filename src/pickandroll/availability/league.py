@@ -105,3 +105,78 @@ class LeagueSurvivalTable:
         frame = pd.DataFrame(out, index=adp.index)
         frame.loc[~known] = np.nan
         return frame
+
+
+#: A table row answers only when at least this many observed players have an ADP within its
+#: kernel's bandwidth (``fit_survival_table``); a thin row is left to the ADP formula.
+MIN_COUNT = 20
+
+
+def bandwidth(adp: float) -> float:
+    """The Gaussian kernel's bandwidth at an ADP: the archive's (5 + 0.08 ADP), wider late,
+    where the market's ADPs spread out."""
+    return 5.0 + 0.08 * float(adp)
+
+
+def survival_counts(adp: Sequence[float], rows: Sequence[int]) -> pd.Series:
+    """For each ADP row, the observed players whose ADP lies within the row's bandwidth."""
+    x = np.asarray(adp, dtype=float)
+    return pd.Series(
+        [int((np.abs(x - a) <= bandwidth(a)).sum()) for a in rows],
+        index=pd.Index(list(rows), name="adp"),
+        dtype=int,
+    )
+
+
+def fit_survival_table(
+    adp: Sequence[float],
+    overall: Sequence[float],
+    picks: int,
+    min_count: int = MIN_COUNT,
+) -> tuple[LeagueSurvivalTable | None, pd.Series]:
+    """``S(m | a)`` from observed drafts, one observation per player with an ADP per draft:
+    his ADP and the overall pick that took him (NaN when he went undrafted, so he survives
+    every pick). Each row is the kernel-weighted share of players still on the board, the
+    archive's smoothing (``bandwidth``). The table keeps the rows from ADP 1 up to the last of
+    an unbroken run, from :data:`LEAGUE_FROM_ADP` on, whose counts clear ``min_count``
+    (``survival_counts``); past it, and before :data:`LEAGUE_FROM_ADP`, the ADP formula answers.
+    Returns the table (``None`` when the first row it would answer is already thin) and the
+    counts of every row looked at."""
+    a_obs = np.asarray(adp, dtype=float)
+    y = np.asarray(overall, dtype=float)
+    if a_obs.shape != y.shape or not len(a_obs) or np.isnan(a_obs).any():
+        raise ValueError("needs one ADP and one pick (NaN if undrafted) per observation")
+    if picks < 1:
+        raise ValueError("picks must be at least 1")
+    top = max(int(np.ceil(a_obs.max() + bandwidth(a_obs.max()))), LEAGUE_FROM_ADP)
+    counts = survival_counts(a_obs, range(1, top + 1))
+    last = None
+    for a in range(LEAGUE_FROM_ADP, top + 1):
+        if counts[a] < min_count:
+            break
+        last = a
+    if last is None:
+        return None, counts
+    undrafted = np.isnan(y)
+    ks = np.arange(1, picks + 1)
+    alive = ((y[:, None] >= ks[None, :]) | undrafted[:, None]).astype(float)
+    rows, und = {}, {}
+    for a in range(1, last + 1):
+        w = np.exp(-0.5 * ((a_obs - a) / bandwidth(a)) ** 2)
+        total = float(w.sum())
+        if total <= 0.0:
+            raise ValueError(f"no observation weighs on ADP {a}")
+        # Clipped: a weighted share of ones can round a hair past 1.
+        rows[a] = np.clip((w @ alive) / total, 0.0, 1.0)
+        und[a] = min(max(float(w @ undrafted.astype(float)) / total, 0.0), 1.0)
+    table = pd.DataFrame.from_dict(rows, orient="index", columns=[int(k) for k in ks])
+    table.index = pd.Index(list(rows), name="adp")
+    return LeagueSurvivalTable(table=table, undrafted=pd.Series(und)), counts
+
+
+def survival_frame(table: LeagueSurvivalTable) -> pd.DataFrame:
+    """The table as written: ``adp, 1..N, undrafted`` (what :meth:`LeagueSurvivalTable.from_frame`
+    reads back)."""
+    frame = table.table.copy()
+    frame["undrafted"] = table.undrafted.to_numpy(float)
+    return frame.reset_index()

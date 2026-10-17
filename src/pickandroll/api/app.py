@@ -727,6 +727,9 @@ def create_app(
             body, note = await asyncio.to_thread(
                 _default_survival, body, data_dir, state.settings.total_picks
             )
+        if note is None and body.league is not None and body.survival == "simulate":
+            # A format archive too small for a table (#77) says so beside the simulation.
+            note = await asyncio.to_thread(leagues.archive_note, data_dir, body.league)
         survival: dict[str, Any] = {"mode": body.survival, "status": "none"}
         if body.survival == "league":
             if not body.survival_file:
@@ -745,13 +748,18 @@ def create_app(
                     f"{state.settings.total_picks}",
                 )
             state.league_survival = league
+            # A table in a league folder or the shared archive is named by its path (#77).
+            under = body.survival_file.startswith(f"{leagues.LEAGUES_DIR}/")
             survival = {
                 "mode": "league",
                 "status": "ready",
-                "source": f"league:{path.name}",
+                "source": f"league:{body.survival_file if under else path.name}",
                 "from_adp": LEAGUE_FROM_ADP,
                 "max_adp": league.max_adp,
             }
+            fit = await asyncio.to_thread(_survival_fit, path)
+            if fit is not None:
+                survival["fit"] = fit
         elif body.survival == "file":
             if not body.survival_file:
                 raise HTTPException(400, "survival=file needs survival_file")
@@ -2094,6 +2102,17 @@ def _load_adp_bias(path: Path) -> AdpBias:
     except json.JSONDecodeError as exc:
         raise ValueError(f"not JSON: {exc}") from exc
     return AdpBias.from_dict(data)
+
+
+def _survival_fit(path: Path) -> dict[str, Any] | None:
+    """The report ``scripts/draft_day.py refit`` writes beside a table it fit (#77): the drafts
+    it was fit on and the minimum-count rule's boundary; ``None`` without one."""
+    report = path.with_suffix(".json")
+    try:
+        data = json.loads(report.read_text())
+    except (OSError, ValueError):
+        return None
+    return data if isinstance(data, dict) else None
 
 
 def _load_league_survival(path: Path) -> LeagueSurvivalTable:
