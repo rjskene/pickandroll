@@ -815,6 +815,7 @@ class BackgroundSolver:
                 return
             board = copy.copy(state)
             board.picks = list(state.picks)
+            epoch = self.book.epoch
             fresh = rec is not None and rec["version"] == session.version
             mine = [c["player"] for c in rec["candidates"][:MINE]] if fresh else []
         key = board_key(board)
@@ -838,7 +839,7 @@ class BackgroundSolver:
                 one_away=size,
                 skip=self.book.known,
             )
-            self._launch(self.book.wanted(branches), state.plan_gap)
+            self._launch(self.book.wanted(branches), state.plan_gap, epoch)
 
         launch(one_away)
         if not grows:
@@ -854,15 +855,17 @@ class BackgroundSolver:
         if grown > one_away:
             launch(grown)
 
-    def _launch(self, branches: list[Any], gap: float) -> None:
+    def _launch(self, branches: list[Any], gap: float, epoch: int | None = None) -> None:
         pool = background_pool()
         for branch in branches:
+            if epoch is not None and epoch != self.book.epoch:
+                return  # a haircut since the board was copied: its plans are stale
             future = pool.submit(solve_branch, (branch.problem, BRANCH_TIME_LIMIT, gap))
             with self._branch_lock:
                 self._branches.add(future)
                 for gen, peak in self._peaks.items():
                     self._peaks[gen] = max(peak, len(self._branches))
-            entry = self.book.add(branch, future)
+            entry = self.book.add(branch, future, epoch)
             future.add_done_callback(self._branch_ended)
             future.add_done_callback(
                 lambda f, e=entry: self.book.done(
