@@ -194,6 +194,8 @@ class BranchBook:
     hits: int = 0
     pending: int = 0
     misses: int = 0
+    #: Bumped by ``clear``.
+    epoch: int = 0
 
     def known(self, key: BoardKey) -> bool:
         """Whether this board is solved or in flight."""
@@ -205,12 +207,28 @@ class BranchBook:
         with self.lock:
             return [b for b in branches if b.key not in self.entries]
 
-    def add(self, branch: Branch, future: Future) -> Entry:
+    def add(self, branch: Branch, future: Future | None, epoch: int | None = None) -> Entry:
+        """Book a branch. One built before the last ``clear`` (``epoch`` behind) is not
+        booked: its board's projections are gone."""
         entry = Entry(branch=branch, started=time.perf_counter(), future=future)
         with self.lock:
-            self.entries[branch.key] = entry
-            self.launched += 1
+            if epoch is None or epoch == self.epoch:
+                self.entries[branch.key] = entry
+                self.launched += 1
         return entry
+
+    def clear(self) -> None:
+        """Forget every branch, because the projections under them changed (a games haircut,
+        #76: the boards are the same, the plans are not), and cancel the solves that have not
+        started; one already running finishes unused."""
+        with self.lock:
+            self.epoch += 1
+            dead = list(self.entries.values())
+            self.entries.clear()
+            self.counted.clear()
+        for entry in dead:
+            if entry.future is not None:
+                entry.future.cancel()
 
     def done(self, entry: Entry, solution: HorizonSolution | None) -> None:
         with self.lock:

@@ -238,15 +238,18 @@ def logged_complete(prior: list[dict[str, Any]]) -> int | None:
 
 def logged_session(prior: list[dict[str, Any]]) -> dict[str, Any]:
     """The session settings a rebuild starts from: the current attach record's, with the keeper
-    table of the last ``keepers`` event after it (a PATCH since the attach, #63). A record from
-    before #63 always carries ``fit_curve``; it only ever applied to a simulation. One from before
-    #64 ran without the ADP bias."""
+    table of the last ``keepers`` event after it (a PATCH since the attach, #63) and the games
+    haircuts of the last ``adjustments`` event (#76). A record from before #63 always carries
+    ``fit_curve``; it only ever applied to a simulation. One from before #64 ran without the ADP
+    bias."""
     record = last_attach(prior) or {}
     create = dict(record.get("session") or {})
     since = prior.index(record) if record in prior else -1
     for e in prior[since + 1 :]:
         if e.get("type") == "keepers" and e.get("src") == "api":
             create = {**create, "keepers": e.get("keepers") or [], "keepers_file": None}
+        elif e.get("type") == "adjustments" and e.get("src") == "api":
+            create = {**create, "adjustments": e.get("adjustments") or [], "adjustments_file": None}
     if create.get("survival") != "simulate":
         create.pop("fit_curve", None)
     if create:

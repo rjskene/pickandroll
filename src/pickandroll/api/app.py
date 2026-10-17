@@ -64,6 +64,14 @@ from ..sources.bbm import PROJECTION_SUFFIXES, load_bbm
 from ..sources.matching import load_aliases
 from ..sources.yahoo import YahooLeague, build_id_map, load_players_file
 from . import league_curve, leagues, yahoo_room
+from .adjustments import (
+    AdjustmentIn,
+    adjustment_rows,
+    read_adjustments_file,
+)
+from .adjustments import fractions as adjustment_fractions
+from .adjustments import listed as listed_adjustments
+from .adjustments import resolve as resolve_adjustments
 from .keepers import (
     KeeperIn,
     Labelled,
@@ -154,6 +162,10 @@ class Session:
     curve_source: str = "none"
     #: ``curve: league``: the seasons fitted and the standings check (#65).
     curve_fit: dict[str, Any] | None = None
+    #: Games haircuts (#76), by projection id as given (``api.adjustments``), and why a league
+    #: file's entries were skipped.
+    adjustments: list[dict[str, Any]] = field(default_factory=list)
+    adjustments_note: list[str] = field(default_factory=list)
     #: Survival availability: ``mode`` none/simulate/file, ``status`` none/building/ready/failed.
     survival: dict[str, Any] = field(default_factory=lambda: {"mode": "none", "status": "none"})
     #: The simulated survival table's build: a keeper change starts a new one, and a build
@@ -433,10 +445,30 @@ class SessionCreate(BaseModel):
         description="traded picks: the draft position (1..num_teams) that owns each overall "
         "pick, pick 1 first, num_teams x roster size entries; left out, a pure snake",
     )
+    adjustments: list[AdjustmentIn] = Field(
+        default_factory=list,
+        description="games haircuts: a player (id or name) and games_fraction (the share of his "
+        "projected games he plays) or games_out; his totals are scaled before z",
+    )
+    adjustments_file: str | None = Field(
+        default=None,
+        description="JSON inside data/ with adjustment rows, taken before the adjustments list "
+        "(a league folder's adjustments.json by default); an entry that does not read or "
+        "match is skipped and named in the session's adjustments_note",
+    )
 
 
 class KeepersIn(BaseModel):
     keepers: list[KeeperIn]
+
+
+class AdjustmentsPatch(BaseModel):
+    adjustments: list[AdjustmentIn]
+    replace: bool = Field(
+        default=False,
+        description="the rows are the whole table; otherwise each sets or clears (a fraction of "
+        "one, no games out) its player's haircut and the others stay",
+    )
 
 
 class SolveParamsPatch(BaseModel):
@@ -727,6 +759,7 @@ def create_app(
         state, label, curve_source, curve_fit = await asyncio.to_thread(
             _build_state, body, data_dir
         )
+        cuts, cuts_skipped = await asyncio.to_thread(_initial_adjustments, body, data_dir, state)
         note = None
         if body.survival is None:
             body, note = await asyncio.to_thread(
@@ -839,12 +872,16 @@ def create_app(
             solve_ahead=body.solve_ahead,
         )
         session.curve_fit = curve_fit
+        session.adjustments, session.adjustments_note = cuts, cuts_skipped
         # The keeper table as resolved, by id: a rebuild after a restart does not re-read the file.
         # The survival as resolved too, so a rebuild keeps the mode the session started on.
         session.create_params = {
             **body.model_dump(mode="json"),
             "keepers": keeper_params(state.keepers),
             "keepers_file": None,
+            # The haircuts as resolved, by id, the same way (#76).
+            "adjustments": cuts,
+            "adjustments_file": None,
             # Only a simulation fits the curve: a rebuild must not ask a league table to.
             "fit_curve": fit_curve,
         }
@@ -891,6 +928,7 @@ def create_app(
             priced = session.prices_version == session.version
             prices = session.prices if priced else None
             exact = session.exact_prices if priced else {}
+            cuts = {r["player_id"]: r for r in adjustment_rows(state, session.adjustments)}
         rows = []
         for pid in z["total"].sort_values(ascending=False).index[:limit]:
             rows.append(
@@ -927,6 +965,8 @@ def create_app(
                     "taken": pid in taken,
                     "taken_by": taken_by.get(pid),
                     "keeper": kept.get(pid),
+                    # His games haircut (#76): games above are what it leaves him.
+                    "adjustment": cuts.get(pid),
                 }
             )
         return {
@@ -1050,6 +1090,56 @@ def create_app(
             )
         session.publish("keepers", {"keepers": table})
         return {"keepers": table, "version": session.version}
+
+    @app.patch("/sessions/{session_id}/adjustments")
+    def set_adjustments(session_id: str, body: AdjustmentsPatch) -> dict[str, Any]:
+        """Games haircuts mid-draft (#76): each row sets or clears its player's (``replace``:
+        the rows are the whole table). His totals are scaled from the projections as loaded,
+        z is recomputed and the plan solves again; the pick log is not touched, and the plans
+        pre-solved on the old z are dropped. In a room the table goes on the ledger, so a
+        rebuild from the log drafts on it."""
+        session = store.get(session_id)
+        room = session.room
+        with room.lock if room is not None else contextlib.nullcontext(), session.lock:
+            state = session.state
+            base = state.base_projections.df
+            before = {e["player_id"]: e for e in session.adjustments}
+            try:
+                table, _ = resolve_adjustments(
+                    listed_adjustments(body.adjustments),
+                    base,
+                    () if body.replace else session.adjustments,
+                )
+                state.set_adjustments(adjustment_fractions(table, base))
+            except (KeyError, ValueError) as exc:
+                raise HTTPException(400, str(exc)) from exc
+            after = {e["player_id"]: e for e in table}
+            changed = sorted(
+                p for p in before.keys() | after.keys() if before.get(p) != after.get(p)
+            )
+            session.adjustments = table
+            if session.create_params is not None:
+                session.create_params = {
+                    **session.create_params,
+                    "adjustments": table,
+                    "adjustments_file": None,
+                }
+            rows = adjustment_rows(state, table)
+            if room is not None:
+                room.log.append(
+                    {
+                        "type": "adjustments",
+                        "adjustments": table,
+                        "names": {r["player_id"]: r["name"] for r in rows},
+                        "changed": changed,
+                        "board": len(state.picks),
+                        "src": "api",
+                    }
+                )
+            if session.solver is not None:
+                session.solver.book.clear()
+        session.publish("adjustments", {"adjustments": rows, "changed": changed})
+        return {"adjustments": rows, "changed": changed, "version": session.version}
 
     @app.post("/sessions/{session_id}/autopick")
     def autopick(session_id: str, body: AutoPickIn) -> dict[str, Any]:
@@ -1509,6 +1599,11 @@ def create_app(
                         **({"ext_version": body.ext_version} if body.ext_version else {}),
                         **({"pre_armed": pre_armed} if pre_armed else {}),
                         "session": session.create_params,
+                        # The games haircuts the room starts under, by name (#76).
+                        "adjustments": [
+                            {"player_id": r["player_id"], "name": r["name"]}
+                            for r in adjustment_rows(state, session.adjustments)
+                        ],
                         "solve": {
                             "n": params.n,
                             "scenarios": params.scenarios,
@@ -1846,6 +1941,7 @@ DATA_FILE_FIELDS = (
     "adp_fallback_file",
     "curve_file",
     "survival_file",
+    "adjustments_file",
 )
 
 
@@ -1985,6 +2081,34 @@ def _build_state(
         state.curve = curve.scaled(body.sigma_scale)
         curve_source = state.curve.source
     return state, projections.label, curve_source, curve_fit
+
+
+def _initial_adjustments(
+    body: SessionCreate, data_dir: Path, state: DraftState
+) -> tuple[list[dict[str, Any]], list[str]]:
+    """A new session's games haircuts (#76), applied to the state: the file's rows (a league's
+    prepared list) first, then the request's. The file is read leniently, since a prepared list
+    must never stop a draft's attach: an entry that does not read or match is skipped and its
+    reason returned. The request's rows are strict (400)."""
+    base = state.base_projections.df
+    table: list[dict[str, Any]] = []
+    skipped: list[str] = []
+    if body.adjustments_file:
+        path = data_dir / body.adjustments_file
+        if path.exists():
+            rows, skipped = read_adjustments_file(path)
+            table, unmatched = resolve_adjustments(rows, base, strict=False)
+            skipped += unmatched
+        else:
+            skipped.append(f"{body.adjustments_file} not found: no haircuts from it")
+    try:
+        table, _ = resolve_adjustments(listed_adjustments(body.adjustments), base, table)
+        state.set_adjustments(adjustment_fractions(table, base))
+    except (KeyError, ValueError) as exc:
+        raise HTTPException(400, str(exc)) from exc
+    for line in skipped:
+        LOG.warning("adjustments: %s", line)
+    return table, skipped
 
 
 def _league_curve(
@@ -2367,6 +2491,10 @@ def _summary(session: Session) -> dict[str, Any]:
         "pick_owners": None if state.pick_owners is None else list(state.pick_owners),
         "traded_picks": state.traded_picks,
         "keepers": keeper_rows(state),
+        # Games haircuts (#76): the players whose totals are scaled, and the league file's
+        # entries that were skipped.
+        "adjustments": adjustment_rows(state, session.adjustments),
+        "adjustments_note": session.adjustments_note,
         "picks_made": len(state.picks),
         "next_overall": state.next_overall,
         "my_next_pick": state.my_next_pick,

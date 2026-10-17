@@ -2,8 +2,8 @@
 // since the web app has no Node types.
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import type { AvailabilityBias, BoardPlayer, CurveFit, SessionSummary } from "./api";
-import { adpCell, adpTitle, armLabel, biasDetail, clockNote, curveFitNote, draftWhen, oddsSource, rankLabel, survivalDetail } from "./format.ts";
+import type { AdjustmentRow, AvailabilityBias, BoardPlayer, CurveFit, SessionSummary } from "./api";
+import { adpCell, adpTitle, armLabel, biasDetail, clockNote, curveFitNote, draftWhen, haircutLabel, haircutTitle, haircutWeeks, oddsSource, rankLabel, survivalDetail, weeksToGames } from "./format.ts";
 
 const row = (adp_from: BoardPlayer["adp_from"], adp: number | null, keepers_ahead = 0): BoardPlayer =>
   ({ adp, adp_eff: adp == null ? null : adp - keepers_ahead, adp_from, keepers_ahead }) as BoardPlayer;
@@ -92,4 +92,23 @@ test("the footer shows the room's pick clock and the plan budget it gives", () =
   assert.equal(clockNote({ clock_s: 30, plan_time_limit: 5 }), " · 30 s clock, plan 5 s");
   assert.equal(clockNote({ clock_s: null, plan_time_limit: 8 }), " · plan 8 s (fixed)");
   assert.equal(clockNote({}), "");
+});
+
+const cut = (over: Partial<AdjustmentRow>): AdjustmentRow =>
+  ({ player_id: "p1", name: "A Player", team: "", games_fraction: null, games_out: null, note: null, fraction: 1, games: 60, games_left: 60, taken: false, ...over }) as AdjustmentRow;
+
+test("out N weeks is about 3.75 games a week, four weeks about fifteen", () => {
+  assert.equal(weeksToGames(4), 15);
+  assert.equal(weeksToGames(1), 4);
+  assert.equal(weeksToGames(8), 30);
+});
+
+test("a haircut reads as the weeks the board set, else as given", () => {
+  const board = cut({ games_out: 15, note: "out 4 weeks", fraction: 0.75, games_left: 45 });
+  assert.equal(haircutWeeks(board), 4);
+  assert.equal(haircutLabel(board), "out 4 wk");
+  assert.equal(haircutTitle(board), "games haircut: 15 games out (out 4 weeks), 45 of 60 projected games; his totals are scaled and z recomputed");
+  assert.equal(haircutLabel(cut({ games_out: 10, note: "sweep: ESPN" })), "−10 GP");
+  assert.equal(haircutWeeks(cut({ games_out: 10, note: "sweep: ESPN" })), null);
+  assert.equal(haircutLabel(cut({ games_fraction: 0.8, fraction: 0.8 })), "×0.80 GP");
 });
