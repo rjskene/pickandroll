@@ -42,8 +42,6 @@ from zoneinfo import ZoneInfo
 
 import pandas as pd
 
-from pickandroll.api.adjustments import read_adjustments_file, resolve
-from pickandroll.api.leagues import ADJUSTMENTS, league_cats, league_slots, load_settings
 from pickandroll.optim.roster import yahoo_default_slots
 from pickandroll.projections.schema import NINE_CAT, POINTS_CAT, Cat, fantasy_points
 from pickandroll.projections.zscores import zscores
@@ -60,6 +58,8 @@ ROTOWIRE_URL = "https://www.rotowire.com/basketball/news.php"
 #: The saved pages ``--news-from`` reads.
 ESPN_FILE = "espn_injuries.json"
 ROTOWIRE_FILE = "rotowire_news.html"
+#: A league's prepared haircuts (pickandroll.api.leagues.ADJUSTMENTS, read at attach).
+ADJUSTMENTS = "adjustments.json"
 #: Players the sweep looks at: the top this many by projected value.
 TOP = 200
 #: A headline's day is the US Eastern day; the block prints times in the draft's zone.
@@ -203,6 +203,9 @@ def read_page(url: str, saved: Path | None) -> tuple[str | None, str | None]:
 def league_values(data: Path, league: str, projections: pd.DataFrame) -> pd.Series:
     """Projected value on the league's own scoring, best first: total z over a pool of the
     league's drafted rosters (a points league's fantasy points, else its categories)."""
+    # pickandroll.api loads the whole app: imported only when a command needs it.
+    from pickandroll.api.leagues import league_cats, league_slots, load_settings
+
     settings = load_settings(data, league)
     slots = (
         league_slots(list(settings["roster"])) if settings.get("roster") else yahoo_default_slots()
@@ -369,6 +372,8 @@ def on_status(runbook: Any, league: str) -> None:
     path = runbook.DATA / "leagues" / league / ADJUSTMENTS
     if not path.exists():
         return
+    from pickandroll.api.adjustments import read_adjustments_file, resolve
+
     rows, problems = read_adjustments_file(path)
     try:
         df = load_bbm(runbook.DATA / runbook.newest_projections()).df

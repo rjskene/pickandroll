@@ -172,6 +172,9 @@ def test_status_checks_the_leagues_adjustments_file(league, capsys):
             ]
         )
     )
+    from pickandroll.api.leagues import ADJUSTMENTS
+
+    assert news(league).ADJUSTMENTS == ADJUSTMENTS
     news(league).on_status(league, LEAGUE)
     out = capsys.readouterr().out
     assert (
