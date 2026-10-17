@@ -307,6 +307,13 @@ def test_one_draft_is_half_the_formula_and_the_formats_pool(runbook, capsys):
         "(333 2026-10-19)" in out
     )
     assert "blend: 1.5 drafts toward the ADP formula" in out
+    # The pooled, blended table: shares in [0, 1], never rising with the pick, never under the
+    # blended undrafted share.
+    pooled = LeagueSurvivalTable.from_frame(pd.read_csv(shared / "survival_by_adp.csv"))
+    s, und = pooled.table.to_numpy(), pooled.undrafted.to_numpy()
+    assert ((s >= 0) & (s <= 1)).all() and ((und >= 0) & (und <= 1)).all()
+    assert (np.diff(s, axis=1) <= 1e-12).all()
+    assert (s >= und[:, None] - 1e-12).all()
     module.on_status(runbook, "222")
     assert "blend: 1.5 drafts (1 of the format, 1 of the other at x0.5)" in capsys.readouterr().out
     # The league sets the other format's weight; at zero it is left out.
