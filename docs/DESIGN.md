@@ -257,13 +257,13 @@ earlier real drafts in that format (#77):
   projections, at the same weights, each league's draft on its own (a `league_id` column groups
   them). A points roster is scored on the nine categories for a categories session, and a
   categories roster on fpts for a points one. The fit is blended toward a prior by the same
-  `D/(D+1)`, and the prior curve is today's simulated run: a session on a league table with
-  `fit_curve` (the default) runs the usual background simulation on today's projections for its
-  curve alone. It keeps that curve and never installs the run's survival table
-  (`survival.curve_run` reports the run; a `curve` event says it landed). Until it lands, the
-  static simulated curve (categories) or the flat curve (fpts) stands in as the prior. Without
-  `curve: league`, the run's curve is the session's curve, as under `survival: simulate`. A
-  curve that cannot be fit at the attach falls back to the simulated one.
+  `D/(D+1)`, and the prior curve is today's simulated run: a session on a league table under
+  `curve: league` and `fit_curve` (the default) runs the usual background simulation on today's
+  projections for its curve alone. It keeps that curve as the prior and never installs the run's
+  survival table (`survival.curve_run` reports the run; a `curve` event says it landed). Until it
+  lands, the static simulated curve (categories) or the flat curve (fpts) stands in as the prior.
+  A league table's session without `curve: league` runs no simulation and keeps the simulated
+  curve. A curve that cannot be fit at the attach falls back to the simulated one.
 - **No bias.** The shared folder holds no `adp_bias.json`, so these sessions run the formula unshifted.
 
 `availability.bias.AdpBias` (#64) is the league's mean shift of the formula. The league runs
@@ -340,7 +340,8 @@ projections, from the archive's `picks.csv` beside the league table, #65, or the
 #77; the session reports `curve_fit`: the seasons or drafts fitted and the standings' sigma in z units as
 the check, and the blend toward its prior), `survival` none/simulate/file/league
 (left out: the league table, else a simulation), `fit_curve` (the simulation's curve: under
-`survival: simulate` from its own run, beside a league table from a run for the curve alone, #77),
+`survival: simulate` from its own run, beside a league table under `curve: league` the prior
+from a run for the curve alone, #77),
 `solve_ahead`, `time_limit`),
 `/files?kind=survival|curve|adp` (what data/ holds), `/board` (with a `cost` per player: the
 exact re-solve where the player was a priced candidate, flagged `cost_exact`, else the

@@ -568,7 +568,7 @@ def test_a_league_tables_session_runs_the_simulation_for_its_curve(tmp_path):
         while s["survival"]["curve_run"]["status"] == "building" and time.time() < deadline:
             time.sleep(0.1)
             s = client.get(f"/sessions/{s['id']}").json()
-        assert s["survival"]["curve_run"]["status"] == "ready", s["survival"]
+        assert s["survival"]["curve_run"]["status"] == "ready", s["survival"]["curve_run"]
         assert (s["survival"]["status"], s["availability_source"]) == ("ready", "league")
         assert s["curve_fit"]["blend"]["prior_status"] == "ready"
         prior = s["curve_fit"]["blend"]["prior"]
@@ -581,6 +581,12 @@ def test_a_league_tables_session_runs_the_simulation_for_its_curve(tmp_path):
             True,
             True,
         )
+        # Without curve=league there is no blend to give a prior: the table's session runs
+        # nothing and keeps the simulated curve.
+        plain = client.post("/sessions", json={**quick, "league": "555"}).json()
+        assert plain["availability_source"] == "league" and "curve_run" not in plain["survival"]
+        params = store.get(plain["id"]).create_params
+        assert (params["fit_curve"], params["curve_run"]) == (False, False)
     # A rebuild keeps what the session ran on: a record from before #77 beside a table ran no
     # simulation for its curve, a record that says it did runs it again.
     from pickandroll.api import yahoo_room

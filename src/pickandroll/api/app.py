@@ -865,10 +865,10 @@ def create_app(
                 "fit_curve out",
             )
         # The simulation's curve: the curve itself, or the prior the league's rosters blend
-        # toward (curve=league). Beside a league table it runs for the curve alone (#77); a
-        # curve file stands on its own there.
+        # toward (curve=league). Beside a league table it runs for that prior alone (#77):
+        # without curve=league the table's session keeps the simulated curve and runs nothing.
         fit_curve = bool(body.fit_curve) and (
-            body.survival == "simulate" or (body.survival == "league" and not body.curve_file)
+            body.survival == "simulate" or (body.survival == "league" and body.curve == "league")
         )
         curve_only = fit_curve and body.survival == "league" and body.objective == "win"
         session = store.create(
@@ -2391,7 +2391,7 @@ async def _build_survival(
     """Simulate the league in a worker thread, then install the table (and the fitted curve)
     and wake the solver. A build that a keeper change has superseded (``generation`` is no
     longer the session's) is dropped: the newer one reports and installs. ``curve_only``
-    beside a league table (#77): the run's curve is installed, or the prior the league's
+    beside a league table under curve=league (#77): the run's curve is the prior the league's
     rosters blend toward, and its table is dropped."""
     state = session.state
 
@@ -2471,9 +2471,9 @@ def _install_run_curve(session: Session, run: CategoryCurve) -> None:
 
 
 async def _build_curve(session: Session, sims: int, drafters: tuple[Strategy, ...]) -> None:
-    """The simulation behind a league table's session, for its curve alone (#77): the league
-    table stays the survival, the run's curve becomes the session's or, under curve=league,
-    the prior the rosters' curve blends toward. Reported as ``survival.curve_run``."""
+    """The simulation behind a league table's session under curve=league, for its curve alone
+    (#77): the league table stays the survival, and the run's curve becomes the prior the
+    rosters' curve blends toward. Reported as ``survival.curve_run``."""
     state = session.state
     run = session.survival.setdefault("curve_run", {"status": "building", "sims": sims})
 
