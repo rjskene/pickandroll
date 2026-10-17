@@ -67,6 +67,7 @@ OK, ERROR, GONE, MOVED, DOWN, NO_TAB, QUIET, YAHOO_DONE, STALE = range(9)
 PREP_MODULES = (
     "projections",  # 75
     "refit",  # 77
+    "news",  # 76
 )
 PREP = {name: importlib.import_module(f"draft_prep.{name}") for name in PREP_MODULES}
 

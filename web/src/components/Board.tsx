@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, CAT_LABEL, isPoints, teamLabel, type BoardPlayer, type Cat, type SimStrategy } from "../api";
 import { useDraft } from "../draft";
-import { adpCell, adpIsStandIn, adpLabel, adpTitle, fmtCost, oddsClass } from "../format";
+import { adpCell, adpIsStandIn, adpLabel, adpTitle, fmtCost, haircutLabel, haircutTitle, haircutWeeks, oddsClass, OUT_WEEKS, weeksToGames } from "../format";
 import ModelFlag from "./ModelFlag";
 
 function heat(z: number): string | undefined {
@@ -88,6 +88,50 @@ function sortRows(rows: BoardPlayer[], sort: Sort): BoardPlayer[] {
       return c !== 0 ? c * sign : a.i - b.i;
     })
     .map((x) => x.p);
+}
+
+/** "Out N weeks" on a board row (#76): a games haircut that scales his projected totals to the
+ * games left; z is recomputed and the plan solves again. "—" clears it. */
+function OutControl({ p }: { p: BoardPlayer }) {
+  const d = useDraft();
+  const queryClient = useQueryClient();
+  const set = useMutation({
+    mutationFn: (weeks: number) =>
+      api.setAdjustments(d.session.id, [
+        weeks > 0 ? { player_id: p.player_id, games_out: weeksToGames(weeks), note: `out ${weeks} weeks` } : { player_id: p.player_id, games_out: 0 },
+      ]),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["session", d.session.id] });
+      queryClient.invalidateQueries({ queryKey: ["board", d.session.id] });
+    },
+  });
+  const a = p.adjustment;
+  const weeks = haircutWeeks(a);
+  const value = a ? (weeks !== null ? String(weeks) : "custom") : "0";
+  const offered = weeks !== null && !OUT_WEEKS.includes(weeks) ? [...OUT_WEEKS, weeks].sort((x, y) => x - y) : OUT_WEEKS;
+  return (
+    <select
+      className={`out${a ? " on" : ""}${set.error ? " bad" : ""}`}
+      value={value}
+      disabled={set.isPending}
+      aria-label={`${p.name}: weeks out`}
+      title={set.error ? set.error.message : a ? haircutTitle(a) : "out N weeks: scale his projected totals to the games left (about 3.75 a week); z is recomputed and the plan solves again"}
+      onClick={(e) => e.stopPropagation()}
+      onChange={(e) => {
+        const v = e.target.value;
+        e.currentTarget.blur();
+        if (v !== "custom") set.mutate(Number(v));
+      }}
+    >
+      <option value="0">—</option>
+      {a && weeks === null && <option value="custom">{haircutLabel(a)}</option>}
+      {offered.map((w) => (
+        <option key={w} value={w}>
+          out {w} wk
+        </option>
+      ))}
+    </select>
+  );
 }
 
 export default function Board() {
@@ -269,7 +313,8 @@ export default function Board() {
             <tr>
               {th("name", "Player")}
               {th("positions", "Pos")}
-              {th("games", "GP", { className: "num" })}
+              {th("games", "GP", { className: "num", title: "projected games; a haircut's games left where one is set" })}
+              <th title="out N weeks: a games haircut on his projected totals">Out</th>
               {wide && th("adp", `ADP${adpIsStandIn(s.adp_source) ? "*" : ""}`, { className: "num", title: `average draft position: ${adpLabel(s.adp_source)}` })}
               {th("total", "Z", { className: "num" })}
               {points && th("fpts", "FPTS", { className: "num", title: "projected fantasy points over the season, on the league's scoring" })}
@@ -310,7 +355,12 @@ export default function Board() {
                     )}
                   </td>
                   <td>{p.positions || <span className="dim">?</span>}</td>
-                  <td className="num">{Math.round(p.games)}</td>
+                  <td className={`num${p.adjustment ? " accent" : ""}`} title={p.adjustment ? haircutTitle(p.adjustment) : undefined}>
+                    {Math.round(p.games)}
+                  </td>
+                  <td>
+                    <OutControl p={p} />
+                  </td>
                   {wide && (
                     <td className={`num${p.adp_from === "rank" || p.adp_from === "end" ? " dim" : ""}`} title={adpTitle(p, s.adp_fallback_source)}>
                       {adpCell(p)}

@@ -18,6 +18,9 @@ A league folder holds what a session for that league needs, all local and never 
 ``armed.json`` (optional)
     Written only by the user's own click in the dashboard (``PUT /leagues/{id}/arm``): the room
     for this league's draft comes up in autopilot. Nothing else writes it.
+``adjustments.json`` (optional)
+    Games haircuts the user prepared from the news sweep (#76, ``api.adjustments``), applied
+    when the league's session is made: at the room's attach.
 
 A session names the folder with ``league``; fields the request sets itself win over the
 folder's.
@@ -47,6 +50,7 @@ SHARED = "_shared"
 #: The refit's report beside the shared table (or in its place, with the reason there is none).
 SURVIVAL_REPORT = "survival_by_adp.json"
 ARMED = "armed.json"
+ADJUSTMENTS = "adjustments.json"
 #: A league id as Yahoo prints it, and as the draft client's path carries it.
 LEAGUE_ID = r"^[0-9]{1,12}$"
 
@@ -182,6 +186,8 @@ def session_defaults(data_dir: Path, league: str) -> dict[str, Any]:
     else:
         # Another league's table (31822's archive) is not this league's market.
         out["survival"] = "simulate"
+    if (league_dir(data_dir, league) / ADJUSTMENTS).exists():
+        out["adjustments_file"] = f"{folder}/{ADJUSTMENTS}"
     return out
 
 

@@ -108,8 +108,14 @@ def analyze(events: list[dict[str, Any]]) -> dict[str, Any]:
     score = None
     probe = None  # the queue probe's note: what Yahoo did with a star on my turn
     mismatch = None  # the API's note when the room showed another team count (#17)
+    # Games haircuts in force (#76), in log order: (time, the players cut by name).
+    cuts: list[tuple[float, list[str]]] = []
     for e in events:
         kind = e.get("type")
+        if kind in ("attach", "adjustments"):
+            named = _cut_players(e)
+            if named is not None:
+                cuts.append((to_ms(e["t"]), named))
         if kind == "room_pick" and e.get("src") == "gap":
             gap_picks.add(int(e["overall"]))
         elif kind == "room_pick":
@@ -301,6 +307,9 @@ def analyze(events: list[dict[str, Any]]) -> dict[str, Any]:
         else:
             to_land = None
         churn = bool(ref and final and final.get("top_pid") != ref.get("top_pid"))
+        # The haircuts in force when the reco acted on was solved (at the landing without one).
+        t_cut = to_ms(ref["t"]) if ref else t_land
+        cut = next((named for t, named in reversed(cuts) if t <= t_cut), [])
         # Where the actual pick stood in the acted reco's candidates (1 = its top), if at all.
         cands = [str(c) for c in (ref or {}).get("cands") or []]
         rank = cands.index(actual) + 1 if actual in cands else None
@@ -344,6 +353,7 @@ def analyze(events: list[dict[str, Any]]) -> dict[str, Any]:
                 # The pick clock the turn ran on, as the room reported it (None: not reported).
                 "clock_s": _clock((turns.get(k) or {}).get("clock_s")) or attach_clock,
                 "attempts": len(attempts.get(k, [])),
+                "adjusted": cut,
             }
         )
 
@@ -576,10 +586,41 @@ def analyze(events: list[dict[str, Any]]) -> dict[str, Any]:
             )
         },
         "teams": _teams_seen(turns, num_teams, mismatch),
+        # Turns solved under a games haircut (#76), and whether the log holds any haircut.
+        "adjusted_turns": [
+            {"overall": r["overall"], "players": r["adjusted"]} for r in rows if r["adjusted"]
+        ],
+        "haircuts": any(named for _, named in cuts),
         "rows": rows,
         "last_room_pick": room[max(room)] if room else None,
         "last_reco": recos[-1] if recos else None,
     }
+
+
+def _cut_players(e: dict[str, Any]) -> list[str] | None:
+    """The players a log event leaves cut (#76), by name where it gives one: an adjustments
+    event's table, or an attach record's (the session's at attach). ``None``: the event says
+    nothing about haircuts (an attach from before #76)."""
+    if e.get("type") == "adjustments":
+        names = e.get("names") or {}
+        return [str(names.get(a["player_id"], a["player_id"])) for a in e.get("adjustments") or []]
+    if "adjustments" in e:
+        return [str(a.get("name") or a["player_id"]) for a in e.get("adjustments") or []]
+    session = e.get("session") or {}
+    if "adjustments" in session:
+        return [str(a["player_id"]) for a in session.get("adjustments") or []]
+    return None
+
+
+def _cut_turns(card: dict[str, Any]) -> str:
+    turns = card.get("adjusted_turns") or []
+    if not turns:
+        return "none of my turns was solved under one"
+    players = list(dict.fromkeys(p for t in turns for p in t["players"]))
+    return (
+        f"{'pick' if len(turns) == 1 else 'picks'} {_picks([t['overall'] for t in turns])} "
+        f"solved under one ({', '.join(players)})"
+    )
 
 
 def _clock(value: Any) -> float | None:
@@ -769,6 +810,7 @@ def markdown(card: dict[str, Any]) -> str:
         "",
         f"Team count (diagnostic): {_teams(card.get('teams'))}.",
         "",
+        *([f"Games haircuts: {_cut_turns(card)}.", ""] if card.get("haircuts") else []),
         (
             "| pick | rd | ref | model | actual | label | lag ms | turn→land ms "
             "| reco ready ms | tries |"
