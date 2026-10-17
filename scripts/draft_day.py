@@ -277,9 +277,14 @@ def servers(start: bool = False) -> int:
                 break
         else:
             raise Stop(DOWN, f"{name}: did not come up in 120 s; see {log}")
-    live = api("GET", "/rooms")
+    rooms = api("GET", "/rooms")
+    # A finished room stays attached until it is detached; it is not a live draft.
+    live = [str(r.get("draft_id")) for r in rooms if not r.get("complete")]
+    done = [str(r.get("draft_id")) for r in rooms if r.get("complete")]
     if live:
-        say(f"live rooms on the API: {', '.join(str(r.get('draft_id')) for r in live)}")
+        say(f"live rooms on the API: {', '.join(live)}")
+    if done:
+        say(f"complete rooms on the API (not live): {', '.join(done)}")
     return OK
 
 
@@ -361,7 +366,13 @@ def attach(league: str, wait_s: float | None) -> int:
         return OK
     if (DATA / "fidelity" / f"{league}.jsonl").exists():
         # The API restarted mid-draft: rebuild the room from its log, mode as last set.
-        room = api("POST", "/rooms", {"draft_id": league}, timeout=300)
+        code, room = call("POST", f"{API}/rooms", {"draft_id": league}, 300)
+        if code == 409 and "draft complete" in str(room):
+            say(f"room {league} complete: its log holds every pick (finish replays it)")
+            return OK
+        if code is None or code >= 400:
+            detail = room.get("detail") if isinstance(room, dict) else room
+            raise Stop(DOWN if code is None else ERROR, f"POST /rooms: {code} {detail}")
         say(
             f"room {league} rebuilt from its log: mode {room['mode']}, {room['picks_applied']} picks"
         )
@@ -440,6 +451,10 @@ def monitor(league: str, quiet_s: float, give_up_s: float, limit_s: float) -> in
     while True:
         code, room = call("GET", f"{API}/rooms/{league}", timeout=60)
         now = time.monotonic()
+        if code == 404 and "draft is complete" in str(room):
+            # The API restarted after the last pick: finish replays the room from its log.
+            say(f"room {league} complete (no live room after a restart)")
+            return OK
         if code != 200:
             down_since = down_since or now
             say(f"ALERT the room does not answer ({code}: {str(room)[:120]})")
@@ -492,7 +507,12 @@ def finish(league: str) -> int:
     """Copy the room log and the session's snapshots next to it, and write the scorecard and
     the comment for #67 (no team names, no projection numbers beyond the scorecard's own)."""
     code, room = call("GET", f"{API}/rooms/{league}", timeout=120)
-    if code != 200:
+    if code == 404 and (DATA / "fidelity" / f"{league}.jsonl").exists():
+        # The API restarted after the last pick: a complete room is rebuilt only when asked.
+        code, room = call("POST", f"{API}/rooms", {"draft_id": league, "replay": True}, 300)
+        if code in (200, 201):
+            say(f"room {league} replayed from its log: {room['picks_applied']} picks")
+    if code not in (200, 201):
         raise Stop(ERROR, f"no room {league} on the API ({code})")
     sid = room["session_id"]
     out = DATA / "fidelity" / f"{league}_{datetime.now(UTC).astimezone():%Y-%m-%d}_session_{sid}"
