@@ -412,8 +412,11 @@ These are the user's own steps. A session cannot do them.
   - The arm is read once, at the first attach, so arm before the scheduled task fires (T−30).
   - After the attach, the room's Sync card arms or disarms the live room.
   - An unarmed league mirrors, and Yahoo autopicks your turns.
-- Chrome is open and signed in to Yahoo. The pickandroll extension shows 0.4.0 at `chrome://extensions`; if it
-  shows an older version, load `~/code/pickandroll/extension` and reload it.
+- Chrome is open and **signed in to Yahoo, with a Yahoo tab left open in a window**. On 2026-10-17 the T-30 run
+  found Chrome with no windows and Yahoo signed out, and the draft went to Yahoo's autopick: a session cannot sign
+  in for you. Sign in on the Mac before you leave, and a sign-in check about 90 minutes before each draft (run by
+  fantasyMASTER) pushes a notification to your phone if Yahoo is signed out. The pickandroll extension shows 0.4.0
+  at `chrome://extensions`; if it shows an older version, load `~/code/pickandroll/extension` and reload it.
 - The Claude desktop app is open: scheduled tasks fire only while it runs. The Mac is plugged in and awake at
   each T−30. The run keeps it awake from then on, but cannot wake a sleeping Mac. To keep it awake until Monday
   night, run `caffeinate -ims -t 320000` in a terminal (about 89 hours).
