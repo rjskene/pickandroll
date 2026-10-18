@@ -417,6 +417,13 @@ These are the user's own steps. A session cannot do them.
   in for you. Sign in on the Mac before you leave, and a sign-in check about 90 minutes before each draft (run by
   fantasyMASTER) pushes a notification to your phone if Yahoo is signed out. The pickandroll extension shows 0.4.0
   at `chrome://extensions`; if it shows an older version, load `~/code/pickandroll/extension` and reload it.
+- **Remote unlock works only if Screen Sharing was switched on from System Settings** (General > Sharing)
+  while someone was at the Mac. Loading the daemon with `launchctl` over SSH starts a sharing agent without the
+  Screen Recording and Accessibility grants, so a viewer sees a black screen and its keystrokes are dropped; nothing
+  from a shell, kickstart or MDM can add those grants. A locked Mac then cannot be unlocked remotely, and a session
+  never types the Mac password or signs in to Yahoo for you. On 2026-10-18 the Sunday points drafts went to Yahoo's
+  autopick this way. Before leaving: Screen Sharing on from System Settings, and the lock off
+  (`sysadminctl -screenLock off -password -`, set 2026-10-18) or the Mac kept awake so it never locks.
 - The Claude desktop app is open: scheduled tasks fire only while it runs. The Mac is plugged in and awake at
   each T−30. The run keeps it awake from then on, but cannot wake a sleeping Mac. To keep it awake until Monday
   night, run `caffeinate -ims -t 320000` in a terminal (about 89 hours).
