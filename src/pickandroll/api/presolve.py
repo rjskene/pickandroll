@@ -52,6 +52,10 @@ BRANCH_TIME_LIMIT = 20.0
 #: 84), most likely first, at most ``FIRST_TURN_MAX`` (seat 12 would be C(14, 11) = 364).
 FIRST_TURN_SPARE = 3
 FIRST_TURN_MAX = 120
+#: A wave board's plan budget: the draft has not started, and only a converged plan is served
+#: unpriced at the turn. Round one's first plan is the night's biggest (every slot open); at
+#: 20 s the 223259 replay's board for pick 5 stopped short and was only priced.
+FIRST_TURN_TIME_LIMIT = 60.0
 
 BoardKey = tuple[int, frozenset[str], frozenset[str]]
 

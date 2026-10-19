@@ -44,6 +44,7 @@ from ..optim.roster import pick_pool, solve_roster
 from .presolve import (
     BRANCH_TIME_LIMIT,
     FIRST_TURN_SPARE,
+    FIRST_TURN_TIME_LIMIT,
     GROW_AFTER_S,
     MINE,
     ONE_AWAY,
@@ -911,6 +912,7 @@ class BackgroundSolver:
         gap: float,
         epoch: int | None = None,
         wave: FirstTurnWave | None = None,
+        time_limit: float = BRANCH_TIME_LIMIT,
     ) -> int:
         """Submit the branches to the background pool; returns how many were."""
         pool = background_pool()
@@ -918,7 +920,7 @@ class BackgroundSolver:
         for branch in branches:
             if epoch is not None and epoch != self.book.epoch:
                 return launched  # a haircut since the board was copied: its plans are stale
-            future = pool.submit(solve_branch, (branch.problem, BRANCH_TIME_LIMIT, gap))
+            future = pool.submit(solve_branch, (branch.problem, time_limit, gap))
             launched += 1
             with self._branch_lock:
                 self._branches.add(future)
@@ -997,7 +999,11 @@ class BackgroundSolver:
             branches = self.book.wanted(
                 build_branches(wave.board, [path], wave.curve, skip=self.book.known)
             )
-            launched = self._launch(branches, wave.gap, wave.epoch, wave) if branches else 0
+            launched = (
+                self._launch(branches, wave.gap, wave.epoch, wave, FIRST_TURN_TIME_LIMIT)
+                if branches
+                else 0
+            )
             if not launched:
                 with self._branch_lock:
                     wave.inflight -= 1
