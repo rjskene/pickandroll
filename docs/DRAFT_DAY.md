@@ -132,7 +132,10 @@ Use the Claude in Chrome tools: load them in one ToolSearch call, then call `tab
    through `enterdraft` to the draft client). The draft client opens at
    `https://basketball.fantasysports.yahoo.com/draftclient/nba/<league>/<my_team_id>`, where `my_team_id` is in
    `settings.json`. If there is no button yet, the room is not open: wait two minutes and reload the league page.
-   If the button opens a new tab, use that tab. Navigating straight to the draftclient URL also works.
+   If the button opens a new tab, use that tab. **Never navigate to a typed draftclient URL.** The button's link
+   carries an `?auth=` token; a tab opened at the bare URL can sit on "Connecting to draft server" indefinitely.
+   On 2026-10-18 (league 224319) such a tab hung from T−29 to T+15, the run log said `seen, no seat yet` the whole
+   time, and the user's first four picks went to Yahoo's autopick before the session re-entered through the button.
 5. Leave the draft tab alone. Click nothing in it, do not navigate it, and do not reload it once the draft has
    started. Keep it open in its window until the run has finished. The extension (pickandroll 0.4.0) runs in that
    tab, and its timers run on a Worker, so the tab need not stay in front. Yahoo draws the order about 30 minutes
@@ -140,6 +143,10 @@ Use the Claude in Chrome tools: load them in one ToolSearch call, then call `tab
    `attaching room <league>: seat N of 12`.
 6. If after 5 minutes on the draftclient page the run log still says `waiting for the draft tab: not seen`, the
    extension is not running in the tab. Reload the draft tab once; before the draft starts that is safe.
+   Two minutes after the client opens it must show the pre-draft board, or the draft board with the pick clock. If
+   it still says "Connecting to draft server", close that tab and enter again through the league page's button;
+   repeat until the client shows the board. After the draw, `seen, no seat yet` for more than a few minutes means
+   the same thing: the client never connected. Re-enter through the button, do not wait for the start.
 7. Close the other tabs this session opened (the NBA home and the league page) once the draft tab is in the room.
 
 Open the draft tab well before the draw, not at the start. The scheduled task fires at T−30, before Yahoo draws
@@ -204,8 +211,8 @@ it is.
 
 The draft tab has sent no heartbeat for 20 minutes. Look at Chrome with `tabs_context_mcp`:
 
-- If the draft tab is gone, open exactly one new one at the draftclient URL. The old client is gone, so this is not
-  a second client.
+- If the draft tab is gone, open exactly one new one through the league page's **Enter Live Draft** button (step 3),
+  never at a typed draftclient URL. The old client is gone, so this is not a second client.
 - If the tab is there but frozen, reload it once.
 
 Then run `draft_day.py monitor <league>` in the background, and `draft_day.py finish <league>` when it ends.
@@ -214,9 +221,10 @@ it.
 
 ### No seat in time (exit 5)
 
-No draft tab reported a seat by 15 minutes after the start. Check Chrome: is the tab on the draftclient page, and
-is the league still there? Once the tab shows the room, run `draft_day.py attach <league> --wait 600`. Then run
-`monitor` and `finish`.
+No draft tab reported a seat by 15 minutes after the start. Check Chrome: is the tab on the draftclient page, is
+the league still there, and does the tab show the board rather than "Connecting to draft server"? If it shows the
+latter, close it and re-enter through the league page's button (step 3). Once the tab shows the room, run
+`draft_day.py attach <league> --wait 600`. Then run `monitor` and `finish`.
 
 ### Yahoo finished first (exit 7)
 
