@@ -3,7 +3,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const { RoomTracker } = require("../lib/room.js");
-const { Drafter, planWait, BACKSTOP_BY_S } = require("../lib/drafter.js");
+const { Drafter, planWait, planCap, BACKSTOP_BY_S } = require("../lib/drafter.js");
 
 const SLOT = 1;
 const K = 24; // my pick: round 2, slot 1
@@ -184,6 +184,34 @@ test("plan wait: hold up to 20 s, never past 12 s left", () => {
   assert.equal(planWait(15.5), 3);
   assert.equal(planWait(10), 0);
   assert.equal(planWait(null), 20);
+});
+
+test("plan wait follows the room's clock: a 60 s room holds up to 40 s, a 30 s room 20 s (#86)", () => {
+  assert.equal(planCap(60), 40);
+  assert.equal(planCap(30), 20);
+  assert.equal(planCap(90), 70);
+  assert.equal(planCap(null), 20, "before the room's clock frame: the 30 s design point");
+  assert.equal(planWait(60, 12, 60), 40);
+  assert.equal(planWait(45, 12, 60), 33, "never past 12 s left");
+  assert.equal(planWait(null, 12, 60), 40);
+  assert.equal(planWait(30, 12, 30), 18);
+  assert.equal(planWait(40, 12, 30), 20);
+  assert.equal(planWait(60, 12), 20, "no clock: unchanged");
+});
+
+test("a 60 s room holds for the fresh plan past 20 s; a 30 s room asks as before (#86)", async () => {
+  // Round one: the plan for my turn's board comes 30 s into the turn, after two 20 s holds (the
+  // worker and the API hold /plan at most 20 s an ask).
+  const slow = world({ clock: 60, planMs: 20000, plan: [{ fresh: false, board: K - 2 }, { fresh: true }] });
+  const out = await slow.d.turn(K);
+  assert.deepEqual(slow.log.plans, [40, 19], "the second ask holds what is left of the 40 s");
+  assert.equal(out.fresh, true);
+  assert.equal(out.board, K - 1);
+  assert.equal(out.waited_ms, 2000);
+  assert.equal(slow.log.clicks[0][0] - 1_000_000 >= 40_000, true, "the click came after the second hold");
+  const mock = world({ clock: 30, planMs: 200 });
+  await mock.d.turn(K);
+  assert.deepEqual(mock.log.plans, [18]);
 });
 
 test("the first click lands: one attempt, how row, Autodraft untouched", async () => {
