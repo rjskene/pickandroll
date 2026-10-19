@@ -1196,6 +1196,8 @@ def on_recommendation(session: Session, room: YahooRoom, payload: dict[str, Any]
             "scale": payload.get("scale"),
             "capped": payload.get("capped"),
             "branches_running": payload.get("branches_running"),
+            # The pre-draft wave (#87): the boards of my first turn listed, launched and solved.
+            "first_turn": payload.get("first_turn"),
         }
     )
     if payload.get("mode") == "roster" and not room.roster_noted:

@@ -27,8 +27,10 @@ import copy
 import functools
 import threading
 import time
+from collections import deque
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -41,6 +43,7 @@ from ..optim.pool import background_pool, background_size
 from ..optim.roster import pick_pool, solve_roster
 from .presolve import (
     BRANCH_TIME_LIMIT,
+    FIRST_TURN_SPARE,
     GROW_AFTER_S,
     MINE,
     ONE_AWAY,
@@ -50,6 +53,9 @@ from .presolve import (
     Entry,
     board_key,
     branch_boards,
+    build_branches,
+    first_turn_between,
+    first_turn_paths,
     likely_next,
     may_grow,
     solve_branch,
@@ -543,6 +549,35 @@ def compute_recommendation(
     return payload
 
 
+@dataclass
+class FirstTurnWave:
+    """The pre-draft wave (#87): the boards my first turn can start on, listed most likely first
+    on the board before the draft and launched a few at a time (``BackgroundSolver._feed_wave``)."""
+
+    first: int  # my first pick
+    board: Any  # the board before the draft the pick sequences apply to
+    curve: Any
+    gap: float
+    epoch: int
+    paths: deque = field(default_factory=deque)
+    boards: int = 0
+    launched: int = 0
+    solved: int = 0
+    inflight: int = 0
+    #: Why the rest is not launched: "pick landed" (the draft started) or "board changed".
+    stopped: str | None = None
+
+    def status(self) -> dict[str, Any]:
+        return {
+            "first_pick": self.first,
+            "boards": self.boards,
+            "launched": self.launched,
+            "solved": self.solved,
+            "running": self.inflight,
+            "stopped": self.stopped,
+        }
+
+
 class BackgroundSolver:
     """Re-solves a session whenever its board changes. A solve for a board a pick has replaced
     stops at its next stage, and the new board's solve starts at once rather than queueing
@@ -581,6 +616,7 @@ class BackgroundSolver:
         # that set may grow (:func:`may_grow`); and the board whose growth check is timed.
         self._board: tuple[BoardKey, float, int, bool] | None = None
         self._grow_timed: BoardKey | None = None
+        self._wave: FirstTurnWave | None = None
 
     @property
     def running(self) -> bool:
@@ -690,6 +726,9 @@ class BackgroundSolver:
                 return
             if rec["version"] == payload["version"] and not displaces(payload, rec):
                 return
+        wave = self._wave
+        if wave is not None:
+            payload = {**payload, "first_turn": wave.status()}
         self.session.set_recommendation(payload)
         self.solved_version = payload["version"]
         if payload["version"] == self.session.version:
@@ -836,6 +875,7 @@ class BackgroundSolver:
             _, arrived, one_away, grows = self._board
         waited = now - arrived
         curve: Any = None if session.solve_params.objective == "sum" else "default"
+        self._first_turn(board, curve, epoch, state.plan_gap)
         likely = likely_next(
             board, self._o_rank_series(), limit=ONE_AWAY_MAX if grows else ONE_AWAY
         )
@@ -865,16 +905,27 @@ class BackgroundSolver:
         if grown > one_away:
             launch(grown)
 
-    def _launch(self, branches: list[Any], gap: float, epoch: int | None = None) -> None:
+    def _launch(
+        self,
+        branches: list[Any],
+        gap: float,
+        epoch: int | None = None,
+        wave: FirstTurnWave | None = None,
+    ) -> int:
+        """Submit the branches to the background pool; returns how many were."""
         pool = background_pool()
+        launched = 0
         for branch in branches:
             if epoch is not None and epoch != self.book.epoch:
-                return  # a haircut since the board was copied: its plans are stale
+                return launched  # a haircut since the board was copied: its plans are stale
             future = pool.submit(solve_branch, (branch.problem, BRANCH_TIME_LIMIT, gap))
+            launched += 1
             with self._branch_lock:
                 self._branches.add(future)
                 for gen, peak in self._peaks.items():
                     self._peaks[gen] = max(peak, len(self._branches))
+                if wave is not None:
+                    wave.launched += 1
             entry = self.book.add(branch, future, epoch)
             future.add_done_callback(self._branch_ended)
             future.add_done_callback(
@@ -882,6 +933,90 @@ class BackgroundSolver:
                     e, None if f.cancelled() or f.exception() is not None else f.result()
                 )
             )
+            if wave is not None:
+                future.add_done_callback(functools.partial(self._wave_ended, wave))
+        return launched
+
+    # ------------------------------------------------------------------ the pre-draft wave
+    def _first_turn(self, board: Any, curve: Any, epoch: int, gap: float) -> None:
+        """Start the pre-draft wave (#87) on the board before the draft, keep it fed, or stop
+        it: once a pick lands the rest is not launched (the boards already solved stay in the
+        book, pruned as the draft goes), and a new seat or a haircut starts it over."""
+        between = first_turn_between(board)
+        first = board.my_next_pick if between is not None else None
+        with self._branch_lock:
+            wave = self._wave
+            if (
+                wave is not None
+                and wave.stopped is None
+                and (wave.first, wave.epoch)
+                != (
+                    first,
+                    epoch,
+                )
+            ):
+                wave.stopped = "pick landed" if between is None else "board changed"
+                wave.paths.clear()
+            start = between is not None and (
+                wave is None
+                or wave.stopped is not None
+                or (wave.first, wave.epoch) != (first, epoch)
+            )
+        if start:
+            assert between is not None and first is not None
+            likely = likely_next(
+                board, self._o_rank_series(), limit=len(between) + FIRST_TURN_SPARE
+            )
+            paths = first_turn_paths(board, likely)
+            fresh = FirstTurnWave(
+                first=first,
+                board=board,
+                curve=curve,
+                gap=gap,
+                epoch=epoch,
+                paths=deque(paths),
+                boards=len(paths),
+            )
+            with self._branch_lock:
+                self._wave = fresh
+        self._feed_wave()
+
+    def _feed_wave(self) -> None:
+        """Launch the wave's next boards while they hold fewer than all but one of the
+        background pool's workers: one stays free for the branches of the board on the table."""
+        limit = max(1, background_size() - 1)
+        while True:
+            with self._branch_lock:
+                wave = self._wave
+                if wave is None or wave.stopped is not None or not wave.paths:
+                    return
+                if wave.inflight >= limit:
+                    return
+                path = wave.paths.popleft()
+                wave.inflight += 1
+            branches = self.book.wanted(
+                build_branches(wave.board, [path], wave.curve, skip=self.book.known)
+            )
+            launched = self._launch(branches, wave.gap, wave.epoch, wave) if branches else 0
+            if not launched:
+                with self._branch_lock:
+                    wave.inflight -= 1
+
+    def _wave_ended(self, wave: FirstTurnWave, future: Any) -> None:
+        """A wave board is done (or cancelled): count it and launch the next."""
+        ok = not future.cancelled() and future.exception() is None and future.result() is not None
+        with self._branch_lock:
+            wave.inflight -= 1
+            if ok:
+                wave.solved += 1
+            more = wave.stopped is None and bool(wave.paths)
+        loop = self.loop
+        if more and loop is not None and not loop.is_closed():
+            loop.call_soon_threadsafe(self._schedule_wave_feed)
+
+    def _schedule_wave_feed(self) -> None:
+        if self.enabled and self.session.solve_params.presolve:
+            asyncio.get_running_loop().run_in_executor(_EXECUTOR, self._feed_wave)
 
     def _grow_later(self, key: BoardKey, delay: float) -> None:
         """Look at the pre-solves again once ``key`` has stayed on the table ``GROW_AFTER_S``."""
@@ -923,4 +1058,5 @@ class BackgroundSolver:
             "last_error": self.last_error,
             "presolve": self.book.status(),
             "branches_running": len(self._branches),
+            "first_turn": None if self._wave is None else self._wave.status(),
         }
