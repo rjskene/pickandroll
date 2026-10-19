@@ -8,6 +8,11 @@ on my own turn with my next pick straight after it, the boards after my likely c
 branch is a plan-only solve in the process pool. When a pick lands on a board that was
 solved ahead, its plan is the recommendation at once; any other board is solved as usual.
 
+Before the draft (#87) the solver is idle while the room fills, and once my seat is known the
+boards my first turn can start on are few enough to list: one per likely set of players gone
+before it. The pre-draft wave solves them, most likely first, so round one's fast picks find the
+plan for my first turn already made.
+
 Who is likely: Yahoo's ``o_rank`` (the order its autodraft follows, and the room's default
 sort) interleaved with ADP (how people draft), best available first.
 """
@@ -42,6 +47,15 @@ ONE_AWAY_MAX = 12
 #: full budget rather than a room's: in rounds 1-6 a plan needs 6-16 s to converge, and only a
 #: converged branch is served unpriced.
 BRANCH_TIME_LIMIT = 20.0
+#: The pre-draft wave (#87): with ``n`` picks before my first turn, every set of ``n`` players
+#: from the ``n + FIRST_TURN_SPARE`` likeliest (seat 5: C(7, 4) = 35 boards; seat 7: C(9, 6) =
+#: 84), most likely first, at most ``FIRST_TURN_MAX`` (seat 12 would be C(14, 11) = 364).
+FIRST_TURN_SPARE = 3
+FIRST_TURN_MAX = 120
+#: A wave board's plan budget: the draft has not started, and only a converged plan is served
+#: unpriced at the turn. Round one's first plan is the night's biggest (every slot open); at
+#: 20 s the 223259 replay's board for pick 5 stopped short and was only priced.
+FIRST_TURN_TIME_LIMIT = 60.0
 
 BoardKey = tuple[int, frozenset[str], frozenset[str]]
 
@@ -92,6 +106,47 @@ def may_grow(state: DraftState) -> bool:
     kept = state.keeper_slots
     between = [o for o in range(state.next_overall, my_next) if o not in kept]
     return len(between) == 1 and between[0] not in mine and my_next + 1 not in mine
+
+
+def first_turn_between(state: DraftState) -> list[int] | None:
+    """The overalls before my first turn when no pick has landed yet and others pick before
+    me; ``None`` once the draft has started, on my own first pick, or with no pick left (keeper
+    slots pass without a pick)."""
+    kept = state.keeper_slots
+    if any(p.overall not in kept for p in state.picks):
+        return None
+    my_next = state.my_next_pick
+    if my_next is None:
+        return None
+    mine = set(state.my_picks)
+    between = [o for o in range(state.next_overall, my_next) if o not in kept]
+    if not between or any(o in mine for o in between):
+        return None
+    return between
+
+
+def first_turn_paths(
+    state: DraftState, likely: Sequence[str], limit: int = FIRST_TURN_MAX
+) -> list[tuple[tuple[int, str, str], ...]]:
+    """The pick sequences of the pre-draft wave, most likely first: each a set of players from
+    ``likely`` (best first) for the picks before my first turn, in ``likely``'s order. A set
+    whose players sit higher in ``likely`` comes first (the smallest sum of places, then the
+    earliest). The board depends on who is gone, not who took him, so each set is one board."""
+    between = first_turn_between(state)
+    if between is None:
+        return []
+    n = len(between)
+    top = list(likely)[: n + FIRST_TURN_SPARE]
+    if len(top) < n:
+        return []
+    sets = sorted(combinations(range(len(top)), n), key=lambda c: (sum(c), c))[:limit]
+    return [
+        tuple(
+            (o, f"Team {state.owner_of(o)[1]}", top[i])
+            for o, i in zip(between, chosen, strict=True)
+        )
+        for chosen in sets
+    ]
 
 
 @dataclass(frozen=True)
@@ -147,6 +202,18 @@ def branch_boards(
             ((a, owner(a), x), (b, owner(b), y))
             for x, y in combinations(list(likely)[:TWO_AWAY], 2)
         ]
+    return build_branches(state, paths, curve, skip=skip)
+
+
+def build_branches(
+    state: DraftState,
+    paths: Sequence[tuple[tuple[int, str, str], ...]],
+    curve: Any = "default",
+    *,
+    skip: Callable[[BoardKey], bool] | None = None,
+) -> list[Branch]:
+    """The board after each pick sequence and its plan problem; sequences that cannot be
+    applied, and boards ``skip`` says are planned, are left out."""
     out = []
     for path in paths:
         board = copy.copy(state)

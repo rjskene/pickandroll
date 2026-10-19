@@ -17,12 +17,16 @@ from fastapi.testclient import TestClient
 from pickandroll.api import SessionStore, create_app
 from pickandroll.api import solver as solver_module
 from pickandroll.api.presolve import (
+    FIRST_TURN_MAX,
+    FIRST_TURN_SPARE,
     ONE_AWAY,
     ONE_AWAY_MAX,
     TWO_AWAY,
     BranchBook,
     board_key,
     branch_boards,
+    build_branches,
+    first_turn_paths,
     likely_next,
     may_grow,
 )
@@ -132,6 +136,53 @@ def test_branch_boards_one_and_two_away_and_back_to_back(room):
     b2b = branch_boards(s12, [], mine)
     assert [b.picks[0][1] for b in b2b] == [s12.my_team, s12.my_team]
     assert all(b.key[0] == 13 and len(b.key[2]) == 1 for b in b2b)
+
+
+def test_the_pre_draft_wave_lists_my_first_turns_boards_most_likely_first(room):
+    client, store, _ = room
+    sizes = {}
+    for slot in (1, 2, 5, 7, 12):
+        state = store.get(_attach(client, slot=slot, draft_id=f"w{slot}")["session_id"]).state
+        likely = likely_next(state, None, limit=slot - 1 + FIRST_TURN_SPARE)
+        paths = first_turn_paths(state, likely)
+        sizes[slot] = len(paths)
+        if slot == 5:
+            # The likeliest board first: the top four gone, in order, at picks 1-4.
+            assert [pid for _, _, pid in paths[0]] == likely[:4]
+            assert [o for o, _, _ in paths[0]] == [1, 2, 3, 4]
+            assert [pid for _, _, pid in paths[1]] == likely[:3] + [likely[4]]
+            branches = build_branches(state, paths[:6])
+            assert len({b.key for b in branches}) == 6 and all(b.key[0] == 5 for b in branches)
+            # Once a pick lands the wave is over.
+            state.apply_pick("Team 1", likely[0], 1)
+            assert first_turn_paths(state, likely) == []
+    # Seat 5: C(7, 4); seat 7: C(9, 6); seat 12 (C(14, 11) = 364) is capped; seat 1 has none.
+    assert sizes == {1: 0, 2: 4, 5: 35, 7: 84, 12: FIRST_TURN_MAX}
+
+
+def test_the_pre_draft_wave_makes_my_first_turn_a_hit(room):
+    client, store, _ = room
+    sid = _attach(client, slot=5)["session_id"]
+    session = store.get(sid)
+    likely = likely_next(session.state, None, limit=4 + FIRST_TURN_SPARE)
+    # Before the draft the wave plans my first turn's boards, at most all but one of the
+    # background workers at a time.
+    status = _until(lambda: (s := _solver(client, sid)["first_turn"]) and s["solved"] >= 3 and s)
+    assert status["first_pick"] == 5 and status["boards"] == 35 and status["stopped"] is None
+    assert status["running"] <= max(1, background_size() - 1)
+    # Round one goes as likely: the top four.
+    for k, pid in enumerate(likely[:4], start=1):
+        _pick(client, k, session.room.ids.yid(pid))
+    # The wave stops once a pick lands: the rest is not launched.
+    assert _until(lambda: _solver(client, sid)["first_turn"]["stopped"]) == "pick landed"
+    rec = _until(
+        lambda: (r := session.recommendation) and r["next_overall"] == 5 and r.get("branch") and r
+    )
+    assert rec["first_turn"]["first_pick"] == 5
+    book = _solver(client, sid)["presolve"]
+    assert book["hits"] + book["pending"] == 1 and book["misses"] == 0
+    logged = _until(lambda: (ev := _recos(session, 4)) and ev)
+    assert logged[0]["branch"] is True and logged[0]["first_turn"]["solved"] >= 1
 
 
 def test_branch_book_counts_each_turn_once_and_prunes(room):
