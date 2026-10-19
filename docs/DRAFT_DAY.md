@@ -36,9 +36,11 @@ Yahoo team id `my_team_id`), `yahoo_players.json` (Yahoo's public player list fo
   for the same league, and never connect to the draft socket any other way. Yahoo kicks the user's seat when a second
   client joins.
 - **Servers.** Start dev servers only from `~/code/.claude/launch.json`: `pickandroll-api-draft`
-  (:8000, no reload) and `pickandroll-web-tailnet` (:5173). Never the plain `pickandroll-web` entry: it rejects
-  the tailnet host the user watches the dashboard from ("Blocked request"), which happened twice on 2026-10-18. No pulls, checkouts or `src/` edits while any room
-  is live.
+  (:8000, no reload) and `pickandroll-web` or `pickandroll-web-tailnet` (:5173; since 2026-10-19 15:17 PDT both
+  allow the tailnet host the user watches the dashboard from, which the plain entry rejected twice on 2026-10-18).
+  Prefer `servers --start`, which detaches the process: a server started with `preview_start` is stopped by the
+  app when its session goes idle, which took the web server down three times this weekend. No pulls, checkouts
+  or `src/` edits while any room is live.
   Never restart the API while another league's room is live: on Sunday the 11:00 draft can still be running when the
   14:00 task fires.
 - Do not use the superpowers plugin. Never commit anything under `data/`.
