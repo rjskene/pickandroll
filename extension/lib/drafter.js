@@ -57,7 +57,8 @@
 })(typeof globalThis !== "undefined" ? globalThis : this, function (Y) {
   "use strict";
 
-  const PLAN_WAIT_MAX_S = 20;
+  const PLAN_WAIT_MAX_S = 20; // the hold's cap in a 30 s room (the mocks' design point)
+  const CLOCK_RESERVE_S = 20; // a longer clock holds up to its length less this (#86)
   const START_BY_S = 12; // stop waiting for a fresh plan with this much clock left
   const BACKSTOP_BY_S = 6; // the queue backstop is set with this much clock left
   const RECLICK_MS = [1800, 2500, 2500];
@@ -74,11 +75,21 @@
   const NO_ROW = new Set(["no row", "row vanished"]); // queueOnly found no row to star
   const MISSES = new Set(["noRow", "noButton", "mismatch", "notLanded"]);
 
+  /** The longest hold for a fresh plan in a room whose pick clock is ``clock`` seconds: 20 s,
+   * or the clock less 20 s when that is longer (a 60 s room holds up to 40 s, #86). In round one
+   * the picks before mine land every 5-10 s and each restarts the solve, so the plan for my
+   * turn's board can need 6-20 s after the turn begins. */
+  function planCap(clock) {
+    if (!Number.isFinite(clock) || clock <= 0) return PLAN_WAIT_MAX_S;
+    return Math.max(PLAN_WAIT_MAX_S, Math.floor(clock - CLOCK_RESERVE_S));
+  }
+
   /** Seconds to hold /plan for a fresh solve with ``left`` seconds on the clock, stopping
-   * with ``by`` seconds left. */
-  function planWait(left, by = START_BY_S) {
-    if (left === null || left === undefined || Number.isNaN(left)) return PLAN_WAIT_MAX_S;
-    return Math.max(0, Math.min(PLAN_WAIT_MAX_S, Math.floor(left - by)));
+   * with ``by`` seconds left, in a room whose pick clock is ``clock`` seconds. */
+  function planWait(left, by = START_BY_S, clock = null) {
+    const cap = planCap(clock);
+    if (left === null || left === undefined || Number.isNaN(left)) return cap;
+    return Math.max(0, Math.min(cap, Math.floor(left - by)));
   }
 
   const STOP = Symbol("stop");
@@ -161,6 +172,13 @@
 
     left() {
       return this.tracker.clockLeft(this.now());
+    }
+
+    /** The pick clock the room put pick ``k`` on the clock with (the D| frame's, which the
+     * turn_start event carries as clock_s), or null before that frame. */
+    turnClock(k) {
+      const d = this.tracker.onDeck;
+      return d && d.overall === k && Number.isFinite(d.clock) ? d.clock : null;
     }
 
     /** Seconds left, or Infinity before the room's first clock frame: the row loop then runs as
@@ -572,10 +590,11 @@
         const board = k - 1;
         const current = (p) => Boolean(p && p !== STOP && p.fresh && p.board === board);
         const by = this.actAt === null ? START_BY_S : Math.max(START_BY_S, this.actAt);
-        const first = planWait(this.left(), by);
+        const clock = this.turnClock(k);
+        const first = planWait(this.left(), by, clock);
         const until = this.now() + first * 1000;
         const waitLeft = () =>
-          Math.max(0, Math.min(planWait(this.left(), by), Math.floor((until - this.now()) / 1000)));
+          Math.max(0, Math.min(planWait(this.left(), by, clock), Math.floor((until - this.now()) / 1000)));
         let plan = await this.ask(ctx, first, board);
         while (plan !== STOP && !current(plan) && this.live(ctx)) {
           const wait = waitLeft();
@@ -885,5 +904,5 @@
     }
   }
 
-  return { Drafter, planWait, START_BY_S, BACKSTOP_BY_S };
+  return { Drafter, planWait, planCap, START_BY_S, BACKSTOP_BY_S };
 });

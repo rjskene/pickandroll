@@ -39,7 +39,8 @@ Click **Armed** under Mode in the side panel and confirm. On each of your turns 
 
 1. waits for pickandroll's plan for this exact board, the board after the pick before yours. If the API does not
    answer (restarting, an error), it keeps asking until the wait is up, then acts on the newest plan it holds,
-   including the one fetched ahead of the turn;
+   including the one fetched ahead of the turn. The wait lasts up to 20 s, or the room's pick clock less 20 s
+   when that is longer (40 s in a 60 s room), and always ends with 12 s left;
 2. clicks the Draft button on the plan's first available player's row, checking that the row's label names that
    player. A row out of view is scrolled to. Yahoo's search box is used only when the search fallback is on, on
    the options page; it is off by default because in the September drafts the filtered table's Draft button
