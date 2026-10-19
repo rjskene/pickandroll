@@ -30,12 +30,15 @@ Yahoo team id `my_team_id`), `yahoo_players.json` (Yahoo's public player list fo
   queue or its Autodraft switch. The scheduled task's prompt says "the runbook arms it". In this runbook, that arm
   is the user's pre-arm, nothing more.
 - **Credentials.** Never type or handle credentials. If Yahoo shows a sign-in page, stop the browser steps and
-  write that down (see "Report").
+  write that down (see "Report"). If Basketball Monster shows one, skip the export and keep the projections file
+  on disk (see "Projections").
 - **One client per seat.** Open the draft room in one tab of the user's Chrome only. Never open a second draft tab
   for the same league, and never connect to the draft socket any other way. Yahoo kicks the user's seat when a second
   client joins.
 - **Servers.** Start dev servers only from `~/code/.claude/launch.json`: `pickandroll-api-draft`
-  (:8000, no reload) and `pickandroll-web` (:5173). No pulls, checkouts or `src/` edits while any room is live.
+  (:8000, no reload) and `pickandroll-web-tailnet` (:5173). Never the plain `pickandroll-web` entry: it rejects
+  the tailnet host the user watches the dashboard from ("Blocked request"), which happened twice on 2026-10-18. No pulls, checkouts or `src/` edits while any room
+  is live.
   Never restart the API while another league's room is live: on Sunday the 11:00 draft can still be running when the
   14:00 task fires.
 - Do not use the superpowers plugin. Never commit anything under `data/`.
@@ -51,9 +54,8 @@ Yahoo team id `my_team_id`), `yahoo_players.json` (Yahoo's public player list fo
 This prints Yahoo's public view of the league: teams joined, draft status and draft time. It also prints
 whether the user armed it, and the newest projection file with its export time.
 
-- `ALERT projections ...` means that file is more than two days old. A session cannot export a fresh one, because
-  that needs the user's sign-in to Basketball Monster. The run goes ahead on the newest file, and the report says
-  so.
+- `ALERT projections ...` means that file is more than two days old. The export below replaces it, ALERT or not.
+  If Chrome is not signed in to Basketball Monster, the run goes ahead on the newest file, and the report says so.
 
 - Exit 2, "Yahoo has no such league now": the league dissolved. Go to "Dissolved league".
 - Exit 3, "the draft moved": the new time is six hours away or more, or already past. Go to "Draft moved".
@@ -63,6 +65,17 @@ whether the user armed it, and the newest projection file with its export time.
 - `adjustments.json: N games haircuts applied at attach (...)`: the user prepared haircuts for this league (see
   "News sweep and games haircuts"). An `ALERT adjustments.json` line names an entry the attach will skip; the
   attach goes ahead without it. Say so in the report.
+
+Then export this morning's projections through the user's Chrome (see "Projections", "Export through the user's
+Chrome") and import them:
+
+```
+.venv/bin/python scripts/draft_day.py projections
+```
+
+It prints the file it saved and the movers, or that the export equals the newest file. Do this before the news
+sweep, which reads the projection file's time. Skip it, and say so in the report, only when Chrome is not signed in
+to Basketball Monster or the export fails twice.
 
 Then sweep the news and post the block on the league's issue (#67 for the cash leagues):
 
@@ -78,7 +91,7 @@ still runs on the other. Exit 1 means neither page read: post that one line inst
 
 ### 2. Servers and the run
 
-Start both servers with `preview_start` and the names `pickandroll-api-draft` and `pickandroll-web`. If they are
+Start both servers with `preview_start` and the names `pickandroll-api-draft` and `pickandroll-web-tailnet`. If they are
 already up, they are reused. Then check them:
 
 ```
@@ -300,8 +313,8 @@ Each finished draft is evidence for the next one in its format. The archive is
 
 ## Projections (#75)
 
-Every draft should run on that morning's Basketball Monster export. The user exports it by hand. Nothing in
-the project signs in to Basketball Monster.
+Every draft should run on that morning's Basketball Monster export. The user exports it by hand, or the session
+exports it through the user's signed-in Chrome (below). Nothing in the project signs in to Basketball Monster.
 
 ```
 .venv/bin/python scripts/draft_day.py projections                 # the newest Projections*.csv
@@ -327,6 +340,25 @@ the project signs in to Basketball Monster.
   from it. Names and directions only, no numbers. A player listed for games is not listed again for value.
 - **Staleness.** `status` prints the newest file and its export time. When the file is more than two days old,
   the line starts with `ALERT`, and `run` repeats it before the attach.
+
+### Export through the user's Chrome
+
+When the user's Chrome is signed in to Basketball Monster, the session exports with the Claude in Chrome tools, the
+same way it opens the draft room. Done this way on 2026-10-19 at 10:26 PDT while the 258332 room was live in
+another tab, which it never touched.
+
+1. Open `https://basketballmonster.com/projections.aspx` in a new tab of the user's Chrome, never in a draft tab.
+   The header must show the account menu with a Logout link inside it. A Login link or a sign-in page means the
+   user is signed out: close the tab, keep the file on disk, say so in the report. Never type credentials.
+2. Under Filters set the player select to **All Players** (the page opens on Only Top Players, too few for the
+   import), and set **Stats Display Format** to **Total Stats** (the layout the loader reads; the page's default
+   is per game). Projection Source stays Josh Projections.
+3. Click **Refresh**, wait for the table, then **Export to CSV**. Chrome saves `~/Downloads/Projections.csv` (a
+   later one gets ` (1)`, ` (2)`; `projections` takes the newest by file time).
+4. Run `.venv/bin/python scripts/draft_day.py projections`, then close the tab.
+
+The export holds over 500 players with games. The Excel button gives the `.xls` layout, which `projections` does
+not read.
 
 ### The headless refresh (`--bbm-fetch`, off by default)
 
@@ -405,11 +437,13 @@ Each entry names a player, by name or projection id, and either `games_out` (the
 
 ## Before the user leaves (the user's checklist)
 
-These are the user's own steps. A session cannot do them.
+These are the user's own steps.
 
-- **Export this morning's projections, then run `projections`.** On basketballmonster.com, go to Member,
-  Projections 26-27, Export CSV. Then run `.venv/bin/python scripts/draft_day.py projections` in
-  `~/code/pickandroll`. It prints the file it saved and the movers. A refusal says why (see "Projections").
+- **Stay signed in to Basketball Monster in Chrome.** The session exports this morning's projections itself at
+  T−30 through that sign-in (see "Projections", "Export through the user's Chrome"). To do it by hand instead: on
+  basketballmonster.com, Member, Projections 26-27, All Players, Total Stats, Export to CSV, then
+  `.venv/bin/python scripts/draft_day.py projections` in `~/code/pickandroll`. It prints the file it saved and
+  the movers. A refusal says why (see "Projections").
 - **Optional: haircuts from the news.** Run `.venv/bin/python scripts/draft_day.py news <league>` and read the
   block. Where the news is clear (out for weeks), add the player to `data/leagues/<id>/adjustments.json` (see
   "News sweep and games haircuts"). The scheduled session posts the sweep again at T−30, but it never writes
