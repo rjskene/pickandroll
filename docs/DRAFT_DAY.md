@@ -352,7 +352,8 @@ another tab, which it never touched.
    user is signed out: close the tab, keep the file on disk, say so in the report. Never type credentials.
 2. Under Filters set the player select to **All Players** (the page opens on Only Top Players, too few for the
    import), and set **Stats Display Format** to **Total Stats** (the layout the loader reads; the page's default
-   is per game). Projection Source stays Josh Projections.
+   is per game). Projection Source stays Josh Projections. The page re-renders after the first select, so find
+   the second one again before setting it. The page opens on its defaults every time; set both on every export.
 3. Click **Refresh**, wait for the table, then **Export to CSV**. Chrome saves `~/Downloads/Projections.csv` (a
    later one gets ` (1)`, ` (2)`; `projections` takes the newest by file time).
 4. Run `.venv/bin/python scripts/draft_day.py projections`, then close the tab.
