@@ -112,7 +112,9 @@ Candidates for closing that gap, cheapest first:
    beat, projecting each opponent's final total from their drafted players plus
    replacement-level fill. The tally is now computed live (`DraftState.matchups`); the step
    left is to put it in the objective so marginal value goes where the most opponents can be
-   flipped.
+   flipped. Studied 2026-10-19 (`docs/analysis/2026-10-19-live-curve-study.md`): per-opponent
+   odds on the archive's slot-value fills beat the fixed curve from pick one and by half at pick
+   120; a single re-fitted normal does not, since its width never narrows. Recommended.
 2. **Oracle experiment.** Give the planner the true opponent drafter types and punts in the
    harness and measure the gain; it bounds what any detection can be worth.
 3. **Type-conditional survival.** Detect each opponent's drafter type from their picks (the
