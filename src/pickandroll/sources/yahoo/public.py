@@ -150,6 +150,14 @@ def matchup_url(league: str, week: int, teams: Iterable[int]) -> str:
     return f"{SITE}/{league}/matchup?week={week}&mid1={a}&mid2={b}"
 
 
+def buzz_url(day: date) -> str:
+    """Yahoo's buzz index for ``day`` (today or yesterday, US Eastern), most added first."""
+    return (
+        f"{SITE}/buzzindex?date={day.isoformat()}&pos=ALL&src=combined&bimtab=ALL"
+        "&trendtab=O&sort=BI_A&sdir=1"
+    )
+
+
 def transactions_url(league: str) -> str:
     return f"{SITE}/{league}/transactions"
 

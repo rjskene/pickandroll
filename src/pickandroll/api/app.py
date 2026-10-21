@@ -82,6 +82,7 @@ from .keepers import (
     read_keepers_file,
     resolve_keepers,
 )
+from .season_flags import PAST_DAYS_PREFIX
 from .solver import BackgroundSolver, SolveParams, compute_recommendation, solver_executor
 from .yahoo_feed import LeagueFactory, SeatRefused, YahooFeed, attach_feed
 from .yahoo_room import YahooRoom
@@ -693,9 +694,14 @@ def create_app(
 
     @app.get("/projections")
     def list_projections() -> list[dict[str, Any]]:
-        # A keepers CSV is never a projection: left out, it cannot become the default.
+        # A keepers CSV is never a projection, nor a past-days export of what players did (#95,
+        # the breakout flag's): left out, neither can become the default.
         files = _list_files(data_dir, PROJECTION_SUFFIXES)
-        return [f for f in files if "keeper" not in f["file"].lower()]
+        return [
+            f
+            for f in files
+            if "keeper" not in f["file"].lower() and not f["file"].startswith(PAST_DAYS_PREFIX)
+        ]
 
     names_cache: dict[tuple[str, float], list[dict[str, str]]] = {}
 

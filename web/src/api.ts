@@ -1044,6 +1044,35 @@ export interface SeasonView extends SeasonSummary {
   fetched: Record<string, { at: string; source: "public" | "extension" }>;
   schedule: { days: number; first: string | null; last: string | null };
   week_projection: WeekProjection;
+  /** The breakout flag (#95) of every available player a signal speaks for, by Yahoo id. */
+  flags?: Record<string, PlayerFlag>;
+  flag_inputs?: FlagInputs;
+}
+
+// ---------------------------------------------------------------- breakout flag (#95)
+export type FlagLevel = "watch" | "add" | "must-add";
+export type FlagSignalKey = "surge" | "minutes" | "value" | "opportunity";
+export interface FlagSignal {
+  /** 0 to 1. */
+  score: number;
+  /** The evidence with every number; null when the signal says nothing. */
+  reason: string | null;
+  facts: Record<string, unknown>;
+}
+export interface PlayerFlag {
+  /** From the sum of the four scores; null under watch. */
+  level: FlagLevel | null;
+  score: number;
+  signals: Record<FlagSignalKey, FlagSignal>;
+}
+export interface FlagInputs {
+  buzz?: { today: string | null; rows: number; earlier_days: number };
+  injuries?: { read_at: string | null; players: number };
+  /** The rest-of-season export the minutes, value and opportunity read. */
+  projection?: string | null;
+  past_days?: Record<string, { file: string; as_of: string; stale?: boolean } | null>;
+  /** The flags could not be made. */
+  error?: string;
 }
 
 export const api = {

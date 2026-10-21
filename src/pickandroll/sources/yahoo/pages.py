@@ -10,7 +10,9 @@ Each parser takes the page's HTML and returns a season part's data (``pickandrol
   ``R_O`` "Research" view), adds and drops; in the ``S_PS7`` view, Yahoo's projection for the
   next seven days (``parse_projection_page``);
 * a matchup page ``/nba/<league>/matchup?week=<w>&mid1=<a>&mid2=<b>``: both teams' totals;
-* the transactions page ``/nba/<league>/transactions``.
+* the transactions page ``/nba/<league>/transactions``;
+* Yahoo's buzz index ``/nba/buzzindex`` (every league's adds, drops and trades on a day, for
+  the breakout flag): ``parse_buzz_page``.
 
 The parsers find tables by their column labels rather than by position, so the stat view the
 page shows (season totals, Yahoo's next-7-days projection, ...) does not matter to them.
@@ -152,13 +154,19 @@ def clears_date(text: str, today: date) -> date | None:
     return min(candidates, key=lambda d: abs((d - today).days)) if candidates else None
 
 
+#: Yahoo's icon font (the sort arrow), in Unicode's private use area.
+_GLYPHS = re.compile("[\ue000-\uf8ff]")
+
+
 def _column(labels: list[str], *names: str) -> int | None:
     """The column labelled ``name``, else the first whose label starts with it (``% Ros`` with
-    the page's sort arrow after it)."""
+    the page's sort arrow after it); icon glyphs, which the sorted column's label carries
+    (``Adds\ue004``), are ignored."""
+    clean = [_GLYPHS.sub("", label).strip() for label in labels]
     for name in names:
-        if name in labels:
-            return labels.index(name)
-        for i, label in enumerate(labels):
+        if name in clean:
+            return clean.index(name)
+        for i, label in enumerate(clean):
             if label.startswith(name + " "):
                 return i
     return None
@@ -259,6 +267,49 @@ def parse_players_page(html: str, today: date) -> dict[str, Any]:
                 "pct_started_change": start_change,
                 "adds": _int(text("adds")) if col["adds"] is not None else None,
                 "drops": _int(text("drops")) if col["drops"] is not None else None,
+            }
+        )
+    return {"rows": out}
+
+
+def parse_buzz_page(html: str) -> dict[str, Any]:
+    """Yahoo's buzz index for a day: every listed player with the percent of Yahoo's leagues that
+    roster and start him and his adds, drops and trades across them, in the page's order (the
+    sort the URL asked for)."""
+    root = parse(html)
+    _require(root, "buzz index")
+    found = _table_with(root, "Player", "Adds", "Drops")
+    if found is None:
+        raise PageError("no table on the buzz index")
+    labels, rows = found
+    col = {
+        "player": _column(labels, "Player"),
+        "ros": _column(labels, "% Ros"),
+        "start": _column(labels, "% Start"),
+        "adds": _column(labels, "Adds"),
+        "drops": _column(labels, "Drops"),
+        "trades": _column(labels, "Trades"),
+    }
+    out = []
+    for row in rows:
+        cs = cells(row)
+
+        def text(key: str, cs: list[Node] = cs) -> str:
+            i = col[key]
+            return cs[i].text() if i is not None and i < len(cs) else ""
+
+        i = col["player"]
+        player = player_cell(cs[i]) if i is not None and i < len(cs) else None
+        if player is None:
+            continue
+        out.append(
+            {
+                "player": player.to_dict(),
+                "pct_rostered": _pct(text("ros"))[0],
+                "pct_started": _pct(text("start"))[0],
+                "adds": _int(text("adds")),
+                "drops": _int(text("drops")),
+                "trades": _int(text("trades")),
             }
         )
     return {"rows": out}

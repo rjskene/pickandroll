@@ -9,6 +9,7 @@ import {
   type MoveHorizon,
   type MoveRef,
   type MovesPayload,
+  type PlayerFlag,
   type ProjectionSystem,
   type ProjectionSystemInfo,
   type RosterRow,
@@ -28,6 +29,14 @@ import {
   dayLabel,
   DEFAULT_AVAILABLE_SORT,
   filterAvailable,
+  FLAG_SHORT,
+  FLAG_SIGNAL_NAME,
+  FLAG_TONE,
+  flagged,
+  flagInputsNote,
+  flagOf,
+  flagSignals,
+  flagTitle,
   gainLabel,
   gainTone,
   HORIZON_LABEL,
@@ -163,6 +172,9 @@ export default function SeasonScreen({ league, onBack }: { league: string; onBac
                   <Moves q={moves} s={s} onPick={setPicked} />
                 )}
               </Card>
+              <Card title="FLAGS" note={flagCount(s)} style={{ flex: "7 1 0%" }}>
+                <Flags s={s} m={moves.data} mh={MOVE_HORIZON[horizon]} now={now} onPick={setPicked} />
+              </Card>
               <Card title="MY ROSTER" note={s.my_team?.name} style={{ flex: "8 1 0%" }}>
                 <Roster rows={s.roster} w={s.week_projection} />
               </Card>
@@ -193,6 +205,16 @@ function Card({ title, note, action, style, children }: { title: string; note?: 
       </header>
       <div className="body">{children}</div>
     </section>
+  );
+}
+
+/** A breakout flag's level as a tag (W, A, M+), its evidence on hover; nothing under watch. */
+function FlagTag({ f }: { f: PlayerFlag | undefined }) {
+  if (!f?.level) return null;
+  return (
+    <span className={`tag ${FLAG_TONE[f.level]}`} title={flagTitle(f)}>
+      {FLAG_SHORT[f.level]}
+    </span>
   );
 }
 
@@ -300,6 +322,7 @@ function Waivers({
       if (key === "gain_week") return bestMove(cand, "week")?.gain ?? null;
       if (key === "gain_three") return bestMove(cand, "three")?.gain ?? null;
       if (key === "next_price") return bestMove(cand, mh)?.next_price ?? null;
+      if (key === "flag") return flagOf(s, r.player.yahoo_id)?.score ?? null;
       if ((cats as string[]).includes(key)) {
         // Fewer turnovers first when sorting high to low.
         const v = totals.get(r.player.yahoo_id)?.mine?.[key as Cat];
@@ -308,7 +331,7 @@ function Waivers({
       return undefined;
     };
     return sortAvailable(filterAvailable(rows, filter, (r) => rowGames(w, r, "week")), sort, extra);
-  }, [rows, filter, sort, totals, w, cats, m, mh]);
+  }, [rows, filter, sort, totals, w, cats, m, mh, s]);
   const teams = useMemo(() => [...new Set(rows.map((r) => r.player.nba_team).filter((t): t is string => Boolean(t)))].sort(), [rows]);
   const set = (patch: Partial<AvailableFilter>) => setFilter((f) => ({ ...f, ...patch }));
   const click = (key: AvailableSortKey) =>
@@ -408,6 +431,7 @@ function Waivers({
           <thead>
             <tr>
               {OWN_COLUMNS.map((c) => th(c.key, c.label, c.title, Boolean(c.num)))}
+              {th("flag", "Flag", "the breakout flag: W watch, A add, M+ must-add, from four signals (adds surge, minutes trend, value gap, opportunity); hover a row's for the evidence", false)}
               {(["week", "three"] as const).map((h) => th(GAIN_KEY[h], GAIN_SHORT[h], gainTitle(h)))}
               <th title={`the player his best move over the ${HORIZON_LABEL[horizon]} drops (the horizon at the right)`}>For</th>
               {th("next_price", "Next", `how much less the move over the ${HORIZON_LABEL[horizon]} adds with the next best drop`)}
@@ -421,6 +445,7 @@ function Waivers({
               const id = r.player.yahoo_id;
               const cand = m?.candidates[String(id)];
               const best = bestMove(cand, mh);
+              const f = flagOf(s, id);
               return (
                 <tr key={id} className={picked?.add === id ? "hl" : undefined} onClick={() => onPick({ add: id, drop: openingDrop(cand, mh) })}>
                   <td className="strong">
@@ -431,6 +456,9 @@ function Waivers({
                   <td className={r.availability === "W" ? "accent" : undefined}>{availabilityLabel(r)}</td>
                   <td className="num">{games(r, "week") ?? ""}</td>
                   <td className="num dim">{games(r, "next3") ?? ""}</td>
+                  <td title={f ? flagTitle(f) : undefined}>
+                    <FlagTag f={f} />
+                  </td>
                   {(["week", "three"] as const).map((h) => (
                     <td key={h} className={`num ${gainTone(cand?.[h]?.gain, minGain)}`}>
                       {gainLabel(cand?.[h]?.gain)}
@@ -498,7 +526,7 @@ function Moves({ q, s, onPick }: { q: UseQueryResult<MovesPayload>; s: SeasonVie
         {m.system.fallback ? ` · ${m.system.fallback}` : ""}
       </p>
       {(["three", "week"] as const).map((h) => (
-        <Recommended key={h} h={h} m={m} name={name} onPick={onPick} />
+        <Recommended key={h} h={h} m={m} s={s} name={name} onPick={onPick} />
       ))}
       <p className="dim small">
         Recommended by a search over the {m.search.pool} candidates whose best single move adds most: a strong heuristic, not a proof. Each move&apos;s prices
@@ -508,7 +536,7 @@ function Moves({ q, s, onPick }: { q: UseQueryResult<MovesPayload>; s: SeasonVie
   );
 }
 
-function Recommended({ h, m, name, onPick }: { h: MoveHorizon; m: MovesPayload; name: Namer; onPick: (m: MoveKey) => void }) {
+function Recommended({ h, m, s, name, onPick }: { h: MoveHorizon; m: MovesPayload; s: SeasonView; name: Namer; onPick: (m: MoveKey) => void }) {
   const set = m.recommended[h];
   const info = m.horizons[h];
   const o = OTHER_HORIZON[h];
@@ -544,7 +572,9 @@ function Recommended({ h, m, name, onPick }: { h: MoveHorizon; m: MovesPayload; 
           <tbody>
             {set.moves.map((x) => (
               <tr key={x.add} className="pick" onClick={() => onPick(x)}>
-                <td className="strong">{name(x.add)}</td>
+                <td className="strong">
+                  {name(x.add)} <FlagTag f={flagOf(s, x.add)} />
+                </td>
                 <td>{name(x.drop)}</td>
                 <td className="dim">{dayLabel(x.from)}</td>
                 <td className={`num ${gainTone(x.marginal[h], m.search.min_gain)}`}>{gainLabel(x.marginal[h])}</td>
@@ -562,6 +592,54 @@ function Recommended({ h, m, name, onPick }: { h: MoveHorizon; m: MovesPayload; 
       )}
       {set.held.length > 0 && <p className="muted small">It also moves {set.held.map((x) => `${name(x.player)} to ${x.slot}`).join(", ")}.</p>}
     </div>
+  );
+}
+
+// ---------------------------------------------------------------- flags (#95)
+function flagCount(s: SeasonView): string | undefined {
+  const n = flagged(s).length;
+  return s.flag_inputs?.error ? "not made" : n ? `${n} flagged` : undefined;
+}
+
+/** The flagged available players, the highest first; a click opens his move. */
+function Flags({ s, m, mh, now, onPick }: { s: SeasonView; m: MovesPayload | undefined; mh: MoveHorizon; now: number; onPick: (m: MoveKey) => void }) {
+  const rows = flagged(s);
+  return (
+    <>
+      {rows.length === 0 ? (
+        <p className="muted small">No available player is flagged.</p>
+      ) : (
+        <table className="season-table">
+          <thead>
+            <tr>
+              <th>Flag</th>
+              <th>Player</th>
+              <th>Signals</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map(({ row, flag }) => {
+              const id = row.player.yahoo_id;
+              return (
+                <tr key={id} className="pick" title={flagTitle(flag)} onClick={() => onPick({ add: id, drop: openingDrop(m?.candidates[String(id)], mh) })}>
+                  <td>
+                    <FlagTag f={flag} />
+                  </td>
+                  <td className="strong">
+                    {row.player.name} <span className="dim">{row.player.nba_team}</span>
+                  </td>
+                  <td className="dim">{flagSignals(flag).map((k) => FLAG_SIGNAL_NAME[k]).join(", ")}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      )}
+      <p className={`small ${s.flag_inputs?.error ? "bad" : "dim"}`}>
+        {flagInputsNote(s.flag_inputs, now)} · signs a pickup may outlast his projection, which lags a role change by days; nothing is added automatically;
+        the levels are first guesses until two weeks of buzz-index history are kept
+      </p>
+    </>
   );
 }
 
@@ -597,7 +675,7 @@ function MoveDrawer({
     <>
       <div className="block">
         <span className="k">
-          Add {name(picked.add)} for {name(picked.drop)}
+          Add {name(picked.add)} <FlagTag f={flagOf(s, picked.add)} /> for {name(picked.drop)}
         </span>
         <p className="muted small">
           {p && `${p.nba_team ?? "no team"} · ${p.positions.join(", ")} · `}

@@ -4,9 +4,13 @@
 import type {
   AvailableRow,
   Cat,
+  FlagInputs,
+  FlagLevel,
+  FlagSignalKey,
   MoveAdds,
   MoveCandidate,
   MoveHorizon,
+  PlayerFlag,
   Rates,
   SeasonPlayer,
   SeasonRefresh,
@@ -196,6 +200,8 @@ export type AvailableSortKey =
   | "gain_week"
   | "gain_three"
   | "next_price"
+  // The breakout flag (#95): the sum of its four scores.
+  | "flag"
   | Cat;
 export interface AvailableSort {
   key: AvailableSortKey;
@@ -366,4 +372,60 @@ export function playersById(s: Pick<SeasonView, "available" | "roster" | "roster
   for (const r of s.roster) out.set(r.player.yahoo_id, r.player);
   for (const r of s.available) out.set(r.player.yahoo_id, r.player);
   return out;
+}
+
+// ---------------------------------------------------------------- breakout flag (#95)
+export const FLAG_SIGNALS: FlagSignalKey[] = ["surge", "minutes", "value", "opportunity"];
+export const FLAG_SIGNAL_NAME: Record<FlagSignalKey, string> = {
+  surge: "adds surge",
+  minutes: "minutes up",
+  value: "value gap",
+  opportunity: "opportunity",
+};
+/** The Waivers column's tag: W, A, M+. */
+export const FLAG_SHORT: Record<FlagLevel, string> = { watch: "W", add: "A", "must-add": "M+" };
+export const FLAG_TONE: Record<FlagLevel, "tie" | "accent" | "good"> = { watch: "tie", add: "accent", "must-add": "good" };
+
+/** A player's flag, when a signal speaks for him. */
+export function flagOf(s: Pick<SeasonView, "flags">, id: number): PlayerFlag | undefined {
+  return s.flags?.[String(id)];
+}
+
+/** The signals that spoke, loudest first. */
+export function flagSignals(f: PlayerFlag): FlagSignalKey[] {
+  return FLAG_SIGNALS.filter((k) => (f.signals[k]?.score ?? 0) > 0).sort((a, b) => f.signals[b].score - f.signals[a].score);
+}
+
+/** The hover text: the level and the sum, then each signal that spoke with its evidence. */
+export function flagTitle(f: PlayerFlag): string {
+  // The server scores opportunity alone 0: it counts only beside another signal.
+  const alone = f.score === 0 && (f.signals.opportunity?.score ?? 0) > 0;
+  const head = alone
+    ? "not flagged: opportunity counts only beside another signal"
+    : `${f.level ?? "under watch"} · ${f.score.toFixed(2)} of 4 (watch 0.8, add 1.5, must-add 2.2)`;
+  return [head, ...flagSignals(f).map((k) => `${FLAG_SIGNAL_NAME[k]} ${f.signals[k].score.toFixed(2)}: ${f.signals[k].reason ?? ""}`)].join("\n");
+}
+
+/** The flagged players (a level, not just a signal), the highest score first. */
+export function flagged(s: Pick<SeasonView, "flags" | "available">): { row: AvailableRow; flag: PlayerFlag }[] {
+  return s.available
+    .map((row) => ({ row, flag: flagOf(s, row.player.yahoo_id) }))
+    .filter((x): x is { row: AvailableRow; flag: PlayerFlag } => x.flag?.level != null)
+    .sort((a, b) => b.flag.score - a.flag.score || a.row.player.name.localeCompare(b.row.player.name));
+}
+
+/** What the flags were read from: "buzz index read 5 min ago · 81 on the injury report · past 7
+ * days 2026-10-21 · no past 14 days", with what is missing named. */
+export function flagInputsNote(i: FlagInputs | undefined, now: number): string {
+  if (!i) return "no flag inputs yet";
+  if (i.error) return `no flags: ${i.error}`;
+  const parts = [
+    i.buzz?.today ? `buzz index read ${ageLabel(i.buzz.today, now)}` : "no buzz index today",
+    i.injuries?.read_at ? `${i.injuries.players} on the injury report` : "no injury report",
+  ];
+  for (const [w, x] of Object.entries(i.past_days ?? {})) {
+    parts.push(x ? `past ${w.replace("d", " days")} ${x.as_of.slice(0, 10)}${x.stale ? " (old, not read)" : ""}` : `no past ${w.replace("d", " days")}`);
+  }
+  if (!i.projection) parts.push("no rest-of-season export");
+  return parts.join(" · ");
 }

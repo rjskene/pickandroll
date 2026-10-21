@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import json
 import re
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time
 from pathlib import Path
@@ -52,13 +52,24 @@ def _latest(data_dir: Path, patterns: Iterable[str]) -> Path | None:
 
 _frames: dict[tuple[str, float], pd.DataFrame] = {}
 _matches: dict[tuple[str, float, int], dict[int, str]] = {}
+#: The exports and matches kept: the season file, the weekly and past-days exports, per league.
+KEPT = 16
 
 
-def _frame(path: Path) -> pd.DataFrame:
+def _keep(cache: dict[Any, Any], key: Any, value: Any) -> Any:
+    """``value`` under ``key``, the oldest entries dropped past :data:`KEPT`."""
+    cache[key] = value
+    while len(cache) > KEPT:
+        del cache[next(iter(cache))]
+    return value
+
+
+def _frame(path: Path, read: Callable[[Path], pd.DataFrame] | None = None) -> pd.DataFrame:
+    """An export's normalized frame, cached per file and time (``read``: another reader than
+    :func:`load_bbm`)."""
     key = (str(path), path.stat().st_mtime)
     if key not in _frames:
-        _frames.clear()
-        _frames[key] = load_bbm(path).df
+        return _keep(_frames, key, read(path) if read else load_bbm(path).df)
     return _frames[key]
 
 
@@ -86,8 +97,7 @@ def _match(
     key = (str(path), path.stat().st_mtime, hash(tuple(sorted(players))))
     if key not in _matches:
         result = match_players(_yahoo_frame(players), df, load_aliases(data_dir / "aliases.json"))
-        _matches.clear()
-        _matches[key] = {int(k): v for k, v in result.mapping.items()}
+        return _keep(_matches, key, {int(k): v for k, v in result.mapping.items()})
     return _matches[key]
 
 

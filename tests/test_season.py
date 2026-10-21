@@ -19,7 +19,7 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from pickandroll.api import SessionStore, create_app, season_week
+from pickandroll.api import SessionStore, create_app, season_flags, season_week
 from pickandroll.api import seasons as season_api
 from pickandroll.season import (
     EXTENSION,
@@ -35,6 +35,7 @@ from pickandroll.season import (
     mondays,
 )
 from pickandroll.sources import schedule
+from pickandroll.sources.injuries import ESPN_INJURIES_URL
 from pickandroll.sources.yahoo import pages, public
 
 FIXTURES = Path(__file__).parent / "fixtures" / "season"
@@ -415,6 +416,10 @@ class FakeYahoo:
             day = re.search(r"dates=(\d{8})", url).group(1)
             path = FIXTURES / f"espn_{day}.json"
             return path.read_text() if path.exists() else '{"events": []}'
+        if url == ESPN_INJURIES_URL:
+            return fixture("espn_injuries.json")
+        if "/buzzindex?" in url:
+            return fixture("buzz.html")
         kind, info = pages.page_kind(url)
         if kind == "league":
             return fixture("league.html")
@@ -481,7 +486,9 @@ def test_a_refresh_reads_the_public_sources_and_serves_the_season(client):
     fake = client.fake
     assert sum("/players?" in u and "S_PS7" not in u for u in fake.urls) == 2
     assert sum("/players?" in u and "S_PS7" in u for u in fake.urls) == 2
-    assert sum("?date=" in u for u in fake.urls) == 24  # Mondays Oct 19 to Mar 29
+    assert (
+        sum("?date=" in u and "/buzzindex" not in u for u in fake.urls) == 24
+    )  # Mondays Oct 19 to Mar 29
     cal = json.loads((client.data_dir / "leagues/_shared/season/calendar.json").read_text())
     seventeen = next(w for w in cal["weeks"] if w["number"] == 17)
     assert (seventeen["start"], seventeen["end"]) == ("2027-02-08", "2027-02-21")
@@ -889,3 +896,146 @@ def test_the_move_drawer_details_one_add_with_every_drop(client):
 def test_moves_need_a_season_of_my_team(client):
     assert client.get("/seasons/100002/moves").status_code == 409
     assert client.get("/seasons/999999/moves").status_code == 404
+
+
+# --------------------------------------------------------------------------- the breakout flag
+PAST_HEAD = "Name,Team,Pos,g,m,p,3,r,a,s,b,fg%,fga,ft%,fta,to,USG"
+
+
+def past_days_csv(path: Path, rows: list[tuple[str, str, str, int, float, float]]) -> None:
+    """A past-days rankings export in the sheet's columns (Total Stats) with made-up numbers:
+    ``(name, team, positions, games, minutes, usage)``."""
+    lines = [PAST_HEAD]
+    for name, team, pos, g, m, usg in rows:
+        lines.append(
+            f'{name},{team},"{pos}",{g},{m},{12 * g},{g},{5 * g},{3 * g},{g},0,0.5,{10 * g},0.8,{2 * g},{2 * g},{usg}'
+        )
+    path.write_text("\n".join(lines) + "\n")
+
+
+def test_a_refresh_keeps_the_flags_inputs_and_the_view_flags_the_pool(client):
+    client.post(f"/seasons/{LEAGUE}/refresh", params={"wait": True})
+    shared = client.data_dir / "leagues" / "_shared" / "season"
+    today = json.loads((shared / "buzz" / "2026-10-21.json").read_text())
+    assert today["day"] == "2026-10-21" and today["read_at"] == NOW.isoformat()
+    assert len(today["rows"]) == 5 and today["adds"]["5015"] == 7206
+    assert (shared / "buzz" / "2026-10-20.json").exists()
+    assert len(json.loads((shared / "injuries.json").read_text())["players"]) == 4
+    v = client.get(f"/seasons/{LEAGUE}").json()
+    assert v["refresh"]["warnings"] == {}
+    flags = v["flags"]
+    # Drummond tops the buzz index: a full surge, a watch on its own.
+    drummond = flags["5015"]
+    assert drummond["level"] == "watch" and drummond["signals"]["surge"]["score"] == 1.0
+    assert "#1 by adds on Yahoo's buzz index" in drummond["signals"]["surge"]["reason"]
+    # Vassell (G-F, no projection) is out to Nov 20: the minutes at forward in San Antonio.
+    keldon = flags["6217"]["signals"]["opportunity"]
+    assert keldon["score"] == 0.5 and "Devin Vassell" in keldon["reason"]
+    # Cunningham is out to Nov 12 at guard in Detroit; Duren is day to day.
+    assert flags["6073"]["signals"]["opportunity"]["score"] == 0.5
+    # Opportunity alone flags nobody: kept for the hover, scored 0.
+    assert flags["6073"]["level"] is None and flags["6073"]["score"] == 0.0
+    # Gilgeous-Alexander is back inside two weeks: nothing for Oklahoma City's guards.
+    assert "10276" not in flags or flags["10276"]["signals"]["opportunity"]["score"] == 0.0
+    assert v["flag_inputs"]["buzz"]["rows"] == 5 and v["flag_inputs"]["projection"] is None
+    # A second refresh within the hour reads neither again.
+    reads = sum("/buzzindex?" in u or u == ESPN_INJURIES_URL for u in client.fake.urls)
+    assert reads == 3
+    client.post(f"/seasons/{LEAGUE}/refresh", params={"wait": True})
+    assert sum("/buzzindex?" in u or u == ESPN_INJURIES_URL for u in client.fake.urls) == reads
+
+
+def test_the_projection_and_the_past_days_feed_the_value_and_minutes_signals(client):
+    names = [*fixture_names(), "Andre Drummond", "Keldon Johnson"]
+    projection_csv(client.data_dir / "bbm_projections_2026-10-21.csv", names)
+    # 38 minutes a game over three games against the projection's 30.
+    past_days_csv(
+        client.data_dir / "bbm_actual_7d_totals_20261021-1500.csv",
+        [
+            ("Andre Drummond", "NYK", "C", 3, 114, 22.0),
+            ("Keldon Johnson", "SAS", "SF,PF", 1, 40, 20.0),
+        ],
+    )
+    client.post(f"/seasons/{LEAGUE}/refresh", params={"wait": True})
+    v = client.get(f"/seasons/{LEAGUE}").json()
+    drummond = v["flags"]["5015"]
+    assert drummond["signals"]["minutes"]["score"] == 1.0
+    assert drummond["signals"]["value"]["score"] > 0
+    assert drummond["level"] in ("add", "must-add")
+    # One game is under the 7-day window's floor of two.
+    assert v["flags"]["6217"]["signals"]["minutes"]["score"] == 0.0
+    past = v["flag_inputs"]["past_days"]
+    assert past["7d"]["file"] == "bbm_actual_7d_totals_20261021-1500.csv" and past["14d"] is None
+    d = client.get("/flags/digest").json()
+    md = d["markdown"]
+    assert "Andre Drummond (NYK, C): adds surge" in md and "minutes up" in md and "value gap" in md
+    # The projection's numbers stay local: the JSON has them, the markdown does not.
+    assert "38.0" in d["leagues"][0]["flagged"][0]["signals"]["minutes"]["reason"]
+    assert "38.0" not in md and "ranked" not in md and "projected min" not in md
+
+
+def test_the_flag_digest_lists_every_league_with_a_season(client):
+    client.post(f"/seasons/{LEAGUE}/refresh", params={"wait": True})
+    d = client.get("/flags/digest").json()
+    assert d["date"] == "2026-10-21"
+    assert [x["league"] for x in d["leagues"]] == [LEAGUE]
+    assert d["leagues"][0]["name"] == "Test League 100001"
+    assert {"league": "100002", "reason": "no season read yet"} in d["skipped"]
+    top = d["leagues"][0]["flagged"]
+    # Johnson's surge and his opportunity outrank Drummond's surge alone; the highest first.
+    assert [x["name"] for x in top[:2]] == ["Keldon Johnson", "Andre Drummond"]
+    assert [x["score"] for x in top] == sorted((x["score"] for x in top), reverse=True)
+    assert all(x["level"] is not None for x in top)
+    md = d["markdown"]
+    assert md.startswith("## Breakout flags, Wed Oct 21") and "### League 100001" in md
+    assert "Test League" not in md and "Team 4" not in md
+    assert "no past-days export within 3 days" in md
+    # The five most added are watch-level: one line of names, the evidence in the JSON.
+    assert "- watch (5): Keldon Johnson (SAS), Andre Drummond (NYK), Zaccharie Risacher" in md
+    assert top[0]["line"] not in md and top[0]["signals"]["opportunity"]["reason"]
+
+
+def test_the_buzz_day_file_keeps_the_larger_adds_and_the_latest_read(tmp_path):
+    season_flags.record_adds(tmp_path, TODAY, {1: 10, 2: 5})
+    rows = [{"player": {"yahoo_id": 1}, "adds": 7}]
+    season_flags.record_adds(tmp_path, TODAY, {1: 7, 3: 2}, buzz=rows, read_at=NOW)
+    body = json.loads(season_flags.buzz_path(tmp_path, TODAY).read_text())
+    assert body["adds"] == {"1": 10, "2": 5, "3": 2} and body["rows"] == rows
+    # Today's is read again past the hour.
+    assert not season_flags._buzz_due(tmp_path, TODAY, TODAY, NOW + timedelta(minutes=30))
+    assert season_flags._buzz_due(tmp_path, TODAY, TODAY, NOW + timedelta(hours=2))
+    # Yesterday's, read during the day, once more for its final count.
+    yesterday = TODAY - timedelta(days=1)
+    at = datetime(2026, 10, 20, 20, 0, tzinfo=UTC)  # 16:00 Eastern on the 20th
+    season_flags.record_adds(tmp_path, yesterday, {}, buzz=[], read_at=at)
+    assert season_flags._buzz_due(tmp_path, yesterday, TODAY, NOW)
+    season_flags.record_adds(tmp_path, yesterday, {}, buzz=[], read_at=NOW)
+    assert not season_flags._buzz_due(tmp_path, yesterday, TODAY, NOW)
+
+
+def test_a_failed_flag_input_warns_and_the_refresh_still_lands(client):
+    real = client.fake.__call__
+
+    class Flaky(FakeYahoo):
+        def __call__(self, url: str) -> str:
+            if "/buzzindex?" in url:
+                raise public.FetchError(f"{url}: HTTP 503")
+            return real(url)
+
+    client.app.state.seasons.fetch_factory = Flaky
+    r = client.post(f"/seasons/{LEAGUE}/refresh", params={"wait": True})
+    assert r.status_code == 202 and r.json()["refresh"]["status"] == "done"
+    warnings = r.json()["refresh"]["warnings"]
+    assert set(warnings) == {"buzz index 2026-10-20", "buzz index 2026-10-21"}
+    d = client.get("/flags/digest").json()
+    assert "no buzz index read today" in d["notes"]
+
+
+def test_a_past_days_export_is_never_offered_as_a_projection(client):
+    projection_csv(client.data_dir / "bbm_projections_2026-10-21.csv", ["Andre Drummond"])
+    past_days_csv(
+        client.data_dir / "bbm_actual_7d_totals_20261021-1500.csv",
+        [("Andre Drummond", "NYK", "C", 3, 90, 20.0)],
+    )
+    files = [f["file"] for f in client.get("/projections").json()]
+    assert files == ["bbm_projections_2026-10-21.csv"]
