@@ -1,7 +1,7 @@
 // Node's own test runner with its built-in type stripping (`npm test`), as format.test.ts.
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import type { AvailableRow, MoveCandidate, Rates, RosterRow, SeasonPlayer } from "./api";
+import type { AvailableRow, FlagSignal, MoveCandidate, PlayerFlag, Rates, RosterRow, SeasonPlayer } from "./api";
 import {
   addsNote,
   ageLabel,
@@ -20,6 +20,12 @@ import {
   projectedTotals,
   DEFAULT_AVAILABLE_SORT,
   filterAvailable,
+  FLAG_SHORT,
+  flagged,
+  flagInputsNote,
+  flagOf,
+  flagSignals,
+  flagTitle,
   isStale,
   NO_FILTER,
   ordinal,
@@ -284,4 +290,67 @@ test("the view's players by id: the pool, my roster and every roster", () => {
   const byId = playersById({ available: [row(a)], roster: [slot(b)], rosters: { "4": [slot(c)], "1": [slot(b)] } });
   assert.deepEqual([...byId.keys()].sort(), [1, 2, 3]);
   assert.equal(byId.get(3)?.name, "Theirs");
+});
+
+const signal = (score: number, reason: string | null = null): FlagSignal => ({ score, reason, facts: {} });
+const flag = (level: PlayerFlag["level"], surge: number, minutes = 0, value = 0, opportunity = 0): PlayerFlag => ({
+  level,
+  score: surge + minutes + value + opportunity,
+  signals: {
+    surge: signal(surge, surge ? "7,206 adds today, #1 by adds on Yahoo's buzz index" : null),
+    minutes: signal(minutes, minutes ? "34.0 min over the last 7 days (3 games) against 26.0 projected" : null),
+    value: signal(value),
+    opportunity: signal(opportunity, opportunity ? "Cade Cunningham (G) out, est. return Nov 12" : null),
+  },
+});
+
+test("a flag's tag, its signals loudest first and its evidence on hover", () => {
+  const f = flag("add", 1, 0.75);
+  assert.equal(FLAG_SHORT.add, "A");
+  assert.equal(FLAG_SHORT["must-add"], "M+");
+  assert.deepEqual(flagSignals(flag("watch", 0.3, 0, 0, 0.5)), ["opportunity", "surge"]);
+  assert.equal(
+    flagTitle(f),
+    "add · 1.75 of 4 (watch 0.8, add 1.5, must-add 2.2)\n" +
+      "adds surge 1.00: 7,206 adds today, #1 by adds on Yahoo's buzz index\n" +
+      "minutes up 0.75: 34.0 min over the last 7 days (3 games) against 26.0 projected",
+  );
+  assert.ok(flagTitle(flag(null, 0, 0, 0, 0.5)).startsWith("under watch · 0.50"));
+});
+
+test("the flagged players have a level, the highest first; a signal alone is not a flag", () => {
+  const a = row(player("Andre Drummond", ["C"], { yahoo_id: 5015 }));
+  const b = row(player("Keldon Johnson", ["SF", "PF"], { yahoo_id: 6217 }));
+  const c = row(player("Duncan Robinson", ["SG", "SF"], { yahoo_id: 6073 }));
+  const s = { available: [a, b, c], flags: { "5015": flag("watch", 1), "6217": flag("watch", 0.94, 0, 0, 0.5), "6073": flag(null, 0, 0, 0, 0.5) } };
+  assert.deepEqual(
+    flagged(s).map((x) => x.row.player.name),
+    ["Keldon Johnson", "Andre Drummond"],
+  );
+  assert.equal(flagOf(s, 6073)?.level, null);
+  assert.equal(flagOf({ flags: undefined }, 6073), undefined);
+  // The table's Flag column sorts on the score, unflagged players last.
+  const sorted = sortAvailable([c, a, b, row(player("Nobody", ["C"], { yahoo_id: 1 }))], { key: "flag", dir: "desc" }, (r, key) =>
+    key === "flag" ? (flagOf(s, r.player.yahoo_id)?.score ?? null) : undefined,
+  );
+  assert.deepEqual(
+    sorted.map((r) => r.player.name),
+    ["Keldon Johnson", "Andre Drummond", "Duncan Robinson", "Nobody"],
+  );
+});
+
+test("the flags card says what its inputs were read from, and what is missing", () => {
+  const now = Date.parse("2026-10-21T18:00:00Z");
+  const note = flagInputsNote(
+    {
+      buzz: { today: "2026-10-21T17:55:00+00:00", rows: 50, earlier_days: 0 },
+      injuries: { read_at: "2026-10-21T17:55:00+00:00", players: 81 },
+      projection: null,
+      past_days: { "7d": { file: "bbm_actual_7d_totals_20261021-1500.xls", as_of: "2026-10-21T15:00:00+00:00" }, "14d": null },
+    },
+    now,
+  );
+  assert.equal(note, "buzz index read 5 min ago · 81 on the injury report · past 7 days 2026-10-21 · no past 14 days · no rest-of-season export");
+  assert.equal(flagInputsNote({ error: "KeyError: x" }, now), "no flags: KeyError: x");
+  assert.equal(flagInputsNote(undefined, now), "no flag inputs yet");
 });

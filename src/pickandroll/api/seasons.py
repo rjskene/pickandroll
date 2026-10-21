@@ -7,7 +7,8 @@ Routes:
     this week's opponent, when the snapshot was last read, and any refresh in progress.
 ``GET /seasons/{league}``
     The season view: settings, the week and the next ones, standings, every roster, my
-    matchup, the available players and the league's transactions.
+    matchup, the available players and the league's transactions, and the breakout flag of
+    the available players (#95, ``season_flags``).
 ``POST /seasons/{league}/refresh``
     Reads the league's public sources (a public league: the prize leagues) in the background;
     ``?wait=true`` returns once it is done. A private league answers ``409`` with what to do.
@@ -21,6 +22,10 @@ Routes:
 ``GET /seasons/{league}/moves/{player}``
     The move drawer: adding ``player`` (for ``?drop=``) per category on both horizons, with
     every other drop and the best other adds.
+``GET /flags/digest``
+    The day's breakout flags across every league with a season: each league's flagged players
+    with their evidence, and the digest as markdown for a public issue (leagues by id, no team
+    or league names, no number derived from Basketball Monster).
 
 Storage, all under ``data/`` and never committed: ``data/leagues/<id>/season/state.json`` holds
 the latest read of every part with its time and source, and every refresh or snapshot is kept
@@ -61,7 +66,7 @@ from ..season import (
 )
 from ..sources import schedule as nba_schedule
 from ..sources.yahoo import pages, public
-from . import leagues, season_moves
+from . import leagues, season_flags, season_moves
 from .season_week import BBM_NEXT_WEEK, BBM_ROS, BBM_THIS_WEEK, NBA_TZ, week_projection
 
 SEASON_DIR = "season"
@@ -157,6 +162,8 @@ class RefreshJob:
     started_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     finished_at: datetime | None = None
     error: str | None = None
+    #: What failed without failing the job: the breakout flag's inputs, by input.
+    warnings: dict[str, str] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -167,6 +174,7 @@ class RefreshJob:
             "started_at": self.started_at.isoformat(),
             "finished_at": self.finished_at.isoformat() if self.finished_at else None,
             "error": self.error,
+            "warnings": self.warnings,
         }
 
 
@@ -185,6 +193,7 @@ class SeasonService:
         self._locks: dict[str, threading.Lock] = {}
         self._guard = threading.Lock()
         self.moves_cache = season_moves.MovesCache()
+        self.flags_cache = season_moves.MovesCache()
 
     def lock(self, league: str) -> threading.Lock:
         with self._guard:
@@ -213,11 +222,92 @@ class SeasonService:
         parts = load_parts(self.data_dir, league)
         season = Season.from_parts(base, parts)
         today = nba_today(self.clock())
+        try:
+            _, flags, inputs = self._flags(league)
+            flag_view = {"flags": season_flags.payload(flags), "flag_inputs": inputs}
+        except Exception as exc:  # noqa: BLE001 - the season reads without its flags
+            flag_view = {"flags": {}, "flag_inputs": {"error": f"{type(exc).__name__}: {exc}"}}
         return {
             **_summary(season, is_public, bool(parts), self.jobs.get(league)),
             **_view(season, today),
             "week_projection": week_projection(season, today, self.data_dir, WEEKS_AHEAD),
+            **flag_view,
         }
+
+    # ------------------------------------------------------------------ breakout flags
+    def _flags(
+        self, league: str
+    ) -> tuple[list[season_flags.fl.Pickup], dict[int, season_flags.fl.Flag], dict[str, Any]]:
+        """The league's flags, made again when its state or a flag input changes, or the day."""
+        base, _ = self._base(league)
+        now = self.clock()
+        today = nba_today(now)
+        state = season_dir(self.data_dir, league) / STATE
+        stamp = (
+            state.stat().st_mtime_ns if state.exists() else None,
+            season_flags.stamp(self.data_dir, today),
+        )
+
+        def make() -> Any:
+            season = Season.from_parts(base, load_parts(self.data_dir, league))
+            return season_flags.league_flags(season, today, self.data_dir, now)
+
+        return self.flags_cache.get((league, "flags", "flags", today, stamp), make)
+
+    def digest(self) -> dict[str, Any]:
+        """Every league's flagged players with their evidence, and the digest as markdown."""
+        now = self.clock()
+        today = nba_today(now)
+        rows: list[dict[str, Any]] = []
+        shown: list[tuple[str, list[tuple[season_flags.fl.Pickup, season_flags.fl.Flag]]]] = []
+        skipped: list[dict[str, str]] = []
+        inputs: dict[str, Any] | None = None
+        for league in leagues.leagues(self.data_dir):
+            try:
+                base, _ = base_settings(self.data_dir, league)
+            except leagues.LeagueError as exc:
+                skipped.append({"league": league, "reason": str(exc)})
+                continue
+            parts = load_parts(self.data_dir, league)
+            if not parts:
+                skipped.append({"league": league, "reason": "no season read yet"})
+                continue
+            try:
+                name = Season.from_parts(base, parts).settings.name
+                players, flags, inputs = self._flags(league)
+            except Exception as exc:  # noqa: BLE001 - one league's failure leaves the others
+                skipped.append({"league": league, "reason": f"{type(exc).__name__}: {exc}"})
+                continue
+            top = season_flags.flagged(players, flags)
+            rows.append(season_flags.digest_league(league, name, top))
+            shown.append((league, top))
+        notes = season_flags.stale(inputs, now) if inputs is not None else []
+        return {
+            "date": today.isoformat(),
+            "generated_at": now.isoformat(),
+            "inputs": inputs,
+            "notes": notes,
+            "leagues": rows,
+            "skipped": skipped,
+            "markdown": season_flags.fl.digest_markdown(today, shown, notes),
+        }
+
+    def _flag_inputs(self, job: RefreshJob, fetch: public.Fetch, today: date) -> None:
+        """Read the flag's network inputs; a failure is a warning on the job, never its end."""
+        try:
+            job.warnings |= season_flags.read_inputs(self.data_dir, fetch, today, self.clock())
+        except Exception as exc:  # noqa: BLE001 - a flag input is not worth a failed refresh
+            job.warnings["flag inputs"] = f"{type(exc).__name__}: {exc}"
+
+    def _record_adds(self, league: str, today: date) -> None:
+        """Keep the pool's Yahoo-wide adds read today, the adds history every league shares."""
+        try:
+            season = self.season(league)
+            adds = season_flags.pool_adds(season, today)
+            if adds:
+                season_flags.record_adds(self.data_dir, today, adds)
+        except Exception:  # noqa: BLE001, S110 - the history misses a day's adds, nothing more
+            pass
 
     # ------------------------------------------------------------------ moves
     def _moves_stamp(self, league: str) -> tuple[Any, ...]:
@@ -288,6 +378,9 @@ class SeasonService:
             calendar = self._calendar(league, settings, fetch, today)
             job.step = "schedule"
             self._save_with_schedule(league, received, calendar, fetch, today)
+            job.step = "flag inputs"
+            self._record_adds(league, today)
+            self._flag_inputs(job, fetch, today)
             # The total counted every players page; the pool may have ended sooner.
             job.status, job.step, job.total = "done", "done", job.done
         except public.PrivateLeague as exc:
@@ -351,9 +444,10 @@ class SeasonService:
     def run_extras(self, job: RefreshJob) -> RefreshJob:
         try:
             today = nba_today(self.clock())
-            self._save_with_schedule(
-                job.league, [], self._cached_calendar(), self.fetch_factory(), today
-            )
+            fetch = self.fetch_factory()
+            self._save_with_schedule(job.league, [], self._cached_calendar(), fetch, today)
+            job.step = "flag inputs"
+            self._flag_inputs(job, fetch, today)
             job.status, job.step = "done", "done"
         except Exception as exc:  # noqa: BLE001 - the job reports what broke instead of dying silently
             job.status, job.error = "failed", f"{type(exc).__name__}: {exc}"
@@ -420,6 +514,8 @@ class SeasonService:
                 raise HTTPException(400, f"the snapshot does not read: {exc}") from exc
             if received:
                 save(self.data_dir, league, parts, received, EXTENSION)
+        if any(p.key == "available" for p in received):
+            self._record_adds(league, today)
         summary = self.summary(league)
         if received and not is_public:
             self.start_extras(league)
@@ -655,6 +751,11 @@ def register(
     ) -> dict[str, Any]:
         """The move drawer for adding ``player``."""
         return await asyncio.to_thread(service.move_detail, league, player, drop, system)
+
+    @app.get("/flags/digest")
+    async def get_flag_digest() -> dict[str, Any]:
+        """The day's breakout flags across leagues, for the daily alert on #99."""
+        return await asyncio.to_thread(service.digest)
 
     @app.post("/seasons/{league}/snapshot")
     def post_snapshot(body: SnapshotBody, league: str = league_id) -> dict[str, Any]:

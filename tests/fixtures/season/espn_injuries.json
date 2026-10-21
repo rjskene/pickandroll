@@ -1,0 +1,154 @@
+{
+ "injuries": [
+  {
+   "id": "8",
+   "displayName": "Detroit",
+   "injuries": [
+    {
+     "id": "-201",
+     "status": "Out",
+     "date": "2026-10-20T18:00Z",
+     "athlete": {
+      "firstName": "Cade",
+      "lastName": "Cunningham",
+      "displayName": "Cade Cunningham",
+      "links": [
+       {
+        "rel": [
+         "playercard"
+        ],
+        "href": "https://www.espn.com/nba/player/_/id/201/x"
+       }
+      ],
+      "team": {
+       "abbreviation": "DET",
+       "displayName": "Team DET"
+      },
+      "position": {
+       "abbreviation": "G"
+      }
+     },
+     "shortComment": "Synthetic comment.",
+     "type": {
+      "description": "out"
+     },
+     "details": {
+      "type": "Hamstring",
+      "returnDate": "2026-11-12"
+     }
+    },
+    {
+     "id": "-202",
+     "status": "Day-To-Day",
+     "date": "2026-10-20T18:00Z",
+     "athlete": {
+      "firstName": "Jalen",
+      "lastName": "Duren",
+      "displayName": "Jalen Duren",
+      "links": [
+       {
+        "rel": [
+         "playercard"
+        ],
+        "href": "https://www.espn.com/nba/player/_/id/202/x"
+       }
+      ],
+      "team": {
+       "abbreviation": "DET",
+       "displayName": "Team DET"
+      },
+      "position": {
+       "abbreviation": "C"
+      }
+     },
+     "shortComment": "Synthetic comment.",
+     "type": {
+      "description": "day-to-day"
+     },
+     "details": {
+      "type": "Ankle",
+      "returnDate": "2026-10-23"
+     }
+    }
+   ]
+  },
+  {
+   "id": "25",
+   "displayName": "Oklahoma City",
+   "injuries": [
+    {
+     "id": "-203",
+     "status": "Out",
+     "date": "2026-10-20T18:00Z",
+     "athlete": {
+      "firstName": "Shai",
+      "lastName": "Gilgeous-Alexander",
+      "displayName": "Shai Gilgeous-Alexander",
+      "links": [
+       {
+        "rel": [
+         "playercard"
+        ],
+        "href": "https://www.espn.com/nba/player/_/id/203/x"
+       }
+      ],
+      "team": {
+       "abbreviation": "OKC",
+       "displayName": "Team OKC"
+      },
+      "position": {
+       "abbreviation": "G"
+      }
+     },
+     "shortComment": "Synthetic comment.",
+     "type": {
+      "description": "out"
+     },
+     "details": {
+      "type": "Wrist",
+      "returnDate": "2026-11-01"
+     }
+    }
+   ]
+  },
+  {
+   "id": "24",
+   "displayName": "San Antonio",
+   "injuries": [
+    {
+     "id": "-204",
+     "status": "Out",
+     "date": "2026-10-20T18:00Z",
+     "athlete": {
+      "firstName": "Devin",
+      "lastName": "Vassell",
+      "displayName": "Devin Vassell",
+      "links": [
+       {
+        "rel": [
+         "playercard"
+        ],
+        "href": "https://www.espn.com/nba/player/_/id/204/x"
+       }
+      ],
+      "team": {
+       "abbreviation": "SA",
+       "displayName": "Team SA"
+      },
+      "position": {
+       "abbreviation": "G-F"
+      }
+     },
+     "shortComment": "Synthetic comment.",
+     "type": {
+      "description": "out"
+     },
+     "details": {
+      "type": "Foot",
+      "returnDate": "2026-11-20"
+     }
+    }
+   ]
+  }
+ ]
+}

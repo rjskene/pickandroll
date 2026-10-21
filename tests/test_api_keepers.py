@@ -251,9 +251,11 @@ def test_keepers_file_rows_listing_and_errors(data_dir):
             f"position,round,player\n1,1,{name}\n,,\n2,3,{name}\n"
         )
         (data_dir / "notes.csv").write_text("a,b\n")
+        (data_dir / "bbm_actual_7d_totals_20261021-1500.csv").write_text("Name,g\n")
         files = {f["file"] for f in c.get("/files?kind=keepers").json()}
         assert files == {"keepers_test.csv", "keepers_bad.csv", "keepers_dup.csv"}
-        # Never offered as projections (the newest CSV is the setup screen's default).
+        # Never offered as projections (the newest CSV is the setup screen's default), nor a
+        # past-days export (#95).
         assert {f["file"] for f in c.get("/projections").json()} == {SAMPLE, "notes.csv"}
 
         rows = c.get("/keepers-file?file=keepers_test.csv").json()["rows"]

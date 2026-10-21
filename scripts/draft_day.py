@@ -9,6 +9,7 @@
     python scripts/draft_day.py run 238174        # all of it, in that order (run it in the background)
     python scripts/draft_day.py projections       # import this morning's Basketball Monster export (#75)
     python scripts/draft_day.py refit 15953       # refit the survival table from earlier drafts (#77)
+    python scripts/draft_day.py past-days --days 7  # import a past-week rankings export (#95)
 
 The draft-prep commands (#75-#77) live one module each under scripts/draft_prep/ and are registered
 in ``PREP_MODULES``; ``status`` and ``run`` call their hooks (scripts/draft_prep/__init__.py).
@@ -68,8 +69,12 @@ PREP_MODULES = (
     "projections",  # 75
     "refit",  # 77
     "news",  # 76
+    "past_days",  # 95
 )
-PREP = {name: importlib.import_module(f"draft_prep.{name}") for name in PREP_MODULES}
+#: By command: a module's name with dashes (``past-days``).
+PREP = {
+    name.replace("_", "-"): importlib.import_module(f"draft_prep.{name}") for name in PREP_MODULES
+}
 
 
 class Runbook:
