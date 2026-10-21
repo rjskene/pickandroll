@@ -27,7 +27,7 @@ export default function Leagues() {
   return (
     <div className="leagues">
       <div className="row">
-        <strong>Leagues</strong>
+        <strong>Drafts</strong>
         <span className="muted" style={{ fontSize: 11 }}>
           arm a draft to let pickandroll pick for you in it; unarmed, Yahoo autopicks your turns
         </span>

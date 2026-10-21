@@ -1,0 +1,257 @@
+{
+"events": [
+{
+"status": {
+"type": {
+"name": "STATUS_SCHEDULED"
+}
+},
+"competitions": [
+{
+"competitors": [
+{
+"team": {
+"abbreviation": "ORL"
+}
+},
+{
+"team": {
+"abbreviation": "ATL"
+}
+}
+]
+}
+]
+},
+{
+"status": {
+"type": {
+"name": "STATUS_SCHEDULED"
+}
+},
+"competitions": [
+{
+"competitors": [
+{
+"team": {
+"abbreviation": "WSH"
+}
+},
+{
+"team": {
+"abbreviation": "MIL"
+}
+}
+]
+}
+]
+},
+{
+"status": {
+"type": {
+"name": "STATUS_SCHEDULED"
+}
+},
+"competitions": [
+{
+"competitors": [
+{
+"team": {
+"abbreviation": "MIA"
+}
+},
+{
+"team": {
+"abbreviation": "MIN"
+}
+}
+]
+}
+]
+},
+{
+"status": {
+"type": {
+"name": "STATUS_SCHEDULED"
+}
+},
+"competitions": [
+{
+"competitors": [
+{
+"team": {
+"abbreviation": "BKN"
+}
+},
+{
+"team": {
+"abbreviation": "CHA"
+}
+}
+]
+}
+]
+},
+{
+"status": {
+"type": {
+"name": "STATUS_SCHEDULED"
+}
+},
+"competitions": [
+{
+"competitors": [
+{
+"team": {
+"abbreviation": "TOR"
+}
+},
+{
+"team": {
+"abbreviation": "CHI"
+}
+}
+]
+}
+]
+},
+{
+"status": {
+"type": {
+"name": "STATUS_SCHEDULED"
+}
+},
+"competitions": [
+{
+"competitors": [
+{
+"team": {
+"abbreviation": "MEM"
+}
+},
+{
+"team": {
+"abbreviation": "UTAH"
+}
+}
+]
+}
+]
+},
+{
+"status": {
+"type": {
+"name": "STATUS_SCHEDULED"
+}
+},
+"competitions": [
+{
+"competitors": [
+{
+"team": {
+"abbreviation": "NO"
+}
+},
+{
+"team": {
+"abbreviation": "IND"
+}
+}
+]
+}
+]
+},
+{
+"status": {
+"type": {
+"name": "STATUS_SCHEDULED"
+}
+},
+"competitions": [
+{
+"competitors": [
+{
+"team": {
+"abbreviation": "HOU"
+}
+},
+{
+"team": {
+"abbreviation": "DAL"
+}
+}
+]
+}
+]
+},
+{
+"status": {
+"type": {
+"name": "STATUS_SCHEDULED"
+}
+},
+"competitions": [
+{
+"competitors": [
+{
+"team": {
+"abbreviation": "LAL"
+}
+},
+{
+"team": {
+"abbreviation": "GS"
+}
+}
+]
+}
+]
+},
+{
+"status": {
+"type": {
+"name": "STATUS_SCHEDULED"
+}
+},
+"competitions": [
+{
+"competitors": [
+{
+"team": {
+"abbreviation": "POR"
+}
+},
+{
+"team": {
+"abbreviation": "PHX"
+}
+}
+]
+}
+]
+},
+{
+"status": {
+"type": {
+"name": "STATUS_SCHEDULED"
+}
+},
+"competitions": [
+{
+"competitors": [
+{
+"team": {
+"abbreviation": "LAC"
+}
+},
+{
+"team": {
+"abbreviation": "SAC"
+}
+}
+]
+}
+]
+}
+]
+}

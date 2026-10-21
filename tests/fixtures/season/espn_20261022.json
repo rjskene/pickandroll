@@ -1,0 +1,50 @@
+{
+"events": [
+{
+"status": {
+"type": {
+"name": "STATUS_SCHEDULED"
+}
+},
+"competitions": [
+{
+"competitors": [
+{
+"team": {
+"abbreviation": "PHI"
+}
+},
+{
+"team": {
+"abbreviation": "CLE"
+}
+}
+]
+}
+]
+},
+{
+"status": {
+"type": {
+"name": "STATUS_SCHEDULED"
+}
+},
+"competitions": [
+{
+"competitors": [
+{
+"team": {
+"abbreviation": "OKC"
+}
+},
+{
+"team": {
+"abbreviation": "DEN"
+}
+}
+]
+}
+]
+}
+]
+}

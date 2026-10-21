@@ -1,0 +1,24 @@
+{
+ "service": {
+  "league_key": "478.l.100001",
+  "league_id": 100001,
+  "name": "Test League 100001",
+  "num_teams": 12,
+  "draft_status": "postdraft",
+  "weekly_deadline": "intraday",
+  "scoring_type": "head",
+  "league_type": "public",
+  "current_week": 1,
+  "start_week": 1,
+  "end_week": 22,
+  "end_date": "2027-04-04",
+  "settings": {
+   "waiver_rule": "continuous",
+   "uses_faab": 1,
+   "waiver_time": 2,
+   "max_weekly_adds": 4,
+   "trade_end_date": "2027-03-04",
+   "num_playoff_teams": 6
+  }
+ }
+}
