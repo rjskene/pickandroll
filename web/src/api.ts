@@ -957,11 +957,22 @@ export interface HeldMove {
   slot: string;
 }
 
+/** A player moved to a held slot who comes back inside a horizon, and whom the return sends:
+ * the least valuable active player then, maybe the player himself (#97). */
+export interface Comeback {
+  player: number;
+  slot: string;
+  from: string;
+  drop: number;
+}
+
 export interface RecommendedSet {
   moves: RecommendedMove[];
   gain: Record<MoveHorizon, number>;
   /** Players the set moves to an IL or NA slot to open a spot. */
   held: HeldMove[];
+  /** By horizon, the drops their returns force. */
+  comebacks?: Partial<Record<MoveHorizon, Comeback[]>>;
 }
 
 export interface MoveHorizonInfo {
@@ -1012,6 +1023,7 @@ export interface MoveDetail extends MoveRef {
       /** After less before, unrounded: the drop list's figure. */
       gain: number;
       cats: { before: Partial<Record<Cat, MoveCategory>>; after: Partial<Record<Cat, MoveCategory>> };
+      comebacks?: Comeback[];
     }
   >;
   /** Every drop the add can come with, best over three weeks first. */
@@ -1111,6 +1123,44 @@ export interface TradePayload {
   fill: (TradePlayerRef & { from: string; gain: Record<MoveHorizon, number> }) | null;
 }
 
+/** A recorded week's result for one team (#97): categories won, lost and tied, or a points
+ * league's points and the opponent's. */
+export interface WeekResult {
+  won?: number;
+  lost?: number;
+  tied?: number;
+  points?: number;
+  against?: number;
+  outcome: "W" | "L" | "T";
+}
+
+/** A recorded week, as the season's history lists it. */
+export interface RecordedWeek {
+  week: number;
+  start: string;
+  end: string;
+  recorded_at: string | null;
+  /** When a later record of the week changed it (a stat correction). */
+  revised_at: string | null;
+  opponent: number | null;
+  opponent_name: string | null;
+  result: WeekResult | null;
+  games: { played: number; scheduled: number } | null;
+  /** My place and record in the standings as of the week's end. */
+  rank: number | null;
+  record: string | null;
+  standings_through: string | null;
+  players: number;
+  /** What the record lacks: drafted players without a line, teams without a page. */
+  missing: Record<string, number | string>;
+}
+
+export interface SeasonWeeks {
+  league: string;
+  my_team_id: number | null;
+  weeks: RecordedWeek[];
+}
+
 /** The season view: the summary plus the week, standings, rosters, matchup and the pool. */
 export interface SeasonView extends SeasonSummary {
   settings: {
@@ -1157,7 +1207,7 @@ export interface PlayerFlag {
   signals: Record<FlagSignalKey, FlagSignal>;
 }
 export interface FlagInputs {
-  buzz?: { today: string | null; rows: number; earlier_days: number };
+  buzz?: { today: string | null; rows: number; earlier_days: number; same_hour?: number };
   injuries?: { read_at: string | null; players: number };
   /** The rest-of-season export the minutes, value and opportunity read. */
   projection?: string | null;
@@ -1181,6 +1231,8 @@ export const api = {
   /** Both sides of a proposed trade before and after (#96); nothing is sent to Yahoo. */
   trade: (league: string, body: TradeBody) =>
     request<TradePayload>(`/seasons/${encodeURIComponent(league)}/trade`, { method: "POST", body: JSON.stringify(body) }),
+  /** The weeks the weekly recorder has kept (#97), my result in each. */
+  weeks: (league: string) => request<SeasonWeeks>(`/seasons/${encodeURIComponent(league)}/weeks`),
   /** Read the league's public sources again, in the background; 409 for a private league. */
   refreshSeason: (league: string) =>
     request<{ refresh: SeasonRefresh; season: SeasonSummary }>(`/seasons/${encodeURIComponent(league)}/refresh`, { method: "POST" }),

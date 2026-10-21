@@ -250,7 +250,13 @@ def test_the_digest_names_leagues_by_id_and_prints_no_basketball_monster_number(
     for number in ("37", "88", "19", "23", "29.0", "32.0", "33"):
         assert number not in text, number
     empty = fl.digest_markdown(TODAY, [("100003", [])])
-    assert "No flagged player among the available ones." in empty
+    assert "No flagged player among the available ones." in empty and "Not read" not in empty
+    closing = fl.digest_markdown(
+        TODAY, [], skipped=[("100004", "no season read yet"), ("100005", "its flags failed")]
+    )
+    assert closing.rstrip().endswith(
+        "Not read: League 100004 (no season read yet), League 100005 (its flags failed)."
+    )
 
 
 # --------------------------------------------------------------------------- the parsers

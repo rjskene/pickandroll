@@ -8,7 +8,8 @@ The inputs and where they are kept:
   today's is read again past :data:`BUZZ_MAX_AGE`, yesterday's once more after the day ends,
   for its final count. The file also keeps every available player's Yahoo-wide adds seen that
   day in any league's pool (the players page's ``R_O`` view): the adds history the surge's
-  baseline needs.
+  baseline needs. The counts are kept by the hour they were read (US Eastern; ``24`` for a read
+  after the day ended), so a morning's adds compare with earlier mornings' (#97).
 * ESPN's injury report, ``data/leagues/_shared/season/injuries.json``, read again after
   :data:`INJURIES_MAX_AGE`.
 * Basketball Monster's rest-of-season export (the season view's) and its past-days rankings
@@ -62,6 +63,12 @@ HISTORY_DAYS = 14
 BUZZ_STALE = timedelta(hours=12)
 INJURIES_STALE = timedelta(hours=12)
 
+#: An earlier day's count read at most this many hours before today's hour stands as that
+#: day's count at the same time; else its final count is scaled to the share of the day gone.
+SAME_HOUR_WINDOW = 2
+#: The bucket of a read made after the day ended: its final count.
+FINAL_HOUR = 24
+
 _files = threading.Lock()
 
 
@@ -92,6 +99,13 @@ def _write(path: Path, body: Any) -> None:
     tmp.replace(path)
 
 
+def read_hour(day: date, at: datetime) -> int:
+    """The hour of ``day`` (US Eastern) a read at ``at`` belongs to: 0 to 23, or
+    :data:`FINAL_HOUR` once the day is over."""
+    local = at.astimezone(sw.NBA_TZ)
+    return local.hour if local.date() <= day else FINAL_HOUR
+
+
 def record_adds(
     data_dir: Path,
     day: date,
@@ -99,9 +113,12 @@ def record_adds(
     *,
     buzz: list[dict[str, Any]] | None = None,
     read_at: datetime | None = None,
+    at: datetime | None = None,
 ) -> None:
     """Merge Yahoo-wide ``adds`` by Yahoo id into ``day``'s file (a day's count only grows, so
-    the larger stands) and, with ``buzz``, the day's buzz index as read at ``read_at``."""
+    the larger stands), and into the hour they were read at (``at``, else ``read_at``); with
+    ``buzz``, the day's buzz index as read at ``read_at``."""
+    when = at or read_at
     with _files:
         path = buzz_path(data_dir, day)
         body = _read(path) or {}
@@ -109,6 +126,14 @@ def record_adds(
         for yid, n in adds.items():
             kept[str(yid)] = max(int(n), int(kept.get(str(yid), 0)))
         body = {**body, "day": day.isoformat(), "adds": kept}
+        if when is not None and adds:
+            hours = dict(body.get("hours") or {})
+            hour = f"{read_hour(day, when):02d}"
+            bucket = dict(hours.get(hour) or {})
+            for yid, n in adds.items():
+                bucket[str(yid)] = max(int(n), int(bucket.get(str(yid), 0)))
+            hours[hour] = bucket
+            body["hours"] = hours
         if buzz is not None:
             body |= {"rows": buzz, "read_at": read_at.isoformat() if read_at else None}
         _write(path, body)
@@ -145,7 +170,7 @@ def read_inputs(data_dir: Path, fetch: public.Fetch, today: date, now: datetime)
         try:
             rows = pages.parse_buzz_page(fetch(public.buzz_url(day)))["rows"]
             adds = {r["player"]["yahoo_id"]: r["adds"] for r in rows if r.get("adds") is not None}
-            record_adds(data_dir, day, adds, buzz=rows, read_at=now)
+            record_adds(data_dir, day, adds, buzz=rows, read_at=now, at=now)
         except Exception as exc:  # noqa: BLE001 - a flag input is not worth a failed refresh
             errors[f"buzz index {day.isoformat()}"] = f"{type(exc).__name__}: {exc}"
     kept = _read(injuries_path(data_dir)) or {}
@@ -206,25 +231,63 @@ def _usage(row: pd.Series) -> float | None:
     return None if v is None or pd.isna(v) else float(v)
 
 
+def _hours(body: Mapping[str, Any]) -> list[tuple[int, dict[str, int]]]:
+    return sorted((int(h), dict(c)) for h, c in (body.get("hours") or {}).items())
+
+
+def at_hour(body: Mapping[str, Any], key: str, hour: int) -> tuple[float, bool] | None:
+    """A day's count for player ``key`` as of ``hour`` and whether it was read then: its latest
+    read at or before the hour, within :data:`SAME_HOUR_WINDOW` of it; else its last count
+    scaled to the share of the time to its read gone by the hour (a file kept before the hours
+    were holds final counts); None when the day never saw him."""
+    seen = [(h, counts[key]) for h, counts in _hours(body) if key in counts]
+    before = [x for x in seen if x[0] <= hour]
+    if before and hour - before[-1][0] <= SAME_HOUR_WINDOW:
+        return float(before[-1][1]), True
+    last = (body.get("adds") or {}).get(key)
+    if last is None:
+        return None
+    span = seen[-1][0] + 0.5 if seen and seen[-1][0] < FINAL_HOUR else FINAL_HOUR
+    return float(last) * min(1.0, (hour + 0.5) / span), False
+
+
 def _buzz(
-    data_dir: Path, today: date
-) -> tuple[dict[int, list[int]], dict[int, int], dict[int, int], dict[str, Any]]:
-    """The adds history before today by player, today's buzz-index rank and adds by player, and
-    what was kept."""
-    history: dict[int, list[int]] = {}
-    days = []
-    for i in range(HISTORY_DAYS, 0, -1):
-        body = _read(buzz_path(data_dir, today - timedelta(days=i)))
-        if not body:
-            continue
-        days.append(body.get("day"))
-        for key, n in (body.get("adds") or {}).items():
-            history.setdefault(int(key), []).append(int(n))
+    data_dir: Path, today: date, now: datetime | None = None
+) -> tuple[dict[int, list[float]], dict[int, int], dict[int, int], dict[str, Any]]:
+    """The adds history before today by player, each earlier day's count as of the hour his adds
+    were read today (:func:`at_hour`), today's buzz-index rank and adds by player, and what was
+    kept."""
     body = _read(buzz_path(data_dir, today)) or {}
     rows = body.get("rows") or []
     rank = {int(r["player"]["yahoo_id"]): i for i, r in enumerate(rows, 1)}
     adds = {int(k): int(v) for k, v in (body.get("adds") or {}).items()}
-    info = {"today": body.get("read_at"), "rows": len(rows), "earlier_days": len(days)}
+    # The hour each player's count was last read today; a file kept before the hours were, the
+    # hour of now.
+    fallback = read_hour(today, now) if now is not None else FINAL_HOUR - 1
+    latest: dict[str, int] = {}
+    for h, counts in _hours(body):
+        for key in counts:
+            latest[key] = h
+    history: dict[int, list[float]] = {}
+    days = []
+    same = 0
+    for i in range(HISTORY_DAYS, 0, -1):
+        earlier = _read(buzz_path(data_dir, today - timedelta(days=i)))
+        if not earlier:
+            continue
+        days.append(earlier.get("day"))
+        for key in earlier.get("adds") or {}:
+            hour = latest.get(key, fallback)
+            got = at_hour(earlier, key, hour)
+            if got is not None:
+                history.setdefault(int(key), []).append(got[0])
+                same += got[1]
+    info = {
+        "today": body.get("read_at"),
+        "rows": len(rows),
+        "earlier_days": len(days),
+        "same_hour": same,
+    }
     return history, rank, adds, info
 
 
@@ -318,7 +381,7 @@ def inputs_for(
 ) -> tuple[fl.Inputs, dict[int, int], dict[str, Any]]:
     """The flag's inputs for a league, today's buzz adds by player, and what was read."""
     players = sw.season_players(season)
-    history, rank, adds, buzz_info = _buzz(data_dir, today)
+    history, rank, adds, buzz_info = _buzz(data_dir, today, now)
     recent, past_info = _recent(data_dir, players, now)
     ros_path = sw._latest(data_dir, sw.BBM_ROS)
     projected: dict[int, fl.Projection] = {}

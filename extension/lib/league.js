@@ -20,7 +20,8 @@
 
   /** The league page ``url`` is, as the API's ``pages.page_kind`` reads it: ``{league, kind}``
    * with ``team`` for a team page, ``offset`` (and ``view``, its ``stat1``, when the URL names
-   * one) for the players page; null for any other page
+   * one) for the players page; the league page, a matchup, the transactions and the draft
+   * results by kind alone; null for any other page
    * (the draft client, a player's page, another sport) and for a team page on another date
    * (``?date=``), whose lineup is not today's roster. */
   function leaguePage(url) {
@@ -45,6 +46,8 @@
     }
     if (rest.length === 1 && rest[0] === "matchup") return { league, kind: "matchup" };
     if (rest.length === 1 && rest[0] === "transactions") return { league, kind: "transactions" };
+    // The draft's picks, for the weekly recorder (#97): read once per league.
+    if (rest.length === 1 && rest[0] === "draftresults") return { league, kind: "draftresults" };
     return null;
   }
 

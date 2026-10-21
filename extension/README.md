@@ -87,8 +87,9 @@ season view is fed from the pages you open in Chrome instead:
 
 1. pickandroll needs the league's folder, `data/leagues/<id>/settings.json` with `"public": false` and your
    team id.
-2. Open any of the league's own pages: the league page, a team's page, the players page, the matchup or the
-   transactions (`https://basketball.fantasysports.yahoo.com/nba/<id>/...`). A moment after the page loads,
+2. Open any of the league's own pages: the league page, a team's page, the players page, the matchup, the
+   transactions or the draft results (0.5.2, #97: the weekly recorder reads the picks once)
+   (`https://basketball.fantasysports.yahoo.com/nba/<id>/...`). A moment after the page loads,
    the extension posts it to pickandroll (`POST /seasons/<id>/snapshot`) and the API reads it. A public league's
    pages post the same way.
 3. The side panel on such a tab shows the page, the season it fed (week, snapshot age), the last post of each

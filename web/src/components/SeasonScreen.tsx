@@ -12,6 +12,7 @@ import {
   type PlayerFlag,
   type ProjectionSystem,
   type ProjectionSystemInfo,
+  type RecordedWeek,
   type RosterRow,
   type SeasonMatchup,
   type SeasonPlayer,
@@ -26,6 +27,7 @@ import {
   bestMove,
   catValue,
   changeLabel,
+  comebackText,
   dayLabel,
   DEFAULT_AVAILABLE_SORT,
   filterAvailable,
@@ -60,6 +62,8 @@ import {
   TEXT_KEYS,
   weekDates,
   weekLabel,
+  weekResult,
+  weekTone,
   type AvailableFilter,
   type AvailableSort,
   type AvailableSortKey,
@@ -560,6 +564,7 @@ function Recommended({ h, m, s, name, onPick }: { h: MoveHorizon; m: MovesPayloa
   const set = m.recommended[h];
   const info = m.horizons[h];
   const o = OTHER_HORIZON[h];
+  const returns = comebackText([set.comebacks?.week, set.comebacks?.three], name);
   return (
     <div className="block">
       <span className="k" title={`${info.base.toFixed(2)} expected categories without a move${info.from ? `, from ${dayLabel(info.from)}` : ""}`}>
@@ -611,6 +616,7 @@ function Recommended({ h, m, s, name, onPick }: { h: MoveHorizon; m: MovesPayloa
         </table>
       )}
       {set.held.length > 0 && <p className="muted small">It also moves {set.held.map((x) => `${name(x.player)} to ${x.slot}`).join(", ")}.</p>}
+      {returns && <p className="muted small">{returns}</p>}
     </div>
   );
 }
@@ -691,6 +697,7 @@ function MoveDrawer({
   const row = s.available.find((r) => r.player.yahoo_id === picked.add);
   const cats = s.settings.cats;
   const min = m?.search.min_gain ?? 0;
+  const returns = d ? comebackText([d.horizons.week.comebacks, d.horizons.three.comebacks], name) : null;
   return (
     <>
       <div className="block">
@@ -703,6 +710,11 @@ function MoveDrawer({
           {d && ` · plays from ${dayLabel(d.from)}${picked.drop != null && row?.availability === "W" ? `, when ${name(picked.drop)} leaves` : ""}`}
         </p>
         {d && d.held.length > 0 && <p className="muted small">The move also puts {d.held.map((x) => `${name(x.player)} in ${x.slot}`).join(", ")}.</p>}
+        {returns && (
+          <p className="muted small" title="the least valuable active player by per-game value on the return day">
+            {returns}
+          </p>
+        )}
       </div>
       {q.error && <p className="error">{q.error.message}</p>}
       {!d && !q.error && <p className="muted">Valuing the move…</p>}
@@ -947,6 +959,7 @@ function League({ s, now }: { s: SeasonView; now: number }) {
           </tbody>
         </table>
       </div>
+      <Weeks league={s.league} />
       {s.transactions.length > 0 && (
         <div className="block">
           <span className="k">Recent moves</span>
@@ -966,6 +979,55 @@ function League({ s, now }: { s: SeasonView; now: number }) {
       )}
     </>
   );
+}
+
+/** The weeks the recorder kept (#97): my opponent, result and place after each, latest first. */
+function Weeks({ league }: { league: string }) {
+  const q = useQuery({ queryKey: ["weeks", league], queryFn: () => api.weeks(league), refetchInterval: 300_000 });
+  const weeks = q.data?.weeks ?? [];
+  return (
+    <div className="block">
+      <span className="k">Weeks</span>
+      {q.error && <p className="error small">{q.error.message}</p>}
+      {!q.error && !weeks.length && <p className="dim small">No week recorded yet: each week is recorded the Monday after it ends.</p>}
+      {weeks.length > 0 && (
+        <table className="season-table">
+          <thead>
+            <tr>
+              <th className="num">Wk</th>
+              <th>Opponent</th>
+              <th>Result</th>
+              <th className="num" title="my place in the standings after the week">
+                #
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            {[...weeks].reverse().map((w) => (
+              <tr key={w.week} title={recordedTitle(w)}>
+                <td className="num dim">{w.week}</td>
+                <td>{w.opponent_name ?? (w.opponent != null ? `Team ${w.opponent}` : "")}</td>
+                <td className={weekTone(w.result)}>
+                  {weekResult(w.result)}
+                  {w.revised_at && <span className="dim"> *</span>}
+                </td>
+                <td className="num">{w.rank ?? ""}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </div>
+  );
+}
+
+function recordedTitle(w: RecordedWeek): string {
+  const parts = [`${weekDates(w)}${w.record ? `, ${w.record} after it` : ""}`];
+  if (w.games) parts.push(`${w.games.played} games played`);
+  if (w.revised_at) parts.push(`revised ${dayLabel(w.revised_at.slice(0, 10))} (a stat correction)`);
+  const missing = Object.entries(w.missing).map(([k, v]) => `${v} ${k}`);
+  if (missing.length) parts.push(`missing: ${missing.join(", ")}`);
+  return parts.join(" · ");
 }
 
 function Matchup({ m, mine, name }: { m: SeasonMatchup; mine: number | undefined; name: (id: number) => string }) {

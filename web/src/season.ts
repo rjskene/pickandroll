@@ -4,6 +4,7 @@
 import type {
   AvailableRow,
   Cat,
+  Comeback,
   FlagInputs,
   FlagLevel,
   FlagSignalKey,
@@ -22,6 +23,7 @@ import type {
   TradePayload,
   TradePlayer,
   TradeSide,
+  WeekResult,
   WeekStat,
 } from "./api";
 
@@ -343,6 +345,26 @@ export function dayLabel(iso: string | null | undefined): string {
   return new Date(`${iso}T12:00:00`).toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }
 
+/** The drops held players' returns force, each player's earliest over the horizons: "From Nov 2,
+ * Ayton goes when Brooks returns." (#97); null for none. */
+export function comebackText(lists: (Comeback[] | undefined)[], name: (id: number) => string): string | null {
+  const first = new Map<number, Comeback>();
+  for (const c of lists.flatMap((l) => l ?? [])) {
+    const seen = first.get(c.player);
+    if (!seen || c.from < seen.from) first.set(c.player, c);
+  }
+  if (!first.size) return null;
+  const parts = [...first.values()]
+    .sort((a, b) => a.from.localeCompare(b.from) || a.player - b.player)
+    .map((c) =>
+      c.drop === c.player
+        ? `from ${dayLabel(c.from)}, ${name(c.player)} goes on return`
+        : `from ${dayLabel(c.from)}, ${name(c.drop)} goes when ${name(c.player)} returns`,
+    );
+  const text = parts.join("; ");
+  return `${text[0].toUpperCase()}${text.slice(1)}.`;
+}
+
 /** A gain worth a move, a loss, or neither. */
 export function gainTone(g: number | null | undefined, min: number): "good" | "bad" | "" {
   if (g == null) return "";
@@ -489,3 +511,18 @@ export function movedGamesTitle(p: TradePlayer, h: "week" | "three", oldName: st
   return `${g.old.games} games (${g.old.started} started) for ${oldName}, then ${g.new.games} (${g.new.started} started) for ${newName}; ${g.before.games} games without the trade`;
 }
 
+/** "5-3-1 W" (categories won, lost, tied) or "810.5–790.3 W" (points): a recorded week's result. */
+export function weekResult(r: WeekResult | null | undefined): string {
+  if (!r) return "";
+  if (r.points != null) return `${round1(r.points)}–${round1(r.against ?? 0)} ${r.outcome}`;
+  return `${r.won ?? 0}-${r.lost ?? 0}-${r.tied ?? 0} ${r.outcome}`;
+}
+
+function round1(x: number): string {
+  return String(Math.round(x * 10) / 10);
+}
+
+/** A won week reads good, a lost one bad, a tie neither. */
+export function weekTone(r: WeekResult | null | undefined): "good" | "bad" | "" {
+  return r?.outcome === "W" ? "good" : r?.outcome === "L" ? "bad" : "";
+}

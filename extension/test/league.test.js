@@ -27,10 +27,10 @@ test("the reader knows the league's own pages and nothing else", () => {
   });
   assert.deepEqual(L.leaguePage(`${SITE}/nba/31822/matchup?week=1&mid1=3&mid2=8`), { league: "31822", kind: "matchup" });
   assert.deepEqual(L.leaguePage(`${SITE}/nba/31822/transactions`), { league: "31822", kind: "transactions" });
+  assert.deepEqual(L.leaguePage(`${SITE}/nba/31822/draftresults`), { league: "31822", kind: "draftresults" });
   // Not read: the draft client, a player's page, a team's sub-pages, another site, plain http.
   for (const url of [
     `${SITE}/draftclient/31822/3`,
-    `${SITE}/nba/31822/draftresults`,
     `${SITE}/nba/31822/3/team?stat1=S_PS7`,
     `${SITE}/nba/31822/3?date=2026-10-18`, // another day's lineup, not today's roster
     `${SITE}/nba/players/6013`,

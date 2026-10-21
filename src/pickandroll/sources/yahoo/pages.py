@@ -9,7 +9,12 @@ Each parser takes the page's HTML and returns a season part's data (``pickandrol
   waivers with their clear date, percent rostered and started (with the day's change in the
   ``R_O`` "Research" view), adds and drops; in the ``S_PS7`` view, Yahoo's projection for the
   next seven days (``parse_projection_page``);
-* a matchup page ``/nba/<league>/matchup?week=<w>&mid1=<a>&mid2=<b>``: both teams' totals;
+* a matchup page ``/nba/<league>/matchup?week=<w>&mid1=<a>&mid2=<b>``: both teams' totals and
+  games played (``mid1`` alone names the team's opponent that week);
+* the players page in a season view (``S_S_<season>``, totals) and the player search
+  ``/nba/<league>/playersearch?search=<name>``: every row's line with its owner
+  (``parse_stat_lines``);
+* the draft results ``/nba/<league>/draftresults``: every pick by round;
 * the transactions page ``/nba/<league>/transactions``;
 * Yahoo's buzz index ``/nba/buzzindex`` (every league's adds, drops and trades on a day, for
   the breakout flag): ``parse_buzz_page``.
@@ -33,6 +38,9 @@ _PLAYER_HREF = re.compile(r"/nba/players/(\d+)(?:/|$)")
 _TEAM_HREF = re.compile(r"/nba/(\d+)/(\d+)/?$")
 _MATCHUP_HREF = re.compile(r"matchup\?week=(\d+)&(?:amp;)?mid1=(\d+)&(?:amp;)?mid2=(\d+)")
 _WEEK = re.compile(r"Week (\d+) (?:stats may change|Matchups)")
+_GAMES = re.compile(r"(\d+)\s*/\s*(\d+)\s*Games Played\s*(\d+)\s*/\s*(\d+)")
+_ROUND = re.compile(r"^Round (\d+)$")
+_PICK = re.compile(r"^(\d+)\.$")
 _PCT = re.compile(r"(\d+(?:\.\d+)?)\s*%")
 _CHANGE = re.compile(r"\(\s*([+-]?)\s*(\d+(?:\.\d+)?)\s*\)")
 _NO_CHANGE = re.compile(r"\(\s*[–—-]\s*\)")
@@ -53,8 +61,9 @@ class PageError(ValueError):
 
 # --------------------------------------------------------------------------- page kinds
 def page_kind(url: str) -> tuple[str, dict[str, Any]]:
-    """What a league page URL is: ``league``, ``team`` (with ``team_id``), ``players``,
-    ``matchup`` (``week``, ``teams``) or ``transactions``; with the ``league`` id."""
+    """What a league page URL is: ``league``, ``team`` (with ``team_id``), ``players`` (with its
+    ``view`` and ``status`` filter), ``playersearch``, ``matchup`` (``week``, ``teams``),
+    ``draftresults`` or ``transactions``; with the ``league`` id."""
     parsed = urlparse(url)
     parts = [p for p in parsed.path.split("/") if p]
     if len(parts) < 2 or parts[0] != "nba" or not parts[1].isdigit():
@@ -67,13 +76,21 @@ def page_kind(url: str) -> tuple[str, dict[str, Any]]:
     if rest[0].isdigit() and len(rest) == 1:
         return "team", {"league": league, "team_id": int(rest[0])}
     if rest[0] == "players":
-        return "players", {"league": league, "view": (query.get("stat1") or [None])[0]}
+        return "players", {
+            "league": league,
+            "view": (query.get("stat1") or [None])[0],
+            "status": (query.get("status") or [None])[0],
+        }
+    if rest[0] == "playersearch":
+        return "playersearch", {"league": league, "view": (query.get("stat1") or [None])[0]}
     if rest[0] == "matchup":
         week = (query.get("week") or [None])[0]
         teams = [int(v[0]) for k in ("mid1", "mid2") if (v := query.get(k))]
         return "matchup", {"league": league, "week": int(week) if week else None, "teams": teams}
     if rest[0] == "transactions":
         return "transactions", {"league": league}
+    if rest[0] == "draftresults":
+        return "draftresults", {"league": league}
     raise PageError(f"not a league page this module reads: {url}")
 
 
@@ -336,16 +353,11 @@ def _stat_label(label: str) -> str:
     return re.sub(r"[\s*\ue000-\uf8ff]", "", label).upper()
 
 
-def parse_projection_page(html: str) -> dict[str, Any]:
-    """The players page in a projection view (``S_PS7``, Yahoo's next seven days): for every
-    player row, his projected games (``gp``) and his totals over them, in our stat names.
-    Whoever the rows are (available or taken), the projection is his."""
-    root = parse(html)
-    _require(root, "players")
-    found = _table_with(root, "Players", "GP*") or _table_with(root, "Players", "GP")
-    if found is None:
-        raise PageError("no projection table on the players page")
-    labels, rows = found
+def _stat_rows(
+    labels: list[str], rows: list[Node]
+) -> list[tuple[Player, list[Node], dict[str, float | None]]]:
+    """Every player row of a stat table: the player, the row's cells and his stats in our names
+    (``gp`` None when the table has no games column)."""
     cols = {_stat_label(label): i for i, label in enumerate(labels) if label}
     player_col = _column(labels, "Players")
     out = []
@@ -362,12 +374,114 @@ def parse_projection_page(html: str) -> dict[str, Any]:
             text = cs[i].text() if i is not None and i < len(cs) else ""
             values = text.split("/") if len(names) == 2 else [text]
             for name, value in zip(names, values, strict=False):
-                # "-": Yahoo projects him no games (a player out, or not with a team).
+                # "-": no games (Yahoo projects him none, or he has played none).
                 stats[name] = 0.0 if value.strip() in ("-", "–") else _float(value)
-        if stats.get("gp") is None:
-            continue
-        out.append({"player": player.to_dict(), **stats})
+        out.append((player, cs, stats))
+    return out
+
+
+def parse_projection_page(html: str) -> dict[str, Any]:
+    """The players page in a projection view (``S_PS7``, Yahoo's next seven days): for every
+    player row, his projected games (``gp``) and his totals over them, in our stat names.
+    Whoever the rows are (available or taken), the projection is his."""
+    root = parse(html)
+    _require(root, "players")
+    found = _table_with(root, "Players", "GP*") or _table_with(root, "Players", "GP")
+    if found is None:
+        raise PageError("no projection table on the players page")
+    return {
+        "rows": [
+            {"player": player.to_dict(), **stats}
+            for player, _, stats in _stat_rows(*found)
+            if stats.get("gp") is not None
+        ]
+    }
+
+
+def _minutes(text: str) -> float | None:
+    """``31:30`` -> 31.5."""
+    m = re.fullmatch(r"(\d+):(\d{2})", text.strip())
+    return int(m.group(1)) + int(m.group(2)) / 60 if m else None
+
+
+def parse_stat_lines(html: str) -> dict[str, Any]:
+    """The players page in a stat view (a season's totals, ``S_S_<season>``) or the player
+    search: every row's line in our stat names with his minutes a game, and who has him (the
+    fantasy team's id, or ``FA`` / ``W``). The search page prints no games column: its rows
+    carry ``gp`` None."""
+    root = parse(html)
+    _require(root, "players")
+    found = _table_with(root, "Players", "Roster Status", "PTS")
+    if found is None:
+        raise PageError("no stat table on the players page")
+    labels, rows = found
+    status_col, mpg_col = _column(labels, "Roster Status"), _column(labels, "MPG")
+    out = []
+    for player, cs, stats in _stat_rows(labels, rows):
+        owner: int | None = None
+        availability = None
+        if status_col is not None and status_col < len(cs):
+            cell = cs[status_col]
+            link = next(
+                (a for a in cell.find_all("a") if _TEAM_HREF.search(a.get("href") or "")), None
+            )
+            if link is not None:
+                owner = int(_TEAM_HREF.search(link.get("href") or "").group(2))  # type: ignore[union-attr]
+            elif cell.text() == "FA":
+                availability = "FA"
+            elif cell.text().startswith("W"):
+                availability = "W"
+        mpg = _minutes(cs[mpg_col].text()) if mpg_col is not None and mpg_col < len(cs) else None
+        out.append(
+            {
+                "player": player.to_dict(),
+                "team_id": owner,
+                "availability": availability,
+                "mpg": round(mpg, 2) if mpg is not None else None,
+                **stats,
+            }
+        )
     return {"rows": out}
+
+
+def parse_draft_results(html: str) -> dict[str, Any]:
+    """The draft results by round: every pick's round, its number in the round and overall, the
+    player and the fantasy team that made it, by name (the page links no team)."""
+    root = parse(html)
+    _require(root, "draft results")
+    picks = []
+    for table in root.find_all("table"):
+        labels, rows = table_rows(table)
+        m = _ROUND.match(labels[0]) if labels else None
+        if m is None:
+            continue
+        number = int(m.group(1))
+        for row in rows:
+            cs = cells(row)
+            if len(cs) < 3 or not (n := _PICK.match(cs[0].text())):
+                continue
+            link = cs[1].find("a", pred=lambda a: bool(_PLAYER_HREF.search(a.get("href") or "")))
+            if link is None:
+                continue
+            pid = int(_PLAYER_HREF.search(link.get("href") or "").group(1))  # type: ignore[union-attr]
+            team = positions = None
+            span = cs[1].find("span")
+            if span is not None and (tp := _TEAM_POS.match(span.text().strip("() "))):
+                team, positions = tp.group(1), [p for p in tp.group(2).split(",") if p]
+            picks.append(
+                {
+                    "round": number,
+                    "in_round": int(n.group(1)),
+                    "player": Player(pid, link.text(), team, tuple(positions or ())).to_dict(),
+                    "team_name": cs[2].get("title") or cs[2].text(),
+                }
+            )
+    if not picks:
+        raise PageError("no picks on the draft results page")
+    per_round = max(p["in_round"] for p in picks)
+    for p in picks:
+        p["pick"] = (p["round"] - 1) * per_round + p["in_round"]
+    return {"picks": sorted(picks, key=lambda p: p["pick"])}
 
 
 def parse_league_page(html: str) -> dict[str, Any]:
@@ -475,7 +589,52 @@ def parse_matchup_page(html: str, week: int | None = None) -> dict[str, Any]:
                 if a is not None and b is not None:
                     lines[ths[0].text() or "vs"] = [a, b]
     score = lines.get("vs")
-    return {"week": week, "teams": teams, "totals": totals, "score": score, "lines": lines}
+    out = {"week": week, "teams": teams, "totals": totals, "score": score, "lines": lines}
+    if games := _games_played(root, teams):
+        out["games"] = games
+    if not totals and (sums := _roster_sums(root, teams)):
+        out["roster_totals"] = sums
+    return out
+
+
+def _games_played(root: Node, teams: list[int]) -> dict[str, dict[str, int]]:
+    """Each team's games played and scheduled this week (``3/31 Games Played 2/32``: played over
+    played and remaining), in the page's order of the teams."""
+    box = root.find("div", pred=lambda n: n.get("id") == "remaining-games")
+    m = _GAMES.search(box.text()) if box is not None else None
+    if m is None:
+        return {}
+    a, b = teams
+    return {
+        str(a): {"played": int(m.group(1)), "scheduled": int(m.group(2))},
+        str(b): {"played": int(m.group(3)), "scheduled": int(m.group(4))},
+    }
+
+
+def _roster_sums(root: Node, teams: list[int]) -> dict[str, dict[str, float]]:
+    """Each team's week from the page's player table, summed by column: a points league's page
+    prints no team totals. A player dropped during the week is not on the table."""
+    table = root.find("table", pred=lambda n: (n.get("id") or "").startswith("statTable"))
+    if table is None:
+        return {}
+    labels, rows = table_rows(table)
+    players = [i for i, label in enumerate(labels) if label == "Player"]
+    if len(players) != 2:
+        return {}
+    split = players[1]
+    skip = {"Pos", "Player", ""}
+    sums: dict[str, dict[str, float]] = {str(t): {} for t in teams}
+    for row in rows:
+        cs = cells(row)
+        for i, label in enumerate(labels):
+            if label in skip or i >= len(cs):
+                continue
+            value = _float(cs[i].text())
+            if value is None:
+                continue
+            side = sums[str(teams[i >= split])]
+            side[label] = round(side.get(label, 0.0) + value, 4)
+    return sums
 
 
 def parse_transactions_page(html: str) -> dict[str, Any]:
