@@ -116,35 +116,67 @@ the trade neutral. The proposer (search the league for trades worth offering) st
 phase; the honest output of either is "no worse on our model", never "they will accept".
 Nothing sends a proposal or acts in Yahoo.
 
+## In the dashboard
+
+Everything here lives inside the pickandroll web app and API, not in scripts or a second app
+(user, 2026-10-21: "I need this to be inside pickandroll so it has UI to pick which league and
+then UI to evaluate available waiver options"). The flow:
+
+1. **Pick a league.** The landing page, which today lists live draft rooms, gains a Leagues
+   section: one row per league folder under `data/leagues/` with the league name, the week,
+   my record, this week's opponent and when the snapshot was last refreshed. Clicking a row
+   opens the season view at `?league=<id>`; a Refresh control pulls a new snapshot from the
+   public sources (the private league shows the extension's last post and asks for a page
+   visit when it is stale).
+2. **Evaluate the waiver options.** The season view keeps the draft view's shape (rail, board
+   column, cards drawer) with the board replaced by the Waivers table: every available player
+   (free agents and waivers, with the clear date), his games left this week and over three
+   weeks, his one-week and three-week gain if added in place of the best drop, that drop's name,
+   the price of the next-best drop, percent rostered and its change, injury status, and the
+   breakout flag with its evidence on hover. Filters for position, status, NBA team, games this
+   week and minimum percent rostered; sort by either gain. Selecting a row opens the move in
+   the drawer: the add/drop pair, the per-category change for this week against the named
+   opponent and over three weeks, and the alternatives with their prices.
+3. **Cards in the drawer.** Roster (my players with games this week, IL and slot use),
+   Matchup (both teams' projected totals and win odds per category for the week), Moves (the
+   recommended pairs for the week under the add limit), Trade (enter a proposal, read both
+   sides' change), and the Flag digest (every flagged player across the league's pool).
+
+Nothing on these screens acts in Yahoo. The add and drop stay the user's clicks on Yahoo's
+pages; an armed queue through the extension is a later, opt-in phase.
+
 ## Phases
 
 Each phase is one issue under the ADD/DROP tracker, built by fantasyEMISSARY in a worktree with
-a PR; the order is the dependency order.
+a PR, in dependency order; every phase ships its UI with its engine so the app is usable from
+phase 2 on.
 
-1. **Data layer.** `src/pickandroll/season/` (core, no I/O): a `Season` state with league
-   settings, week calendar, the twelve rosters, the free-agent and waiver pool with ownership,
-   injuries and the schedule. Loaders in `sources/yahoo/` for the three v3 endpoints and parsers
-   for the public team, players and transactions pages, with saved pages as fixtures;
-   `POST /seasons/{league}/snapshot` for the extension's reads of a private league and
-   `GET /seasons/{league}` for the dashboard. A `scripts/season.py snapshot <league>` command
-   that refreshes a league from the public sources and writes `data/leagues/<id>/season/`.
-2. **Weekly projection.** Load the weekly and the rest-of-season Basketball Monster exports;
-   ESPN schedule cache; per-player weekly totals for the rest of this week and the next three
-   weeks on the startable slots; the weekly category spread; per-category win odds against a
-   named opponent. Validate against the first weeks' real matchup totals as they arrive.
-3. **Move optimiser.** The LP above with both horizons, deviation prices for alternative adds
-   and drops, the weekly add limit, positions and IL. CLI first (`scripts/season.py moves
-   <league>`), then the API route.
+1. **Data layer and league picker.** `src/pickandroll/season/` (core, no I/O): a `Season` state
+   with league settings, week calendar, the twelve rosters, the free-agent and waiver pool with
+   ownership, injuries and the schedule. Loaders in `sources/yahoo/` for the three v3 endpoints
+   and parsers for the public team, players and transactions pages, with saved pages as
+   fixtures; `POST /seasons/{league}/snapshot` for the extension's reads of a private league,
+   `POST /seasons/{league}/refresh` for the public sources, `GET /seasons/{league}` for the
+   dashboard; snapshots written under `data/leagues/<id>/season/`. UI: the Leagues section on
+   the landing page and a season view showing the roster and the raw available-player table.
+2. **Weekly projection and the Waivers table.** Load the weekly and the rest-of-season
+   Basketball Monster exports and Yahoo's own weekly projection from the signed-in players
+   page; ESPN schedule cache; per-player weekly totals for the rest of this week and the next
+   three weeks on the startable slots; the weekly category spread; per-category win odds
+   against a named opponent. UI: the Waivers table with games, projections and ownership
+   columns, and the Matchup card.
+3. **Move optimiser and the Moves drawer.** The LP with both horizons, deviation prices for
+   alternative adds and drops, the weekly add limit, positions and IL;
+   `GET /seasons/{league}/moves`. UI: the gain columns and the move drawer with per-category
+   change and alternatives.
 4. **Breakout flag.** The four signals, their scores and levels, the buzz index and past-days
-   loaders, the daily digest.
-5. **Dashboard.** A Moves card (recommended add/drop pairs with their one-week and three-week
-   gain, drop candidates ranked by what losing them costs, the flag with its evidence), a
-   Matchup card (both teams' projected totals and win odds per category for the week, games
-   left per player) and a Trade card.
-6. **Trade evaluator.** The route and the card's scoring described above; the proposer later.
-7. **Weekly recorder.** Every Monday, for each league: standings, each team's category totals
+   loaders; the flag column, hover evidence and the Flag digest card; the daily digest alert.
+5. **Trade evaluator.** `POST /seasons/{league}/trade` scoring both rosters before and after;
+   the Trade card.
+6. **Weekly recorder.** Every Monday, for each league: standings, each team's category totals
    and games played, the matchup results, and season-to-date lines for the drafted players
-   (what #91's in-season test needs), appended under `data/leagues/<id>/season/weeks/`.
+   (what #91's in-season test needs), appended under `data/leagues/<id>/season/weeks/`, with a
+   small history view in the season rail.
 
 Automation (queueing a claim through the extension with the draft's arming rule) is a later,
 opt-in phase and is not in this batch.
