@@ -210,11 +210,20 @@ with their evidence, the watch level folded into one line per league.
 
 The trading counterpart (from #79), built on the same data layer and objective. Given a
 proposed trade (players on each side, between my roster and one opponent's, entered on the
-dashboard), score both rosters before and after on expected categories won over the next three
-weeks against the league's actual rosters and over the rest of the season, report the change
-for me and for the counterparty per category and in total, the slot feasibility of each
-resulting roster, the games behind each player over the horizon, and the margin that would make
-the trade neutral. The proposer (search the league for trades worth offering) stays a later
+dashboard), score both rosters before and after on expected categories won on the move model's
+two horizons (resolved 2026-10-21: the rest of this week, each side against its own opponent,
+and weeks 2–4 against the field with the other side's changed roster in it; a rest-of-season
+horizon needs the full-season schedule cache and is a follow-up), report the change for me and
+for the counterparty per category and in total, the slot feasibility of each resulting roster
+(an over-full side is not valid in Yahoo as entered and is shown with the least costly drop
+named; a freed spot on my side is shown with its best free-agent fill, apart from the trade's own
+change), the games and expected starts behind each traded player on both rosters, and the margin
+that would make the trade neutral: the scale on the received players' counting production that
+brings my three-week change to zero, read as "neutral if what I receive produces N percent of
+its projection". The trade takes effect after the league's reject window (Yahoo's
+`trade_reject_time`, two days when a league does not say; at once when nothing ratifies
+trades), assumed accepted today, so the given players play for their old side until then; the
+route answers 409 once the league's trade deadline has passed. The proposer (search the league for trades worth offering) stays a later
 phase; the honest output of either is "no worse on our model", never "they will accept".
 Nothing sends a proposal or acts in Yahoo.
 
