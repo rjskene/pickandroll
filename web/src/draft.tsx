@@ -30,67 +30,19 @@ import {
   type SolverStatus,
   type SurvivalEvent,
 } from "./api";
+import { DRAFT_CARDS, DRAWER_WIDTH, draftKeys, type DraftCardId, type DrawerState as Drawer, type Half } from "./keys";
+import { clampWidth, useDrawer, useHotkeys } from "./useKeys";
 
-export type CardId = "pick" | "cats" | "alts" | "plan" | "team" | "log" | "solver" | "sync";
-export type Half = "top" | "bottom";
-
-export const CARDS: { id: CardId; title: string; blurb: string }[] = [
-  { id: "pick", title: "Pick", blurb: "recommended pick" },
-  { id: "cats", title: "Categories", blurb: "odds of winning each category, and the league" },
-  { id: "alts", title: "Alternatives", blurb: "priced alternatives and what-if scenarios" },
-  { id: "plan", title: "Plan", blurb: "plan for the remaining picks" },
-  { id: "team", title: "Team", blurb: "score, expected profile and roster" },
-  { id: "log", title: "Log", blurb: "every pick so far" },
-  { id: "solver", title: "Solver", blurb: "timings, objective, settings" },
-  { id: "sync", title: "Yahoo sync", blurb: "the Yahoo draft room: sync, mode, aliases, fidelity" },
-];
+export type CardId = DraftCardId;
+export type { Half };
+export const CARDS = DRAFT_CARDS;
 export const cardIndex = (id: CardId): number => CARDS.findIndex((c) => c.id === id);
 
-interface Pair {
-  top: CardId | null;
-  bottom: CardId | null;
-}
-export interface DrawerState extends Pair {
-  collapsed: boolean;
-  /** Share of the drawer height given to the top card when both halves are open. */
-  split: number;
-  /** The last non-empty pair, restored by `]` after both halves were closed. */
-  last: Pair;
-  /** Drawer width in pixels, dragged at its left edge. */
-  width: number;
-}
+export type DrawerState = Drawer<CardId>;
 const DRAWER_KEY = "pickandroll.drawer";
-export const DRAWER_WIDTH = 420;
-const MIN_DRAWER_WIDTH = 320;
-/** Between the minimum and six tenths of the window, so the board always keeps room. */
-export function clampWidth(px: number): number {
-  const max = Math.max(MIN_DRAWER_WIDTH, Math.round(window.innerWidth * 0.6));
-  return Math.min(max, Math.max(MIN_DRAWER_WIDTH, Math.round(px)));
-}
+export { DRAWER_WIDTH, clampWidth };
 const DEFAULT_DRAWER: DrawerState = { top: "pick", bottom: "cats", collapsed: false, split: 0.5, last: { top: "pick", bottom: "cats" }, width: DRAWER_WIDTH };
 const isCard = (v: unknown): v is CardId => typeof v === "string" && CARDS.some((c) => c.id === v);
-
-function loadDrawer(): DrawerState {
-  try {
-    const raw = localStorage.getItem(DRAWER_KEY);
-    if (raw) {
-      const d = JSON.parse(raw) as Partial<DrawerState>;
-      const top = isCard(d.top) ? d.top : null;
-      const bottom = isCard(d.bottom) ? d.bottom : null;
-      return {
-        top,
-        bottom,
-        collapsed: !!d.collapsed,
-        split: typeof d.split === "number" ? Math.min(0.8, Math.max(0.2, d.split)) : 0.5,
-        width: clampWidth(typeof d.width === "number" ? d.width : DRAWER_WIDTH),
-        last: d.last && (isCard(d.last.top) || isCard(d.last.bottom)) ? { top: isCard(d.last.top) ? d.last.top : null, bottom: isCard(d.last.bottom) ? d.last.bottom : null } : { top, bottom },
-      };
-    }
-  } catch {
-    /* blocked storage: defaults */
-  }
-  return DEFAULT_DRAWER;
-}
 
 /** The board's "available only" filter, for every session: drafted players are listed by default. */
 const AVAILABLE_ONLY_KEY = "pickandroll.board.availableOnly";
@@ -234,54 +186,12 @@ export function DraftProvider({ session, solveEvents, survival, live, room, room
   const draftingTeam = teamOverride ?? onClockTeam;
 
   // ---------------------------------------------------------------- drawer
-  const [drawer, setDrawer] = useState<DrawerState>(loadDrawer);
-  useEffect(() => {
-    try {
-      localStorage.setItem(DRAWER_KEY, JSON.stringify(drawer));
-    } catch {
-      /* storage unavailable */
-    }
-  }, [drawer]);
-  const drawerOpen = !drawer.collapsed && (drawer.top !== null || drawer.bottom !== null);
-
-  const openCard = useCallback((id: CardId, half: Half = "top") => {
-    setDrawer((d) => {
-      if (d.collapsed) {
-        // Reopening: keep the pair if the card is already in it, else place the card.
-        if (d.top === id || d.bottom === id) return { ...d, collapsed: false };
-        const top = half === "top" ? id : d.top;
-        const bottom = half === "bottom" ? id : d.bottom;
-        return { ...d, top, bottom, collapsed: false, last: { top, bottom } };
-      }
-      let { top, bottom } = d;
-      if (top === id) top = null;
-      else if (bottom === id) bottom = null;
-      else if (half === "top") top = id;
-      else bottom = id;
-      const empty = top === null && bottom === null;
-      return { ...d, top, bottom, collapsed: empty, last: empty ? d.last : { top, bottom } };
-    });
-  }, []);
-  const closeCard = useCallback(
-    (id: CardId) => setDrawer((d) => (d.top === id || d.bottom === id ? applyClose(d, id) : d)),
-    [],
+  const { drawer, drawerOpen, openCard, closeCard, toggleDrawer, collapseDrawer, swapHalves, setSplit, setWidth } = useDrawer(
+    DRAWER_KEY,
+    isCard,
+    DEFAULT_DRAWER,
+    { top: "pick", bottom: null },
   );
-  const toggleDrawer = useCallback(() => {
-    setDrawer((d) => {
-      const open = !d.collapsed && (d.top !== null || d.bottom !== null);
-      if (open) return { ...d, collapsed: true };
-      if (d.top !== null || d.bottom !== null) return { ...d, collapsed: false };
-      const last = d.last.top !== null || d.last.bottom !== null ? d.last : { top: "pick" as CardId, bottom: null };
-      return { ...d, top: last.top, bottom: last.bottom, collapsed: false };
-    });
-  }, []);
-  const collapseDrawer = useCallback(() => setDrawer((d) => ({ ...d, collapsed: true })), []);
-  const swapHalves = useCallback(
-    () => setDrawer((d) => ({ ...d, top: d.bottom, bottom: d.top, last: { top: d.bottom, bottom: d.top } })),
-    [],
-  );
-  const setSplit = useCallback((ratio: number) => setDrawer((d) => ({ ...d, split: Math.min(0.8, Math.max(0.2, ratio)) })), []);
-  const setWidth = useCallback((px: number) => setDrawer((d) => ({ ...d, width: clampWidth(px) })), []);
 
   // ---------------------------------------------------------------- toast and sheet
   const [toast, setToast] = useState<Toast | null>(null);
@@ -547,130 +457,8 @@ export function DraftProvider({ session, solveEvents, survival, live, room, room
   return <DraftContext.Provider value={value}>{children}</DraftContext.Provider>;
 }
 
-function applyClose(d: DrawerState, id: CardId): DrawerState {
-  const top = d.top === id ? null : d.top;
-  const bottom = d.bottom === id ? null : d.bottom;
-  const empty = top === null && bottom === null;
-  return { ...d, top, bottom, collapsed: empty, last: empty ? d.last : { top, bottom } };
-}
-
-const SHIFTED_DIGITS: Record<string, number> = { "!": 1, "@": 2, "#": 3, "$": 4, "%": 5, "^": 6, "&": 7, "*": 8 };
-const TEXT_INPUTS = new Set(["text", "search", "number", "email", "password", "url", "tel"]);
-
-/** 1 to 8 from the physical key when the browser reports it, else from the typed character. */
-function cardDigit(e: KeyboardEvent): number | null {
-  const physical = /^Digit([1-8])$/.exec(e.code);
-  if (physical) return Number(physical[1]);
-  if (/^[1-8]$/.test(e.key)) return Number(e.key);
-  return SHIFTED_DIGITS[e.key] ?? null;
-}
-
-/** Global keyboard shortcuts. Letters are ignored while a field has focus; Esc leaves the field first. */
+/** Global keyboard shortcuts (keys.ts, ``draftKeys``). */
 export function Hotkeys() {
-  const draft = useDraft();
-  const latest = useRef(draft);
-  latest.current = draft;
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      const d = latest.current;
-      const target = e.target as HTMLElement | null;
-      const tag = target?.tagName ?? "";
-      const isControl = tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA" || tag === "BUTTON" || tag === "A";
-      // Only text entry swallows letters: a focused checkbox, slider or select must not block shortcuts.
-      const typing =
-        tag === "TEXTAREA" ||
-        !!target?.isContentEditable ||
-        (tag === "INPUT" && TEXT_INPUTS.has((target as HTMLInputElement).type));
-      if (e.key === "Escape") {
-        if (d.sheetOpen) d.setSheetOpen(false);
-        else if (typing || tag === "SELECT") target?.blur();
-        else {
-          if (isControl) target?.blur();
-          d.collapseDrawer();
-        }
-        e.preventDefault();
-        return;
-      }
-      if (typing || e.metaKey || e.ctrlKey || e.altKey) return;
-      if (e.key === "?") {
-        d.setSheetOpen(!d.sheetOpen);
-        e.preventDefault();
-        return;
-      }
-      // Any shortcut used while the key sheet is open also closes the sheet, so keys can be tried from it.
-      const closeSheet = () => {
-        if (d.sheetOpen) d.setSheetOpen(false);
-      };
-      const digit = cardDigit(e);
-      if (digit) {
-        d.openCard(CARDS[digit - 1].id, e.shiftKey ? "bottom" : "top");
-        closeSheet();
-        e.preventDefault();
-        return;
-      }
-      if (tag === "SELECT") return; // letters change the selection natively
-      switch (e.key) {
-        case "]":
-          d.toggleDrawer();
-          break;
-        case "x":
-          d.swapHalves();
-          break;
-        case "/":
-          d.searchRef.current?.focus();
-          d.searchRef.current?.select();
-          break;
-        case "ArrowDown":
-        case "j":
-          d.moveHighlight(1);
-          break;
-        case "ArrowUp":
-        case "k":
-          d.moveHighlight(-1);
-          break;
-        case "Enter":
-          if (isControl || !d.highlight) return; // let the focused control act
-          d.draftPlayer(d.highlight, { via: "key" });
-          break;
-        case "d": {
-          const top = d.result?.candidates[0];
-          if (!top || d.busy || d.done) return; // never draft from a stale answer
-          d.draftPlayer(top.player, { via: "key" });
-          break;
-        }
-        case "z":
-          d.undo();
-          break;
-        case "h":
-          d.toggleAvailableOnly();
-          break;
-        case "r":
-          d.solve();
-          break;
-        case "s":
-          if (d.session.on_the_clock) d.showToast({ message: "You are on the clock: make your pick first" });
-          else d.simulate({ until_my_pick: true });
-          break;
-        case "S":
-          d.simulate({ count: 1, until_my_pick: false });
-          break;
-        case "m":
-          if (d.mock) {
-            d.setMock(false);
-            d.showToast({ message: "Mock draft stopped" });
-          } else if (!d.live) {
-            d.setMock(true);
-            d.showToast({ message: "Mock draft running: other teams simulated, the solver drafts for you" });
-          } else d.setMock(true); // shows the live-draft toast
-          break;
-        default:
-          return;
-      }
-      closeSheet();
-      e.preventDefault();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, []);
+  useHotkeys(draftKeys(useDraft()));
   return null;
 }

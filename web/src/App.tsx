@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, ownerOf, teamLabel, type PickRow, type RoomEventEntry, type RoomStatus, type SolveEvent, type SurvivalEvent } from "./api";
-import { DraftProvider, Hotkeys, useDraft } from "./draft";
+import { CARDS, DraftProvider, Hotkeys, useDraft } from "./draft";
+import { DRAFT_SHEET } from "./keys";
 import Announcer, { type Announcement } from "./components/Announcer";
 import Board from "./components/Board";
 import Drawer from "./components/Drawer";
@@ -13,7 +14,7 @@ import SeasonScreen from "./components/SeasonScreen";
 import Seasons from "./components/Seasons";
 import SessionSetup from "./components/SessionSetup";
 import { RoomFeed, SyncButton } from "./components/YahooSync";
-import { Close } from "./components/icons";
+import { CARD_ICONS, Close } from "./components/icons";
 import { adpIsStandIn, adpLabel, blendLabel, rankLabel, survivalDetail, turnFlag } from "./format";
 
 function useTicker(resetKey: number): number {
@@ -139,7 +140,15 @@ function DraftScreen({ yahoo, room, onSwitch, announce, onShown }: ScreenProps) 
           <Board />
         </div>
         <Drawer />
-        <Rail />
+        <Rail
+          cards={CARDS}
+          icons={CARD_ICONS}
+          on={(id) => !d.drawer.collapsed && (d.drawer.top === id || d.drawer.bottom === id)}
+          onOpen={d.openCard}
+          onSheet={() => d.setSheetOpen(true)}
+          open={d.drawerOpen}
+          onToggle={d.toggleDrawer}
+        />
       </div>
       <footer className="footer">
         <span>
@@ -179,7 +188,7 @@ function DraftScreen({ yahoo, room, onSwitch, announce, onShown }: ScreenProps) 
       </footer>
       <Toast />
       <Announcer queue={announce} onShown={onShown} />
-      <KeySheet />
+      <KeySheet sheet={DRAFT_SHEET} open={d.sheetOpen} onClose={() => d.setSheetOpen(false)} />
       <Hotkeys />
     </main>
   );

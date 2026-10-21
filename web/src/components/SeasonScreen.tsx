@@ -1,4 +1,4 @@
-import { useMemo, useState, type CSSProperties, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { useMutation, useQuery, useQueryClient, type UseQueryResult } from "@tanstack/react-query";
 import {
   api,
@@ -70,13 +70,31 @@ import {
   type Horizon,
   type PositionFilter,
 } from "../season";
-import { DRAWER_WIDTH } from "../draft";
+import { DRAWER_WIDTH, isShown, SEASON_CARDS, SEASON_SHEET, seasonKeys, stepHighlight, type DrawerState, type Half, type SeasonCardId } from "../keys";
+import { useDrawer, useHotkeys } from "../useKeys";
+import Halves, { type Face } from "./Halves";
+import KeySheet from "./KeySheet";
+import Rail from "./Rail";
+import { SEASON_ICONS } from "./icons";
 import Trade from "./Trade";
 import { useNow } from "./YahooSync";
 
-/** A league in season (#92), in the draft view's shape: the available players where the board
- * stands, the moves, my roster and the league's week in the drawer. Yahoo's own columns, the
- * weekly projection's (#93) and the moves' gains (#94). */
+const PANEL_KEY = "pickandroll.season.drawer";
+/** Every card but the Waivers board can sit in a half of the panel. */
+const isPanelCard = (v: unknown): v is SeasonCardId => typeof v === "string" && v !== "waivers" && SEASON_CARDS.some((c) => c.id === v);
+const DEFAULT_PANEL: DrawerState<SeasonCardId> = {
+  top: "moves",
+  bottom: "flags",
+  collapsed: false,
+  split: 0.6,
+  last: { top: "moves", bottom: "flags" },
+  width: DRAWER_WIDTH,
+};
+
+/** A league in season (#92), in the draft view's shape (#109): the available players where the
+ * board stands, a two-half panel of cards (the moves, a trade, the flags, my roster and the
+ * league's week) and the draft's rail and keys. Yahoo's own columns, the weekly projection's
+ * (#93) and the moves' gains (#94). */
 export default function SeasonScreen({ league, onBack }: { league: string; onBack: () => void }) {
   const queryClient = useQueryClient();
   const season = useQuery({
@@ -97,11 +115,32 @@ export default function SeasonScreen({ league, onBack }: { league: string; onBac
   const [chosen, setSystem] = useState<ProjectionSystem | null>(null);
   const [horizon, setHorizon] = useState<Horizon>("next3");
   const [picked, setPicked] = useState<MoveKey | null>(null);
-  // The drawer's first card: the recommended moves, or the trade evaluator (#96).
-  const [panel, setPanel] = useState<"moves" | "trade">("moves");
+  // The panel's two halves, the rail and the keys (#109). Moves and Trade (#96) take each
+  // other's half by t and m; a picked move shows in the Moves card.
+  const panel = useDrawer(PANEL_KEY, isPanelCard, DEFAULT_PANEL, DEFAULT_PANEL.last);
+  const [sheetOpen, setSheetOpen] = useState(false);
+  const [highlight, setHighlight] = useState<number | null>(null);
+  const visibleRows = useRef<number[]>([]);
+  const setVisibleRows = useCallback((ids: number[]) => {
+    visibleRows.current = ids;
+  }, []);
+  const moveHighlight = useCallback((delta: number) => setHighlight((h) => stepHighlight(visibleRows.current, h, delta)), []);
+  const searchRef = useRef<HTMLInputElement | null>(null);
+  const boardRef = useRef<HTMLDivElement | null>(null);
+  const { replaceCard } = panel;
+  const show = (card: "moves" | "trade") => replaceCard(card === "trade" ? "moves" : "trade", card);
   const pick = (m: MoveKey | null) => {
     setPicked(m);
-    if (m) setPanel("moves");
+    if (m) {
+      setHighlight(m.add);
+      replaceCard("trade", "moves");
+    }
+  };
+  // 1 Waivers gives the board the full width, and brings the panel back.
+  const openCard = (id: SeasonCardId, half: Half) => {
+    if (id !== "waivers") return panel.openCard(id, half);
+    panel.toggleDrawer();
+    boardRef.current?.scrollIntoView({ block: "nearest" });
   };
   const system = chosen ?? s?.week_projection.default ?? "bbm";
   const moves = useQuery({
@@ -114,6 +153,71 @@ export default function SeasonScreen({ league, onBack }: { league: string; onBac
     refetchInterval: 60_000,
     retry: false,
   });
+  const mh = MOVE_HORIZON[horizon];
+  const openMove = (id: number) => pick({ add: id, drop: openingDrop(moves.data?.candidates[String(id)], mh) });
+  useHotkeys(
+    seasonKeys({
+      openCard,
+      toggleDrawer: panel.toggleDrawer,
+      swapHalves: panel.swapHalves,
+      collapse: panel.collapseDrawer,
+      closeMove: () => {
+        if (!picked || !isShown(panel.drawer, "moves")) return false;
+        setPicked(null);
+        return true;
+      },
+      show,
+      focusSearch: () => {
+        searchRef.current?.focus();
+        searchRef.current?.select();
+      },
+      moveHighlight,
+      highlight,
+      openMove,
+      refresh: s?.public && !running ? () => refresh.mutate() : null,
+      sheetOpen,
+      setSheetOpen,
+    }),
+  );
+  const face = (id: SeasonCardId): Face => {
+    if (!s) return { body: null };
+    switch (id) {
+      case "moves":
+        return {
+          title: picked ? "MOVE" : "MOVES",
+          note: moves.data?.system.label,
+          action: picked ? (
+            <button className="link" onClick={() => setPicked(null)} title="Back to the recommended moves (Esc)">
+              recommended
+            </button>
+          ) : (
+            <button className="link" onClick={() => show("trade")} title="Evaluate a trade with another team: both sides before and after (t)">
+              trade
+            </button>
+          ),
+          body: picked ? <MoveDrawer league={league} s={s} system={system} m={moves.data} picked={picked} onPick={pick} /> : <Moves q={moves} s={s} onPick={pick} />,
+        };
+      case "trade":
+        return {
+          note: moves.data?.system.label,
+          action: (
+            <button className="link" onClick={() => show("moves")} title="Back to the recommended moves (m)">
+              moves
+            </button>
+          ),
+          // Kept mounted while off show (Halves' keep), so a proposal survives a look at the moves.
+          body: <Trade league={league} s={s} system={system} />,
+        };
+      case "flags":
+        return { note: flagCount(s), body: <Flags s={s} m={moves.data} mh={mh} now={now} onPick={pick} /> };
+      case "roster":
+        return { note: s.my_team?.name, body: <Roster rows={s.roster} w={s.week_projection} /> };
+      case "league":
+        return { note: s.current_week ? `week ${s.current_week.number}` : undefined, body: <League s={s} now={now} /> };
+      default:
+        return { body: null };
+    }
+  };
   return (
     <main className="shell">
       <header className="topbar season-top">
@@ -142,7 +246,7 @@ export default function SeasonScreen({ league, onBack }: { league: string; onBac
           </span>
         )}
         {s?.public && (
-          <button className="small" disabled={running} onClick={() => refresh.mutate()} title="Read the league's public Yahoo pages again (about 20 s)">
+          <button className="small" disabled={running} onClick={() => refresh.mutate()} title="Read the league's public Yahoo pages again, about 20 s (r)">
             {running ? "Refreshing…" : "Refresh"}
           </button>
         )}
@@ -161,74 +265,41 @@ export default function SeasonScreen({ league, onBack }: { league: string; onBac
       {s?.has_snapshot && (
         <>
           <div className="main season">
-            <div className="board-col">
-              <Waivers s={s} system={system} setSystem={setSystem} horizon={horizon} setHorizon={setHorizon} moves={moves} picked={picked} onPick={pick} />
+            {/* One box on a wide window (display: contents), the scrolling column beside the rail on a narrow one. */}
+            <div className="season-body">
+              <div className="board-col" ref={boardRef}>
+                <Waivers
+                  s={s}
+                  system={system}
+                  setSystem={setSystem}
+                  horizon={horizon}
+                  setHorizon={setHorizon}
+                  moves={moves}
+                  picked={picked}
+                  onPick={pick}
+                  highlight={highlight}
+                  setVisibleRows={setVisibleRows}
+                  searchRef={searchRef}
+                />
+              </div>
+              <Halves d={panel} cards={SEASON_CARDS} face={face} keep={["trade"]} />
             </div>
-            <aside className="drawer" style={{ width: DRAWER_WIDTH }}>
-              <Card
-                title={picked ? "MOVE" : panel === "trade" ? "TRADE" : "MOVES"}
-                note={moves.data?.system.label}
-                action={
-                  picked ? (
-                    <button className="link" onClick={() => setPicked(null)} title="Back to the recommended moves">
-                      recommended
-                    </button>
-                  ) : panel === "trade" ? (
-                    <button className="link" onClick={() => setPanel("moves")} title="Back to the recommended moves">
-                      moves
-                    </button>
-                  ) : (
-                    <button className="link" onClick={() => setPanel("trade")} title="Evaluate a trade with another team: both sides before and after">
-                      trade
-                    </button>
-                  )
-                }
-                // A trade's two rosters and its result take more room than the moves.
-                style={{ flex: !picked && panel === "trade" ? "18 1 0%" : "10 1 0%" }}
-              >
-                {picked ? (
-                  <MoveDrawer league={league} s={s} system={system} m={moves.data} picked={picked} onPick={pick} />
-                ) : (
-                  panel === "moves" && <Moves q={moves} s={s} onPick={pick} />
-                )}
-                {/* Kept mounted so a proposal survives a look at the moves. */}
-                <div style={{ display: !picked && panel === "trade" ? "contents" : "none" }}>
-                  <Trade league={league} s={s} system={system} />
-                </div>
-              </Card>
-              <Card title="FLAGS" note={flagCount(s)} style={{ flex: "7 1 0%" }}>
-                <Flags s={s} m={moves.data} mh={MOVE_HORIZON[horizon]} now={now} onPick={pick} />
-              </Card>
-              <Card title="MY ROSTER" note={s.my_team?.name} style={{ flex: "8 1 0%" }}>
-                <Roster rows={s.roster} w={s.week_projection} />
-              </Card>
-              <Card title="THE LEAGUE" note={s.current_week ? `week ${s.current_week.number}` : undefined} style={{ flex: "7 1 0%" }}>
-                <League s={s} now={now} />
-              </Card>
-            </aside>
+            <Rail
+              cards={SEASON_CARDS}
+              icons={SEASON_ICONS}
+              on={(id) => (id === "waivers" ? !panel.drawerOpen : isShown(panel.drawer, id))}
+              onOpen={openCard}
+              onSheet={() => setSheetOpen(true)}
+              open={panel.drawerOpen}
+              onToggle={panel.toggleDrawer}
+              noun="panel"
+            />
           </div>
           <SeasonFooter s={s} now={now} />
         </>
       )}
+      <KeySheet sheet={SEASON_SHEET} open={sheetOpen} onClose={() => setSheetOpen(false)} />
     </main>
-  );
-}
-
-function Card({ title, note, action, style, children }: { title: string; note?: string; action?: ReactNode; style: CSSProperties; children: ReactNode }) {
-  return (
-    <section className="card" style={style} aria-label={title}>
-      <header>
-        <h2>{title}</h2>
-        {note && <span className="dim">{note}</span>}
-        {action && (
-          <>
-            <span className="grow" />
-            {action}
-          </>
-        )}
-      </header>
-      <div className="body">{children}</div>
-    </section>
   );
 }
 
@@ -307,6 +378,9 @@ function Waivers({
   moves,
   picked,
   onPick,
+  highlight,
+  setVisibleRows,
+  searchRef,
 }: {
   s: SeasonView;
   system: ProjectionSystem;
@@ -316,6 +390,10 @@ function Waivers({
   moves: UseQueryResult<MovesPayload>;
   picked: MoveKey | null;
   onPick: (m: MoveKey) => void;
+  /** The keyboard's row (j, k, Enter). */
+  highlight: number | null;
+  setVisibleRows: (ids: number[]) => void;
+  searchRef: RefObject<HTMLInputElement | null>;
 }) {
   const w = s.week_projection;
   const cats = s.settings.cats;
@@ -356,6 +434,12 @@ function Waivers({
     };
     return sortAvailable(filterAvailable(rows, filter, (r) => rowGames(w, r, "week")), sort, extra);
   }, [rows, filter, sort, totals, w, cats, m, mh, s]);
+  useEffect(() => {
+    setVisibleRows(shown.map((r) => r.player.yahoo_id));
+  }, [shown, setVisibleRows]);
+  useEffect(() => {
+    if (highlight !== null) document.querySelector(".season-board tr.hl")?.scrollIntoView({ block: "nearest" });
+  }, [highlight]);
   const teams = useMemo(() => [...new Set(rows.map((r) => r.player.nba_team).filter((t): t is string => Boolean(t)))].sort(), [rows]);
   const set = (patch: Partial<AvailableFilter>) => setFilter((f) => ({ ...f, ...patch }));
   const click = (key: AvailableSortKey) =>
@@ -385,7 +469,7 @@ function Waivers({
     <section className="board season-board" aria-label="Waivers">
       <header className="board-head">
         <h2>WAIVERS</h2>
-        <input type="search" placeholder="Player or team" value={filter.search} onChange={(e) => set({ search: e.target.value })} aria-label="Search players" />
+        <input ref={searchRef} type="search" placeholder="Player or team  /" value={filter.search} onChange={(e) => set({ search: e.target.value })} aria-label="Search players" />
         <select value={filter.position} onChange={(e) => set({ position: e.target.value as PositionFilter })} aria-label="Position">
           <option value="">all positions</option>
           {POSITIONS.map((p) => (
@@ -471,7 +555,11 @@ function Waivers({
               const best = bestMove(cand, mh);
               const f = flagOf(s, id);
               return (
-                <tr key={id} className={picked?.add === id ? "hl" : undefined} onClick={() => onPick({ add: id, drop: openingDrop(cand, mh) })}>
+                <tr
+                  key={id}
+                  className={[id === highlight ? "hl" : "", picked?.add === id ? "picked" : ""].filter(Boolean).join(" ") || undefined}
+                  onClick={() => onPick({ add: id, drop: openingDrop(cand, mh) })}
+                >
                   <td className="strong">
                     {r.player.name} <Status player={r.player} />
                   </td>
@@ -1153,6 +1241,9 @@ function SeasonFooter({ s, now }: { s: SeasonView; now: number }) {
       <span title="the NBA schedule behind the games-left counts (ESPN)">{s.schedule.last ? `schedule to ${s.schedule.last}` : "no schedule"}</span>
       {waivers.length > 0 && <span>{waivers.join(" · ")}</span>}
       <span className="grow" />
+      <span>
+        <kbd>?</kbd> keys · <kbd>1</kbd>–<kbd>6</kbd> cards · <kbd>⇧</kbd>+digit bottom half · <kbd>]</kbd> panel
+      </span>
       <span title={Object.entries(s.fetched).map(([k, f]) => `${k}: ${f.at} (${f.source})`).join("\n")}>Snapshot {ageLabel(s.updated_at, now)}</span>
       <span>League {s.league}</span>
     </footer>
