@@ -733,7 +733,143 @@ export interface LeagueResolved {
   rounds: number | null;
 }
 
+// ---------------------------------------------------------------- season (#92)
+/** A refresh of a league's public sources: running in the background, done, failed, or refused
+ * for a private league (its pages come from the extension). */
+export interface SeasonRefresh {
+  status: "running" | "done" | "failed" | "private";
+  step: string;
+  done: number;
+  total: number;
+  started_at: string;
+  finished_at: string | null;
+  error: string | null;
+}
+
+export interface SeasonTeamRef {
+  team_id: number;
+  name: string;
+  record: string | null;
+  rank: number | null;
+  points_for?: number | null;
+}
+
+/** One league folder's season for the landing page's Leagues section. */
+export interface SeasonSummary {
+  league: string;
+  name: string | null;
+  scoring: "points" | "categories";
+  num_teams: number;
+  /** False for a private league: no public pages, the extension posts them. */
+  public: boolean;
+  week: number | null;
+  end_week: number | null;
+  my_team: SeasonTeamRef | null;
+  opponent: SeasonTeamRef | null;
+  has_snapshot: boolean;
+  /** When the newest part of the snapshot was read. */
+  updated_at: string | null;
+  sources: ("public" | "extension")[];
+  refresh: SeasonRefresh | null;
+  error?: string;
+}
+
+export interface SeasonPlayer {
+  yahoo_id: number;
+  name: string;
+  nba_team: string | null;
+  positions: string[];
+  /** Yahoo's injury or availability code: O, Q, D, P, GTD, NA, INJ, SUSP... */
+  status: string | null;
+  status_full: string | null;
+  note: string | null;
+}
+
+export interface SeasonWeek {
+  number: number;
+  start: string;
+  end: string;
+}
+
+export interface RosterRow {
+  slot: string;
+  player: SeasonPlayer;
+  /** Games the player's NBA team plays in the rest of this week; null without the schedule. */
+  games_left: number | null;
+}
+
+export interface AvailableRow {
+  player: SeasonPlayer;
+  availability: "FA" | "W";
+  clears: string | null;
+  pct_rostered: number | null;
+  pct_rostered_change: number | null;
+  pct_started: number | null;
+  pct_started_change: number | null;
+  adds: number | null;
+  drops: number | null;
+  seen_at: string | null;
+  games_left: number | null;
+}
+
+export interface SeasonTeam {
+  team_id: number;
+  name: string;
+  rank: number | null;
+  wins: number | null;
+  losses: number | null;
+  ties: number | null;
+  points_for: number | null;
+  waiver_priority: number | null;
+  faab: number | null;
+  moves: number | null;
+  record: string | null;
+}
+
+export interface SeasonMatchup {
+  week: number;
+  teams: [number, number];
+  /** Each team's week totals by Yahoo's column label (FG%, PTS...), keyed by team id. */
+  totals: Record<string, Record<string, string>>;
+  score: [number, number] | null;
+  lines: Record<string, [number, number]>;
+}
+
+export interface SeasonTransaction {
+  kind: "add" | "drop" | "trade";
+  player: SeasonPlayer;
+  team_id: number | null;
+  team_name: string | null;
+  detail: string | null;
+  when: string | null;
+  group: number;
+}
+
+/** The season view: the summary plus the week, standings, rosters, matchup and the pool. */
+export interface SeasonView extends SeasonSummary {
+  settings: { max_weekly_adds: number | null; waiver_rule: string | null; uses_faab: boolean | null; end_date: string | null };
+  today: string;
+  current_week: SeasonWeek | null;
+  weeks_ahead: SeasonWeek[];
+  calendar_estimated: boolean | null;
+  teams: SeasonTeam[];
+  roster: RosterRow[];
+  rosters: Record<string, RosterRow[]>;
+  matchups: SeasonMatchup[];
+  matchup: SeasonMatchup | null;
+  available: AvailableRow[];
+  transactions: SeasonTransaction[];
+  fetched: Record<string, { at: string; source: "public" | "extension" }>;
+  schedule: { days: number; first: string | null; last: string | null };
+}
+
 export const api = {
+  /** Every league folder's season (#92), for the landing page. */
+  seasons: () => request<SeasonSummary[]>("/seasons"),
+  season: (league: string) => request<SeasonView>(`/seasons/${encodeURIComponent(league)}`),
+  /** Read the league's public sources again, in the background; 409 for a private league. */
+  refreshSeason: (league: string) =>
+    request<{ refresh: SeasonRefresh; season: SeasonSummary }>(`/seasons/${encodeURIComponent(league)}/refresh`, { method: "POST" }),
   leagues: () => request<LeagueSummary[]>("/leagues"),
   /** The user's own click: arm (or disarm) a league's draft before it starts. */
   armLeague: (league: string, armed: boolean) =>

@@ -257,7 +257,8 @@ class SeasonService:
                 for part in received:
                     parts = merge_part(parts, part)
                 save(self.data_dir, league, parts, received, PUBLIC)
-            job.status, job.step = "done", "done"
+            # The total counted every players page; the pool may have ended sooner.
+            job.status, job.step, job.total = "done", "done", job.done
         except public.PrivateLeague as exc:
             job.status, job.error = "private", str(exc)
         except (public.FetchError, pages.PageError) as exc:

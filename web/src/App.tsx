@@ -9,6 +9,8 @@ import KeySheet from "./components/KeySheet";
 import Leagues from "./components/Leagues";
 import LiveDrafts from "./components/LiveDrafts";
 import Rail from "./components/Rail";
+import SeasonScreen from "./components/SeasonScreen";
+import Seasons from "./components/Seasons";
 import SessionSetup from "./components/SessionSetup";
 import { RoomFeed, SyncButton } from "./components/YahooSync";
 import { Close } from "./components/icons";
@@ -186,6 +188,8 @@ function DraftScreen({ yahoo, room, onSwitch, announce, onShown }: ScreenProps) 
 export default function App() {
   const queryClient = useQueryClient();
   const [sessionId, setSessionId] = useState<string | null>(() => new URLSearchParams(location.search).get("session"));
+  // The league whose season view is open (#92); a draft session takes the page over it.
+  const [leagueId, setLeagueId] = useState<string | null>(() => new URLSearchParams(location.search).get("league"));
   const [solveEvents, setSolveEvents] = useState<SolveEvent[]>([]);
   const [survival, setSurvival] = useState<SurvivalEvent | null>(null);
   // The extension's latest events from the room, oldest first, since this page opened.
@@ -216,7 +220,7 @@ export default function App() {
 
   // A live room opens straight into its draft the first time the page loads without a session
   // (#74); "switch draft" comes back to the landing page and stays there.
-  const autoOpened = useRef(!!sessionId);
+  const autoOpened = useRef(!!sessionId || !!leagueId);
   const rooms = useQuery({ queryKey: ["rooms"], queryFn: api.rooms, enabled: !sessionId, refetchInterval: 5000 });
   useEffect(() => {
     if (autoOpened.current || sessionId || !rooms.data) return;
@@ -229,8 +233,10 @@ export default function App() {
     const url = new URL(location.href);
     if (sessionId) url.searchParams.set("session", sessionId);
     else url.searchParams.delete("session");
+    if (leagueId && !sessionId) url.searchParams.set("league", leagueId);
+    else url.searchParams.delete("league");
     history.replaceState(null, "", url);
-  }, [sessionId]);
+  }, [sessionId, leagueId]);
 
   // Live feed: any pick (manual, simulated or from Yahoo) invalidates the board, picks and
   // session; a finished background solve invalidates the recommendation and the score. A Yahoo
@@ -293,6 +299,7 @@ export default function App() {
     return () => source.close();
   }, [sessionId, queryClient]);
 
+  if (!sessionId && leagueId) return <SeasonScreen league={leagueId} onBack={() => setLeagueId(null)} />;
   if (!sessionId || !session.data) {
     return (
       <main className="shell">
@@ -304,6 +311,7 @@ export default function App() {
         {session.error && <p className="error" style={{ padding: "0 24px" }}>{session.error.message}</p>}
         <div className="landing">
           <div className="landing-live">
+            <Seasons onOpen={setLeagueId} />
             <LiveDrafts onOpen={setSessionId} />
             <Leagues />
           </div>
