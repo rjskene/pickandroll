@@ -260,6 +260,13 @@ then UI to evaluate available waiver options"). The flow:
    Matchup (both teams' projected totals and win odds per category for the week), Moves (the
    recommended pairs for the week under the add limit), Trade (enter a proposal, read both
    sides' change), and the Flag digest (every flagged player across the league's pool).
+   Built in #109 on the draft's rail and keys: the rail numbers the cards 1 Waivers, 2 Moves,
+   3 Trade, 4 Flags, 5 My roster, 6 The league; a digit opens a card in the drawer's top half
+   and shift with a digit in its bottom half (Moves over Flags by default, the split
+   draggable), and 1 gives the Waivers board the full width. `]` collapses the drawer to the
+   rail, `/` jumps to the Waivers search, `j`/`k` move a highlight through its rows and Enter
+   opens that player's move, `t` and `m` swap Trade and Moves, `r` refreshes a public league,
+   `?` lists the keys, and Esc leaves a field, then closes the move, then collapses the drawer.
 
 Nothing on these screens acts in Yahoo. The add and drop stay the user's clicks on Yahoo's
 pages; an armed queue through the extension is a later, opt-in phase.

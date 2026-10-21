@@ -443,10 +443,15 @@ tr.tie td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
 .trade-side label.held .name { color: var(--muted); }
 .trade-go { display: flex; align-items: center; gap: 8px; }
 .trade-go input { padding: 1px 4px; font-size: 12px; }
+/* The season view's rail (#109): the board and the panel share one box with it on a wide
+ * window; on a narrow one they stack in a column that scrolls beside the rail. */
+.season-body { display: contents; }
+.season-board tr.picked td { background-color: var(--mine); }
+.drawer[hidden], .card[hidden] { display: none; }
 @media (max-width: 860px) {
-  /* The season view stacks: the drawer's cards under the available table. */
-  .main.season { flex-direction: column; overflow: auto; }
+  .main.season .season-body { display: flex; flex-direction: column; flex: 1; min-width: 0; overflow: auto; }
   .main.season .board-col { padding: 12px 16px; min-height: 70vh; }
+  .main.season .vdivider, .main.season .drawer .divider { display: none; }
   .main.season .drawer { width: auto !important; border-left: 0; border-top: 1px solid var(--line-2); box-shadow: none; }
   .main.season .drawer .card { flex: none !important; }
 }

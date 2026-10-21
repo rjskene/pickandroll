@@ -1,6 +1,6 @@
-import { useRef, type CSSProperties, type ReactElement } from "react";
-import { CARDS, DRAWER_WIDTH, cardIndex, useDraft, type CardId, type Half } from "../draft";
-import { Chevron, Grip, GripV, Swap } from "./icons";
+import type { ReactElement } from "react";
+import { CARDS, useDraft, type CardId } from "../draft";
+import Halves from "./Halves";
 import AltsCard from "./cards/AltsCard";
 import CategoriesCard from "./cards/CategoriesCard";
 import LogCard from "./cards/LogCard";
@@ -21,93 +21,17 @@ const BODIES: Record<CardId, () => ReactElement> = {
   sync: SyncCard,
 };
 
-function CardFrame({ id, half, style }: { id: CardId; half: Half; style: CSSProperties }) {
-  const d = useDraft();
-  const i = cardIndex(id);
-  const Body = BODIES[id];
-  return (
-    <section className="card" style={style} aria-label={CARDS[i].title}>
-      <header>
-        <h2>{CARDS[i].title.toUpperCase()}</h2>
-        <span className="dim">
-          {half} · card {i + 1} of {CARDS.length}
-        </span>
-        <span className="grow" />
-        {d.drawer.top && d.drawer.bottom && (
-          <button className="icon" aria-label="Swap the top and bottom cards" title="Swap halves (x)" onClick={d.swapHalves}>
-            <Swap />
-          </button>
-        )}
-        <button className="icon" aria-label={`Close ${CARDS[i].title}`} title={`Close (${i + 1})`} onClick={() => d.closeCard(id)}>
-          <Chevron dir={half === "top" ? "up" : "down"} />
-        </button>
-      </header>
-      <div className="body">
-        <Body />
-      </div>
-    </section>
-  );
-}
-
+/** The draft screen's drawer: its eight cards in two halves. */
 export default function Drawer() {
   const d = useDraft();
-  const ref = useRef<HTMLElement | null>(null);
-  if (!d.drawerOpen) return null;
-  const { top, bottom, split, width } = d.drawer;
-
-  const startDrag = (e: React.PointerEvent) => {
-    const el = ref.current;
-    if (!el) return;
-    const rect = el.getBoundingClientRect();
-    const move = (ev: PointerEvent) => d.setSplit((ev.clientY - rect.top) / rect.height);
-    const stop = () => {
-      window.removeEventListener("pointermove", move);
-      window.removeEventListener("pointerup", stop);
-    };
-    window.addEventListener("pointermove", move);
-    window.addEventListener("pointerup", stop);
-    e.preventDefault();
-  };
-
-  const startWidthDrag = (e: React.PointerEvent) => {
-    const startX = e.clientX;
-    const startWidth = width;
-    const move = (ev: PointerEvent) => d.setWidth(startWidth + (startX - ev.clientX));
-    const stop = () => {
-      window.removeEventListener("pointermove", move);
-      window.removeEventListener("pointerup", stop);
-      document.body.style.userSelect = "";
-      document.body.style.cursor = "";
-    };
-    // No text selection or cursor flicker while the pointer crosses the board.
-    document.body.style.userSelect = "none";
-    document.body.style.cursor = "col-resize";
-    window.addEventListener("pointermove", move);
-    window.addEventListener("pointerup", stop);
-    e.preventDefault();
-  };
-
   return (
-    <>
-      <div
-        className="vdivider"
-        role="separator"
-        aria-orientation="vertical"
-        title="Drag to resize the drawer · double-click resets it"
-        onPointerDown={startWidthDrag}
-        onDoubleClick={() => d.setWidth(DRAWER_WIDTH)}
-      >
-        <GripV />
-      </div>
-      <aside className="drawer" ref={ref} style={{ width }}>
-        {top && <CardFrame id={top} half="top" style={{ flex: bottom ? `${split} 1 0%` : "1 1 0%" }} />}
-        {top && bottom && (
-          <div className="divider" role="separator" aria-orientation="horizontal" title="Drag to resize · x swaps the halves" onPointerDown={startDrag}>
-            <Grip />
-          </div>
-        )}
-        {bottom && <CardFrame id={bottom} half="bottom" style={{ flex: top ? `${1 - split} 1 0%` : "1 1 0%" }} />}
-      </aside>
-    </>
+    <Halves
+      d={d}
+      cards={CARDS}
+      face={(id) => {
+        const Body = BODIES[id];
+        return { body: <Body /> };
+      }}
+    />
   );
 }
