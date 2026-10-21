@@ -68,6 +68,47 @@ signed-in Chrome (a content script on the team, players and matchup pages postin
 the API), exactly as the draft room was read. Nothing in this module handles credentials; the
 API path replaces the page readers the day Yahoo binds the app.
 
+## The weekly projection, as built (#93)
+
+`season/weekly.py` (core, no I/O) computes it and `api/season_week.py` loads its inputs; the
+season view's payload carries it as `week_projection`, and the web multiplies per-game rates by
+games.
+
+- **Weeks.** The current matchup week and the next three. The current week counts from today,
+  or from tomorrow once the matchup page was read at or after 19:00 ET, when the day's games
+  are already in the week so far.
+- **Games.** The game days of the player's NBA team in the ESPN schedule cache, then the out
+  rule: INJ, OFS, SUSP and NA play no games in any week; O misses the rest of this week, and so
+  does a GTD whom Yahoo's projection gives no games; D, Q and P keep their games. The row shows
+  the status. A Basketball Monster weekly export that covers the week overrides the rule with
+  its games column, and the player plays the last n game days of the week. The exports are
+  `bbm_week_this_*` (the rest of this week) and `bbm_week_next_*`, each with the `.json`
+  sidecar `sources/bbm/fetch.py` writes (`start`, `end`); a this-week export without one counts
+  only on the day it was made.
+- **Starters.** Each day the players with a game fill the startable slots (the roster less BN,
+  IL, IL+ and NA), best first by the chosen system's per-game value (a z-sum over the league's
+  categories, or fantasy points). Augmenting paths let a starter move to another slot to make
+  room, so the assignment is exact. `weekly.starters` takes any value vector, for #94.
+- **Totals.** Per-game rate times games started, summed; FG% and FT% from makes and attempts.
+- **Two systems.** Basketball Monster, the default: the newest rest-of-season export, per game
+  as totals over games, matched to Yahoo ids. Yahoo: the players page's Next 7 Days (proj) view
+  (`S_PS7`), its seven-day totals over its GP. The public refresh reads that view after the
+  ownership view. The private league gets it when the user opens that view in Chrome, or when
+  they arm a read from the side panel, which walks both views (extension 0.5.1). The Waivers
+  table shows one system's nine totals, and hovering a total shows the other's.
+- **Spread.** A counting category's weekly variance is φ_c times its weekly total. A percentage's
+  variance sums, over started games, the binomial variance of makes on the attempts plus the
+  attempts' own variance times (p − p_team)², taken over the team's total attempts. A points
+  league uses Σ w_s² φ_s total_s. φ was fitted on ESPN's public 2025-26 game logs: 245 players
+  with 30+ games and 20+ minutes a game, 15,767 games, fitted 2026-10-21, script in the scratch
+  repository at `emissary/phi-2026-10-21`. The fitted values are PTS 3.17, 3PM 1.18, REB 1.34,
+  AST 1.27, STL 1.07, BLK 1.12, TO 1.03, FGA 1.49 and FTA 2.24. Makes given attempts are
+  binomial: FG 0.91, floored at 1, and FT 1.01. #97's recorder re-fits them from the leagues'
+  own weeks.
+- **Odds.** Each category's final adds the matchup page's week so far to the rest of the week.
+  P(win) = Φ(Δ / √(σ₁² + σ₂²)), reversed for turnovers. Expected categories won is the sum of
+  the nine. The opponent is projected for the current week only.
+
 ## The move model
 
 A move is (add, drop) or (add, nobody) when a slot is open, subject to the weekly add limit.

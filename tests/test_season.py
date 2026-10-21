@@ -19,12 +19,13 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from pickandroll.api import SessionStore, create_app
+from pickandroll.api import SessionStore, create_app, season_week
 from pickandroll.api import seasons as season_api
 from pickandroll.season import (
     EXTENSION,
     PUBLIC,
     Calendar,
+    Matchup,
     Part,
     Player,
     Season,
@@ -256,6 +257,20 @@ def test_the_schedule_reads_espn_in_yahoos_team_names(tmp_path):
     assert len(calls) == 3
 
 
+def test_the_schedule_cache_serves_from_disk_offline(tmp_path):
+    days = [date(2026, 10, 21), date(2026, 10, 22)]
+    schedule.schedule_days(days, lambda url: fixture(f"espn_{url[-8:]}.json"), tmp_path, now=NOW)
+
+    def offline(url: str) -> str:
+        raise public.FetchError(f"{url}: no network")
+
+    # Stale copies (a day later) are served when the source cannot be read.
+    later = schedule.schedule_days(days, offline, tmp_path, now=NOW + timedelta(days=1))
+    assert set(later) == {"2026-10-21", "2026-10-22"} and "GSW" in later["2026-10-21"]
+    # A date never read is left out, so the season says its games are not known.
+    assert schedule.schedule_days([date(2026, 10, 23)], offline, tmp_path, now=NOW) == {}
+
+
 # --------------------------------------------------------------------------- the season state
 def base(league: str = LEAGUE, my_team: int = 4) -> SeasonSettings:
     return SeasonSettings(league, "categories", tuple(CATS), tuple(ROSTER), 12, my_team)
@@ -411,6 +426,8 @@ class FakeYahoo:
             path = FIXTURES / f"team{info['team_id']}.html"
             return path.read_text() if path.exists() else EMPTY_ROSTER
         if kind == "players":
+            if info["view"] == pages.PROJECTION_VIEW:
+                return fixture("avail_ps7.html")
             offset = int(re.search(r"count=(\d+)", url).group(1))
             return fixture("avail0.html" if offset == 0 else "avail25.html")
         if kind == "matchup":
@@ -459,9 +476,11 @@ def test_a_refresh_reads_the_public_sources_and_serves_the_season(client):
     assert v["matchup"]["score"] == [5.0, 3.0]
     assert len(v["transactions"]) == 8
     assert v["sources"] == ["public"] and v["fetched"]["league"]["source"] == "public"
-    # Paging stopped at the short page; the calendar was read once, one request per Monday.
+    # Paging stopped at the short page, in both views; the calendar was read once, one request
+    # per Monday.
     fake = client.fake
-    assert sum("/players?" in u for u in fake.urls) == 2
+    assert sum("/players?" in u and "S_PS7" not in u for u in fake.urls) == 2
+    assert sum("/players?" in u and "S_PS7" in u for u in fake.urls) == 2
     assert sum("?date=" in u for u in fake.urls) == 24  # Mondays Oct 19 to Mar 29
     cal = json.loads((client.data_dir / "leagues/_shared/season/calendar.json").read_text())
     seventeen = next(w for w in cal["weeks"] if w["number"] == 17)
@@ -619,3 +638,175 @@ def test_season_service_reports_a_failed_refresh(tmp_path):
     job = service.run_refresh(season_api.RefreshJob(LEAGUE))
     assert job.status == "failed" and "503" in job.error and job.finished_at is not None
     assert not (tmp_path / "leagues" / LEAGUE / "season" / "state.json").exists()
+
+
+# --------------------------------------------------------------------------- the week projection
+CSV_HEAD = (
+    "player_id,last_name,first_name,games,minutes,field_goals_attempted,field_goals,"
+    "free_throws_attempted,free_throws,threes,threes_attempted,offensive_rebounds,"
+    "defensive_rebounds,assists,blocks,steals,turnovers,fouls,technicals,double_doubles,"
+    "triple_doubles,comments"
+)
+
+
+def projection_csv(path: Path, names: list[str], games: int = 70, star: str | None = None) -> None:
+    """A projection file in the export's CSV layout with made-up numbers: per game 5/10 from the
+    field, 1.6/2 at the line, one three, five rebounds, three assists, half a block, a steal and
+    two turnovers (12.6 points); ``star`` makes 10/18 (22.6 points)."""
+    lines = [CSV_HEAD]
+    for i, name in enumerate(names):
+        first, _, last = name.partition(" ")
+        fgm, fga = (10 * games, 18 * games) if name == star else (5 * games, 10 * games)
+        g = games
+        lines.append(
+            f"{i},{last},{first},{g},{30 * g},{fga},{fgm},{2 * g},{1.6 * g:.1f},{g},{3 * g},"
+            f"{g},{4 * g},{3 * g},{0.5 * g:.1f},{g},{2 * g},{2 * g},0,0,0,"
+        )
+    path.write_text("\n".join(lines) + "\n")
+
+
+def fixture_names() -> list[str]:
+    out = []
+    for team in (4, 10):
+        d = pages.parse_team_page(fixture(f"team{team}.html"), team)
+        out += [s["player"]["name"] for s in d["spots"]]
+    return out + ["Dillon Brooks"]
+
+
+def test_the_week_projection_gives_games_rates_and_my_matchups_odds(client):
+    projection_csv(
+        client.data_dir / "bbm_projections_2026-10-21.csv", fixture_names(), star="Kevin Durant"
+    )
+    client.post(f"/seasons/{LEAGUE}/refresh", params={"wait": True})
+    v = client.get(f"/seasons/{LEAGUE}").json()
+    w = v["week_projection"]
+    assert w["systems"]["bbm"]["file"] == "bbm_projections_2026-10-21.csv"
+    assert w["systems"]["bbm"]["players"] == 27
+    assert w["systems"]["yahoo"]["players"] == 8  # ten rows, two with no games (O and NA)
+    assert [x["number"] for x in w["weeks"]] == [1, 2, 3, 4]
+    assert w["weeks"][0]["from"] == "2026-10-21" and w["weeks"][0]["games_from"] == "schedule"
+    by_name = {s["player"]["name"]: s["player"] for s in v["roster"]}
+    durant = w["players"][str(by_name["Kevin Durant"]["yahoo_id"])]
+    assert durant["bbm"]["pts"] == 22.6 and durant["bbm"]["fga"] == 18
+    assert len(durant["games"]) == 4 and len(durant["started"]) == 4
+    days = [date(2026, 10, 21), date(2026, 10, 22)]
+    playing = {
+        d: set(schedule.teams_playing(json.loads(fixture(f"espn_{d:%Y%m%d}.json")))) for d in days
+    }
+    assert durant["games"][0] == sum("HOU" in playing[d] for d in days)
+    # Nesmith is out (O): no games this week.
+    assert w["players"][str(by_name["Aaron Nesmith"]["yahoo_id"])]["games"][0] == 0
+    brooks = next(a for a in v["available"] if a["player"]["name"] == "Dillon Brooks")["player"]
+    row = w["players"][str(brooks["yahoo_id"])]
+    assert row["yahoo"]["pts"] == round(45.4 / 3, 4) and row["bbm"]["pts"] == 12.6
+    assert row["started"] is None and len(row["games"]) == 4
+    m = w["matchup"]
+    assert m["teams"] == [4, 10] and m["system"] == "bbm" and m["from"] == "2026-10-21"
+    assert (
+        m["so_far"]["4"]["fgm"] == 15
+        and m["so_far"]["4"]["fga"] == 31
+        and m["so_far"]["4"]["pts"] == 42
+    )
+    odds = {o["cat"]: o for o in m["odds"]}
+    assert list(odds) == CATS
+    assert odds["pts"]["mine"] == pytest.approx(42 + m["rest"]["4"]["pts"])
+    assert odds["fg_pct"]["mine"] == pytest.approx(
+        (15 + m["rest"]["4"]["fgm"]) / (31 + m["rest"]["4"]["fga"])
+    )
+    assert all(0 <= o["p_win"] <= 1 for o in m["odds"])
+    assert m["expected"] == pytest.approx(sum(o["p_win"] for o in m["odds"]), abs=1e-3)
+
+
+def test_a_weekly_export_gives_the_weeks_games(client):
+    names = fixture_names()
+    projection_csv(client.data_dir / "bbm_projections_2026-10-21.csv", names)
+    week = client.data_dir / "bbm_week_this_20261021-1400.csv"
+    projection_csv(week, names, games=1)
+    week.with_suffix(".json").write_text(json.dumps({"start": "2026-10-21", "end": "2026-10-25"}))
+    client.post(f"/seasons/{LEAGUE}/refresh", params={"wait": True})
+    v = client.get(f"/seasons/{LEAGUE}").json()
+    w = v["week_projection"]
+    assert w["weeks"][0]["games_from"] == "bbm" and w["weeks"][1]["games_from"] == "schedule"
+    by_name = {s["player"]["name"]: s["player"] for s in v["roster"]}
+    nesmith = by_name["Aaron Nesmith"]
+    playing = schedule.teams_playing(
+        json.loads(fixture("espn_20261021.json"))
+    ) + schedule.teams_playing(json.loads(fixture("espn_20261022.json")))
+    # The export's one game overrides the out rule, within the games his team has.
+    assert w["players"][str(nesmith["yahoo_id"])]["games"][0] == min(1, playing.count("IND"))
+    # An export for another span is not used.
+    week.with_suffix(".json").write_text(json.dumps({"start": "2026-10-20", "end": "2026-10-25"}))
+    w = client.get(f"/seasons/{LEAGUE}").json()["week_projection"]
+    assert w["weeks"][0]["games_from"] == "schedule"
+
+
+def test_the_week_so_far_and_where_the_rest_begins():
+    m = Matchup.from_dict(pages.parse_matchup_page(fixture("matchup.html")))
+    mine = season_week.so_far(m, 10, points=False)
+    assert mine == {
+        "fgm": 12,
+        "fga": 23,
+        "ftm": 7,
+        "fta": 9,
+        "threes": 0,
+        "pts": 31,
+        "reb": 13,
+        "ast": 2,
+        "stl": 2,
+        "blk": 1,
+        "tov": 2,
+    }
+    pts = Matchup.from_dict(pages.parse_matchup_page(fixture("matchup_points.html")))
+    assert season_week.so_far(pts, 12, points=True) == {"fpts": 92.7}
+    # Read at 2 pm Eastern: today's games are still to come; at 9 pm they have begun.
+    assert season_week.first_day(datetime(2026, 10, 21, 18, 0, tzinfo=UTC), TODAY) == TODAY
+    assert season_week.first_day(datetime(2026, 10, 22, 1, 0, tzinfo=UTC), TODAY) == date(
+        2026, 10, 22
+    )
+    assert season_week.first_day(None, TODAY) == TODAY
+
+
+def test_a_projection_page_posted_by_the_extension_feeds_yahoos_system(client):
+    site = "https://basketball.fantasysports.yahoo.com/nba/100002"
+    r = client.post(
+        "/seasons/100002/snapshot",
+        json={
+            "pages": [
+                {
+                    "url": site + "/players?status=A&pos=P&stat1=S_PS7&count=0",
+                    "html": fixture("avail_ps7.html"),
+                }
+            ]
+        },
+    )
+    assert r.json()["accepted"] == ["available", "yahoo_week"]
+    parts = season_api.load_parts(client.data_dir, "100002")
+    rows = parts["yahoo_week"].data["rows"]
+    assert len(rows) == 10 and "upsert" not in parts["yahoo_week"].data
+    # A second page upserts by player.
+    client.post(
+        "/seasons/100002/snapshot",
+        json={
+            "pages": [
+                {
+                    "url": site + "/players?status=A&pos=P&stat1=S_PS7&count=25",
+                    "html": fixture("avail_ps7.html"),
+                }
+            ]
+        },
+    )
+    assert len(season_api.load_parts(client.data_dir, "100002")["yahoo_week"].data["rows"]) == 10
+
+
+def test_the_projection_page_parser():
+    rows = pages.parse_projection_page(fixture("avail_ps7.html"))["rows"]
+    assert len(rows) == 10
+    brooks = rows[0]
+    assert brooks["player"]["name"] == "Dillon Brooks" and brooks["gp"] == 3.0
+    assert (brooks["fgm"], brooks["fga"], brooks["ftm"], brooks["fta"]) == (16.6, 38.8, 5.7, 6.9)
+    assert (brooks["threes"], brooks["pts"], brooks["reb"], brooks["ast"]) == (6.5, 45.4, 11.3, 5.0)
+    assert (brooks["stl"], brooks["blk"], brooks["tov"]) == (2.9, 0.5, 4.3)
+    # An out player's projection: no games.
+    assert rows[1]["player"]["status"] == "O" and rows[1]["gp"] == 0.0
+    # "-": no projection at all (a player not active) reads as no games.
+    assert rows[4]["player"]["status"] == "NA" and rows[4]["gp"] == 0.0

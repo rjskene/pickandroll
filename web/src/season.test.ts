@@ -1,11 +1,16 @@
 // Node's own test runner with its built-in type stripping (`npm test`), as format.test.ts.
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import type { AvailableRow, SeasonPlayer } from "./api";
+import type { AvailableRow, Rates, SeasonPlayer } from "./api";
 import {
   ageLabel,
   availabilityLabel,
+  catValue,
   changeLabel,
+  horizonGames,
+  oddsLabel,
+  oddsTone,
+  projectedTotals,
   DEFAULT_AVAILABLE_SORT,
   filterAvailable,
   isStale,
@@ -149,4 +154,52 @@ test("the available table sorts most rostered first, missing values last, ties i
   assert.equal(order("name", "desc"), "DCBA");
   // Free agents first, then waivers by the day they clear.
   assert.equal(order("availability", "asc"), "ABDC");
+});
+
+test("the available table sorts by a column from outside the row", () => {
+  const rows = [row(player("A", ["C"])), row(player("B", ["C"])), row(player("C", ["C"]))];
+  const games: Record<string, number | null> = { A: 2, B: null, C: 4 };
+  const extra = (r: AvailableRow, key: string) => (key === "games" ? games[r.player.name] : undefined);
+  assert.equal(sortAvailable(rows, { key: "games", dir: "desc" }, extra).map((r) => r.player.name).join(""), "CAB");
+  // A key nobody gives sorts nothing: Yahoo's order stands.
+  assert.equal(sortAvailable(rows, { key: "pts", dir: "desc" }).map((r) => r.player.name).join(""), "ABC");
+});
+
+const RATES: Rates = { pts: 12.6, threes: 1, reb: 5, ast: 3, stl: 1, blk: 0.5, tov: 2, fgm: 5, fga: 10, ftm: 1.6, fta: 2 };
+
+test("a horizon's games: this week, or the next three weeks together", () => {
+  assert.equal(horizonGames([3, 4, 3, 4], "week"), 3);
+  assert.equal(horizonGames([3, 4, 3, 4], "next3"), 11);
+  assert.equal(horizonGames([2], "next3"), null);
+  assert.equal(horizonGames([], "week"), null);
+  assert.equal(horizonGames(undefined, "week"), null);
+});
+
+test("projected totals multiply the rates out; percentages are makes over attempts", () => {
+  const nine = ["fg_pct", "ft_pct", "threes", "pts", "reb", "ast", "stl", "blk", "tov"] as const;
+  const t = projectedTotals(RATES, 3, nine);
+  assert.ok(t);
+  assert.ok(Math.abs((t.pts ?? 0) - 37.8) < 1e-9);
+  assert.equal(t.reb, 15);
+  assert.equal(t.fg_pct, 0.5);
+  assert.equal(t.ft_pct, 0.8);
+  assert.equal(projectedTotals(RATES, 0, nine)?.fg_pct, null);
+  assert.equal(projectedTotals(RATES, 0, nine)?.pts, 0);
+  assert.equal(projectedTotals(null, 3, nine), null);
+  assert.equal(projectedTotals(RATES, null, nine), null);
+  // A points league: weights over the rates.
+  const fp = projectedTotals(RATES, 2, ["fpts"], { pts: 1, reb: 1.2, ast: 1.5, blk: 3, stl: 3, tov: -1 });
+  assert.ok(fp && Math.abs((fp.fpts ?? 0) - 2 * (12.6 + 6 + 4.5 + 1.5 + 3 - 2)) < 1e-9);
+});
+
+test("category cells and odds labels", () => {
+  assert.equal(catValue("fg_pct", 0.4861), ".486");
+  assert.equal(catValue("pts", 37.84), "37.8");
+  assert.equal(catValue("pts", null), "");
+  assert.equal(oddsLabel(0.737), "74%");
+  assert.equal(oddsLabel(0.001), "<1%");
+  assert.equal(oddsLabel(0.999), ">99%");
+  assert.equal(oddsTone(0.7), "good");
+  assert.equal(oddsTone(0.2), "bad");
+  assert.equal(oddsTone(0.5), "");
 });

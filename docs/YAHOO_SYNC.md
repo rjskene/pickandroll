@@ -317,8 +317,10 @@ refresh, gets the same season view as the prize leagues. Rules:
 - Read-only. It never clicks anything; Add, Drop and Trade stay the user's. It never runs on the draft client,
   and the draft content scripts are unchanged.
 - It navigates only during a multi-page read of the players page that the user armed from the side panel:
-  it follows the page's Next 25 link while the API accepts the posts, at most 12 pages (300 players), and the
-  read ends on the first refused post or missing link. Without that arming it never navigates.
+  it follows the page's Next 25 link while the API accepts the posts, at most 12 pages (300 players) a view.
+  When the view runs out (missing link or page limit), it opens the first page of the Next 7 Days (proj)
+  view (`stat1=S_PS7`, same filters and sort) and reads it the same way (0.5.1, #93), unless the read
+  started there. The read ends on the first refused post. Without that arming it never navigates.
 - What is posted is the page less its scripts, styles, frames and form fields (Yahoo's forms carry a hidden
   crumb). No cookies.
 - A team page for another date (`?date=`) is skipped; its lineup is not today's roster.

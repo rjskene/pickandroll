@@ -19,6 +19,12 @@ test("the reader knows the league's own pages and nothing else", () => {
   assert.deepEqual(L.leaguePage(`${SITE}/nba/31822/3?stat1=S_PS7`), { league: "31822", kind: "team", team: 3 });
   assert.deepEqual(L.leaguePage(`${SITE}/nba/31822/players?status=A&pos=P&count=50`), { league: "31822", kind: "players", offset: 50 });
   assert.deepEqual(L.leaguePage(`${SITE}/nba/31822/players`), { league: "31822", kind: "players", offset: 0 });
+  assert.deepEqual(L.leaguePage(`${SITE}/nba/31822/players?status=A&stat1=S_PS7&count=25`), {
+    league: "31822",
+    kind: "players",
+    offset: 25,
+    view: "S_PS7",
+  });
   assert.deepEqual(L.leaguePage(`${SITE}/nba/31822/matchup?week=1&mid1=3&mid2=8`), { league: "31822", kind: "matchup" });
   assert.deepEqual(L.leaguePage(`${SITE}/nba/31822/transactions`), { league: "31822", kind: "transactions" });
   // Not read: the draft client, a player's page, a team's sub-pages, another site, plain http.
@@ -40,6 +46,8 @@ test("the reader knows the league's own pages and nothing else", () => {
 test("each page keeps one line in the panel, the snapshot body carries the page as rendered", () => {
   assert.equal(L.postKey({ kind: "team", team: 3 }), "team 3");
   assert.equal(L.postKey({ kind: "players", offset: 25 }), "players 26-50");
+  assert.equal(L.postKey({ kind: "players", offset: 25, view: "R_O" }), "players 26-50");
+  assert.equal(L.postKey({ kind: "players", offset: 0, view: "S_PS7" }), "players 1-25 (next 7 days)");
   assert.equal(L.postKey({ kind: "matchup" }), "matchup");
   const at = Date.parse("2026-10-21T18:00:00Z");
   assert.deepEqual(L.snapshotBody(`${SITE}/nba/31822/3`, "<html></html>", at), {
@@ -52,8 +60,9 @@ test("a multi-page read follows Next 25 only on the armed league's players pages
   const next = `${SITE}/nba/31822/players?count=25`;
   // Nothing armed: never navigates.
   assert.deepEqual(L.afterPost(null, p0, true, next), { follow: null, read: null });
-  const read = L.startRead("31822", 3, 1000);
-  assert.deepEqual(read, { league: "31822", pages_left: 3, started_at: 1000 });
+  // Started in the projection view, the read has no other view to walk.
+  const read = L.startRead("31822", 3, 1000, "S_PS7");
+  assert.deepEqual(read, { league: "31822", pages: 3, pages_left: 3, started_at: 1000, then: [] });
   let r = L.afterPost(read, p0, true, next);
   assert.equal(r.follow, next);
   assert.equal(r.read.pages_left, 2);
@@ -68,6 +77,27 @@ test("a multi-page read follows Next 25 only on the armed league's players pages
   // Another league's page, or a team page, leaves the read alone and does not navigate.
   assert.deepEqual(L.afterPost(read, L.leaguePage(`${SITE}/nba/15953/players`), true, `${SITE}/nba/15953/players?count=25`), { follow: null, read });
   assert.deepEqual(L.afterPost(read, L.leaguePage(`${SITE}/nba/31822/3`), true, null), { follow: null, read });
+});
+
+test("a read started in another view walks Next 7 Days (proj) after it, from its first page", () => {
+  const url = (view, n) => `${SITE}/nba/31822/players?status=A&pos=P&stat1=${view}&sort=R_PO&sdir=1&count=${n}`;
+  const read = L.startRead("31822", 2, 1000, "R_O");
+  assert.deepEqual(read.then, ["S_PS7"]);
+  assert.deepEqual(L.startRead("31822", 2, 1000).then, ["S_PS7"], "the default view too");
+  let r = L.afterPost(read, L.leaguePage(url("R_O", 0)), true, url("R_O", 25), url("R_O", 0));
+  assert.equal(r.follow, url("R_O", 25));
+  // The ownership view's last page: on to the projection view's first, its filters and sort kept.
+  r = L.afterPost(r.read, L.leaguePage(url("R_O", 25)), true, url("R_O", 50), url("R_O", 25));
+  assert.equal(r.follow, `${SITE}/nba/31822/players?status=A&pos=P&stat1=S_PS7&sort=R_PO&sdir=1`);
+  assert.deepEqual(r.read, { ...read, pages_left: 2, then: [] });
+  r = L.afterPost(r.read, L.leaguePage(r.follow), true, url("S_PS7", 25), r.follow);
+  assert.equal(r.follow, url("S_PS7", 25));
+  assert.deepEqual(L.afterPost(r.read, L.leaguePage(url("S_PS7", 25)), true, url("S_PS7", 50), url("S_PS7", 25)), { follow: null, read: null });
+  // A short page moves on too; a failed post still ends the whole read.
+  assert.equal(L.afterPost(read, L.leaguePage(url("R_O", 0)), true, null, url("R_O", 0)).follow, L.viewUrl(url("R_O", 0), "S_PS7"));
+  assert.deepEqual(L.afterPost(read, L.leaguePage(url("R_O", 0)), false, url("R_O", 25), url("R_O", 0)), { follow: null, read: null });
+  // The user moved to the projection view mid-read: it is not walked twice.
+  assert.deepEqual(L.afterPost({ ...read, pages_left: 1 }, L.leaguePage(url("S_PS7", 0)), true, url("S_PS7", 25), url("S_PS7", 0)), { follow: null, read: null });
 });
 
 test("the panel's lines say what each post did", () => {
@@ -156,15 +186,23 @@ test("a refused post is remembered with the API's reason, and never follows a li
   assert.equal(w.store.has("season_read:31822"), false);
 });
 
-test("an armed read walks the players pages, then disarms; stop disarms at once", async () => {
+test("an armed read walks the players pages in both views, then disarms; stop disarms at once", async () => {
   const w = loadWorker(accepted(["available"]));
-  const page = (n) => `${SITE}/nba/31822/players?status=A&pos=P&count=${n}`;
+  const page = (n, view = "R_O") => `${SITE}/nba/31822/players?status=A&pos=P&stat1=${view}&count=${n}`;
   assert.equal((await w.send({ op: "season_page", url: page(0), html: "x", next: page(25) })).data.follow, null, "nothing armed");
-  await w.send({ op: "season_read", league: "31822", pages: 3 });
+  await w.send({ op: "season_read", league: "31822", pages: 2, view: "R_O" });
   assert.equal((await w.send({ op: "season_page", url: page(0), html: "x", next: page(25) })).data.follow, page(25));
-  assert.equal((await w.send({ op: "season_page", url: page(25), html: "x", next: page(50) })).data.follow, page(50));
-  assert.equal((await w.send({ op: "season_page", url: page(50), html: "x", next: page(75) })).data.follow, null);
+  const first = `${SITE}/nba/31822/players?status=A&pos=P&stat1=S_PS7`;
+  assert.equal((await w.send({ op: "season_page", url: page(25), html: "x", next: page(50) })).data.follow, first);
+  assert.equal((await w.send({ op: "season_page", url: first, html: "x", next: page(25, "S_PS7") })).data.follow, page(25, "S_PS7"));
+  assert.equal((await w.send({ op: "season_page", url: page(25, "S_PS7"), html: "x", next: page(50, "S_PS7") })).data.follow, null);
   assert.equal(w.store.has("season_read:31822"), false);
+  assert.deepEqual(Object.keys(w.store.get("league:31822")).sort(), [
+    "players 1-25",
+    "players 1-25 (next 7 days)",
+    "players 26-50",
+    "players 26-50 (next 7 days)",
+  ]);
   // At most READ_PAGES pages, whatever the panel asks.
   assert.equal((await w.send({ op: "season_read", league: "31822", pages: 99 })).data.read.pages_left, L.READ_PAGES);
   assert.deepEqual((await w.send({ op: "season_read", league: "31822", pages: 0 })).data, { read: null });

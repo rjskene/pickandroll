@@ -1,6 +1,7 @@
-// The season view's pure helpers (#92): labels for ages, ownership and availability, and the
-// available table's filters and sort. No React, so `npm test` runs them under Node.
-import type { AvailableRow, SeasonPlayer, SeasonRefresh, SeasonSummary, SeasonTeamRef, SeasonWeek } from "./api";
+// The season view's pure helpers (#92): labels for ages, ownership and availability, the
+// available table's filters and sort, and the week projection's totals and odds (#93). No React,
+// so `npm test` runs them under Node.
+import type { AvailableRow, Cat, Rates, SeasonPlayer, SeasonRefresh, SeasonSummary, SeasonTeamRef, SeasonWeek, WeekStat } from "./api";
 
 /** "4 min ago": how old a snapshot is. */
 export function ageLabel(iso: string | null | undefined, now: number): string {
@@ -138,7 +139,22 @@ export function filterAvailable(rows: AvailableRow[], f: AvailableFilter): Avail
   );
 }
 
-export type AvailableSortKey = "name" | "nba_team" | "positions" | "games_left" | "availability" | "status" | "pct_rostered" | "pct_rostered_change" | "pct_started" | "adds" | "drops";
+export type AvailableSortKey =
+  | "name"
+  | "nba_team"
+  | "positions"
+  | "games_left"
+  | "availability"
+  | "status"
+  | "pct_rostered"
+  | "pct_rostered_change"
+  | "pct_started"
+  | "adds"
+  | "drops"
+  // The week projection's columns (#93): games this week and the next three, each category's total.
+  | "games"
+  | "games_next3"
+  | Cat;
 export interface AvailableSort {
   key: AvailableSortKey;
   dir: "asc" | "desc";
@@ -148,7 +164,13 @@ export const DEFAULT_AVAILABLE_SORT: AvailableSort = { key: "pct_rostered", dir:
 /** A first click sorts text A to Z and numbers high to low. */
 export const TEXT_KEYS: AvailableSortKey[] = ["name", "nba_team", "positions", "availability", "status"];
 
-function sortValue(r: AvailableRow, key: AvailableSortKey): number | string | null {
+/** A sort key's value from outside the row (the week projection's columns); undefined when the
+ * key is the row's own. */
+export type SortExtra = (r: AvailableRow, key: AvailableSortKey) => number | null | undefined;
+
+function sortValue(r: AvailableRow, key: AvailableSortKey, extra?: SortExtra): number | string | null {
+  const outside = extra?.(r, key);
+  if (outside !== undefined) return outside;
   switch (key) {
     case "name":
       return r.player.name;
@@ -161,20 +183,88 @@ function sortValue(r: AvailableRow, key: AvailableSortKey): number | string | nu
       return r.availability === "FA" ? "0" : `1${r.clears ?? ""}`;
     case "status":
       return r.player.status;
-    default:
+    case "games_left":
+    case "pct_rostered":
+    case "pct_rostered_change":
+    case "pct_started":
+    case "adds":
+    case "drops":
       return r[key];
+    default:
+      return null;
   }
 }
 
 /** Rows in sort order; missing values last either way, ties in Yahoo's order. */
-export function sortAvailable(rows: AvailableRow[], sort: AvailableSort): AvailableRow[] {
+export function sortAvailable(rows: AvailableRow[], sort: AvailableSort, extra?: SortExtra): AvailableRow[] {
   const sign = sort.dir === "asc" ? 1 : -1;
   return rows
-    .map((r, i) => ({ r, i, v: sortValue(r, sort.key) }))
+    .map((r, i) => ({ r, i, v: sortValue(r, sort.key, extra) }))
     .sort((a, b) => {
       if (a.v == null || b.v == null) return a.v == null && b.v == null ? a.i - b.i : a.v == null ? 1 : -1;
       const c = typeof a.v === "string" || typeof b.v === "string" ? String(a.v).localeCompare(String(b.v)) : a.v - b.v;
       return c !== 0 ? c * sign : a.i - b.i;
     })
     .map((x) => x.r);
+}
+
+// ---------------------------------------------------------------- week projection (#93)
+/** The Waivers table's horizons: the rest of this week (the streaming view) and the three weeks
+ * after it (whether he is worth a roster spot). */
+export type Horizon = "week" | "next3";
+export const HORIZON_LABEL: Record<Horizon, string> = { week: "rest of this week", next3: "next 3 weeks" };
+
+/** Games in a horizon: this week's from today, or the next three weeks' together. */
+export function horizonGames(games: number[] | null | undefined, h: Horizon): number | null {
+  if (!games || !games.length) return null;
+  if (h === "week") return games[0] ?? null;
+  const next = games.slice(1, 4);
+  return next.length ? next.reduce((a, b) => a + b, 0) : null;
+}
+
+const PCT_PARTS: Partial<Record<Cat, [WeekStat, WeekStat]>> = { fg_pct: ["fgm", "fga"], ft_pct: ["ftm", "fta"] };
+
+/** A player's projected categories over ``games`` games at ``rates`` per game: counting totals,
+ * percentages as makes over attempts, a points league's fantasy points from its weights. */
+export function projectedTotals(
+  rates: Rates | null | undefined,
+  games: number | null,
+  cats: readonly Cat[],
+  points?: Record<string, number> | null,
+): Partial<Record<Cat, number | null>> | null {
+  if (!rates || games == null) return null;
+  const out: Partial<Record<Cat, number | null>> = {};
+  for (const c of cats) {
+    const parts = PCT_PARTS[c];
+    if (c === "fpts") {
+      out[c] = points ? Object.entries(points).reduce((t, [stat, w]) => t + w * (rates[stat as WeekStat] ?? 0) * games, 0) : null;
+    } else if (parts) {
+      const [made, att] = parts;
+      // No games, no shots: a percentage over nothing is blank.
+      out[c] = games > 0 && rates[att] ? rates[made] / rates[att] : null;
+    } else {
+      out[c] = rates[c as WeekStat] * games;
+    }
+  }
+  return out;
+}
+
+export const isPct = (cat: Cat): boolean => cat === "fg_pct" || cat === "ft_pct";
+
+/** A category's value in a cell: ".486" for a percentage, one decimal for a total. */
+export function catValue(cat: Cat, v: number | null | undefined): string {
+  if (v == null || Number.isNaN(v)) return "";
+  return isPct(cat) ? v.toFixed(3).replace(/^0/, "") : v.toFixed(1);
+}
+
+/** "74%" for the odds of winning a category; "<1%" and ">99%" at the ends. */
+export function oddsLabel(p: number): string {
+  if (p < 0.005) return "<1%";
+  if (p > 0.995) return ">99%";
+  return `${Math.round(p * 100)}%`;
+}
+
+/** Likely won, likely lost, or open. */
+export function oddsTone(p: number): "good" | "bad" | "" {
+  return p >= 0.65 ? "good" : p <= 0.35 ? "bad" : "";
 }

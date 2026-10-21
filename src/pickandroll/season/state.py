@@ -43,6 +43,8 @@ from .calendar import Calendar, Week
 
 PUBLIC = "public"
 EXTENSION = "extension"
+#: The part holding Yahoo's own projection for the next seven days, by player (#93).
+YAHOO_WEEK = "yahoo_week"
 #: Yahoo's injury and availability codes that keep a player out of a game.
 OUT_CODES = frozenset({"O", "INJ", "SUSP", "NA", "OFS"})
 
@@ -360,9 +362,16 @@ OWNERSHIP_ONLY = ("pct_rostered_change", "pct_started", "pct_started_change", "a
 def merge_part(parts: Mapping[str, Part], part: Part) -> dict[str, Part]:
     """``parts`` with ``part`` in: it replaces the older read of its key, except that available
     rows read a page at a time (the extension's) are upserted by player into the pool, keeping
-    the ownership columns a page in another view did not carry."""
+    the ownership columns a page in another view did not carry, and so are Yahoo's projection
+    rows."""
     out = dict(parts)
     old = parts.get(part.key)
+    if part.key == YAHOO_WEEK and part.data.get("upsert") and old is not None:
+        by_id = {r["player"]["yahoo_id"]: r for r in old.data.get("rows", [])}
+        by_id.update({r["player"]["yahoo_id"]: r for r in part.data.get("rows", [])})
+        fetched = max(old.fetched_at, part.fetched_at)
+        out[part.key] = Part(part.key, fetched, part.source, {"rows": list(by_id.values())})
+        return out
     if part.key == "available" and part.data.get("upsert") and old is not None:
         rows = {r["player"]["yahoo_id"]: r for r in old.data.get("rows", [])}
         for r in part.data.get("rows", []):
@@ -375,7 +384,7 @@ def merge_part(parts: Mapping[str, Part], part: Part) -> dict[str, Part]:
         out[part.key] = Part(part.key, fetched, part.source, {"rows": list(rows.values())})
     else:
         data = part.data
-        if part.key == "available" and isinstance(data, dict) and "upsert" in data:
+        if part.key in ("available", YAHOO_WEEK) and isinstance(data, dict) and "upsert" in data:
             data = {k: v for k, v in data.items() if k != "upsert"}
         out[part.key] = Part(part.key, part.fetched_at, part.source, data)
     return out
@@ -395,6 +404,9 @@ class Season:
     schedule: Mapping[date, frozenset[str]]
     #: When each part was read, and by whom.
     fetched: Mapping[str, tuple[datetime, str]]
+    #: Yahoo's projection for the next seven days by player id: ``gp`` and the totals over those
+    #: games, with when the row was read (``seen_at``).
+    yahoo_week: Mapping[int, Mapping[str, Any]] = field(default_factory=dict)
 
     @classmethod
     def from_parts(cls, base: SeasonSettings, parts: Mapping[str, Part]) -> Season:
@@ -467,6 +479,10 @@ class Season:
             for day, teams_ in ((_data(parts, "schedule") or {}).get("days") or {}).items()
         }
         fetched = {k: (p.fetched_at, p.source) for k, p in parts.items()}
+        yahoo_week = {
+            int(r["player"]["yahoo_id"]): r
+            for r in (_data(parts, YAHOO_WEEK) or {}).get("rows", [])
+        }
         return cls(
             settings=settings,
             calendar=calendar,
@@ -478,6 +494,7 @@ class Season:
             players=players,
             schedule=schedule,
             fetched=fetched,
+            yahoo_week=yahoo_week,
         )
 
     # ------------------------------------------------------------------ queries
