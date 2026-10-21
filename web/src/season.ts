@@ -398,7 +398,11 @@ export function flagSignals(f: PlayerFlag): FlagSignalKey[] {
 
 /** The hover text: the level and the sum, then each signal that spoke with its evidence. */
 export function flagTitle(f: PlayerFlag): string {
-  const head = `${f.level ?? "under watch"} · ${f.score.toFixed(2)} of 4 (watch 0.8, add 1.5, must-add 2.2)`;
+  // The server scores opportunity alone 0: it counts only beside another signal.
+  const alone = f.score === 0 && (f.signals.opportunity?.score ?? 0) > 0;
+  const head = alone
+    ? "not flagged: opportunity counts only beside another signal"
+    : `${f.level ?? "under watch"} · ${f.score.toFixed(2)} of 4 (watch 0.8, add 1.5, must-add 2.2)`;
   return [head, ...flagSignals(f).map((k) => `${FLAG_SIGNAL_NAME[k]} ${f.signals[k].score.toFixed(2)}: ${f.signals[k].reason ?? ""}`)].join("\n");
 }
 

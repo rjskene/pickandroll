@@ -207,6 +207,21 @@ def test_the_flag_sums_the_signals_and_only_players_a_signal_speaks_for_are_kept
     assert d["level"] == "add" and set(d["signals"]) == set(fl.SIGNALS)
 
 
+def test_opportunity_alone_flags_nobody():
+    out = fl.flags([pickup()], inputs(injuries=[injury("Cade Cunningham", mpg=34.0)]))
+    f = out[1]
+    assert (f.score, f.level) == (0.0, None)
+    # Its own score and evidence stay, for the dashboard's hover.
+    assert f.signals["opportunity"].score == pytest.approx(1.0)
+    assert "Cade Cunningham" in f.signals["opportunity"].reason
+
+
+def test_opportunity_with_a_surge_counts_in_full():
+    i = inputs(buzz_rank={1: 50}, injuries=[injury("Cade Cunningham", mpg=34.0)])
+    f = fl.flag(pickup(adds=90), i)
+    assert f.score == pytest.approx(0.3 + 1.0) and f.level == "watch"
+
+
 # --------------------------------------------------------------------------- the digest
 def test_the_digest_names_leagues_by_id_and_prints_no_basketball_monster_number():
     a = pickup(yahoo_id=1, adds=900)

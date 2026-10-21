@@ -15,7 +15,8 @@ Four signals, each a score from 0 to 1 with its evidence:
 * **Opportunity** (:func:`opportunity`): teammates at his position out for weeks, weighted by
   their projected minutes; nothing for a player out himself.
 
-The level comes from the sum of the four (:data:`LEVELS`). Every constant is a first guess, to be
+The level comes from the sum of the four (:data:`LEVELS`); opportunity counts toward it only
+beside another signal (:data:`OPPORTUNITY_NEEDS_ANOTHER`). Every constant is a first guess, to be
 tuned once two weeks of buzz-index history are kept. The flag never adds anyone.
 
 Each signal's evidence comes as two texts: ``reason``, with every number, for the dashboard, and
@@ -66,6 +67,10 @@ VALUE_RANK_SCALE = 240.0
 OUT_DAYS = 14
 OPPORTUNITY_FULL = 30.0
 UNKNOWN_MPG = 15.0
+#: Opportunity counts toward the flag only beside another signal: alone it explains minutes no
+#: other sign says he is getting (on 2026-10-21 it made 14 of the watches in each of two leagues
+#: by itself). Its own score and evidence stay in the flag either way.
+OPPORTUNITY_NEEDS_ANOTHER = True
 #: The levels by the sum of the four scores, highest first.
 LEVELS: tuple[tuple[str, float], ...] = (("must-add", 2.2), ("add", 1.5), ("watch", 0.8))
 SIGNALS = ("surge", "minutes", "value", "opportunity")
@@ -347,22 +352,27 @@ def level_of(score: float) -> str | None:
 
 
 def flag(p: Pickup, inputs: Inputs) -> Flag:
+    """The four signals and their sum; with :data:`OPPORTUNITY_NEEDS_ANOTHER`, a sum of 0 when
+    opportunity is the only one that spoke."""
     signals = {
         "surge": adds_surge(p, inputs),
         "minutes": minutes_trend(p, inputs),
         "value": value_gap(p, inputs),
         "opportunity": opportunity(p, inputs),
     }
-    score = sum(s.score for s in signals.values())
+    others = sum(s.score for k, s in signals.items() if k != "opportunity")
+    alone = OPPORTUNITY_NEEDS_ANOTHER and others <= 0
+    score = others + (0.0 if alone else signals["opportunity"].score)
     return Flag(level_of(score), score, signals)
 
 
 def flags(pool: Iterable[Pickup], inputs: Inputs) -> dict[int, Flag]:
-    """Every player's flag that any signal speaks for."""
+    """Every player's flag that any signal speaks for (opportunity alone included, scored 0, so
+    the dashboard can show its evidence)."""
     out = {}
     for p in pool:
         f = flag(p, inputs)
-        if f.score > 0:
+        if any(s.score > 0 for s in f.signals.values()):
             out[p.yahoo_id] = f
     return out
 

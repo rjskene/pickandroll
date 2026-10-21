@@ -315,7 +315,13 @@ test("a flag's tag, its signals loudest first and its evidence on hover", () => 
       "adds surge 1.00: 7,206 adds today, #1 by adds on Yahoo's buzz index\n" +
       "minutes up 0.75: 34.0 min over the last 7 days (3 games) against 26.0 projected",
   );
-  assert.ok(flagTitle(flag(null, 0, 0, 0, 0.5)).startsWith("under watch · 0.50"));
+  assert.ok(flagTitle(flag(null, 0.3, 0, 0, 0.4)).startsWith("under watch · 0.70"));
+  // Opportunity alone: the server scores it 0, the hover says why and keeps the evidence.
+  const alone = { ...flag(null, 0, 0, 0, 0.5), score: 0 };
+  assert.equal(
+    flagTitle(alone),
+    "not flagged: opportunity counts only beside another signal\nopportunity 0.50: Cade Cunningham (G) out, est. return Nov 12",
+  );
 });
 
 test("the flagged players have a level, the highest first; a signal alone is not a flag", () => {

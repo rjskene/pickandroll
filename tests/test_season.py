@@ -933,7 +933,8 @@ def test_a_refresh_keeps_the_flags_inputs_and_the_view_flags_the_pool(client):
     assert keldon["score"] == 0.5 and "Devin Vassell" in keldon["reason"]
     # Cunningham is out to Nov 12 at guard in Detroit; Duren is day to day.
     assert flags["6073"]["signals"]["opportunity"]["score"] == 0.5
-    assert flags["6073"]["level"] is None
+    # Opportunity alone flags nobody: kept for the hover, scored 0.
+    assert flags["6073"]["level"] is None and flags["6073"]["score"] == 0.0
     # Gilgeous-Alexander is back inside two weeks: nothing for Oklahoma City's guards.
     assert "10276" not in flags or flags["10276"]["signals"]["opportunity"]["score"] == 0.0
     assert v["flag_inputs"]["buzz"]["rows"] == 5 and v["flag_inputs"]["projection"] is None
