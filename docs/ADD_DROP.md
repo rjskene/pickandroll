@@ -214,6 +214,19 @@ leagues by id, player names, Yahoo adds and percent-rostered changes and ESPN re
 team or league names and no number derived from Basketball Monster; add and must-add players
 with their evidence, the watch level folded into one line per league.
 
+The explainer and the breakdown (#113). An "i" beside the Flag column's header on Waivers and
+on the Flags card says what each signal reads and how it scores, the levels and the caveat that
+they are first guesses, with every threshold taken from the API (`flag_config` on `GET
+/seasons/{league}`, built from the constants in `season/flags.py`, so the text follows a
+retune). Clicking a player's flag, on Waivers or on the Flags card, opens his breakdown under
+the row: the four signals as bars from 0 to 1 with their evidence, the sum on a scale marked at
+the three levels with the distance to the next one, and an "evaluate move" button. One breakdown
+is open at a time across the page, and Esc closes it before the move drawer. A signal that
+scores nothing because its input is missing says so rather than reading as a zero
+(`flag_inputs.silent`: no rest-of-season export silences the minutes trend and the value gap, a
+past-days export older than its limit the minutes trend, no injury report read the opportunity);
+an opportunity score on its own is marked as not counted.
+
 ## The trade evaluator
 
 The trading counterpart (from #79), built on the same data layer and objective. Given a
@@ -258,7 +271,7 @@ then UI to evaluate available waiver options"). The flow:
    (free agents and waivers, with the clear date), his games left this week and over three
    weeks, his one-week and three-week gain if added in place of the best drop, that drop's name,
    the price of the next-best drop, percent rostered and its change, injury status, and the
-   breakout flag with its evidence on hover. Filters for position, status, NBA team, games this
+   breakout flag with its evidence on hover and its breakdown under the row on a click (#113). Filters for position, status, NBA team, games this
    week and minimum percent rostered; sort by either gain. Selecting a row opens the move in
    the drawer: the add/drop pair, the per-category change for this week against the named
    opponent and over three weeks, and the alternatives with their prices.
@@ -304,7 +317,8 @@ phase 2 on.
    change and alternatives.
 4. **Breakout flag.** The four signals, their scores and levels, the buzz index and past-days
    loaders; the flag column, hover evidence and the Flag digest card; the daily digest alert
-   (built in #95; the alert is a scheduled session, see the decisions).
+   (built in #95; the alert is a scheduled session, see the decisions). The "i" explainer and
+   the per-player breakdown under the row (#113).
 5. **Trade evaluator.** `POST /seasons/{league}/trade` scoring both rosters before and after;
    the Trade card.
 6. **Weekly recorder.** Every Monday, for each league: standings, each team's category totals

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
 import { useMutation, useQuery, useQueryClient, type UseQueryResult } from "@tanstack/react-query";
 import {
   api,
@@ -72,6 +72,7 @@ import {
 } from "../season";
 import { DRAWER_WIDTH, isShown, SEASON_CARDS, SEASON_SHEET, seasonKeys, stepHighlight, type DrawerState, type Half, type SeasonCardId } from "../keys";
 import { useDrawer, useHotkeys } from "../useKeys";
+import { FlagBreakdown, FlagInfo } from "./FlagExplain";
 import Halves, { type Face } from "./Halves";
 import KeySheet from "./KeySheet";
 import Rail from "./Rail";
@@ -120,6 +121,13 @@ export default function SeasonScreen({ league, onBack }: { league: string; onBac
   const panel = useDrawer(PANEL_KEY, isPanelCard, DEFAULT_PANEL, DEFAULT_PANEL.last);
   const [sheetOpen, setSheetOpen] = useState(false);
   const [highlight, setHighlight] = useState<number | null>(null);
+  // One flag breakdown open at a time (#113), under a Flags card row or a Waivers row: opening
+  // another closes the first.
+  const [breakdown, setBreakdown] = useState<FlagOpen | null>(null);
+  const toggleBreakdown = useCallback(
+    (where: FlagOpen["where"], id: number) => setBreakdown((b) => (b && b.where === where && b.id === id ? null : { where, id })),
+    [],
+  );
   const visibleRows = useRef<number[]>([]);
   const setVisibleRows = useCallback((ids: number[]) => {
     visibleRows.current = ids;
@@ -161,6 +169,11 @@ export default function SeasonScreen({ league, onBack }: { league: string; onBac
       toggleDrawer: panel.toggleDrawer,
       swapHalves: panel.swapHalves,
       collapse: panel.collapseDrawer,
+      closeBreakdown: () => {
+        if (!breakdown || (breakdown.where === "flags" && !isShown(panel.drawer, "flags"))) return false;
+        setBreakdown(null);
+        return true;
+      },
       closeMove: () => {
         if (!picked || !isShown(panel.drawer, "moves")) return false;
         setPicked(null);
@@ -209,7 +222,11 @@ export default function SeasonScreen({ league, onBack }: { league: string; onBac
           body: <Trade league={league} s={s} system={system} />,
         };
       case "flags":
-        return { note: flagCount(s), body: <Flags s={s} m={moves.data} mh={mh} now={now} onPick={pick} /> };
+        return {
+          note: flagCount(s),
+          action: <FlagInfo cfg={s.flag_config} silent={s.flag_inputs?.silent} align="right" />,
+          body: <Flags s={s} m={moves.data} mh={mh} now={now} onPick={pick} open={breakdown?.where === "flags" ? breakdown.id : null} onToggle={(id) => toggleBreakdown("flags", id)} />,
+        };
       case "roster":
         return { note: s.my_team?.name, body: <Roster rows={s.roster} w={s.week_projection} /> };
       case "league":
@@ -280,6 +297,8 @@ export default function SeasonScreen({ league, onBack }: { league: string; onBac
                   highlight={highlight}
                   setVisibleRows={setVisibleRows}
                   searchRef={searchRef}
+                  flagOpen={breakdown?.where === "waivers" ? breakdown.id : null}
+                  onToggleFlag={(id) => toggleBreakdown("waivers", id)}
                 />
               </div>
               <Halves d={panel} cards={SEASON_CARDS} face={face} keep={["trade"]} />
@@ -303,11 +322,17 @@ export default function SeasonScreen({ league, onBack }: { league: string; onBac
   );
 }
 
+/** Where a flag breakdown is open: under the Flags card's row or the Waivers row of a player. */
+interface FlagOpen {
+  where: "flags" | "waivers";
+  id: number;
+}
+
 /** A breakout flag's level as a tag (W, A, M+), its evidence on hover; nothing under watch. */
-function FlagTag({ f }: { f: PlayerFlag | undefined }) {
+function FlagTag({ f, s }: { f: PlayerFlag | undefined; s: SeasonView }) {
   if (!f?.level) return null;
   return (
-    <span className={`tag ${FLAG_TONE[f.level]}`} title={flagTitle(f)}>
+    <span className={`tag ${FLAG_TONE[f.level]}`} title={flagTitle(f, s.flag_config)}>
       {FLAG_SHORT[f.level]}
     </span>
   );
@@ -381,6 +406,8 @@ function Waivers({
   highlight,
   setVisibleRows,
   searchRef,
+  flagOpen,
+  onToggleFlag,
 }: {
   s: SeasonView;
   system: ProjectionSystem;
@@ -394,6 +421,9 @@ function Waivers({
   highlight: number | null;
   setVisibleRows: (ids: number[]) => void;
   searchRef: RefObject<HTMLInputElement | null>;
+  /** The player whose flag breakdown is open under his row (#113). */
+  flagOpen: number | null;
+  onToggleFlag: (id: number) => void;
 }) {
   const w = s.week_projection;
   const cats = s.settings.cats;
@@ -444,12 +474,14 @@ function Waivers({
   const set = (patch: Partial<AvailableFilter>) => setFilter((f) => ({ ...f, ...patch }));
   const click = (key: AvailableSortKey) =>
     setSort((s) => (s.key === key ? { key, dir: s.dir === "asc" ? "desc" : "asc" } : { key, dir: TEXT_KEYS.includes(key) ? "asc" : "desc" }));
-  const th = (key: AvailableSortKey, label: string, title?: string, num = true) => (
+  const th = (key: AvailableSortKey, label: string, title?: string, num = true, extra?: ReactNode) => (
     <th key={key} className={`sortable${num ? " num" : ""}${sort.key === key ? " sorted" : ""}`} title={title} onClick={() => click(key)}>
       {label}
       {sort.key === key && <span className="arrow">{sort.dir === "asc" ? "▲" : "▼"}</span>}
+      {extra}
     </th>
   );
+  const columns = OWN_COLUMNS.length + 1 + 2 + 2 + cats.length + TREND_COLUMNS.length;
   const info = w.systems[system];
   const week = w.weeks[0];
   const gainTitle = (h: MoveHorizon) =>
@@ -539,7 +571,13 @@ function Waivers({
           <thead>
             <tr>
               {OWN_COLUMNS.map((c) => th(c.key, c.label, c.title, Boolean(c.num)))}
-              {th("flag", "Flag", "the breakout flag: W watch, A add, M+ must-add, from four signals (adds surge, minutes trend, value gap, opportunity); hover a row's for the evidence", false)}
+              {th(
+                "flag",
+                "Flag",
+                "the breakout flag: W watch, A add, M+ must-add, from four signals (adds surge, minutes trend, value gap, opportunity); click a row's tag for the breakdown",
+                false,
+                <FlagInfo cfg={s.flag_config} silent={s.flag_inputs?.silent} />,
+              )}
               {(["week", "three"] as const).map((h) => th(GAIN_KEY[h], GAIN_SHORT[h], gainTitle(h)))}
               <th title={`the player his best move over the ${HORIZON_LABEL[horizon]} drops (the horizon at the right)`}>For</th>
               {th("next_price", "Next", `how much less the move over the ${HORIZON_LABEL[horizon]} adds with the next best drop`)}
@@ -554,47 +592,69 @@ function Waivers({
               const cand = m?.candidates[String(id)];
               const best = bestMove(cand, mh);
               const f = flagOf(s, id);
+              const open = flagOpen === id && Boolean(f?.level);
               return (
-                <tr
-                  key={id}
-                  className={[id === highlight ? "hl" : "", picked?.add === id ? "picked" : ""].filter(Boolean).join(" ") || undefined}
-                  onClick={() => onPick({ add: id, drop: openingDrop(cand, mh) })}
-                >
-                  <td className="strong">
-                    {r.player.name} <Status player={r.player} />
-                  </td>
-                  <td>{r.player.nba_team}</td>
-                  <td>{r.player.positions.join(", ")}</td>
-                  <td className={r.availability === "W" ? "accent" : undefined}>{availabilityLabel(r)}</td>
-                  <td className="num">{games(r, "week") ?? ""}</td>
-                  <td className="num dim">{games(r, "next3") ?? ""}</td>
-                  <td title={f ? flagTitle(f) : undefined}>
-                    <FlagTag f={f} />
-                  </td>
-                  {(["week", "three"] as const).map((h) => (
-                    <td key={h} className={`num ${gainTone(cand?.[h]?.gain, minGain)}`}>
-                      {gainLabel(cand?.[h]?.gain)}
+                <Fragment key={id}>
+                  <tr
+                    className={[id === highlight ? "hl" : "", picked?.add === id ? "picked" : ""].filter(Boolean).join(" ") || undefined}
+                    onClick={() => onPick({ add: id, drop: openingDrop(cand, mh) })}
+                  >
+                    <td className="strong">
+                      {r.player.name} <Status player={r.player} />
                     </td>
-                  ))}
-                  <td className="dim">{best ? name(best.drop) : ""}</td>
-                  <td className="num dim" title={best?.next_drop != null || best?.next_price != null ? `next best: ${name(best.next_drop)}` : undefined}>
-                    {best?.next_price == null ? "" : best.next_price.toFixed(2)}
-                  </td>
-                  {cats.map((c) => (
-                    <td
-                      key={c}
-                      className="num"
-                      title={t?.theirs ? `${SYSTEM_SHORT[other]}: ${catValue(c, t.theirs[c])}` : `no ${SYSTEM_SHORT[other]} line`}
-                    >
-                      {catValue(c, t?.mine?.[c])}
+                    <td>{r.player.nba_team}</td>
+                    <td>{r.player.positions.join(", ")}</td>
+                    <td className={r.availability === "W" ? "accent" : undefined}>{availabilityLabel(r)}</td>
+                    <td className="num">{games(r, "week") ?? ""}</td>
+                    <td className="num dim">{games(r, "next3") ?? ""}</td>
+                    <td>
+                      {f?.level && (
+                        <button
+                          className="flag-btn"
+                          aria-expanded={open}
+                          aria-label={`${r.player.name}'s flag breakdown`}
+                          title={`${flagTitle(f, s.flag_config)}\nclick for the breakdown`}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onToggleFlag(id);
+                          }}
+                        >
+                          <FlagTag f={f} s={s} />
+                        </button>
+                      )}
                     </td>
-                  ))}
-                  <td className="num">{pctLabel(r.pct_rostered)}</td>
-                  <td className={`num ${(r.pct_rostered_change ?? 0) > 0 ? "good" : (r.pct_rostered_change ?? 0) < 0 ? "bad" : ""}`}>{changeLabel(r.pct_rostered_change)}</td>
-                  <td className="num">{pctLabel(r.pct_started)}</td>
-                  <td className="num">{r.adds ?? ""}</td>
-                  <td className="num">{r.drops ?? ""}</td>
-                </tr>
+                    {(["week", "three"] as const).map((h) => (
+                      <td key={h} className={`num ${gainTone(cand?.[h]?.gain, minGain)}`}>
+                        {gainLabel(cand?.[h]?.gain)}
+                      </td>
+                    ))}
+                    <td className="dim">{best ? name(best.drop) : ""}</td>
+                    <td className="num dim" title={best?.next_drop != null || best?.next_price != null ? `next best: ${name(best.next_drop)}` : undefined}>
+                      {best?.next_price == null ? "" : best.next_price.toFixed(2)}
+                    </td>
+                    {cats.map((c) => (
+                      <td
+                        key={c}
+                        className="num"
+                        title={t?.theirs ? `${SYSTEM_SHORT[other]}: ${catValue(c, t.theirs[c])}` : `no ${SYSTEM_SHORT[other]} line`}
+                      >
+                        {catValue(c, t?.mine?.[c])}
+                      </td>
+                    ))}
+                    <td className="num">{pctLabel(r.pct_rostered)}</td>
+                    <td className={`num ${(r.pct_rostered_change ?? 0) > 0 ? "good" : (r.pct_rostered_change ?? 0) < 0 ? "bad" : ""}`}>{changeLabel(r.pct_rostered_change)}</td>
+                    <td className="num">{pctLabel(r.pct_started)}</td>
+                    <td className="num">{r.adds ?? ""}</td>
+                    <td className="num">{r.drops ?? ""}</td>
+                  </tr>
+                  {open && f && (
+                    <tr className="breakdown">
+                      <td colSpan={columns}>
+                        <FlagBreakdown f={f} cfg={s.flag_config} silent={s.flag_inputs?.silent} onEvaluate={() => onPick({ add: id, drop: openingDrop(cand, mh) })} />
+                      </td>
+                    </tr>
+                  )}
+                </Fragment>
               );
             })}
           </tbody>
@@ -686,7 +746,7 @@ function Recommended({ h, m, s, name, onPick }: { h: MoveHorizon; m: MovesPayloa
             {set.moves.map((x) => (
               <tr key={x.add} className="pick" onClick={() => onPick(x)}>
                 <td className="strong">
-                  {name(x.add)} <FlagTag f={flagOf(s, x.add)} />
+                  {name(x.add)} <FlagTag f={flagOf(s, x.add)} s={s} />
                 </td>
                 <td>{name(x.drop)}</td>
                 <td className="dim">{dayLabel(x.from)}</td>
@@ -715,8 +775,25 @@ function flagCount(s: SeasonView): string | undefined {
   return s.flag_inputs?.error ? "not made" : n ? `${n} flagged` : undefined;
 }
 
-/** The flagged available players, the highest first; a click opens his move. */
-function Flags({ s, m, mh, now, onPick }: { s: SeasonView; m: MovesPayload | undefined; mh: MoveHorizon; now: number; onPick: (m: MoveKey) => void }) {
+/** The flagged available players, the highest first; a click opens his breakdown under the row,
+ * which carries the move. */
+function Flags({
+  s,
+  m,
+  mh,
+  now,
+  onPick,
+  open,
+  onToggle,
+}: {
+  s: SeasonView;
+  m: MovesPayload | undefined;
+  mh: MoveHorizon;
+  now: number;
+  onPick: (m: MoveKey) => void;
+  open: number | null;
+  onToggle: (id: number) => void;
+}) {
   const rows = flagged(s);
   return (
     <>
@@ -734,16 +811,31 @@ function Flags({ s, m, mh, now, onPick }: { s: SeasonView; m: MovesPayload | und
           <tbody>
             {rows.map(({ row, flag }) => {
               const id = row.player.yahoo_id;
+              const shown = open === id;
               return (
-                <tr key={id} className="pick" title={flagTitle(flag)} onClick={() => onPick({ add: id, drop: openingDrop(m?.candidates[String(id)], mh) })}>
-                  <td>
-                    <FlagTag f={flag} />
-                  </td>
-                  <td className="strong">
-                    {row.player.name} <span className="dim">{row.player.nba_team}</span>
-                  </td>
-                  <td className="dim">{flagSignals(flag).map((k) => FLAG_SIGNAL_NAME[k]).join(", ")}</td>
-                </tr>
+                <Fragment key={id}>
+                  <tr
+                    className={`pick${shown ? " picked" : ""}`}
+                    aria-expanded={shown}
+                    title={shown ? "Click to close the breakdown" : "Click for the breakdown"}
+                    onClick={() => onToggle(id)}
+                  >
+                    <td>
+                      <FlagTag f={flag} s={s} />
+                    </td>
+                    <td className="strong">
+                      {row.player.name} <span className="dim">{row.player.nba_team}</span>
+                    </td>
+                    <td className="dim">{flagSignals(flag).map((k) => FLAG_SIGNAL_NAME[k]).join(", ")}</td>
+                  </tr>
+                  {shown && (
+                    <tr className="breakdown">
+                      <td colSpan={3}>
+                        <FlagBreakdown f={flag} cfg={s.flag_config} silent={s.flag_inputs?.silent} onEvaluate={() => onPick({ add: id, drop: openingDrop(m?.candidates[String(id)], mh) })} />
+                      </td>
+                    </tr>
+                  )}
+                </Fragment>
               );
             })}
           </tbody>
@@ -790,7 +882,7 @@ function MoveDrawer({
     <>
       <div className="block">
         <span className="k">
-          Add {name(picked.add)} <FlagTag f={flagOf(s, picked.add)} /> for {name(picked.drop)}
+          Add {name(picked.add)} <FlagTag f={flagOf(s, picked.add)} s={s} /> for {name(picked.drop)}
         </span>
         <p className="muted small">
           {p && `${p.nba_team ?? "no team"} · ${p.positions.join(", ")} · `}

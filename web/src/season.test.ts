@@ -1,7 +1,7 @@
 // Node's own test runner with its built-in type stripping (`npm test`), as format.test.ts.
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import type { AvailableRow, BestMove, FlagSignal, MoveCandidate, PlayerFlag, Rates, RosterRow, SeasonPlayer, SeasonSummary, TradePlayer, TradeSide } from "./api";
+import type { AvailableRow, BestMove, FlagConfig, FlagSignal, MoveCandidate, PlayerFlag, Rates, RosterRow, SeasonPlayer, SeasonSummary, TradePlayer, TradeSide } from "./api";
 import {
   addsLeft,
   addsNote,
@@ -40,8 +40,11 @@ import {
   flagged,
   flagInputsNote,
   flagOf,
+  flagBreakdown,
+  flagExplainer,
   flagSignals,
   flagTitle,
+  levelsLine,
   isStale,
   NO_FILTER,
   ordinal,
@@ -320,24 +323,101 @@ const flag = (level: PlayerFlag["level"], surge: number, minutes = 0, value = 0,
   },
 });
 
+// The season view's flag_config as the API sends it today; a retune changes the numbers, not the code.
+const CONFIG: FlagConfig = {
+  levels: [
+    { level: "must-add", floor: 2.2 },
+    { level: "add", floor: 1.5 },
+    { level: "watch", floor: 0.8 },
+  ],
+  max: 4,
+  opportunity_needs_another: true,
+  past_days_max_days: 3,
+  signals: {
+    surge: { name: "adds surge", jump_full: 2.5, jump_floor: 1, history_days: 3, adds_full: 8, adds_floor: 25, buzz_rows: 50, buzz_last: 0.3 },
+    minutes: { name: "minutes up", minutes_full: 8, usage_full: 5, usage_weight: 0.5, min_games: { "14": 4, "7": 2 } },
+    value: { name: "value gap", rank: 120, pct: 50, rank_scale: 240 },
+    opportunity: { name: "opportunity", out_days: 14, full: 30, unknown_mpg: 15 },
+  },
+};
+
 test("a flag's tag, its signals loudest first and its evidence on hover", () => {
   const f = flag("add", 1, 0.75);
   assert.equal(FLAG_SHORT.add, "A");
   assert.equal(FLAG_SHORT["must-add"], "M+");
   assert.deepEqual(flagSignals(flag("watch", 0.3, 0, 0, 0.5)), ["opportunity", "surge"]);
+  // The thresholds are the API's, so the hover follows a retune; without them it names none.
+  assert.equal(levelsLine(CONFIG), "watch 0.8, add 1.5, must-add 2.2");
+  assert.equal(flagTitle(f).split("\n")[0], "add · 1.75");
+  assert.equal(flagTitle(f, { ...CONFIG, levels: [{ level: "add", floor: 1.2 }] }).split("\n")[0], "add · 1.75 of 4 (add 1.2)");
   assert.equal(
-    flagTitle(f),
+    flagTitle(f, CONFIG),
     "add · 1.75 of 4 (watch 0.8, add 1.5, must-add 2.2)\n" +
       "adds surge 1.00: 7,206 adds today, #1 by adds on Yahoo's buzz index\n" +
       "minutes up 0.75: 34.0 min over the last 7 days (3 games) against 26.0 projected",
   );
-  assert.ok(flagTitle(flag(null, 0.3, 0, 0, 0.4)).startsWith("under watch · 0.70"));
+  assert.ok(flagTitle(flag(null, 0.3, 0, 0, 0.4), CONFIG).startsWith("under watch · 0.70"));
   // Opportunity alone: the server scores it 0, the hover says why and keeps the evidence.
   const alone = { ...flag(null, 0, 0, 0, 0.5), score: 0 };
   assert.equal(
-    flagTitle(alone),
+    flagTitle(alone, CONFIG),
     "not flagged: opportunity counts only beside another signal\nopportunity 0.50: Cade Cunningham (G) out, est. return Nov 12",
   );
+});
+
+test("a flag's breakdown: every signal in order with its evidence, a silent one says why, the sum against the levels", () => {
+  const b = flagBreakdown(flag("add", 1, 0.75), CONFIG, { value: "no rest-of-season export: no rank on the league's scoring" });
+  assert.deepEqual(
+    b.signals.map((x) => [x.key, x.score, x.reason !== null, x.silent, x.counted]),
+    [
+      ["surge", 1, true, null, true],
+      ["minutes", 0.75, true, null, true],
+      ["value", 0, false, "no rest-of-season export: no rank on the league's scoring", true],
+      ["opportunity", 0, false, null, true],
+    ],
+  );
+  assert.equal(b.line, "1.75 of 4: add (from 1.5); must-add at 2.2, 0.45 more");
+  assert.deepEqual(
+    b.levels.map((l) => [l.level, l.reached]),
+    [
+      ["watch", true],
+      ["add", true],
+      ["must-add", false],
+    ],
+  );
+  // The top level has nothing above it; under watch names the first level.
+  assert.equal(flagBreakdown(flag("must-add", 1, 1, 0.5), CONFIG).line, "2.50 of 4: must-add (from 2.2)");
+  assert.equal(flagBreakdown(flag(null, 0.3, 0, 0, 0.4), CONFIG).line, "0.70 of 4: not flagged; watch at 0.8, 0.10 more");
+  // A signal that spoke is never silent, whatever the inputs say about the league.
+  assert.equal(flagBreakdown(flag("add", 1, 0.75), CONFIG, { minutes: "no past-days export within 3 days" }).signals[1].silent, null);
+  // Opportunity alone: shown with its evidence, not counted, and the line says why.
+  const alone = flagBreakdown({ ...flag(null, 0, 0, 0, 0.5), score: 0 }, CONFIG);
+  assert.deepEqual([alone.signals[3].score, alone.signals[3].counted, alone.signals[3].reason !== null], [0.5, false, true]);
+  assert.equal(alone.line, "0.00 of 4: not flagged, opportunity counts only beside another signal; watch from 0.8");
+  // Without the view's config: no thresholds to show.
+  assert.deepEqual([flagBreakdown(flag("add", 1, 0.75)).levels, flagBreakdown(flag("add", 1, 0.75)).line], [[], "1.75 of 4: add"]);
+});
+
+test("the flag's explainer takes every number from the API and names the signals left silent", () => {
+  const x = flagExplainer(CONFIG, { minutes: "no past-days export within 3 days" });
+  assert.deepEqual(
+    x.signals.map((sg) => [sg.key, sg.name, sg.silent]),
+    [
+      ["surge", "adds surge", null],
+      ["minutes", "minutes up", "no past-days export within 3 days"],
+      ["value", "value gap", null],
+      ["opportunity", "opportunity", null],
+    ],
+  );
+  assert.equal(x.levels, "Each signal scores from 0 to 1 and the level comes from their sum, at most 4: watch from 0.8, add from 1.5, must-add from 2.2.");
+  assert.ok(x.signals[1].text.includes("(2 in 7 days, 4 in 14 days)") && x.signals[1].text.includes("last 3 days"));
+  assert.ok(x.signals[2].text.startsWith("ranked inside the top 120") && x.signals[2].text.includes("under 50%"));
+  assert.ok(x.signals[3].text.endsWith("It counts toward the level only beside another signal."));
+  assert.ok(x.caveat.includes("first guess"));
+  // A retune shows at once.
+  const tuned = flagExplainer({ ...CONFIG, opportunity_needs_another: false, signals: { ...CONFIG.signals, value: { ...CONFIG.signals.value, rank: 150 } } });
+  assert.ok(tuned.signals[2].text.startsWith("ranked inside the top 150"));
+  assert.ok(!tuned.signals[3].text.includes("beside another signal"));
 });
 
 test("the flagged players have a level, the highest first; a signal alone is not a flag", () => {

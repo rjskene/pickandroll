@@ -350,6 +350,8 @@ export interface SeasonKeys {
   swapHalves: () => void;
   /** Esc's last step: the panel collapses to the rail. */
   collapse: () => void;
+  /** Esc's first step: close an open flag breakdown (#113); false when none is open. */
+  closeBreakdown: () => boolean;
   /** Esc's middle step: close the move drawer; false when none is open. */
   closeMove: () => boolean;
   /** The panel shows Trade (t) or Moves (m) in the half the other holds. */
@@ -373,7 +375,7 @@ export function seasonKeys(s: SeasonKeys): KeyMap {
     sheetOpen: s.sheetOpen,
     setSheetOpen: s.setSheetOpen,
     escape: () => {
-      if (!s.closeMove()) s.collapse();
+      if (!s.closeBreakdown() && !s.closeMove()) s.collapse();
     },
     keys: {
       "]": () => s.toggleDrawer(),
@@ -408,7 +410,7 @@ export const SEASON_SHEET: Sheet = {
         [["⇧ 2", "…", "⇧ 6"], "open it in the bottom half (mouse: shift-click or right-click the rail icon)"],
         [["]"], "collapse the panel to the rail, or bring it back with its two cards"],
         [["x"], "swap the top and bottom cards"],
-        [["Esc"], "leave a field, then close the move drawer, then collapse the panel"],
+        [["Esc"], "leave a field, then close a flag breakdown, then the move drawer, then collapse the panel"],
       ],
     },
     {

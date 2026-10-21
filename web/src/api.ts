@@ -1225,6 +1225,8 @@ export interface SeasonView extends SeasonSummary {
   /** The breakout flag (#95) of every available player a signal speaks for, by Yahoo id. */
   flags?: Record<string, PlayerFlag>;
   flag_inputs?: FlagInputs;
+  /** The flag's own thresholds, for the explainer (#113). */
+  flag_config?: FlagConfig;
 }
 
 // ---------------------------------------------------------------- breakout flag (#95)
@@ -1249,8 +1251,25 @@ export interface FlagInputs {
   /** The rest-of-season export the minutes, value and opportunity read. */
   projection?: string | null;
   past_days?: Record<string, { file: string; as_of: string; stale?: boolean } | null>;
+  /** The signals today's inputs cannot score for anyone, each with why. */
+  silent?: Partial<Record<FlagSignalKey, string>>;
   /** The flags could not be made. */
   error?: string;
+}
+/** ``season/flags.py``'s constants, as the season view sends them. */
+export interface FlagConfig {
+  /** Highest first. */
+  levels: { level: FlagLevel; floor: number }[];
+  /** The most the four scores add up to. */
+  max: number;
+  opportunity_needs_another: boolean;
+  past_days_max_days: number;
+  signals: {
+    surge: { name: string; jump_full: number; jump_floor: number; history_days: number; adds_full: number; adds_floor: number; buzz_rows: number; buzz_last: number };
+    minutes: { name: string; minutes_full: number; usage_full: number; usage_weight: number; min_games: Record<string, number> };
+    value: { name: string; rank: number; pct: number; rank_scale: number };
+    opportunity: { name: string; out_days: number; full: number; unknown_mpg: number };
+  };
 }
 
 export const api = {

@@ -247,6 +247,7 @@ function fakeSeason(over: Partial<SeasonKeys> = {}) {
     toggleDrawer: rec("toggle"),
     swapHalves: rec("swap"),
     collapse: rec("collapse"),
+    closeBreakdown: () => false,
     closeMove: () => false,
     show: rec("show"),
     focusSearch: rec("search"),
@@ -319,6 +320,13 @@ test("season: keys that must not act", () => {
     assert.equal(handleKey(e, map), false, e.key);
     assert.deepEqual(calls, [], e.key);
   }
+});
+
+test("season: Esc closes an open flag breakdown before the move drawer", () => {
+  let moved = 0;
+  const f = fakeSeason({ closeBreakdown: () => true, closeMove: () => (moved++, true) });
+  handleKey(key("Escape"), f.map);
+  assert.deepEqual([f.calls, moved], [[], 0]);
 });
 
 test("season: Esc leaves a field, then closes the move drawer, then collapses the panel", () => {
