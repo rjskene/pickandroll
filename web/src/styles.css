@@ -416,6 +416,7 @@ tr.tie td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
 /* The draft board pins its last column (the Draft button); the waiver table has none. */
 .season-board th:last-child { right: auto; box-shadow: none; }
 .season-board td:last-child { position: static; box-shadow: none; }
+.season-board .board-note { margin: -4px 0 8px; font-size: 12px; }
 .season-top { gap: 14px; }
 .season-top > * { white-space: nowrap; }
 .season-top > .title { white-space: normal; min-width: 0; }

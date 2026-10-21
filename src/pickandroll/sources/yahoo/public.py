@@ -23,7 +23,7 @@ from collections.abc import Callable, Iterable
 from datetime import UTC, date, datetime
 from typing import Any, Protocol
 
-from ...season.state import PUBLIC, Part, SeasonSettings, matchup_key, roster_key
+from ...season.state import PUBLIC, YAHOO_WEEK, Part, SeasonSettings, matchup_key, roster_key
 from . import pages
 
 PUB_API = "https://pub-api.fantasysports.yahoo.com/fantasy/v3"
@@ -226,11 +226,11 @@ def refresh_parts(
     """Every public source of a league, read once, as season parts.
 
     The order is settings, the player pool, the league page (standings and this week's pairs),
-    every team's page, the available players most rostered first, my matchup and the
-    transactions. Raises :class:`PrivateLeague` when Yahoo serves nothing public for it.
+    every team's page, the available players most rostered first, Yahoo's projection of them
+    for the next seven days, my matchup and the transactions. Raises :class:`PrivateLeague` when Yahoo serves nothing public for it.
     """
     pages_needed = -(-max_available // PAGE_ROWS)
-    total = 3 + base.num_teams + pages_needed + 2
+    total = 3 + base.num_teams + 2 * pages_needed + 2
     done = 0
 
     def step(what: str) -> None:
@@ -265,15 +265,25 @@ def refresh_parts(
         )
         step(f"team {team_id}")
     rows: list[dict[str, Any]] = []
+    offsets = []
     for offset in range(0, max_available, PAGE_ROWS):
         page = pages.parse_players_page(fetch(available_url(league, offset)), today)
         rows.extend(page["rows"])
+        offsets.append(offset)
         step(f"available {offset + 1}-{offset + PAGE_ROWS}")
         if len(page["rows"]) < PAGE_ROWS:
             break
     seen = datetime.now(UTC).isoformat()
     unique = {r["player"]["yahoo_id"]: {**r, "seen_at": seen} for r in rows}
     out.append(part("available", {"rows": list(unique.values())}))
+    # Yahoo's own projection of the same players for the next seven days.
+    projected: dict[int, dict[str, Any]] = {}
+    for offset in offsets:
+        html = fetch(available_url(league, offset, pages.PROJECTION_VIEW))
+        for r in pages.parse_projection_page(html)["rows"]:
+            projected[r["player"]["yahoo_id"]] = {**r, "seen_at": datetime.now(UTC).isoformat()}
+        step(f"Yahoo projection {offset + 1}-{offset + PAGE_ROWS}")
+    out.append(part(YAHOO_WEEK, {"rows": list(projected.values())}))
     week = read.get("current_week") or league_page.get("week")
     mine = base.my_team_id
     pair = next(

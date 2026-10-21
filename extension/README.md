@@ -95,8 +95,11 @@ season view is fed from the pages you open in Chrome instead:
    page with what the API took from it or why it refused it, **Refresh this page** (reloads the tab) and a link
    to the league in the web app.
 4. On the players page, **Read every page** opens the first page of the same view and follows its Next 25 link
-   page by page, up to 12 pages (300 players), then stops. **Stop reading** ends it. Without that click the
-   reader never navigates.
+   page by page, up to 12 pages (300 players). It then does the same in the Next 7 Days (proj) view, Yahoo's own
+   weekly projections (0.5.1, #93), unless it started there, and stops. **Stop reading** ends it. Without that
+   click the reader never navigates.
+5. Yahoo's projections reach pickandroll only from that view: open Next 7 Days (proj) on the players page too,
+   or let the read walk it. Its pages keep their own lines in the panel ("players 1-25 (next 7 days)").
 
 After the first post of a private league the API also brings in the week calendar (from the cache any public
 league's refresh writes) and the NBA schedule, so games left show on the roster. A team page for another date

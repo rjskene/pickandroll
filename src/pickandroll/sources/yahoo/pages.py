@@ -7,7 +7,8 @@ Each parser takes the page's HTML and returns a season part's data (``pickandrol
 * a team page ``/nba/<league>/<team>``: the roster by slot;
 * the players page ``/nba/<league>/players?status=A...``: available players, free agents and
   waivers with their clear date, percent rostered and started (with the day's change in the
-  ``R_O`` "Research" view), adds and drops;
+  ``R_O`` "Research" view), adds and drops; in the ``S_PS7`` view, Yahoo's projection for the
+  next seven days (``parse_projection_page``);
 * a matchup page ``/nba/<league>/matchup?week=<w>&mid1=<a>&mid2=<b>``: both teams' totals;
 * the transactions page ``/nba/<league>/transactions``.
 
@@ -260,6 +261,61 @@ def parse_players_page(html: str, today: date) -> dict[str, Any]:
                 "drops": _int(text("drops")) if col["drops"] is not None else None,
             }
         )
+    return {"rows": out}
+
+
+#: Yahoo's stat columns, by their label with spaces and the projection's asterisk taken out.
+_STAT_LABELS = {
+    "GP": ("gp",),
+    "FGM/A": ("fgm", "fga"),
+    "FTM/A": ("ftm", "fta"),
+    "3PTM": ("threes",),
+    "PTS": ("pts",),
+    "REB": ("reb",),
+    "AST": ("ast",),
+    "ST": ("stl",),
+    "BLK": ("blk",),
+    "TO": ("tov",),
+}
+#: The players page's view of Yahoo's projection for the next seven days.
+PROJECTION_VIEW = "S_PS7"
+
+
+def _stat_label(label: str) -> str:
+    return re.sub(r"[\s*\ue000-\uf8ff]", "", label).upper()
+
+
+def parse_projection_page(html: str) -> dict[str, Any]:
+    """The players page in a projection view (``S_PS7``, Yahoo's next seven days): for every
+    player row, his projected games (``gp``) and his totals over them, in our stat names.
+    Whoever the rows are (available or taken), the projection is his."""
+    root = parse(html)
+    _require(root, "players")
+    found = _table_with(root, "Players", "GP*") or _table_with(root, "Players", "GP")
+    if found is None:
+        raise PageError("no projection table on the players page")
+    labels, rows = found
+    cols = {_stat_label(label): i for i, label in enumerate(labels) if label}
+    player_col = _column(labels, "Players")
+    out = []
+    for row in rows:
+        cs = cells(row)
+        player = (
+            player_cell(cs[player_col]) if player_col is not None and player_col < len(cs) else None
+        )
+        if player is None:
+            continue
+        stats: dict[str, float | None] = {}
+        for label, names in _STAT_LABELS.items():
+            i = cols.get(label)
+            text = cs[i].text() if i is not None and i < len(cs) else ""
+            values = text.split("/") if len(names) == 2 else [text]
+            for name, value in zip(names, values, strict=False):
+                # "-": Yahoo projects him no games (a player out, or not with a team).
+                stats[name] = 0.0 if value.strip() in ("-", "–") else _float(value)
+        if stats.get("gp") is None:
+            continue
+        out.append({"player": player.to_dict(), **stats})
     return {"rows": out}
 
 

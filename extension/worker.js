@@ -184,8 +184,8 @@ const ops = {
     return api("/sessions");
   },
   /** A league page as the user's Chrome rendered it, posted to the season's snapshot route.
-   * Answers the post and ``follow``: the players page's Next 25 link, only while a multi-page
-   * read the user armed from the panel is running. */
+   * Answers the post and ``follow``: the players page's Next 25 link, or the first page of the
+   * read's next view, only while a multi-page read the user armed from the panel is running. */
   async season_page({ url, html, fetched_at, next = null }, sender) {
     const L = self.PickAndRoll;
     const page = L.leaguePage(url);
@@ -206,19 +206,20 @@ const ops = {
     if (sender.tab) await chrome.storage.session.set({ [`league_tab:${sender.tab.id}`]: { ...page, url, at } });
     const read = await stored(readKey(page.league));
     const posted = !post.error && post.accepted.length > 0;
-    const { follow, read: left } = L.afterPost(read, page, posted, next);
+    const { follow, read: left } = L.afterPost(read, page, posted, next, url);
     if (read && left) await chrome.storage.session.set({ [readKey(page.league)]: left });
     else if (read) await chrome.storage.session.remove(readKey(page.league));
     return { post, follow, season };
   },
-  /** Arm (``pages`` > 0) or stop a multi-page read of the league's players page. */
-  async season_read({ league, pages = 0 }) {
+  /** Arm (``pages`` > 0) or stop a multi-page read of the league's players page, starting in
+   * ``view`` (the page's ``stat1``). */
+  async season_read({ league, pages = 0, view = null }) {
     const L = self.PickAndRoll;
     if (!(Number(pages) > 0)) {
       await chrome.storage.session.remove(readKey(league));
       return { read: null };
     }
-    const read = L.startRead(league, Math.min(Number(pages), L.READ_PAGES));
+    const read = L.startRead(league, Math.min(Number(pages), L.READ_PAGES), Date.now(), view);
     await chrome.storage.session.set({ [readKey(league)]: read });
     return { read };
   },

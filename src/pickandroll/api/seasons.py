@@ -32,7 +32,6 @@ from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any
-from zoneinfo import ZoneInfo
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi import Path as FastPath
@@ -41,6 +40,7 @@ from pydantic import BaseModel, Field
 from ..season import (
     EXTENSION,
     PUBLIC,
+    YAHOO_WEEK,
     Calendar,
     Part,
     Season,
@@ -55,6 +55,7 @@ from ..season import (
 from ..sources import schedule as nba_schedule
 from ..sources.yahoo import pages, public
 from . import leagues
+from .season_week import NBA_TZ, week_projection
 
 SEASON_DIR = "season"
 STATE = "state.json"
@@ -64,7 +65,6 @@ CALENDAR = "calendar.json"
 #: The weeks a season view looks ahead: this one and the next three (the Moves card's horizon).
 WEEKS_AHEAD = 4
 #: The NBA's dates (and Yahoo's pages) run on US Eastern time.
-NBA_TZ = ZoneInfo("America/New_York")
 TRANSACTIONS_SHOWN = 30
 
 FetchFactory = Callable[[], public.Fetch]
@@ -204,9 +204,11 @@ class SeasonService:
         base, is_public = self._base(league)
         parts = load_parts(self.data_dir, league)
         season = Season.from_parts(base, parts)
+        today = nba_today(self.clock())
         return {
             **_summary(season, is_public, bool(parts), self.jobs.get(league)),
-            **_view(season, nba_today(self.clock())),
+            **_view(season, today),
+            "week_projection": week_projection(season, today, self.data_dir, WEEKS_AHEAD),
         }
 
     # ------------------------------------------------------------------ refresh
@@ -355,7 +357,7 @@ class SeasonService:
         for page in body.pages:
             at = page.fetched_at or datetime.now(UTC)
             try:
-                received.append(_page_part(league, page.url, page.html, at, today))
+                received.extend(_page_parts(league, page.url, page.html, at, today))
             except pages.PageError as exc:
                 skipped.append({"url": page.url, "reason": str(exc)})
         for given in body.parts:
@@ -382,12 +384,35 @@ class SeasonService:
 
 
 def _known_key(key: str) -> bool:
-    fixed = {"settings", "players", "league", "available", "transactions", "calendar", "schedule"}
+    fixed = {
+        "settings",
+        "players",
+        "league",
+        "available",
+        "transactions",
+        "calendar",
+        "schedule",
+        YAHOO_WEEK,
+    }
     return key in fixed or key.startswith(("roster/", "matchup/"))
 
 
-def _page_part(league: str, url: str, html: str, at: datetime, today: date) -> Part:
+def _page_parts(league: str, url: str, html: str, at: datetime, today: date) -> list[Part]:
+    """The season parts one league page gives: one, except that the players page in Yahoo's
+    projection view also gives the projection rows."""
     kind, info = pages.page_kind(url)
+    part = _page_part(league, kind, info, html, at, today)
+    if kind == "players" and info.get("view") == pages.PROJECTION_VIEW:
+        rows = pages.parse_projection_page(html)["rows"]
+        seen = at.isoformat()
+        data = {"upsert": True, "rows": [{**r, "seen_at": seen} for r in rows]}
+        return [part, Part(YAHOO_WEEK, at, EXTENSION, data)]
+    return [part]
+
+
+def _page_part(
+    league: str, kind: str, info: dict[str, Any], html: str, at: datetime, today: date
+) -> Part:
     if info["league"] != str(league):
         raise pages.PageError(f"the page is league {info['league']}'s, not {league}'s")
     if kind == "league":

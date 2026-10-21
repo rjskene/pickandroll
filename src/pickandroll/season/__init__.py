@@ -5,6 +5,7 @@ from .calendar import Calendar, Week, build_calendar, monday_of, mondays
 from .state import (
     EXTENSION,
     PUBLIC,
+    YAHOO_WEEK,
     Available,
     Matchup,
     Part,
@@ -22,6 +23,7 @@ from .state import (
 __all__ = [
     "EXTENSION",
     "PUBLIC",
+    "YAHOO_WEEK",
     "Available",
     "Calendar",
     "Matchup",

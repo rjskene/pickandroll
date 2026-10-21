@@ -13,11 +13,14 @@
   const HOST = "basketball.fantasysports.yahoo.com";
   /** Rows on one players page; Yahoo's Next 25 link moves ``count`` by this. */
   const PAGE_ROWS = 25;
-  /** A multi-page read stops after this many pages (300 players, as the API's own refresh). */
+  /** A multi-page read stops after this many pages of a view (300 players, as the API's own refresh). */
   const READ_PAGES = 12;
+  /** The players page's Next 7 Days (proj) view: Yahoo's own weekly projections (#93). */
+  const PROJECTION_VIEW = "S_PS7";
 
   /** The league page ``url`` is, as the API's ``pages.page_kind`` reads it: ``{league, kind}``
-   * with ``team`` for a team page and ``offset`` for the players page; null for any other page
+   * with ``team`` for a team page, ``offset`` (and ``view``, its ``stat1``, when the URL names
+   * one) for the players page; null for any other page
    * (the draft client, a player's page, another sport) and for a team page on another date
    * (``?date=``), whose lineup is not today's roster. */
   function leaguePage(url) {
@@ -37,7 +40,8 @@
       return u.searchParams.has("date") ? null : { league, kind: "team", team: Number(rest[0]) };
     }
     if (rest.length === 1 && rest[0] === "players") {
-      return { league, kind: "players", offset: Number(u.searchParams.get("count")) || 0 };
+      const view = u.searchParams.get("stat1");
+      return { league, kind: "players", offset: Number(u.searchParams.get("count")) || 0, ...(view ? { view } : {}) };
     }
     if (rest.length === 1 && rest[0] === "matchup") return { league, kind: "matchup" };
     if (rest.length === 1 && rest[0] === "transactions") return { league, kind: "transactions" };
@@ -45,10 +49,14 @@
   }
 
   /** Where the page's posts are kept in the panel: one line per team, matchup and players
-   * page, so a page read again replaces its own line. */
+   * page, so a page read again replaces its own line. The projection view's pages keep lines
+   * of their own: they feed Yahoo's projections as well as the available players. */
   function postKey(page) {
     if (page.kind === "team") return `team ${page.team}`;
-    if (page.kind === "players") return `players ${page.offset + 1}-${page.offset + PAGE_ROWS}`;
+    if (page.kind === "players") {
+      const rows = `players ${page.offset + 1}-${page.offset + PAGE_ROWS}`;
+      return page.view === PROJECTION_VIEW ? `${rows} (next 7 days)` : rows;
+    }
     return page.kind;
   }
 
@@ -58,22 +66,36 @@
   }
 
   /** A multi-page read of the players page, armed from the side panel: at most ``pages`` more
-   * pages of ``league``. */
-  function startRead(league, pages = READ_PAGES, now = Date.now()) {
-    return { league: String(league), pages_left: pages, started_at: now };
+   * pages of ``league`` in the view it starts in (``view``, the page's ``stat1``), then as many
+   * in the projection view (``then``) unless it starts there. */
+  function startRead(league, pages = READ_PAGES, now = Date.now(), view = null) {
+    const then = view === PROJECTION_VIEW ? [] : [PROJECTION_VIEW];
+    return { league: String(league), pages, pages_left: pages, started_at: now, then };
   }
 
-  /** What the reader does after posting ``page``: ``{follow, read}``. It follows Yahoo's Next 25
-   * link (``next``, read from the page) only on a players page of the armed league whose post
-   * the API accepted, while pages are left; ``read`` is the read that remains, null once it is
-   * done. Without an armed read it never navigates. */
-  function afterPost(read, page, posted, next) {
+  /** ``url``, a players page, in another stat view, from its first page; filters and sort kept. */
+  function viewUrl(url, view) {
+    const u = new URL(url);
+    u.searchParams.set("stat1", view);
+    u.searchParams.delete("count");
+    return u.href;
+  }
+
+  /** What the reader does after posting ``page`` (at ``url``): ``{follow, read}``. It follows
+   * Yahoo's Next 25 link (``next``, read from the page) only on a players page of the armed
+   * league whose post the API accepted, while pages are left; when the view runs out, it opens
+   * the first page of the next view the read has ``then``. ``read`` is the read that remains,
+   * null once it is done. Without an armed read it never navigates. */
+  function afterPost(read, page, posted, next, url = null) {
     if (!read) return { follow: null, read: null };
     if (!page || page.league !== read.league || page.kind !== "players") return { follow: null, read };
-    if (!posted || !next || read.pages_left <= 1 || leaguePage(next)?.kind !== "players") {
-      return { follow: null, read: null };
+    if (!posted) return { follow: null, read: null };
+    if (next && read.pages_left > 1 && leaguePage(next)?.kind === "players") {
+      return { follow: next, read: { ...read, pages_left: read.pages_left - 1 } };
     }
-    return { follow: next, read: { ...read, pages_left: read.pages_left - 1 } };
+    const [view, ...then] = (read.then || []).filter((v) => v !== page.view);
+    if (!view || !url) return { follow: null, read: null };
+    return { follow: viewUrl(url, view), read: { ...read, pages_left: read.pages, then } };
   }
 
   /** "2 min ago" for a post's age. */
@@ -95,5 +117,18 @@
     return `${post.key}: posted ${when}${post.accepted && post.accepted.length ? ` as ${post.accepted.join(", ")}` : ""}`;
   }
 
-  return { LEAGUE_HOST: HOST, LEAGUE_PAGE_ROWS: PAGE_ROWS, READ_PAGES, leaguePage, postKey, snapshotBody, startRead, afterPost, ago, postLine };
+  return {
+    LEAGUE_HOST: HOST,
+    LEAGUE_PAGE_ROWS: PAGE_ROWS,
+    READ_PAGES,
+    PROJECTION_VIEW,
+    leaguePage,
+    postKey,
+    snapshotBody,
+    startRead,
+    viewUrl,
+    afterPost,
+    ago,
+    postLine,
+  };
 });

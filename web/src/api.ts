@@ -845,9 +845,84 @@ export interface SeasonTransaction {
   group: number;
 }
 
+// ---------------------------------------------------------------- week projection (#93)
+/** The per-game stats a projection system gives. */
+export type WeekStat = "pts" | "threes" | "reb" | "ast" | "stl" | "blk" | "tov" | "fgm" | "fga" | "ftm" | "fta";
+export type Rates = Record<WeekStat, number>;
+/** Basketball Monster's rest-of-season export, or Yahoo's projection for the next seven days. */
+export type ProjectionSystem = "bbm" | "yahoo";
+
+export interface ProjectionSystemInfo {
+  label: string;
+  file?: string | null;
+  as_of: string | null;
+  /** Players the system has a per-game line for. */
+  players?: number;
+}
+
+export interface ProjectionWeek {
+  number: number;
+  start: string;
+  end: string;
+  /** The first day projected: today in the current week. */
+  from: string;
+  days: number;
+  /** Where the week's games come from: the schedule less the out rule, or a BBM weekly export. */
+  games_from: "schedule" | "bbm";
+}
+
+export interface WeekProjectionPlayer {
+  /** Games per projected week: the current week from today, then the next ones. */
+  games: number[];
+  /** A roster's games in a starting slot per week (null for an available player). */
+  started: number[] | null;
+  bbm: Rates | null;
+  yahoo: Rates | null;
+}
+
+export interface CategoryOddsRow {
+  cat: Cat;
+  /** Projected finals: the week so far plus the rest of the week. */
+  mine: number | null;
+  theirs: number | null;
+  sd: number;
+  p_win: number;
+}
+
+export interface WeekMatchupOdds {
+  week: number;
+  /** Mine, then the opponent. */
+  teams: [number, number];
+  system: ProjectionSystem;
+  so_far_at: string | null;
+  so_far: Record<string, Partial<Record<WeekStat | "fpts", number>>>;
+  from: string;
+  odds: CategoryOddsRow[];
+  expected: number;
+  rest: Record<string, Partial<Record<WeekStat | "fpts", number>>>;
+  players_with_rates: Record<string, number>;
+}
+
+export interface WeekProjection {
+  systems: Record<ProjectionSystem, ProjectionSystemInfo>;
+  default: ProjectionSystem;
+  phi_source: string;
+  weeks: ProjectionWeek[];
+  /** By Yahoo player id: my roster, this week's opponent and the available players. */
+  players: Record<string, WeekProjectionPlayer>;
+  matchup: WeekMatchupOdds | null;
+}
+
 /** The season view: the summary plus the week, standings, rosters, matchup and the pool. */
 export interface SeasonView extends SeasonSummary {
-  settings: { max_weekly_adds: number | null; waiver_rule: string | null; uses_faab: boolean | null; end_date: string | null };
+  settings: {
+    cats: Cat[];
+    points: Record<string, number> | null;
+    max_weekly_adds: number | null;
+    waiver_rule: string | null;
+    uses_faab: boolean | null;
+    end_date: string | null;
+  };
   today: string;
   current_week: SeasonWeek | null;
   weeks_ahead: SeasonWeek[];
@@ -861,6 +936,7 @@ export interface SeasonView extends SeasonSummary {
   transactions: SeasonTransaction[];
   fetched: Record<string, { at: string; source: "public" | "extension" }>;
   schedule: { days: number; first: string | null; last: string | null };
+  week_projection: WeekProjection;
 }
 
 export const api = {

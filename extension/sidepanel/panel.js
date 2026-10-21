@@ -161,11 +161,12 @@ function renderLeague() {
   show("league-read", league.kind === "players" || reading);
   show("read-start", !reading);
   show("read-stop", reading);
+  const then = reading ? (league.read.then || []).length > 0 : league.view !== L.PROJECTION_VIEW;
   text(
     "read-note",
     reading
-      ? `Reading the players pages: ${league.read.pages_left} more at most. Keep this tab open.`
-      : "Opens the first players page and follows its Next 25 link page by page, up to 300 players, then stops.",
+      ? `Reading the players pages: ${league.read.pages_left} more at most in this view${then ? ", then Next 7 Days (proj)" : ""}. Keep this tab open.`
+      : `Opens the first players page and follows its Next 25 link page by page, up to 300 players${then ? ", then does the same in Next 7 Days (proj), Yahoo's projections" : ""}, and stops.`,
   );
   show("league-web", Boolean(web));
   if (web) $("league-web").href = `${web}/?league=${encodeURIComponent(league.league)}`;
@@ -329,7 +330,7 @@ $("league-reload").addEventListener("click", () => {
 });
 $("read-start").addEventListener("click", async () => {
   if (!league) return;
-  await call("season_read", { league: league.league, pages: L.READ_PAGES }).catch(() => {});
+  await call("season_read", { league: league.league, pages: L.READ_PAGES, view: league.view || null }).catch(() => {});
   // From the first page of the same view (its filters and stat columns kept).
   const first = new URL(league.url);
   first.searchParams.delete("count");
