@@ -303,7 +303,7 @@ phase 2 on.
    user's Chrome. `GET /seasons/{league}/weeks` serves the Weeks block on the league card.
    `scripts/season.py record --all` prints one line per league and exits non-zero only when
    the API is unreachable. The scheduled task `weekly-recorder-monday` runs it every Monday at
-   08:00 on the Mac's clock and opens the private league's needed pages read-only in the
+   06:00 on the Mac's clock and opens the private league's needed pages read-only in the
    user's Chrome (set up 2026-10-21).
 
 Automation (queueing a claim through the extension with the draft's arming rule) is a later,
@@ -323,7 +323,7 @@ the prize leagues is week 1 (`current_week` 1 on 2026-10-21, season end 2027-04-
   league.
 - **Alert channel for the breakout digest:** a daily comment on the programme's tracker issue,
   posted by a scheduled session the way the draft scorecards were; a desktop notification can
-  be added once the digest has run for a week. Set up 2026-10-21 as the scheduled task `breakout-digest-daily`: every day at 07:00
+  be added once the digest has run for a week. Set up 2026-10-21 as the scheduled task `breakout-digest-daily`: every day at 05:00
   on the Mac's clock it refreshes the public leagues on the running API, reads `GET /flags/digest` and
   posts the markdown field on #99; it opens no browser, so the minutes trend waits for a
   past-days export made by hand.
