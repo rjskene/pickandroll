@@ -300,7 +300,7 @@ the prize leagues is week 1 (`current_week` 1 on 2026-10-21, season end 2027-04-
 - **Alert channel for the breakout digest:** a daily comment on the programme's tracker issue,
   posted by a scheduled session the way the draft scorecards were; a desktop notification can
   be added once the digest has run for a week. Set up 2026-10-21 as the scheduled task `breakout-digest-daily`: every day at 07:00
-  Pacific it refreshes the public leagues on the running API, reads `GET /flags/digest` and
+  on the Mac's clock it refreshes the public leagues on the running API, reads `GET /flags/digest` and
   posts the markdown field on #99; it opens no browser, so the minutes trend waits for a
   past-days export made by hand.
 - **Default view on the Moves card:** the three-week gain, with the one-week gain beside it.
