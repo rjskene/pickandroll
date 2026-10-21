@@ -304,3 +304,29 @@ scorecard shows the failure it fixes, and the last two clean mocks before the dr
    iterating, the full suite at milestones; comments on the issues only for plan, PR and scorecard, no running
    commentary; every iteration on #8 goes through the replay tier, not a mock.
 5. **Master discipline.** Spot checks at plan, PR and scorecard time only.
+
+## 9. The league page reader (extension 0.5.0, #98)
+
+The extension's second content script, `extension/league.js`, runs on a league's own pages
+(`https://basketball.fantasysports.yahoo.com/nba/<id>/...`: the league page, team pages, the players page,
+the matchup, the transactions) and posts each one, as Chrome rendered it, to `POST /seasons/<id>/snapshot` as
+`{pages: [{url, html, fetched_at}]}`. The API parses the pages with the same `sources/yahoo/pages.py` parsers
+that read the public pages (no parser copy in JavaScript), so the private league 31822, which the API cannot
+refresh, gets the same season view as the prize leagues. Rules:
+
+- Read-only. It never clicks anything; Add, Drop and Trade stay the user's. It never runs on the draft client,
+  and the draft content scripts are unchanged.
+- It navigates only during a multi-page read of the players page that the user armed from the side panel:
+  it follows the page's Next 25 link while the API accepts the posts, at most 12 pages (300 players), and the
+  read ends on the first refused post or missing link. Without that arming it never navigates.
+- What is posted is the page less its scripts, styles, frames and form fields (Yahoo's forms carry a hidden
+  crumb). No cookies.
+- A team page for another date (`?date=`) is skipped; its lineup is not today's roster.
+- The players page in a stat view other than the default (ownership) one carries % rostered but not % started,
+  adds or drops; the API keeps the ownership columns it already holds for a player when such a page leaves them
+  empty.
+- For a private league the first accepted post also starts a background job that brings in the week calendar
+  (the shared cache that any public league's refresh writes) and the ESPN schedule; posts never wait on it.
+
+The signed-in pages of 31822 were checked read-only against the parsers on 2026-10-21: same tables and labels as
+the public pages (the sorted column's label carries a glyph, which the column match ignores).

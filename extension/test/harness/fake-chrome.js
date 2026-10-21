@@ -1,11 +1,12 @@
 // A stand-in for the chrome.* APIs the extension uses, for the harness pages: runtime messaging
 // and ports between the page's scripts (sender = tab 1), storage.local / storage.session in
-// memory, and the calls the side panel makes. worker.js loaded into the same page answers it.
+// memory, and the calls the side panel makes (a reload or navigation of a tab is recorded in
+// ``store.tabs``, never done). worker.js loaded into the same page answers it.
 // ``manifest``: what runtime.getManifest() returns (the harness passes the extension's own).
 window.makeFakeChrome = function makeFakeChrome(manifest) {
   "use strict";
   const listeners = { message: [], connect: [], changed: [] };
-  const store = { local: {}, session: {} };
+  const store = { local: {}, session: {}, tabs: [] };
   const area = (name) => ({
     async get(keys) {
       const all = store[name];
@@ -59,6 +60,12 @@ window.makeFakeChrome = function makeFakeChrome(manifest) {
     tabs: {
       async query() {
         return [{ id: 1 }];
+      },
+      async reload(id) {
+        store.tabs.push({ reload: id });
+      },
+      async update(id, props) {
+        store.tabs.push({ update: id, ...props });
       },
       onActivated: evt([]),
     },

@@ -1,7 +1,10 @@
 // pickandroll side panel: the draft tab's room (what the content script last reported, kept in
 // chrome.storage.session by the service worker) plus the API's view of it, and the controls to
-// attach a session, see the mode and detach.
+// attach a session, see the mode and detach. On a league page instead (#98): what the league
+// reader posted, the season it fed, a Refresh of the page and the multi-page read of the
+// players page.
 "use strict";
+const L = globalThis.PickAndRoll;
 
 const $ = (id) => document.getElementById(id);
 const REFRESH_MS = 2000;
@@ -28,20 +31,38 @@ let tab = null; // the draft tab's report
 let room = null; // GET /rooms/{d}
 let sessions = null;
 let busy = false;
-
-async function draftTab() {
-  const all = await chrome.storage.session.get(null);
-  const [active] = await chrome.tabs.query({ active: true, currentWindow: true });
-  return (active && all[`tab:${active.id}`]) || (all.last_tab != null ? all[`tab:${all.last_tab}`] : null) || null;
-}
+// The active tab's league page: {league, kind, url, tab_id, posts, read}, and its season summary
+// (undefined until the API answers, null when pickandroll has no folder for the league).
+let league = null;
+let leagueSeason;
+let web = null; // the web app's address, for the league link
 
 async function load() {
   if (busy) return;
   busy = true;
   try {
-    tab = await draftTab();
+    const all = await chrome.storage.session.get(null);
+    const [active] = await chrome.tabs.query({ active: true, currentWindow: true });
+    const page = active && all[`league_tab:${active.id}`];
+    league = page
+      ? { ...page, tab_id: active.id, posts: all[`league:${page.league}`] || {}, read: all[`season_read:${page.league}`] || null }
+      : null;
+    // The draft tab: the active one, else the last draft tab seen, unless a league page is active.
+    tab = league
+      ? null
+      : (active && all[`tab:${active.id}`]) || (all.last_tab != null ? all[`tab:${all.last_tab}`] : null) || null;
     room = null;
-    if (tab) {
+    if (league) {
+      try {
+        leagueSeason = (await call("season", { league: league.league })).season;
+        const s = await call("settings");
+        web = s.web;
+        setApi("ok", s.api);
+      } catch (e) {
+        leagueSeason = undefined;
+        setApi(e.status ? "ok" : "bad", null, e.message);
+      }
+    } else if (tab) {
       try {
         const r = await call("status", { draft_id: tab.draft_id });
         room = r.attached ? r.room : null;
@@ -104,8 +125,55 @@ function checkSession() {
   $("attach-btn").disabled = !s || unknown;
 }
 
+function renderLeague() {
+  show("league", Boolean(league));
+  if (!league) return;
+  const now = Date.now();
+  text("league-title", `League ${league.league}`);
+  const here = Object.values(league.posts).find((p) => p.url === league.url);
+  text("league-page", `${league.kind}${here ? ` · ${here.error ? "not posted" : "posted"} ${L.ago(here.at, now)}` : " · posting…"}`);
+  $("league-page").className = here && (here.error || (here.skipped && here.skipped.length)) ? "bad" : "";
+  const s = leagueSeason;
+  text(
+    "league-season",
+    s === undefined
+      ? "-"
+      : s === null
+        ? `no league ${league.league} in pickandroll (data/leagues/${league.league}/settings.json)`
+        : `${s.week != null ? `Week ${s.week}${s.end_week ? ` of ${s.end_week}` : ""}` : "week unknown"} · snapshot ${s.updated_at ? L.ago(Date.parse(s.updated_at), now) : "not read yet"}`,
+  );
+  const posts = Object.values(league.posts).sort((a, b) => b.at - a.at);
+  $("league-posts").replaceChildren(
+    ...posts.map((p) => {
+      const li = document.createElement("li");
+      li.textContent = L.postLine(p, now);
+      if (p.error || (p.skipped && p.skipped.length)) li.className = "bad";
+      return li;
+    }),
+  );
+  if (!posts.length) {
+    const li = document.createElement("li");
+    li.className = "muted";
+    li.textContent = "none yet";
+    $("league-posts").append(li);
+  }
+  const reading = Boolean(league.read);
+  show("league-read", league.kind === "players" || reading);
+  show("read-start", !reading);
+  show("read-stop", reading);
+  text(
+    "read-note",
+    reading
+      ? `Reading the players pages: ${league.read.pages_left} more at most. Keep this tab open.`
+      : "Opens the first players page and follows its Next 25 link page by page, up to 300 players, then stops.",
+  );
+  show("league-web", Boolean(web));
+  if (web) $("league-web").href = `${web}/?league=${encodeURIComponent(league.league)}`;
+}
+
 function render() {
-  show("none", !tab);
+  renderLeague();
+  show("none", !tab && !league);
   show("room", Boolean(tab));
   show("attach", Boolean(tab) && !room && tab.attached !== true);
   show("attached", Boolean(room));
@@ -254,6 +322,23 @@ $("detach-btn").addEventListener("click", async () => {
   if (!tab || !confirm(`Detach room ${tab.draft_id}? The session keeps its picks; the room stops syncing.`)) return;
   await call("detach", { draft_id: tab.draft_id }).catch(() => {});
   sessions = null;
+  load();
+});
+$("league-reload").addEventListener("click", () => {
+  if (league) chrome.tabs.reload(league.tab_id);
+});
+$("read-start").addEventListener("click", async () => {
+  if (!league) return;
+  await call("season_read", { league: league.league, pages: L.READ_PAGES }).catch(() => {});
+  // From the first page of the same view (its filters and stat columns kept).
+  const first = new URL(league.url);
+  first.searchParams.delete("count");
+  chrome.tabs.update(league.tab_id, { url: first.href });
+  load();
+});
+$("read-stop").addEventListener("click", async () => {
+  if (!league) return;
+  await call("season_read", { league: league.league, pages: 0 }).catch(() => {});
   load();
 });
 $("options").addEventListener("click", (e) => {

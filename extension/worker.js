@@ -6,8 +6,11 @@
 // MV3 stops an idle worker. Nothing is lost when it does: the room's history lives in the draft
 // tab (page.js keeps every frame, the content script every pick) and is resent from the API's
 // synced_through. What the side panel shows per tab is kept in chrome.storage.session.
+//
+// The league reader (league.js, #98) posts the league pages the user opens to the season's
+// snapshot route here; what each post did is kept per league for the panel.
 "use strict";
-importScripts("lib/protocol.js");
+importScripts("lib/protocol.js", "lib/league.js");
 
 const DEFAULTS = {
   api: "http://localhost:8000",
@@ -100,6 +103,20 @@ async function attachedOr(fn) {
   }
 }
 
+// ------------------------------------------------------------------ league pages (#98)
+const postsKey = (league) => `league:${league}`;
+const readKey = (league) => `season_read:${league}`;
+
+async function stored(key) {
+  return (await chrome.storage.session.get(key))[key] || null;
+}
+
+/** Keep ``post`` as its page's line in the league's posts, newest per page. */
+async function remember(league, post) {
+  const posts = (await stored(postsKey(league))) || {};
+  await chrome.storage.session.set({ [postsKey(league)]: { ...posts, [post.key]: post } });
+}
+
 const ops = {
   async settings() {
     return settings();
@@ -166,6 +183,50 @@ const ops = {
   async sessions() {
     return api("/sessions");
   },
+  /** A league page as the user's Chrome rendered it, posted to the season's snapshot route.
+   * Answers the post and ``follow``: the players page's Next 25 link, only while a multi-page
+   * read the user armed from the panel is running. */
+  async season_page({ url, html, fetched_at, next = null }, sender) {
+    const L = self.PickAndRoll;
+    const page = L.leaguePage(url);
+    if (!page) throw new ApiError(400, `not a league page: ${url}`);
+    const key = L.postKey(page);
+    const at = Date.now();
+    let post;
+    let season = null;
+    try {
+      const body = L.snapshotBody(url, html, fetched_at || at);
+      const r = await api(`/seasons/${encodeURIComponent(page.league)}/snapshot`, { method: "POST", body, timeout: 30000 });
+      post = { key, url, at, accepted: r.accepted || [], skipped: r.skipped || [] };
+      season = r.season || null;
+    } catch (e) {
+      post = { key, url, at, error: e.message, status: e.status ?? 0 };
+    }
+    await remember(page.league, post);
+    if (sender.tab) await chrome.storage.session.set({ [`league_tab:${sender.tab.id}`]: { ...page, url, at } });
+    const read = await stored(readKey(page.league));
+    const posted = !post.error && post.accepted.length > 0;
+    const { follow, read: left } = L.afterPost(read, page, posted, next);
+    if (read && left) await chrome.storage.session.set({ [readKey(page.league)]: left });
+    else if (read) await chrome.storage.session.remove(readKey(page.league));
+    return { post, follow, season };
+  },
+  /** Arm (``pages`` > 0) or stop a multi-page read of the league's players page. */
+  async season_read({ league, pages = 0 }) {
+    const L = self.PickAndRoll;
+    if (!(Number(pages) > 0)) {
+      await chrome.storage.session.remove(readKey(league));
+      return { read: null };
+    }
+    const read = L.startRead(league, Math.min(Number(pages), L.READ_PAGES));
+    await chrome.storage.session.set({ [readKey(league)]: read });
+    return { read };
+  },
+  /** The league's season summary (GET /seasons), null when pickandroll has no folder for it. */
+  async season({ league }) {
+    const all = await api("/seasons");
+    return { season: (all || []).find((s) => s.league === String(league)) || null };
+  },
   async report({ tab }, sender) {
     if (!sender.tab) return {};
     const { api: base } = await settings();
@@ -190,6 +251,14 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
 // A draft tab holds a port while it is open. When the port closes because the tab closed,
 // reloaded or left the room, the seat is no longer under the extension's eye: say so.
 chrome.runtime.onConnect.addListener((port) => {
+  // A league page holds one too: when it closes or the tab leaves it, the panel stops showing it.
+  if (port.name === "league") {
+    port.onDisconnect.addListener(() => {
+      void chrome.runtime.lastError;
+      if (port.sender && port.sender.tab) chrome.storage.session.remove(`league_tab:${port.sender.tab.id}`);
+    });
+    return;
+  }
   if (port.name !== "room") return;
   let seat = null;
   port.onMessage.addListener((m) => {

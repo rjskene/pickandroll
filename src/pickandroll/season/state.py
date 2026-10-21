@@ -352,15 +352,25 @@ def matchup_key(week: int, teams: Iterable[int]) -> str:
     return f"matchup/{week}/{a}-{b}"
 
 
+#: The players page's ownership columns only its Research view (``R_O``) carries; a page in
+#: another view leaves them empty.
+OWNERSHIP_ONLY = ("pct_rostered_change", "pct_started", "pct_started_change", "adds", "drops")
+
+
 def merge_part(parts: Mapping[str, Part], part: Part) -> dict[str, Part]:
     """``parts`` with ``part`` in: it replaces the older read of its key, except that available
-    rows read a page at a time (the extension's) are upserted by player into the pool."""
+    rows read a page at a time (the extension's) are upserted by player into the pool, keeping
+    the ownership columns a page in another view did not carry."""
     out = dict(parts)
     old = parts.get(part.key)
     if part.key == "available" and part.data.get("upsert") and old is not None:
         rows = {r["player"]["yahoo_id"]: r for r in old.data.get("rows", [])}
         for r in part.data.get("rows", []):
-            rows[r["player"]["yahoo_id"]] = r
+            was = rows.get(r["player"]["yahoo_id"]) or {}
+            kept = {
+                k: was[k] for k in OWNERSHIP_ONLY if r.get(k) is None and was.get(k) is not None
+            }
+            rows[r["player"]["yahoo_id"]] = {**r, **kept}
         fetched = max(old.fetched_at, part.fetched_at)
         out[part.key] = Part(part.key, fetched, part.source, {"rows": list(rows.values())})
     else:
