@@ -9,6 +9,7 @@ import {
   bestMove,
   catValue,
   changeLabel,
+  comebackText,
   dayLabel,
   effectiveNote,
   gainLabel,
@@ -17,6 +18,8 @@ import {
   movedGamesTitle,
   rosterNote,
   tradeVerdict,
+  weekResult,
+  weekTone,
   gainTone,
   horizonGames,
   MOVE_HORIZON,
@@ -417,3 +420,24 @@ test("a traded player's games: his old team's until the date, then his new one's
   assert.equal(movedGamesTitle(p, "week", "Team 10", "me"), "1 games (1 started) for Team 10, then 2 (2 started) for me; 3 games without the trade");
 });
 
+test("a recorded week's result reads as categories or points, with its outcome", () => {
+  assert.equal(weekResult({ won: 5, lost: 3, tied: 1, outcome: "W" }), "5-3-1 W");
+  assert.equal(weekResult({ points: 810.5, against: 790.25, outcome: "W" }), "810.5–790.3 W");
+  assert.equal(weekResult(null), "");
+  assert.equal(weekTone({ won: 3, lost: 5, tied: 1, outcome: "L" }), "bad");
+  assert.equal(weekTone({ won: 4, lost: 4, tied: 1, outcome: "T" }), "");
+});
+
+test("a held player's return names the drop it forces, the earliest day per player", () => {
+  const name = (id: number) => `P${id}`;
+  assert.equal(comebackText([undefined, []], name), null);
+  const three = [
+    { player: 5, slot: "IL", from: "2026-11-02", drop: 3 },
+    { player: 7, slot: "IL+", from: "2026-11-02", drop: 7 },
+  ];
+  const week = [{ player: 7, slot: "IL+", from: "2026-10-28", drop: 7 }];
+  assert.equal(
+    comebackText([week, three], name),
+    "From Oct 28, P7 goes on return; from Nov 2, P3 goes when P5 returns.",
+  );
+});

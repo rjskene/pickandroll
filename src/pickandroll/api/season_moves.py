@@ -8,6 +8,9 @@ rates are the chosen system's: Basketball Monster's, or Yahoo's next seven days 
 players (the only ones its players page lists) with Basketball Monster's line for everyone else. Every candidate's single moves are valued
 exactly; the recommended set is a search (``season.moves``), priced by re-solves over the
 candidates whose best single move gains most.
+
+A player of mine listed O is held out past next Monday when ESPN's injury report gives a later
+return date (#97): the day a held-slot move's deferred drop is charged from.
 """
 
 from __future__ import annotations
@@ -20,9 +23,14 @@ from datetime import date
 from pathlib import Path
 from typing import Any
 
+import pandas as pd
+
 from ..season import Player, Season
 from ..season import moves as mv
 from ..season import weekly as wk
+from ..sources.injuries import Listed
+from ..sources.matching import match_players
+from . import season_flags
 from . import season_week as sw
 
 #: The weeks the moves look at: this week and the three after it.
@@ -83,6 +91,31 @@ def system_rates(season: Season, data_dir: Path, system: str) -> Rated:
         value = wk.per_game_values(bbm.rates, cats, points)
         info = dict(bbm.info)
     return Rated(rates, value, info, players, bbm, yahoo)
+
+
+def espn_returns(data_dir: Path, members: list[mv.Member]) -> dict[int, date]:
+    """ESPN's return dates for ``members`` listed O, matched by name and team."""
+    out_ = [(k, p) for k, p in members if p.status in wk.OUT_THIS_WEEK]
+    path = season_flags.injuries_path(data_dir)
+    if not out_ or not path.exists():
+        return {}
+    body = season_flags._read(path) or {}
+    listed = [Listed.from_dict(d) for d in body.get("players") or []]
+    dated = [x for x in listed if x.returns is not None]
+    if not dated:
+        return {}
+    espn = pd.DataFrame(
+        {"name": [x.name for x in dated], "team": [x.team for x in dated]},
+        index=[x.key for x in dated],
+    )
+    espn = espn[~espn.index.duplicated()]
+    mine = pd.DataFrame(
+        {"player": [p.name for _, p in out_], "team": [p.nba_team for _, p in out_]},
+        index=[k for k, _ in out_],
+    )
+    found = match_players(espn, mine).mapping
+    returns = {x.key: x.returns for x in dated}
+    return {int(k): returns[key] for key, k in found.items()}
 
 
 def add_limits(
@@ -189,6 +222,7 @@ def build(season: Season, today: date, data_dir: Path, system: str) -> Built | N
         no_games=yahoo.zero,
         horizons={"week": (week_span,), "three": later},
         limits=limits,
+        returns=espn_returns(data_dir, [*roster, *held]),
     )
     names = {t.team_id: t.name for t in season.teams}
     horizons = {
@@ -229,6 +263,12 @@ def _move(m: mv.Move, problem: mv.MoveProblem) -> dict[str, Any]:
 
 def _r(x: float) -> float:
     return round(float(x), 3)
+
+
+def _comebacks(cs: list[mv.Comeback] | tuple[mv.Comeback, ...]) -> list[dict[str, Any]]:
+    return [
+        {"player": c.player, "slot": c.slot, "from": c.day.isoformat(), "drop": c.drop} for c in cs
+    ]
 
 
 def moves_payload(built: Built) -> dict[str, Any]:
@@ -276,6 +316,7 @@ def moves_payload(built: Built) -> dict[str, Any]:
             ],
             "gain": {h: _r(v) for h, v in rec.gain.items()},
             "held": [{"player": k, "slot": slot} for k, slot in rec.held],
+            "comebacks": {h: _comebacks(cs) for h, cs in rec.comebacks.items()},
         }
     return {
         "system": built.system,
@@ -323,6 +364,7 @@ def detail_payload(built: Built, add: int, drop: int | None) -> dict[str, Any] |
             "after": _r(ev.value(key, move)),
             "gain": _r(ev.gain(key, move)),
             "cats": {"before": _cats(ev, key, []), "after": _cats(ev, key, move)},
+            "comebacks": _comebacks(mv.comebacks(p, key, move)),
         }
     drops = [
         {"drop": d, **{key: _r(ev.gain(key, [mv.Move(add, d)])) for key in HORIZONS}}

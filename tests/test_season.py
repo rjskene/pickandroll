@@ -19,7 +19,7 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from pickandroll.api import SessionStore, create_app, season_flags, season_week
+from pickandroll.api import SessionStore, create_app, season_flags, season_moves, season_week
 from pickandroll.api import seasons as season_api
 from pickandroll.season import (
     EXTENSION,
@@ -899,6 +899,37 @@ def test_the_move_drawer_details_one_add_with_every_drop(client):
     assert client.get(f"/seasons/{LEAGUE}/moves/1").status_code == 404
 
 
+def test_an_out_player_of_mine_is_held_out_until_espns_later_return_date(tmp_path):
+    path = season_flags.injuries_path(tmp_path)
+    path.parent.mkdir(parents=True)
+
+    def listed(key, name, team, status, returns):
+        return {
+            "key": key,
+            "name": name,
+            "team": team,
+            "position": "C",
+            "status": status,
+            "returns": returns,
+        }
+
+    players = [
+        listed("espn:1", "Hurt One", "MIN", "Out", "2026-11-04"),
+        listed("espn:2", "Day Two", "SAS", "Day-To-Day", "2026-10-23"),
+        listed("espn:3", "No Date", "NYK", "Out", None),
+    ]
+    path.write_text(json.dumps({"read_at": NOW.isoformat(), "players": players}))
+    members = [
+        (1, Player(1, "Hurt One", "MIN", ("C",), status="O")),
+        (2, Player(2, "Day Two", "SAS", ("C",), status="GTD")),
+        (3, Player(3, "No Date", "NYK", ("C",), status="O")),
+        (4, Player(4, "Hurt One", "LAL", ("C",), status="O")),
+    ]
+    # O players only, by name and team; no date, no hold.
+    assert season_moves.espn_returns(tmp_path, members) == {1: date(2026, 11, 4)}
+    assert season_moves.espn_returns(tmp_path / "none", members) == {}
+
+
 def test_moves_need_a_season_of_my_team(client):
     assert client.get("/seasons/100002/moves").status_code == 409
     assert client.get("/seasons/999999/moves").status_code == 404
@@ -1118,6 +1149,8 @@ def test_the_flag_digest_lists_every_league_with_a_season(client):
     # The five most added are watch-level: one line of names, the evidence in the JSON.
     assert "- watch (5): Keldon Johnson (SAS), Andre Drummond (NYK), Zaccharie Risacher" in md
     assert top[0]["line"] not in md and top[0]["signals"]["opportunity"]["reason"]
+    # The leagues not read close the markdown, by id.
+    assert md.rstrip().endswith("Not read: League 100002 (no season read yet).")
 
 
 def test_the_buzz_day_file_keeps_the_larger_adds_and_the_latest_read(tmp_path):
@@ -1136,6 +1169,49 @@ def test_the_buzz_day_file_keeps_the_larger_adds_and_the_latest_read(tmp_path):
     assert season_flags._buzz_due(tmp_path, yesterday, TODAY, NOW)
     season_flags.record_adds(tmp_path, yesterday, {}, buzz=[], read_at=NOW)
     assert not season_flags._buzz_due(tmp_path, yesterday, TODAY, NOW)
+
+
+def _et(day: date, hour: int, minute: int = 5) -> datetime:
+    return datetime(day.year, day.month, day.day, hour, minute, tzinfo=season_week.NBA_TZ)
+
+
+def test_the_buzz_day_file_keeps_the_adds_by_the_hour_they_were_read(tmp_path):
+    season_flags.record_adds(tmp_path, TODAY, {1: 40}, at=_et(TODAY, 9, 10))
+    season_flags.record_adds(tmp_path, TODAY, {1: 35, 2: 3}, at=_et(TODAY, 9, 30))
+    season_flags.record_adds(tmp_path, TODAY, {1: 90}, at=NOW)  # 14:00 Eastern
+    body = json.loads(season_flags.buzz_path(tmp_path, TODAY).read_text())
+    assert body["hours"] == {"09": {"1": 40, "2": 3}, "14": {"1": 90}}
+    # A read after the day ended holds its final count.
+    season_flags.record_adds(tmp_path, TODAY, {1: 120}, at=_et(TODAY + timedelta(days=1), 1))
+    body = json.loads(season_flags.buzz_path(tmp_path, TODAY).read_text())
+    assert body["hours"]["24"] == {"1": 120} and body["adds"] == {"1": 120, "2": 3}
+
+
+def test_a_mornings_adds_compare_with_earlier_mornings(tmp_path):
+    for i in (1, 2, 3):
+        day = TODAY - timedelta(days=i)
+        season_flags.record_adds(tmp_path, day, {1: 100}, at=_et(day, 9))
+        season_flags.record_adds(tmp_path, day, {1: 1000}, at=_et(day, 20))
+    season_flags.record_adds(tmp_path, TODAY, {1: 300}, at=_et(TODAY, 10))
+    history, _, adds, info = season_flags._buzz(tmp_path, TODAY, _et(TODAY, 10, 20))
+    # Each earlier day as of 09:05, an hour before today's read, not its final 1000.
+    assert history[1] == [100.0, 100.0, 100.0] and adds[1] == 300
+    assert info["same_hour"] == 3 and info["earlier_days"] == 3
+
+
+def test_an_earlier_day_not_read_by_that_hour_scales_its_count(tmp_path):
+    old = TODAY - timedelta(days=2)
+    path = season_flags.buzz_path(tmp_path, old)
+    path.parent.mkdir(parents=True)
+    path.write_text(json.dumps({"day": old.isoformat(), "adds": {"1": 960}}))
+    yesterday = TODAY - timedelta(days=1)
+    season_flags.record_adds(tmp_path, yesterday, {1: 620}, at=_et(yesterday, 15))
+    season_flags.record_adds(tmp_path, TODAY, {1: 50}, at=_et(TODAY, 9))
+    history, *_, info = season_flags._buzz(tmp_path, TODAY, _et(TODAY, 9))
+    # A file kept before the hours were holds final counts: the share of the day by 09:30.
+    # Yesterday, read last at 15:05, scales from then.
+    assert history[1] == pytest.approx([960 * 9.5 / 24, 620 * 9.5 / 15.5])
+    assert info["same_hour"] == 0
 
 
 def test_a_failed_flag_input_warns_and_the_refresh_still_lands(client):

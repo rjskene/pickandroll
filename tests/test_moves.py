@@ -69,6 +69,8 @@ def build(
     slots=("C", "C", "Util"),
     so_far=None,
     so_far_theirs=None,
+    value=None,
+    returns=None,
 ):
     """A problem with the ``week`` horizon (the first week against ``opponent``) and the
     ``three`` horizon (weeks 2-4 against ``field``, each a list of rosters)."""
@@ -101,12 +103,13 @@ def build(
         rates=rate,
         schedule=sched,
         slots=slots,
-        value={k: 1.0 for k in rate},
+        value=value or {k: 1.0 for k in rate},
         cats=cats,
         points=None,
         no_games=frozenset(),
         horizons=spans,
         limits=tuple(limits or ()),
+        returns=returns or {},
     )
 
 
@@ -164,7 +167,7 @@ def test_a_waiver_claim_counts_from_its_clear_date_and_its_drop_plays_until_then
         roster, cands, rate, sched, opponent, field, effective={10: thursday, 11: WEEKS[0][0]}
     )
     ev = mv.Evaluator(p)
-    members, gone = ev._after(frozenset({mv.Move(10, 3)}))
+    members, gone = ev._after("week", frozenset({mv.Move(10, 3)}))
     week = wk.project_week(
         members,
         rate,
@@ -179,7 +182,7 @@ def test_a_waiver_claim_counts_from_its_clear_date_and_its_drop_plays_until_then
     assert week.players[10].games == 2  # Thursday and Saturday
     assert week.players[3].games == 2  # Monday and Wednesday, then dropped on Thursday
     # A free agent's drop stops on the first day.
-    members, gone = ev._after(frozenset({mv.Move(11, 3)}))
+    members, gone = ev._after("week", frozenset({mv.Move(11, 3)}))
     week = wk.project_week(
         members,
         rate,
@@ -348,6 +351,83 @@ def test_an_out_player_can_move_to_an_open_il_slot_instead_of_a_drop():
     na = (8, Player(8, "Rookie", "MIN", ("C",), status="NA"))
     p = build([*roster, na], cands, rate, sched, opponent, field, held_open={"NA": 1})
     assert mv.held_moves(p) == [(8, "NA")]
+
+
+def il_league(status="O"):
+    """The streaming league with a fourth player of mine, out (``status``), and an open IL slot;
+    per-game values rank the third player last."""
+    roster, cands, rate, sched, opponent, field = streaming_league()
+    hurt = (5, Player(5, "Hurt", "MIN", ("C",), status=status))
+    rate |= {5: rates(1.0)}
+    value = {k: 1.0 for k in rate} | {1: 1.2, 3: 0.1}
+    return [*roster, hurt], cands, rate, sched, opponent, field, value
+
+
+def test_an_il_move_defers_the_drop_to_the_day_he_returns():
+    roster, cands, rate, sched, opponent, field, value = il_league()
+    p = build(roster, cands, rate, sched, opponent, field, held_open={"IL": 1}, value=value)
+    ev = mv.Evaluator(p)
+    # Out this week, so he comes back next Monday, inside the three weeks only, and sends the
+    # least valuable active player then.
+    assert mv.comebacks(p, "week", [mv.Move(11)]) == []
+    assert mv.comebacks(p, "three", [mv.Move(11)]) == [mv.Comeback(5, "IL", WEEKS[1][0], 3)]
+    # Over the three weeks the free move is worth the drop it defers, no more.
+    assert ev.value("three", [mv.Move(11)]) == pytest.approx(ev.value("three", [mv.Move(11, 3)]))
+    # This week it opens a spot: the third player still plays.
+    assert ev.value("week", [mv.Move(10)]) > ev.value("week", [mv.Move(10, 3)])
+
+
+def test_a_later_return_date_holds_him_out_until_then():
+    roster, cands, rate, sched, opponent, field, value = il_league()
+    late = WEEKS[2][2]
+    p = build(roster, cands, rate, sched, opponent, field, held_open={"IL": 1}, value=value)
+    q = build(
+        roster,
+        cands,
+        rate,
+        sched,
+        opponent,
+        field,
+        held_open={"IL": 1},
+        value=value,
+        returns={5: late},
+    )
+    assert mv.comebacks(q, "three", [mv.Move(11)]) == [mv.Comeback(5, "IL", late, 3)]
+    # He misses the week before it: the roster is worth less without a move.
+    assert mv.Evaluator(q).base["three"] < mv.Evaluator(p).base["three"]
+    week = wk.project_week(
+        [(5, roster[-1][1])],
+        rate,
+        WEEKS[1],
+        sched,
+        ("C",),
+        value,
+        False,
+        available_from={5: late},
+    )
+    assert week.players[5].games == 0
+
+
+def test_an_injured_player_costs_no_drop_inside_the_horizon():
+    roster, cands, rate, sched, opponent, field, value = il_league("INJ")
+    p = build(roster, cands, rate, sched, opponent, field, held_open={"IL": 1}, value=value)
+    ev = mv.Evaluator(p)
+    assert mv.comebacks(p, "three", [mv.Move(11)]) == []
+    assert ev.value("three", [mv.Move(11)]) > ev.value("three", [mv.Move(11, 3)])
+
+
+def test_the_returning_player_goes_himself_when_he_is_worth_least():
+    roster, cands, rate, sched, opponent, field, value = il_league()
+    value |= {5: 0.05}
+    p = build(roster, cands, rate, sched, opponent, field, held_open={"IL": 1}, value=value)
+    assert mv.comebacks(p, "three", [mv.Move(11)]) == [mv.Comeback(5, "IL", WEEKS[1][0], 5)]
+    # He never plays again, so the move is worth what the add brings with the third player kept.
+    ev = mv.Evaluator(p)
+    alone = build(roster[:3], cands, rate, sched, opponent, field, spots=4, value=value)
+    assert ev.gain("three", [mv.Move(11)]) == pytest.approx(
+        mv.Evaluator(alone).value("three", [mv.Move(11)]) - mv.Evaluator(alone).base["three"],
+        abs=1e-9,
+    )
 
 
 def test_an_open_spot_takes_an_add_without_a_drop():

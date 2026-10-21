@@ -119,6 +119,14 @@ Yahoo's conditional drop does, so the dropped player keeps his games until then;
 with a free-agent add, and a free IL move, take effect on the first day. A move counts against
 the add limit of the week in which it takes effect.
 
+An IL move defers a drop; it does not avoid it (#97). The player moved comes back on the first
+day of the first week the out rule lets him play: next Monday for an O, or ESPN's return date
+when that is later, and he is held out until then. An INJ, OFS, SUSP or NA player stays out of
+every horizon and costs nothing. On the day he comes back, the set drops its least valuable
+active player by per-game value, the returning player included, and the drawer names that drop
+("From Nov 4, X goes when Y returns"). This uses the starters' own ranking; it does not re-value
+every choice.
+
 Solver (resolved 2026-10-21 by fantasyMASTER on fantasyEMISSARY's prototypes): exact search on
 the #93 evaluator, not an LP. This spec first called for one LP per horizon as on the draft
 board. The prototype on a prize league (13 rostered, 213 priced candidates) showed why not. The
@@ -289,7 +297,12 @@ phase 2 on.
 6. **Weekly recorder.** Every Monday, for each league: standings, each team's category totals
    and games played, the matchup results, and season-to-date lines for the drafted players
    (what #91's in-season test needs), appended under `data/leagues/<id>/season/weeks/`, with a
-   small history view in the season rail.
+   small history view in the season rail. Built in #97: `POST /seasons/{league}/record?week=`
+   writes one file per week, and recording it again writes only on a change (`revised_at`).
+   A private league answers 409 with the pages it needs, for the extension to read in the
+   user's Chrome. `GET /seasons/{league}/weeks` serves the Weeks block on the league card.
+   `scripts/season.py record --all` prints one line per league and exits non-zero only when
+   the API is unreachable.
 
 Automation (queueing a claim through the extension with the draft's arming rule) is a later,
 opt-in phase and is not in this batch.

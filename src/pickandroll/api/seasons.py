@@ -27,6 +27,14 @@ Routes:
     (``{team, give, get}``, players by Yahoo id), both sides before and after on the moves'
     horizons, each resulting roster's slots, the traded players' games and the margin that
     leaves the trade neutral on my side. Nothing is proposed or sent to Yahoo.
+``POST /seasons/{league}/record``
+    The weekly recorder (#97, ``season_record``): a finished week's standings, each team's
+    totals, games and result, the matchups and the drafted players' season lines, written to
+    ``season/weeks/<week>.json``; ``?week=`` for a past week, by default the latest one over.
+    Recording a week again writes only what changed. A private league answers ``409`` with the
+    pages still to open in the user's Chrome.
+``GET /seasons/{league}/weeks``
+    The recorded weeks: my opponent, result and place after each (``/weeks/{week}``: a record).
 ``GET /flags/digest``
     The day's breakout flags across every league with a season: each league's flagged players
     with their evidence, and the digest as markdown for a public issue (leagues by id, no team
@@ -69,9 +77,10 @@ from ..season import (
     mondays,
     roster_key,
 )
+from ..season import record as season_rec
 from ..sources import schedule as nba_schedule
 from ..sources.yahoo import pages, public
-from . import leagues, season_flags, season_moves, season_trades
+from . import leagues, season_flags, season_moves, season_record, season_trades
 from .season_week import BBM_NEXT_WEEK, BBM_ROS, BBM_THIS_WEEK, NBA_TZ, week_projection
 
 SEASON_DIR = "season"
@@ -275,7 +284,7 @@ class SeasonService:
                 continue
             parts = load_parts(self.data_dir, league)
             if not parts:
-                skipped.append({"league": league, "reason": "no season read yet"})
+                skipped.append({"league": league, "reason": NO_SEASON})
                 continue
             try:
                 name = Season.from_parts(base, parts).settings.name
@@ -287,6 +296,8 @@ class SeasonService:
             rows.append(season_flags.digest_league(league, name, top))
             shown.append((league, top))
         notes = season_flags.stale(inputs, now) if inputs is not None else []
+        # The markdown is public: a league's own failure text stays in the JSON.
+        unread = [(x["league"], _public_reason(x["reason"])) for x in skipped]
         return {
             "date": today.isoformat(),
             "generated_at": now.isoformat(),
@@ -294,7 +305,7 @@ class SeasonService:
             "notes": notes,
             "leagues": rows,
             "skipped": skipped,
-            "markdown": season_flags.fl.digest_markdown(today, shown, notes),
+            "markdown": season_flags.fl.digest_markdown(today, shown, notes, unread),
         }
 
     def _flag_inputs(self, job: RefreshJob, fetch: public.Fetch, today: date) -> None:
@@ -310,15 +321,19 @@ class SeasonService:
             season = self.season(league)
             adds = season_flags.pool_adds(season, today)
             if adds:
-                season_flags.record_adds(self.data_dir, today, adds)
+                season_flags.record_adds(self.data_dir, today, adds, at=self.clock())
         except Exception:  # noqa: BLE001, S110 - the history misses a day's adds, nothing more
             pass
 
     # ------------------------------------------------------------------ moves
     def _moves_stamp(self, league: str) -> tuple[Any, ...]:
-        """What the moves of a league depend on beyond the day: the state file and the
-        projection exports."""
-        files = [season_dir(self.data_dir, league) / STATE, self.data_dir / "aliases.json"]
+        """What the moves of a league depend on beyond the day: the state file, the projection
+        exports and the injury report (an O's return date)."""
+        files = [
+            season_dir(self.data_dir, league) / STATE,
+            self.data_dir / "aliases.json",
+            season_flags.injuries_path(self.data_dir),
+        ]
         for pattern in (*BBM_ROS, BBM_THIS_WEEK, BBM_NEXT_WEEK):
             files += sorted(self.data_dir.glob(pattern))
         return tuple((f.name, f.stat().st_mtime_ns) for f in files if f.exists())
@@ -372,6 +387,130 @@ class SeasonService:
             )
         except season_trades.Refused as exc:
             raise HTTPException(exc.status, exc.detail) from exc
+
+    # ------------------------------------------------------------------ the weekly recorder
+    def _reference_league(self) -> str | None:
+        """A public league whose players pages give the season's lines (NBA statistics, the same
+        in every league) for a private one."""
+        for league in leagues.leagues(self.data_dir):
+            try:
+                _, is_public = base_settings(self.data_dir, league)
+            except leagues.LeagueError:
+                continue
+            if is_public:
+                return league
+        return None
+
+    def record(self, league: str, number: int | None) -> dict[str, Any]:
+        """Record a finished week of ``league`` (#97): read it, and write its record when it is
+        new or its content changed."""
+        base, is_public = self._base(league)
+        now = self.clock()
+        today = nba_today(now)
+        with self.lock(f"record/{league}"):
+            parts = load_parts(self.data_dir, league)
+            season = Season.from_parts(base, parts)
+            calendar = season.calendar or self._cached_calendar()
+            if calendar is None:
+                raise HTTPException(409, f"league {league} has no week calendar yet: refresh it")
+            try:
+                week = season_record.week_to_record(calendar.weeks, today, number)
+            except LookupError as exc:
+                raise HTTPException(404, str(exc)) from exc
+            except ValueError as exc:
+                raise HTTPException(409, str(exc)) from exc
+            fetch = self.fetch_factory()
+            try:
+                if is_public:
+                    draft = parts.get(season_record.DRAFT)
+                    inputs = season_record.public_inputs(
+                        league, week, fetch, now, draft.data["picks"] if draft else None
+                    )
+                    if inputs.picks_read:
+                        self._save_part(
+                            league, Part(season_record.DRAFT, now, PUBLIC, {"picks": inputs.picks})
+                        )
+                    source, owners, owners_at = league, None, None
+                else:
+                    inputs = season_record.private_inputs(league, week, parts, season.settings)
+                    source = self._reference_league()
+                    owners = {
+                        sp.player.yahoo_id: team
+                        for team, spots in season.rosters.items()
+                        for sp in spots
+                    }
+                    times = [at for k, (at, _) in season.fetched.items() if k.startswith("roster/")]
+                    owners_at = min(times) if times else None
+                lines = lines_at = None
+                count: dict[str, int] = {}
+                if inputs.picks is not None and source is not None:
+                    wanted = {
+                        int(p["player"]["yahoo_id"]): p["player"]["name"] for p in inputs.picks
+                    }
+                    lines, count = season_record.read_lines(
+                        source, wanted, fetch, season_record.season_year(week)
+                    )
+                    lines_at = self.clock()
+            except season_record.NeedsPages as exc:
+                raise HTTPException(
+                    409,
+                    {
+                        "message": f"league {league} is private: open these pages in Chrome "
+                        "with the extension, then record again",
+                        "week": week.number,
+                        "needs": exc.urls,
+                    },
+                ) from exc
+            except (public.FetchError, pages.PageError) as exc:
+                raise HTTPException(502, str(exc)) from exc
+            new = season_record.assemble(
+                league,
+                week,
+                season.settings,
+                inputs,
+                lines,
+                lines_at,
+                source if lines is not None else None,
+                owners,
+                owners_at,
+            )
+            folder = season_dir(self.data_dir, league)
+            out, status = season_rec.settle(
+                season_record.load_record(folder, week.number), new, self.clock()
+            )
+            if out is not None:
+                season_record.write_record(folder, out)
+            written = out or season_record.load_record(folder, week.number) or new
+        return {
+            "league": league,
+            "week": week.number,
+            "status": status,
+            "pages": count,
+            "missing": written.get("missing") or {},
+            "summary": season_rec.summary(written, season.settings.my_team_id),
+        }
+
+    def _save_part(self, league: str, part: Part) -> None:
+        with self.lock(league):
+            parts = merge_part(load_parts(self.data_dir, league), part)
+            save(self.data_dir, league, parts, [part], part.source)
+
+    def weeks(self, league: str) -> dict[str, Any]:
+        base, _ = self._base(league)
+        mine = Season.from_parts(base, load_parts(self.data_dir, league)).settings.my_team_id
+        rows = season_record.records(season_dir(self.data_dir, league))
+        return {
+            "league": league,
+            "my_team_id": mine,
+            "weeks": [season_rec.summary(r, mine) for r in rows],
+        }
+
+    def week(self, league: str, number: int) -> dict[str, Any]:
+        self._base(league)
+        out = season_record.load_record(season_dir(self.data_dir, league), number)
+        if out is None:
+            raise HTTPException(404, f"week {number} of league {league} is not recorded")
+        return out
 
     # ------------------------------------------------------------------ refresh
     def start_refresh(self, league: str) -> RefreshJob:
@@ -551,6 +690,14 @@ class SeasonService:
         return {"accepted": [p.key for p in received], "skipped": skipped, "season": summary}
 
 
+#: The skip reasons the public digest prints as they are; any other reads as a failure.
+NO_SEASON = "no season read yet"
+
+
+def _public_reason(reason: str) -> str:
+    return reason if reason == NO_SEASON else "its flags failed"
+
+
 def _known_key(key: str) -> bool:
     fixed = {
         "settings",
@@ -560,6 +707,7 @@ def _known_key(key: str) -> bool:
         "transactions",
         "calendar",
         "schedule",
+        "draft",
         YAHOO_WEEK,
     }
     return key in fixed or key.startswith(("roster/", "matchup/"))
@@ -602,6 +750,8 @@ def _page_part(
         return Part(matchup_key(d["week"], d["teams"]), at, EXTENSION, d)
     if kind == "transactions":
         return Part("transactions", at, EXTENSION, pages.parse_transactions_page(html))
+    if kind == "draftresults":
+        return Part("draft", at, EXTENSION, pages.parse_draft_results(html))
     raise pages.PageError(f"no parser for a {kind} page")
 
 
@@ -796,6 +946,24 @@ def register(
     async def post_trade(body: TradeBody, league: str = league_id) -> dict[str, Any]:
         """Both sides of a proposed trade before and after. Nothing is sent to Yahoo."""
         return await asyncio.to_thread(service.trade, league, body)
+
+    @app.post("/seasons/{league}/record")
+    async def post_record(
+        league: str = league_id,
+        week: int | None = Query(None, description="a past week; by default the latest one over"),
+    ) -> dict[str, Any]:
+        """Record a finished week (#97). A private league answers 409 with the pages to open."""
+        return await asyncio.to_thread(service.record, league, week)
+
+    @app.get("/seasons/{league}/weeks")
+    def get_weeks(league: str = league_id) -> dict[str, Any]:
+        """The recorded weeks, for the season's history."""
+        return service.weeks(league)
+
+    @app.get("/seasons/{league}/weeks/{week}")
+    def get_week(week: int, league: str = league_id) -> dict[str, Any]:
+        """One recorded week."""
+        return service.week(league, week)
 
     @app.get("/flags/digest")
     async def get_flag_digest() -> dict[str, Any]:

@@ -142,8 +142,9 @@ class Injury:
 @dataclass(frozen=True)
 class Inputs:
     today: date
-    #: Yahoo-wide adds on earlier days, by Yahoo id, oldest first.
-    history: Mapping[int, Sequence[int]] = field(default_factory=dict)
+    #: Yahoo-wide adds on earlier days, by Yahoo id, oldest first: each day's count as of the
+    #: time of day today's was read.
+    history: Mapping[int, Sequence[float]] = field(default_factory=dict)
     #: Today's rank by adds on the buzz index, by Yahoo id (1 for the most added).
     buzz_rank: Mapping[int, int] = field(default_factory=dict)
     recent: Mapping[int, Sequence[Window]] = field(default_factory=dict)
@@ -398,11 +399,13 @@ def digest_markdown(
     day: date,
     leagues: Sequence[tuple[str, Sequence[tuple[Pickup, Flag]]]],
     notes: Sequence[str] = (),
+    skipped: Sequence[tuple[str, str]] = (),
 ) -> str:
     """The day's digest across leagues, for a public issue: leagues by id, no team names, no
     number derived from Basketball Monster; ``notes`` on missing or old inputs. The add and
     must-add players come with their evidence, the watch level as one line of names (the
-    route's JSON carries every player's evidence)."""
+    route's JSON carries every player's evidence). ``skipped``: the leagues not read, each with
+    a short reason, in a closing line."""
     lines = [
         f"## Breakout flags, {day:%a} {_day(day)}",
         "",
@@ -425,4 +428,6 @@ def digest_markdown(
         if watch:
             names = ", ".join(f"{p.name} ({p.nba_team})" if p.nba_team else p.name for p in watch)
             lines.append(f"- watch ({len(watch)}): {names}")
+    if skipped:
+        lines += ["", "Not read: " + ", ".join(f"League {lg} ({why})" for lg, why in skipped) + "."]
     return "\n".join(lines) + "\n"

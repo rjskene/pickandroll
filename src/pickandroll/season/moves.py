@@ -24,6 +24,13 @@ Players in held slots (IL, IL+, NA) stay on the roster, are never dropped and co
 season view counts them. :data:`HELD_ACCEPTS` says which statuses each held slot takes. It is
 a best guess, not yet checked against a league with IL slots: IL takes INJ, O and OFS, IL+ a
 game-time decision as well, NA takes NA, and a suspension goes nowhere.
+
+A held-slot move defers a drop; it does not avoid one (#97). The player moved comes back on
+the first day of the first week the out rule lets him play (next Monday for an O), or on his
+return date (``returns``, ESPN's) when later, and plays from then; INJ, OFS, SUSP and NA stay
+out of every horizon and cost nothing. From the day he comes back the set drops its least
+valuable active player by per-game value, him included (:func:`comebacks`). That is an
+approximation: the starters' own ranking, not each choice re-valued.
 """
 
 from __future__ import annotations
@@ -112,6 +119,8 @@ class MoveProblem:
     #: The weekly add limits, this week's net of the adds already made.
     limits: tuple[AddLimit, ...] = ()
     held_accepts: Mapping[str, frozenset[str]] = field(default_factory=lambda: HELD_ACCEPTS)
+    #: My players held out until a day (an O's return date, when later than next Monday).
+    returns: Mapping[int, date] = field(default_factory=dict)
 
 
 # --------------------------------------------------------------------------- spots and limits
@@ -169,6 +178,58 @@ def held_used(problem: MoveProblem, moves: Sequence[Move]) -> list[tuple[int, st
     return held_moves(problem, [m.drop for m in moves if m.drop is not None])[:need]
 
 
+@dataclass(frozen=True)
+class Comeback:
+    """A player moved to a held slot who comes back inside a horizon, and whom he sends."""
+
+    player: int
+    slot: str
+    day: date
+    #: The least valuable active player on that day, by per-game value (maybe himself).
+    drop: int
+
+
+def comes_back(
+    problem: MoveProblem, key: int, player: Player, spans: Sequence[WeekSpan]
+) -> date | None:
+    """The day ``player`` comes back inside ``spans``: the first day of the first week the out
+    rule (or a weekly export's games) lets him play, or his return date when later; None when
+    he stays out through them."""
+    back = problem.returns.get(key)
+    for span in spans:
+        if span.games is not None and key in span.games:
+            out = span.games[key] <= 0
+        else:
+            out = wk.is_out(player, span.this_week, key in problem.no_games)
+        days = [d for d in span.days if back is None or d >= back]
+        if not out and days:
+            return days[0]
+    return None
+
+
+def comebacks(problem: MoveProblem, key: str, moves: Iterable[Move]) -> list[Comeback]:
+    """The deferred drops of ``moves`` over horizon ``key``: each held-slot move whose player
+    comes back inside it sends the least valuable active player then, him included."""
+    moves = list(moves)
+    held = held_used(problem, moves)
+    if not held:
+        return []
+    players = dict(problem.roster)
+    dropped = {m.drop for m in moves if m.drop is not None}
+    active = [k for k, _ in problem.roster if k not in dropped] + [m.add for m in moves]
+    backs = []
+    for k, slot in held:
+        day = comes_back(problem, k, players[k], problem.horizons[key])
+        if day is not None:
+            backs.append((day, k, slot))
+    out: list[Comeback] = []
+    for day, k, slot in sorted(backs):
+        weakest = min(active, key=lambda x: (problem.value.get(x, 0.0), str(x)))
+        active.remove(weakest)
+        out.append(Comeback(k, slot, day, weakest))
+    return out
+
+
 # --------------------------------------------------------------------------- the value
 class Evaluator:
     """Values of move sets over the problem's horizons, remembered: the searches and their
@@ -198,7 +259,7 @@ class Evaluator:
         moves = frozenset(moves)
         memo = (key, moves)
         if memo not in self._memo:
-            members, gone = self._after(moves)
+            members, gone = self._after(key, moves)
             self._memo[memo] = sum(
                 self._week(span, members, gone) for span in self.problem.horizons[key]
             )
@@ -207,16 +268,18 @@ class Evaluator:
     def gain(self, key: str, moves: Iterable[Move]) -> float:
         return self.value(key, moves) - self.base[key]
 
-    def _after(self, moves: frozenset[Move]) -> tuple[list[Member], dict[int, date]]:
+    def _after(self, key: str, moves: frozenset[Move]) -> tuple[list[Member], dict[int, date]]:
         p = self.problem
         gone = {m.drop: p.effective[m.add] for m in moves if m.drop is not None}
+        for c in comebacks(p, key, moves):
+            gone[c.drop] = c.day
         adds = [(m.add, self._by_id[m.add]) for m in moves]
         return [*p.held, *p.roster, *adds], gone
 
     def odds(self, key: str, moves: Iterable[Move]) -> list[list[list[wk.CategoryOdds]]]:
         """Each week's category odds over horizon ``key`` with ``moves`` made, one list per
         opponent."""
-        members, gone = self._after(frozenset(moves))
+        members, gone = self._after(key, frozenset(moves))
         return [self._odds(span, members, gone) for span in self.problem.horizons[key]]
 
     def _week(self, span: WeekSpan, members: Sequence[Member], gone: Mapping[int, date]) -> float:
@@ -242,7 +305,7 @@ class Evaluator:
             games=span.games,
             points=p.points,
             no_games=p.no_games,
-            available_from=p.effective,
+            available_from={**p.effective, **p.returns},
             gone_from=gone,
         )
         finals = wk.finals(mine, span.so_far, p.cats)
@@ -368,6 +431,8 @@ class Recommendation:
     gain: Mapping[str, float]
     #: The held-slot moves the set needs (player, slot).
     held: tuple[tuple[int, str], ...]
+    #: On each horizon, the drops the held players' returns force (:func:`comebacks`).
+    comebacks: Mapping[str, tuple[Comeback, ...]] = field(default_factory=dict)
 
 
 def recommend(
@@ -380,7 +445,8 @@ def recommend(
         priced, better = _priced(ev, key, pool, moves, min_gain)
         if better is None or attempt == rounds:
             gain = {h: ev.gain(h, moves) for h in ev.base}
-            return Recommendation(key, priced, gain, tuple(held_used(ev.problem, moves)))
+            back = {h: tuple(comebacks(ev.problem, h, moves)) for h in ev.base}
+            return Recommendation(key, priced, gain, tuple(held_used(ev.problem, moves)), back)
         moves = better
     raise AssertionError("unreachable")
 
