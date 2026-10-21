@@ -4,7 +4,7 @@ Status: programme approved for build by the user on 2026-10-21 ("now I want to i
 pickup assessment tool"). The design sketch of 2026-10-15 is kept below with its decisions
 resolved; what the user still has to decide is in the last section. Issue #4 was the placeholder
 for the module, #79 the trade brainstorm, #91 the in-season test the draft edge audit asks for.
-The build runs as a tracker with one issue per phase (see "Phases").
+The build runs under tracker #99 with one issue per phase: #92 data layer and league picker, #98 extension page reader for the private league, #93 weekly projections and the Waivers table, #94 move optimiser, #95 breakout flag, #96 trade evaluator, #97 weekly recorder (filed 2026-10-21).
 
 ## What it is for
 
@@ -188,10 +188,12 @@ or transactions. The weekly data starts accumulating this season once phases 1 a
 they ship before the first full matchup week to capture the baseline. The first scoring week of
 the prize leagues is week 1 (`current_week` 1 on 2026-10-21, season end 2027-04-04, 22 weeks).
 
-## Open decisions for the user
+## Decisions taken with the user
 
-- **Alert channel for the breakout digest:** a comment on a GitHub issue thread (as the draft
-  scorecards were posted), a desktop notification from a scheduled session, or both.
-- **Which leagues:** the nine prize leagues from the public sources, and the home league 31822
-  through the extension; the engine is per league either way.
+- **Leagues (2026-10-21):** all nine prize leagues from the public sources and the home league
+  31822 through the extension's page reader, from day one. One engine, one season view per
+  league.
+- **Alert channel for the breakout digest:** a daily comment on the programme's tracker issue,
+  posted by a scheduled session the way the draft scorecards were; a desktop notification can
+  be added once the digest has run for a week.
 - **Default view on the Moves card:** the three-week gain, with the one-week gain beside it.
