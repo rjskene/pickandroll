@@ -185,6 +185,27 @@ their sum, with the thresholds tuned on last season's buzz index history once tw
 data exist. The flag appears on the Moves card and on the free-agent list, and a daily digest
 of flagged players across all leagues can go out as an alert (channel: see the open decisions).
 
+As built (#95, PR #104, 2026-10-21). The flag is computed when read and cached like the moves;
+a refresh stores the day's buzz index, keyed by the NBA day, and ESPN's injury report under
+`data/leagues/_shared/season/`, and the past-days export is imported from the browser's download
+with `draft_day.py past-days 7|14`. Scores: adds surge is the louder of the day's gain in percent
+rostered over yesterday's level (floored at 1 percent; a gain of 2.5 times the level scores 1)
+and today's Yahoo-wide adds against his median over at least three earlier days (log-scaled, 8
+times scores 1), with his rank on the buzz index as the fallback until that history exists (first
+1.0, fiftieth 0.3). Minutes trend is the smaller of the 7- and 14-day gains in minutes a game over
+the rest-of-season projection, over 8 minutes, with floors of 2 and 4 games, and a usage gain over
+5 points at half weight, combined by max. Value gap is (1 − rank/240)(1 − pct/50) for a rank
+inside 120 on the league's own scoring and under 50 percent rostered. Opportunity is the
+projected minutes of teammates in his position group listed out on ESPN for 14 or more days,
+over 30 (15 for a teammate without a line), nothing for a player out himself, and it counts
+toward the flag only beside another signal: on 2026-10-21 it alone made 14 of the watches in
+each of two leagues, every guard on a team with two injured guards. Levels 0.8, 1.5 and 2.2 are
+first guesses. `GET /seasons/{league}` carries the flags with their evidence and `GET
+/flags/digest` every league's flagged players plus a markdown field for the public comment:
+leagues by id, player names, Yahoo adds and percent-rostered changes and ESPN return dates, no
+team or league names and no number derived from Basketball Monster; add and must-add players
+with their evidence, the watch level folded into one line per league.
+
 ## The trade evaluator
 
 The trading counterpart (from #79), built on the same data layer and objective. Given a
@@ -252,7 +273,8 @@ phase 2 on.
    `GET /seasons/{league}/moves`. UI: the gain columns and the move drawer with per-category
    change and alternatives.
 4. **Breakout flag.** The four signals, their scores and levels, the buzz index and past-days
-   loaders; the flag column, hover evidence and the Flag digest card; the daily digest alert.
+   loaders; the flag column, hover evidence and the Flag digest card; the daily digest alert
+   (built in #95; the alert is a scheduled session, see the decisions).
 5. **Trade evaluator.** `POST /seasons/{league}/trade` scoring both rosters before and after;
    the Trade card.
 6. **Weekly recorder.** Every Monday, for each league: standings, each team's category totals
@@ -277,5 +299,8 @@ the prize leagues is week 1 (`current_week` 1 on 2026-10-21, season end 2027-04-
   league.
 - **Alert channel for the breakout digest:** a daily comment on the programme's tracker issue,
   posted by a scheduled session the way the draft scorecards were; a desktop notification can
-  be added once the digest has run for a week.
+  be added once the digest has run for a week. Set up 2026-10-21 as the scheduled task `breakout-digest-daily`: every day at 07:00
+  Pacific it refreshes the public leagues on the running API, reads `GET /flags/digest` and
+  posts the markdown field on #99; it opens no browser, so the minutes trend waits for a
+  past-days export made by hand.
 - **Default view on the Moves card:** the three-week gain, with the one-week gain beside it.
