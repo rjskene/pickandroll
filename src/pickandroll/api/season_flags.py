@@ -485,8 +485,30 @@ def stale(info: Mapping[str, Any], now: datetime) -> list[str]:
     if not fresh:
         out.append("no past-days export within 3 days: the minutes trend is silent")
     if not info.get("projection"):
-        out.append("no rest-of-season projection: minutes, value and opportunity are silent")
+        out.append("no rest-of-season projection: the minutes trend and the value gap are silent")
     return out
+
+
+def silent(info: Mapping[str, Any]) -> dict[str, str]:
+    """The signals today's inputs cannot score for anyone, each with why: the dashboard shows
+    them as silent rather than leave them out. Opportunity without a projection still scores,
+    each teammate out counting :data:`flags.UNKNOWN_MPG` minutes."""
+    if info.get("error"):
+        return {}
+    out = {}
+    if not info.get("projection"):
+        out["minutes"] = "no rest-of-season export: no projected minutes to compare with"
+        out["value"] = "no rest-of-season export: no rank on the league's scoring"
+    elif not any(v and not v.get("stale") for v in (info.get("past_days") or {}).values()):
+        out["minutes"] = f"no past-days export within {PAST_DAYS_MAX_AGE.days} days"
+    if not (info.get("injuries") or {}).get("read_at"):
+        out["opportunity"] = "no injury report read"
+    return out
+
+
+def config() -> dict[str, Any]:
+    """The flag's constants for the explainer, with the past-days exports' age limit."""
+    return {**fl.config(), "past_days_max_days": PAST_DAYS_MAX_AGE.days}
 
 
 def payload(flags: Mapping[int, fl.Flag]) -> dict[str, Any]:

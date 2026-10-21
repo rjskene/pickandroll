@@ -6,6 +6,7 @@ import type {
   BestMove,
   Cat,
   Comeback,
+  FlagConfig,
   FlagInputs,
   FlagLevel,
   FlagSignalKey,
@@ -423,14 +424,118 @@ export function flagSignals(f: PlayerFlag): FlagSignalKey[] {
   return FLAG_SIGNALS.filter((k) => (f.signals[k]?.score ?? 0) > 0).sort((a, b) => f.signals[b].score - f.signals[a].score);
 }
 
-/** The hover text: the level and the sum, then each signal that spoke with its evidence. */
-export function flagTitle(f: PlayerFlag): string {
-  // The server scores opportunity alone 0: it counts only beside another signal.
-  const alone = f.score === 0 && (f.signals.opportunity?.score ?? 0) > 0;
-  const head = alone
+/** Opportunity alone: the server scores the flag 0, since it counts only beside another signal. */
+function opportunityAlone(f: PlayerFlag): boolean {
+  return f.score === 0 && (f.signals.opportunity?.score ?? 0) > 0;
+}
+
+/** The flag's levels lowest first, as the API reports them: "watch 0.8, add 1.5, must-add 2.2". */
+export function levelsLine(cfg: FlagConfig): string {
+  return [...cfg.levels]
+    .sort((a, b) => a.floor - b.floor)
+    .map((l) => `${l.level} ${l.floor}`)
+    .join(", ");
+}
+
+/** The hover text: the level and the sum (against the thresholds when the view sent them), then
+ * each signal that spoke with its evidence. */
+export function flagTitle(f: PlayerFlag, cfg?: FlagConfig): string {
+  const head = opportunityAlone(f)
     ? "not flagged: opportunity counts only beside another signal"
-    : `${f.level ?? "under watch"} · ${f.score.toFixed(2)} of 4 (watch 0.8, add 1.5, must-add 2.2)`;
+    : `${f.level ?? "under watch"} · ${f.score.toFixed(2)}${cfg ? ` of ${cfg.max} (${levelsLine(cfg)})` : ""}`;
   return [head, ...flagSignals(f).map((k) => `${FLAG_SIGNAL_NAME[k]} ${f.signals[k].score.toFixed(2)}: ${f.signals[k].reason ?? ""}`)].join("\n");
+}
+
+/** One signal in a player's breakdown (#113). */
+export interface BreakdownSignal {
+  key: FlagSignalKey;
+  name: string;
+  score: number;
+  /** The evidence with every number; null when the signal said nothing. */
+  reason: string | null;
+  /** Why today's inputs could not score it for anyone; null when they could. */
+  silent: string | null;
+  /** False for opportunity alone, which counts only beside another signal. */
+  counted: boolean;
+}
+
+export interface Breakdown {
+  /** All four, in the flag's own order, quiet ones included. */
+  signals: BreakdownSignal[];
+  sum: number;
+  max: number;
+  level: FlagLevel | null;
+  /** The levels lowest first, each with whether the sum reaches it. */
+  levels: { level: FlagLevel; floor: number; reached: boolean }[];
+  /** "1.75 of 4: add (from 1.5); must-add at 2.2, 0.45 more". */
+  line: string;
+}
+
+/** A player's flag as the breakdown under his row shows it: every signal with its score and
+ * evidence (a silent one says why), then the sum against the thresholds. */
+export function flagBreakdown(f: PlayerFlag, cfg?: FlagConfig, silent?: FlagInputs["silent"]): Breakdown {
+  const alone = opportunityAlone(f);
+  const signals = FLAG_SIGNALS.map((key): BreakdownSignal => {
+    const sig = f.signals[key];
+    const score = sig?.score ?? 0;
+    return {
+      key,
+      name: FLAG_SIGNAL_NAME[key],
+      score,
+      reason: score > 0 ? (sig?.reason ?? null) : null,
+      silent: score > 0 ? null : (silent?.[key] ?? null),
+      counted: !(alone && key === "opportunity"),
+    };
+  });
+  const levels = cfg ? [...cfg.levels].sort((a, b) => a.floor - b.floor).map((l) => ({ ...l, reached: f.score >= l.floor - 1e-9 })) : [];
+  const max = cfg?.max ?? FLAG_SIGNALS.length;
+  const sum = `${f.score.toFixed(2)} of ${max}`;
+  let line: string;
+  if (!levels.length) line = `${sum}: ${f.level ?? "not flagged"}`;
+  else if (alone) line = `${sum}: not flagged, opportunity counts only beside another signal; ${levels[0].level} from ${levels[0].floor}`;
+  else {
+    const at = levels.filter((l) => l.reached).pop();
+    const next = levels.find((l) => !l.reached);
+    const toNext = next ? `${next.level} at ${next.floor}, ${(next.floor - f.score).toFixed(2)} more` : "";
+    line = at ? `${sum}: ${at.level} (from ${at.floor})${toNext ? `; ${toNext}` : ""}` : `${sum}: not flagged; ${toNext}`;
+  }
+  return { signals, sum: f.score, max, level: f.level, levels, line };
+}
+
+/** The "i" text for the breakout flag, every number from the API's config: what each signal
+ * reads and how it scores, with the ones today's inputs leave silent named. */
+export function flagExplainer(
+  cfg: FlagConfig,
+  silent?: FlagInputs["silent"],
+): { signals: { key: FlagSignalKey; name: string; text: string; silent: string | null }[]; levels: string; caveat: string } {
+  const { surge, minutes, value, opportunity } = cfg.signals;
+  const windows = Object.entries(minutes.min_games)
+    .sort((a, b) => Number(a[0]) - Number(b[0]))
+    .map(([days, games]) => `${games} in ${days} days`)
+    .join(", ");
+  const text: Record<FlagSignalKey, string> = {
+    surge:
+      `the day's gain in % rostered against his own level (a gain of ${surge.jump_full}× his level scores 1, a level under ${surge.jump_floor}% counting as ${surge.jump_floor}%), ` +
+      `or his Yahoo-wide adds today against his median over at least ${surge.history_days} earlier days (${surge.adds_full}× the median scores 1, a median under ${surge.adds_floor} counting as ${surge.adds_floor}); ` +
+      `until those days are kept, his rank by adds on Yahoo's buzz index (the first scores 1, the ${surge.buzz_rows}th ${surge.buzz_last}). The louder part counts.`,
+    minutes:
+      `minutes a game over the last 7 and 14 days against his rest-of-season projection, the smaller gain of the windows with enough games (${windows}): ` +
+      `${minutes.minutes_full} more minutes a game scores 1, and a usage gain of ${minutes.usage_full} points scores the same at weight ${minutes.usage_weight}. ` +
+      `It needs a past-days export from the last ${cfg.past_days_max_days} days.`,
+    value: `ranked inside the top ${value.rank} on the league's own scoring and rostered in under ${value.pct}% of Yahoo leagues: the better the rank and the lower the %, the higher the score.`,
+    opportunity:
+      `teammates in his position group (guard, forward, centre) out at least ${opportunity.out_days} more days, by their projected minutes: ${opportunity.full} minutes a game out scores 1, ` +
+      `a teammate without a projection counting ${opportunity.unknown_mpg}; nothing while he is out himself.` +
+      (cfg.opportunity_needs_another ? " It counts toward the level only beside another signal." : ""),
+  };
+  return {
+    signals: FLAG_SIGNALS.map((key) => ({ key, name: cfg.signals[key].name, text: text[key], silent: silent?.[key] ?? null })),
+    levels: `Each signal scores from 0 to 1 and the level comes from their sum, at most ${cfg.max}: ${[...cfg.levels]
+      .sort((a, b) => a.floor - b.floor)
+      .map((l) => `${l.level} from ${l.floor}`)
+      .join(", ")}.`,
+    caveat: "Every threshold is a first guess, to be tuned once two weeks of buzz-index history are kept. The flag never adds anyone.",
+  };
 }
 
 /** The flagged players (a level, not just a signal), the highest score first. */

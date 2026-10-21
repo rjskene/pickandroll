@@ -345,6 +345,46 @@ def opportunity(p: Pickup, inputs: Inputs) -> Signal:
     return Signal(score, reason, public, facts)
 
 
+def config() -> dict[str, Any]:
+    """The constants above for the dashboard's explainer, so its text follows a retune."""
+    return {
+        "levels": [{"level": name, "floor": floor} for name, floor in LEVELS],
+        "max": float(len(SIGNALS)),
+        "opportunity_needs_another": OPPORTUNITY_NEEDS_ANOTHER,
+        "signals": {
+            "surge": {
+                "name": SIGNAL_NAMES["surge"],
+                "jump_full": JUMP_FULL,
+                "jump_floor": JUMP_FLOOR,
+                "history_days": HISTORY_DAYS,
+                "adds_full": ADDS_FULL,
+                "adds_floor": ADDS_FLOOR,
+                "buzz_rows": BUZZ_ROWS,
+                "buzz_last": BUZZ_LAST,
+            },
+            "minutes": {
+                "name": SIGNAL_NAMES["minutes"],
+                "minutes_full": MINUTES_FULL,
+                "usage_full": USAGE_FULL,
+                "usage_weight": USAGE_WEIGHT,
+                "min_games": {str(days): games for days, games in MIN_GAMES.items()},
+            },
+            "value": {
+                "name": SIGNAL_NAMES["value"],
+                "rank": VALUE_RANK,
+                "pct": VALUE_PCT,
+                "rank_scale": VALUE_RANK_SCALE,
+            },
+            "opportunity": {
+                "name": SIGNAL_NAMES["opportunity"],
+                "out_days": OUT_DAYS,
+                "full": OPPORTUNITY_FULL,
+                "unknown_mpg": UNKNOWN_MPG,
+            },
+        },
+    }
+
+
 def level_of(score: float) -> str | None:
     for name, floor in LEVELS:
         if score >= floor - 1e-9:

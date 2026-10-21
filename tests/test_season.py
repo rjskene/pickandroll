@@ -34,6 +34,7 @@ from pickandroll.season import (
     merge_part,
     mondays,
 )
+from pickandroll.season import flags as fl
 from pickandroll.sources import schedule
 from pickandroll.sources.injuries import ESPN_INJURIES_URL
 from pickandroll.sources.yahoo import pages, public
@@ -1178,6 +1179,9 @@ def test_a_refresh_keeps_the_flags_inputs_and_the_view_flags_the_pool(client):
     # Gilgeous-Alexander is back inside two weeks: nothing for Oklahoma City's guards.
     assert "10276" not in flags or flags["10276"]["signals"]["opportunity"]["score"] == 0.0
     assert v["flag_inputs"]["buzz"]["rows"] == 5 and v["flag_inputs"]["projection"] is None
+    # Without a projection the minutes and the value gap cannot speak; opportunity still does.
+    assert set(v["flag_inputs"]["silent"]) == {"minutes", "value"}
+    assert "no rest-of-season export" in v["flag_inputs"]["silent"]["minutes"]
     # A second refresh within the hour reads neither again.
     reads = sum("/buzzindex?" in u or u == ESPN_INJURIES_URL for u in client.fake.urls)
     assert reads == 3
@@ -1206,6 +1210,7 @@ def test_the_projection_and_the_past_days_feed_the_value_and_minutes_signals(cli
     assert v["flags"]["6217"]["signals"]["minutes"]["score"] == 0.0
     past = v["flag_inputs"]["past_days"]
     assert past["7d"]["file"] == "bbm_actual_7d_totals_20261021-1500.csv" and past["14d"] is None
+    assert v["flag_inputs"]["silent"] == {}
     d = client.get("/flags/digest").json()
     md = d["markdown"]
     assert "Andre Drummond (NYK, C): adds surge" in md and "minutes up" in md and "value gap" in md
@@ -1324,3 +1329,28 @@ def test_a_past_days_export_is_never_offered_as_a_projection(client):
     )
     files = [f["file"] for f in client.get("/projections").json()]
     assert files == ["bbm_projections_2026-10-21.csv"]
+
+
+def test_the_view_carries_the_flags_thresholds_from_the_flag_itself(client):
+    """#113: the explainer's numbers are the flag's own, so a retune reaches the web."""
+    v = client.get(f"/seasons/{LEAGUE}").json()
+    cfg = v["flag_config"]
+    assert [(x["level"], x["floor"]) for x in cfg["levels"]] == [(n, f) for n, f in fl.LEVELS]
+    assert set(cfg["signals"]) == set(fl.SIGNALS) and cfg["max"] == len(fl.SIGNALS)
+    assert cfg["signals"]["value"]["rank"] == fl.VALUE_RANK
+    assert cfg["signals"]["minutes"]["min_games"] == {"7": 2, "14": 4}
+    assert cfg["opportunity_needs_another"] is fl.OPPORTUNITY_NEEDS_ANOTHER
+    assert cfg["past_days_max_days"] == 3
+    # Before any read: no injury report either, so opportunity is silent too.
+    assert set(v["flag_inputs"]["silent"]) == {"minutes", "value", "opportunity"}
+
+
+def test_a_stale_past_days_export_leaves_only_the_minutes_silent():
+    info = {
+        "projection": "bbm_projections.csv",
+        "injuries": {"read_at": "2026-10-21T15:00:00+00:00", "players": 4},
+        "past_days": {"7d": {"file": "x.csv", "as_of": "2026-10-10", "stale": True}, "14d": None},
+    }
+    assert set(season_flags.silent(info)) == {"minutes"}
+    assert "within 3 days" in season_flags.silent(info)["minutes"]
+    assert season_flags.silent({"error": "boom"}) == {}

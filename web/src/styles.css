@@ -363,6 +363,8 @@ table.keepers tr.err td { background: rgba(239, 107, 107, 0.14); }
 .info-btn:hover, .info-btn[aria-expanded="true"] { color: var(--accent); border-color: var(--accent); }
 .popover { position: absolute; top: 22px; left: 0; z-index: 12; width: 340px; padding: 10px 12px; background: var(--panel-2); border: 1px solid var(--line-2); border-radius: 8px; box-shadow: 0 18px 50px rgba(0, 0, 0, 0.6); font-family: var(--body); font-size: 12px; font-weight: 400; line-height: 1.45; color: var(--text); text-transform: none; letter-spacing: 0; white-space: normal; text-align: left; display: grid; gap: 6px; cursor: default; }
 .popover.right { left: auto; right: 0; }
+.popover { overflow-y: auto; }
+.popover.up { top: auto; bottom: 22px; }
 .popover b { color: #ffffff; font-weight: 600; }
 
 /* tags, ties and the category strip */
@@ -450,6 +452,27 @@ tr.tie td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
 .season-table th, .season-table td { padding: 3px 5px; position: static; }
 .season-table tr.mine td { background: var(--mine); }
 .season-table tr.bench td { color: var(--muted); }
+/* The breakout flag's breakdown under a row (#113): four 0-to-1 bars with their evidence, then the sum against the levels. */
+.flag-btn { padding: 0; border: 0; background: none; cursor: pointer; line-height: 0; }
+.flag-btn[aria-expanded="true"] .tag { box-shadow: 0 0 0 1px currentColor; }
+tr.breakdown > td { padding: 0; white-space: normal; background: var(--panel); }
+.flag-breakdown { display: grid; gap: 5px; padding: 8px 10px 10px; border-left: 2px solid var(--accent); font-size: 12px; line-height: 1.4; }
+.season-board .flag-breakdown { position: sticky; left: 0; max-width: 760px; }
+.fb-signal, .fb-sum { display: grid; grid-template-columns: 84px 110px 34px minmax(0, 1fr); gap: 10px; align-items: center; }
+.fb-sum { grid-template-columns: 84px 110px 34px minmax(0, 1fr) auto; padding-top: 5px; border-top: 1px solid var(--line); }
+.fb-sum .grow { display: none; }
+.fb-name { color: var(--muted); }
+.fb-signal.quiet .fb-name { color: var(--dim); }
+.fb-bar { position: relative; height: 6px; border-radius: 3px; background: var(--line-2); }
+.fb-bar > span { position: absolute; inset: 0 auto 0 0; border-radius: 3px; background: var(--accent); }
+.fb-bar > i { position: absolute; top: -3px; width: 2px; height: 12px; margin-left: -1px; background: var(--dim); }
+.fb-bar > i.on { background: var(--text); }
+/* A phone: the evidence and the sum's line under the bar, the move button on a line of its own. */
+@media (max-width: 600px) {
+  .fb-signal, .fb-sum { grid-template-columns: 84px minmax(0, 1fr) 34px; row-gap: 2px; }
+  .fb-signal > :nth-child(4), .fb-sum > :nth-child(4) { grid-column: 1 / -1; }
+  .fb-sum > button { grid-column: 1 / -1; justify-self: start; }
+}
 .season-table tr.bench td.strong { color: var(--text); font-weight: 400; }
 /* The moves (#94): a waiver row, and a move in the drawer, opens that move. */
 .season-board tbody tr { cursor: pointer; }

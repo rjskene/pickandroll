@@ -8,7 +8,8 @@ Routes:
 ``GET /seasons/{league}``
     The season view: settings, the week and the next ones, standings, every roster, my
     matchup, the available players and the league's transactions, and the breakout flag of
-    the available players (#95, ``season_flags``).
+    the available players (#95, ``season_flags``) with the signals today's inputs leave silent
+    and the flag's thresholds for the explainer (#113).
 ``POST /seasons/{league}/refresh``
     Reads the league's public sources (a public league: the prize leagues) in the background;
     ``?wait=true`` returns once it is done. A private league answers ``409`` with what to do.
@@ -251,9 +252,14 @@ class SeasonService:
         today = nba_today(self.clock())
         try:
             _, flags, inputs = self._flags(league)
-            flag_view = {"flags": season_flags.payload(flags), "flag_inputs": inputs}
+            flag_view = {
+                "flags": season_flags.payload(flags),
+                "flag_inputs": {**inputs, "silent": season_flags.silent(inputs)},
+            }
         except Exception as exc:  # noqa: BLE001 - the season reads without its flags
             flag_view = {"flags": {}, "flag_inputs": {"error": f"{type(exc).__name__}: {exc}"}}
+        # The explainer's thresholds come from the flag itself, never from copies in the web.
+        flag_view["flag_config"] = season_flags.config()
         return {
             **_summary(season, is_public, bool(parts), self.jobs.get(league)),
             **_view(season, today),
