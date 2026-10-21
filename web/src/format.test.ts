@@ -3,7 +3,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { AdjustmentRow, AvailabilityBias, BoardPlayer, CurveFit, LeagueResolved, LeagueSummary, RoomSummary, SessionSummary } from "./api";
-import { adpCell, adpTitle, armLabel, biasDetail, blendDetail, blendLabel, clockNote, clockText, curveFitNote, draftWhen, haircutLabel, leagueSurvivalText, haircutTitle, haircutWeeks, nextDraft, oddsSource, rankLabel, roomOrder, survivalDetail, turnFlag, weeksToGames } from "./format.ts";
+import { adpCell, adpTitle, armLabel, biasDetail, blendDetail, blendLabel, clockNote, clockText, curveFitNote, draftDay, draftsAhead, draftState, draftWhen, finishedDrafts, haircutLabel, leagueSurvivalText, haircutTitle, haircutWeeks, nextDraft, oddsSource, pageFor, rankLabel, roomOrder, survivalDetail, turnFlag, untilLabel, weeksToGames } from "./format.ts";
 
 const row = (adp_from: BoardPlayer["adp_from"], adp: number | null, keepers_ahead = 0): BoardPlayer =>
   ({ adp, adp_eff: adp == null ? null : adp - keepers_ahead, adp_from, keepers_ahead }) as BoardPlayer;
@@ -219,4 +219,62 @@ test("the form says what a league session's survival resolves to", () => {
     "the format's drafts by ADP (blend: 1.5 drafts: 1 of the format + 1 of the other format at ×0.5, 40% ADP formula)",
   );
   assert.equal(leagueSurvivalText({ ...base, survival: "league", survival_file: "leagues/1/survival_by_adp.csv" }), "this league's own drafts by ADP (leagues/1/survival_by_adp.csv)");
+});
+
+// ---------------------------------------------------------------- the landing page (#108)
+const draft = (league: string, draft_time: string | null, rounds: number | null = 13) =>
+  ({ league, draft_time, num_teams: 12, pick_seconds: 60, resolved: rounds == null ? null : { rounds } }) as LeagueSummary;
+const live = (draft_id: string, complete = false) => ({ draft_id, complete }) as RoomSummary;
+const at = Date.parse("2026-10-21T12:00:00Z");
+const hours = (h: number) => new Date(at + h * 3600_000).toISOString();
+
+test("a draft is ahead, started, live in its room, finished or unscheduled", () => {
+  assert.equal(draftState(draft("a", hours(1)), [], at), "ahead");
+  // 12 teams x 13 rounds on a 60 s clock is 2.6 h at most, and half an hour's grace.
+  assert.equal(draftState(draft("a", hours(-3)), [], at), "started");
+  assert.equal(draftState(draft("a", hours(-3.2)), [], at), "finished");
+  // Without the rounds, four hours.
+  assert.equal(draftState(draft("a", hours(-4.4), null), [], at), "started");
+  assert.equal(draftState(draft("a", hours(-4.6), null), [], at), "finished");
+  // Its room says it best, either way.
+  assert.equal(draftState(draft("a", hours(-30)), [live("a")], at), "live");
+  assert.equal(draftState(draft("a", hours(-1)), [live("a", true)], at), "finished");
+  assert.equal(draftState(draft("a", null), [], at), "unscheduled");
+});
+
+test("a finished draft is never offered to arm, and the drafts ahead come soonest first", () => {
+  const leagues = [draft("done", hours(-48)), draft("later", hours(72)), draft("soon", hours(2)), draft("unknown", null), draft("running", hours(-1))];
+  assert.deepEqual(
+    draftsAhead(leagues, [], at).map((l) => l.league),
+    ["running", "soon", "later", "unknown"],
+  );
+  assert.deepEqual(
+    finishedDrafts([...leagues, draft("older", hours(-96))], [], at).map((l) => l.league),
+    ["done", "older"],
+  );
+});
+
+test("auto is the draft season while a draft is under fourteen days away or running", () => {
+  const ahead = (days: number) => [draft("x", hours(days * 24)), draft("old", hours(-200))];
+  assert.equal(pageFor("auto", ahead(13.9), [], at), "draft");
+  assert.equal(pageFor("auto", ahead(14.1), [], at), "season");
+  assert.equal(pageFor("auto", [draft("old", hours(-200))], [], at), "season");
+  assert.equal(pageFor("auto", [draft("x", hours(-1))], [], at), "draft");
+  // A live room, a league's or a mock's, is draft season too; a finished one is not.
+  assert.equal(pageFor("auto", [], [live("mock")], at), "draft");
+  assert.equal(pageFor("auto", [], [live("mock", true)], at), "season");
+  // A chosen page is the page.
+  assert.equal(pageFor("season", ahead(1), [], at), "season");
+  assert.equal(pageFor("draft", [], [], at), "draft");
+});
+
+test("a draft card says when, on this clock, and how long until it starts", () => {
+  assert.match(draftDay(hours(0)), /^[A-Z][a-z]{2} [A-Z][a-z]{2} \d{1,2} · \d{1,2}:\d{2} [AP]M$/);
+  assert.equal(draftDay(null), "time unknown");
+  assert.equal(untilLabel(hours(54), at), "in 2 days 6 h");
+  assert.equal(untilLabel(hours(24), at), "in 1 day");
+  assert.equal(untilLabel(hours(3), at), "in 3 h");
+  assert.equal(untilLabel(hours(0.75), at), "in 45 min");
+  assert.equal(untilLabel(hours(-1 / 3), at), "started 20 min ago");
+  assert.equal(untilLabel(null, at), "no draft time yet");
 });

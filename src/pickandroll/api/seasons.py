@@ -52,6 +52,7 @@ from __future__ import annotations
 import asyncio
 import json
 import threading
+from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
@@ -77,6 +78,7 @@ from ..season import (
     mondays,
     roster_key,
 )
+from ..season import moves as mv
 from ..season import record as season_rec
 from ..sources import schedule as nba_schedule
 from ..sources.yahoo import pages, public
@@ -229,7 +231,18 @@ class SeasonService:
         parts = load_parts(self.data_dir, league)
         season = Season.from_parts(base, parts)
         job = self.jobs.get(league)
-        return _summary(season, is_public, bool(parts), job)
+        out = _summary(season, is_public, bool(parts), job)
+        if not parts:
+            return out
+        # The landing grid's card (#108): the week's score, the adds left and the flags.
+        out |= _glance(season, nba_today(self.clock()))
+        try:
+            players, flags, _ = self._flags(league)
+            out["flags"] = dict(Counter(f.level for _, f in season_flags.flagged(players, flags)))
+        except Exception as exc:  # noqa: BLE001 - the card reads without its flags
+            out["flags"] = None
+            out["flags_error"] = f"{type(exc).__name__}: {exc}"
+        return out
 
     def view(self, league: str) -> dict[str, Any]:
         base, is_public = self._base(league)
@@ -357,6 +370,21 @@ class SeasonService:
         today = nba_today(self.clock())
         key = (league, system, "moves", today, self._moves_stamp(league))
         return self.moves_cache.get(key, lambda: season_moves.moves_payload(built))
+
+    def best(self, league: str, system: str, solve: bool = False) -> dict[str, Any]:
+        """The landing grid's best move (#108): from the moves already solved today, or, with
+        ``solve``, solved now. Without it nothing is solved: a cold league says so."""
+        if solve:
+            self.moves(league, system)
+        else:
+            self._base(league)
+        today = nba_today(self.clock())
+        stamp = self._moves_stamp(league)
+        payload = self.moves_cache.peek((league, system, "moves", today, stamp))
+        built = self.moves_cache.peek((league, system, "built", today, stamp))
+        if payload is None or built is None:
+            return {"league": league, "status": "not_solved", "system": system}
+        return {"league": league, **season_moves.best_payload(built, payload)}
 
     def move_detail(self, league: str, add: int, drop: int | None, system: str) -> dict[str, Any]:
         out = season_moves.detail_payload(self._built(league, system), add, drop)
@@ -806,6 +834,28 @@ def _summary(
     }
 
 
+def _glance(season: Season, today: date) -> dict[str, Any]:
+    """My week at a glance: the score so far, mine first, and the adds left this week."""
+    mine = season.settings.my_team_id
+    matchup = season.matchup_of(mine)
+    score = None
+    if matchup is not None and matchup.score is not None:
+        a, b = matchup.score
+        score = [a, b] if matchup.teams[0] == mine else [b, a]
+    week = season.current(today)
+    adds = None
+    if mine is not None and week is not None:
+        limit = season.settings.max_weekly_adds
+        used = mv.adds_used(season.transactions, mine, week.start, week.end, today)
+        adds = {
+            "limit": limit,
+            "used": used.count,
+            "complete": used.complete,
+            "left": None if limit is None else max(0, limit - used.count),
+        }
+    return {"score": score, "adds": adds}
+
+
 def _view(season: Season, today: date) -> dict[str, Any]:
     week = season.current(today)
     days_left = week.days(since=today) if week else None
@@ -931,6 +981,16 @@ def register(
     async def get_moves(league: str = league_id, system: str = system_q) -> dict[str, Any]:
         """Every available player's best move on both horizons and the recommended moves."""
         return await asyncio.to_thread(service.moves, league, system)
+
+    @app.get("/seasons/{league}/best")
+    async def get_best(league: str = league_id, system: str = system_q) -> dict[str, Any]:
+        """The best recommended move when today's moves are solved; never solves them."""
+        return await asyncio.to_thread(service.best, league, system)
+
+    @app.post("/seasons/{league}/best")
+    async def post_best(league: str = league_id, system: str = system_q) -> dict[str, Any]:
+        """Solve today's moves and give the best recommended move."""
+        return await asyncio.to_thread(service.best, league, system, True)
 
     @app.get("/seasons/{league}/moves/{player}")
     async def get_move(

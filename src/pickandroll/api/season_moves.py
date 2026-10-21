@@ -329,6 +329,36 @@ def moves_payload(built: Built) -> dict[str, Any]:
     }
 
 
+def best_payload(built: Built, payload: dict[str, Any]) -> dict[str, Any]:
+    """The landing grid's line for a league (#108): the recommended move that adds most on the
+    three weeks ahead (the rest of this week when no week follows), with the set's gain."""
+    key = "three" if built.horizons["three"]["weeks"] else "week"
+    rec = payload["recommended"][key]
+    p = built.problem
+    names = {k: player.name for k, player in (*p.roster, *p.held, *p.candidates)}
+    best = max(rec["moves"], key=lambda m: m["marginal"][key], default=None)
+    move = None
+    if best is not None:
+        move = {
+            "add": best["add"],
+            "add_name": names.get(best["add"]),
+            "drop": best["drop"],
+            "drop_name": None if best["drop"] is None else names.get(best["drop"]),
+            "from": best["from"],
+            "gain": best["marginal"][key],
+        }
+    return {
+        "status": "solved",
+        "system": built.system["key"],
+        "horizon": key,
+        "label": built.horizons[key]["label"],
+        "move": move,
+        "moves": len(rec["moves"]),
+        "gain": rec["gain"][key],
+        "min_gain": MIN_GAIN,
+    }
+
+
 def _cats(ev: mv.Evaluator, key: str, moves: list[mv.Move]) -> dict[str, dict[str, Any]]:
     """Per category over horizon ``key``: expected wins summed over the weeks (each week's odds
     averaged over its opponents), and in a one-opponent week my final and theirs."""
@@ -397,6 +427,11 @@ class MovesCache:
         self._lock = threading.Lock()
         self._payloads: dict[tuple[Any, ...], Any] = {}
         self._building: dict[tuple[Any, ...], threading.Lock] = {}
+
+    def peek(self, key: tuple[Any, ...]) -> Any:
+        """The value for ``key`` when it was made, else None; nothing is made."""
+        with self._lock:
+            return self._payloads.get(key)
 
     def get(self, key: tuple[Any, ...], make: Callable[[], Any]) -> Any:
         """The value for ``key`` (``(league, system, kind, ...)``), made once; a newer key of

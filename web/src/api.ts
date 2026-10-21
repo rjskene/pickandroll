@@ -772,6 +772,43 @@ export interface SeasonSummary {
   sources: ("public" | "extension")[];
   refresh: SeasonRefresh | null;
   error?: string;
+  /** The landing grid's card (#108), once the league is read: this week's score so far, mine
+   * first (categories won, or points); null before the matchup is read. */
+  score?: [number, number] | null;
+  /** My adds this week against the league's weekly limit; null without the week calendar. */
+  adds?: Omit<MoveAdds, "weeks"> | null;
+  /** The pool's flagged players by level; null, with the error, when the flags do not make. */
+  flags?: Partial<Record<FlagLevel, number>> | null;
+  flags_error?: string;
+}
+
+/** The landing grid's best move for a league (#108), from today's solved moves: never solved
+ * by the look, only by its POST. */
+export type BestMove =
+  | { league: string; status: "not_solved"; system: ProjectionSystem }
+  | {
+      league: string;
+      status: "solved";
+      system: ProjectionSystem;
+      /** The three weeks after this one, or the rest of this week when none follows. */
+      horizon: MoveHorizon;
+      label: string;
+      /** The recommended move that adds most; null when none gains ``min_gain``. */
+      move: BestMoveLine | null;
+      /** The recommended set's size and its gain on the horizon. */
+      moves: number;
+      gain: number;
+      min_gain: number;
+    };
+
+export interface BestMoveLine {
+  add: number;
+  add_name: string | null;
+  /** Null: the add takes an open spot. */
+  drop: number | null;
+  drop_name: string | null;
+  from: string;
+  gain: number;
 }
 
 export interface SeasonPlayer {
@@ -1223,6 +1260,12 @@ export const api = {
   /** Every available player's best move on both horizons and the recommended sets (#94). */
   moves: (league: string, system: ProjectionSystem) =>
     request<MovesPayload>(`/seasons/${encodeURIComponent(league)}/moves?system=${system}`),
+  /** The best recommended move when today's moves are solved (#108); never solves them. */
+  best: (league: string, system: ProjectionSystem) =>
+    request<BestMove>(`/seasons/${encodeURIComponent(league)}/best?system=${system}`),
+  /** Solve today's moves and give the best recommended move. */
+  solveBest: (league: string, system: ProjectionSystem) =>
+    request<BestMove>(`/seasons/${encodeURIComponent(league)}/best?system=${system}`, { method: "POST" }),
   /** The move drawer: adding ``player`` for ``drop`` (null: an open spot). */
   move: (league: string, player: number, drop: number | null, system: ProjectionSystem) =>
     request<MoveDetail>(

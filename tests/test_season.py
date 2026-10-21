@@ -935,6 +935,90 @@ def test_moves_need_a_season_of_my_team(client):
     assert client.get("/seasons/999999/moves").status_code == 404
 
 
+# --------------------------------------------------------------------------- landing grid (#108)
+def test_the_leagues_list_gives_the_weeks_score_adds_left_and_flag_counts(client):
+    projection_csv(
+        client.data_dir / "bbm_projections_2026-10-21.csv", fixture_names(), star="Kevin Durant"
+    )
+    client.post(f"/seasons/{LEAGUE}/refresh", params={"wait": True})
+    rows = {r["league"]: r for r in client.get("/seasons").json()}
+    v = client.get(f"/seasons/{LEAGUE}").json()
+    mine = rows[LEAGUE]
+    # The score is mine first, whichever side of the matchup Yahoo lists me on.
+    a, b = v["matchup"]["score"]
+    assert mine["score"] == ([a, b] if v["matchup"]["teams"][0] == 4 else [b, a])
+    # The adds are the moves' own count, without solving a move.
+    m = client.get(f"/seasons/{LEAGUE}/moves").json()
+    assert mine["adds"] == {k: m["adds"][k] for k in ("limit", "used", "complete", "left")}
+    levels = [f["level"] for f in v["flags"].values() if f["level"] is not None]
+    assert sum(mine["flags"].values()) == len(levels)
+    assert set(mine["flags"]) <= {"must-add", "add", "watch"}
+    # A league with no season read has none of them.
+    assert not {"score", "adds", "flags"} & set(rows["100002"])
+
+
+def test_the_best_move_comes_from_the_solved_moves_and_never_solves_them(client):
+    projection_csv(
+        client.data_dir / "bbm_projections_2026-10-21.csv", fixture_names(), star="Kevin Durant"
+    )
+    # Games every day: the three weeks after this one have moves too.
+    client.fake.every_day = True
+    client.post(f"/seasons/{LEAGUE}/refresh", params={"wait": True})
+    service = client.app.state.seasons
+    yahoo = {"system": "yahoo"}
+    cold = client.get(f"/seasons/{LEAGUE}/best", params=yahoo).json()
+    assert cold == {"league": LEAGUE, "status": "not_solved", "system": "yahoo"}
+    # The look solved nothing.
+    assert not service.moves_cache._payloads
+    b = client.post(f"/seasons/{LEAGUE}/best", params=yahoo).json()
+    m = client.get(f"/seasons/{LEAGUE}/moves", params=yahoo).json()
+    rec = m["recommended"]["three"]
+    assert (b["status"], b["horizon"], b["system"]) == ("solved", "three", "yahoo")
+    assert b["label"] == m["horizons"]["three"]["label"]
+    assert b["moves"] == len(rec["moves"]) > 0 and b["gain"] == rec["gain"]["three"]
+    best = max(rec["moves"], key=lambda x: x["marginal"]["three"])
+    assert (b["move"]["add"], b["move"]["drop"], b["move"]["gain"]) == (
+        best["add"],
+        best["drop"],
+        best["marginal"]["three"],
+    )
+    v = client.get(f"/seasons/{LEAGUE}").json()
+    names = {a["player"]["yahoo_id"]: a["player"]["name"] for a in v["available"]}
+    names |= {s["player"]["yahoo_id"]: s["player"]["name"] for s in v["roster"]}
+    assert b["move"]["add_name"] == names[best["add"]]
+    assert b["move"]["drop_name"] == names.get(best["drop"])
+    # Solved, the look answers the same; another system is still cold.
+    assert client.get(f"/seasons/{LEAGUE}/best", params=yahoo).json() == b
+    assert client.get(f"/seasons/{LEAGUE}/best").json()["status"] == "not_solved"
+    assert client.post("/seasons/100002/best").status_code == 409
+    assert client.get("/seasons/999999/best").status_code == 404
+
+
+def test_a_solved_set_without_a_move_says_so():
+    built = season_moves.Built(
+        problem=type("P", (), {"roster": (), "held": (), "candidates": ()})(),
+        system={"key": "bbm"},
+        horizons={
+            "week": {"label": "rest of week 25", "weeks": [25]},
+            "three": {"label": "no later weeks", "weeks": []},
+        },
+        adds={},
+        unprojected=0,
+    )
+    payload = {"recommended": {"week": {"moves": [], "gain": {"week": 0.0, "three": 0.0}}}}
+    b = season_moves.best_payload(built, payload)
+    # The last week has no three weeks after it: the rest of this week answers.
+    assert (b["horizon"], b["move"], b["moves"], b["gain"]) == ("week", None, 0, 0.0)
+
+
+def test_a_cache_peek_makes_nothing():
+    cache = season_moves.MovesCache()
+    assert cache.peek(("1", "bbm", "moves", 1)) is None
+    assert cache.get(("1", "bbm", "moves", 1), lambda: "x") == "x"
+    assert cache.peek(("1", "bbm", "moves", 1)) == "x"
+    assert cache.peek(("1", "bbm", "moves", 2)) is None
+
+
 # --------------------------------------------------------------------------- trades (#96)
 def trade_league(client) -> dict[str, int]:
     """The fixture league refreshed with a projection where Cooper Flagg (team 10, my opponent
