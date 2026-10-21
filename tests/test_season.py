@@ -810,3 +810,82 @@ def test_the_projection_page_parser():
     assert rows[1]["player"]["status"] == "O" and rows[1]["gp"] == 0.0
     # "-": no projection at all (a player not active) reads as no games.
     assert rows[4]["player"]["status"] == "NA" and rows[4]["gp"] == 0.0
+
+
+# --------------------------------------------------------------------------- moves (#94)
+def test_the_moves_route_values_every_candidate_and_recommends_a_set(client):
+    projection_csv(
+        client.data_dir / "bbm_projections_2026-10-21.csv", fixture_names(), star="Kevin Durant"
+    )
+    client.post(f"/seasons/{LEAGUE}/refresh", params={"wait": True})
+    v = client.get(f"/seasons/{LEAGUE}").json()
+    r = client.get(f"/seasons/{LEAGUE}/moves")
+    assert r.status_code == 200, r.text
+    m = r.json()
+    # The rest of the week starts where the matchup card's does, and from the same value.
+    assert m["horizons"]["week"]["from"] == "2026-10-21"
+    assert m["horizons"]["week"]["base"] == pytest.approx(
+        v["week_projection"]["matchup"]["expected"], abs=1e-3
+    )
+    assert m["horizons"]["week"]["label"] == "rest of week 1 against Team 10"
+    assert m["horizons"]["three"]["weeks"] == [2, 3, 4]
+    assert m["system"]["key"] == "bbm"
+    # The weekly limit, net of my adds this week; the page does not reach back past Monday.
+    assert m["adds"]["limit"] == v["settings"]["max_weekly_adds"]
+    assert m["adds"]["complete"] is False
+    assert m["adds"]["left"] == m["adds"]["limit"] - m["adds"]["used"]
+    brooks = next(a for a in v["available"] if a["player"]["name"] == "Dillon Brooks")
+    row = m["candidates"][str(brooks["player"]["yahoo_id"])]
+    assert row["from"] == brooks["clears"]
+    best = row["week"]
+    by_name = {s["player"]["name"]: s["player"]["yahoo_id"] for s in v["roster"]}
+    assert best["drop"] in by_name.values()
+    # Only the candidates with a projection are valued.
+    assert len(m["candidates"]) + m["unprojected"] == len(v["available"])
+    # Yahoo's projection is a second system for the same table: it projects more of the
+    # available players, and two of them are worth a move this week.
+    y = client.get(f"/seasons/{LEAGUE}/moves", params={"system": "yahoo"}).json()
+    assert y["system"]["key"] == "yahoo" and "fallback" in y["system"]
+    assert len(y["candidates"]) > len(m["candidates"])
+    assert len(y["recommended"]["week"]["moves"]) == 2
+    for payload in (m, y):
+        for key in ("week", "three"):
+            rec = payload["recommended"][key]
+            assert set(rec["gain"]) == {"week", "three"}
+            assert len(rec["moves"]) <= payload["adds"]["left"]
+            for move in rec["moves"]:
+                assert move["marginal"][key] > payload["search"]["min_gain"]
+                assert move["price_without"] >= 0
+                assert move["add"] not in {x["add"] for x in move["instead_without"]}
+    assert client.get(f"/seasons/{LEAGUE}/moves", params={"system": "espn"}).status_code == 422
+
+
+def test_the_move_drawer_details_one_add_with_every_drop(client):
+    projection_csv(client.data_dir / "bbm_projections_2026-10-21.csv", fixture_names())
+    client.post(f"/seasons/{LEAGUE}/refresh", params={"wait": True})
+    v = client.get(f"/seasons/{LEAGUE}").json()
+    m = client.get(f"/seasons/{LEAGUE}/moves").json()
+    brooks = next(a for a in v["available"] if a["player"]["name"] == "Dillon Brooks")
+    pid = brooks["player"]["yahoo_id"]
+    drop = m["candidates"][str(pid)]["three"]["drop"]
+    d = client.get(f"/seasons/{LEAGUE}/moves/{pid}", params={"drop": drop}).json()
+    assert d["add"] == pid and d["drop"] == drop and d["from"] == brooks["clears"]
+    week = d["horizons"]["week"]
+    assert week["before"] == m["horizons"]["week"]["base"]
+    assert week["gain"] == next(x["week"] for x in d["drops"] if x["drop"] == drop)
+    assert week["after"] - week["before"] == pytest.approx(week["gain"], abs=2e-3)
+    assert set(week["cats"]["before"]) == set(CATS)
+    # This week's categories carry both finals; the three weeks' only the wins.
+    assert {"wins", "mine", "theirs"} <= set(week["cats"]["after"]["pts"])
+    assert set(d["horizons"]["three"]["cats"]["after"]["pts"]) == {"wins"}
+    # Every active player is a drop, best three-week gain first.
+    assert len(d["drops"]) >= len([s for s in v["roster"] if s["slot"] not in ("IL", "IL+", "NA")])
+    assert [x["three"] for x in d["drops"]] == sorted(
+        (x["three"] for x in d["drops"]), reverse=True
+    )
+    assert client.get(f"/seasons/{LEAGUE}/moves/1").status_code == 404
+
+
+def test_moves_need_a_season_of_my_team(client):
+    assert client.get("/seasons/100002/moves").status_code == 409
+    assert client.get("/seasons/999999/moves").status_code == 404

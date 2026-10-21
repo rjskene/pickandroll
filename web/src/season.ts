@@ -1,7 +1,21 @@
 // The season view's pure helpers (#92): labels for ages, ownership and availability, the
-// available table's filters and sort, and the week projection's totals and odds (#93). No React,
-// so `npm test` runs them under Node.
-import type { AvailableRow, Cat, Rates, SeasonPlayer, SeasonRefresh, SeasonSummary, SeasonTeamRef, SeasonWeek, WeekStat } from "./api";
+// available table's filters and sort, the week projection's totals and odds (#93) and the moves'
+// gains (#94). No React, so `npm test` runs them under Node.
+import type {
+  AvailableRow,
+  Cat,
+  MoveAdds,
+  MoveCandidate,
+  MoveHorizon,
+  Rates,
+  SeasonPlayer,
+  SeasonRefresh,
+  SeasonSummary,
+  SeasonTeamRef,
+  SeasonView,
+  SeasonWeek,
+  WeekStat,
+} from "./api";
 
 /** "4 min ago": how old a snapshot is. */
 export function ageLabel(iso: string | null | undefined, now: number): string {
@@ -111,9 +125,23 @@ export interface AvailableFilter {
   availability: "" | "FA" | "W";
   /** Hide players Yahoo lists as out (O, INJ, SUSP, NA, OFS). */
   healthy: boolean;
+  /** One NBA team's players only; empty for every team. */
+  nbaTeam: string;
+  /** At least this many games this week (0: no floor). */
+  minGames: number;
+  /** At least this percent rostered (0: no floor). */
+  minRostered: number;
 }
 
-export const NO_FILTER: AvailableFilter = { search: "", position: "", availability: "", healthy: false };
+export const NO_FILTER: AvailableFilter = {
+  search: "",
+  position: "",
+  availability: "",
+  healthy: false,
+  nbaTeam: "",
+  minGames: 0,
+  minRostered: 0,
+};
 
 const EXPAND: Partial<Record<PositionFilter, string[]>> = { G: ["PG", "SG", "G"], F: ["SF", "PF", "F"] };
 
@@ -128,14 +156,23 @@ function fold(s: string): string {
   return s.normalize("NFD").replace(/\p{Diacritic}/gu, "").toLowerCase();
 }
 
-export function filterAvailable(rows: AvailableRow[], f: AvailableFilter): AvailableRow[] {
+/** ``rows`` that pass ``f``; ``gamesThisWeek`` gives a row's games for the games floor (a row
+ * without a count fails a floor above zero). */
+export function filterAvailable(
+  rows: AvailableRow[],
+  f: AvailableFilter,
+  gamesThisWeek: (r: AvailableRow) => number | null = (r) => r.games_left,
+): AvailableRow[] {
   const q = fold(f.search.trim());
   return rows.filter(
     (r) =>
       (!q || fold(r.player.name).includes(q) || fold(r.player.nba_team ?? "") === q) &&
       playsPosition(r.player.positions, f.position) &&
       (!f.availability || r.availability === f.availability) &&
-      (!f.healthy || statusTone(r.player) !== "bad"),
+      (!f.healthy || statusTone(r.player) !== "bad") &&
+      (!f.nbaTeam || r.player.nba_team === f.nbaTeam) &&
+      (!f.minGames || (gamesThisWeek(r) ?? 0) >= f.minGames) &&
+      (!f.minRostered || (r.pct_rostered ?? 0) >= f.minRostered),
   );
 }
 
@@ -154,13 +191,21 @@ export type AvailableSortKey =
   // The week projection's columns (#93): games this week and the next three, each category's total.
   | "games"
   | "games_next3"
+  // The moves' columns (#94): the best single move's gain on each horizon, and what the next
+  // best drop costs on the table's horizon.
+  | "gain_week"
+  | "gain_three"
+  | "next_price"
   | Cat;
 export interface AvailableSort {
   key: AvailableSortKey;
   dir: "asc" | "desc";
 }
 /** Yahoo's own order: most rostered first. */
-export const DEFAULT_AVAILABLE_SORT: AvailableSort = { key: "pct_rostered", dir: "desc" };
+export const YAHOO_SORT: AvailableSort = { key: "pct_rostered", dir: "desc" };
+/** The best move over the three weeks after this one first (#94); Yahoo's order until the
+ * moves are valued. */
+export const DEFAULT_AVAILABLE_SORT: AvailableSort = { key: "gain_three", dir: "desc" };
 /** A first click sorts text A to Z and numbers high to low. */
 export const TEXT_KEYS: AvailableSortKey[] = ["name", "nba_team", "positions", "availability", "status"];
 
@@ -267,4 +312,58 @@ export function oddsLabel(p: number): string {
 /** Likely won, likely lost, or open. */
 export function oddsTone(p: number): "good" | "bad" | "" {
   return p >= 0.65 ? "good" : p <= 0.35 ? "bad" : "";
+}
+
+// ---------------------------------------------------------------- moves (#94)
+/** The moves' horizon behind the table's: the rest of this week, or the three weeks after it. */
+export const MOVE_HORIZON: Record<Horizon, MoveHorizon> = { week: "week", next3: "three" };
+
+/** "+0.42" for a gain in expected categories, "−0.10" for a loss, "0.00" for neither; blank for
+ * none. */
+export function gainLabel(g: number | null | undefined, digits = 2): string {
+  if (g == null || Number.isNaN(g)) return "";
+  const r = Number(g.toFixed(digits));
+  if (r === 0) return (0).toFixed(digits);
+  return `${r > 0 ? "+" : "−"}${Math.abs(r).toFixed(digits)}`;
+}
+
+/** "Oct 22" for a day. */
+export function dayLabel(iso: string | null | undefined): string {
+  if (!iso) return "";
+  return new Date(`${iso}T12:00:00`).toLocaleDateString("en-US", { month: "short", day: "numeric" });
+}
+
+/** A gain worth a move, a loss, or neither. */
+export function gainTone(g: number | null | undefined, min: number): "good" | "bad" | "" {
+  if (g == null) return "";
+  return g > min ? "good" : g < 0 ? "bad" : "";
+}
+
+/** A candidate's best single move on a horizon; null when none fits or he has no line. */
+export function bestMove(c: MoveCandidate | undefined, h: MoveHorizon): MoveCandidate[MoveHorizon] {
+  return c?.[h] ?? null;
+}
+
+/** The drop a candidate's drawer opens on: his best move's on the table's horizon, else the
+ * other horizon's, else an open spot. */
+export function openingDrop(c: MoveCandidate | undefined, h: MoveHorizon): number | null {
+  const other: MoveHorizon = h === "week" ? "three" : "week";
+  return (bestMove(c, h) ?? bestMove(c, other))?.drop ?? null;
+}
+
+/** "4 adds a week · 1 used this week · 3 left"; a count from a transactions page that may not
+ * reach back to the week's start is a floor ("at least"), so what is left is a ceiling. */
+export function addsNote(a: MoveAdds): string {
+  if (a.limit == null) return "no weekly add limit";
+  const used = `${a.complete ? "" : "at least "}${a.used} used this week`;
+  return `${a.limit} adds a week · ${used} · ${a.complete ? "" : "at most "}${a.left ?? a.limit} left`;
+}
+
+/** Every player the view names, by Yahoo id: the pool, my roster and the league's rosters. */
+export function playersById(s: Pick<SeasonView, "available" | "roster" | "rosters">): Map<number, SeasonPlayer> {
+  const out = new Map<number, SeasonPlayer>();
+  for (const rows of Object.values(s.rosters)) for (const r of rows) out.set(r.player.yahoo_id, r.player);
+  for (const r of s.roster) out.set(r.player.yahoo_id, r.player);
+  for (const r of s.available) out.set(r.player.yahoo_id, r.player);
+  return out;
 }

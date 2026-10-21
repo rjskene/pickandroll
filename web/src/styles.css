@@ -427,6 +427,11 @@ tr.tie td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
 .season-table tr.mine td { background: var(--mine); }
 .season-table tr.bench td { color: var(--muted); }
 .season-table tr.bench td.strong { color: var(--text); font-weight: 400; }
+/* The moves (#94): a waiver row, and a move in the drawer, opens that move. */
+.season-board tbody tr { cursor: pointer; }
+.season-table tr.pick { cursor: pointer; }
+.card p.small { font-size: 12px; }
+.season-board tbody tr:hover td, .season-table tr.pick:hover td { background-image: linear-gradient(rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0.04)); }
 @media (max-width: 860px) {
   /* The season view stacks: the drawer's cards under the available table. */
   .main.season { flex-direction: column; overflow: auto; }

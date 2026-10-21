@@ -913,6 +913,113 @@ export interface WeekProjection {
   matchup: WeekMatchupOdds | null;
 }
 
+// ---------------------------------------------------------------- moves (#94)
+/** The moves' horizons: the rest of this week against the opponent, and the three weeks after
+ * it against the field. */
+export type MoveHorizon = "week" | "three";
+
+/** An add, the player dropped for him (null: an open spot) and the day he plays from (a waiver
+ * claim's clear date). */
+export interface MoveRef {
+  add: number;
+  drop: number | null;
+  from: string;
+}
+
+/** A candidate's best single move on a horizon, and what the next best drop costs. */
+export interface CandidateGain {
+  /** Expected categories won over the horizon (a points league: matchups won). */
+  gain: number;
+  drop: number | null;
+  next_drop: number | null;
+  next_price: number | null;
+}
+
+export interface MoveCandidate {
+  from: string;
+  /** Null when no move with him fits (no adds left, no drop). */
+  week: CandidateGain | null;
+  three: CandidateGain | null;
+}
+
+export interface RecommendedMove extends MoveRef {
+  /** What the move adds to its set on each horizon. */
+  marginal: Record<MoveHorizon, number>;
+  /** The set less the re-solve without this add, and with this drop kept (null: no drop). */
+  price_without: number;
+  price_keep: number | null;
+  instead_without: MoveRef[];
+  instead_keep: MoveRef[] | null;
+}
+
+export interface HeldMove {
+  player: number;
+  slot: string;
+}
+
+export interface RecommendedSet {
+  moves: RecommendedMove[];
+  gain: Record<MoveHorizon, number>;
+  /** Players the set moves to an IL or NA slot to open a spot. */
+  held: HeldMove[];
+}
+
+export interface MoveHorizonInfo {
+  label: string;
+  weeks: number[];
+  from: string | null;
+  opponent: number | null;
+  /** My roster's expected categories over the horizon without a move. */
+  base: number;
+}
+
+export interface MoveAdds {
+  /** The league's weekly limit (null: none). */
+  limit: number | null;
+  /** My adds this week on the transactions page; a floor when the page may not reach back. */
+  used: number;
+  complete: boolean;
+  left: number | null;
+  weeks: { start: string; end: string; adds: number | null }[];
+}
+
+export interface MovesPayload {
+  system: ProjectionSystemInfo & { key: ProjectionSystem; fallback?: string };
+  horizons: Record<MoveHorizon, MoveHorizonInfo>;
+  adds: MoveAdds;
+  /** By Yahoo player id. */
+  candidates: Record<string, MoveCandidate>;
+  recommended: Record<MoveHorizon, RecommendedSet>;
+  /** Available players without a line in the system (no move valued). */
+  unprojected: number;
+  search: { pool: number; min_gain: number };
+}
+
+/** A category over a horizon: expected wins summed over its weeks; this week's finals too. */
+export interface MoveCategory {
+  wins: number;
+  mine?: number | null;
+  theirs?: number | null;
+}
+
+export interface MoveDetail extends MoveRef {
+  held: HeldMove[];
+  horizons: Record<
+    MoveHorizon,
+    {
+      before: number;
+      after: number;
+      /** After less before, unrounded: the drop list's figure. */
+      gain: number;
+      cats: { before: Partial<Record<Cat, MoveCategory>>; after: Partial<Record<Cat, MoveCategory>> };
+    }
+  >;
+  /** Every drop the add can come with, best over three weeks first. */
+  drops: ({ drop: number | null } & Record<MoveHorizon, number>)[];
+  /** The best other adds for this drop. */
+  adds: ({ add: number } & Record<MoveHorizon, number>)[];
+}
+
 /** The season view: the summary plus the week, standings, rosters, matchup and the pool. */
 export interface SeasonView extends SeasonSummary {
   settings: {
@@ -943,6 +1050,14 @@ export const api = {
   /** Every league folder's season (#92), for the landing page. */
   seasons: () => request<SeasonSummary[]>("/seasons"),
   season: (league: string) => request<SeasonView>(`/seasons/${encodeURIComponent(league)}`),
+  /** Every available player's best move on both horizons and the recommended sets (#94). */
+  moves: (league: string, system: ProjectionSystem) =>
+    request<MovesPayload>(`/seasons/${encodeURIComponent(league)}/moves?system=${system}`),
+  /** The move drawer: adding ``player`` for ``drop`` (null: an open spot). */
+  move: (league: string, player: number, drop: number | null, system: ProjectionSystem) =>
+    request<MoveDetail>(
+      `/seasons/${encodeURIComponent(league)}/moves/${player}?system=${system}${drop == null ? "" : `&drop=${drop}`}`,
+    ),
   /** Read the league's public sources again, in the background; 409 for a private league. */
   refreshSeason: (league: string) =>
     request<{ refresh: SeasonRefresh; season: SeasonSummary }>(`/seasons/${encodeURIComponent(league)}/refresh`, { method: "POST" }),

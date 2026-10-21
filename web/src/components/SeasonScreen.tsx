@@ -1,10 +1,14 @@
 import { useMemo, useState, type CSSProperties, type ReactNode } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient, type UseQueryResult } from "@tanstack/react-query";
 import {
   api,
   CAT_LABEL,
   type AvailableRow,
   type Cat,
+  type MoveCategory,
+  type MoveHorizon,
+  type MoveRef,
+  type MovesPayload,
   type ProjectionSystem,
   type ProjectionSystemInfo,
   type RosterRow,
@@ -15,20 +19,28 @@ import {
   type WeekProjection,
 } from "../api";
 import {
+  addsNote,
   ageLabel,
   availabilityLabel,
+  bestMove,
   catValue,
   changeLabel,
+  dayLabel,
   DEFAULT_AVAILABLE_SORT,
   filterAvailable,
+  gainLabel,
+  gainTone,
   HORIZON_LABEL,
   horizonGames,
   isRefreshing,
   isStale,
+  MOVE_HORIZON,
   NO_FILTER,
   oddsLabel,
   oddsTone,
+  openingDrop,
   pctLabel,
+  playersById,
   projectedTotals,
   POSITIONS,
   recordLabel,
@@ -49,8 +61,8 @@ import { DRAWER_WIDTH } from "../draft";
 import { useNow } from "./YahooSync";
 
 /** A league in season (#92), in the draft view's shape: the available players where the board
- * stands, my roster and the league's week in the drawer. Phase 1 shows Yahoo's own columns;
- * the weekly projections and the waiver ranking add theirs (#93 onward). */
+ * stands, the moves, my roster and the league's week in the drawer. Yahoo's own columns, the
+ * weekly projection's (#93) and the moves' gains (#94). */
 export default function SeasonScreen({ league, onBack }: { league: string; onBack: () => void }) {
   const queryClient = useQueryClient();
   const season = useQuery({
@@ -68,6 +80,20 @@ export default function SeasonScreen({ league, onBack }: { league: string; onBac
   const now = useNow(30_000);
   const s = season.data;
   const running = isRefreshing(s) || refresh.isPending;
+  const [chosen, setSystem] = useState<ProjectionSystem | null>(null);
+  const [horizon, setHorizon] = useState<Horizon>("next3");
+  const [picked, setPicked] = useState<MoveKey | null>(null);
+  const system = chosen ?? s?.week_projection.default ?? "bbm";
+  const moves = useQuery({
+    queryKey: ["moves", league, system, s?.updated_at],
+    queryFn: () => api.moves(league, system),
+    enabled: Boolean(s?.has_snapshot && s.my_team),
+    // A new snapshot keeps the last gains up while its own are valued; another system's never
+    // stand in for this one's.
+    placeholderData: (prev, prevQuery) => (prevQuery?.queryKey[2] === system ? prev : undefined),
+    refetchInterval: 60_000,
+    retry: false,
+  });
   return (
     <main className="shell">
       <header className="topbar season-top">
@@ -116,13 +142,31 @@ export default function SeasonScreen({ league, onBack }: { league: string; onBac
         <>
           <div className="main season">
             <div className="board-col">
-              <Waivers s={s} />
+              <Waivers s={s} system={system} setSystem={setSystem} horizon={horizon} setHorizon={setHorizon} moves={moves} picked={picked} onPick={setPicked} />
             </div>
             <aside className="drawer" style={{ width: DRAWER_WIDTH }}>
-              <Card title="MY ROSTER" note={s.my_team?.name} style={{ flex: "11 1 0%" }}>
+              <Card
+                title={picked ? "MOVE" : "MOVES"}
+                note={moves.data?.system.label}
+                action={
+                  picked && (
+                    <button className="link" onClick={() => setPicked(null)} title="Back to the recommended moves">
+                      recommended
+                    </button>
+                  )
+                }
+                style={{ flex: "10 1 0%" }}
+              >
+                {picked ? (
+                  <MoveDrawer league={league} s={s} system={system} m={moves.data} picked={picked} onPick={setPicked} />
+                ) : (
+                  <Moves q={moves} s={s} onPick={setPicked} />
+                )}
+              </Card>
+              <Card title="MY ROSTER" note={s.my_team?.name} style={{ flex: "8 1 0%" }}>
                 <Roster rows={s.roster} w={s.week_projection} />
               </Card>
-              <Card title="THE LEAGUE" note={s.current_week ? `week ${s.current_week.number}` : undefined} style={{ flex: "9 1 0%" }}>
+              <Card title="THE LEAGUE" note={s.current_week ? `week ${s.current_week.number}` : undefined} style={{ flex: "7 1 0%" }}>
                 <League s={s} now={now} />
               </Card>
             </aside>
@@ -134,12 +178,18 @@ export default function SeasonScreen({ league, onBack }: { league: string; onBac
   );
 }
 
-function Card({ title, note, style, children }: { title: string; note?: string; style: CSSProperties; children: ReactNode }) {
+function Card({ title, note, action, style, children }: { title: string; note?: string; action?: ReactNode; style: CSSProperties; children: ReactNode }) {
   return (
     <section className="card" style={style} aria-label={title}>
       <header>
         <h2>{title}</h2>
         {note && <span className="dim">{note}</span>}
+        {action && (
+          <>
+            <span className="grow" />
+            {action}
+          </>
+        )}
       </header>
       <div className="body">{children}</div>
     </section>
@@ -178,16 +228,59 @@ const TREND_COLUMNS: { key: AvailableSortKey; label: string; title: string }[] =
   { key: "drops", label: "Drops", title: "drops across Yahoo today" },
 ];
 const SYSTEM_SHORT: Record<ProjectionSystem, string> = { bbm: "BBM", yahoo: "Yahoo" };
+/** A move horizon's column: the rest of this week, the three weeks after it. */
+const GAIN_SHORT: Record<MoveHorizon, string> = { week: "+1wk", three: "+3wk" };
+const GAIN_KEY: Record<MoveHorizon, AvailableSortKey> = { week: "gain_week", three: "gain_three" };
 
-function Waivers({ s }: { s: SeasonView }) {
+/** The move a drawer shows: an add and his drop (null: an open spot). */
+type MoveKey = Pick<MoveRef, "add" | "drop">;
+
+/** A move horizon as the payload names it: "the rest of week 1 against …", "weeks 2-4 against
+ * the field". */
+function horizonName(m: MovesPayload | undefined, h: MoveHorizon): string {
+  const label = m?.horizons[h].label ?? (h === "week" ? "rest of this week" : "three weeks after this one");
+  return h === "week" || !m ? `the ${label}` : label;
+}
+
+const cap = (x: string) => x.charAt(0).toUpperCase() + x.slice(1);
+
+/** A player's name by Yahoo id; a drop of null is an open spot. */
+type Namer = (id: number | null) => string;
+
+function useNamer(s: SeasonView): Namer {
+  const byId = useMemo(() => playersById(s), [s]);
+  return (id) => (id == null ? "an open spot" : (byId.get(id)?.name ?? `player ${id}`));
+}
+
+function Waivers({
+  s,
+  system,
+  setSystem,
+  horizon,
+  setHorizon,
+  moves,
+  picked,
+  onPick,
+}: {
+  s: SeasonView;
+  system: ProjectionSystem;
+  setSystem: (x: ProjectionSystem) => void;
+  horizon: Horizon;
+  setHorizon: (h: Horizon) => void;
+  moves: UseQueryResult<MovesPayload>;
+  picked: MoveKey | null;
+  onPick: (m: MoveKey) => void;
+}) {
   const w = s.week_projection;
   const cats = s.settings.cats;
   const points = s.settings.points;
   const [filter, setFilter] = useState<AvailableFilter>(NO_FILTER);
   const [sort, setSort] = useState<AvailableSort>(DEFAULT_AVAILABLE_SORT);
-  const [system, setSystem] = useState<ProjectionSystem>(w.default);
-  const [horizon, setHorizon] = useState<Horizon>("week");
   const other: ProjectionSystem = system === "bbm" ? "yahoo" : "bbm";
+  const m = moves.data;
+  const mh = MOVE_HORIZON[horizon];
+  const minGain = m?.search.min_gain ?? 0;
+  const name = useNamer(s);
   const rows = s.available;
   const games = (r: AvailableRow, h: Horizon) => rowGames(w, r, h);
   const totals = useMemo(() => {
@@ -203,6 +296,10 @@ function Waivers({ s }: { s: SeasonView }) {
     const extra = (r: AvailableRow, key: AvailableSortKey): number | null | undefined => {
       if (key === "games") return rowGames(w, r, "week");
       if (key === "games_next3") return rowGames(w, r, "next3");
+      const cand = m?.candidates[String(r.player.yahoo_id)];
+      if (key === "gain_week") return bestMove(cand, "week")?.gain ?? null;
+      if (key === "gain_three") return bestMove(cand, "three")?.gain ?? null;
+      if (key === "next_price") return bestMove(cand, mh)?.next_price ?? null;
       if ((cats as string[]).includes(key)) {
         // Fewer turnovers first when sorting high to low.
         const v = totals.get(r.player.yahoo_id)?.mine?.[key as Cat];
@@ -210,8 +307,9 @@ function Waivers({ s }: { s: SeasonView }) {
       }
       return undefined;
     };
-    return sortAvailable(filterAvailable(rows, filter), sort, extra);
-  }, [rows, filter, sort, totals, w, cats]);
+    return sortAvailable(filterAvailable(rows, filter, (r) => rowGames(w, r, "week")), sort, extra);
+  }, [rows, filter, sort, totals, w, cats, m, mh]);
+  const teams = useMemo(() => [...new Set(rows.map((r) => r.player.nba_team).filter((t): t is string => Boolean(t)))].sort(), [rows]);
   const set = (patch: Partial<AvailableFilter>) => setFilter((f) => ({ ...f, ...patch }));
   const click = (key: AvailableSortKey) =>
     setSort((s) => (s.key === key ? { key, dir: s.dir === "asc" ? "desc" : "asc" } : { key, dir: TEXT_KEYS.includes(key) ? "asc" : "desc" }));
@@ -223,6 +321,15 @@ function Waivers({ s }: { s: SeasonView }) {
   );
   const info = w.systems[system];
   const week = w.weeks[0];
+  const gainTitle = (h: MoveHorizon) =>
+    `the expected categories his best move adds over ${horizonName(m, h)}` +
+    `${h === "week" ? ", the week so far included" : ", each week's odds averaged over the other teams"}; the move drops the player in For (${HORIZON_LABEL[horizon]}) or the best for this horizon` +
+    (s.scoring === "points" ? " (a points league: matchups won)" : "");
+  const movesNote = m
+    ? `+1wk and +3wk: what his best move adds in expected categories; click a row for the move${m.unprojected ? ` · ${m.unprojected} with no line to value` : ""}`
+    : s.my_team
+      ? "valuing the moves…"
+      : "";
   const horizonTitle =
     horizon === "week"
       ? `${week ? `from ${week.from} to ${week.end}` : "this week"}: his per-game line times the games he plays, every game counted (whom he would sit is the move's question, #94)`
@@ -244,6 +351,30 @@ function Waivers({ s }: { s: SeasonView }) {
           <option value="">free agents and waivers</option>
           <option value="FA">free agents</option>
           <option value="W">waivers</option>
+        </select>
+        <select value={filter.nbaTeam} onChange={(e) => set({ nbaTeam: e.target.value })} aria-label="NBA team">
+          <option value="">all teams</option>
+          {teams.map((t) => (
+            <option key={t} value={t}>
+              {t}
+            </option>
+          ))}
+        </select>
+        <select value={filter.minGames} onChange={(e) => set({ minGames: Number(e.target.value) })} aria-label="Games this week" title="Games he plays in the rest of this week">
+          <option value={0}>any games</option>
+          {[1, 2, 3, 4].map((n) => (
+            <option key={n} value={n}>
+              {n}+ games
+            </option>
+          ))}
+        </select>
+        <select value={filter.minRostered} onChange={(e) => set({ minRostered: Number(e.target.value) })} aria-label="Percent rostered" title="Rostered in at least this share of Yahoo leagues">
+          <option value={0}>any % rostered</option>
+          {[5, 10, 25, 50].map((n) => (
+            <option key={n} value={n}>
+              {n}%+ rostered
+            </option>
+          ))}
         </select>
         <label className="inline muted" title="Hide players Yahoo lists as out (O, INJ, SUSP, NA, OFS)">
           <input type="checkbox" checked={filter.healthy} onChange={(e) => set({ healthy: e.target.checked })} /> hide out
@@ -270,12 +401,16 @@ function Waivers({ s }: { s: SeasonView }) {
         {info.as_of ? ` · ${info.file ? `${info.file}, ` : "read "}${info.as_of.slice(0, 10)}` : ""}
         {` · totals over the ${HORIZON_LABEL[horizon]}, every game he plays counted · hover a total for ${SYSTEM_SHORT[other]}'s`}
         {` · ${shown.length === rows.length ? `the ${rows.length} most rostered available players` : `${shown.length} of the ${rows.length} most rostered available players`}`}
+        {moves.error ? <span className="bad">{` · no moves: ${moves.error.message}`}</span> : movesNote && ` · ${movesNote}`}
       </p>
       <div className="table-wrap">
         <table>
           <thead>
             <tr>
               {OWN_COLUMNS.map((c) => th(c.key, c.label, c.title, Boolean(c.num)))}
+              {(["week", "three"] as const).map((h) => th(GAIN_KEY[h], GAIN_SHORT[h], gainTitle(h)))}
+              <th title={`the player his best move over the ${HORIZON_LABEL[horizon]} drops (the horizon at the right)`}>For</th>
+              {th("next_price", "Next", `how much less the move over the ${HORIZON_LABEL[horizon]} adds with the next best drop`)}
               {cats.map((c) => th(c, CAT_LABEL[c], `${CAT_LABEL[c]} over the ${HORIZON_LABEL[horizon]} (${SYSTEM_SHORT[system]})`))}
               {TREND_COLUMNS.map((c) => th(c.key, c.label, c.title))}
             </tr>
@@ -283,8 +418,11 @@ function Waivers({ s }: { s: SeasonView }) {
           <tbody>
             {shown.map((r) => {
               const t = totals.get(r.player.yahoo_id);
+              const id = r.player.yahoo_id;
+              const cand = m?.candidates[String(id)];
+              const best = bestMove(cand, mh);
               return (
-                <tr key={r.player.yahoo_id}>
+                <tr key={id} className={picked?.add === id ? "hl" : undefined} onClick={() => onPick({ add: id, drop: openingDrop(cand, mh) })}>
                   <td className="strong">
                     {r.player.name} <Status player={r.player} />
                   </td>
@@ -293,6 +431,15 @@ function Waivers({ s }: { s: SeasonView }) {
                   <td className={r.availability === "W" ? "accent" : undefined}>{availabilityLabel(r)}</td>
                   <td className="num">{games(r, "week") ?? ""}</td>
                   <td className="num dim">{games(r, "next3") ?? ""}</td>
+                  {(["week", "three"] as const).map((h) => (
+                    <td key={h} className={`num ${gainTone(cand?.[h]?.gain, minGain)}`}>
+                      {gainLabel(cand?.[h]?.gain)}
+                    </td>
+                  ))}
+                  <td className="dim">{best ? name(best.drop) : ""}</td>
+                  <td className="num dim" title={best?.next_drop != null || best?.next_price != null ? `next best: ${name(best.next_drop)}` : undefined}>
+                    {best?.next_price == null ? "" : best.next_price.toFixed(2)}
+                  </td>
                   {cats.map((c) => (
                     <td
                       key={c}
@@ -327,6 +474,281 @@ function rowGames(w: WeekProjection, r: AvailableRow, h: Horizon): number | null
 function systemTitle(info: ProjectionSystemInfo, system: ProjectionSystem): string {
   const what = system === "bbm" ? "per game from the rest-of-season export" : "per game from Yahoo's next 7 days (the players page's Next 7 Days view)";
   return `${info.label}: ${what}; ${info.players ? `${info.players} players` : "nothing read"}${info.as_of ? `, ${info.as_of}` : ""}`;
+}
+
+// ---------------------------------------------------------------- moves (#94)
+const OTHER_HORIZON: Record<MoveHorizon, MoveHorizon> = { week: "three", three: "week" };
+
+/** "adds Brooks for Bey, Vucevic for an open spot", or "makes no move". */
+function insteadText(moves: MoveRef[], name: Namer): string {
+  return moves.length ? `adds ${moves.map((x) => `${name(x.add)} for ${name(x.drop)}`).join(", ")}` : "makes no move";
+}
+
+/** The recommended sets, the three weeks first, then the rest of this week. */
+function Moves({ q, s, onPick }: { q: UseQueryResult<MovesPayload>; s: SeasonView; onPick: (m: MoveKey) => void }) {
+  const name = useNamer(s);
+  if (!s.my_team) return <p className="muted">The moves need my team: none is set for this league.</p>;
+  if (q.error) return <p className="error">{q.error.message}</p>;
+  const m = q.data;
+  if (!m) return <p className="muted">Valuing the moves…</p>;
+  return (
+    <>
+      <p className="muted small" title={m.adds.complete ? "my adds this week from the transactions page" : "the transactions page does not reach back to the week's start: more adds may have been used"}>
+        {addsNote(m.adds)}
+        {m.system.fallback ? ` · ${m.system.fallback}` : ""}
+      </p>
+      {(["three", "week"] as const).map((h) => (
+        <Recommended key={h} h={h} m={m} name={name} onPick={onPick} />
+      ))}
+      <p className="dim small">
+        Recommended by a search over the {m.search.pool} candidates whose best single move adds most: a strong heuristic, not a proof. Each move&apos;s prices
+        are re-solves: the set without his add, and the set keeping his drop.
+      </p>
+    </>
+  );
+}
+
+function Recommended({ h, m, name, onPick }: { h: MoveHorizon; m: MovesPayload; name: Namer; onPick: (m: MoveKey) => void }) {
+  const set = m.recommended[h];
+  const info = m.horizons[h];
+  const o = OTHER_HORIZON[h];
+  return (
+    <div className="block">
+      <span className="k" title={`${info.base.toFixed(2)} expected categories without a move${info.from ? `, from ${dayLabel(info.from)}` : ""}`}>
+        Recommended for {horizonName(m, h)}
+        {set.moves.length > 0 && ` · ${gainLabel(set.gain[h])} (${GAIN_SHORT[o]} ${gainLabel(set.gain[o])})`}
+      </span>
+      {set.moves.length === 0 ? (
+        <p className="muted small">No move adds more than {m.search.min_gain} expected categories.</p>
+      ) : (
+        <table className="season-table">
+          <thead>
+            <tr>
+              <th>Add</th>
+              <th>For</th>
+              <th title="the day he plays from: a waiver claim's clear date, when its drop leaves too">From</th>
+              <th className="num" title={`what the move adds to the set over ${horizonName(m, h)}`}>
+                {GAIN_SHORT[h]}
+              </th>
+              <th className="num" title={`what the move adds to the set over ${horizonName(m, o)}`}>
+                {GAIN_SHORT[o]}
+              </th>
+              <th className="num" title="what the set gives up when the search runs again without this add">
+                w/o
+              </th>
+              <th className="num" title="what the set gives up when the search runs again keeping this drop">
+                keep
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            {set.moves.map((x) => (
+              <tr key={x.add} className="pick" onClick={() => onPick(x)}>
+                <td className="strong">{name(x.add)}</td>
+                <td>{name(x.drop)}</td>
+                <td className="dim">{dayLabel(x.from)}</td>
+                <td className={`num ${gainTone(x.marginal[h], m.search.min_gain)}`}>{gainLabel(x.marginal[h])}</td>
+                <td className="num dim">{gainLabel(x.marginal[o])}</td>
+                <td className="num" title={`without ${name(x.add)} the search ${insteadText(x.instead_without, name)}`}>
+                  {x.price_without.toFixed(2)}
+                </td>
+                <td className="num" title={x.instead_keep ? `keeping ${name(x.drop)} the search ${insteadText(x.instead_keep, name)}` : "no drop to keep"}>
+                  {x.price_keep == null ? "" : x.price_keep.toFixed(2)}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+      {set.held.length > 0 && <p className="muted small">It also moves {set.held.map((x) => `${name(x.player)} to ${x.slot}`).join(", ")}.</p>}
+    </div>
+  );
+}
+
+/** One add with one drop: each category before and after on both horizons, every other drop
+ * and the best other adds for this drop. */
+function MoveDrawer({
+  league,
+  s,
+  system,
+  m,
+  picked,
+  onPick,
+}: {
+  league: string;
+  s: SeasonView;
+  system: ProjectionSystem;
+  m: MovesPayload | undefined;
+  picked: MoveKey;
+  onPick: (m: MoveKey) => void;
+}) {
+  const name = useNamer(s);
+  const q = useQuery({
+    queryKey: ["move", league, system, picked.add, picked.drop, s.updated_at],
+    queryFn: () => api.move(league, picked.add, picked.drop, system),
+    retry: false,
+  });
+  const d = q.data;
+  const p = playersById(s).get(picked.add);
+  const row = s.available.find((r) => r.player.yahoo_id === picked.add);
+  const cats = s.settings.cats;
+  const min = m?.search.min_gain ?? 0;
+  return (
+    <>
+      <div className="block">
+        <span className="k">
+          Add {name(picked.add)} for {name(picked.drop)}
+        </span>
+        <p className="muted small">
+          {p && `${p.nba_team ?? "no team"} · ${p.positions.join(", ")} · `}
+          {row ? availabilityLabel(row) : "not in the pool"}
+          {d && ` · plays from ${dayLabel(d.from)}${picked.drop != null && row?.availability === "W" ? `, when ${name(picked.drop)} leaves` : ""}`}
+        </p>
+        {d && d.held.length > 0 && <p className="muted small">The move also puts {d.held.map((x) => `${name(x.player)} in ${x.slot}`).join(", ")}.</p>}
+      </div>
+      {q.error && <p className="error">{q.error.message}</p>}
+      {!d && !q.error && <p className="muted">Valuing the move…</p>}
+      {d && (
+        <>
+          <div className="block">
+            <span className="k" title="expected categories won this week, the week so far included">
+              {cap(horizonName(m, "week"))} · {d.horizons.week.before.toFixed(2)} → {d.horizons.week.after.toFixed(2)} ({gainLabel(d.horizons.week.gain)})
+            </span>
+            <WeekCats cats={cats} before={d.horizons.week.cats.before} after={d.horizons.week.cats.after} />
+          </div>
+          <div className="block">
+            <span className="k" title="expected categories won over the three weeks, each week's odds averaged over the other teams">
+              {cap(horizonName(m, "three"))} · {d.horizons.three.before.toFixed(2)} → {d.horizons.three.after.toFixed(2)} ({gainLabel(d.horizons.three.gain)})
+            </span>
+            <FieldCats cats={cats} before={d.horizons.three.cats.before} after={d.horizons.three.cats.after} />
+          </div>
+          <div className="block">
+            <span className="k">Drop instead</span>
+            <table className="season-table">
+              <thead>
+                <tr>
+                  <th>For</th>
+                  <th className="num">{GAIN_SHORT.week}</th>
+                  <th className="num">{GAIN_SHORT.three}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {d.drops.map((x) => (
+                  <tr key={x.drop ?? "open"} className={`pick${x.drop === picked.drop ? " hl" : ""}`} onClick={() => onPick({ add: picked.add, drop: x.drop })}>
+                    <td>{name(x.drop)}</td>
+                    <td className={`num ${gainTone(x.week, min)}`}>{gainLabel(x.week)}</td>
+                    <td className={`num ${gainTone(x.three, min)}`}>{gainLabel(x.three)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {d.adds.length > 0 && (
+            <div className="block">
+              <span className="k">Other adds for {name(picked.drop)}</span>
+              <table className="season-table">
+                <thead>
+                  <tr>
+                    <th>Add</th>
+                    <th className="num">{GAIN_SHORT.week}</th>
+                    <th className="num">{GAIN_SHORT.three}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {d.adds.map((x) => (
+                    <tr key={x.add} className="pick" onClick={() => onPick({ add: x.add, drop: picked.drop })}>
+                      <td>{name(x.add)}</td>
+                      <td className={`num ${gainTone(x.week, min)}`}>{gainLabel(x.week)}</td>
+                      <td className={`num ${gainTone(x.three, min)}`}>{gainLabel(x.three)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </>
+      )}
+    </>
+  );
+}
+
+type CatsByCat = Partial<Record<Cat, MoveCategory>>;
+
+/** This week against the opponent: my final before and after, theirs, and the odds of each. */
+function WeekCats({ cats, before, after }: { cats: Cat[]; before: CatsByCat; after: CatsByCat }) {
+  return (
+    <table className="season-table">
+      <thead>
+        <tr>
+          <th></th>
+          <th className="num" title="my projected final without the move">
+            me
+          </th>
+          <th className="num" title="my projected final with the move">
+            after
+          </th>
+          <th className="num">them</th>
+          <th className="num" title="the odds of winning the category without the move">
+            win
+          </th>
+          <th className="num" title="the odds with the move">
+            after
+          </th>
+        </tr>
+      </thead>
+      <tbody>
+        {cats.map((c) => {
+          const b = before[c];
+          const a = after[c];
+          return (
+            <tr key={c}>
+              <td>{CAT_LABEL[c]}</td>
+              <td className="num dim">{catValue(c, b?.mine)}</td>
+              <td className="num">{catValue(c, a?.mine)}</td>
+              <td className="num dim">{catValue(c, b?.theirs)}</td>
+              <td className={`num ${b ? oddsTone(b.wins) : ""}`}>{b ? oddsLabel(b.wins) : ""}</td>
+              <td className={`num ${a ? oddsTone(a.wins) : ""}`}>{a ? oddsLabel(a.wins) : ""}</td>
+            </tr>
+          );
+        })}
+      </tbody>
+    </table>
+  );
+}
+
+/** The three weeks against the field: expected wins of each category, before and after. */
+function FieldCats({ cats, before, after }: { cats: Cat[]; before: CatsByCat; after: CatsByCat }) {
+  return (
+    <table className="season-table">
+      <thead>
+        <tr>
+          <th></th>
+          <th className="num" title="expected weeks won without the move">
+            wins
+          </th>
+          <th className="num" title="with the move">
+            after
+          </th>
+          <th className="num">change</th>
+        </tr>
+      </thead>
+      <tbody>
+        {cats.map((c) => {
+          const b = before[c]?.wins;
+          const a = after[c]?.wins;
+          const diff = a != null && b != null ? a - b : null;
+          return (
+            <tr key={c}>
+              <td>{CAT_LABEL[c]}</td>
+              <td className="num dim">{b?.toFixed(2) ?? ""}</td>
+              <td className="num">{a?.toFixed(2) ?? ""}</td>
+              <td className={`num ${diff == null ? "" : diff > 0.005 ? "good" : diff < -0.005 ? "bad" : ""}`}>{gainLabel(diff)}</td>
+            </tr>
+          );
+        })}
+      </tbody>
+    </table>
+  );
 }
 
 // ---------------------------------------------------------------- drawer
