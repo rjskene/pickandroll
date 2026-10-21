@@ -39,6 +39,7 @@ import re
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import date
+from typing import Protocol
 
 from . import weekly as wk
 from .state import Player, Transaction
@@ -231,6 +232,19 @@ def comebacks(problem: MoveProblem, key: str, moves: Iterable[Move]) -> list[Com
 
 
 # --------------------------------------------------------------------------- the value
+class Valued(Protocol):
+    """What the searches value sets with: the :class:`Evaluator`, or a weighted horizon over it
+    (the strategy engine's, #110)."""
+
+    problem: MoveProblem
+    #: The value of no moves on each horizon the searches may be asked about.
+    base: Mapping[str, float]
+
+    def value(self, key: str, moves: Iterable[Move]) -> float: ...
+
+    def gain(self, key: str, moves: Iterable[Move]) -> float: ...
+
+
 class Evaluator:
     """Values of move sets over the problem's horizons, remembered: the searches and their
     re-solves visit the same sets many times."""
@@ -282,6 +296,11 @@ class Evaluator:
         members, gone = self._after(key, frozenset(moves))
         return [self._odds(span, members, gone) for span in self.problem.horizons[key]]
 
+    def mine(self, key: str, moves: Iterable[Move]) -> list[wk.TeamWeek]:
+        """My projected week for each week of horizon ``key`` with ``moves`` made."""
+        members, gone = self._after(key, frozenset(moves))
+        return [self._mine(span, members, gone) for span in self.problem.horizons[key]]
+
     def _week(self, span: WeekSpan, members: Sequence[Member], gone: Mapping[int, date]) -> float:
         odds = self._odds(span, members, gone)
         if not odds:
@@ -293,8 +312,14 @@ class Evaluator:
     ) -> list[list[wk.CategoryOdds]]:
         if not span.opponents:
             return []
+        finals = wk.finals(self._mine(span, members, gone), span.so_far, self.problem.cats)
+        return [wk.odds_of(finals, theirs, self.problem.cats) for theirs in self._theirs[id(span)]]
+
+    def _mine(
+        self, span: WeekSpan, members: Sequence[Member], gone: Mapping[int, date]
+    ) -> wk.TeamWeek:
         p = self.problem
-        mine = wk.project_week(
+        return wk.project_week(
             members,
             p.rates,
             span.days,
@@ -308,8 +333,6 @@ class Evaluator:
             available_from={**p.effective, **p.returns},
             gone_from=gone,
         )
-        finals = wk.finals(mine, span.so_far, p.cats)
-        return [wk.odds_of(finals, theirs, p.cats) for theirs in self._theirs[id(span)]]
 
 
 # --------------------------------------------------------------------------- one move
@@ -330,7 +353,7 @@ class SwapGain:
 
 
 def single_swaps(
-    ev: Evaluator, key: str, candidates: Iterable[int] | None = None
+    ev: Valued, key: str, candidates: Iterable[int] | None = None
 ) -> dict[int, list[SwapGain]]:
     """Each candidate's gain over horizon ``key`` with every drop he can come with, best first:
     the best of a single move with that add forced, and every other drop's price. A candidate
@@ -351,7 +374,7 @@ def single_swaps(
 
 # --------------------------------------------------------------------------- the search
 def search(
-    ev: Evaluator,
+    ev: Valued,
     key: str,
     pool: Sequence[int],
     exclude: Iterable[int] = (),
@@ -436,23 +459,38 @@ class Recommendation:
 
 
 def recommend(
-    ev: Evaluator, key: str, pool: Sequence[int], min_gain: float = 0.0, rounds: int = 3
+    ev: Valued,
+    key: str,
+    pool: Sequence[int],
+    min_gain: float = 0.0,
+    rounds: int = 3,
+    start: Sequence[Move] | None = None,
+    keep: Iterable[int] = (),
 ) -> Recommendation:
     """The recommended set over horizon ``key`` with every move priced by a re-solve. A re-solve
-    that beats the set replaces it (the search is a heuristic), at most ``rounds`` times."""
-    moves = search(ev, key, pool, min_gain=min_gain)
+    that beats the set replaces it (the search is a heuristic), at most ``rounds`` times. The set
+    is the search's, or ``start`` (another solver's); ``keep`` are drops nothing may use."""
+    kept = frozenset(keep)
+    moves = (
+        tuple(start) if start is not None else search(ev, key, pool, keep=kept, min_gain=min_gain)
+    )
     for attempt in range(rounds + 1):
-        priced, better = _priced(ev, key, pool, moves, min_gain)
+        priced, better = _priced(ev, key, pool, moves, min_gain, kept)
         if better is None or attempt == rounds:
             gain = {h: ev.gain(h, moves) for h in ev.base}
-            back = {h: tuple(comebacks(ev.problem, h, moves)) for h in ev.base}
+            back = {h: tuple(comebacks(ev.problem, h, moves)) for h in ev.problem.horizons}
             return Recommendation(key, priced, gain, tuple(held_used(ev.problem, moves)), back)
         moves = better
     raise AssertionError("unreachable")
 
 
 def _priced(
-    ev: Evaluator, key: str, pool: Sequence[int], moves: tuple[Move, ...], min_gain: float
+    ev: Valued,
+    key: str,
+    pool: Sequence[int],
+    moves: tuple[Move, ...],
+    min_gain: float,
+    kept: frozenset[int] = frozenset(),
 ) -> tuple[tuple[PricedMove, ...], tuple[Move, ...] | None]:
     """Each move of ``moves`` priced by its two re-solves, and the best re-solve that beats the
     set, if one does."""
@@ -460,10 +498,10 @@ def _priced(
     priced: list[PricedMove] = []
     better: tuple[Move, ...] | None = None
     for move in moves:
-        without = search(ev, key, pool, exclude={move.add}, min_gain=min_gain)
+        without = search(ev, key, pool, exclude={move.add}, keep=kept, min_gain=min_gain)
         keep = None
         if move.drop is not None:
-            keep = search(ev, key, pool, keep={move.drop}, min_gain=min_gain)
+            keep = search(ev, key, pool, keep=kept | {move.drop}, min_gain=min_gain)
         for alt in (without, keep):
             if alt is None or ev.value(key, alt) <= value + EPS:
                 continue

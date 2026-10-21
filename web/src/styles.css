@@ -242,6 +242,24 @@ tr.hl td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
 .score-chart .dot-key { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--accent); }
 .score-chart .dot-key.hollow { background: var(--panel); border: 2px solid var(--accent); }
 .score-chart .band-key { display: inline-block; width: 12px; height: 10px; border-radius: 2px; background: var(--line-2); opacity: 0.8; }
+/* The strategy card's frontier (#110): the score chart's axes, marks filled by their source. */
+.frontier svg { cursor: pointer; }
+.frontier .mark .glyph { fill: var(--panel); stroke: var(--accent); stroke-width: 2; }
+.frontier .mark.milp .glyph { fill: var(--accent); stroke: var(--panel); }
+.frontier .mark.both .half { fill: var(--accent); }
+.frontier .mark.pending .glyph { stroke: var(--dim); }
+.frontier .mark.on .glyph { stroke: var(--text); }
+.frontier .natural-ring { fill: none; stroke: var(--muted); stroke-width: 1; }
+.frontier .mark-label { fill: var(--muted); font-size: 10px; font-family: var(--body); }
+.frontier .mark.on .mark-label { fill: var(--text); font-weight: 600; }
+.frontier .key svg { display: inline-block; width: 12px; height: 12px; overflow: visible; cursor: default; }
+.card .strategy-go { flex-direction: row; align-items: center; gap: 12px; flex-wrap: wrap; }
+.strategy-tabs { flex-shrink: 0; align-self: flex-start; }
+.season-table.strategy-moves th, .season-table.strategy-moves td { padding: 3px 3px; }
+.lock-toggle { padding: 0 2px; vertical-align: -1px; color: var(--dim); }
+.lock-toggle:hover, .lock-toggle.on { color: var(--accent); }
+.strategy-fo { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.strategy-debug { overflow-wrap: anywhere; }
 
 /* controls */
 .controls { display: flex; flex-wrap: wrap; gap: 10px 14px; align-items: center; font-size: 12px; color: var(--muted); }

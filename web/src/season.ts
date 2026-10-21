@@ -1,6 +1,6 @@
 // The season view's pure helpers (#92): labels for ages, ownership and availability, the
 // available table's filters and sort, the week projection's totals and odds (#93) and the moves'
-// gains (#94). No React, so `npm test` runs them under Node.
+// gains (#94), and the strategy panel's (#110). No React, so `npm test` runs them under Node.
 import type {
   AvailableRow,
   BestMove,
@@ -10,9 +10,11 @@ import type {
   FlagInputs,
   FlagLevel,
   FlagSignalKey,
+  MilpBlock,
   MoveAdds,
   MoveCandidate,
   MoveHorizon,
+  MoveRef,
   PlayerFlag,
   Rates,
   SeasonPlayer,
@@ -21,6 +23,11 @@ import type {
   SeasonTeamRef,
   SeasonView,
   SeasonWeek,
+  StrategyPayload,
+  StrategyPoint,
+  StrategySettings,
+  StrategySource,
+  StrategyWeightKey,
   TradeMargin,
   TradePayload,
   TradePlayer,
@@ -692,4 +699,117 @@ export function gridOrder(seasons: SeasonSummary[], best: Map<string, BestMove |
       ? Number(read(b)) - Number(read(a)) || title(a).localeCompare(title(b))
       : group(a) - group(b) || gain(b) - gain(a) || title(a).localeCompare(title(b)),
   );
+}
+
+// ---------------------------------------------------------------- strategy (#110)
+/** A run still going: the panel polls it. */
+export function isSolving(p: Pick<StrategyPayload, "status"> | undefined): boolean {
+  return p?.status === "solving";
+}
+
+/** What a gain counts this week and over the rest of the season: categories and category-weeks,
+ * or in a points league matchups on both. */
+export function strategyUnits(scoring: SeasonView["scoring"]): { week: string; season: string } {
+  return scoring === "points" ? { week: "matchups", season: "matchups" } : { week: "categories", season: "category-weeks" };
+}
+
+/** The point the panel opens on: the natural weight's, else the first. */
+export function defaultWeight(points: Pick<StrategyPoint, "key" | "natural">[] | undefined): StrategyWeightKey | null {
+  if (!points?.length) return null;
+  return (points.find((p) => p.natural) ?? points[0]).key;
+}
+
+/** The linear program's status as the panel says it: solved, time-limited, no set, running. */
+export function milpLabel(m: MilpBlock | null | undefined, limit: number): string {
+  if (!m || m.status === "pending") return "running";
+  if (m.status === "optimal") return "solved";
+  if (m.status === "time_limited") return `time-limited at ${limit} s`;
+  return "no set";
+}
+
+/** Where a point's recommended set came from, in words: the search's first, then whichever of
+ * the two is better on the weight's own value once the program is in. */
+export function sourceText(p: Pick<StrategyPoint, "stage" | "source" | "note" | "ahead" | "milp">, limit: number): string {
+  const status = milpLabel(p.milp, limit);
+  if (p.stage !== "done" || !p.source) return "Recommended by the exact search; the linear program is still running.";
+  if (p.source === "both") return `Recommended by both: the exact search and the linear program (${status}) found the same set.`;
+  const by = p.ahead != null && p.ahead > 0.005 ? gainLabel(p.ahead) : null;
+  if (p.source === "milp") return `Recommended by the linear program (${status})${by ? `, ahead of the search's set by ${by}` : ""}.`;
+  if (p.milp?.status === "failed") return "Recommended by the exact search; the linear program found no set.";
+  const from = p.note ? `, from ${p.note}` : "";
+  return by
+    ? `Recommended by the exact search${from}, ahead of the linear program's set (${status}) by ${by}.`
+    : `Recommended by the exact search${from}; the linear program (${status}) found nothing better.`;
+}
+
+/** A mark on the frontier: the weights whose sets land on the same gains share one. */
+export interface FrontierMark {
+  x: number;
+  y: number;
+  keys: StrategyWeightKey[];
+  /** The first weight's source; pending while the program runs. */
+  source: StrategySource | "pending";
+  natural: boolean;
+}
+
+/** The frontier's marks: this week's gain across, the rest of the season's up, in the weights'
+ * order. */
+export function frontierMarks(points: StrategyPoint[]): FrontierMark[] {
+  const out: FrontierMark[] = [];
+  for (const p of points) {
+    if (!p.gain) continue;
+    const at = out.find((m) => Math.abs(m.x - p.gain!.week) < 0.0005 && Math.abs(m.y - p.gain!.season) < 0.0005);
+    if (at) {
+      at.keys.push(p.key);
+      at.natural ||= p.natural;
+      continue;
+    }
+    out.push({ x: p.gain.week, y: p.gain.season, keys: [p.key], source: p.stage === "done" && p.source ? p.source : "pending", natural: p.natural });
+  }
+  return out;
+}
+
+/** An axis's range: zero (no move) always in, padded so no mark sits on an edge. */
+export function axisRange(values: number[]): [number, number] {
+  const lo = Math.min(0, ...values);
+  const hi = Math.max(0, ...values);
+  const pad = Math.max(0.05, (hi - lo) * 0.12);
+  return [lo - (lo < 0 ? pad : pad / 2), hi + pad];
+}
+
+/** Round tick values for an axis, three to six whatever the spread. */
+export function axisTicks(lo: number, hi: number): number[] {
+  const span = hi - lo;
+  const raw = span / 4;
+  const mag = 10 ** Math.floor(Math.log10(raw));
+  const step = [1, 2, 2.5, 5, 10].map((f) => f * mag).find((x) => span / x <= 6) ?? 10 * mag;
+  const out: number[] = [];
+  for (let i = Math.ceil(lo / step - 1e-9); i * step <= hi + 1e-9; i++) out.push(Number((i * step).toFixed(6)));
+  return out;
+}
+
+/** The first-order values as two lists: the pool's highest not in the set (whom to look at
+ * next) and my lowest not already dropped (whom a move would send), each with its value. */
+export function firstOrderLists(
+  fo: Record<string, number> | undefined,
+  pool: number[],
+  roster: number[],
+  set: Pick<MoveRef, "add" | "drop">[],
+  n = 5,
+): { adds: [number, number][]; mine: [number, number][] } {
+  if (!fo) return { adds: [], mine: [] };
+  const added = new Set(set.map((m) => m.add));
+  const dropped = new Set(set.map((m) => m.drop));
+  const of = (ids: number[]) => ids.filter((id) => fo[String(id)] != null).map((id): [number, number] => [id, fo[String(id)]]);
+  const adds = of(pool.filter((id) => !added.has(id))).sort((a, b) => b[1] - a[1] || a[0] - b[0]);
+  const mine = of(roster.filter((id) => !dropped.has(id))).sort((a, b) => a[1] - b[1] || a[0] - b[0]);
+  return { adds: adds.slice(0, n), mine: mine.slice(0, n) };
+}
+
+/** The panel's locks and switch differ from the shown run's: a solve would give another answer. */
+export function strategySettingsChanged(run: StrategySettings | undefined, lock: number[], programOnly: boolean): boolean {
+  if (!run) return false;
+  const a = [...run.keep].sort((x, y) => x - y);
+  const b = [...new Set(lock)].sort((x, y) => x - y);
+  return run.program_only !== programOnly || a.length !== b.length || a.some((x, i) => x !== b[i]);
 }

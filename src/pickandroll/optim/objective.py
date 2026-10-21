@@ -258,16 +258,7 @@ class CategoryCurve:
     def segments(self, cat: Cat, lo: float, hi: float) -> tuple[float, list[Segment]]:
         """Piecewise-linear approximation on ``[lo, hi]``: the value at ``lo`` and the segments
         from there up. Breakpoints outside the range are dropped."""
-        if hi <= lo:
-            raise ValueError("hi must exceed lo")
-        mu, sigma = self.mu[cat], self.sigma[cat]
-        points = [lo] + [mu + b * sigma for b in self.breaks if lo < mu + b * sigma < hi] + [hi]
-        values = [self.probability(cat, p) for p in points]
-        segments = [
-            Segment(start=p0, width=p1 - p0, slope=(v1 - v0) / (p1 - p0))
-            for p0, p1, v0, v1 in zip(points[:-1], points[1:], values[:-1], values[1:], strict=True)
-        ]
-        return values[0], segments
+        return normal_segments(self.mu[cat], self.sigma[cat], lo, hi, self.breaks)
 
     def evaluate(self, cat: Cat, total: float, lo: float, hi: float) -> float:
         """Value of a total under the piecewise-linear curve on ``[lo, hi]``."""
@@ -296,6 +287,22 @@ def total_bounds(value: pd.DataFrame, roster_size: int) -> tuple[pd.Series, pd.S
     return lo, hi
 
 
+def normal_segments(
+    mu: float, sigma: float, lo: float, hi: float, breaks: Sequence[float] = DEFAULT_BREAKS
+) -> tuple[float, list[Segment]]:
+    """:meth:`CategoryCurve.segments` for one normal curve given by its mean and spread (the
+    season's strategy engine, #110, has a curve per category and horizon)."""
+    if hi <= lo:
+        raise ValueError("hi must exceed lo")
+    points = [lo] + [mu + b * sigma for b in breaks if lo < mu + b * sigma < hi] + [hi]
+    values = [phi((p - mu) / sigma) for p in points]
+    segments = [
+        Segment(start=p0, width=p1 - p0, slope=(v1 - v0) / (p1 - p0))
+        for p0, p1, v0, v1 in zip(points[:-1], points[1:], values[:-1], values[1:], strict=True)
+    ]
+    return values[0], segments
+
+
 def add_curve(
     model: pulp.LpProblem,
     name: str,
@@ -305,7 +312,22 @@ def add_curve(
     lo: float,
     hi: float,
 ) -> pulp.LpAffineExpression:
-    """Add the piecewise-linear value of ``total`` to ``model`` and return it as an expression.
+    """Add the piecewise-linear value of ``total`` to ``model`` and return it as an expression
+    (:func:`add_segments` on the curve's segments)."""
+    base, segments = curve.segments(cat, lo, hi)
+    return add_segments(model, name, total, lo, base, segments)
+
+
+def add_segments(
+    model: pulp.LpProblem,
+    name: str,
+    total: pulp.LpAffineExpression,
+    lo: float,
+    base: float,
+    segments: Sequence[Segment],
+) -> pulp.LpAffineExpression:
+    """Add the piecewise-linear value of ``total`` to ``model``, ``base`` at ``lo`` and
+    ``segments`` from there up, and return it as an expression.
 
     ``total`` is split into one bounded piece per segment. A binary on a link forces the
     earlier segment to fill before the later one starts. The link needs one whenever the later
@@ -313,7 +335,6 @@ def add_curve(
     stretch (the lower tail of the curve) and pour the total into a steeper segment further
     up. Where the later segment is the flattest so far, the maximizer fills in order by itself.
     """
-    base, segments = curve.segments(cat, lo, hi)
     pieces = [
         model.add_variable(f"seg_{name}_{k}", lowBound=0.0, upBound=s.width)
         for k, s in enumerate(segments)

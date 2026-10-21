@@ -77,6 +77,7 @@ import Halves, { type Face } from "./Halves";
 import KeySheet from "./KeySheet";
 import Rail from "./Rail";
 import { SEASON_ICONS } from "./icons";
+import Strategy from "./Strategy";
 import Trade from "./Trade";
 import { useNow } from "./YahooSync";
 
@@ -93,8 +94,8 @@ const DEFAULT_PANEL: DrawerState<SeasonCardId> = {
 };
 
 /** A league in season (#92), in the draft view's shape (#109): the available players where the
- * board stands, a two-half panel of cards (the moves, a trade, the flags, my roster and the
- * league's week) and the draft's rail and keys. Yahoo's own columns, the weekly projection's
+ * board stands, a two-half panel of cards (the moves, a trade, the flags, my roster, the
+ * league's week and the strategy, #110) and the draft's rail and keys. Yahoo's own columns, the weekly projection's
  * (#93) and the moves' gains (#94). */
 export default function SeasonScreen({ league, onBack }: { league: string; onBack: () => void }) {
   const queryClient = useQueryClient();
@@ -231,6 +232,8 @@ export default function SeasonScreen({ league, onBack }: { league: string; onBac
         return { note: s.my_team?.name, body: <Roster rows={s.roster} w={s.week_projection} /> };
       case "league":
         return { note: s.current_week ? `week ${s.current_week.number}` : undefined, body: <League s={s} now={now} /> };
+      case "strategy":
+        return { note: moves.data?.system.label, body: <Strategy league={league} s={s} system={system} onPick={pick} /> };
       default:
         return { body: null };
     }
@@ -1334,7 +1337,7 @@ function SeasonFooter({ s, now }: { s: SeasonView; now: number }) {
       {waivers.length > 0 && <span>{waivers.join(" · ")}</span>}
       <span className="grow" />
       <span>
-        <kbd>?</kbd> keys · <kbd>1</kbd>–<kbd>6</kbd> cards · <kbd>⇧</kbd>+digit bottom half · <kbd>]</kbd> panel
+        <kbd>?</kbd> keys · <kbd>1</kbd>–<kbd>7</kbd> cards · <kbd>⇧</kbd>+digit bottom half · <kbd>]</kbd> panel
       </span>
       <span title={Object.entries(s.fetched).map(([k, f]) => `${k}: ${f.at} (${f.source})`).join("\n")}>Snapshot {ageLabel(s.updated_at, now)}</span>
       <span>League {s.league}</span>

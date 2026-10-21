@@ -323,7 +323,7 @@ export const DRAFT_SHEET: Sheet = {
 };
 
 // ---------------------------------------------------------------- the league page
-export type SeasonCardId = "waivers" | "moves" | "trade" | "flags" | "roster" | "league";
+export type SeasonCardId = "waivers" | "moves" | "trade" | "flags" | "roster" | "league" | "strategy";
 
 export const SEASON_CARDS: CardDef<SeasonCardId>[] = [
   { id: "waivers", title: "Waivers", blurb: "the available players; the board at full width", halves: false },
@@ -332,6 +332,7 @@ export const SEASON_CARDS: CardDef<SeasonCardId>[] = [
   { id: "flags", title: "Flags", blurb: "breakout flags on the available players" },
   { id: "roster", title: "My roster", blurb: "my players and their games this week" },
   { id: "league", title: "The league", blurb: "this week's matchups and the weeks recorded" },
+  { id: "strategy", title: "Strategy", blurb: "this week against the rest of the season: the recommended set at each weight" },
 ];
 
 /** The Waivers highlight moved by ``delta`` through the rows on show (j, k and the arrows):
@@ -401,13 +402,13 @@ export function seasonKeys(s: SeasonKeys): KeyMap {
 
 export const SEASON_SHEET: Sheet = {
   cards:
-    "Cards are 1 Waivers · 2 Moves · 3 Trade · 4 Flags · 5 My roster · 6 The league, the numbers on the rail. Letters do nothing while you are typing in a field.",
+    "Cards are 1 Waivers · 2 Moves · 3 Trade · 4 Flags · 5 My roster · 6 The league · 7 Strategy, the numbers on the rail. Letters do nothing while you are typing in a field.",
   groups: [
     {
       title: "Cards",
       rows: [
-        [["1", "…", "6"], "open that card in the top half; the same key again closes it (1 Waivers gives the board the full width, again brings the panel back)"],
-        [["⇧ 2", "…", "⇧ 6"], "open it in the bottom half (mouse: shift-click or right-click the rail icon)"],
+        [["1", "…", "7"], "open that card in the top half; the same key again closes it (1 Waivers gives the board the full width, again brings the panel back)"],
+        [["⇧ 2", "…", "⇧ 7"], "open it in the bottom half (mouse: shift-click or right-click the rail icon)"],
         [["]"], "collapse the panel to the rail, or bring it back with its two cards"],
         [["x"], "swap the top and bottom cards"],
         [["Esc"], "leave a field, then close a flag breakdown, then the move drawer, then collapse the panel"],

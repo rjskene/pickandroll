@@ -91,6 +91,14 @@ export const SEASON_ICONS: Record<SeasonCardId, ReactElement> = {
       <path d="M8 21h8M12 17v4M7 4h10v5a5 5 0 0 1-10 0V4zM17 6h3v2a3 3 0 0 1-3 3M7 6H4v2a3 3 0 0 0 3 3" />
     </svg>
   ),
+  // A frontier: this week against the rest of the season.
+  strategy: (
+    <svg width="20" height="20" viewBox="0 0 24 24" {...stroke} aria-hidden="true">
+      <path d="M3 3v18h18M6 6c3 0 7 1 9 4s3 7 3 8" />
+      <circle cx="9.5" cy="6.8" r="1.5" />
+      <circle cx="16" cy="12" r="1.5" />
+    </svg>
+  ),
 };
 
 export function Chevron({ dir }: { dir: "up" | "down" | "left" | "right" }) {
