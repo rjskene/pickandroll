@@ -1,13 +1,20 @@
 // Node's own test runner with its built-in type stripping (`npm test`), as format.test.ts.
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import type { AvailableRow, Rates, SeasonPlayer } from "./api";
+import type { AvailableRow, MoveCandidate, Rates, RosterRow, SeasonPlayer } from "./api";
 import {
+  addsNote,
   ageLabel,
   availabilityLabel,
+  bestMove,
   catValue,
   changeLabel,
+  dayLabel,
+  gainLabel,
+  gainTone,
   horizonGames,
+  MOVE_HORIZON,
+  openingDrop,
   oddsLabel,
   oddsTone,
   projectedTotals,
@@ -17,6 +24,7 @@ import {
   NO_FILTER,
   ordinal,
   pctLabel,
+  playersById,
   playsPosition,
   recordLabel,
   refreshNote,
@@ -25,6 +33,7 @@ import {
   statusTone,
   weekDates,
   weekLabel,
+  YAHOO_SORT,
 } from "./season.ts";
 
 const player = (name: string, positions: string[], extra: Partial<SeasonPlayer> = {}): SeasonPlayer => ({
@@ -140,6 +149,23 @@ test("the available table filters by name, team, position, waivers and health", 
   assert.deepEqual(names({ healthy: true }), ["Dillon Brooks", "Jalen Smith"]);
 });
 
+test("the available table filters by NBA team, games this week and percent rostered", () => {
+  const rows = [
+    row(player("Kristaps Porziņģis", ["C"], { nba_team: "GSW" }), { pct_rostered: 43, games_left: 0 }),
+    row(player("Dillon Brooks", ["SF", "PF"]), { pct_rostered: 46, games_left: 3 }),
+    row(player("Jalen Smith", ["PF", "C"], { nba_team: "CHI" }), { pct_rostered: null, games_left: null }),
+  ];
+  const names = (f: Partial<typeof NO_FILTER>, games?: (r: (typeof rows)[number]) => number | null) =>
+    filterAvailable(rows, { ...NO_FILTER, ...f }, games).map((r) => r.player.name);
+  assert.deepEqual(names({ nbaTeam: "CHI" }), ["Jalen Smith"]);
+  // The games floor reads the row's own count by default, or the projection's when given one.
+  assert.deepEqual(names({ minGames: 1 }), ["Dillon Brooks"]);
+  assert.deepEqual(names({ minGames: 2 }, (r) => (r.player.name === "Jalen Smith" ? 2 : 0)), ["Jalen Smith"]);
+  // A row with no ownership figure fails a floor above zero.
+  assert.deepEqual(names({ minRostered: 44 }), ["Dillon Brooks"]);
+  assert.deepEqual(names({ minRostered: 0 }).length, 3);
+});
+
 test("the available table sorts most rostered first, missing values last, ties in Yahoo's order", () => {
   const rows = [
     row(player("A", ["C"]), { pct_rostered: 12, adds: 5 }),
@@ -148,7 +174,7 @@ test("the available table sorts most rostered first, missing values last, ties i
     row(player("D", ["C"]), { pct_rostered: 12, adds: null, availability: "W", clears: "2026-10-22" }),
   ];
   const order = (key: Parameters<typeof sortAvailable>[1]["key"], dir: "asc" | "desc") => sortAvailable(rows, { key, dir }).map((r) => r.player.name).join("");
-  assert.equal(order(DEFAULT_AVAILABLE_SORT.key, DEFAULT_AVAILABLE_SORT.dir), "CADB");
+  assert.equal(order(YAHOO_SORT.key, YAHOO_SORT.dir), "CADB");
   assert.equal(order("pct_rostered", "asc"), "ADCB");
   assert.equal(order("adds", "desc"), "BACD");
   assert.equal(order("name", "desc"), "DCBA");
@@ -202,4 +228,60 @@ test("category cells and odds labels", () => {
   assert.equal(oddsTone(0.7), "good");
   assert.equal(oddsTone(0.2), "bad");
   assert.equal(oddsTone(0.5), "");
+});
+
+test("the table opens on the three-week gain; until the moves are valued Yahoo's order stands", () => {
+  const rows = [row(player("A", ["C"])), row(player("B", ["C"])), row(player("C", ["C"]))];
+  const gains: Record<string, number | null> = { A: 0.2, B: null, C: 1.1 };
+  const extra = (r: AvailableRow, key: string) => (key === "gain_three" ? gains[r.player.name] : undefined);
+  assert.deepEqual(DEFAULT_AVAILABLE_SORT, { key: "gain_three", dir: "desc" });
+  assert.equal(sortAvailable(rows, DEFAULT_AVAILABLE_SORT, extra).map((r) => r.player.name).join(""), "CAB");
+  assert.equal(sortAvailable(rows, DEFAULT_AVAILABLE_SORT).map((r) => r.player.name).join(""), "ABC");
+});
+
+test("a gain reads signed, to two places, and is toned against the move's floor", () => {
+  assert.equal(gainLabel(0.4249), "+0.42");
+  assert.equal(gainLabel(-0.1), "−0.10");
+  assert.equal(gainLabel(-0.001), "0.00");
+  assert.equal(gainLabel(null), "");
+  assert.equal(gainLabel(1.23456, 3), "+1.235");
+  assert.equal(gainTone(0.5, 0.01), "good");
+  assert.equal(gainTone(0.005, 0.01), "");
+  assert.equal(gainTone(-0.2, 0.01), "bad");
+  assert.equal(gainTone(undefined, 0.01), "");
+  assert.equal(dayLabel("2026-10-22"), "Oct 22");
+  assert.equal(dayLabel(null), "");
+});
+
+test("a candidate's drawer opens on his best drop for the table's horizon, else the other's", () => {
+  const c: MoveCandidate = {
+    from: "2026-10-22",
+    week: { gain: 0.3, drop: 7, next_drop: 8, next_price: 0.1 },
+    three: { gain: 0.9, drop: 8, next_drop: null, next_price: null },
+  };
+  assert.equal(MOVE_HORIZON.next3, "three");
+  assert.equal(bestMove(c, "week")?.gain, 0.3);
+  assert.equal(openingDrop(c, MOVE_HORIZON.week), 7);
+  assert.equal(openingDrop(c, MOVE_HORIZON.next3), 8);
+  assert.equal(openingDrop({ ...c, week: null }, "week"), 8);
+  // No move fits on either horizon: the drawer opens on an open spot.
+  assert.equal(openingDrop({ ...c, week: null, three: null }, "week"), null);
+  assert.equal(openingDrop(undefined, "three"), null);
+});
+
+test("the add limit reads as a floor when the transactions page may not reach the week's start", () => {
+  const weeks = [{ start: "2026-10-20", end: "2026-10-26", adds: 3 }];
+  assert.equal(addsNote({ limit: 4, used: 1, complete: true, left: 3, weeks }), "4 adds a week · 1 used this week · 3 left");
+  assert.equal(addsNote({ limit: 4, used: 1, complete: false, left: 3, weeks }), "4 adds a week · at least 1 used this week · at most 3 left");
+  assert.equal(addsNote({ limit: null, used: 0, complete: true, left: null, weeks }), "no weekly add limit");
+});
+
+test("the view's players by id: the pool, my roster and every roster", () => {
+  const slot = (p: SeasonPlayer, s = "BN"): RosterRow => ({ slot: s, player: p, games_left: null });
+  const a = player("Pool Guy", ["PG"], { yahoo_id: 1 });
+  const b = player("Mine", ["C"], { yahoo_id: 2 });
+  const c = player("Theirs", ["SF"], { yahoo_id: 3 });
+  const byId = playersById({ available: [row(a)], roster: [slot(b)], rosters: { "4": [slot(c)], "1": [slot(b)] } });
+  assert.deepEqual([...byId.keys()].sort(), [1, 2, 3]);
+  assert.equal(byId.get(3)?.name, "Theirs");
 });

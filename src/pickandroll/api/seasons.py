@@ -14,6 +14,13 @@ Routes:
 ``POST /seasons/{league}/snapshot``
     The extension's reads of a private league: whole pages (``{url, html}``, parsed here by
     the same parsers) or parts already parsed (``{key, data}``).
+``GET /seasons/{league}/moves``
+    Every available player's best move this week and over the next three, and the recommended
+    moves under the weekly add limit (#94, ``season_moves``); ``?system=yahoo`` for Yahoo's
+    projection.
+``GET /seasons/{league}/moves/{player}``
+    The move drawer: adding ``player`` (for ``?drop=``) per category on both horizons, with
+    every other drop and the best other adds.
 
 Storage, all under ``data/`` and never committed: ``data/leagues/<id>/season/state.json`` holds
 the latest read of every part with its time and source, and every refresh or snapshot is kept
@@ -54,8 +61,8 @@ from ..season import (
 )
 from ..sources import schedule as nba_schedule
 from ..sources.yahoo import pages, public
-from . import leagues
-from .season_week import NBA_TZ, week_projection
+from . import leagues, season_moves
+from .season_week import BBM_NEXT_WEEK, BBM_ROS, BBM_THIS_WEEK, NBA_TZ, week_projection
 
 SEASON_DIR = "season"
 STATE = "state.json"
@@ -177,6 +184,7 @@ class SeasonService:
         self.jobs: dict[str, RefreshJob] = {}
         self._locks: dict[str, threading.Lock] = {}
         self._guard = threading.Lock()
+        self.moves_cache = season_moves.MovesCache()
 
     def lock(self, league: str) -> threading.Lock:
         with self._guard:
@@ -210,6 +218,41 @@ class SeasonService:
             **_view(season, today),
             "week_projection": week_projection(season, today, self.data_dir, WEEKS_AHEAD),
         }
+
+    # ------------------------------------------------------------------ moves
+    def _moves_stamp(self, league: str) -> tuple[Any, ...]:
+        """What the moves of a league depend on beyond the day: the state file and the
+        projection exports."""
+        files = [season_dir(self.data_dir, league) / STATE, self.data_dir / "aliases.json"]
+        for pattern in (*BBM_ROS, BBM_THIS_WEEK, BBM_NEXT_WEEK):
+            files += sorted(self.data_dir.glob(pattern))
+        return tuple((f.name, f.stat().st_mtime_ns) for f in files if f.exists())
+
+    def _built(self, league: str, system: str) -> season_moves.Built:
+        base, _ = self._base(league)
+        today = nba_today(self.clock())
+        key = (league, system, "built", today, self._moves_stamp(league))
+
+        def make() -> season_moves.Built | None:
+            season = Season.from_parts(base, load_parts(self.data_dir, league))
+            return season_moves.build(season, today, self.data_dir, system)
+
+        built = self.moves_cache.get(key, make)
+        if built is None:
+            raise HTTPException(409, f"league {league} has no season of my team to move in yet")
+        return built
+
+    def moves(self, league: str, system: str) -> dict[str, Any]:
+        built = self._built(league, system)
+        today = nba_today(self.clock())
+        key = (league, system, "moves", today, self._moves_stamp(league))
+        return self.moves_cache.get(key, lambda: season_moves.moves_payload(built))
+
+    def move_detail(self, league: str, add: int, drop: int | None, system: str) -> dict[str, Any]:
+        out = season_moves.detail_payload(self._built(league, system), add, drop)
+        if out is None:
+            raise HTTPException(404, f"no move adds {add} for {drop or 'nobody'} in {league}")
+        return out
 
     # ------------------------------------------------------------------ refresh
     def start_refresh(self, league: str) -> RefreshJob:
@@ -595,6 +638,23 @@ def register(
         if job.status == "failed":
             raise HTTPException(502, job.error)
         return {"refresh": job.to_dict(), "season": service.summary(league)}
+
+    system_q = Query("bbm", pattern="^(bbm|yahoo)$", description="the projection system")
+
+    @app.get("/seasons/{league}/moves")
+    async def get_moves(league: str = league_id, system: str = system_q) -> dict[str, Any]:
+        """Every available player's best move on both horizons and the recommended moves."""
+        return await asyncio.to_thread(service.moves, league, system)
+
+    @app.get("/seasons/{league}/moves/{player}")
+    async def get_move(
+        player: int,
+        league: str = league_id,
+        drop: int | None = Query(None, description="the player dropped for him; none: a free spot"),
+        system: str = system_q,
+    ) -> dict[str, Any]:
+        """The move drawer for adding ``player``."""
+        return await asyncio.to_thread(service.move_detail, league, player, drop, system)
 
     @app.post("/seasons/{league}/snapshot")
     def post_snapshot(body: SnapshotBody, league: str = league_id) -> dict[str, Any]:

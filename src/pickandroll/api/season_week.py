@@ -235,6 +235,46 @@ def first_day(read_at: datetime | None, today: date) -> date:
     return today
 
 
+# --------------------------------------------------------------------------- the weeks
+@dataclass(frozen=True)
+class Span:
+    """A week of the projection: its days from the first day on, and a weekly export's games
+    when one covers them."""
+
+    week: Week
+    first: date
+    days: list[date]
+    games: Mapping[int, int] | None
+
+
+def matchup_read(season: Season, team_id: int | None) -> tuple[Matchup | None, datetime | None]:
+    """My matchup this week and when its page was read."""
+    matchup = season.matchup_of(team_id) if team_id is not None else None
+    if matchup is None:
+        return None, None
+    fetched = season.fetched.get(matchup_key(matchup.week, matchup.teams))
+    return matchup, fetched[0] if fetched else None
+
+
+def spans(
+    season: Season,
+    today: date,
+    data_dir: Path,
+    weeks_ahead: int,
+    players: Mapping[int, Player],
+    since: date,
+) -> list[Span]:
+    """The weeks ahead from ``since`` (this week's first day), each with its export's games."""
+    weeks = season.calendar.ahead(today, weeks_ahead) if season.calendar else []
+    out = []
+    for i, week in enumerate(weeks):
+        first = max(week.start, since) if i == 0 else week.start
+        days = week.days(first) if first <= week.end else []
+        override = bbm_week_games(data_dir, players, week, first, today, i == 0) if days else None
+        out.append(Span(week, first, days, override))
+    return out
+
+
 # --------------------------------------------------------------------------- the view
 def week_projection(
     season: Season, today: date, data_dir: Path, weeks_ahead: int
@@ -257,28 +297,20 @@ def week_projection(
     if not weeks:
         return out
     mine = s.my_team_id
-    matchup = season.matchup_of(mine)
-    read_at = None
-    if matchup is not None:
-        fetched = season.fetched.get(matchup_key(matchup.week, matchup.teams))
-        read_at = fetched[0] if fetched else None
+    matchup, read_at = matchup_read(season, mine)
     since = first_day(read_at, today) if matchup is not None else today
     slots = wk.starting_slots(s.roster)
     value = wk.per_game_values(bbm.rates, cats, points)
-    spans = []
-    for i, week in enumerate(weeks):
-        first = max(week.start, since) if i == 0 else week.start
-        days = week.days(first) if first <= week.end else []
-        override = bbm_week_games(data_dir, players, week, first, today, i == 0) if days else None
-        spans.append((week, first, days, override))
+    ahead = spans(season, today, data_dir, weeks_ahead, players, since)
+    for sp in ahead:
         out["weeks"].append(
             {
-                "number": week.number,
-                "start": week.start.isoformat(),
-                "end": week.end.isoformat(),
-                "from": first.isoformat(),
-                "days": len(days),
-                "games_from": "bbm" if override is not None else "schedule",
+                "number": sp.week.number,
+                "start": sp.week.start.isoformat(),
+                "end": sp.week.end.isoformat(),
+                "from": sp.first.isoformat(),
+                "days": len(sp.days),
+                "games_from": "bbm" if sp.games is not None else "schedule",
             }
         )
 
@@ -296,11 +328,11 @@ def week_projection(
 
     for a in season.available:
         r = row(a.player.yahoo_id)
-        for i, (_, _, days, override) in enumerate(spans):
-            g = override.get(a.player.yahoo_id) if override is not None else None
+        for i, sp in enumerate(ahead):
+            g = sp.games.get(a.player.yahoo_id) if sp.games is not None else None
             pw = wk.standalone_week(
                 a.player,
-                days,
+                sp.days,
                 season.schedule,
                 i == 0,
                 games=g,
@@ -312,22 +344,21 @@ def week_projection(
         return out
 
     def project(roster: list[tuple[int, Player]], i: int) -> wk.TeamWeek:
-        _, _, days, override = spans[i]
         return wk.project_week(
             roster,
             bbm.rates,
-            days,
+            ahead[i].days,
             season.schedule,
             slots,
             value,
             i == 0,
-            games=override,
+            games=ahead[i].games,
             points=points,
             no_games=yahoo.zero,
         )
 
     roster = [(sp.player.yahoo_id, sp.player) for sp in season.rosters.get(mine, ())]
-    weekly = [project(roster, i) for i in range(len(spans))]
+    weekly = [project(roster, i) for i in range(len(ahead))]
     for tw in weekly:
         for yid, pw in tw.players.items():
             r = row(yid)

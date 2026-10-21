@@ -16,6 +16,7 @@ import math
 from collections.abc import Collection, Hashable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date
+from functools import lru_cache
 from typing import Any
 
 from ..projections.schema import eligible_slots
@@ -73,6 +74,13 @@ def accepts(slot: str, positions: Iterable[str]) -> bool:
     return slot.upper() == "UTIL" or slot.upper() in eligible_slots(positions)
 
 
+@lru_cache(maxsize=4096)
+def _fits(slots: tuple[str, ...], positions: tuple[str, ...]) -> tuple[int, ...]:
+    """The indexes of ``slots`` a player with ``positions`` can start in (the move search asks
+    this for every day of every roster it values)."""
+    return tuple(i for i, s in enumerate(slots) if accepts(s, positions))
+
+
 def starters[K: Hashable](
     candidates: Sequence[tuple[K, Sequence[str]]],
     slots: Sequence[str],
@@ -84,7 +92,7 @@ def starters[K: Hashable](
     matroid, so the greedy set is the best one). A player can move to another slot to make room
     for a more valuable one; nobody is benched for a less valuable player."""
     order = sorted(candidates, key=lambda c: (-value.get(c[0], 0.0), str(c[0])))
-    fits = [[i for i, s in enumerate(slots) if accepts(s, pos)] for _, pos in order]
+    fits = [_fits(tuple(slots), tuple(pos)) for _, pos in order]
     holder: dict[int, int] = {}  # slot index -> candidate index
 
     def place(ci: int, seen: set[int]) -> bool:
@@ -161,14 +169,17 @@ def project_week[K: Hashable](
     games: Mapping[K, int] | None = None,
     points: Mapping[str, float] | None = None,
     no_games: Collection[K] = (),
+    available_from: Mapping[K, date] | None = None,
+    gone_from: Mapping[K, date] | None = None,
 ) -> TeamWeek:
     """One roster's week over ``days``.
 
     ``games`` overrides the schedule and the out rule for the players it names (a weekly export
     that already folds in the news): such a player plays the last ``games`` of his game days.
     ``no_games`` are the players another projection gives no games (the out rule's game-time
-    decisions). A player without rates plays but adds nothing. Starters are chosen per day by
-    ``value``."""
+    decisions). ``available_from`` holds back the players it names until that day (a waiver
+    claim's clear date) and ``gone_from`` stops them from that day on (a drop). A player
+    without rates plays but adds nothing. Starters are chosen per day by ``value``."""
     playing: dict[K, list[date]] = {}
     for key, player in roster:
         played = game_days(player.nba_team, days, schedule)
@@ -177,6 +188,10 @@ def project_week[K: Hashable](
             played = played[len(played) - n :]
         elif is_out(player, this_week, key in no_games):
             played = []
+        if available_from is not None and key in available_from:
+            played = [d for d in played if d >= available_from[key]]
+        if gone_from is not None and key in gone_from:
+            played = [d for d in played if d < gone_from[key]]
         playing[key] = played
     positions = {key: player.positions for key, player in roster}
     started = {key: 0 for key, _ in roster}
@@ -295,19 +310,24 @@ def final(week: TeamWeek, so_far: Mapping[str, float], cat: str) -> tuple[float 
     return so_far.get(cat, 0.0) + week.totals.get(cat, 0.0), math.sqrt(week.variance.get(cat, 0.0))
 
 
-def category_odds(
-    mine: TeamWeek,
-    theirs: TeamWeek,
-    cats: Sequence[str],
-    so_far_mine: Mapping[str, float] | None = None,
-    so_far_theirs: Mapping[str, float] | None = None,
+Final = tuple[float | None, float]
+
+
+def finals(week: TeamWeek, so_far: Mapping[str, float], cats: Sequence[str]) -> dict[str, Final]:
+    """Each category's :func:`final`."""
+    return {cat: final(week, so_far, cat) for cat in cats}
+
+
+def odds_of(
+    mine: Mapping[str, Final], theirs: Mapping[str, Final], cats: Sequence[str]
 ) -> list[CategoryOdds]:
-    """The odds of winning each category of the week: normal finals, lower wins for turnovers.
-    A category with no spread is won, lost or tied (one half) outright."""
+    """The odds of winning each category from both teams' finals (:func:`finals`): normal
+    finals, lower wins for turnovers. A category with no spread is won, lost or tied (one half)
+    outright."""
     out = []
     for cat in cats:
-        a, sa = final(mine, so_far_mine or {}, cat)
-        b, sb = final(theirs, so_far_theirs or {}, cat)
+        a, sa = mine[cat]
+        b, sb = theirs[cat]
         sd = math.hypot(sa, sb)
         if a is None or b is None:
             p = 0.5 if a is None and b is None else (0.0 if a is None else 1.0)
@@ -316,6 +336,19 @@ def category_odds(
             p = _phi(d / sd) if sd > 0 else (1.0 if d > 0 else 0.0 if d < 0 else 0.5)
         out.append(CategoryOdds(cat, a, b, sd, p))
     return out
+
+
+def category_odds(
+    mine: TeamWeek,
+    theirs: TeamWeek,
+    cats: Sequence[str],
+    so_far_mine: Mapping[str, float] | None = None,
+    so_far_theirs: Mapping[str, float] | None = None,
+) -> list[CategoryOdds]:
+    """The odds of winning each category of the week (:func:`odds_of` on the two weeks)."""
+    return odds_of(
+        finals(mine, so_far_mine or {}, cats), finals(theirs, so_far_theirs or {}, cats), cats
+    )
 
 
 def expected_won(odds: Iterable[CategoryOdds]) -> float:
