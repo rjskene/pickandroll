@@ -9,10 +9,15 @@ from pickandroll.api import SessionStore, create_app
 DATA = Path(__file__).resolve().parents[1] / "data"
 
 
-@pytest.fixture
-def client():
+def need_sample() -> None:
+    """Skip a test that runs on the sample export when data/ lacks it (a worktree has no data/)."""
     if not (DATA / "bbm_sample_ros_totals.xls").exists():
         pytest.skip("no Basketball Monster sample export in data/")
+
+
+@pytest.fixture
+def client():
+    need_sample()
     app = create_app(SessionStore(), data_dir=DATA)
     with TestClient(app) as c:
         yield c
@@ -454,6 +459,7 @@ def test_the_score_history_follows_the_recommendation_shown():
     the recommendation on show. Only the recommendation shown is recorded now."""
     from pickandroll.api.solver import compute_recommendation
 
+    need_sample()
     store = SessionStore()
     with TestClient(create_app(store, data_dir=DATA)) as c:
         sid = create(c)["id"]

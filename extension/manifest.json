@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "pickandroll draft room",
-  "version": "0.4.1",
-  "description": "Mirrors your Yahoo fantasy basketball draft room into a pickandroll session running on this computer.",
+  "version": "0.5.0",
+  "description": "Mirrors your Yahoo fantasy basketball draft room into a pickandroll session running on this computer, and reads your league's pages for its season view.",
   "minimum_chrome_version": "116",
   "permissions": [
     "storage",
@@ -38,6 +38,16 @@
         "content.js"
       ],
       "run_at": "document_start"
+    },
+    {
+      "matches": [
+        "https://basketball.fantasysports.yahoo.com/nba/*"
+      ],
+      "js": [
+        "lib/league.js",
+        "league.js"
+      ],
+      "run_at": "document_idle"
     }
   ],
   "side_panel": {

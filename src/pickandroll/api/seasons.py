@@ -241,22 +241,8 @@ class SeasonService:
             settings = base.merged(next(p.data for p in received if p.key == "settings"))
             job.step = "calendar"
             calendar = self._calendar(league, settings, fetch, today)
-            if calendar is not None:
-                received.append(Part("calendar", datetime.now(UTC), PUBLIC, calendar.to_dict()))
             job.step = "schedule"
-            with self.lock(league):
-                parts = load_parts(self.data_dir, league)
-                days = _schedule_days(calendar, today)
-                read = nba_schedule.schedule_days(
-                    days, fetch, self.data_dir / SCHEDULE_DIR, now=self.clock()
-                )
-                old = (parts.get("schedule").data if "schedule" in parts else {}).get("days", {})
-                received.append(
-                    Part("schedule", datetime.now(UTC), PUBLIC, {"days": {**old, **read}})
-                )
-                for part in received:
-                    parts = merge_part(parts, part)
-                save(self.data_dir, league, parts, received, PUBLIC)
+            self._save_with_schedule(league, received, calendar, fetch, today)
             # The total counted every players page; the pool may have ended sooner.
             job.status, job.step, job.total = "done", "done", job.done
         except public.PrivateLeague as exc:
@@ -271,6 +257,71 @@ class SeasonService:
             job.finished_at = datetime.now(UTC)
         return job
 
+    def _save_with_schedule(
+        self,
+        league: str,
+        received: list[Part],
+        calendar: Calendar | None,
+        fetch: public.Fetch,
+        today: date,
+    ) -> None:
+        """Merge ``received`` with the calendar and the NBA schedule for the days the view counts
+        games on into the league's season, and save it."""
+        if calendar is not None:
+            received.append(Part("calendar", datetime.now(UTC), PUBLIC, calendar.to_dict()))
+        # Read before the league's lock: a snapshot posted meanwhile does not wait on ESPN.
+        days = _schedule_days(calendar, today)
+        read = nba_schedule.schedule_days(
+            days, fetch, self.data_dir / SCHEDULE_DIR, now=self.clock()
+        )
+        with self.lock(league):
+            parts = load_parts(self.data_dir, league)
+            old = (parts.get("schedule").data if "schedule" in parts else {}).get("days", {})
+            received.append(Part("schedule", datetime.now(UTC), PUBLIC, {"days": {**old, **read}}))
+            for part in received:
+                parts = merge_part(parts, part)
+            save(self.data_dir, league, parts, received, PUBLIC)
+
+    # ------------------------------------------------------------------ a private league's extras
+    def start_extras(self, league: str) -> RefreshJob | None:
+        """A private league's public parts, in the background, when its season lacks them or
+        its schedule is older than :data:`nba_schedule.MAX_AGE`: the week calendar (the shared
+        cache a public league's refresh writes; no page of a private league answers the probe)
+        and the NBA schedule. Its Yahoo pages come from the extension's snapshots."""
+        parts = load_parts(self.data_dir, league)
+        schedule = parts.get("schedule")
+        fresh = schedule is not None and self.clock() - schedule.fetched_at < nba_schedule.MAX_AGE
+        if fresh and ("calendar" in parts or self._cached_calendar() is None):
+            return None
+        with self._guard:
+            job = self.jobs.get(league)
+            if job is not None and job.status == "running":
+                return job
+            job = self.jobs[league] = RefreshJob(league, step="schedule")
+        threading.Thread(
+            target=self.run_extras, args=(job,), daemon=True, name=f"season-extras-{league}"
+        ).start()
+        return job
+
+    def run_extras(self, job: RefreshJob) -> RefreshJob:
+        try:
+            today = nba_today(self.clock())
+            self._save_with_schedule(
+                job.league, [], self._cached_calendar(), self.fetch_factory(), today
+            )
+            job.status, job.step = "done", "done"
+        except Exception as exc:  # noqa: BLE001 - the job reports what broke instead of dying silently
+            job.status, job.error = "failed", f"{type(exc).__name__}: {exc}"
+        finally:
+            job.finished_at = datetime.now(UTC)
+        return job
+
+    def _cached_calendar(self) -> Calendar | None:
+        try:
+            return Calendar.from_dict(json.loads(calendar_path(self.data_dir).read_text()))
+        except (OSError, ValueError, KeyError):
+            return None
+
     def _calendar(
         self, league: str, settings: SeasonSettings, fetch: public.Fetch, today: date
     ) -> Calendar | None:
@@ -279,24 +330,25 @@ class SeasonService:
         end = settings.end_date
         if end is None:
             return None
-        path = calendar_path(self.data_dir)
-        try:
-            cached = Calendar.from_dict(json.loads(path.read_text()))
-            if cached.weeks and cached.weeks[-1].end >= end and not cached.estimated:
-                return cached
-        except (OSError, ValueError, KeyError):
-            pass
+        cached = self._cached_calendar()
+        if (
+            cached is not None
+            and cached.weeks
+            and cached.weeks[-1].end >= end
+            and not cached.estimated
+        ):
+            return cached
         week = settings.current_week or 1
         first = monday_of(today) - timedelta(weeks=week - 1)
         team = settings.my_team_id or 1
         labels = public.week_labels(league, team, mondays(first, end), fetch)
         calendar = build_calendar(first, end, labels)
-        _write_json(path, calendar.to_dict())
+        _write_json(calendar_path(self.data_dir), calendar.to_dict())
         return calendar
 
     # ------------------------------------------------------------------ snapshot
     def snapshot(self, league: str, body: SnapshotBody) -> dict[str, Any]:
-        base, _ = self._base(league)
+        base, is_public = self._base(league)
         today = nba_today(self.clock())
         received: list[Part] = []
         skipped: list[dict[str, str]] = []
@@ -323,11 +375,10 @@ class SeasonService:
                 raise HTTPException(400, f"the snapshot does not read: {exc}") from exc
             if received:
                 save(self.data_dir, league, parts, received, EXTENSION)
-        return {
-            "accepted": [p.key for p in received],
-            "skipped": skipped,
-            "season": self.summary(league),
-        }
+        summary = self.summary(league)
+        if received and not is_public:
+            self.start_extras(league)
+        return {"accepted": [p.key for p in received], "skipped": skipped, "season": summary}
 
 
 def _known_key(key: str) -> bool:

@@ -13,7 +13,7 @@
     </header>
 
     <section id="none" hidden>
-      <p>Open your Yahoo draft room in this window. The panel follows the draft tab.</p>
+      <p>Open your Yahoo draft room, or one of your league's pages, in this window. The panel follows the tab.</p>
     </section>
 
     <section id="room" hidden>
@@ -61,9 +61,35 @@
       <button id="detach-btn" type="button" class="quiet">Detach this room</button>
     </section>
 
+    <section id="league" hidden>
+      <h2 id="league-title" class="title">League</h2>
+      <dl>
+        <dt>This page</dt><dd id="league-page">-</dd>
+        <dt>pickandroll</dt><dd id="league-season">-</dd>
+      </dl>
+      <h2>Pages read</h2>
+      <ul id="league-posts" class="posts"></ul>
+      <p class="muted small">Each page of the league you open posts itself to pickandroll: the teams' pages,
+        the players page (the available players) and the matchup. Nothing is clicked in Yahoo.</p>
+      <button id="league-reload" type="button">Refresh this page</button>
+
+      <div id="league-read" hidden>
+        <h2>All available players</h2>
+        <p id="read-note" class="muted small">Opens the first players page and follows its Next 25 link page by page,
+          up to 300 players, then stops.</p>
+        <button id="read-start" type="button">Read every page</button>
+        <button id="read-stop" type="button" class="quiet" hidden>Stop reading</button>
+      </div>
+
+      <p class="links">
+        <a id="league-web" href="#" target="_blank" rel="noopener">Open the league in pickandroll</a>
+      </p>
+    </section>
+
     <footer>
       <a href="#" id="options">Settings</a>
     </footer>
+    <script src="../lib/league.js"></script>
     <script src="panel.js"></script>
   </body>
 </html>

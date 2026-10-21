@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import re
+import time
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
@@ -313,6 +314,30 @@ def test_a_page_of_available_players_upserts_into_the_pool():
     assert len(parts["available"].data["rows"]) == 10
 
 
+def test_a_page_in_another_view_keeps_the_ownership_it_does_not_show():
+    """The players page's stat views (the default, the projections) carry % Ros but not % Start,
+    adds or drops: posting one keeps what the Research view read, and takes the rest."""
+    research = pages.parse_players_page(fixture("avail25.html"), TODAY)
+    parts = merge_part({}, part("available", research))
+    before = parts["available"].data["rows"][0]
+    stats_view = {
+        **before,
+        "pct_rostered": before["pct_rostered"] + 2,
+        **dict.fromkeys(
+            ("pct_rostered_change", "pct_started", "pct_started_change", "adds", "drops")
+        ),
+    }
+    parts = merge_part(parts, part("available", {"rows": [stats_view], "upsert": True}, EXTENSION))
+    after = next(
+        r
+        for r in parts["available"].data["rows"]
+        if r["player"]["yahoo_id"] == before["player"]["yahoo_id"]
+    )
+    assert after["pct_rostered"] == before["pct_rostered"] + 2
+    for key in ("pct_started", "adds", "drops"):
+        assert after[key] == before[key] is not None
+
+
 def test_a_private_league_takes_its_name_and_week_from_the_league_page():
     parts = merge_part(
         {}, part("league", pages.parse_league_page(fixture("league.html")), EXTENSION)
@@ -531,6 +556,49 @@ def test_a_private_leagues_pages_posted_by_the_extension_round_trip(client):
     again.state.seasons.clock = lambda: NOW
     with TestClient(again) as c2:
         assert len(c2.get("/seasons/100002").json()["available"]) == 35
+    wait_for_job(client, "100002")
+
+
+def wait_for_job(client, league: str) -> season_api.RefreshJob:
+    """The league's background job, once it has finished."""
+    job = client.app.state.seasons.jobs[league]
+    deadline = time.monotonic() + 10
+    while job.status == "running" and time.monotonic() < deadline:
+        time.sleep(0.02)
+    assert job.status == "done", job.error
+    return job
+
+
+def test_a_private_leagues_snapshot_brings_in_the_calendar_and_the_schedule(client):
+    """No page of a private league answers without a sign-in, so its week calendar comes from
+    the cache a public league's refresh writes, and the NBA schedule from ESPN, in the
+    background after the extension's first post."""
+    site = "https://basketball.fantasysports.yahoo.com/nba/100002"
+    assert client.post(f"/seasons/{LEAGUE}/refresh?wait=true").status_code == 202
+    probes = len(client.fake.urls)
+    r = client.post(
+        "/seasons/100002/snapshot",
+        json={
+            "pages": [
+                {"url": site, "html": fixture("league.html")},
+                {"url": site + "/7", "html": fixture("team4.html")},
+            ]
+        },
+    )
+    assert r.status_code == 200, r.text
+    wait_for_job(client, "100002")
+    v = client.get("/seasons/100002").json()
+    assert v["current_week"] == {"number": 1, "start": "2026-10-19", "end": "2026-10-25"}
+    assert v["calendar_estimated"] is False and v["sources"] == ["extension", "public"]
+    assert all(row["games_left"] is not None for row in v["roster"])
+    # Only ESPN was read for it: nothing of Yahoo's, and no calendar probe.
+    assert all("espn" in url for url in client.fake.urls[probes:])
+    # A second post while the schedule is fresh starts nothing.
+    client.post(
+        "/seasons/100002/snapshot",
+        json={"pages": [{"url": site + "/7", "html": fixture("team4.html")}]},
+    )
+    assert client.app.state.seasons.start_extras("100002") is None
 
 
 def test_a_snapshot_that_does_not_read_is_refused(client):

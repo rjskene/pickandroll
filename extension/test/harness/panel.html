@@ -8,17 +8,19 @@
     <style>body { max-width: 380px; }</style>
   </head>
   <body>
-    <p class="muted" id="harness-note">Loading the side panel against the API… (?draft=&lt;room id&gt;&amp;slot=1)</p>
+    <p class="muted" id="harness-note">Loading the side panel against the API… (?draft=&lt;room id&gt;&amp;slot=1, or ?league=&lt;id&gt;&amp;page=players)</p>
     <script src="/extension/test/harness/fake-chrome.js"></script>
     <script>
       // The extension's side panel, unchanged, in a normal page: the stand-in chrome.* routes its
-      // calls into worker.js, and tab 1's report is built from GET /rooms/{draft}.
+      // calls into worker.js, and tab 1's report is built from GET /rooms/{draft}. With ?league=<id>
+      // tab 1 is that league's page instead (``page``: the path under the league, e.g. players).
       (async () => {
         const q = new URLSearchParams(location.search);
         const API = (q.get("api") || "http://localhost:8000").replace(/\/+$/, "");
         const draft = q.get("draft");
         const slot = Number(q.get("slot") || 1);
         const { chrome, store } = window.makeFakeChrome();
+        window.__store = store;
         Object.defineProperty(window, "chrome", { value: chrome, configurable: true, writable: true });
         window.importScripts = () => {};
         store.local.api = API;
@@ -31,7 +33,12 @@
             document.head.appendChild(s);
           });
         await load("/extension/lib/protocol.js");
+        await load("/extension/lib/league.js");
         await load("/extension/worker.js");
+        if (q.get("league")) {
+          const url = `https://${PickAndRoll.LEAGUE_HOST}/nba/${q.get("league")}${q.get("page") ? "/" + q.get("page") : ""}`;
+          store.session["league_tab:1"] = { ...PickAndRoll.leaguePage(url), url, at: Date.now() };
+        }
         if (draft) {
           const r = await fetch(`${API}/rooms/${encodeURIComponent(draft)}`);
           const room = r.ok ? await r.json() : null;

@@ -4,7 +4,8 @@ Mirrors your Yahoo fantasy basketball draft room into a pickandroll session runn
 in the room reaches the session within a second or two, and pickandroll's plan for your next pick shows in the
 draft page and in a side panel. By default it only mirrors and never clicks anything in Yahoo. When you arm a
 room from the side panel, it drafts pickandroll's pick on each of your turns. Only you can arm it, and a pick
-you make by hand always wins.
+you make by hand always wins. From 0.5.0 it also reads your league's own pages during the season, for the
+season view (below): that is how a private league such as 31822 reaches pickandroll.
 
 Spec and metrics: `docs/YAHOO_SYNC.md`. API side: the `/rooms/{draft_id}` routes (`docs/DESIGN.md`).
 
@@ -79,6 +80,28 @@ The strip, by state:
 Reloading the draft tab is the last resort in a live draft: the room resends its whole history on connect, so
 nothing is lost, but the seat is away for a few seconds.
 
+## League pages: the season view (0.5.0, #98)
+
+A league whose pages answer only when you are signed in (31822 is private) cannot be refreshed by the API. Its
+season view is fed from the pages you open in Chrome instead:
+
+1. pickandroll needs the league's folder, `data/leagues/<id>/settings.json` with `"public": false` and your
+   team id.
+2. Open any of the league's own pages: the league page, a team's page, the players page, the matchup or the
+   transactions (`https://basketball.fantasysports.yahoo.com/nba/<id>/...`). A moment after the page loads,
+   the extension posts it to pickandroll (`POST /seasons/<id>/snapshot`) and the API reads it. A public league's
+   pages post the same way.
+3. The side panel on such a tab shows the page, the season it fed (week, snapshot age), the last post of each
+   page with what the API took from it or why it refused it, **Refresh this page** (reloads the tab) and a link
+   to the league in the web app.
+4. On the players page, **Read every page** opens the first page of the same view and follows its Next 25 link
+   page by page, up to 12 pages (300 players), then stops. **Stop reading** ends it. Without that click the
+   reader never navigates.
+
+After the first post of a private league the API also brings in the week calendar (from the cache any public
+league's refresh writes) and the NBA schedule, so games left show on the roster. A team page for another date
+(`?date=`) is not posted: its lineup is not today's roster.
+
 ## What it reads and sends
 
 - **Reads:** the text frames of the draft room's own WebSocket. The page script adds a listener to the socket
@@ -88,22 +111,27 @@ nothing is lost, but the seat is away for a few seconds.
 - **Sends:** the draft id, your seat, each pick (overall, Yahoo player id, team, arrival time), when each pick
   goes on the clock, and the fidelity events of `docs/YAHOO_SYNC.md` §4. Only to the pickandroll API on
   `localhost`/`127.0.0.1`, and only from the service worker; the Yahoo page itself never calls localhost.
+- **League pages (0.5.0):** the page as Chrome rendered it, less its scripts, styles, frames and form fields, with its URL
+  and the time it was read, to the same API through the service worker. Only the league's own pages under
+  `/nba/<id>/` (above); never the draft client, and nothing on them is clicked.
 - **Never:** cookies, the `?auth=` part of the room URL, anything you type, or any page other than the draft
-  client.
+  client and the league pages above.
 
 ## Files
 
 | file | role |
 |---|---|
-| `manifest.json` | MV3 manifest: content scripts on the draft client only, host permission for localhost only |
+| `manifest.json` | MV3 manifest: content scripts on the draft client and the league pages, host permission for localhost only |
 | `page.js` | page world, `document_start`: watches Yahoo's socket; hosts the timer worker (hidden tabs throttle timers) |
 | `content.js` | isolated world: the room tracker, picks and events to the worker, the in-page strip |
 | `lib/protocol.js` | the room's frame format and snake-draft arithmetic (pure) |
 | `lib/room.js` | `RoomTracker`: picks, the pick on the clock, the sync cursor, how my picks landed (pure) |
 | `lib/drafter.js` | armed mode: one turn at a time, a newer turn supersedes an older one, the queue backstop and the probe (pure, through a page adapter) |
 | `lib/yahoo.js` | Yahoo's player table: row matching by headshot id and name, label checks, the plan's candidates (pure) |
+| `league.js` | isolated world, league pages: posts the page to the worker, follows Next 25 only during an armed read |
+| `lib/league.js` | which league pages are read, the snapshot body, the multi-page read (pure) |
 | `worker.js` | service worker: the only caller of the API; per-tab state for the panel in `chrome.storage.session` |
-| `sidepanel/` | side panel: room state, attach a session, mode, plan, detach |
+| `sidepanel/` | side panel: room state, attach a session, mode, plan, detach; on a league page, its posts and the read |
 | `options/` | API and web app addresses (localhost only), Yahoo players file, the queue probe's round, the search fallback |
 | `test/*.test.js` | unit tests (`node --test extension/test/*.test.js` from the repo root) |
 | `test/harness/` | Tier 1 for the extension: a recorded room played through the real scripts against the API |
@@ -131,4 +159,5 @@ The harness runs in the Claude browser pane or any browser. Start `pickandroll-a
     then reports the room's count, and the API turns the room to mirror at pick 13 (#17).
   - `api=` and `draft=` set the API base and the room id.
 - `http://localhost:8765/extension/test/harness/panel.html?draft=<room id>`: the side panel, unchanged, against a
-  room in the API.
+  room in the API. `?league=<id>&page=players` shows it on that league's page instead (`page` is the path under
+  the league; a Refresh or a read is recorded in `window.__store.tabs`, not done).
