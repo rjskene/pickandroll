@@ -93,7 +93,7 @@ no gaps, no stand-ins. What the night exposed, and the programme that follows fr
 3. **More leagues.** The user expects to join cash leagues: a session per league with its own
    settings (teams, roster slots, categories, keepers, traded picks), the extension keyed by
    draft id as today, league files under `data/leagues/`.
-4. **ADD/DROP.** The in-season waiver engine, `docs/ADD_DROP.md` (design sketch; issue #4).
+4. **ADD/DROP.** The in-season programme (waivers, breakout flag, trades), `docs/ADD_DROP.md`; approved for build 2026-10-21, issues under its tracker.
 
 ## Checks before drafting on it
 
