@@ -53,6 +53,8 @@ class Built:
     adds: dict[str, Any]
     #: Available players in the pool without a projection in the system (no move is valued).
     unprojected: int
+    #: The matchup weeks after this one in the league's calendar (the strategy engine's, #110).
+    weeks_left: int = 0
 
 
 @dataclass(frozen=True)
@@ -253,7 +255,8 @@ def build(season: Season, today: date, data_dir: Path, system: str) -> Built | N
         ],
     }
     unprojected = sum(1 for a in pool if a.player.yahoo_id not in rates)
-    return Built(problem, {"key": system, **info}, horizons, adds, unprojected)
+    weeks_left = sum(1 for w in season.calendar.weeks if w.number > this.number)
+    return Built(problem, {"key": system, **info}, horizons, adds, unprojected, weeks_left)
 
 
 # --------------------------------------------------------------------------- the payloads

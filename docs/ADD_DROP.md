@@ -150,6 +150,12 @@ exact swaps found a better set than the MILP in 0.8 s in total. So:
   the card can say "dropping X instead costs 0.3 categories over the next three weeks".
 - Every number agrees with the Matchup card because it is the same evaluator.
 
+Solver, revisited for the strategy engine (#110, fantasyMASTER's ruling of 2026-10-21): the
+linear program is exact and fast for this week, and on the season side the exact search finds
+the better set more often, which is why both run there. The Strategy card shows whichever set is
+better on its weight's exact value, with its source (see "The strategy engine" below); the
+Moves card keeps the search alone.
+
 Horizons: "this week" is the rest of the current week against the named opponent, with the week
 so far; "three weeks" is weeks 2–4 (the Waivers table's G 3wk span) against the field, the mean
 over the eleven other teams of the per-opponent category odds on their projected rosters (the
@@ -170,6 +176,68 @@ the count is unknown and uses the full limit.
 Waiver claims (resolved 2026-10-21): the first version prices free agents and lists waiver
 players with their clear dates without pricing the claim. Priority cost and FAAB bids come
 later, keyed by the league's waiver setting.
+
+## The strategy engine (#110)
+
+The Moves card answers one horizon at a time. The Strategy card weighs this week against the rest
+of the season on one value, for a weight λ:
+
+    λ · (expected categories this week) + (1 − λ) · (weeks left) · (a later week's)
+
+where a later week is the three weeks ahead averaged: "rest of season, from the three weeks
+ahead", the three-week horizon taken as the stationary later week, times the calendar's weeks
+after this one. Four weights make the frontier: this week alone (λ = 1); this week as much as all
+the rest together (λ = w / (1 + w) for w weeks left); every week alike, the natural weight (λ = ½,
+the season's own total halved); and the rest of the season alone (λ = 0). With no week after
+this one there is only this week's. A points league counts matchups where a categories league
+counts categories. Every value is the move model's evaluator, so the card agrees with the Moves
+and Matchup cards.
+
+The pool is the 30 candidates whose best single swap gains most, the two horizons' rankings
+interleaved so the best on either is in; `pool` (up to 60) is a query parameter. Two solvers
+answer each weight (option A, provisional until the user rules):
+
+- **The exact search**: the move model's search (greedy exact swaps and the replacement pass) on
+  the weighted value, its set then priced by re-solves as on the Moves card. Its sets are the
+  first answer, about two seconds once the moves are valued.
+- **The linear program**: the draft's roster MILP applied to the moves, HiGHS through PuLP.
+  Binaries add a candidate and drop one of my players on one of the days an add arrives (the
+  first day for a free agent, the clear date for a claim), each at most once and on each date no
+  more drops than adds; a drop keeps his games before his date, and each week's adds stay within
+  its limit. This week's starts are a matching of players to slots on each day; a later week's
+  are capped by count at the number of starting slots. Each category's total goes through the
+  draft's piecewise Φ: this week against the named opponent's final, a later week against the
+  field (the other teams' projected weeks from every game their rosters play: the mean, and the
+  spread between teams plus two teams' weekly noise). It starts from the search's set, runs for
+  at most 10 s to a 10⁻⁴ gap, and HiGHS's own status says whether it solved, stopped at the time
+  limit with a set, or found none. It makes no held-slot moves; the search does.
+
+The card recommends whichever set is better on the weight's exact value, and says which: the
+search's, the program's, or both when they found the same adds with the same drops on the same
+days. A program's set that a re-solve beats while it is priced becomes the search's answer, with
+a note. Option B is one switch, `program_only`: the program's set whenever it solves to the gap,
+the search's only when the program hits its limit or finds no set; the default stays on A.
+
+The field curve uses every game of the other teams' rosters rather than their projected starts.
+The program's count cap ignores positions, so it overstates my own starts by the same token; on
+the prize leagues' data an isolated check found the starts curve equal or worse at every point.
+
+At the program's solution each player also gets a first-order value: the curves' slopes there
+times his line over every game he plays, weighted as the program weighs the horizons. The card
+lists the pool's highest outside the set and my lowest not dropped, as a ranking of whom to look
+at next, not a price (the prices are the re-solves').
+
+`GET /seasons/{id}/strategy?system=` returns today's run for the snapshot as far as it got and
+never solves; `POST` with `pool`, `weights`, `lock` (my players never dropped, repeated) and
+`program_only` starts one, replacing an older run of that league and system (`wait=true` blocks
+until it finishes, for tests). A run searches every weight, then solves the programs in a
+background process pool while the searches' sets are priced, then chooses. The card is the rail's
+seventh: it opens on the natural weight with a Solve button and solves nothing on load; the
+frontier plots each weight's set by its gain this week across and over the rest of the season
+up, hollow the search's, solid the program's, half both, the natural weight ringed; a weight's
+tab shows the set with a lock on each drop, the categories before and after, the first-order
+lists and the solvers' seconds and sizes. Like every card it says "recommended", never
+"optimal", and nothing in it acts in Yahoo.
 
 ## The breakout flag
 
@@ -280,7 +348,8 @@ then UI to evaluate available waiver options"). The flow:
    recommended pairs for the week under the add limit), Trade (enter a proposal, read both
    sides' change), and the Flag digest (every flagged player across the league's pool).
    Built in #109 on the draft's rail and keys: the rail numbers the cards 1 Waivers, 2 Moves,
-   3 Trade, 4 Flags, 5 My roster, 6 The league; a digit opens a card in the drawer's top half
+   3 Trade, 4 Flags, 5 My roster, 6 The league, 7 Strategy (#110, "The strategy engine"); a
+   digit opens a card in the drawer's top half
    and shift with a digit in its bottom half (Moves over Flags by default, the split
    draggable), and 1 gives the Waivers board the full width. `]` collapses the drawer to the
    rail, `/` jumps to the Waivers search, `j`/`k` move a highlight through its rows and Enter

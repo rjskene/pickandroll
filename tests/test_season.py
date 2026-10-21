@@ -19,7 +19,14 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from pickandroll.api import SessionStore, create_app, season_flags, season_moves, season_week
+from pickandroll.api import (
+    SessionStore,
+    create_app,
+    season_flags,
+    season_moves,
+    season_strategy,
+    season_week,
+)
 from pickandroll.api import seasons as season_api
 from pickandroll.season import (
     EXTENSION,
@@ -35,6 +42,7 @@ from pickandroll.season import (
     mondays,
 )
 from pickandroll.season import flags as fl
+from pickandroll.season import strategy as st
 from pickandroll.sources import schedule
 from pickandroll.sources.injuries import ESPN_INJURIES_URL
 from pickandroll.sources.yahoo import pages, public
@@ -663,18 +671,26 @@ CSV_HEAD = (
 )
 
 
-def projection_csv(path: Path, names: list[str], games: int = 70, star: str | None = None) -> None:
+def projection_csv(
+    path: Path,
+    names: list[str],
+    games: int = 70,
+    star: str | None = None,
+    scale: dict[str, float] | None = None,
+) -> None:
     """A projection file in the export's CSV layout with made-up numbers: per game 5/10 from the
     field, 1.6/2 at the line, one three, five rebounds, three assists, half a block, a steal and
-    two turnovers (12.6 points); ``star`` makes 10/18 (22.6 points)."""
+    two turnovers (12.6 points); ``star`` makes 10/18 (22.6 points); ``scale`` multiplies a
+    player's whole line."""
     lines = [CSV_HEAD]
     for i, name in enumerate(names):
         first, _, last = name.partition(" ")
         fgm, fga = (10 * games, 18 * games) if name == star else (5 * games, 10 * games)
-        g = games
+        g, x = games, (scale or {}).get(name, 1.0)
         lines.append(
-            f"{i},{last},{first},{g},{30 * g},{fga},{fgm},{2 * g},{1.6 * g:.1f},{g},{3 * g},"
-            f"{g},{4 * g},{3 * g},{0.5 * g:.1f},{g},{2 * g},{2 * g},0,0,0,"
+            f"{i},{last},{first},{g},{30 * g},{fga * x:.1f},{fgm * x:.1f},{2 * g * x:.1f},"
+            f"{1.6 * g * x:.1f},{g * x:.1f},{3 * g * x:.1f},{g * x:.1f},{4 * g * x:.1f},"
+            f"{3 * g * x:.1f},{0.5 * g * x:.1f},{g * x:.1f},{2 * g * x:.1f},{2 * g},0,0,0,"
         )
     path.write_text("\n".join(lines) + "\n")
 
@@ -993,6 +1009,99 @@ def test_the_best_move_comes_from_the_solved_moves_and_never_solves_them(client)
     assert client.get(f"/seasons/{LEAGUE}/best").json()["status"] == "not_solved"
     assert client.post("/seasons/100002/best").status_code == 409
     assert client.get("/seasons/999999/best").status_code == 404
+
+
+# --------------------------------------------------------------------------- strategy (#110)
+def strategy_league(client) -> season_api.SeasonService:
+    """The fixture league refreshed with games every day and twenty available players projected
+    on lines from half to one and a half times the others', its programs solved in process."""
+    client.fake.every_day = True
+    client.post(f"/seasons/{LEAGUE}/refresh", params={"wait": True})
+    v = client.get(f"/seasons/{LEAGUE}").json()
+    mine = set(fixture_names())
+    pool = [a["player"]["name"] for a in v["available"] if a["player"]["name"] not in mine][:20]
+    scale = {name: 0.5 + i / 19 for i, name in enumerate(pool)}
+    projection_csv(
+        client.data_dir / "bbm_projections_2026-10-21.csv",
+        [*mine, *pool],
+        star="Kevin Durant",
+        scale=scale,
+    )
+    service = client.app.state.seasons
+    service.strategy_workers = 1
+    return service
+
+
+def test_the_strategy_route_never_solves_on_a_get_and_a_post_fills_it(client):
+    service = strategy_league(client)
+    url = f"/seasons/{LEAGUE}/strategy"
+    cold = client.get(url).json()
+    assert cold == {"league": LEAGUE, "status": "not_solved", "system": "bbm"}
+    # The look solved nothing, not even the moves the pool is ranked by.
+    assert not service.moves_cache._payloads
+    r = client.post(url, params={"wait": True, "pool": 12, "weights": "week,natural"})
+    assert r.status_code == 200, r.text
+    s = r.json()
+    assert (s["status"], s["error"], s["step"]) == ("solved", None, None)
+    m = client.get(f"/seasons/{LEAGUE}/moves").json()
+    # The pool: the best single moves on each horizon in turn, from the Moves panel's gains.
+    assert s["pool"] == st.pool_of(season_strategy.gains_of(m), 12)
+    assert [pt["key"] for pt in s["points"]] == ["week", "natural"]
+    week, natural = s["points"]
+    assert (week["lambda"], natural["lambda"], natural["natural"]) == (1.0, 0.5, True)
+    assert s["horizons"]["season"]["label"] == "rest of season, from the three weeks ahead"
+    assert s["weeks_left"] == s["horizons"]["season"]["weeks_left"] > 0
+    for key in ("week", "three"):
+        assert s["horizons"][key]["base"] == m["horizons"][key]["base"]
+    for pt in s["points"]:
+        assert pt["stage"] == "done" and pt["source"] in {"search", "milp", "both"}
+        assert pt["milp"]["status"] in {"optimal", "time_limited", "failed"}
+        assert set(pt["milp"]["size"]) == {"variables", "binaries", "constraints"}
+        # Never worse than the search on the weight's own value.
+        assert pt["gain"]["weighted"] >= pt["search"]["gain"]["weighted"] - 1e-9
+        # The rest of the season is a later week times the weeks left (from rounded gains).
+        assert pt["gain"]["season"] == pytest.approx(
+            pt["gain"]["three"] * s["weeks_left"] / 3, abs=1e-3 * s["weeks_left"]
+        )
+        assert set(pt["cats"]) == {"week", "three"}
+        assert all(x["priced"] and x["price_without"] >= -1e-9 for x in pt["moves"])
+    # This week's set is at least the best single move, which the pool always holds.
+    best = max(r["week"]["gain"] for r in m["candidates"].values() if r["week"])
+    assert week["gain"]["week"] >= best - 1e-3 > 0
+    # The look finds the run as it ended; another system's is still cold.
+    assert client.get(url).json() == s
+    assert client.get(url, params={"system": "yahoo"}).json()["status"] == "not_solved"
+
+
+def test_a_locked_player_is_never_dropped_and_option_b_is_one_switch(client):
+    strategy_league(client)
+    url = f"/seasons/{LEAGUE}/strategy"
+    params = {"wait": True, "pool": 10, "weights": "week"}
+    first = client.post(url, params=params).json()
+    drops = {x["drop"] for x in first["points"][0]["moves"]} - {None}
+    assert drops
+    locked = client.post(url, params={**params, "lock": sorted(drops), "program_only": True}).json()
+    assert locked["settings"]["keep"] == sorted(drops)
+    assert locked["settings"]["program_only"] is True
+    pt = locked["points"][0]
+    for block in (pt["moves"], pt["search"]["moves"], pt["milp"]["moves"]):
+        assert not drops & {x["drop"] for x in block}
+    # Option B: the program's set wherever it solved.
+    if pt["milp"]["status"] == "optimal":
+        assert pt["source"] in {"milp", "both"}
+    # A player not on my roster is no lock.
+    other = client.post(url, params={**params, "lock": [999999999]}).json()
+    assert other["settings"]["keep"] == []
+
+
+def test_the_strategy_route_refuses_what_it_cannot_solve(client):
+    strategy_league(client)
+    url = f"/seasons/{LEAGUE}/strategy"
+    assert client.post(url, params={"weights": "week,someday"}).status_code == 422
+    assert client.post(url, params={"pool": 0}).status_code == 422
+    assert client.post(url, params={"pool": 61}).status_code == 422
+    assert client.post("/seasons/100002/strategy").status_code == 409
+    assert client.get("/seasons/999999/strategy").status_code == 404
 
 
 def test_a_solved_set_without_a_move_says_so():

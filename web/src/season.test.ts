@@ -1,8 +1,32 @@
 // Node's own test runner with its built-in type stripping (`npm test`), as format.test.ts.
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import type { AvailableRow, BestMove, FlagConfig, FlagSignal, MoveCandidate, PlayerFlag, Rates, RosterRow, SeasonPlayer, SeasonSummary, TradePlayer, TradeSide } from "./api";
+import type {
+  AvailableRow,
+  BestMove,
+  FlagConfig,
+  FlagSignal,
+  MoveCandidate,
+  PlayerFlag,
+  Rates,
+  RosterRow,
+  SeasonPlayer,
+  SeasonSummary,
+  StrategyPoint,
+  TradePlayer,
+  TradeSide,
+} from "./api";
 import {
+  axisRange,
+  axisTicks,
+  defaultWeight,
+  firstOrderLists,
+  frontierMarks,
+  isSolving,
+  milpLabel,
+  sourceText,
+  strategySettingsChanged,
+  strategyUnits,
   addsLeft,
   addsNote,
   bestGain,
@@ -585,4 +609,107 @@ test("the grid puts most to gain first, then the leagues not solved, no move, an
     gridOrder(seasons, best, "name").map((s) => s.league),
     ["big", "cold", "none", "small", "broken", "unread"],
   );
+});
+
+// ---------------------------------------------------------------- strategy (#110)
+const point = (key: StrategyPoint["key"], over: Partial<StrategyPoint> = {}): StrategyPoint => ({
+  key,
+  label: key,
+  lambda: 0.5,
+  natural: key === "natural",
+  stage: "done",
+  source: "search",
+  gain: { week: 0.2, three: 0.3, season: 2.2, weighted: 1.2 },
+  moves: [],
+  ...over,
+});
+
+test("a strategy run polls while it solves, and opens on the natural weight", () => {
+  assert.equal(isSolving({ status: "solving" }), true);
+  assert.equal(isSolving({ status: "solved" }), false);
+  assert.equal(isSolving(undefined), false);
+  assert.equal(defaultWeight([point("week"), point("natural"), point("season")]), "natural");
+  assert.equal(defaultWeight([point("week")]), "week");
+  assert.equal(defaultWeight([]), null);
+  assert.deepEqual(strategyUnits("categories"), { week: "categories", season: "category-weeks" });
+  assert.deepEqual(strategyUnits("points"), { week: "matchups", season: "matchups" });
+});
+
+test("the program's status reads solved, time-limited, no set or running, never optimal", () => {
+  assert.equal(milpLabel({ status: "optimal" }, 10), "solved");
+  assert.equal(milpLabel({ status: "time_limited" }, 10), "time-limited at 10 s");
+  assert.equal(milpLabel({ status: "failed" }, 10), "no set");
+  assert.equal(milpLabel({ status: "pending" }, 10), "running");
+  assert.equal(milpLabel(null, 10), "running");
+  for (const status of ["optimal", "time_limited", "failed"] as const) {
+    for (const source of ["search", "milp", "both"] as const) {
+      const text = sourceText({ stage: "done", source, ahead: 0.1, milp: { status } }, 10);
+      assert.match(text, /^Recommended/);
+      assert.doesNotMatch(text, /optimal/i);
+    }
+  }
+});
+
+test("a point's source names the solver whose set is shown and by how much it leads", () => {
+  assert.match(sourceText({ stage: "searched" }, 10), /exact search; the linear program is still running/);
+  assert.equal(sourceText({ stage: "done", source: "both", milp: { status: "optimal" } }, 10), "Recommended by both: the exact search and the linear program (solved) found the same set.");
+  assert.equal(sourceText({ stage: "done", source: "milp", ahead: 0.43, milp: { status: "optimal" } }, 10), "Recommended by the linear program (solved), ahead of the search's set by +0.43.");
+  assert.equal(
+    sourceText({ stage: "done", source: "search", ahead: 1.2, milp: { status: "time_limited" } }, 10),
+    "Recommended by the exact search, ahead of the linear program's set (time-limited at 10 s) by +1.20.",
+  );
+  assert.equal(sourceText({ stage: "done", source: "search", ahead: 0, milp: { status: "optimal" } }, 10), "Recommended by the exact search; the linear program (solved) found nothing better.");
+  assert.equal(sourceText({ stage: "done", source: "search", ahead: null, milp: { status: "failed" } }, 10), "Recommended by the exact search; the linear program found no set.");
+  assert.match(sourceText({ stage: "done", source: "search", note: "a re-solve of the linear program's set", ahead: 0.02, milp: { status: "optimal" } }, 10), /exact search, from a re-solve of the linear program's set, ahead of the linear program's set \(solved\) by \+0\.02/);
+});
+
+test("weights whose sets land on the same gains share a frontier mark", () => {
+  const marks = frontierMarks([
+    point("week", { gain: { week: 0.5, three: 0, season: 0, weighted: 0.5 }, source: "both" }),
+    point("even", { gain: { week: 0.5, three: 0, season: 0, weighted: 0.48 } }),
+    point("natural", { stage: "priced", source: undefined }),
+    point("season", { gain: undefined }),
+  ]);
+  assert.deepEqual(
+    marks.map((m) => [m.keys, m.source, m.natural]),
+    [
+      [["week", "even"], "both", false],
+      [["natural"], "pending", true],
+    ],
+  );
+});
+
+test("the frontier's axes always take in no move and tick at round steps", () => {
+  const [lo, hi] = axisRange([0.4, 1.2]);
+  assert.ok(lo < 0 && hi > 1.2);
+  const [nlo, nhi] = axisRange([-0.3, -0.1]);
+  assert.ok(nlo < -0.3 && nhi > 0);
+  assert.deepEqual(axisTicks(0, 1), [0, 0.2, 0.4, 0.6, 0.8, 1]);
+  assert.deepEqual(axisTicks(-0.1, 3.4), [0, 1, 2, 3]);
+  const t = axisTicks(-0.06, 0.62);
+  assert.ok(t.length >= 3 && t.length <= 6, String(t));
+  assert.ok(t.includes(0));
+});
+
+test("the first-order lists rank the pool off the set high and my players not dropped low", () => {
+  const fo = { "1": 0.9, "2": 0.4, "3": 1.5, "10": 0.2, "11": -0.1, "12": 0.6 };
+  const set = [{ add: 3, drop: 11 }];
+  const { adds, mine } = firstOrderLists(fo, [1, 2, 3, 4], [10, 11, 12], set, 2);
+  assert.deepEqual(adds, [
+    [1, 0.9],
+    [2, 0.4],
+  ]);
+  assert.deepEqual(mine, [
+    [10, 0.2],
+    [12, 0.6],
+  ]);
+  assert.deepEqual(firstOrderLists(undefined, [1], [10], []), { adds: [], mine: [] });
+});
+
+test("a changed lock or switch asks for a re-solve; the same locks in any order do not", () => {
+  const run = { pool: 30, weights: ["week" as const], keep: [5, 3], program_only: false };
+  assert.equal(strategySettingsChanged(run, [3, 5], false), false);
+  assert.equal(strategySettingsChanged(run, [3], false), true);
+  assert.equal(strategySettingsChanged(run, [3, 5], true), true);
+  assert.equal(strategySettingsChanged(undefined, [3], true), false);
 });

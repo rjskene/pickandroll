@@ -1069,6 +1069,102 @@ export interface MoveDetail extends MoveRef {
   adds: ({ add: number } & Record<MoveHorizon, number>)[];
 }
 
+// ---------------------------------------------------------------- strategy (#110)
+/** The frontier's weights of this week against the rest of the season. */
+export type StrategyWeightKey = "week" | "even" | "natural" | "season";
+/** Which solver's set a point recommends. */
+export type StrategySource = "search" | "milp" | "both";
+/** HiGHS's own word: solved to the gap, stopped at the time limit with a set, or no set. */
+export type MilpStatus = "optimal" | "time_limited" | "failed";
+
+/** A set's exact gains: this week, the three weeks after it, the rest of the season (a later
+ * week times the weeks left, in category-weeks) and the weight's own value. */
+export interface StrategyGain {
+  week: number;
+  three: number;
+  season: number;
+  weighted: number;
+}
+
+/** One solver's set at a weight. */
+export interface StrategyBlock {
+  seconds: number;
+  moves: MoveRef[];
+  gain: StrategyGain;
+  /** The search's: seconds spent pricing its set by re-solves. */
+  pricing?: number;
+}
+
+export interface MilpBlock extends Partial<StrategyBlock> {
+  status: MilpStatus | "pending";
+  size?: { variables: number; binaries: number; constraints: number };
+  /** The program's own value of its set on the horizons it modelled. */
+  model?: Partial<Record<"week" | "later", number>>;
+}
+
+/** A move of a point's recommended set, priced by re-solves once ``priced``. */
+export interface StrategyMove extends MoveRef {
+  priced: boolean;
+  marginal?: Record<MoveHorizon | "weighted", number>;
+  price_without?: number;
+  price_keep?: number | null;
+  instead_without?: MoveRef[];
+  instead_keep?: MoveRef[] | null;
+}
+
+export interface StrategyPoint {
+  key: StrategyWeightKey;
+  label: string;
+  lambda: number;
+  natural: boolean;
+  /** waiting → searched (the search's set) → priced → done (the program in). */
+  stage: "waiting" | "searched" | "priced" | "done";
+  source?: StrategySource;
+  /** How the shown set came about when it is not simply one solver's. */
+  note?: string | null;
+  /** The shown set's weighted value less the other solver's (null: the same set). */
+  ahead?: number | null;
+  moves?: StrategyMove[];
+  gain?: StrategyGain;
+  cats?: Record<MoveHorizon, { before: Partial<Record<Cat, MoveCategory>>; after: Partial<Record<Cat, MoveCategory>> }>;
+  search?: StrategyBlock;
+  milp?: MilpBlock | null;
+  /** At a program's solution: each pool player's and each of mine's first-order value. */
+  first_order?: Record<string, number>;
+}
+
+export interface StrategySettings {
+  pool: number;
+  weights: StrategyWeightKey[];
+  keep: number[];
+  program_only: boolean;
+}
+
+export interface StrategyPayload {
+  league: string;
+  status: "not_solved" | "solving" | "solved" | "failed" | "cancelled";
+  system: ProjectionSystemInfo & { key: ProjectionSystem; fallback?: string };
+  step?: string | null;
+  error?: string | null;
+  weeks_left?: number;
+  settings?: StrategySettings;
+  pool?: number[];
+  horizons?: Record<MoveHorizon, MoveHorizonInfo> & { season: { label: string; weeks_left: number; base: number | null } };
+  adds?: MoveAdds;
+  points?: StrategyPoint[];
+  time_limit?: number;
+  min_gain?: number;
+  started_at?: string;
+  finished_at?: string | null;
+  timing?: Partial<Record<"moves" | "first" | "done", number>>;
+}
+
+export interface StrategyOptions {
+  lock?: number[];
+  program_only?: boolean;
+  pool?: number;
+}
+
 // ---------------------------------------------------------------- trades (#96)
 /** A proposal between my roster and one other team's, by Yahoo player id. */
 export interface TradeBody {
@@ -1272,6 +1368,15 @@ export interface FlagConfig {
   };
 }
 
+/** The strategy run's query: the system, the locks, the program alone and the pool. */
+export function strategyQuery(system: ProjectionSystem, o: StrategyOptions): string {
+  const q = new URLSearchParams({ system });
+  for (const id of o.lock ?? []) q.append("lock", String(id));
+  if (o.program_only) q.set("program_only", "true");
+  if (o.pool) q.set("pool", String(o.pool));
+  return q.toString();
+}
+
 export const api = {
   /** Every league folder's season (#92), for the landing page. */
   seasons: () => request<SeasonSummary[]>("/seasons"),
@@ -1290,6 +1395,12 @@ export const api = {
     request<MoveDetail>(
       `/seasons/${encodeURIComponent(league)}/moves/${player}?system=${system}${drop == null ? "" : `&drop=${drop}`}`,
     ),
+  /** Today's strategy run (#110), as far as it got; never solves. */
+  strategy: (league: string, system: ProjectionSystem) =>
+    request<StrategyPayload>(`/seasons/${encodeURIComponent(league)}/strategy?system=${system}`),
+  /** Start the strategy run (or find the one with these settings). */
+  solveStrategy: (league: string, system: ProjectionSystem, o: StrategyOptions = {}) =>
+    request<StrategyPayload>(`/seasons/${encodeURIComponent(league)}/strategy?${strategyQuery(system, o)}`, { method: "POST" }),
   /** Both sides of a proposed trade before and after (#96); nothing is sent to Yahoo. */
   trade: (league: string, body: TradeBody) =>
     request<TradePayload>(`/seasons/${encodeURIComponent(league)}/trade`, { method: "POST", body: JSON.stringify(body) }),

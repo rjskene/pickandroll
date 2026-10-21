@@ -23,6 +23,14 @@ Routes:
 ``GET /seasons/{league}/moves/{player}``
     The move drawer: adding ``player`` (for ``?drop=``) per category on both horizons, with
     every other drop and the best other adds.
+``GET /seasons/{league}/strategy``
+    The Strategy panel (#110, ``season_strategy``): today's run of the strategy engine, the
+    recommended set at each weight of this week against the rest of the season, from the exact
+    search and the linear program; never solves (``not_solved`` until a POST).
+``POST /seasons/{league}/strategy``
+    Start that run (``?pool=`` 30 by default, up to 60, ``?weights=``, ``?lock=`` players never
+    dropped, ``?program_only=true`` for the linear program with the search as its fallback only,
+    ``?wait=true`` to answer once it is done).
 ``POST /seasons/{league}/trade``
     The Trade card (#96, ``season_trades``): a proposal between my roster and one other team's
     (``{team, give, get}``, players by Yahoo id), both sides before and after on the moves'
@@ -83,7 +91,7 @@ from ..season import moves as mv
 from ..season import record as season_rec
 from ..sources import schedule as nba_schedule
 from ..sources.yahoo import pages, public
-from . import leagues, season_flags, season_moves, season_record, season_trades
+from . import leagues, season_flags, season_moves, season_record, season_strategy, season_trades
 from .season_week import BBM_NEXT_WEEK, BBM_ROS, BBM_THIS_WEEK, NBA_TZ, week_projection
 
 SEASON_DIR = "season"
@@ -211,6 +219,9 @@ class SeasonService:
         self._guard = threading.Lock()
         self.moves_cache = season_moves.MovesCache()
         self.flags_cache = season_moves.MovesCache()
+        self.strategy_runs = season_strategy.Runs()
+        #: The strategy engine's programs run in the background process pool; 1: in process.
+        self.strategy_workers: int | None = None
 
     def lock(self, league: str) -> threading.Lock:
         with self._guard:
@@ -391,6 +402,50 @@ class SeasonService:
         if payload is None or built is None:
             return {"league": league, "status": "not_solved", "system": system}
         return {"league": league, **season_moves.best_payload(built, payload)}
+
+    # ------------------------------------------------------------------ strategy
+    def strategy(self, league: str, system: str) -> dict[str, Any]:
+        """Today's strategy run on the league's current inputs; never solves."""
+        self._base(league)
+        today = nba_today(self.clock())
+        run = self.strategy_runs.get(league, system, today, self._moves_stamp(league))
+        if run is None:
+            return {"league": league, "status": "not_solved", "system": system}
+        return {"league": league, **run.payload()}
+
+    def solve_strategy(
+        self,
+        league: str,
+        system: str,
+        settings: season_strategy.Settings,
+        wait: bool = False,
+    ) -> dict[str, Any]:
+        """Start the strategy run with ``settings`` (or find it), and its payload so far."""
+        built = self._built(league, system)
+        today = nba_today(self.clock())
+        stamp = self._moves_stamp(league)
+        mine = {k for k, _ in built.problem.roster}
+        settings = season_strategy.Settings(
+            settings.pool,
+            settings.weights,
+            tuple(sorted(k for k in set(settings.keep) if k in mine)),
+            settings.program_only,
+        )
+        run = self.strategy_runs.start(
+            league,
+            system,
+            (today, stamp, settings),
+            lambda: season_strategy.Run(
+                (today, stamp, settings),
+                built,
+                lambda: self.moves(league, system),
+                settings,
+                self.strategy_workers,
+            ),
+        )
+        if wait:
+            run.done.wait()
+        return {"league": league, **run.payload()}
 
     def move_detail(self, league: str, add: int, drop: int | None, system: str) -> dict[str, Any]:
         out = season_moves.detail_payload(self._built(league, system), add, drop)
@@ -1007,6 +1062,39 @@ def register(
     ) -> dict[str, Any]:
         """The move drawer for adding ``player``."""
         return await asyncio.to_thread(service.move_detail, league, player, drop, system)
+
+    lock_q = Query([], description="my players no move may drop")
+
+    @app.get("/seasons/{league}/strategy")
+    async def get_strategy(league: str = league_id, system: str = system_q) -> dict[str, Any]:
+        """Today's strategy run, as far as it got; never solves."""
+        return await asyncio.to_thread(service.strategy, league, system)
+
+    @app.post("/seasons/{league}/strategy")
+    async def post_strategy(
+        league: str = league_id,
+        system: str = system_q,
+        pool: int = Query(
+            season_strategy.POOL,
+            ge=1,
+            le=season_strategy.MAX_POOL,
+            description="the candidates both solvers search, by single-move gain",
+        ),
+        weights: str = Query(
+            ",".join(season_strategy.st.WEIGHT_KEYS),
+            pattern=r"^(week|even|natural|season)(,(week|even|natural|season))*$",
+            description="the frontier's weights, by key",
+        ),
+        lock: list[int] = lock_q,
+        program_only: bool = Query(
+            False, description="the linear program's set, the search only its fallback"
+        ),
+        wait: bool = Query(False, description="answer once the run is done"),
+    ) -> dict[str, Any]:
+        """Start the strategy run (or find the one with these settings)."""
+        keys = [k for k in season_strategy.st.WEIGHT_KEYS if k in weights.split(",")]
+        settings = season_strategy.Settings(pool, tuple(keys), tuple(lock), program_only)
+        return await asyncio.to_thread(service.solve_strategy, league, system, settings, wait)
 
     @app.post("/seasons/{league}/trade")
     async def post_trade(body: TradeBody, league: str = league_id) -> dict[str, Any]:
