@@ -302,7 +302,9 @@ phase 2 on.
    A private league answers 409 with the pages it needs, for the extension to read in the
    user's Chrome. `GET /seasons/{league}/weeks` serves the Weeks block on the league card.
    `scripts/season.py record --all` prints one line per league and exits non-zero only when
-   the API is unreachable.
+   the API is unreachable. The scheduled task `weekly-recorder-monday` runs it every Monday at
+   08:00 on the Mac's clock and opens the private league's needed pages read-only in the
+   user's Chrome (set up 2026-10-21).
 
 Automation (queueing a claim through the extension with the draft's arming rule) is a later,
 opt-in phase and is not in this batch.
