@@ -111,16 +111,53 @@ games.
 
 ## The move model
 
-A move is (add, drop) or (add, nobody) when a slot is open, subject to the weekly add limit.
-One LP: lock my roster minus the drops, candidates are the free agents available by the day the
-claim would process (a free agent now, a waiver player on his clear date), maximise the
-objective above over the horizon, with at most k drops and k adds. The deviation price of
-every alternative add and every alternative drop is a re-solve, as on the board today, so the
-card can say "dropping X instead costs 0.3 categories over the next three weeks".
+A move is (add, drop), (add, nobody) when a slot is open, or (add, X to IL) when an injured
+player can move into an open IL or IL+ slot, subject to the weekly add limit. Candidates are the
+free agents available by the day the claim would process (a free agent now, a waiver player on
+his clear date). A drop paired with a waiver claim takes effect when the claim clears, as
+Yahoo's conditional drop does, so the dropped player keeps his games until then; a drop paired
+with a free-agent add, and a free IL move, take effect on the first day. A move counts against
+the add limit of the week in which it takes effect.
 
-Streaming is the W = 1 case with a games-heavy week: the solver will prefer the free agent with
-four games to the better player with two, which is right for that week and wrong for the next,
-so the card shows the one-week and the three-week answer side by side and the user chooses.
+Solver (resolved 2026-10-21 by fantasyMASTER on fantasyEMISSARY's prototypes): exact search on
+the #93 evaluator, not an LP. This spec first called for one LP per horizon as on the draft
+board. The prototype on a prize league (13 rostered, 213 priced candidates) showed why not. The
+MILP with slot-level starts, a no-benching constraint and the draft's piecewise Φ took about a
+second for the rest of this week and found the exact best swap there, but on the three-week
+horizon with 27 category curves it hit the 30 s limit at every k, and its k = 2 answer was worse
+than its own k = 1. Summing the three weeks into nine curves brought it to 3.5–7 s per solve with
+its objective about 0.05 categories low from the piecewise Φ, and the deviation prices would
+have needed 2k further solves per horizon. Exact evaluation of every (add, drop) pair with
+`project_week` and the odds takes 0.4 s for this week and 2.2 s for three weeks, and greedy
+exact swaps found a better set than the MILP in 0.8 s in total. So:
+
+- k = 1 is exhaustive over every candidate and every drop: exact and global, it feeds the gain
+  columns and the drawer's alternative drops and adds with their prices.
+- The recommended set under the add limit is greedy exact swaps (the best swap, then the best
+  swap given it) followed by a replacement pass that tries every alternative for each chosen add
+  and drop until nothing improves; it stops early when the next add does not pay. It is a strong
+  heuristic, not a proof, so the UI says "recommended", never "optimal", and a test checks it
+  against brute force on a small league where k = 2 can be enumerated.
+- The deviation price of an alternative is the same search re-run with that choice forced, so
+  the card can say "dropping X instead costs 0.3 categories over the next three weeks".
+- Every number agrees with the Matchup card because it is the same evaluator.
+
+Horizons: "this week" is the rest of the current week against the named opponent, with the week
+so far; "three weeks" is weeks 2–4 (the Waivers table's G 3wk span) against the field, the mean
+over the eleven other teams of the per-opponent category odds on their projected rosters (the
+mean of the odds, not the odds against an averaged roster), since the state holds only this
+week's matchups. Every move shows both gains whichever horizon chose it, so a streaming drop's
+long-term cost is visible: the solver prefers the free agent with four games to the better
+player with two, which is right for that week and wrong for the next, and the user chooses.
+
+IL: an active player whose status the slot accepts moves into an open IL or IL+ slot for free,
+which opens a spot without a drop; players already in IL, IL+ or NA slots stay put and are not
+drop candidates. Slot eligibility is a configurable set, a best guess until a league with IL
+slots is seen: IL accepts INJ, O and OFS; IL+ also GTD; NA accepts NA.
+
+Add limit: k is the league's weekly limit minus the adds already made this week, counted from
+the transactions page; when that page does not reach back to the week's start the payload says
+the count is unknown and uses the full limit.
 
 Waiver claims (resolved 2026-10-21): the first version prices free agents and lists waiver
 players with their clear dates without pricing the claim. Priority cost and FAAB bids come
@@ -209,8 +246,9 @@ phase 2 on.
    three weeks on the startable slots; the weekly category spread; per-category win odds
    against a named opponent. UI: the Waivers table with games, projections and ownership
    columns, and the Matchup card.
-3. **Move optimiser and the Moves drawer.** The LP with both horizons, deviation prices for
-   alternative adds and drops, the weekly add limit, positions and IL;
+3. **Move optimiser and the Moves drawer.** Exact search on the #93 evaluator with both
+   horizons (see the move model), deviation prices for alternative adds and drops, the weekly
+   add limit, positions and IL;
    `GET /seasons/{league}/moves`. UI: the gain columns and the move drawer with per-category
    change and alternatives.
 4. **Breakout flag.** The four signals, their scores and levels, the buzz index and past-days
