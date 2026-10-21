@@ -182,6 +182,8 @@ def settings_from_v3(body: Any) -> dict[str, Any] | None:
         "uses_faab": bool(s["uses_faab"]) if s.get("uses_faab") is not None else None,
         "max_weekly_adds": s.get("max_weekly_adds"),
         "trade_end_date": s.get("trade_end_date") or None,
+        "trade_ratify": s.get("trade_ratify_type") or None,
+        "trade_review_days": s.get("trade_reject_time"),
     }
 
 

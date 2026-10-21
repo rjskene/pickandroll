@@ -67,6 +67,7 @@ import {
   type PositionFilter,
 } from "../season";
 import { DRAWER_WIDTH } from "../draft";
+import Trade from "./Trade";
 import { useNow } from "./YahooSync";
 
 /** A league in season (#92), in the draft view's shape: the available players where the board
@@ -92,6 +93,12 @@ export default function SeasonScreen({ league, onBack }: { league: string; onBac
   const [chosen, setSystem] = useState<ProjectionSystem | null>(null);
   const [horizon, setHorizon] = useState<Horizon>("next3");
   const [picked, setPicked] = useState<MoveKey | null>(null);
+  // The drawer's first card: the recommended moves, or the trade evaluator (#96).
+  const [panel, setPanel] = useState<"moves" | "trade">("moves");
+  const pick = (m: MoveKey | null) => {
+    setPicked(m);
+    if (m) setPanel("moves");
+  };
   const system = chosen ?? s?.week_projection.default ?? "bbm";
   const moves = useQuery({
     queryKey: ["moves", league, system, s?.updated_at],
@@ -151,29 +158,42 @@ export default function SeasonScreen({ league, onBack }: { league: string; onBac
         <>
           <div className="main season">
             <div className="board-col">
-              <Waivers s={s} system={system} setSystem={setSystem} horizon={horizon} setHorizon={setHorizon} moves={moves} picked={picked} onPick={setPicked} />
+              <Waivers s={s} system={system} setSystem={setSystem} horizon={horizon} setHorizon={setHorizon} moves={moves} picked={picked} onPick={pick} />
             </div>
             <aside className="drawer" style={{ width: DRAWER_WIDTH }}>
               <Card
-                title={picked ? "MOVE" : "MOVES"}
+                title={picked ? "MOVE" : panel === "trade" ? "TRADE" : "MOVES"}
                 note={moves.data?.system.label}
                 action={
-                  picked && (
+                  picked ? (
                     <button className="link" onClick={() => setPicked(null)} title="Back to the recommended moves">
                       recommended
                     </button>
+                  ) : panel === "trade" ? (
+                    <button className="link" onClick={() => setPanel("moves")} title="Back to the recommended moves">
+                      moves
+                    </button>
+                  ) : (
+                    <button className="link" onClick={() => setPanel("trade")} title="Evaluate a trade with another team: both sides before and after">
+                      trade
+                    </button>
                   )
                 }
-                style={{ flex: "10 1 0%" }}
+                // A trade's two rosters and its result take more room than the moves.
+                style={{ flex: !picked && panel === "trade" ? "18 1 0%" : "10 1 0%" }}
               >
                 {picked ? (
-                  <MoveDrawer league={league} s={s} system={system} m={moves.data} picked={picked} onPick={setPicked} />
+                  <MoveDrawer league={league} s={s} system={system} m={moves.data} picked={picked} onPick={pick} />
                 ) : (
-                  <Moves q={moves} s={s} onPick={setPicked} />
+                  panel === "moves" && <Moves q={moves} s={s} onPick={pick} />
                 )}
+                {/* Kept mounted so a proposal survives a look at the moves. */}
+                <div style={{ display: !picked && panel === "trade" ? "contents" : "none" }}>
+                  <Trade league={league} s={s} system={system} />
+                </div>
               </Card>
               <Card title="FLAGS" note={flagCount(s)} style={{ flex: "7 1 0%" }}>
-                <Flags s={s} m={moves.data} mh={MOVE_HORIZON[horizon]} now={now} onPick={setPicked} />
+                <Flags s={s} m={moves.data} mh={MOVE_HORIZON[horizon]} now={now} onPick={pick} />
               </Card>
               <Card title="MY ROSTER" note={s.my_team?.name} style={{ flex: "8 1 0%" }}>
                 <Roster rows={s.roster} w={s.week_projection} />
