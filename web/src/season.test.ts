@@ -1,9 +1,16 @@
 // Node's own test runner with its built-in type stripping (`npm test`), as format.test.ts.
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import type { AvailableRow, FlagSignal, MoveCandidate, PlayerFlag, Rates, RosterRow, SeasonPlayer, TradePlayer, TradeSide } from "./api";
+import type { AvailableRow, BestMove, FlagSignal, MoveCandidate, PlayerFlag, Rates, RosterRow, SeasonPlayer, SeasonSummary, TradePlayer, TradeSide } from "./api";
 import {
+  addsLeft,
   addsNote,
+  bestGain,
+  bestLine,
+  flagCounts,
+  gridOrder,
+  placeLabel,
+  scoreLabel,
   ageLabel,
   availabilityLabel,
   bestMove,
@@ -439,5 +446,63 @@ test("a held player's return names the drop it forces, the earliest day per play
   assert.equal(
     comebackText([week, three], name),
     "From Oct 28, P7 goes on return; from Nov 2, P3 goes when P5 returns.",
+  );
+});
+
+// ---------------------------------------------------------------- landing grid (#108)
+const card = (league: string, extra: Partial<SeasonSummary> = {}) =>
+  ({ league, name: `League ${league}`, scoring: "categories", num_teams: 12, has_snapshot: true, my_team: null, ...extra }) as SeasonSummary;
+const solved = (league: string, gain: number | null): BestMove => ({
+  league,
+  status: "solved",
+  system: "bbm",
+  horizon: "three",
+  label: "weeks 2-4 against the field",
+  move: gain == null ? null : { add: 1, add_name: "Add One", drop: 2, drop_name: "Drop Two", from: "2026-10-22", gain },
+  moves: gain == null ? 0 : 1,
+  gain: gain ?? 0,
+  min_gain: 0.01,
+});
+
+test("a league card reads its score mine first, its place, its adds and its flags", () => {
+  assert.equal(scoreLabel(card("1", { score: [5, 3] })), "5-3");
+  assert.equal(scoreLabel(card("1", { scoring: "points", score: [93.24, 101.9] })), "93.2–101.9");
+  assert.equal(scoreLabel(card("1", { score: null })), "no score yet");
+  assert.equal(placeLabel(card("1", { my_team: { team_id: 4, name: "Team 4", record: "0-0-0", rank: 2 } })), "2nd of 12");
+  assert.equal(placeLabel(card("1")), "no place yet");
+  assert.equal(addsLeft({ limit: 4, used: 1, complete: true, left: 3 }), "3 of 4 adds left");
+  assert.equal(addsLeft({ limit: 4, used: 0, complete: false, left: 4 }), "at most 4 of 4 adds left");
+  assert.equal(addsLeft({ limit: null, used: 0, complete: true, left: null }), "no add limit");
+  assert.equal(flagCounts({ watch: 11, add: 1 }), "1 add · 11 watch");
+  assert.equal(flagCounts({}), "no flags");
+  assert.equal(flagCounts(null), "");
+});
+
+test("the best move reads as an add for a drop, an add to an open spot, or no move", () => {
+  const b = solved("1", 0.4) as Extract<BestMove, { status: "solved" }>;
+  assert.equal(bestLine(b), "Add Add One for Drop Two");
+  assert.equal(bestLine({ ...b, move: { ...b.move!, drop: null, drop_name: null } }), "Add Add One");
+  assert.equal(bestLine(solved("1", null) as Extract<BestMove, { status: "solved" }>), "no move gains 0.01");
+  assert.equal(bestGain(b), 0.4);
+  assert.equal(bestGain(solved("1", null)), null);
+  assert.equal(bestGain({ league: "1", status: "not_solved", system: "bbm" }), null);
+  assert.equal(bestGain(undefined), null);
+});
+
+test("the grid puts most to gain first, then the leagues not solved, no move, and not read", () => {
+  const seasons = [card("none"), card("cold"), card("small"), card("unread", { has_snapshot: false }), card("big"), card("broken", { error: "no folder" })];
+  const best = new Map<string, BestMove | undefined>([
+    ["none", solved("none", null)],
+    ["small", solved("small", 0.1)],
+    ["big", solved("big", 0.5)],
+    ["cold", { league: "cold", status: "not_solved", system: "bbm" }],
+  ]);
+  assert.deepEqual(
+    gridOrder(seasons, best, "gain").map((s) => s.league),
+    ["big", "small", "cold", "none", "broken", "unread"],
+  );
+  assert.deepEqual(
+    gridOrder(seasons, best, "name").map((s) => s.league),
+    ["big", "cold", "none", "small", "broken", "unread"],
   );
 });

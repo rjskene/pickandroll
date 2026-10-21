@@ -3,6 +3,7 @@
 // gains (#94). No React, so `npm test` runs them under Node.
 import type {
   AvailableRow,
+  BestMove,
   Cat,
   Comeback,
   FlagInputs,
@@ -385,7 +386,7 @@ export function openingDrop(c: MoveCandidate | undefined, h: MoveHorizon): numbe
 
 /** "4 adds a week · 1 used this week · 3 left"; a count from a transactions page that may not
  * reach back to the week's start is a floor ("at least"), so what is left is a ceiling. */
-export function addsNote(a: MoveAdds): string {
+export function addsNote(a: Pick<MoveAdds, "limit" | "used" | "complete" | "left">): string {
   if (a.limit == null) return "no weekly add limit";
   const used = `${a.complete ? "" : "at least "}${a.used} used this week`;
   return `${a.limit} adds a week · ${used} · ${a.complete ? "" : "at most "}${a.left ?? a.limit} left`;
@@ -525,4 +526,65 @@ function round1(x: number): string {
 /** A won week reads good, a lost one bad, a tie neither. */
 export function weekTone(r: WeekResult | null | undefined): "good" | "bad" | "" {
   return r?.outcome === "W" ? "good" : r?.outcome === "L" ? "bad" : "";
+}
+
+// ---------------------------------------------------------------- landing grid (#108)
+/** "5-3", "93.2–101.9": my week's score so far, mine first (categories won, or points). */
+export function scoreLabel(s: Pick<SeasonSummary, "score" | "scoring">): string {
+  if (!s.score) return "no score yet";
+  const [mine, theirs] = s.score;
+  return s.scoring === "points" ? `${round1(mine)}–${round1(theirs)}` : `${mine}-${theirs}`;
+}
+
+/** "4th of 12", my place in the standings. */
+export function placeLabel(s: Pick<SeasonSummary, "my_team" | "num_teams">): string {
+  const rank = s.my_team?.rank;
+  return rank != null ? `${ordinal(rank)} of ${s.num_teams}` : "no place yet";
+}
+
+/** "3 of 4 adds left" ("at most" when the transactions page may not reach the week's start). */
+export function addsLeft(a: SeasonSummary["adds"]): string {
+  if (!a) return "";
+  if (a.limit == null) return "no add limit";
+  return `${a.complete ? "" : "at most "}${a.left ?? a.limit} of ${a.limit} adds left`;
+}
+
+/** "1 add · 11 watch": the pool's flagged players by level, the highest first. */
+export function flagCounts(flags: SeasonSummary["flags"]): string {
+  if (!flags) return "";
+  const parts = (["must-add", "add", "watch"] as const).filter((k) => flags[k]).map((k) => `${flags[k]} ${k}`);
+  return parts.join(" · ") || "no flags";
+}
+
+/** A card's gain for the grid's order: its best move's, null when not solved or none gains. */
+export function bestGain(b: BestMove | undefined): number | null {
+  return b?.status === "solved" && b.move ? b.move.gain : null;
+}
+
+/** "Add Name for Name", or "Add Name" for an open spot. */
+export function bestLine(b: Extract<BestMove, { status: "solved" }>): string {
+  const m = b.move;
+  if (!m) return `no move gains ${b.min_gain}`;
+  const add = m.add_name ?? `player ${m.add}`;
+  return m.drop == null ? `Add ${add}` : `Add ${add} for ${m.drop_name ?? `player ${m.drop}`}`;
+}
+
+export type GridOrder = "gain" | "name";
+
+/** The in-season grid's cards: by most to gain (the leagues not solved yet next, then those
+ * where no move gains, the leagues not read last), or by name; by name within each. */
+export function gridOrder(seasons: SeasonSummary[], best: Map<string, BestMove | undefined>, by: GridOrder): SeasonSummary[] {
+  const title = (s: SeasonSummary) => s.name ?? s.league;
+  const read = (s: SeasonSummary) => !s.error && s.has_snapshot;
+  const group = (s: SeasonSummary) => {
+    if (!read(s)) return 3;
+    const b = best.get(s.league);
+    return b?.status !== "solved" ? 1 : b.move ? 0 : 2;
+  };
+  const gain = (s: SeasonSummary) => bestGain(best.get(s.league)) ?? 0;
+  return [...seasons].sort((a, b) =>
+    by === "name"
+      ? Number(read(b)) - Number(read(a)) || title(a).localeCompare(title(b))
+      : group(a) - group(b) || gain(b) - gain(a) || title(a).localeCompare(title(b)),
+  );
 }

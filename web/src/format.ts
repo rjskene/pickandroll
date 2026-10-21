@@ -274,6 +274,87 @@ export function roomOrder(rooms: RoomSummary[]): RoomSummary[] {
   return [...rooms].sort((a, b) => Number(a.complete) - Number(b.complete) || turnIn(a) - turnIn(b));
 }
 
+// ---------------------------------------------------------------- the landing page (#108)
+/** The Layout control: auto picks the page by the drafts' dates. */
+export type Layout = "auto" | "season" | "draft";
+export const LAYOUTS: { id: Layout; label: string; title: string }[] = [
+  { id: "auto", label: "auto", title: "The draft-season page while a league's draft runs or is less than 14 days away, else the in-season page" },
+  { id: "season", label: "in season", title: "The leagues' weeks and the best move in each; the drafts folded into a line" },
+  { id: "draft", label: "draft season", title: "The drafts ahead with Arm, the live drafts and a new draft; the leagues as chips" },
+];
+/** auto shows the draft-season page while a league's draft is this many days away or less. */
+export const DRAFT_SEASON_DAYS = 14;
+/** A draft's length when its league does not give the rounds and the pick clock. */
+const DRAFT_MS = 4 * 3600_000;
+/** Past every pick on the full clock, the draft is over after this much more. */
+const DRAFT_GRACE_MS = 30 * 60_000;
+
+/** Where a league's draft stands: ahead of its time; started with no room attached; live in an
+ * attached room; finished (its room complete, or past every pick on the full clock); or with no
+ * time in its settings. */
+export type DraftState = "ahead" | "started" | "live" | "finished" | "unscheduled";
+
+export function draftState(l: LeagueSummary, rooms: RoomSummary[], now: number): DraftState {
+  const room = rooms.find((r) => r.draft_id === l.league);
+  if (room) return room.complete ? "finished" : "live";
+  const t = l.draft_time ? Date.parse(l.draft_time) : NaN;
+  if (Number.isNaN(t)) return "unscheduled";
+  if (t > now) return "ahead";
+  const rounds = l.resolved?.rounds;
+  const span = rounds && l.num_teams && l.pick_seconds ? rounds * l.num_teams * l.pick_seconds * 1000 : DRAFT_MS;
+  return now < t + span + DRAFT_GRACE_MS ? "started" : "finished";
+}
+
+/** The drafts the user can still arm: ahead, started with no room, or with no time yet; the
+ * soonest first. A finished draft is never among them. */
+export function draftsAhead(leagues: LeagueSummary[], rooms: RoomSummary[], now: number): LeagueSummary[] {
+  const when = (l: LeagueSummary) => (l.draft_time ? Date.parse(l.draft_time) : Infinity);
+  return leagues.filter((l) => ["ahead", "started", "unscheduled"].includes(draftState(l, rooms, now))).sort((a, b) => when(a) - when(b));
+}
+
+/** The finished drafts, the latest first. */
+export function finishedDrafts(leagues: LeagueSummary[], rooms: RoomSummary[], now: number): LeagueSummary[] {
+  const when = (l: LeagueSummary) => (l.draft_time ? Date.parse(l.draft_time) : 0);
+  return leagues.filter((l) => draftState(l, rooms, now) === "finished").sort((a, b) => when(b) - when(a));
+}
+
+/** The page the Layout control shows: auto is the draft-season page while a room is live or a
+ * league's draft runs or is less than fourteen days away, else the in-season page. */
+export function pageFor(layout: Layout, leagues: LeagueSummary[], rooms: RoomSummary[], now: number): "season" | "draft" {
+  if (layout !== "auto") return layout;
+  const soon = now + DRAFT_SEASON_DAYS * 86_400_000;
+  const near = leagues.some((l) => {
+    const state = draftState(l, rooms, now);
+    return state === "started" || state === "live" || (state === "ahead" && Date.parse(l.draft_time!) < soon);
+  });
+  return near || rooms.some((r) => !r.complete) ? "draft" : "season";
+}
+
+/** "Sat Oct 31 · 8:00 PM", a draft's day and time on this machine's clock. */
+export function draftDay(iso: string | null): string {
+  if (!iso) return "time unknown";
+  const t = Date.parse(iso);
+  if (Number.isNaN(t)) return iso;
+  const d = new Date(t);
+  const day = d.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" }).replace(",", "");
+  return `${day} · ${d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}`;
+}
+
+/** "in 2 days 6 h", "in 3 h", "in 45 min", or "started 20 min ago". */
+export function untilLabel(iso: string | null, now: number): string {
+  const t = iso ? Date.parse(iso) : NaN;
+  if (Number.isNaN(t)) return "no draft time yet";
+  const minutes = Math.round((t - now) / 60_000);
+  const span = (m: number) => {
+    if (m < 60) return `${m} min`;
+    const h = Math.floor(m / 60);
+    if (h < 24) return `${h} h`;
+    const days = Math.floor(h / 24);
+    return `${days} day${days === 1 ? "" : "s"}${h % 24 ? ` ${h % 24} h` : ""}`;
+  };
+  return minutes >= 0 ? `in ${span(minutes)}` : `started ${span(-minutes)} ago`;
+}
+
 /** The league whose draft comes next, among those not yet past. */
 export function nextDraft(leagues: LeagueSummary[], now: number): LeagueSummary | null {
   const upcoming = leagues

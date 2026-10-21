@@ -86,14 +86,56 @@ button.primary kbd { background: rgba(0, 0, 0, 0.18); border-color: rgba(0, 0, 0
 .setup .row > label { min-width: 0; }
 .setup select, .setup input:not([type="checkbox"]):not([type="number"]) { width: 100%; min-width: 0; max-width: 100%; }
 
-/* landing (#74): the live drafts and the leagues beside the start form; one column on a phone,
-   the live drafts first */
-.landing { flex: 1; min-height: 0; overflow: auto; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 520px); gap: 20px; align-items: start; align-content: start; width: 100%; max-width: 1180px; margin: 0 auto; padding: 24px; }
-.landing-live { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; min-width: 0; }
-/* Beside the form a league row wraps its draft time rather than widen the column. */
-.landing-live .leagues { grid-template-columns: minmax(0, 1fr); }
-.landing-live .leagues td:nth-child(3) { white-space: normal; }
-.landing .setup { margin: 0; max-width: none; }
+/* landing (#108): the Layout control over the in-season grid or the draft-season page; one
+   column on a phone */
+.modeswitch { display: inline-flex; align-items: center; gap: 8px; }
+.landing-grid { flex: 1; min-height: 0; overflow: auto; padding: 18px 24px 24px; display: flex; flex-direction: column; gap: 14px; }
+.league-grid { display: flex; flex-direction: column; gap: 14px; }
+.lg-head { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 14px; }
+.lg-head h2 { font-size: 22px; }
+.lg-head label.inline { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; }
+.league-grid .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; }
+.lcard { display: grid; gap: 7px; align-content: start; min-width: 0; padding: 12px 14px; border: 1px solid var(--line-2); border-radius: 10px; background: var(--panel); cursor: pointer; }
+.lcard:hover, .lcard:focus-visible { border-color: var(--muted); outline: none; }
+.lcard.unread { cursor: default; opacity: 0.75; }
+.lcard.unread:hover { border-color: var(--line-2); }
+.lcard .top { display: flex; align-items: baseline; gap: 8px; min-width: 0; font-size: 12px; }
+/* A league's name wraps rather than lose the part that tells two prize leagues apart. */
+.lcard .name { flex: 1; min-width: 0; overflow-wrap: anywhere; font-family: var(--display); font-size: 19px; font-weight: 700; line-height: 1.15; color: #ffffff; letter-spacing: 0.02em; }
+.lcard .top > :last-child { white-space: nowrap; }
+.lcard .meta { font-size: 11px; color: var(--dim); }
+.lcard .score { display: flex; align-items: baseline; flex-wrap: wrap; gap: 10px; }
+.lcard .score .big { font-family: var(--display); font-size: 26px; font-weight: 700; color: #ffffff; line-height: 1; }
+.lcard .facts { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 12px; font-size: 12px; color: var(--muted); }
+.lcard .move { display: flex; align-items: center; gap: 6px; min-height: 26px; padding-top: 6px; border-top: 1px solid var(--line); font-size: 12px; }
+/* In season the drafts fold into one line, and open in a drawer over the grid. */
+.fold { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 14px; padding: 10px 14px; border: 1px solid var(--line-2); border-radius: 10px; background: var(--panel-2); }
+.fold .k { color: var(--text); }
+.shade { position: fixed; inset: 0; z-index: 29; background: rgba(11, 15, 20, 0.55); }
+.slide { position: fixed; top: 0; right: 0; bottom: 0; z-index: 30; width: min(560px, 100vw); display: flex; flex-direction: column; background: var(--panel); border-left: 1px solid var(--line-2); box-shadow: -30px 0 80px rgba(0, 0, 0, 0.6); }
+.slide > header { display: flex; align-items: center; gap: 10px; padding: 14px 18px; border-bottom: 1px solid var(--line); }
+.slide > .body { display: grid; gap: 14px; align-content: start; padding: 14px 18px; overflow: auto; }
+.drawer-section { display: grid; gap: 8px; }
+.finished td { font-size: 12px; }
+/* Draft season: the drafts ahead, live drafts, leagues and sessions beside the New draft form. */
+.season-mode { flex: 1; min-height: 0; overflow: auto; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 480px); gap: 18px; align-items: start; align-content: start; width: 100%; max-width: 1280px; margin: 0 auto; padding: 18px 24px; }
+.draft-col { display: grid; gap: 12px; align-content: start; min-width: 0; }
+.season-mode .setup, .slide .setup { margin: 0; max-width: none; }
+.upcoming { display: grid; gap: 10px; }
+.dcard { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px 12px; align-items: center; padding: 12px 14px; border: 1px solid var(--line-2); border-radius: 10px; background: var(--panel-2); }
+.dcard.soon { border-color: var(--accent); }
+.dcard .when { font-family: var(--display); font-size: 24px; font-weight: 700; color: #ffffff; }
+.dactions { display: grid; gap: 6px; justify-items: end; }
+.chips { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 6px; }
+.chip { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; min-width: 0; padding: 6px 10px; border: 1px solid var(--line); border-radius: 8px; background: transparent; font-size: 12px; text-align: left; }
+.chip:hover { border-color: var(--muted); }
+.chip span:first-child { min-width: 0; overflow-wrap: anywhere; }
+.chip span:last-child { white-space: nowrap; }
+/* The New draft form's inputs in one line, and its strategy behind a disclosure. */
+.chosen { display: flex; align-items: center; gap: 8px; min-width: 0; padding: 6px 10px; border: 1px solid var(--line-2); border-radius: 6px; background: var(--panel-2); font-size: 12px; }
+.chosen > span:nth-child(2) { min-width: 0; overflow-wrap: anywhere; }
+details.more > summary { cursor: pointer; color: var(--accent); font-size: 12px; }
+details.more > .more-body { display: grid; gap: 12px; margin-top: 10px; }
 .live { display: grid; gap: 10px; }
 .room-card { display: grid; gap: 8px; padding: 10px 12px; border: 1px solid var(--line-2); border-radius: 8px; background: var(--panel-2); }
 .room-card.done { opacity: 0.6; }
@@ -102,16 +144,12 @@ button.primary kbd { background: rgba(0, 0, 0, 0.18); border-color: rgba(0, 0, 0
 .room-facts dt { font-family: var(--display); font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); font-size: 11px; }
 .room-facts dd { margin: 0; font-family: var(--display); font-size: 22px; font-weight: 700; color: #ffffff; }
 @media (max-width: 860px) {
-  .landing { grid-template-columns: minmax(0, 1fr); padding: 12px 16px; }
+  .season-mode { grid-template-columns: minmax(0, 1fr); padding: 12px 16px; }
+  .landing-grid { padding: 12px 16px; }
   /* On a phone the top bar wraps, so the turn flag and "switch draft" stay on screen. */
   .topbar { flex-wrap: wrap; gap: 6px 14px; padding: 8px 16px; }
-  /* and a league's row stacks: its id, format and arm control, then the draft time. */
-  .landing-live .leagues table, .landing-live .leagues tbody { display: block; }
-  .landing-live .leagues tr { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 8px; padding: 6px 0; border-bottom: 1px solid var(--line); }
-  .landing-live .leagues td { display: block; padding: 0; border: 0; }
-  .landing-live .leagues td:empty { display: none; }
-  .landing-live .leagues td:last-child { margin-left: auto; }
-  .landing-live .leagues td:nth-child(3) { order: 1; flex-basis: 100%; color: var(--muted); }
+  .dcard { grid-template-columns: minmax(0, 1fr); }
+  .dactions { grid-auto-flow: column; justify-content: start; }
 }
 /* The top bar's count to my next turn (#74); the warning colour on my turn. */
 .turn-flag { font-family: var(--display); font-size: 18px; font-weight: 600; color: var(--muted); white-space: nowrap; }
@@ -398,20 +436,6 @@ tr.tie td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
 .fidelity td:nth-child(2), .fidelity td:nth-child(3) { white-space: normal; min-width: 80px; }
 .seen { display: grid; gap: 4px; padding: 8px 10px; border: 1px solid var(--line-2); border-radius: 8px; background: var(--panel-2); }
 .seen .row { align-items: center; }
-.leagues { display: grid; gap: 6px; padding: 8px 10px; border: 1px solid var(--line-2); border-radius: 8px; background: var(--panel-2); }
-.leagues .row { align-items: baseline; flex-wrap: wrap; }
-.leagues table { width: 100%; border-collapse: collapse; font-size: 12px; }
-.leagues td { padding: 3px 6px 3px 0; vertical-align: middle; }
-.leagues td:last-child { text-align: right; white-space: nowrap; }
-
-/* Leagues in season (#92): the landing page's list and the season view's drawer tables. */
-.seasons { display: grid; gap: 2px; }
-.season-row { display: grid; gap: 3px; padding: 8px 0; border-bottom: 1px solid var(--line); }
-.season-row:last-child { border-bottom: 0; padding-bottom: 0; }
-.season-row .row { align-items: center; }
-.season-row .row .dim { font-size: 11px; }
-.season-row .actions { display: inline-flex; gap: 6px; }
-.season-row .facts { display: flex; flex-wrap: wrap; gap: 2px 14px; font-size: 12px; }
 .season .board-col { padding-right: 12px; }
 /* The draft board pins its last column (the Draft button); the waiver table has none. */
 .season-board th:last-child { right: auto; box-shadow: none; }

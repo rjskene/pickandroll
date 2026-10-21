@@ -241,12 +241,18 @@ Everything here lives inside the pickandroll web app and API, not in scripts or 
 (user, 2026-10-21: "I need this to be inside pickandroll so it has UI to pick which league and
 then UI to evaluate available waiver options"). The flow:
 
-1. **Pick a league.** The landing page, which today lists live draft rooms, gains a Leagues
-   section: one row per league folder under `data/leagues/` with the league name, the week,
-   my record, this week's opponent and when the snapshot was last refreshed. Clicking a row
-   opens the season view at `?league=<id>`; a Refresh control pulls a new snapshot from the
-   public sources (the private league shows the extension's last post and asks for a page
-   visit when it is stale).
+1. **Pick a league.** In season the landing page is a grid (#108): one card per league folder
+   under `data/leagues/` with this week's score (mine first), the opponent, my place, the adds
+   left, the pool's flag counts, the best recommended move with its gain over the three weeks
+   after this one, and how old the snapshot is or why it did not read. The cards sort by most
+   to gain. Clicking a card opens the season view at `?league=<id>`; a refresh link pulls a new
+   snapshot from the public sources (the private league shows the extension's last post). The
+   grid never solves a move on load: each card reads `GET /seasons/{id}/best`, which answers
+   from the moves already solved today, and a league without an answer says "not solved yet"
+   and solves on its button (`POST`). A Layout control in the top bar switches between this
+   page and the draft-season one; auto shows the draft-season page while a league's draft runs
+   or is less than fourteen days away. In season the drafts fold into one line and a Drafts
+   drawer (the drafts ahead with Arm, live and finished drafts, the sessions, a New draft).
 2. **Evaluate the waiver options.** The season view keeps the draft view's shape (rail, board
    column, cards drawer) with the board replaced by the Waivers table: every available player
    (free agents and waivers, with the clear date), his games left this week and over three

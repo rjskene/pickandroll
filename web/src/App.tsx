@@ -7,12 +7,9 @@ import Announcer, { type Announcement } from "./components/Announcer";
 import Board from "./components/Board";
 import Drawer from "./components/Drawer";
 import KeySheet from "./components/KeySheet";
-import Leagues from "./components/Leagues";
-import LiveDrafts from "./components/LiveDrafts";
 import Rail from "./components/Rail";
+import Landing from "./components/Landing";
 import SeasonScreen from "./components/SeasonScreen";
-import Seasons from "./components/Seasons";
-import SessionSetup from "./components/SessionSetup";
 import { RoomFeed, SyncButton } from "./components/YahooSync";
 import { CARD_ICONS, Close } from "./components/icons";
 import { adpIsStandIn, adpLabel, blendLabel, rankLabel, survivalDetail, turnFlag } from "./format";
@@ -309,26 +306,7 @@ export default function App() {
   }, [sessionId, queryClient]);
 
   if (!sessionId && leagueId) return <SeasonScreen league={leagueId} onBack={() => setLeagueId(null)} />;
-  if (!sessionId || !session.data) {
-    return (
-      <main className="shell">
-        <header className="topbar">
-          <div className="wordmark">
-            PICK<span>&amp;</span>ROLL
-          </div>
-        </header>
-        {session.error && <p className="error" style={{ padding: "0 24px" }}>{session.error.message}</p>}
-        <div className="landing">
-          <div className="landing-live">
-            <Seasons onOpen={setLeagueId} />
-            <LiveDrafts onOpen={setSessionId} />
-            <Leagues />
-          </div>
-          <SessionSetup onCreated={(s) => setSessionId(s.id)} onSelect={setSessionId} />
-        </div>
-      </main>
-    );
-  }
+  if (!sessionId || !session.data) return <Landing onOpenLeague={setLeagueId} onOpenSession={setSessionId} error={session.error} />;
   return (
     <DraftProvider
       session={session.data}
