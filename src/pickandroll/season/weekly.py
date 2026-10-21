@@ -13,7 +13,7 @@ a percentage's spread is the binomial spread of the makes given the attempts.
 from __future__ import annotations
 
 import math
-from collections.abc import Collection, Hashable, Iterable, Mapping, Sequence
+from collections.abc import Callable, Collection, Hashable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date
 from functools import lru_cache
@@ -366,36 +366,60 @@ def per_game_values[K: Hashable](
     points league; in a categories league the sum of his per-game z-scores over the ``pool``
     best players (percentages by impact, makes over a pool-average shooter on his attempts;
     turnovers negated), the pool chosen in two passes."""
+    score = line_value(rates, cats, points, pool)
+    return {k: score(r) for k, r in rates.items()}
+
+
+def line_value[K: Hashable](
+    rates: Mapping[K, Rates],
+    cats: Sequence[str],
+    points: Mapping[str, float] | None = None,
+    pool: int = 156,
+) -> Callable[[Rates], float]:
+    """The per-game value of any line against the players of ``rates``, as
+    :func:`per_game_values` values them (the trade margin values a received player's line
+    scaled down this way)."""
     if points:
-        return {
-            k: sum(float(w) * float(r.get(s, 0.0)) for s, w in points.items())
-            for k, r in rates.items()
-        }
+        weights = dict(points)
+        return lambda r: sum(float(w) * float(r.get(s, 0.0)) for s, w in weights.items())
     keys = list(rates)
-    chosen = keys
-    z: dict[K, float] = {}
-    for _ in range(2):
-        cols: dict[str, dict[K, float]] = {}
-        for cat in cats:
-            if cat in PCT:
-                made, att = PCT[cat]
-                m = sum(float(rates[k].get(made, 0.0)) for k in chosen)
-                a = sum(float(rates[k].get(att, 0.0)) for k in chosen)
-                p = m / a if a else 0.0
-                cols[cat] = {
-                    k: float(rates[k].get(made, 0.0)) - p * float(rates[k].get(att, 0.0))
-                    for k in keys
-                }
-            elif cat in COUNTING:
-                sign = -1.0 if cat in LOWER_WINS else 1.0
-                cols[cat] = {k: sign * float(rates[k].get(cat, 0.0)) for k in keys}
-        z = {k: 0.0 for k in keys}
-        for col in cols.values():
-            xs = [col[k] for k in chosen]
-            mean = sum(xs) / len(xs) if xs else 0.0
-            sd = math.sqrt(sum((x - mean) ** 2 for x in xs) / len(xs)) if xs else 0.0
-            sd = sd or 1.0
-            for k in keys:
-                z[k] += (col[k] - mean) / sd
-        chosen = sorted(keys, key=lambda k: -z[k])[:pool]
-    return z
+    first = _z_scorer(rates, keys, cats)
+    z = {k: first(rates[k]) for k in keys}
+    return _z_scorer(rates, sorted(keys, key=lambda k: -z[k])[:pool], cats)
+
+
+def _z_scorer[K: Hashable](
+    rates: Mapping[K, Rates], chosen: Sequence[K], cats: Sequence[str]
+) -> Callable[[Rates], float]:
+    """A line's sum of per-game z-scores over the ``chosen`` players' columns."""
+    cols: list[tuple[Callable[[Rates], float], float, float]] = []
+    for cat in cats:
+        if cat in PCT:
+            made, att = PCT[cat]
+            m = sum(float(rates[k].get(made, 0.0)) for k in chosen)
+            a = sum(float(rates[k].get(att, 0.0)) for k in chosen)
+            p = m / a if a else 0.0
+
+            def col(r: Rates, made: str = made, att: str = att, p: float = p) -> float:
+                return float(r.get(made, 0.0)) - p * float(r.get(att, 0.0))
+
+        elif cat in COUNTING:
+            sign = -1.0 if cat in LOWER_WINS else 1.0
+
+            def col(r: Rates, cat: str = cat, sign: float = sign) -> float:
+                return sign * float(r.get(cat, 0.0))
+
+        else:
+            continue
+        xs = [col(rates[k]) for k in chosen]
+        mean = sum(xs) / len(xs) if xs else 0.0
+        sd = math.sqrt(sum((x - mean) ** 2 for x in xs) / len(xs)) if xs else 0.0
+        cols.append((col, mean, sd or 1.0))
+
+    def score(r: Rates) -> float:
+        z = 0.0
+        for col, mean, sd in cols:
+            z += (col(r) - mean) / sd
+        return z
+
+    return score

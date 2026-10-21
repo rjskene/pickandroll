@@ -22,6 +22,11 @@ Routes:
 ``GET /seasons/{league}/moves/{player}``
     The move drawer: adding ``player`` (for ``?drop=``) per category on both horizons, with
     every other drop and the best other adds.
+``POST /seasons/{league}/trade``
+    The Trade card (#96, ``season_trades``): a proposal between my roster and one other team's
+    (``{team, give, get}``, players by Yahoo id), both sides before and after on the moves'
+    horizons, each resulting roster's slots, the traded players' games and the margin that
+    leaves the trade neutral on my side. Nothing is proposed or sent to Yahoo.
 ``GET /flags/digest``
     The day's breakout flags across every league with a season: each league's flagged players
     with their evidence, and the digest as markdown for a public issue (leagues by id, no team
@@ -66,7 +71,7 @@ from ..season import (
 )
 from ..sources import schedule as nba_schedule
 from ..sources.yahoo import pages, public
-from . import leagues, season_flags, season_moves
+from . import leagues, season_flags, season_moves, season_trades
 from .season_week import BBM_NEXT_WEEK, BBM_ROS, BBM_THIS_WEEK, NBA_TZ, week_projection
 
 SEASON_DIR = "season"
@@ -343,6 +348,30 @@ class SeasonService:
         if out is None:
             raise HTTPException(404, f"no move adds {add} for {drop or 'nobody'} in {league}")
         return out
+
+    # ------------------------------------------------------------------ trades
+    def _trade_league(self, league: str, system: str) -> season_trades.TradeLeague:
+        base, _ = self._base(league)
+        today = nba_today(self.clock())
+        key = (league, system, "trade", today, self._moves_stamp(league))
+
+        def make() -> season_trades.TradeLeague | None:
+            season = Season.from_parts(base, load_parts(self.data_dir, league))
+            return season_trades.build(season, today, self.data_dir, system)
+
+        built = self.moves_cache.get(key, make)
+        if built is None:
+            raise HTTPException(409, f"league {league} has no season of my team to trade in yet")
+        return built
+
+    def trade(self, league: str, body: TradeBody) -> dict[str, Any]:
+        built = self._trade_league(league, body.system)
+        try:
+            return season_trades.evaluate(
+                built, body.team, body.give, body.get, body.effective, nba_today(self.clock())
+            )
+        except season_trades.Refused as exc:
+            raise HTTPException(exc.status, exc.detail) from exc
 
     # ------------------------------------------------------------------ refresh
     def start_refresh(self, league: str) -> RefreshJob:
@@ -690,6 +719,17 @@ class SnapshotBody(BaseModel):
     parts: list[SnapshotPart] = Field(default_factory=list)
 
 
+class TradeBody(BaseModel):
+    #: The counterparty's team id.
+    team: int
+    #: My players who go to them, and theirs who come to me, by Yahoo id.
+    give: list[int] = Field(default_factory=list)
+    get: list[int] = Field(default_factory=list)
+    system: str = Field("bbm", pattern="^(bbm|yahoo)$")
+    #: The day the trade takes effect; by default when Yahoo would process it if accepted today.
+    effective: date | None = None
+
+
 def register(
     app: FastAPI, data_dir: Path, fetch_factory: FetchFactory | None = None
 ) -> SeasonService:
@@ -751,6 +791,11 @@ def register(
     ) -> dict[str, Any]:
         """The move drawer for adding ``player``."""
         return await asyncio.to_thread(service.move_detail, league, player, drop, system)
+
+    @app.post("/seasons/{league}/trade")
+    async def post_trade(body: TradeBody, league: str = league_id) -> dict[str, Any]:
+        """Both sides of a proposed trade before and after. Nothing is sent to Yahoo."""
+        return await asyncio.to_thread(service.trade, league, body)
 
     @app.get("/flags/digest")
     async def get_flag_digest() -> dict[str, Any]:

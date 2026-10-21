@@ -1,7 +1,7 @@
 // Node's own test runner with its built-in type stripping (`npm test`), as format.test.ts.
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import type { AvailableRow, FlagSignal, MoveCandidate, PlayerFlag, Rates, RosterRow, SeasonPlayer } from "./api";
+import type { AvailableRow, FlagSignal, MoveCandidate, PlayerFlag, Rates, RosterRow, SeasonPlayer, TradePlayer, TradeSide } from "./api";
 import {
   addsNote,
   ageLabel,
@@ -10,7 +10,13 @@ import {
   catValue,
   changeLabel,
   dayLabel,
+  effectiveNote,
   gainLabel,
+  marginText,
+  movedGames,
+  movedGamesTitle,
+  rosterNote,
+  tradeVerdict,
   gainTone,
   horizonGames,
   MOVE_HORIZON,
@@ -360,3 +366,54 @@ test("the flags card says what its inputs were read from, and what is missing", 
   assert.equal(flagInputsNote({ error: "KeyError: x" }, now), "no flags: KeyError: x");
   assert.equal(flagInputsNote(undefined, now), "no flag inputs yet");
 });
+
+test("a trade reads as no worse or worse on our model, never as accepted", () => {
+  assert.equal(tradeVerdict(0.42), "no worse on our model");
+  assert.equal(tradeVerdict(-0.004), "no worse on our model");
+  assert.equal(tradeVerdict(-0.2), "worse on our model");
+});
+
+test("the trade margin names the share of the projection, or the end it falls past", () => {
+  const m = { horizon: "three" as const, change: 0.99, max: 3 };
+  assert.equal(marginText({ ...m, neutral: 0.608, reading: "crosses" }), "neutral if what I receive produces 61% of its projection");
+  assert.equal(marginText({ ...m, neutral: 1.185, reading: "crosses" }), "neutral if what I receive produces 119% of its projection");
+  assert.equal(marginText({ ...m, neutral: null, reading: "wins_at_zero" }), "no worse for me even if what I receive produces nothing");
+  assert.equal(marginText({ ...m, neutral: null, reading: "loses_at_max" }), "worse for me even if what I receive produces 300% of its projection");
+  assert.equal(marginText(null), "");
+});
+
+test("the trade's date says whether it is the review's or the one asked", () => {
+  assert.equal(effectiveNote({ effective: "2026-10-23", effective_rule: "review", review_days: 2 }), "takes effect Oct 23 if accepted today, after the league's 2-day review");
+  assert.equal(effectiveNote({ effective: "2026-10-21", effective_rule: "review", review_days: 0 }), "takes effect Oct 21 if accepted today (the league does not review trades)");
+  assert.equal(effectiveNote({ effective: "2026-10-26", effective_rule: "requested", review_days: 2 }), "takes effect Oct 26, the date asked");
+});
+
+test("a side's roster after the trade: fits, opens a spot, or is not valid as entered", () => {
+  const name = (id: number) => `P${id}`;
+  const roster = (over: Partial<TradeSide["roster"]>): TradeSide["roster"] => ({ spots: 13, active: 13, open: 0, valid: true, held_moves: [], drops: [], ...over });
+  assert.equal(rosterNote(roster({}), name), "fits");
+  assert.equal(rosterNote(roster({ active: 12, open: 1 }), name), "1 spot open");
+  const drop = { player: 7, name: "Paul Reed", nba_team: "DET", positions: ["C"], status: null };
+  assert.equal(
+    rosterNote(roster({ active: 14, valid: false, drops: [drop] }), name),
+    "not valid in Yahoo as entered: 14 players for 13 spots, so Paul Reed would go (least missed)",
+  );
+  assert.equal(rosterNote(roster({ held_moves: [{ player: 3, slot: "IL" }] }), name), "fits; P3 to IL");
+});
+
+test("a traded player's games: his old team's until the date, then his new one's", () => {
+  const g = (games: number, started: number) => ({ games, started });
+  const p: TradePlayer = {
+    player: 1,
+    name: "Cooper Flagg",
+    nba_team: "DAL",
+    positions: ["SF"],
+    status: null,
+    from: 10,
+    to: 4,
+    games: { week: { before: g(3, 3), old: g(1, 1), new: g(2, 2) }, three: { before: g(11, 10), old: g(0, 0), new: g(11, 11) } },
+  };
+  assert.equal(movedGames(p, "week"), "1 + 2");
+  assert.equal(movedGamesTitle(p, "week", "Team 10", "me"), "1 games (1 started) for Team 10, then 2 (2 started) for me; 3 games without the trade");
+});
+

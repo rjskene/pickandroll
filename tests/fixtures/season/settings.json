@@ -18,6 +18,8 @@
    "waiver_time": 2,
    "max_weekly_adds": 4,
    "trade_end_date": "2027-03-04",
+   "trade_ratify_type": "yahoo",
+   "trade_reject_time": 2,
    "num_playoff_teams": 6
   }
  }

@@ -18,6 +18,10 @@ import type {
   SeasonTeamRef,
   SeasonView,
   SeasonWeek,
+  TradeMargin,
+  TradePayload,
+  TradePlayer,
+  TradeSide,
   WeekStat,
 } from "./api";
 
@@ -429,3 +433,59 @@ export function flagInputsNote(i: FlagInputs | undefined, now: number): string {
   if (!i.projection) parts.push("no rest-of-season export");
   return parts.join(" · ");
 }
+
+// ---------------------------------------------------------------- trades (#96)
+/** A change this small reads as no change. */
+const EVEN = 0.005;
+
+/** The trade on our model for one side; never whether the other side will accept it. */
+export function tradeVerdict(change: number): string {
+  return change >= -EVEN ? "no worse on our model" : "worse on our model";
+}
+
+/** The margin in words: how much of its projection what I receive can lose (or must gain)
+ * before the trade costs me. */
+export function marginText(m: TradeMargin | null): string {
+  if (!m) return "";
+  if (m.reading === "wins_at_zero") return "no worse for me even if what I receive produces nothing";
+  if (m.reading === "loses_at_max") return `worse for me even if what I receive produces ${Math.round(m.max * 100)}% of its projection`;
+  return `neutral if what I receive produces ${Math.round((m.neutral ?? 0) * 100)}% of its projection`;
+}
+
+/** When the trade takes effect, and on what assumption. */
+export function effectiveNote(t: Pick<TradePayload, "effective" | "effective_rule" | "review_days">): string {
+  const day = dayLabel(t.effective);
+  if (t.effective_rule === "requested") return `takes effect ${day}, the date asked`;
+  if (!t.review_days) return `takes effect ${day} if accepted today (the league does not review trades)`;
+  return `takes effect ${day} if accepted today, after the league's ${t.review_days}-day review`;
+}
+
+/** A side's roster once the trade is processed: whether it fits, what it drops or opens. */
+export function rosterNote(r: TradeSide["roster"], name: (id: number) => string): string {
+  const held = r.held_moves.map((h) => `${name(h.player)} to ${h.slot}`);
+  const parts: string[] = [];
+  if (!r.valid) {
+    parts.push(
+      `not valid in Yahoo as entered: ${r.active} players for ${r.spots} spots, so ${r.drops.map((d) => d.name).join(" and ")} would go (least missed)`,
+    );
+  } else if (r.open > 0) {
+    parts.push(`${r.open} spot${r.open > 1 ? "s" : ""} open`);
+  } else {
+    parts.push("fits");
+  }
+  if (held.length) parts.push(held.join(", "));
+  return parts.join("; ");
+}
+
+/** "1 + 2": a traded player's games on his old team (until the date) and his new one. */
+export function movedGames(p: TradePlayer, h: "week" | "three"): string {
+  const g = p.games[h];
+  return `${g.old.games} + ${g.new.games}`;
+}
+
+/** The hover for a traded player's games: starts as well, and the games as things stand. */
+export function movedGamesTitle(p: TradePlayer, h: "week" | "three", oldName: string, newName: string): string {
+  const g = p.games[h];
+  return `${g.old.games} games (${g.old.started} started) for ${oldName}, then ${g.new.games} (${g.new.started} started) for ${newName}; ${g.before.games} games without the trade`;
+}
+

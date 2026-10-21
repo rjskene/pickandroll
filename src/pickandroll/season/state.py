@@ -81,6 +81,10 @@ class SeasonSettings:
     uses_faab: bool | None = None
     max_weekly_adds: int | None = None
     trade_end_date: date | None = None
+    #: Who reviews an accepted trade (``yahoo``, ``commish``, ``vote`` or ``none``).
+    trade_ratify: str | None = None
+    #: The days an accepted trade waits for review before it is processed.
+    trade_review_days: int | None = None
 
     def to_dict(self) -> dict[str, Any]:
         d = asdict(self)
@@ -111,6 +115,8 @@ class SeasonSettings:
             uses_faab=None if d.get("uses_faab") is None else bool(d["uses_faab"]),
             max_weekly_adds=_opt_int(d.get("max_weekly_adds")),
             trade_end_date=_opt_date(d.get("trade_end_date")),
+            trade_ratify=d.get("trade_ratify"),
+            trade_review_days=_opt_int(d.get("trade_review_days")),
         )
 
     def merged(self, read: Mapping[str, Any]) -> SeasonSettings:

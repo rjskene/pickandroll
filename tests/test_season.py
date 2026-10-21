@@ -227,6 +227,7 @@ def test_v3_settings_and_players():
         True,
         4,
     )
+    assert (read["trade_ratify"], read["trade_review_days"]) == ("yahoo", 2)
     # Yahoo's answer for a league it does not serve publicly.
     assert public.settings_from_v3({"error": {"description": "league not found"}}) is None
     pool = public.players_from_v3(json.loads(fixture("players.json")))
@@ -405,16 +406,21 @@ class FakeYahoo:
 
     def __init__(self) -> None:
         self.urls: list[str] = []
+        self.settings = fixture("settings.json")
+        #: Games on every day of the horizon (the two fixture days in turn), not just those two.
+        self.every_day = False
 
     def __call__(self, url: str) -> str:
         self.urls.append(url)
         if url.startswith(public.PUB_API + "/settings/"):
-            return fixture("settings.json")
+            return self.settings
         if url.startswith(public.PUB_API + "/players/"):
             return fixture("players.json")
         if url.startswith(schedule.SCOREBOARD.split("?")[0]):
             day = re.search(r"dates=(\d{8})", url).group(1)
             path = FIXTURES / f"espn_{day}.json"
+            if not path.exists() and self.every_day:
+                path = FIXTURES / f"espn_2026102{1 + int(day) % 2}.json"
             return path.read_text() if path.exists() else '{"events": []}'
         if url == ESPN_INJURIES_URL:
             return fixture("espn_injuries.json")
@@ -896,6 +902,125 @@ def test_the_move_drawer_details_one_add_with_every_drop(client):
 def test_moves_need_a_season_of_my_team(client):
     assert client.get("/seasons/100002/moves").status_code == 409
     assert client.get("/seasons/999999/moves").status_code == 404
+
+
+# --------------------------------------------------------------------------- trades (#96)
+def trade_league(client) -> dict[str, int]:
+    """The fixture league refreshed with a projection where Cooper Flagg (team 10, my opponent
+    this week) is the one star, and games on every day; every player of teams 4 and 10 by
+    name."""
+    client.fake.every_day = True
+    projection_csv(
+        client.data_dir / "bbm_projections_2026-10-21.csv", fixture_names(), star="Cooper Flagg"
+    )
+    client.post(f"/seasons/{LEAGUE}/refresh", params={"wait": True})
+    v = client.get(f"/seasons/{LEAGUE}").json()
+    return {
+        s["player"]["name"]: s["player"]["yahoo_id"] for t in ("4", "10") for s in v["rosters"][t]
+    }
+
+
+def test_a_trade_with_this_weeks_opponent_scores_both_sides(client):
+    ids = trade_league(client)
+    body = {"team": 10, "give": [ids["Paul Reed"]], "get": [ids["Cooper Flagg"]]}
+    r = client.post(f"/seasons/{LEAGUE}/trade", json=body)
+    assert r.status_code == 200, r.text
+    t = r.json()
+    mine, theirs = t["sides"]["mine"], t["sides"]["theirs"]
+    assert (mine["team"], theirs["team"]) == (4, 10)
+    assert (mine["opponent"], theirs["opponent"]) == (10, 4)
+    for key in ("week", "three"):
+        assert mine["horizons"][key]["change"] > 0 > theirs["horizons"][key]["change"]
+        cats = mine["horizons"][key]["cats"]
+        assert [c["cat"] for c in cats] == CATS
+        assert sum(c["change"] for c in cats) == pytest.approx(
+            mine["horizons"][key]["change"], abs=5e-3
+        )
+    # The same horizons and odds as the moves: my side before the trade is the moves' base.
+    moves = client.get(f"/seasons/{LEAGUE}/moves").json()
+    for key in ("week", "three"):
+        assert mine["horizons"][key]["before"] == pytest.approx(
+            moves["horizons"][key]["base"], abs=2e-3
+        )
+    # Accepted today, processed after the league's two-day review.
+    assert (t["first_day"], t["review_days"]) == ("2026-10-21", 2)
+    assert (t["effective"], t["effective_rule"]) == ("2026-10-23", "review")
+    assert mine["roster"]["valid"] and theirs["roster"]["valid"]
+    flagg = next(p for p in t["players"] if p["name"] == "Cooper Flagg")
+    assert (flagg["from"], flagg["to"]) == (10, 4)
+    g = flagg["games"]["week"]
+    assert g["old"]["games"] + g["new"]["games"] == g["before"]["games"]
+    m = t["margin"]
+    assert m["horizon"] == t["lead"] == "three"
+    assert m["change"] == mine["horizons"]["three"]["change"]
+    # Reed sits on my bench and Flagg leaves a team of my field (three teams with a roster
+    # here): the trade is no worse for me even if Flagg produced nothing.
+    assert m["reading"] == "wins_at_zero" and m["neutral"] is None
+
+
+def test_a_trade_after_this_week_changes_nothing_this_week(client):
+    ids = trade_league(client)
+    body = {
+        "team": 10,
+        "give": [ids["Paul Reed"]],
+        "get": [ids["Cooper Flagg"]],
+        "effective": "2026-10-26",
+    }
+    t = client.post(f"/seasons/{LEAGUE}/trade", json=body).json()
+    assert (t["effective"], t["effective_rule"]) == ("2026-10-26", "requested")
+    for side in ("mine", "theirs"):
+        assert t["sides"][side]["horizons"]["week"]["change"] == 0
+    assert t["sides"]["mine"]["horizons"]["three"]["change"] > 0
+
+
+def test_a_two_for_one_reports_the_full_roster_and_the_freed_spot(client):
+    ids = trade_league(client)
+    two = [ids["Cooper Flagg"], ids["Josh Hart"]]
+    t = client.post(
+        f"/seasons/{LEAGUE}/trade", json={"team": 10, "give": [ids["Paul Reed"]], "get": two}
+    ).json()
+    mine = t["sides"]["mine"]["roster"]
+    assert not mine["valid"] and len(mine["drops"]) == 1 and mine["active"] == 14
+    assert mine["drops"][0]["player"] not in two
+    theirs = t["sides"]["theirs"]["roster"]
+    assert theirs["valid"] and theirs["open"] == 1
+    # The other way round my side frees a spot, and the best free agent for it is priced.
+    back = client.post(
+        f"/seasons/{LEAGUE}/trade",
+        json={
+            "team": 10,
+            "give": [ids["Paul Reed"], ids["Mitchell Robinson"]],
+            "get": [ids["Josh Hart"]],
+        },
+    ).json()
+    assert back["sides"]["mine"]["roster"]["open"] == 1
+    assert back["fill"]["name"] == "Dillon Brooks" and back["fill"]["gain"]["three"] > 0
+
+
+def test_a_trade_that_cannot_be_evaluated_is_refused(client):
+    ids = trade_league(client)
+    reed, flagg = ids["Paul Reed"], ids["Cooper Flagg"]
+
+    def post(body):
+        return client.post(f"/seasons/{LEAGUE}/trade", json=body)
+
+    assert post({"team": 10, "give": [reed], "get": [reed]}).status_code == 400
+    assert post({"team": 10, "give": [flagg], "get": []}).status_code == 400
+    assert post({"team": 10, "give": [reed], "get": [ids["Kevin Durant"]]}).status_code == 400
+    assert post({"team": 4, "give": [reed], "get": []}).status_code == 400
+    assert post({"team": 10}).status_code == 400
+    assert post({"team": 10, "give": [reed], "system": "espn"}).status_code == 422
+    assert client.post("/seasons/100002/trade", json={"team": 1}).status_code == 409
+
+
+def test_a_trade_after_the_deadline_is_refused(client):
+    settings = json.loads(fixture("settings.json"))
+    settings["service"]["settings"]["trade_end_date"] = "2026-10-20"
+    client.fake.settings = json.dumps(settings)
+    ids = trade_league(client)
+    body = {"team": 10, "give": [ids["Paul Reed"]], "get": [ids["Cooper Flagg"]]}
+    r = client.post(f"/seasons/{LEAGUE}/trade", json=body)
+    assert r.status_code == 409 and "2026-10-20" in r.json()["detail"]
 
 
 # --------------------------------------------------------------------------- the breakout flag

@@ -432,6 +432,17 @@ tr.tie td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
 .season-table tr.pick { cursor: pointer; }
 .card p.small { font-size: 12px; }
 .season-board tbody tr:hover td, .season-table tr.pick:hover td { background-image: linear-gradient(rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0.04)); }
+/* The Trade card (#96): the two rosters side by side, a checkbox per player. */
+.trade-with { display: flex; align-items: center; gap: 8px; }
+.trade-with select { flex: 1; min-width: 0; padding: 2px 6px; font-size: 12px; }
+.trade-pick { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.trade-side { margin: 0; padding: 4px 6px; border: 1px solid var(--line); border-radius: 6px; min-width: 0; }
+.trade-side legend { padding: 0 4px; }
+.trade-side label { display: flex; align-items: center; gap: 4px; font-size: 12px; line-height: 20px; cursor: pointer; }
+.trade-side label .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.trade-side label.held .name { color: var(--muted); }
+.trade-go { display: flex; align-items: center; gap: 8px; }
+.trade-go input { padding: 1px 4px; font-size: 12px; }
 @media (max-width: 860px) {
   /* The season view stacks: the drawer's cards under the available table. */
   .main.season { flex-direction: column; overflow: auto; }

@@ -1020,6 +1020,97 @@ export interface MoveDetail extends MoveRef {
   adds: ({ add: number } & Record<MoveHorizon, number>)[];
 }
 
+// ---------------------------------------------------------------- trades (#96)
+/** A proposal between my roster and one other team's, by Yahoo player id. */
+export interface TradeBody {
+  team: number;
+  give: number[];
+  get: number[];
+  system?: ProjectionSystem;
+  /** The day it takes effect; by default when Yahoo would process it if accepted today. */
+  effective?: string | null;
+}
+
+export interface TradePlayerRef {
+  player: number;
+  name: string;
+  nba_team: string | null;
+  positions: string[];
+  status: string | null;
+}
+
+/** A category's expected wins over a horizon, before and after the trade. */
+export interface TradeCategory {
+  cat: Cat;
+  before: number;
+  after: number;
+  change: number;
+}
+
+export interface TradeSide {
+  team: number;
+  name: string;
+  /** This week's named opponent. */
+  opponent: number | null;
+  opponent_name: string | null;
+  /** False when the side's matchup page was not read: its week starts from nothing so far. */
+  so_far_read: boolean;
+  horizons: Record<MoveHorizon, { before: number; after: number; change: number; cats: TradeCategory[] }>;
+  roster: {
+    spots: number;
+    /** Active players after the trade and its held-slot moves, before any drop. */
+    active: number;
+    open: number;
+    /** False when the side must drop someone: the trade as entered is not valid in Yahoo. */
+    valid: boolean;
+    held_moves: HeldMove[];
+    /** The players it misses least, chosen by the evaluator. */
+    drops: TradePlayerRef[];
+  };
+}
+
+export interface TradeGames {
+  games: number;
+  started: number;
+}
+
+export interface TradePlayer extends TradePlayerRef {
+  from: number;
+  to: number;
+  /** On his old team as if no trade, and with it on his old team (until the date) and new one. */
+  games: Record<MoveHorizon, { before: TradeGames; old: TradeGames; new: TradeGames }>;
+}
+
+export type MarginReading = "crosses" | "wins_at_zero" | "loses_at_max";
+
+export interface TradeMargin {
+  horizon: MoveHorizon;
+  /** The share of what I receive's projection that leaves my change at zero. */
+  neutral: number | null;
+  reading: MarginReading;
+  /** My change at the full projection. */
+  change: number;
+  max: number;
+}
+
+export interface TradePayload {
+  trade: { team: number; give: number[]; get: number[] };
+  effective: string;
+  /** "review": accepted today and processed after the league's review; "requested": the body's. */
+  effective_rule: "review" | "requested";
+  review_days: number;
+  first_day: string;
+  system: ProjectionSystemInfo & { key: ProjectionSystem; fallback?: string };
+  horizons: Record<MoveHorizon, { label: string; weeks: number[]; from: string | null }>;
+  /** The horizon the drops, the fill and the margin are taken on. */
+  lead: MoveHorizon;
+  sides: { mine: TradeSide; theirs: TradeSide };
+  players: TradePlayer[];
+  margin: TradeMargin | null;
+  /** The best free agent for a spot the trade frees on my side, valued beside the trade. */
+  fill: (TradePlayerRef & { from: string; gain: Record<MoveHorizon, number> }) | null;
+}
+
 /** The season view: the summary plus the week, standings, rosters, matchup and the pool. */
 export interface SeasonView extends SeasonSummary {
   settings: {
@@ -1087,6 +1178,9 @@ export const api = {
     request<MoveDetail>(
       `/seasons/${encodeURIComponent(league)}/moves/${player}?system=${system}${drop == null ? "" : `&drop=${drop}`}`,
     ),
+  /** Both sides of a proposed trade before and after (#96); nothing is sent to Yahoo. */
+  trade: (league: string, body: TradeBody) =>
+    request<TradePayload>(`/seasons/${encodeURIComponent(league)}/trade`, { method: "POST", body: JSON.stringify(body) }),
   /** Read the league's public sources again, in the background; 409 for a private league. */
   refreshSeason: (league: string) =>
     request<{ refresh: SeasonRefresh; season: SeasonSummary }>(`/seasons/${encodeURIComponent(league)}/refresh`, { method: "POST" }),

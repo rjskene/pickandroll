@@ -20,7 +20,7 @@ from datetime import date
 from pathlib import Path
 from typing import Any
 
-from ..season import Season
+from ..season import Player, Season
 from ..season import moves as mv
 from ..season import weekly as wk
 from . import season_week as sw
@@ -47,12 +47,22 @@ class Built:
     unprojected: int
 
 
-def build(season: Season, today: date, data_dir: Path, system: str) -> Built | None:
-    """The move problem for my team, or None when the season lacks my team or its weeks."""
+@dataclass(frozen=True)
+class Rated:
+    """A system's rates and per-game values for the season's players."""
+
+    rates: dict[int, wk.Rates]
+    value: dict[int, float]
+    info: dict[str, Any]
+    players: dict[int, Player]
+    bbm: sw.System
+    yahoo: sw.System
+
+
+def system_rates(season: Season, data_dir: Path, system: str) -> Rated:
+    """The rates of ``system``: Basketball Monster's, or Yahoo's next seven days for the
+    available players with Basketball Monster's line for everyone else."""
     s = season.settings
-    mine = s.my_team_id
-    if mine is None or not season.calendar or mine not in season.rosters:
-        return None
     players = sw.season_players(season)
     bbm = sw.bbm_system(data_dir, players)
     yahoo = sw.yahoo_system(season)
@@ -72,6 +82,38 @@ def build(season: Season, today: date, data_dir: Path, system: str) -> Built | N
         rates = dict(bbm.rates)
         value = wk.per_game_values(bbm.rates, cats, points)
         info = dict(bbm.info)
+    return Rated(rates, value, info, players, bbm, yahoo)
+
+
+def add_limits(
+    season: Season, team: int, ahead: list[sw.Span], today: date
+) -> tuple[mv.AddsUsed, tuple[mv.AddLimit, ...]]:
+    """The adds ``team`` made this week and each week's add limit, this week's net of them."""
+    limit = season.settings.max_weekly_adds
+    this = ahead[0].week
+    used = mv.adds_used(season.transactions, team, this.start, this.end, today)
+    limits = tuple(
+        mv.AddLimit(
+            sp.week.start,
+            sp.week.end,
+            None if limit is None else (max(0, limit - used.count) if i == 0 else limit),
+        )
+        for i, sp in enumerate(ahead)
+    )
+    return used, limits
+
+
+def build(season: Season, today: date, data_dir: Path, system: str) -> Built | None:
+    """The move problem for my team, or None when the season lacks my team or its weeks."""
+    s = season.settings
+    mine = s.my_team_id
+    if mine is None or not season.calendar or mine not in season.rosters:
+        return None
+    points = dict(s.points) if s.scoring == "points" and s.points else None
+    cats = tuple(s.cats)
+    rated = system_rates(season, data_dir, system)
+    rates, value, info, yahoo = rated.rates, rated.value, rated.info, rated.yahoo
+    players = rated.players
     matchup, read_at = sw.matchup_read(season, mine)
     since = sw.first_day(read_at, today) if matchup is not None else today
     ahead = sw.spans(season, today, data_dir, WEEKS_AHEAD, players, since)
@@ -129,15 +171,7 @@ def build(season: Season, today: date, data_dir: Path, system: str) -> Built | N
     }
     limit = s.max_weekly_adds
     this = ahead[0].week
-    used = mv.adds_used(season.transactions, mine, this.start, this.end, today)
-    limits = tuple(
-        mv.AddLimit(
-            sp.week.start,
-            sp.week.end,
-            None if limit is None else (max(0, limit - used.count) if i == 0 else limit),
-        )
-        for i, sp in enumerate(ahead)
-    )
+    used, limits = add_limits(season, mine, ahead, today)
     problem = mv.MoveProblem(
         roster=roster,
         held=held,
