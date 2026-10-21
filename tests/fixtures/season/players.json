@@ -1,0 +1,936 @@
+{
+"service": {
+"player_list": [
+{
+"id": 4244,
+"fname": "Kevin",
+"lname": "Durant",
+"team_abbr": "HOU",
+"display_pos": "SG,SF,PF",
+"inj": "",
+"inj_full": null,
+"inj_note": null
+},
+{
+"id": 4472,
+"fname": "Brook",
+"lname": "Lopez",
+"team_abbr": "LAC",
+"display_pos": "C",
+"inj": "",
+"inj_full": null,
+"inj_note": null
+},
+{
+"id": 4612,
+"fname": "Stephen",
+"lname": "Curry",
+"team_abbr": "GSW",
+"display_pos": "PG",
+"inj": "P",
+"inj_full": "Probable",
+"inj_note": "Ankle"
+},
+{
+"id": 4622,
+"fname": "Jrue",
+"lname": "Holiday",
+"team_abbr": "POR",
+"display_pos": "PG,SG",
+"inj": "",
+"inj_full": null,
+"inj_note": null
+},
+{
+"id": 4892,
+"fname": "Klay",
+"lname": "Thompson",
+"team_abbr": "MIA",
+"display_pos": "SG,SF",
+"inj": "",
+"inj_full": null,
+"inj_note": null
+},
+{
+"id": 4896,
+"fname": "Kawhi",
+"lname": "Leonard",
+"team_abbr": "TOR",
+"display_pos": "SG,SF,PF",
+"inj": "",
+"inj_full": null,
+"inj_note": null
+},
+{
+"id": 4897,
+"fname": "Nikola",
+"lname": "Vu\u010devi\u0107",
+"team_abbr": "ORL",
+"display_pos": "C",
+"inj": "",
+"inj_full": null,
+"inj_note": null
+},
+{
+"id": 4901,
+"fname": "Tobias",
+"lname": "Harris",
+"team_abbr": "SAS",
+"display_pos": "PF",
+"inj": "O",
+"inj_full": "Out (short-term injury)",
+"inj_note": "Calf"
+},
+{
+"id": 4912,
+"fname": "Jimmy",
+"lname": "Butler III",
+"team_abbr": "GSW",
+"display_pos": "SF,PF",
+"inj": "O",
+"inj_full": "Out (short-term injury)",
+"inj_note": "Knee"
+},
+{
+"id": 5012,
+"fname": "Damian",
+"lname": "Lillard",
+"team_abbr": "POR",
+"display_pos": "PG",
+"inj": "",
+"inj_full": null,
+"inj_note": null
+},
+{
+"id": 5015,
+"fname": "Andre",
+"lname": "Drummond",
+"team_abbr": "NYK",
+"display_pos": "C",
+"inj": "",
+"inj_full": null,
+"inj_note": null
+},
+{
+"id": 5069,
+"fname": "Draymond",
+"lname": "Green",
+"team_abbr": "GSW",
+"display_pos": "PF,C",
+"inj": "",
+"inj_full": null,
+"inj_note": null
+},
+{
+"id": 5294,
+"fname": "Joel",
+"lname": "Embiid",
+"team_abbr": "PHI",
+"display_pos": "C",
+"inj": "",
+"inj_full": null,
+"inj_note": null
+},
+{
+"id": 5295,
+"fname": "Aaron",
+"lname": "Gordon",
+"team_abbr": "DEN",
+"display_pos": "PF,C",
+"inj": "",
+"inj_full": null,
+"inj_note": null
+},
+{
+"id": 5327,
+"fname": "Jusuf",
+"lname": "Nurki\u0107",
+"team_abbr": "UTA",
+"display_pos": "C",
+"inj": "O",
+"inj_full": "Out (short-term injury)",
+"inj_note": "Foot"
+},
+{
+"id": 5350,
+"fname": "Jerami",
+"lname": "Grant",
+"team_abbr": "MEM",
+"display_pos": "SF,PF",
+"inj": "",
+"inj_full": null,
+"inj_note": null
+},
+{
+"id": 5432,
+"fname": "Karl-Anthony",
+"lname": "Towns",
+"team_abbr": "NYK",
+"display_pos": "PF,C",
+"inj": "",
+"inj_full": null,
+"inj_note": null
+},
+{
+"id": 5464,
+"fname": "Kristaps",
+"lname": "Porzi\u0146\u0123is",
+"team_abbr": "GSW",
+"display_pos": "C",
+"inj": "O",
+"inj_full": "Out (short-term injury)",
+"inj_note": "Undisclosed"
+},
+{
+"id": 5471,
+"fname": "Myles",
+"lname": "Turner",
+"team_abbr": "MIL",
+"display_pos": "C",
+"inj": "",
+"inj_full": null,
+"inj_note": null
+},
+{
+"id": 5475,
+"fname": "Kelly",
+"lname": "Oubre Jr.",
+"team_abbr": "IND",
+"display_pos": "SF,PF",
+"inj": "",
+"inj_full": null,
+"inj_note": null
+},
+{
+"id": 5482,
+"fname": "Bobby",
+"lname": "Portis Jr.",
+"team_abbr": "MIA",
+"display_pos": "PF,C",
+"inj": "",
+"inj_full": null,
+"inj_note": null
+},
+{
+"id": 5600,
+"fname": "Ben",
+"lname": "Simmons",
+"team_abbr": "SAC",
+"display_pos": "PG",
+"inj": "O",
+"inj_full": "Out (short-term injury)",
+"inj_note": "Achilles"
+},
+{
+"id": 5602,
+"fname": "Jaylen",
+"lname": "Brown",
+"team_abbr": "PHI",
+"display_pos": "SG,SF,PF",
+"inj": "",
+"inj_full": null,
+"inj_note": null
+},
+{
+"id": 5640,
+"fname": "Jakob",
+"lname": "Poeltl",
+"team_abbr": "TOR",
+"display_pos": "C",
+"inj": "",
+"inj_full": null,
+"inj_note": null
+},
+{
+"id": 5642,
+"fname": "Domantas",
+"lname": "Sabonis",
+"team_abbr": "SAC",
+"display_pos": "PF,C",
+"inj": "",
+"inj_full": null,
+"inj_note": null
+},
+{
+"id": 5754,
+"fname": "Alex",
+"lname": "Caruso",
+"team_abbr": "OKC",
+"display_pos": "SG,SF",
+"inj": "",
+"inj_full": null,
+"inj_note": null
+},
+{
+"id": 5826,
+"fname": "Donovan",
+"lname": "Mitchell",
+"team_abbr": "CLE",
+"display_pos": "PG,SG",
+"inj": "",
+"inj_full": null,
+"inj_note": null
+},
+{
+"id": 5843,
+"fname": "Josh",
+"lname": "Hart",
+"team_abbr": "NYK",
+"display_pos": "SG,SF",
+"inj": "",
+"inj_full": null,
+"inj_note": null
+},
+{
+"id": 5858,
+"fname": "Dillon",
+"lname": "Brooks",
+"team_abbr": "PHX",
+"display_pos": "SF,PF",
+"inj": "",
+"inj_full": null,
+"inj_note": null
+},
+{
+"id": 5958,
+"fname": "Deandre",
+"lname": "Ayton",
+"team_abbr": "WAS",
+"display_pos": "C",
+"inj": "",
+"inj_full": null,
+"inj_note": null
+},
+{
+"id": 6019,
+"fname": "Collin",
+"lname": "Sexton",
+"team_abbr": "LAL",
+"display_pos": "PG,SG",
+"inj": "Q",
+"inj_full": "Questionable",
+"inj_note": "Calf"
+},
+{
+"id": 6021,
+"fname": "Mikal",
+"lname": "Bridges",
+"team_abbr": "NYK",
+"display_pos": "SF,PF",
+"inj": "",
+"inj_full": null,
+"inj_note": null
+},
+{
+"id": 6023,
+"fname": "Miles",
+"lname": "Bridges",
+"team_abbr": "PHX",
+"display_pos": "PF",
+"inj": "",
+"inj_full": null,
+"inj_note": null
+},
+{
+"id": 6025,
+"fname": "Michael",
+"lname": "Porter Jr.",
+"team_abbr": "BKN",
+"display_pos": "SF,PF",
+"inj": "",
+"inj_full": null,
+"inj_note": null
+},
+{
+"id": 6032,
+"fname": "Grayson",
+"lname": "Allen",
+"team_abbr": "CHA",
+"display_pos": "SG,SF",
+"inj": "",
+"inj_full": null,
+"inj_note": null
+},
+{
+"id": 6047,
+"fname": "Mitchell",
+"lname": "Robinson",
+"team_abbr": "BOS",
+"display_pos": "C",
+"inj": "",
+"inj_full": null,
+"inj_note": null
+},
+{
+"id": 6073,
+"fname": "Duncan",
+"lname": "Robinson",
+"team_abbr": "DET",
+"display_pos": "SG,SF",
+"inj": "",
+"inj_full": null,
+"inj_note": null
+},
+{
+"id": 6164,
+"fname": "Ja",
+"lname": "Morant",
+"team_abbr": "POR",
+"display_pos": "PG",
+"inj": "",
+"inj_full": null,
+"inj_note": null
+},
+{
+"id": 6173,
+"fname": "Cameron",
+"lname": "Johnson",
+"team_abbr": "DEN",
+"display_pos": "SF,PF",
+"inj": "",
+"inj_full": null,
+"inj_note": null
+},
+{
+"id": 6174,
+"fname": "P.J.",
+"lname": "Washington",
+"team_abbr": "DAL",
+"display_pos": "PF,C",
+"inj": "",
+"inj_full": null,
+"inj_note": null
+},
+{
+"id": 6205,
+"fname": "Nickeil",
+"lname": "Alexander-Walker",
+"team_abbr": "ATL",
+"display_pos": "PG,SG",
+"inj": "",
+"inj_full": null,
+"inj_note": null
+},
+{
+"id": 6217,
+"fname": "Keldon",
+"lname": "Johnson",
+"team_abbr": "SAS",
+"display_pos": "SF,PF",
+"inj": "",
+"inj_full": null,
+"inj_note": null
+},
+{
+"id": 6218,
+"fname": "Kevin",
+"lname": "Porter Jr.",
+"team_abbr": "MIL",
+"display_pos": "PG,SG",
+"inj": "NA",
+"inj_full": "Not Active",
+"inj_note": null
+},
+{
+"id": 6226,
+"fname": "Daniel",
+"lname": "Gafford",
+"team_abbr": "DAL",
+"display_pos": "C",
+"inj": "",
+"inj_full": null,
+"inj_note": null
+},
+{
+"id": 6355,
+"fname": "Anthony",
+"lname": "Edwards",
+"team_abbr": "MIN",
+"display_pos": "PG,SG",
+"inj": "",
+"inj_full": null,
+"inj_note": null
+},
+{
+"id": 6401,
+"fname": "Deni",
+"lname": "Avdija",
+"team_abbr": "POR",
+"display_pos": "SG,SF,PF",
+"inj": "Q",
+"inj_full": "Questionable",
+"inj_note": "Ankle"
+},
+{
+"id": 6402,
+"fname": "Jalen",
+"lname": "Smith",
+"team_abbr": "CHI",
+"display_pos": "PF,C",
+"inj": "",
+"inj_full": null,
+"inj_note": null
+},
+{
+"id": 6406,
+"fname": "Aaron",
+"lname": "Nesmith",
+"team_abbr": "IND",
+"display_pos": "SG,SF",
+"inj": "O",
+"inj_full": "Out (short-term injury)",
+"inj_note": "Hamstring"
+},
+{
+"id": 6408,
+"fname": "Isaiah",
+"lname": "Stewart",
+"team_abbr": "MEM",
+"display_pos": "PF,C",
+"inj": "D",
+"inj_full": "Doubtful",
+"inj_note": "Ankle"
+},
+{
+"id": 6422,
+"fname": "Desmond",
+"lname": "Bane",
+"team_abbr": "ORL",
+"display_pos": "SG,SF",
+"inj": "",
+"inj_full": null,
+"inj_note": null
+},
+{
+"id": 6433,
+"fname": "Tre",
+"lname": "Jones",
+"team_abbr": "CHI",
+"display_pos": "PG,SG",
+"inj": "",
+"inj_full": null,
+"inj_note": null
+},
+{
+"id": 6450,
+"fname": "Paul",
+"lname": "Reed",
+"team_abbr": "DET",
+"display_pos": "PF,C",
+"inj": "",
+"inj_full": null,
+"inj_note": null
+},
+{
+"id": 6512,
+"fname": "Cade",
+"lname": "Cunningham",
+"team_abbr": "DET",
+"display_pos": "PG,SG",
+"inj": "",
+"inj_full": null,
+"inj_note": null
+},
+{
+"id": 6549,
+"fname": "Jonathan",
+"lname": "Kuminga",
+"team_abbr": "MIN",
+"display_pos": "SF,PF",
+"inj": "",
+"inj_full": null,
+"inj_note": null
+},
+{
+"id": 6564,
+"fname": "Isaiah",
+"lname": "Jackson",
+"team_abbr": "LAC",
+"display_pos": "C",
+"inj": "",
+"inj_full": null,
+"inj_note": null
+},
+{
+"id": 6577,
+"fname": "Herbert",
+"lname": "Jones",
+"team_abbr": "NOP",
+"display_pos": "SG,SF",
+"inj": "",
+"inj_full": null,
+"inj_note": null
+},
+{
+"id": 6596,
+"fname": "Sandro",
+"lname": "Mamukelashvili",
+"team_abbr": "LAL",
+"display_pos": "PF,C",
+"inj": "",
+"inj_full": null,
+"inj_note": null
+},
+{
+"id": 6606,
+"fname": "Austin",
+"lname": "Reaves",
+"team_abbr": "LAL",
+"display_pos": "PG,SG,SF",
+"inj": "",
+"inj_full": null,
+"inj_note": null
+},
+{
+"id": 6693,
+"fname": "Jabari",
+"lname": "Smith Jr.",
+"team_abbr": "HOU",
+"display_pos": "PF,C",
+"inj": "",
+"inj_full": null,
+"inj_note": null
+},
+{
+"id": 6694,
+"fname": "Keegan",
+"lname": "Murray",
+"team_abbr": "SAC",
+"display_pos": "SF,PF",
+"inj": "",
+"inj_full": null,
+"inj_note": null
+},
+{
+"id": 6696,
+"fname": "Bennedict",
+"lname": "Mathurin",
+"team_abbr": "NOP",
+"display_pos": "SG,SF",
+"inj": "",
+"inj_full": null,
+"inj_note": null
+},
+{
+"id": 6703,
+"fname": "Jalen",
+"lname": "Duren",
+"team_abbr": "DET",
+"display_pos": "C",
+"inj": "",
+"inj_full": null,
+"inj_note": null
+},
+{
+"id": 6705,
+"fname": "Mark",
+"lname": "Williams",
+"team_abbr": "PHX",
+"display_pos": "C",
+"inj": "O",
+"inj_full": "Out (short-term injury)",
+"inj_note": "Shoulder"
+},
+{
+"id": 6733,
+"fname": "Moussa",
+"lname": "Diabat\u00e9",
+"team_abbr": "CHA",
+"display_pos": "C",
+"inj": "",
+"inj_full": null,
+"inj_note": null
+},
+{
+"id": 6751,
+"fname": "Collin",
+"lname": "Gillespie",
+"team_abbr": "PHX",
+"display_pos": "PG,SG",
+"inj": "",
+"inj_full": null,
+"inj_note": null
+},
+{
+"id": 6754,
+"fname": "Julian",
+"lname": "Champagnie",
+"team_abbr": "SAS",
+"display_pos": "SF,PF",
+"inj": "",
+"inj_full": null,
+"inj_note": null
+},
+{
+"id": 6757,
+"fname": "Scotty",
+"lname": "Pippen Jr.",
+"team_abbr": "MEM",
+"display_pos": "PG",
+"inj": "",
+"inj_full": null,
+"inj_note": null
+},
+{
+"id": 10048,
+"fname": "Scoot",
+"lname": "Henderson",
+"team_abbr": "POR",
+"display_pos": "PG",
+"inj": "",
+"inj_full": null,
+"inj_note": null
+},
+{
+"id": 10065,
+"fname": "Toumani",
+"lname": "Camara",
+"team_abbr": "POR",
+"display_pos": "SF,PF",
+"inj": "",
+"inj_full": null,
+"inj_note": null
+},
+{
+"id": 10115,
+"fname": "Brandin",
+"lname": "Podziemski",
+"team_abbr": "GSW",
+"display_pos": "PG,SG",
+"inj": "O",
+"inj_full": "Out (short-term injury)",
+"inj_note": "Back"
+},
+{
+"id": 10265,
+"fname": "Matas",
+"lname": "Buzelis",
+"team_abbr": "CHI",
+"display_pos": "SF,PF",
+"inj": "",
+"inj_full": null,
+"inj_note": null
+},
+{
+"id": 10272,
+"fname": "Kyshawn",
+"lname": "George",
+"team_abbr": "WAS",
+"display_pos": "SG,SF,PF",
+"inj": "",
+"inj_full": null,
+"inj_note": null
+},
+{
+"id": 10276,
+"fname": "Jared",
+"lname": "McCain",
+"team_abbr": "OKC",
+"display_pos": "PG,SG",
+"inj": "",
+"inj_full": null,
+"inj_note": null
+},
+{
+"id": 10285,
+"fname": "Donovan",
+"lname": "Clingan",
+"team_abbr": "POR",
+"display_pos": "C",
+"inj": "",
+"inj_full": null,
+"inj_note": null
+},
+{
+"id": 10287,
+"fname": "Zach",
+"lname": "Edey",
+"team_abbr": "MEM",
+"display_pos": "C",
+"inj": "",
+"inj_full": null,
+"inj_note": null
+},
+{
+"id": 10288,
+"fname": "Reed",
+"lname": "Sheppard",
+"team_abbr": "HOU",
+"display_pos": "PG,SG",
+"inj": "",
+"inj_full": null,
+"inj_note": null
+},
+{
+"id": 10290,
+"fname": "Stephon",
+"lname": "Castle",
+"team_abbr": "SAS",
+"display_pos": "PG,SG",
+"inj": "",
+"inj_full": null,
+"inj_note": null
+},
+{
+"id": 10296,
+"fname": "Zaccharie",
+"lname": "Risacher",
+"team_abbr": "DAL",
+"display_pos": "SF,PF",
+"inj": "",
+"inj_full": null,
+"inj_note": null
+},
+{
+"id": 10312,
+"fname": "Pelle",
+"lname": "Larsson",
+"team_abbr": "MIA",
+"display_pos": "SG,SF",
+"inj": "",
+"inj_full": null,
+"inj_note": null
+},
+{
+"id": 10335,
+"fname": "Adem",
+"lname": "Bona",
+"team_abbr": "PHI",
+"display_pos": "C",
+"inj": "",
+"inj_full": null,
+"inj_note": null
+},
+{
+"id": 10444,
+"fname": "Derik",
+"lname": "Queen",
+"team_abbr": "NOP",
+"display_pos": "PF,C",
+"inj": "",
+"inj_full": null,
+"inj_note": null
+},
+{
+"id": 10450,
+"fname": "Kon",
+"lname": "Knueppel",
+"team_abbr": "CHA",
+"display_pos": "SG,SF",
+"inj": "O",
+"inj_full": "Out (short-term injury)",
+"inj_note": "Hamstring"
+},
+{
+"id": 10454,
+"fname": "VJ",
+"lname": "Edgecombe",
+"team_abbr": "PHI",
+"display_pos": "PG,SG",
+"inj": "",
+"inj_full": null,
+"inj_note": null
+},
+{
+"id": 10468,
+"fname": "Cooper",
+"lname": "Flagg",
+"team_abbr": "DAL",
+"display_pos": "SG,SF,PF",
+"inj": "",
+"inj_full": null,
+"inj_note": null
+},
+{
+"id": 10496,
+"fname": "Maxime",
+"lname": "Raynaud",
+"team_abbr": "SAC",
+"display_pos": "C",
+"inj": "O",
+"inj_full": "Out (short-term injury)",
+"inj_note": "Knee"
+},
+{
+"id": 10576,
+"fname": "Brayden",
+"lname": "Burries",
+"team_abbr": "MIL",
+"display_pos": "SG",
+"inj": "",
+"inj_full": null,
+"inj_note": null
+},
+{
+"id": 10579,
+"fname": "Aday",
+"lname": "Mara",
+"team_abbr": "OKC",
+"display_pos": "C",
+"inj": "",
+"inj_full": null,
+"inj_note": null
+},
+{
+"id": 10585,
+"fname": "Keaton",
+"lname": "Wagler",
+"team_abbr": "LAC",
+"display_pos": "SG",
+"inj": "",
+"inj_full": null,
+"inj_note": null
+},
+{
+"id": 10588,
+"fname": "Mikel",
+"lname": "Brown Jr.",
+"team_abbr": "BKN",
+"display_pos": "PG",
+"inj": "",
+"inj_full": null,
+"inj_note": null
+},
+{
+"id": 10590,
+"fname": "Darryn",
+"lname": "Peterson",
+"team_abbr": "UTA",
+"display_pos": "SG",
+"inj": "",
+"inj_full": null,
+"inj_note": null
+},
+{
+"id": 10592,
+"fname": "Cameron",
+"lname": "Boozer",
+"team_abbr": "MEM",
+"display_pos": "PF",
+"inj": "",
+"inj_full": null,
+"inj_note": null
+},
+{
+"id": 10595,
+"fname": "Caleb",
+"lname": "Wilson",
+"team_abbr": "CHI",
+"display_pos": "PF",
+"inj": "",
+"inj_full": null,
+"inj_note": null
+},
+{
+"id": 10599,
+"fname": "AJ",
+"lname": "Dybantsa",
+"team_abbr": "WAS",
+"display_pos": "SF",
+"inj": "O",
+"inj_full": "Out (short-term injury)",
+"inj_note": "Ankle"
+}
+]
+}
+}

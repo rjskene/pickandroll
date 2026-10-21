@@ -63,7 +63,7 @@ from ..projections.zscores import zscores
 from ..sources.bbm import PROJECTION_SUFFIXES, load_bbm
 from ..sources.matching import load_aliases
 from ..sources.yahoo import YahooLeague, build_id_map, load_players_file
-from . import league_curve, leagues, yahoo_room
+from . import league_curve, leagues, seasons, yahoo_room
 from .adjustments import (
     AdjustmentIn,
     adjustment_rows,
@@ -647,7 +647,10 @@ def create_app(
     data_dir: Path | None = None,
     league_factory: LeagueFactory | None = None,
     fidelity_dir: Path | None = None,
+    season_fetch: seasons.FetchFactory | None = None,
 ) -> FastAPI:
+    """The API. ``season_fetch`` makes the fetcher the in-season refresh reads Yahoo's and
+    ESPN's public sources with (tests pass saved pages)."""
     store = store or SessionStore()
     data_dir = data_dir or DATA_DIR
     fidelity_dir = fidelity_dir or data_dir / "fidelity"
@@ -680,6 +683,9 @@ def create_app(
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    # The in-season state of each league (docs/ADD_DROP.md, #92).
+    seasons.register(app, data_dir, season_fetch)
 
     @app.get("/health")
     def health() -> dict[str, str]:
