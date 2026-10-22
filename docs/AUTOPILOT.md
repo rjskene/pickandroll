@@ -80,15 +80,31 @@ from IL if the IL spots are full also."
 
 In the model's terms, carried by #124:
 
-- A rostered player whose rest-of-season value (the season horizon at the natural weight)
-  exceeds the best available add's is **protected**: never a drop candidate on the week horizon,
-  whatever his games this week.
+- A rostered player is **protected** when he is net positive (his rest-of-season per-game value
+  is above the pool's average under the league's scorer), that value exceeds the best available
+  add's by the protection floor (section 6), and he returns this season (an Out For Season player,
+  or one listed INJ, SUSP or NA with no return date, is not protected; an O without a date returns
+  next Monday). Both values are Basketball Monster's rest-of-season line whatever system the solve
+  runs on: Yahoo's values are week projections. A protected player is never a drop candidate on
+  any horizon or strategy weight, whatever his games this week and whatever his absence. The
+  three-week horizon and the season extrapolated from it value a player out three weeks at about
+  nothing, so the rule is a forced keep, not a value term (ruled 2026-10-22).
 - A protected player who is out goes to IL when Yahoo's rule makes him eligible (Out or Out For
   Season; see `docs/ADD_DROP.md`) and a slot is open. The stash is worth it when the freed spot's
-  best add over the horizons beats what he gives after his return; the engine shows both.
-- When the IL is full, the engine ranks the occupants by rest-of-season value net of return and
-  says who leaves it (a drop, or a cleared occupant to activate) and what that frees.
-- An absence shorter than a week keeps a player on the bench, not on waivers.
+  best add over the horizons beats what he gives after his return; the engine shows both. Several
+  eligible players for fewer open slots: the latest to return goes first, roster order breaks ties.
+- A player's value net of return is (his per-game value above an empty line, under the scorer
+  that valued him) times his games from his return to the season's last day, from the schedule
+  where it is read and his team's rate over the read days where it is not. It is shown for every
+  protected player who is out, so a long absence's cost is visible, and it ranks the IL.
+- When the IL is full, the engine says who leaves it, only while an active player is eligible for
+  the slot: a cleared occupant first (activated, the weakest active player dropped), else the
+  occupant with the least value net of return, dropped. The ranking governs on the IL even for a
+  protected occupant, who is marked as such there; the executor still never drops him.
+- An absence shorter than a week keeps a player on the bench, not on waivers: a player who is
+  better than the best available add over the rest of the season and returns within seven days is
+  not a drop candidate for that solve, protected or not. A replacement-level player out for a few
+  days is streamed like any other.
 - Streaming runs among the spots below the waiver replacement level only.
 
 The Waivers table and the Moves card say which players are protected and why; the executor reads
