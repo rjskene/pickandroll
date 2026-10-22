@@ -141,8 +141,23 @@ matchups and some twenty moves a week are noise enough to chase ghosts (the draf
 two weeks and YTD, reverted when worse, and every change, its reason and its result is a comment
 on #127. The master applies the change (user, 2026-10-22: "you apply the rules"); the user can
 override any of it afterwards: the live settings are `data/autopilot/knobs.json`, per league
-where the user wants it, shown and editable on the dashboard, and a knob the user has set is
-frozen until they free it.
+where the user wants it, shown read-only on the Progress view (below), changed by the master in the session when the
+user asks, and a knob the user has set is frozen until they free it.
+
+**The Progress view** (user, 2026-10-22: "a separate module in the pickandroll UI that shows the
+hill climb analysis and progress over time. some charts and graphs and also some narrative around
+what is working and what isn't and what decisions were made and maybe actionable items ... although
+i don't want any user inputs there ... we can handle action items in the session"). A screen of its
+own at `/progress`, read-only: no form, no editable knob, no button beyond navigation. It reads the
+decision log, the scorecard, the knob file and the Monday notes (`data/autopilot/notes/<monday>.md`,
+sections "What is working", "What is not", "Decision", "Action items": the text the hill-climb step
+also posts on the tracker) and shows, per week since the first Monday, pooled and per league:
+expected against actual wins and categories; the moves' projected against realized gain, per move
+and cumulative; the week odds' Brier score and the category odds' hit rate by bucket; the standing
+in each league; and the knob changes as events on every chart (the Monday, the knob, the leagues
+that took it, the verdict two weeks later). The narrative is generated sentences from the numbers
+beside the Monday notes; the newest note's action items are listed at the top, for the session to
+act on. The private league is shown apart. Built after #125 and #126, with phase 3.
 
 ## 7. Phases
 
@@ -156,7 +171,8 @@ frozen until they free it.
   executor for Add and Drop with the idempotence check, the autopilot log and the digest line.
   Filed when phase 1 is in.
 - **Phase 3, the hill-climb step.** The Monday analysis over the scorecard, the knob file, the
-  A/B split, the revert rule, the comment on #127. Filed when phase 0 has scored two weeks.
+  A/B split, the revert rule, the comment on #127. The Progress view of
+  section 6, the Monday note it renders. Filed when phase 0 has scored two weeks.
 
 ## 8. What is never committed
 
@@ -173,3 +189,6 @@ never a Basketball Monster number.
   The strategy rule of section 4.
 - 2026-10-22, later: no FAAB ceiling. Every public league is armed in advance; only the private
   league is excluded.
+- 2026-10-22, evening: the hill-climb gets a read-only Progress view of its own (section 6):
+  charts, narrative, decisions and action items, no inputs; action items are handled in the
+  session.
