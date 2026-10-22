@@ -10,6 +10,7 @@
     python scripts/draft_day.py projections       # import this morning's Basketball Monster export (#75)
     python scripts/draft_day.py refit 15953       # refit the survival table from earlier drafts (#77)
     python scripts/draft_day.py past-days --days 7  # import a past-week rankings export (#95)
+    python scripts/draft_day.py week --this       # import this week's or next week's export (#117)
 
 The draft-prep commands (#75-#77) live one module each under scripts/draft_prep/ and are registered
 in ``PREP_MODULES``; ``status`` and ``run`` call their hooks (scripts/draft_prep/__init__.py).
@@ -70,6 +71,7 @@ PREP_MODULES = (
     "refit",  # 77
     "news",  # 76
     "past_days",  # 95
+    "week",  # 117
 )
 #: By command: a module's name with dashes (``past-days``).
 PREP = {
@@ -578,7 +580,15 @@ def main() -> int:
         help="; ".join(m.HELP for m in PREP.values()),
     )
     parser.add_argument("league", nargs="?", help="the Yahoo league id (data/leagues/<id>/)")
-    parser.add_argument("--start", action="store_true", help="servers: start what is down")
+    parser.add_argument(
+        "--start",
+        nargs="?",
+        const=True,
+        default=False,
+        metavar="D",
+        help="servers: start what is down; week: the span's first day (YYYY-MM-DD) instead of "
+        "today or next Monday",
+    )
     parser.add_argument(
         "--wait", type=float, help="attach: seconds to wait for the tab (default: start + 15 min)"
     )
@@ -616,7 +626,7 @@ def main() -> int:
             status(league, args.accept_move)
             return OK
         if args.command == "servers":
-            return servers(start=args.start)
+            return servers(start=args.start is True)
         if args.command == "refresh":
             return refresh(league)
         if args.command == "attach":

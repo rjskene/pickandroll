@@ -366,6 +366,28 @@ another tab, which it never touched.
 The export holds over 500 players with games. The Excel button gives the `.xls` layout, which `projections` does
 not read.
 
+The weekly page feeds the season view's week projection (`draft_day.py week`, #117), one export for the rest of
+this week and one for next week:
+
+1. Open `https://basketballmonster.com/weeklyprojections.aspx` in a new tab, signed in as above.
+2. Click **Remaining Week** (`[name=RESTWEEK]`: the calendars become today through Sunday) or **Next Week**
+   (`[name=NEXTWEEK]`: Monday through Sunday of next week) and wait for the calendars. These two buttons only set
+   the dates and may be clicked from JavaScript.
+3. Set the player select (`#PlayerFilterControl`) to **All Players**, and check it again after switching to the
+   other week. Click **Refresh** and wait for the table.
+4. Click **Export to Excel** as a real click, for the reason above. Chrome saves `~/Downloads/WeeklyProjections.xls`
+   (later ones ` (1)`, ` (2)`). Check that a new file landed.
+5. Run `.venv/bin/python scripts/draft_day.py week --this` (or `--next`) straight after its export: the import
+   takes the newest download. `--export FILE` takes another file, and `--start D` and `--end D` set the span's
+   dates when the export's calendars were set by hand.
+
+The export lists every player, about 520, with 0 games for those without a game in the span. The import prints one
+line: saved as `data/bbm_week_this_<UTC stamp>.xls` or `bbm_week_next_<UTC stamp>.xls` with its sidecar, not saved
+(identical to the newest saved file of its kind, for the same span), or refused with the reason: a player with more
+games than the span has days (a season export), under 300 players (Only Top Players), a this-week export not made
+today or a next-week one not made in the week before (an older download), or a file identical to the other kind's
+saved export (a download that did not land).
+
 ### The headless refresh (`--bbm-fetch`, off by default)
 
 `scripts/bbm_fetch.py` drives Basketball Monster through its own browser profile, `data/bbm-profile`. The user

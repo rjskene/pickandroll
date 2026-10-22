@@ -56,7 +56,7 @@ leagues, and Yahoo serves everything the engine needs without a sign-in:
 | free agents and waivers with clear dates, percent rostered and its change | the public players page `/nba/<id>/players?status=A&pos=P&stat1=R_O&sort=R_PO&sdir=1&count=<offset>` | checked in #92 on 258901: the rows are server-rendered, 25 a page; the Research view `R_O` carries roster status with the waiver date, percent rostered and started with the day's change, and Yahoo-wide adds, drops and trades. The same public page serves the stat views too, so a public league needs no sign-in for them: `S_PS7` and `S_PS14` (Yahoo's projections for the next 7 and 14 days), `S_PSR` (the remaining games), `S_L7`, `S_L14`, `S_L30` (last 7, 14 and 30 days, totals and averages) and the standard deviations (`S_SDL14` and the like) |
 | the league's own adds and drops | the public `/nba/<id>/transactions` page | |
 | Yahoo-wide adds, drops and trades per player | the public buzz index `/nba/buzzindex` | the "surge in adds" signal for the breakout flag |
-| this week's and next week's per-game projections with games, back-to-backs, minutes, injury, Yahoo ownership | Basketball Monster weekly export (`sources/bbm/fetch.py::weekly`, `this_week=True` for the rest of this week; `parse.py` already normalises it: `games`, `quality_games`, `back_to_backs`, `minutes`, `yahoo_owned_pct`, `bbm_adv_pct`, `injury`) | exported from the user's signed-in Chrome as the season export is, never with typed credentials |
+| this week's and next week's per-game projections with games, back-to-backs, minutes, injury, Yahoo ownership | Basketball Monster weekly export (imported with `scripts/draft_day.py week --this \| --next`, or `sources/bbm/fetch.py::weekly`, `this_week=True` for the rest of this week; `parse.py` already normalises it: `games`, `quality_games`, `back_to_backs`, `minutes`, `yahoo_owned_pct`, `bbm_adv_pct`, `injury`) | exported from the user's signed-in Chrome as the season export is, never with typed credentials |
 | rest-of-season per-game projections | Basketball Monster season export, per-game | refreshed daily in season |
 | recent production (minutes and rates over the last 7 or 14 days) | Basketball Monster past-days rankings (`fetch.py::rankings_past_days`) | the "minutes trend" signal |
 | NBA schedule by team and date | ESPN's public scoreboard JSON (`site.api.espn.com/.../nba/scoreboard?dates=YYYYMMDD`), one call per date, cached under `data/schedule/` | NBA's own cdn file answers 403 |
@@ -82,9 +82,16 @@ games.
   does a GTD whom Yahoo's projection gives no games; D, Q and P keep their games. The row shows
   the status. A Basketball Monster weekly export that covers the week overrides the rule with
   its games column, and the player plays the last n game days of the week. The exports are
-  `bbm_week_this_*` (the rest of this week) and `bbm_week_next_*`, each with the `.json`
-  sidecar `sources/bbm/fetch.py` writes (`start`, `end`); a this-week export without one counts
-  only on the day it was made.
+  `bbm_week_this_*` (the rest of this week) and `bbm_week_next_*`, each with a `.json` sidecar
+  (`start`, `end`) that `scripts/draft_day.py week --this | --next` writes when it imports the
+  browser's download (#117), as `sources/bbm/fetch.py` does for its own; a this-week export
+  without one counts only on the day it was made. An export counts only when its sidecar's
+  dates are exactly the week's first day and last day. So a morning export of the rest of this
+  week is not counted once the matchup page was read at or after 19:00 ET that day: the week
+  then projects from tomorrow, while the export's games include today's, and the schedule rule
+  gives the games until the next morning's export. A matchup week that does not end on the
+  coming Sunday needs the export's calendars set to it and the same dates given with `--start`
+  and `--end`.
 - **Starters.** Each day the players with a game fill the startable slots (the roster less BN,
   IL, IL+ and NA), best first by the chosen system's per-game value (a z-sum over the league's
   categories, or fantasy points). Augmenting paths let a starter move to another slot to make
@@ -421,8 +428,8 @@ the prize leagues is week 1 (`current_week` 1 on 2026-10-21, season end 2027-04-
   posted by a scheduled session the way the draft scorecards were; a desktop notification can
   be added once the digest has run for a week. Set up 2026-10-21 as the scheduled task `breakout-digest-daily`: every day at 05:00
   on the Mac's clock it makes the day's Basketball Monster exports through the user's signed-in
-  Chrome and imports them (rest of season, past 7 and 14 days; this week and next week once the
-  `week` import exists), refreshes the public leagues on the running API, reads `GET /flags/digest`
+  Chrome and imports them (rest of season with `draft_day.py projections`, this week and next
+  week with `week --this` and `week --next`, past 7 and 14 days with `past-days`), refreshes the public leagues on the running API, reads `GET /flags/digest`
   and posts the markdown field on #99. The export buttons are clicked as real clicks, never from
   JavaScript: Chrome silently blocks script-triggered downloads after the first one of a session,
   and an import then re-saves an older download under the wrong name (seen 2026-10-22).
