@@ -1,8 +1,9 @@
 """The NBA schedule by date, from ESPN's public scoreboard (NBA's own schedule file answers 403).
 
 One request per date; each date is cached as ``<cache>/<YYYY-MM-DD>.json`` and read again only
-once its copy is older than ``max_age`` (a game can be postponed). Team names are returned in
-Yahoo's abbreviations, the ones the league pages and the player pool use.
+once its copy is older than ``max_age`` (a game can be postponed), or ``far_max_age`` for a date
+weeks away (the rest of the season, which the Season view counts games on, #116). Team names
+are returned in Yahoo's abbreviations, the ones the league pages and the player pool use.
 """
 
 from __future__ import annotations
@@ -19,6 +20,8 @@ ESPN_TO_YAHOO = {"GS": "GSW", "NO": "NOP", "NY": "NYK", "SA": "SAS", "UTAH": "UT
 #: Games that will not be played on their date.
 NOT_PLAYED = {"STATUS_POSTPONED", "STATUS_CANCELED", "STATUS_SUSPENDED"}
 MAX_AGE = timedelta(hours=12)
+#: How old a far date's copy may be: its games move rarely, and the season holds many dates.
+FAR_MAX_AGE = timedelta(days=7)
 
 
 def scoreboard_url(day: date) -> str:
@@ -46,8 +49,11 @@ def schedule_days(
     cache_dir: Path,
     now: datetime | None = None,
     max_age: timedelta = MAX_AGE,
+    far_from: date | None = None,
+    far_max_age: timedelta = FAR_MAX_AGE,
 ) -> dict[str, list[str]]:
-    """``{"YYYY-MM-DD": [teams playing]}`` for ``days``, from the cache where it is fresh.
+    """``{"YYYY-MM-DD": [teams playing]}`` for ``days``, from the cache where it is fresh: within
+    ``max_age``, or ``far_max_age`` for a date from ``far_from`` on.
 
     A date already over when its copy was read is final. A date that cannot be read is left
     out (the season's games count then says the schedule does not cover it)."""
@@ -60,7 +66,8 @@ def schedule_days(
         if cached is not None:
             fetched = datetime.fromisoformat(cached["fetched_at"])
             final = fetched.date() > day + timedelta(days=1)
-            if final or now - fetched < max_age:
+            age = far_max_age if far_from is not None and day >= far_from else max_age
+            if final or now - fetched < age:
                 out[day.isoformat()] = cached["teams"]
                 continue
         try:

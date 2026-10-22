@@ -562,6 +562,13 @@ def parse_league_page(html: str) -> dict[str, Any]:
     return {"name": name, "teams": teams, "matchups": matchups, "week": week_label(html)}
 
 
+def parse_pairings(html: str, week: int) -> dict[str, Any]:
+    """The pairs of ``week`` from the league page shown for it (``?matchup_week=N``, #116): the
+    schedule's source. A playoff week Yahoo has not seeded lists none."""
+    matchups = [m for m in parse_league_page(html)["matchups"] if m["week"] == week]
+    return {"week": week, "matchups": matchups}
+
+
 def parse_matchup_page(html: str, week: int | None = None) -> dict[str, Any]:
     """A matchup page: the two teams (in the page's order), each one's totals by column, and the
     score lines (``vs``: categories won or points; a points league adds Yahoo's projections)."""

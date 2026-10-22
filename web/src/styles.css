@@ -566,6 +566,43 @@ tr.breakdown > td { padding: 0; white-space: normal; background: var(--panel); }
 .mu-players { display: flex; flex-direction: column; gap: 4px; margin-top: 12px; }
 .mu-players .note { font-family: var(--body); font-size: 12px; letter-spacing: 0; text-transform: none; }
 .mu-players .season-table td { white-space: nowrap; }
+/* A narrow board column scrolls the players' table, not the view, so Cats and Matchup stay in reach. */
+.mu-table { overflow-x: auto; }
+/* The Season view (#116): the summary, a chip per week left, the week a chip opens. */
+.season-view { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.season-view .me { color: var(--accent); }
+.season-view .them { color: var(--them); }
+.season-view .note { font-size: 12px; margin: 0; }
+.sv-head { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+.sv-title { display: flex; align-items: baseline; gap: 8px; }
+.sv-record { font-family: var(--display); font-weight: 700; font-size: 26px; line-height: 1; }
+.sv-summary { flex: 1; min-width: 240px; margin: 0; color: var(--muted); }
+.sv-strip { display: flex; align-items: stretch; gap: 6px; overflow-x: auto; padding: 2px 2px 6px; }
+.sv-chip { flex: 0 0 auto; width: 76px; padding: 5px 6px; display: flex; flex-direction: column; align-items: flex-start; gap: 1px; border: 1px solid var(--line-2); border-radius: 8px; background: var(--panel-2); color: var(--text); text-align: left; }
+.sv-chip .wk { font-size: 10px; font-weight: 700; color: var(--muted); }
+.sv-chip .wk em { font-style: normal; color: var(--accent); }
+.sv-chip .opp { width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; }
+.sv-chip .odds { font-family: var(--display); font-weight: 700; font-size: 20px; line-height: 1; }
+.sv-chip.good { background: rgba(61, 220, 132, 0.16); border-color: #2d6b45; }
+.sv-chip.warn { background: rgba(245, 185, 66, 0.14); border-color: #6b5a2d; }
+.sv-chip.bad { background: rgba(239, 107, 107, 0.16); border-color: #6b2d2d; }
+.sv-chip.field, .sv-chip.unread { color: var(--muted); }
+.sv-chip[aria-pressed="true"] { outline: 2px solid var(--text); outline-offset: 1px; }
+.sv-split { flex: 0 0 auto; align-self: center; padding: 0 4px; font-size: 10px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--dim); writing-mode: vertical-rl; transform: rotate(180deg); border-left: 1px solid var(--line-2); }
+.sv-week { display: flex; flex-direction: column; gap: 4px; padding-top: 8px; border-top: 1px solid var(--line-2); }
+.sv-week-head { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; gap: 24px; padding-bottom: 6px; }
+.sv-vs { font-family: var(--display); font-weight: 700; font-size: 20px; line-height: 1.1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sv-big { font-family: var(--display); font-weight: 700; font-size: 40px; line-height: 1; color: var(--accent); }
+.mu-row.small { grid-template-columns: 110px minmax(0, 1fr) 110px; padding: 1px 0; font-size: 12px; }
+.mu-row.small .mu-bar { width: 220px; height: 6px; }
+/* The scoreboards stack by their own width (the cards panel narrows the board column on a laptop). */
+.matchup-view, .season-view { container-type: inline-size; }
+@container (max-width: 640px) {
+  .mu-hero, .sv-week-head { grid-template-columns: minmax(0, 1fr); gap: 8px; }
+  .mu-side.r { align-items: flex-start; text-align: left; }
+  .mu-row { grid-template-columns: 80px minmax(0, 1fr) 80px; gap: 6px; }
+  .mu-row.small { grid-template-columns: 64px minmax(0, 1fr) 64px; }
+}
 /* The League card's tabs (#116) and its pairings, a click opening one's categories. */
 .seg.small { flex-shrink: 0; }
 .seg.small button { padding: 1px 7px; font-size: 11px; white-space: nowrap; }
@@ -579,9 +616,6 @@ tr.breakdown > td { padding: 0; white-space: normal; background: var(--panel); }
   .main.season .views .tab { width: auto; height: 32px; flex-direction: row; gap: 6px; padding: 0 10px; font-size: 12px; }
   .main.season .views .hide { width: 32px; height: 32px; }
   .main.season .views.handle { gap: 8px; }
-  .mu-hero { grid-template-columns: minmax(0, 1fr); gap: 8px; }
-  .mu-side.r { align-items: flex-start; text-align: left; }
-  .mu-row { grid-template-columns: 80px minmax(0, 1fr) 80px; gap: 6px; }
 }
 @media (max-width: 860px) {
   .main.season .season-body { display: flex; flex-direction: column; flex: 1; min-width: 0; overflow: auto; }

@@ -38,6 +38,7 @@ Part keys and their data:
 
 from __future__ import annotations
 
+import math
 from collections.abc import Iterable, Mapping
 from dataclasses import asdict, dataclass, field, replace
 from datetime import date, datetime
@@ -89,6 +90,17 @@ class SeasonSettings:
     trade_ratify: str | None = None
     #: The days an accepted trade waits for review before it is processed.
     trade_review_days: int | None = None
+    #: The teams the playoffs take.
+    playoff_teams: int | None = None
+
+    @property
+    def first_playoff_week(self) -> int | None:
+        """The first playoff week, estimated as one week a round of the bracket ending with the
+        season's last week (six teams: three rounds, two of them with byes); None when the last
+        week or the bracket is not known. Yahoo's public settings do not name the week."""
+        if not self.end_week or not self.playoff_teams or self.playoff_teams < 2:
+            return None
+        return self.end_week - math.ceil(math.log2(self.playoff_teams)) + 1
 
     def to_dict(self) -> dict[str, Any]:
         d = asdict(self)
@@ -121,6 +133,7 @@ class SeasonSettings:
             trade_end_date=_opt_date(d.get("trade_end_date")),
             trade_ratify=d.get("trade_ratify"),
             trade_review_days=_opt_int(d.get("trade_review_days")),
+            playoff_teams=_opt_int(d.get("playoff_teams")),
         )
 
     def merged(self, read: Mapping[str, Any]) -> SeasonSettings:
@@ -422,6 +435,10 @@ class Season:
     #: Yahoo's projection for the next seven days by player id: ``gp`` and the totals over those
     #: games, with when the row was read (``seen_at``).
     yahoo_week: Mapping[int, Mapping[str, Any]] = field(default_factory=dict)
+    #: Each week's pairs as far as read: this week's from the league page, the others from the
+    #: league page shown for that week (``pairings/<week>``). A week read with no pairs (a playoff
+    #: week Yahoo has not seeded) is here and empty; a week never read is not here.
+    pairings: Mapping[int, tuple[tuple[int, int], ...]] = field(default_factory=dict)
 
     @classmethod
     def from_parts(cls, base: SeasonSettings, parts: Mapping[str, Part]) -> Season:
@@ -505,6 +522,16 @@ class Season:
             int(r["player"]["yahoo_id"]): r
             for r in (_data(parts, YAHOO_WEEK) or {}).get("rows", [])
         }
+        pairings: dict[int, tuple[tuple[int, int], ...]] = {}
+        for key, part in parts.items():
+            if key.startswith("pairings/"):
+                pairings[int(part.data["week"])] = tuple(
+                    (int(m["teams"][0]), int(m["teams"][1]))
+                    for m in part.data.get("matchups") or []
+                )
+        # This week's pairs are the league page's own.
+        for week in {m.week for m in matchups}:
+            pairings[week] = tuple(m.teams for m in matchups if m.week == week)
         return cls(
             settings=settings,
             calendar=calendar,
@@ -517,6 +544,7 @@ class Season:
             schedule=schedule,
             fetched=fetched,
             yahoo_week=yahoo_week,
+            pairings=pairings,
         )
 
     # ------------------------------------------------------------------ queries
@@ -540,6 +568,44 @@ class Season:
             (m for m in self.matchups if team_id in m.teams and (week is None or m.week == week)),
             None,
         )
+
+    def opponent_in(self, team_id: int | None, week: int) -> int | None:
+        """``team_id``'s opponent in ``week`` as far as its pairs were read; None when not."""
+        for a, b in self.pairings.get(week, ()):
+            if team_id in (a, b):
+                return b if team_id == a else a
+        return None
+
+    def weeks_unpaired(self, today: date, calendar: Calendar | None = None) -> list[int]:
+        """The regular weeks after ``today``'s whose pairs were never read, or were read with
+        none (a page read too soon): the reads the Season view's opponents still need. The
+        season's calendar unless ``calendar`` is given (a private league's may not be saved yet)."""
+        calendar = calendar or self.calendar
+        if calendar is None:
+            return []
+        current = calendar.week_of(today)
+        after = current.number if current is not None else (self.settings.current_week or 0)
+        playoffs = self.first_playoff_week
+        return [
+            w.number
+            for w in calendar.weeks
+            if w.number > after
+            and (playoffs is None or w.number < playoffs)
+            and not self.pairings.get(w.number)
+        ]
+
+    @property
+    def first_playoff_week(self) -> int | None:
+        """The first playoff week: the settings' estimate, else (a private league has no settings
+        part) the first week read with no pairs when no later week lists any; None when not
+        known."""
+        known = self.settings.first_playoff_week
+        if known is not None:
+            return known
+        paired = [w for w, pairs in self.pairings.items() if pairs]
+        empty = [w for w, pairs in self.pairings.items() if not pairs]
+        last = max(paired, default=0)
+        return min((w for w in empty if w > last), default=None)
 
     @property
     def opponent(self) -> Team | None:

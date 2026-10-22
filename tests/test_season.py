@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import re
 import time
+from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
@@ -37,9 +38,11 @@ from pickandroll.season import (
     Player,
     Season,
     SeasonSettings,
+    Week,
     build_calendar,
     merge_part,
     mondays,
+    pairings_key,
 )
 from pickandroll.season import flags as fl
 from pickandroll.season import moves as mv
@@ -199,13 +202,14 @@ def test_the_league_page_gives_standings_and_this_weeks_pairs():
     }
 
 
-def week_page(week: int) -> str:
+def week_page(week: int, paired: bool = True) -> str:
     """The fixture league page as Yahoo shows another week (``?matchup_week=N``): the same
-    pairs, no scores yet."""
+    pairs, no scores yet; or, not ``paired``, no pairs (a playoff week not seeded yet)."""
     html = re.sub(r"<div class='Fz-lg '>\d+</div>", "", fixture("league.html"))
-    return html.replace("week=1&", f"week={week}&").replace(
+    html = html.replace("week=1&", f"week={week}&").replace(
         "Week 1 Matchups", f"Week {week} Matchups"
     )
+    return html if paired else html.replace("matchup?week=", "matchup?unseeded=")
 
 
 def test_the_league_page_gives_each_pairs_live_score():
@@ -263,6 +267,7 @@ def test_v3_settings_and_players():
         4,
     )
     assert (read["trade_ratify"], read["trade_review_days"]) == ("yahoo", 2)
+    assert read["playoff_teams"] == 6
     # Yahoo's answer for a league it does not serve publicly.
     assert public.settings_from_v3({"error": {"description": "league not found"}}) is None
     pool = public.players_from_v3(json.loads(fixture("players.json")))
@@ -308,6 +313,26 @@ def test_the_schedule_cache_serves_from_disk_offline(tmp_path):
     assert schedule.schedule_days([date(2026, 10, 23)], offline, tmp_path, now=NOW) == {}
 
 
+def test_a_far_date_of_the_schedule_is_read_again_only_weekly(tmp_path):
+    calls: list[str] = []
+
+    def fetch(url: str) -> str:
+        calls.append(url)
+        return fixture("espn_20261021.json")
+
+    near, far, far_from = date(2026, 10, 23), date(2026, 12, 1), date(2026, 11, 16)
+    schedule.schedule_days([near, far], fetch, tmp_path, now=NOW, far_from=far_from)
+    assert len(calls) == 2
+    # A day later the near date's copy is stale, the far date's is not.
+    later = NOW + timedelta(days=1)
+    schedule.schedule_days([near, far], fetch, tmp_path, now=later, far_from=far_from)
+    assert calls[2:] == [schedule.scoreboard_url(near)]
+    # Eight days on, the far date's is.
+    later = NOW + timedelta(days=8)
+    schedule.schedule_days([far], fetch, tmp_path, now=later, far_from=far_from)
+    assert calls[3:] == [schedule.scoreboard_url(far)]
+
+
 # --------------------------------------------------------------------------- the season state
 def base(league: str = LEAGUE, my_team: int = 4) -> SeasonSettings:
     return SeasonSettings(league, "categories", tuple(CATS), tuple(ROSTER), 12, my_team)
@@ -349,6 +374,55 @@ def test_the_season_assembles_its_parts():
     s2 = Season.from_parts(base(), merge_part(parts, part("roster/4", claimed)))
     assert taken.yahoo_id not in {a.player.yahoo_id for a in s2.available}
     assert len(s2.available) == len(s.available) - 1
+
+
+def test_the_first_playoff_week_is_a_week_a_round_ending_the_season():
+    s = replace(base(), end_week=22, playoff_teams=6)
+    # Six teams: three rounds (the top two seeds' byes in the first), weeks 20 to 22.
+    assert s.first_playoff_week == 20
+    assert replace(s, playoff_teams=4).first_playoff_week == 21
+    assert replace(s, playoff_teams=8).first_playoff_week == 20
+    assert replace(s, playoff_teams=10).first_playoff_week == 19
+    assert replace(s, playoff_teams=None).first_playoff_week is None
+    assert replace(s, end_week=None).first_playoff_week is None
+
+
+def pairs_part(week: int, pairs: list[tuple[int, int]]) -> Part:
+    data = {"week": week, "matchups": [{"week": week, "teams": list(t)} for t in pairs]}
+    return part(pairings_key(week), data)
+
+
+def test_the_season_knows_each_weeks_pairs_and_the_weeks_left_to_read():
+    weeks = tuple(
+        Week(n, SEASON_START + timedelta(weeks=n - 1), SEASON_START + timedelta(weeks=n, days=-1))
+        for n in range(1, 23)
+    )
+    parts = {
+        "league": part("league", pages.parse_league_page(fixture("league.html"))),
+        "calendar": part("calendar", Calendar(weeks).to_dict()),
+        "pairings/2": pairs_part(2, [(4, 7), (1, 10)]),
+        "pairings/3": pairs_part(3, []),
+    }
+    season = Season.from_parts(replace(base(), end_week=22, playoff_teams=6), parts)
+    # This week's pairs are the league page's; another week's, its own page's.
+    assert season.opponent_in(4, 1) == 10 and season.opponent_in(4, 2) == 7
+    assert season.opponent_in(10, 2) == 1 and season.opponent_in(4, 3) is None
+    # Left to read: the regular weeks after this one never read, or read with no pairs.
+    assert season.first_playoff_week == 20
+    assert season.weeks_unpaired(TODAY) == list(range(3, 20))
+    # A private league has no settings part: its playoffs start at the first week read with no
+    # pairs and none after it.
+    read = {f"pairings/{w}": pairs_part(w, [(4, 7)]) for w in range(4, 20)}
+    read |= {f"pairings/{w}": pairs_part(w, []) for w in (20, 21, 22)}
+    private = Season.from_parts(base(), {**parts, **read})
+    assert private.first_playoff_week == 20 and private.weeks_unpaired(TODAY) == [3]
+    # Read for no week ahead: every week is left, the playoffs with them.
+    bare = Season.from_parts(base(), {k: parts[k] for k in ("league", "calendar")})
+    assert bare.first_playoff_week is None and bare.weeks_unpaired(TODAY) == list(range(2, 23))
+    # Without the calendar given, nothing is known to read.
+    no_calendar = Season.from_parts(base(), {"league": parts["league"]})
+    assert no_calendar.weeks_unpaired(TODAY) == []
+    assert no_calendar.weeks_unpaired(TODAY, Calendar(weeks)) == list(range(2, 23))
 
 
 def test_a_page_of_available_players_upserts_into_the_pool():
@@ -455,6 +529,10 @@ class FakeYahoo:
         self.settings = fixture("settings.json")
         #: Games on every day of the horizon (the two fixture days in turn), not just those two.
         self.every_day = False
+        #: The weeks whose league page lists no pairs (the playoffs, not seeded yet).
+        self.unpaired = set(range(20, 24))
+        #: The weeks whose league page does not answer.
+        self.down: set[int] = set()
 
     def __call__(self, url: str) -> str:
         self.urls.append(url)
@@ -474,6 +552,11 @@ class FakeYahoo:
             return fixture("buzz.html")
         kind, info = pages.page_kind(url)
         if kind == "league":
+            week = info.get("matchup_week")
+            if week in self.down:
+                raise public.FetchError(f"{url}: HTTP 503")
+            if week is not None:
+                return week_page(week, paired=week not in self.unpaired)
             return fixture("league.html")
         if kind == "team":
             m = re.search(r"date=(\d{4}-\d{2}-\d{2})", url)
@@ -576,6 +659,31 @@ def test_a_refresh_reads_every_pairs_matchup_page_mine_first(client):
     rows = {tuple(m["teams"]): m for m in client.get(f"/seasons/{LEAGUE}").json()["matchups"]}
     assert len(rows) == 6
     assert set(rows[(7, 12)]["totals"]) == {"7", "12"}
+
+
+def weeks_read(client) -> list[int]:
+    found = (re.search(r"matchup_week=(\d+)", u) for u in client.fake.urls)
+    return sorted(int(m.group(1)) for m in found if m)
+
+
+def test_a_refresh_reads_each_regular_week_ahead_once_and_an_empty_one_again(client):
+    client.fake.unpaired |= {5}
+    client.fake.down = {7}
+    r = client.post(f"/seasons/{LEAGUE}/refresh", params={"wait": True})
+    assert r.status_code == 202, r.text
+    # The regular weeks after this one; the playoffs (weeks 20 on, six teams) are the field's.
+    assert weeks_read(client) == list(range(2, 20))
+    season = client.app.state.seasons.season(LEAGUE)
+    assert season.opponent_in(4, 2) == 10 and season.opponent_in(4, 5) is None
+    # A page that did not answer is left out, not read as a week without pairs.
+    assert 7 not in season.pairings
+    client.fake.urls.clear()
+    client.fake.unpaired -= {5}
+    client.fake.down = set()
+    client.post(f"/seasons/{LEAGUE}/refresh", params={"wait": True})
+    assert weeks_read(client) == [5, 7]
+    season = client.app.state.seasons.season(LEAGUE)
+    assert season.opponent_in(4, 5) == season.opponent_in(4, 7) == 10
 
 
 def test_the_leagues_list_shows_each_folders_week_record_and_opponent(client):
@@ -1133,6 +1241,77 @@ def test_the_matchup_route_needs_a_season_with_my_matchup(client):
 
 
 # --------------------------------------------------------------------------- landing grid (#108)
+def test_the_outlook_gives_every_week_left_against_its_opponent_or_the_field(client):
+    projection_csv(
+        client.data_dir / "bbm_projections_2026-10-21.csv", fixture_names(), star="Kevin Durant"
+    )
+    client.fake.every_day = True
+    client.fake.unpaired |= {5}
+    client.post(f"/seasons/{LEAGUE}/refresh", params={"wait": True})
+    r = client.get(f"/seasons/{LEAGUE}/outlook")
+    assert r.status_code == 200, r.text
+    o = r.json()
+    weeks = o["weeks"]
+    # The fake calendar: 23 weeks, the seventeenth two weeks long.
+    assert [w["week"] for w in weeks] == list(range(1, 24)) and weeks[16]["days"] == 14
+    assert (o["team"], o["first_playoff_week"], o["system"]["key"]) == (4, 20, "bbm")
+    # This week is the Matchup view's: its opponent, score, days and odds.
+    m = client.get(f"/seasons/{LEAGUE}/matchup").json()
+    this = weeks[0]
+    assert (this["this_week"], this["opponent"], this["score"]) == (True, 10, [5.0, 3.0])
+    assert this["tied"] == m["tied"] == 1
+    assert (this["from"], this["days"]) == ("2026-10-21", 5)
+    assert this["win"] == pytest.approx(m["win"], abs=1e-4)
+    assert this["expected"] == pytest.approx(m["expected"], abs=1e-4)
+    assert [c["p_win"] for c in this["cats"]] == pytest.approx(
+        [c["p_win"] for c in m["cats"]], abs=1e-4
+    )
+    # A later regular week: the pairs its own page lists (the fixture's: team 10 every week).
+    nxt = weeks[1]
+    assert (nxt["opponent"], nxt["field"], nxt["from"], nxt["days"]) == (10, None, "2026-10-26", 7)
+    assert not nxt["this_week"] and nxt["scheduled"] and nxt["games"] > 0
+    assert nxt["score"] is None
+    # A week whose page listed no pairs, and the playoffs: the field, every other roster read.
+    others = [t for t in client.app.state.seasons.season(LEAGUE).rosters if t != 4]
+    for w in [weeks[4], *weeks[19:]]:
+        assert w["opponent"] is None and w["field"] == len(others) and w["win"] is not None
+    assert [w["playoffs"] for w in weeks] == [False] * 19 + [True] * 4
+    # The summary is the regular weeks': the wins expected, and the lean of each named week.
+    s, regular = o["summary"], weeks[:19]
+    assert (s["weeks"], s["field"], s["unread"]) == (19, 1, 0)
+    assert s["expected_wins"] == pytest.approx(sum(w["win"] for w in regular), abs=0.01)
+    named = [w["win"] for w in regular if w["opponent"] is not None]
+    assert s["favoured"] == sum(1 for x in named if x >= 0.6)
+    assert s["underdog"] == sum(1 for x in named if x <= 0.4)
+    assert s["favoured"] + s["toss_up"] + s["underdog"] == 18
+    # A week's players: what each adds is the week without him from its first day.
+    p = client.app.state.seasons._built(LEAGUE, "bbm").problem
+    season = client.app.state.seasons.season(LEAGUE)
+    span = mv.WeekSpan(tuple(date(2026, 10, 26) + timedelta(n) for n in range(7)), False, ())
+    members = [(sp.player.yahoo_id, sp.player) for sp in season.rosters[10]]
+    theirs = wk.finals(
+        wk.project_week(
+            members, p.rates, span.days, p.schedule, p.slots, p.value, False,
+            points=p.points, no_games=p.no_games,
+        ),
+        {},
+        CATS,
+    )  # fmt: skip
+    full = wk.odds_of(wk.finals(mv.project_mine(p, span), {}, CATS), theirs, CATS)
+    top = nxt["players"][0]
+    gone = mv.project_mine(p, span, gone={top["player"]: span.days[0]})
+    without = wk.odds_of(wk.finals(gone, {}, CATS), theirs, CATS)
+    assert nxt["win"] == pytest.approx(wk.matchup_won(full), abs=1e-4)
+    assert top["matchup"] == pytest.approx(wk.matchup_won(full) - wk.matchup_won(without), abs=1e-4)
+    assert top["cats"] == pytest.approx(wk.expected_won(full) - wk.expected_won(without), abs=1e-4)
+    assert top["matchup"] > 0 and nxt["started"] == sum(x["started"] for x in nxt["players"])
+    assert all(x["cats"] == 0 and x["matchup"] == 0 for x in nxt["players"] if not x["started"])
+
+
+def test_the_outlook_needs_a_season_of_my_team(client):
+    assert client.get("/seasons/100002/outlook").status_code == 409
+
+
 def test_the_leagues_list_gives_the_weeks_score_adds_left_and_flag_counts(client):
     projection_csv(
         client.data_dir / "bbm_projections_2026-10-21.csv", fixture_names(), star="Kevin Durant"
