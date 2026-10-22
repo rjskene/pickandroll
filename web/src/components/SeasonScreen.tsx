@@ -77,6 +77,7 @@ import { FlagBreakdown, FlagInfo } from "./FlagExplain";
 import Halves, { type Face } from "./Halves";
 import KeySheet from "./KeySheet";
 import MatchupView from "./MatchupView";
+import OutlookView from "./OutlookView";
 import Rail from "./Rail";
 import { SEASON_ICONS } from "./icons";
 import Strategy from "./Strategy";
@@ -317,6 +318,11 @@ export default function SeasonScreen({ league, onBack }: { league: string; onBac
               {views.view === "matchup" && (
                 <div className="board-col view-col">
                   <MatchupView league={league} s={s} system={system} setSystem={setSystem} now={now} />
+                </div>
+              )}
+              {views.view === "season" && (
+                <div className="board-col view-col">
+                  <OutlookView league={league} s={s} system={system} setSystem={setSystem} />
                 </div>
               )}
               {/* Kept mounted in another view, so its sort, filters and highlight stay. */}
@@ -1223,9 +1229,11 @@ function Pairings({ s, now }: { s: SeasonView; now: number }) {
             return (
               <Fragment key={key}>
                 <tr className={`pick${a === mine ? " mine" : ""}`} aria-expanded={isOpen} onClick={() => setOpen(isOpen ? null : key)}>
-                  <td>{name(a)}</td>
+                  <td title={name(a)}>{name(a)}</td>
                   <td className="num strong">{score ? scoreLabel({ score, scoring: s.scoring }) : "—"}</td>
-                  <td className="r">{name(b)}</td>
+                  <td className="r" title={name(b)}>
+                    {name(b)}
+                  </td>
                 </tr>
                 {isOpen && (
                   <tr className="breakdown">
@@ -1379,7 +1387,7 @@ function SeasonFooter({ s, now }: { s: SeasonView; now: number }) {
       {waivers.length > 0 && <span>{waivers.join(" · ")}</span>}
       <span className="grow" />
       <span>
-        <kbd>?</kbd> keys · <kbd>w</kbd> <kbd>h</kbd> views · <kbd>[</kbd> view drawer · <kbd>1</kbd>–<kbd>7</kbd> cards · <kbd>⇧</kbd>+digit bottom half · <kbd>]</kbd> panel
+        <kbd>?</kbd> keys · <kbd>w</kbd> <kbd>h</kbd> <kbd>s</kbd> views · <kbd>[</kbd> view drawer · <kbd>1</kbd>–<kbd>7</kbd> cards · <kbd>⇧</kbd>+digit bottom half · <kbd>]</kbd> panel
       </span>
       <span title={Object.entries(s.fetched).map(([k, f]) => `${k}: ${f.at} (${f.source})`).join("\n")}>Snapshot {ageLabel(s.updated_at, now)}</span>
       <span>League {s.league}</span>

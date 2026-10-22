@@ -15,6 +15,8 @@ import type {
   MoveCandidate,
   MoveHorizon,
   MoveRef,
+  OutlookSummary,
+  OutlookWeek,
   PlayerFlag,
   Rates,
   SeasonPlayer,
@@ -359,6 +361,39 @@ export function matchupRecord(m: { score: [number, number] | null; tied: number 
 /** "3 days left" in the matchup, counting today when it is still to play. */
 export function daysLeftLabel(days: number): string {
   return days <= 0 ? "no day left" : days === 1 ? "1 day left" : `${days} days left`;
+}
+
+// ---------------------------------------------------------------- season view (#116)
+/** A week's chip: favoured, a toss-up or an underdog by its matchup odds against a named
+ * opponent; the field when its pairs are not known (the playoffs); unread without odds. */
+export function chipTone(w: Pick<OutlookWeek, "opponent" | "win">): "good" | "warn" | "bad" | "field" | "unread" {
+  if (w.win == null) return "unread";
+  if (w.opponent == null) return "field";
+  return w.win >= FAVOURED ? "good" : w.win <= UNDERDOG ? "bad" : "warn";
+}
+
+/** The week a chip opens by default: next week, else the first left. */
+export function defaultWeek(weeks: Pick<OutlookWeek, "week" | "this_week">[]): number | null {
+  if (!weeks.length) return null;
+  return (weeks[0].this_week ? weeks[1] ?? weeks[0] : weeks[0]).week;
+}
+
+/** "7.3 wins expected in the 19 regular weeks left", then the leans of the named weeks and
+ * the weeks against the field; no wins when no week has odds (no roster faced read). */
+export function outlookSummary(s: OutlookSummary): string[] {
+  const weeks = `${s.weeks} regular week${s.weeks === 1 ? "" : "s"} left`;
+  if (s.weeks > 0 && s.unread >= s.weeks) return [`${weeks}, none with odds yet: no roster faced was read`];
+  const out = [`${s.expected_wins.toFixed(1)} wins expected in the ${weeks}`];
+  const leans: [number, string, string][] = [
+    [s.favoured, "favoured", "favoured"],
+    [s.toss_up, "toss-up", "toss-ups"],
+    [s.underdog, "underdog", "underdogs"],
+  ];
+  const named = leans.filter(([n]) => n > 0).map(([n, one, many]) => `${n} ${n === 1 ? one : many}`);
+  if (named.length) out.push(named.join(" · "));
+  if (s.field) out.push(`${s.field} against the field`);
+  if (s.unread) out.push(`${s.unread} without odds, counted as none`);
+  return out;
 }
 
 // ---------------------------------------------------------------- moves (#94)

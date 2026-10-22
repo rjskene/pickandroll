@@ -46,9 +46,9 @@ leagues, and Yahoo serves everything the engine needs without a sign-in:
 
 | input | source | notes |
 |---|---|---|
-| league settings, current week, roster slots, waiver and add rules | `pub-api.fantasysports.yahoo.com/fantasy/v3/settings/nba/<id>` (already used by `scripts/draft_day.py`) | `current_week`, `start_week`, `end_week`, `end_date`, `weekly_deadline`, and the `settings` block; no week dates |
+| league settings, current week, roster slots, waiver and add rules | `pub-api.fantasysports.yahoo.com/fantasy/v3/settings/nba/<id>` (already used by `scripts/draft_day.py`) | `current_week`, `start_week`, `end_week`, `end_date`, `weekly_deadline`, `num_playoff_teams`, and the `settings` block; no week dates and no playoff start week |
 | week dates | the public team page on a date, `/nba/<id>/<team>?date=YYYY-MM-DD`, whose "Week N stats may change" line names that day's matchup week | one request per Monday of the season, cached for every league in `data/leagues/_shared/season/calendar.json` (#92); 2026-27 has 22 weeks, week 1 Oct 19-25, week 17 Feb 15-28 across the All-Star break, week 22 Mar 29-Apr 4 |
-| standings, waiver priority, FAAB left, moves, this week's pairs and their live scores | the public league page `/nba/<id>` | the `standingstable` and the matchups module: one `li[data-target="/nba/<id>/matchup?week=&mid1=&mid2="]` per pair with both scores (`div.Fz-lg`, in mid1/mid2 order) and no categories (#116). `?matchup_week=N` shows another week's pairs; it is stored as that week's pairings, never as the league page |
+| standings, waiver priority, FAAB left, moves, this week's pairs and their live scores | the public league page `/nba/<id>` | the `standingstable` and the matchups module: one `li[data-target="/nba/<id>/matchup?week=&mid1=&mid2="]` per pair with both scores (`div.Fz-lg`, in mid1/mid2 order) and no categories (#116). `?matchup_week=N` shows another week's pairs; it is stored as that week's pairings, never as the league page. Read once a week ahead for the Season view's opponents: a public refresh reads every regular week after this one whose pairs it lacks, and again only while a page lists none; the private league's pages are listed by the Monday recorder (#116) |
 | a matchup's week totals and score | the public matchup page `/nba/<id>/matchup?week=W&mid1=A&mid2=B` | each team's category totals; a points league adds Yahoo's original and live projected points. A public refresh reads every pair's page of the week, mine first (#116) |
 | player pool: positions, NBA team, injury status and note, season stats, Yahoo ranks, ADP | `.../v3/players/nba/<id>?format=json&projected=1&average=1` (744 players) | `inj`, `inj_full`, `inj_note`, `display_pos`, `season_stats`; no per-league ownership |
 | team list | `.../v3/teams/nba/<id>` | names and ids only |
@@ -59,7 +59,7 @@ leagues, and Yahoo serves everything the engine needs without a sign-in:
 | this week's and next week's per-game projections with games, back-to-backs, minutes, injury, Yahoo ownership | Basketball Monster weekly export (imported with `scripts/draft_day.py week --this \| --next`, or `sources/bbm/fetch.py::weekly`, `this_week=True` for the rest of this week; `parse.py` already normalises it: `games`, `quality_games`, `back_to_backs`, `minutes`, `yahoo_owned_pct`, `bbm_adv_pct`, `injury`) | exported from the user's signed-in Chrome as the season export is, never with typed credentials |
 | rest-of-season per-game projections | Basketball Monster season export, per-game | refreshed daily in season |
 | recent production (minutes and rates over the last 7 or 14 days) | Basketball Monster past-days rankings (`fetch.py::rankings_past_days`) | the "minutes trend" signal |
-| NBA schedule by team and date | ESPN's public scoreboard JSON (`site.api.espn.com/.../nba/scoreboard?dates=YYYYMMDD`), one call per date, cached under `data/schedule/` | NBA's own cdn file answers 403 |
+| NBA schedule by team and date | ESPN's public scoreboard JSON (`site.api.espn.com/.../nba/scoreboard?dates=YYYYMMDD`), one call per date, cached under `data/schedule/` | NBA's own cdn file answers 403. Read to the season's end for the Season view (#116): a date within the Moves card's four weeks is read again after 12 hours, a later one after a week |
 | signed-in extras for every league (the user's Chrome, read-only): Yahoo's own projections per player for the next 7 and 14 days and the remaining games, last 7, 14 and 30 day totals, averages and standard deviations, percent rostered, roster status with the availability date, player notes; the home page's live matchup scores for every league | the players page and the home page in the user's signed-in Chrome, read with Claude in Chrome or the extension | checked 2026-10-21 on league 31822; a second weekly projection system for the blend the draft edge audit recommends, and the recent-production signal for the breakout flag. For a public league the players page serves the same views without a sign-in (row above); only the private league and the home page need the user's Chrome |
 | news | ESPN injuries and Rotowire headlines (`scripts/draft_prep/news.py`, already built) | teammate injuries are the "opportunity" signal |
 
@@ -373,9 +373,9 @@ then UI to evaluate available waiver options"). The flow:
    first; a click on one opens its category totals as far as its matchup page was read, or says
    it was not read).
 4. **Views** (#116). Where the board stands, the pane shows a view picked from a narrow drawer
-   at its left edge: Waivers (`w`, the table above) and Matchup (`h`). The chevron at its foot,
-   or `[`, takes the drawer down to a 22 px handle whose dots mark the view on show; `w` and `h`
-   switch views either way, and the view and the drawer persist in the browser like the panel.
+   at its left edge: Waivers (`w`, the table above), Matchup (`h`) and Season (`s`). The chevron
+   at its foot, or `[`, takes the drawer down to a 22 px handle whose dots mark the view on show;
+   the view letters switch views either way, and the view and the drawer persist in the browser like the panel.
    1 Waivers shows the Waivers view first, and only there gives the board the full width. `/`
    comes back to the Waivers view for its search; `j`, `k` and Enter act only in it.
 5. **The Matchup view** (#116), `GET /seasons/{league}/matchup?system=bbm|yahoo`. A scoreboard:
@@ -394,6 +394,33 @@ then UI to evaluate available waiver options"). The flow:
    start left adds nothing. Theirs are what each adds for them. Sorted by Matchup, the players
    with no game left last. A team whose page was never read projects as an empty roster, and
    the view says so above the categories.
+6. **The Season view** (#116, `s`), `GET /seasons/{league}/outlook?system=bbm|yahoo`. Every
+   week left of my season. A summary line: the wins expected in the regular weeks left (their
+   matchup odds summed), my record today, and how many of the named weeks are favoured (60% or
+   better), toss-ups and underdogs (40% or worse). Then a strip of chips, one a week: its
+   number, the opponent's name and the odds of winning it, filled green, amber or red by those
+   lines, grey for a week against the field; a divider marks the playoffs. A click opens that
+   week beneath the strip as a smaller scoreboard (the odds, the days and games, a bar per
+   category) and my players that week with Cats and Matchup worked out as in the Matchup view;
+   next week opens first.
+
+   This week is the move model's own (the same span, opponent and week so far as the Matchup
+   view). A later week is projected the same way from its Monday with today's rosters (nobody
+   added or dropped; an O sits out this week only). Its opponent is the one the league page
+   shown for that week pairs me with. A week whose pairs were never read, and a playoff week,
+   is played against the field: its odds and finals are the average over every other team
+   whose roster was read. The playoffs are estimated from the settings, one week a round of the
+   bracket ending with the season's last week (six teams: weeks 20 to 22 of 22), because
+   Yahoo's public settings name no playoff week; the private league has no settings part, so
+   there the playoffs begin at the first week read with no pairs and none after it. A week
+   without a roster faced has no odds and counts as none in the summary.
+
+   The schedule's sources: the public refresh reads the league page for each regular week
+   after this one once (and again only while it lists no pairs), and the NBA schedule to the
+   season's end. For the private league, `POST /seasons/{id}/record` answers with `ahead`, the
+   league page of each week whose pairs are missing, and `scripts/season.py record` prints them
+   as "schedule pages" after the record's own: for the user's signed-in Chrome to open once,
+   read only, as the record's pages are.
 
 The league page shown for another week (`?matchup_week=N`, the week select) used to land as
 the league part and move the current week with it. It is stored as its own part,

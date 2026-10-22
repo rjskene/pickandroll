@@ -97,6 +97,7 @@ from . import (
     season_flags,
     season_matchup,
     season_moves,
+    season_outlook,
     season_record,
     season_strategy,
     season_trades,
@@ -472,6 +473,23 @@ class SeasonService:
             raise HTTPException(409, f"league {league} has no matchup of my team this week")
         return {"league": league, **out}
 
+    def outlook(self, league: str, system: str) -> dict[str, Any]:
+        """The Season view (#116): every week left of my season as win odds, each with its
+        scoreboard and what my players add to it."""
+        built = self._built(league, system)
+        base, _ = self._base(league)
+        today = nba_today(self.clock())
+        key = (league, system, "outlook", today, self._moves_stamp(league))
+
+        def make() -> dict[str, Any] | None:
+            season = Season.from_parts(base, load_parts(self.data_dir, league))
+            return season_outlook.payload(built, season, today, self.data_dir)
+
+        out = self.moves_cache.get(key, make)
+        if out is None:
+            raise HTTPException(409, f"league {league} has no season of my team to look ahead in")
+        return {"league": league, **out}
+
     def move_detail(self, league: str, add: int, drop: int | None, system: str) -> dict[str, Any]:
         out = season_moves.detail_payload(self._built(league, system), add, drop)
         if out is None:
@@ -533,6 +551,15 @@ class SeasonService:
                 raise HTTPException(404, str(exc)) from exc
             except ValueError as exc:
                 raise HTTPException(409, str(exc)) from exc
+            # The weeks ahead whose pairs the Season view lacks: a public league's refresh reads
+            # them; a private league's are for the user's Chrome to open with the record's pages.
+            ahead = (
+                []
+                if is_public
+                else [
+                    public.pairings_url(league, w) for w in season.weeks_unpaired(today, calendar)
+                ]
+            )
             fetch = self.fetch_factory()
             try:
                 if is_public:
@@ -573,6 +600,7 @@ class SeasonService:
                         "with the extension, then record again",
                         "week": week.number,
                         "needs": exc.urls,
+                        "ahead": ahead,
                     },
                 ) from exc
             except (public.FetchError, pages.PageError) as exc:
@@ -602,6 +630,7 @@ class SeasonService:
             "pages": count,
             "missing": written.get("missing") or {},
             "summary": season_rec.summary(written, season.settings.my_team_id),
+            "ahead": ahead,
         }
 
     def _save_part(self, league: str, part: Part) -> None:
@@ -658,6 +687,11 @@ class SeasonService:
             settings = base.merged(next(p.data for p in received if p.key == "settings"))
             job.step = "calendar"
             calendar = self._calendar(league, settings, fetch, today)
+            job.step = "pairs"
+            weeks = self._unpaired(league, base, received, calendar, today)
+            received += public.pairings_parts(
+                league, weeks, fetch, step=lambda step: setattr(job, "step", step)
+            )
             job.step = "schedule"
             self._save_with_schedule(league, received, calendar, fetch, today)
             job.step = "flag inputs"
@@ -677,6 +711,25 @@ class SeasonService:
             job.finished_at = datetime.now(UTC)
         return job
 
+    def _unpaired(
+        self,
+        league: str,
+        base: SeasonSettings,
+        received: list[Part],
+        calendar: Calendar | None,
+        today: date,
+    ) -> list[int]:
+        """The regular weeks ahead whose pairs the season lacks once ``received`` is merged:
+        each is read once, and again only while its page lists no pairs."""
+        parts = load_parts(self.data_dir, league)
+        for part in received:
+            parts = merge_part(parts, part)
+        if calendar is not None:
+            parts = merge_part(
+                parts, Part("calendar", datetime.now(UTC), PUBLIC, calendar.to_dict())
+            )
+        return Season.from_parts(base, parts).weeks_unpaired(today)
+
     def _save_with_schedule(
         self,
         league: str,
@@ -692,7 +745,11 @@ class SeasonService:
         # Read before the league's lock: a snapshot posted meanwhile does not wait on ESPN.
         days = _schedule_days(calendar, today)
         read = nba_schedule.schedule_days(
-            days, fetch, self.data_dir / SCHEDULE_DIR, now=self.clock()
+            days,
+            fetch,
+            self.data_dir / SCHEDULE_DIR,
+            now=self.clock(),
+            far_from=today + timedelta(weeks=WEEKS_AHEAD),
         )
         with self.lock(league):
             parts = load_parts(self.data_dir, league)
@@ -846,14 +903,12 @@ def _page_part(
     if info["league"] != str(league):
         raise pages.PageError(f"the page is league {info['league']}'s, not {league}'s")
     if kind == "league":
-        d = pages.parse_league_page(html)
         if "matchup_week" in info:
             # Another week's pairs (the week select): its own part, never this week's league
             # part, so it moves neither the standings nor the current week.
             week = int(info["matchup_week"])
-            matchups = [m for m in d["matchups"] if m["week"] == week]
-            return Part(pairings_key(week), at, EXTENSION, {"week": week, "matchups": matchups})
-        return Part("league", at, EXTENSION, d)
+            return Part(pairings_key(week), at, EXTENSION, pages.parse_pairings(html, week))
+        return Part("league", at, EXTENSION, pages.parse_league_page(html))
     if kind == "team":
         d = pages.parse_team_page(html, info["team_id"])
         return Part(roster_key(info["team_id"]), at, EXTENSION, d)
@@ -876,10 +931,11 @@ def _page_part(
 
 
 def _schedule_days(calendar: Calendar | None, today: date) -> list[date]:
-    """The dates the season view counts games on: the rest of this week and the next three
-    (four weeks of days when the calendar is not known)."""
+    """The dates the season view counts games on: the rest of the season, for the Season view
+    (#116; four weeks of days when the calendar is not known). The dates past the Moves card's
+    four weeks are read again only weekly (``nba_schedule.schedule_days``' ``far_from``)."""
     if calendar is not None:
-        weeks = calendar.ahead(today, WEEKS_AHEAD)
+        weeks = [w for w in calendar.weeks if w.end >= today]
         if weeks:
             last = weeks[-1].end
             return [today + timedelta(n) for n in range((last - today).days + 1)]
@@ -1101,6 +1157,12 @@ def register(
         """My matchup this week: the projected finals and odds per category, the matchup odds,
         and what each player of both teams adds to them (#116)."""
         return await asyncio.to_thread(service.matchup, league, system)
+
+    @app.get("/seasons/{league}/outlook")
+    async def get_outlook(league: str = league_id, system: str = system_q) -> dict[str, Any]:
+        """Every week left of my season: the win odds against its opponent (or the field), the
+        summary of the regular weeks, and each week's scoreboard and my players (#116)."""
+        return await asyncio.to_thread(service.outlook, league, system)
 
     @app.get("/seasons/{league}/strategy")
     async def get_strategy(league: str = league_id, system: str = system_q) -> dict[str, Any]:

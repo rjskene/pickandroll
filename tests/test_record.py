@@ -586,6 +586,8 @@ def test_a_private_league_names_the_pages_it_needs_then_records(client):
     r = client.post(f"/seasons/{PRIVATE}/record")
     assert r.status_code == 409
     needs = r.json()["detail"]["needs"]
+    # The weeks ahead whose pairs the Season view lacks: the league page shown for each.
+    assert r.json()["detail"]["ahead"] == [f"{SITE}/{PRIVATE}?matchup_week=3"]
     assert needs == [
         f"{SITE}/{PRIVATE}",
         f"{SITE}/{PRIVATE}/matchup?week=1&mid1=1&mid2=2",
@@ -619,6 +621,7 @@ def test_a_private_league_names_the_pages_it_needs_then_records(client):
     out = client.post(f"/seasons/{PRIVATE}/record")
     assert out.status_code == 200, out.text
     assert out.json()["status"] == "recorded"
+    assert out.json()["ahead"] == [f"{SITE}/{PRIVATE}?matchup_week=3"]
     rec_ = json.loads(week_file(client, PRIVATE, 1).read_text())
     assert rec_["sources"] == {"pages": "extension", "players": LEAGUE}
     assert rec_["teams"]["3"]["result"]["outcome"] == "T"
@@ -628,6 +631,14 @@ def test_a_private_league_names_the_pages_it_needs_then_records(client):
     assert players[1005]["team"] == 2 and players[1011]["team"] is None
     assert players[1011]["line"]["pts"] == line(1011)["pts"]
     assert all(f"/nba/{LEAGUE}/" in u for u in client.fake.urls if "fantasysports" in u)
+    # Once the week's page is posted, nothing is left ahead.
+    week3 = league_html(PRIVATE, 1, False).replace(
+        "</body>",
+        f'<a href="/nba/{PRIVATE}/matchup?week=3&mid1=1&mid2=4">1 v 4</a>'
+        f'<a href="/nba/{PRIVATE}/matchup?week=3&mid1=2&mid2=3">2 v 3</a></body>',
+    )
+    snapshot(client, PRIVATE, f"{SITE}/{PRIVATE}?matchup_week=3", week3, AFTER_1)
+    assert client.post(f"/seasons/{PRIVATE}/record").json()["ahead"] == []
 
 
 def test_the_draft_is_read_once_per_league(client):
@@ -663,6 +674,7 @@ def test_the_script_prints_one_line_per_league(client):
     assert lines[0].startswith(f"{LEAGUE} week 1: recorded")
     assert lines[1].startswith(f"{PRIVATE} week 1: needs pages (")
     assert f"{SITE}/{PRIVATE}/draftresults" in lines[1]
+    assert lines[1].endswith(f"; schedule pages (1): {SITE}/{PRIVATE}?matchup_week=3")
     assert lines[2].startswith(f"{POINTS} week 1: recorded")
 
 

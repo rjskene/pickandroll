@@ -998,6 +998,81 @@ export interface MatchupPayload {
   players: { mine: MatchupPlayer[]; theirs: MatchupPlayer[] };
 }
 
+// ---------------------------------------------------------------- season view (#116)
+/** A category of a week ahead: my projected final, the opponent's (the field's average) and the
+ * odds of winning it; null when no roster faced was read. */
+export interface OutlookCategory {
+  cat: Cat;
+  mine: number | null;
+  theirs: number | null;
+  p_win: number | null;
+}
+
+/** A player of mine in a week ahead: his games and starts, and what he adds to the week. */
+export interface OutlookPlayer {
+  player: number;
+  slot: string;
+  games: number;
+  started: number;
+  cats: number;
+  matchup: number;
+}
+
+export interface OutlookWeek {
+  week: number;
+  start: string;
+  end: string;
+  /** The first day projected: today's first in this week, Monday in a later one. */
+  from: string;
+  days: number;
+  this_week: boolean;
+  playoffs: boolean;
+  /** The opponent the week's pairs name; null: the week is played against the field. */
+  opponent: number | null;
+  /** The teams averaged over when against the field. */
+  field: number | null;
+  /** False when no roster faced was read: the week has no odds. */
+  rosters_read: boolean;
+  /** Whether the NBA schedule covers every day the week counts games on. */
+  scheduled: boolean;
+  /** Yahoo's count so far, mine first (this week only). */
+  score: [number, number] | null;
+  tied: number | null;
+  expected: number | null;
+  win: number | null;
+  games: number;
+  started: number;
+  cats: OutlookCategory[];
+  players: OutlookPlayer[];
+}
+
+export interface OutlookSummary {
+  /** The regular weeks left, this one included. */
+  weeks: number;
+  /** The matchup odds of the regular weeks, summed. */
+  expected_wins: number;
+  expected_cats: number;
+  favoured: number;
+  toss_up: number;
+  underdog: number;
+  /** Regular weeks against the field (their pairs not read). */
+  field: number;
+  /** Regular weeks without odds (no roster faced read). */
+  unread: number;
+}
+
+export interface OutlookPayload {
+  league: string;
+  system: ProjectionSystemInfo & { key: ProjectionSystem; fallback?: string };
+  today: string;
+  team: number;
+  record: string | null;
+  /** Estimated from the bracket and the last week, or the first week read with no pairs. */
+  first_playoff_week: number | null;
+  summary: OutlookSummary;
+  weeks: OutlookWeek[];
+}
+
 // ---------------------------------------------------------------- moves (#94)
 /** The moves' horizons: the rest of this week against the opponent, and the three weeks after
  * it against the field. */
@@ -1435,6 +1510,9 @@ export const api = {
   /** My matchup this week as a scoreboard, and what each player adds to it (#116). */
   matchup: (league: string, system: ProjectionSystem) =>
     request<MatchupPayload>(`/seasons/${encodeURIComponent(league)}/matchup?system=${system}`),
+  /** Every week left of my season as win odds, each with its scoreboard and my players (#116). */
+  outlook: (league: string, system: ProjectionSystem) =>
+    request<OutlookPayload>(`/seasons/${encodeURIComponent(league)}/outlook?system=${system}`),
   /** The best recommended move when today's moves are solved (#108); never solves them. */
   best: (league: string, system: ProjectionSystem) =>
     request<BestMove>(`/seasons/${encodeURIComponent(league)}/best?system=${system}`),

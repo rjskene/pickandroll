@@ -9,13 +9,15 @@ prints one line per league:
 
     258901 week 3: recorded (pages: taken 7, available 2, searches 0)
     251146 week 3: unchanged
-    31822 week 3: needs pages (8): https://basketball.fantasysports.yahoo.com/nba/31822 ...
+    31822 week 3: needs pages (8): https://basketball.fantasysports.yahoo.com/nba/31822 ...; schedule pages (15): https://...?matchup_week=5 ...
     15953: skipped: no week is over yet
     238174: failed (502): https://...: HTTP 503
 
 ``needs pages`` is the private league: the pages listed are for the user's signed-in Chrome to
-open (read only; the extension posts them), after which the league is recorded again. Nothing
-here signs in or reads Yahoo itself: the API does the reading.
+open (read only; the extension posts them), after which the league is recorded again.
+``schedule pages`` are the private league's weeks ahead whose pairs the Season view has not read
+(#116): the league page shown for each week, for the same Chrome to open once; the record does
+not wait on them. Nothing here signs in or reads Yahoo itself: the API does the reading.
 
 Exit codes: 0 every league was asked, whatever it answered; 2 the API is unreachable.
 """
@@ -68,6 +70,10 @@ def _missing(missing: dict[str, Any]) -> str:
     return "; missing: " + ", ".join(parts) if parts else ""
 
 
+def _ahead(ahead: list[str] | None) -> str:
+    return f"; schedule pages ({len(ahead)}): {' '.join(ahead)}" if ahead else ""
+
+
 def describe(league: str, status: int, body: Any) -> str:
     """One league's answer as one line."""
     detail = body.get("detail") if isinstance(body, dict) else body
@@ -77,11 +83,14 @@ def describe(league: str, status: int, body: Any) -> str:
         return (
             f"{league} week {body['week']}: {body['status']}"
             f"{f' (pages: {read})' if read and body['status'] != 'unchanged' else ''}"
-            f"{_missing(body.get('missing') or {})}"
+            f"{_missing(body.get('missing') or {})}{_ahead(body.get('ahead'))}"
         )
     if status == 409 and isinstance(detail, dict) and detail.get("needs"):
         needs = detail["needs"]
-        return f"{league} week {detail.get('week')}: needs pages ({len(needs)}): {' '.join(needs)}"
+        return (
+            f"{league} week {detail.get('week')}: needs pages ({len(needs)}): {' '.join(needs)}"
+            f"{_ahead(detail.get('ahead'))}"
+        )
     if status in (404, 409):
         return f"{league}: skipped: {detail}"
     return f"{league}: failed ({status}): {detail}"

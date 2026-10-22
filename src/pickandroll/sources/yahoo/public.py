@@ -23,7 +23,15 @@ from collections.abc import Callable, Iterable
 from datetime import UTC, date, datetime
 from typing import Any, Protocol
 
-from ...season.state import PUBLIC, YAHOO_WEEK, Part, SeasonSettings, matchup_key, roster_key
+from ...season.state import (
+    PUBLIC,
+    YAHOO_WEEK,
+    Part,
+    SeasonSettings,
+    matchup_key,
+    pairings_key,
+    roster_key,
+)
 from . import pages
 
 PUB_API = "https://pub-api.fantasysports.yahoo.com/fantasy/v3"
@@ -145,6 +153,11 @@ def available_url(league: str, offset: int, view: str = OWNERSHIP_VIEW) -> str:
     return f"{SITE}/{league}/players?status=A&pos=P&stat1={view}&sort=R_PO&sdir=1&count={offset}"
 
 
+def pairings_url(league: str, week: int) -> str:
+    """The league page as shown for ``week``: that week's pairs (#116)."""
+    return f"{SITE}/{league}?matchup_week={week}"
+
+
 def matchup_url(league: str, week: int, teams: Iterable[int]) -> str:
     a, b = list(teams)
     return f"{SITE}/{league}/matchup?week={week}&mid1={a}&mid2={b}"
@@ -184,6 +197,7 @@ def settings_from_v3(body: Any) -> dict[str, Any] | None:
         "trade_end_date": s.get("trade_end_date") or None,
         "trade_ratify": s.get("trade_ratify_type") or None,
         "trade_review_days": s.get("trade_reject_time"),
+        "playoff_teams": s.get("num_playoff_teams"),
     }
 
 
@@ -308,6 +322,24 @@ def refresh_parts(
         step("my matchup" if mine in pair else f"matchup {pair[0]}-{pair[1]}")
     out.append(part("transactions", pages.parse_transactions_page(fetch(transactions_url(league)))))
     step("transactions")
+    return out
+
+
+def pairings_parts(
+    league: str, weeks: Iterable[int], fetch: Fetch, step: Callable[[str], None] | None = None
+) -> list[Part]:
+    """Each of ``weeks``' pairs from the league page shown for it, one ``pairings/<week>`` part
+    a week: the season's schedule of opponents (#116). A page that cannot be read is left out;
+    the next refresh asks for it again."""
+    out = []
+    for week in weeks:
+        try:
+            data = pages.parse_pairings(fetch(pairings_url(league, week)), week)
+        except (FetchError, pages.PageError):
+            continue
+        out.append(Part(pairings_key(week), datetime.now(UTC), PUBLIC, data))
+        if step is not None:
+            step(f"week {week} pairs")
     return out
 
 

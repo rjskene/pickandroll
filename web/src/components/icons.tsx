@@ -114,6 +114,13 @@ export const VIEW_ICONS: Record<SeasonViewId, ReactElement> = {
       <path d="M3 12h7M14 12h7M10 6v12M14 6v12" />
     </svg>
   ),
+  // A calendar: the weeks ahead.
+  season: (
+    <svg width="18" height="18" viewBox="0 0 24 24" {...stroke} aria-hidden="true">
+      <rect x="4" y="5" width="16" height="15" rx="2" />
+      <path d="M4 10h16M9 3v4M15 3v4" />
+    </svg>
+  ),
 };
 
 export function Chevron({ dir }: { dir: "up" | "down" | "left" | "right" }) {

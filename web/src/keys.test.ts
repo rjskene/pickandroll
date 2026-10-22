@@ -310,18 +310,20 @@ test("season: ] / j k arrows Enter t m r x", () => {
   }
 });
 
-test("season: w and h show their views, [ the drawer, whatever the view", () => {
+test("season: w, h and s show their views, [ the drawer, whatever the view", () => {
   assert.deepEqual(
     SEASON_VIEWS.map((v) => [v.key, v.id]),
     [
       ["w", "waivers"],
       ["h", "matchup"],
+      ["s", "season"],
     ],
   );
-  for (const view of ["waivers", "matchup"] as const) {
+  for (const view of ["waivers", "matchup", "season"] as const) {
     const cases: [KeyLike, unknown[][]][] = [
       [key("w"), [["view", "waivers"]]],
       [key("h"), [["view", "matchup"]]],
+      [key("s"), [["view", "season"]]],
       [key("["), [["views"]]],
       [key("/"), [["search"]]],
     ];
@@ -333,11 +335,13 @@ test("season: w and h show their views, [ the drawer, whatever the view", () => 
   }
 });
 
-test("season: the Waivers keys rest in the Matchup view", () => {
-  for (const e of [key("j"), key("k"), key("ArrowDown"), key("ArrowUp"), key("Enter")]) {
-    const { map, calls } = fakeSeason({ view: "matchup", highlight: 42 });
-    assert.equal(handleKey(e, map), false, e.key);
-    assert.deepEqual(calls, [], e.key);
+test("season: the Waivers keys rest in the Matchup and Season views", () => {
+  for (const view of ["matchup", "season"] as const) {
+    for (const e of [key("j"), key("k"), key("ArrowDown"), key("ArrowUp"), key("Enter")]) {
+      const { map, calls } = fakeSeason({ view, highlight: 42 });
+      assert.equal(handleKey(e, map), false, e.key);
+      assert.deepEqual(calls, [], e.key);
+    }
   }
 });
 
@@ -345,6 +349,7 @@ test("the views come back from the browser, or the defaults", () => {
   assert.deepEqual(parseViews(null), DEFAULT_VIEWS);
   assert.deepEqual(parseViews("{"), DEFAULT_VIEWS);
   assert.deepEqual(parseViews(JSON.stringify({ view: "matchup", shown: false })), { view: "matchup", shown: false });
+  assert.deepEqual(parseViews(JSON.stringify({ view: "season", shown: true })), { view: "season", shown: true });
   assert.deepEqual(parseViews(JSON.stringify({ view: "bogus", shown: "no" })), DEFAULT_VIEWS);
   assert.deepEqual(DEFAULT_VIEWS, { view: "waivers", shown: true });
 });
@@ -415,5 +420,5 @@ test("each sheet names its screen's cards and lists its keys", () => {
   assert.ok(DRAFT_SHEET.cards.startsWith(`Cards are ${DRAFT_CARDS.map((c, i) => `${i + 1} ${c.title}`).join(" · ")},`));
   assert.ok(SEASON_SHEET.cards.startsWith(`Cards are ${SEASON_CARDS.map((c, i) => `${i + 1} ${c.title}`).join(" · ")},`));
   const listed = SEASON_SHEET.groups.flatMap((g) => g.rows.flatMap(([keys]) => keys));
-  for (const k of ["1", "7", "⇧ 2", "]", "[", "w", "h", "x", "Esc", "/", "j", "k", "↓", "↑", "Enter", "t", "m", "r", "?"]) assert.ok(listed.includes(k), k);
+  for (const k of ["1", "7", "⇧ 2", "]", "[", "w", "h", "s", "x", "Esc", "/", "j", "k", "↓", "↑", "Enter", "t", "m", "r", "?"]) assert.ok(listed.includes(k), k);
 });

@@ -36,6 +36,9 @@ import {
   placeLabel,
   scoreLabel,
   daysLeftLabel,
+  chipTone,
+  defaultWeek,
+  outlookSummary,
   leanTone,
   matchupRecord,
   oddsGainLabel,
@@ -728,4 +731,30 @@ test("the matchup view's lines, odds gains, record and days left (#116)", () => 
   assert.equal(matchupRecord({ score: [93.24, 101.9], tied: null }, "points"), "93.2–101.9");
   assert.equal(matchupRecord({ score: null, tied: null }, "categories"), "no score yet");
   assert.deepEqual([0, 1, 3].map(daysLeftLabel), ["no day left", "1 day left", "3 days left"]);
+});
+
+test("the season view's chips, the week it opens and its summary (#116)", () => {
+  assert.deepEqual(
+    [0.6, 0.5, 0.4].map((win) => chipTone({ opponent: 7, win })),
+    ["good", "warn", "bad"],
+  );
+  assert.equal(chipTone({ opponent: null, win: 0.7 }), "field");
+  assert.equal(chipTone({ opponent: 7, win: null }), "unread");
+  const weeks = [
+    { week: 3, this_week: true },
+    { week: 4, this_week: false },
+  ];
+  assert.equal(defaultWeek(weeks), 4);
+  assert.equal(defaultWeek(weeks.slice(0, 1)), 3);
+  assert.equal(defaultWeek([{ week: 5, this_week: false }]), 5);
+  assert.equal(defaultWeek([]), null);
+  const summary = { weeks: 19, expected_wins: 7.33, expected_cats: 78.2, favoured: 4, toss_up: 1, underdog: 13, field: 1, unread: 0 };
+  assert.deepEqual(outlookSummary(summary), ["7.3 wins expected in the 19 regular weeks left", "4 favoured · 1 toss-up · 13 underdogs", "1 against the field"]);
+  assert.deepEqual(outlookSummary({ ...summary, weeks: 2, favoured: 0, toss_up: 0, underdog: 1, field: 1, unread: 1 }), [
+    "7.3 wins expected in the 2 regular weeks left",
+    "1 underdog",
+    "1 against the field",
+    "1 without odds, counted as none",
+  ]);
+  assert.deepEqual(outlookSummary({ ...summary, weeks: 1, unread: 1 }), ["1 regular week left, none with odds yet: no roster faced was read"]);
 });

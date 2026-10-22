@@ -165,54 +165,56 @@ function Players({
       <div className="k">
         {title} <span className="muted note">{note}</span>
       </div>
-      <table className="season-table">
-        <thead>
-          <tr>
-            <th>Player</th>
-            <th>Slot</th>
-            <th className="num" title={`games left from ${dayLabel(m.from)}`}>
-              G
-            </th>
-            {cols.map((c) => (
-              <th key={c} className="num" title={`${CAT_LABEL[c]} per game`}>
-                {CAT_LABEL[c]}
+      <div className="mu-table">
+        <table className="season-table">
+          <thead>
+            <tr>
+              <th>Player</th>
+              <th>Slot</th>
+              <th className="num" title={`games left from ${dayLabel(m.from)}`}>
+                G
               </th>
-            ))}
-            {!points && (
-              <th className="num" title={`expected categories he adds: the week with him less the week without him from ${dayLabel(m.from)}`}>
-                Cats
+              {cols.map((c) => (
+                <th key={c} className="num" title={`${CAT_LABEL[c]} per game`}>
+                  {CAT_LABEL[c]}
+                </th>
+              ))}
+              {!points && (
+                <th className="num" title={`expected categories he adds: the week with him less the week without him from ${dayLabel(m.from)}`}>
+                  Cats
+                </th>
+              )}
+              <th className="num" title="the matchup odds he adds, the same way">
+                Matchup
               </th>
-            )}
-            <th className="num" title="the matchup odds he adds, the same way">
-              Matchup
-            </th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((r) => {
-            const p = player(r.player);
-            return (
-              <tr key={r.player} className={r.games === 0 ? "bench" : undefined}>
-                <td>
-                  <span className="strong">{p?.name ?? `player ${r.player}`}</span>
-                  {p?.nba_team && <span className="dim"> {p.nba_team}</span>}
-                </td>
-                <td className="dim">{r.slot}</td>
-                <td className="num" title={r.started !== r.games ? `${r.started} of them in a starting slot` : undefined}>
-                  {r.games}
-                </td>
-                {cols.map((c) => (
-                  <td key={c} className="num">
-                    {catValue(c, r.per_game?.[c])}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => {
+              const p = player(r.player);
+              return (
+                <tr key={r.player} className={r.games === 0 ? "bench" : undefined}>
+                  <td>
+                    <span className="strong">{p?.name ?? `player ${r.player}`}</span>
+                    {p?.nba_team && <span className="dim"> {p.nba_team}</span>}
                   </td>
-                ))}
-                {!points && <td className={`num ${tone(r.cats)}`}>{gainLabel(r.cats)}</td>}
-                <td className={`num ${tone(r.matchup)}`}>{oddsGainLabel(r.matchup)}</td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
+                  <td className="dim">{r.slot}</td>
+                  <td className="num" title={r.started !== r.games ? `${r.started} of them in a starting slot` : undefined}>
+                    {r.games}
+                  </td>
+                  {cols.map((c) => (
+                    <td key={c} className="num">
+                      {catValue(c, r.per_game?.[c])}
+                    </td>
+                  ))}
+                  {!points && <td className={`num ${tone(r.cats)}`}>{gainLabel(r.cats)}</td>}
+                  <td className={`num ${tone(r.matchup)}`}>{oddsGainLabel(r.matchup)}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
