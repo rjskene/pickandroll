@@ -29,6 +29,7 @@ page shows (season totals, Yahoo's next-7-days projection, ...) does not matter 
 from __future__ import annotations
 
 import re
+from collections.abc import Sequence
 from datetime import date
 from typing import Any
 from urllib.parse import parse_qs, urlparse
@@ -630,25 +631,28 @@ def parse_pairings(html: str, week: int) -> dict[str, Any]:
     return {"week": week, "matchups": matchups}
 
 
-def parse_matchup_page(html: str, week: int | None = None) -> dict[str, Any]:
+def parse_matchup_page(
+    html: str, week: int | None = None, pair: Sequence[int] | None = None
+) -> dict[str, Any]:
     """A matchup page: the two teams (in the page's order), each one's totals by column, and the
-    score lines (``vs``: categories won or points; a points league adds Yahoo's projections)."""
+    score lines (``vs``: categories won or points; a points league adds Yahoo's projections).
+    ``pair``, the teams the URL asks for (``mid1``, and ``mid2`` when given), must be on it."""
     root = parse(html)
     _require(root, "matchup")
-    teams: list[int] = []
-    for a in root.find_all("a"):
-        m = _TEAM_HREF.search(a.get("href") or "")
-        if m and int(m.group(2)) not in teams:
-            teams.append(int(m.group(2)))
-        if len(teams) == 2:
-            break
+    found = _table_with(root, "Team", "FG%") or _table_with(root, "Team", "PTS")
+    teams = _matchup_teams(root, found[1] if found is not None else [])
     if len(teams) != 2:
         raise PageError("the matchup page does not name two teams")
+    asked = [int(t) for t in pair or ()]
+    if not set(asked) <= set(teams):
+        raise PageError(
+            f"the matchup page shows teams {teams[0]} and {teams[1]};"
+            f" its URL asks for {' and '.join(map(str, asked))}"
+        )
     week = week if week is not None else week_label(html)
     if week is None:
         raise PageError("the matchup page does not say its week")
     totals: dict[str, dict[str, str]] = {}
-    found = _table_with(root, "Team", "FG%") or _table_with(root, "Team", "PTS")
     if found is not None:
         labels, rows = found
         for row in rows:
@@ -680,6 +684,23 @@ def parse_matchup_page(html: str, week: int | None = None) -> dict[str, Any]:
     if not totals and (sums := _roster_sums(root, teams)):
         out["roster_totals"] = sums
     return out
+
+
+def _matchup_teams(root: Node, rows: Sequence[Node]) -> list[int]:
+    """The matchup's two teams in the page's order: the header's (``#matchup-header``, the
+    teams' names over the score), else the totals table's rows. Never the page's chrome: a
+    signed-in page's navigation links to my team before either."""
+    header = root.find("section", pred=lambda n: n.get("id") == "matchup-header")
+    for scope in ([header] if header is not None else [], rows):
+        teams: list[int] = []
+        for node in scope:
+            for a in node.find_all("a"):
+                m = _TEAM_HREF.search(a.get("href") or "")
+                if m and int(m.group(2)) not in teams:
+                    teams.append(int(m.group(2)))
+        if len(teams) == 2:
+            return teams
+    return []
 
 
 def _games_played(root: Node, teams: list[int]) -> dict[str, dict[str, int]]:

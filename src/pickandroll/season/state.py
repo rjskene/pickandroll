@@ -33,7 +33,8 @@ Part keys and their data:
 ``available``
     ``{"rows": [...]}``, :class:`Available` rows with the time each was seen.
 ``matchup/<week>/<a>-<b>``
-    One matchup page: :class:`Matchup`.
+    One matchup page: :class:`Matchup`. One whose teams are not a pair of its week on the league
+    page is not read (:func:`unpaired_matchups`).
 ``transactions``
     ``{"rows": [...]}``, :class:`Transaction` rows, newest first.
 ``calendar``
@@ -469,6 +470,31 @@ def pairings_key(week: int) -> str:
     return f"pairings/{week}"
 
 
+def unpaired_matchups(parts: Mapping[str, Part]) -> set[str]:
+    """The matchup parts whose two teams are not a pair of their week on the league page (this
+    week's from the league part, another week's from ``pairings/<week>``) when the page listed
+    that week's pairs: a matchup page whose teams were misread, as a signed-in page's navigation
+    link to my team once made them. The season reads none of them, and a save drops them."""
+    listed: dict[int, set[frozenset[int]]] = {}
+    for key, part in parts.items():
+        if key == "league":
+            rows = [(int(m["week"]), m["teams"]) for m in part.data.get("matchups") or []]
+        elif key.startswith("pairings/"):
+            week = int(part.data["week"])
+            rows = [(week, m["teams"]) for m in part.data.get("matchups") or []]
+        else:
+            continue
+        for week, teams in rows:
+            listed.setdefault(week, set()).add(frozenset(int(t) for t in teams))
+    return {
+        key
+        for key, part in parts.items()
+        if key.startswith("matchup/")
+        and (pairs := listed.get(int(part.data["week"])))
+        and frozenset(int(t) for t in part.data["teams"]) not in pairs
+    }
+
+
 #: The players page's ownership columns only its Research view (``R_O``) carries; a page in
 #: another view leaves them empty.
 OWNERSHIP_ONLY = ("pct_rostered_change", "pct_started", "pct_started_change", "adds", "drops")
@@ -594,8 +620,9 @@ class Season:
             for m in league.get("matchups", [])
         }
         league_at = parts["league"].fetched_at if "league" in parts else None
+        misread = unpaired_matchups(parts)
         for key, part in parts.items():
-            if key.startswith("matchup/"):
+            if key.startswith("matchup/") and key not in misread:
                 read = Matchup.from_dict(part.data)
                 listed = pairs.get(key)
                 # The league page's live score when it was read after the matchup page.

@@ -20,6 +20,7 @@ from .state import (
     merge_part,
     pairings_key,
     roster_key,
+    unpaired_matchups,
 )
 
 __all__ = [
@@ -45,4 +46,5 @@ __all__ = [
     "mondays",
     "pairings_key",
     "roster_key",
+    "unpaired_matchups",
 ]
