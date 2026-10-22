@@ -27,6 +27,10 @@ Routes:
     The Lineup view (#107, ``season_lineup``): my recommended starters for each day of a week
     (``?week=``, this one by default) against Yahoo's lineup as read, the games it loses, the
     held slots with who is eligible for them, and first any held player whose status cleared.
+``GET /seasons/{league}/decisions``
+    The decision log (#125, ``season_decisions``): every moves and strategy solve of the days
+    ``?from=``..``?to=`` (the last week by default) and my moves of those days from the
+    transactions page, each matched to the latest solve before it.
 ``GET /seasons/{league}/strategy``
     The Strategy panel (#110, ``season_strategy``): today's run of the strategy engine, the
     recommended set at each weight of this week against the rest of the season, from the exact
@@ -100,6 +104,7 @@ from ..sources import schedule as nba_schedule
 from ..sources.yahoo import pages, public
 from . import (
     leagues,
+    season_decisions,
     season_flags,
     season_lineup,
     season_matchup,
@@ -440,7 +445,30 @@ class SeasonService:
         built = self._built(league, system)
         today = nba_today(self.clock())
         key = (league, system, "moves", today, self._moves_stamp(league))
-        return self.moves_cache.get(key, lambda: season_moves.moves_payload(built))
+
+        def make() -> dict[str, Any]:
+            out = season_moves.moves_payload(built)
+            self._log(league, lambda at: season_decisions.moves_entry(built, out, at))
+            return out
+
+        return self.moves_cache.get(key, make)
+
+    def _log(self, league: str, entry: Callable[[datetime], dict[str, Any]]) -> None:
+        """Keep a finished solve in the decision log (#125); a failure to log loses the entry,
+        never the answer."""
+        try:
+            season_decisions.append(season_dir(self.data_dir, league), entry(self.clock()))
+        except Exception:  # noqa: BLE001, S110 - the log misses one solve, nothing more
+            pass
+
+    def decisions(self, league: str, start: date | None, end: date | None) -> dict[str, Any]:
+        """The decision log (#125): the entries of ``start``..``end`` and my moves in those days,
+        each matched to the latest entry before it."""
+        base, _ = self._base(league)
+        today = nba_today(self.clock())
+        season = Season.from_parts(base, load_parts(self.data_dir, league))
+        entries = season_decisions.load(season_dir(self.data_dir, league), end)
+        return season_decisions.payload(entries, season, today, start, end)
 
     def best(self, league: str, system: str, solve: bool = False) -> dict[str, Any]:
         """The landing grid's best move (#108): from the moves already solved today, or, with
@@ -495,6 +523,9 @@ class SeasonService:
                 lambda: self.moves(league, system),
                 settings,
                 self.strategy_workers,
+                on_solved=lambda run: self._log(
+                    league, lambda at: season_decisions.strategy_entry(built, run.payload(), at)
+                ),
             ),
         )
         if wait:
@@ -624,6 +655,13 @@ class SeasonService:
             # The private league's lineup pages (#107): its settings page until read, and my
             # team page shown for each day of this week from today.
             lineup_pages = [] if is_public else _lineup_pages(season, calendar, today)
+            # And its transactions page until read today, for the decision log's match (#125).
+            read = season.fetched.get("transactions")
+            moves_page = (
+                public.transactions_url(league)
+                if not is_public and (read is None or nba_today(read[0]) < today)
+                else None
+            )
             fetch = self.fetch_factory()
             try:
                 if is_public:
@@ -666,6 +704,7 @@ class SeasonService:
                         "needs": exc.urls,
                         "ahead": ahead,
                         "lineup_pages": lineup_pages,
+                        "transactions_page": moves_page,
                     },
                 ) from exc
             except (public.FetchError, pages.PageError) as exc:
@@ -697,6 +736,7 @@ class SeasonService:
             "summary": season_rec.summary(written, season.settings.my_team_id),
             "ahead": ahead,
             "lineup_pages": lineup_pages,
+            "transactions_page": moves_page,
         }
 
     def _save_part(self, league: str, part: Part) -> None:
@@ -1230,6 +1270,8 @@ def register(
         return {"refresh": job.to_dict(), "season": service.summary(league)}
 
     system_q = Query("bbm", pattern="^(bbm|yahoo)$", description="the projection system")
+    from_q = Query(None, alias="from", description="the first day; a week before the last")
+    to_q = Query(None, alias="to", description="the last day; today")
 
     @app.get("/seasons/{league}/moves")
     async def get_moves(league: str = league_id, system: str = system_q) -> dict[str, Any]:
@@ -1280,6 +1322,15 @@ def register(
     ) -> dict[str, Any]:
         """My recommended lineup for each day of the week against Yahoo's as read (#107)."""
         return await asyncio.to_thread(service.lineup, league, system, week)
+
+    @app.get("/seasons/{league}/decisions")
+    async def get_decisions(
+        league: str = league_id,
+        start: date | None = from_q,
+        end: date | None = to_q,
+    ) -> dict[str, Any]:
+        """The decision log (#125): each solve's recommended sets and my moves matched to them."""
+        return await asyncio.to_thread(service.decisions, league, start, end)
 
     @app.get("/seasons/{league}/strategy")
     async def get_strategy(league: str = league_id, system: str = system_q) -> dict[str, Any]:

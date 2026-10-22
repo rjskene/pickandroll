@@ -56,7 +56,7 @@ leagues, and Yahoo serves everything the engine needs without a sign-in:
 | team list | `.../v3/teams/nba/<id>` | names and ids only |
 | each team's roster, including mine and this week's opponent's | the public team page `basketball.fantasysports.yahoo.com/nba/<id>/<team>` | roster names are in the served HTML (checked on 258901) |
 | free agents and waivers with clear dates, percent rostered and its change | the public players page `/nba/<id>/players?status=A&pos=P&stat1=R_O&sort=R_PO&sdir=1&count=<offset>` | checked in #92 on 258901: the rows are server-rendered, 25 a page; the Research view `R_O` carries roster status with the waiver date, percent rostered and started with the day's change, and Yahoo-wide adds, drops and trades. The same public page serves the stat views too, so a public league needs no sign-in for them: `S_PS7` and `S_PS14` (Yahoo's projections for the next 7 and 14 days), `S_PSR` (the remaining games), `S_L7`, `S_L14`, `S_L30` (last 7, 14 and 30 days, totals and averages) and the standard deviations (`S_SDL14` and the like) |
-| the league's own adds and drops | the public `/nba/<id>/transactions` page | |
+| the league's own adds and drops | the public `/nba/<id>/transactions` page | each move with its team, its time (`Oct 20, 3:57 am`, printed without a zone and read in US Eastern) and Yahoo's words for it (`$5 Waiver`, `Free Agent`, `To Waivers`); an add and the drop that came with it share a row group. Read on every public refresh; the private league's page is listed by the weekly recorder until read that day (#125, see "Decision log") |
 | Yahoo-wide adds, drops and trades per player | the public buzz index `/nba/buzzindex` | the "surge in adds" signal for the breakout flag |
 | this week's and next week's per-game projections with games, back-to-backs, minutes, injury, Yahoo ownership | Basketball Monster weekly export (imported with `scripts/draft_day.py week --this \| --next`, or `sources/bbm/fetch.py::weekly`, `this_week=True` for the rest of this week; `parse.py` already normalises it: `games`, `quality_games`, `back_to_backs`, `minutes`, `yahoo_owned_pct`, `bbm_adv_pct`, `injury`) | exported from the user's signed-in Chrome as the season export is, never with typed credentials |
 | rest-of-season per-game projections | Basketball Monster season export, per-game | refreshed daily in season |
@@ -328,6 +328,55 @@ out, any of the Moves card's four weeks.
   posts the field as it is.
 - **Script.** `scripts/season.py lineup [league ...] --all [--days 2] [--json]` prints the same
   line per league for the terminal.
+
+## Decision log (#125)
+
+`season/decisions.py` (core, no I/O) and `api/season_decisions.py`;
+`GET /seasons/{league}/decisions?from=YYYY-MM-DD&to=YYYY-MM-DD`, the last seven days to today
+when left out.
+
+- **Entries.** Each solve of the moves route (once per day and inputs: a cached answer writes
+  nothing) and each strategy run that solved appends one entry to
+  `data/leagues/<id>/season/decisions/<date>.json`, the date in US Eastern, for every system
+  solved. An entry holds its time, the route, the projection system with its export file, the
+  knobs in force (`knobs`: the system, then the blend weight, the horizon weight, the protection
+  floor, the stash threshold, the FAAB sizing and the daily move cap of docs/AUTOPILOT.md, null
+  until the knob file of phase 3 sets them), the first day a move counts, the adds left, the
+  horizons' labels and the pool (the moves route's search pool, candidates and floor; the
+  strategy's players and settings). Then one set per horizon (moves) or per weight (strategy):
+  its moves (add, drop or nobody, the day it counts from, and the bid to make, null until the
+  FAAB sizing of phase 2), the held slots it uses and the comebacks it implies (moves), the
+  weight and where the set came from (strategy), its gains, and this week against the named
+  opponent before and after it: each category's finals and odds, the expected categories won
+  and the odds of winning the matchup. A strategy run cut off before it solved logs nothing. A
+  failure to write loses that entry, never the answer.
+- **My moves.** My team's rows on the transactions page, one per row group: an add with the
+  drop that came with it, a lone add or a lone drop, with its time and the bid as read (`bid`,
+  dollars, from Yahoo's `$5 Waiver`; null for a free agent's add). A trade is not a move here.
+  The page prints its times without a zone, in the zone of the Yahoo account that opened it;
+  they are read in US Eastern (`season_decisions.TRANSACTIONS_TZ`), an assumption, since the
+  user's Mac runs on US Central.
+- **Match.** Each move against the latest entry logged before it, over every set of that entry:
+  `as_recommended` (a set holds the same add with the same drop, nobody being an open spot or a
+  held slot), `differently` (a set adds the same player for another drop or drops the same
+  player for another add), `not_recommended` (no set names either player) or `no_entry`
+  (nothing logged before it). The entry may be older than the range shown. A move with an
+  entry within an hour of it, before or after, is flagged `near`: a wrong zone could have
+  matched it to another entry, so its kind is checked before it is scored.
+- **Payload.** The entries in the range, oldest first; my moves in it, each with its match and
+  the entry it was matched to; the count per kind and of the near ones; when the transactions
+  page was read; and the names of the players in both. The private league answers the same from
+  its posted page. The Monday scorecard (#126) reads it.
+- **Pages.** A public league's refresh reads its transactions page. The private league's is the
+  user's Chrome's: the weekly recorder's response lists it as `transactions_page` until a page
+  read that day is posted, and `scripts/season.py record` prints it after the lineup pages.
+- **Script.** `scripts/season.py decisions <league ...> [--from] [--to] [--json]` prints each
+  solve with its sets, then each move with its match ("near a solve" when flagged), one per
+  line, times in US Eastern.
+- **Routine.** An entry is written only when something solves: the Moves card, the landing
+  grid's solve button and the Strategy panel's run. The digest solves nothing, so for an entry
+  every day the daily routine asks `GET /seasons/{id}/moves` of each league after its refresh
+  (docs/AUTOPILOT.md, the daily row).
 
 ## The breakout flag
 
