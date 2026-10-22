@@ -61,9 +61,10 @@ class PageError(ValueError):
 
 # --------------------------------------------------------------------------- page kinds
 def page_kind(url: str) -> tuple[str, dict[str, Any]]:
-    """What a league page URL is: ``league``, ``team`` (with ``team_id``), ``players`` (with its
-    ``view`` and ``status`` filter), ``playersearch``, ``matchup`` (``week``, ``teams``),
-    ``draftresults`` or ``transactions``; with the ``league`` id."""
+    """What a league page URL is: ``league`` (with ``matchup_week`` when it shows another
+    week's pairs), ``team`` (with ``team_id``), ``players`` (with its ``view`` and ``status``
+    filter), ``playersearch``, ``matchup`` (``week``, ``teams``), ``draftresults`` or
+    ``transactions``; with the ``league`` id."""
     parsed = urlparse(url)
     parts = [p for p in parsed.path.split("/") if p]
     if len(parts) < 2 or parts[0] != "nba" or not parts[1].isdigit():
@@ -72,6 +73,10 @@ def page_kind(url: str) -> tuple[str, dict[str, Any]]:
     query = parse_qs(parsed.query)
     rest = parts[2:]
     if not rest:
+        # ``?matchup_week=N`` shows week N's pairs: a schedule page, not this week's league page.
+        week = (query.get("matchup_week") or [None])[0]
+        if week and week.isdigit():
+            return "league", {"league": league, "matchup_week": int(week)}
         return "league", {"league": league}
     if rest[0].isdigit() and len(rest) == 1:
         return "team", {"league": league, "team_id": int(rest[0])}
@@ -486,7 +491,8 @@ def parse_draft_results(html: str) -> dict[str, Any]:
 
 def parse_league_page(html: str) -> dict[str, Any]:
     """The league page: the standings (record, points for, waiver priority and budget, moves)
-    and this week's matchup pairs."""
+    and the week's matchup pairs, each with its live score when the matchups module prints one
+    (categories won, or points)."""
     root = parse(html)
     _require(root, "league")
     found = _table_with(root, "Team", "W-L-T")
@@ -540,7 +546,18 @@ def parse_league_page(html: str) -> dict[str, Any]:
         m = _MATCHUP_HREF.search(a.get("href") or "")
         if m:
             pairs[(int(m.group(1)), (int(m.group(2)), int(m.group(3))))] = None
-    matchups = [{"week": w, "teams": list(t)} for w, t in pairs]
+    # The matchups module: one item per pair, the two scores in the pair's order.
+    scores: dict[tuple[int, tuple[int, int]], list[float]] = {}
+    for li in root.find_all("li", attr="data-target"):
+        m = _MATCHUP_HREF.search(li.get("data-target") or "")
+        values = [_float(d.text()) for d in li.find_all("div", cls="Fz-lg")]
+        if m and len(values) == 2 and None not in values:
+            key = (int(m.group(1)), (int(m.group(2)), int(m.group(3))))
+            scores[key] = [v for v in values if v is not None]
+    matchups = [
+        {"week": w, "teams": list(t), **({"score": scores[(w, t)]} if (w, t) in scores else {})}
+        for w, t in pairs
+    ]
     name = _title(root).split(" | ")[0].strip() or None
     return {"name": name, "teams": teams, "matchups": matchups, "week": week_label(html)}
 

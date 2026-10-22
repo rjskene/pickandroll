@@ -17,6 +17,7 @@ from .state import (
     Transaction,
     matchup_key,
     merge_part,
+    pairings_key,
     roster_key,
 )
 
@@ -40,5 +41,6 @@ __all__ = [
     "merge_part",
     "monday_of",
     "mondays",
+    "pairings_key",
     "roster_key",
 ]

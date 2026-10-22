@@ -239,3 +239,19 @@ def test_player_totals_carry_the_percentages():
     t = wk.player_totals(wk.PlayerWeek(3, 2), rates(fgm=5, fga=10), None)
     assert t["fgm"] == 10 and t["fga"] == 20 and t["fg_pct"] == 0.5
     assert wk.player_totals(wk.PlayerWeek(3, 2), None) is None
+
+
+def odds(cat: str, p: float) -> wk.CategoryOdds:
+    return wk.CategoryOdds(cat, None, None, 1.0, p)
+
+
+def test_the_matchup_odds_count_more_categories_won_and_a_tie_as_half():
+    assert wk.matchup_won([odds("fpts", 0.7)]) == pytest.approx(0.7)
+    assert wk.matchup_won([odds(c, 0.5) for c in NINE]) == pytest.approx(0.5)
+    # Two categories: both won, or one each (a tie, half).
+    two = [odds("pts", 0.8), odds("reb", 0.6)]
+    assert wk.matchup_won(two) == pytest.approx(0.8 * 0.6 + 0.5 * (0.8 * 0.4 + 0.2 * 0.6))
+    # Nine sure categories but one: five won is a win whatever the sixth does.
+    sure = [odds(c, 1.0) for c in NINE[:5]] + [odds(c, 0.0) for c in NINE[5:8]]
+    assert wk.matchup_won([*sure, odds("tov", 0.3)]) == pytest.approx(1.0)
+    assert wk.matchup_won([]) == pytest.approx(0.5)

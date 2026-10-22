@@ -9,6 +9,7 @@ import {
   MIN_DRAWER_WIDTH,
   openCard as opened,
   parseDrawer,
+  parseViews,
   replaceCard as replaced,
   swapHalves as swapped,
   toggleDrawer as toggled,
@@ -16,6 +17,8 @@ import {
   type Half,
   type KeyMap,
   type Pair,
+  type SeasonViewId,
+  type Views,
 } from "./keys";
 
 /** Between the minimum and six tenths of the window, so the board always keeps room. */
@@ -81,6 +84,32 @@ export function useDrawer<Id extends string>(
     setWidth,
     replaceCard,
   };
+}
+
+export interface ViewsApi extends Views {
+  setView: (view: SeasonViewId) => void;
+  toggleViews: () => void;
+}
+
+/** The league page's view and its drawer (#116), saved under ``storageKey`` as the panel is. */
+export function useViews(storageKey: string): ViewsApi {
+  const [views, setViews] = useState<Views>(() => {
+    try {
+      return parseViews(localStorage.getItem(storageKey));
+    } catch {
+      return parseViews(null); // blocked storage
+    }
+  });
+  useEffect(() => {
+    try {
+      localStorage.setItem(storageKey, JSON.stringify(views));
+    } catch {
+      /* storage unavailable */
+    }
+  }, [storageKey, views]);
+  const setView = useCallback((view: SeasonViewId) => setViews((v) => ({ ...v, view })), []);
+  const toggleViews = useCallback(() => setViews((v) => ({ ...v, shown: !v.shown })), []);
+  return { ...views, setView, toggleViews };
 }
 
 /** A screen's shortcuts on the window, read from the latest ``map`` on every key. */

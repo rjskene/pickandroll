@@ -85,13 +85,22 @@ from ..season import (
     merge_part,
     monday_of,
     mondays,
+    pairings_key,
     roster_key,
 )
 from ..season import moves as mv
 from ..season import record as season_rec
 from ..sources import schedule as nba_schedule
 from ..sources.yahoo import pages, public
-from . import leagues, season_flags, season_moves, season_record, season_strategy, season_trades
+from . import (
+    leagues,
+    season_flags,
+    season_matchup,
+    season_moves,
+    season_record,
+    season_strategy,
+    season_trades,
+)
 from .season_week import BBM_NEXT_WEEK, BBM_ROS, BBM_THIS_WEEK, NBA_TZ, week_projection
 
 SEASON_DIR = "season"
@@ -447,6 +456,22 @@ class SeasonService:
             run.done.wait()
         return {"league": league, **run.payload()}
 
+    def matchup(self, league: str, system: str) -> dict[str, Any]:
+        """The Matchup view (#116): my matchup's scoreboard and what each player adds to it."""
+        built = self._built(league, system)
+        base, _ = self._base(league)
+        today = nba_today(self.clock())
+        key = (league, system, "matchup", today, self._moves_stamp(league))
+
+        def make() -> dict[str, Any] | None:
+            season = Season.from_parts(base, load_parts(self.data_dir, league))
+            return season_matchup.payload(built, season)
+
+        out = self.moves_cache.get(key, make)
+        if out is None:
+            raise HTTPException(409, f"league {league} has no matchup of my team this week")
+        return {"league": league, **out}
+
     def move_detail(self, league: str, add: int, drop: int | None, system: str) -> dict[str, Any]:
         out = season_moves.detail_payload(self._built(league, system), add, drop)
         if out is None:
@@ -799,7 +824,7 @@ def _known_key(key: str) -> bool:
         "draft",
         YAHOO_WEEK,
     }
-    return key in fixed or key.startswith(("roster/", "matchup/"))
+    return key in fixed or key.startswith(("roster/", "matchup/", "pairings/"))
 
 
 def _page_parts(league: str, url: str, html: str, at: datetime, today: date) -> list[Part]:
@@ -822,6 +847,12 @@ def _page_part(
         raise pages.PageError(f"the page is league {info['league']}'s, not {league}'s")
     if kind == "league":
         d = pages.parse_league_page(html)
+        if "matchup_week" in info:
+            # Another week's pairs (the week select): its own part, never this week's league
+            # part, so it moves neither the standings nor the current week.
+            week = int(info["matchup_week"])
+            matchups = [m for m in d["matchups"] if m["week"] == week]
+            return Part(pairings_key(week), at, EXTENSION, {"week": week, "matchups": matchups})
         return Part("league", at, EXTENSION, d)
     if kind == "team":
         d = pages.parse_team_page(html, info["team_id"])
@@ -1064,6 +1095,12 @@ def register(
         return await asyncio.to_thread(service.move_detail, league, player, drop, system)
 
     lock_q = Query([], description="my players no move may drop")
+
+    @app.get("/seasons/{league}/matchup")
+    async def get_matchup(league: str = league_id, system: str = system_q) -> dict[str, Any]:
+        """My matchup this week: the projected finals and odds per category, the matchup odds,
+        and what each player of both teams adds to them (#116)."""
+        return await asyncio.to_thread(service.matchup, league, system)
 
     @app.get("/seasons/{league}/strategy")
     async def get_strategy(league: str = league_id, system: str = system_q) -> dict[str, Any]:
