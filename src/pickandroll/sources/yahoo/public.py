@@ -4,7 +4,8 @@ Yahoo's Fantasy API still refuses the app (docs/ADD_DROP.md, "Inputs"), so a sea
 what Yahoo serves to anyone for a public league:
 
 * the v3 JSON endpoints ``settings`` and ``players`` (``pub-api.fantasysports.yahoo.com``);
-* the league's pages on ``basketball.fantasysports.yahoo.com``, parsed in :mod:`.pages`.
+* the league's pages on ``basketball.fantasysports.yahoo.com``, parsed in :mod:`.pages`, the
+  settings page among them for the held slots and the lineup deadline v3 leaves out (#107).
 
 For a private league both answer with nothing; that league's pages come from the extension.
 Nothing here signs in, sends a cookie or acts on the league.
@@ -28,6 +29,7 @@ from ...season.state import (
     YAHOO_WEEK,
     Part,
     SeasonSettings,
+    lineup_key,
     matchup_key,
     pairings_key,
     roster_key,
@@ -144,6 +146,12 @@ def league_url(league: str) -> str:
     return f"{SITE}/{league}"
 
 
+def settings_page_url(league: str) -> str:
+    """The league's settings page: the roster positions with the held slots and the lineup
+    deadline (#107), which the v3 settings leave out."""
+    return f"{SITE}/{league}/settings"
+
+
 def team_url(league: str, team_id: int, day: date | None = None) -> str:
     return f"{SITE}/{league}/{team_id}" + (f"?date={day.isoformat()}" if day else "")
 
@@ -255,7 +263,7 @@ def refresh_parts(
     Raises :class:`PrivateLeague` when Yahoo serves nothing public for it.
     """
     pages_needed = -(-max_available // PAGE_ROWS)
-    total = 3 + base.num_teams + 2 * pages_needed + base.num_teams // 2 + 1
+    total = 4 + base.num_teams + 2 * pages_needed + base.num_teams // 2 + 1
     done = 0
 
     def step(what: str) -> None:
@@ -275,6 +283,14 @@ def refresh_parts(
         )
     out.append(part("settings", read))
     step("settings")
+    # The held slots and the lineup deadline; a page that does not answer keeps the last read.
+    try:
+        out.append(
+            part("league_settings", pages.parse_settings_page(fetch(settings_page_url(league))))
+        )
+    except (FetchError, pages.PageError):
+        pass
+    step("settings page")
     out.append(part("players", players_from_v3(_json(fetch, players_url(league)))))
     step("player pool")
     league_page = pages.parse_league_page(fetch(league_url(league)))
@@ -340,6 +356,27 @@ def pairings_parts(
         out.append(Part(pairings_key(week), datetime.now(UTC), PUBLIC, data))
         if step is not None:
             step(f"week {week} pairs")
+    return out
+
+
+def lineup_parts(
+    league: str,
+    team_id: int,
+    days: Iterable[date],
+    fetch: Fetch,
+    step: Callable[[str], None] | None = None,
+) -> list[Part]:
+    """``team_id``'s lineup on each of ``days``, from its team page shown for the day, one
+    ``lineup/<team>/<day>`` part a day (#107). A page that cannot be read is left out."""
+    out = []
+    for day in days:
+        try:
+            data = pages.parse_team_page(fetch(team_url(league, team_id, day)), team_id)
+        except (FetchError, pages.PageError):
+            continue
+        out.append(Part(lineup_key(team_id, day), datetime.now(UTC), PUBLIC, data))
+        if step is not None:
+            step(f"lineup {day:%a %b %d}")
     return out
 
 

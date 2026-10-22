@@ -193,8 +193,12 @@ def build(season: Season, today: date, data_dir: Path, system: str) -> Built | N
     spots = [sp for sp in season.rosters[mine]]
     roster = tuple((sp.player.yahoo_id, sp.player) for sp in spots if sp.slot not in mv.HELD)
     held = tuple((sp.player.yahoo_id, sp.player) for sp in spots if sp.slot in mv.HELD)
+    held_slots = {sp.player.yahoo_id: sp.slot for sp in spots if sp.slot in mv.HELD}
     slot_count = Counter(s.roster)
-    taken = Counter(sp.slot for sp in spots if sp.slot in mv.HELD)
+    # A held player whose status cleared is activated on the first day: his slot is open.
+    taken = Counter(
+        sp.slot for sp in spots if sp.slot in mv.HELD and mv.eligible(sp.player.status, sp.slot)
+    )
     held_open = {k: slot_count.get(k, 0) - taken.get(k, 0) for k in mv.HELD}
     on_roster = {k for k, _ in roster} | {k for k, _ in held}
     pool = [a for a in season.available if a.player.yahoo_id not in on_roster]
@@ -225,6 +229,7 @@ def build(season: Season, today: date, data_dir: Path, system: str) -> Built | N
         horizons={"week": (week_span,), "three": later},
         limits=limits,
         returns=espn_returns(data_dir, [*roster, *held]),
+        held_slots=held_slots,
     )
     names = {t.team_id: t.name for t in season.teams}
     horizons = {
@@ -274,8 +279,27 @@ def _comebacks(cs: list[mv.Comeback] | tuple[mv.Comeback, ...]) -> list[dict[str
     ]
 
 
+def cleared_payload(problem: mv.MoveProblem) -> list[dict[str, Any]]:
+    """My held players whose status cleared, each with the slot, his status and the active
+    player his activation drops on the first day (maybe himself): Yahoo refuses every add until
+    he is activated (#124)."""
+    players = dict(problem.held)
+    sends = {c.player: c.drop for c in mv.comebacks(problem, "week", ())}
+    return [
+        {
+            "player": k,
+            "slot": slot,
+            "status": players[k].status,
+            "from": problem.first_day.isoformat(),
+            "drop": sends.get(k),
+        }
+        for k, slot in mv.cleared(problem)
+    ]
+
+
 def moves_payload(built: Built) -> dict[str, Any]:
-    """The table's gains for every candidate and the recommended set on each horizon."""
+    """The table's gains for every candidate and the recommended set on each horizon, and first
+    the held players whose cleared status blocks every add."""
     p = built.problem
     ev = mv.Evaluator(p)
     swaps = {key: mv.single_swaps(ev, key) for key in HORIZONS}
@@ -322,6 +346,7 @@ def moves_payload(built: Built) -> dict[str, Any]:
             "comebacks": {h: _comebacks(cs) for h, cs in rec.comebacks.items()},
         }
     return {
+        "cleared": cleared_payload(p),
         "system": built.system,
         "horizons": {key: {**built.horizons[key], "base": _r(ev.base[key])} for key in HORIZONS},
         "adds": built.adds,

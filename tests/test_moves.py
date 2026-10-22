@@ -71,6 +71,7 @@ def build(
     so_far_theirs=None,
     value=None,
     returns=None,
+    held_slots=None,
 ):
     """A problem with the ``week`` horizon (the first week against ``opponent``) and the
     ``three`` horizon (weeks 2-4 against ``field``, each a list of rosters)."""
@@ -110,6 +111,7 @@ def build(
         horizons=spans,
         limits=tuple(limits or ()),
         returns=returns or {},
+        held_slots=held_slots or {},
     )
 
 
@@ -329,9 +331,36 @@ def test_min_gain_leaves_out_moves_worth_less():
 
 
 # --------------------------------------------------------------------------- held slots
+@pytest.mark.parametrize(
+    ("status", "slots"),
+    [
+        # Yahoo's help page for basketball: IL takes O and OFS, never P, Q or D.
+        ("O", ("IL", "IL+")),
+        ("OFS", ("IL", "IL+")),
+        ("P", ()),
+        ("Q", ()),
+        ("D", ()),
+        # Unverified: IL+ from the 2021 announcement, NA from baseball and hockey.
+        ("INJ", ("IL+",)),
+        ("GTD", ("IL+",)),
+        ("NA", ("NA",)),
+        # A suspension, a healthy player and a status the table does not know go nowhere.
+        ("SUSP", ()),
+        (None, ()),
+        ("DTD", ()),
+    ],
+)
+def test_each_status_fits_the_held_slots_yahoo_allows(status, slots):
+    assert mv.held_slots_for(status) == slots
+    for slot in mv.HELD:
+        assert mv.eligible(status, slot) == (slot in slots)
+    assert status is None or status == "DTD" or status in mv.KNOWN_STATUSES
+    assert mv.HELD_CONFIRMED == {"IL"}
+
+
 def test_an_out_player_can_move_to_an_open_il_slot_instead_of_a_drop():
     roster, cands, rate, sched, opponent, field = streaming_league()
-    hurt = (5, Player(5, "Hurt", "MIN", ("C",), status="INJ"))
+    hurt = (5, Player(5, "Hurt", "MIN", ("C",), status="O"))
     banned = (6, Player(6, "Banned", "MIN", ("C",), status="SUSP"))
     rate |= {5: rates(1.0), 6: rates(1.0)}
     full = [*roster, hurt]
@@ -348,9 +377,44 @@ def test_an_out_player_can_move_to_an_open_il_slot_instead_of_a_drop():
     gtd = (7, Player(7, "Maybe", "MIN", ("C",), status="GTD"))
     p = build([*roster, gtd], cands, rate, sched, opponent, field, held_open={"IL": 1, "IL+": 1})
     assert mv.held_moves(p) == [(7, "IL+")]
+    # A questionable player fits no held slot; an INJ only IL+ (Yahoo's IL takes O and OFS).
+    q = (8, Player(8, "Doubt", "MIN", ("C",), status="Q"))
+    p = build([*roster, q], cands, rate, sched, opponent, field, held_open={"IL": 1, "IL+": 1})
+    assert mv.held_moves(p) == []
+    inj = (9, Player(9, "Hurt Long", "MIN", ("C",), status="INJ"))
+    p = build([*roster, inj], cands, rate, sched, opponent, field, held_open={"IL": 1})
+    assert mv.held_moves(p) == []
     na = (8, Player(8, "Rookie", "MIN", ("C",), status="NA"))
     p = build([*roster, na], cands, rate, sched, opponent, field, held_open={"NA": 1})
     assert mv.held_moves(p) == [(8, "NA")]
+
+
+def test_a_held_player_whose_status_cleared_is_activated_on_the_first_day():
+    """Yahoo refuses every add while a player on IL is no longer eligible for it: the model
+    activates him on the first day and drops the least valuable active player then, with no
+    move made as with any."""
+    roster, cands, rate, sched, opponent, field = streaming_league()
+    back = (5, Player(5, "Back", "MIN", ("C",), status="Q"))
+    rate |= {5: rates(1.0)}
+    value = {k: 1.0 for k in rate} | {1: 1.2, 3: 0.1}
+    p = build(
+        roster, cands, rate, sched, opponent, field, held=[back], held_slots={5: "IL"}, value=value
+    )
+    assert mv.cleared(p) == [(5, "IL")]
+    first = WEEKS[0][0]
+    for key in ("week", "three"):
+        assert mv.comebacks(p, key, []) == [mv.Comeback(5, "IL", first, 3)]
+        assert mv.comebacks(p, key, [mv.Move(10, 1)]) == [mv.Comeback(5, "IL", first, 3)]
+    # The base already counts him in and the third player out.
+    ev = mv.Evaluator(p)
+    alone = build([roster[0], roster[1], back], cands, rate, sched, opponent, field, value=value)
+    assert ev.base["three"] == pytest.approx(mv.Evaluator(alone).base["three"])
+    # Still out (O), or a healthy player in a bench spot: nothing to activate.
+    out = (5, Player(5, "Back", "MIN", ("C",), status="O"))
+    p = build(
+        roster, cands, rate, sched, opponent, field, held=[out], held_slots={5: "IL"}, value=value
+    )
+    assert mv.cleared(p) == [] and mv.comebacks(p, "three", []) == []
 
 
 def il_league(status="O"):
@@ -409,7 +473,7 @@ def test_a_later_return_date_holds_him_out_until_then():
 
 
 def test_an_injured_player_costs_no_drop_inside_the_horizon():
-    roster, cands, rate, sched, opponent, field, value = il_league("INJ")
+    roster, cands, rate, sched, opponent, field, value = il_league("OFS")
     p = build(roster, cands, rate, sched, opponent, field, held_open={"IL": 1}, value=value)
     ev = mv.Evaluator(p)
     assert mv.comebacks(p, "three", [mv.Move(11)]) == []

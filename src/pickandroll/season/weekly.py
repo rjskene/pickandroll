@@ -180,6 +180,30 @@ def project_week[K: Hashable](
     decisions). ``available_from`` holds back the players it names until that day (a waiver
     claim's clear date) and ``gone_from`` stops them from that day on (a drop). A player
     without rates plays but adds nothing. Starters are chosen per day by ``value``."""
+    playing = playing_days(
+        roster, days, schedule, this_week, games, no_games, available_from, gone_from
+    )
+    started = {key: 0 for key, _ in roster}
+    for lineup in daily_starters(roster, playing, days, slots, value).values():
+        for key in lineup:
+            started[key] += 1
+    players = {key: PlayerWeek(len(playing[key]), started[key]) for key, _ in roster}
+    return _team_week(players, rates, points)
+
+
+def playing_days[K: Hashable](
+    roster: Sequence[tuple[K, Player]],
+    days: Sequence[date],
+    schedule: Mapping[date, frozenset[str]],
+    this_week: bool,
+    games: Mapping[K, int] | None = None,
+    no_games: Collection[K] = (),
+    available_from: Mapping[K, date] | None = None,
+    gone_from: Mapping[K, date] | None = None,
+) -> dict[K, list[date]]:
+    """The days of ``days`` each player of ``roster`` plays, as :func:`project_week` counts
+    them (the schedule, the out rule or a weekly export's games, and the days he is held back
+    or gone)."""
     playing: dict[K, list[date]] = {}
     for key, player in roster:
         played = game_days(player.nba_team, days, schedule)
@@ -193,14 +217,27 @@ def project_week[K: Hashable](
         if gone_from is not None and key in gone_from:
             played = [d for d in played if d < gone_from[key]]
         playing[key] = played
+    return playing
+
+
+def daily_starters[K: Hashable](
+    roster: Sequence[tuple[K, Player]],
+    playing: Mapping[K, Sequence[date]],
+    days: Sequence[date],
+    slots: Sequence[str],
+    value: Mapping[K, float],
+) -> dict[date, dict[K, str]]:
+    """Each day's starters by slot (:func:`starters` over the players of ``roster`` who play
+    that day): the lineup the projection counts."""
     positions = {key: player.positions for key, player in roster}
-    started = {key: 0 for key, _ in roster}
-    for day in days:
-        on = [(key, positions[key]) for key, played in playing.items() if day in played]
-        for key in starters(on, slots, value):
-            started[key] += 1
-    players = {key: PlayerWeek(len(playing[key]), started[key]) for key, _ in roster}
-    return _team_week(players, rates, points)
+    return {
+        day: starters(
+            [(key, positions[key]) for key, played in playing.items() if day in played],
+            slots,
+            value,
+        )
+        for day in days
+    }
 
 
 def standalone_week(
