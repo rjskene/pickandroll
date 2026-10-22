@@ -495,6 +495,8 @@ def test_a_recorded_week_from_the_league_pages(client):
     assert players[1012]["line"]["gp"] == line(1012)["gp"]
     assert players[1010]["line"] is None and rec_["missing"] == {"players": [1010]}
     assert out["summary"]["opponent"] == 2 and out["summary"]["rank"] == 1
+    # A public league's refresh reads its transactions page: none to open (#125).
+    assert out["transactions_page"] is None
 
 
 def test_recording_the_same_week_again_changes_nothing(client):

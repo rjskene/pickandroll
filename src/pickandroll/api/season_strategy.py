@@ -90,12 +90,15 @@ class Run:
         prepare: Callable[[], dict[str, Any]],
         settings: Settings,
         workers: int | None,
+        on_solved: Callable[[Run], None] | None = None,
     ) -> None:
         self.key = key
         self.built = built
         self.prepare = prepare
         self.settings = settings
         self.workers = workers
+        #: Called once the run solved (the decision log, #125); a failure there is ignored.
+        self.on_solved = on_solved
         self.done = threading.Event()
         self._lock = threading.Lock()
         self.status = "solving"
@@ -178,6 +181,11 @@ class Run:
             self.status, self.error = status, error
             self.step = None if status == "solved" else self.step
             self.finished = datetime.now(UTC)
+        if status == "solved" and self.on_solved is not None:
+            try:
+                self.on_solved(self)
+            except Exception:  # noqa: BLE001, S110 - a run that solved stays solved
+                pass
         self.done.set()
 
     def _run(self) -> None:

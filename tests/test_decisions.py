@@ -1,0 +1,471 @@
+"""The decision log (#125): each solve of the moves and strategy routes kept as an entry, my moves
+read from the transactions page and matched to the entry before them, the route and the script.
+
+The transactions page is the season fixture (another league's page, renamed), with teams moved
+to mine where a test needs my moves. Nothing here is from Basketball Monster: the projection is
+the season tests' made-up one.
+"""
+
+from __future__ import annotations
+
+import io
+import json
+from contextlib import redirect_stdout
+from datetime import UTC, date, datetime, timedelta
+
+import pytest
+
+from pickandroll.api import season_decisions
+from pickandroll.api.season_week import NBA_TZ
+from pickandroll.api.seasons import season_dir
+from pickandroll.season import decisions as dl
+from pickandroll.season.state import Player, Transaction
+from pickandroll.sources.yahoo import pages, public
+from tests.test_season import (
+    CATS,
+    LEAGUE,
+    NOW,
+    TODAY,
+    fixture,
+    fixture_names,
+    projection_csv,
+    season_client,
+    strategy_league,
+    wait_for_job,
+)
+
+SITE = "https://basketball.fantasysports.yahoo.com/nba"
+
+
+@pytest.fixture
+def client(tmp_path):
+    with season_client(tmp_path) as c:
+        yield c
+
+
+def transactions(*teams: int) -> list[Transaction]:
+    """The fixture page's rows, with ``teams`` made mine (team 4)."""
+    return [
+        Transaction.from_dict(r)
+        for r in pages.parse_transactions_page(mine(fixture("transactions.html"), *teams))["rows"]
+    ]
+
+
+def mine(html: str, *teams: int, me: int = 4) -> str:
+    """The transactions page with ``teams``' rows made mine (team ``me``)."""
+    for team in teams:
+        html = html.replace(f'/nba/{LEAGUE}/{team}"', f'/nba/{LEAGUE}/{me}"')
+    return html
+
+
+def et(day: int, hour: int, minute: int = 0) -> datetime:
+    return datetime(2026, 10, day, hour, minute, tzinfo=NBA_TZ)
+
+
+def entry(at: datetime, *sets: list[tuple[int, int | None]], source: str = "moves") -> dict:
+    """A logged solve at ``at`` (kept in UTC, as the API's clock gives it) with ``sets``."""
+    at = at.astimezone(UTC)
+    return {
+        "id": f"{at:%Y%m%dT%H%M%S%f}-{source}-bbm",
+        "at": at.isoformat(),
+        "source": source,
+        "system": {"key": "bbm"},
+        "sets": [
+            {
+                "key": f"set{i}",
+                "weight": None,
+                "moves": [{"add": a, "drop": d, "from": None} for a, d in moves],
+                "gain": {f"set{i}": 0.5},
+            }
+            for i, moves in enumerate(sets)
+        ],
+    }
+
+
+# --------------------------------------------------------------------------- the moves made
+def test_a_moves_time_is_read_on_the_leagues_clock_and_its_bid_from_yahoos_words():
+    assert dl.when_at("Oct 20, 3:57 am", TODAY, NBA_TZ) == et(20, 3, 57)
+    assert dl.when_at("Oct 20, 12:05 pm", TODAY, NBA_TZ) == et(20, 12, 5)
+    assert dl.when_at("Oct 20, 12:30 am", TODAY, NBA_TZ) == et(20, 0, 30)
+    assert dl.when_at("Oct 20, 9:15 PM", TODAY, NBA_TZ) == et(20, 21, 15)
+    # A date without a time is its midnight; no date is no time.
+    assert dl.when_at("Oct 20", TODAY, NBA_TZ) == et(20, 0)
+    assert dl.when_at(None, TODAY, NBA_TZ) is None
+    assert dl.when_at("yesterday", TODAY, NBA_TZ) is None
+    # A date after today is last year's.
+    assert dl.when_at("Dec 30, 1:00 pm", TODAY, NBA_TZ).year == 2025
+    assert dl.bid_of("$5 Waiver") == 5.0 and dl.bid_of("$0 Waiver") == 0.0
+    assert dl.bid_of("Free Agent") is None and dl.bid_of("To Waivers") is None
+    assert dl.bid_of(None) is None
+
+
+def test_my_moves_are_each_group_of_my_teams_rows_on_the_transactions_page():
+    rows = transactions()
+    # Team 8's claim: an add with the drop that came with it, its bid in Yahoo's words.
+    assert dl.moves_made(rows, 8, TODAY, NBA_TZ) == [
+        dl.Made(1, date(2026, 10, 20), et(20, 3, 57), 6402, 10272, "$0 Waiver", 0.0)
+    ]
+    # Team 9's: a lone drop, then two lone adds (a FAAB claim each), newest first.
+    made = dl.moves_made(rows, 9, TODAY, NBA_TZ)
+    assert [(m.group, m.add, m.drop, m.bid) for m in made] == [
+        (0, None, 5600, None),
+        (4, 6433, None, 1.0),
+        (5, 5600, None, 2.0),
+    ]
+    assert made[0].at == et(20, 8, 53) and made[0].detail is None
+    assert made[1].to_dict() == {
+        "group": 4,
+        "day": "2026-10-20",
+        "at": et(20, 3, 57).isoformat(),
+        "add": 6433,
+        "drop": None,
+        "detail": "$1 Waiver",
+        "bid": 1.0,
+    }
+    # A trade is not a move here; another team's rows are not mine.
+    trade = Transaction(
+        "trade", Player(1, "Player One", "ATL", ("PG",)), 9, "Team 9", None, None, 9
+    )
+    assert [m.group for m in dl.moves_made([*rows, trade], 9, TODAY, NBA_TZ)] == [0, 4, 5]
+    assert dl.moves_made(rows, 4, TODAY, NBA_TZ) == []
+
+
+def test_a_move_matches_the_latest_entry_logged_before_it():
+    claim = dl.Made(1, date(2026, 10, 20), et(20, 3, 57), 6402, 10272, "$0 Waiver", 0.0)
+    early = entry(et(20, 1), [(6402, 10272)], [(6433, 11)])
+    later = entry(et(20, 8), [(12, None)])
+    # The entry after the move is not the one it is matched to, whatever their order.
+    got = dl.match(claim, [later, early])
+    assert got == {
+        "kind": dl.AS_RECOMMENDED,
+        "entry": early["id"],
+        "move": {"add": 6402, "drop": 10272},
+        "near": False,
+    }
+    # The same add for another drop, or the same drop for another add: differently.
+    other_drop = dl.Made(2, claim.day, claim.at, 6433, 99)
+    assert dl.match(other_drop, [early]) == {
+        "kind": dl.DIFFERENTLY,
+        "entry": early["id"],
+        "move": {"add": 6433, "drop": 11},
+        "near": False,
+    }
+    other_add = dl.Made(3, claim.day, claim.at, 77, 10272)
+    assert dl.match(other_add, [early])["move"] == {"add": 6402, "drop": 10272}
+    # An add into an open spot is recommended only as one: nobody dropped is a drop of its own.
+    open_spot = dl.Made(4, claim.day, et(20, 9), 12, None)
+    assert dl.match(open_spot, [early, later])["kind"] == dl.AS_RECOMMENDED
+    assert dl.match(dl.Made(5, claim.day, claim.at, 12, None), [early])["kind"] == (
+        dl.NOT_RECOMMENDED
+    )
+    # A lone drop of a player no set names; a move with nothing logged before it.
+    lone = dl.Made(6, claim.day, et(20, 8, 53), None, 5600)
+    # It is 53 minutes after the 8 am solve: near one, so a zone off by an hour would match it
+    # to the 1 am solve instead.
+    assert dl.match(lone, [early, later]) == {
+        "kind": dl.NOT_RECOMMENDED,
+        "entry": later["id"],
+        "move": None,
+        "near": True,
+    }
+    assert dl.match(claim, [later]) == {
+        "kind": dl.NO_ENTRY,
+        "entry": None,
+        "move": None,
+        "near": False,
+    }
+    assert dl.match(dl.Made(7, None, None, 6402, 10272), [early])["kind"] == dl.NO_ENTRY
+    # Near is either side: a solve 40 minutes after the move flags it too.
+    assert dl.match(claim, [early, entry(et(20, 4, 37), [(12, None)])])["near"] is True
+    assert dl.match(claim, [early, entry(et(20, 4, 58), [(12, None)])])["near"] is False
+
+
+# --------------------------------------------------------------------------- the log
+def solved_league(client) -> None:
+    projection_csv(
+        client.data_dir / "bbm_projections_2026-10-21.csv", fixture_names(), star="Kevin Durant"
+    )
+    r = client.post(f"/seasons/{LEAGUE}/refresh", params={"wait": True})
+    assert r.status_code == 202, r.text
+
+
+def logged(client, day: str = "2026-10-21") -> list[dict]:
+    path = season_dir(client.data_dir, LEAGUE) / "decisions" / f"{day}.json"
+    return json.loads(path.read_text()) if path.exists() else []
+
+
+def snapshot(client, league: str, url: str, html: str, at: datetime | None = None) -> None:
+    page = {"url": url, "html": html}
+    if at is not None:
+        page["fetched_at"] = at.isoformat()
+    r = client.post(f"/seasons/{league}/snapshot", json={"pages": [page]})
+    assert r.status_code == 200, r.text
+    assert r.json()["accepted"], r.json()
+
+
+def test_each_solve_of_the_moves_route_appends_an_entry_to_its_days_log(client):
+    # The strategy tests' league: a pool of players better than some of mine.
+    strategy_league(client)
+    m = client.get(f"/seasons/{LEAGUE}/moves").json()
+    [first] = logged(client)
+    assert first["at"] == NOW.isoformat() and first["source"] == "moves"
+    assert first["id"] == f"{NOW:%Y%m%dT%H%M%S%f}-moves-bbm"
+    # The system and its export, the day the moves start, the adds left, the pool.
+    assert first["system"] == m["system"]
+    assert first["system"]["file"] == "bbm_projections_2026-10-21.csv"
+    # The knobs in force: the solve's system, the others unset until the knob file (phase 3).
+    assert first["knobs"] == {
+        "system": "bbm",
+        "blend": None,
+        "horizon_weight": None,
+        "protection_floor": None,
+        "stash_threshold": None,
+        "faab_sizing": None,
+        "daily_cap": None,
+    }
+    assert first["first_day"] == "2026-10-21" and first["adds"] == m["adds"]
+    assert first["horizons"] == {k: v["label"] for k, v in m["horizons"].items()}
+    assert first["pool"] == {
+        "size": m["search"]["pool"],
+        "candidates": len(m["candidates"]),
+        "min_gain": m["search"]["min_gain"],
+    }
+    # Each horizon's recommended set: its moves, the held slots, the comebacks, the gains.
+    assert [s["key"] for s in first["sets"]] == ["week", "three"]
+    for s in first["sets"]:
+        rec = m["recommended"][s["key"]]
+        # Each move with the bid to make, none until the FAAB sizing (phase 2).
+        assert s["moves"] == [
+            {**{k: x[k] for k in ("add", "drop", "from")}, "bid": None} for x in rec["moves"]
+        ]
+        assert (s["weight"], s["held"], s["comebacks"]) == (None, rec["held"], rec["comebacks"])
+        assert s["gain"] == rec["gain"]
+        # This week before and after the set: each category's finals and odds.
+        before, after = s["week"]["before"], s["week"]["after"]
+        assert set(before["cats"]) == set(after["cats"]) == set(CATS)
+        for block in (before, after):
+            assert all(0 <= c["p_win"] <= 1 for c in block["cats"].values())
+            assert 0 <= block["expected"] <= len(CATS) and 0 <= block["matchup"] <= 1
+            assert block["expected"] == pytest.approx(
+                sum(c["p_win"] for c in block["cats"].values()), abs=1e-3
+            )
+    week = first["sets"][0]
+    assert week["moves"], "the fixture league has a move this week"
+    assert week["week"]["after"]["expected"] > week["week"]["before"]["expected"]
+    # The same answer again is the cached one: nothing new to log.
+    client.get(f"/seasons/{LEAGUE}/moves")
+    assert len(logged(client)) == 1
+    # New inputs the same day solve again, and the entry goes after the first one.
+    later = NOW + timedelta(minutes=5)
+    client.app.state.seasons.clock = lambda: later
+    snapshot(client, LEAGUE, f"{SITE}/{LEAGUE}/transactions", fixture("transactions.html"))
+    client.get(f"/seasons/{LEAGUE}/moves")
+    entries = logged(client)
+    assert [e["at"] for e in entries] == [NOW.isoformat(), later.isoformat()]
+    assert entries[0] == first
+
+
+def test_a_strategy_run_that_solved_is_logged_with_each_weights_set(client):
+    strategy_league(client)
+    s = client.post(
+        f"/seasons/{LEAGUE}/strategy",
+        params={"wait": True, "pool": 12, "weights": "week,natural"},
+    ).json()
+    assert s["status"] == "solved"
+    entries = logged(client)
+    # The run solved the moves it ranks its pool by first: their entry, then its own.
+    assert [e["source"] for e in entries] == ["moves", "strategy"]
+    run = entries[1]
+    assert run["system"] == s["system"] and run["settings"] == s["settings"]
+    assert run["knobs"]["system"] == "bbm" and run["knobs"]["daily_cap"] is None
+    assert run["pool"] == {"size": len(s["pool"]), "players": s["pool"]}
+    assert [x["key"] for x in run["sets"]] == ["week", "natural"]
+    for logged_set, point in zip(run["sets"], s["points"], strict=True):
+        assert logged_set["weight"] == point["lambda"]
+        assert logged_set["natural"] == point["natural"]
+        assert logged_set["source"] == point["source"]
+        assert logged_set["gain"] == point["gain"]
+        assert logged_set["moves"] == [
+            {**{k: x[k] for k in ("add", "drop", "from")}, "bid": None} for x in point["moves"]
+        ]
+        assert set(logged_set["week"]["after"]["cats"]) == set(CATS)
+    # The same run asked again is found, not solved: nothing new to log.
+    client.post(
+        f"/seasons/{LEAGUE}/strategy", params={"wait": True, "pool": 12, "weights": "week,natural"}
+    )
+    assert len(logged(client)) == 2
+
+
+def test_a_failure_to_log_loses_the_entry_never_the_answer(client, monkeypatch):
+    solved_league(client)
+
+    def broken(*_args, **_kwargs):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(season_decisions, "append", broken)
+    r = client.get(f"/seasons/{LEAGUE}/moves")
+    assert r.status_code == 200 and r.json()["recommended"]["week"]
+    assert logged(client) == []
+
+
+# --------------------------------------------------------------------------- the route
+def matched_league(client) -> tuple[dict, dict]:
+    """The fixture league with teams 8 and 9's moves made mine, and two solves logged before
+    them on Oct 20: one at 1 am that recommends team 8's claim and team 9's first add for
+    another drop, one at 8 am that recommends neither."""
+    snapshot(
+        client,
+        LEAGUE,
+        f"{SITE}/{LEAGUE}/transactions",
+        mine(fixture("transactions.html"), 8, 9),
+        NOW,
+    )
+    early = entry(et(20, 1), [(6402, 10272)], [(6433, 11)])
+    later = entry(et(20, 8), [(12, None)])
+    folder = season_dir(client.data_dir, LEAGUE)
+    for e in (later, early):
+        season_decisions.append(folder, e)
+    return early, later
+
+
+def test_the_decisions_route_matches_each_of_my_moves_to_the_entry_before_it(client):
+    early, later = matched_league(client)
+    # Both entries are Oct 20's in US Eastern, the 1 am one too (Oct 20 05:00 UTC).
+    assert [e["id"] for e in logged(client, "2026-10-20")] == [later["id"], early["id"]]
+    r = client.get(
+        f"/seasons/{LEAGUE}/decisions", params={"from": "2026-10-20", "to": "2026-10-20"}
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert (body["league"], body["from"], body["to"]) == (LEAGUE, "2026-10-20", "2026-10-20")
+    assert body["transactions_read"] == NOW.isoformat()
+    # The entries oldest first.
+    assert [e["id"] for e in body["entries"]] == [early["id"], later["id"]]
+    made = {m["group"]: m for m in body["made"]}
+    assert sorted(made) == [0, 1, 4, 5]
+    assert made[1]["match"] == {
+        "kind": "as_recommended",
+        "entry": early["id"],
+        "move": {"add": 6402, "drop": 10272},
+        "near": False,
+    }
+    assert (made[1]["detail"], made[1]["bid"]) == ("$0 Waiver", 0.0)
+    assert made[4]["match"] == {
+        "kind": "differently",
+        "entry": early["id"],
+        "move": {"add": 6433, "drop": 11},
+        "near": False,
+    }
+    assert made[5]["match"]["kind"] == "not_recommended"
+    # The lone drop at 8:53 is matched to the 8 am solve, which named neither player, and is
+    # within an hour of it.
+    assert made[0]["match"] == {
+        "kind": "not_recommended",
+        "entry": later["id"],
+        "move": None,
+        "near": True,
+    }
+    assert body["summary"] == {
+        "as_recommended": 1,
+        "differently": 1,
+        "not_recommended": 2,
+        "no_entry": 0,
+        "near": 1,
+    }
+    # The names of the players in the moves, where the season knows them.
+    names = body["players"]
+    assert names["6402"] == "Jalen Smith" and names["10272"] == "Kyshawn George"
+    assert {"6433", "5600"} <= set(names) and "11" not in names
+    # By default the last week to today; a day before the moves shows none of them.
+    assert client.get(f"/seasons/{LEAGUE}/decisions").json()["made"] == body["made"]
+    early_day = client.get(f"/seasons/{LEAGUE}/decisions", params={"to": "2026-10-19"}).json()
+    assert (early_day["from"], early_day["entries"], early_day["made"]) == ("2026-10-13", [], [])
+    assert early_day["summary"]["as_recommended"] == 0
+    assert client.get("/seasons/9/decisions").status_code == 404
+
+
+def test_a_move_with_nothing_logged_before_it_says_so(client):
+    snapshot(
+        client,
+        LEAGUE,
+        f"{SITE}/{LEAGUE}/transactions",
+        mine(fixture("transactions.html"), 8),
+        NOW,
+    )
+    body = client.get(f"/seasons/{LEAGUE}/decisions").json()
+    assert body["entries"] == []
+    assert [(m["group"], m["match"]["kind"]) for m in body["made"]] == [(1, "no_entry")]
+    assert body["summary"]["no_entry"] == 1
+
+
+def test_a_private_leagues_record_lists_its_transactions_page_until_read_today(client):
+    solved_league(client)
+    snapshot(client, "100002", f"{SITE}/100002", fixture("league.html"))
+    wait_for_job(client, "100002")
+    later = NOW + timedelta(days=7)
+    client.app.state.seasons.clock = lambda: later
+
+    def record() -> dict:
+        r = client.post("/seasons/100002/record")
+        return r.json()["detail"] if r.status_code == 409 else r.json()
+
+    assert record()["transactions_page"] == public.transactions_url("100002")
+    # Read today, it is not asked for again until tomorrow.
+    snapshot(client, "100002", f"{SITE}/100002/transactions", fixture("transactions.html"), later)
+    assert record()["transactions_page"] is None
+
+
+def test_a_private_leagues_moves_are_read_from_its_posted_transactions_page(client):
+    """The private league has no public page: the user's Chrome posts its transactions page,
+    and the route matches my moves (team 7) from it."""
+    site = f"{SITE}/100002"
+    snapshot(client, "100002", site, fixture("league.html"))
+    snapshot(client, "100002", f"{site}/transactions", mine(fixture("transactions.html"), 8, me=7))
+    wait_for_job(client, "100002")
+    claim = entry(et(20, 1), [(6402, 10272)])
+    season_decisions.append(season_dir(client.data_dir, "100002"), claim)
+    body = client.get("/seasons/100002/decisions").json()
+    assert [(m["group"], m["match"]["kind"], m["match"]["entry"]) for m in body["made"]] == [
+        (1, "as_recommended", claim["id"])
+    ]
+    assert body["entries"] == [claim]
+
+
+# --------------------------------------------------------------------------- the script
+def test_the_decisions_command_prints_each_solve_then_each_move(client):
+    from tests.test_record import load_script
+
+    script = load_script()
+    matched_league(client)
+
+    def call(method: str, path: str) -> tuple[int, object]:
+        r = client.request(method, path)
+        return r.status_code, r.json()
+
+    buf = io.StringIO()
+    with redirect_stdout(buf):
+        assert script.decisions_all(call, [LEAGUE, "9"], "2026-10-20", "2026-10-20") == 0
+    lines = buf.getvalue().strip().splitlines()
+    # Each set's gain and moves, by name where the season knows the player.
+    assert lines[0].startswith(
+        f"{LEAGUE} 2026-10-20 01:00 moves bbm: set0 +0.50: add Jalen Smith for Kyshawn George; "
+        "set1 +0.50: add "
+    )
+    assert lines[0].endswith(" for 11") and "add 6433" not in lines[0]
+    assert lines[1] == f"{LEAGUE} 2026-10-20 08:00 moves bbm: set0 +0.50: add 12"
+    claim = next(x for x in lines if "Jalen Smith" in x and "made:" in x)
+    assert claim == (
+        f"{LEAGUE} 2026-10-20 03:57 made: add Jalen Smith for Kyshawn George ($0 Waiver): "
+        "as recommended (moves 2026-10-20 01:00)"
+    )
+    assert any(
+        x.endswith("not recommended (moves 2026-10-20 08:00) [near a solve]") and " drop " in x
+        for x in lines
+    )
+    assert lines[-1].startswith("9: skipped (404)")
+    # The record's line lists the private league's transactions page with the others to open.
+    url = public.transactions_url("100002")
+    needs = {"needs": [f"{SITE}/100002"], "week": 1, "transactions_page": url}
+    assert script.describe("100002", 409, {"detail": needs}).endswith(f"; transactions page: {url}")
+    # Nothing logged and nothing made reads as such.
+    assert script.decision_lines({"entries": [], "made": [], "players": {}}) == ["nothing logged"]
