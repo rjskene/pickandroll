@@ -355,6 +355,23 @@ def expected_won(odds: Iterable[CategoryOdds]) -> float:
     return sum(o.p_win for o in odds)
 
 
+def matchup_won(odds: Sequence[CategoryOdds]) -> float:
+    """The odds of winning the matchup: more of its categories won than lost, each category
+    won with its own odds and independently of the others (a Poisson binomial over the
+    categories), a tie on categories counted half. A points league's one category is its own
+    odds. The categories are not independent (points and threes move together), so this is a
+    headline, not the standings' measure: expected categories is."""
+    counts = [1.0]
+    for o in odds:
+        nxt = [0.0] * (len(counts) + 1)
+        for k, q in enumerate(counts):
+            nxt[k] += q * (1.0 - o.p_win)
+            nxt[k + 1] += q * o.p_win
+        counts = nxt
+    n = len(odds)
+    return sum(q * (1.0 if 2 * k > n else 0.5 if 2 * k == n else 0.0) for k, q in enumerate(counts))
+
+
 # --------------------------------------------------------------------------- values
 def per_game_values[K: Hashable](
     rates: Mapping[K, Rates],

@@ -35,6 +35,10 @@ import {
   gridOrder,
   placeLabel,
   scoreLabel,
+  daysLeftLabel,
+  leanTone,
+  matchupRecord,
+  oddsGainLabel,
   ageLabel,
   availabilityLabel,
   bestMove,
@@ -712,4 +716,16 @@ test("a changed lock or switch asks for a re-solve; the same locks in any order 
   assert.equal(strategySettingsChanged(run, [3], false), true);
   assert.equal(strategySettingsChanged(run, [3, 5], true), true);
   assert.equal(strategySettingsChanged(undefined, [3], true), false);
+});
+
+test("the matchup view's lines, odds gains, record and days left (#116)", () => {
+  assert.deepEqual([0.6, 0.59, 0.41, 0.4].map(leanTone), ["good", "", "", "bad"]);
+  assert.equal(oddsGainLabel(0.0461), "+4.6%");
+  assert.equal(oddsGainLabel(-0.003), "−0.3%");
+  assert.equal(oddsGainLabel(0), "0.0%");
+  assert.equal(oddsGainLabel(null), "");
+  assert.equal(matchupRecord({ score: [5, 3], tied: 1 }, "categories"), "5-3-1");
+  assert.equal(matchupRecord({ score: [93.24, 101.9], tied: null }, "points"), "93.2–101.9");
+  assert.equal(matchupRecord({ score: null, tied: null }, "categories"), "no score yet");
+  assert.deepEqual([0, 1, 3].map(daysLeftLabel), ["no day left", "1 day left", "3 days left"]);
 });

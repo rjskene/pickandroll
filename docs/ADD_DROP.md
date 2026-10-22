@@ -48,8 +48,8 @@ leagues, and Yahoo serves everything the engine needs without a sign-in:
 |---|---|---|
 | league settings, current week, roster slots, waiver and add rules | `pub-api.fantasysports.yahoo.com/fantasy/v3/settings/nba/<id>` (already used by `scripts/draft_day.py`) | `current_week`, `start_week`, `end_week`, `end_date`, `weekly_deadline`, and the `settings` block; no week dates |
 | week dates | the public team page on a date, `/nba/<id>/<team>?date=YYYY-MM-DD`, whose "Week N stats may change" line names that day's matchup week | one request per Monday of the season, cached for every league in `data/leagues/_shared/season/calendar.json` (#92); 2026-27 has 22 weeks, week 1 Oct 19-25, week 17 Feb 15-28 across the All-Star break, week 22 Mar 29-Apr 4 |
-| standings, waiver priority, FAAB left, moves, this week's pairs | the public league page `/nba/<id>` | the `standingstable` and the week's `matchup?week=&mid1=&mid2=` links |
-| a matchup's week totals and score | the public matchup page `/nba/<id>/matchup?week=W&mid1=A&mid2=B` | each team's category totals; a points league adds Yahoo's original and live projected points |
+| standings, waiver priority, FAAB left, moves, this week's pairs and their live scores | the public league page `/nba/<id>` | the `standingstable` and the matchups module: one `li[data-target="/nba/<id>/matchup?week=&mid1=&mid2="]` per pair with both scores (`div.Fz-lg`, in mid1/mid2 order) and no categories (#116). `?matchup_week=N` shows another week's pairs; it is stored as that week's pairings, never as the league page |
+| a matchup's week totals and score | the public matchup page `/nba/<id>/matchup?week=W&mid1=A&mid2=B` | each team's category totals; a points league adds Yahoo's original and live projected points. A public refresh reads every pair's page of the week, mine first (#116) |
 | player pool: positions, NBA team, injury status and note, season stats, Yahoo ranks, ADP | `.../v3/players/nba/<id>?format=json&projected=1&average=1` (744 players) | `inj`, `inj_full`, `inj_note`, `display_pos`, `season_stats`; no per-league ownership |
 | team list | `.../v3/teams/nba/<id>` | names and ids only |
 | each team's roster, including mine and this week's opponent's | the public team page `basketball.fantasysports.yahoo.com/nba/<id>/<team>` | roster names are in the served HTML (checked on 258901) |
@@ -115,6 +115,12 @@ games.
 - **Odds.** Each category's final adds the matchup page's week so far to the rest of the week.
   P(win) = Φ(Δ / √(σ₁² + σ₂²)), reversed for turnovers. Expected categories won is the sum of
   the nine. The opponent is projected for the current week only.
+- **Matchup odds** (#116). The odds of winning the matchup take the categories as independent:
+  the number of categories won is a Poisson binomial over the nine odds, and the matchup is won
+  with more categories won than lost, a tie on categories counting half. Points and threes, or
+  rebounds and blocks, move together, so this is a headline for the Matchup view; expected
+  categories stays the measure the moves, the strategy and the standings use. A points league's
+  one category is its own odds.
 
 ## The move model
 
@@ -362,6 +368,36 @@ then UI to evaluate available waiver options"). The flow:
    rail, `/` jumps to the Waivers search, `j`/`k` move a highlight through its rows and Enter
    opens that player's move, `t` and `m` swap Trade and Moves, `r` refreshes a public league,
    `?` lists the keys, and Esc leaves a field, then closes the move, then collapses the drawer.
+   Card 6, The league (#116), has two tabs: Standings (the standings, the recorded weeks and the
+   league's recent moves) and Matchups (this week's pairings with their live scores, mine
+   first; a click on one opens its category totals as far as its matchup page was read, or says
+   it was not read).
+4. **Views** (#116). Where the board stands, the pane shows a view picked from a narrow drawer
+   at its left edge: Waivers (`w`, the table above) and Matchup (`h`). The chevron at its foot,
+   or `[`, takes the drawer down to a 22 px handle whose dots mark the view on show; `w` and `h`
+   switch views either way, and the view and the drawer persist in the browser like the panel.
+   1 Waivers shows the Waivers view first, and only there gives the board the full width. `/`
+   comes back to the Waivers view for its search; `j`, `k` and Enter act only in it.
+5. **The Matchup view** (#116), `GET /seasons/{league}/matchup?system=bbm|yahoo`. A scoreboard:
+   the odds of winning the matchup large in the middle (the matchup odds above), Yahoo's count
+   so far (won, lost, tied), the days left and the expected categories, my team on the left in
+   amber and the opponent's on the right in blue, with the projection system's select. Then a
+   row per category: my projected final with the week so far beneath it, a diverging bar (mine
+   from the centre leftward, as long as my odds; theirs rightward, as long as theirs), the
+   category and its odds as a pill (green at 60% or better, red at 40% or worse), and their
+   final. The finals are the move model's own for the rest of the week (the same first day,
+   starters, games and rates as the Moves card), so the view, Moves and Strategy agree.
+   Beneath, my players and theirs: slot, games left, the nine per-game rates of the chosen
+   system, Cats and Matchup. A player's Cats is the expected categories his team has with him
+   less without him from the first day on, his starts going to the bench by the daily starters
+   (the move model's drop path), and Matchup the same for the matchup odds; a player with no
+   start left adds nothing. Theirs are what each adds for them. Sorted by Matchup, the players
+   with no game left last. A team whose page was never read projects as an empty roster, and
+   the view says so above the categories.
+
+The league page shown for another week (`?matchup_week=N`, the week select) used to land as
+the league part and move the current week with it. It is stored as its own part,
+`pairings/<week>`, and moves neither the standings nor the current week (#116).
 
 Nothing on these screens acts in Yahoo. The add and drop stay the user's clicks on Yahoo's
 pages; an armed queue through the extension is a later, opt-in phase.

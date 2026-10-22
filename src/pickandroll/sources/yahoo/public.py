@@ -237,10 +237,11 @@ def refresh_parts(
 
     The order is settings, the player pool, the league page (standings and this week's pairs),
     every team's page, the available players most rostered first, Yahoo's projection of them
-    for the next seven days, my matchup and the transactions. Raises :class:`PrivateLeague` when Yahoo serves nothing public for it.
+    for the next seven days, every matchup of the week (mine first) and the transactions.
+    Raises :class:`PrivateLeague` when Yahoo serves nothing public for it.
     """
     pages_needed = -(-max_available // PAGE_ROWS)
-    total = 3 + base.num_teams + 2 * pages_needed + 2
+    total = 3 + base.num_teams + 2 * pages_needed + base.num_teams // 2 + 1
     done = 0
 
     def step(what: str) -> None:
@@ -296,14 +297,15 @@ def refresh_parts(
     out.append(part(YAHOO_WEEK, {"rows": list(projected.values())}))
     week = read.get("current_week") or league_page.get("week")
     mine = base.my_team_id
-    pair = next(
-        (m["teams"] for m in league_page["matchups"] if mine in m["teams"] and m["week"] == week),
-        None,
+    # Every pair of the week, mine first: the totals behind each live score.
+    pairs = sorted(
+        (m["teams"] for m in league_page["matchups"] if m["week"] == week),
+        key=lambda t: mine not in t,
     )
-    if pair is not None and week is not None:
+    for pair in pairs if week is not None else []:
         data = pages.parse_matchup_page(fetch(matchup_url(league, int(week), pair)), int(week))
         out.append(part(matchup_key(int(week), data["teams"]), data))
-    step("my matchup")
+        step("my matchup" if mine in pair else f"matchup {pair[0]}-{pair[1]}")
     out.append(part("transactions", pages.parse_transactions_page(fetch(transactions_url(league)))))
     step("transactions")
     return out

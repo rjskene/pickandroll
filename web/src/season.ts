@@ -335,6 +335,32 @@ export function oddsTone(p: number): "good" | "bad" | "" {
   return p >= 0.65 ? "good" : p <= 0.35 ? "bad" : "";
 }
 
+// ---------------------------------------------------------------- matchup view (#116)
+/** The matchup lines: favoured at 60% or better, an underdog at 40% or worse, else a toss-up. */
+export const FAVOURED = 0.6;
+export const UNDERDOG = 0.4;
+
+export function leanTone(p: number): "good" | "bad" | "" {
+  return p >= FAVOURED ? "good" : p <= UNDERDOG ? "bad" : "";
+}
+
+/** "+4.6%" for the matchup odds a player adds, "−0.3%" for odds he costs, "0.0%" for none. */
+export function oddsGainLabel(x: number | null | undefined): string {
+  return x == null || Number.isNaN(x) ? "" : `${gainLabel(x * 100, 1)}%`;
+}
+
+/** "5-3-1", the matchup so far as Yahoo counts it (won, lost, tied), or a points league's
+ * "93.2–101.9"; mine first. */
+export function matchupRecord(m: { score: [number, number] | null; tied: number | null }, scoring: SeasonSummary["scoring"]): string {
+  const score = scoreLabel({ score: m.score, scoring });
+  return m.score && scoring !== "points" && m.tied != null ? `${score}-${m.tied}` : score;
+}
+
+/** "3 days left" in the matchup, counting today when it is still to play. */
+export function daysLeftLabel(days: number): string {
+  return days <= 0 ? "no day left" : days === 1 ? "1 day left" : `${days} days left`;
+}
+
 // ---------------------------------------------------------------- moves (#94)
 /** The moves' horizon behind the table's: the rest of this week, or the three weeks after it. */
 export const MOVE_HORIZON: Record<Horizon, MoveHorizon> = { week: "week", next3: "three" };

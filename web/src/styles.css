@@ -14,6 +14,8 @@
   /* The single-roster fallback flag: a bright red that white text reads on. */
   --alert: #e11d2a;
   --mine: rgba(245, 185, 66, 0.12);
+  /* The other side of a matchup (#116), against my amber. */
+  --them: #4ea1ff;
   --display: "Barlow Condensed", "Arial Narrow", sans-serif;
   --body: "IBM Plex Sans", system-ui, sans-serif;
   --drawer: 420px;
@@ -199,6 +201,9 @@ tr.hl td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
 .card { display: flex; flex-direction: column; min-height: 0; }
 .card > header { display: flex; align-items: center; gap: 10px; padding: 8px 8px 8px 14px; border-bottom: 1px solid var(--line); flex-shrink: 0; }
 .card > header .dim { font-size: 11px; }
+/* A crowded header (a card with tabs, #116) cuts its note before the title or the controls. */
+.card > header h2 { white-space: nowrap; }
+.card > header .dim { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .card > .body { flex: 1; min-height: 0; overflow: auto; padding: 12px 14px; display: flex; flex-direction: column; gap: 12px; }
 .card .block { display: flex; flex-direction: column; gap: 8px; padding-top: 10px; border-top: 1px solid var(--line); }
 .card .block:first-child, .card .hero + .block { border-top: 0; padding-top: 0; }
@@ -512,7 +517,72 @@ tr.breakdown > td { padding: 0; white-space: normal; background: var(--panel); }
  * window; on a narrow one they stack in a column that scrolls beside the rail. */
 .season-body { display: contents; }
 .season-board tr.picked td { background-color: var(--mine); }
-.drawer[hidden], .card[hidden] { display: none; }
+.drawer[hidden], .card[hidden], .board-col[hidden] { display: none; }
+/* The league page's views (#116): a drawer of view tabs at the pane's left edge, or its handle. */
+.views { width: 62px; flex-shrink: 0; display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 10px 0; background: var(--panel); border-right: 1px solid var(--line); }
+.views .tab { width: 52px; height: 56px; padding: 0; border: 1px solid transparent; border-radius: 8px; background: transparent; color: var(--muted); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; font-size: 10px; font-weight: 600; }
+.views .tab:hover { color: var(--text); background: var(--panel-2); border-color: transparent; }
+.views .tab.on { background: var(--accent); color: var(--accent-ink); }
+.views .tab kbd { min-width: 0; padding: 0 4px; font-size: 9px; line-height: 12px; border-bottom-width: 1px; }
+.views .tab.on kbd { background: rgba(0, 0, 0, 0.18); border-color: rgba(0, 0, 0, 0.3); color: var(--accent-ink); }
+.views .hide { width: 44px; height: 44px; padding: 0; display: flex; align-items: center; justify-content: center; color: var(--muted); }
+.views.handle { width: 22px; gap: 8px; }
+.views.handle .show { width: 18px; height: 28px; padding: 0; border-radius: 5px; display: flex; align-items: center; justify-content: center; color: var(--muted); }
+.views.handle .show svg { width: 12px; height: 12px; }
+.views .dot { width: 6px; height: 6px; padding: 0; border: 0; border-radius: 3px; background: var(--line-2); }
+.views .dot.on { background: var(--accent); }
+.view-col { overflow: auto; }
+/* The Matchup view (#116): the scoreboard, a diverging bar per category, both teams' players. */
+.matchup-view { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.matchup-view .me { color: var(--accent); }
+.matchup-view .them { color: var(--them); }
+.mu-hero { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; gap: 24px; padding: 4px 0 8px; }
+.mu-side { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.mu-side.r { align-items: flex-end; text-align: right; }
+.mu-side select { margin-top: 4px; }
+.mu-team { font-family: var(--display); font-weight: 700; font-size: 24px; line-height: 1; }
+.mu-mid { display: flex; flex-direction: column; align-items: center; gap: 2px; text-align: center; }
+.mu-huge { font-family: var(--display); font-weight: 700; font-size: 56px; line-height: 1; color: var(--accent); cursor: help; }
+.mu-big { font-family: var(--display); font-weight: 700; font-size: 26px; line-height: 1; color: #ffffff; }
+.mu-row { display: grid; grid-template-columns: 150px minmax(0, 1fr) 150px; align-items: center; gap: 12px; padding: 2px 0; border-bottom: 1px solid var(--line); }
+.mu-row.head { border-bottom-color: var(--line-2); }
+.mu-row .c { text-align: center; }
+.mu-row .r { text-align: right; }
+.mu-vals { display: flex; flex-direction: column; line-height: 1.15; }
+.mu-vals.r { text-align: right; }
+.mu-vals > span { font-weight: 700; }
+.mu-vals small { color: var(--dim); font-size: 10px; }
+.mu-cell { display: flex; align-items: center; justify-content: center; gap: 10px; min-width: 0; }
+.mu-bar { display: flex; width: 300px; min-width: 60px; flex-shrink: 1; height: 7px; border-radius: 4px; overflow: hidden; background: var(--line); }
+.mu-bar .l { flex: 1; display: flex; justify-content: flex-end; }
+.mu-bar .r { flex: 1; }
+.mu-bar i { display: block; height: 100%; }
+.mu-bar .l i { background: var(--accent); }
+.mu-bar .r i { background: var(--them); }
+.mu-cat { width: 38px; flex-shrink: 0; font-family: var(--display); font-weight: 700; font-size: 14px; letter-spacing: 0.03em; text-align: center; }
+.mu-pill { min-width: 44px; flex-shrink: 0; padding: 1px 6px; border: 1px solid var(--line-2); border-radius: 10px; background: var(--panel-2); font-size: 11px; font-weight: 700; text-align: center; }
+.mu-pill.good { border-color: #2d6b45; }
+.mu-pill.bad { border-color: #6b2d2d; }
+.mu-players { display: flex; flex-direction: column; gap: 4px; margin-top: 12px; }
+.mu-players .note { font-family: var(--body); font-size: 12px; letter-spacing: 0; text-transform: none; }
+.mu-players .season-table td { white-space: nowrap; }
+/* The League card's tabs (#116) and its pairings, a click opening one's categories. */
+.seg.small { flex-shrink: 0; }
+.seg.small button { padding: 1px 7px; font-size: 11px; white-space: nowrap; }
+.pairings { table-layout: fixed; }
+.pairings tr.pick td { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pairings tr.pick td:nth-child(2) { width: 84px; text-align: center; }
+.pairings td.r { text-align: right; }
+.pair-totals { display: grid; gap: 4px; padding: 6px 8px 8px; border-left: 2px solid var(--accent); overflow-x: auto; }
+@media (max-width: 860px) {
+  .main.season .views { width: auto; flex-direction: row; padding: 4px 16px; border-right: 0; border-bottom: 1px solid var(--line); }
+  .main.season .views .tab { width: auto; height: 32px; flex-direction: row; gap: 6px; padding: 0 10px; font-size: 12px; }
+  .main.season .views .hide { width: 32px; height: 32px; }
+  .main.season .views.handle { gap: 8px; }
+  .mu-hero { grid-template-columns: minmax(0, 1fr); gap: 8px; }
+  .mu-side.r { align-items: flex-start; text-align: left; }
+  .mu-row { grid-template-columns: 80px minmax(0, 1fr) 80px; gap: 6px; }
+}
 @media (max-width: 860px) {
   .main.season .season-body { display: flex; flex-direction: column; flex: 1; min-width: 0; overflow: auto; }
   .main.season .board-col { padding: 12px 16px; min-height: 70vh; }

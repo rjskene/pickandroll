@@ -16,7 +16,11 @@ Part keys and their data:
     Yahoo's player pool for the league: a list of :class:`Player`.
 ``league``
     The league page: ``teams`` (:class:`Team` rows of the standings) and ``matchups`` (this
-    week's pairs, ``{"week", "teams": [a, b]}``).
+    week's pairs, ``{"week", "teams": [a, b]}`` with ``"score"`` once played). A pair's
+    matchup page replaces its row, keeping the league page's score when that was read later.
+``pairings/<week>``
+    The league page shown for another week (``?matchup_week=N``): ``{"week", "matchups"}``.
+    Never the league part, so it moves neither the standings nor the current week.
 ``roster/<team id>``
     One team page: ``{"team_id", "name", "spots": [{"slot", "player"}]}``.
 ``available``
@@ -360,6 +364,11 @@ def matchup_key(week: int, teams: Iterable[int]) -> str:
     return f"matchup/{week}/{a}-{b}"
 
 
+def pairings_key(week: int) -> str:
+    """A week's pairs from the league page shown for that week (``?matchup_week=N``)."""
+    return f"pairings/{week}"
+
+
 #: The players page's ownership columns only its Research view (``R_O``) carries; a page in
 #: another view leaves them empty.
 OWNERSHIP_ONLY = ("pct_rostered_change", "pct_started", "pct_started_change", "adds", "drops")
@@ -461,13 +470,20 @@ class Season:
         )
         pairs = {
             matchup_key(m["week"], m["teams"]): Matchup(
-                int(m["week"]), (int(m["teams"][0]), int(m["teams"][1]))
+                int(m["week"]),
+                (int(m["teams"][0]), int(m["teams"][1])),
+                score=(float(m["score"][0]), float(m["score"][1])) if m.get("score") else None,
             )
             for m in league.get("matchups", [])
         }
+        league_at = parts["league"].fetched_at if "league" in parts else None
         for key, part in parts.items():
             if key.startswith("matchup/"):
                 read = Matchup.from_dict(part.data)
+                listed = pairs.get(key)
+                # The league page's live score when it was read after the matchup page.
+                if listed and listed.score and league_at and league_at > part.fetched_at:
+                    read = replace(read, score=listed.score)
                 pairs[key] = read
         week = settings.current_week
         matchups = tuple(

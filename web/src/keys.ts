@@ -331,9 +331,45 @@ export const SEASON_CARDS: CardDef<SeasonCardId>[] = [
   { id: "trade", title: "Trade", blurb: "a trade with another team, both sides before and after" },
   { id: "flags", title: "Flags", blurb: "breakout flags on the available players" },
   { id: "roster", title: "My roster", blurb: "my players and their games this week" },
-  { id: "league", title: "The league", blurb: "this week's matchups and the weeks recorded" },
+  { id: "league", title: "The league", blurb: "the standings and the weeks recorded, or this week's matchups" },
   { id: "strategy", title: "Strategy", blurb: "this week against the rest of the season: the recommended set at each weight" },
 ];
+
+/** The views of the league page's pane (#116), the tabs of the drawer at its left edge. */
+export type SeasonViewId = "waivers" | "matchup";
+
+export interface ViewDef {
+  id: SeasonViewId;
+  title: string;
+  /** The letter that shows it. */
+  key: string;
+  blurb: string;
+}
+
+export const SEASON_VIEWS: ViewDef[] = [
+  { id: "waivers", title: "Waivers", key: "w", blurb: "the available players and their moves" },
+  { id: "matchup", title: "Matchup", key: "h", blurb: "this week's matchup and what each player adds to it" },
+];
+
+/** The view on show and whether the drawer is shown or down to its handle. */
+export interface Views {
+  view: SeasonViewId;
+  shown: boolean;
+}
+
+export const DEFAULT_VIEWS: Views = { view: "waivers", shown: true };
+
+/** The views saved in the browser, or the defaults (blocked storage, a bad value). */
+export function parseViews(raw: string | null): Views {
+  if (!raw) return DEFAULT_VIEWS;
+  try {
+    const v = JSON.parse(raw) as Partial<Views>;
+    const view = SEASON_VIEWS.some((d) => d.id === v.view) ? (v.view as SeasonViewId) : DEFAULT_VIEWS.view;
+    return { view, shown: typeof v.shown === "boolean" ? v.shown : DEFAULT_VIEWS.shown };
+  } catch {
+    return DEFAULT_VIEWS;
+  }
+}
 
 /** The Waivers highlight moved by ``delta`` through the rows on show (j, k and the arrows):
  * from the first or last row when nothing on show is highlighted. */
@@ -346,6 +382,11 @@ export function stepHighlight(rows: number[], h: number | null, delta: number): 
 
 /** What the league page's keys act on. */
 export interface SeasonKeys {
+  /** The view on show: the Waivers keys (the arrows, j, k, Enter) act only in its view. */
+  view: SeasonViewId;
+  setView: (view: SeasonViewId) => void;
+  /** Show the view drawer, or take it down to its handle. */
+  toggleViews: () => void;
   openCard: (id: SeasonCardId, half: Half) => void;
   toggleDrawer: () => void;
   swapHalves: () => void;
@@ -357,6 +398,7 @@ export interface SeasonKeys {
   closeMove: () => boolean;
   /** The panel shows Trade (t) or Moves (m) in the half the other holds. */
   show: (card: "moves" | "trade") => void;
+  /** The Waivers search, in the Waivers view. */
   focusSearch: () => void;
   moveHighlight: (delta: number) => void;
   /** The highlighted Waivers row's player. */
@@ -370,6 +412,11 @@ export interface SeasonKeys {
 }
 
 export function seasonKeys(s: SeasonKeys): KeyMap {
+  const waivers = (run: () => void) => () => {
+    if (s.view !== "waivers") return false;
+    run();
+  };
+  const views = Object.fromEntries(SEASON_VIEWS.map((v) => [v.key, () => s.setView(v.id)]));
   return {
     cards: SEASON_CARDS.length,
     openCard: (i, half) => s.openCard(SEASON_CARDS[i].id, half),
@@ -379,15 +426,17 @@ export function seasonKeys(s: SeasonKeys): KeyMap {
       if (!s.closeBreakdown() && !s.closeMove()) s.collapse();
     },
     keys: {
+      ...views,
+      "[": () => s.toggleViews(),
       "]": () => s.toggleDrawer(),
       x: () => s.swapHalves(),
       "/": () => s.focusSearch(),
-      ArrowDown: () => s.moveHighlight(1),
-      j: () => s.moveHighlight(1),
-      ArrowUp: () => s.moveHighlight(-1),
-      k: () => s.moveHighlight(-1),
+      ArrowDown: waivers(() => s.moveHighlight(1)),
+      j: waivers(() => s.moveHighlight(1)),
+      ArrowUp: waivers(() => s.moveHighlight(-1)),
+      k: waivers(() => s.moveHighlight(-1)),
       Enter: ({ control }) => {
-        if (control || s.highlight === null) return false; // let the focused control act
+        if (control || s.highlight === null || s.view !== "waivers") return false; // let the focused control act
         s.openMove(s.highlight);
       },
       t: () => s.show("trade"),
@@ -402,12 +451,20 @@ export function seasonKeys(s: SeasonKeys): KeyMap {
 
 export const SEASON_SHEET: Sheet = {
   cards:
-    "Cards are 1 Waivers · 2 Moves · 3 Trade · 4 Flags · 5 My roster · 6 The league · 7 Strategy, the numbers on the rail. Letters do nothing while you are typing in a field.",
+    "Cards are 1 Waivers · 2 Moves · 3 Trade · 4 Flags · 5 My roster · 6 The league · 7 Strategy, the numbers on the rail. Views are w Waivers · h Matchup, the tabs of the drawer at the left. Letters do nothing while you are typing in a field.",
   groups: [
+    {
+      title: "Views",
+      rows: [
+        [["w"], "the Waivers view: the available players and their moves"],
+        [["h"], "the Matchup view: this week's matchup and what each player adds to it"],
+        [["["], "take the view drawer down to its handle, or show it (the letters work either way)"],
+      ],
+    },
     {
       title: "Cards",
       rows: [
-        [["1", "…", "7"], "open that card in the top half; the same key again closes it (1 Waivers gives the board the full width, again brings the panel back)"],
+        [["1", "…", "7"], "open that card in the top half; the same key again closes it (1 Waivers shows the Waivers view; there it gives the board the full width, and again brings the panel back)"],
         [["⇧ 2", "…", "⇧ 7"], "open it in the bottom half (mouse: shift-click or right-click the rail icon)"],
         [["]"], "collapse the panel to the rail, or bring it back with its two cards"],
         [["x"], "swap the top and bottom cards"],
@@ -417,8 +474,8 @@ export const SEASON_SHEET: Sheet = {
     {
       title: "Waivers",
       rows: [
-        [["/"], "jump to the Waivers search"],
-        [["↓", "j"], "move the highlight down"],
+        [["/"], "jump to the Waivers search (from any view)"],
+        [["↓", "j"], "move the highlight down (in the Waivers view)"],
         [["↑", "k"], "move the highlight up"],
         [["Enter"], "open the highlighted player's move drawer"],
       ],

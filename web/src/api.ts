@@ -950,6 +950,54 @@ export interface WeekProjection {
   matchup: WeekMatchupOdds | null;
 }
 
+// ---------------------------------------------------------------- matchup view (#116)
+/** A category of my matchup: both projected finals, the week so far and the odds. */
+export interface MatchupCategory extends CategoryOddsRow {
+  /** The week so far, mine then theirs (a percentage's makes over attempts). */
+  so_far: [number | null, number | null];
+}
+
+/** A player's line in the Matchup view: his games and starts left, his per-game rates and what
+ * he adds to his team's matchup. */
+export interface MatchupPlayer {
+  player: number;
+  slot: string;
+  games: number;
+  started: number;
+  /** One game of his rates, the percentages and fantasy points worked out (null: no line). */
+  per_game: Partial<Record<WeekStat | Cat, number | null>> | null;
+  /** Expected categories he adds for his team: with him less without him from the first day. */
+  cats: number;
+  /** The matchup odds he adds for his team. */
+  matchup: number;
+}
+
+export interface MatchupPayload {
+  league: string;
+  system: ProjectionSystemInfo & { key: ProjectionSystem; fallback?: string };
+  week: number;
+  start: string | null;
+  end: string | null;
+  /** The first day projected. */
+  from: string;
+  /** Days left, from the first day projected. */
+  days: number;
+  /** Mine, then the opponent. */
+  teams: [number, number];
+  /** Whether each team's page was read: one never read projects as an empty roster. */
+  rosters_read: [boolean, boolean];
+  so_far_at: string | null;
+  /** Yahoo's count so far, mine first: categories won (or points). */
+  score: [number, number] | null;
+  tied: number | null;
+  cats: MatchupCategory[];
+  /** Expected categories won: the sum of the category odds. */
+  expected: number;
+  /** The odds of winning the matchup (independent categories, a tie half). */
+  win: number;
+  players: { mine: MatchupPlayer[]; theirs: MatchupPlayer[] };
+}
+
 // ---------------------------------------------------------------- moves (#94)
 /** The moves' horizons: the rest of this week against the opponent, and the three weeks after
  * it against the field. */
@@ -1384,6 +1432,9 @@ export const api = {
   /** Every available player's best move on both horizons and the recommended sets (#94). */
   moves: (league: string, system: ProjectionSystem) =>
     request<MovesPayload>(`/seasons/${encodeURIComponent(league)}/moves?system=${system}`),
+  /** My matchup this week as a scoreboard, and what each player adds to it (#116). */
+  matchup: (league: string, system: ProjectionSystem) =>
+    request<MatchupPayload>(`/seasons/${encodeURIComponent(league)}/matchup?system=${system}`),
   /** The best recommended move when today's moves are solved (#108); never solves them. */
   best: (league: string, system: ProjectionSystem) =>
     request<BestMove>(`/seasons/${encodeURIComponent(league)}/best?system=${system}`),

@@ -318,21 +318,32 @@ class Evaluator:
     def _mine(
         self, span: WeekSpan, members: Sequence[Member], gone: Mapping[int, date]
     ) -> wk.TeamWeek:
-        p = self.problem
-        return wk.project_week(
-            members,
-            p.rates,
-            span.days,
-            p.schedule,
-            p.slots,
-            p.value,
-            span.this_week,
-            games=span.games,
-            points=p.points,
-            no_games=p.no_games,
-            available_from={**p.effective, **p.returns},
-            gone_from=gone,
-        )
+        return project_mine(self.problem, span, members, gone)
+
+
+def project_mine(
+    problem: MoveProblem,
+    span: WeekSpan,
+    members: Sequence[Member] | None = None,
+    gone: Mapping[int, date] | None = None,
+) -> wk.TeamWeek:
+    """My week over ``span`` with ``members`` (my roster, held slots included, when None), each
+    player in ``gone`` stopped from his day on (a drop): his starts go to the bench."""
+    p = problem
+    return wk.project_week(
+        [*p.held, *p.roster] if members is None else members,
+        p.rates,
+        span.days,
+        p.schedule,
+        p.slots,
+        p.value,
+        span.this_week,
+        games=span.games,
+        points=p.points,
+        no_games=p.no_games,
+        available_from={**p.effective, **p.returns},
+        gone_from=gone or {},
+    )
 
 
 # --------------------------------------------------------------------------- one move

@@ -42,7 +42,9 @@ from pickandroll.season import (
     mondays,
 )
 from pickandroll.season import flags as fl
+from pickandroll.season import moves as mv
 from pickandroll.season import strategy as st
+from pickandroll.season import weekly as wk
 from pickandroll.sources import schedule
 from pickandroll.sources.injuries import ESPN_INJURIES_URL
 from pickandroll.sources.yahoo import pages, public
@@ -102,6 +104,11 @@ def test_page_kinds_come_from_the_url():
         {"league": LEAGUE, "week": 3, "teams": [4, 10]},
     )
     assert pages.page_kind(base + "/transactions")[0] == "transactions"
+    # The league page for another week (its week select) is that week's pairs.
+    assert pages.page_kind(base + "?matchup_week=3") == (
+        "league",
+        {"league": LEAGUE, "matchup_week": 3},
+    )
     with pytest.raises(pages.PageError):
         pages.page_kind("https://sports.yahoo.com/nba/players/6205")
 
@@ -190,6 +197,25 @@ def test_the_league_page_gives_standings_and_this_weeks_pairs():
         (6, 8),
         (7, 12),
     }
+
+
+def week_page(week: int) -> str:
+    """The fixture league page as Yahoo shows another week (``?matchup_week=N``): the same
+    pairs, no scores yet."""
+    html = re.sub(r"<div class='Fz-lg '>\d+</div>", "", fixture("league.html"))
+    return html.replace("week=1&", f"week={week}&").replace(
+        "Week 1 Matchups", f"Week {week} Matchups"
+    )
+
+
+def test_the_league_page_gives_each_pairs_live_score():
+    d = pages.parse_league_page(fixture("league.html"))
+    scores = {tuple(m["teams"]): m.get("score") for m in d["matchups"]}
+    assert len(scores) == 6
+    assert scores[(4, 10)] == [5.0, 3.0] and scores[(5, 9)] == [2.0, 2.0]
+    # A week not played yet has the pairs and no score.
+    later = pages.parse_league_page(week_page(2))["matchups"]
+    assert {m["week"] for m in later} == {2} and all("score" not in m for m in later)
 
 
 def test_the_matchup_page_gives_both_teams_totals_and_the_score():
@@ -407,6 +433,17 @@ def fake_week(day: date) -> int:
     return n if n <= 17 else n - 1
 
 
+def matchup_page(teams: list[int]) -> str:
+    """The fixture matchup page (Team 4 vs Team 10) as another pair's: the same totals."""
+    html = fixture("matchup.html")
+    if teams in ([], [4], [4, 10]):
+        return html
+    a, b = teams
+    for old, new in ((4, "A"), (10, "B"), ("A", a), ("B", b)):
+        html = re.sub(rf"(/nba/100001/|Team ){old}\b", rf"\g<1>{new}", html)
+    return html
+
+
 EMPTY_ROSTER = "<html><body><table><thead><tr><th>Pos</th><th>Players</th></tr></thead><tbody></tbody></table></body></html>"
 
 
@@ -451,7 +488,7 @@ class FakeYahoo:
             offset = int(re.search(r"count=(\d+)", url).group(1))
             return fixture("avail0.html" if offset == 0 else "avail25.html")
         if kind == "matchup":
-            return fixture("matchup.html")
+            return matchup_page(info["teams"])
         if kind == "transactions":
             return fixture("transactions.html")
         raise AssertionError(url)
@@ -514,6 +551,31 @@ def test_a_refresh_reads_the_public_sources_and_serves_the_season(client):
     assert client.post(f"/seasons/{LEAGUE}/refresh", params={"wait": True}).status_code == 202
     assert not any("?date=" in u for u in fake.urls)
     assert len(list((folder / "snapshots").iterdir())) == 2
+
+
+def test_a_refresh_reads_every_pairs_matchup_page_mine_first(client):
+    steps: list[tuple[str, int, int]] = []
+    parts = public.refresh_parts(
+        LEAGUE, base(), client.fake, TODAY, progress=lambda *step: steps.append(step)
+    )
+    read = [u for u in client.fake.urls if "/matchup?" in u]
+    assert len(read) == 6 and read[0].endswith("mid1=4&mid2=10")
+    assert [k for k in (p.key for p in parts) if k.startswith("matchup/")][:2] == [
+        "matchup/1/4-10",
+        "matchup/1/1-2",
+    ]
+    assert [w for w, _, _ in steps if "matchup" in w] == [
+        "my matchup",
+        "matchup 1-2",
+        "matchup 3-11",
+        "matchup 5-9",
+        "matchup 6-8",
+        "matchup 7-12",
+    ]
+    client.post(f"/seasons/{LEAGUE}/refresh", params={"wait": True})
+    rows = {tuple(m["teams"]): m for m in client.get(f"/seasons/{LEAGUE}").json()["matchups"]}
+    assert len(rows) == 6
+    assert set(rows[(7, 12)]["totals"]) == {"7", "12"}
 
 
 def test_the_leagues_list_shows_each_folders_week_record_and_opponent(client):
@@ -640,6 +702,53 @@ def test_a_private_leagues_snapshot_brings_in_the_calendar_and_the_schedule(clie
         json={"pages": [{"url": site + "/7", "html": fixture("team4.html")}]},
     )
     assert client.app.state.seasons.start_extras("100002") is None
+
+
+def test_another_weeks_league_page_is_its_pairings_and_moves_nothing(client):
+    """The league page shown for another week is that week's pairs, stored on its own: it
+    never becomes the league part, so the standings and the current week stay this week's."""
+    site = "https://basketball.fantasysports.yahoo.com/nba/100002"
+    client.post(
+        "/seasons/100002/snapshot", json={"pages": [{"url": site, "html": fixture("league.html")}]}
+    )
+    r = client.post(
+        "/seasons/100002/snapshot",
+        json={"pages": [{"url": site + "?matchup_week=2", "html": week_page(2)}]},
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["accepted"] == ["pairings/2"]
+    v = client.get("/seasons/100002").json()
+    assert v["week"] == 1 and v["opponent"]["team_id"] == 12
+    assert {m["week"] for m in v["matchups"]} == {1}
+    stored = season_api.load_parts(client.data_dir, "100002")
+    assert stored["pairings/2"].data["week"] == 2
+    assert {tuple(m["teams"]) for m in stored["pairings/2"].data["matchups"]} == {
+        (1, 2),
+        (3, 11),
+        (4, 10),
+        (5, 9),
+        (6, 8),
+        (7, 12),
+    }
+    assert stored["league"].data["week"] == 1
+    wait_for_job(client, "100002")
+
+
+def test_a_matchup_page_read_before_the_league_page_keeps_the_newer_score():
+    league = pages.parse_league_page(fixture("league.html"))
+    league["matchups"] = [
+        m | {"score": [6.0, 3.0]} if m["teams"] == [4, 10] else m for m in league["matchups"]
+    ]
+    matchup = pages.parse_matchup_page(fixture("matchup.html"))
+    early = NOW - timedelta(hours=2)
+    parts = merge_part(
+        merge_part({}, part("league", league)), part("matchup/1/4-10", matchup, at=early)
+    )
+    s = Season.from_parts(base(), parts)
+    assert s.matchup_of(4).score == (6.0, 3.0) and s.matchup_of(4).totals[4]["FG%"] == ".484"
+    # Read after it, the matchup page's own score stands.
+    parts = merge_part(parts, part("matchup/1/4-10", matchup, at=NOW + timedelta(hours=1)))
+    assert Season.from_parts(base(), parts).matchup_of(4).score == (5.0, 3.0)
 
 
 def test_a_snapshot_that_does_not_read_is_refused(client):
@@ -950,6 +1059,77 @@ def test_an_out_player_of_mine_is_held_out_until_espns_later_return_date(tmp_pat
 def test_moves_need_a_season_of_my_team(client):
     assert client.get("/seasons/100002/moves").status_code == 409
     assert client.get("/seasons/999999/moves").status_code == 404
+
+
+# --------------------------------------------------------------------------- matchup view (#116)
+def test_the_matchup_route_scores_my_week_and_what_each_player_adds(client):
+    projection_csv(
+        client.data_dir / "bbm_projections_2026-10-21.csv", fixture_names(), star="Kevin Durant"
+    )
+    client.post(f"/seasons/{LEAGUE}/refresh", params={"wait": True})
+    v = client.get(f"/seasons/{LEAGUE}").json()
+    r = client.get(f"/seasons/{LEAGUE}/matchup")
+    assert r.status_code == 200, r.text
+    m = r.json()
+    assert (m["week"], m["teams"], m["system"]["key"]) == (1, [4, 10], "bbm")
+    assert (m["start"], m["end"], m["from"], m["days"]) == (
+        "2026-10-19",
+        "2026-10-25",
+        "2026-10-21",
+        5,
+    )
+    # Yahoo's count so far, mine first, and the one category level.
+    assert m["score"] == [5.0, 3.0] and m["tied"] == 1 and m["rosters_read"] == [True, True]
+    # The Matchup card's finals and odds: the same model.
+    card = v["week_projection"]["matchup"]
+    cats = {c["cat"]: c for c in m["cats"]}
+    assert list(cats) == CATS
+    for o in card["odds"]:
+        assert cats[o["cat"]]["p_win"] == pytest.approx(o["p_win"], abs=1e-3)
+        assert cats[o["cat"]]["mine"] == pytest.approx(o["mine"], abs=1e-3)
+    assert cats["pts"]["so_far"] == [42.0, 31.0]
+    assert cats["fg_pct"]["so_far"][0] == pytest.approx(15 / 31, abs=1e-4)
+    assert m["expected"] == pytest.approx(sum(c["p_win"] for c in m["cats"]), abs=1e-3)
+    assert m["expected"] == pytest.approx(card["expected"], abs=1e-3)
+    odds = [wk.CategoryOdds(c["cat"], None, None, 1.0, c["p_win"]) for c in m["cats"]]
+    assert m["win"] == pytest.approx(wk.matchup_won(odds), abs=1e-3) and 0 < m["win"] < 1
+    # Both rosters, each player once; with games first, the larger Matchup first.
+    mine, theirs = m["players"]["mine"], m["players"]["theirs"]
+    assert {x["player"] for x in mine} == {s["player"]["yahoo_id"] for s in v["roster"]}
+    team10 = pages.parse_team_page(fixture("team10.html"), 10)["spots"]
+    assert {x["player"] for x in theirs} == {s["player"]["yahoo_id"] for s in team10}
+    for rows in (mine, theirs):
+        keys = [(x["games"] == 0, -x["matchup"]) for x in rows]
+        assert keys == sorted(keys)
+        # No start left adds nothing.
+        assert all(x["cats"] == 0 and x["matchup"] == 0 for x in rows if not x["started"])
+    by_name = {s["player"]["name"]: s["player"]["yahoo_id"] for s in v["roster"]}
+    durant = next(x for x in mine if x["player"] == by_name["Kevin Durant"])
+    assert durant == mine[0] and durant["per_game"]["pts"] == 22.6 and durant["slot"] == "SG"
+    nesmith = next(x for x in mine if x["player"] == by_name["Aaron Nesmith"])
+    assert nesmith["games"] == 0 and nesmith["matchup"] == 0 and mine[-1]["games"] == 0
+    # His contribution is the week without him from the first day on (the drop path).
+    built = client.app.state.seasons._built(LEAGUE, "bbm")
+    span = built.problem.horizons["week"][0]
+    week = mv.project_mine(built.problem, span, gone={durant["player"]: span.days[0]})
+    without = wk.odds_of(
+        wk.finals(week, span.so_far, CATS),
+        wk.finals(span.opponents[0], span.so_far_theirs[0], CATS),
+        CATS,
+    )
+    assert durant["cats"] == pytest.approx(m["expected"] - wk.expected_won(without), abs=1e-3)
+    assert durant["matchup"] == pytest.approx(m["win"] - wk.matchup_won(without), abs=1e-3)
+    assert durant["cats"] > mine[1]["cats"] > 0
+    # Theirs are what each adds for them: my odds without him less with him.
+    assert theirs[0]["cats"] > 0 and theirs[0]["matchup"] > 0
+    y = client.get(f"/seasons/{LEAGUE}/matchup", params={"system": "yahoo"})
+    assert y.status_code == 200 and y.json()["system"]["key"] == "yahoo"
+    assert client.get(f"/seasons/{LEAGUE}/matchup", params={"system": "espn"}).status_code == 422
+
+
+def test_the_matchup_route_needs_a_season_with_my_matchup(client):
+    assert client.get("/seasons/100002/matchup").status_code == 409
+    assert client.get("/seasons/999999/matchup").status_code == 404
 
 
 # --------------------------------------------------------------------------- landing grid (#108)

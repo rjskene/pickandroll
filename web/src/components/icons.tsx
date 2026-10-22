@@ -1,6 +1,6 @@
 import type { ReactElement } from "react";
 import type { CardId } from "../draft";
-import type { SeasonCardId } from "../keys";
+import type { SeasonCardId, SeasonViewId } from "../keys";
 
 const stroke = { fill: "none", stroke: "currentColor", strokeWidth: 2, strokeLinecap: "round" as const, strokeLinejoin: "round" as const };
 
@@ -97,6 +97,21 @@ export const SEASON_ICONS: Record<SeasonCardId, ReactElement> = {
       <path d="M3 3v18h18M6 6c3 0 7 1 9 4s3 7 3 8" />
       <circle cx="9.5" cy="6.8" r="1.5" />
       <circle cx="16" cy="12" r="1.5" />
+    </svg>
+  ),
+};
+
+/** The view drawer's tabs (#116). */
+export const VIEW_ICONS: Record<SeasonViewId, ReactElement> = {
+  waivers: (
+    <svg width="18" height="18" viewBox="0 0 24 24" {...stroke} aria-hidden="true">
+      <path d="M4 6h16M4 12h16M4 18h10" />
+    </svg>
+  ),
+  // Two sides and the line between them.
+  matchup: (
+    <svg width="18" height="18" viewBox="0 0 24 24" {...stroke} aria-hidden="true">
+      <path d="M3 12h7M14 12h7M10 6v12M14 6v12" />
     </svg>
   ),
 };

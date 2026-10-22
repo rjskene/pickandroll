@@ -1,5 +1,6 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
 import { useMutation, useQuery, useQueryClient, type UseQueryResult } from "@tanstack/react-query";
+import { flushSync } from "react-dom";
 import {
   api,
   CAT_LABEL,
@@ -17,7 +18,6 @@ import {
   type SeasonMatchup,
   type SeasonPlayer,
   type SeasonView,
-  type WeekMatchupOdds,
   type WeekProjection,
 } from "../api";
 import {
@@ -56,6 +56,7 @@ import {
   POSITIONS,
   recordLabel,
   refreshNote,
+  scoreLabel,
   sortAvailable,
   statusTitle,
   statusTone,
@@ -70,18 +71,21 @@ import {
   type Horizon,
   type PositionFilter,
 } from "../season";
-import { DRAWER_WIDTH, isShown, SEASON_CARDS, SEASON_SHEET, seasonKeys, stepHighlight, type DrawerState, type Half, type SeasonCardId } from "../keys";
-import { useDrawer, useHotkeys } from "../useKeys";
+import { DRAWER_WIDTH, isShown, SEASON_CARDS, SEASON_SHEET, SEASON_VIEWS, seasonKeys, stepHighlight, type DrawerState, type Half, type SeasonCardId } from "../keys";
+import { useDrawer, useHotkeys, useViews } from "../useKeys";
 import { FlagBreakdown, FlagInfo } from "./FlagExplain";
 import Halves, { type Face } from "./Halves";
 import KeySheet from "./KeySheet";
+import MatchupView from "./MatchupView";
 import Rail from "./Rail";
 import { SEASON_ICONS } from "./icons";
 import Strategy from "./Strategy";
 import Trade from "./Trade";
+import ViewDrawer from "./ViewDrawer";
 import { useNow } from "./YahooSync";
 
 const PANEL_KEY = "pickandroll.season.drawer";
+const VIEW_KEY = "pickandroll.season.view";
 /** Every card but the Waivers board can sit in a half of the panel. */
 const isPanelCard = (v: unknown): v is SeasonCardId => typeof v === "string" && v !== "waivers" && SEASON_CARDS.some((c) => c.id === v);
 const DEFAULT_PANEL: DrawerState<SeasonCardId> = {
@@ -93,9 +97,10 @@ const DEFAULT_PANEL: DrawerState<SeasonCardId> = {
   width: DRAWER_WIDTH,
 };
 
-/** A league in season (#92), in the draft view's shape (#109): the available players where the
- * board stands, a two-half panel of cards (the moves, a trade, the flags, my roster, the
- * league's week and the strategy, #110) and the draft's rail and keys. Yahoo's own columns, the weekly projection's
+/** A league in season (#92), in the draft view's shape (#109): a view where the board stands
+ * (the available players, or this week's matchup, #116) picked from a drawer at its left edge,
+ * a two-half panel of cards (the moves, a trade, the flags, my roster, the league and the
+ * strategy, #110) and the draft's rail and keys. Yahoo's own columns, the weekly projection's
  * (#93) and the moves' gains (#94). */
 export default function SeasonScreen({ league, onBack }: { league: string; onBack: () => void }) {
   const queryClient = useQueryClient();
@@ -120,6 +125,9 @@ export default function SeasonScreen({ league, onBack }: { league: string; onBac
   // The panel's two halves, the rail and the keys (#109). Moves and Trade (#96) take each
   // other's half by t and m; a picked move shows in the Moves card.
   const panel = useDrawer(PANEL_KEY, isPanelCard, DEFAULT_PANEL, DEFAULT_PANEL.last);
+  // The view where the board stands and the drawer that picks it (#116), kept like the panel.
+  const views = useViews(VIEW_KEY);
+  const [leagueTab, setLeagueTab] = useState<LeagueTab>("standings");
   const [sheetOpen, setSheetOpen] = useState(false);
   const [highlight, setHighlight] = useState<number | null>(null);
   // One flag breakdown open at a time (#113), under a Flags card row or a Waivers row: opening
@@ -145,10 +153,12 @@ export default function SeasonScreen({ league, onBack }: { league: string; onBac
       replaceCard("trade", "moves");
     }
   };
-  // 1 Waivers gives the board the full width, and brings the panel back.
+  // 1 Waivers shows the Waivers view; there it gives the board the full width, and brings the
+  // panel back.
   const openCard = (id: SeasonCardId, half: Half) => {
     if (id !== "waivers") return panel.openCard(id, half);
-    panel.toggleDrawer();
+    if (views.view !== "waivers") views.setView("waivers");
+    else panel.toggleDrawer();
     boardRef.current?.scrollIntoView({ block: "nearest" });
   };
   const system = chosen ?? s?.week_projection.default ?? "bbm";
@@ -166,6 +176,9 @@ export default function SeasonScreen({ league, onBack }: { league: string; onBac
   const openMove = (id: number) => pick({ add: id, drop: openingDrop(moves.data?.candidates[String(id)], mh) });
   useHotkeys(
     seasonKeys({
+      view: views.view,
+      setView: views.setView,
+      toggleViews: views.toggleViews,
       openCard,
       toggleDrawer: panel.toggleDrawer,
       swapHalves: panel.swapHalves,
@@ -182,6 +195,8 @@ export default function SeasonScreen({ league, onBack }: { league: string; onBac
       },
       show,
       focusSearch: () => {
+        // The board is hidden in another view: show it before the focus.
+        flushSync(() => views.setView("waivers"));
         searchRef.current?.focus();
         searchRef.current?.select();
       },
@@ -231,7 +246,18 @@ export default function SeasonScreen({ league, onBack }: { league: string; onBac
       case "roster":
         return { note: s.my_team?.name, body: <Roster rows={s.roster} w={s.week_projection} /> };
       case "league":
-        return { note: s.current_week ? `week ${s.current_week.number}` : undefined, body: <League s={s} now={now} /> };
+        return {
+          action: (
+            <span className="seg small" role="tablist" aria-label="The league">
+              {LEAGUE_TABS.map(([tab, label]) => (
+                <button key={tab} role="tab" aria-selected={leagueTab === tab} className={leagueTab === tab ? "on" : undefined} onClick={() => setLeagueTab(tab)}>
+                  {label}
+                </button>
+              ))}
+            </span>
+          ),
+          body: leagueTab === "matchups" ? <Pairings s={s} now={now} /> : <League s={s} />,
+        };
       case "strategy":
         return { note: moves.data?.system.label, body: <Strategy league={league} s={s} system={system} onPick={pick} /> };
       default:
@@ -287,7 +313,14 @@ export default function SeasonScreen({ league, onBack }: { league: string; onBac
           <div className="main season">
             {/* One box on a wide window (display: contents), the scrolling column beside the rail on a narrow one. */}
             <div className="season-body">
-              <div className="board-col" ref={boardRef}>
+              <ViewDrawer views={SEASON_VIEWS} view={views.view} shown={views.shown} onView={views.setView} onToggle={views.toggleViews} />
+              {views.view === "matchup" && (
+                <div className="board-col view-col">
+                  <MatchupView league={league} s={s} system={system} setSystem={setSystem} now={now} />
+                </div>
+              )}
+              {/* Kept mounted in another view, so its sort, filters and highlight stay. */}
+              <div className="board-col" ref={boardRef} hidden={views.view !== "waivers"}>
                 <Waivers
                   s={s}
                   system={system}
@@ -309,7 +342,7 @@ export default function SeasonScreen({ league, onBack }: { league: string; onBac
             <Rail
               cards={SEASON_CARDS}
               icons={SEASON_ICONS}
-              on={(id) => (id === "waivers" ? !panel.drawerOpen : isShown(panel.drawer, id))}
+              on={(id) => (id === "waivers" ? views.view === "waivers" && !panel.drawerOpen : isShown(panel.drawer, id))}
               onOpen={openCard}
               onSheet={() => setSheetOpen(true)}
               open={panel.drawerOpen}
@@ -1095,20 +1128,24 @@ function RosterGames({ row, p }: { row: RosterRow; p: WeekProjection["players"][
   );
 }
 
-/** My matchup's columns, mine first. */
+/** A pairing's columns, mine first. */
 function ordered(m: SeasonMatchup, mine: number | undefined): [number, number] {
   return m.teams[1] === mine ? [m.teams[1], m.teams[0]] : m.teams;
 }
 
-function League({ s, now }: { s: SeasonView; now: number }) {
+/** The League card's tabs (#116): the standings with the weeks recorded, or this week's
+ * pairings. */
+type LeagueTab = "standings" | "matchups";
+const LEAGUE_TABS: [LeagueTab, string][] = [
+  ["standings", "Standings"],
+  ["matchups", "Matchups"],
+];
+
+function League({ s }: { s: SeasonView }) {
   const mine = s.my_team?.team_id;
-  const name = (id: number) => s.teams.find((t) => t.team_id === id)?.name ?? `Team ${id}`;
-  const m = s.matchup;
   const points = s.scoring === "points";
   return (
     <>
-      {m && <Matchup m={m} mine={mine} name={name} />}
-      {s.week_projection.matchup && <Odds o={s.week_projection.matchup} now={now} />}
       <div className="block">
         <span className="k">Standings</span>
         <table className="season-table">
@@ -1164,6 +1201,55 @@ function League({ s, now }: { s: SeasonView; now: number }) {
   );
 }
 
+/** This week's pairings with their live scores (#116), mine first; a click opens a pairing's
+ * categories as far as its matchup page was read. */
+function Pairings({ s, now }: { s: SeasonView; now: number }) {
+  const mine = s.my_team?.team_id;
+  const [open, setOpen] = useState<string | null>(null);
+  const name = (id: number) => s.teams.find((t) => t.team_id === id)?.name ?? `Team ${id}`;
+  const pairs = [...s.matchups].sort((x, y) => Number(mine != null && y.teams.includes(mine)) - Number(mine != null && x.teams.includes(mine)));
+  if (!pairs.length) return <p className="dim small">No pairing read for this week.</p>;
+  return (
+    <div className="block">
+      <span className="k">Week {pairs[0].week} · click a pairing for its categories</span>
+      <table className="season-table pairings">
+        <tbody>
+          {pairs.map((m) => {
+            const key = `${m.week}/${Math.min(...m.teams)}-${Math.max(...m.teams)}`;
+            const [a, b] = ordered(m, mine);
+            const score = m.score && a !== m.teams[0] ? ([m.score[1], m.score[0]] as [number, number]) : m.score;
+            const isOpen = open === key;
+            const read = s.fetched[`matchup/${key}`];
+            return (
+              <Fragment key={key}>
+                <tr className={`pick${a === mine ? " mine" : ""}`} aria-expanded={isOpen} onClick={() => setOpen(isOpen ? null : key)}>
+                  <td>{name(a)}</td>
+                  <td className="num strong">{score ? scoreLabel({ score, scoring: s.scoring }) : "—"}</td>
+                  <td className="r">{name(b)}</td>
+                </tr>
+                {isOpen && (
+                  <tr className="breakdown">
+                    <td colSpan={3}>
+                      <div className="pair-totals">
+                        <PairTotals m={m} a={a} b={b} name={name} />
+                        <span className="dim small">
+                          {read
+                            ? `categories read ${ageLabel(read.at, now)}`
+                            : `categories not read: ${s.public ? "a refresh reads every pairing's matchup page" : "open its matchup page in Chrome with the extension"}`}
+                        </span>
+                      </div>
+                    </td>
+                  </tr>
+                )}
+              </Fragment>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 /** The weeks the recorder kept (#97): my opponent, result and place after each, latest first. */
 function Weeks({ league }: { league: string }) {
   const q = useQuery({ queryKey: ["weeks", league], queryFn: () => api.weeks(league), refetchInterval: 300_000 });
@@ -1213,24 +1299,28 @@ function recordedTitle(w: RecordedWeek): string {
   return parts.join(" · ");
 }
 
-function Matchup({ m, mine, name }: { m: SeasonMatchup; mine: number | undefined; name: (id: number) => string }) {
-  const [a, b] = ordered(m, mine);
+/** A pairing's totals so far, its first team on the first line: Yahoo's columns, or a points
+ * league's score lines. */
+function PairTotals({ m, a, b, name }: { m: SeasonMatchup; a: number; b: number; name: (id: number) => string }) {
   const flip = a !== m.teams[0];
   const pair = (v: [number, number]) => (flip ? [v[1], v[0]] : v);
   const totalsA = m.totals[String(a)] ?? {};
   const totalsB = m.totals[String(b)] ?? {};
   const cats = Object.keys(totalsA);
-  // A categories matchup has only the score, which the heading carries; a points one adds
-  // Yahoo's projections.
+  // A categories matchup has only the score, which the row carries; a points one adds Yahoo's
+  // projections.
   const lines = Object.entries(m.lines).filter(([label]) => label !== "vs" || Object.keys(m.lines).length > 1);
   return (
-    <div className="block">
-      <span className="k">
-        Week {m.week}: {name(a)} vs {name(b)}
-        {m.score && ` · ${pair(m.score).join("–")}`}
-      </span>
+    <>
       {lines.length > 0 && (
         <table className="season-table">
+          <thead>
+            <tr>
+              <th></th>
+              <th className="num">{name(a)}</th>
+              <th className="num">{name(b)}</th>
+            </tr>
+          </thead>
           <tbody>
             {lines.map(([label, v]) => (
               <tr key={label}>
@@ -1255,68 +1345,20 @@ function Matchup({ m, mine, name }: { m: SeasonMatchup; mine: number | undefined
             </tr>
           </thead>
           <tbody>
-            <tr className="mine">
-              <td>me</td>
-              {cats.map((c) => (
-                <td key={c} className="num">
-                  {totalsA[c]}
-                </td>
-              ))}
-            </tr>
-            <tr>
-              <td>them</td>
-              {cats.map((c) => (
-                <td key={c} className="num">
-                  {totalsB[c] ?? ""}
-                </td>
-              ))}
-            </tr>
+            {[a, b].map((t, i) => (
+              <tr key={t}>
+                <td>{name(t)}</td>
+                {cats.map((c) => (
+                  <td key={c} className="num">
+                    {(i === 0 ? totalsA : totalsB)[c] ?? ""}
+                  </td>
+                ))}
+              </tr>
+            ))}
           </tbody>
         </table>
       )}
-    </div>
-  );
-}
-
-/** My matchup's projected finals and the odds of each category (#93). */
-function Odds({ o, now }: { o: WeekMatchupOdds; now: number }) {
-  const one = o.odds.length === 1 ? o.odds[0] : null;
-  const [mine, theirs] = o.teams.map(String);
-  const withRates = `${o.players_with_rates[mine] ?? 0} and ${o.players_with_rates[theirs] ?? 0} players with a Basketball Monster line`;
-  return (
-    <div className="block">
-      <span
-        className="k"
-        title={`The week so far (matchup page, read ${o.so_far_at ? ageLabel(o.so_far_at, now) : "never"}) plus Basketball Monster's per-game line times the games each player starts from ${o.from}; ${withRates}. The spread comes from per-game game-log dispersion.`}
-      >
-        Projected finals ·{" "}
-        {one ? `${oddsLabel(one.p_win)} to win` : `${o.expected.toFixed(1)} of ${o.odds.length} categories expected`}
-      </span>
-      <table className="season-table">
-        <thead>
-          <tr>
-            <th></th>
-            <th className="num">me</th>
-            <th className="num">them</th>
-            <th className="num" title="the odds of winning the category this week">
-              win
-            </th>
-          </tr>
-        </thead>
-        <tbody>
-          {o.odds.map((r) => (
-            <tr key={r.cat}>
-              <td>{CAT_LABEL[r.cat]}</td>
-              <td className="num">{catValue(r.cat, r.mine)}</td>
-              <td className="num">{catValue(r.cat, r.theirs)}</td>
-              <td className={`num ${oddsTone(r.p_win)}`} title={`spread of the difference: ${catValue(r.cat, r.sd)}`}>
-                {oddsLabel(r.p_win)}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+    </>
   );
 }
 
@@ -1337,7 +1379,7 @@ function SeasonFooter({ s, now }: { s: SeasonView; now: number }) {
       {waivers.length > 0 && <span>{waivers.join(" · ")}</span>}
       <span className="grow" />
       <span>
-        <kbd>?</kbd> keys · <kbd>1</kbd>–<kbd>7</kbd> cards · <kbd>⇧</kbd>+digit bottom half · <kbd>]</kbd> panel
+        <kbd>?</kbd> keys · <kbd>w</kbd> <kbd>h</kbd> views · <kbd>[</kbd> view drawer · <kbd>1</kbd>–<kbd>7</kbd> cards · <kbd>⇧</kbd>+digit bottom half · <kbd>]</kbd> panel
       </span>
       <span title={Object.entries(s.fetched).map(([k, f]) => `${k}: ${f.at} (${f.source})`).join("\n")}>Snapshot {ageLabel(s.updated_at, now)}</span>
       <span>League {s.league}</span>
