@@ -306,6 +306,35 @@ def test_a_held_player_whose_status_cleared_is_the_first_thing_said(client):
     assert alerts[0]["kind"] == "cleared" and alerts[0]["player"] == reed
     held = client.get(f"/seasons/{LEAGUE}/lineup").json()["held"]
     assert held["slots"][0] == {"slot": "IL", "player": reed, "cleared": True}
+    # The digest says so first, names only.
+    d = client.get("/flags/digest").json()
+    [row] = [x for x in d["lineups"] if x["league"] == LEAGUE]
+    drop = next(
+        s["player"]["name"] for s in v["roster"] if s["player"]["yahoo_id"] == cleared["drop"]
+    )
+    assert row["cleared_line"] == (
+        f"- League {LEAGUE}: Paul Reed sits in IL with no status and blocks every add until"
+        f" activated; the activation would drop {drop}"
+    )
+    section = d["markdown"][d["markdown"].index("### Lineups") :]
+    assert section.splitlines()[2] == row["cleared_line"]
+
+
+def test_the_cleared_line_names_the_player_his_slot_status_and_the_drop():
+    players = {"1": {"name": "One"}, "2": {"name": "Two"}}
+    alerts = [
+        {"kind": "held_lower_bound", "slots": {"IL": 1}},
+        {"kind": "cleared", "player": 1, "slot": "IL", "status": "Q", "from": "x", "drop": 2},
+    ]
+    assert season_lineup.cleared_line("9", {"players": players, "alerts": alerts}) == (
+        "- League 9: One sits in IL as Q and blocks every add until activated;"
+        " the activation would drop Two"
+    )
+    alerts[1] = {**alerts[1], "drop": None}
+    assert season_lineup.cleared_line("9", {"players": players, "alerts": alerts}).endswith(
+        "until activated; an active spot is open for him"
+    )
+    assert season_lineup.cleared_line("9", {"players": players, "alerts": alerts[:1]}) is None
 
 
 def test_the_digest_names_the_leagues_that_lose_games_as_set(client):

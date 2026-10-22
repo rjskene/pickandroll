@@ -264,8 +264,30 @@ def digest_line(league: str, lineup: Mapping[str, Any], today: date) -> str | No
     return f"- League {league}: " + "; ".join(parts) if parts else None
 
 
+def cleared_line(league: str, lineup: Mapping[str, Any]) -> str | None:
+    """The digest's line for a league whose held slot holds a player whose status cleared: he
+    blocks every add until activated, and the activation's drop; None when there is none."""
+    names = {int(k): v["name"] for k, v in lineup["players"].items()}
+    parts = []
+    for a in lineup["alerts"]:
+        if a["kind"] != "cleared":
+            continue
+        who = names.get(a["player"], str(a["player"]))
+        status = f"as {a['status']}" if a["status"] else "with no status"
+        then = (
+            f"the activation would drop {names.get(a['drop'], str(a['drop']))}"
+            if a["drop"] is not None
+            else "an active spot is open for him"
+        )
+        parts.append(
+            f"{who} sits in {a['slot']} {status} and blocks every add until activated; {then}"
+        )
+    return f"- League {league}: " + "; ".join(parts) if parts else None
+
+
 def digest_section(lines: Sequence[str]) -> str:
-    """The digest's lineup section: one line per league that loses a game as set, else none."""
+    """The digest's lineup section: a line per league with a held player whose status cleared,
+    then one per league that loses a game as set; nothing when there is neither."""
     if not lines:
         return ""
     return "\n".join(["", "### Lineups", "", *lines]) + "\n"

@@ -328,6 +328,7 @@ class SeasonService:
         rows: list[dict[str, Any]] = []
         lineups: list[dict[str, Any]] = []
         lineup_lines: list[str] = []
+        cleared_lines: list[str] = []
         shown: list[tuple[str, list[tuple[season_flags.fl.Pickup, season_flags.fl.Flag]]]] = []
         skipped: list[dict[str, str]] = []
         inputs: dict[str, Any] | None = None
@@ -353,6 +354,8 @@ class SeasonService:
             line = self._lineup_line(league, today)
             if line.get("line"):
                 lineup_lines.append(line["line"])
+            if line.get("cleared_line"):
+                cleared_lines.append(line["cleared_line"])
             lineups.append({"league": league, **line})
         notes = season_flags.stale(inputs, now) if inputs is not None else []
         # The markdown is public: a league's own failure text stays in the JSON.
@@ -366,13 +369,13 @@ class SeasonService:
             "leagues": rows,
             "skipped": skipped,
             "lineups": lineups,
-            "markdown": markdown + season_lineup.digest_section(lineup_lines),
+            "markdown": markdown + season_lineup.digest_section([*cleared_lines, *lineup_lines]),
         }
 
     def _lineup_line(self, league: str, today: date) -> dict[str, Any]:
         """A league's lineup for the digest: today's and tomorrow's games lost as set and the
-        line saying so (None when nothing is lost or nothing was read); the failure, if any,
-        stays in the JSON."""
+        line saying so (None when nothing is lost or nothing was read), and the line naming a
+        held player whose status cleared; the failure, if any, stays in the JSON."""
         try:
             out = self.lineup(league, "bbm", None)
         except HTTPException as exc:
@@ -386,6 +389,7 @@ class SeasonService:
             "lost": sum(d["lost"] or 0 for d in days),
             "unread": [d["date"] for d in days if d["yahoo"] is None],
             "cleared": [a for a in out["alerts"] if a["kind"] == "cleared"],
+            "cleared_line": season_lineup.cleared_line(league, out),
         }
 
     def _flag_inputs(self, job: RefreshJob, fetch: public.Fetch, today: date) -> None:

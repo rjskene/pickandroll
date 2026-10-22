@@ -320,9 +320,12 @@ out, any of the Moves card's four weeks.
   first, then an unknown status, the held lower bound, an unknown rule); a summary (games lost,
   the days that differ, the days not read); and the players named. Nothing here applies a
   lineup.
-- **Digest.** `GET /flags/digest`'s markdown carries a Lineups section: one line per league
-  whose lineup as set loses a game today or tomorrow, with the players to start and to sit and
-  the games lost, and nothing when none does. The daily routine posts the field as it is.
+- **Digest.** `GET /flags/digest`'s markdown carries a Lineups section. First comes a line
+  per league whose held slot holds a player whose status cleared: he blocks every add until
+  activated, and the activation's drop is named. Then comes one line per league whose lineup as
+  set loses a game today or tomorrow, with the players to start and to sit and the games lost.
+  Both use names only, and the section is left out when there is neither. The daily routine
+  posts the field as it is.
 - **Script.** `scripts/season.py lineup [league ...] --all [--days 2] [--json]` prints the same
   line per league for the terminal.
 
