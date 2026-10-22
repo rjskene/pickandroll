@@ -24,7 +24,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from pickandroll.api import SessionStore, create_app, season_record
-from pickandroll.season import Week
+from pickandroll.season import EXTENSION, Part, SeasonSettings, Week
 from pickandroll.season import record as rec
 from pickandroll.sources.yahoo import pages
 
@@ -256,8 +256,10 @@ def matchup_html(league: str, week: int, a: int, b: int, points: bool, bump: int
         f"<span>{GAMES[b]}/{GAMES[b]}</span></div></div>"
     )
     head = (
+        "<section id='matchup-header'>"
         f'<p><a href="/nba/{league}/{a}">Team {a}</a> <a href="/nba/{league}/{b}">Team {b}</a></p>'
         f"<table class='M-a'><tr><td>{score[0]}</td><th>vs</th><td>{score[1]}</td></tr></table>"
+        "</section>"
     )
     if points:
         cols = ["Fan Pts", "PTS", "REB", "AST", "BLK", "ST", "TO"]
@@ -571,6 +573,40 @@ def snapshot(client, league: str, url: str, html: str, at: datetime):
     r = client.post(f"/seasons/{league}/snapshot", json=body)
     assert r.status_code == 200 and not r.json()["skipped"], r.text
     return r
+
+
+def test_the_recorder_reads_no_matchup_page_whose_teams_are_not_a_pair():
+    """A matchup page stored with misread teams (my team against the page's first, from a
+    signed-in page's navigation) is neither recorded nor named as a page still to read."""
+    week = Week(1, date(2026, 10, 19), date(2026, 10, 25))
+    league = pages.parse_league_page(league_html(PRIVATE, 1, False)) | {
+        "matchups": [{"week": 1, "teams": [1, 2]}, {"week": 1, "teams": [3, 4]}]
+    }
+    before = datetime(2026, 10, 22, 16, 0, tzinfo=UTC)
+
+    def page(key: str, a: int, b: int, at: datetime, teams: list[int] | None = None) -> Part:
+        data = pages.parse_matchup_page(matchup_html(PRIVATE, 1, a, b, False), 1)
+        return Part(key, at, EXTENSION, data | ({"teams": teams} if teams else {}))
+
+    parts = {
+        "league": Part("league", AFTER_1, EXTENSION, league),
+        "draft": Part("draft", AFTER_1, EXTENSION, {"picks": []}),
+        "matchup/1/1-2": page("matchup/1/1-2", 1, 2, AFTER_1),
+        "matchup/1/3-4": page("matchup/1/3-4", 3, 4, AFTER_1),
+        "matchup/1/1-3": page("matchup/1/1-3", 3, 4, AFTER_1, [1, 3]),
+    }
+    settings = SeasonSettings(PRIVATE, "categories", (), (), 4, 1)
+    got = season_record.private_inputs(PRIVATE, week, parts, settings)
+    assert sorted(sorted(m["teams"]) for m in got.matchups) == [[1, 2], [3, 4]]
+    # Read before the week's end, it would name the wrong pair's page to read (1 and 3).
+    parts = {k: parts[k] for k in ("league", "draft")}
+    parts["matchup/1/1-3"] = page("matchup/1/1-3", 3, 4, before, [1, 3])
+    with pytest.raises(season_record.NeedsPages) as needs:
+        season_record.private_inputs(PRIVATE, week, parts, settings)
+    # One page by each team instead, in the standings' order.
+    assert sorted(needs.value.urls) == [
+        f"{SITE}/{PRIVATE}/matchup?week=1&mid1={t}" for t in (1, 2, 3, 4)
+    ]
 
 
 def test_a_private_league_names_the_pages_it_needs_then_records(client):

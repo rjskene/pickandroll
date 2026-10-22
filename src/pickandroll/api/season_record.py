@@ -31,7 +31,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 
-from ..season import EXTENSION, PUBLIC, Part, SeasonSettings, Week
+from ..season import EXTENSION, PUBLIC, Part, SeasonSettings, Week, unpaired_matchups
 from ..season import record as rec
 from ..sources.yahoo import pages, public
 from .season_week import NBA_TZ
@@ -207,15 +207,15 @@ def private_inputs(
     teams = [int(t["team_id"]) for t in (lg.data.get("teams") or [])] if lg is not None else []
     teams = teams or list(range(1, settings.num_teams + 1))
     prefix = f"matchup/{week.number}/"
-    fresh = [
-        p.data for k, p in parts.items() if k.startswith(prefix) and after_week(p.fetched_at, week)
-    ]
+    misread = unpaired_matchups(parts)
+    week_pages = {k: p for k, p in parts.items() if k.startswith(prefix) and k not in misread}
+    fresh = [p.data for p in week_pages.values() if after_week(p.fetched_at, week)]
     covered = {int(t) for m in fresh for t in m["teams"]}
     # The week's pairs read before its end name both teams of a page still to read.
     known = [
         tuple(int(t) for t in p.data["teams"])
-        for k, p in sorted(parts.items())
-        if k.startswith(prefix) and not after_week(p.fetched_at, week)
+        for _, p in sorted(week_pages.items())
+        if not after_week(p.fetched_at, week)
     ]
     for a, b in known:
         if a not in covered and b not in covered:

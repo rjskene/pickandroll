@@ -43,6 +43,7 @@ from pickandroll.season import (
     merge_part,
     mondays,
     pairings_key,
+    unpaired_matchups,
 )
 from pickandroll.season import flags as fl
 from pickandroll.season import moves as mv
@@ -810,6 +811,73 @@ def test_a_private_leagues_snapshot_brings_in_the_calendar_and_the_schedule(clie
         json={"pages": [{"url": site + "/7", "html": fixture("team4.html")}]},
     )
     assert client.app.state.seasons.start_extras("100002") is None
+
+
+def test_a_signed_in_matchup_page_names_its_own_teams_not_the_navigations():
+    """A signed-in page's navigation links to my team (7) before the matchup's two: the teams
+    are the header's, else the totals table's, never the page's chrome."""
+    html = fixture("matchup_signed_in.html")
+    d = pages.parse_matchup_page(html)
+    assert d["teams"] == [1, 2] and set(d["totals"]) == {"1", "2"} and d["score"] == [5.0, 3.0]
+    # Without the header, the totals table's rows name them.
+    bare = re.sub(r"<section id='matchup-header'.*?</section>", "", html, flags=re.DOTALL)
+    assert pages.parse_matchup_page(bare)["teams"] == [1, 2]
+    # The pair the URL asks for must be on the page (``mid1`` alone names one team).
+    assert pages.parse_matchup_page(html, pair=[2, 1])["teams"] == [1, 2]
+    assert pages.parse_matchup_page(html, pair=[1])["teams"] == [1, 2]
+    with pytest.raises(pages.PageError, match="shows teams 1 and 2; its URL asks for 1 and 7"):
+        pages.parse_matchup_page(html, pair=[1, 7])
+
+
+def test_a_matchup_page_is_stored_as_the_pair_its_url_asks_for_or_skipped(client):
+    site = "https://basketball.fantasysports.yahoo.com/nba/100002"
+    client.post(
+        "/seasons/100002/snapshot", json={"pages": [{"url": site, "html": fixture("league.html")}]}
+    )
+    html = fixture("matchup_signed_in.html")
+    r = client.post(
+        "/seasons/100002/snapshot",
+        json={"pages": [{"url": f"{site}/matchup?week=1&mid1=1&mid2=2", "html": html}]},
+    )
+    assert r.json()["accepted"] == ["matchup/1/1-2"]
+    r = client.post(
+        "/seasons/100002/snapshot",
+        json={"pages": [{"url": f"{site}/matchup?week=1&mid1=1&mid2=5", "html": html}]},
+    )
+    assert r.json()["accepted"] == []
+    assert "its URL asks for 1 and 5" in r.json()["skipped"][0]["reason"]
+    v = client.get("/seasons/100002").json()
+    assert v["opponent"]["team_id"] == 12
+
+
+def test_a_matchup_part_whose_teams_are_not_a_pair_of_its_week_is_not_read_and_is_dropped(client):
+    """Pages read before the parser took its teams from the header were stored as my team
+    against the matchup's first team. The league page's pairs expose them: the season reads none
+    of them and the next save drops them; a week whose pairs were never read keeps its pages."""
+    site = "https://basketball.fantasysports.yahoo.com/nba/100002"
+    client.post(
+        "/seasons/100002/snapshot", json={"pages": [{"url": site, "html": fixture("league.html")}]}
+    )
+    state = client.data_dir / "leagues" / "100002" / "season" / "state.json"
+    body = json.loads(state.read_text())
+    page = pages.parse_matchup_page(fixture("matchup_signed_in.html"))
+    for key, week, teams in (("matchup/1/1-7", 1, [7, 1]), ("matchup/2/3-7", 2, [7, 3])):
+        data = page | {"week": week, "teams": teams}
+        body["parts"][key] = Part(key, NOW, EXTENSION, data).to_dict()
+    state.write_text(json.dumps(body))
+    parts = season_api.load_parts(client.data_dir, "100002")
+    assert unpaired_matchups(parts) == {"matchup/1/1-7"}
+    # Read as it was, team 7's first matchup (7 vs 1) made team 1 this week's opponent.
+    v = client.get("/seasons/100002").json()
+    assert v["opponent"]["team_id"] == 12
+    assert [7, 1] not in [m["teams"] for m in v["matchups"]]
+    # The next save, any post, drops it; the snapshot files keep what was received.
+    client.post(
+        "/seasons/100002/snapshot",
+        json={"pages": [{"url": site + "/7", "html": fixture("team4.html")}]},
+    )
+    kept = json.loads(state.read_text())["parts"]
+    assert "matchup/1/1-7" not in kept and "matchup/2/3-7" in kept
 
 
 def test_another_weeks_league_page_is_its_pairings_and_moves_nothing(client):

@@ -87,6 +87,7 @@ from ..season import (
     mondays,
     pairings_key,
     roster_key,
+    unpaired_matchups,
 )
 from ..season import moves as mv
 from ..season import record as season_rec
@@ -167,6 +168,10 @@ def _write_json(path: Path, body: Any) -> None:
 def save(
     data_dir: Path, league: str, parts: dict[str, Part], received: list[Part], source: str
 ) -> None:
+    """The season's parts, less the matchup pages whose teams were misread
+    (``unpaired_matchups``), and a snapshot of what was received."""
+    misread = unpaired_matchups(parts)
+    parts = {k: p for k, p in parts.items() if k not in misread}
     folder = season_dir(data_dir, league)
     _write_json(
         folder / STATE, {"league": league, "parts": {k: p.to_dict() for k, p in parts.items()}}
@@ -921,7 +926,8 @@ def _page_part(
             {**d, "upsert": True, "rows": [{**r, "seen_at": at.isoformat()} for r in d["rows"]]},
         )
     if kind == "matchup":
-        d = pages.parse_matchup_page(html, info.get("week"))
+        # The pair the URL asked for: a page showing another is skipped, never stored as it.
+        d = pages.parse_matchup_page(html, info.get("week"), info.get("teams"))
         return Part(matchup_key(d["week"], d["teams"]), at, EXTENSION, d)
     if kind == "transactions":
         return Part("transactions", at, EXTENSION, pages.parse_transactions_page(html))
