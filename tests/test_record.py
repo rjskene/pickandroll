@@ -674,7 +674,12 @@ def test_the_script_prints_one_line_per_league(client):
     assert lines[0].startswith(f"{LEAGUE} week 1: recorded")
     assert lines[1].startswith(f"{PRIVATE} week 1: needs pages (")
     assert f"{SITE}/{PRIVATE}/draftresults" in lines[1]
-    assert lines[1].endswith(f"; schedule pages (1): {SITE}/{PRIVATE}?matchup_week=3")
+    assert f"; schedule pages (1): {SITE}/{PRIVATE}?matchup_week=3; lineup pages (" in lines[1]
+    # The lineup pages (#107): the settings page until read, then my team page by day.
+    assert (
+        f"lineup pages (8): {SITE}/{PRIVATE}/settings {SITE}/{PRIVATE}/2?date=2026-10-26 "
+        in lines[1]
+    )
     assert lines[2].startswith(f"{POINTS} week 1: recorded")
 
 

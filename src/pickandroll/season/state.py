@@ -12,6 +12,10 @@ Part keys and their data:
 
 ``settings``
     :class:`SeasonSettings` fields read from Yahoo (name, weeks, waiver and add rules).
+``league_settings``
+    The league's settings page (#107): the roster positions with the held slots (IL, IL+, NA,
+    which Yahoo's v3 settings leave out), the lineup deadline and the playoff weeks. The source
+    of the held slots; without it they are the most any read roster fills, a lower bound.
 ``players``
     Yahoo's player pool for the league: a list of :class:`Player`.
 ``league``
@@ -23,6 +27,9 @@ Part keys and their data:
     Never the league part, so it moves neither the standings nor the current week.
 ``roster/<team id>``
     One team page: ``{"team_id", "name", "spots": [{"slot", "player"}]}``.
+``lineup/<team id>/<YYYY-MM-DD>``
+    The team page shown for a day (``?date=``): that day's lineup, as ``roster/`` holds today's
+    (#107).
 ``available``
     ``{"rows": [...]}``, :class:`Available` rows with the time each was seen.
 ``matchup/<week>/<a>-<b>``
@@ -52,6 +59,11 @@ EXTENSION = "extension"
 YAHOO_WEEK = "yahoo_week"
 #: Yahoo's injury and availability codes that keep a player out of a game.
 OUT_CODES = frozenset({"O", "INJ", "SUSP", "NA", "OFS"})
+#: The roster slots whose players are off the active roster (``season.moves.HELD``).
+HELD_SLOTS = ("IL", "IL+", "NA")
+#: Where a season's held slot counts come from.
+SLOTS_PAGE = "settings page"
+SLOTS_ROSTERS = "rosters read"
 
 
 def _opt_int(v: Any) -> int | None:
@@ -92,21 +104,41 @@ class SeasonSettings:
     trade_review_days: int | None = None
     #: The teams the playoffs take.
     playoff_teams: int | None = None
+    #: The playoff weeks as the settings page prints them.
+    playoff_weeks: tuple[int, ...] = ()
+    #: The settings page's "Weekly Deadline" as printed (``Daily - Today``), and what it means:
+    #: lineups change ``daily`` or ``weekly``, a daily change counting ``today`` or ``tomorrow``.
+    lineup_deadline: str | None = None
+    lineup_changes: str | None = None
+    lineup_from: str | None = None
+    #: Where the held slots of ``roster`` come from: :data:`SLOTS_PAGE`, or :data:`SLOTS_ROSTERS`
+    #: (the most any read roster fills: a lower bound); None before the season is read.
+    held_from: str | None = None
+    #: Whether an injured player can be added straight to an injury slot.
+    injured_add_to_slot: bool | None = None
 
     @property
     def first_playoff_week(self) -> int | None:
-        """The first playoff week, estimated as one week a round of the bracket ending with the
-        season's last week (six teams: three rounds, two of them with byes); None when the last
-        week or the bracket is not known. Yahoo's public settings do not name the week."""
+        """The first playoff week: the settings page's, else estimated as one week a round of
+        the bracket ending with the season's last week (six teams: three rounds, two of them
+        with byes); None when neither is known. Yahoo's v3 settings do not name the week."""
+        if self.playoff_weeks:
+            return self.playoff_weeks[0]
         if not self.end_week or not self.playoff_teams or self.playoff_teams < 2:
             return None
         return self.end_week - math.ceil(math.log2(self.playoff_teams)) + 1
+
+    @property
+    def held_slots(self) -> dict[str, int]:
+        """The league's held slots by kind (IL, IL+, NA), as ``roster`` holds them."""
+        return {k: n for k in HELD_SLOTS if (n := sum(1 for x in self.roster if x == k))}
 
     def to_dict(self) -> dict[str, Any]:
         d = asdict(self)
         for k in ("end_date", "trade_end_date"):
             d[k] = d[k].isoformat() if d[k] else None
         d["cats"], d["roster"] = list(self.cats), list(self.roster)
+        d["playoff_weeks"] = list(self.playoff_weeks)
         d["points"] = dict(self.points) if self.points else None
         return d
 
@@ -134,6 +166,14 @@ class SeasonSettings:
             trade_ratify=d.get("trade_ratify"),
             trade_review_days=_opt_int(d.get("trade_review_days")),
             playoff_teams=_opt_int(d.get("playoff_teams")),
+            playoff_weeks=tuple(int(w) for w in d.get("playoff_weeks") or ()),
+            lineup_deadline=d.get("lineup_deadline"),
+            lineup_changes=d.get("lineup_changes"),
+            lineup_from=d.get("lineup_from"),
+            held_from=d.get("held_from"),
+            injured_add_to_slot=None
+            if d.get("injured_add_to_slot") is None
+            else bool(d["injured_add_to_slot"]),
         )
 
     def merged(self, read: Mapping[str, Any]) -> SeasonSettings:
@@ -142,6 +182,42 @@ class SeasonSettings:
         keep = {"league", "scoring", "cats", "roster", "num_teams", "my_team_id", "points"}
         fields = {k: v for k, v in read.items() if k not in keep and v is not None}
         return SeasonSettings.from_dict({**self.to_dict(), **fields})
+
+    def with_slots(
+        self, page: Mapping[str, Any] | None, rosters: Iterable[Iterable[str]]
+    ) -> SeasonSettings:
+        """These settings with the held slots and the lineup rule read: the settings page's
+        positions and rule when it was read; else the folder's active slots with, for each held
+        kind, the most any read roster (``rosters``, each its slots) fills, and the rule from
+        v3's ``weekly_deadline``. The folder's own held slots (the draft's) are never used."""
+        changes, effective = _lineup_rule(self.weekly_deadline)
+        if page is not None:
+            read = page.get("lineup_changes") is not None
+            return replace(
+                self,
+                roster=tuple(str(x) for x in page.get("roster") or self.roster),
+                playoff_weeks=tuple(int(w) for w in page.get("playoff_weeks") or ()),
+                lineup_deadline=page.get("lineup_deadline"),
+                lineup_changes=page.get("lineup_changes") if read else changes,
+                lineup_from=page.get("lineup_from") if read else effective,
+                held_from=SLOTS_PAGE,
+                injured_add_to_slot=page.get("injured_add_to_slot"),
+            )
+        seen: dict[str, int] = {}
+        any_read = False
+        for slots in rosters:
+            any_read = True
+            for kind in HELD_SLOTS:
+                seen[kind] = max(seen.get(kind, 0), sum(1 for x in slots if x == kind))
+        active = tuple(x for x in self.roster if x not in HELD_SLOTS)
+        held = tuple(kind for kind in HELD_SLOTS for _ in range(seen.get(kind, 0)))
+        return replace(
+            self,
+            roster=active + held,
+            lineup_changes=changes,
+            lineup_from=effective,
+            held_from=SLOTS_ROSTERS if any_read else None,
+        )
 
 
 @dataclass(frozen=True)
@@ -377,6 +453,17 @@ def matchup_key(week: int, teams: Iterable[int]) -> str:
     return f"matchup/{week}/{a}-{b}"
 
 
+def lineup_key(team_id: int, day: date) -> str:
+    """One day's lineup of a team, from its team page shown for that day."""
+    return f"lineup/{team_id}/{day.isoformat()}"
+
+
+def _lineup_rule(deadline: str | None) -> tuple[str | None, str | None]:
+    """v3's ``weekly_deadline`` as a lineup rule: ``intraday`` is daily, counting today (the
+    settings page's ``Daily - Today``); anything else is not known."""
+    return ("daily", "today") if (deadline or "").strip().lower() == "intraday" else (None, None)
+
+
 def pairings_key(week: int) -> str:
     """A week's pairs from the league page shown for that week (``?matchup_week=N``)."""
     return f"pairings/{week}"
@@ -439,6 +526,8 @@ class Season:
     #: league page shown for that week (``pairings/<week>``). A week read with no pairs (a playoff
     #: week Yahoo has not seeded) is here and empty; a week never read is not here.
     pairings: Mapping[int, tuple[tuple[int, int], ...]] = field(default_factory=dict)
+    #: Each team's lineups read by day (``lineup/<team>/<day>``), each as its team page lists it.
+    lineups: Mapping[int, Mapping[date, tuple[RosterSpot, ...]]] = field(default_factory=dict)
 
     @classmethod
     def from_parts(cls, base: SeasonSettings, parts: Mapping[str, Part]) -> Season:
@@ -471,6 +560,17 @@ class Season:
                     names[int(d["team_id"])] = d["name"]
         known = {t.team_id for t in teams}
         teams += tuple(Team(tid, name) for tid, name in sorted(names.items()) if tid not in known)
+        settings = settings.with_slots(
+            _data(parts, "league_settings"), ([s.slot for s in r] for r in rosters.values())
+        )
+        lineups: dict[int, dict[date, tuple[RosterSpot, ...]]] = {}
+        for key, part in parts.items():
+            if key.startswith("lineup/"):
+                _, team, day = key.split("/")
+                lineups.setdefault(int(team), {})[date.fromisoformat(day)] = tuple(
+                    RosterSpot(s.slot, s.player.with_pool(players.get(s.player.yahoo_id)))
+                    for s in (RosterSpot.from_dict(x) for x in part.data.get("spots", []))
+                )
         rostered = {s.player.yahoo_id for spots in rosters.values() for s in spots}
         available = tuple(
             sorted(
@@ -545,6 +645,7 @@ class Season:
             fetched=fetched,
             yahoo_week=yahoo_week,
             pairings=pairings,
+            lineups=lineups,
         )
 
     # ------------------------------------------------------------------ queries
@@ -596,9 +697,9 @@ class Season:
 
     @property
     def first_playoff_week(self) -> int | None:
-        """The first playoff week: the settings' estimate, else (a private league has no settings
-        part) the first week read with no pairs when no later week lists any; None when not
-        known."""
+        """The first playoff week: the settings page's, or the estimate from v3's settings; else
+        (a private league whose settings page was not read) the first week read with no pairs
+        when no later week lists any; None when not known."""
         known = self.settings.first_playoff_week
         if known is not None:
             return known

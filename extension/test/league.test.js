@@ -28,11 +28,17 @@ test("the reader knows the league's own pages and nothing else", () => {
   assert.deepEqual(L.leaguePage(`${SITE}/nba/31822/matchup?week=1&mid1=3&mid2=8`), { league: "31822", kind: "matchup" });
   assert.deepEqual(L.leaguePage(`${SITE}/nba/31822/transactions`), { league: "31822", kind: "transactions" });
   assert.deepEqual(L.leaguePage(`${SITE}/nba/31822/draftresults`), { league: "31822", kind: "draftresults" });
+  // A team's page for a day is that day's lineup (#107); the settings page, the held slots and the rule.
+  assert.deepEqual(L.leaguePage(`${SITE}/nba/31822/3?date=2026-10-18`), { league: "31822", kind: "team", team: 3, date: "2026-10-18" });
+  assert.deepEqual(L.leaguePage(`${SITE}/nba/31822/settings`), { league: "31822", kind: "settings" });
   // Not read: the draft client, a player's page, a team's sub-pages, another site, plain http.
   for (const url of [
     `${SITE}/draftclient/31822/3`,
     `${SITE}/nba/31822/3/team?stat1=S_PS7`,
-    `${SITE}/nba/31822/3?date=2026-10-18`, // another day's lineup, not today's roster
+    `${SITE}/nba/31822/3?date=2026-02-30`, // not a day
+    `${SITE}/nba/31822/3?date=`,
+    `${SITE}/nba/31822/3?date=20261018`,
+    `${SITE}/nba/31822/settings/edit`,
     `${SITE}/nba/players/6013`,
     `${SITE}/nba/31822/playerswatch`,
     `https://sports.yahoo.com/nba/31822`,
@@ -45,6 +51,8 @@ test("the reader knows the league's own pages and nothing else", () => {
 
 test("each page keeps one line in the panel, the snapshot body carries the page as rendered", () => {
   assert.equal(L.postKey({ kind: "team", team: 3 }), "team 3");
+  assert.equal(L.postKey({ kind: "team", team: 3, date: "2026-10-26" }), "team 3 on 2026-10-26");
+  assert.equal(L.postKey({ kind: "settings" }), "settings");
   assert.equal(L.postKey({ kind: "players", offset: 25 }), "players 26-50");
   assert.equal(L.postKey({ kind: "players", offset: 25, view: "R_O" }), "players 26-50");
   assert.equal(L.postKey({ kind: "players", offset: 0, view: "S_PS7" }), "players 1-25 (next 7 days)");

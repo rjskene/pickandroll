@@ -150,7 +150,7 @@ def test_a_two_for_one_frees_a_spot_and_prices_its_best_add_beside_the_trade():
 
 
 def test_a_received_injured_player_takes_an_open_held_slot_instead_of_a_drop():
-    lg = league(LEVELS, held_slots={"IL": 1}, statuses={23: "INJ"})
+    lg = league(LEVELS, held_slots={"IL": 1}, statuses={23: "OFS"})
     rep = tr.evaluate(lg, trade([13], [21, 23]))
     assert rep.mine.roster.valid
     assert rep.mine.roster.held_moves == ((23, "IL"),)

@@ -48,6 +48,8 @@ leagues, and Yahoo serves everything the engine needs without a sign-in:
 |---|---|---|
 | league settings, current week, roster slots, waiver and add rules | `pub-api.fantasysports.yahoo.com/fantasy/v3/settings/nba/<id>` (already used by `scripts/draft_day.py`) | `current_week`, `start_week`, `end_week`, `end_date`, `weekly_deadline`, `num_playoff_teams`, and the `settings` block; no week dates and no playoff start week |
 | week dates | the public team page on a date, `/nba/<id>/<team>?date=YYYY-MM-DD`, whose "Week N stats may change" line names that day's matchup week | one request per Monday of the season, cached for every league in `data/leagues/_shared/season/calendar.json` (#92); 2026-27 has 22 weeks, week 1 Oct 19-25, week 17 Feb 15-28 across the All-Star break, week 22 Mar 29-Apr 4 |
+| held slots, lineup rule, playoff weeks, the injured-add rule | the public settings page `/nba/<id>/settings`, a table of labels and values | "Roster Positions" (every slot, IL, IL+ and NA included), "Weekly Deadline" (`Daily - Today`, `Daily - Tomorrow` or weekly), "Playoffs" (`6 teams - Week 20, 21 and 22`) and whether an injured free agent may be added straight to an injury slot. v3's settings name no playoff week, and the roster the season used was the league folder's, from the draft, without IL (#107, see "Held slots") |
+| my lineup on a day | my team page on that day, `/nba/<id>/<team>?date=YYYY-MM-DD` | the slots filled that day; an empty IL slot is not shown. Stored as `lineup/<team>/<day>`, apart from today's roster (#107, see "Lineups") |
 | standings, waiver priority, FAAB left, moves, this week's pairs and their live scores | the public league page `/nba/<id>` | the `standingstable` and the matchups module: one `li[data-target="/nba/<id>/matchup?week=&mid1=&mid2="]` per pair with both scores (`div.Fz-lg`, in mid1/mid2 order) and no categories (#116). `?matchup_week=N` shows another week's pairs; it is stored as that week's pairings, never as the league page. Read once a week ahead for the Season view's opponents: a public refresh reads every regular week after this one whose pairs it lacks, and again only while a page lists none; the private league's pages are listed by the Monday recorder (#116) |
 | a matchup's week totals and score | the public matchup page `/nba/<id>/matchup?week=W&mid1=A&mid2=B` | each team's category totals; a points league adds Yahoo's original and live projected points. A public refresh reads every pair's page of the week, mine first (#116) |
 | player pool: positions, NBA team, injury status and note, season stats, Yahoo ranks, ADP | `.../v3/players/nba/<id>?format=json&projected=1&average=1` (744 players) | `inj`, `inj_full`, `inj_note`, `display_pos`, `season_stats`; no per-league ownership |
@@ -177,10 +179,44 @@ week's matchups. Every move shows both gains whichever horizon chose it, so a st
 long-term cost is visible: the solver prefers the free agent with four games to the better
 player with two, which is right for that week and wrong for the next, and the user chooses.
 
-IL: an active player whose status the slot accepts moves into an open IL or IL+ slot for free,
-which opens a spot without a drop; players already in IL, IL+ or NA slots stay put and are not
-drop candidates. Slot eligibility is a configurable set, a best guess until a league with IL
-slots is seen: IL accepts INJ, O and OFS; IL+ also GTD; NA accepts NA.
+IL: an active player whose status the slot accepts moves into an open IL, IL+ or NA slot for
+free, which opens a spot without a drop; players already in a held slot whose status still fits
+it stay put and are not drop candidates. Which statuses fit which slot, how many held slots the
+league has, and a held player whose status cleared are in "Held slots" below.
+
+### Held slots (#107, #124)
+
+Yahoo's rule for basketball (help article SLN6863, also served as SLN28136, read 2026-10-22):
+an IL slot takes a player listed O or OFS; P, Q and D are not eligible. A player in a held slot
+whose real-life status no longer fits it blocks every add and claim until he is moved to an
+active spot, which needs an open one.
+
+| slot | takes | source |
+|---|---|---|
+| IL | O, OFS | Yahoo's help pages: confirmed |
+| IL+ | INJ, O, OFS, GTD | a 2021 Yahoo post only: unverified |
+| NA | NA | unverified |
+
+INJ is no longer taken for IL: the help pages leave it out. A status the model does not know
+(anything but P, Q, D, O, OFS, INJ, GTD, SUSP and NA) is ineligible for every slot, and the
+lineup route says so. The table is `season.moves.HELD_ACCEPTS`, with `HELD_CONFIRMED` naming
+the rows a Yahoo page confirms.
+
+How many held slots: the league's settings page, which lists every roster position. It is read
+by the public refresh after v3's settings (part `league_settings`), and the extension posts it
+for the private league. Until it is read, the held slots are a lower bound, the most of each
+kind any roster read fills, and the lineup route says so (`held_lower_bound`). The draft-time roster
+in the league folder is never used for them: it lists no IL, which kept the stash moves of #97
+from ever firing in nine of the thirteen leagues. The settings page also gives the lineup rule
+(v3's `weekly_deadline` is the fallback: `intraday` is daily from today), the playoff weeks
+(used before the estimate, see the Season view) and whether an injured free agent may be added
+straight to an injury slot (#124's no-drop add).
+
+A held player whose status cleared (an IL player now listed Q, say) is the first thing the
+Moves card and the lineup route say: he blocks every add. The model activates him on the first
+day, dropping the weakest active player by per-game value, him included, in every set the
+search weighs, the empty one too, so every gain is counted from that baseline. His slot then
+counts as open for a stash.
 
 Add limit: k is the league's weekly limit minus the adds already made this week, counted from
 the transactions page; when that page does not reach back to the week's start the payload says
@@ -251,6 +287,44 @@ up, hollow the search's, solid the program's, half both, the natural weight ring
 tab shows the set with a lock on each drop, the categories before and after, the first-order
 lists and the solvers' seconds and sizes. Like every card it says "recommended", never
 "optimal", and nothing in it acts in Yahoo.
+
+## Lineups (#107)
+
+`season/lineup.py` (core, no I/O) and `api/season_lineup.py`;
+`GET /seasons/{league}/lineup?week=N&system=bbm|yahoo`, the current week when `week` is left
+out, any of the Moves card's four weeks.
+
+- **Recommended.** Each day, the players who play (the move model's schedule, out rule, games
+  and returns, `weekly.playing_days`) placed by `weekly.starters`, the same daily starters the
+  projection counts. The sets a lineup's slots can hold form a matroid, so the most valuable
+  set is also the one that starts the most games: no legal lineup starts more. A league whose
+  lineups change weekly gets one lineup for the week, each player worth his games times his
+  per-game value. Held slots never start.
+- **First day.** A day before the first day a change counts (the move model's first day, or
+  tomorrow in a league whose changes count from tomorrow) shows Yahoo's lineup only.
+- **Yahoo's lineup.** My team page shown for the day (`lineup/<team>/<day>`), or for today the
+  team page read today. A public refresh reads each day of this week before today once and
+  today and the days after it every time; lineup parts older than fourteen days are dropped
+  when the season is saved. The private league's pages come from the user's Chrome
+  (extension 0.5.3): the route's `needs` lists the settings page until read and each day ahead
+  not read today, and the weekly recorder's response lists them as `lineup_pages`, after the
+  schedule pages.
+- **Comparison.** Per day, the players each lineup starts who play that day; the games lost are
+  the recommended count less Yahoo's, and `start` and `sit` name the difference. Two lineups that
+  start the same players in other slots are no difference.
+- **Payload.** For an executor to consume later, every recommended day is slot by slot in the
+  league's slot order with Yahoo player ids (`recommended: [{slot, player}]`, the bench beside
+  it), and Yahoo's as read the same way with when and from which page it was read. Then the held
+  slots one by one with their occupants (cleared ones marked), the open ones and the active
+  players eligible for one; the rule and its source; the alerts in order (a cleared occupant
+  first, then an unknown status, the held lower bound, an unknown rule); a summary (games lost,
+  the days that differ, the days not read); and the players named. Nothing here applies a
+  lineup.
+- **Digest.** `GET /flags/digest`'s markdown carries a Lineups section: one line per league
+  whose lineup as set loses a game today or tomorrow, with the players to start and to sit and
+  the games lost, and nothing when none does. The daily routine posts the field as it is.
+- **Script.** `scripts/season.py lineup [league ...] --all [--days 2] [--json]` prints the same
+  line per league for the terminal.
 
 ## The breakout flag
 
@@ -409,11 +483,12 @@ then UI to evaluate available waiver options"). The flow:
    added or dropped; an O sits out this week only). Its opponent is the one the league page
    shown for that week pairs me with. A week whose pairs were never read, and a playoff week,
    is played against the field: its odds and finals are the average over every other team
-   whose roster was read. The playoffs are estimated from the settings, one week a round of the
-   bracket ending with the season's last week (six teams: weeks 20 to 22 of 22), because
-   Yahoo's public settings name no playoff week; the private league has no settings part, so
-   there the playoffs begin at the first week read with no pairs and none after it. A week
-   without a roster faced has no odds and counts as none in the summary.
+   whose roster was read. The playoffs are the settings page's weeks (#107); before it is
+   read they are estimated from v3's settings, one week a round of the bracket ending with the
+   season's last week (six teams: weeks 20 to 22 of 22), because v3 names no playoff week; a
+   private league whose settings page was not read begins them at the first week read with no
+   pairs and none after it. A week without a roster faced has no odds and counts as none in the
+   summary.
 
    The schedule's sources: the public refresh reads the league page for each regular week
    after this one once (and again only while it lists no pairs), and the NBA schedule to the

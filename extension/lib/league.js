@@ -19,11 +19,11 @@
   const PROJECTION_VIEW = "S_PS7";
 
   /** The league page ``url`` is, as the API's ``pages.page_kind`` reads it: ``{league, kind}``
-   * with ``team`` for a team page, ``offset`` (and ``view``, its ``stat1``, when the URL names
-   * one) for the players page; the league page, a matchup, the transactions and the draft
-   * results by kind alone; null for any other page
-   * (the draft client, a player's page, another sport) and for a team page on another date
-   * (``?date=``), whose lineup is not today's roster. */
+   * with ``team`` for a team page (and ``date``, YYYY-MM-DD, for the team page shown for a day,
+   * ``?date=``: that day's lineup, #107), ``offset`` (and ``view``, its ``stat1``, when the URL
+   * names one) for the players page; the league page, a matchup, the transactions, the draft
+   * results and the settings page by kind alone; null for any other page (the draft client, a
+   * player's page, another sport) and for a team page whose date is not a day. */
   function leaguePage(url) {
     let u;
     try {
@@ -38,7 +38,10 @@
     const rest = parts.slice(2);
     if (!rest.length) return { league, kind: "league" };
     if (rest.length === 1 && /^\d+$/.test(rest[0])) {
-      return u.searchParams.has("date") ? null : { league, kind: "team", team: Number(rest[0]) };
+      const team = { league, kind: "team", team: Number(rest[0]) };
+      if (!u.searchParams.has("date")) return team;
+      const date = u.searchParams.get("date");
+      return isDay(date) ? { ...team, date } : null;
     }
     if (rest.length === 1 && rest[0] === "players") {
       const view = u.searchParams.get("stat1");
@@ -48,14 +51,24 @@
     if (rest.length === 1 && rest[0] === "transactions") return { league, kind: "transactions" };
     // The draft's picks, for the weekly recorder (#97): read once per league.
     if (rest.length === 1 && rest[0] === "draftresults") return { league, kind: "draftresults" };
+    // The held slots and the lineup rule (#107, #124): read once per league.
+    if (rest.length === 1 && rest[0] === "settings") return { league, kind: "settings" };
     return null;
   }
 
+  /** ``s`` is a calendar day written YYYY-MM-DD. */
+  function isDay(s) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return false;
+    const d = new Date(`${s}T00:00:00Z`);
+    return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === s;
+  }
+
   /** Where the page's posts are kept in the panel: one line per team, matchup and players
-   * page, so a page read again replaces its own line. The projection view's pages keep lines
-   * of their own: they feed Yahoo's projections as well as the available players. */
+   * page, so a page read again replaces its own line. A team's page for a day keeps a line per
+   * day, and the projection view's pages keep lines of their own: they feed Yahoo's projections
+   * as well as the available players. */
   function postKey(page) {
-    if (page.kind === "team") return `team ${page.team}`;
+    if (page.kind === "team") return page.date ? `team ${page.team} on ${page.date}` : `team ${page.team}`;
     if (page.kind === "players") {
       const rows = `players ${page.offset + 1}-${page.offset + PAGE_ROWS}`;
       return page.view === PROJECTION_VIEW ? `${rows} (next 7 days)` : rows;
