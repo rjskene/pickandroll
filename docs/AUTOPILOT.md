@@ -19,8 +19,9 @@ ultimately decide and manually make the inputs." Nothing ever clicks there.
 | the private league | the same | the user, by hand, from the Waivers, Strategy and Lineup views and the daily digest |
 
 Arming is per league and is the user's own click on the dashboard, recorded in
-`data/leagues/<id>/armed.json` as the draft's arming was (#67). A disarmed league is never
-touched. A file `data/autopilot/STOP` stops every executor at once; a session that sees it does
+`data/leagues/<id>/armed.json` as the draft's arming was (#67). The user armed every public
+league in advance (2026-10-22), so a public league counts as armed unless the user disarms it on
+the dashboard; the private league cannot be armed. A disarmed league is never touched. A file `data/autopilot/STOP` stops every executor at once; a session that sees it does
 nothing and says so.
 
 Every public league folder today (twelve) has the same waiver rules, read from Yahoo's public
@@ -107,10 +108,11 @@ The default rule, until the user sets another or the hill-climb tunes it within 
 - a claim's bid scales with the move's projected gain relative to the week's typical
   recommended gain: $1 for a routine stream, more for a flagged breakout or a move that lifts
   the week's odds by a lot;
-- no single claim bids more than 20% of the budget left, and no week more than 35% of it;
+- no ceiling (user, 2026-10-22: valuable waiver pickups early in a season-long league are
+  rare); the bid is sized to the move's value and the budget left, and the hill-climb may tune
+  the sizing;
 - the bid and its reason go in the queue, so a veto can strike the bid, not only the move.
 
-Open: the user's own ceiling, if they want one other than these.
 
 ## 6. The hill-climb
 
@@ -129,7 +131,7 @@ recorder (#97).
 | horizon weight | the strategy objective | even, natural, season |
 | the protection floor | the keep rule | the margin by which a player must beat the best add |
 | the stash threshold | #124 | the margin by which the freed spot must beat the return |
-| the FAAB sizing | section 5 | within the caps above |
+| the FAAB sizing | section 5 | the sizing rule only; no ceiling |
 | the daily move cap | section 2 | 1 to 3 |
 
 **The protocol.** One knob changes per week, pooled across the armed leagues; where the leagues
@@ -169,3 +171,5 @@ never a Basketball Monster number.
   suggestions only. The extension may add, drop and set lineups in an armed public league. Moves
   go through a veto window. The master applies the Monday change; the user can override later.
   The strategy rule of section 4.
+- 2026-10-22, later: no FAAB ceiling. Every public league is armed in advance; only the private
+  league is excluded.
