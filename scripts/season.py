@@ -1,8 +1,11 @@
-"""The season's scheduled commands (#97): the weekly recorder, run every Monday morning.
+"""The season's commands: the weekly recorder (#97), run every Monday morning, and the lineup
+check (#107), for the terminal.
 
     python scripts/season.py record --all              # every league's latest finished week
     python scripts/season.py record 258901 --week 3     # one league, a past week
     python scripts/season.py record --all --json        # each league's answer whole, one per line
+    python scripts/season.py lineup --all               # today's and tomorrow's lineups as set
+    python scripts/season.py lineup 258901 --days 7     # one league, the rest of the week
 
 It asks the API (``PICKANDROLL_API``, by default http://127.0.0.1:8000) to record each league and
 prints one line per league:
@@ -17,7 +20,17 @@ prints one line per league:
 open (read only; the extension posts them), after which the league is recorded again.
 ``schedule pages`` are the private league's weeks ahead whose pairs the Season view has not read
 (#116): the league page shown for each week, for the same Chrome to open once; the record does
-not wait on them. Nothing here signs in or reads Yahoo itself: the API does the reading.
+not wait on them. ``lineup pages`` are its settings page until read and my team page shown for
+each day of the week from today (#107), for the lineup comparison. Nothing here signs in or
+reads Yahoo itself: the API does the reading.
+
+``lineup`` prints one line per league: the days whose lineup as set in Yahoo loses games against
+the recommended one, with the players to start and to sit, first any IL player whose status
+cleared (Yahoo refuses every add until he is activated); the days not read are named:
+
+    258901 week 1: Thu start Paul Reed for Myles Turner (1 game lost)
+    251146 week 1: nothing lost Wed-Thu
+    31822 week 1: IL: Jusuf Nurkic is Q, activate him (drops Paul Reed); not read: Thu
 
 Exit codes: 0 every league was asked, whatever it answered; 2 the API is unreachable.
 """
@@ -31,6 +44,7 @@ import sys
 import urllib.error
 import urllib.request
 from collections.abc import Callable
+from datetime import date
 from typing import Any
 
 API = os.environ.get("PICKANDROLL_API", "http://127.0.0.1:8000").rstrip("/")
@@ -70,8 +84,9 @@ def _missing(missing: dict[str, Any]) -> str:
     return "; missing: " + ", ".join(parts) if parts else ""
 
 
-def _ahead(ahead: list[str] | None) -> str:
-    return f"; schedule pages ({len(ahead)}): {' '.join(ahead)}" if ahead else ""
+def _ahead(ahead: list[str] | None, lineup: list[str] | None = None) -> str:
+    out = f"; schedule pages ({len(ahead)}): {' '.join(ahead)}" if ahead else ""
+    return out + (f"; lineup pages ({len(lineup)}): {' '.join(lineup)}" if lineup else "")
 
 
 def describe(league: str, status: int, body: Any) -> str:
@@ -83,13 +98,14 @@ def describe(league: str, status: int, body: Any) -> str:
         return (
             f"{league} week {body['week']}: {body['status']}"
             f"{f' (pages: {read})' if read and body['status'] != 'unchanged' else ''}"
-            f"{_missing(body.get('missing') or {})}{_ahead(body.get('ahead'))}"
+            f"{_missing(body.get('missing') or {})}"
+            f"{_ahead(body.get('ahead'), body.get('lineup_pages'))}"
         )
     if status == 409 and isinstance(detail, dict) and detail.get("needs"):
         needs = detail["needs"]
         return (
             f"{league} week {detail.get('week')}: needs pages ({len(needs)}): {' '.join(needs)}"
-            f"{_ahead(detail.get('ahead'))}"
+            f"{_ahead(detail.get('ahead'), detail.get('lineup_pages'))}"
         )
     if status in (404, 409):
         return f"{league}: skipped: {detail}"
@@ -119,6 +135,64 @@ def record_all(
     return 0
 
 
+def _day(iso: str) -> str:
+    return date.fromisoformat(iso).strftime("%a")
+
+
+def lineup_line(league: str, body: Any, days: int) -> str:
+    """One league's lineups for the first ``days`` days a change counts, as one line."""
+    names = {int(k): v["name"] for k, v in (body.get("players") or {}).items()}
+    name = lambda k: names.get(k, str(k))
+    ahead = [d for d in body["days"] if not d["past"]][:days]
+    parts = []
+    for a in body.get("alerts") or []:
+        if a["kind"] == "cleared":
+            drop = f" (drops {name(a['drop'])})" if a.get("drop") is not None else ""
+            parts.append(
+                f"{a['slot']}: {name(a['player'])} is {a['status'] or 'healthy'}, "
+                f"activate him{drop}"
+            )
+    for d in ahead:
+        if d["lost"]:
+            sit = f" for {', '.join(map(name, d['sit']))}" if d["sit"] else ""
+            games = f"{d['lost']} game{'s' if d['lost'] != 1 else ''} lost"
+            parts.append(
+                f"{_day(d['date'])} start {', '.join(map(name, d['start']))}{sit} ({games})"
+            )
+    unread = [_day(d["date"]) for d in ahead if d["yahoo"] is None]
+    if not parts and ahead and len(unread) < len(ahead):
+        span = _day(ahead[0]["date"]) + (f"-{_day(ahead[-1]['date'])}" if len(ahead) > 1 else "")
+        parts.append(f"nothing lost {span}")
+    if unread:
+        parts.append(f"not read: {', '.join(unread)}")
+    return f"{league} week {body['week']}: " + "; ".join(parts or ["no day left this week"])
+
+
+def lineup_all(
+    call: Call, days: int, leagues: list[str] | None = None, as_json: bool = False
+) -> int:
+    try:
+        if leagues is None:
+            status, rows = call("GET", "/seasons")
+            if status != 200:
+                print(f"the league list failed ({status}): {rows}")
+                return 0
+            leagues = [str(r["league"]) for r in rows]
+        for league in leagues:
+            status, body = call("GET", f"/seasons/{league}/lineup")
+            if as_json:
+                print(json.dumps({"league": league, "status": status, "body": body}), flush=True)
+            elif status == 200:
+                print(lineup_line(league, body, days), flush=True)
+            else:
+                detail = body.get("detail") if isinstance(body, dict) else body
+                print(f"{league}: skipped ({status}): {detail}", flush=True)
+    except Unreachable as exc:
+        print(f"the API is unreachable: {exc}", flush=True)
+        return 2
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     sub = ap.add_subparsers(dest="command", required=True)
@@ -128,10 +202,18 @@ def main(argv: list[str] | None = None) -> int:
     r.add_argument("--week", type=int, help="a past week; by default the latest one over")
     r.add_argument("--api", default=API, help="the API's address")
     r.add_argument("--json", action="store_true", help="print each answer whole")
+    lu = sub.add_parser("lineup", help="each league's lineups as set against the recommended")
+    lu.add_argument("leagues", nargs="*", help="league ids (or --all)")
+    lu.add_argument("--all", action="store_true", help="every league folder")
+    lu.add_argument("--days", type=int, default=2, help="the days from today (default 2)")
+    lu.add_argument("--api", default=API, help="the API's address")
+    lu.add_argument("--json", action="store_true", help="print each answer whole")
     args = ap.parse_args(argv)
     if not args.all and not args.leagues:
         ap.error("name the leagues or pass --all")
     leagues = None if args.all else args.leagues
+    if args.command == "lineup":
+        return lineup_all(http(args.api.rstrip("/")), args.days, leagues, args.json)
     return record_all(http(args.api.rstrip("/")), args.week, leagues, args.json)
 
 

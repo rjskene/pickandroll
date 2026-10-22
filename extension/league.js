@@ -1,5 +1,6 @@
 // pickandroll, league page reader (#98, isolated world). On a Yahoo league's own pages (the
-// league page, a team page, the players page, a matchup, the transactions) it posts the page as
+// league page, a team page or a team's page for a day, the players page, a matchup, the
+// transactions, the draft results, the settings page) it posts the page as
 // the user's Chrome rendered it to the season's snapshot route, through the service worker; the
 // API parses it (sources/yahoo/pages.py). This is how the private league, whose pages answer only
 // when signed in, reaches the season view; a public league's pages post the same way.

@@ -21,9 +21,18 @@ time, then improved by replacing any add or drop with any alternative until noth
 recommended move is the same search re-run with that add left out or that drop kept.
 
 Players in held slots (IL, IL+, NA) stay on the roster, are never dropped and count as the
-season view counts them. :data:`HELD_ACCEPTS` says which statuses each held slot takes. It is
-a best guess, not yet checked against a league with IL slots: IL takes INJ, O and OFS, IL+ a
-game-time decision as well, NA takes NA, and a suspension goes nowhere.
+season view counts them. :data:`HELD_ACCEPTS` says which statuses each held slot takes (#124,
+docs/ADD_DROP.md, "Held slots"). IL is Yahoo's own rule for basketball, from its help page
+(https://help.yahoo.com/kb/SLN6863.html): Out (O) and Out For Season (OFS) go there; Probable,
+Questionable and Doubtful do not. IL+ and NA are unverified: the help page names neither for
+basketball, IL+ comes from Yahoo's 2021 announcement (INJ, OFS, O and GTD), NA from its
+baseball and hockey rules, and no league read so far has either slot. A status the table does
+not know (:data:`KNOWN_STATUSES`) goes nowhere, and a suspension goes nowhere.
+
+A player in a held slot whose status no longer fits it (his status cleared, :func:`cleared`)
+makes the roster illegal: Yahoo refuses every add until he is activated, and activating him
+takes an active spot. The move model activates him on the first day and drops the least
+valuable active player then, him included, in every set and in none (:func:`comebacks`).
 
 A held-slot move defers a drop; it does not avoid one (#97). The player moved comes back on
 the first day of the first week the out rule lets him play (next Monday for an O), or on his
@@ -44,15 +53,20 @@ from typing import Protocol
 from . import weekly as wk
 from .state import Player, Transaction
 
-#: The statuses each held slot accepts (unverified, see the module docstring). The order is the
-#: order a player is placed in: the most restrictive slot first.
+#: The statuses each held slot accepts (see the module docstring for the sources). The order is
+#: the order a player is placed in: the most restrictive slot first.
 HELD_ACCEPTS: Mapping[str, frozenset[str]] = {
     "NA": frozenset({"NA"}),
-    "IL": frozenset({"INJ", "O", "OFS"}),
+    "IL": frozenset({"O", "OFS"}),
     "IL+": frozenset({"INJ", "O", "OFS", "GTD"}),
 }
 #: Slots whose players are off the active roster.
 HELD = frozenset(HELD_ACCEPTS)
+#: The held slots whose rule Yahoo's help page states for basketball; the others are unverified.
+HELD_CONFIRMED = frozenset({"IL"})
+#: Every status the eligibility table knows: Yahoo's feed (P, Q, D, O, NA), the help page's
+#: (OFS) and the 2021 announcement's (INJ, GTD), and a suspension. Another is eligible nowhere.
+KNOWN_STATUSES = frozenset({"P", "Q", "D", "O", "OFS", "INJ", "GTD", "SUSP", "NA"})
 #: Gains below this are equal: the search stops on them and a re-solve must beat it to count.
 EPS = 1e-9
 
@@ -122,6 +136,34 @@ class MoveProblem:
     held_accepts: Mapping[str, frozenset[str]] = field(default_factory=lambda: HELD_ACCEPTS)
     #: My players held out until a day (an O's return date, when later than next Monday).
     returns: Mapping[int, date] = field(default_factory=dict)
+    #: The slot each of my held players sits in (``held``'s keys).
+    held_slots: Mapping[int, str] = field(default_factory=dict)
+
+
+# --------------------------------------------------------------------------- eligibility
+def eligible(
+    status: str | None, slot: str, accepts: Mapping[str, frozenset[str]] = HELD_ACCEPTS
+) -> bool:
+    """Whether a player of ``status`` may sit in held slot ``slot``."""
+    return status is not None and status in accepts.get(slot, frozenset())
+
+
+def held_slots_for(
+    status: str | None, accepts: Mapping[str, frozenset[str]] = HELD_ACCEPTS
+) -> tuple[str, ...]:
+    """The held slots a player of ``status`` may sit in, most restrictive first."""
+    return tuple(slot for slot in accepts if eligible(status, slot, accepts))
+
+
+def cleared(problem: MoveProblem) -> list[tuple[int, str]]:
+    """My held players whose status no longer fits their slot, each with the slot: each blocks
+    every add until he is activated."""
+    players = dict(problem.held)
+    return [
+        (key, slot)
+        for key, slot in problem.held_slots.items()
+        if key in players and not eligible(players[key].status, slot, problem.held_accepts)
+    ]
 
 
 # --------------------------------------------------------------------------- spots and limits
@@ -139,8 +181,8 @@ def held_moves(problem: MoveProblem, dropped: Iterable[int] = ()) -> list[tuple[
     for key, player in problem.roster:
         if key in out_:
             continue
-        for slot, accepts in problem.held_accepts.items():
-            if open_.get(slot, 0) > 0 and player.status in accepts:
+        for slot in problem.held_accepts:
+            if open_.get(slot, 0) > 0 and eligible(player.status, slot, problem.held_accepts):
                 open_[slot] -= 1
                 out.append((key, slot))
                 break
@@ -210,15 +252,18 @@ def comes_back(
 
 def comebacks(problem: MoveProblem, key: str, moves: Iterable[Move]) -> list[Comeback]:
     """The deferred drops of ``moves`` over horizon ``key``: each held-slot move whose player
-    comes back inside it sends the least valuable active player then, him included."""
+    comes back inside it sends the least valuable active player then, him included; and each
+    held player whose status cleared (:func:`cleared`) does so on the first day, moves or none."""
     moves = list(moves)
     held = held_used(problem, moves)
-    if not held:
+    back_now = cleared(problem)
+    if not held and not back_now:
         return []
     players = dict(problem.roster)
     dropped = {m.drop for m in moves if m.drop is not None}
     active = [k for k, _ in problem.roster if k not in dropped] + [m.add for m in moves]
-    backs = []
+    active += [k for k, _ in back_now]
+    backs = [(problem.first_day, k, slot) for k, slot in back_now]
     for k, slot in held:
         day = comes_back(problem, k, players[k], problem.horizons[key])
         if day is not None:

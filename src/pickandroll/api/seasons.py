@@ -23,6 +23,10 @@ Routes:
 ``GET /seasons/{league}/moves/{player}``
     The move drawer: adding ``player`` (for ``?drop=``) per category on both horizons, with
     every other drop and the best other adds.
+``GET /seasons/{league}/lineup``
+    The Lineup view (#107, ``season_lineup``): my recommended starters for each day of a week
+    (``?week=``, this one by default) against Yahoo's lineup as read, the games it loses, the
+    held slots with who is eligible for them, and first any held player whose status cleared.
 ``GET /seasons/{league}/strategy``
     The Strategy panel (#110, ``season_strategy``): today's run of the strategy engine, the
     recommended set at each weight of this week against the rest of the season, from the exact
@@ -81,6 +85,7 @@ from ..season import (
     Season,
     SeasonSettings,
     build_calendar,
+    lineup_key,
     matchup_key,
     merge_part,
     monday_of,
@@ -91,11 +96,13 @@ from ..season import (
 )
 from ..season import moves as mv
 from ..season import record as season_rec
+from ..season.state import SLOTS_PAGE
 from ..sources import schedule as nba_schedule
 from ..sources.yahoo import pages, public
 from . import (
     leagues,
     season_flags,
+    season_lineup,
     season_matchup,
     season_moves,
     season_outlook,
@@ -165,14 +172,21 @@ def _write_json(path: Path, body: Any) -> None:
     tmp.replace(path)
 
 
+#: A day's lineup is kept this long: this week's and last week's days.
+LINEUP_KEPT = timedelta(days=14)
+
+
 def save(
     data_dir: Path, league: str, parts: dict[str, Part], received: list[Part], source: str
 ) -> None:
     """The season's parts, less the matchup pages whose teams were misread
-    (``unpaired_matchups``), and a snapshot of what was received."""
+    (``unpaired_matchups``) and the lineup pages older than :data:`LINEUP_KEPT`, and a snapshot
+    of what was received."""
     misread = unpaired_matchups(parts)
     parts = {k: p for k, p in parts.items() if k not in misread}
     folder = season_dir(data_dir, league)
+    oldest = (datetime.now(UTC) - LINEUP_KEPT).date().isoformat()
+    parts = {k: p for k, p in parts.items() if not (k.startswith("lineup/") and k[-10:] < oldest)}
     _write_json(
         folder / STATE, {"league": league, "parts": {k: p.to_dict() for k, p in parts.items()}}
     )
@@ -318,6 +332,9 @@ class SeasonService:
         now = self.clock()
         today = nba_today(now)
         rows: list[dict[str, Any]] = []
+        lineups: list[dict[str, Any]] = []
+        lineup_lines: list[str] = []
+        cleared_lines: list[str] = []
         shown: list[tuple[str, list[tuple[season_flags.fl.Pickup, season_flags.fl.Flag]]]] = []
         skipped: list[dict[str, str]] = []
         inputs: dict[str, Any] | None = None
@@ -340,9 +357,16 @@ class SeasonService:
             top = season_flags.flagged(players, flags)
             rows.append(season_flags.digest_league(league, name, top))
             shown.append((league, top))
+            line = self._lineup_line(league, today)
+            if line.get("line"):
+                lineup_lines.append(line["line"])
+            if line.get("cleared_line"):
+                cleared_lines.append(line["cleared_line"])
+            lineups.append({"league": league, **line})
         notes = season_flags.stale(inputs, now) if inputs is not None else []
         # The markdown is public: a league's own failure text stays in the JSON.
         unread = [(x["league"], _public_reason(x["reason"])) for x in skipped]
+        markdown = season_flags.fl.digest_markdown(today, shown, notes, unread)
         return {
             "date": today.isoformat(),
             "generated_at": now.isoformat(),
@@ -350,7 +374,28 @@ class SeasonService:
             "notes": notes,
             "leagues": rows,
             "skipped": skipped,
-            "markdown": season_flags.fl.digest_markdown(today, shown, notes, unread),
+            "lineups": lineups,
+            "markdown": markdown + season_lineup.digest_section([*cleared_lines, *lineup_lines]),
+        }
+
+    def _lineup_line(self, league: str, today: date) -> dict[str, Any]:
+        """A league's lineup for the digest: today's and tomorrow's games lost as set and the
+        line saying so (None when nothing is lost or nothing was read), and the line naming a
+        held player whose status cleared; the failure, if any, stays in the JSON."""
+        try:
+            out = self.lineup(league, "bbm", None)
+        except HTTPException as exc:
+            return {"line": None, "error": str(exc.detail)}
+        except Exception as exc:  # noqa: BLE001 - a lineup's failure leaves the digest
+            return {"line": None, "error": f"{type(exc).__name__}: {exc}"}
+        last = today + timedelta(days=season_lineup.DIGEST_DAYS - 1)
+        days = [d for d in out["days"] if not d["past"] and d["date"] <= last.isoformat()]
+        return {
+            "line": season_lineup.digest_line(league, out, today),
+            "lost": sum(d["lost"] or 0 for d in days),
+            "unread": [d["date"] for d in days if d["yahoo"] is None],
+            "cleared": [a for a in out["alerts"] if a["kind"] == "cleared"],
+            "cleared_line": season_lineup.cleared_line(league, out),
         }
 
     def _flag_inputs(self, job: RefreshJob, fetch: public.Fetch, today: date) -> None:
@@ -495,6 +540,23 @@ class SeasonService:
             raise HTTPException(409, f"league {league} has no season of my team to look ahead in")
         return {"league": league, **out}
 
+    def lineup(self, league: str, system: str, week: int | None) -> dict[str, Any]:
+        """The Lineup view (#107): my recommended starters for each day of ``week`` (this one
+        by default) against Yahoo's lineup as read."""
+        built = self._built(league, system)
+        base, is_public = self._base(league)
+        today = nba_today(self.clock())
+        key = (league, system, "lineup", week, today, self._moves_stamp(league))
+
+        def make() -> dict[str, Any] | None:
+            season = Season.from_parts(base, load_parts(self.data_dir, league))
+            return season_lineup.payload(built, season, today, week, is_public)
+
+        out = self.moves_cache.get(key, make)
+        if out is None:
+            raise HTTPException(404, f"week {week} of league {league} has no lineup to show")
+        return {"league": league, **out}
+
     def move_detail(self, league: str, add: int, drop: int | None, system: str) -> dict[str, Any]:
         out = season_moves.detail_payload(self._built(league, system), add, drop)
         if out is None:
@@ -565,6 +627,9 @@ class SeasonService:
                     public.pairings_url(league, w) for w in season.weeks_unpaired(today, calendar)
                 ]
             )
+            # The private league's lineup pages (#107): its settings page until read, and my
+            # team page shown for each day of this week from today.
+            lineup_pages = [] if is_public else _lineup_pages(season, calendar, today)
             fetch = self.fetch_factory()
             try:
                 if is_public:
@@ -606,6 +671,7 @@ class SeasonService:
                         "week": week.number,
                         "needs": exc.urls,
                         "ahead": ahead,
+                        "lineup_pages": lineup_pages,
                     },
                 ) from exc
             except (public.FetchError, pages.PageError) as exc:
@@ -636,6 +702,7 @@ class SeasonService:
             "missing": written.get("missing") or {},
             "summary": season_rec.summary(written, season.settings.my_team_id),
             "ahead": ahead,
+            "lineup_pages": lineup_pages,
         }
 
     def _save_part(self, league: str, part: Part) -> None:
@@ -697,6 +764,18 @@ class SeasonService:
             received += public.pairings_parts(
                 league, weeks, fetch, step=lambda step: setattr(job, "step", step)
             )
+            job.step = "lineups"
+            received += (
+                public.lineup_parts(
+                    league,
+                    base.my_team_id,
+                    self._lineup_days(league, base.my_team_id, calendar, today),
+                    fetch,
+                    step=lambda step: setattr(job, "step", step),
+                )
+                if base.my_team_id is not None
+                else []
+            )
             job.step = "schedule"
             self._save_with_schedule(league, received, calendar, fetch, today)
             job.step = "flag inputs"
@@ -715,6 +794,17 @@ class SeasonService:
         finally:
             job.finished_at = datetime.now(UTC)
         return job
+
+    def _lineup_days(
+        self, league: str, team: int | None, calendar: Calendar | None, today: date
+    ) -> list[date]:
+        """The days of this week whose lineup a refresh reads: each day before today once, today
+        and the days after it every time (#107)."""
+        week = calendar.week_of(today) if calendar is not None else None
+        if week is None or team is None:
+            return []
+        parts = load_parts(self.data_dir, league)
+        return [d for d in week.days() if d >= today or lineup_key(team, d) not in parts]
 
     def _unpaired(
         self,
@@ -884,9 +974,21 @@ def _known_key(key: str) -> bool:
         "calendar",
         "schedule",
         "draft",
+        "league_settings",
         YAHOO_WEEK,
     }
-    return key in fixed or key.startswith(("roster/", "matchup/", "pairings/"))
+    return key in fixed or key.startswith(("roster/", "matchup/", "pairings/", "lineup/"))
+
+
+def _lineup_pages(season: Season, calendar: Calendar | None, today: date) -> list[str]:
+    """The pages a private league's lineups need from the user's Chrome: the settings page
+    until it was read, and my team page shown for each day of this week from today."""
+    s = season.settings
+    out = [] if s.held_from == SLOTS_PAGE else [public.settings_page_url(s.league)]
+    week = calendar.week_of(today) if calendar is not None else None
+    if week is not None and s.my_team_id is not None:
+        out += [public.team_url(s.league, s.my_team_id, d) for d in week.days(today)]
+    return out
 
 
 def _page_parts(league: str, url: str, html: str, at: datetime, today: date) -> list[Part]:
@@ -916,7 +1018,12 @@ def _page_part(
         return Part("league", at, EXTENSION, pages.parse_league_page(html))
     if kind == "team":
         d = pages.parse_team_page(html, info["team_id"])
+        if "date" in info:
+            # Another day's lineup (#107): its own part, never the roster today's page holds.
+            return Part(lineup_key(info["team_id"], info["date"]), at, EXTENSION, d)
         return Part(roster_key(info["team_id"]), at, EXTENSION, d)
+    if kind == "settings":
+        return Part("league_settings", at, EXTENSION, pages.parse_settings_page(html))
     if kind == "players":
         d = pages.parse_players_page(html, today)
         return Part(
@@ -1169,6 +1276,17 @@ def register(
         """Every week left of my season: the win odds against its opponent (or the field), the
         summary of the regular weeks, and each week's scoreboard and my players (#116)."""
         return await asyncio.to_thread(service.outlook, league, system)
+
+    @app.get("/seasons/{league}/lineup")
+    async def get_lineup(
+        league: str = league_id,
+        system: str = system_q,
+        week: int | None = Query(
+            None, description="a week of the moves' four; this one by default"
+        ),
+    ) -> dict[str, Any]:
+        """My recommended lineup for each day of the week against Yahoo's as read (#107)."""
+        return await asyncio.to_thread(service.lineup, league, system, week)
 
     @app.get("/seasons/{league}/strategy")
     async def get_strategy(league: str = league_id, system: str = system_q) -> dict[str, Any]:

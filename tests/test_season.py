@@ -13,6 +13,8 @@ from __future__ import annotations
 import json
 import re
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
@@ -534,6 +536,12 @@ class FakeYahoo:
         self.unpaired = set(range(20, 24))
         #: The weeks whose league page does not answer.
         self.down: set[int] = set()
+        #: The settings page: the roster positions with three IL slots, daily lineups.
+        self.settings_page = fixture("settings_page.html")
+        #: A team page shown for a day, by (team, day), instead of the team's own page.
+        self.lineups: dict[tuple[int, date], str] = {}
+        #: A team's page today instead of its fixture.
+        self.team_pages: dict[int, str] = {}
 
     def __call__(self, url: str) -> str:
         self.urls.append(url)
@@ -560,12 +568,21 @@ class FakeYahoo:
                 return week_page(week, paired=week not in self.unpaired)
             return fixture("league.html")
         if kind == "team":
-            m = re.search(r"date=(\d{4}-\d{2}-\d{2})", url)
-            if m:
-                week = fake_week(date.fromisoformat(m.group(1)))
-                return f"<html><body><p>Week {week} stats may change when Stat corrections are applied.</p></body></html>"
             path = FIXTURES / f"team{info['team_id']}.html"
-            return path.read_text() if path.exists() else EMPTY_ROSTER
+            page = self.team_pages.get(info["team_id"]) or (
+                path.read_text() if path.exists() else None
+            )
+            if "date" in info:
+                # A day's page: that day's week label, and the team's roster as its lineup.
+                if (info["team_id"], info["date"]) in self.lineups:
+                    return self.lineups[info["team_id"], info["date"]]
+                label = f"Week {fake_week(info['date'])} stats may change"
+                if page is not None:
+                    return page.replace("Week 1 stats may change", label)
+                return (
+                    f"<html><body><p>{label} when Stat corrections are applied.</p></body></html>"
+                )
+            return page if page is not None else EMPTY_ROSTER
         if kind == "players":
             if info["view"] == pages.PROJECTION_VIEW:
                 return fixture("avail_ps7.html")
@@ -575,11 +592,15 @@ class FakeYahoo:
             return matchup_page(info["teams"])
         if kind == "transactions":
             return fixture("transactions.html")
+        if kind == "settings":
+            return self.settings_page
         raise AssertionError(url)
 
 
-@pytest.fixture
-def client(tmp_path):
+@contextmanager
+def season_client(tmp_path: Path) -> Iterator[TestClient]:
+    """The app on a data folder with the public fixture league and a private one (team 7),
+    Yahoo faked (``c.fake``) and the clock at :data:`NOW`."""
     write_folder(tmp_path, LEAGUE)
     write_folder(tmp_path, "100002", public=False, my_team_id=7)
     fake = FakeYahoo()
@@ -588,6 +609,12 @@ def client(tmp_path):
     with TestClient(app) as c:
         c.fake = fake  # type: ignore[attr-defined]
         c.data_dir = tmp_path  # type: ignore[attr-defined]
+        yield c
+
+
+@pytest.fixture
+def client(tmp_path):
+    with season_client(tmp_path) as c:
         yield c
 
 
@@ -622,9 +649,12 @@ def test_a_refresh_reads_the_public_sources_and_serves_the_season(client):
     fake = client.fake
     assert sum("/players?" in u and "S_PS7" not in u for u in fake.urls) == 2
     assert sum("/players?" in u and "S_PS7" in u for u in fake.urls) == 2
-    assert (
-        sum("?date=" in u and "/buzzindex" not in u for u in fake.urls) == 24
-    )  # Mondays Oct 19 to Mar 29
+    dated = [u for u in fake.urls if "?date=" in u and "/buzzindex" not in u]
+    # The calendar, one request per Monday from Oct 19 to Mar 29, and my team page shown for
+    # each day of this week (#107).
+    week = [date(2026, 10, 19) + timedelta(days=n) for n in range(7)]
+    lineups = [public.team_url(LEAGUE, 4, d) for d in week]
+    assert len(dated) == 24 + 7 and all(u in dated for u in lineups)
     cal = json.loads((client.data_dir / "leagues/_shared/season/calendar.json").read_text())
     seventeen = next(w for w in cal["weeks"] if w["number"] == 17)
     assert (seventeen["start"], seventeen["end"]) == ("2027-02-08", "2027-02-21")
@@ -633,7 +663,9 @@ def test_a_refresh_reads_the_public_sources_and_serves_the_season(client):
     assert (folder / "state.json").exists() and len(list((folder / "snapshots").iterdir())) == 1
     fake.urls.clear()
     assert client.post(f"/seasons/{LEAGUE}/refresh", params={"wait": True}).status_code == 202
-    assert not any("?date=" in u for u in fake.urls)
+    # No calendar again; the days before today's lineup were read once, today's and later
+    # days' are read every time.
+    assert [u for u in fake.urls if "?date=" in u] == lineups[2:]
     assert len(list((folder / "snapshots").iterdir())) == 2
 
 
@@ -1154,7 +1186,8 @@ def test_the_moves_route_values_every_candidate_and_recommends_a_set(client):
     assert row["from"] == brooks["clears"]
     best = row["week"]
     by_name = {s["player"]["name"]: s["player"]["yahoo_id"] for s in v["roster"]}
-    assert best["drop"] in by_name.values()
+    # None: my out bench player can go to an open IL slot (the league's three, #124).
+    assert best["drop"] is None or best["drop"] in by_name.values()
     # Only the candidates with a projection are valued.
     assert len(m["candidates"]) + m["unprojected"] == len(v["available"])
     # Yahoo's projection is a second system for the same table: it projects more of the
@@ -1182,7 +1215,8 @@ def test_the_move_drawer_details_one_add_with_every_drop(client):
     m = client.get(f"/seasons/{LEAGUE}/moves").json()
     brooks = next(a for a in v["available"] if a["player"]["name"] == "Dillon Brooks")
     pid = brooks["player"]["yahoo_id"]
-    drop = m["candidates"][str(pid)]["three"]["drop"]
+    row = m["candidates"][str(pid)]["three"]
+    drop = row["drop"] or row["next_drop"]
     d = client.get(f"/seasons/{LEAGUE}/moves/{pid}", params={"drop": drop}).json()
     assert d["add"] == pid and d["drop"] == drop and d["from"] == brooks["clears"]
     week = d["horizons"]["week"]
@@ -1632,10 +1666,19 @@ def test_a_two_for_one_reports_the_full_roster_and_the_freed_spot(client):
         f"/seasons/{LEAGUE}/trade", json={"team": 10, "give": [ids["Paul Reed"]], "get": two}
     ).json()
     mine = t["sides"]["mine"]["roster"]
-    assert not mine["valid"] and len(mine["drops"]) == 1 and mine["active"] == 14
-    assert mine["drops"][0]["player"] not in two
+    # My out bench player takes one of the league's open IL slots (#124): no drop.
+    assert mine["valid"] and mine["active"] == 13 and not mine["drops"]
+    assert mine["held_moves"] == [{"player": ids["Aaron Nesmith"], "slot": "IL"}]
     theirs = t["sides"]["theirs"]["roster"]
     assert theirs["valid"] and theirs["open"] == 1
+    # A third player in is one too many: a drop, never one of those received.
+    three = [*two, ids["Austin Reaves"]]
+    t = client.post(
+        f"/seasons/{LEAGUE}/trade", json={"team": 10, "give": [ids["Paul Reed"]], "get": three}
+    ).json()
+    mine = t["sides"]["mine"]["roster"]
+    assert not mine["valid"] and len(mine["drops"]) == 1 and mine["active"] == 14
+    assert mine["drops"][0]["player"] not in three
     # The other way round my side frees a spot, and the best free agent for it is priced.
     back = client.post(
         f"/seasons/{LEAGUE}/trade",

@@ -88,7 +88,8 @@ season view is fed from the pages you open in Chrome instead:
 1. pickandroll needs the league's folder, `data/leagues/<id>/settings.json` with `"public": false` and your
    team id.
 2. Open any of the league's own pages: the league page, a team's page, the players page, the matchup, the
-   transactions or the draft results (0.5.2, #97: the weekly recorder reads the picks once)
+   transactions or the draft results (0.5.2, #97: the weekly recorder reads the picks once), a team's page
+   for a day or the settings page (0.5.3, #107: the lineup view)
    (`https://basketball.fantasysports.yahoo.com/nba/<id>/...`). A moment after the page loads,
    the extension posts it to pickandroll (`POST /seasons/<id>/snapshot`) and the API reads it. A public league's
    pages post the same way.
@@ -103,8 +104,11 @@ season view is fed from the pages you open in Chrome instead:
    or let the read walk it. Its pages keep their own lines in the panel ("players 1-25 (next 7 days)").
 
 After the first post of a private league the API also brings in the week calendar (from the cache any public
-league's refresh writes) and the NBA schedule, so games left show on the roster. A team page for another date
-(`?date=`) is not posted: its lineup is not today's roster.
+league's refresh writes) and the NBA schedule, so games left show on the roster. A team's page for a day
+(`?date=`, 0.5.3) is posted as that day's lineup, kept apart from today's roster: the lineup view compares it
+with the recommended lineup. The settings page gives the held slots (IL, IL+, NA) and when lineup changes
+count; until it is posted the held slots are the most any roster read holds. The weekly recorder's response
+and the season script list the pages still to open (`lineup pages`).
 
 ## What it reads and sends
 

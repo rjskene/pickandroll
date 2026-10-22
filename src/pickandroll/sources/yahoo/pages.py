@@ -16,6 +16,9 @@ Each parser takes the page's HTML and returns a season part's data (``pickandrol
   (``parse_stat_lines``);
 * the draft results ``/nba/<league>/draftresults``: every pick by round;
 * the transactions page ``/nba/<league>/transactions``;
+* the settings page ``/nba/<league>/settings``: the roster positions with the held slots
+  (Yahoo's v3 settings leave those out), the lineup deadline and the playoff weeks
+  (``parse_settings_page``, #107);
 * Yahoo's buzz index ``/nba/buzzindex`` (every league's adds, drops and trades on a day, for
   the breakout flag): ``parse_buzz_page``.
 
@@ -46,6 +49,7 @@ _PCT = re.compile(r"(\d+(?:\.\d+)?)\s*%")
 _CHANGE = re.compile(r"\(\s*([+-]?)\s*(\d+(?:\.\d+)?)\s*\)")
 _NO_CHANGE = re.compile(r"\(\s*[–—-]\s*\)")
 _CLEARS = re.compile(r"^W\s*\(\s*([A-Z][a-z]{2})\s+(\d{1,2})\s*\)")
+_PLAYOFF_WEEKS = re.compile(r"Weeks?\s+([\d,\s]+(?:and\s+\d+)?)")
 _MONTHS = {
     m: i
     for i, m in enumerate(
@@ -63,9 +67,10 @@ class PageError(ValueError):
 # --------------------------------------------------------------------------- page kinds
 def page_kind(url: str) -> tuple[str, dict[str, Any]]:
     """What a league page URL is: ``league`` (with ``matchup_week`` when it shows another
-    week's pairs), ``team`` (with ``team_id``), ``players`` (with its ``view`` and ``status``
-    filter), ``playersearch``, ``matchup`` (``week``, ``teams``), ``draftresults`` or
-    ``transactions``; with the ``league`` id."""
+    week's pairs), ``team`` (with ``team_id``, and ``date`` when it shows that day's lineup),
+    ``players`` (with its ``view`` and ``status`` filter), ``playersearch``, ``matchup``
+    (``week``, ``teams``), ``draftresults``, ``transactions`` or ``settings``; with the
+    ``league`` id."""
     parsed = urlparse(url)
     parts = [p for p in parsed.path.split("/") if p]
     if len(parts) < 2 or parts[0] != "nba" or not parts[1].isdigit():
@@ -80,7 +85,14 @@ def page_kind(url: str) -> tuple[str, dict[str, Any]]:
             return "league", {"league": league, "matchup_week": int(week)}
         return "league", {"league": league}
     if rest[0].isdigit() and len(rest) == 1:
-        return "team", {"league": league, "team_id": int(rest[0])}
+        info: dict[str, Any] = {"league": league, "team_id": int(rest[0])}
+        day = (query.get("date") or [None])[0]
+        if day:
+            try:
+                info["date"] = date.fromisoformat(day)
+            except ValueError as exc:
+                raise PageError(f"a team page on no date it names: {url}") from exc
+        return "team", info
     if rest[0] == "players":
         return "players", {
             "league": league,
@@ -97,6 +109,8 @@ def page_kind(url: str) -> tuple[str, dict[str, Any]]:
         return "transactions", {"league": league}
     if rest[0] == "draftresults":
         return "draftresults", {"league": league}
+    if rest[0] == "settings" and len(rest) == 1:
+        return "settings", {"league": league}
     raise PageError(f"not a league page this module reads: {url}")
 
 
@@ -238,6 +252,53 @@ def parse_team_page(html: str, team_id: int) -> dict[str, Any]:
     title = _title(root).split(" | ")[0]
     name = title.split(" - ", 1)[1].strip() if " - " in title else None
     return {"team_id": team_id, "name": name, "spots": spots, "week": week_label(html)}
+
+
+def lineup_rule(deadline: str | None) -> tuple[str | None, str | None]:
+    """How often a lineup changes and from when, from the settings page's "Weekly Deadline"
+    (``Daily - Today``: ``("daily", "today")``); ``(None, None)`` for a value not known."""
+    text = (deadline or "").strip().lower()
+    if text.startswith("daily"):
+        return "daily", "today" if "today" in text else "tomorrow" if "tomorrow" in text else None
+    if text.startswith("weekly"):
+        return "weekly", None
+    return None, None
+
+
+def parse_settings_page(html: str) -> dict[str, Any]:
+    """The settings page: the roster positions in order, held slots included (``IL``, ``IL+``,
+    ``NA``: Yahoo's v3 settings leave them out), the lineup deadline as printed with what it
+    means (:func:`lineup_rule`), the playoff weeks, and whether an injured player can be added
+    straight to an injury slot."""
+    root = parse(html)
+    _require(root, "settings")
+    rows: dict[str, str] = {}
+    for tr in root.find_all("tr"):
+        tds = tr.children_of("td")
+        if len(tds) == 2:
+            label = tds[0].text()
+            if label.endswith(":"):
+                rows.setdefault(label[:-1].strip().lower(), tds[1].text())
+    positions = rows.get("roster positions")
+    if not positions:
+        raise PageError("no roster positions on the settings page")
+    deadline = rows.get("weekly deadline") or None
+    changes, effective = lineup_rule(deadline)
+    playoffs = None
+    m = _PLAYOFF_WEEKS.search(rows.get("playoffs") or "")
+    if m:
+        playoffs = [int(x) for x in re.findall(r"\d+", m.group(1))] or None
+    direct = rows.get(
+        "allow injured players from waivers or free agents to be added directly to injury slot"
+    )
+    return {
+        "roster": [x.strip() for x in positions.split(",") if x.strip()],
+        "lineup_deadline": deadline,
+        "lineup_changes": changes,
+        "lineup_from": effective,
+        "playoff_weeks": playoffs,
+        "injured_add_to_slot": None if direct is None else direct.strip().lower() == "yes",
+    }
 
 
 def parse_players_page(html: str, today: date) -> dict[str, Any]:
