@@ -357,7 +357,10 @@ another tab, which it never touched.
    is per game). Projection Source stays Josh Projections. The page re-renders after the first select, so find
    the second one again before setting it. The page opens on its defaults every time; set both on every export.
 3. Click **Refresh**, wait for the table, then **Export to CSV**. Chrome saves `~/Downloads/Projections.csv` (a
-   later one gets ` (1)`, ` (2)`; `projections` takes the newest by file time).
+   later one gets ` (1)`, ` (2)`; `projections` takes the newest by file time). Click the export button as a
+   real click (the `computer` tool on its element), never from JavaScript: Chrome silently blocks
+   script-triggered downloads after the first one of a session, and the import then re-saves an older
+   download. Check that a new file landed before running the import.
 4. Run `.venv/bin/python scripts/draft_day.py projections`, then close the tab.
 
 The export holds over 500 players with games. The Excel button gives the `.xls` layout, which `projections` does
