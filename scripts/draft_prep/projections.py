@@ -63,7 +63,7 @@ def add_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--export",
         metavar="FILE",
-        help="projections, past-days: import this export instead of the newest download",
+        help="projections, past-days, week: import this export instead of the newest download",
     )
     parser.add_argument(
         "--bbm-fetch",

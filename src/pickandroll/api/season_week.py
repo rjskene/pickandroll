@@ -30,7 +30,8 @@ from ..sources.matching import load_aliases, match_players
 
 #: Rest-of-season exports, newest first: the draft's Total Stats CSV or a per-game sheet.
 BBM_ROS = ("bbm_projections_*", "bbm_ros_*")
-#: Weekly exports (``sources.bbm.fetch.weekly``): the rest of this week and next week.
+#: Weekly exports (``scripts/draft_day.py week`` or ``sources.bbm.fetch.weekly``): the rest of this
+#: week and next week.
 BBM_THIS_WEEK = "bbm_week_this_*"
 BBM_NEXT_WEEK = "bbm_week_next_*"
 NBA_TZ = ZoneInfo("America/New_York")
@@ -165,7 +166,8 @@ def yahoo_system(season: Season) -> System:
 
 def _covers(path: Path, first: date, last: date, today: date) -> bool:
     """Whether a weekly export covers ``first``..``last``: its sidecar's dates when it has one
-    (``sources.bbm.fetch`` writes them), else an export made today for the rest of this week."""
+    (``draft_day.py week`` and ``sources.bbm.fetch`` write them), else an export made today for the
+    rest of this week."""
     meta = path.with_suffix(".json")
     try:
         d = json.loads(meta.read_text())

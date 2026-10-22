@@ -73,4 +73,13 @@ Data pulls:
 .venv/bin/python scripts/bbm_fetch.py --ros  # Basketball Monster exports into data/ (log in on first run)
 ```
 
+Basketball Monster exports downloaded from the user's signed-in browser are imported into `data/` from
+`~/Downloads` (`docs/DRAFT_DAY.md`, "Export through the user's Chrome"):
+
+```bash
+.venv/bin/python scripts/draft_day.py projections            # rest of season, the draft's and the season view's
+.venv/bin/python scripts/draft_day.py week --this            # the rest of this week; --next for next week
+.venv/bin/python scripts/draft_day.py past-days --days 7     # past 7 or 14 days, the breakout flag's minutes
+```
+
 Projection exports from paid services live in `data/` and are gitignored. Never commit them.
