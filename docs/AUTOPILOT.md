@@ -523,4 +523,12 @@ never a Basketball Monster number.
   one its first week-start entry recorded) unless the query names a system;
   armed is the public leagues; a per-scoring change carries its scoring; the blend's later step is
   0.25 toward Yahoo, never past 0.75.
+- 2026-10-23, evening (#164, the plan ruled on the issue; user: the private league is theirs to
+  judge, the public leagues are hardened): the season guard holds every recommended set, re-solve,
+  streaming plan and strategy set, the program's included, to a rest of the season of zero or
+  more, in every league; the set it held back is named beside the recommended one, flagged, and
+  logged, so the autopilot never executes a move the guard refused; the protection floor becomes
+  the margin an add must beat a player by (a higher floor protects more), and the season-costly
+  flag reads a season projection below zero whatever the floor; a move with no season line counts
+  as zero for the guard and marks the total partial.
 
