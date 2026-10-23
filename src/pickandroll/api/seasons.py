@@ -699,9 +699,21 @@ class SeasonService:
 
     def trade(self, league: str, body: TradeBody) -> dict[str, Any]:
         built = self._trade_league(league, body.system)
+        # The moves' problem and scorer, for the rest of the season (#151); a trade is valued
+        # on its horizons without them.
+        try:
+            moves = self._built(league, body.system)
+        except HTTPException:
+            moves = None
         try:
             return season_trades.evaluate(
-                built, body.team, body.give, body.get, body.effective, nba_today(self.clock())
+                built,
+                body.team,
+                body.give,
+                body.get,
+                body.effective,
+                nba_today(self.clock()),
+                moves,
             )
         except season_trades.Refused as exc:
             raise HTTPException(exc.status, exc.detail) from exc

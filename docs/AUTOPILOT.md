@@ -155,6 +155,9 @@ judging figure, never in its place; a move whose recommended-horizon gain is pos
 season projection is below minus the protection floor is flagged season-costly, and the scorecard
 counts those and how many of them realized below zero. The check measures the keep rule; it does not
 change the engine.
+Every recommendation and comparison in the dashboard shows that season figure beside its two
+horizons as the ROS column (#151), the same number the scorecard judges a move by; nothing ranks
+on it.
 
 Refined 2026-10-23 (#143, master's reading of the ruling's principle): a strategy set is judged by
 its weight. The week weight (λ = 1, this week alone) is judged on the week. The even and natural
