@@ -18,6 +18,7 @@ import {
   POOLED,
   scopeMoves,
   scopeSentences,
+  seasonFigures,
   UNITS,
   UNITS_SHORT,
   type MatchFilter,
@@ -28,7 +29,8 @@ import { knobMarkers, NothingScored, ScopeHead, Sentences, Tile, viewRange } fro
 
 // The Moves view and the Move card (#129): every move made over the weeks shown, its value
 // projected at decision time against its realized value on the horizon it was recommended for,
-// in its league's units, by how it matched the solve before it.
+// in its league's units, by how it matched the solve before it; beside it, the move over the
+// season and the season check's flag (#144), never in its place.
 
 const MATCHES: MatchKind[] = ["as_recommended", "differently", "not_recommended", "no_entry"];
 const SET_WORDS: Record<string, string> = { week: "the week's set", three: "the three weeks' set", plan: "the streaming plan" };
@@ -40,6 +42,23 @@ const nameOf = (m: ProgressMove, side: "add" | "drop") => {
 const catName = (cat: string) => CAT_LABEL[cat as Cat] ?? cat.toUpperCase();
 const madeAt = (m: ProgressMove) => (m.at ? m.at.slice(0, 16).replace("T", " ") : m.day);
 const digits = (s: Scoring) => (s === "points" ? 1 : 2);
+const games = (n: number | null) => (n == null ? null : `${Number.isInteger(n) ? n : n.toFixed(1)} game${n === 1 ? "" : "s"}`);
+const COSTLY_TITLE = "season-costly: projected positive on the horizon it was recommended for, and below minus the keep rule's protection floor over the season";
+
+/** A move's season figures in words, for the Season column's tooltip (with the flag's meaning,
+ * ``flag``) and the Move card. */
+function seasonTitle(m: ProgressMove, flag = true): string {
+  const v = seasonFigures(m);
+  const s = m.scoring;
+  if (v.projected == null) return "no season projection: the solve before it was logged before the season horizon (#144)";
+  const sides = [m.add != null ? `${games(v.games.add)} added` : null, m.drop != null ? `${games(v.games.drop)} given up` : null].filter(Boolean).join(", ");
+  const x = v.games.extrapolated ? `, ${games(v.games.extrapolated)} of them extrapolated past the schedule read` : "";
+  const so =
+    v.realized == null
+      ? "nothing realized yet"
+      : `${unitsLabel(v.realized, s)} realized ${v.complete ? "over the season" : `so far, read through ${dayLabel(v.read.through)}`} (${[m.add != null ? `${games(v.read.add)} added` : null, m.drop != null ? `${games(v.read.drop)} given up` : null].filter(Boolean).join(", ")})`;
+  return `${unitsLabel(v.projected, s)} projected over the season (${sides}${x}); ${so}${flag && v.costly ? `; ${COSTLY_TITLE}` : ""}`;
+}
 
 export function MovesView({
   p,
@@ -79,7 +98,7 @@ export function MovesView({
   const say = scopeSentences(p.sentences, scope).filter((s) => s.topic === "moves");
   const rows = [...moves].sort((a, b) => (b.at ?? b.day ?? "").localeCompare(a.at ?? a.day ?? "") || a.league.localeCompare(b.league));
   const pooled = scope === POOLED;
-  const cols = pooled ? 11 : 10;
+  const cols = pooled ? 12 : 11;
   return (
     <div className="season-view progress-view">
       <ScopeHead p={p} title={`Moves · ${all.length} made`} scope={scope} onScope={onScope} bounds={bounds} from={from} to={to} setRange={setRange} onStep={step}>
@@ -131,6 +150,9 @@ export function MovesView({
                 </span>
               )}
             </Tile>
+            <Tile k="season" v={totals.checked ? String(totals.costly) : "—"} title={`the moves the season check flagged (#144), of those it checked: ${COSTLY_TITLE}`}>
+              {totals.checked ? `season-costly of ${totals.checked} checked · ${totals.costlyBelow} below zero so far` : "no move checked against the season yet"}
+            </Tile>
             <Tile k="paid" v={`$${totals.paid}`} title="the FAAB bid on the moves that cleared waivers">
               FAAB · {totals.made - totals.bids} free, {totals.bids} bid
             </Tile>
@@ -173,7 +195,7 @@ export function MovesView({
               />
             </>
           )}
-          <p className="dim small">A row opens the move in the panel; ▸ opens its categories. Each figure is in its league's units, on the horizon its set was recommended for.</p>
+          <p className="dim small">A row opens the move in the panel; ▸ opens its categories. Each figure is in its league's units, on the horizon its set was recommended for; the season beside it, never in its place.</p>
           <div className="pg-scroll">
             <table className="season-table pg-moves">
               <thead>
@@ -195,6 +217,9 @@ export function MovesView({
                   </th>
                   <th className="num" title="realized less projected, once the horizon is over">
                     Δ
+                  </th>
+                  <th className="num" title="the move over the season (#144): its value projected to the season's last day, and realized so far; beside the judging figure, never in its place">
+                    Season
                   </th>
                   <th aria-label="Categories" />
                 </tr>
@@ -251,6 +276,7 @@ export function MovesView({
                           )}
                         </td>
                         <td className={`num ${f.delta == null ? "dim" : f.delta >= 0 ? "good" : "bad"}`}>{f.delta == null ? "—" : unitsLabel(f.delta, m.scoring)}</td>
+                        <SeasonCell m={m} />
                         <td>
                           <button
                             className="link"
@@ -281,6 +307,33 @@ export function MovesView({
         </>
       )}
     </div>
+  );
+}
+
+/** The Season column: the projection over the season and the realized so far, the flag. */
+function SeasonCell({ m }: { m: ProgressMove }) {
+  const v = seasonFigures(m);
+  if (v.projected == null && v.realized == null) {
+    return (
+      <td className="num dim" title={seasonTitle(m)}>
+        —
+      </td>
+    );
+  }
+  return (
+    <td className="num" title={seasonTitle(m)}>
+      {v.costly && (
+        <>
+          <span className="tag bad">costly</span>{" "}
+        </>
+      )}
+      {v.projected == null ? <span className="dim">—</span> : unitsLabel(v.projected, m.scoring)}
+      {v.realized != null && (
+        <div className="dim small">
+          {unitsLabel(v.realized, m.scoring)} {v.complete ? "realized" : "so far"}
+        </div>
+      )}
+    </td>
   );
 }
 
@@ -340,6 +393,7 @@ export function MoveCard({ p, m }: { p: ProgressPayload; m: ProgressMove | null 
     return <p className="muted small">Pick a move in the table: its value projected against realized, the knobs in force when it was solved, how it matched the solve, and its week's odds.</p>;
   }
   const f = moveFigures(m);
+  const v = seasonFigures(m);
   const s = m.scoring ?? "categories";
   const add = nameOf(m, "add");
   const drop = nameOf(m, "drop");
@@ -380,6 +434,12 @@ export function MoveCard({ p, m }: { p: ProgressPayload; m: ProgressMove | null 
             <span className="k">horizon</span>
             <span className="v">{HORIZON_SHORT[f.horizon]}</span>
           </div>
+          {f.horizon !== "season" && (
+            <div className="stat" title="the move over the season (#144), beside the judging figure, never in its place">
+              <span className="k">season</span>
+              <span className="v">{v.projected == null ? "—" : unitsLabel(v.projected, s)}</span>
+            </div>
+          )}
           {m.bid != null && (
             <div className="stat">
               <span className="k">bid</span>
@@ -416,6 +476,20 @@ export function MoveCard({ p, m }: { p: ProgressPayload; m: ProgressMove | null 
             <span className="dim">No odds logged with its set: only a move made as recommended carries them, from the entries of #129 on.</span>
           )}
         </p>
+      </div>
+      <div className="block">
+        <span className="k">Over the season</span>
+        <p className="small">
+          {v.costly && (
+            <>
+              <span className="tag bad" title={COSTLY_TITLE}>
+                season-costly
+              </span>{" "}
+            </>
+          )}
+          {seasonTitle(m, false)}.
+        </p>
+        {v.costly === false && <p className="small dim">The season check cleared it: not positive on its horizon, or not below the floor over the season.</p>}
       </div>
       <div className="block">
         <span className="k">Realized</span>

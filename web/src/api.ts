@@ -1142,6 +1142,8 @@ export interface LineupPayload {
 /** The moves' horizons: the rest of this week against the opponent, and the three weeks after
  * it against the field. */
 export type MoveHorizon = "week" | "three";
+/** The horizons the scorecard values a move on: the solve's two and the rest of the season (#144). */
+export type JudgedHorizon = MoveHorizon | "season";
 
 /** An add, the player dropped for him (null: an open spot) and the day he plays from (a waiver
  * claim's clear date). */
@@ -1619,6 +1621,8 @@ export interface LoggedSpan {
   value: number | null;
   /** The value by category (a points league's by scoring stat); entries logged before #129 have none. */
   cats?: Record<string, number> | null;
+  /** The season's games past the schedule read, at the team's rate (#144): the season horizon only. */
+  extrapolated_games?: { add: number; drop: number | null };
 }
 
 /** A move's realized span: its games from the move on, through the last day read. */
@@ -1651,7 +1655,7 @@ export interface Realized {
   reason: UnscoredReason | null;
   add: RealizedSide | null;
   drop: RealizedSide | null;
-  horizons: Partial<Record<MoveHorizon, RealizedSpan>>;
+  horizons: Partial<Record<JudgedHorizon, RealizedSpan>>;
   /** The entry whose scorer valued it; ``own`` false for a borrowed one. */
   scorer: { entry: string; own: boolean } | null;
   /** The days from the matched entry's first day to the move's. */
@@ -1670,13 +1674,18 @@ export interface ScorecardMove {
   projected: {
     set: string;
     gain: Partial<Record<MoveHorizon, number | null>>;
-    value: { add: number | null; drop: number | null; horizons: Partial<Record<MoveHorizon, LoggedSpan>> };
+    value: { add: number | null; drop: number | null; horizons: Partial<Record<JudgedHorizon, LoggedSpan>> };
     /** The set's odds of winning the matchup and its expected categories, before and after it (#129). */
     odds?: Record<"before" | "after", { matchup: number | null; expected: number | null } | null>;
+    /** Whether the decision log flagged it as costing the season (#144); null before the flag. */
+    season_costly?: boolean | null;
   } | null;
   realized: Realized | null;
-  /** The horizon it is judged on: the one its set was recommended for (#143). */
-  judged?: MoveHorizon;
+  /** The horizon it is judged on: the one its set was recommended for (#143, the season #144). */
+  judged?: JudgedHorizon;
+  /** Projected positive on its judging horizon and below minus the protection floor over the
+   * season (#144); null for a move with no flag logged. */
+  season_costly?: boolean | null;
   /** The knobs in force at the entry it matched (#129). */
   knobs?: Partial<Record<KnobName, unknown>> | null;
 }
@@ -1711,7 +1720,15 @@ export interface MovesCompared {
   /** The realized sum over the projected; null when the projected is not positive. */
   share: number | null;
   /** How many were judged on each horizon: the one each move's set was recommended for (#143). */
-  horizons?: Partial<Record<MoveHorizon, number>>;
+  horizons?: Partial<Record<JudgedHorizon, number>>;
+}
+
+/** Moves counted against the season (#144), with how many of the scored realized below zero so far. */
+export interface SeasonCount {
+  moves: number;
+  below_so_far: number;
+  /** The moves the decision log flagged or cleared (``season_costly`` only). */
+  checked?: number;
 }
 
 export interface MovesSummary {
@@ -1722,14 +1739,17 @@ export interface MovesSummary {
   no_entry: number;
   near: number;
   projected: number;
-  projected_value: Partial<Record<MoveHorizon, number>>;
+  projected_value: Partial<Record<JudgedHorizon, number>>;
   scored: number;
   realized_only: number;
   unscored: number;
-  realized_value: Partial<Record<MoveHorizon, number>>;
-  complete: Partial<Record<MoveHorizon, number>>;
+  realized_value: Partial<Record<JudgedHorizon, number>>;
+  complete: Partial<Record<JudgedHorizon, number>>;
   /** The scored moves whose judging horizon is over, each on it (#143); null for none. */
   compared: MovesCompared | null;
+  /** The moves projected below zero over the season and the flagged season-costly (#144). */
+  season_negative?: SeasonCount;
+  season_costly?: SeasonCount;
   unscored_by: Partial<Record<UnscoredReason, number>>;
   gaps: number;
 }
