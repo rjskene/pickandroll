@@ -1238,6 +1238,8 @@ export interface RecommendedSet {
   /** By horizon, the drops their returns force. */
   comebacks?: Partial<Record<MoveHorizon, Comeback[]>>;
   ros?: RosTotal | null;
+  /** The season guard on the set (#164); null where none ran (no scorer or season end). */
+  season_guard?: SeasonGuard | null;
 }
 
 /** A streamer valued to the season's end as kept there: the later step that drops him (#151). */
@@ -1282,12 +1284,32 @@ export interface StreamPlan {
   short: number | null;
   floor: number;
   /** Why it is not recommended: under the floor, or the plan with the best week would clear it
-   * but costs the three weeks after, which the planner never trades (``guard``). */
-  reason: "short" | "guard" | null;
+   * but costs the three weeks after, which the planner never trades (``guard``), or the season
+   * (``season``, the season guard, #164). */
+  reason: "short" | "guard" | "season" | null;
   guard: PlanGuard | null;
 }
 
-/** The plan the three-week guard refused (#136): what it would buy, for the user to weigh. */
+/** The season guard (#164): a set is recommended only when its moves' rest of the season sums to
+ * zero or more. When the search without it finds a set that beats the guarded one and costs the
+ * season, that set is held back and named here: shown flagged, never recommended. */
+export type SeasonGuard =
+  | { held_back: false }
+  | {
+      held_back: true;
+      moves: (MoveRef & { held?: HeldMove | null; marginal: Record<string, number>; ros?: MoveRos | null; season_costly?: boolean | null })[];
+      /** Its gain on each horizon. */
+      gain: Record<string, number>;
+      /** Its rest of the season; ``partial`` when a move without a line counted as zero. */
+      ros: { value: number; partial: boolean };
+      /** What the guarded set gives up on each horizon, and keeps over the season. */
+      forgone: Record<string, number>;
+      saved: { value: number; partial: boolean };
+      /** A strategy weight's: the held set was the linear program's. */
+      program?: boolean;
+    };
+
+/** The plan a guard refused (#136, the season guard's #164): what it would buy, for the user to weigh. */
 export interface PlanGuard {
   steps: (MoveRef & { spot: number })[];
   spots: number[];
@@ -1479,6 +1501,8 @@ export interface StrategyPoint {
   note?: string | null;
   /** The shown set's weighted value less the other solver's (null: the same set). */
   ahead?: number | null;
+  /** The season guard on the weight's set (#164). */
+  season_guard?: SeasonGuard | null;
   moves?: StrategyMove[];
   /** The held-slot moves the set's adds without a drop need. */
   held?: HeldMove[];

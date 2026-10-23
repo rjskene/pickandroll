@@ -299,7 +299,8 @@ add's games less the drop's, each times his per-game value under the league's sc
 empty line, the games counted on the horizons' days and then from the schedule as far as read,
 extrapolated past it at the team's rate. The tables, the log and the scorecard so value a move
 alike. It is in value units (category z or points, over the games), not expected categories,
-so it sits beside the two horizons and ranks nothing.
+so it sits beside the two horizons and ranks nothing; the season guard (#164, below) draws one
+line on it.
 
 The payloads carry it as `ros`, `{value, add_games, drop_games, extrapolated: {add, drop},
 from, to}`:
@@ -318,6 +319,52 @@ A trade's sides carry `ros: {before, after, change, from, unvalued}`, and each m
 and the fill carry `ros: {value, per_game, games, extrapolated}`. These use the moves' problem
 and scorer and each player's games to the season's end as a move's are counted
 (`decisions.season_games`). The fill is valued beside the trade, as on the horizons.
+
+### The season guard (#164)
+
+The season is what counts: a set that wins its week can still cost the season. The season
+guard holds every recommended set to a rest of the season of zero or more: the sum the ROS
+column shows, each move valued on its own from its day as the log values it
+(`moves.season_guard`, the master's ruling on #164, 2026-10-23).
+
+- **The line.** A set is allowed when its moves' rest of the season sums to zero or more;
+  exactly zero is allowed. A move without a season figure (an add or a drop with no Basketball
+  Monster line) counts as zero, so it neither blocks the set nor pays for the rest of it, and the
+  total is marked partial. Nothing inside the allowed sets ranks on it. Without the league's
+  scorer or a season end there is nothing to guard on, and the payload says so (`season_guard`
+  null).
+- **Where it holds.** The search tries every set beside the add limit's test and the guard's
+  (`moves.admitted`), and so do the re-solves that price each move, so a re-solve never offers a
+  set the guard refuses. The streaming plan keeps each spot's path to the guard with the plan
+  around it (the base, the earlier spots' steps and the later spots' own moves); its base is the
+  guarded set's, so it starts on the line. The strategy engine guards every weight's search and
+  re-solves, and takes the linear program's set only when the guard allows it, else the
+  search's stands (both options, A and B). The private league is guarded the same way: it is the
+  same engine, and the user still makes every move there by hand.
+- **What it held back.** On each horizon the engine solves once more without the guard,
+  re-solves and all (a re-solve can find the costly set a plain search misses; only when the
+  guard refused a set, since otherwise the solve was the unguarded one). When that set beats the guarded one on the horizon and its rest of the season is below
+  zero, the horizon's `season_guard` names it: `{held_back: true, moves, gain, ros: {value,
+  partial}, forgone, saved}`, each move with what it adds to the set, its rest of the season and
+  the log's `season_costly` flag, then what the guarded set forgoes on each horizon and saves
+  over the season. Otherwise `season_guard` is `{held_back: false}`. A strategy weight's names
+  the better on the weighted value of its unguarded search's set (re-solved the same way) and a
+  refused program set, with `program` when it was the program's.
+- **The Moves card.** Under a set the guard changed, one muted line: "The season guard held back
+  a set that gains +1.50 on the week but costs the season −95.0; this one forgoes 1.15." A
+  partial total says so. The held set's moves are in its tooltip, flagged season-costly, never
+  shown as recommended. The landing grid's best move reads the guarded set, as it reads
+  `recommended`. The Strategy card says when the guard held back the program's set.
+- **The plan.** When the season guard, not the three-week guard, is what keeps the best-week
+  plan out, its `reason` is `season` and `guard` gives the refused plan as for the three-week
+  guard ("... but costs the season −12.4; the season guard holds it back.").
+- **The log.** Each logged set carries `season_guard`: whether a set was held back and, when one
+  was, its moves (add, drop, day, gain, rest of the season), its gain and its rest of the
+  season, so the scorecard can tell a move the guard held back from one the user chose.
+
+The keep rule and the season check stay as they are: the keep rule protects the players worth
+more than the best add, and the check counts the moves flagged season-costly. The guard is what
+keeps a set below the line from being recommended at all.
 
 ## The strategy engine (#110)
 
@@ -365,7 +412,9 @@ The card recommends whichever set is better on the weight's exact value, and say
 search's, the program's, or both when they found the same adds with the same drops on the same
 days. A program's set that a re-solve beats while it is priced becomes the search's answer, with
 a note. Option B is one switch, `program_only`: the program's set whenever it solves to the gap,
-the search's only when the program hits its limit or finds no set; the default stays on A.
+the search's only when the program hits its limit or finds no set; the default stays on A. Under
+either option the season guard (#164) holds the search and its re-solves, and a program's set
+it refuses is never taken.
 
 The field curve uses every game of the other teams' rosters rather than their projected starts.
 The program's count cap ignores positions, so it overstates my own starts by the same token; on
@@ -474,8 +523,9 @@ when left out.
   weight and where the set came from (strategy), its gains, and this week against the named
   opponent before and after it: each category's finals and odds, the expected categories won
   and the odds of winning the matchup. A recommended streaming plan (#136) is one more set of
-  the moves route's, `plan`, its moves counting from their days. A strategy run cut off before
-  it solved logs nothing. A failure to write loses that entry, never the answer.
+  the moves route's, `plan`, its moves counting from their days. Since #164 each set also
+  carries the season guard's record, `season_guard` ("The season guard"). A strategy run cut
+  off before it solved logs nothing. A failure to write loses that entry, never the answer.
 - **Moves in value units (#126).** From 2026-10-22 an entry also keeps its `scorer`: the
   league's, the keep rule's (Basketball Monster's lines over the players the league rosters),
   as data (`weekly.scorer_of`: a points league's weights, or each category's spread and, for
@@ -711,7 +761,8 @@ cannot say "add A now, drop A for B on Thursday"; the plan can.
   against a later cost the way the user can; its three-week change shows beside its week gain.
   When the plan with the best week would clear the floor but costs the weeks after, the payload
   says the guard refused it and gives its steps, games and gain on both horizons, so the user
-  sees the trade and can make it by hand.
+  sees the trade and can make it by hand. The season guard (#164) holds the plan too: when it,
+  not the three-week guard, keeps the best-week plan out, the reason is `season`.
 - **Output.** The moves payload's `plan` beside `recommended` (null without a stream spot):
   `base`, the set's moves it keeps; `steps` by day, each a move (`add`, `drop`, `from`, its day)
   with the `spot` it turns over and its own gain on both horizons (`marginal`, the plan up to it
@@ -720,8 +771,9 @@ cannot say "add A now, drop A for B on Thursday"; the plan can.
   the set and the plan; the expected categories (`value`) with no move, the set and the plan on
   both horizons, and the plan's `gain` on the set; `recommended`, and `short`, how far its week
   falls short of the floor, and `reason`, why it is not recommended: `short`, under the floor,
-  or `guard`, with `guard` the refused plan (its steps by day, the spots, my started games with
-  it and its gain on the set on both horizons). The Moves card shows a Streaming plan section
+  `guard`, or `season` (the season guard's refusal, #164), with `guard` the refused plan (its
+  steps by day, the spots, my started games with it, its gain on the set on both horizons and
+  its rest of the season less the set's). The Moves card shows a Streaming plan section
   under the week's set when it is recommended: the steps by day with each one's gain, then the started games and the
   adds against the set and the set's moves it keeps. A plan not recommended is one muted line
   instead, what it would have bought ("Streaming Grant's spot buys 2 more started games for +0.04
@@ -729,8 +781,8 @@ cannot say "add A now, drop A for B on Thursday"; the plan can.
   ("... for +0.15 this week but costs 0.47 over three weeks; not recommended.", its steps in the
   line's tooltip). Every moves entry of the decision log (#125) carries the plan's verdict,
   `plan`, whatever it is: recommended or not and why, the plan's and the set's expected values
-  on both horizons, the shortfall, the floor and the refused plan's gain when the guard refused
-  one, so the scorecard can count the plans foregone and judge the floor; null without a stream
+  on both horizons, the shortfall, the floor and the refused plan's gain and rest of the season
+  when a guard refused one, so the scorecard can count the plans foregone and judge the floor; null without a stream
   spot. The log keeps a recommended plan's steps as one more set, `plan`: the kept moves, then
   the steps, each with its `from` and the #126 fields, the step's `value` counting the add's games and the drop's from the step's
   day (the drop may be an earlier step's add), so the steps' values sum to the plan's and the

@@ -541,15 +541,20 @@ def first_order(
 
 # --------------------------------------------------------------------------- the choice
 def choose(
-    w: Weighted, search: Sequence[mv.Move], milp: Milp | None, program_only: bool = False
+    w: Weighted,
+    search: Sequence[mv.Move],
+    milp: Milp | None,
+    program_only: bool = False,
+    allowed: mv.Allowed | None = None,
 ) -> tuple[str, tuple[mv.Move, ...]]:
     """The set a weight recommends and its source: the program's when it is better on the
     weighted value by more than ``moves.EPS``, both when the two found the same adds with the
     same drops leaving on the same days, the search's otherwise (and whenever the program found
-    no set). With ``program_only`` the program's set stands whenever it solved to the gap, and
-    the search's is only the fallback for a solve that hit its time limit or failed."""
+    no set, or one ``allowed``, the season guard, refuses: #164). With ``program_only`` the
+    program's set stands whenever it solved to the gap, and the search's is only the fallback
+    for a solve that hit its time limit, failed or was refused."""
     search = tuple(search)
-    if milp is None or milp.status == FAILED or not mv.feasible(w.problem, milp.moves):
+    if milp is None or milp.status == FAILED or not mv.admitted(w.problem, milp.moves, allowed):
         return SEARCH, search
     eff = w.problem.effective
 

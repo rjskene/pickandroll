@@ -158,7 +158,11 @@ counts those and how many of them realized below zero. The check measures the ke
 change the engine.
 Every recommendation and comparison in the dashboard shows that season figure beside its two
 horizons as the ROS column (#151), the same number the scorecard judges a move by; nothing ranks
-on it.
+on it. The season guard (#164, docs/ADD_DROP.md "The season guard") draws one line on it: no
+recommended set, re-solve, streaming plan or strategy set (the program's included) has a rest of
+the season below zero, in every league, the private one too. A set the guard held back is named
+beside the recommended one, flagged season-costly, and the decision log records it, so the
+autopilot never executes a move the guard refused.
 
 Refined 2026-10-23 (#143, master's reading of the ruling's principle): a strategy set is judged by
 its weight. The week weight (λ = 1, this week alone) is judged on the week. The even and natural

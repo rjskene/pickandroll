@@ -34,6 +34,7 @@ import type {
   ScorecardMove,
   ScorecardToDate,
   ScorecardWeek,
+  SeasonGuard,
   SeasonPlayer,
   SeasonRefresh,
   SeasonSummary,
@@ -547,6 +548,39 @@ export function forText(x: { drop: number | null; held?: HeldMove | null }, name
   return x.drop == null && x.held ? `${name(x.held.player)} to ${x.held.slot}` : name(x.drop);
 }
 
+/** The line under a recommended set the season guard changed (#164): "The season guard held back
+ * a set that gains +1.50 on the week but costs the season −95.0; this one forgoes 1.15." A total
+ * with a move without a season line says so; null when the guard held nothing back. */
+export function seasonGuardLine(
+  guard: SeasonGuard | null | undefined,
+  key: MoveHorizon,
+  scoring: string | null | undefined,
+): string | null {
+  if (!guard?.held_back) return null;
+  const on = key === "week" ? "on the week" : "over the three weeks";
+  const partial = guard.ros.partial ? " (a partial total: a move without a season line counts as zero)" : "";
+  return (
+    `The season guard held back a set that gains ${gainLabel(guard.gain[key])} ${on} but costs the season ` +
+    `${rosLabel(guard.ros, scoring)}${partial}; this one forgoes ${Math.abs(guard.forgone[key]).toFixed(2)}.`
+  );
+}
+
+/** The set the season guard held back, each move flagged as the log flags it (#164): "add Brooks
+ * for Grant (season-costly, −95.0)"; null when it held nothing back. Never a recommendation. */
+export function seasonGuardMoves(
+  guard: SeasonGuard | null | undefined,
+  name: (id: number | null) => string,
+  scoring: string | null | undefined,
+): string | null {
+  if (!guard?.held_back) return null;
+  return guard.moves
+    .map((x) => {
+      const flags = [x.season_costly ? "season-costly" : null, x.ros?.value != null ? rosLabel(x.ros, scoring) : null].filter(Boolean);
+      return `add ${name(x.add)}${x.drop == null && !x.held ? "" : ` for ${forText(x, name)}`}${flags.length ? ` (${flags.join(", ")})` : ""}`;
+    })
+    .join("; ");
+}
+
 /** The week's streaming plan to show (#136): only a recommended one. */
 export function shownPlan(plan: StreamPlan | null | undefined): StreamPlan | null {
   return plan?.recommended && plan.steps.length ? plan : null;
@@ -576,9 +610,14 @@ export function planNote(plan: StreamPlan, name: (id: number | null) => string):
 /** The line under the week's set when the best streaming plan is not recommended (#136), so
  * what was weighed shows: "Streaming Grant's spot buys 2 more started games for +0.04 this week,
  * under the 0.10 floor."; or, when the three-week guard refused the plan with the best week,
- * "... for +0.15 this week but costs 0.47 over three weeks; not recommended."; null with no
- * plan or a recommended one (its section shows instead). */
-export function planShortLine(plan: StreamPlan | null | undefined, name: (id: number) => string): string | null {
+ * "... for +0.15 this week but costs 0.47 over three weeks; not recommended."; or, when the
+ * season guard did (#164), "... but costs the season −12.4; the season guard holds it back.";
+ * null with no plan or a recommended one (its section shows instead). */
+export function planShortLine(
+  plan: StreamPlan | null | undefined,
+  name: (id: number) => string,
+  scoring?: string | null,
+): string | null {
   if (!plan || plan.recommended) return null;
   const buys = (spots: number[], games: number, gain: number) => {
     const who = spots.length === 1 ? `${name(spots[0])}'s spot` : `the spots of ${andList(spots, name)}`;
@@ -590,16 +629,20 @@ export function planShortLine(plan: StreamPlan | null | undefined, name: (id: nu
   if (plan.reason === "guard" && g) {
     return `${buys(g.spots, g.games, g.gain.week)} but costs ${Math.abs(g.gain.three).toFixed(2)} over three weeks; not recommended.`;
   }
+  if (plan.reason === "season" && g) {
+    return `${buys(g.spots, g.games, g.gain.week)} but costs the season ${rosLabel(g.ros, scoring)}; the season guard holds it back.`;
+  }
   const floor = plan.floor.toFixed(2);
   const spots = plan.spots.filter((x) => x.steps > 0).map((x) => x.player);
   if (!spots.length || Number(plan.gain.week.toFixed(2)) <= 0) return `No streaming plan beats the set this week (floor ${floor}).`;
   return `${buys(spots, plan.games.plan, plan.gain.week)}, under the ${floor} floor.`;
 }
 
-/** The steps of the plan the three-week guard refused, by day, to make it by hand (#136): "Thu
- * Oct 22: add Brooks for Grant; Sat Oct 24: add Hale for Brooks"; null for none. */
+/** The steps of the plan a guard refused (the three-week guard, or the season guard, #164), by
+ * day, to make it by hand (#136): "Thu Oct 22: add Brooks for Grant; Sat Oct 24: add Hale for
+ * Brooks"; null for none. */
 export function guardSteps(plan: StreamPlan | null | undefined, name: (id: number | null) => string): string | null {
-  if (!plan?.guard || plan.reason !== "guard") return null;
+  if (!plan?.guard || (plan.reason !== "guard" && plan.reason !== "season")) return null;
   return plan.guard.steps.map((x) => `${stepDay(x.from)}: add ${name(x.add)} for ${name(x.drop)}`).join("; ");
 }
 
@@ -1166,13 +1209,16 @@ export function milpLabel(m: MilpBlock | null | undefined, limit: number): strin
 
 /** Where a point's recommended set came from, in words: the search's first, then whichever of
  * the two is better on the weight's own value once the program is in. */
-export function sourceText(p: Pick<StrategyPoint, "stage" | "source" | "note" | "ahead" | "milp">, limit: number): string {
+export function sourceText(p: Pick<StrategyPoint, "stage" | "source" | "note" | "ahead" | "milp" | "season_guard">, limit: number): string {
   const status = milpLabel(p.milp, limit);
   if (p.stage !== "done" || !p.source) return "Recommended by the exact search; the linear program is still running.";
   if (p.source === "both") return `Recommended by both: the exact search and the linear program (${status}) found the same set.`;
   const by = p.ahead != null && p.ahead > 0.005 ? gainLabel(p.ahead) : null;
   if (p.source === "milp") return `Recommended by the linear program (${status})${by ? `, ahead of the search's set by ${by}` : ""}.`;
   if (p.milp?.status === "failed") return "Recommended by the exact search; the linear program found no set.";
+  if (p.season_guard?.held_back && p.season_guard.program) {
+    return `Recommended by the exact search: the season guard held back the linear program's set (${status}), which costs the season.`;
+  }
   const from = p.note ? `, from ${p.note}` : "";
   return by
     ? `Recommended by the exact search${from}, ahead of the linear program's set (${status}) by ${by}.`

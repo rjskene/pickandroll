@@ -20,6 +20,12 @@ time, then improved by replacing any add or drop with any alternative until noth
 (:func:`search`). That is a strong heuristic, not a proof of optimality. The price of each
 recommended move is the same search re-run with that add left out or that drop kept.
 
+The season guard (#164, docs/ADD_DROP.md "The season guard") is a line every set searched must
+hold beside :func:`feasible`: its moves' rest-of-season values, each move valued on its own from
+its day as the decision log values it, sum to zero or more (:func:`season_guard`). The search,
+its re-solves and the streaming plan never offer a set below it; nothing inside the allowed sets
+ranks on it.
+
 Players in held slots (IL, IL+, NA) stay on the roster, are never dropped and count as the
 season view counts them. :data:`HELD_ACCEPTS` says which statuses each held slot takes (#124,
 docs/ADD_DROP.md, "Held slots"). IL is Yahoo's own rule for basketball, from its help page
@@ -58,7 +64,7 @@ value net of return (:func:`net_of_return`) only ranks the IL and is shown, neve
 from __future__ import annotations
 
 import re
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 from typing import Protocol
@@ -303,6 +309,34 @@ def feasible(problem: MoveProblem, moves: Sequence[Move]) -> bool:
             if counts[lim] > lim.adds:
                 return False
     return True
+
+
+#: A test every set searched must pass beside :func:`feasible` (the season guard's,
+#: :func:`season_guard`).
+Allowed = Callable[[Sequence[Move]], bool]
+
+
+def admitted(problem: MoveProblem, moves: Sequence[Move], allowed: Allowed | None) -> bool:
+    """:func:`feasible`, and allowed by ``allowed`` when a guard is given."""
+    return feasible(problem, moves) and (allowed is None or allowed(moves))
+
+
+def season_total(ros: Callable[[Move], float | None], moves: Iterable[Move]) -> tuple[float, bool]:
+    """A set's rest of the season by ``ros`` (each move's own value, None for none) and whether
+    the total is partial: a move without a value counts as zero."""
+    values = [ros(m) for m in moves]
+    return sum(v for v in values if v is not None), any(v is None for v in values)
+
+
+def season_guard(ros: Callable[[Move], float | None]) -> Allowed:
+    """The season guard (#164): a set is allowed when its rest of the season
+    (:func:`season_total`) is zero or more. A move without a value neither blocks the set nor
+    pays for the rest of it."""
+
+    def allowed(moves: Sequence[Move]) -> bool:
+        return season_total(ros, moves)[0] >= -EPS
+
+    return allowed
 
 
 def held_used(problem: MoveProblem, moves: Sequence[Move]) -> list[tuple[int, str]]:
@@ -766,11 +800,13 @@ def search(
     exclude: Iterable[int] = (),
     keep: Iterable[int] = (),
     min_gain: float = 0.0,
+    allowed: Allowed | None = None,
 ) -> tuple[Move, ...]:
     """The recommended moves over horizon ``key`` among the candidates of ``pool``: greedy, one
     best move at a time while it gains more than ``min_gain``, then each add and each drop
     replaced by its best alternative, or the move undone, until no change gains. ``exclude``
-    are adds and ``keep`` drops the search may not use (a re-solve's forced choice)."""
+    are adds and ``keep`` drops the search may not use (a re-solve's forced choice); every set
+    tried must pass ``allowed`` (the season guard) beside :func:`feasible`."""
     p = ev.problem
     banned, kept = set(exclude), set(keep)
     adds_ok = [c for c in pool if c not in banned]
@@ -784,7 +820,7 @@ def search(
                 continue
             for drop in drop_options(p, moves, kept):
                 trial = [*moves, Move(cand, drop)]
-                if not feasible(p, trial):
+                if not admitted(p, trial, allowed):
                     continue
                 v = ev.value(key, trial)
                 if best is None or v > best[0]:
@@ -806,7 +842,7 @@ def search(
                 [*rest, Move(move.add, d)] for d in drop_options(p, rest, kept) if d != move.drop
             ]
             for trial in trials:
-                if not feasible(p, trial):
+                if not admitted(p, trial, allowed):
                     continue
                 v = ev.value(key, trial)
                 # Undoing a move needs it to have been worth less than min_gain.
@@ -852,16 +888,20 @@ def recommend(
     rounds: int = 3,
     start: Sequence[Move] | None = None,
     keep: Iterable[int] = (),
+    allowed: Allowed | None = None,
 ) -> Recommendation:
     """The recommended set over horizon ``key`` with every move priced by a re-solve. A re-solve
     that beats the set replaces it (the search is a heuristic), at most ``rounds`` times. The set
-    is the search's, or ``start`` (another solver's); ``keep`` are drops nothing may use."""
+    is the search's, or ``start`` (another solver's, which the caller has allowed); ``keep`` are
+    drops nothing may use; the search and every re-solve keep to ``allowed``."""
     kept = frozenset(keep)
     moves = (
-        tuple(start) if start is not None else search(ev, key, pool, keep=kept, min_gain=min_gain)
+        tuple(start)
+        if start is not None
+        else search(ev, key, pool, keep=kept, min_gain=min_gain, allowed=allowed)
     )
     for attempt in range(rounds + 1):
-        priced, better = _priced(ev, key, pool, moves, min_gain, kept)
+        priced, better = _priced(ev, key, pool, moves, min_gain, kept, allowed)
         if better is None or attempt == rounds:
             gain = {h: ev.gain(h, moves) for h in ev.base}
             back = {h: tuple(comebacks(ev.problem, h, moves)) for h in ev.problem.horizons}
@@ -877,17 +917,22 @@ def _priced(
     moves: tuple[Move, ...],
     min_gain: float,
     kept: frozenset[int] = frozenset(),
+    allowed: Allowed | None = None,
 ) -> tuple[tuple[PricedMove, ...], tuple[Move, ...] | None]:
-    """Each move of ``moves`` priced by its two re-solves, and the best re-solve that beats the
-    set, if one does."""
+    """Each move of ``moves`` priced by its two re-solves (each kept to ``allowed``), and the
+    best re-solve that beats the set, if one does."""
     value = ev.value(key, moves)
     priced: list[PricedMove] = []
     better: tuple[Move, ...] | None = None
     for move in moves:
-        without = search(ev, key, pool, exclude={move.add}, keep=kept, min_gain=min_gain)
+        without = search(
+            ev, key, pool, exclude={move.add}, keep=kept, min_gain=min_gain, allowed=allowed
+        )
         keep = None
         if move.drop is not None:
-            keep = search(ev, key, pool, keep=kept | {move.drop}, min_gain=min_gain)
+            keep = search(
+                ev, key, pool, keep=kept | {move.drop}, min_gain=min_gain, allowed=allowed
+            )
         for alt in (without, keep):
             if alt is None or ev.value(key, alt) <= value + EPS:
                 continue

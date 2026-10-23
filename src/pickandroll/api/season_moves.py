@@ -21,13 +21,19 @@ each player with an absence on the IL.
 The streaming plan (#136, ``season.stream``) turns the weakest spots over inside the week: a
 dated sequence of adds and drops the payload shows beside the week's recommended set, and
 recommends only when its week beats the set's by the planner's floor.
+
+The season guard (#164, ``season.moves.season_guard``) holds every recommended set, its re-solves
+and the plan to a rest of the season of zero or more, on the log's own figure for each move
+(:func:`ros_of`). When the search without it finds a set that beats the guarded one on the
+horizon and costs the season, the horizon names that set (``season_guard``): shown flagged, never
+recommended.
 """
 
 from __future__ import annotations
 
 import threading
 from collections import Counter
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import date
 from pathlib import Path
@@ -436,6 +442,92 @@ def ros_total(rows: list[dict[str, Any] | None]) -> dict[str, Any] | None:
     return {"value": round(float(sum(v for v in values if v is not None)), 4)}
 
 
+def guard_ros(built: Built) -> Callable[[mv.Move], float | None] | None:
+    """Each move's rest of the season for the season guard (#164): :func:`ros_move`'s value,
+    cached by add, drop and day; None without the league's scorer or a season end, when there is
+    nothing to guard on."""
+    p = built.problem
+    if built.scorer is None or p.season_end is None:
+        return None
+    seen: dict[tuple[int, int | None, date], float | None] = {}
+
+    def ros(m: mv.Move) -> float | None:
+        k = (m.add, m.drop, mv.day_of(p, m))
+        if k not in seen:
+            r = ros_of(built, *k)
+            seen[k] = None if r is None else r["value"]
+        return seen[k]
+
+    return ros
+
+
+class Watched:
+    """A guard that counts the sets it refused: a solve it never refused is the unguarded
+    one's."""
+
+    def __init__(self, allowed: mv.Allowed) -> None:
+        self.allowed, self.refused = allowed, 0
+
+    def __call__(self, moves: Sequence[mv.Move]) -> bool:
+        ok = self.allowed(moves)
+        self.refused += not ok
+        return ok
+
+
+def held_back(
+    built: Built,
+    ev: mv.Valued,
+    key: str,
+    moves: Sequence[mv.Move],
+    ros: Callable[[mv.Move], float | None] | None,
+    free: Sequence[mv.Move] | None,
+    source: str = "moves",
+    set_key: str | None = None,
+) -> dict[str, Any] | None:
+    """The season guard on horizon ``key``'s guarded set ``moves`` (#164): ``held_back`` when
+    ``free``, the set the engine recommends without the guard, beats it on the horizon and its
+    rest of the season is below zero. Then that set's moves, each with what it adds to the set, its rest of
+    the season and the decision log's season-costly flag (judged as the log judges the set's,
+    ``source`` and ``set_key``); its gain and its rest of the season (``partial`` when a move
+    without a line counted as zero); and what the guarded set forgoes on each horizon and saves
+    over the season. None without the guard; not held back without a ``free`` set (the guard
+    refused nothing, so the solve was the unguarded one)."""
+    if ros is None:
+        return None
+    if free is None:
+        return {"held_back": False}
+    total, partial = mv.season_total(ros, free)
+    if total >= -mv.EPS or ev.value(key, free) <= ev.value(key, moves) + mv.EPS:
+        return {"held_back": False}
+    p = ev.problem
+    mine, mine_partial = mv.season_total(ros, moves)
+    by_add = held_by_add(p, list(free))
+    horizons = list(ev.base)
+    rows = []
+    for m in free:
+        rest = [x for x in free if x != m]
+        proj = dl.move_projection(p, built.scorer, m.add, m.drop, mv.day_of(p, m))
+        judged = dl.judging_horizon(source, set_key or key, proj)
+        rows.append(
+            {
+                **_move(m, p),
+                "held": by_add.get(m.add),
+                "marginal": {h: _r(ev.value(h, free) - ev.value(h, rest)) for h in horizons},
+                "ros": ros_move(built, m),
+                "season_costly": dl.season_costly(proj, judged),
+            }
+        )
+    gain = {h: ev.gain(h, free) for h in horizons}
+    return {
+        "held_back": True,
+        "moves": rows,
+        "gain": {h: _r(v) for h, v in gain.items()},
+        "ros": {"value": round(total, 4), "partial": partial},
+        "forgone": {h: _r(gain[h] - ev.gain(h, moves)) for h in horizons},
+        "saved": {"value": round(mine - total, 4), "partial": partial or mine_partial},
+    }
+
+
 def _comebacks(cs: list[mv.Comeback] | tuple[mv.Comeback, ...]) -> list[dict[str, Any]]:
     return [
         {"player": c.player, "slot": c.slot, "from": c.day.isoformat(), "drop": c.drop} for c in cs
@@ -611,13 +703,23 @@ def moves_payload(built: Built) -> dict[str, Any]:
         candidates[str(cand)] = row
     recommended = {}
     sets: dict[str, list[mv.Move]] = {}
+    ros = guard_ros(built)
+    guard = None if ros is None else mv.season_guard(ros)
     for key in HORIZONS:
         ranked = sorted(
             (c for c, g in swaps[key].items() if g and g[0].gain > MIN_GAIN),
             key=lambda c: -swaps[key][c][0].gain,
         )
-        rec = mv.recommend(ev, key, ranked[:POOL], min_gain=MIN_GAIN)
+        watched = None if guard is None else Watched(guard)
+        rec = mv.recommend(ev, key, ranked[:POOL], min_gain=MIN_GAIN, allowed=watched)
         sets[key] = [pm.move for pm in rec.moves]
+        # The set the engine recommends without the guard, re-solves and all (a re-solve can
+        # find the costly set the plain search misses), solved only when the guard refused a set:
+        # else the guarded solve was the unguarded one.
+        free = None
+        if watched is not None and watched.refused:
+            unguarded = mv.recommend(ev, key, ranked[:POOL], min_gain=MIN_GAIN)
+            free = [pm.move for pm in unguarded.moves]
         held = held_by_add(p, sets[key])
         rows = [
             {
@@ -640,6 +742,7 @@ def moves_payload(built: Built) -> dict[str, Any]:
             "ros": ros_total([r["ros"] for r in rows]),
             "held": [{"player": k, "slot": slot} for k, slot in rec.held],
             "comebacks": {h: _comebacks(cs) for h, cs in rec.comebacks.items()},
+            "season_guard": held_back(built, ev, key, sets[key], ros, free),
         }
     return {
         "cleared": cleared_payload(p),
@@ -650,7 +753,7 @@ def moves_payload(built: Built) -> dict[str, Any]:
         "adds": built.adds,
         "candidates": candidates,
         "recommended": recommended,
-        "plan": plan_payload(built, ev, sets["week"], recommended["week"]["moves"]),
+        "plan": plan_payload(built, ev, sets["week"], recommended["week"]["moves"], guard),
         "unprojected": built.unprojected,
         "search": {"pool": POOL, "min_gain": MIN_GAIN},
     }
@@ -662,22 +765,27 @@ def _started(ev: mv.Evaluator, moves: list[mv.Move]) -> int:
 
 
 def plan_payload(
-    built: Built, ev: mv.Evaluator, against: list[mv.Move], rows: list[dict[str, Any]]
+    built: Built,
+    ev: mv.Evaluator,
+    against: list[mv.Move],
+    rows: list[dict[str, Any]],
+    allowed: mv.Allowed | None = None,
 ) -> dict[str, Any] | None:
     """The week's streaming plan (#136) against its recommended set (``against``, whose payload
     rows are ``rows``): the set's moves it keeps, its steps by day with each one's own gain on
     both horizons, the spots it turns over, my started games and the adds with no move, the set
     and the plan, and the plan's value beside the set's; recommended only when its week beats
     the set's by the floor (``season.stream.floor_of``), else by how much it falls short and
-    why: ``short``, under the floor, or ``guard``, when the plan with the best week would clear
-    it but costs the three weeks after, which the planner never trades (its steps, games and
-    gains are given so the user can make the trade by hand). None without a stream spot or the
-    league's scorer (the keep rule's)."""
+    why: ``short``, under the floor; ``guard``, when the plan with the best week would clear
+    it but costs the three weeks after, which the planner never trades; or ``season``, when the
+    season guard (``allowed``, #164) is what keeps it out, its rest of the season below zero.
+    The refused plan's steps, games and gains are given (``guard``) so the user can make the
+    trade by hand. None without a stream spot or the league's scorer (the keep rule's)."""
     p = built.problem
     if built.rule is None or built.scorer is None:
         return None
     per_game = {k: wk.net_value(built.scorer, r) for k, r in p.rates.items()}
-    plan = st.plan(ev, built.rule, against, per_game)
+    plan = st.plan(ev, built.rule, against, per_game, allowed=allowed)
     if plan is None:
         return None
     spot_of = {m: sp.occupant for sp in plan.spots for m in sp.steps}
@@ -691,11 +799,19 @@ def plan_payload(
     recommended = st.recommended(ev, plan)
     reason, guard = (None, None) if recommended else ("short", None)
     if not recommended:
-        free = st.plan(ev, built.rule, against, per_game, guard=False)
+        free = st.plan(ev, built.rule, against, per_game, guard=False, allowed=allowed)
         if free is not None and free.steps:
             gain = {h: ev.value(h, list(free.moves)) - value["set"][h] for h in HORIZONS}
             if gain["week"] > floor and gain["three"] < -mv.EPS:
                 reason, guard = "guard", _guarded(built, ev, free, gain, rows)
+    if reason == "short" and allowed is not None:
+        # The plan with the season guard off: when it would clear the floor on the three-week
+        # guard alone, the season guard is what refused it.
+        wild = st.plan(ev, built.rule, against, per_game)
+        if wild is not None and wild.steps and not allowed(wild.moves):
+            gain = {h: ev.value(h, list(wild.moves)) - value["set"][h] for h in HORIZONS}
+            if gain["week"] > floor:
+                reason, guard = "season", _guarded(built, ev, wild, gain, rows)
     kept = set(plan.base)
     base = [
         {k: row[k] for k in ("add", "drop", "from", "held", "marginal", "ros")}
@@ -756,9 +872,10 @@ def _guarded(
     gain: dict[str, float],
     rows: list[dict[str, Any]],
 ) -> dict[str, Any]:
-    """The plan the three-week guard refused: its steps by day with the spots they turn over,
-    the spots, my started games with it and its gain on the set on both horizons, and on the
-    rest of the season (#151) its moves' less the set's (``rows``)."""
+    """The plan a guard refused (the three-week guard, or the season guard, #164): its steps by
+    day with the spots they turn over, the spots, my started games with it and its gain on the
+    set on both horizons, and on the rest of the season (#151) its moves' less the set's
+    (``rows``)."""
     p = ev.problem
     spot_of = {m: sp.occupant for sp in plan.spots for m in sp.steps}
     mine = ros_total([ros_move(built, m) for m in plan.moves])
