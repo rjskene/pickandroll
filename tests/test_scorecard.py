@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import io
 import json
+from collections.abc import Mapping
 from contextlib import redirect_stdout
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
@@ -119,6 +120,32 @@ def test_the_projection_is_the_last_solve_that_saw_the_whole_week():
     assert sc.projection(entries, WEEK2, "bbm")["sets"][0]["week"]["before"]["matchup"] == 0.61
     assert sc.projection(entries, WEEK2, "yahoo")["sets"][0]["week"]["before"]["matchup"] == 0.2
     assert sc.projection(entries[:1], WEEK2, "bbm") is None
+
+
+def test_with_no_system_named_a_week_is_projected_on_its_entrys_system_in_force():
+    # #152: each entry records the knob file's system for its league when it was logged.
+    def on(e: dict[str, Any], file_system: str) -> dict[str, Any]:
+        return {**e, "knobs": {"system": e["system"]["key"], "file_system": file_system}}
+
+    def matchup(found: Mapping[str, Any] | None) -> float | None:
+        return found["sets"][0]["week"]["before"]["matchup"] if found else None
+
+    entries = [
+        # Logged before entries kept it: Basketball Monster's, the file's default.
+        entry("2026-10-26T04:00:00+00:00", "2026-10-26", 0.5),
+        on(entry("2026-10-26T05:00:00+00:00", "2026-10-26", 0.61), "bbm"),
+        # The dashboard named Yahoo's while the file had Basketball Monster's in force.
+        on(entry("2026-10-26T06:00:00+00:00", "2026-10-26", 0.2, system="yahoo"), "bbm"),
+    ]
+    assert matchup(sc.projection(entries, WEEK2, None)) == 0.61
+    assert matchup(sc.projection(entries[:1], WEEK2, None)) == 0.5
+    assert matchup(sc.projection(entries, WEEK2, "yahoo")) == 0.2
+    # The file then put the league on the blend: a solve on it before the week's games is the
+    # last in force, and the entries before it keep the system they recorded.
+    blend = on(entry("2026-10-26T07:00:00+00:00", "2026-10-26", 0.7, system="blend"), "blend")
+    assert matchup(sc.projection([*entries, blend], WEEK2, None)) == 0.7
+    assert matchup(sc.projection([*entries, blend], WEEK2, "bbm")) == 0.61
+    assert sc.on_system(entries[0], None) and not sc.on_system(entries[2], None)
 
 
 def test_a_category_is_won_on_its_total_a_percentage_on_its_makes_and_fewer_turnovers():

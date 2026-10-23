@@ -107,8 +107,10 @@ def knobs(built: Built) -> dict[str, Any]:
     """The AUTOPILOT knobs (docs/AUTOPILOT.md, section 6) the solve ran with, every one of
     ``season.progress.KNOBS`` whether the solve uses it or not (#152): the projection system and
     its blend weight, the strategy's recommended weight, the keep rule's protection floor, the
-    streaming plan's floors and moves a day, the stash threshold and the FAAB sizing."""
-    return {k: built.knobs.get(k) for k in pg.KNOBS}
+    streaming plan's floors and moves a day, the stash threshold and the FAAB sizing; and beside
+    them ``file_system``, the system the knob file had in force for the league, which a route
+    naming another overrode (the scorecard projects each week on it)."""
+    return {**{k: built.knobs.get(k) for k in pg.KNOBS}, "file_system": built.file_system}
 
 
 def _logged(move: Mapping[str, Any], built: Built | None = None) -> dict[str, Any]:

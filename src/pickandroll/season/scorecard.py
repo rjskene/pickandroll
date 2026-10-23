@@ -4,7 +4,9 @@ calibration pooled across leagues.
 
 A week's projection is the decision log's last entry (#125) of the system scored whose first day
 is the week's first: a solve that saw the whole week ahead, before its first game (once a day's
-games begin, a solve's first day is the next). Its week block before any move gives each
+games begin, a solve's first day is the next). With no system named, the system scored is each
+entry's own in force: the knob file's for its league when it was logged (#152), so the Monday a
+change of system takes effect the week stays projected on the old one, for both halves. Its week block before any move gives each
 category's finals and odds, the expected categories and the odds of winning the matchup. A week
 without one is unprojected: shown, but in no sum. The result is the weekly record's (#97): my
 categories won, lost and tied (a points league's points), and each category's totals, a
@@ -19,6 +21,7 @@ from datetime import date
 from typing import Any
 
 from .calendar import Week
+from .progress import DEFAULTS
 
 #: Percentages from their makes and attempts.
 PCT = {"fg_pct": ("fgm", "fga"), "ft_pct": ("ftm", "fta")}
@@ -30,6 +33,8 @@ FPTS = "fpts"
 BUCKETS = 5
 #: A week's outcome as a win counts it: a tie is half.
 OUTCOME = {"W": 1.0, "T": 0.5, "L": 0.0}
+#: The system in force for an entry logged before entries kept it: the knob file's default.
+IN_FORCE = DEFAULTS["system"]
 
 
 def _round(x: float | None, digits: int = 4) -> float | None:
@@ -41,18 +46,25 @@ def _before(entry: Mapping[str, Any] | None) -> Mapping[str, Any] | None:
     return (sets[0].get("week") or {}).get("before") if sets else None
 
 
+def on_system(entry: Mapping[str, Any], system: str | None) -> bool:
+    """Whether ``entry`` was solved on ``system``; with None, on the system the knob file had in
+    force for its league when it was logged (``knobs.file_system``, #152)."""
+    if system is None:
+        system = (entry.get("knobs") or {}).get("file_system") or IN_FORCE
+    return (entry.get("system") or {}).get("key") == system
+
+
 def projection(
-    entries: Iterable[Mapping[str, Any]], week: Week, system: str
+    entries: Iterable[Mapping[str, Any]], week: Week, system: str | None
 ) -> Mapping[str, Any] | None:
-    """The entry that projects ``week``: the last one on ``system`` whose first day is the week's
-    first and that holds a week block (a week without a named opponent has none)."""
+    """The entry that projects ``week``: the last one on ``system`` (:func:`on_system`) whose
+    first day is the week's first and that holds a week block (a week without a named opponent
+    has none)."""
     start = week.start.isoformat()
     found = [
         e
         for e in entries
-        if e.get("first_day") == start
-        and (e.get("system") or {}).get("key") == system
-        and _before(e) is not None
+        if e.get("first_day") == start and on_system(e, system) and _before(e) is not None
     ]
     return max(found, key=lambda e: e["at"], default=None)
 
@@ -133,7 +145,7 @@ def week_card(
     record: Mapping[str, Any],
     entries: Sequence[Mapping[str, Any]],
     me: int,
-    system: str,
+    system: str | None,
     moves: Sequence[Mapping[str, Any]] = (),
 ) -> dict[str, Any]:
     """A league's week: its projection (None when unprojected), its result (None when the

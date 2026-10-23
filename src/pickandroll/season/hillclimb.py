@@ -167,14 +167,21 @@ def _days(a: str, b: str) -> int:
     return (date.fromisoformat(a) - date.fromisoformat(b)).days
 
 
+def written(change: Mapping[str, Any]) -> str:
+    """The last day a change wrote its knob: its verdict's (a revert or a rollout writes it
+    again), else its Monday."""
+    return change.get("judged_on") or change["monday"]
+
+
 def recent(knobs: Mapping[str, Any], knob: str, monday: str) -> dict[str, Any] | None:
-    """The change that keeps ``knob`` from changing this Monday: one to its family within
-    :data:`QUIET_DAYS`, or one still waiting for its verdict."""
+    """The change that keeps ``knob`` from changing this Monday: one that wrote its family
+    within :data:`QUIET_DAYS` (its Monday, or its revert or rollout), or one still waiting for
+    its verdict."""
     family = FAMILY.get(knob, (knob,))
     for c in reversed(knobs.get("changes", [])):
         if c["knob"] not in family or c["monday"] > monday:
             continue
-        if _days(monday, c["monday"]) < QUIET_DAYS or (
+        if _days(monday, written(c)) < QUIET_DAYS or (
             c["verdict"] is None and c.get("source") != "user"
         ):
             return c
@@ -191,6 +198,8 @@ def refused_change(
     if why := pg.refused(knob, to):
         return why
     if c := recent(knobs, knob, monday):
+        if c.get("judged_on") and c["verdict"] is not None:
+            return f"{c['id']} ({c['knob']}) was {c['verdict']} on {c['judged_on']}"
         return f"{c['id']} changed {c['knob']} on {c['monday']}"
     if len(scope) < MIN_LEAGUES:
         return f"{len(scope)} league{'s' * (len(scope) != 1)} to split, fewer than {MIN_LEAGUES}"
@@ -489,9 +498,11 @@ def verdict(
 ) -> dict[str, Any]:
     """A change's verdict over its two weeks: the halves (A the leagues that took it, B the
     armed leagues of its scope that kept the setting: those the change recorded, when it did),
-    each measure for both, and the measure that decided, kept when none tells them apart. The
-    year to date is shown beside: each measure for both halves to the last week and before the
-    change."""
+    each measure for both, and the measure that decided, kept when none tells them apart.
+    Beside it, never deciding, the year to date read as a difference in differences (``since``,
+    each measure's A − B gap to the last week recorded less its gap before the change; a sum
+    over no weeks is nothing, a share over no moves unknown) and the raw figures it is read
+    from (``a_ytd``, ``b_ytd``, ``a_before``, ``b_before``)."""
     week = int(change["week"])
     end = week + pg.JUDGED_WEEKS - 1
     scoring = change.get("scoring")
@@ -515,6 +526,9 @@ def verdict(
         "a_before": measures(a, rows, moves, 1, week - 1),
         "b_before": measures(b, rows, moves, 1, week - 1),
     }
+    figures["since"] = {
+        name: _since(figures, name, summed=name != "share") for name, _, _ in MEASURES
+    }
     decided, outcome = None, "kept"
     for name, threshold, more in MEASURES:
         x, y = figures["a"][name], figures["b"][name]
@@ -536,6 +550,19 @@ def verdict(
     }
 
 
+def _since(figures: Mapping[str, Any], name: str, summed: bool) -> float | None:
+    """The change in a measure's A − B gap since the change's Monday: the gap to the last week
+    less the gap before. For a sum, a half with nothing before counts nothing."""
+
+    def gap(a: float | None, b: float | None, empty: float | None) -> float | None:
+        a, b = (empty if a is None else a), (empty if b is None else b)
+        return None if a is None or b is None else a - b
+
+    now = gap(figures["a_ytd"][name], figures["b_ytd"][name], None)
+    before = gap(figures["a_before"][name], figures["b_before"][name], 0.0 if summed else None)
+    return None if now is None or before is None else round(now - before, 4)
+
+
 def _judged(change: Mapping[str, Any], raw: Mapping[str, Any]) -> dict[str, Any] | None:
     """The verdict the step wrote on ``raw`` (``change`` as the knob file reads it), as
     :func:`verdict` gave it; None when it wrote none."""
@@ -552,19 +579,34 @@ def _judged(change: Mapping[str, Any], raw: Mapping[str, Any]) -> dict[str, Any]
         "window": j.get("window"),
         "a": j.get("a") or {},
         "b": j.get("b") or {},
+        "since": j.get("since") or {},
+        "a_ytd": j.get("a_ytd") or {},
+        "b_ytd": j.get("b_ytd") or {},
     }
 
 
 def _verdict_reason(v: Mapping[str, Any]) -> str:
     what = f"{v['id']} ({v['knob']})"
-    if v["decided_by"] is None:
-        return f"{what} is kept: no measure told the halves apart over weeks {v['window'][0]}-{v['window'][1]}."
+    weeks = f"weeks {v['window'][0]}-{v['window'][1]}"
     name = v["decided_by"]
-    x, y = v["a"][name], v["b"][name]
+    if name is None:
+        said = f"{what} is kept: no measure told the halves apart over {weeks}."
+    else:
+        x, y = v["a"][name], v["b"][name]
+        said = (
+            f"{what} is {v['verdict']}: on {MEASURE_WORDS[name]}, the {len(v['leagues'])} "
+            f"leagues that took it ran {x:g} against {y:g} for the {len(v['b_leagues'])} that "
+            f"kept the setting over {weeks}."
+        )
+    shown = name or "wins_above"
+    d = (v.get("since") or {}).get(shown)
+    if d is None:
+        return said
+    x, y = (v.get("a_ytd") or {}).get(shown), (v.get("b_ytd") or {}).get(shown)
+    raw = f" ({x:g} against {y:g})" if x is not None and y is not None else ""
     return (
-        f"{what} is {v['verdict']}: on {MEASURE_WORDS[name]}, the {len(v['leagues'])} leagues "
-        f"that took it ran {x:g} against {y:g} for the {len(v['b_leagues'])} that kept the "
-        f"setting over weeks {v['window'][0]}-{v['window'][1]}."
+        f"{said} Year to date, the gap on {MEASURE_WORDS[shown]} moved {d:+g} since its "
+        f"Monday{raw}."
     )
 
 
@@ -704,22 +746,22 @@ def note(
     working = [s["text"] for s in pooled if s.get("tone") != "bad"]
     not_working = [s["text"] for s in pooled if s.get("tone") == "bad"]
     decision = [_verdict_reason(v) for v in verdicts]
+    passed = []
+    for r in outcomes:
+        if r["clears"] and not r.get("blocked"):
+            break  # the rule that made the change
+        if r["clears"]:
+            where = f" ({r['scoring']})" if r["scoring"] else ""
+            passed.append(f"{RULE_WORDS[r['rule']]}{where} cleared but {r['blocked']}")
+    blocked = "; ".join(passed)
     if change is not None:
         decision.append(f"{change['id']}: {change['reason']}")
-    else:
-        blocked = [r for r in outcomes if r["clears"] and r.get("blocked")]
         if blocked:
-            decision.append(
-                "No change: "
-                + "; ".join(
-                    f"{RULE_WORDS[r['rule']]}{f' ({r["scoring"]})' if r['scoring'] else ''} "
-                    f"cleared but {r['blocked']}"
-                    for r in blocked
-                )
-                + "."
-            )
-        else:
-            decision.append("No change: no rule's numbers cleared its threshold.")
+            decision.append(f"Passed over before it: {blocked}.")
+    elif blocked:
+        decision.append(f"No change: {blocked}.")
+    else:
+        decision.append("No change: no rule's numbers cleared its threshold.")
     actions = [
         f"Judge {c['id']} ({c['knob']}) once week {c['week'] + pg.JUDGED_WEEKS - 1} is recorded."
         for c in pending
@@ -803,6 +845,9 @@ def step(
                     "b_leagues": v["b_leagues"],
                     "a": v["a"],
                     "b": v["b"],
+                    "since": v["since"],
+                    "a_ytd": v["a_ytd"],
+                    "b_ytd": v["b_ytd"],
                     "reached": reach,
                 },
             }

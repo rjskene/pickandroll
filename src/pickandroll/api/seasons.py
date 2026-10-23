@@ -60,8 +60,9 @@ Routes:
 ``GET /seasons/scorecard``
     Every league's scorecard of ``?week=`` (the last any league recorded), the odds pooled over
     the public leagues that projected it (the private league apart), and the week as markdown
-    for the AUTOPILOT tracker (#127). Both score each league on the system the knob file has in
-    force for it (#152) unless ``?system=`` names one.
+    for the AUTOPILOT tracker (#127). Unless ``?system=`` names one, both score each week on the
+    system its decision log entry had in force when it was logged (#152): the knob file's for the
+    league then, so a change of system scores its first week on the old one for both halves.
 ``POST /autopilot/monday``
     The Monday hill-climb step (#152, ``season_hillclimb``): the verdicts due, at most one knob
     change from the rule table, written to the knob file with the Monday note; once a Monday
@@ -916,10 +917,9 @@ class SeasonService:
     ) -> dict[str, Any]:
         """A league's recorded weeks against the decision log (#126): ``week`` (the last
         recorded by default) and every week to it, its moves realized from the cached box
-        scores, the season to date and the calibration; on ``system``, by default the one the
-        knob file has in force for the league (#152)."""
+        scores, the season to date and the calibration; on ``system``, by default each decision
+        log entry's own in force when it was logged (#152, ``season.scorecard.on_system``)."""
         base, is_public = self._base(league)
-        system = self._system(league, system)
         season = Season.from_parts(base, load_parts(self.data_dir, league))
         folder = season_dir(self.data_dir, league)
         own = box is None
@@ -1562,7 +1562,7 @@ def register(
     scorecard_system_q = Query(
         None,
         pattern="^(bbm|yahoo|blend)$",
-        description="the system scored; each league's in force (#152) by default",
+        description="the system scored; by default each entry's in force when logged (#152)",
     )
 
     # Before ``/seasons/{league}``, whose pattern would refuse the word.

@@ -273,11 +273,27 @@ def test_a_knob_changed_in_the_last_four_weeks_or_frozen_is_not_changed_again():
     assert out["rules"][0]["blocked"] == "K1 changed protection_floor on 2026-10-12"
     # Four weeks on, it may change again.
     assert step(recent, payload(floor), MONDAYS[3])["change"]["id"] == "K2"
+    # A revert writes the knob again: the four weeks run from it.
+    undone = {
+        "changes": [{**recent["changes"][0], "monday": "2026-09-28", "judged_on": "2026-10-12"}]
+    }
+    assert step(undone, payload(floor))["rules"][0]["blocked"] == (
+        "K1 (protection_floor) was reverted on 2026-10-12"
+    )
+    assert step(undone, payload(floor), MONDAYS[3])["change"]["id"] == "K2"
     # Frozen in three of the four leagues: one left to split.
     frozen = {"frozen": {lg: ["protection_floor"] for lg in ("1", "2", "3")}}
     out = step(frozen, payload(floor))
     assert out["change"] is None
     assert out["rules"][0]["blocked"] == "1 league to split, fewer than 2"
+    # A blocked rule passes to the next, and the note names it.
+    both = floor + costly_moves({"5": (2, 2), "6": (1, 1)})
+    out = step(frozen, payload(both))
+    assert (out["change"]["rule"], out["change"]["scoring"]) == ("season_check", "points")
+    assert (
+        "Passed over before it: the season check (categories) cleared but 1 league to split, "
+        "fewer than 2."
+    ) in out["note"]
 
 
 def test_the_step_never_changes_a_knob_without_a_hook():
@@ -440,6 +456,27 @@ def test_the_first_measure_that_tells_the_halves_apart_decides():
     assert (v["verdict"], v["decided_by"]) == ("kept", None)
 
 
+def test_the_year_to_date_is_read_as_the_change_in_the_gap_and_never_decides():
+    # A lagged by three wins a league before the change, then ran a win ahead of B a league
+    # over the window: the raw year to date has A behind, the gap moved two wins its way.
+    rows = two_weeks(0.5, -0.5)
+    for lg in ("1", "2", "3", "4"):
+        rows[lg].insert(0, row(1, 0.5, 0.5 - (3.0 if lg in ("1", "3") else 0.0)))
+    out = step(judged_file(), payload(rows=rows, last=3), MONDAYS[3])
+    (v,) = out["verdicts"]
+    assert (v["verdict"], v["decided_by"]) == ("kept", "wins_above")
+    assert (v["a_ytd"]["wins_above"], v["b_ytd"]["wins_above"]) == (-2.0, -1.0)
+    assert v["since"]["wins_above"] == 2.0
+    assert out["knobs"]["changes"][0]["judged"]["since"]["wins_above"] == 2.0
+    assert (
+        "Year to date, the gap on wins above expected a league moved +2 since its Monday "
+        "(-2 against -1)."
+    ) in out["note"]
+    # With nothing before the change, the year to date is the window.
+    (v,) = step(judged_file(), payload(rows=two_weeks(0.5, -0.5), last=3), MONDAYS[3])["verdicts"]
+    assert v["since"]["wins_above"] == 2.0
+
+
 def test_a_change_waits_for_its_two_weeks_and_a_users_change_is_never_judged():
     rows = two_weeks(0.5, -0.5)
     assert step(judged_file(), payload(rows=rows, last=2), MONDAYS[3])["verdicts"] == []
@@ -561,13 +598,20 @@ def test_a_knob_file_that_is_not_json_is_refused_not_overwritten(client):  # noq
     assert path.read_text() == "{not json"
 
 
-def test_the_scorecard_scores_a_league_on_its_system_in_force(client):  # noqa: F811
+def test_the_scorecard_projects_each_week_on_the_system_its_entry_had_in_force(client):  # noqa: F811
+    url = f"/seasons/{PUBLIC}/scorecard"
+    before = client.get(url).json()
+    assert before["system"] is None
+    shown = [w["projected"] for w in before["weeks"]]
+    assert any(shown)
+    # The file now puts the league on Yahoo's: the weeks its entries projected on Basketball
+    # Monster's, in force when they were logged, keep their projections.
     path = client.data_dir / "autopilot" / "knobs.json"
     path.write_text(json.dumps({"leagues": {PUBLIC: {"system": "yahoo"}}}))
-    assert client.get(f"/seasons/{PUBLIC}/scorecard").json()["system"] == "yahoo"
-    assert client.get(f"/seasons/{OTHER}/scorecard").json()["system"] == "bbm"
-    named = client.get(f"/seasons/{PUBLIC}/scorecard", params={"system": "bbm"}).json()
-    assert named["system"] == "bbm"
+    assert [w["projected"] for w in client.get(url).json()["weeks"]] == shown
+    # A named system still wins: no entry was solved on Yahoo's.
+    named = client.get(url, params={"system": "yahoo"}).json()
+    assert named["system"] == "yahoo" and not any(w["projected"] for w in named["weeks"])
 
 
 def test_the_script_prints_the_steps_line_and_its_note(client):  # noqa: F811

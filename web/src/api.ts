@@ -1843,7 +1843,8 @@ export interface CalibrationBucket {
 export interface ScorecardPayload {
   league: string;
   public: boolean;
-  system: string;
+  /** The system named in the query; null when each week is scored on its entry's in force (#152). */
+  system: string | null;
   status: "recorded" | "not_recorded" | "no_team";
   week: number | null;
   card: ScorecardWeek | null;
