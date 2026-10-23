@@ -267,8 +267,8 @@ scorecard (#126) over all its recorded weeks, the knob file and the notes, and w
   of winning the matchup against the result, the categories expected against won, the Brier score,
   the standing after it, the week's moves (by group, their value projected and realized on the week,
   the scored ones compared on their judging horizon once it is over, the FAAB paid) and the
-  lineup's games lost (null:
-  not recorded yet), each with its running sums to it;
+  player-games lost to the lineup with the days read after they ended (#149; null when none
+  was), each with its running sums to it;
 - the public leagues pooled by week, the same, with the category odds' buckets of the week, and the
   calibration over the season;
 - every move, with its league, its players' names, the knobs in force at the entry it matched, its
