@@ -47,7 +47,14 @@ export const JUDGED_WEEKS = 2;
 export const UNITS: Record<Scoring, string> = { points: "fantasy points", categories: "category value" };
 export const UNITS_SHORT: Record<Scoring, string> = { points: "pts", categories: "value" };
 
-export const LINEUP_LOST_TITLE = "not recorded yet: counted once the lineup log exists";
+/** The Lineup lost column's header and a cell's tooltip (#149): what it counts and the days read,
+ * a day counting only when its lineup was read after it ended. */
+export const LINEUP_LOST_TITLE = "player-games lost to the lineup: a player who played while benched with an eligible slot open or idle, on the days whose lineup was read after they ended";
+
+export function lineupLostTitle(s: { lineupLost: number | null; lineupDaysRead: number; lineupDays: number }): string {
+  if (s.lineupLost == null) return "player-games lost to the lineup: no lineup read after its day";
+  return `player-games lost to the lineup: a player who played while benched with an eligible slot open or idle; ${s.lineupDaysRead} of ${s.lineupDays} days read`;
+}
 
 /** The scored moves whose horizon is over, each on the one its set was recommended for (#143),
  * summed: realized against projected. */
@@ -91,6 +98,11 @@ export interface ScopeWeek {
   /** The week's realized value of every valued move, by scoring. */
   realized: Partial<Record<Scoring, number>>;
   compared: Partial<Record<Scoring, MovesSum>>;
+  /** The player-games lost to the lineup over the leagues that read a day of the week (null when
+   * none did), the days read after they ended, and the week's days times its leagues. */
+  lineupLost: number | null;
+  lineupDaysRead: number;
+  lineupDays: number;
   lines: LeagueLine[];
 }
 
@@ -110,6 +122,11 @@ export function scopeLeagues(p: ProgressPayload, scope: string): ProgressLeague[
 }
 
 /** The scope's weeks, from ``from`` to ``to``, each as the leagues' rows sum it. */
+/** A week's days, its first and last counted. */
+function weekDays(w: { start: string; end: string }): number {
+  return Math.round((Date.parse(w.end) - Date.parse(w.start)) / 86_400_000) + 1;
+}
+
 export function scopeWeeks(p: ProgressPayload, scope: string, from = 1, to = Infinity): ScopeWeek[] {
   const leagues = scopeLeagues(p, scope);
   const out: ScopeWeek[] = [];
@@ -128,6 +145,7 @@ export function scopeWeeks(p: ProgressPayload, scope: string, from = 1, to = Inf
       if (r.moves.compared) compared[s] = addMoves(compared[s], r.moves.compared);
     }
     const count = (x: string) => rows.filter(({ r }) => r.outcome === x).length;
+    const lineup = rows.filter(({ r }) => r.lineup_lost != null);
     out.push({
       week: w.week,
       start: w.start,
@@ -144,6 +162,9 @@ export function scopeWeeks(p: ProgressPayload, scope: string, from = 1, to = Inf
       made: rows.reduce((a, { r }) => a + r.moves.made, 0),
       realized,
       compared,
+      lineupLost: lineup.length ? lineup.reduce((a, { r }) => a + r.lineup_lost!, 0) : null,
+      lineupDaysRead: rows.reduce((a, { r }) => a + (r.lineup_days_read ?? 0), 0),
+      lineupDays: rows.length * weekDays(w),
       lines: rows.map(({ league, r }) => ({ league, outcome: r.outcome, expected: r.expected, won: r.won, rank: r.rank })),
     });
   }
@@ -195,6 +216,9 @@ export interface RangeSum {
   compared: Partial<Record<Scoring, MovesSum>>;
   brierLast: number | null;
   brier: number | null;
+  lineupLost: number | null;
+  lineupDaysRead: number;
+  lineupDays: number;
 }
 
 export function rangeSum(weeks: ScopeWeek[]): RangeSum {
@@ -213,6 +237,9 @@ export function rangeSum(weeks: ScopeWeek[]): RangeSum {
     compared: {},
     brierLast: null,
     brier: null,
+    lineupLost: null,
+    lineupDaysRead: 0,
+    lineupDays: 0,
   };
   // The Brier score over the range is the mean over its matchups, not over its weeks.
   let brierSum = 0;
@@ -231,6 +258,9 @@ export function rangeSum(weeks: ScopeWeek[]): RangeSum {
       out.rankLast = w.rank;
     }
     out.made += w.made;
+    if (w.lineupLost != null) out.lineupLost = (out.lineupLost ?? 0) + w.lineupLost;
+    out.lineupDaysRead += w.lineupDaysRead;
+    out.lineupDays += w.lineupDays;
     for (const [s, v] of Object.entries(w.realized) as [Scoring, number][]) out.realized[s] = round((out.realized[s] ?? 0) + v);
     for (const [s, c] of Object.entries(w.compared) as [Scoring, MovesSum][]) out.compared[s] = addMoves(out.compared[s], c);
     if (w.brier != null) {

@@ -138,7 +138,8 @@ def week_card(
 ) -> dict[str, Any]:
     """A league's week: its projection (None when unprojected), its result (None when the
     record has none for me), each category projected against actual, my standing after it, and
-    ``moves``, my moves made that week as the decision log matched them."""
+    ``moves``, my moves made that week as the decision log matched them, and ``lineup``, my
+    games lost to the lineup as the record counted them (#149; None when not counted)."""
     week = week_of(record)
     entry = projection(entries, week, system)
     before = _before(entry)
@@ -176,6 +177,7 @@ def week_card(
         "cats": cats,
         "standing": standing(record, me),
         "moves": [dict(m) for m in moves],
+        "lineup": dict(record["lineup"]) if record.get("lineup") else None,
     }
 
 

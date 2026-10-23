@@ -308,8 +308,9 @@ comes back to it.
   Then the scope's sentences, the chart (actual solid, expected dashed, both summed over the
   range; the standing alone; each knob change a mark on the time axis that opens its sheet; a
   tip by week, with each league's result when pooled), the week strip, and the league table
-  (W-L, expected, the gap, moves, realized in the league's units, lineup games lost shown as a
-  dash until the lineup log exists, the place), each row opening its weeks.
+  (W-L, expected, the gap, moves, realized in the league's units, the player-games lost to the
+  lineup over the days read after they ended, #149, its tooltip saying how many of the range's
+  days were read and a dash when none was, the place), each row opening its weeks.
 - **Moves** (`m`): the same scope and range, and the moves made by match (as recommended,
   differently, not recommended, no solve before it), each counted. Each move is judged on the
   horizon its set was recommended for (the week's set, the streaming plan's and the strategy's

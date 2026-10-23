@@ -11,6 +11,9 @@ league's payload names the pages for the user's Chrome to open (``needs``).
 Every recommended day is slot by slot with player ids, for whatever applies it later; nothing
 here applies a lineup. The first alerts are the held players whose status cleared: each blocks
 every add until he is activated (Yahoo's rule).
+
+The weekly record's games lost to the lineup (#149, :func:`week_lost`) count only a day's
+lineup read after the day, the cached box scores saying who played.
 """
 
 from __future__ import annotations
@@ -23,9 +26,11 @@ from ..season import Player, Season
 from ..season import lineup as lu
 from ..season import moves as mv
 from ..season import weekly as wk
+from ..season.calendar import Week
 from ..season.state import SLOTS_PAGE, RosterSpot, SeasonSettings, lineup_key, roster_key
 from ..sources.yahoo import public
 from .season_moves import Built, cleared_payload
+from .season_scorecard import BoxScores
 from .season_week import NBA_TZ
 
 #: The days the digest's lineup line covers: today and tomorrow.
@@ -59,6 +64,53 @@ def yahoo_reads(season: Season, team: int, today: date) -> dict[date, Read]:
     if today not in out and read is not None and _local(read[0]) == today:
         out[today] = (season.rosters.get(team, ()), read[0], "team page")
     return out
+
+
+def final_reads(
+    season: Season, team: int, days: Sequence[date]
+) -> dict[date, tuple[RosterSpot, ...]]:
+    """``team``'s lineups of ``days`` read after the day, the only final ones (#149): a page
+    read on its own day may predate a change made later that day."""
+    out = {}
+    for day in days:
+        spots = season.lineups.get(team, {}).get(day)
+        read = season.fetched.get(lineup_key(team, day))
+        if spots is not None and read is not None and _local(read[0]) > day:
+            out[day] = spots
+    return out
+
+
+def week_lost(season: Season, week: Week, box: BoxScores) -> dict[str, Any] | None:
+    """My games lost to the lineup over ``week`` (``season.lineup.week_lost``), from the
+    lineups read after their day and the cached box scores: a player played when his line
+    there is not empty. None when the league has no team of mine."""
+    s = season.settings
+    team = s.my_team_id
+    if team is None:
+        return None
+    reads = final_reads(season, team, week.days())
+    games = box.days(week.start, week.end)
+    named = {
+        sp.player.yahoo_id: (sp.player.name, sp.player.nba_team)
+        for spots in reads.values()
+        for sp in spots
+    }
+    espn = {k: e for k, (e, _) in box.match(named, [g for d in games.values() for g in d]).items()}
+    played = {
+        day: {
+            k
+            for k, e in espn.items()
+            if any(
+                ((g.get("players") or {}).get(e) or {}).get("line") is not None for g in day_games
+            )
+        }
+        for day, day_games in games.items()
+    }
+    lineups = {
+        day: [(sp.slot, sp.player.yahoo_id, sp.player.positions) for sp in spots]
+        for day, spots in reads.items()
+    }
+    return lu.week_lost(week.days(), lineups, played, wk.starting_slots(s.roster), espn)
 
 
 def payload(

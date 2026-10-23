@@ -320,7 +320,8 @@ def client(tmp_path):
         moved("drop", 12, "BBB", "Oct 27, 9:00 am", 1),
     ]
     put_week(tmp_path, PUBLIC, record(1, "L"))
-    put_week(tmp_path, PUBLIC, {**record(2), "transactions": rows})
+    lineup = {"lost": 2, "days_read": 5, "days": 7, "unmatched": 0}
+    put_week(tmp_path, PUBLIC, {**record(2), "transactions": rows, "lineup": lineup})
     monday = entry("2026-10-26T12:00:00+00:00", "2026-10-26", 0.7)
     move = logged(11, 12)
     tuesday = {
@@ -332,11 +333,11 @@ def client(tmp_path):
     put_entries(tmp_path, PUBLIC, "2026-10-26", [monday])
     put_entries(tmp_path, PUBLIC, "2026-10-27", [tuesday])
     put_week(tmp_path, OTHER, record(1))
-    put_week(tmp_path, OTHER, record(2, "L"))
+    put_week(tmp_path, OTHER, {**record(2, "L"), "lineup": {**lineup, "lost": 1, "days_read": 7}})
     put_entries(
         tmp_path, OTHER, "2026-10-26", [entry("2026-10-26T12:00:00+00:00", "2026-10-26", 0.4)]
     )
-    put_week(tmp_path, PRIVATE, record(2, "T"))
+    put_week(tmp_path, PRIVATE, {**record(2, "T"), "lineup": {**lineup, "lost": 4, "days_read": 7}})
     games = [
         box_game("2026-10-27", 23, ["AAA", "BBB"], e11=20.0, e12=8.0),
         box_game("2026-10-29", 23, ["AAA", "CCC"], e11=10.0),
@@ -420,7 +421,11 @@ def test_progress_gives_the_season_by_week_pooled_with_the_moves_knobs_and_notes
     assert first[0]["expected"] is None and first[0]["won"] == 0.0
     week2 = first[1]
     assert (week2["expected"], week2["won"], week2["brier"]) == (0.7, 1.0, 0.09)
-    assert week2["lineup_lost"] is None and week2["moves"]["made"] == 1
+    assert week2["moves"]["made"] == 1
+    # The games lost to the lineup, with the days read (#149); none read before the count.
+    assert (week2["lineup_lost"], week2["lineup_days_read"], week2["lineup_days"]) == (2, 5, 7)
+    assert first[0]["lineup_lost"] is None and first[0]["lineup_days_read"] == 0
+    assert week2["cum"]["lineup"] == {"lost": 2, "days_read": 5, "days": 7}
     assert week2["moves"]["compared"]["moves"] == 1
     assert week2["cum"]["weeks"] == 1 and week2["cum"]["won"] == 1.0
     assert week2["cum"]["won_all"] == 1.0 and week2["cum"]["expected"] == 0.7
@@ -431,6 +436,10 @@ def test_progress_gives_the_season_by_week_pooled_with_the_moves_knobs_and_notes
     assert (pooled[2]["expected"], pooled[2]["won"]) == (1.1, 1.0)
     assert pooled[2]["brier"] == pytest.approx((0.09 + 0.16) / 2)
     assert pooled[2]["cum"]["moves"]["categories"]["compared"]["moves"] == 1
+    # Pooled over the public leagues only: the private league's four are not in.
+    assert pooled[2]["lineup"] == {"lost": 3, "days_read": 12, "days": 14}
+    assert pooled[1]["lineup"] == {"lost": None, "days_read": 0, "days": 0}
+    assert pooled[2]["cum"]["lineup"] == {"lost": 3, "days_read": 12, "days": 14}
     assert out["pooled"]["calibration"]["weeks"] == 2
     # The move, with its names, the knobs at its solve, its odds and its value by category.
     (move,) = out["moves"]

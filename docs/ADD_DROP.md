@@ -391,15 +391,29 @@ out, any of the Moves card's four weeks.
 - **First day.** A day before the first day a change counts (the move model's first day, or
   tomorrow in a league whose changes count from tomorrow) shows Yahoo's lineup only.
 - **Yahoo's lineup.** My team page shown for the day (`lineup/<team>/<day>`), or for today the
-  team page read today. A public refresh reads each day of this week before today once and
-  today and the days after it every time; lineup parts older than fourteen days are dropped
-  when the season is saved. The private league's pages come from the user's Chrome
+  team page read today. A public refresh reads today and the days after it every time, and
+  each day before today of this week or the last until it was read after the day (#149): a
+  lineup read on its own day may change later that day. Lineup parts older than fourteen days
+  are dropped when the season is saved. The private league's pages come from the user's Chrome
   (extension 0.5.3): the route's `needs` lists the settings page until read and each day ahead
   not read today, and the weekly recorder's response lists them as `lineup_pages`, after the
-  schedule pages.
+  schedule pages, with each day of the week recorded not read after it.
 - **Comparison.** Per day, the players each lineup starts who play that day; the games lost are
   the recommended count less Yahoo's, and `start` and `sit` name the difference. Two lineups that
   start the same players in other slots are no difference.
+- **Games lost (#149).** The weekly record counts my player-games lost to the lineup as set:
+  per day, the most of my starters and benched players who played that the starting slots can
+  hold, less my starters who played (`season.lineup.lost_games`). That is the issue's rule made
+  exact, and it supersedes the issue's one-by-one wording: a benched player who played counts
+  when a slot he fits was open or held a player without a game, or could be freed by moving its
+  starter to one, and two benched players who could take only one such slot count once. Held
+  slots neither start nor count. Who played is the box-score cache's (#126): a line that is not
+  empty. A day counts only with its lineup read after the day and its box scores cached; any
+  other day is not read and adds nothing. The record's `lineup` is `{lost, days_read, days,
+  unmatched}` (`lost` None when no day was read; `unmatched` the players of a read day's
+  starting slots or bench whom no box score of the week matched), kept until a record that read
+  more of its days. The scorecard's card carries it, the Progress view's league table shows it
+  with the days read, and the Monday markdown sums it over the public leagues.
 - **Payload.** For an executor to consume later, every recommended day is slot by slot in the
   league's slot order with Yahoo player ids (`recommended: [{slot, player}]`, the bench beside
   it), and Yahoo's as read the same way with when and from which page it was read. Then the held
@@ -608,7 +622,10 @@ last recorded week when left out. The metric is docs/AUTOPILOT.md's, section 6.
   season-costly, each with how many of them realized below zero so far. No value in scorer units
   appears there, for a move or summed (master's ruling, 2026-10-22: docs/AUTOPILOT.md section
   8 keeps Basketball Monster numbers and what reduces to one out of the issue); the values stay
-  in the JSON, the script's lines and the card.
+  in the JSON, the script's lines and the card. Since #149 a line sums the player-games lost to
+  the lineup over the public leagues, with the league-days read of those recorded ("Lineup: N
+  player-games lost over the public leagues (D of T league-days read)"), left out when no day
+  was read.
 - **Script.** `scripts/season.py scorecard [league ...] [--week N] [--json]`: the week's
   markdown, or one line per league named.
 - **The card (part 3).** Card 8 on the league page's rail, Scorecard: the last recorded week
@@ -968,8 +985,8 @@ phase 2 on.
    user's Chrome. `GET /seasons/{league}/weeks` serves the Weeks block on the league card.
    `scripts/season.py record --all` prints one line per league and exits non-zero only when
    the API is unreachable. Since #126 a record also keeps the week's transactions, merged
-   across the transactions pages read through it, for the Monday scorecard's moves. The
-   scheduled task `weekly-recorder-monday` runs it every Monday at
+   across the transactions pages read through it, for the Monday scorecard's moves, and since
+   #149 my player-games lost to the lineup ("Lineups", games lost). The scheduled task `weekly-recorder-monday` runs it every Monday at
    06:00 on the Mac's clock and opens the private league's needed pages read-only in the
    user's Chrome (set up 2026-10-21).
 
