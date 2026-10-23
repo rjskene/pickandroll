@@ -73,13 +73,14 @@ def week_row(card: Mapping[str, Any]) -> dict[str, Any]:
     """A league's week: the odds of winning the matchup against the result, the categories
     expected against won, the Brier score, the standing after it, and its moves (how many, by
     group, their value projected and realized on the week, and the scored ones compared on the
-    horizon each was recommended for once it is over, ``compared``, #143); the lineup's games
-    lost are not recorded yet."""
+    horizon each was recommended for once it is over, ``compared``, #143), and the games lost
+    to the lineup (#149) with the days read, None when no day was."""
     proj, act = card.get("projected"), card.get("actual")
     won = _won(card)
     expected = proj["matchup"] if proj and won is not None else None
     summary = moves_summary(card["moves"])
     standing = card.get("standing") or {}
+    lineup = card.get("lineup") or {}
     return {
         "week": card["week"],
         "start": card["start"],
@@ -102,7 +103,9 @@ def week_row(card: Mapping[str, Any]) -> dict[str, Any]:
             "compared": summary["compared"],
             "paid": sum(m.get("bid") or 0 for m in card["moves"]),
         },
-        "lineup_lost": None,
+        "lineup_lost": lineup.get("lost") if lineup.get("days_read") else None,
+        "lineup_days_read": lineup.get("days_read") or 0,
+        "lineup_days": lineup.get("days") or 0,
     }
 
 
@@ -110,9 +113,21 @@ def _sum(rows: Iterable[Mapping[str, Any]], key: str) -> float:
     return round(sum(r[key] for r in rows), 4)
 
 
+def _lineup(rows: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+    """The games lost to the lineup over some week rows, summed over the weeks that read a day
+    (None when none did), and the days read and the days over all of them."""
+    counted = [r["lineup_lost"] for r in rows if r["lineup_lost"] is not None]
+    return {
+        "lost": sum(counted) if counted else None,
+        "days_read": sum(r["lineup_days_read"] for r in rows),
+        "days": sum(r["lineup_days"] for r in rows),
+    }
+
+
 def _running(rows: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
     """The sums of some week rows: wins and the matchup odds over the projected weeks, every
-    win, and the categories expected and won over the weeks with both."""
+    win, the categories expected and won over the weeks with both, and the games lost to the
+    lineup (:func:`_lineup`)."""
     projected = [r for r in rows if r["expected"] is not None]
     cats = [r for r in rows if r["expected_categories"] is not None and r["categories"] is not None]
     return {
@@ -122,6 +137,7 @@ def _running(rows: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
         "won_all": _sum([r for r in rows if r["won"] is not None], "won"),
         "expected_categories": _sum(cats, "expected_categories") if cats else None,
         "categories": _sum(cats, "categories") if cats else None,
+        "lineup": _lineup(rows),
     }
 
 

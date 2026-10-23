@@ -1864,6 +1864,14 @@ export type Scoring = "categories" | "points";
 
 /** Wins and categories summed over some weeks: the wins and the matchup odds over the projected
  * weeks, every win, and the categories over the weeks with both. */
+/** The player-games lost to the lineup over some weeks (#149): summed over the weeks that read
+ * a day (null when none did), with the days read after they ended and the days. */
+export interface LineupLost {
+  lost: number | null;
+  days_read: number;
+  days: number;
+}
+
 export interface ProgressRunning {
   weeks: number;
   expected: number;
@@ -1871,6 +1879,7 @@ export interface ProgressRunning {
   won_all: number;
   expected_categories: number | null;
   categories: number | null;
+  lineup?: LineupLost;
 }
 
 /** A league's week on the Progress view, with its running sums to it. */
@@ -1900,8 +1909,12 @@ export interface ProgressWeek {
     compared: MovesCompared | null;
     paid: number;
   };
-  /** Not recorded yet: counted once the lineup log exists. */
+  /** The player-games lost to the lineup (#149): a player who played while benched with a slot
+   * he fit open or idle, over the days whose lineup was read after the day; null when none was. */
   lineup_lost: number | null;
+  /** The days read after they ended, and the week's days the record counted. */
+  lineup_days_read?: number;
+  lineup_days?: number;
   cum: ProgressRunning & {
     moves: { made: number; realized_value: Partial<Record<MoveHorizon, number>>; compared: MovesCompared | null };
   };

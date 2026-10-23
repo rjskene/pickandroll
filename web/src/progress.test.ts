@@ -16,6 +16,7 @@ import {
   movesTrend,
   scopeMoves,
   knobValue,
+  lineupLostTitle,
   POOLED,
   rangeSum,
   recordedRange,
@@ -191,6 +192,31 @@ test("the range's sums give the record, the moves by scoring and the Brier score
   // Week 1: (0.16 + 0.01) / 2; week 2: (0.25 + 0.09) / 2; the mean over the four matchups.
   assert.equal(s.brierLast, 0.17);
   assert.equal(s.brier, 0.1275);
+});
+
+test("the games lost to the lineup sum the weeks read and say how many of their days were (#149)", () => {
+  const p = payload([league("1001", true, [row(1), row(2, { lineup_lost: 2, lineup_days_read: 5, lineup_days: 7 })])]);
+  const weeks = scopeWeeks(p, "1001");
+  assert.deepEqual(
+    weeks.map((w) => [w.lineupLost, w.lineupDaysRead, w.lineupDays]),
+    [
+      [null, 0, 7],
+      [2, 5, 7],
+    ],
+  );
+  // A week recorded before the count is a week of days not read.
+  const s = rangeSum(weeks);
+  assert.deepEqual([s.lineupLost, s.lineupDaysRead, s.lineupDays], [2, 5, 14]);
+  assert.equal(lineupLostTitle(s), "player-games lost to the lineup: a player who played while benched with an eligible slot open or idle; 5 of 14 days read");
+  assert.equal(lineupLostTitle(rangeSum(weeks.slice(0, 1))), "player-games lost to the lineup: no lineup read after its day");
+  // Pooled: the public leagues' games and their league-days.
+  const two = payload([
+    league("1001", true, [row(2, { lineup_lost: 2, lineup_days_read: 5 })]),
+    league("1002", true, [row(2, { lineup_lost: 0, lineup_days_read: 7 })]),
+    league("2001", false, [row(2, { lineup_lost: 4, lineup_days_read: 7 })]),
+  ]);
+  const [week2] = scopeWeeks(two, POOLED);
+  assert.deepEqual([week2.lineupLost, week2.lineupDaysRead, week2.lineupDays], [2, 12, 14]);
 });
 
 test("moves sums add up and keep their share", () => {

@@ -641,6 +641,21 @@ def _realized_line(label: str, payloads: Sequence[Mapping[str, Any]]) -> str | N
     return f"- Realized, {label}: this week {this}. Season to date {_realized_counts(season)}."
 
 
+def _lineup_line(payloads: Sequence[Mapping[str, Any]]) -> str | None:
+    """The week's games lost to the lineup summed over ``payloads`` (#149), with the days read
+    of the days recorded; None when no day was read."""
+    counts = [p["card"]["lineup"] for p in payloads if p.get("card") and p["card"].get("lineup")]
+    read = [c for c in counts if c.get("days_read")]
+    if not read:
+        return None
+    lost = sum(c["lost"] for c in read)
+    return (
+        f"- Lineup: {lost} player-game{'s' if lost != 1 else ''} lost over the public leagues "
+        f"({sum(c['days_read'] for c in counts)} of {sum(c['days'] for c in counts)} "
+        "league-days read)."
+    )
+
+
 def markdown(
     week: int,
     payloads: Sequence[Mapping[str, Any]],
@@ -675,6 +690,8 @@ def markdown(
         )
     public = [p for p in payloads if p["public"]]
     private = [p for p in payloads if not p["public"]]
+    if lineup := _lineup_line(public):
+        lines.append(lineup)
     head = [
         "| League | Projected | Result | Categories | Standing | Moves |",
         "|---|---|---|---|---|---|",

@@ -322,6 +322,7 @@ def assemble(
     owners: Mapping[int, int | str | None] | None,
     owners_at: datetime | None,
     transactions: Sequence[Mapping[str, Any]] = (),
+    lineup: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """The week's record from what was read (``season.record.settle`` stamps it)."""
     points = settings.scoring == "points"
@@ -366,4 +367,5 @@ def assemble(
         missing=missing,
         sources={"pages": inputs.source, **({"players": lines_from} if lines_from else {})},
         transactions=transactions,
+        lineup=lineup,
     )

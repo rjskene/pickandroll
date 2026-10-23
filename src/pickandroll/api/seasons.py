@@ -97,6 +97,7 @@ from ..season import (
     Part,
     Season,
     SeasonSettings,
+    Week,
     build_calendar,
     lineup_key,
     matchup_key,
@@ -758,9 +759,10 @@ class SeasonService:
                     public.pairings_url(league, w) for w in season.weeks_unpaired(today, calendar)
                 ]
             )
-            # The private league's lineup pages (#107): its settings page until read, and my
-            # team page shown for each day of this week from today.
-            lineup_pages = [] if is_public else _lineup_pages(season, calendar, today)
+            # The private league's lineup pages (#107): its settings page until read, my team
+            # page shown for each day of this week from today, and for each day of the week
+            # recorded not read after it (#149).
+            lineup_pages = [] if is_public else _lineup_pages(season, calendar, today, week)
             # And its transactions page until read today, for the decision log's match (#125).
             read = season.fetched.get("transactions")
             moves_page = (
@@ -819,6 +821,9 @@ class SeasonService:
             read_pages = season_record.transaction_pages(
                 folder / SNAPSHOTS, week, parts.get("transactions")
             )
+            box = season_scorecard.BoxScores.at(self.data_dir, today)
+            lineup = season_lineup.week_lost(season, week, box)
+            self._save_ids(box)
             new = season_record.assemble(
                 league,
                 week,
@@ -830,6 +835,7 @@ class SeasonService:
                 owners,
                 owners_at,
                 season_rec.week_transactions(read_pages, week),
+                lineup,
             )
             out, status = season_rec.settle(
                 season_record.load_record(folder, week.number), new, self.clock()
@@ -1072,13 +1078,17 @@ class SeasonService:
     def _lineup_days(
         self, league: str, team: int | None, calendar: Calendar | None, today: date
     ) -> list[date]:
-        """The days of this week whose lineup a refresh reads: each day before today once, today
-        and the days after it every time (#107)."""
+        """The days whose lineup a refresh reads: today and the days after it in this week every
+        time (#107), and each day before today of this week or the last until it was read after
+        the day (#149), since a lineup read on its own day may change later that day."""
         week = calendar.week_of(today) if calendar is not None else None
-        if week is None or team is None:
+        if calendar is None or week is None or team is None:
             return []
+        last = calendar.week_of(week.start - timedelta(days=1))
         parts = load_parts(self.data_dir, league)
-        return [d for d in week.days() if d >= today or lineup_key(team, d) not in parts]
+        past = [d for w in (last, week) if w is not None for d in w.days() if d < today]
+        again = [d for d in past if not _read_after(parts.get(lineup_key(team, d)), d)]
+        return again + week.days(today)
 
     def _unpaired(
         self,
@@ -1256,14 +1266,29 @@ def _known_key(key: str) -> bool:
     return key in fixed or key.startswith(("roster/", "matchup/", "pairings/", "lineup/"))
 
 
-def _lineup_pages(season: Season, calendar: Calendar | None, today: date) -> list[str]:
+def _read_after(part: Part | None, day: date) -> bool:
+    """Whether a day's lineup was read after the day, so that it is final (#149)."""
+    return part is not None and nba_today(part.fetched_at) > day
+
+
+def _lineup_pages(
+    season: Season, calendar: Calendar | None, today: date, recorded: Week | None = None
+) -> list[str]:
     """The pages a private league's lineups need from the user's Chrome: the settings page
-    until it was read, and my team page shown for each day of this week from today."""
+    until it was read, my team page shown for each day of this week from today, and for each
+    day of the ``recorded`` week not read after it (#149)."""
     s = season.settings
     out = [] if s.held_from == SLOTS_PAGE else [public.settings_page_url(s.league)]
     week = calendar.week_of(today) if calendar is not None else None
     if week is not None and s.my_team_id is not None:
         out += [public.team_url(s.league, s.my_team_id, d) for d in week.days(today)]
+    if recorded is not None and s.my_team_id is not None:
+        final = season_lineup.final_reads(season, s.my_team_id, recorded.days())
+        out += [
+            public.team_url(s.league, s.my_team_id, d)
+            for d in recorded.days()
+            if d < today and d not in final
+        ]
     return out
 
 

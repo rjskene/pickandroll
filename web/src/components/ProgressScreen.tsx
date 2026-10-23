@@ -25,6 +25,7 @@ import {
   KNOB_TITLE,
   knobValue,
   LINEUP_LOST_TITLE,
+  lineupLostTitle,
   METRICS,
   moveKey,
   POOLED,
@@ -503,8 +504,8 @@ function LeagueTable({
                   <td className="num" title={UNITS[scoring]}>
                     {realized == null ? "" : unitsLabel(realized, scoring)}
                   </td>
-                  <td className="num dim" title={LINEUP_LOST_TITLE}>
-                    —
+                  <td className={s.lineupLost == null ? "num dim" : "num"} title={lineupLostTitle(s)}>
+                    {s.lineupLost ?? "—"}
                   </td>
                   <td className="num">{s.rankLast == null ? "" : ordinal(s.rankLast)}</td>
                   <td>
