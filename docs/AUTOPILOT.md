@@ -143,6 +143,19 @@ set's expected categories stays the headline beside it. Beside it: the week odds
 and the standings. The scorecard (#126, docs/ADD_DROP.md "Scorecard") computes all of it from
 the decision log (#125) and the recorder (#97).
 
+Ruled 2026-10-23 (#143, #144): every move is judged on the horizon its set was recommended for,
+everywhere the scorecard speaks (the summary, the sentences, the Monday markdown, the Progress
+screen's tiles and Moves view): the week's set and the streaming plan on the week, the three weeks'
+set and the strategy's on the three weeks after, a strategy set solved under the season weight on the
+season once that horizon exists, a move with no projection of its own on the week. The season is
+what counts: a move that wins its week can still cost the season, so every move also carries a
+season horizon (its projection from the move's day to the regular season's last day, games from the
+schedule as far as read and extrapolated beyond it, and its realized value so far), shown beside the
+judging figure, never in its place; a move whose recommended-horizon gain is positive and whose
+season projection is below minus the protection floor is flagged season-costly, and the scorecard
+counts those and how many of them realized below zero. The check measures the keep rule; it does not
+change the engine.
+
 **The knobs**, each with bounds the Monday step may move within:
 
 | knob | where | bounds |
@@ -338,3 +351,5 @@ never a Basketball Monster number.
 - 2026-10-22, night: the keep rule as section 4 reads (#124, a forced keep on every horizon); the
   scorecard's realized gain per move in scorer units from ESPN's box scores, every game counting
   (#126).
+- 2026-10-23, night: every move judged on its recommended horizon everywhere (#143); the season
+  horizon, the season check and its flag (#144), the season being what counts.
