@@ -177,6 +177,10 @@ class MoveProblem:
     floor: float = PROTECTION_FLOOR
     #: My players no move may drop: those the keep rule keeps (:func:`keep_rule`).
     kept: frozenset[int] = frozenset()
+    #: The streaming plan's floor and its moves a day (knobs, #152); None for the stream's own
+    #: defaults (``season.stream``).
+    plan_floor: float | None = None
+    daily_cap: int | None = None
 
 
 def day_of(problem: MoveProblem, move: Move) -> date:

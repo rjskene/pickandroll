@@ -106,6 +106,16 @@ games.
   ownership view. The private league gets it when the user opens that view in Chrome, or when
   they arm a read from the side panel, which walks both views (extension 0.5.1). The Waivers
   table shows one system's nine totals, and hovering a total shows the other's.
+- **The blend** (#152, `system=blend`). For a player Yahoo projects, each per-game rate is
+  (1 − w) × Basketball Monster's + w × Yahoo's, w the knob file's `blend` (Yahoo's share, 0.5
+  when the file names the blend system and no weight); everyone else keeps Basketball Monster's
+  line, and a player only Yahoo projects keeps Yahoo's. A per-game value is the same mix of the
+  two systems' own. The routes take `blend` as a system name; the dashboard's select still offers
+  the two systems.
+- **The system in force** (#152). A route that names no system solves on the one the knob file
+  (`data/autopilot/knobs.json`, docs/AUTOPILOT.md section 6) has in force for the league,
+  Basketball Monster's without one; a named system wins. The dashboard always names one, so the
+  file's system reaches the routines' solves (the digest's moves and lineups) and not the panel.
 - **Spread.** A counting category's weekly variance is φ_c times its weekly total. A percentage's
   variance sums, over started games, the binomial variance of makes on the attempts plus the
   attempts' own variance times (p − p_team)², taken over the team's total attempts. A points
@@ -239,8 +249,8 @@ keep rule").
   average is zero for a categories league's z-sums and, in a points league, the mean of the
   players the league rosters (its teams times their active spots, the best by value).
 - **Protected**: all three of net positive (his value above the pool's average), better than
-  the best available add's value by the protection floor (`season_moves.PROTECTION_FLOOR`,
-  zero until the knob file sets it), and back this season. Out for the season, or INJ, SUSP or
+  the best available add's value by the protection floor (the knob file's `protection_floor`,
+  #152; `season_moves.PROTECTION_FLOOR`, zero, without one), and back this season. Out for the season, or INJ, SUSP or
   NA with no return date, is never protected; an O without a date is back next Monday.
 - **Benched**: better than the best add by the floor, not net positive, and back within seven
   days (`SHORT_ABSENCE_DAYS`). A replacement-level player out a few days is streamed like any
@@ -369,7 +379,9 @@ never solves; `POST` with `pool`, `weights`, `lock` (my players never dropped, r
 `program_only` starts one, replacing an older run of that league and system (`wait=true` blocks
 until it finishes, for tests). A run searches every weight, then solves the programs in a
 background process pool while the searches' sets are priced, then chooses. The card is the rail's
-seventh: it opens on the natural weight with a Solve button and solves nothing on load; the
+seventh: it opens on the recommended weight (the knob file's `horizon_weight`, #152, the natural
+weight by default; its tab says "recommended", and nothing executes it) with a Solve button and
+solves nothing on load; the
 frontier plots each weight's set by its gain this week across and over the rest of the season
 up, hollow the search's, solid the program's, half both, the natural weight ringed; a weight's
 tab shows the set with a lock on each drop, the categories before and after, the first-order
@@ -430,10 +442,12 @@ when left out.
   nothing) and each strategy run that solved appends one entry to
   `data/leagues/<id>/season/decisions/<date>.json`, the date in US Eastern, for every system
   solved. An entry holds its time, the route, the projection system with its export file, the
-  knobs in force (`knobs`: the system, then the blend weight, the horizon weight, the protection
-  floor, the stash threshold, the FAAB sizing and the daily move cap of docs/AUTOPILOT.md, null
-  until the knob file of phase 3 sets them; `protection_floor` is the floor the keep rule used,
-  #124; `plan_floor_cats` and `plan_floor_points` the streaming plan's, #136), the first day a
+  knobs the solve ran with (`knobs`, #152: every knob of docs/AUTOPILOT.md section 6, the
+  league's from the knob file over the code's defaults, with the system the solve ran on: the
+  system and the blend weight, the horizon weight the strategy marks recommended, the keep rule's
+  protection floor, #124, the streaming plan's floors, #136, and its moves a day, and the stash
+  threshold and the FAAB sizing, recorded though nothing reads them; a strategy entry also names
+  its `recommended` weight and marks that weight's set), the first day a
   move counts, the adds left, the horizons' labels and the pool (the moves route's search pool,
   candidates and floor; the strategy's players and settings). Then one set per horizon (moves)
   or per weight (strategy):

@@ -15,7 +15,6 @@ summed across the two; their realized share of the projection is what compares a
 
 from __future__ import annotations
 
-import json
 from collections.abc import Iterable, Mapping, Sequence
 from datetime import date
 from pathlib import Path
@@ -24,27 +23,13 @@ from typing import Any
 from ..season import progress as pg
 from ..season import scorecard as sc
 from ..season.calendar import Week
+from .season_knobs import autopilot_dir
 from .season_scorecard import moves_summary
 
-AUTOPILOT_DIR = "autopilot"
-KNOBS_FILE = "knobs.json"
 NOTES_DIR = "notes"
 
 
 # --------------------------------------------------------------------------- the files
-def autopilot_dir(data_dir: Path) -> Path:
-    return data_dir / AUTOPILOT_DIR
-
-
-def load_knobs(data_dir: Path) -> tuple[Any, list[str]]:
-    """The knob file's JSON, None when there is none; a file that is not JSON is a problem."""
-    path = autopilot_dir(data_dir) / KNOBS_FILE
-    try:
-        return json.loads(path.read_text()), []
-    except FileNotFoundError:
-        return None, []
-    except ValueError as exc:
-        return None, [f"{KNOBS_FILE} is not JSON: {exc}"]
 
 
 def load_notes(data_dir: Path) -> tuple[list[dict[str, Any]], list[str]]:

@@ -118,12 +118,16 @@ class Run:
         #: and the end.
         self.timing: dict[str, float] = {}
         self._t0 = time.perf_counter()
+        #: The weight the knob file recommends (#152, natural by default): marked, never
+        #: executed.
+        self.recommended = built.knobs.get("horizon_weight")
         self.points: dict[str, dict[str, Any]] = {
             w.key: {
                 "key": w.key,
                 "label": w.label,
                 "lambda": round(w.lam, 4),
                 "natural": w.natural,
+                "recommended": w.key == self.recommended,
                 "stage": "waiting",
             }
             for w in self.weights
@@ -150,6 +154,7 @@ class Run:
                 "system": b.system,
                 "weeks_left": b.weeks_left,
                 "settings": self.settings.to_dict(),
+                "recommended": self.recommended,
                 "keep_rule": season_moves.keep_payload(b),
                 "pool": list(self.pool),
                 "horizons": horizons,

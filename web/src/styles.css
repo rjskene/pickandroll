@@ -260,6 +260,7 @@ tr.hl td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
 .frontier .key svg { display: inline-block; width: 12px; height: 12px; overflow: visible; cursor: default; }
 .card .strategy-go { flex-direction: row; align-items: center; gap: 12px; flex-wrap: wrap; }
 .strategy-tabs { flex-shrink: 0; align-self: flex-start; }
+.strategy-tabs .rec-mark { font-size: 11px; font-weight: 400; opacity: 0.8; }
 .season-table.strategy-moves th, .season-table.strategy-moves td { padding: 3px 3px; }
 .lock-toggle { padding: 0 2px; vertical-align: -1px; color: var(--dim); }
 .lock-toggle:hover, .lock-toggle.on { color: var(--accent); }

@@ -26,7 +26,7 @@ from typing import Any
 from ..season import Season
 from ..season import decisions as dl
 from ..season import moves as mv
-from ..season import stream as st
+from ..season import progress as pg
 from ..season import weekly as wk
 from . import season_moves
 from .season_moves import Built
@@ -41,20 +41,6 @@ SHOWN_DAYS = 7
 #: the league's clock, is the assumption; the user's Mac runs on US Central. A move within an
 #: hour of a solve is flagged ``near`` (``decisions.NEAR``) so a wrong zone shows.
 TRANSACTIONS_TZ = NBA_TZ
-#: The AUTOPILOT knobs (docs/AUTOPILOT.md, section 6) an entry records as in force: the
-#: projection system (the solve's own), the keep rule's protection floor (#124) and the
-#: streaming plan's floors (#136), then the blend weight, the strategy's horizon weight, the
-#: stash threshold, the FAAB sizing and the daily move cap, None until the knob file (phase 3)
-#: sets them.
-KNOBS = (
-    "blend",
-    "horizon_weight",
-    "protection_floor",
-    "stash_threshold",
-    "faab_sizing",
-    "daily_cap",
-)
-
 _lock = threading.Lock()
 
 
@@ -117,16 +103,12 @@ def _week(ev: mv.Evaluator, moves: Sequence[mv.Move]) -> dict[str, Any]:
     return {"before": week_block(ev, []), "after": week_block(ev, moves)}
 
 
-def knobs(system: str, floor: float | None = None) -> dict[str, Any]:
-    """The knobs in force for a solve on ``system`` with the keep rule's ``floor``, and the
-    streaming plan's floors in a categories and a points league."""
-    return {
-        "system": system,
-        **dict.fromkeys(KNOBS),
-        "protection_floor": floor,
-        "plan_floor_cats": st.PLAN_FLOOR_CATS,
-        "plan_floor_points": st.PLAN_FLOOR_POINTS,
-    }
+def knobs(built: Built) -> dict[str, Any]:
+    """The AUTOPILOT knobs (docs/AUTOPILOT.md, section 6) the solve ran with, every one of
+    ``season.progress.KNOBS`` whether the solve uses it or not (#152): the projection system and
+    its blend weight, the strategy's recommended weight, the keep rule's protection floor, the
+    streaming plan's floors and moves a day, the stash threshold and the FAAB sizing."""
+    return {k: built.knobs.get(k) for k in pg.KNOBS}
 
 
 def _logged(move: Mapping[str, Any], built: Built | None = None) -> dict[str, Any]:
@@ -174,7 +156,7 @@ def _common(built: Built, at: datetime, source: str) -> dict[str, Any]:
         "at": at.isoformat(),
         "source": source,
         "system": built.system,
-        "knobs": knobs(built.system["key"], built.problem.floor),
+        "knobs": knobs(built),
         "first_day": p.first_day.isoformat(),
         "adds": built.adds,
         "horizons": {k: built.horizons[k]["label"] for k in season_moves.HORIZONS},
@@ -256,7 +238,8 @@ def plan_verdict(plan: Mapping[str, Any] | None) -> dict[str, Any] | None:
 
 def strategy_entry(built: Built, payload: Mapping[str, Any], at: datetime) -> dict[str, Any]:
     """A strategy run that solved: each weight's chosen set and its source, its gains (this
-    week, three weeks, the season) and this week before and after."""
+    week, three weeks, the season) and this week before and after, the weight the knob file
+    recommends marked (#152)."""
     ev = mv.Evaluator(built.problem)
     floor = built.problem.floor
     sets = []
@@ -270,6 +253,7 @@ def strategy_entry(built: Built, payload: Mapping[str, Any], at: datetime) -> di
                 "key": point["key"],
                 "weight": point["lambda"],
                 "natural": point.get("natural", False),
+                "recommended": point.get("recommended", False),
                 "source": point.get("source"),
                 "moves": moves,
                 "gain": point.get("gain"),
@@ -280,6 +264,7 @@ def strategy_entry(built: Built, payload: Mapping[str, Any], at: datetime) -> di
         **_common(built, at, "strategy"),
         "pool": {"size": len(payload.get("pool") or []), "players": list(payload["pool"])},
         "settings": payload.get("settings"),
+        "recommended": payload.get("recommended"),
         "sets": sets,
     }
 

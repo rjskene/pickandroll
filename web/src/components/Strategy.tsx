@@ -156,8 +156,16 @@ export default function Strategy({ league, s, system, onPick }: { league: string
           {points.length > 1 && (
             <div className="seg strategy-tabs" role="tablist" aria-label="Weight">
               {points.map((p) => (
-                <button key={p.key} role="tab" aria-selected={p.key === at?.key} className={p.key === at?.key ? "on" : undefined} onClick={() => setChosen(p.key)} title={`${p.label}: λ ${p.lambda}`}>
+                <button
+                  key={p.key}
+                  role="tab"
+                  aria-selected={p.key === at?.key}
+                  className={p.key === at?.key ? "on" : undefined}
+                  onClick={() => setChosen(p.key)}
+                  title={`${p.label}: λ ${p.lambda}${p.recommended ? "; the recommended weight" : ""}`}
+                >
                   {SHORT[p.key]}
+                  {p.recommended && <span className="rec-mark"> · recommended</span>}
                 </button>
               ))}
             </div>

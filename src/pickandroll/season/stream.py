@@ -11,8 +11,9 @@ own moves from the set, so it never takes the adds the set gives them.
 A spot's path says who holds it each day from the first day to the week's last. Each change of
 holder is one dated move (``moves.Move`` with its ``day``) whose drop is the holder before, so a
 later step drops an earlier step's add. The path keeps to the week's adds left, at most
-:data:`DAILY_CAP` moves a day (the base's included, docs/AUTOPILOT.md section 2), each candidate
-from his effective day on (a claim's clear date), and nobody holds the spot twice.
+:data:`DAILY_CAP` moves a day or the problem's own cap (a knob, #152; the base's included,
+docs/AUTOPILOT.md section 2), each candidate from his effective day on (a claim's clear date),
+and nobody holds the spot twice.
 
 The search is a dynamic programme over the days with a cheap score: a holder's day is worth his
 per-game value (the league scorer's, net of an empty line) when he has a game that day and would
@@ -245,7 +246,8 @@ def _room(
     for m in moves:
         day = mv.day_of(problem, m)
         used[day] = used.get(day, 0) + 1
-    return {d: DAILY_CAP - used.get(d, 0) for d in days}
+    cap = DAILY_CAP if problem.daily_cap is None else problem.daily_cap
+    return {d: cap - used.get(d, 0) for d in days}
 
 
 def _adds_left(problem: mv.MoveProblem, moves: Sequence[mv.Move], week: date) -> int:
@@ -329,8 +331,10 @@ def plan(
 
 
 def floor_of(problem: mv.MoveProblem) -> float:
-    """The floor a plan's week must clear: :data:`PLAN_FLOOR_POINTS` in a points league, else
-    :data:`PLAN_FLOOR_CATS`."""
+    """The floor a plan's week must clear: the problem's own (the knob, #152), else
+    :data:`PLAN_FLOOR_POINTS` in a points league and :data:`PLAN_FLOOR_CATS` in another."""
+    if problem.plan_floor is not None:
+        return problem.plan_floor
     return PLAN_FLOOR_POINTS if problem.points else PLAN_FLOOR_CATS
 
 
