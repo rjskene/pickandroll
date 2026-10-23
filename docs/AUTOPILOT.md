@@ -146,15 +146,19 @@ the decision log (#125) and the recorder (#97).
 Ruled 2026-10-23 (#143, #144): every move is judged on the horizon its set was recommended for,
 everywhere the scorecard speaks (the summary, the sentences, the Monday markdown, the Progress
 screen's tiles and Moves view): the week's set and the streaming plan on the week, the three weeks'
-set and the strategy's on the three weeks after, a strategy set solved under the season weight on the
-season once that horizon exists, a move with no projection of its own on the week. The season is
-what counts: a move that wins its week can still cost the season, so every move also carries a
+set on the three weeks after, the strategy's set under the week weight on the week, its even and
+natural sets on the three weeks after, its set solved under the season weight on the season once that
+horizon exists, a move with no projection of its own on the week. The season is what counts: a move that wins its week can still cost the season, so every move also carries a
 season horizon (its projection from the move's day to the regular season's last day, games from the
 schedule as far as read and extrapolated beyond it, and its realized value so far), shown beside the
 judging figure, never in its place; a move whose recommended-horizon gain is positive and whose
 season projection is below minus the protection floor is flagged season-costly, and the scorecard
 counts those and how many of them realized below zero. The check measures the keep rule; it does not
 change the engine.
+
+Refined 2026-10-23 (#143, master's reading of the ruling's principle): a strategy set is judged by
+its weight. The week weight (λ = 1, this week alone) is judged on the week. The even and natural
+weights are judged on the three weeks after. The season weight is judged on the season.
 
 The details (#144, plan ruled on the issue 2026-10-23; docs/ADD_DROP.md "Scorecard"):
 - **The season's end.** The calendar's last day: the league's, the playoffs included, the day the
@@ -305,9 +309,9 @@ comes back to it.
   dash until the lineup log exists, the place), each row opening its weeks.
 - **Moves** (`m`): the same scope and range, and the moves made by match (as recommended,
   differently, not recommended, no solve before it), each counted. Each move is judged on the
-  horizon its set was recommended for (the week's set and the streaming plan's on its week, the
-  three weeks' set and the strategy's on the three weeks after, the strategy's season-weight set
-  on the season), in its league's units. Four figures: projected and realized over the moves
+  horizon its set was recommended for (the week's set, the streaming plan's and the strategy's
+  week-weight set on its week, the three weeks' set and the strategy's even and natural sets on the
+  three weeks after, the strategy's season-weight set on the season), in its league's units. Four figures: projected and realized over the moves
   whose horizon is over, one for each unit, with the realized share of the projection; the season
   check (#144), the moves flagged season-costly of those checked and how many went below zero so
   far; and the FAAB paid, free against bid. Then the scope's moves sentences (the season check's

@@ -339,10 +339,11 @@ export const MATCH_TITLE: Record<MatchKind, string> = {
 export const HORIZON_SHORT: Record<JudgedHorizon, string> = { week: "week", three: "3 wk", season: "season" };
 
 /** The horizon a move is judged on, as its row gives it (#143): the one its set was recommended
- * for (the week's set and the streaming plan's, the week; the three weeks' set and the
- * strategy's, the three weeks; the strategy's set solved under the season weight, the season,
- * #144); a move with no projection of its own, its week. A row from before the scorecard wrote
- * it is judged from its set the same way. */
+ * for (the week's set, the streaming plan's and the strategy's under the week weight, the week;
+ * the three weeks' set and the strategy's under the even and the natural weights, the three
+ * weeks; the strategy's set solved under the season weight, the season, #144); a move with no
+ * projection of its own, its week. A row from before the scorecard wrote it is judged from its
+ * set the same way. */
 export function moveHorizon(m: ProgressMove): JudgedHorizon {
   if (m.judged) return m.judged;
   const set = m.projected?.set;

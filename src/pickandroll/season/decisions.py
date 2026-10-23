@@ -52,8 +52,9 @@ NEAR = timedelta(hours=1)
 WEEK, THREE, SEASON = "week", "three", "season"
 #: The moves route's sets recommended for the three weeks after.
 THREE_SETS = ("three",)
-#: The strategy's set solved under the season weight (λ = 0, the rest of the season alone).
-SEASON_SET = "season"
+#: The strategy's sets solved under the week weight (λ = 1, this week alone) and under the season
+#: weight (λ = 0, the rest of the season alone).
+WEEK_SET, SEASON_SET = "week", "season"
 
 _CLOCK = re.compile(r",\s*(\d{1,2}):(\d{2})\s*([ap])\.?m", re.IGNORECASE)
 _BID = re.compile(r"\$\s*(\d+(?:\.\d+)?)")
@@ -323,9 +324,12 @@ def judging_horizon(
 ) -> str:
     """The horizon a recommended move is judged on (#143, #144): the one its set was recommended
     for. The moves route's week set and streaming plan on the week, its three weeks' set on the
-    three weeks after; a strategy set on the three weeks after, the one solved under the season
-    weight on the season when its projection (``value``) has that horizon."""
+    three weeks after; the strategy's set under the week weight on the week, under the season
+    weight on the season when its projection (``value``) has that horizon, and its others (the
+    even and the natural weights) on the three weeks after."""
     if source == "strategy":
+        if set_key == WEEK_SET:
+            return WEEK
         season = set_key == SEASON_SET and SEASON in ((value or {}).get("horizons") or {})
         return SEASON if season else THREE
     return THREE if set_key in THREE_SETS else WEEK
