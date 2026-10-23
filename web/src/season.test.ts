@@ -10,6 +10,7 @@ import type {
   KeptPlayer,
   LineupDay,
   MoveCandidate,
+  MoveRos,
   PlayerFlag,
   Rates,
   RosterRow,
@@ -35,7 +36,17 @@ import {
   milpLabel,
   guardSteps,
   planNote,
+  planRosText,
   planShortLine,
+  planStepRosTitle,
+  playerRosTitle,
+  rosGames,
+  rosHeadTitle,
+  rosLabel,
+  rosTitle,
+  rosTone,
+  sideRosTitle,
+  valueUnits,
   shownPlan,
   sourceText,
   stepDay,
@@ -746,6 +757,9 @@ test("a player who is out reads as a stash, a full slot's leaver, bench or dropp
     "P1 (O, back Nov 2): move to IL, which frees a spot for P6 (+0.42 over the three weeks); 12.3 net of return.",
   );
   assert.equal(stashText(stash({ advice: "stash", slot: "IL", add: { week: { player: 5, gain: 0.1 }, three: null } }), name).includes("P5 (+0.10 this week)"), true);
+  // The freed spot's add carries his rest of the season (#151).
+  const ros: MoveRos = { value: 8.4, add_games: 50, drop_games: null, extrapolated: { add: 0, drop: null }, from: "2026-10-24", to: "2027-04-12" };
+  assert.ok(stashText(stash({ advice: "stash", slot: "IL", add: { week: null, three: { player: 6, gain: 0.42, ros } } }), name, "categories").includes("P6 (+0.42 over the three weeks, ROS +8.40)"));
   assert.equal(
     stashText(stash({ advice: "il_full", leave: { player: 7, slot: "IL", how: "activate", drop: 8, net: null, protected: false } }), name),
     "P1 (O, back Nov 2): eligible, IL or IL+ full; activate P7 (cleared) from IL, dropping P8; 12.3 net of return.",
@@ -1135,4 +1149,66 @@ test("a scorecard move's line, its realized cells and its tooltip (#126)", () =>
   assert.equal(realizedLabel(unscored, "week", "categories"), "−");
   assert.ok(realizedTitle(unscored, "categories").startsWith("no realized value: a player not matched to the box scores; "));
   assert.equal(MATCH_WORDS.no_entry, "no solve before it");
+});
+
+test("a move's rest of the season reads in the scorer's units, its games and days on hover (#151)", () => {
+  const name = (id: number) => ({ 11: "Brooks", 12: "Grant" })[id] ?? `player ${id}`;
+  const r: MoveRos = { value: 12.345, add_games: 58, drop_games: 55, extrapolated: { add: 4, drop: 2.5 }, from: "2026-10-24", to: "2027-04-12" };
+  assert.equal(rosLabel(r, "categories"), "+12.35");
+  assert.equal(rosLabel({ value: 310.46 }, "points"), "+310.5");
+  assert.equal(rosLabel(null, "categories"), "");
+  assert.equal(rosLabel({ ...r, value: null }, "categories"), "");
+  // Only a season-costly figure is coloured, and only when it reads below zero.
+  assert.equal(rosTone(r, "categories"), "");
+  assert.equal(rosTone({ value: -0.2 }, "categories"), "bad");
+  assert.equal(rosTone({ value: -0.004 }, "categories"), "");
+  assert.equal(rosTone(undefined, "categories"), "");
+  assert.equal(
+    rosGames(r, { add: 11, drop: 12 }, name),
+    "Brooks's 58 games less Grant's 55, Oct 24 to Apr 12, 6.5 of them past the schedule read at the team's rate",
+  );
+  assert.equal(rosGames({ ...r, add_games: 1, drop_games: null, extrapolated: { add: 0, drop: null } }, { add: 11, drop: null }, name), "Brooks's 1 game, Oct 24 to Apr 12");
+  assert.equal(
+    rosTitle(r, { add: 11, drop: 12 }, name, "points"),
+    "to the season's end, playoffs included: Brooks's 58 games less Grant's 55, Oct 24 to Apr 12, 6.5 of them past the schedule read at the team's rate; " +
+      "each at his per-game value, in fantasy points. The decision log's figure; nothing ranks on it",
+  );
+  assert.equal(rosTitle({ ...r, value: null }, { add: 11, drop: null }, name, "categories"), "not valued to the season's end: Brooks has no line");
+  assert.equal(rosTitle({ ...r, value: null }, { add: 11, drop: 12 }, name, "categories"), "not valued to the season's end: the add or the drop has no line");
+  assert.ok(rosTitle(undefined, { add: 11, drop: 12 }, name, "categories").startsWith("not valued to the season's end: no scorer"));
+  assert.ok(rosHeadTitle("categories").startsWith("ROS: the move to the season's end, playoffs included, in the scorer's z-sum, net of an empty line"));
+  assert.ok(rosHeadTitle("points", "the step").startsWith("ROS: the step to the season's end, playoffs included, in fantasy points"));
+  assert.equal(valueUnits("points"), "fantasy points");
+  assert.equal(valueUnits(null), "the scorer's z-sum, net of an empty line");
+});
+
+test("a plan step's figure names the later step that drops him; the plan's total sits beside the set's (#151)", () => {
+  const name = (id: number) => `P${id}`;
+  const ros: MoveRos = { value: 2.5, add_games: 40, drop_games: 38, extrapolated: { add: 0, drop: 0 }, from: "2026-10-22", to: "2027-04-12" };
+  const step = { add: 10, drop: 3, ros, dropped_by: { add: 11, from: "2026-10-24" } };
+  assert.equal(
+    planStepRosTitle(step, name, "categories"),
+    `${rosTitle(ros, step, name, "categories")}. Valued as kept there: Sat Oct 24's step drops P10 for P11, so the plan's total counts the two together`,
+  );
+  assert.equal(planStepRosTitle({ ...step, dropped_by: null }, name, "categories"), rosTitle(ros, step, name, "categories"));
+  assert.equal(planRosText(streamPlan(), "categories"), null);
+  assert.equal(planRosText(streamPlan({ ros: { set: { value: 12.1 }, plan: { value: 14.2 } } }), "categories"), "ROS +14.20 against the set's +12.10");
+  assert.equal(planRosText(streamPlan({ ros: { set: null, plan: { value: 14.2 } } }), "categories"), null);
+});
+
+test("a trade's rest of the season: a side's change and a player's games on hover (#151)", () => {
+  assert.equal(
+    playerRosTitle({ value: 12.18, per_game: 0.21, games: 58, extrapolated: 4 }, "2026-10-24", "categories"),
+    "58 games from Oct 24 to the season's end, 4 past the schedule read, at +0.21 a game, in the scorer's z-sum, net of an empty line",
+  );
+  assert.equal(playerRosTitle({ value: 300, per_game: 30, games: 10, extrapolated: 0 }, "2026-10-24", "points"), "10 games from Oct 24 to the season's end, at +30.0 a game, in fantasy points");
+  assert.ok(playerRosTitle(null, "2026-10-24", "categories").startsWith("not valued"));
+  const side: NonNullable<TradeSide["ros"]> = { before: 100, after: 104.5, change: 4.5, from: "2026-10-24", unvalued: 1 };
+  assert.equal(
+    sideRosTitle(side, "categories"),
+    "the roster to the season's end from Oct 24, 100.00 → 104.50 in the scorer's z-sum, net of an empty line: what it receives less what it sends and drops; " +
+      "1 player without a line counts nothing",
+  );
+  assert.ok(sideRosTitle({ ...side, unvalued: 0 }, "points").endsWith("what it receives less what it sends and drops"));
+  assert.ok(sideRosTitle(null, "categories").startsWith("not valued"));
 });

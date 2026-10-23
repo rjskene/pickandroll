@@ -9,11 +9,16 @@ import {
   marginText,
   movedGames,
   movedGamesTitle,
+  playerRosTitle,
   playersById,
+  rosLabel,
   rosterNote,
+  rosTone,
+  sideRosTitle,
   statusTitle,
   statusTone,
   tradeVerdict,
+  valueUnits,
 } from "../season";
 
 const HELD = new Set(["IL", "IL+", "NA"]);
@@ -33,9 +38,9 @@ function same(a: number[], b: number[]): boolean {
 }
 
 /** The Trade card (#96): a proposal between my roster and one other team's, both sides before
- * and after on the moves' horizons, each roster's slots, the margin and the traded players'
- * games. The reading is "no worse on our model", never whether they would accept; nothing here
- * proposes the trade or acts in Yahoo. */
+ * and after on the moves' horizons and to the season's end (#151), each roster's slots, the
+ * margin and the traded players' games. The reading is "no worse on our model", never whether
+ * they would accept; nothing here proposes the trade or acts in Yahoo. */
 export default function Trade({ league, s, system }: { league: string; s: SeasonView; system: ProjectionSystem }) {
   const mine = s.my_team?.team_id;
   const others = s.teams.filter((t) => t.team_id !== mine && (s.rosters[String(t.team_id)]?.length ?? 0) > 0);
@@ -142,11 +147,17 @@ function TradeResult({ t, s, stale }: { t: TradePayload; s: SeasonView; stale: b
                   {SHORT[h]}
                 </th>
               ))}
+              <th
+                className="num"
+                title={`ROS: the roster to the season's end from ${dayLabel(t.effective)}, playoffs included, in ${valueUnits(s.scoring)}: what it receives less what it sends and drops, as the decision log values a move. Beside the horizons; the reading stays the horizon's`}
+              >
+                ROS
+              </th>
             </tr>
           </thead>
           <tbody>
             {[mine, theirs].map((side) => (
-              <SideRow key={side.team} side={side} label={side === mine ? "Me" : side.name} />
+              <SideRow key={side.team} side={side} label={side === mine ? "Me" : side.name} scoring={s.scoring} />
             ))}
           </tbody>
         </table>
@@ -196,7 +207,8 @@ function TradeResult({ t, s, stale }: { t: TradePayload; s: SeasonView; stale: b
         </p>
         {t.fill && (
           <p className="small" title="valued beside the trade, not in it: the add is a move of its own">
-            Best free agent for my open spot: {t.fill.name}, {gainLabel(t.fill.gain.three)} over weeks {t.horizons.three.weeks.join("-") || "ahead"} ({gainLabel(t.fill.gain.week)} this week) from {dayLabel(t.fill.from)}.
+            Best free agent for my open spot: {t.fill.name}, {gainLabel(t.fill.gain.three)} over weeks {t.horizons.three.weeks.join("-") || "ahead"} ({gainLabel(t.fill.gain.week)} this week
+            {t.fill.ros ? `, ROS ${rosLabel(t.fill.ros, s.scoring)}` : ""}) from {dayLabel(t.fill.from)}.
           </p>
         )}
       </div>
@@ -221,6 +233,12 @@ function TradeResult({ t, s, stale }: { t: TradePayload; s: SeasonView; stale: b
               <th className="num" title="games in the three weeks after this one, old team then new">
                 wk {t.horizons.three.weeks.length ? `${t.horizons.three.weeks[0]}-${t.horizons.three.weeks[t.horizons.three.weeks.length - 1]}` : "—"}
               </th>
+              <th className="num" title={`games from ${dayLabel(t.effective)} to the season's end, as the decision log counts a move's`}>
+                rest
+              </th>
+              <th className="num" title={`his games to the season's end at his per-game value, in ${valueUnits(s.scoring)}: what the side's ROS counts for him`}>
+                ROS
+              </th>
             </tr>
           </thead>
           <tbody>
@@ -233,6 +251,12 @@ function TradeResult({ t, s, stale }: { t: TradePayload; s: SeasonView; stale: b
                     {movedGames(p, h)}
                   </td>
                 ))}
+                <td className="num" title={playerRosTitle(p.ros, t.effective, s.scoring)}>
+                  {p.ros ? Number(p.ros.games.toFixed(1)) : ""}
+                </td>
+                <td className="num" title={playerRosTitle(p.ros, t.effective, s.scoring)}>
+                  {rosLabel(p.ros, s.scoring)}
+                </td>
               </tr>
             ))}
           </tbody>
@@ -246,7 +270,7 @@ function TradeResult({ t, s, stale }: { t: TradePayload; s: SeasonView; stale: b
   );
 }
 
-function SideRow({ side, label }: { side: TradeSide; label: string }) {
+function SideRow({ side, label, scoring }: { side: TradeSide; label: string; scoring: SeasonView["scoring"] }) {
   return (
     <tr>
       <td title={HORIZONS.map((h) => `${h === "week" ? "this week" : "weeks after"} ${side.horizons[h].before.toFixed(2)} → ${side.horizons[h].after.toFixed(2)}`).join(" · ")}>
@@ -255,6 +279,9 @@ function SideRow({ side, label }: { side: TradeSide; label: string }) {
       {HORIZONS.map((h) => (
         <Change key={h} x={side.horizons[h].change} />
       ))}
+      <td className={`num ${side.ros ? rosTone({ value: side.ros.change }, scoring) : ""}`} title={sideRosTitle(side.ros, scoring)}>
+        {side.ros ? rosLabel({ value: side.ros.change }, scoring) : ""}
+      </td>
     </tr>
   );
 }

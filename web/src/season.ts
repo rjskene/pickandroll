@@ -1,7 +1,7 @@
 // The season view's pure helpers (#92): labels for ages, ownership and availability, the
 // available table's filters and sort, the week projection's totals and odds (#93) and the moves'
-// gains (#94), the strategy panel's (#110) and the scorecard's (#126). No React, so `npm test` runs
-// them under Node.
+// gains (#94) with their rest of the season (#151), the strategy panel's (#110) and the
+// scorecard's (#126). No React, so `npm test` runs them under Node.
 import type {
   AvailableRow,
   BestMove,
@@ -23,10 +23,13 @@ import type {
   MoveCandidate,
   MoveHorizon,
   MoveRef,
+  MoveRos,
   MovesSummary,
   OutlookSummary,
   OutlookWeek,
+  PlanStep,
   PlayerFlag,
+  PlayerRos,
   Rates,
   ScorecardMove,
   ScorecardToDate,
@@ -232,6 +235,8 @@ export type AvailableSortKey =
   | "gain_week"
   | "gain_three"
   | "next_price"
+  // The table's horizon's best move to the season's end (#151).
+  | "ros"
   // The breakout flag (#95): the sum of its four scores.
   | "flag"
   | Cat;
@@ -648,13 +653,14 @@ function absence(status: string | null, back: string | null): string {
 /** A player who is out, and what to do with him (#124): stash him with the freed spot's best add,
  * who should leave a full slot, bench, or droppable; the value net of return for a protected
  * player. */
-export function stashText(a: Stash, name: (id: number | null) => string): string {
+export function stashText(a: Stash, name: (id: number | null) => string, scoring?: string | null): string {
   const who = `${name(a.player)} ${absence(a.status, a.back)}`;
   const net = a.protected && a.net != null ? `; ${a.net.toFixed(1)} net of return` : "";
   if (a.advice === "stash") {
     const add = a.add?.three ?? a.add?.week ?? null;
     const span = a.add?.three ? "over the three weeks" : "this week";
-    const freed = add ? `, which frees a spot for ${name(add.player)} (${gainLabel(add.gain)} ${span})` : "";
+    const ros = add?.ros?.value != null ? `, ROS ${unitsLabel(add.ros.value, scoring)}` : "";
+    const freed = add ? `, which frees a spot for ${name(add.player)} (${gainLabel(add.gain)} ${span}${ros})` : "";
     return `${who}: move to ${a.slot}${freed}${net}.`;
   }
   if (a.advice === "il_full") {
@@ -697,6 +703,95 @@ export function addsNote(a: Pick<MoveAdds, "limit" | "used" | "complete" | "left
   if (a.limit == null) return "no weekly add limit";
   const used = `${a.complete ? "" : "at least "}${a.used} used this week`;
   return `${a.limit} adds a week · ${used} · ${a.complete ? "" : "at most "}${a.left ?? a.limit} left`;
+}
+
+// ---------------------------------------------------------------- rest of the season (#151)
+/** What a value in the scorer's units counts: a points league's fantasy points, else the
+ * categories' z-sum. */
+export function valueUnits(scoring: string | null | undefined): string {
+  return scoring === "points" ? "fantasy points" : "the scorer's z-sum, net of an empty line";
+}
+
+/** "58", or "57.5" with games extrapolated past the schedule read. */
+function gamesCount(g: number): string {
+  return Number.isInteger(g) ? String(g) : g.toFixed(1);
+}
+
+/** A rest of the season in a cell: "+12.40" (a points league "+310.5"); blank for none. */
+export function rosLabel(r: { value: number | null } | null | undefined, scoring: string | null | undefined): string {
+  return unitsLabel(r?.value, scoring);
+}
+
+/** A season-costly figure reads red; nothing else is coloured, since nothing ranks on it. */
+export function rosTone(r: { value: number | null } | null | undefined, scoring: string | null | undefined): "bad" | "" {
+  return rosLabel(r, scoring).startsWith("−") ? "bad" : "";
+}
+
+/** The ROS column's header hover; ``what`` is whose figure it is. */
+export function rosHeadTitle(scoring: string | null | undefined, what = "the move"): string {
+  return (
+    `ROS: ${what} to the season's end, playoffs included, in ${valueUnits(scoring)}: the add's games less the drop's, ` +
+    "each at his per-game value, as the decision log values it. Beside the horizons; nothing ranks on it"
+  );
+}
+
+/** The games behind a move's figure: "Brooks's 58 games less Grant's 55, Oct 24 to Apr 12, 6 of
+ * them past the schedule read at the team's rate". */
+export function rosGames(r: MoveRos, x: Pick<MoveRef, "add" | "drop">, name: (id: number) => string): string {
+  const add = `${name(x.add)}'s ${gamesCount(r.add_games)} ${r.add_games === 1 ? "game" : "games"}`;
+  const drop = x.drop != null && r.drop_games != null ? ` less ${name(x.drop)}'s ${gamesCount(r.drop_games)}` : "";
+  const past = r.extrapolated.add + (r.extrapolated.drop ?? 0);
+  const extra = past > 0 ? `, ${gamesCount(past)} of them past the schedule read at the team's rate` : "";
+  return `${add}${drop}, ${dayLabel(r.from)} to ${dayLabel(r.to)}${extra}`;
+}
+
+/** A move's figure on hover: its days and games, its units, and that nothing ranks on it. */
+export function rosTitle(
+  r: MoveRos | null | undefined,
+  x: Pick<MoveRef, "add" | "drop">,
+  name: (id: number) => string,
+  scoring: string | null | undefined,
+): string {
+  if (!r) return "not valued to the season's end: no scorer for the league, or no season's end read";
+  if (r.value == null) return `not valued to the season's end: ${x.drop == null ? `${name(x.add)} has` : "the add or the drop has"} no line`;
+  return `to the season's end, playoffs included: ${rosGames(r, x, name)}; each at his per-game value, in ${valueUnits(scoring)}. The decision log's figure; nothing ranks on it`;
+}
+
+/** A plan step's figure on hover: the log's, his add kept to the season's end, and the later
+ * step that drops him, which the plan's total nets out. */
+export function planStepRosTitle(x: Pick<PlanStep, "add" | "drop" | "ros" | "dropped_by">, name: (id: number) => string, scoring: string | null | undefined): string {
+  const text = rosTitle(x.ros, x, name, scoring);
+  const by = x.dropped_by;
+  return by
+    ? `${text}. Valued as kept there: ${stepDay(by.from)}'s step drops ${name(x.add)} for ${name(by.add)}, so the plan's total counts the two together`
+    : text;
+}
+
+/** "ROS +14.20 against the set's +12.10": the plan's rest of the season beside the set's;
+ * null when either is not valued. */
+export function planRosText(plan: Pick<StreamPlan, "ros">, scoring: string | null | undefined): string | null {
+  const r = plan.ros;
+  if (!r?.plan || !r.set) return null;
+  return `ROS ${unitsLabel(r.plan.value, scoring)} against the set's ${unitsLabel(r.set.value, scoring)}`;
+}
+
+/** A traded player's figure on hover: "58 games from Oct 24 to the season's end, 6 past the
+ * schedule read, at +0.21 a game". */
+export function playerRosTitle(r: PlayerRos | null | undefined, from: string, scoring: string | null | undefined): string {
+  if (!r) return "not valued to the season's end: no line, or no scorer for the league";
+  const past = r.extrapolated > 0 ? `, ${gamesCount(r.extrapolated)} past the schedule read` : "";
+  return `${gamesCount(r.games)} games from ${dayLabel(from)} to the season's end${past}, at ${unitsLabel(r.per_game, scoring)} a game, in ${valueUnits(scoring)}`;
+}
+
+/** A trade side's figure on hover: its roster's before and after from the trade's day, and the
+ * players counted as nothing for want of a line. */
+export function sideRosTitle(r: TradeSide["ros"], scoring: string | null | undefined): string {
+  if (!r) return "not valued to the season's end: no scorer for the league";
+  const unvalued = r.unvalued ? `; ${r.unvalued} ${r.unvalued === 1 ? "player without a line counts" : "players without a line count"} nothing` : "";
+  return (
+    `the roster to the season's end from ${dayLabel(r.from)}, ${r.before.toFixed(2)} → ${r.after.toFixed(2)} in ${valueUnits(scoring)}: ` +
+    `what it receives less what it sends and drops${unvalued}`
+  );
 }
 
 /** Every player the view names, by Yahoo id: the pool, my roster and the league's rosters. */
