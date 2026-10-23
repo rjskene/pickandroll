@@ -13,6 +13,10 @@ single-move gains (today's moves, solved first when they are not), ranks the poo
 3. takes the program's set when it is better on the weighted value (``strategy.choose``), priced
    the same way, with every player's first-order value at the program's solution.
 
+The season guard (#164, ``season_moves.held_back``) holds every weight: its search and its
+re-solves never offer a set whose rest of the season is below zero, the program's set is taken
+only when the guard allows it, and a point names the set the guard held back (``season_guard``).
+
 A run is kept per league and system for the day and the inputs it was made from (the moves'
 stamp). GET never solves: with no such run it says ``not_solved``. POST starts a run, or returns
 the one with the same settings; ``?wait=true`` answers once it is done. A GET during a run shows
@@ -213,10 +217,23 @@ class Run:
             self.pool = pool
             self.base = {**ev.base, "season": any_w.season(ev.base.get("three", 0.0))}
         curves = st.curves(ev)
+        # The season guard (#164) on every weight: its search, its re-solves and the program's set.
+        ros = season_moves.guard_ros(self.built)
+        guard = None if ros is None else mv.season_guard(ros)
+        watched = {
+            w.key: None if guard is None else season_moves.Watched(guard) for w in self.weights
+        }
         searched: dict[str, tuple[mv.Move, ...]] = {}
         for w in self.weights:
             t0 = time.perf_counter()
-            moves = mv.search(weighted[w.key], st.WEIGHTED, pool, keep=keep, min_gain=MIN_GAIN)
+            moves = mv.search(
+                weighted[w.key],
+                st.WEIGHTED,
+                pool,
+                keep=keep,
+                min_gain=MIN_GAIN,
+                allowed=watched[w.key],
+            )
             searched[w.key] = moves
             block = self._block(weighted[w.key], moves, time.perf_counter() - t0)
             self._set(w.key, stage="searched", search=block, **self._shown(weighted[w.key], moves))
@@ -238,7 +255,13 @@ class Run:
             self._step(f"pricing the search's set: {w.label}")
             t0 = time.perf_counter()
             rec = mv.recommend(
-                weighted[w.key], st.WEIGHTED, pool, MIN_GAIN, start=searched[w.key], keep=keep
+                weighted[w.key],
+                st.WEIGHTED,
+                pool,
+                MIN_GAIN,
+                start=searched[w.key],
+                keep=keep,
+                allowed=watched[w.key],
             )
             recs[w.key] = rec
             moves = tuple(pm.move for pm in rec.moves)
@@ -266,17 +289,22 @@ class Run:
             wt = weighted[w.key]
             rec = recs[w.key]
             best = tuple(pm.move for pm in rec.moves)
-            source, moves = st.choose(wt, best, milp, only)
+            source, moves = st.choose(wt, best, milp, only, guard)
             note = None
             if source == st.MILP:
                 self._step(f"pricing the linear program's set: {w.label}")
                 rounds = 0 if only else 3
-                rec = mv.recommend(wt, st.WEIGHTED, pool, MIN_GAIN, rounds, moves, keep)
+                rec = mv.recommend(
+                    wt, st.WEIGHTED, pool, MIN_GAIN, rounds, moves, keep, allowed=watched[w.key]
+                )
                 priced = tuple(pm.move for pm in rec.moves)
                 if frozenset(priced) != frozenset(moves):
                     # A re-solve of the program's set beat it: the search's own answer.
                     source, note = st.SEARCH, "a re-solve of the linear program's set"
                 moves = priced
+            season_guard = self._season_guard(
+                wt, w.key, pool, keep, moves, milp, ros, watched[w.key]
+            )
             other = milp.moves if source == st.SEARCH else best
             ahead = None
             if source != st.BOTH and milp.status != st.FAILED:
@@ -301,9 +329,46 @@ class Run:
                 source=source,
                 note=note,
                 ahead=ahead,
+                season_guard=season_guard,
                 first_order={str(k): _r(v) for k, v in fo.items()},
                 **self._shown(wt, moves, rec),
             )
+
+    def _season_guard(
+        self,
+        wt: st.Weighted,
+        key: str,
+        pool: list[int],
+        keep: frozenset[int],
+        moves: tuple[mv.Move, ...],
+        milp: st.Milp,
+        ros: Callable[[mv.Move], float | None] | None,
+        watched: season_moves.Watched | None,
+    ) -> dict[str, Any] | None:
+        """The season guard on a weight's shown set (#164, ``season_moves.held_back``): the set
+        held back is the better on the weighted value of the search's set without the guard,
+        re-solves and all (solved only when the guard refused a set), and the program's set when
+        the guard refused it; ``program`` says the program's was the one."""
+        if ros is None or watched is None:
+            return None
+        p = self.built.problem
+        found: list[tuple[str, tuple[mv.Move, ...]]] = []
+        if watched.refused:
+            free = mv.recommend(wt, st.WEIGHTED, pool, MIN_GAIN, keep=keep)
+            found.append(("search", tuple(pm.move for pm in free.moves)))
+        if (
+            milp.status != st.FAILED
+            and mv.feasible(p, milp.moves)
+            and not watched.allowed(milp.moves)
+        ):
+            found.append(("program", milp.moves))
+        if not found:
+            return {"held_back": False}
+        by, free = max(found, key=lambda f: wt.value(st.WEIGHTED, f[1]))
+        out = season_moves.held_back(self.built, wt, st.WEIGHTED, moves, ros, free, "strategy", key)
+        if out and out.get("held_back"):
+            out["program"] = by == "program"
+        return out
 
     # ------------------------------------------------------------------ the blocks
     def _block(self, wt: st.Weighted, moves: tuple[mv.Move, ...], seconds: float) -> dict[str, Any]:

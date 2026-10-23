@@ -73,6 +73,8 @@ import {
   rosTitle,
   rosTone,
   scoreLabel,
+  seasonGuardLine,
+  seasonGuardMoves,
   shownPlan,
   sortAvailable,
   stashText,
@@ -968,7 +970,21 @@ function Recommended({ h, m, s, name, onPick }: { h: MoveHorizon; m: MovesPayloa
         <p className="muted small">It also moves {set.held.map((x) => `${name(x.player)} to ${x.slot}`).join(", ")}.</p>
       )}
       {returns && <p className="muted small">{returns}</p>}
+      <SeasonGuardNote set={set} h={h} s={s} name={name} />
     </div>
+  );
+}
+
+/** What the season guard held back from a set (#164): one muted line, the held set's moves on
+ * hover, flagged season-costly; never shown as recommended. */
+function SeasonGuardNote({ set, h, s, name }: { set: MovesPayload["recommended"][MoveHorizon]; h: MoveHorizon; s: SeasonView; name: Namer }) {
+  const line = seasonGuardLine(set.season_guard, h, s.scoring);
+  if (!line) return null;
+  const held = seasonGuardMoves(set.season_guard, name, s.scoring);
+  return (
+    <p className="muted small" title={held ? `held back, not recommended: ${held}` : undefined}>
+      {line}
+    </p>
   );
 }
 
@@ -979,11 +995,12 @@ function PlanBlock({ m, s, name }: { m: MovesPayload; s: SeasonView; name: Namer
   const plan = shownPlan(m.plan);
   const ros = plan && planRosText(plan, s.scoring);
   if (!plan) {
-    const line = planShortLine(m.plan, name);
+    const line = planShortLine(m.plan, name, s.scoring);
     const steps = guardSteps(m.plan, name);
     const refused = m.plan?.guard?.ros;
+    const which = m.plan?.reason === "season" ? "season" : "three-week";
     return line ? (
-      <p className="muted small" title={steps ? `the plan the three-week guard refused: ${steps}${refused ? `; to the season's end ${rosLabel(refused, s.scoring)} on the set` : ""}` : undefined}>
+      <p className="muted small" title={steps ? `the plan the ${which} guard refused: ${steps}${refused ? `; to the season's end ${rosLabel(refused, s.scoring)} on the set` : ""}` : undefined}>
         {line}
       </p>
     ) : null;

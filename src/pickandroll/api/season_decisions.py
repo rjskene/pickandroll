@@ -11,7 +11,8 @@ own gain and value. A moves entry also says what the week's streaming plan (#136
 against its set, whatever the verdict (``plan``), and a recommended plan is one more set,
 ``plan``, its steps dated by their ``from``. From #144 each move's value has a season horizon
 and the move says whether it costs the season (``season_costly``) on the horizon its set is
-judged on, against the protection floor in force. A day's file is a list, appended to.
+judged on: below zero over the season, whatever the protection floor (#164). A day's file is a
+list, appended to.
 """
 
 from __future__ import annotations
@@ -127,16 +128,38 @@ def _logged(move: Mapping[str, Any], built: Built | None = None) -> dict[str, An
     return out
 
 
-def _flagged(
-    moves: list[dict[str, Any]], source: str, key: str, floor: float
-) -> list[dict[str, Any]]:
+def _flagged(moves: list[dict[str, Any]], source: str, key: str) -> list[dict[str, Any]]:
     """``moves`` of one set, each with whether it costs the season (#144) on the horizon the set
     is judged on (``decisions.season_costly``); None for a move with no projection."""
     for m in moves:
         value = m.get("value")
         judged = dl.judging_horizon(source, key, value)
-        m["season_costly"] = dl.season_costly(value, judged, floor)
+        m["season_costly"] = dl.season_costly(value, judged)
     return moves
+
+
+def guard_record(guard: Mapping[str, Any] | None) -> dict[str, Any] | None:
+    """The season guard on a logged set (#164): whether it held a set back and, when it did,
+    that set's moves (add, drop, first day, what each adds to the set and its rest of the
+    season), its gain and its rest of the season, so the scorecard can tell a move the guard
+    held back from one the user chose; None where no guard ran."""
+    if guard is None:
+        return None
+    if not guard.get("held_back"):
+        return {"held_back": False}
+    return {
+        "held_back": True,
+        "moves": [
+            {
+                **{k: m[k] for k in ("add", "drop", "from")},
+                "gain": m.get("marginal"),
+                "ros": (m.get("ros") or {}).get("value"),
+            }
+            for m in guard["moves"]
+        ],
+        "gain": guard["gain"],
+        "ros": guard["ros"],
+    }
 
 
 def _moves_of(rows: Sequence[Mapping[str, Any]]) -> list[mv.Move]:
@@ -168,13 +191,13 @@ def _common(built: Built, at: datetime, source: str) -> dict[str, Any]:
 
 def moves_entry(built: Built, payload: Mapping[str, Any], at: datetime) -> dict[str, Any]:
     """The moves route's solve: each horizon's recommended set, with the held-slot moves and
-    the comebacks it implies, its gains on both horizons and this week before and after."""
+    the comebacks it implies, its gains on both horizons, this week before and after, and the
+    season guard's record (:func:`guard_record`)."""
     ev = mv.Evaluator(built.problem)
-    floor = built.problem.floor
     sets = []
     for key in season_moves.HORIZONS:
         rec = payload["recommended"][key]
-        moves = _flagged([_logged(m, built) for m in rec["moves"]], "moves", key, floor)
+        moves = _flagged([_logged(m, built) for m in rec["moves"]], "moves", key)
         sets.append(
             {
                 "key": key,
@@ -184,6 +207,7 @@ def moves_entry(built: Built, payload: Mapping[str, Any], at: datetime) -> dict[
                 "comebacks": rec["comebacks"],
                 "gain": rec["gain"],
                 "week": _week(ev, _moves_of(moves)),
+                "season_guard": guard_record(rec.get("season_guard")),
             }
         )
     plan = payload.get("plan")
@@ -191,7 +215,7 @@ def moves_entry(built: Built, payload: Mapping[str, Any], at: datetime) -> dict[
         # The streaming plan (#136) as one more set: the week set's moves it keeps, then its
         # steps by day, each counting from its day with its own gain.
         moves = [_logged(m, built) for m in (*plan["base"], *plan["steps"])]
-        moves = _flagged(moves, "moves", "plan", floor)
+        moves = _flagged(moves, "moves", "plan")
         none = plan["value"]["none"]
         sets.append(
             {
@@ -221,9 +245,10 @@ def plan_verdict(plan: Mapping[str, Any] | None) -> dict[str, Any] | None:
     """The week's best streaming plan against its set, as every moves entry logs it whether it
     was recommended or not (the scorecard counts the plans foregone and judges the floor): its
     expected value on both horizons, the set's, the shortfall, the floor in force and why it was
-    not recommended (``short`` or ``guard``, the latter with the refused plan's gain on the set
-    on both horizons); None without a stream spot. The steps are logged only as a recommended
-    plan's set."""
+    not recommended (``short``, ``guard`` or ``season``, the latter two with the refused plan's
+    gain on the set on both horizons and its rest of the season less the set's: the three-week
+    guard refused it, or the season guard, #164); None without a stream spot. The steps are
+    logged only as a recommended plan's set."""
     if plan is None:
         return None
     guard = plan.get("guard")
@@ -234,22 +259,21 @@ def plan_verdict(plan: Mapping[str, Any] | None) -> dict[str, Any] | None:
         "set": plan["value"]["set"],
         "short": plan["short"],
         "floor": plan["floor"],
-        "guard": None if guard is None else {"gain": guard["gain"]},
+        "guard": None if guard is None else {"gain": guard["gain"], "ros": guard.get("ros")},
     }
 
 
 def strategy_entry(built: Built, payload: Mapping[str, Any], at: datetime) -> dict[str, Any]:
     """A strategy run that solved: each weight's chosen set and its source, its gains (this
-    week, three weeks, the season) and this week before and after, the weight the knob file
-    recommends marked (#152)."""
+    week, three weeks, the season), this week before and after and the season guard's record
+    (:func:`guard_record`, #164), the weight the knob file recommends marked (#152)."""
     ev = mv.Evaluator(built.problem)
-    floor = built.problem.floor
     sets = []
     for point in payload["points"]:
         if point.get("stage") != "done":
             continue
         moves = [_logged(m, built) for m in point.get("moves") or []]
-        moves = _flagged(moves, "strategy", point["key"], floor)
+        moves = _flagged(moves, "strategy", point["key"])
         sets.append(
             {
                 "key": point["key"],
@@ -260,6 +284,7 @@ def strategy_entry(built: Built, payload: Mapping[str, Any], at: datetime) -> di
                 "moves": moves,
                 "gain": point.get("gain"),
                 "week": _week(ev, _moves_of(moves)),
+                "season_guard": guard_record(point.get("season_guard")),
             }
         )
     return {

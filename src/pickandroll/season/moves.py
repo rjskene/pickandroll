@@ -20,6 +20,12 @@ time, then improved by replacing any add or drop with any alternative until noth
 (:func:`search`). That is a strong heuristic, not a proof of optimality. The price of each
 recommended move is the same search re-run with that add left out or that drop kept.
 
+The season guard (#164, docs/ADD_DROP.md "The season guard") is a line every set searched must
+hold beside :func:`feasible`: its moves' rest-of-season values, each move valued on its own from
+its day as the decision log values it, sum to zero or more (:func:`season_guard`). The search,
+its re-solves and the streaming plan never offer a set below it; nothing inside the allowed sets
+ranks on it.
+
 Players in held slots (IL, IL+, NA) stay on the roster, are never dropped and count as the
 season view counts them. :data:`HELD_ACCEPTS` says which statuses each held slot takes (#124,
 docs/ADD_DROP.md, "Held slots"). IL is Yahoo's own rule for basketball, from its help page
@@ -46,8 +52,9 @@ order breaking ties (:func:`held_moves`).
 The keep rule (#124, the user's of 2026-10-22, docs/AUTOPILOT.md section 4) is a forced keep, not
 a value term: the three-week horizon, and the season the strategy engine reads from it, value a
 player out three weeks at about nothing. A player of mine is **protected** when he is net positive
-(his rest-of-season per-game value above the pool's average, ``average``), that value
-exceeds the best available add's by the floor, and he returns this season (:func:`back_from`). A
+(his rest-of-season per-game value above the pool's average, ``average``), the best
+available add's value does not beat his by the floor or more (``value + floor > best``, #164: a
+higher floor protects more), and he returns this season (:func:`back_from`). A
 player who passes the last two but not the first and is back within :data:`SHORT_ABSENCE_DAYS`
 is kept on the bench for the solve. Neither is ever a drop on any horizon (``kept``,
 :func:`drop_options`); a protected player out still goes to a held slot when one is open. His
@@ -57,7 +64,7 @@ value net of return (:func:`net_of_return`) only ranks the IL and is shown, neve
 from __future__ import annotations
 
 import re
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 from typing import Protocol
@@ -65,9 +72,10 @@ from typing import Protocol
 from . import weekly as wk
 from .state import Player, Transaction
 
-#: How far a protected player's rest-of-season per-game value must exceed the best add's by
-#: default: the keep rule's protection floor (#124), a knob the hill-climb may raise and bring
-#: back down but never below this (docs/AUTOPILOT.md section 6, #150).
+#: By how much the best add's rest-of-season per-game value must beat a player's to take him
+#: off the protected list, by default: the keep rule's protection floor (#124, its side #164), a
+#: knob the hill-climb may raise for more protection and bring back down, never below this
+#: (docs/AUTOPILOT.md section 6, #150).
 PROTECTION_FLOOR = 0.0
 
 #: The statuses each held slot accepts (see the module docstring for the sources). The order is
@@ -173,7 +181,7 @@ class MoveProblem:
     average: float = 0.0
     #: The last day of the season's calendar.
     season_end: date | None = None
-    #: How far a protected player's per-game value must exceed the best add's (a knob).
+    #: By how much the best add's per-game value must beat a player's to unprotect him (a knob).
     floor: float = PROTECTION_FLOOR
     #: My players no move may drop: those the keep rule keeps (:func:`keep_rule`).
     kept: frozenset[int] = frozenset()
@@ -301,6 +309,34 @@ def feasible(problem: MoveProblem, moves: Sequence[Move]) -> bool:
             if counts[lim] > lim.adds:
                 return False
     return True
+
+
+#: A test every set searched must pass beside :func:`feasible` (the season guard's,
+#: :func:`season_guard`).
+Allowed = Callable[[Sequence[Move]], bool]
+
+
+def admitted(problem: MoveProblem, moves: Sequence[Move], allowed: Allowed | None) -> bool:
+    """:func:`feasible`, and allowed by ``allowed`` when a guard is given."""
+    return feasible(problem, moves) and (allowed is None or allowed(moves))
+
+
+def season_total(ros: Callable[[Move], float | None], moves: Iterable[Move]) -> tuple[float, bool]:
+    """A set's rest of the season by ``ros`` (each move's own value, None for none) and whether
+    the total is partial: a move without a value counts as zero."""
+    values = [ros(m) for m in moves]
+    return sum(v for v in values if v is not None), any(v is None for v in values)
+
+
+def season_guard(ros: Callable[[Move], float | None]) -> Allowed:
+    """The season guard (#164): a set is allowed when its rest of the season
+    (:func:`season_total`) is zero or more. A move without a value neither blocks the set nor
+    pays for the rest of it."""
+
+    def allowed(moves: Sequence[Move]) -> bool:
+        return season_total(ros, moves)[0] >= -EPS
+
+    return allowed
 
 
 def held_used(problem: MoveProblem, moves: Sequence[Move]) -> list[tuple[int, str]]:
@@ -436,7 +472,7 @@ class Kept:
     #: His rest-of-season per-game value (None: no line) and the day he is back.
     value: float | None
     back: date | None
-    #: Above the pool's average; above the best add's by the floor; back this season.
+    #: Above the pool's average; not beaten by the best add's by the floor; back this season.
     net_positive: bool
     beats_best: bool
     returns: bool
@@ -467,7 +503,7 @@ def kept_of(
     value = problem.season_value.get(key)
     back = back_from(problem, key, player)
     net = value is not None and value > problem.average
-    beats = value is not None and (best_value is None or value > best_value + floor)
+    beats = value is not None and (best_value is None or value + floor > best_value)
     returns = back is not None
     protected = net and beats and returns
     away = back is not None and 0 < (back - problem.first_day).days < SHORT_ABSENCE_DAYS
@@ -764,11 +800,13 @@ def search(
     exclude: Iterable[int] = (),
     keep: Iterable[int] = (),
     min_gain: float = 0.0,
+    allowed: Allowed | None = None,
 ) -> tuple[Move, ...]:
     """The recommended moves over horizon ``key`` among the candidates of ``pool``: greedy, one
     best move at a time while it gains more than ``min_gain``, then each add and each drop
     replaced by its best alternative, or the move undone, until no change gains. ``exclude``
-    are adds and ``keep`` drops the search may not use (a re-solve's forced choice)."""
+    are adds and ``keep`` drops the search may not use (a re-solve's forced choice); every set
+    tried must pass ``allowed`` (the season guard) beside :func:`feasible`."""
     p = ev.problem
     banned, kept = set(exclude), set(keep)
     adds_ok = [c for c in pool if c not in banned]
@@ -782,7 +820,7 @@ def search(
                 continue
             for drop in drop_options(p, moves, kept):
                 trial = [*moves, Move(cand, drop)]
-                if not feasible(p, trial):
+                if not admitted(p, trial, allowed):
                     continue
                 v = ev.value(key, trial)
                 if best is None or v > best[0]:
@@ -804,7 +842,7 @@ def search(
                 [*rest, Move(move.add, d)] for d in drop_options(p, rest, kept) if d != move.drop
             ]
             for trial in trials:
-                if not feasible(p, trial):
+                if not admitted(p, trial, allowed):
                     continue
                 v = ev.value(key, trial)
                 # Undoing a move needs it to have been worth less than min_gain.
@@ -850,16 +888,20 @@ def recommend(
     rounds: int = 3,
     start: Sequence[Move] | None = None,
     keep: Iterable[int] = (),
+    allowed: Allowed | None = None,
 ) -> Recommendation:
     """The recommended set over horizon ``key`` with every move priced by a re-solve. A re-solve
     that beats the set replaces it (the search is a heuristic), at most ``rounds`` times. The set
-    is the search's, or ``start`` (another solver's); ``keep`` are drops nothing may use."""
+    is the search's, or ``start`` (another solver's, which the caller has allowed); ``keep`` are
+    drops nothing may use; the search and every re-solve keep to ``allowed``."""
     kept = frozenset(keep)
     moves = (
-        tuple(start) if start is not None else search(ev, key, pool, keep=kept, min_gain=min_gain)
+        tuple(start)
+        if start is not None
+        else search(ev, key, pool, keep=kept, min_gain=min_gain, allowed=allowed)
     )
     for attempt in range(rounds + 1):
-        priced, better = _priced(ev, key, pool, moves, min_gain, kept)
+        priced, better = _priced(ev, key, pool, moves, min_gain, kept, allowed)
         if better is None or attempt == rounds:
             gain = {h: ev.gain(h, moves) for h in ev.base}
             back = {h: tuple(comebacks(ev.problem, h, moves)) for h in ev.problem.horizons}
@@ -875,17 +917,22 @@ def _priced(
     moves: tuple[Move, ...],
     min_gain: float,
     kept: frozenset[int] = frozenset(),
+    allowed: Allowed | None = None,
 ) -> tuple[tuple[PricedMove, ...], tuple[Move, ...] | None]:
-    """Each move of ``moves`` priced by its two re-solves, and the best re-solve that beats the
-    set, if one does."""
+    """Each move of ``moves`` priced by its two re-solves (each kept to ``allowed``), and the
+    best re-solve that beats the set, if one does."""
     value = ev.value(key, moves)
     priced: list[PricedMove] = []
     better: tuple[Move, ...] | None = None
     for move in moves:
-        without = search(ev, key, pool, exclude={move.add}, keep=kept, min_gain=min_gain)
+        without = search(
+            ev, key, pool, exclude={move.add}, keep=kept, min_gain=min_gain, allowed=allowed
+        )
         keep = None
         if move.drop is not None:
-            keep = search(ev, key, pool, keep=kept | {move.drop}, min_gain=min_gain)
+            keep = search(
+                ev, key, pool, keep=kept | {move.drop}, min_gain=min_gain, allowed=allowed
+            )
         for alt in (without, keep):
             if alt is None or ev.value(key, alt) <= value + EPS:
                 continue

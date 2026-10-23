@@ -608,8 +608,16 @@ def test_the_keep_rule_protects_a_net_positive_player_better_than_the_best_add_w
     # Out until next Monday, still protected: the absence never decides it.
     assert five.protected and five.back == WEEKS[1][0] and not five.bench
     assert rule.kept == {1, 5}
-    # The floor raises the bar over the best add's value.
-    assert mv.keep_rule(replace(p, floor=1.0)).kept == {1}
+    # A raised floor protects more (#164): the best add must beat a player by the floor to take
+    # him off the list. Player 2 at 0.77, 0.03 below the add's 0.8, is protected at 0.05, and
+    # beaten by exactly the floor at 0.03 he is not.
+    close = replace(p, season_value={**p.season_value, 2: 0.77})
+    assert mv.keep_rule(close).kept == {1, 5}
+    assert mv.keep_rule(replace(close, floor=0.05)).kept == {1, 2, 5}
+    assert mv.keep_rule(replace(close, floor=0.03)).kept == {1, 5}
+    # A floor of 1.0 protects player 2 at 0.3 as well; player 3, below the pool's average, never.
+    assert mv.keep_rule(replace(p, floor=1.0)).kept == {1, 2, 5}
+    assert 3 not in mv.keep_rule(replace(p, floor=10.0)).kept
     # Out for the season is never protected, however good.
     ofs = replace(p, roster=(*p.roster[:3], (5, replace(p.roster[3][1], status="OFS"))))
     assert not mv.keep_rule(ofs).players[5].protected

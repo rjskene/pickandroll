@@ -15,6 +15,7 @@ import type {
   Rates,
   RosterRow,
   MovesSummary,
+  SeasonGuard,
   ScorecardMove,
   ScorecardToDate,
   ScorecardWeek,
@@ -46,6 +47,8 @@ import {
   rosTitle,
   rosTone,
   sideRosTitle,
+  seasonGuardLine,
+  seasonGuardMoves,
   valueUnits,
   shownPlan,
   sourceText,
@@ -703,6 +706,37 @@ test("a plan the three-week guard refused says what it buys and what it costs, a
     "Streaming P3's spot buys 2 more started games for +0.15 this week but costs 0.47 over three weeks; not recommended.",
   );
   assert.equal(guardSteps(refused, name), "Thu Oct 22: add P10 for P3; Sat Oct 24: add P11 for P10");
+  // The season guard's refusal (#164): what it buys and what it costs the season.
+  const costly = streamPlan({ ...refused, reason: "season", guard: { ...refused.guard!, gain: { week: 0.15, three: 0.2 }, ros: { value: -12.44 } } });
+  assert.equal(
+    planShortLine(costly, name, "categories"),
+    "Streaming P3's spot buys 2 more started games for +0.15 this week but costs the season −12.4; the season guard holds it back.",
+  );
+  assert.equal(guardSteps(costly, name), "Thu Oct 22: add P10 for P3; Sat Oct 24: add P11 for P10");
+});
+
+test("a set the season guard changed says what it held back and what this one forgoes (#164)", () => {
+  const name = (id: number | null) => `P${id}`;
+  const guard: SeasonGuard = {
+    held_back: true,
+    moves: [
+      { add: 10, drop: 3, from: "2026-10-26", marginal: { week: 1.497, three: -6.392 }, ros: null, season_costly: true },
+      { add: 12, drop: null, from: "2026-10-26", held: { player: 5, slot: "IL" }, marginal: { week: 0.1, three: 0 }, ros: null, season_costly: null },
+    ],
+    gain: { week: 1.497, three: -6.392 },
+    ros: { value: -95, partial: true },
+    forgone: { week: 1.146, three: -6.56 },
+    saved: { value: 116, partial: true },
+  };
+  assert.equal(
+    seasonGuardLine(guard, "week", "categories"),
+    "The season guard held back a set that gains +1.50 on the week but costs the season −95.0 (a partial total: a move without a season line counts as zero); this one forgoes 1.15.",
+  );
+  assert.match(seasonGuardLine({ ...guard, ros: { value: -95, partial: false } }, "three", "categories")!, /gains −6\.39 over the three weeks but costs the season −95\.0; this one forgoes 6\.56\.$/);
+  assert.equal(seasonGuardMoves(guard, name, "categories"), "add P10 for P3 (season-costly); add P12 for P5 to IL");
+  assert.equal(seasonGuardLine({ held_back: false }, "week", "categories"), null);
+  assert.equal(seasonGuardLine(null, "week", "categories"), null);
+  assert.equal(seasonGuardMoves({ held_back: false }, name, "categories"), null);
 });
 
 const keepRule = (players: Partial<KeptPlayer>[]): KeepRule => ({
@@ -733,7 +767,7 @@ test("the keep rule names whom it keeps and benches, and why", () => {
   assert.equal(keptWhy(rule.players[1]), "bench, back Oct 25");
   assert.equal(
     keepRuleNote({ ...rule, floor: 0.1 }, name),
-    "Protected: above the pool's average (0.00 a game), better than the best add (P9, 0.50) by more than 0.1 over the rest of the season, and back this season; benched: better than the best add (P9, 0.50) by more than 0.1 and back within a week. No move drops either.",
+    "Protected: above the pool's average (0.00 a game), better than the best add (P9, 0.50) minus 0.1 over the rest of the season, and back this season; benched: better than the best add (P9, 0.50) minus 0.1 and back within a week. No move drops either.",
   );
 });
 
@@ -1020,6 +1054,12 @@ test("a point's source names the solver whose set is shown and by how much it le
   assert.equal(sourceText({ stage: "done", source: "search", ahead: 0, milp: { status: "optimal" } }, 10), "Recommended by the exact search; the linear program (solved) found nothing better.");
   assert.equal(sourceText({ stage: "done", source: "search", ahead: null, milp: { status: "failed" } }, 10), "Recommended by the exact search; the linear program found no set.");
   assert.match(sourceText({ stage: "done", source: "search", note: "a re-solve of the linear program's set", ahead: 0.02, milp: { status: "optimal" } }, 10), /exact search, from a re-solve of the linear program's set, ahead of the linear program's set \(solved\) by \+0\.02/);
+  // The season guard refused the program's set (#164).
+  const held = { held_back: true as const, moves: [], gain: {}, ros: { value: -3, partial: false }, forgone: {}, saved: { value: 3, partial: false }, program: true };
+  assert.equal(
+    sourceText({ stage: "done", source: "search", ahead: -0.4, milp: { status: "optimal" }, season_guard: held }, 10),
+    "Recommended by the exact search: the season guard held back the linear program's set (solved), which costs the season.",
+  );
 });
 
 test("weights whose sets land on the same gains share a frontier mark", () => {

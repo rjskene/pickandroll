@@ -23,7 +23,12 @@ the weeks after. It keeps the best :data:`KEEP` partial paths per holder and add
 leaves it (its own move for the spot, else its occupant kept): the spot's plan is the path with
 the best week among those that cost nothing on the three weeks after, since the last holder
 stays. A heuristic: the plan is recommended, never optimal, and only when its week beats the
-recommended set's by more than the floor (:func:`floor_of`). Pure.
+recommended set's by more than the floor (:func:`floor_of`).
+
+The season guard (#164, ``moves.season_guard``) holds the whole plan: a path is taken only when
+the plan so far with it (the base, the earlier spots' steps and the later spots' own moves) is
+allowed. The base is the guarded set's, so the plan starts on the line. It is apart from the
+three-week ``guard`` above. Pure.
 """
 
 from __future__ import annotations
@@ -266,13 +271,14 @@ def plan_spot(
     per_game: Mapping[int, float],
     own: Sequence[mv.Move] = (),
     guard: bool = True,
+    allowed: mv.Allowed | None = None,
 ) -> SpotPlan:
     """The plan for ``occupant``'s spot with ``fixed`` made, against the spot as the set leaves
     it (``own``, the set's move for it, else the occupant kept): of the best :data:`EXACT` paths
     by cheap score, the one with the best week among those no worse on the weeks after (the
-    ``guard``); the set's own move (or no step) when none beats it. Without the guard, the
-    paths are ranked by the week alone and the best week is taken whatever it costs after, the
-    plan the guard refuses."""
+    ``guard``) and, with ``fixed``, ``allowed`` (the season guard); the set's own move (or no
+    step) when none beats it. Without the guard, the paths are ranked by the week alone and the
+    best week is taken whatever it costs after, the plan the guard refuses."""
     p = ev.problem
     span = p.horizons["week"][0]
     used = {m.add for m in fixed}
@@ -295,7 +301,7 @@ def plan_spot(
     later = ev.value("three", [*fixed, *own])
     for steps in found[:EXACT]:
         trial = [*fixed, *steps]
-        if steps == own or not mv.feasible(p, trial):
+        if steps == own or not mv.admitted(p, trial, allowed):
             continue
         v = ev.value("week", trial)
         if v > best_v + mv.EPS and (not guard or ev.value("three", trial) >= later - mv.EPS):
@@ -309,9 +315,11 @@ def plan(
     recommended: Sequence[mv.Move],
     per_game: Mapping[int, float],
     guard: bool = True,
+    allowed: mv.Allowed | None = None,
 ) -> Plan | None:
     """The week's streaming plan against the ``recommended`` set, None without a stream spot;
-    without the ``guard``, the best week whatever it costs after (:func:`plan_spot`)."""
+    without the ``guard``, the best week whatever it costs after, and every spot's path kept
+    to ``allowed`` (the season guard) with the plan around it (:func:`plan_spot`)."""
     p = ev.problem
     spots = stream_spots(p, rule)
     if not spots:
@@ -326,7 +334,7 @@ def plan(
         done = [m for sp in planned for m in sp.steps]
         rest = [m for o in spots[i + 1 :] for m in own[o]]
         fixed = [*base, *done, *rest]
-        planned.append(plan_spot(ev, fixed, occupant, per_game, own[occupant], guard))
+        planned.append(plan_spot(ev, fixed, occupant, per_game, own[occupant], guard, allowed))
     return Plan(base, tuple(planned), tuple(recommended))
 
 

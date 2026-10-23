@@ -729,7 +729,7 @@ def test_the_season_is_summed_beside_the_others_and_the_flagged_counted():
     rows = [
         row(True, -3.0, -1.0, gaps=2),  # flagged, below zero so far
         row(True, -2.0, 0.5),  # flagged, above so far
-        row(False, -0.5, -0.2),  # below zero over the season, not below the floor's margin
+        row(False, -0.5, -0.2),  # below zero over the season, not positive on its horizon
         row(False, 4.0, -0.1),
         row(None, 1.0, 0.3),  # logged before the flag
     ]

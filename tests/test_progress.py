@@ -446,8 +446,8 @@ def test_the_season_check_says_how_many_were_flagged_and_how_many_went_below_zer
             "bad",
             (
                 "2 of the 12 moves checked against the season (category value) were flagged "
-                "season-costly: projected positive on the horizon recommended, below the "
-                "protection floor over the season; 1 of them has realized below zero so far."
+                "season-costly: projected positive on the horizon recommended, below zero over the "
+                "season; 1 of them has realized below zero so far."
             ),
         ),
         (

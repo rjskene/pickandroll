@@ -81,8 +81,9 @@ from IL if the IL spots are full also."
 In the model's terms, carried by #124:
 
 - A rostered player is **protected** when he is net positive (his rest-of-season per-game value
-  is above the pool's average under the league's scorer), that value exceeds the best available
-  add's by the protection floor (section 6), and he returns this season (an Out For Season player,
+  is above the pool's average under the league's scorer), the best available add's value does
+  not beat his by the protection floor or more (section 6; a higher floor protects more, #164),
+  and he returns this season (an Out For Season player,
   or one listed INJ, SUSP or NA with no return date, is not protected; an O without a date returns
   next Monday). Both values are Basketball Monster's rest-of-season line whatever system the solve
   runs on: Yahoo's values are week projections. A protected player is never a drop candidate on
@@ -152,12 +153,16 @@ horizon exists, a move with no projection of its own on the week. The season is 
 season horizon (its projection from the move's day to the regular season's last day, games from the
 schedule as far as read and extrapolated beyond it, and its realized value so far), shown beside the
 judging figure, never in its place; a move whose recommended-horizon gain is positive and whose
-season projection is below minus the protection floor is flagged season-costly, and the scorecard
+season projection is below zero is flagged season-costly, and the scorecard
 counts those and how many of them realized below zero. The check measures the keep rule; it does not
 change the engine.
 Every recommendation and comparison in the dashboard shows that season figure beside its two
 horizons as the ROS column (#151), the same number the scorecard judges a move by; nothing ranks
-on it.
+on it. The season guard (#164, docs/ADD_DROP.md "The season guard") draws one line on it: no
+recommended set, re-solve, streaming plan or strategy set (the program's included) has a rest of
+the season below zero, in every league, the private one too. A set the guard held back is named
+beside the recommended one, flagged season-costly, and the decision log records it, so the
+autopilot never executes a move the guard refused.
 
 Refined 2026-10-23 (#143, master's reading of the ruling's principle): a strategy set is judged by
 its weight. The week weight (λ = 1, this week alone) is judged on the week. The even and natural
@@ -175,8 +180,7 @@ The details (#144, plan ruled on the issue 2026-10-23; docs/ADD_DROP.md "Scoreca
   - Never the player's own three-week games, which are zero while he is out.
 - **The flag.** `season_costly` is set at decision time when both hold:
   - the projection's value on the judging horizon is above zero;
-  - the season projection is below minus the per-game floor times the dropped player's season
-    games.
+  - the season projection is below zero, whatever the protection floor (#164).
 
   Both figures are in the league's units.
 - **In the Monday markdown.** Counts and ratios only: no season sum, as for every value in
@@ -188,7 +192,7 @@ The details (#144, plan ruled on the issue 2026-10-23; docs/ADD_DROP.md "Scoreca
 |---|---|---|
 | projection system or blend weight | the moves solve | bbm, yahoo, blend 0.25 to 0.75 |
 | horizon weight | the strategy objective | even, natural, season |
-| the protection floor | the keep rule | the margin by which a player must beat the best add; at or above the default, never below it (#150, ruled 2026-10-23) |
+| the protection floor | the keep rule | the margin by which the best add must beat a player to unprotect him (#164); at or above the default, never below it (#150, ruled 2026-10-23) |
 | the streaming floors | the streaming plan (#136) | the margin by which a plan's week must beat the set's, in a categories and a points league |
 | the stash threshold | #124 | the margin by which the freed spot must beat the return |
 | the FAAB sizing | section 5 | the sizing rule only; no ceiling |
