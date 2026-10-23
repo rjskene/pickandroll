@@ -216,7 +216,10 @@ def test_a_move_is_judged_on_its_sets_horizon_and_flagged_when_it_costs_the_seas
     judged = dl.judging_horizon
     assert judged("moves", "week", value) == "week" and judged("moves", "plan", value) == "week"
     assert judged("moves", "three", value) == "three"
-    # The strategy's sets on the three weeks, the season weight's on the season once it has one.
+    # The strategy's sets by their weight: this week alone on the week, the even and the natural
+    # on the three weeks, the season's on the season once its projection has one.
+    assert judged("strategy", "week", value) == "week"
+    assert judged("strategy", "even", value) == "three"
     assert judged("strategy", "natural", value) == "three"
     assert judged("strategy", "season", value) == "season"
     assert judged("strategy", "season", {"horizons": {"week": {"value": 1.0}}}) == "three"
@@ -547,11 +550,13 @@ def test_a_strategy_run_that_solved_is_logged_with_each_weights_set(client):
             x.get("marginal") for x in point["moves"]
         ]
         assert set(logged_set["week"]["after"]["cats"]) == set(CATS)
-        # The season check (#144) on the three weeks, these weights' judging horizon.
+        # The season check (#144) on each weight's judging horizon: the week's on the week, the
+        # natural's on the three weeks.
         floor = run["knobs"]["protection_floor"]
+        on = {"week": "week", "natural": "three"}[logged_set["key"]]
         for x in logged_set["moves"]:
             assert "season" in x["value"]["horizons"]
-            assert x["season_costly"] == dl.season_costly(x["value"], "three", floor)
+            assert x["season_costly"] == dl.season_costly(x["value"], on, floor)
     # The same run asked again is found, not solved: nothing new to log.
     client.post(
         f"/seasons/{LEAGUE}/strategy", params={"wait": True, "pool": 12, "weights": "week,natural"}

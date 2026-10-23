@@ -535,9 +535,10 @@ last recorded week when left out. The metric is docs/AUTOPILOT.md's, section 6.
     projected direction (`same_way`) and how many were judged on each horizon (`horizons`).
   - *The judging horizon* (#143, ruled 2026-10-23). Every move is judged on the horizon its set
     was recommended for, written on its row as `judged`: the week's set and the streaming plan on
-    the week, the three weeks' set and the strategy's on the three weeks after, a move with no
-    projection of its own on the week, and (#144) a strategy set solved under the season weight
-    on the season once its projection has that horizon. `compared`, the sentences, the markdown
+    the week, the three weeks' set on the three weeks after, the strategy's set under the week
+    weight on the week and its others (the even and the natural weights) on the three weeks after,
+    a move with no projection of its own on the week, and (#144) a strategy set solved under the
+    season weight on the season once its projection has that horizon. `compared`, the sentences, the markdown
     and the Progress screen all count the same moves on the same horizon; a move keeps its
     values on every horizon beside it.
   - *The season horizon* (#144, ruled 2026-10-23). The season is what counts, so every move

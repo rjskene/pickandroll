@@ -15,9 +15,10 @@ of the entry nearest it on the system scored (master's ruling, 2026-10-22). A mo
 of three groups: ``scored`` (projected by its own entry and realized), ``realized_only`` (realized,
 but with no projection of its own or a borrowed scorer) or ``unscored``; only the scored are set
 against their projection, each on the horizon its set was recommended for (``judged``, #143): the
-week's set and the streaming plan on the week, the three weeks' set and the strategy's on the three
-weeks after, the strategy's set solved under the season weight on the season (#144), a move with no
-projection of its own on the week. Every move also carries its season horizon beside the judging
+week's set, the streaming plan and the strategy's set under the week weight on the week, the three
+weeks' set and the strategy's under the even and the natural weights on the three weeks after, the
+strategy's set solved under the season weight on the season (#144), a move with no projection of
+its own on the week. Every move also carries its season horizon beside the judging
 one, projected to the season's last day and realized so far, and the flag the decision log set on
 it (``season_costly``, #144: projected positive on its judging horizon, below minus the protection
 floor over the season); the summary counts the moves projected below zero over the season and the
