@@ -150,6 +150,10 @@ def test_a_weeks_card_sets_the_projection_against_the_result():
     bare = sc.week_card(record(), [], 1, "bbm")
     assert bare["projected"] is None and bare["actual"]["won"] == 1.0
     assert all(r["p_win"] is None for r in bare["cats"])
+    # The games lost to the lineup as the record counted them (#149); none in an older record.
+    count = {"lost": 2, "days_read": 6, "days": 7, "unmatched": 0}
+    assert sc.week_card({**record(), "lineup": count}, [], 1, "bbm")["lineup"] == count
+    assert bare["lineup"] is None
 
 
 def test_a_points_leagues_week_is_its_points_and_its_matchup():
@@ -332,6 +336,34 @@ def test_every_leagues_scorecard_pools_the_public_leagues_and_keeps_the_private_
     one = client.get("/seasons/scorecard", params={"week": 1}).json()
     assert one["pooled"]["week"]["leagues"] == 0
     assert set(one["pooled"]["week"]["not_recorded"]) == {OTHER}
+
+
+def test_the_markdown_sums_the_public_leagues_games_lost_to_the_lineup(tmp_path):
+    for league in (PUBLIC, OTHER):
+        write_league(tmp_path, league)
+    write_league(tmp_path, PRIVATE, public=False)
+
+    def put(lineups: dict[str, dict[str, Any]]) -> str:
+        for league, count in lineups.items():
+            put_week(tmp_path, league, {**record(2), "lineup": count})
+        app = create_app(SessionStore(), data_dir=tmp_path, season_fetch=lambda: None)
+        with TestClient(app) as c:
+            return c.get("/seasons/scorecard").json()["markdown"]
+
+    count = {"lost": 2, "days_read": 5, "days": 7, "unmatched": 0}
+    md = put(
+        {
+            PUBLIC: count,
+            OTHER: {**count, "lost": 1, "days_read": 7},
+            PRIVATE: {**count, "lost": 4},
+        }
+    )
+    # The private league's games are never in the public sum.
+    assert (
+        "- Lineup: 3 player-games lost over the public leagues (12 of 14 league-days read)." in md
+    )
+    none = {"lost": None, "days_read": 0, "days": 7, "unmatched": 0}
+    assert "Lineup:" not in put({PUBLIC: none, OTHER: none, PRIVATE: count})
 
 
 def test_a_week_recorded_before_its_transactions_were_kept_reads_the_seasons_page():

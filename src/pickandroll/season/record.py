@@ -5,7 +5,7 @@ A week's record holds the standings as of the week's end, each team's totals and
 for the week with its result, the week's matchups, the season-to-date line of every drafted
 player with the team that has him, and every add and drop of the week as the transactions pages
 read through it listed them (a page lists the latest few dozen, so the week is the pages' union:
-the Monday scorecard's moves, #126). It is built from the parsed pages (``sources.yahoo.pages``)
+the Monday scorecard's moves, #126), and my games lost to the lineup (#149). It is built from the parsed pages (``sources.yahoo.pages``)
 and written once per week by the API; recording a week again changes the file only when its
 content changed (a stat correction), and says when (``revised_at``). Pure: the reads and the
 file live in ``api.season_record``.
@@ -13,7 +13,8 @@ file live in ``api.season_record``.
 A section read after the week's end (the standings, the players' lines) carries ``through``,
 the last NBA day it includes: the day before it was read. Only a read on the day after the week
 ends is the week's own; a later read is kept only until one at the week's end arrives, and never
-replaces it.
+replaces it. The lineup's count (``lineup``) is kept until one that read more of the week's days
+arrives: a day's lineup is dropped two weeks on, so a later record reads fewer.
 """
 
 from __future__ import annotations
@@ -226,8 +227,10 @@ def week_record(
     missing: Mapping[str, Any],
     sources: Mapping[str, str],
     transactions: Sequence[Mapping[str, Any]] = (),
+    lineup: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """The record of ``week`` (``recorded_at`` and ``revised_at`` are set by :func:`settle`)."""
+    """The record of ``week`` (``recorded_at`` and ``revised_at`` are set by :func:`settle`);
+    ``lineup`` my games lost to it (``season.lineup.week_lost``), None without a team of mine."""
     return {
         "league": str(league),
         "week": week.number,
@@ -241,6 +244,7 @@ def week_record(
         "matchups": list(matchups),
         "players": players,
         "transactions": [dict(t) for t in transactions],
+        "lineup": dict(lineup) if lineup is not None else None,
         "missing": {k: v for k, v in missing.items() if v},
     }
 
@@ -272,13 +276,17 @@ def _better(old: Mapping[str, Any] | None, new: Mapping[str, Any] | None, end: d
     return n is None or n > o
 
 
+def _days_read(lineup: Mapping[str, Any] | None) -> int:
+    return int((lineup or {}).get("days_read") or 0)
+
+
 def settle(
     old: Mapping[str, Any] | None, new: Mapping[str, Any], now: datetime
 ) -> tuple[dict[str, Any] | None, str]:
     """The record to write and what happened: ``recorded`` (a first record), ``revised`` (its
     content changed: a stat correction, a late section replaced) or ``unchanged`` (nothing to
     write). A standings or players section read later than an old one at the week's end leaves
-    the old one in place."""
+    the old one in place, as does a lineup count that read fewer days than the old one."""
     out = copy.deepcopy(dict(new))
     end = date.fromisoformat(out["end"])
     if old is not None:
@@ -291,6 +299,8 @@ def settle(
                 out["missing"] = missing
                 if key in (old.get("sources") or {}):
                     out["sources"] = {**out["sources"], key: old["sources"][key]}
+        if _days_read(old.get("lineup")) > _days_read(out.get("lineup")):
+            out["lineup"] = copy.deepcopy(old["lineup"])
         if content(old) == content(out):
             return None, "unchanged"
         out["recorded_at"] = old.get("recorded_at") or now.isoformat()

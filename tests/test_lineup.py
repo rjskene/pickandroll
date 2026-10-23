@@ -17,7 +17,7 @@ from datetime import date, timedelta
 import pytest
 
 from pickandroll.api import season_lineup
-from pickandroll.season import Player, RosterSpot, Season, SeasonSettings
+from pickandroll.season import Player, RosterSpot, Season, SeasonSettings, Week
 from pickandroll.season import lineup as lu
 from pickandroll.season import weekly as wk
 from pickandroll.season.state import SLOTS_PAGE, SLOTS_ROSTERS
@@ -230,6 +230,111 @@ def test_a_weekly_lineup_starts_the_most_games_times_value():
     assert lu.weekly_lineup(roster, playing, WEEK, ("C", "C"), value) == {3: "C", 1: "C"}
 
 
+# --------------------------------------------------------------------------- games lost (#149)
+def test_a_benched_player_who_played_is_lost_when_a_slot_he_fits_was_open_or_idle():
+    slots = ("PG", "C", "Util")
+    spots = [
+        ("PG", 1, ("PG",)),
+        ("C", 2, ("C",)),  # no game: his slot is idle
+        ("BN", 3, ("C",)),  # played: the idle C was his
+        ("BN", 4, ("SG",)),  # played: Util was open
+        ("BN", 5, ("PF",)),  # no game: nothing lost
+        ("IL", 6, ("PG",)),  # held: never a game lost
+    ]
+    assert lu.lost_games(spots, {1, 3, 4, 6}, slots) == 2
+    # Everyone who played started: nothing lost.
+    assert lu.lost_games(spots, {1, 2}, slots) == 0
+
+
+def test_two_benched_players_who_could_take_one_slot_count_once():
+    slots = ("C", "PG")
+    spots = [("C", 1, ("C",)), ("PG", 2, ("PG",)), ("BN", 3, ("C",)), ("BN", 4, ("C",))]
+    # The C slot's starter had no game: one of the two benched centres could have started.
+    assert lu.lost_games(spots, {2, 3, 4}, slots) == 1
+
+
+def test_a_benched_player_counts_when_a_starter_could_move_to_free_his_slot():
+    slots = ("C", "F")
+    # 3 fits only C, whose starter played; that starter also fits F, where 2 had no game.
+    spots = [("C", 1, ("PF", "C")), ("F", 2, ("SF",)), ("BN", 3, ("C",))]
+    assert lu.lost_games(spots, {1, 3}, slots) == 1
+    # A starter who fits nowhere else holds his slot: nothing lost.
+    spots = [("C", 1, ("C",)), ("F", 2, ("SF",)), ("BN", 3, ("C",))]
+    assert lu.lost_games(spots, {1, 3}, slots) == 0
+
+
+def test_a_weeks_games_lost_sum_the_days_read_and_count_the_unmatched_once():
+    slots = ("C", "PG")
+    lineup = [("C", 1, ("C",)), ("BN", 2, ("PG",)), ("BN", 9, ("SG",)), ("NA", 8, ("C",))]
+    lineups = {WEEK[0]: lineup, WEEK[1]: lineup, WEEK[3]: lineup}
+    # Day 3 has no box scores and day 2 no lineup read after it: neither is read.
+    played = {WEEK[0]: {1, 2}, WEEK[1]: {2}, WEEK[2]: {1, 2}}
+    out = lu.week_lost(WEEK, lineups, played, slots, matched={1, 2})
+    # 9 matched no box score: once, though on two days; 8 is held and never counted.
+    assert out == {"lost": 2, "days_read": 2, "days": 7, "unmatched": 1}
+    assert lu.week_lost(WEEK, {}, played, slots, matched={1, 2}) == {
+        "lost": None,
+        "days_read": 0,
+        "days": 7,
+        "unmatched": 0,
+    }
+
+
+class Box:
+    """The box-score cache as ``week_lost`` reads it: games by day and the ESPN ids known."""
+
+    def __init__(self, games: dict[date, list[dict]], ids: dict[int, str]):
+        self.games, self.ids = games, ids
+
+    def days(self, first: date, last: date) -> dict[date, list[dict]]:
+        return {d: g for d, g in self.games.items() if first <= d <= last}
+
+    def match(self, players, games) -> dict[int, tuple[str, str]]:
+        return {k: (self.ids[k], "id") for k in players if k in self.ids}
+
+
+def game(**lines: dict | None) -> list[dict]:
+    return [{"id": "1", "players": {e: {"line": line} for e, line in lines.items()}}]
+
+
+def test_only_a_lineup_read_after_its_day_counts_and_the_box_scores_say_who_played():
+    def spot(slot: str, key: int, *positions: str) -> dict:
+        return {
+            "slot": slot,
+            "player": {"yahoo_id": key, "name": f"P{key}", "positions": positions},
+        }
+
+    lineup = {"team_id": 4, "spots": [spot("C", 1, "C"), spot("BN", 2, "PG"), spot("IL", 3, "PG")]}
+    after = NOW.replace(day=20)  # Oct 20, 14:00 Eastern
+    parts = {
+        # Oct 19 read the next day: final. Oct 20 read that afternoon: not final.
+        "lineup/4/2026-10-19": part("lineup/4/2026-10-19", lineup, at=after),
+        "lineup/4/2026-10-20": part("lineup/4/2026-10-20", lineup, at=after),
+        # Oct 21 read after it, but its box scores are not cached.
+        "lineup/4/2026-10-21": part("lineup/4/2026-10-21", lineup, at=NOW.replace(day=23)),
+    }
+    season = Season.from_parts(base(), parts)
+    week = Week(1, WEEK[0], WEEK[-1])
+    assert set(season_lineup.final_reads(season, 4, WEEK)) == {WEEK[0], WEEK[2]}
+    played = {"pts": 10.0}
+    box = Box(
+        {WEEK[0]: game(e1=played, e2=played, e3=played), WEEK[1]: game(e2=played)},
+        {1: "e1", 2: "e2", 3: "e3"},
+    )
+    # Oct 19: the benched PG played with PG open; the held player's game is no loss.
+    assert season_lineup.week_lost(season, week, box) == {
+        "lost": 1,
+        "days_read": 1,
+        "days": 7,
+        "unmatched": 0,
+    }
+    # A line of None is a player on the report who did not play.
+    box.games[WEEK[0]] = game(e1=played, e2=None)
+    assert season_lineup.week_lost(season, week, box)["lost"] == 0
+    # A league without a team of mine has no count.
+    assert season_lineup.week_lost(Season.from_parts(base(my_team=None), parts), week, box) is None
+
+
 # --------------------------------------------------------------------------- the route
 def lineup_league(client, **pages_by_day) -> None:
     projection_csv(
@@ -430,12 +535,46 @@ def test_a_private_leagues_record_lists_its_lineup_pages(client):
     r = client.post("/seasons/100002/record")
     body = r.json()
     detail = body["detail"] if r.status_code == 409 else body
-    # The settings page until read, and my team page for each day of this week from today.
+    # The settings page until read, my team page for each day of this week from today, and for
+    # each day of the week recorded not read after it (#149): none of week 1's was.
     days = [date(2026, 10, 28) + timedelta(days=n) for n in range(5)]
     assert detail["lineup_pages"] == [
         public.settings_page_url("100002"),
         *(public.team_url("100002", 7, d) for d in days),
+        *(public.team_url("100002", 7, d) for d in WEEK),
     ]
+    # A day read after it is no longer asked for.
+    at = (later - timedelta(days=1)).isoformat()
+    url = public.team_url("100002", 7, WEEK[0])
+    page = {"url": url, "html": fixture("team4.html"), "fetched_at": at}
+    assert client.post("/seasons/100002/snapshot", json={"pages": [page]}).status_code == 200
+    wait_for_job(client, "100002")
+    r = client.post("/seasons/100002/record")
+    detail = r.json()["detail"] if r.status_code == 409 else r.json()
+    assert url not in detail["lineup_pages"]
+    assert public.team_url("100002", 7, WEEK[1]) in detail["lineup_pages"]
+
+
+def dated(urls: list[str]) -> list[str]:
+    return [u for u in urls if "?date=" in u and "/matchup" not in u and "/buzzindex" not in u]
+
+
+def test_a_refresh_reads_a_past_day_again_until_it_was_read_after_the_day(client):
+    # Read on Wednesday Oct 21: every day of week 1, the past two after their day.
+    lineup_league(client)
+    fake = client.fake
+    service = client.app.state.seasons
+    fake.urls.clear()
+    service.clock = lambda: NOW + timedelta(days=1)
+    assert client.post(f"/seasons/{LEAGUE}/refresh", params={"wait": True}).status_code == 202
+    # Thursday: Wednesday was read on its own day, so once more; Monday and Tuesday were not.
+    assert dated(fake.urls) == [public.team_url(LEAGUE, 4, d) for d in WEEK[2:]]
+    # The next Monday: last week's days read on or before their day, then this week's.
+    fake.urls.clear()
+    service.clock = lambda: NOW + timedelta(days=5)
+    assert client.post(f"/seasons/{LEAGUE}/refresh", params={"wait": True}).status_code == 202
+    this = [date(2026, 10, 26) + timedelta(days=n) for n in range(7)]
+    assert dated(fake.urls) == [public.team_url(LEAGUE, 4, d) for d in [*WEEK[3:], *this]]
 
 
 def test_the_lineup_command_prints_one_line_per_league(client):

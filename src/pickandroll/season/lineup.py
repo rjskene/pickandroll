@@ -13,16 +13,23 @@ most valuable set over the week's games, each player worth his games times his p
 
 Held slots (IL, IL+, NA) never start. A held player whose status cleared stays out of the
 recommendation until he is activated, which the lineup says first (``season.moves.cleared``).
+
+The games a lineup as read lost (#149, :func:`lost_games`) rest on the same matroid: the most
+players who played that the starting slots could have held, less the starters who played.
 """
 
 from __future__ import annotations
 
-from collections.abc import Hashable, Mapping, Sequence
+from collections.abc import Collection, Hashable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date
+from typing import Any
 
 from . import weekly as wk
 from .state import Player, RosterSpot
+
+#: The bench: a benched player who played can be a game lost; a held one (IL, IL+, NA) never is.
+BENCH = "BN"
 
 
 @dataclass(frozen=True)
@@ -132,3 +139,50 @@ def compare(
         start,
         sit,
     )
+
+
+def lost_games[K: Hashable](
+    spots: Sequence[tuple[str, K, Sequence[str]]], played: Collection[K], slots: Sequence[str]
+) -> int:
+    """The games one day's lineup as read lost (#149): the most of its starters and benched
+    players who played that the starting ``slots`` can hold, less as many of its starters who
+    played. ``spots`` is the lineup (slot, player, positions), ``played`` the players who played
+    that day. A benched player who played counts when a slot he fits was open or held a player
+    without a game, or could be freed by moving its starter to one; two benched players who
+    could take only one such slot count once. Held slots neither start nor count."""
+
+    def most(rows: list[tuple[K, Sequence[str]]]) -> int:
+        return len(wk.starters(rows, slots, dict.fromkeys((k for k, _ in rows), 1.0)))
+
+    starting = [(k, pos) for slot, k, pos in spots if slot.upper() not in wk.NOT_STARTING]
+    bench = [(k, pos) for slot, k, pos in spots if slot.upper() == BENCH]
+    starting = [(k, pos) for k, pos in starting if k in played]
+    bench = [(k, pos) for k, pos in bench if k in played]
+    return most([*starting, *bench]) - most(starting)
+
+
+def week_lost[K: Hashable](
+    days: Sequence[date],
+    lineups: Mapping[date, Sequence[tuple[str, K, Sequence[str]]]],
+    played: Mapping[date, Collection[K]],
+    slots: Sequence[str],
+    matched: Collection[K],
+) -> dict[str, Any]:
+    """A week's games lost to the lineup: :func:`lost_games` summed over the ``days`` read, a
+    day with both its lineup read after it (``lineups``) and its box scores (``played``); a day
+    without either adds nothing and is not read. ``lost`` is None when no day was read.
+    ``unmatched`` counts the players of a read day's starting slots or bench whom no box score
+    of the week matched (``matched``): they count as not playing."""
+    read = [d for d in days if d in lineups and d in played]
+    unmatched = {
+        k
+        for d in read
+        for slot, k, _ in lineups[d]
+        if (slot.upper() not in wk.NOT_STARTING or slot.upper() == BENCH) and k not in matched
+    }
+    return {
+        "lost": sum(lost_games(lineups[d], played[d], slots) for d in read) if read else None,
+        "days_read": len(read),
+        "days": len(days),
+        "unmatched": len(unmatched),
+    }

@@ -281,8 +281,8 @@ scorecard (#126) over all its recorded weeks, the knob file and the notes, and w
   of winning the matchup against the result, the categories expected against won, the Brier score,
   the standing after it, the week's moves (by group, their value projected and realized on the week,
   the scored ones compared on their judging horizon once it is over, the FAAB paid) and the
-  lineup's games lost (null:
-  not recorded yet), each with its running sums to it;
+  player-games lost to the lineup with the days read after they ended (#149; null when none
+  was), each with its running sums to it;
 - the public leagues pooled by week, the same, with the category odds' buckets of the week, and the
   calibration over the season;
 - every move, with its league, its players' names, the knobs in force at the entry it matched, its
@@ -322,8 +322,9 @@ comes back to it.
   Then the scope's sentences, the chart (actual solid, expected dashed, both summed over the
   range; the standing alone; each knob change a mark on the time axis that opens its sheet; a
   tip by week, with each league's result when pooled), the week strip, and the league table
-  (W-L, expected, the gap, moves, realized in the league's units, lineup games lost shown as a
-  dash until the lineup log exists, the place), each row opening its weeks.
+  (W-L, expected, the gap, moves, realized in the league's units, the player-games lost to the
+  lineup over the days read after they ended, #149, its tooltip saying how many of the range's
+  days were read and a dash when none was, the place), each row opening its weeks.
 - **Moves** (`m`): the same scope and range, and the moves made by match (as recommended,
   differently, not recommended, no solve before it), each counted. Each move is judged on the
   horizon its set was recommended for (the week's set, the streaming plan's and the strategy's

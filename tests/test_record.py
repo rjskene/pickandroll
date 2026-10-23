@@ -25,6 +25,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from pickandroll.api import SessionStore, create_app, season_record
+from pickandroll.api.seasons import save
 from pickandroll.season import EXTENSION, Part, SeasonSettings, Week
 from pickandroll.season import record as rec
 from pickandroll.sources.yahoo import pages
@@ -175,6 +176,19 @@ def test_a_late_read_never_replaces_the_one_at_the_weeks_end():
     out, status = rec.settle(lone, _record(), t0)
     assert status == "revised" and out["players"]["through"] == "2026-10-25"
     assert "players" not in out["missing"]
+
+
+def test_a_lineup_count_that_read_fewer_days_never_replaces_the_old_one():
+    t0 = datetime(2026, 10, 26, tzinfo=UTC)
+    full = {"lost": 3, "days_read": 7, "days": 7, "unmatched": 0}
+    first, _ = rec.settle(None, _record(lineup=full), t0)
+    # Two weeks on, the days' lineups are dropped: a record read then counts none of them.
+    gone = {"lost": None, "days_read": 0, "days": 7, "unmatched": 0}
+    assert rec.settle(first, _record(lineup=gone), t0) == (None, "unchanged")
+    # One that read more days than the old one replaces it.
+    some, _ = rec.settle(None, _record(lineup={**full, "lost": 1, "days_read": 3}), t0)
+    out, status = rec.settle(some, _record(lineup=full), t0)
+    assert status == "revised" and out["lineup"] == full
 
 
 def _moved(kind: str, pid: int, team: int, when: str, group: int) -> dict:
@@ -571,6 +585,48 @@ def test_the_record_keeps_the_weeks_transactions_from_every_snapshot(client):
     ]
 
 
+def test_the_record_counts_my_games_lost_to_the_lineup_from_the_days_read_after(client):
+    def spot(slot: str, pid: int, name: str, team: str, position: str) -> dict:
+        player = {"yahoo_id": pid, "name": name, "nba_team": team, "positions": [position]}
+        return {"slot": slot, "player": player}
+
+    lineup = {
+        "team_id": 1,
+        "spots": [
+            spot("C", 1001, "Ann Able", "AAA", "C"),
+            spot("BN", 1002, "Ben Baker", "BBB", "PG"),
+            spot("BN", 1003, "Cal Cole", "CCC", "SG"),
+        ],
+    }
+    after = datetime(2026, 10, 26, 13, 0, tzinfo=UTC)
+    keys = [f"lineup/1/2026-10-{d}" for d in (19, 20)]
+    save(
+        client.data_dir, LEAGUE, {k: Part(k, after, EXTENSION, lineup) for k in keys}, [], "", after
+    )
+    # Only Oct 19 and 20 cached: 1001 and 1002 played on the 19th, 1001 alone on the 20th.
+    box = client.data_dir / "boxscores"
+    box.mkdir()
+    for day, played in (("2026-10-19", ("e1", "e2")), ("2026-10-20", ("e1",))):
+        names = {"e1": ("Ann Able", "AAA"), "e2": ("Ben Baker", "BBB")}
+        players = {
+            e: {"name": names[e][0], "team": names[e][1], "line": {"pts": 9.0}} for e in played
+        }
+        game = {"id": day, "start": f"{day}T23:00Z", "teams": ["AAA", "BBB"], "players": players}
+        (box / f"{day}.json").write_text(json.dumps({"date": day, "games": [game]}))
+    (box / "ids.json").write_text(json.dumps({"1001": "e1", "1002": "e2"}))
+    assert client.post(f"/seasons/{LEAGUE}/record").json()["status"] == "recorded"
+    rec_ = json.loads(week_file(client, LEAGUE, 1).read_text())
+    # The benched PG who played on the 19th with PG open; 1003 matched no box score.
+    assert rec_["lineup"] == {"lost": 1, "days_read": 2, "days": 7, "unmatched": 1}
+    # Two weeks on the lineups are gone: recording again keeps the count.
+    later = datetime(2026, 11, 9, 14, 0, tzinfo=UTC)
+    save(client.data_dir, LEAGUE, {}, [], "", later)
+    client.clock["now"] = later
+    assert client.post(f"/seasons/{LEAGUE}/record", params={"week": 1}).json()["status"] == (
+        "unchanged"
+    )
+
+
 def test_recording_the_same_week_again_changes_nothing(client):
     assert client.post(f"/seasons/{LEAGUE}/record").json()["status"] == "recorded"
     path = week_file(client, LEAGUE, 1)
@@ -799,7 +855,7 @@ def test_the_script_prints_one_line_per_league(client):
     assert f"; schedule pages (1): {SITE}/{PRIVATE}?matchup_week=3; lineup pages (" in lines[1]
     # The lineup pages (#107): the settings page until read, then my team page by day.
     assert (
-        f"lineup pages (8): {SITE}/{PRIVATE}/settings {SITE}/{PRIVATE}/2?date=2026-10-26 "
+        f"lineup pages (15): {SITE}/{PRIVATE}/settings {SITE}/{PRIVATE}/2?date=2026-10-26 "
         in lines[1]
     )
     assert lines[2].startswith(f"{POINTS} week 1: recorded")
