@@ -622,3 +622,59 @@ def test_each_move_is_judged_on_the_horizon_its_set_was_recommended_for():
         "3 moves scored: realized 167% of projected, 2 of 2 in the projected direction "
         "(the 2 with their recommended horizon over)"
     )
+
+
+def test_the_season_is_summed_beside_the_others_and_the_flagged_counted():
+    """#144: a strategy set solved under the season weight is judged on the season; the season
+    is summed through the days read; the moves projected below zero over it and the flagged
+    are counted, with how many realized below zero so far; its gaps are not counted twice."""
+    assert (
+        season_scorecard.judged_horizon(
+            {"set": "season", "value": {"horizons": {"season": {"value": 1.0}}}},
+            {"source": "strategy"},
+        )
+        == "season"
+    )
+
+    def row(flag: bool | None, projected: float, so_far: float, gaps: int = 0) -> dict:
+        r = {
+            "match": {"kind": "as_recommended", "near": False},
+            "judged": "week",
+            "season_costly": flag,
+            "projected": {
+                "value": {"horizons": {"week": {"value": 1.0}, "season": {"value": projected}}}
+            },
+            "realized": {
+                "valued": True,
+                "scorer": {"own": True},
+                "horizons": {
+                    "week": {"value": 0.5, "complete": True, "gaps": gaps},
+                    "season": {"value": so_far, "complete": False, "gaps": gaps},
+                },
+            },
+        }
+        return {**r, "group": season_scorecard.group(r)}
+
+    rows = [
+        row(True, -3.0, -1.0, gaps=2),  # flagged, below zero so far
+        row(True, -2.0, 0.5),  # flagged, above so far
+        row(False, -0.5, -0.2),  # below zero over the season, not below the floor's margin
+        row(False, 4.0, -0.1),
+        row(None, 1.0, 0.3),  # logged before the flag
+    ]
+    s = season_scorecard.moves_summary(rows)
+    assert s["projected_value"]["season"] == pytest.approx(-0.5)
+    assert s["realized_value"]["season"] == pytest.approx(-0.5)
+    assert s["complete"]["season"] == 0
+    assert s["season_negative"] == {"moves": 3, "below_so_far": 2}
+    assert s["season_costly"] == {"checked": 4, "moves": 2, "below_so_far": 1}
+    assert s["gaps"] == 2
+    line = season_scorecard._realized_counts(rows)
+    assert line.endswith(
+        "3 projected below zero over the season, 2 of them below zero so far; "
+        "2 flagged season-costly, 1 of them below zero so far"
+    )
+    # A week with no season projection says nothing of it.
+    assert "season" not in season_scorecard._realized_counts(
+        [{**r, "projected": None, "season_costly": None} for r in rows[:1]]
+    )

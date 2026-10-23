@@ -16,7 +16,12 @@ of three groups: ``scored`` (projected by its own entry and realized), ``realize
 but with no projection of its own or a borrowed scorer) or ``unscored``; only the scored are set
 against their projection, each on the horizon its set was recommended for (``judged``, #143): the
 week's set and the streaming plan on the week, the three weeks' set and the strategy's on the three
-weeks after, a move with no projection of its own on the week.
+weeks after, the strategy's set solved under the season weight on the season (#144), a move with no
+projection of its own on the week. Every move also carries its season horizon beside the judging
+one, projected to the season's last day and realized so far, and the flag the decision log set on
+it (``season_costly``, #144: projected positive on its judging horizon, below minus the protection
+floor over the season); the summary counts the moves projected below zero over the season and the
+flagged, each with how many of the scored realized below zero so far.
 
 The private league is scored on its own and never pooled: its moves are suggestions only.
 """
@@ -47,9 +52,7 @@ BOXSCORES_DIR = "boxscores"
 #: A move's group: projected by its own entry and realized, realized only, or neither.
 SCORED, REALIZED_ONLY, UNSCORED = "scored", "realized_only", "unscored"
 #: The horizon a move is judged on when nothing says otherwise: its week.
-WEEK = "week"
-#: The moves route's sets recommended for the three weeks after the week.
-_THREE_SETS = ("three",)
+WEEK = dl.WEEK
 _REASONS = {
     rz.NO_TIME: "with no time on the page",
     rz.NO_SCORER: "with no scorer logged",
@@ -84,9 +87,10 @@ def week_moves(record: Mapping[str, Any], me: int, season: Season | None = None)
 
 def logged_move(entries: Sequence[Mapping[str, Any]], match: Mapping[str, Any]) -> dict | None:
     """The entry's own record of a move made as recommended: the set it came from, its gain on
-    each horizon as the solve priced it, its projection in value units, and the week's odds of
-    winning the matchup and expected categories before and after the set (``odds``, #129);
-    None for any other match, or an entry logged before it kept them."""
+    each horizon as the solve priced it, its projection in value units, the week's odds of
+    winning the matchup and expected categories before and after the set (``odds``, #129), and
+    whether it was flagged as costing the season (``season_costly``, #144, None for an entry
+    logged before the flag); None for any other match, or an entry logged before it kept them."""
     if match.get("kind") != dl.AS_RECOMMENDED or match.get("move") is None:
         return None
     entry = next((e for e in entries if e["id"] == match["entry"]), None)
@@ -101,7 +105,13 @@ def logged_move(entries: Sequence[Mapping[str, Any]], match: Mapping[str, Any]) 
                     else None
                     for side in ("before", "after")
                 }
-                return {"set": s["key"], "gain": m.get("gain"), "value": m["value"], "odds": odds}
+                return {
+                    "set": s["key"],
+                    "gain": m.get("gain"),
+                    "value": m["value"],
+                    "odds": odds,
+                    "season_costly": m.get("season_costly"),
+                }
     return None
 
 
@@ -218,15 +228,13 @@ def realized_move(
 
 
 def judged_horizon(projected: Mapping[str, Any] | None, entry: Mapping[str, Any] | None) -> str:
-    """The horizon a move is judged on (#143): the one its set was recommended for. The moves
-    route's week set and streaming plan on the week, its three weeks' set on the three weeks
-    after; a strategy set on the three weeks after (the season once #144's horizon exists); a
-    move with no projection of its own on the week."""
+    """The horizon a move is judged on (#143, #144): the one its set was recommended for
+    (``decisions.judging_horizon``); a move with no projection of its own on the week."""
     if not projected:
         return WEEK
-    if (entry or {}).get("source") == "strategy" or projected.get("set") in _THREE_SETS:
-        return "three"
-    return WEEK
+    return dl.judging_horizon(
+        (entry or {}).get("source"), projected.get("set"), projected.get("value")
+    )
 
 
 def group(row: Mapping[str, Any]) -> str:
@@ -264,7 +272,8 @@ def move_rows(
 ) -> list[dict[str, Any]]:
     """My moves of the week, each with its match, the knobs in force at the entry it matched
     (#129), the entry's projection of it (for a move made as recommended), the horizon it is
-    judged on (``judged``, #143) and its realized value (None without the box scores)."""
+    judged on (``judged``, #143), whether the entry flagged it as costing the season
+    (``season_costly``, #144) and its realized value (None without the box scores)."""
     week = sc.week_of(record)
     players = _players(season, record) if box is not None else {}
     calendar = season.calendar if season is not None else None
@@ -282,6 +291,7 @@ def move_rows(
             "knobs": (entry or {}).get("knobs"),
             "projected": projected,
             "judged": judged_horizon(projected, entry),
+            "season_costly": (projected or {}).get("season_costly"),
             "realized": realized,
         }
         out.append({**row, "group": group(row)})
@@ -305,7 +315,11 @@ def moves_summary(rows: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
     judging horizon is over (``compared``, None without one), each on the horizon its set was
     recommended for (#143): their projected and realized values summed, the realized share of
     the projected, how many realized in the projected direction and how many were judged on
-    each horizon."""
+    each horizon. The season (#144) is summed like the others, realized through the days read;
+    ``season_negative`` counts the moves projected below zero over it and ``season_costly`` the
+    moves flagged (of those ``checked``, the moves the decision log flagged or cleared), each
+    with how many of the scored among them realized below zero so far (``below_so_far``). The
+    season's span overlaps the others, so its gaps are not counted."""
     rows = list(rows)
     projected = [r["projected"] for r in rows if r.get("projected")]
     sums: dict[str, float] = {}
@@ -318,16 +332,30 @@ def moves_summary(rows: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
     compared: dict[str, Any] | None = None
     reasons: Counter[str] = Counter()
     gaps = 0
+    negative = {"moves": 0, "below_so_far": 0}
+    costly = {"checked": 0, "moves": 0, "below_so_far": 0}
     for r in rows:
         x = r.get("realized") or {}
         if not x.get("valued"):
             reasons[x.get("reason") or rz.NOT_READ] += 1
         for key, h in (x.get("horizons") or {}).items():
-            gaps += h.get("gaps") or 0
+            gaps += (h.get("gaps") or 0) if key != dl.SEASON else 0
             if not x.get("valued") or h["value"] is None:
                 continue
             _add(real, key, h["value"])
             complete[key] = complete.get(key, 0) + int(h["complete"])
+        so_far = ((x.get("horizons") or {}).get(dl.SEASON) or {}).get("value")
+        below = int(group(r) == SCORED and so_far is not None and so_far < 0)
+        horizons = ((r.get("projected") or {}).get("value") or {}).get("horizons") or {}
+        over = (horizons.get(dl.SEASON) or {}).get("value")
+        if over is not None and over < 0:
+            negative["moves"] += 1
+            negative["below_so_far"] += below
+        if r.get("season_costly") is not None:
+            costly["checked"] += 1
+        if r.get("season_costly"):
+            costly["moves"] += 1
+            costly["below_so_far"] += below
         judged = r.get("judged") or judged_horizon(r.get("projected"), None)
         h = (x.get("horizons") or {}).get(judged)
         p = ((r.get("projected") or {}).get("value") or {}).get("horizons", {}).get(judged)
@@ -364,6 +392,8 @@ def moves_summary(rows: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
         "realized_value": real,
         "complete": complete,
         "compared": compared,
+        "season_negative": negative,
+        "season_costly": costly,
         "unscored_by": dict(reasons),
         "gaps": gaps,
     }
@@ -563,7 +593,9 @@ def _realized_counts(rows: Sequence[Mapping[str, Any]]) -> str:
     """Moves realized as public text, counts and ratios only (master's ruling, 2026-10-22: no
     scorer-unit value, for a move or summed): the scored with their realized share of the
     projected and how many went the projected way, each on the horizon its set was recommended
-    for (#143), the realized only, the unscored by reason."""
+    for (#143), the realized only, the unscored by reason, and once a move has a season
+    projection (#144) the moves projected below zero over the season and the flagged
+    season-costly, each with how many realized below zero so far."""
     s = moves_summary(rows)
     c = s["compared"]
     head = f"{s[SCORED]} move{'s' if s[SCORED] != 1 else ''} scored"
@@ -585,6 +617,16 @@ def _realized_counts(rows: Sequence[Mapping[str, Any]]) -> str:
         parts[-1] += f" ({why})"
     if s["gaps"]:
         parts.append(f"{s['gaps']} game{'s' if s['gaps'] != 1 else ''} of players not matched")
+    if dl.SEASON in s["projected_value"]:
+        neg, costly = s["season_negative"], s["season_costly"]
+        parts.append(
+            f"{neg['moves']} projected below zero over the season, "
+            f"{neg['below_so_far']} of them below zero so far"
+        )
+        parts.append(
+            f"{costly['moves']} flagged season-costly, "
+            f"{costly['below_so_far']} of them below zero so far"
+        )
     return "; ".join(parts)
 
 

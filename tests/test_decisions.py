@@ -153,6 +153,84 @@ def test_a_plans_steps_are_valued_from_their_days_and_sum_to_the_plan():
     assert dl.move_projection(p, scorer, 11, 1) == dl.move_projection(p, scorer, 11, 1, thu)
 
 
+def test_the_season_horizon_counts_the_schedule_read_and_extrapolates_the_rest():
+    """#144: from the move's day to the season's last day, the week's and the three weeks'
+    games as they count them, then from the day each is back his team's games where the
+    schedule was read and its rate over the read days where not, the latter extrapolated."""
+    from dataclasses import replace
+
+    from tests.test_moves import WEEKS, build, player, rates, schedule
+
+    # Each team plays 7 of the 28 days read (a quarter a day); the season runs 14 days more.
+    sched = schedule({"ADD": [1, 3, 5, 7, 9, 14, 21], "DRP": [0, 2, 4, 6, 8, 15, 22]})
+    rate = {1: rates(1.0), 2: rates(1.0), 9: rates(2.0)}
+    end = WEEKS[3][6] + timedelta(14)
+    p = build(
+        [player(1, "DRP"), player(2, "DRP", "INJ")],
+        [player(9, "ADD")],
+        rate,
+        sched,
+        [player(5, "DRP")],
+        effective={9: WEEKS[0][2]},
+        returns={1: WEEKS[0][4]},
+    )
+    p = replace(p, season_end=end)
+    scorer = {"points": {"pts": 1.0}}
+    out = dl.move_projection(p, scorer, 9, 1)
+    season = out["horizons"]["season"]
+    # The add: 2 + 4 games on the two horizons, then 14 unread days at a quarter; the drop
+    # 2 + 3 from his return, then the same 3.5.
+    assert season == {
+        "from": WEEKS[0][2].isoformat(),
+        "to": end.isoformat(),
+        "add_games": 9.5,
+        "drop_games": 8.5,
+        "extrapolated_games": {"add": 3.5, "drop": 3.5},
+        "value": 9.5 * 20.0 - 8.5 * 10.0,
+        "cats": {"pts": 9.5 * 20.0 - 8.5 * 10.0},
+    }
+    # Dropping one out for the season (INJ without a date) gives up nothing; with a date a week
+    # past the schedule read, the 8 days from it.
+    hurt = dl.move_projection(p, scorer, 9, 2)["horizons"]["season"]
+    assert (hurt["drop_games"], hurt["extrapolated_games"]["drop"]) == (0.0, 0.0)
+    back = replace(p, returns={1: WEEKS[0][4], 2: WEEKS[3][6] + timedelta(7)})
+    hurt = dl.move_projection(back, scorer, 9, 2)["horizons"]["season"]
+    assert (hurt["drop_games"], hurt["extrapolated_games"]["drop"]) == (2.0, 2.0)
+    # The schedule read to the season's end: nothing extrapolated.
+    later = {WEEKS[3][6] + timedelta(n): frozenset({"ADD"} if n % 2 else ()) for n in range(1, 15)}
+    full = dl.move_projection(replace(p, schedule={**sched, **later}), scorer, 9, None)
+    assert full["horizons"]["season"]["add_games"] == 6 + 7
+    assert full["horizons"]["season"]["extrapolated_games"] == {"add": 0.0, "drop": None}
+    # No season's end known: no season horizon.
+    assert "season" not in dl.move_projection(replace(p, season_end=None), scorer, 9, 1)["horizons"]
+
+
+def test_a_move_is_judged_on_its_sets_horizon_and_flagged_when_it_costs_the_season():
+    value = {
+        "horizons": {
+            "week": {"value": 4.0},
+            "three": {"value": -1.0},
+            "season": {"value": -2.0, "drop_games": 30.0},
+        }
+    }
+    judged = dl.judging_horizon
+    assert judged("moves", "week", value) == "week" and judged("moves", "plan", value) == "week"
+    assert judged("moves", "three", value) == "three"
+    # The strategy's sets on the three weeks, the season weight's on the season once it has one.
+    assert judged("strategy", "natural", value) == "three"
+    assert judged("strategy", "season", value) == "season"
+    assert judged("strategy", "season", {"horizons": {"week": {"value": 1.0}}}) == "three"
+    # Positive on its horizon and below minus the floor times the games given up over the season.
+    costly = dl.season_costly
+    assert costly(value, "week", 0.0) is True
+    assert costly(value, "week", 0.1) is False  # within 30 games of a 0.1 margin
+    assert costly(value, "three", 0.0) is False  # not positive on its own horizon
+    assert costly(value, "season", 0.0) is False
+    # Without either figure there is nothing to say.
+    assert costly({"horizons": {"week": {"value": 4.0}}}, "week", 0.0) is None
+    assert costly(None, "week", 0.0) is None
+
+
 # --------------------------------------------------------------------------- the moves made
 def test_a_moves_time_is_read_on_the_leagues_clock_and_its_bid_from_yahoos_words():
     assert dl.when_at("Oct 20, 3:57 am", TODAY, NBA_TZ) == et(20, 3, 57)
@@ -332,12 +410,21 @@ def test_each_solve_of_the_moves_route_appends_an_entry_to_its_days_log(client):
     # the add's games less the drop's over each horizon, each game at his per-game value.
     assert set(first["scorer"]["cats"]) == set(CATS)
     value = week["moves"][0]["value"]
-    assert value["add"] is not None and set(value["horizons"]) == {"week", "three"}
+    assert value["add"] is not None and set(value["horizons"]) == {"week", "three", "season"}
     this = value["horizons"]["week"]
     assert this["from"] == "2026-10-21" and this["add_games"] > 0
     drop = (this["drop_games"] or 0) * (value["drop"] or 0.0)
     assert this["value"] == pytest.approx(this["add_games"] * value["add"] - drop, abs=1e-3)
     assert value["horizons"]["three"]["from"] > this["to"]
+    # The season (#144): from the move to the calendar's last day, its games the two horizons'
+    # and more, some extrapolated past the schedule read; and the flag the log sets on it.
+    season, three = value["horizons"]["season"], value["horizons"]["three"]
+    assert season["from"] >= this["from"] and season["to"] > three["to"]
+    assert season["add_games"] > this["add_games"] + three["add_games"]
+    assert set(season["extrapolated_games"]) == {"add", "drop"}
+    drop = (season["drop_games"] or 0) * (value["drop"] or 0.0)
+    assert season["value"] == pytest.approx(season["add_games"] * value["add"] - drop, abs=0.05)
+    assert week["moves"][0]["season_costly"] in (True, False)
     # The same answer again is the cached one: nothing new to log.
     client.get(f"/seasons/{LEAGUE}/moves")
     assert len(logged(client)) == 1
@@ -460,6 +547,11 @@ def test_a_strategy_run_that_solved_is_logged_with_each_weights_set(client):
             x.get("marginal") for x in point["moves"]
         ]
         assert set(logged_set["week"]["after"]["cats"]) == set(CATS)
+        # The season check (#144) on the three weeks, these weights' judging horizon.
+        floor = run["knobs"]["protection_floor"]
+        for x in logged_set["moves"]:
+            assert "season" in x["value"]["horizons"]
+            assert x["season_costly"] == dl.season_costly(x["value"], "three", floor)
     # The same run asked again is found, not solved: nothing new to log.
     client.post(
         f"/seasons/{LEAGUE}/strategy", params={"wait": True, "pool": 12, "weights": "week,natural"}

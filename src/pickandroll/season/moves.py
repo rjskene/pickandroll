@@ -384,19 +384,26 @@ def back_from(problem: MoveProblem, key: int, player: Player) -> date | None:
     return max(start, last + timedelta(days=1))
 
 
-def games_left(problem: MoveProblem, nba_team: str | None, start: date) -> float:
-    """The games ``nba_team`` plays from ``start`` to the season's last day: the schedule's on
-    the days it was read, the team's rate over its read days on the others
-    (:data:`GAMES_PER_DAY` when no day was read)."""
+def games_ahead(problem: MoveProblem, nba_team: str | None, start: date) -> tuple[int, float]:
+    """The games ``nba_team`` plays from ``start`` to the season's last day, apart: the
+    schedule's on the days it was read, and the team's rate over its read days on the others
+    (:data:`GAMES_PER_DAY` when no day was read), extrapolated."""
     end = problem.season_end
     if end is None or not nba_team or start > end:
-        return 0.0
+        return 0, 0.0
     read = list(problem.schedule)
     rate = sum(nba_team in problem.schedule[d] for d in read) / len(read) if read else 0.0
     rate = rate if read else GAMES_PER_DAY
     inside = [d for d in read if start <= d <= end]
     unread = (end - start).days + 1 - len(inside)
-    return sum(nba_team in problem.schedule[d] for d in inside) + unread * rate
+    return sum(nba_team in problem.schedule[d] for d in inside), unread * rate
+
+
+def games_left(problem: MoveProblem, nba_team: str | None, start: date) -> float:
+    """The games ``nba_team`` plays from ``start`` to the season's last day (:func:`games_ahead`,
+    read and extrapolated together)."""
+    read, extrapolated = games_ahead(problem, nba_team, start)
+    return read + extrapolated
 
 
 def net_of_return(problem: MoveProblem, key: int, player: Player) -> float | None:

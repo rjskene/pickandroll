@@ -156,6 +156,25 @@ season projection is below minus the protection floor is flagged season-costly, 
 counts those and how many of them realized below zero. The check measures the keep rule; it does not
 change the engine.
 
+The details (#144, plan ruled on the issue 2026-10-23; docs/ADD_DROP.md "Scorecard"):
+- **The season's end.** The calendar's last day: the league's, the playoffs included, the day the
+  keep rule's `games_left` counts to.
+- **The games.**
+  - On the week's and the three weeks' days, those horizons' own counts.
+  - After them, from the day the player is back as the keep rule reads it:
+    - on a day the schedule was read, his team's games;
+    - on a day it was not, his team's games a day over the read days. These are extrapolated
+      and counted in `extrapolated_games`.
+  - Never the player's own three-week games, which are zero while he is out.
+- **The flag.** `season_costly` is set at decision time when both hold:
+  - the projection's value on the judging horizon is above zero;
+  - the season projection is below minus the per-game floor times the dropped player's season
+    games.
+
+  Both figures are in the league's units.
+- **In the Monday markdown.** Counts and ratios only: no season sum, as for every value in
+  scorer units.
+
 **The knobs**, each with bounds the Monday step may move within:
 
 | knob | where | bounds |
@@ -256,9 +275,11 @@ scorecard (#126) over all its recorded weeks, the knob file and the notes, and w
 - the sentences, written by rule (`season/progress.py`): the pooled wins track their expectation
   within a game, else are ahead or behind by the gap; a league a game or more off its own is named;
   the scored moves track their projection when they realized within 10% of it, else trail or beat
-  it; the matchup odds' Brier score; a bucket of 30 category odds or more off its results by 5
-  points or more reads over-confident (the results nearer a coin flip than the odds) or timid; and
-  each change kept, reverted or pending with when it is judged;
+  it; by scoring, how many of the moves checked against the season were flagged season-costly and
+  how many of those realized below zero so far (#144); the matchup odds' Brier score; a bucket of
+  30 category odds or more off its results by 5 points or more reads over-confident (the results
+  nearer a coin flip than the odds) or timid; and each change kept, reverted or pending with when
+  it is judged;
 - the problems met reading the two files, and the leagues whose scorecard failed.
 
 A move's values are in its league's scorer's units, fantasy points or the categories' z-sum, so the

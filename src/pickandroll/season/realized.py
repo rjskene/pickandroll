@@ -4,13 +4,15 @@ valued with the decision log entry's scorer (``weekly.net_value``, in the units 
 the move in). Every game the two played counts, whoever started; a game that began before the
 move is not his.
 
-The spans are the projection's two horizons: ``week``, from the move to the end of its matchup
-week, and ``three``, the three matchup weeks after it. A span is counted through its last day
-read without a gap from its first (``through``): a day not read yet stops it, and is listed in
-``missing`` once it is over. A player not matched to the box scores is a gap: his team's games
-in the span are counted in ``gaps`` and the span has no value, never a zero (until his team
-plays there is nothing to miss: no games, no value). A later move that drops the added player
-counts his games from then on against itself, so a stream's moves add up to what the spot made.
+The spans are the projection's horizons: ``week``, from the move to the end of its matchup
+week, ``three``, the three matchup weeks after it, and ``season`` (#144), from the move to the
+season's last day, complete only once the season is over and "so far" until then. A span is
+counted through its last day read without a gap from its first (``through``): a day not read
+yet stops it, and is listed in ``missing`` once it is over. A player not matched to the box
+scores is a gap: his team's games in the span are counted in ``gaps`` and the span has no
+value, never a zero (until his team plays there is nothing to miss: no games, no value). A
+later move that drops the added player counts his games from then on against itself, so a
+stream's moves add up to what the spot made.
 
 Pure: the games are ``sources.boxscores``' cached days, read by ``api.season_scorecard``.
 """
@@ -48,9 +50,10 @@ class Side:
 
 
 def spans(week: Week, day: date, calendar: Calendar | None = None) -> dict[str, tuple[date, date]]:
-    """A move's spans: ``week`` from its day to its week's end, and ``three`` over the
+    """A move's spans: ``week`` from its day to its week's end, ``three`` over the
     :data:`AFTER` matchup weeks after (fewer at the season's end, none after it; seven-day
-    weeks when the calendar is not known)."""
+    weeks when the calendar is not known), and ``season`` from its day to the calendar's last
+    day (#144; none without a calendar)."""
     out = {"week": (day, week.end)}
     if calendar is None:
         out["three"] = (week.end + timedelta(1), week.end + timedelta(7 * AFTER))
@@ -58,6 +61,9 @@ def spans(week: Week, day: date, calendar: Calendar | None = None) -> dict[str, 
     later = [w for w in calendar.weeks if w.start > week.end][:AFTER]
     if later:
         out["three"] = (later[0].start, later[-1].end)
+    end = max((w.end for w in calendar.weeks), default=None)
+    if end is not None and day <= end:
+        out["season"] = (day, end)
     return out
 
 

@@ -571,6 +571,9 @@ def test_games_to_the_seasons_end_count_the_schedule_read_and_the_teams_rate_aft
     p = keep_league()
     # MIN plays 10 of the 28 days read: 6 from the second Monday, and 14 unread days at 10/28.
     assert mv.games_left(p, "MIN", WEEKS[1][0]) == pytest.approx(6 + 14 * 10 / 28)
+    # The two apart, as the season horizon (#144) reports the extrapolated games.
+    read, extrapolated = mv.games_ahead(p, "MIN", WEEKS[1][0])
+    assert read == 6 and extrapolated == pytest.approx(14 * 10 / 28)
     assert mv.games_left(p, "MIN", p.season_end + timedelta(1)) == 0.0
     assert mv.games_left(p, None, WEEKS[1][0]) == 0.0
     assert mv.games_left(replace(p, season_end=None), "MIN", WEEKS[1][0]) == 0.0

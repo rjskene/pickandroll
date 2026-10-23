@@ -143,7 +143,8 @@ def league_series(cards: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
 
 
 def _by_scoring(cards: Iterable[Mapping[str, Any]], week: int | None = None) -> dict[str, Any]:
-    """The scored moves compared over ``cards`` (to ``week``) by the scoring of their league."""
+    """The scored moves compared over ``cards`` (to ``week``) by the scoring of their league,
+    and the season check's counts (``season_costly``, #144)."""
     rows: dict[str, list[Mapping[str, Any]]] = {}
     for c in cards:
         if week is None or c["week"] <= week:
@@ -155,6 +156,7 @@ def _by_scoring(cards: Iterable[Mapping[str, Any]], week: int | None = None) -> 
             "made": s["made"],
             "realized": s["realized_value"].get("week"),
             "compared": s["compared"],
+            "season_costly": s["season_costly"],
         }
     return out
 
@@ -292,7 +294,14 @@ def payload(
     moves_pooled = {
         s: m["compared"] for s, m in (to_date or {}).get("moves", {}).items() if m["compared"]
     }
-    say = pg.sentences(to_date, league_sums, calibration, moves_pooled, knobs["changes"])
+    season_pooled = {
+        s: m["season_costly"]
+        for s, m in (to_date or {}).get("moves", {}).items()
+        if m.get("season_costly")
+    }
+    say = pg.sentences(
+        to_date, league_sums, calibration, moves_pooled, knobs["changes"], season_pooled
+    )
     kinds = moves_summary(m for c in all_cards for m in c["moves"])
     return {
         "system": system,

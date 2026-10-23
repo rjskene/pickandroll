@@ -362,6 +362,25 @@ def moves_sentence(scope: str, scoring: str, c: Mapping[str, Any]) -> dict[str, 
     )
 
 
+def season_sentence(scope: str, scoring: str, c: Mapping[str, Any]) -> dict[str, str]:
+    """The season check (#144): of the moves checked against the season, how many were flagged
+    season-costly (projected positive on the horizon each was recommended for, below minus the
+    protection floor over the season) and how many of those have realized below zero so far."""
+    n, flagged, below = c["checked"], c["moves"], c["below_so_far"]
+    units = UNITS.get(scoring, "value units")
+    checked = f"the {n} move{'s' * (n != 1)} checked against the season ({units})"
+    if not flagged:
+        return _say("moves", scope, "good", f"None of {checked} was flagged season-costly.")
+    return _say(
+        "moves",
+        scope,
+        "bad" if below else "neutral",
+        f"{flagged} of {checked} {'were' if flagged != 1 else 'was'} flagged season-costly: "
+        "projected positive on the horizon recommended, below the protection floor over the "
+        f"season; {below} of them {'have' if below != 1 else 'has'} realized below zero so far.",
+    )
+
+
 def odds_sentences(scope: str, calibration: Mapping[str, Any]) -> list[dict[str, str]]:
     """The matchup odds' Brier score over the weeks scored (a league's weeks, or pooled each
     league's week a matchup), and each bucket of category odds off its results."""
@@ -419,14 +438,16 @@ def sentences(
     calibration: Mapping[str, Any] | None,
     moves: Mapping[str, Mapping[str, Any]],
     changes: Sequence[Mapping[str, Any]],
+    season: Mapping[str, Mapping[str, Any]] | None = None,
 ) -> list[dict[str, str]]:
     """The narrative by rule, each sentence with its topic (``wins``, ``league``, ``moves``,
     ``odds``, ``knobs``), its scope (``pooled`` or a league's id) and its tone (``good``,
     ``bad`` or ``neutral``): the public leagues' wins against expectation pooled, each league a
     game or more off its own, the scored moves' realized share of their projection by unit,
-    the matchup odds' Brier score and any bucket of category odds off its results, and each
-    knob change's verdict or when it is judged. ``pooled`` and each league carry ``won``,
-    ``expected`` and ``weeks`` over their projected weeks."""
+    the season check's flagged moves by unit (``season``, #144, the moves topic), the matchup
+    odds' Brier score and any bucket of category odds off its results, and each knob change's
+    verdict or when it is judged. ``pooled`` and each league carry ``won``, ``expected`` and
+    ``weeks`` over their projected weeks."""
     out = []
     if pooled and pooled.get("weeks"):
         out.append(
@@ -442,6 +463,9 @@ def sentences(
     for scoring, c in moves.items():
         if c.get("moves"):
             out.append(moves_sentence("pooled", scoring, c))
+    for scoring, c in (season or {}).items():
+        if c.get("checked"):
+            out.append(season_sentence("pooled", scoring, c))
     if calibration:
         out += odds_sentences("pooled", calibration)
     out += [change_sentence(c, c.get("week")) for c in changes]

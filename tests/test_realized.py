@@ -60,9 +60,11 @@ def week_days(first: date, last: date) -> tuple[date, ...]:
 
 
 def test_a_moves_spans_are_its_week_from_its_day_and_the_three_weeks_after():
+    # The season (#144) from the move's day to the calendar's last day, beside the other two.
     assert rz.spans(WEEK2, date(2026, 10, 27), CALENDAR) == {
         "week": (date(2026, 10, 27), date(2026, 11, 1)),
         "three": (date(2026, 11, 2), date(2026, 11, 22)),
+        "season": (date(2026, 10, 27), date(2026, 11, 29)),
     }
     # Fewer at the season's end, none after it; seven-day weeks without a calendar.
     assert rz.spans(WEEKS[4], date(2026, 11, 20), CALENDAR)["three"] == (
@@ -71,6 +73,11 @@ def test_a_moves_spans_are_its_week_from_its_day_and_the_three_weeks_after():
     )
     assert "three" not in rz.spans(WEEKS[5], date(2026, 11, 27), CALENDAR)
     assert rz.spans(WEEK2, date(2026, 10, 27))["three"] == (date(2026, 11, 2), date(2026, 11, 22))
+    assert "season" not in rz.spans(WEEK2, date(2026, 10, 27))
+    assert rz.spans(WEEKS[5], date(2026, 11, 27), CALENDAR)["season"] == (
+        date(2026, 11, 27),
+        date(2026, 11, 29),
+    )
 
 
 def test_the_add_s_games_from_the_move_less_the_drop_s_valued_with_the_scorer():
@@ -99,6 +106,13 @@ def test_the_add_s_games_from_the_move_less_the_drop_s_valued_with_the_scorer():
     three = out["horizons"]["three"]
     assert three["through"] is None and three["value"] is None and three["missing"] == []
     assert out["add"] == {"yahoo": 11, "espn": "e11", "by": "team"}
+    # The season (#144) so far: the same games through the days read, not complete until the
+    # calendar's last day is.
+    season = out["horizons"]["season"]
+    assert (season["from"], season["to"]) == ("2026-10-27", "2026-11-29")
+    assert season["through"] == "2026-11-01" and season["complete"] is False
+    assert (season["add_games"], season["drop_games"]) == (2, 2)
+    assert season["value"] == pytest.approx(22.8) and season["cats"] == week["cats"]
 
 
 def test_a_categories_scorer_values_the_games_as_their_sum():
