@@ -14,13 +14,14 @@ The ownership map for traded picks and the draft-night dashboard fixes are merge
 
 ## Roles
 
-Three Claude Desktop sessions share this checkout and reach each other with `ListAgents` / `SendMessage`.
+Four Claude Desktop sessions share this checkout and reach each other with `ListAgents` / `SendMessage`.
 
 | session | does | does not |
 |---|---|---|
 | **fantasyMASTER** | analysis, plans, metrics, spot checks, reviews and merges PRs, answers design questions | implement |
 | **fantasyEMISSARY** | implements, tests, hill-climbs `docs/YAHOO_SYNC.md`; owns #8, #9, #10; directs the drone | merge its own PRs |
 | **fantasyMOCK** (the drone) | runs Yahoo mock drafts from the user's Chrome on instruction from the emissary or the master; posts the scorecard of every mock on #11 | change code |
+| **fantasySIMIMP** | implements the season simulator (SEASON SIM, the design note at `~/code/pickandroll-scratch/master/season-sim/DESIGN.md`), in its own worktrees and PRs; started 2026-10-23 so the master stays on the non-simulator work | merge its own PRs; touch non-simulator code or the emissary's files |
 
 The user may talk to any of the three. A session that receives a decision from the user relays it to the others
 when it affects their work. Report outcomes faithfully: a failed test, a lost pick or a skipped step is stated
