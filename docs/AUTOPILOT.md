@@ -135,7 +135,11 @@ The default rule, until the user sets another or the hill-climb tunes it within 
 **The metric.** For each executed move, the realized gain: the added player's actual line from
 the move's date to the end of the horizon against the dropped player's over the same days, in
 the units the move was valued in, summed YTD and compared with the projected gain at decision
-time. Beside it: the week odds' Brier score pooled across leagues, actual wins against expected,
+time. Ruled 2026-10-22 on #126: the realized gain of a move is the added player's actual games in
+the span less the dropped player's, valued in the league scorer's units (fantasy points, or the
+z-sum net of an empty line) by the scorer of the decision log entry itself, on both horizons,
+every game the two played counting; the actual lines come from ESPN's public box scores. The
+set's expected categories stays the headline beside it. Beside it: the week odds' Brier score pooled across leagues, actual wins against expected,
 and the standings. The scorecard (#126) computes all of it from the decision log (#125) and the
 recorder (#97).
 
@@ -208,3 +212,6 @@ never a Basketball Monster number.
 - 2026-10-22, evening: the hill-climb gets a read-only Progress view of its own (section 6):
   charts, narrative, decisions and action items, no inputs; action items are handled in the
   session.
+- 2026-10-22, night: the keep rule as section 4 reads (#124, a forced keep on every horizon); the
+  scorecard's realized gain per move in scorer units from ESPN's box scores, every game counting
+  (#126).
