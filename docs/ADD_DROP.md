@@ -404,7 +404,8 @@ when left out.
   until the knob file of phase 3 sets them; `protection_floor` is the floor the keep rule used,
   #124; `plan_floor_cats` and `plan_floor_points` the streaming plan's, #136), the first day a
   move counts, the adds left, the horizons' labels and the pool (the moves route's search pool,
-  candidates and floor; the strategy's players and settings). Then one set per horizon (moves) or per weight (strategy):
+  candidates and floor; the strategy's players and settings). Then one set per horizon (moves)
+  or per weight (strategy):
   its moves (add, drop or nobody, the day it counts from, and the bid to make, null until the
   FAAB sizing of phase 2), the held slots it uses and the comebacks it implies (moves), the
   weight and where the set came from (strategy), its gains, and this week against the named
@@ -535,8 +536,8 @@ cannot say "add A now, drop A for B on Thursday"; the plan can.
   more than the floor until the scorecard (#126) sets a noise floor: `PLAN_FLOOR_CATS`, 0.10
   expected categories, in a categories league, and in a points league, whose week is the
   matchup's win odds on [0, 1], the same share of the scale, `PLAN_FLOOR_POINTS`, 0.01. Both are
-  knobs (docs/AUTOPILOT.md, section 6) the decision log records. It is a heuristic, so the card says "recommended", never "optimal", and a test checks it
-  against brute force on a small league.
+  knobs (docs/AUTOPILOT.md, section 6) the decision log records. It is a heuristic, so the card
+  says "recommended", never "optimal", and a test checks it against brute force on a small league.
 - **Horizons.** A plan lives inside the current week, and its final holder stays: the
   three-week horizon values him as it does any add. A plan never costs the three weeks after
   against the set (above), a hard rule for the autopilot, which cannot weigh a week's gain
@@ -553,8 +554,8 @@ cannot say "add A now, drop A for B on Thursday"; the plan can.
   both horizons, and the plan's `gain` on the set; `recommended`, and `short`, how far its week
   falls short of the floor, and `reason`, why it is not recommended: `short`, under the floor,
   or `guard`, with `guard` the refused plan (its steps by day, the spots, my started games with
-  it and its gain on the set on both horizons). The Moves card shows a Streaming plan section under the week's set
-  when it is recommended: the steps by day with each one's gain, then the started games and the
+  it and its gain on the set on both horizons). The Moves card shows a Streaming plan section
+  under the week's set when it is recommended: the steps by day with each one's gain, then the started games and the
   adds against the set and the set's moves it keeps. A plan not recommended is one muted line
   instead, what it would have bought ("Streaming Grant's spot buys 2 more started games for +0.04
   this week, under the 0.10 floor."), or for the guard's refusal what it buys and costs
@@ -563,9 +564,8 @@ cannot say "add A now, drop A for B on Thursday"; the plan can.
   `plan`, whatever it is: recommended or not and why, the plan's and the set's expected values
   on both horizons, the shortfall, the floor and the refused plan's gain when the guard refused
   one, so the scorecard can count the plans foregone and judge the floor; null without a stream
-  spot. The log keeps a recommended plan's
-  steps as one more set, `plan`: the kept moves, then the steps, each with its `from`
-  and the #126 fields, the step's `value` counting the add's games and the drop's from the step's
+  spot. The log keeps a recommended plan's steps as one more set, `plan`: the kept moves, then
+  the steps, each with its `from` and the #126 fields, the step's `value` counting the add's games and the drop's from the step's
   day (the drop may be an earlier step's add), so the steps' values sum to the plan's and the
   scorecard scores a stream like any move. `scripts/season.py decisions` prints the plan's moves
   by day. The executor (docs/AUTOPILOT.md, phase 2) takes the day's step only; the plan is
