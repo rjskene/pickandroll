@@ -413,9 +413,10 @@ when left out.
   failure to write loses that entry, never the answer.
 - **Moves in value units (#126).** From 2026-10-22 an entry also keeps its `scorer`: the
   league's, the keep rule's (Basketball Monster's lines over the players the league rosters),
-  as data (`weekly.scorer_of`: a points league's weights, or each category's spread and a
-  percentage's pool average), so the scorecard values the actual lines by the entry's own
-  scorer without rebuilding it. Each recommended move keeps its own `gain` on each horizon as
+  as data (`weekly.scorer_of`: a points league's weights, or each category's spread and, for
+  a percentage, the pool's rate its impact column weighs a line's attempts by, unrounded), so
+  the scorecard values the actual lines exactly as the solve valued the projections, without
+  rebuilding the scorer from an export that may be gone (master's ruling, 2026-10-22). Each recommended move keeps its own `gain` on each horizon as
   the solve priced it (the set with it against the set without it; null for a strategy move
   left unpriced) and its `value`: the add's and the drop's per-game value under the scorer net
   of an empty line, and on each horizon its first and last days, the games each was assumed to

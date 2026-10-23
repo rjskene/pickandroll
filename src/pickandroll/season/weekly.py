@@ -499,20 +499,18 @@ def scorer_of[K: Hashable](
     pool: int = 156,
 ) -> dict[str, Any]:
     """The scorer :func:`line_value` builds, as data a decision log entry keeps (#126): a points
-    league's weights, or each category's pool average (a percentage's) and spread over the pool
-    chosen the same way. Its means are left out: :func:`net_value` needs none."""
+    league's weights, or for each category over the pool chosen the same way its column's spread
+    and, for a percentage, the pool's rate (its makes over its attempts, which the impact column
+    weighs a line's attempts by). Unrounded, so that :func:`net_value` values a line exactly as
+    the live scorer does net of an empty line; the columns' means are left out, as that needs
+    none."""
     if points:
         return {"points": {stat: float(w) for stat, w in points.items()}}
     keys = list(rates)
     first = _z_scorer(rates, keys, cats)
     z = {k: first(rates[k]) for k in keys}
     chosen = sorted(keys, key=lambda k: -z[k])[:pool]
-    return {
-        "cats": {
-            cat: {"p": round(p, 6), "sd": round(sd, 6)}
-            for cat, p, _, sd in _columns(rates, chosen, cats)
-        }
-    }
+    return {"cats": {cat: {"p": p, "sd": sd} for cat, p, _, sd in _columns(rates, chosen, cats)}}
 
 
 def net_value(scorer: Mapping[str, Any], line: Mapping[str, float]) -> float:

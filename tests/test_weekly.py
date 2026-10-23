@@ -3,6 +3,7 @@ spread, and the odds of each category. Every number here is made up and computed
 
 from __future__ import annotations
 
+import json
 import math
 from datetime import date, timedelta
 
@@ -243,10 +244,21 @@ def test_a_scorer_kept_as_data_values_a_line_as_the_line_value_does():
         4: rates(threes=3, ast=8, ftm=6, fta=7),
     }
     score = wk.line_value(r, NINE, pool=3)
-    kept = wk.scorer_of(r, NINE, pool=3)
+    # Kept as the decision log keeps it: through JSON.
+    kept = json.loads(json.dumps(wk.scorer_of(r, NINE, pool=3)))
     assert set(kept["cats"]) == set(NINE)
-    for line in [*r.values(), rates(pts=40, tov=6)]:
-        assert wk.net_value(kept, line) == pytest.approx(score(line) - score({}), abs=1e-4)
+    # The percentages carry the pool's rate their impact column weighs attempts by.
+    first = wk.per_game_values(r, NINE, pool=len(r))  # the first pass, over everyone
+    pool = sorted(r, key=lambda k: -first[k])[:3]
+    fg = sum(r[k]["fgm"] for k in pool) / sum(r[k]["fga"] for k in pool)
+    assert kept["cats"]["fg_pct"]["p"] == fg
+    # Live scorer and kept scorer value a line the same, net of an empty line: the projection's
+    # per-game values less a dead spot's, as the keep rule and the moves' values take them.
+    values = wk.per_game_values(r, NINE, pool=3)
+    for key, line in r.items():
+        assert wk.net_value(kept, line) == pytest.approx(values[key] - score({}), rel=1e-12)
+    for line in (rates(pts=40, tov=6), {"fgm": 9.0, "fga": 11.0}):
+        assert wk.net_value(kept, line) == pytest.approx(score(line) - score({}), rel=1e-12)
     # Linear: two games' total is worth both games.
     two = {k: 2 * v for k, v in rates(pts=40).items()}
     assert wk.net_value(kept, two) == pytest.approx(2 * wk.net_value(kept, rates(pts=40)))
