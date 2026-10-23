@@ -710,6 +710,8 @@ def test_a_matchup_page_without_its_teams_skips_that_pair_and_the_refresh_lands(
     folder = client.data_dir / "leagues" / LEAGUE / "season"
     before = json.loads((folder / "state.json").read_text())["parts"]["matchup/1/7-12"]
     client.fake.live = {(7, 12), (3, 11)}
+    later = NOW + timedelta(minutes=5)
+    client.app.state.seasons.clock = lambda: later
     r = client.post(f"/seasons/{LEAGUE}/refresh", params={"wait": True})
     job = r.json()["refresh"]
     assert job["status"] == "done", job
@@ -720,7 +722,7 @@ def test_a_matchup_page_without_its_teams_skips_that_pair_and_the_refresh_lands(
     # The pairs read are new; a skipped pair keeps its last read.
     parts = json.loads((folder / "state.json").read_text())["parts"]
     assert parts["matchup/1/7-12"] == before
-    assert parts["matchup/1/4-10"]["fetched_at"] > before["fetched_at"]
+    assert parts["matchup/1/4-10"]["fetched_at"] == later.isoformat() > before["fetched_at"]
     rows = {tuple(m["teams"]) for m in client.get(f"/seasons/{LEAGUE}").json()["matchups"]}
     assert len(rows) == 6
 
@@ -1108,6 +1110,22 @@ def test_the_week_projection_gives_games_rates_and_my_matchups_odds(client):
     )
     assert all(0 <= o["p_win"] <= 1 for o in m["odds"])
     assert m["expected"] == pytest.approx(sum(o["p_win"] for o in m["odds"]), abs=1e-3)
+
+
+def test_a_refresh_after_the_first_tip_off_projects_the_week_from_tomorrow(client):
+    # 19:30 ET on a game day, whatever the real clock says (#121): every part is stamped with
+    # the service's clock, so the week so far counts today's games and the rest starts tomorrow.
+    evening = datetime(2026, 10, 21, 23, 30, tzinfo=UTC)
+    client.app.state.seasons.clock = lambda: evening
+    projection_csv(client.data_dir / "bbm_projections_2026-10-21.csv", fixture_names())
+    client.post(f"/seasons/{LEAGUE}/refresh", params={"wait": True})
+    folder = client.data_dir / "leagues" / LEAGUE / "season"
+    parts = json.loads((folder / "state.json").read_text())["parts"]
+    assert {"calendar", "schedule", "matchup/1/4-10"} <= set(parts)
+    assert {p["fetched_at"] for p in parts.values()} == {evening.isoformat()}
+    assert {r["seen_at"] for r in parts["available"]["data"]["rows"]} == {evening.isoformat()}
+    w = client.get(f"/seasons/{LEAGUE}").json()["week_projection"]
+    assert w["weeks"][0]["from"] == "2026-10-22" and w["matchup"]["from"] == "2026-10-22"
 
 
 def test_a_weekly_export_gives_the_weeks_games(client):

@@ -63,6 +63,15 @@ class Fetch(Protocol):
     def __call__(self, url: str) -> str: ...
 
 
+Clock = Callable[[], datetime]
+
+
+def utc_now() -> datetime:
+    """The real clock, each part's stamp by default. The season service passes its own, so a
+    test that pins it stamps the parts at the pinned instant too (#121)."""
+    return datetime.now(UTC)
+
+
 #: The longest one address may take to accept a connection before the next is tried.
 CONNECT_TIMEOUT = 5.0
 
@@ -258,6 +267,7 @@ def refresh_parts(
     max_available: int = MAX_AVAILABLE,
     progress: Progress | None = None,
     warn: Callable[[str, str], None] | None = None,
+    clock: Clock = utc_now,
 ) -> list[Part]:
     """Every public source of a league, read once, as season parts.
 
@@ -266,7 +276,7 @@ def refresh_parts(
     for the next seven days, every matchup of the week (mine first) and the transactions.
     A matchup page that does not parse skips its pair (the last read stays) and is reported to
     ``warn``, never failing the rest. Raises :class:`PrivateLeague` when Yahoo serves nothing
-    public for it.
+    public for it. Each part and row is stamped with ``clock`` when it is read.
     """
     pages_needed = -(-max_available // PAGE_ROWS)
     total = 4 + base.num_teams + 2 * pages_needed + base.num_teams // 2 + 1
@@ -279,7 +289,7 @@ def refresh_parts(
             progress(what, done, total)
 
     def part(key: str, data: Any) -> Part:
-        return Part(key, datetime.now(UTC), PUBLIC, data)
+        return Part(key, clock(), PUBLIC, data)
 
     out: list[Part] = []
     read = settings_from_v3(_json(fetch, settings_url(league)))
@@ -320,7 +330,7 @@ def refresh_parts(
         step(f"available {offset + 1}-{offset + PAGE_ROWS}")
         if len(page["rows"]) < PAGE_ROWS:
             break
-    seen = datetime.now(UTC).isoformat()
+    seen = clock().isoformat()
     unique = {r["player"]["yahoo_id"]: {**r, "seen_at": seen} for r in rows}
     out.append(part("available", {"rows": list(unique.values())}))
     # Yahoo's own projection of the same players for the next seven days.
@@ -328,7 +338,7 @@ def refresh_parts(
     for offset in offsets:
         html = fetch(available_url(league, offset, pages.PROJECTION_VIEW))
         for r in pages.parse_projection_page(html)["rows"]:
-            projected[r["player"]["yahoo_id"]] = {**r, "seen_at": datetime.now(UTC).isoformat()}
+            projected[r["player"]["yahoo_id"]] = {**r, "seen_at": clock().isoformat()}
         step(f"Yahoo projection {offset + 1}-{offset + PAGE_ROWS}")
     out.append(part(YAHOO_WEEK, {"rows": list(projected.values())}))
     week = read.get("current_week") or league_page.get("week")
@@ -355,7 +365,11 @@ def refresh_parts(
 
 
 def pairings_parts(
-    league: str, weeks: Iterable[int], fetch: Fetch, step: Callable[[str], None] | None = None
+    league: str,
+    weeks: Iterable[int],
+    fetch: Fetch,
+    step: Callable[[str], None] | None = None,
+    clock: Clock = utc_now,
 ) -> list[Part]:
     """Each of ``weeks``' pairs from the league page shown for it, one ``pairings/<week>`` part
     a week: the season's schedule of opponents (#116). A page that cannot be read is left out;
@@ -366,7 +380,7 @@ def pairings_parts(
             data = pages.parse_pairings(fetch(pairings_url(league, week)), week)
         except (FetchError, pages.PageError):
             continue
-        out.append(Part(pairings_key(week), datetime.now(UTC), PUBLIC, data))
+        out.append(Part(pairings_key(week), clock(), PUBLIC, data))
         if step is not None:
             step(f"week {week} pairs")
     return out
@@ -378,6 +392,7 @@ def lineup_parts(
     days: Iterable[date],
     fetch: Fetch,
     step: Callable[[str], None] | None = None,
+    clock: Clock = utc_now,
 ) -> list[Part]:
     """``team_id``'s lineup on each of ``days``, from its team page shown for the day, one
     ``lineup/<team>/<day>`` part a day (#107). A page that cannot be read is left out."""
@@ -387,7 +402,7 @@ def lineup_parts(
             data = pages.parse_team_page(fetch(team_url(league, team_id, day)), team_id)
         except (FetchError, pages.PageError):
             continue
-        out.append(Part(lineup_key(team_id, day), datetime.now(UTC), PUBLIC, data))
+        out.append(Part(lineup_key(team_id, day), clock(), PUBLIC, data))
         if step is not None:
             step(f"lineup {day:%a %b %d}")
     return out
