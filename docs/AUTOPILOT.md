@@ -419,4 +419,12 @@ never a Basketball Monster number.
   or 0.5 points a game), then the plan floors (never above four times the default), then the system
   (20 scored moves, a step to blend 0.5, never a flip); the Monday write is an API route with a
   script, idempotent per Monday.
+- 2026-10-23, later (#152, PR 2's judging ruled on the issue): the verdict is decided on the two
+  judged weeks, year to date read as the change in the A − B gap since the change's Monday, the
+  raw figure shown beside; a measure decides only past a threshold a league of the half (0.5 wins,
+  1.0 category, 0.10 of realized share, 1 season-costly move below zero), and a change none clears
+  is kept; each decision log entry records the file's system in force when it was logged, and a
+  week's projection is the last week-start entry solved on it unless the query names a system;
+  armed is the public leagues; a per-scoring change carries its scoring; the blend's later step is
+  0.25 toward Yahoo, never past 0.75.
 
