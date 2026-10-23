@@ -82,6 +82,43 @@ def entry(at: datetime, *sets: list[tuple[int, int | None]], source: str = "move
     }
 
 
+# --------------------------------------------------------------------------- value units (#126)
+def test_a_recommended_move_is_logged_in_the_scorers_units_with_the_games_assumed():
+    from tests.test_moves import WEEKS, build, player, rates, schedule
+
+    # The add plays Tue, Thu, Sat and four games later; the drop Mon, Wed, Fri, Sun and three.
+    sched = schedule({"ADD": [1, 3, 5, 7, 9, 14, 21], "DRP": [0, 2, 4, 6, 8, 15, 22]})
+    rate = {1: rates(1.0), 2: rates(1.0), 9: rates(2.0)}
+    p = build(
+        [player(1, "DRP"), player(2, "DRP")],
+        [player(9, "ADD")],
+        rate,
+        sched,
+        [player(5, "DRP")],
+        effective={9: WEEKS[0][2]},  # his claim clears on Wednesday
+        returns={1: WEEKS[0][4]},  # the drop is out until Friday
+    )
+    scorer = {"points": {"pts": 1.0}}
+    out = dl.move_projection(p, scorer, 9, 1)
+    assert (out["add"], out["drop"]) == (20.0, 10.0)
+    # This week the add's games from Wednesday (Thu, Sat), the drop's from his return (Fri, Sun).
+    assert out["horizons"]["week"] == {
+        "from": WEEKS[0][0].isoformat(),
+        "to": WEEKS[0][6].isoformat(),
+        "add_games": 2,
+        "drop_games": 2,
+        "value": 2 * 20.0 - 2 * 10.0,
+    }
+    three = out["horizons"]["three"]
+    assert (three["from"], three["to"]) == (WEEKS[1][0].isoformat(), WEEKS[3][6].isoformat())
+    assert (three["add_games"], three["drop_games"], three["value"]) == (4, 3, 4 * 20.0 - 3 * 10.0)
+    # A lone add gives up nobody's games; no scorer, or no such candidate, logs nothing.
+    lone = dl.move_projection(p, scorer, 9, None)
+    assert lone["drop"] is None and lone["horizons"]["week"]["drop_games"] is None
+    assert lone["horizons"]["week"]["value"] == 40.0
+    assert dl.move_projection(p, None, 9, 1) is None and dl.move_projection(p, scorer, 7, 1) is None
+
+
 # --------------------------------------------------------------------------- the moves made
 def test_a_moves_time_is_read_on_the_leagues_clock_and_its_bid_from_yahoos_words():
     assert dl.when_at("Oct 20, 3:57 am", TODAY, NBA_TZ) == et(20, 3, 57)
@@ -235,10 +272,12 @@ def test_each_solve_of_the_moves_route_appends_an_entry_to_its_days_log(client):
     assert [s["key"] for s in first["sets"]] == ["week", "three"]
     for s in first["sets"]:
         rec = m["recommended"][s["key"]]
-        # Each move with the bid to make, none until the FAAB sizing (phase 2).
-        assert s["moves"] == [
+        # Each move with the bid to make, none until the FAAB sizing (phase 2), and (#126) its
+        # own gain on each horizon as the solve priced it.
+        assert [{k: x[k] for k in ("add", "drop", "from", "bid")} for x in s["moves"]] == [
             {**{k: x[k] for k in ("add", "drop", "from")}, "bid": None} for x in rec["moves"]
         ]
+        assert [x["gain"] for x in s["moves"]] == [x["marginal"] for x in rec["moves"]]
         assert (s["weight"], s["held"], s["comebacks"]) == (None, rec["held"], rec["comebacks"])
         assert s["gain"] == rec["gain"]
         # This week before and after the set: each category's finals and odds.
@@ -253,6 +292,16 @@ def test_each_solve_of_the_moves_route_appends_an_entry_to_its_days_log(client):
     week = first["sets"][0]
     assert week["moves"], "the fixture league has a move this week"
     assert week["week"]["after"]["expected"] > week["week"]["before"]["expected"]
+    # The scorer the scorecard values the moves made with (#126), and each move in its units:
+    # the add's games less the drop's over each horizon, each game at his per-game value.
+    assert set(first["scorer"]["cats"]) == set(CATS)
+    value = week["moves"][0]["value"]
+    assert value["add"] is not None and set(value["horizons"]) == {"week", "three"}
+    this = value["horizons"]["week"]
+    assert this["from"] == "2026-10-21" and this["add_games"] > 0
+    drop = (this["drop_games"] or 0) * (value["drop"] or 0.0)
+    assert this["value"] == pytest.approx(this["add_games"] * value["add"] - drop, abs=1e-3)
+    assert value["horizons"]["three"]["from"] > this["to"]
     # The same answer again is the cached one: nothing new to log.
     client.get(f"/seasons/{LEAGUE}/moves")
     assert len(logged(client)) == 1
@@ -286,8 +335,11 @@ def test_a_strategy_run_that_solved_is_logged_with_each_weights_set(client):
         assert logged_set["natural"] == point["natural"]
         assert logged_set["source"] == point["source"]
         assert logged_set["gain"] == point["gain"]
-        assert logged_set["moves"] == [
+        assert [{k: x[k] for k in ("add", "drop", "from", "bid")} for x in logged_set["moves"]] == [
             {**{k: x[k] for k in ("add", "drop", "from")}, "bid": None} for x in point["moves"]
+        ]
+        assert [x["gain"] for x in logged_set["moves"]] == [
+            x.get("marginal") for x in point["moves"]
         ]
         assert set(logged_set["week"]["after"]["cats"]) == set(CATS)
     # The same run asked again is found, not solved: nothing new to log.

@@ -1,5 +1,5 @@
 """The season's commands: the weekly recorder (#97), run every Monday morning, the lineup
-check (#107) and the decision log (#125), for the terminal.
+check (#107), the decision log (#125) and the Monday scorecard (#126), for the terminal.
 
     python scripts/season.py record --all              # every league's latest finished week
     python scripts/season.py record 258901 --week 3     # one league, a past week
@@ -7,6 +7,8 @@ check (#107) and the decision log (#125), for the terminal.
     python scripts/season.py lineup --all               # today's and tomorrow's lineups as set
     python scripts/season.py lineup 258901 --days 7     # one league, the rest of the week
     python scripts/season.py decisions 258901           # the last week's solves and my moves
+    python scripts/season.py scorecard                  # the last recorded week, as markdown
+    python scripts/season.py scorecard 258901 --week 2  # one league's week, in a line
 
 It asks the API (``PICKANDROLL_API``, by default http://127.0.0.1:8000) to record each league and
 prints one line per league:
@@ -40,6 +42,12 @@ when one lies within an hour of it, where a wrong time zone could change the mat
 
     258901 2026-10-22 13:05 moves bbm: week +0.42: add Paul Reed for Myles Turner; three +0.31: no move
     258901 2026-10-22 18:40 made: add Paul Reed for Myles Turner (Free Agent): as recommended (moves 2026-10-22 13:05)
+
+``scorecard`` prints the week's scorecard across leagues as markdown (the odds pooled over the
+public leagues, a row per league, my moves by name and match), or for the leagues named one line
+each:
+
+    258901 week 2: projected 61% to win, 5.2 categories; W 5-3-1; rank 2 of 12, 9-7-2; moves 1 (1 as recommended); to date 1-1-0, wins 1 against 1.10 expected; 1 moves unscored
 
 Exit codes: 0 every league was asked, whatever it answered; 2 the API is unreachable.
 """
@@ -282,6 +290,81 @@ def decisions_all(
     return 0
 
 
+def _pct(x: float | None) -> str:
+    return "-" if x is None else f"{round(100 * x)}%"
+
+
+def scorecard_line(body: dict[str, Any]) -> str:
+    """A league's scorecard in a line: the week projected and played, the standing after it,
+    the moves, and the season to date."""
+    card = body.get("card")
+    if not card:
+        return f"{body['league']}: {body.get('status', 'not recorded').replace('_', ' ')}"
+    proj, actual = card.get("projected"), card.get("actual")
+    parts = []
+    if proj:
+        cats = "" if card["scoring"] == "points" else f", {proj['expected']:.1f} categories"
+        parts.append(f"projected {_pct(proj['matchup'])} to win{cats}")
+    else:
+        parts.append("not projected")
+    if actual:
+        res = actual["result"]
+        if card["scoring"] == "points":
+            parts.append(f"{res['outcome']} {res['points']:.1f}-{res['against']:.1f}")
+        else:
+            parts.append(f"{res['outcome']} {res['won']}-{res['lost']}-{res['tied']}")
+    st = card.get("standing") or {}
+    if st.get("rank"):
+        parts.append(
+            f"rank {st['rank']} of {st['teams']}"
+            + (f", {st['record']}" if st.get("record") else "")
+        )
+    moves = body["to_date"]["moves"]
+    week_moves = len(card["moves"])
+    made = sum(1 for m in card["moves"] if m["match"]["kind"] == "as_recommended")
+    parts.append(f"moves {week_moves} ({made} as recommended)" if week_moves else "no moves")
+    td = body["to_date"]
+    if td["projected"]:
+        parts.append(
+            f"to date {td['record']}, wins {td['wins']:g} against {td['expected_wins']:.2f} expected"
+        )
+    else:
+        parts.append(f"to date {td['record']}")
+    if moves["unscored"]:
+        parts.append(f"{moves['unscored']} moves unscored")
+    return f"{body['league']} week {card['week']}: " + "; ".join(parts)
+
+
+def scorecard_all(
+    call: Call, leagues: list[str], week: int | None = None, as_json: bool = False
+) -> int:
+    """Every league's scorecard as the week's markdown, or the leagues named one line each."""
+    query = f"?week={week}" if week is not None else ""
+    try:
+        if not leagues:
+            status, body = call("GET", f"/seasons/scorecard{query}")
+            if as_json:
+                print(json.dumps(body), flush=True)
+            elif status == 200:
+                print(body["markdown"], end="", flush=True)
+            else:
+                print(f"scorecard: failed ({status}): {body}", flush=True)
+            return 0
+        for league in leagues:
+            status, body = call("GET", f"/seasons/{league}/scorecard{query}")
+            if as_json:
+                print(json.dumps({"league": league, "status": status, "body": body}), flush=True)
+            elif status == 200:
+                print(scorecard_line(body), flush=True)
+            else:
+                detail = body.get("detail") if isinstance(body, dict) else body
+                print(f"{league}: skipped ({status}): {detail}", flush=True)
+    except Unreachable as exc:
+        print(f"the API is unreachable: {exc}", flush=True)
+        return 2
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     sub = ap.add_subparsers(dest="command", required=True)
@@ -303,7 +386,14 @@ def main(argv: list[str] | None = None) -> int:
     dc.add_argument("--to", dest="end", help="the last day (YYYY-MM-DD); today")
     dc.add_argument("--api", default=API, help="the API's address")
     dc.add_argument("--json", action="store_true", help="print each answer whole")
+    sc = sub.add_parser("scorecard", help="the Monday scorecard: each week against its projection")
+    sc.add_argument("leagues", nargs="*", help="league ids, one line each; every league by default")
+    sc.add_argument("--week", type=int, help="a past week; by default the last recorded")
+    sc.add_argument("--api", default=API, help="the API's address")
+    sc.add_argument("--json", action="store_true", help="print each answer whole")
     args = ap.parse_args(argv)
+    if args.command == "scorecard":
+        return scorecard_all(http(args.api.rstrip("/")), args.leagues, args.week, args.json)
     if args.command == "decisions":
         return decisions_all(
             http(args.api.rstrip("/")), args.leagues, args.start, args.end, args.json

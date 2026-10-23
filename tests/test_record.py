@@ -14,6 +14,7 @@ import importlib.util
 import io
 import json
 import re
+import time
 from collections.abc import Mapping
 from contextlib import redirect_stdout
 from datetime import UTC, date, datetime
@@ -174,6 +175,35 @@ def test_a_late_read_never_replaces_the_one_at_the_weeks_end():
     out, status = rec.settle(lone, _record(), t0)
     assert status == "revised" and out["players"]["through"] == "2026-10-25"
     assert "players" not in out["missing"]
+
+
+def _moved(kind: str, pid: int, team: int, when: str, group: int) -> dict:
+    player = {"yahoo_id": pid, "name": f"Player {pid}"}
+    return {"kind": kind, "player": player, "team_id": team, "when": when, "group": group}
+
+
+def test_a_weeks_transactions_are_the_union_of_the_pages_read():
+    week = WEEKS[0]
+    thursday = [
+        _moved("add", 11, 1, "Oct 22, 4:13 am", 0),
+        _moved("drop", 12, 1, "Oct 22, 4:13 am", 0),
+        _moved("add", 13, 2, "Oct 18, 9:00 pm", 1),  # the week before
+    ]
+    monday = [
+        _moved("add", 15, 4, "Oct 26, 8:00 am", 0),  # the week after
+        _moved("add", 14, 3, "Oct 25, 1:00 pm", 1),
+        _moved("add", 11, 1, "Oct 22, 4:13 am", 2),  # Thursday's, listed again
+        _moved("drop", 12, 1, "Oct 22, 4:13 am", 2),
+    ]
+    out = rec.week_transactions(
+        [(date(2026, 10, 22), thursday), (date(2026, 10, 26), monday)], week
+    )
+    assert [(t["kind"], t["player"]["yahoo_id"], t["group"], t["day"]) for t in out] == [
+        ("add", 11, 0, "2026-10-22"),
+        ("drop", 12, 0, "2026-10-22"),
+        ("add", 14, 1, "2026-10-25"),
+    ]
+    assert rec.week_transactions([], week) == []
 
 
 def test_games_come_from_the_totals_over_the_averages():
@@ -499,6 +529,48 @@ def test_a_recorded_week_from_the_league_pages(client):
     assert out["transactions_page"] is None
 
 
+def test_the_record_keeps_the_weeks_transactions_from_every_snapshot(client):
+    folder = client.data_dir / "leagues" / LEAGUE / "season" / "snapshots"
+    folder.mkdir(parents=True)
+
+    def snapshot(stamp: str, at: str, rows: list[dict]) -> None:
+        part = {"fetched_at": at, "source": "public", "data": {"rows": rows}}
+        body = {"received_at": at, "source": "public", "parts": {"transactions": part}}
+        (folder / f"{stamp}-public.json").write_text(json.dumps(body))
+
+    # Read before the week (too early to hold it), on its Thursday, and on Sunday night (US
+    # Eastern; Monday in UTC): Thursday's move listed on both is kept once.
+    snapshot(
+        "20261017T120000000000Z",
+        "2026-10-17T12:00:00+00:00",
+        [_moved("add", 9, 2, "Oct 17, 8:00 am", 0)],
+    )
+    snapshot(
+        "20261022T120000000000Z",
+        "2026-10-22T12:00:00+00:00",
+        [
+            _moved("add", 1011, 1, "Oct 22, 4:13 am", 0),
+            _moved("drop", 1003, 1, "Oct 22, 4:13 am", 0),
+        ],
+    )
+    snapshot(
+        "20261026T030000000000Z",
+        "2026-10-26T03:00:00+00:00",
+        [
+            _moved("add", 1012, 3, "Oct 25, 9:30 pm", 0),
+            _moved("add", 1011, 1, "Oct 22, 4:13 am", 1),
+            _moved("drop", 1003, 1, "Oct 22, 4:13 am", 1),
+        ],
+    )
+    assert client.post(f"/seasons/{LEAGUE}/record").json()["status"] == "recorded"
+    rows = json.loads(week_file(client, LEAGUE, 1).read_text())["transactions"]
+    assert [(t["player"]["yahoo_id"], t["group"], t["day"]) for t in rows] == [
+        (1011, 0, "2026-10-22"),
+        (1003, 0, "2026-10-22"),
+        (1012, 1, "2026-10-25"),
+    ]
+
+
 def test_recording_the_same_week_again_changes_nothing(client):
     assert client.post(f"/seasons/{LEAGUE}/record").json()["status"] == "recorded"
     path = week_file(client, LEAGUE, 1)
@@ -568,6 +640,15 @@ def test_a_week_not_over_or_unknown_is_refused(client):
     r = client.post(f"/seasons/{LEAGUE}/record")
     assert r.status_code == 409 and "no week is over" in r.json()["detail"]
     assert client.get(f"/seasons/{LEAGUE}/weeks").json()["weeks"] == []
+
+
+def wait_for_extras(client, league: str) -> None:
+    """A private league's background read, started by a snapshot post, once it has finished."""
+    job = client.app.state.seasons.jobs.get(league)
+    deadline = time.monotonic() + 10
+    while job is not None and job.status == "running" and time.monotonic() < deadline:
+        time.sleep(0.02)
+    assert job is None or job.status != "running"
 
 
 def snapshot(client, league: str, url: str, html: str, at: datetime):
@@ -655,6 +736,9 @@ def test_a_private_league_names_the_pages_it_needs_then_records(client):
         for t in TEAMS
     ]  # fmt: skip
     client.post(f"/seasons/{PRIVATE}/snapshot", json={"parts": rosters})
+    # The post's background read (schedule, buzz index) done first: only the record's reads
+    # count below.
+    wait_for_extras(client, PRIVATE)
     client.fake.urls.clear()
     out = client.post(f"/seasons/{PRIVATE}/record")
     assert out.status_code == 200, out.text

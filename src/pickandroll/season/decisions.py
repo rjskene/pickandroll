@@ -17,7 +17,12 @@ before it, over every set of that entry:
 The page prints a move's time without its zone (``Oct 20, 3:57 am``); it is read in the zone
 given (``api.season_decisions.TRANSACTIONS_TZ``). A move within :data:`NEAR` of any entry is
 flagged ``near``: a zone off by an hour could change the entry it is matched to, so its kind is
-not to be trusted blindly. Pure: the entries are read and written by the API.
+not to be trusted blindly.
+
+From #126 on, an entry also keeps what the Monday scorecard scores a move by: its scorer (the
+league's, as data: ``weekly.scorer_of``) and, for each recommended move, its own gain on each
+horizon as the solve priced it and its projection in value units (:func:`move_projection`).
+Pure: the entries are read and written by the API.
 """
 
 from __future__ import annotations
@@ -28,7 +33,8 @@ from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta, tzinfo
 from typing import Any
 
-from .moves import when_date
+from . import weekly as wk
+from .moves import MoveProblem, when_date
 from .state import Transaction
 
 AS_RECOMMENDED = "as_recommended"
@@ -170,3 +176,71 @@ def match(made: Made, entries: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
 
 def _move(m: tuple[int, int | None]) -> dict[str, Any]:
     return {"add": m[0], "drop": m[1]}
+
+
+# --------------------------------------------------------------------------- value units (#126)
+def _games(
+    problem: MoveProblem, key: str, pid: int, player: Any, start: date
+) -> tuple[int, date | None, date | None]:
+    """The games ``player`` was assumed to play over horizon ``key`` from ``start`` on, as the
+    projection counts them, and the horizon's first and last days."""
+    games, days = 0, []
+    for span in problem.horizons[key]:
+        days += span.days
+        playing = wk.playing_days(
+            [(pid, player)],
+            span.days,
+            problem.schedule,
+            span.this_week,
+            span.games,
+            problem.no_games,
+            available_from={pid: start},
+        )
+        games += len(playing[pid])
+    return games, min(days, default=None), max(days, default=None)
+
+
+def move_projection(
+    problem: MoveProblem, scorer: Mapping[str, Any] | None, add: int, drop: int | None
+) -> dict[str, Any] | None:
+    """A recommended move in value units: the add's and the drop's per-game value under
+    ``scorer`` net of an empty line, and on each horizon its days and the games each was
+    assumed to play there, the add's from the day the move takes effect and the drop's given
+    up from that day (or from his return, when later); the move's value is the add's games'
+    less the drop's. None without a scorer or a candidate of the problem's."""
+    added = dict(problem.candidates).get(add)
+    if scorer is None or added is None:
+        return None
+    mine = dict(problem.roster) | dict(problem.held)
+    dropped = mine.get(drop) if drop is not None else None
+    start = problem.effective.get(add, problem.first_day)
+
+    def per_game(pid: int) -> float | None:
+        line = problem.rates.get(pid)
+        return None if line is None else round(wk.net_value(scorer, line), 4)
+
+    a, d = per_game(add), per_game(drop) if dropped is not None else None
+    horizons = {}
+    for key in problem.horizons:
+        add_games, first, last = _games(problem, key, add, added, start)
+        if first is None:
+            continue
+        drop_games = 0
+        if dropped is not None:
+            back = max(start, problem.returns.get(drop, start))
+            drop_games = _games(problem, key, drop, dropped, back)[0]
+        value = None
+        if a is not None and (dropped is None or d is not None):
+            value = round(add_games * a - drop_games * (d or 0.0), 4)
+        horizons[key] = {
+            "from": first.isoformat(),
+            "to": last.isoformat(),
+            "add_games": add_games,
+            "drop_games": drop_games if dropped is not None else None,
+            "value": value,
+        }
+    return {
+        "add": a,
+        "drop": d,
+        "horizons": horizons,
+    }

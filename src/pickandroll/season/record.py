@@ -2,8 +2,10 @@
 record, kept for the in-season test of the draft (#91).
 
 A week's record holds the standings as of the week's end, each team's totals and games played
-for the week with its result, the week's matchups, and the season-to-date line of every drafted
-player with the team that has him. It is built from the parsed pages (``sources.yahoo.pages``)
+for the week with its result, the week's matchups, the season-to-date line of every drafted
+player with the team that has him, and every add and drop of the week as the transactions pages
+read through it listed them (a page lists the latest few dozen, so the week is the pages' union:
+the Monday scorecard's moves, #126). It is built from the parsed pages (``sources.yahoo.pages``)
 and written once per week by the API; recording a week again changes the file only when its
 content changed (a stat correction), and says when (``revised_at``). Pure: the reads and the
 file live in ``api.season_record``.
@@ -23,6 +25,7 @@ from datetime import date, datetime
 from typing import Any
 
 from .calendar import Week
+from .moves import when_date
 from .state import SeasonSettings
 
 #: Yahoo's column labels, spaces and the non-scoring asterisk taken out, in our stat names.
@@ -186,6 +189,31 @@ def drafted_lines(
     return rows, missing
 
 
+def week_transactions(
+    pages: Iterable[tuple[date, Sequence[Mapping[str, Any]]]], week: Week
+) -> list[dict[str, Any]]:
+    """Every transaction of ``week`` from the transactions pages read, each with the day it was
+    read (which dates its rows): a group (an add and the drop with it) once however many pages
+    listed it, numbered anew in the order first seen, each row with its ``day``."""
+    seen: dict[tuple[Any, ...], int] = {}
+    out: list[dict[str, Any]] = []
+    for read, rows in pages:
+        groups: dict[int, list[Mapping[str, Any]]] = {}
+        for row in rows:
+            groups.setdefault(int(row.get("group") or 0), []).append(row)
+        for group in groups.values():
+            day = when_date(group[0].get("when"), read)
+            if day is None or not week.start <= day <= week.end:
+                continue
+            players = tuple(sorted((r["kind"], int(r["player"]["yahoo_id"])) for r in group))
+            key = (group[0].get("team_id"), group[0].get("when"), players)
+            if key in seen:
+                continue
+            seen[key] = len(seen)
+            out += [{**r, "group": seen[key], "day": day.isoformat()} for r in group]
+    return out
+
+
 def week_record(
     league: str,
     week: Week,
@@ -197,6 +225,7 @@ def week_record(
     players: Mapping[str, Any] | None,
     missing: Mapping[str, Any],
     sources: Mapping[str, str],
+    transactions: Sequence[Mapping[str, Any]] = (),
 ) -> dict[str, Any]:
     """The record of ``week`` (``recorded_at`` and ``revised_at`` are set by :func:`settle`)."""
     return {
@@ -211,6 +240,7 @@ def week_record(
         "teams": dict(teams),
         "matchups": list(matchups),
         "players": players,
+        "transactions": [dict(t) for t in transactions],
         "missing": {k: v for k, v in missing.items() if v},
     }
 
