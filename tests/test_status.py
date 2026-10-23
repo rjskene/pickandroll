@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import json
+import os
 from datetime import UTC, datetime, timedelta
 
+from pickandroll.api.seasons import RefreshJob
 from pickandroll.season import status as st
+from tests.test_season import LEAGUE, fixture_names, projection_csv, season_client
 
 #: 14:00 ET on a game day, after the routine's due time; the morning before it.
 NOW = datetime(2026, 10, 21, 18, 0, tzinfo=UTC)
@@ -135,3 +139,46 @@ def test_a_league_is_its_worst_section_and_the_whole_its_worst_league():
     assert (out["state"], out["today"]) == (st.GREEN, "2026-10-21")
     assert out["due_at"] == "2026-10-21T06:30:00-04:00"
     assert st.payload(exports, [green, private], None, NOW)["state"] == st.RED
+
+
+def test_the_status_route_lights_every_league_and_names_what_is_late(tmp_path):
+    """The route on the fixture leagues, the clock at :data:`NOW`: nothing read and no export
+    first; then the exports of today, a refresh and the moves solved; then a projection newer
+    than the moves, a missing export and a failed refresh."""
+    with season_client(tmp_path) as client:
+        before = client.get("/seasons/status").json()
+        assert before["state"] == st.RED and before["today"] == "2026-10-21"
+        assert {r["reason"] for r in before["exports"]["rows"]} == {"missing"}
+        assert [lg["league"] for lg in before["leagues"]] == ["100001", "100002"]
+
+        ros = tmp_path / "bbm_projections_2026-10-21.csv"
+        projection_csv(ros, fixture_names())
+        os.utime(ros, (at(4).timestamp(), at(4).timestamp()))
+        for name in ("week_this", "week_next", "actual_7d_totals", "actual_14d_totals"):
+            export = tmp_path / f"bbm_{name}_20261021-1400.xls"
+            export.write_bytes(b"")
+            sidecar = {"as_of": at(4).isoformat(), "file": export.name}
+            export.with_suffix(".json").write_text(json.dumps(sidecar))
+        client.post(f"/seasons/{LEAGUE}/refresh", params={"wait": True})
+        assert client.get(f"/seasons/{LEAGUE}/moves").status_code == 200
+        p = client.get("/seasons/status").json()
+        assert p["exports"]["state"] == st.GREEN
+        public, private = p["leagues"]
+        assert public["yahoo"]["rows"][0]["read_at"] == NOW.isoformat()
+        assert public["recommendations"]["rows"][0]["state"] == st.GREEN
+        assert public["state"] == st.GREEN
+        # The private league reads no page of its own here: red, and so over all.
+        assert (private["public"], private["state"], p["state"]) == (False, st.RED, st.RED)
+
+        later = (NOW + timedelta(minutes=1)).timestamp()
+        os.utime(ros, (later, later))
+        (tmp_path / "bbm_week_next_20261021-1400.xls").unlink()
+        failed = RefreshJob(LEAGUE, status="failed", error="Yahoo answered 503")
+        client.app.state.seasons.jobs[LEAGUE] = failed
+        public = client.get("/seasons/status").json()["leagues"][0]
+        moves = public["recommendations"]["rows"][0]
+        assert (moves["state"], moves["reason"]) == (st.RED, "projection newer")
+        assert public["yahoo"]["rows"][0]["error"] == "Yahoo answered 503"
+        assert public["yahoo"]["state"] == st.RED
+        rows = {r["kind"]: r for r in client.get("/seasons/status").json()["exports"]["rows"]}
+        assert rows["week_next"]["reason"] == "missing"
