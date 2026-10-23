@@ -698,6 +698,27 @@ td select.out.bad { border-color: var(--bad); }
 .pg-knobs details ul { margin: 4px 0 0; padding-left: 18px; }
 .pg-league { display: flex; flex-direction: column; gap: 10px; }
 .pg-league p { margin: 0; }
+/* The Moves view (#129): its table, a move's categories under its row (a bar for the realized,
+   a tick for the projected, one scale around zero) and the Move card's names. */
+.pg-moves td { white-space: nowrap; }
+.pg-chart-head { justify-content: flex-start; gap: 10px; flex-wrap: wrap; }
+.pg-cats { position: sticky; left: 0; max-width: min(640px, calc(100vw - 64px)); }
+.pg-cat { display: grid; grid-template-columns: 48px 180px 52px 52px minmax(0, 1fr); gap: 10px; align-items: center; }
+.pg-cat.sum { padding-top: 5px; border-top: 1px solid var(--line); }
+.pg-bar > b { position: absolute; top: -2px; bottom: -2px; width: 1px; background: var(--muted); }
+.pg-bar > span.neg { background: var(--bad); }
+.pg-names { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.hero .pg-names .name { font-size: 26px; }
+.hero .pg-names .name.other { font-size: 19px; color: var(--muted); }
+/* The Odds view's buckets, and the Table view's week rows. */
+.pg-odds { display: flex; flex-direction: column; gap: 6px; max-width: 520px; }
+.pg-buckets { width: auto; min-width: 280px; }
+.pg-table tr.pg-wk > td { background: var(--panel-2); border-top: 1px solid var(--line-2); padding-top: 5px; white-space: normal; }
+.pg-table td { white-space: nowrap; }
+@media (max-width: 600px) {
+  .pg-cat { grid-template-columns: 44px minmax(0, 1fr) 46px 46px; row-gap: 2px; }
+  .pg-cat > :nth-child(5) { grid-column: 1 / -1; }
+}
 .pg-sheet { width: min(640px, calc(100vw - 32px)); max-height: calc(100vh - 32px); outline: none; }
 .pg-sheet-body { display: flex; flex-direction: column; gap: 8px; padding: 14px 22px; overflow: auto; }
 .pg-sheet h2 { text-transform: uppercase; font-size: 18px; }

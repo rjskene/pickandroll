@@ -358,15 +358,18 @@ def moves_sentence(scope: str, scoring: str, c: Mapping[str, Any]) -> dict[str, 
 
 
 def odds_sentences(scope: str, calibration: Mapping[str, Any]) -> list[dict[str, str]]:
+    """The matchup odds' Brier score over the weeks scored (a league's weeks, or pooled each
+    league's week a matchup), and each bucket of category odds off its results."""
     out = []
     if calibration.get("brier") is not None:
-        weeks = calibration["weeks"]
+        n = calibration["weeks"]
+        noun = "matchup" if scope == "pooled" else "week"
         out.append(
             _say(
                 "odds",
                 scope,
                 "neutral",
-                f"The matchup odds' Brier score is {calibration['brier']:.2f} over {weeks} week{'s' * (weeks != 1)} (0.25 is a coin flip, lower is better).",
+                f"The matchup odds' Brier score is {calibration['brier']:.2f} over {n} {noun}{'s' * (n != 1)} (0.25 is a coin flip, lower is better).",
             )
         )
     for b in calibration.get("buckets") or []:
