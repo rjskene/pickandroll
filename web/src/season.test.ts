@@ -67,6 +67,7 @@ import {
   forText,
   gainLabel,
   keepLine,
+  keepPhrase,
   keepRuleNote,
   keptPlayers,
   keptWhy,
@@ -122,6 +123,7 @@ import {
   sortAvailable,
   statusTitle,
   statusTone,
+  waiversNote,
   weekDates,
   weekLabel,
   YAHOO_SORT,
@@ -722,6 +724,49 @@ test("the keep rule names whom it keeps and benches, and why", () => {
     keepRuleNote({ ...rule, floor: 0.1 }, name),
     "Protected: above the pool's average (0.00 a game), better than the best add (P9, 0.50) by more than 0.1 over the rest of the season, and back this season; benched: better than the best add (P9, 0.50) by more than 0.1 and back within a week. No move drops either.",
   );
+});
+
+test("the keep rule's header is one phrase, its names in the tooltip (#153)", () => {
+  assert.equal(keepPhrase(undefined), null);
+  assert.equal(keepPhrase(keepRule([{ player: 1, beats_best: false }])), null);
+  const five = keepRule([1, 2, 3, 4, 5].map((player) => ({ player, protected: true })));
+  assert.deepEqual(keepPhrase(five), { lead: "Keep rule protects ", count: 5, tail: "" });
+  const both = keepRule([{ player: 1, protected: true }, { player: 2, bench: true, back: "2026-10-25" }]);
+  const p = keepPhrase(both)!;
+  assert.equal(`${p.lead}${p.count}${p.tail}`, "Keep rule protects 1 and benches 1");
+  assert.deepEqual(keepPhrase(keepRule([{ player: 2, bench: true }])), { lead: "Keep rule benches ", count: 1, tail: "" });
+});
+
+test("the Waivers header is one phrase, every other clause in its tooltip unchanged (#153)", () => {
+  const moves = "+1wk and +3wk: what his best move adds in expected categories; click a row for the move · 4 with no line to value";
+  const a = {
+    label: "Basketball Monster",
+    players: 392,
+    file: "bbm_projections_2026-10-23.csv",
+    asOf: "2026-10-23T10:14:00Z",
+    horizon: "next3" as const,
+    other: "Yahoo",
+    shown: 120,
+    total: 150,
+    moves,
+  };
+  const note = waiversNote(a);
+  assert.equal(note.phrase, "392 players · next 3 weeks");
+  // Today's line, clause by clause: each one is in the tooltip.
+  const before =
+    "Basketball Monster: 392 players · bbm_projections_2026-10-23.csv, 2026-10-23 · totals over the next 3 weeks, every game he plays counted · " +
+    `hover a total for Yahoo's · 120 of the 150 most rostered available players · ${moves}`;
+  for (const clause of before.split(" · ")) assert.ok(note.detail.includes(clause), clause);
+  assert.equal(note.detail.length, before.split(" · ").length);
+  const unread = waiversNote({ ...a, players: 0, file: null, asOf: null, shown: 150, horizon: "week", moves: null });
+  assert.equal(unread.phrase, "no projection read · rest of this week");
+  assert.deepEqual(unread.detail, [
+    "Basketball Monster: nothing read yet",
+    "totals over the rest of this week, every game he plays counted",
+    "hover a total for Yahoo's",
+    "the 150 most rostered available players",
+  ]);
+  assert.equal(waiversNote({ ...a, file: null }).detail[1], "read 2026-10-23");
 });
 
 const stash = (x: Partial<Stash>): Stash => ({

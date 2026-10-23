@@ -49,6 +49,7 @@ import {
   isRefreshing,
   isStale,
   keepLine,
+  keepPhrase,
   keepRuleNote,
   keptPlayers,
   keptWhy,
@@ -73,6 +74,7 @@ import {
   statusTone,
   stepDay,
   TEXT_KEYS,
+  waiversNote,
   weekDates,
   weekLabel,
   weekResult,
@@ -86,6 +88,7 @@ import {
 import { DRAWER_WIDTH, isShown, SEASON_CARDS, SEASON_SHEET, SEASON_VIEWS, seasonKeys, stepHighlight, type DrawerState, type Half, type SeasonCardId } from "../keys";
 import { useDrawer, useHotkeys, useViews } from "../useKeys";
 import { FlagBreakdown, FlagInfo } from "./FlagExplain";
+import { StatusDot, StatusSheet, useSeasonStatus } from "./StatusLight";
 import Halves, { type Face } from "./Halves";
 import KeySheet from "./KeySheet";
 import LineupView from "./LineupView";
@@ -111,6 +114,9 @@ const DEFAULT_PANEL: DrawerState<SeasonCardId> = {
   last: { top: "moves", bottom: "flags" },
   width: DRAWER_WIDTH,
 };
+
+const REFRESH_TITLE = "Read the league's public Yahoo pages again, about 20 s (r)";
+const KEEP_RULE_TITLE = "the keep rule (#124): a net-positive player better than the best add over the rest of the season, who returns this season, is never a drop";
 
 /** A league in season (#92), in the draft view's shape (#109): a view where the board stands
  * (the available players, or this week's matchup, #116) picked from a drawer at its left edge,
@@ -144,6 +150,10 @@ export default function SeasonScreen({ league, onBack, onProgress }: { league: s
   const views = useViews(VIEW_KEY);
   const [leagueTab, setLeagueTab] = useState<LeagueTab>("standings");
   const [sheetOpen, setSheetOpen] = useState(false);
+  // The freshness light's sheet (#153).
+  const status = useSeasonStatus();
+  const [statusOpen, setStatusOpen] = useState(false);
+  const closeStatus = useCallback(() => setStatusOpen(false), []);
   const [highlight, setHighlight] = useState<number | null>(null);
   // One flag breakdown open at a time (#113), under a Flags card row or a Waivers row: opening
   // another closes the first.
@@ -189,6 +199,14 @@ export default function SeasonScreen({ league, onBack, onProgress }: { league: s
   });
   const mh = MOVE_HORIZON[horizon];
   const openMove = (id: number) => pick({ add: id, drop: openingDrop(moves.data?.candidates[String(id)], mh) });
+  // A new read or a new solve moves the light.
+  useEffect(() => {
+    void queryClient.invalidateQueries({ queryKey: ["status"] });
+  }, [queryClient, s?.updated_at, moves.dataUpdatedAt]);
+  // The keep rule's count opens the Strategy card, where its kept players are (#153).
+  const showStrategy = () => {
+    if (!isShown(panel.drawer, "strategy")) openCard("strategy", "bottom");
+  };
   useHotkeys(
     seasonKeys({
       view: views.view,
@@ -304,13 +322,14 @@ export default function SeasonScreen({ league, onBack, onProgress }: { league: s
             {s.opponent && <span>vs {s.opponent.name}</span>}
           </>
         )}
+        <StatusDot p={status.data} league={league} onOpen={() => setStatusOpen(true)} />
         {s && (
           <span className={running ? "accent" : isStale(s.updated_at, now) ? "bad" : "muted"} title={s.updated_at ?? undefined}>
             {refreshNote(s.refresh) || (s.has_snapshot ? `read ${ageLabel(s.updated_at, now)}` : "not read yet")}
           </span>
         )}
         {s?.public && (
-          <button className="small" disabled={running} onClick={() => refresh.mutate()} title="Read the league's public Yahoo pages again, about 20 s (r)">
+          <button className="small" disabled={running} onClick={() => refresh.mutate()} title={REFRESH_TITLE}>
             {running ? "Refreshing…" : "Refresh"}
           </button>
         )}
@@ -366,6 +385,7 @@ export default function SeasonScreen({ league, onBack, onProgress }: { league: s
                   searchRef={searchRef}
                   flagOpen={breakdown?.where === "waivers" ? breakdown.id : null}
                   onToggleFlag={(id) => toggleBreakdown("waivers", id)}
+                  onKeep={showStrategy}
                 />
               </div>
               <Halves d={panel} cards={SEASON_CARDS} face={face} keep={["trade"]} />
@@ -385,6 +405,14 @@ export default function SeasonScreen({ league, onBack, onProgress }: { league: s
         </>
       )}
       <KeySheet sheet={SEASON_SHEET} open={sheetOpen} onClose={() => setSheetOpen(false)} />
+      {statusOpen && status.data && (
+        <StatusSheet
+          p={status.data}
+          league={league}
+          onClose={closeStatus}
+          refresh={s?.public ? { run: () => refresh.mutate(), running, title: REFRESH_TITLE } : undefined}
+        />
+      )}
     </main>
   );
 }
@@ -475,6 +503,7 @@ function Waivers({
   searchRef,
   flagOpen,
   onToggleFlag,
+  onKeep,
 }: {
   s: SeasonView;
   system: ProjectionSystem;
@@ -491,6 +520,8 @@ function Waivers({
   /** The player whose flag breakdown is open under his row (#113). */
   flagOpen: number | null;
   onToggleFlag: (id: number) => void;
+  /** Opens the Strategy card, at the keep rule's players. */
+  onKeep: () => void;
 }) {
   const w = s.week_projection;
   const cats = s.settings.cats;
@@ -503,6 +534,7 @@ function Waivers({
   const minGain = m?.search.min_gain ?? 0;
   const name = useNamer(s);
   const keep = keepLine(m?.keep_rule, name);
+  const kept = keepPhrase(m?.keep_rule);
   const rows = s.available;
   const games = (r: AvailableRow, h: Horizon) => rowGames(w, r, h);
   const totals = useMemo(() => {
@@ -558,9 +590,19 @@ function Waivers({
     (s.scoring === "points" ? " (a points league: matchups won)" : "");
   const movesNote = m
     ? `+1wk and +3wk: what his best move adds in expected categories; click a row for the move${m.unprojected ? ` · ${m.unprojected} with no line to value` : ""}`
-    : s.my_team
-      ? "valuing the moves…"
-      : "";
+    : null;
+  // One phrase in the header, the rest in its "?" (#153).
+  const note = waiversNote({
+    label: info.label,
+    players: info.players,
+    file: info.file,
+    asOf: info.as_of,
+    horizon,
+    other: SYSTEM_SHORT[other],
+    shown: shown.length,
+    total: rows.length,
+    moves: movesNote,
+  });
   const horizonTitle =
     horizon === "week"
       ? `${week ? `from ${week.from} to ${week.end}` : "this week"}: his per-game line times the games he plays, every game counted (whom he would sit is the move's question, #94)`
@@ -628,17 +670,24 @@ function Waivers({
         </select>
       </header>
       <p className="muted small board-note">
-        {info.players ? `${info.label}: ${info.players} players` : `${info.label}: nothing read yet`}
-        {info.as_of ? ` · ${info.file ? `${info.file}, ` : "read "}${info.as_of.slice(0, 10)}` : ""}
-        {` · totals over the ${HORIZON_LABEL[horizon]}, every game he plays counted · hover a total for ${SYSTEM_SHORT[other]}'s`}
-        {` · ${shown.length === rows.length ? `the ${rows.length} most rostered available players` : `${shown.length} of the ${rows.length} most rostered available players`}`}
-        {moves.error ? <span className="bad">{` · no moves: ${moves.error.message}`}</span> : movesNote && ` · ${movesNote}`}
+        {note.phrase}{" "}
+        <span className="help" tabIndex={0} title={note.detail.join("\n")} aria-label={note.detail.join("; ")}>
+          ?
+        </span>
+        {moves.error ? <span className="bad">{` · no moves: ${moves.error.message}`}</span> : !m && s.my_team ? " · valuing the moves…" : ""}
+        {kept && keep && (
+          <>
+            {" · "}
+            <span title={`${keep}\n${KEEP_RULE_TITLE}`}>
+              {kept.lead}
+              <button className="link" onClick={onKeep} title={`${keep}\nOpen the Strategy card, where the kept players are`}>
+                {kept.count}
+              </button>
+              {kept.tail}
+            </span>
+          </>
+        )}
       </p>
-      {keep && (
-        <p className="muted small board-note" title="the keep rule (#124): a net-positive player better than the best add over the rest of the season, who returns this season, is never a drop">
-          {keep}
-        </p>
-      )}
       <div className="table-wrap">
         <table>
           <thead>
