@@ -93,7 +93,7 @@ import MatchupView from "./MatchupView";
 import OutlookView from "./OutlookView";
 import Rail from "./Rail";
 import Scorecard from "./Scorecard";
-import { SEASON_ICONS } from "./icons";
+import { SEASON_ICONS, VIEW_ICONS } from "./icons";
 import Strategy from "./Strategy";
 import Trade from "./Trade";
 import ViewDrawer from "./ViewDrawer";
@@ -117,7 +117,7 @@ const DEFAULT_PANEL: DrawerState<SeasonCardId> = {
  * a two-half panel of cards (the moves, a trade, the flags, my roster, the league and the
  * strategy, #110) and the draft's rail and keys. Yahoo's own columns, the weekly projection's
  * (#93) and the moves' gains (#94). */
-export default function SeasonScreen({ league, onBack }: { league: string; onBack: () => void }) {
+export default function SeasonScreen({ league, onBack, onProgress }: { league: string; onBack: () => void; onProgress: () => void }) {
   const queryClient = useQueryClient();
   const season = useQuery({
     queryKey: ["season", league],
@@ -219,6 +219,7 @@ export default function SeasonScreen({ league, onBack }: { league: string; onBac
       highlight,
       openMove,
       refresh: s?.public && !running ? () => refresh.mutate() : null,
+      progress: onProgress,
       sheetOpen,
       setSheetOpen,
     }),
@@ -313,6 +314,9 @@ export default function SeasonScreen({ league, onBack }: { league: string; onBac
             {running ? "Refreshing…" : "Refresh"}
           </button>
         )}
+        <button className="link" onClick={onProgress} title="the hill-climb over the season, every league (p)">
+          progress
+        </button>
         <button className="link" onClick={onBack}>
           all leagues
         </button>
@@ -330,7 +334,7 @@ export default function SeasonScreen({ league, onBack }: { league: string; onBac
           <div className="main season">
             {/* One box on a wide window (display: contents), the scrolling column beside the rail on a narrow one. */}
             <div className="season-body">
-              <ViewDrawer views={SEASON_VIEWS} view={views.view} shown={views.shown} onView={views.setView} onToggle={views.toggleViews} />
+              <ViewDrawer views={SEASON_VIEWS} icons={VIEW_ICONS} view={views.view} shown={views.shown} onView={views.setView} onToggle={views.toggleViews} />
               {views.view === "matchup" && (
                 <div className="board-col view-col">
                   <MatchupView league={league} s={s} system={system} setSystem={setSystem} now={now} />
@@ -1540,7 +1544,7 @@ function SeasonFooter({ s, now }: { s: SeasonView; now: number }) {
       {waivers.length > 0 && <span>{waivers.join(" · ")}</span>}
       <span className="grow" />
       <span>
-        <kbd>?</kbd> keys · <kbd>w</kbd> <kbd>h</kbd> <kbd>s</kbd> views · <kbd>[</kbd> view drawer · <kbd>1</kbd>–<kbd>8</kbd> cards · <kbd>⇧</kbd>+digit bottom half · <kbd>]</kbd> panel
+        <kbd>?</kbd> keys · <kbd>w</kbd> <kbd>h</kbd> <kbd>s</kbd> views · <kbd>[</kbd> view drawer · <kbd>1</kbd>–<kbd>8</kbd> cards · <kbd>⇧</kbd>+digit bottom half · <kbd>]</kbd> panel · <kbd>p</kbd> progress
       </span>
       <span title={Object.entries(s.fetched).map(([k, f]) => `${k}: ${f.at} (${f.source})`).join("\n")}>Snapshot {ageLabel(s.updated_at, now)}</span>
       <span>League {s.league}</span>

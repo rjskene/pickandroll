@@ -645,3 +645,62 @@ tr.breakdown > td { padding: 0; white-space: normal; background: var(--panel); }
 td select.out { padding: 1px 2px; font-size: 11px; max-width: 80px; }
 td select.out.on { color: var(--accent); border-color: var(--accent); }
 td select.out.bad { border-color: var(--bad); }
+
+/* The Progress screen (#129): the Trend view's head, tiles, sentences and strip, the chart's
+ * lines by their job, the Note and Knobs cards and the knob change sheet. */
+.progress-view { gap: 12px; }
+.progress-view .sv-head { gap: 10px 14px; }
+.progress-view .sv-head .seg { max-width: 100%; overflow-x: auto; }
+.progress-view .sv-head .seg button { flex: none; }
+.pg-foot > span:first-child { white-space: normal; }
+.pg-range { display: inline-flex; align-items: center; gap: 4px; }
+.pg-range b { min-width: 18px; text-align: center; }
+.pg-empty { max-width: 640px; line-height: 1.5; }
+.pg-tiles { display: flex; gap: 10px; flex-wrap: wrap; }
+.pg-tile { flex: 1 1 180px; min-width: 0; display: flex; flex-direction: column; gap: 3px; padding: 10px 12px; border: 1px solid var(--line-2); border-radius: 10px; background: var(--panel-2); }
+.pg-tile .v { font-family: var(--display); font-size: 26px; font-weight: 700; line-height: 1; color: var(--text); }
+.pg-tile .muted { font-size: 12px; line-height: 1.4; }
+.pg-unit { display: block; }
+.pg-say { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 3px; max-width: 900px; font-size: 12.5px; line-height: 1.45; }
+.pg-say li { display: flex; gap: 8px; }
+.pg-say .mark { flex: none; width: 12px; text-align: center; color: var(--dim); }
+.pg-say .mark.good { color: var(--good); }
+.pg-say .mark.bad { color: var(--bad); }
+.pg-strip .sv-chip { width: 84px; }
+.pg-k { font-size: 10px; font-weight: 700; margin-left: 2px; }
+.pg-scroll { max-width: 100%; overflow-x: auto; }
+.pg-leagues td { vertical-align: top; }
+.pg-leagues tr.pg-open > td { background: var(--panel-2); padding: 8px 10px 10px; white-space: normal; }
+.pg-leagues tr.pg-open .pg-say { margin: 8px 0; }
+.pg-weeks { width: auto; min-width: 360px; }
+.score-chart .line.expected { stroke: var(--muted); stroke-dasharray: 5 4; }
+.score-chart .line.other { stroke: var(--muted); }
+.score-chart .dot.expected, .score-chart .dot.other { fill: var(--muted); }
+.score-chart .end-label.expected, .score-chart .end-label.other { fill: var(--muted); font-weight: 400; }
+.score-chart .knob-mark line { stroke: var(--dim); stroke-width: 1; stroke-dasharray: 3 3; }
+.score-chart .knob-mark text { fill: var(--muted); font-size: 10px; font-weight: 600; font-family: var(--body); }
+.score-chart .knob-mark .hit { fill: transparent; }
+.score-chart .knob-mark.open { cursor: pointer; }
+.score-chart .knob-mark.open:hover text, .score-chart .knob-mark.open:focus-visible text { fill: var(--accent); }
+.score-chart .knob-mark:focus-visible { outline: none; }
+.score-chart .line-key { display: inline-block; width: 18px; height: 0; border-top: 2px solid var(--accent); }
+.score-chart .line-key.expected { border-top: 2px dashed var(--muted); }
+.score-chart .line-key.other { border-top-color: var(--muted); }
+.score-chart .mark-key { display: inline-block; width: 0; height: 12px; border-left: 1px dashed var(--muted); margin: 0 4px; }
+.progress-chart .tip { min-width: 170px; }
+.pg-steps { display: inline-flex; gap: 4px; }
+.pg-note { display: flex; flex-direction: column; gap: 10px; font-size: 12.5px; line-height: 1.45; }
+.pg-note section { display: flex; flex-direction: column; gap: 3px; }
+.pg-note p { margin: 0; white-space: pre-line; }
+.pg-note ol { margin: 2px 0 0; padding-left: 20px; display: flex; flex-direction: column; gap: 3px; }
+.pg-knobs { display: flex; flex-direction: column; gap: 8px; }
+.pg-knobs p { margin: 0; line-height: 1.45; }
+.pg-knobs details ul { margin: 4px 0 0; padding-left: 18px; }
+.pg-league { display: flex; flex-direction: column; gap: 10px; }
+.pg-league p { margin: 0; }
+.pg-sheet { width: min(640px, calc(100vw - 32px)); max-height: calc(100vh - 32px); outline: none; }
+.pg-sheet-body { display: flex; flex-direction: column; gap: 8px; padding: 14px 22px; overflow: auto; }
+.pg-sheet h2 { text-transform: uppercase; font-size: 18px; }
+.pg-sheet p { margin: 0; line-height: 1.45; }
+.pg-sheet .pg-ab { width: auto; min-width: 380px; }
+.pg-why { margin: 0; padding: 6px 12px; border-left: 2px solid var(--line-2); color: var(--text); font-style: italic; white-space: pre-line; }

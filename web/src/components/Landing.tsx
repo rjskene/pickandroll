@@ -1,10 +1,11 @@
 import { useCallback, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { api, type LeagueSummary, type RoomSummary } from "../api";
+import { api, type LeagueSummary, type ProgressPayload, type RoomSummary } from "../api";
 import { DRAFT_SEASON_DAYS, draftDay, draftsAhead, finishedDrafts, LAYOUTS, pageFor, type Layout } from "../format";
 import DraftSeason from "./DraftSeason";
 import DraftsDrawer, { type DrawerView } from "./DraftsDrawer";
 import LeagueGrid from "./LeagueGrid";
+import { POOLED, rangeSum, recordLabel, scopeWeeks } from "../progress";
 import { useNow } from "./YahooSync";
 
 const LAYOUT_KEY = "pickandroll.layout";
@@ -24,10 +25,12 @@ function savedLayout(): Layout {
 export default function Landing({
   onOpenLeague,
   onOpenSession,
+  onProgress,
   error,
 }: {
   onOpenLeague: (league: string) => void;
   onOpenSession: (id: string) => void;
+  onProgress: () => void;
   error: Error | null;
 }) {
   const [layout, setLayoutState] = useState<Layout>(savedLayout);
@@ -89,6 +92,7 @@ export default function Landing({
       ) : (
         <div className="landing-grid">
           <LeagueGrid onOpen={onOpenLeague} />
+          <ProgressFold onOpen={onProgress} />
           <DraftsFold leagues={leagues.data ?? []} rooms={rooms.data ?? []} now={now} onDrafts={() => setDrawer("drafts")} onNew={() => setDrawer("new")} />
         </div>
       )}
@@ -97,6 +101,35 @@ export default function Landing({
       )}
     </main>
   );
+}
+
+/** The Progress screen (#129) in one line: the weeks scored, the public leagues' record
+ * against expected, and the knob change pending. */
+function ProgressFold({ onOpen }: { onOpen: () => void }) {
+  const q = useQuery({ queryKey: ["progress"], queryFn: api.progress, refetchInterval: 600_000 });
+  return (
+    <div className="fold">
+      <span className="k">Progress</span>
+      <span className="muted">{q.data ? progressLine(q.data) : q.isError ? "not read" : "reading…"}</span>
+      <span className="grow" />
+      <button className="small" onClick={onOpen} title="the hill-climb over the season: every league against its expectation, the knob changes and the Monday notes">
+        Progress
+      </button>
+    </div>
+  );
+}
+
+function progressLine(p: ProgressPayload): string {
+  if (!p.last_recorded) return "no week scored yet: the Monday recorder scores each week once it ends";
+  const sum = rangeSum(scopeWeeks(p, POOLED));
+  const pending = p.knobs.changes.find((c) => !c.verdict);
+  return [
+    `${p.last_recorded} week${p.last_recorded === 1 ? "" : "s"} scored`,
+    sum.projected ? `public leagues ${recordLabel(sum.record)} against ${sum.expected.toFixed(1)} expected` : null,
+    pending ? `${pending.id} pending` : null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
 }
 
 /** In season the drafts fold into one line: what is ahead, live and finished, and the drawer. */

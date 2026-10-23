@@ -1617,6 +1617,8 @@ export interface LoggedSpan {
   add_games: number;
   drop_games: number | null;
   value: number | null;
+  /** The value by category (a points league's by scoring stat); entries logged before #129 have none. */
+  cats?: Record<string, number> | null;
 }
 
 /** A move's realized span: its games from the move on, through the last day read. */
@@ -1634,6 +1636,8 @@ export interface RealizedSpan {
   /** The games of a player not matched to the box scores. */
   gaps: number;
   value: number | null;
+  /** The value by category (a points league's by scoring stat); null while a side is unmatched. */
+  cats?: Record<string, number> | null;
 }
 
 export interface RealizedSide {
@@ -1667,8 +1671,12 @@ export interface ScorecardMove {
     set: string;
     gain: Partial<Record<MoveHorizon, number | null>>;
     value: { add: number | null; drop: number | null; horizons: Partial<Record<MoveHorizon, LoggedSpan>> };
+    /** The set's odds of winning the matchup and its expected categories, before and after it (#129). */
+    odds?: Record<"before" | "after", { matchup: number | null; expected: number | null } | null>;
   } | null;
   realized: Realized | null;
+  /** The knobs in force at the entry it matched (#129). */
+  knobs?: Partial<Record<KnobName, unknown>> | null;
 }
 
 export interface ScorecardCat {
@@ -1733,6 +1741,14 @@ export interface ScorecardToDate {
   moves: MovesSummary;
 }
 
+export interface CalibrationBucket {
+  from: number;
+  to: number;
+  count: number;
+  odds: number | null;
+  won: number | null;
+}
+
 export interface ScorecardPayload {
   league: string;
   public: boolean;
@@ -1745,6 +1761,183 @@ export interface ScorecardPayload {
   calibration?: { weeks: number; brier: number | null };
   /** The names of the players the moves name, by Yahoo id. */
   players?: Record<string, string>;
+}
+
+// ---------------------------------------------------------------- the Progress view (#129)
+/** The knobs of docs/AUTOPILOT.md section 6, as the decision log records them. */
+export type KnobName =
+  | "system"
+  | "blend"
+  | "horizon_weight"
+  | "protection_floor"
+  | "plan_floor_cats"
+  | "plan_floor_points"
+  | "stash_threshold"
+  | "faab_sizing"
+  | "daily_cap";
+export type Scoring = "categories" | "points";
+
+/** Wins and categories summed over some weeks: the wins and the matchup odds over the projected
+ * weeks, every win, and the categories over the weeks with both. */
+export interface ProgressRunning {
+  weeks: number;
+  expected: number;
+  won: number;
+  won_all: number;
+  expected_categories: number | null;
+  categories: number | null;
+}
+
+/** A league's week on the Progress view, with its running sums to it. */
+export interface ProgressWeek {
+  week: number;
+  start: string;
+  end: string;
+  scoring: Scoring | null;
+  /** The odds of winning the matchup, on a week with a result. */
+  expected: number | null;
+  won: number | null;
+  outcome: "W" | "L" | "T" | null;
+  expected_categories: number | null;
+  categories: number | null;
+  brier: number | null;
+  rank: number | null;
+  teams: number | null;
+  record: string | null;
+  moves: {
+    made: number;
+    scored: number;
+    realized_only: number;
+    unscored: number;
+    /** On the week, in the league's scorer's units. */
+    projected: number | null;
+    realized: number | null;
+    compared: MovesCompared | null;
+    paid: number;
+  };
+  /** Not recorded yet: counted once the lineup log exists. */
+  lineup_lost: number | null;
+  cum: ProgressRunning & {
+    moves: { made: number; realized_value: Partial<Record<MoveHorizon, number>>; compared: Partial<Record<MoveHorizon, MovesCompared>> };
+  };
+}
+
+/** A scoring's moves pooled: never summed with the other scoring's, whose units differ. */
+export interface ScoringMoves {
+  made: number;
+  realized: number | null;
+  compared: MovesCompared | null;
+}
+
+export interface PooledWeek extends ProgressRunning {
+  week: number;
+  leagues: number;
+  brier: number | null;
+  buckets: CalibrationBucket[];
+  record: string;
+  moves: Partial<Record<Scoring, ScoringMoves>>;
+  cum: ProgressRunning & { moves: Partial<Record<Scoring, ScoringMoves>> };
+}
+
+export interface ProgressLeague {
+  league: string;
+  public: boolean;
+  status: ScorecardPayload["status"];
+  scoring: Scoring | null;
+  weeks: ProgressWeek[];
+  to_date?: ScorecardToDate;
+}
+
+export interface ProgressMove extends ScorecardMove {
+  league: string;
+  public: boolean;
+  week: number;
+  scoring: Scoring | null;
+  names: { add: string | null; drop: string | null };
+}
+
+/** One half of a knob change over the weeks it is judged on. */
+export interface AbHalf {
+  leagues: string[];
+  wins_above: number | null;
+  moves_a_week: number | null;
+  standing_climbed: number;
+  brier: number | null;
+  moves: Partial<Record<Scoring, { moves: number; projected: number; realized: number; share: number | null }>>;
+}
+
+export interface KnobChange {
+  id: string;
+  monday: string;
+  knob: KnobName;
+  from: unknown;
+  to: unknown;
+  /** The leagues that took it: the A half. */
+  leagues: string[];
+  source: "master" | "user" | null;
+  reason: string | null;
+  decided_at: string | null;
+  verdict: "kept" | "reverted" | null;
+  judged_on: string | null;
+  rolled_out: string | null;
+  week: number | null;
+  ab: {
+    window: [number, number] | null;
+    a: AbHalf;
+    b: AbHalf;
+    /** Each week's wins above expected a league, both halves, from two weeks before it. */
+    series: { week: number; a: number | null; b: number | null }[];
+  } | null;
+}
+
+export interface ProgressNote {
+  monday: string;
+  posted: string | null;
+  working: string | null;
+  not_working: string | null;
+  decision: string | null;
+  actions: string[];
+  week: number | null;
+  /** The week the note looks back on. */
+  scored_week: number | null;
+}
+
+export interface ProgressSentence {
+  topic: "wins" | "league" | "moves" | "odds" | "knobs";
+  /** "pooled" or a league's id. */
+  scope: string;
+  tone: "good" | "bad" | "neutral";
+  text: string;
+}
+
+export interface ProgressPayload {
+  system: string;
+  today: string;
+  week: number | null;
+  last_recorded: number | null;
+  weeks: { week: number; start: string; end: string }[];
+  leagues: ProgressLeague[];
+  pooled: { weeks: PooledWeek[]; to_date: PooledWeek["cum"] | null; calibration: { weeks: number; brier: number | null; buckets: CalibrationBucket[] } };
+  moves: ProgressMove[];
+  knobs: {
+    in_force: Partial<Record<KnobName, unknown>>;
+    leagues: Record<string, Partial<Record<KnobName, unknown>>>;
+    frozen: Record<string, KnobName[]>;
+    changes: KnobChange[];
+  };
+  notes: ProgressNote[];
+  action_items: { monday: string; items: string[] } | null;
+  sentences: ProgressSentence[];
+  sources: {
+    leagues: number;
+    recorded: number;
+    public: number;
+    moves: Record<"made" | "as_recommended" | "differently" | "not_recommended" | "no_entry" | "near", number>;
+    knob_file: boolean;
+    notes: number;
+  };
+  problems: string[];
+  skipped: { league: string; reason: string }[];
 }
 
 /** The season view: the summary plus the week, standings, rosters, matchup and the pool. */
@@ -1870,6 +2063,8 @@ export const api = {
   weeks: (league: string) => request<SeasonWeeks>(`/seasons/${encodeURIComponent(league)}/weeks`),
   /** The recorded weeks against the decision log, the season to date and my moves realized (#126). */
   scorecard: (league: string) => request<ScorecardPayload>(`/seasons/${encodeURIComponent(league)}/scorecard`),
+  /** Every league's season against its expectation, the knob changes and the Monday notes (#129). */
+  progress: () => request<ProgressPayload>("/progress"),
   /** Read the league's public sources again, in the background; 409 for a private league. */
   refreshSeason: (league: string) =>
     request<{ refresh: SeasonRefresh; season: SeasonSummary }>(`/seasons/${encodeURIComponent(league)}/refresh`, { method: "POST" }),

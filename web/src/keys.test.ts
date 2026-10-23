@@ -14,6 +14,12 @@ import {
   openCard,
   parseDrawer,
   parseViews,
+  parseViewsOf,
+  DEFAULT_PROGRESS_VIEWS,
+  PROGRESS_CARDS,
+  PROGRESS_SHEET,
+  PROGRESS_VIEWS,
+  progressKeys,
   replaceCard,
   SEASON_CARDS,
   SEASON_SHEET,
@@ -24,6 +30,7 @@ import {
   toggleDrawer,
   type DrawerState,
   type KeyLike,
+  type ProgressKeys,
   type SeasonKeys,
 } from "./keys.ts";
 
@@ -261,6 +268,7 @@ function fakeSeason(over: Partial<SeasonKeys> = {}) {
     highlight: null,
     openMove: rec("move"),
     refresh: rec("refresh"),
+    progress: rec("progress"),
     sheetOpen: false,
     setSheetOpen: rec("sheet"),
     ...over,
@@ -302,6 +310,7 @@ test("season: ] / j k arrows Enter t m r x", () => {
     [key("t"), [["show", "trade"]]],
     [key("m"), [["show", "moves"]]],
     [key("r"), [["refresh"]]],
+    [key("p"), [["progress"]]],
   ];
   for (const [e, want, over] of cases) {
     const { map, calls } = fakeSeason(over);
@@ -422,5 +431,85 @@ test("each sheet names its screen's cards and lists its keys", () => {
   assert.ok(DRAFT_SHEET.cards.startsWith(`Cards are ${DRAFT_CARDS.map((c, i) => `${i + 1} ${c.title}`).join(" · ")},`));
   assert.ok(SEASON_SHEET.cards.startsWith(`Cards are ${SEASON_CARDS.map((c, i) => `${i + 1} ${c.title}`).join(" · ")},`));
   const listed = SEASON_SHEET.groups.flatMap((g) => g.rows.flatMap(([keys]) => keys));
-  for (const k of ["1", "8", "⇧ 2", "]", "[", "w", "h", "s", "l", "x", "Esc", "/", "j", "k", "↓", "↑", "Enter", "t", "m", "r", "?"]) assert.ok(listed.includes(k), k);
+  for (const k of ["1", "8", "⇧ 2", "]", "[", "w", "h", "s", "l", "x", "Esc", "/", "j", "k", "↓", "↑", "Enter", "t", "m", "r", "p", "?"]) assert.ok(listed.includes(k), k);
+  assert.ok(PROGRESS_SHEET.cards.startsWith(`Cards are ${PROGRESS_CARDS.map((c, i) => `${i + 1} ${c.title}`).join(" · ")},`));
+  const progress = PROGRESS_SHEET.groups.flatMap((g) => g.rows.flatMap(([keys]) => keys));
+  for (const k of ["1", "3", "⇧ 3", "]", "[", "t", "x", "←", "→", "Esc", "?"]) assert.ok(progress.includes(k), k);
+});
+
+/** The Progress screen's actions, recorded. */
+function fakeProgress(over: Partial<ProgressKeys> = {}) {
+  const calls: unknown[][] = [];
+  const rec =
+    (name: string) =>
+    (...args: unknown[]) => {
+      calls.push([name, ...args]);
+    };
+  const s: ProgressKeys = {
+    setView: rec("view"),
+    toggleViews: rec("views"),
+    openCard: rec("open"),
+    toggleDrawer: rec("toggle"),
+    swapHalves: rec("swap"),
+    collapse: rec("collapse"),
+    sheetChange: null,
+    closeChange: rec("close"),
+    stepChange: rec("step"),
+    sheetOpen: false,
+    setSheetOpen: rec("sheet"),
+    ...over,
+  };
+  return { map: progressKeys(s), calls };
+}
+
+test("progress: digits open its three cards, t its view, [ ] x the drawers", () => {
+  assert.deepEqual(
+    PROGRESS_CARDS.map((c) => c.id),
+    ["note", "knobs", "league"],
+  );
+  assert.deepEqual(
+    PROGRESS_VIEWS.map((v) => [v.key, v.id]),
+    [["t", "trend"]],
+  );
+  const cases: [KeyLike, unknown[][]][] = [
+    [digit(1), [["open", "note", "top"]]],
+    [digit(3, true), [["open", "league", "bottom"]]],
+    [key("t"), [["view", "trend"]]],
+    [key("["), [["views"]]],
+    [key("]"), [["toggle"]]],
+    [key("x"), [["swap"]]],
+  ];
+  for (const [e, want] of cases) {
+    const { map, calls } = fakeProgress();
+    assert.equal(handleKey(e, map), true, e.key);
+    assert.deepEqual(calls, want, e.key);
+  }
+  const { map } = fakeProgress();
+  assert.equal(handleKey(digit(4), map), false);
+});
+
+test("progress: Esc closes a change's sheet before the panel, and the arrows step only in it", () => {
+  let f = fakeProgress({ sheetChange: "K1" });
+  handleKey(key("Escape"), f.map);
+  assert.deepEqual(f.calls, [["close"]]);
+  f = fakeProgress();
+  handleKey(key("Escape"), f.map);
+  assert.deepEqual(f.calls, [["collapse"]]);
+  f = fakeProgress({ sheetChange: "K1" });
+  assert.equal(handleKey(key("ArrowRight"), f.map), true);
+  assert.equal(handleKey(key("ArrowLeft"), f.map), true);
+  assert.deepEqual(f.calls, [
+    ["step", 1],
+    ["step", -1],
+  ]);
+  f = fakeProgress();
+  assert.equal(handleKey(key("ArrowRight"), f.map), false, "no sheet: the arrow is left alone");
+  assert.deepEqual(f.calls, []);
+});
+
+test("a screen's views come back from the browser by its own definitions", () => {
+  assert.deepEqual(parseViewsOf(null, PROGRESS_VIEWS, DEFAULT_PROGRESS_VIEWS), DEFAULT_PROGRESS_VIEWS);
+  assert.deepEqual(parseViewsOf(JSON.stringify({ view: "trend", shown: false }), PROGRESS_VIEWS, DEFAULT_PROGRESS_VIEWS), { view: "trend", shown: false });
+  // The league page's view is not one of the Progress screen's.
+  assert.deepEqual(parseViewsOf(JSON.stringify({ view: "matchup", shown: true }), PROGRESS_VIEWS, DEFAULT_PROGRESS_VIEWS), DEFAULT_PROGRESS_VIEWS);
 });
