@@ -411,6 +411,17 @@ when left out.
   opponent before and after it: each category's finals and odds, the expected categories won
   and the odds of winning the matchup. A strategy run cut off before it solved logs nothing. A
   failure to write loses that entry, never the answer.
+- **Moves in value units (#126).** From 2026-10-22 an entry also keeps its `scorer`: the
+  league's, the keep rule's (Basketball Monster's lines over the players the league rosters),
+  as data (`weekly.scorer_of`: a points league's weights, or each category's spread and a
+  percentage's pool average), so the scorecard values the actual lines by the entry's own
+  scorer without rebuilding it. Each recommended move keeps its own `gain` on each horizon as
+  the solve priced it (the set with it against the set without it; null for a strategy move
+  left unpriced) and its `value`: the add's and the drop's per-game value under the scorer net
+  of an empty line, and on each horizon its first and last days, the games each was assumed to
+  play there (the add's from the day the move counts, the drop's given up from that day or from
+  his return when later) and the move's value, the add's games' less the drop's. An entry
+  logged before them leaves its moves unscored.
 - **My moves.** My team's rows on the transactions page, one per row group: an add with the
   drop that came with it, a lone add or a lone drop, with its time and the bid as read (`bid`,
   dollars, from Yahoo's `$5 Waiver`; null for a free agent's add). A trade is not a move here.
@@ -438,6 +449,49 @@ when left out.
   grid's solve button and the Strategy panel's run. The digest solves nothing, so for an entry
   every day the daily routine asks `GET /seasons/{id}/moves` of each league after its refresh
   (docs/AUTOPILOT.md, the daily row).
+
+## Scorecard (#126)
+
+`season/scorecard.py` (core, no I/O) and `api/season_scorecard.py`;
+`GET /seasons/{league}/scorecard?week=N&system=bbm` and `GET /seasons/scorecard?week=N`, the
+last recorded week when left out. The metric is docs/AUTOPILOT.md's, section 6.
+
+- **The projection.** A week's is the decision log's last entry on the system scored whose
+  first day is the week's first: a solve that saw the whole week, before its first game (once a
+  day's games begin, a solve's first day is the next). Its week block before any move gives each
+  category's finals and odds, the expected categories won and the odds of winning the matchup.
+  A week without one is unprojected: shown, but in no sum. Week 1 is unprojected (the log began
+  on Oct 22).
+- **The result.** The weekly record's (#97): my categories won, lost and tied (a points
+  league's points), the outcome, and each category's totals, a percentage from its makes and
+  attempts to Yahoo's three decimals, the lower turnovers winning; my rank and record after it.
+- **My moves.** The week's transactions as the record keeps them (`transactions`: every
+  transactions page read from the day before the week to a week after it, a row group once
+  however many pages listed it; the page lists only the latest few dozen), or for a week
+  recorded before the record kept them, the season's page. Each is matched to the entry before
+  it as the decision log matches (`as_recommended`, `differently`, `not_recommended`,
+  `no_entry`, `near`); a move made as recommended carries the entry's `gain` and `value` for it.
+- **Pooled.** Over the public leagues that projected the week: the matchup odds' Brier score
+  (a tie half a win) and the category odds in five buckets of 20 points, each with its count,
+  its mean odds and its share won; a points league's one category is its matchup, in the Brier
+  score only. The leagues that did not project it and those not recorded are named; the
+  season to date pools every projected week the same way. The private league is shown apart
+  and never pooled: its moves are suggestions only.
+- **Season to date.** Per league: the record, the projected weeks' expected wins (the matchup
+  odds summed) against the wins (a tie half), the expected categories against those won, the
+  standing after the last week, and the moves by match with the logged projections' value
+  summed on each horizon.
+- **Realized value (part 2).** The added player's games in the move's span less the dropped
+  player's from the move, valued with the entry's scorer, every game the two played counting;
+  the lines from ESPN's public box scores, cached per date once final, players matched by name
+  and team (the name alone when a trade inside the span breaks the team match), an unmatched
+  player's games a counted gap. Until it is built every move is counted unscored.
+- **Markdown.** `markdown` in the all-leagues answer, for #127: leagues by id, no team or
+  league names, no projected player line; the odds, results and standings as aggregates, a row
+  per league, the private league in its own table, and my moves by the players' names and how
+  they matched.
+- **Script.** `scripts/season.py scorecard [league ...] [--week N] [--json]`: the week's
+  markdown, or one line per league named.
 
 ## The breakout flag
 
@@ -670,7 +724,8 @@ phase 2 on.
    A private league answers 409 with the pages it needs, for the extension to read in the
    user's Chrome. `GET /seasons/{league}/weeks` serves the Weeks block on the league card.
    `scripts/season.py record --all` prints one line per league and exits non-zero only when
-   the API is unreachable. The scheduled task `weekly-recorder-monday` runs it every Monday at
+   the API is unreachable. Since #126 a record also keeps the week's transactions, merged
+   across the transactions pages read through it, for the Monday scorecard's moves. The scheduled task `weekly-recorder-monday` runs it every Monday at
    06:00 on the Mac's clock and opens the private league's needed pages read-only in the
    user's Chrome (set up 2026-10-21).
 

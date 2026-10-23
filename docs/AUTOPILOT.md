@@ -140,8 +140,8 @@ the span less the dropped player's, valued in the league scorer's units (fantasy
 z-sum net of an empty line) by the scorer of the decision log entry itself, on both horizons,
 every game the two played counting; the actual lines come from ESPN's public box scores. The
 set's expected categories stays the headline beside it. Beside it: the week odds' Brier score pooled across leagues, actual wins against expected,
-and the standings. The scorecard (#126) computes all of it from the decision log (#125) and the
-recorder (#97).
+and the standings. The scorecard (#126, docs/ADD_DROP.md "Scorecard") computes all of it from
+the decision log (#125) and the recorder (#97).
 
 **The knobs**, each with bounds the Monday step may move within:
 
