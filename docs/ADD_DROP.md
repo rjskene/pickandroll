@@ -751,7 +751,7 @@ then UI to evaluate available waiver options"). The flow:
    draggable), and 1 gives the Waivers board the full width. `]` collapses the drawer to the
    rail, `/` jumps to the Waivers search, `j`/`k` move a highlight through its rows and Enter
    opens that player's move, `t` and `m` swap Trade and Moves, `r` refreshes a public league,
-   `?` lists the keys, and Esc leaves a field, then closes the move, then collapses the drawer.
+   `p` opens the Progress screen (#129), `?` lists the keys, and Esc leaves a field, then closes the move, then collapses the drawer.
    Card 6, The league (#116), has two tabs: Standings (the standings, the recorded weeks and the
    league's recent moves) and Matchups (this week's pairings with their live scores, mine
    first; a click on one opens its category totals as far as its matchup page was read, or says

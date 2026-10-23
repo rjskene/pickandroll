@@ -103,10 +103,10 @@ export default function ProgressScreen({ onBack, onOpenLeague }: { onBack: () =>
       setSheetOpen,
     }),
   );
-  // A scope chosen from a row or a card shows in the League card.
+  // A league chosen from a chip, a row or a card shows in the League card, when the panel is open.
   const choose = (league: string) => {
     setScope(league);
-    if (league !== POOLED && !isShown(panel.drawer, "league")) panel.openCard("league", "bottom");
+    if (league !== POOLED && panel.drawerOpen && !isShown(panel.drawer, "league")) panel.openCard("league", "bottom");
   };
   const face = (id: ProgressCardId): Face => {
     if (!p) return { body: null };
