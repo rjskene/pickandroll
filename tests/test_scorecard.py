@@ -140,11 +140,23 @@ def test_with_no_system_named_a_week_is_projected_on_its_entrys_system_in_force(
     assert matchup(sc.projection(entries, WEEK2, None)) == 0.61
     assert matchup(sc.projection(entries[:1], WEEK2, None)) == 0.5
     assert matchup(sc.projection(entries, WEEK2, "yahoo")) == 0.2
-    # The file then put the league on the blend: a solve on it before the week's games is the
-    # last in force, and the entries before it keep the system they recorded.
-    blend = on(entry("2026-10-26T07:00:00+00:00", "2026-10-26", 0.7, system="blend"), "blend")
-    assert matchup(sc.projection([*entries, blend], WEEK2, None)) == 0.7
-    assert matchup(sc.projection([*entries, blend], WEEK2, "bbm")) == 0.61
+    # The Monday step then put the league on the blend. A solve after it, before the week's
+    # games, is not the week's projection: the week began on Basketball Monster's, for both
+    # halves, and so does a solve after it naming Basketball Monster's.
+    later = [
+        on(entry("2026-10-26T07:00:00+00:00", "2026-10-26", 0.7, system="blend"), "blend"),
+        on(entry("2026-10-26T08:00:00+00:00", "2026-10-26", 0.4), "blend"),
+    ]
+    assert matchup(sc.projection([*entries, *later], WEEK2, None)) == 0.61
+    assert matchup(sc.projection([*entries, *later], WEEK2, "blend")) == 0.7
+    assert matchup(sc.projection([*entries, *later], WEEK2, "bbm")) == 0.4
+    # The next week begins on the blend.
+    week3 = Week(3, date(2026, 11, 2), date(2026, 11, 8))
+    nxt = [
+        on(entry("2026-11-02T05:00:00+00:00", "2026-11-02", 0.66, system="blend"), "blend"),
+        on(entry("2026-11-02T06:00:00+00:00", "2026-11-02", 0.3), "blend"),
+    ]
+    assert matchup(sc.projection(nxt, week3, None)) == 0.66
     assert sc.on_system(entries[0], None) and not sc.on_system(entries[2], None)
 
 

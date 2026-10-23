@@ -4,10 +4,11 @@ calibration pooled across leagues.
 
 A week's projection is the decision log's last entry (#125) of the system scored whose first day
 is the week's first: a solve that saw the whole week ahead, before its first game (once a day's
-games begin, a solve's first day is the next). With no system named, the system scored is each
-entry's own in force: the knob file's for its league when it was logged (#152), so the Monday a
-change of system takes effect the week stays projected on the old one, for both halves. Its week block before any move gives each
-category's finals and odds, the expected categories and the odds of winning the matchup. A week
+games begin, a solve's first day is the next). With no system named, the system scored is the one
+in force when the week began (#152): the knob file's system for the league that the week's first
+such entry recorded, so a change of system made on the week's Monday leaves the week projected on
+the old one for both halves, whatever is solved after it. Its week block before any move gives
+each category's finals and odds, the expected categories and the odds of winning the matchup. A week
 without one is unprojected: shown, but in no sum. The result is the weekly record's (#97): my
 categories won, lost and tied (a points league's points), and each category's totals, a
 percentage from its makes and attempts to Yahoo's three decimals, the lower turnovers winning.
@@ -46,27 +47,35 @@ def _before(entry: Mapping[str, Any] | None) -> Mapping[str, Any] | None:
     return (sets[0].get("week") or {}).get("before") if sets else None
 
 
+def file_system(entry: Mapping[str, Any]) -> str:
+    """The system the knob file had in force for the entry's league when it was logged
+    (``knobs.file_system``, #152); :data:`IN_FORCE` for an entry logged before entries kept it."""
+    return (entry.get("knobs") or {}).get("file_system") or IN_FORCE
+
+
 def on_system(entry: Mapping[str, Any], system: str | None) -> bool:
     """Whether ``entry`` was solved on ``system``; with None, on the system the knob file had in
-    force for its league when it was logged (``knobs.file_system``, #152)."""
-    if system is None:
-        system = (entry.get("knobs") or {}).get("file_system") or IN_FORCE
-    return (entry.get("system") or {}).get("key") == system
+    force for its league when it was logged."""
+    return (entry.get("system") or {}).get("key") == (system or file_system(entry))
 
 
 def projection(
     entries: Iterable[Mapping[str, Any]], week: Week, system: str | None
 ) -> Mapping[str, Any] | None:
-    """The entry that projects ``week``: the last one on ``system`` (:func:`on_system`) whose
-    first day is the week's first and that holds a week block (a week without a named opponent
-    has none)."""
+    """The entry that projects ``week``: the last one on ``system`` whose first day is the week's
+    first and that holds a week block (a week without a named opponent has none). With None, on
+    the system in force when the week began: the one its first such entry recorded, solved on
+    the system the file then had in force."""
     start = week.start.isoformat()
-    found = [
-        e
-        for e in entries
-        if e.get("first_day") == start and on_system(e, system) and _before(e) is not None
-    ]
-    return max(found, key=lambda e: e["at"], default=None)
+    opening = sorted((e for e in entries if e.get("first_day") == start), key=lambda e: e["at"])
+    if not opening:
+        return None
+    if system is None:
+        began = file_system(opening[0])
+        found = [e for e in opening if file_system(e) == began and on_system(e, None)]
+    else:
+        found = [e for e in opening if on_system(e, system)]
+    return max((e for e in found if _before(e) is not None), key=lambda e: e["at"], default=None)
 
 
 def total(totals: Mapping[str, Any], cat: str) -> float | None:

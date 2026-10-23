@@ -24,9 +24,10 @@ it (``season_costly``, #144: projected positive on its judging horizon, below mi
 floor over the season); the summary counts the moves projected below zero over the season and the
 flagged, each with how many of the scored realized below zero so far.
 
-The system scored is the one the query names; with none, each entry's own in force (#152,
-``season.scorecard.on_system``): the knob file's system for its league when it was logged, which
-the entry's knobs record (``file_system``).
+The system scored is the one the query names; with none, the one in force (#152): a week is
+projected on the knob file's system for the league when the week began, which each entry's knobs
+record (``file_system``; ``season.scorecard.projection``), and a move with no scorer of its own
+borrows the nearest entry's solved on the system in force when it was logged.
 
 The private league is scored on its own and never pooled: its moves are suggestions only.
 """
@@ -49,8 +50,8 @@ from ..season.state import Player, Transaction
 from ..sources import boxscores
 from .season_decisions import TRANSACTIONS_TZ, _names
 
-#: The system scored by default: each entry's own in force when it was logged (#152,
-#: ``season.scorecard.on_system``).
+#: The system scored by default: the one in force (#152, ``season.scorecard.projection`` and
+#: ``on_system``).
 SYSTEM: str | None = None
 KINDS = (dl.AS_RECOMMENDED, dl.DIFFERENTLY, dl.NOT_RECOMMENDED, dl.NO_ENTRY)
 #: Where a refresh caches the box scores, under the data folder.

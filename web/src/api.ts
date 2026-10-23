@@ -1843,7 +1843,7 @@ export interface CalibrationBucket {
 export interface ScorecardPayload {
   league: string;
   public: boolean;
-  /** The system named in the query; null when each week is scored on its entry's in force (#152). */
+  /** The system named in the query; null when each week is scored on its own in force (#152). */
   system: string | null;
   status: "recorded" | "not_recorded" | "no_team";
   week: number | null;
@@ -2020,7 +2020,7 @@ export interface ProgressSentence {
 }
 
 export interface ProgressPayload {
-  /** The system named in the query; null when each league is scored on its own in force (#152). */
+  /** The system named in the query; null when each week is scored on its own in force (#152). */
   system: string | null;
   today: string;
   week: number | null;
