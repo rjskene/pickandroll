@@ -292,6 +292,12 @@ def solve_roster(
     for (p, i), var in parts["x"].items():
         if var.value() is not None and var.value() > 0.5:
             rows.append({"player": p, "slot": slots[i].name, "slot_index": i})
+    if status == "Not Solved" and not rows:
+        # Stopped at the time limit before any roster was found (every variable reads zero):
+        # a failed solve, never an empty roster (#122).
+        raise RuntimeError(
+            f"roster solve failed with status {status}: no roster within {time_limit:g} s"
+        )
     roster = pd.DataFrame(rows).sort_values("slot_index").reset_index(drop=True)
 
     active = tuple(c for c in problem.cats if _is_on(parts["y"][c]))
