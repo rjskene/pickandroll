@@ -734,6 +734,14 @@ td select.out.bad { border-color: var(--bad); }
 .status-sheet { width: min(880px, calc(100vw - 32px)); }
 .status-section .k { display: flex; align-items: center; gap: 6px; margin: 6px 0 4px; }
 .status-table { width: 100%; border-collapse: collapse; font-size: 12px; }
-.status-table td { padding: 3px 12px 3px 0; vertical-align: baseline; border-top: 1px solid var(--line); }
+.status-table td { padding: 3px 12px 3px 0; vertical-align: baseline; border-top: 1px solid var(--line); overflow-wrap: anywhere; }
+/* The same columns in every section, so the times and states line up down the sheet; a phone
+ * lets each table size its own. */
+@media (min-width: 601px) {
+  .status-table { table-layout: fixed; }
+  .status-table td:nth-child(1) { width: 18%; }
+  .status-table td:nth-child(2) { width: 12%; }
+  .status-table td:nth-child(3) { width: 37%; }
+}
 .status-table td.num { white-space: nowrap; font-variant-numeric: tabular-nums; }
 .pg-why { margin: 0; padding: 6px 12px; border-left: 2px solid var(--line-2); color: var(--text); font-style: italic; white-space: pre-line; }
