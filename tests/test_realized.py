@@ -87,7 +87,7 @@ def test_the_add_s_games_from_the_move_less_the_drop_s_valued_with_the_scorer():
         also=week_days(mon, date(2026, 11, 1)),
     )
     out = rz.realized(AT, AT.date(), WEEK2, ADD, DROP, POINTS, played, TODAY, CALENDAR)
-    assert out["scored"] is True and out["reason"] is None
+    assert out["valued"] is True and out["reason"] is None
     week = out["horizons"]["week"]
     assert (week["from"], week["to"], week["through"]) == ("2026-10-27", "2026-11-01", "2026-11-01")
     assert week["complete"] is True and week["missing"] == []
@@ -136,7 +136,7 @@ def test_a_span_counts_through_its_last_day_read_without_a_gap():
     # Wednesday is not read: Thursday's game waits for it, and the span is not complete.
     assert week["through"] == "2026-10-27" and week["value"] == pytest.approx(10.0)
     assert week["missing"] == ["2026-10-28"] and week["complete"] is False
-    assert out["scored"] is True
+    assert out["valued"] is True
 
 
 def test_a_player_not_matched_is_a_gap_of_his_teams_games_never_a_zero():
@@ -150,7 +150,7 @@ def test_a_player_not_matched_is_a_gap_of_his_teams_games_never_a_zero():
     lost = rz.Side(12, "BBB")
     out = rz.realized(AT, tue, WEEK2, ADD, lost, POINTS, played, date(2026, 10, 30), CALENDAR)
     week = out["horizons"]["week"]
-    assert out["scored"] is False and out["reason"] == rz.UNMATCHED
+    assert out["valued"] is False and out["reason"] == rz.UNMATCHED
     assert week["gaps"] == 2 and week["value"] is None and week["drop_games"] is None
     assert week["add"] == pytest.approx(10.0)
     assert out["drop"] == {"yahoo": 12, "espn": None, "by": None}
@@ -164,11 +164,11 @@ def test_a_player_whose_team_has_not_played_has_no_game_not_a_gap():
     idle = rz.Side(12, "BBB")
     out = rz.realized(AT, tue, WEEK2, ADD, idle, POINTS, played, date(2026, 10, 29), CALENDAR)
     week = out["horizons"]["week"]
-    assert out["scored"] is True and week["gaps"] == 0
+    assert out["valued"] is True and week["gaps"] == 0
     assert (week["drop_games"], week["drop"], week["value"]) == (0, 0.0, 10.0)
 
 
-def test_a_move_is_unscored_without_a_time_a_scorer_or_a_day_read():
+def test_a_move_has_no_realized_value_without_a_time_a_scorer_or_a_day_read():
     tue = date(2026, 10, 27)
     assert rz.realized(None, None, WEEK2, ADD, DROP, POINTS, {}, TODAY)["reason"] == rz.NO_TIME
     assert rz.realized(AT, tue, WEEK2, ADD, DROP, None, {}, TODAY)["reason"] == rz.NO_SCORER

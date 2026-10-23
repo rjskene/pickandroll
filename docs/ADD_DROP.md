@@ -493,12 +493,15 @@ last recorded week when left out. The metric is docs/AUTOPILOT.md's, section 6.
   game's actual line valued with the entry's scorer (`weekly.net_value`, the units the entry
   priced the move in), every game the two played counting whoever started. The spans are the
   projection's horizons from the move: `week`, from its day to its week's end, and `three`, the
-  three matchup weeks after it. A span counts through its last day read without a gap from its
-  first (`through`, `complete`, and the days over but not read in `missing`). The scorer is the
-  matched entry's; a move with no entry, or one matched to an entry logged before entries kept
-  their scorer, takes the scorer of the entry nearest it on the system scored (`scorer.own`
-  false). A later move that drops the added player counts his games from then on against itself,
-  so a stream's moves add up to what the spot made.
+  three matchup weeks after it (master's ruling, 2026-10-22). `lag_days` is the days from the
+  matched entry's first day to the move's: a late execution's shortfall reads for what it is,
+  and at zero the spans are the logged ones. A span counts through its last day read without a
+  gap from its first (`through`, `complete`, and the days over but not read in `missing`). The
+  scorer is the matched entry's; a move with no entry, or one matched to an entry logged before
+  entries kept their scorer, borrows the scorer of the entry nearest it on the league's system
+  scored (`scorer.own` false) and is realized only (ruled 2026-10-22). A later move that drops
+  the added player counts his games from then on against itself, so a stream's moves add up to
+  what the spot made.
   - *Box scores.* A refresh (a public league's, and a private league's extras) caches every day
     of the season to yesterday not cached yet, oldest first, at most 14 a refresh: the date's
     scoreboard, then each final regular-season game's summary, every player's line (minutes,
@@ -514,18 +517,27 @@ last recorded week when left out. The metric is docs/AUTOPILOT.md's, section 6.
     nothing to miss. On 2026-10-22 the rostered players of every league whose team had played
     matched 185 of 188, all on their own team; the three left were in neither the box score nor
     the injury report of their team's game.
-  - *Scored.* A move is scored when its time is on the page, a scorer values it, its week's span
-    has a day read and has a value; else `reason` says why (`no_time`, `no_scorer`, `not_read`,
-    `unmatched`). The moves summary adds the realized value summed on each horizon through the
-    days read, the spans complete, the unscored by reason, the gap games, and over the moves
-    both projected (made as recommended) and realized on a complete span, the two sums side by
-    side (`compared`).
+  - *Groups.* A move has a realized value (`valued`) when its time is on the page, a scorer
+    values it and its week's span has a day read and a value; else `reason` says why
+    (`no_time`, `no_scorer`, `not_read`, `unmatched`). Each move is then in one `group`:
+    `scored`, projected by its own entry (made as recommended) and realized under its scorer;
+    `realized_only`, realized with no projection of its own or under a borrowed scorer; or
+    `unscored`. The moves summary counts the three, sums the realized value of every move
+    realized on each horizon through the days read, counts the spans complete, the unscored by
+    reason and the gap games, and over the scored moves on a complete span only (`compared`)
+    sums their projected and realized values, the realized share of the projected (none when the
+    projected sum is not positive) and how many realized in the projected direction
+    (`same_way`).
 - **Markdown.** `markdown` in the all-leagues answer, for #127: leagues by id, no team or
   league names, no projected player line; the odds, results and standings as aggregates, a row
   per league, the private league in its own table, and my moves by the players' names and how
-  they matched, then the week's moves realized, summed over the public leagues and apart for
-  the private one: how many scored, their value on the week, those made as recommended against
-  their projection, and the unscored by reason.
+  they matched, then the moves realized, this week's and the season's to date, pooled over the
+  public leagues and apart for the private one, in counts and ratios only: the scored with
+  their realized share of the projected and how many went in the projected direction on the
+  week, the realized only, the unscored by reason and the gap games. No value in scorer units
+  appears there, for a move or summed (master's ruling, 2026-10-22: docs/AUTOPILOT.md section
+  8 keeps Basketball Monster numbers and what reduces to one out of the issue); the values stay
+  in the JSON, the script's lines and the card.
 - **Script.** `scripts/season.py scorecard [league ...] [--week N] [--json]`: the week's
   markdown, or one line per league named.
 

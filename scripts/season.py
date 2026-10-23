@@ -47,7 +47,7 @@ when one lies within an hour of it, where a wrong time zone could change the mat
 public leagues, a row per league, my moves by name and match), or for the leagues named one line
 each:
 
-    258901 week 2: projected 61% to win, 5.2 categories; W 5-3-1; rank 2 of 12, 9-7-2; moves 2 (1 as recommended); to date 1-1-0, wins 1 against 1.10 expected; 1 moves realized +0.85 on their weeks; 1 moves unscored
+    258901 week 2: projected 61% to win, 5.2 categories; W 5-3-1; rank 2 of 12, 9-7-2; moves 2 (1 as recommended); to date 1-1-0, wins 1 against 1.10 expected; 1 moves realized +0.85 on their weeks (1 scored, 0 realized only); 1 moves unscored
 
 Exit codes: 0 every league was asked, whatever it answered; 2 the API is unreachable.
 """
@@ -340,9 +340,13 @@ def scorecard_line(body: dict[str, Any]) -> str:
         )
     else:
         parts.append(f"to date {td['record']}")
-    if moves["scored"]:
+    valued = moves["scored"] + moves["realized_only"]
+    if valued:
         realized = moves["realized_value"].get("week", 0.0)
-        parts.append(f"{moves['scored']} moves realized {realized:+.2f} on their weeks")
+        parts.append(
+            f"{valued} moves realized {realized:+.2f} on their weeks "
+            f"({moves['scored']} scored, {moves['realized_only']} realized only)"
+        )
     if moves["unscored"]:
         parts.append(f"{moves['unscored']} moves unscored")
     return f"{body['league']} week {card['week']}: " + "; ".join(parts)

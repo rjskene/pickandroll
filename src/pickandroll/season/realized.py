@@ -27,7 +27,7 @@ from .calendar import Calendar, Week
 
 #: The weeks after the move's own that ``three`` spans (the Moves card's horizon).
 AFTER = 3
-#: Why a move is not scored.
+#: Why a move has no realized value.
 NO_TIME, NO_SCORER, UNMATCHED, NOT_READ = "no_time", "no_scorer", "unmatched", "not_read"
 
 Game = Mapping[str, Any]
@@ -153,13 +153,14 @@ def realized(
     today: date,
     calendar: Calendar | None = None,
 ) -> dict[str, Any]:
-    """A move's realized value on each span, and whether it is scored: when its time is known,
-    a scorer values it, its week's span has a day read and has a value, its players matched;
-    else ``reason`` says why not (``no_time``, ``no_scorer``, ``not_read``, ``unmatched``). A
-    later span with a gap keeps its gaps and no value, the move scored on its week."""
+    """A move's realized value on each span, and whether it has one (``valued``): when its time
+    is known, a scorer values it, its week's span has a day read and has a value, its players
+    matched; else ``reason`` says why not (``no_time``, ``no_scorer``, ``not_read``,
+    ``unmatched``). A later span with a gap keeps its gaps and no value, the move valued on its
+    week."""
     sides = {k: s for k, s in (("add", add), ("drop", drop)) if s is not None}
     out: dict[str, Any] = {
-        "scored": False,
+        "valued": False,
         "reason": None,
         **{k: s.to_dict() if s else None for k, s in (("add", add), ("drop", drop))},
         "horizons": {},
@@ -176,4 +177,4 @@ def realized(
         return {**out, "reason": NOT_READ}
     if out["horizons"]["week"]["value"] is None:
         return {**out, "reason": UNMATCHED}
-    return {**out, "scored": True}
+    return {**out, "valued": True}
