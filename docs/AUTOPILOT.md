@@ -390,5 +390,8 @@ never a Basketball Monster number.
 - 2026-10-23, morning: the lineup-lost count is counted (#149); the protection floor has a minimum
   the hill-climb may not go below, the default (#150); phase 3 is filed now, not after two scored
   weeks (#152); every move and trade recommendation and comparison shows the rest of the season
-  beside the week and the three weeks (#151). The test hygiene issues #121 and #122 build.
+  beside the week and the three weeks (#151). The test hygiene issues #121 and #122 build. The
+  season dashboard gets a freshness light for the daily updates and shorter header text (#153).
+  Multi-step plans cover the current week only (the streaming plan, #136); a sequence of moves
+  over several weeks is never built: "too many unknowns".
 
