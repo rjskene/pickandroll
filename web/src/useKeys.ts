@@ -86,18 +86,23 @@ export function useDrawer<Id extends string>(
   };
 }
 
-export interface ViewsApi extends Views {
-  setView: (view: SeasonViewId) => void;
+export interface ViewsApi<Id extends string = SeasonViewId> extends Views<Id> {
+  setView: (view: Id) => void;
   toggleViews: () => void;
 }
 
 /** The league page's view and its drawer (#116), saved under ``storageKey`` as the panel is. */
 export function useViews(storageKey: string): ViewsApi {
-  const [views, setViews] = useState<Views>(() => {
+  return useViewsOf(storageKey, parseViews);
+}
+
+/** A screen's views (the league page's, the Progress screen's): ``parse`` reads them saved. */
+export function useViewsOf<Id extends string>(storageKey: string, parse: (raw: string | null) => Views<Id>): ViewsApi<Id> {
+  const [views, setViews] = useState<Views<Id>>(() => {
     try {
-      return parseViews(localStorage.getItem(storageKey));
+      return parse(localStorage.getItem(storageKey));
     } catch {
-      return parseViews(null); // blocked storage
+      return parse(null); // blocked storage
     }
   });
   useEffect(() => {
@@ -107,7 +112,7 @@ export function useViews(storageKey: string): ViewsApi {
       /* storage unavailable */
     }
   }, [storageKey, views]);
-  const setView = useCallback((view: SeasonViewId) => setViews((v) => ({ ...v, view })), []);
+  const setView = useCallback((view: Id) => setViews((v) => ({ ...v, view })), []);
   const toggleViews = useCallback(() => setViews((v) => ({ ...v, shown: !v.shown })), []);
   return { ...views, setView, toggleViews };
 }

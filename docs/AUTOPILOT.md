@@ -182,8 +182,9 @@ act on. The private league is shown apart. Built after #125 and #126, with phase
 
 **The knob file** (`data/autopilot/knobs.json`, #129). JSON the master writes, by hand until the
 Monday step of phase 3 does, and the Progress view only reads. It is meant to be edited by hand, so
-the view reads it leniently: a key it does not know, a change without a date or a knob, or a verdict
-of neither kind is named in the view's problems and left out, and never fails the page.
+the view reads it leniently: a key it does not know, or a change without a date or a knob, is
+named in the view's problems and left out; a verdict or source of neither kind is named there and
+the change kept with none; none of it fails the page.
 
 - `in_force`: the value in force of each knob, by the names the decision log records them under
   (#125, `knobs` in an entry) and no other: `system` and `blend` (the projection system or blend
@@ -249,6 +250,34 @@ scorecard (#126) over all its recorded weeks, the knob file and the notes, and w
 A move's values are in its league's scorer's units, fantasy points or the categories' z-sum, so the
 moves are pooled by scoring and never summed across the two; their realized share of the projection
 compares across them.
+
+**The screen** (#129, `web/src/components/ProgressScreen.tsx`, the arithmetic in `progress.ts`) is
+the league page's shell: the views in a drawer at the left, the cards in a two-half panel at the
+right with their rail, the same keys (`?` lists them), and nothing that writes. It is reached from
+a line under the landing page's league grid and from `p` on a league page; a league opened from it
+comes back to it.
+
+- **Trend** (`t`): the scope (the public leagues pooled, or one league, the private one among them)
+  and the metric (wins, categories, or the standing), and a week range stepped with ‹ ›. Three
+  figures over the range: the record against the wins expected (or the categories, or the place);
+  the scored moves' realized share of their projection, one share for each unit with its sums
+  beside it, never one sum across the two; and the Brier score last week and over the range.
+  Then the scope's sentences, the chart (actual solid, expected dashed, both summed over the
+  range; the standing alone; each knob change a mark on the time axis that opens its sheet; a
+  tip by week, with each league's result when pooled), the week strip, and the league table
+  (W-L, expected, the gap, moves, realized in the league's units, lineup games lost shown as a
+  dash until the lineup log exists, the place), each row opening its weeks.
+- **Cards:** 1 Note (one Monday note at a time, stepped with ‹ ›: the action items first, as
+  handled in the session, then what is working, what is not and the decision), 2 Knobs (the
+  changes with their half and verdict, the knobs in force, each league's own values and the knobs
+  frozen, and any problem reading the files), 3 League (the league chosen: its record, place,
+  moves by match and sentences, and a link to its league page).
+- **The knob sheet**, over the view (Esc closes it, ← → step through the changes): the change and
+  its dates, its verdict as the file holds it, the wins above expected a league a week for A
+  against B, the A/B table, why it was tried (the Decision of the note of its Monday, else the
+  change's reason), the rule it is judged by and the leagues in A.
+
+The Moves, Odds and Table views and the Move and Odds cards follow in #129's third part.
 
 ## 7. Phases
 

@@ -1,6 +1,6 @@
 import type { ReactElement } from "react";
 import type { CardId } from "../draft";
-import type { SeasonCardId, SeasonViewId } from "../keys";
+import type { ProgressCardId, ProgressViewId, SeasonCardId, SeasonViewId } from "../keys";
 
 const stroke = { fill: "none", stroke: "currentColor", strokeWidth: 2, strokeLinecap: "round" as const, strokeLinejoin: "round" as const };
 
@@ -133,6 +133,35 @@ export const VIEW_ICONS: Record<SeasonViewId, ReactElement> = {
     <svg width="18" height="18" viewBox="0 0 24 24" {...stroke} aria-hidden="true">
       <rect x="4" y="4" width="16" height="16" rx="2" />
       <path d="M4 9h16M4 14h16M10 4v16" />
+    </svg>
+  ),
+};
+
+/** The Progress screen's cards and views (#129). */
+export const PROGRESS_ICONS: Record<ProgressCardId, ReactElement> = {
+  // A page with its sections: the Monday note.
+  note: (
+    <svg width="20" height="20" viewBox="0 0 24 24" {...stroke} aria-hidden="true">
+      <path d="M6 3h9l4 4v14H6zM15 3v4h4M9 11h7M9 15h7M9 19h4" />
+    </svg>
+  ),
+  // Two sliders: the knobs.
+  knobs: (
+    <svg width="20" height="20" viewBox="0 0 24 24" {...stroke} aria-hidden="true">
+      <path d="M4 7h16M4 17h16" />
+      <circle cx="9" cy="7" r="2.2" />
+      <circle cx="15" cy="17" r="2.2" />
+    </svg>
+  ),
+  league: SEASON_ICONS.league,
+};
+
+export const PROGRESS_VIEW_ICONS: Record<ProgressViewId, ReactElement> = {
+  // A climbing line over a baseline.
+  trend: (
+    <svg width="18" height="18" viewBox="0 0 24 24" {...stroke} aria-hidden="true">
+      <path d="M3 20h18M4 16l5-5 4 3 7-8" />
+      <path d="M4 14h16" strokeDasharray="2 3" />
     </svg>
   ),
 };

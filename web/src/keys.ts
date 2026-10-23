@@ -339,8 +339,8 @@ export const SEASON_CARDS: CardDef<SeasonCardId>[] = [
 /** The views of the league page's pane (#116), the tabs of the drawer at its left edge. */
 export type SeasonViewId = "waivers" | "matchup" | "season" | "lineup";
 
-export interface ViewDef {
-  id: SeasonViewId;
+export interface ViewDef<Id extends string = SeasonViewId> {
+  id: Id;
   title: string;
   /** The letter that shows it. */
   key: string;
@@ -355,23 +355,28 @@ export const SEASON_VIEWS: ViewDef[] = [
 ];
 
 /** The view on show and whether the drawer is shown or down to its handle. */
-export interface Views {
-  view: SeasonViewId;
+export interface Views<Id extends string = SeasonViewId> {
+  view: Id;
   shown: boolean;
 }
 
 export const DEFAULT_VIEWS: Views = { view: "waivers", shown: true };
 
-/** The views saved in the browser, or the defaults (blocked storage, a bad value). */
-export function parseViews(raw: string | null): Views {
-  if (!raw) return DEFAULT_VIEWS;
+/** A screen's views saved in the browser, or ``defaults`` (blocked storage, a bad value). */
+export function parseViewsOf<Id extends string>(raw: string | null, defs: ViewDef<Id>[], defaults: Views<Id>): Views<Id> {
+  if (!raw) return defaults;
   try {
-    const v = JSON.parse(raw) as Partial<Views>;
-    const view = SEASON_VIEWS.some((d) => d.id === v.view) ? (v.view as SeasonViewId) : DEFAULT_VIEWS.view;
-    return { view, shown: typeof v.shown === "boolean" ? v.shown : DEFAULT_VIEWS.shown };
+    const v = JSON.parse(raw) as Partial<Views<Id>>;
+    const view = defs.some((d) => d.id === v.view) ? (v.view as Id) : defaults.view;
+    return { view, shown: typeof v.shown === "boolean" ? v.shown : defaults.shown };
   } catch {
-    return DEFAULT_VIEWS;
+    return defaults;
   }
+}
+
+/** The league page's views saved in the browser, or the defaults. */
+export function parseViews(raw: string | null): Views {
+  return parseViewsOf(raw, SEASON_VIEWS, DEFAULT_VIEWS);
 }
 
 /** The Waivers highlight moved by ``delta`` through the rows on show (j, k and the arrows):
@@ -410,6 +415,8 @@ export interface SeasonKeys {
   openMove: (player: number) => void;
   /** Read the league again; null when it cannot be (a private league, a refresh running). */
   refresh: (() => void) | null;
+  /** Open the Progress screen (#129). */
+  progress: () => void;
   sheetOpen: boolean;
   setSheetOpen: (open: boolean) => void;
 }
@@ -448,6 +455,7 @@ export function seasonKeys(s: SeasonKeys): KeyMap {
         if (!s.refresh) return false;
         s.refresh();
       },
+      p: () => s.progress(),
     },
   };
 }
@@ -491,9 +499,100 @@ export const SEASON_SHEET: Sheet = {
         [["t"], "the panel shows Trade"],
         [["m"], "the panel shows Moves"],
         [["r"], "refresh the league (public leagues)"],
+        [["p"], "the Progress screen: the hill-climb over the season, every league (read-only)"],
         [["?"], "this sheet"],
       ],
     },
   ],
   footer: "Every key mirrors a visible control. Keys work while this sheet is open and close it. The draft screen keeps its own keys.",
+};
+
+// ---------------------------------------------------------------- the Progress screen (#129)
+export type ProgressCardId = "note" | "knobs" | "league";
+
+export const PROGRESS_CARDS: CardDef<ProgressCardId>[] = [
+  { id: "note", title: "Note", blurb: "the Monday note: what is working, what is not, the decision and the action items" },
+  { id: "knobs", title: "Knobs", blurb: "the knob changes, their halves and verdicts, and the settings in force; a row opens its sheet" },
+  { id: "league", title: "League", blurb: "the league chosen: its weeks against expectation, its moves and its sentences" },
+];
+
+export type ProgressViewId = "trend";
+
+export const PROGRESS_VIEWS: ViewDef<ProgressViewId>[] = [
+  { id: "trend", title: "Trend", key: "t", blurb: "wins, categories and standing over the season against their expectation" },
+];
+
+export const DEFAULT_PROGRESS_VIEWS: Views<ProgressViewId> = { view: "trend", shown: true };
+
+/** What the Progress screen's keys act on. */
+export interface ProgressKeys {
+  setView: (view: ProgressViewId) => void;
+  toggleViews: () => void;
+  openCard: (id: ProgressCardId, half: Half) => void;
+  toggleDrawer: () => void;
+  swapHalves: () => void;
+  collapse: () => void;
+  /** The knob change sheet: closed by Esc first; the arrows step to the other changes. */
+  sheetChange: string | null;
+  closeChange: () => void;
+  stepChange: (delta: number) => void;
+  sheetOpen: boolean;
+  setSheetOpen: (open: boolean) => void;
+}
+
+export function progressKeys(s: ProgressKeys): KeyMap {
+  const views = Object.fromEntries(PROGRESS_VIEWS.map((v) => [v.key, () => s.setView(v.id)]));
+  const step = (delta: number) => () => {
+    if (!s.sheetChange) return false;
+    s.stepChange(delta);
+  };
+  return {
+    cards: PROGRESS_CARDS.length,
+    openCard: (i, half) => s.openCard(PROGRESS_CARDS[i].id, half),
+    sheetOpen: s.sheetOpen,
+    setSheetOpen: s.setSheetOpen,
+    escape: () => {
+      if (s.sheetChange) s.closeChange();
+      else s.collapse();
+    },
+    keys: {
+      ...views,
+      "[": () => s.toggleViews(),
+      "]": () => s.toggleDrawer(),
+      x: () => s.swapHalves(),
+      ArrowLeft: step(-1),
+      ArrowRight: step(1),
+    },
+  };
+}
+
+export const PROGRESS_SHEET: Sheet = {
+  cards: `Cards are ${PROGRESS_CARDS.map((c, i) => `${i + 1} ${c.title}`).join(" · ")}, the numbers on the rail. Views are ${PROGRESS_VIEWS.map((v) => `${v.key} ${v.title}`).join(" · ")}, the tabs of the drawer at the left. Nothing on this screen writes anything.`,
+  groups: [
+    {
+      title: "Views",
+      rows: [
+        ...PROGRESS_VIEWS.map((v): [string[], string] => [[v.key], `the ${v.title} view: ${v.blurb}`]),
+        [["["], "take the view drawer down to its handle, or show it (the letters work either way)"],
+      ],
+    },
+    {
+      title: "Cards",
+      rows: [
+        [["1", "…", String(PROGRESS_CARDS.length)], "open that card in the top half; the same key again closes it"],
+        [["⇧ 1", "…", `⇧ ${PROGRESS_CARDS.length}`], "open it in the bottom half (mouse: shift-click or right-click the rail icon)"],
+        [["]"], "collapse the panel to the rail, or bring it back with its two cards"],
+        [["x"], "swap the top and bottom cards"],
+      ],
+    },
+    {
+      title: "Knob changes",
+      rows: [
+        [["←", "→"], "in a change's sheet, the change before or after"],
+        [["Esc"], "close the sheet, then collapse the panel"],
+        [["?"], "this sheet"],
+      ],
+    },
+  ],
+  footer: "Every key mirrors a visible control. Action items and knob changes are handled in the session with the master; this screen only reads.",
 };

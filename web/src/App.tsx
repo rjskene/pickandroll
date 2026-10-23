@@ -9,6 +9,7 @@ import Drawer from "./components/Drawer";
 import KeySheet from "./components/KeySheet";
 import Rail from "./components/Rail";
 import Landing from "./components/Landing";
+import ProgressScreen from "./components/ProgressScreen";
 import SeasonScreen from "./components/SeasonScreen";
 import { RoomFeed, SyncButton } from "./components/YahooSync";
 import { CARD_ICONS, Close } from "./components/icons";
@@ -196,6 +197,8 @@ export default function App() {
   const [sessionId, setSessionId] = useState<string | null>(() => new URLSearchParams(location.search).get("session"));
   // The league whose season view is open (#92); a draft session takes the page over it.
   const [leagueId, setLeagueId] = useState<string | null>(() => new URLSearchParams(location.search).get("league"));
+  // The Progress screen (#129) at /progress; a league opened from it comes back to it.
+  const [progress, setProgress] = useState(() => location.pathname === "/progress");
   const [solveEvents, setSolveEvents] = useState<SolveEvent[]>([]);
   const [survival, setSurvival] = useState<SurvivalEvent | null>(null);
   // The extension's latest events from the room, oldest first, since this page opened.
@@ -226,7 +229,7 @@ export default function App() {
 
   // A live room opens straight into its draft the first time the page loads without a session
   // (#74); "switch draft" comes back to the landing page and stays there.
-  const autoOpened = useRef(!!sessionId || !!leagueId);
+  const autoOpened = useRef(!!sessionId || !!leagueId || progress);
   const rooms = useQuery({ queryKey: ["rooms"], queryFn: api.rooms, enabled: !sessionId, refetchInterval: 5000 });
   useEffect(() => {
     if (autoOpened.current || sessionId || !rooms.data) return;
@@ -241,8 +244,9 @@ export default function App() {
     else url.searchParams.delete("session");
     if (leagueId && !sessionId) url.searchParams.set("league", leagueId);
     else url.searchParams.delete("league");
+    url.pathname = progress && !sessionId && !leagueId ? "/progress" : "/";
     history.replaceState(null, "", url);
-  }, [sessionId, leagueId]);
+  }, [sessionId, leagueId, progress]);
 
   // Live feed: any pick (manual, simulated or from Yahoo) invalidates the board, picks and
   // session; a finished background solve invalidates the recommendation and the score. A Yahoo
@@ -305,8 +309,13 @@ export default function App() {
     return () => source.close();
   }, [sessionId, queryClient]);
 
-  if (!sessionId && leagueId) return <SeasonScreen league={leagueId} onBack={() => setLeagueId(null)} />;
-  if (!sessionId || !session.data) return <Landing onOpenLeague={setLeagueId} onOpenSession={setSessionId} error={session.error} />;
+  const openProgress = () => {
+    setLeagueId(null);
+    setProgress(true);
+  };
+  if (!sessionId && leagueId) return <SeasonScreen league={leagueId} onBack={() => setLeagueId(null)} onProgress={openProgress} />;
+  if (!sessionId && progress) return <ProgressScreen onBack={() => setProgress(false)} onOpenLeague={setLeagueId} />;
+  if (!sessionId || !session.data) return <Landing onOpenLeague={setLeagueId} onOpenSession={setSessionId} onProgress={openProgress} error={session.error} />;
   return (
     <DraftProvider
       session={session.data}

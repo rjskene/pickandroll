@@ -1,20 +1,24 @@
-import type { SeasonViewId, ViewDef } from "../keys";
-import { Chevron, VIEW_ICONS } from "./icons";
+import type { ReactElement } from "react";
+import type { ViewDef } from "../keys";
+import { Chevron } from "./icons";
 
-/** The league page's views (#116): a narrow drawer at the pane's left edge with a tab per view
- * (its icon, name and key) and a chevron that takes it down to a handle, whose dots mark the view
- * on show. The view keys work either way; `[` shows or hides it. */
-export default function ViewDrawer({
+/** A screen's views (the league page's since #116, the Progress screen's since #129): a narrow
+ * drawer at the pane's left edge with a tab per view (its icon, name and key) and a chevron that
+ * takes it down to a handle, whose dots mark the view on show. The view keys work either way; `[`
+ * shows or hides it. */
+export default function ViewDrawer<Id extends string>({
   views,
+  icons,
   view,
   shown,
   onView,
   onToggle,
 }: {
-  views: ViewDef[];
-  view: SeasonViewId;
+  views: ViewDef<Id>[];
+  icons: Record<Id, ReactElement>;
+  view: Id;
   shown: boolean;
-  onView: (view: SeasonViewId) => void;
+  onView: (view: Id) => void;
   onToggle: () => void;
 }) {
   if (!shown) {
@@ -33,7 +37,7 @@ export default function ViewDrawer({
     <nav className="views" aria-label="Views">
       {views.map((v) => (
         <button key={v.id} className={v.id === view ? "tab on" : "tab"} aria-pressed={v.id === view} title={`${v.title}: ${v.blurb} (${v.key})`} onClick={() => onView(v.id)}>
-          {VIEW_ICONS[v.id]}
+          {icons[v.id]}
           {v.title}
           <kbd>{v.key}</kbd>
         </button>
