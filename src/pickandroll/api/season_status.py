@@ -1,7 +1,7 @@
 """``GET /seasons/status`` (#153): what the freshness light reads from the data folder, the
-newest export of each kind, a league's newest public snapshot and the daily routine's run
-marker, for ``season.status`` to judge. The service brings each league's parts, refresh job and
-decision log; nothing here writes, and nothing calls GitHub.
+newest export of each kind, a league's newest public snapshot and last logged refresh, and the
+daily routine's run marker, for ``season.status`` to judge. The service brings each league's
+parts, refresh job and decision log; nothing here writes, and nothing calls GitHub.
 """
 
 from __future__ import annotations
@@ -25,6 +25,9 @@ EXPORT_PATTERNS: Mapping[str, tuple[str, ...]] = {
 }
 #: The daily routine's run marker, which it writes as its last step.
 ROUTINE = Path("routine") / "daily.json"
+#: A league's refresh log in its season folder, a JSON line at each job's start and end
+#: (``api.seasons.log_refresh``).
+REFRESHES = "refreshes.jsonl"
 
 
 def _as_of(path: Path) -> datetime:
@@ -68,6 +71,23 @@ def latest_entries(season_dir: Path, today: date, days: int = 2) -> list[dict[st
         except (OSError, ValueError):
             continue
     return out
+
+
+def last_refresh(season_dir: Path) -> dict[str, Any] | None:
+    """The league's last refresh job as its log has it: its end, or only its start when it never
+    ended; None without a log."""
+    try:
+        lines = (season_dir / REFRESHES).read_text().splitlines()
+    except OSError:
+        return None
+    for line in reversed(lines):
+        try:
+            job = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(job, dict):
+            return job
+    return None
 
 
 def routine_marker(data_dir: Path) -> dict[str, Any] | None:

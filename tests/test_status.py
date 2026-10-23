@@ -7,7 +7,8 @@ import os
 from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from pickandroll.api.seasons import RefreshJob
+from pickandroll.api import season_status
+from pickandroll.api.seasons import RefreshJob, season_dir
 from pickandroll.season import status as st
 from tests.test_season import LEAGUE, fixture_names, projection_csv, season_client
 
@@ -108,6 +109,32 @@ def test_a_public_refresh_is_judged_by_its_newest_read_and_its_job():
     assert partial["snapshot_at"] == at(3).isoformat()
 
 
+def test_a_refresh_logged_as_started_and_never_ended_is_red():
+    """After a restart the service has no job: the last one its log has stands in, and a start
+    with no end is a refresh the service stopped during (#153)."""
+    started = {"status": "running", "step": "players", "done": 12, "total": 47}
+    lost = st.refresh_row(started, YESTERDAY, None, NOW, live=False)
+    assert (lost["state"], lost["reason"]) == (st.RED, "refresh never finished")
+    assert (lost["step"], lost["done"], lost["total"], lost["logged"]) == ("players", 12, 47, True)
+    # The service's own running job is only amber.
+    assert st.refresh_row(started, YESTERDAY, None, NOW)["state"] == st.AMBER
+    failed = {"status": "failed", "error": "HTTP 502", "finished_at": at(8).isoformat()}
+    logged = st.refresh_row(failed, YESTERDAY, None, NOW, live=False)
+    assert (logged["state"], logged["error"], logged["finished_at"]) == (
+        st.RED,
+        "HTTP 502",
+        at(8).isoformat(),
+    )
+    assert st.refresh_row(None, at(3), None, NOW, live=False)["logged"] is False
+
+
+def test_the_last_logged_refresh_skips_a_torn_line(tmp_path):
+    assert season_status.last_refresh(tmp_path) is None
+    log = tmp_path / season_status.REFRESHES
+    log.write_text('{"status":"running"}\n{"status":"done","done":47}\n{"status":"fa')
+    assert season_status.last_refresh(tmp_path) == {"status": "done", "done": 47}
+
+
 def test_the_private_leagues_pages_go_by_their_newest_read():
     fetched = {
         "matchup/1/4-10": at(2),
@@ -166,6 +193,10 @@ def test_a_solve_older_than_its_inputs_is_amber_and_none_today_is_red_once_due()
     )
     read = st.recommendations([moves], at(4), at(0.5), NOW)
     assert read["rows"][0]["reason"] == "Yahoo read newer; re-solved on open"
+    # The private league names its newest page.
+    page = st.recommendations([moves], at(4), at(0.5), NOW, yahoo="lineup")
+    assert page["rows"][0]["reason"] == "lineup read newer; re-solved on open"
+    assert list(page["inputs"]) == ["projection", "lineup read"]
     # No solve today: amber before the run is due, red after.
     old = [entry("moves", 20)]
     assert st.recommendations(old, at(30), at(30), MORNING)["state"] == st.AMBER
@@ -250,3 +281,19 @@ def test_the_status_route_lights_every_league_and_names_what_is_late(tmp_path):
         assert public["yahoo"]["state"] == st.RED
         rows = {r["kind"]: r for r in p["exports"]["rows"]}
         assert rows["week_next"]["reason"] == "missing"
+
+        # The refresh logged its start and its end, each with its time; after a restart (no
+        # job in the service) the light reads the log's last line.
+        log = season_dir(tmp_path, LEAGUE) / season_status.REFRESHES
+        lines = [json.loads(x) for x in log.read_text().splitlines()]
+        assert [x["status"] for x in lines] == ["running", "done"]
+        assert all(x["at"] and x["league"] == LEAGUE for x in lines)
+        assert lines[1]["finished_at"] and lines[1]["step"] == "done"
+        client.app.state.seasons.jobs.clear()
+        refresh = client.get("/seasons/status").json()["leagues"][0]["yahoo"]["rows"][0]
+        assert (refresh["status"], refresh["logged"], refresh["state"]) == ("done", True, st.GREEN)
+        # A start the log never saw end: the service stopped during it.
+        with log.open("a") as f:
+            f.write(json.dumps({**lines[0], "at": NOW.isoformat()}) + "\n")
+        refresh = client.get("/seasons/status").json()["leagues"][0]["yahoo"]["rows"][0]
+        assert (refresh["state"], refresh["reason"]) == (st.RED, "refresh never finished")
