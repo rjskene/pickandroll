@@ -11,6 +11,7 @@ import {
   scorecardToDateLine,
   scorecardWeekLine,
   unitsLabel,
+  valueUnits,
   weekDates,
 } from "../season";
 
@@ -66,7 +67,7 @@ export default function Scorecard({ league }: { league: string }) {
 
 function Moves({ moves, scoring, name }: { moves: ScorecardMove[]; scoring: ScorecardPayload["weeks"][number]["scoring"]; name: (id: number) => string }) {
   if (!moves.length) return <p className="dim small">No move made this week.</p>;
-  const units = scoring === "points" ? "fantasy points" : "the scorer's z-sum, net of an empty line";
+  const units = valueUnits(scoring);
   return (
     <table className="season-table">
       <thead>

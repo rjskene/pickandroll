@@ -1145,6 +1145,27 @@ export type MoveHorizon = "week" | "three";
 /** The horizons the scorecard values a move on: the solve's two and the rest of the season (#144). */
 export type JudgedHorizon = MoveHorizon | "season";
 
+/** A move's rest of the season (#151): the decision log's own figure for it (#144), from its day
+ * to the season's last day, playoffs included, in the scorer's units (category z or points, net
+ * of an empty line): the add's games less the drop's, each at his per-game value, with how many
+ * are extrapolated past the schedule read. Shown beside the horizons; nothing ranks on it. Kept
+ * apart from ``MoveHorizon``: it is not expected categories. Its value null when the add or the
+ * drop has no line. */
+export interface MoveRos {
+  value: number | null;
+  add_games: number;
+  /** Null: no drop (an open spot). */
+  drop_games: number | null;
+  extrapolated: { add: number; drop: number | null };
+  from: string;
+  to: string;
+}
+
+/** A set's rest of the season: the sum of its moves'. */
+export interface RosTotal {
+  value: number;
+}
+
 /** An add, the player dropped for him (null: an open spot) and the day he plays from (a waiver
  * claim's clear date). */
 export interface MoveRef {
@@ -1162,6 +1183,8 @@ export interface CandidateGain {
   held?: HeldMove | null;
   next_drop: number | null;
   next_price: number | null;
+  /** This move to the season's end (#151). */
+  ros?: MoveRos | null;
 }
 
 export interface MoveCandidate {
@@ -1178,6 +1201,7 @@ export interface RecommendedMove extends MoveRef {
   held?: HeldMove | null;
   /** What the move adds to its set on each horizon. */
   marginal: Record<MoveHorizon, number>;
+  ros?: MoveRos | null;
   /** The set less the re-solve without this add, and with this drop kept (null: no drop). */
   price_without: number;
   price_keep: number | null;
@@ -1211,6 +1235,13 @@ export interface RecommendedSet {
   held: HeldMove[];
   /** By horizon, the drops their returns force. */
   comebacks?: Partial<Record<MoveHorizon, Comeback[]>>;
+  ros?: RosTotal | null;
+}
+
+/** A streamer valued to the season's end as kept there: the later step that drops him (#151). */
+export interface DroppedBy {
+  add: number;
+  from: string;
 }
 
 /** A streaming plan's step (#136): a dated move turning a stream spot over, its drop the spot's
@@ -1220,12 +1251,16 @@ export interface PlanStep extends MoveRef {
   spot: number;
   /** The step's own gain on each horizon: the plan up to it less the plan before it. */
   marginal: Record<MoveHorizon, number>;
+  /** The log's figure for the step, its add kept to the season's end; a later step that drops
+   * him says which, and the plan's total telescopes over the two. */
+  ros?: MoveRos | null;
+  dropped_by?: DroppedBy | null;
 }
 
 /** The week's streaming plan (#136) against its recommended set. */
 export interface StreamPlan {
   /** The set's moves the plan keeps (those that do not drop a stream spot's occupant). */
-  base: (MoveRef & { held?: HeldMove | null; marginal: Record<MoveHorizon, number> })[];
+  base: (MoveRef & { held?: HeldMove | null; marginal: Record<MoveHorizon, number>; ros?: MoveRos | null; dropped_by?: DroppedBy | null })[];
   /** By day. */
   steps: PlanStep[];
   spots: { player: number; steps: number }[];
@@ -1238,6 +1273,8 @@ export interface StreamPlan {
   value: Record<"none" | "set" | "plan", Record<MoveHorizon, number>>;
   /** The plan less the set, on each horizon. */
   gain: Record<MoveHorizon, number>;
+  /** The set's and the plan's rest of the season: the sums of their moves'. */
+  ros?: { set: RosTotal | null; plan: RosTotal | null };
   /** Its week beats the set's by more than the floor; else by how much it falls short. */
   recommended: boolean;
   short: number | null;
@@ -1256,6 +1293,8 @@ export interface PlanGuard {
   games: number;
   /** Its gain on the set on each horizon (the three weeks' negative). */
   gain: Record<MoveHorizon, number>;
+  /** Its moves' rest of the season less the set's. */
+  ros?: RosTotal | null;
 }
 
 export interface MoveHorizonInfo {
@@ -1329,7 +1368,7 @@ export interface Stash {
   /** A full slot's occupant who should leave it: activated (dropping ``drop``) or dropped. */
   leave: { player: number; slot: string; how: "activate" | "drop"; drop: number | null; net: number | null; protected: boolean } | null;
   /** A stash: the best add for the spot it frees, by horizon. */
-  add: Record<MoveHorizon, { player: number; gain: number } | null> | null;
+  add: Record<MoveHorizon, { player: number; gain: number; ros?: MoveRos | null } | null> | null;
 }
 
 export interface MovesPayload {
@@ -1369,11 +1408,13 @@ export interface MoveDetail extends MoveRef {
       comebacks?: Comeback[];
     }
   >;
+  /** The move to the season's end, beside its two horizons (#151). */
+  ros?: MoveRos | null;
   /** Every drop the add can come with, best over three weeks first; ``kept``: the keep rule keeps
    * him, so the search never takes it (#124). */
-  drops: ({ drop: number | null; kept?: boolean; held?: HeldMove | null } & Record<MoveHorizon, number>)[];
+  drops: ({ drop: number | null; kept?: boolean; held?: HeldMove | null; ros?: MoveRos | null } & Record<MoveHorizon, number>)[];
   /** The best other adds for this drop. */
-  adds: ({ add: number } & Record<MoveHorizon, number>)[];
+  adds: ({ add: number; ros?: MoveRos | null } & Record<MoveHorizon, number>)[];
 }
 
 // ---------------------------------------------------------------- strategy (#110)
@@ -1384,8 +1425,9 @@ export type StrategySource = "search" | "milp" | "both";
 /** HiGHS's own word: solved to the gap, stopped at the time limit with a set, or no set. */
 export type MilpStatus = "optimal" | "time_limited" | "failed";
 
-/** A set's exact gains: this week, the three weeks after it, the rest of the season (a later
- * week times the weeks left, in category-weeks) and the weight's own value. */
+/** A set's exact gains: this week, the three weeks after it, the season pace (the three weeks'
+ * average week times the weeks left, in category-weeks; the ROS column is the schedule-based
+ * figure, #151) and the weight's own value. */
 export interface StrategyGain {
   week: number;
   three: number;
@@ -1414,6 +1456,7 @@ export interface StrategyMove extends MoveRef {
   priced: boolean;
   held?: HeldMove | null;
   marginal?: Record<MoveHorizon | "weighted", number>;
+  ros?: MoveRos | null;
   price_without?: number;
   price_keep?: number | null;
   instead_without?: HeldRef[];
@@ -1436,6 +1479,8 @@ export interface StrategyPoint {
   /** The held-slot moves the set's adds without a drop need. */
   held?: HeldMove[];
   gain?: StrategyGain;
+  /** The set's rest of the season, the sum of its moves' (#151). */
+  ros?: RosTotal | null;
   cats?: Record<MoveHorizon, { before: Partial<Record<Cat, MoveCategory>>; after: Partial<Record<Cat, MoveCategory>> }>;
   search?: StrategyBlock;
   milp?: MilpBlock | null;
@@ -1460,7 +1505,7 @@ export interface StrategyPayload {
   settings?: StrategySettings;
   keep_rule?: KeepRule;
   pool?: number[];
-  horizons?: Record<MoveHorizon, MoveHorizonInfo> & { season: { label: string; weeks_left: number; base: number | null } };
+  horizons?: Record<MoveHorizon, MoveHorizonInfo> & { season: { label: string; title?: string; weeks_left: number; base: number | null } };
   adds?: MoveAdds;
   points?: StrategyPoint[];
   time_limit?: number;
@@ -1512,6 +1557,10 @@ export interface TradeSide {
   /** False when the side's matchup page was not read: its week starts from nothing so far. */
   so_far_read: boolean;
   horizons: Record<MoveHorizon, { before: number; after: number; change: number; cats: TradeCategory[] }>;
+  /** Its roster's rest of the season from the trade's day (#151): the change is what it
+   * receives less what it sends and drops; ``unvalued``: players with no line, counted as
+   * nothing. Null without the league's scorer. */
+  ros?: { before: number; after: number; change: number; from: string; unvalued: number } | null;
   roster: {
     spots: number;
     /** Active players after the trade and its held-slot moves, before any drop. */
@@ -1530,11 +1579,22 @@ export interface TradeGames {
   started: number;
 }
 
+/** A player's rest of the season from a day (#151): his per-game value times his games to the
+ * season's last day, as the decision log counts a move's. */
+export interface PlayerRos {
+  value: number;
+  per_game: number;
+  games: number;
+  extrapolated: number;
+}
+
 export interface TradePlayer extends TradePlayerRef {
   from: number;
   to: number;
   /** On his old team as if no trade, and with it on his old team (until the date) and new one. */
   games: Record<MoveHorizon, { before: TradeGames; old: TradeGames; new: TradeGames }>;
+  /** From the trade's day. */
+  ros?: PlayerRos | null;
 }
 
 export type MarginReading = "crosses" | "wins_at_zero" | "loses_at_max";
@@ -1564,7 +1624,7 @@ export interface TradePayload {
   players: TradePlayer[];
   margin: TradeMargin | null;
   /** The best free agent for a spot the trade frees on my side, valued beside the trade. */
-  fill: (TradePlayerRef & { from: string; gain: Record<MoveHorizon, number> }) | null;
+  fill: (TradePlayerRef & { from: string; gain: Record<MoveHorizon, number>; ros?: PlayerRos | null }) | null;
 }
 
 /** A recorded week's result for one team (#97): categories won, lost and tied, or a points
