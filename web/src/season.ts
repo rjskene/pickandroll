@@ -10,6 +10,9 @@ import type {
   FlagInputs,
   FlagLevel,
   FlagSignalKey,
+  HeldMove,
+  KeepRule,
+  KeptPlayer,
   MilpBlock,
   MoveAdds,
   MoveCandidate,
@@ -25,6 +28,7 @@ import type {
   SeasonTeamRef,
   SeasonView,
   SeasonWeek,
+  Stash,
   StrategyPayload,
   StrategyPoint,
   StrategySettings,
@@ -433,6 +437,87 @@ export function comebackText(lists: (Comeback[] | undefined)[], name: (id: numbe
     );
   const text = parts.join("; ");
   return `${text[0].toUpperCase()}${text.slice(1)}.`;
+}
+
+/** Whom an add goes in for: his drop, the held-slot move that makes room ("Brooks to IL"), or
+ * an open spot (#124). */
+export function forText(x: { drop: number | null; held?: HeldMove | null }, name: (id: number | null) => string): string {
+  return x.drop == null && x.held ? `${name(x.held.player)} to ${x.held.slot}` : name(x.drop);
+}
+
+/** "Brooks and Grant" (#124). */
+function andList(ids: number[], name: (id: number) => string): string {
+  const n = ids.map(name);
+  return n.length > 1 ? `${n.slice(0, -1).join(", ")} and ${n[n.length - 1]}` : (n[0] ?? "");
+}
+
+/** The players the keep rule keeps, protected first, then those on the bench for a short
+ * absence (#124). */
+export function keptPlayers(rule: KeepRule | undefined): KeptPlayer[] {
+  const rows = rule?.players ?? [];
+  return [...rows.filter((k) => k.protected), ...rows.filter((k) => k.bench)];
+}
+
+/** The keep rule in a line: who no move drops and why; null when it keeps no one. */
+export function keepLine(rule: KeepRule | undefined, name: (id: number) => string): string | null {
+  const kept = rule?.players.filter((k) => k.protected).map((k) => k.player) ?? [];
+  const bench = rule?.players.filter((k) => k.bench) ?? [];
+  if (!rule || (!kept.length && !bench.length)) return null;
+  const best = rule.best ? `the best add, ${name(rule.best.player)}` : "any add";
+  const parts: string[] = [];
+  if (kept.length) parts.push(`keeps ${andList(kept, name)} (better than ${best}, over the rest of the season)`);
+  if (bench.length) parts.push(`benches ${bench.map((k) => `${name(k.player)} (back ${dayLabel(k.back)})`).join(", ")}`);
+  return `The keep rule ${parts.join(" and ")}: no move drops them.`;
+}
+
+/** Why the keep rule keeps a player: protected, or on the bench until his return. */
+export function keptWhy(k: KeptPlayer): string {
+  return k.protected ? "protected" : `bench, back ${dayLabel(k.back)}`;
+}
+
+/** The keep rule's tests in words, once for the list: the pool's average, the best add's value
+ * and the floor. */
+export function keepRuleNote(rule: KeepRule, name: (id: number) => string): string {
+  const best = rule.best ? `the best add (${name(rule.best.player)}, ${rule.best.value.toFixed(2)})` : "any add";
+  const by = rule.floor ? ` by more than ${rule.floor}` : "";
+  return (
+    `Protected: above the pool's average (${(rule.average ?? 0).toFixed(2)} a game), better than ${best}${by} over the rest of the season, ` +
+    `and back this season; benched: better than ${best}${by} and back within a week. No move drops either.`
+  );
+}
+
+/** "(O, back Nov 2)", "(OFS, no return)": a player's absence. */
+function absence(status: string | null, back: string | null): string {
+  const when = back ? `back ${dayLabel(back)}` : "no return date";
+  return status ? `(${status}, ${when})` : `(${when})`;
+}
+
+/** A player who is out, and what to do with him (#124): stash him with the freed spot's best add,
+ * who should leave a full slot, bench, or droppable; the value net of return for a protected
+ * player. */
+export function stashText(a: Stash, name: (id: number | null) => string): string {
+  const who = `${name(a.player)} ${absence(a.status, a.back)}`;
+  const net = a.protected && a.net != null ? `; ${a.net.toFixed(1)} net of return` : "";
+  if (a.advice === "stash") {
+    const add = a.add?.three ?? a.add?.week ?? null;
+    const span = a.add?.three ? "over the three weeks" : "this week";
+    const freed = add ? `, which frees a spot for ${name(add.player)} (${gainLabel(add.gain)} ${span})` : "";
+    return `${who}: move to ${a.slot}${freed}${net}.`;
+  }
+  if (a.advice === "il_full") {
+    const full = `eligible, ${a.slots.join(" or ")} full`;
+    const lv = a.leave;
+    if (!lv) return `${who}: ${full}${net}.`;
+    const leave =
+      lv.how === "activate"
+        ? lv.drop == null || lv.drop === lv.player
+          ? `${name(lv.player)} (cleared) should leave ${lv.slot}, dropped`
+          : `activate ${name(lv.player)} (cleared) from ${lv.slot}, dropping ${name(lv.drop)}`
+        : `${name(lv.player)} should leave ${lv.slot}, the least value net of return${lv.net != null ? ` (${lv.net.toFixed(1)})` : ""}${lv.protected ? ", though protected: advice only" : ""}`;
+    return `${who}: ${full}; ${leave}${net}.`;
+  }
+  if (a.advice === "bench") return `${who}: bench${a.back ? `, back ${dayLabel(a.back)}` : ""}${net}.`;
+  return `${who}: droppable, the moves may take him.`;
 }
 
 /** A gain worth a move, a loss, or neither. */

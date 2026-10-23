@@ -1091,6 +1091,8 @@ export interface CandidateGain {
   /** Expected categories won over the horizon (a points league: matchups won). */
   gain: number;
   drop: number | null;
+  /** With no drop and no open spot: the held-slot move that makes room for him (#124). */
+  held?: HeldMove | null;
   next_drop: number | null;
   next_price: number | null;
 }
@@ -1100,16 +1102,25 @@ export interface MoveCandidate {
   /** Null when no move with him fits (no adds left, no drop). */
   week: CandidateGain | null;
   three: CandidateGain | null;
+  /** Why no move fits on either horizon, in words. */
+  reason?: string;
 }
 
 export interface RecommendedMove extends MoveRef {
+  /** With no drop and no open spot: the held-slot move that makes room for him (#124). */
+  held?: HeldMove | null;
   /** What the move adds to its set on each horizon. */
   marginal: Record<MoveHorizon, number>;
   /** The set less the re-solve without this add, and with this drop kept (null: no drop). */
   price_without: number;
   price_keep: number | null;
-  instead_without: MoveRef[];
-  instead_keep: MoveRef[] | null;
+  instead_without: HeldRef[];
+  instead_keep: HeldRef[] | null;
+}
+
+/** A move of a re-solve's set, naming the held-slot move an add without a drop needs (#124). */
+export interface HeldRef extends MoveRef {
+  held?: HeldMove | null;
 }
 
 export interface HeldMove {
@@ -1154,8 +1165,66 @@ export interface MoveAdds {
   weeks: { start: string; end: string; adds: number | null }[];
 }
 
+/** A held player whose status cleared: Yahoo refuses every add until he is activated, which
+ * drops ``drop`` (maybe himself) on ``from`` (#124). */
+export interface ClearedPlayer {
+  player: number;
+  slot: string;
+  status: string | null;
+  from: string;
+  drop: number | null;
+}
+
+/** One of my active players under the keep rule (#124): his rest-of-season per-game value, when
+ * he is back, and its three tests. Protected: all three, never dropped; bench: better than the
+ * best add and back within a week, not dropped either. */
+export interface KeptPlayer {
+  player: number;
+  value: number | null;
+  back: string | null;
+  net_positive: boolean;
+  beats_best: boolean;
+  returns: boolean;
+  protected: boolean;
+  bench: boolean;
+}
+
+export interface KeepRule {
+  /** What a player's value must beat the best add's by. */
+  floor: number;
+  /** The pool's average per-game value (0 for category sums). */
+  average?: number;
+  best: { player: number; value: number } | null;
+  players: KeptPlayer[];
+}
+
+/** What to do with one of my players who is out (#124): stash him in an open held slot, say who
+ * leaves a full one, keep him on the bench, or nothing (droppable). */
+export type StashAdvice = "stash" | "il_full" | "bench" | "droppable";
+
+export interface Stash {
+  player: number;
+  status: string | null;
+  back: string | null;
+  /** The held slots his status allows, and the one open for him (null: none). */
+  slots: string[];
+  slot: string | null;
+  protected: boolean;
+  bench: boolean;
+  /** His per-game value above an empty line times his games from his return; null without a line. */
+  net: number | null;
+  advice: StashAdvice;
+  /** A full slot's occupant who should leave it: activated (dropping ``drop``) or dropped. */
+  leave: { player: number; slot: string; how: "activate" | "drop"; drop: number | null; net: number | null; protected: boolean } | null;
+  /** A stash: the best add for the spot it frees, by horizon. */
+  add: Record<MoveHorizon, { player: number; gain: number } | null> | null;
+}
+
 export interface MovesPayload {
   system: ProjectionSystemInfo & { key: ProjectionSystem; fallback?: string };
+  cleared?: ClearedPlayer[];
+  keep_rule?: KeepRule;
+  stash?: Stash[];
   horizons: Record<MoveHorizon, MoveHorizonInfo>;
   adds: MoveAdds;
   /** By Yahoo player id. */
@@ -1186,8 +1255,9 @@ export interface MoveDetail extends MoveRef {
       comebacks?: Comeback[];
     }
   >;
-  /** Every drop the add can come with, best over three weeks first. */
-  drops: ({ drop: number | null } & Record<MoveHorizon, number>)[];
+  /** Every drop the add can come with, best over three weeks first; ``kept``: the keep rule keeps
+   * him, so the search never takes it (#124). */
+  drops: ({ drop: number | null; kept?: boolean; held?: HeldMove | null } & Record<MoveHorizon, number>)[];
   /** The best other adds for this drop. */
   adds: ({ add: number } & Record<MoveHorizon, number>)[];
 }
@@ -1228,11 +1298,12 @@ export interface MilpBlock extends Partial<StrategyBlock> {
 /** A move of a point's recommended set, priced by re-solves once ``priced``. */
 export interface StrategyMove extends MoveRef {
   priced: boolean;
+  held?: HeldMove | null;
   marginal?: Record<MoveHorizon | "weighted", number>;
   price_without?: number;
   price_keep?: number | null;
-  instead_without?: MoveRef[];
-  instead_keep?: MoveRef[] | null;
+  instead_without?: HeldRef[];
+  instead_keep?: HeldRef[] | null;
 }
 
 export interface StrategyPoint {
@@ -1248,6 +1319,8 @@ export interface StrategyPoint {
   /** The shown set's weighted value less the other solver's (null: the same set). */
   ahead?: number | null;
   moves?: StrategyMove[];
+  /** The held-slot moves the set's adds without a drop need. */
+  held?: HeldMove[];
   gain?: StrategyGain;
   cats?: Record<MoveHorizon, { before: Partial<Record<Cat, MoveCategory>>; after: Partial<Record<Cat, MoveCategory>> }>;
   search?: StrategyBlock;
@@ -1271,6 +1344,7 @@ export interface StrategyPayload {
   error?: string | null;
   weeks_left?: number;
   settings?: StrategySettings;
+  keep_rule?: KeepRule;
   pool?: number[];
   horizons?: Record<MoveHorizon, MoveHorizonInfo> & { season: { label: string; weeks_left: number; base: number | null } };
   adds?: MoveAdds;

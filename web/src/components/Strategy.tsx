@@ -4,6 +4,7 @@ import {
   api,
   CAT_LABEL,
   type Cat,
+  type HeldRef,
   type MoveCategory,
   type MoveRef,
   type ProjectionSystem,
@@ -20,10 +21,12 @@ import {
   dayLabel,
   defaultWeight,
   firstOrderLists,
+  forText,
   frontierMarks,
   gainLabel,
   gainTone,
   isSolving,
+  keepLine,
   milpLabel,
   oddsLabel,
   oddsTone,
@@ -96,6 +99,7 @@ export default function Strategy({ league, s, system, onPick }: { league: string
   const points = d.points ?? [];
   const at = points.find((p) => p.key === chosen) ?? points.find((p) => p.key === defaultWeight(points));
   const changed = d.status !== "not_solved" && strategySettingsChanged(d.settings, lock, programOnly);
+  const keep = keepLine(d.keep_rule, name);
   const units = strategyUnits(s.scoring);
   const toggleLock = (id: number) => setLock(toggled(lock, id));
   return (
@@ -124,6 +128,11 @@ export default function Strategy({ league, s, system, onPick }: { league: string
               </button>
             </span>
           ))}
+        </p>
+      )}
+      {keep && (
+        <p className="muted small" title="the keep rule (#124), beside the locks: no weight's set drops them">
+          {keep}
         </p>
       )}
       {d.status === "not_solved" ? (
@@ -268,13 +277,13 @@ function MoveRow({
   onLock: (id: number) => void;
   onPick: (m: MoveKey) => void;
 }) {
-  const instead = (ms: MoveRef[] | null | undefined) =>
-    ms == null ? "" : ms.length ? `adds ${ms.map((m) => `${name(m.add)} for ${name(m.drop)}`).join(", ")}` : "makes no move";
+  const instead = (ms: HeldRef[] | null | undefined) =>
+    ms == null ? "" : ms.length ? `adds ${ms.map((m) => `${name(m.add)} for ${forText(m, name)}`).join(", ")}` : "makes no move";
   return (
     <tr className="pick" onClick={() => onPick(x)} title="Open the move's own breakdown">
       <td className="strong">{name(x.add)}</td>
       <td>
-        {name(x.drop)}{" "}
+        {forText(x, name)}{" "}
         {x.drop != null && (
           <button
             className={`link lock-toggle ${locked ? "on" : ""}`}

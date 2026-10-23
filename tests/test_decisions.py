@@ -213,12 +213,13 @@ def test_each_solve_of_the_moves_route_appends_an_entry_to_its_days_log(client):
     # The system and its export, the day the moves start, the adds left, the pool.
     assert first["system"] == m["system"]
     assert first["system"]["file"] == "bbm_projections_2026-10-21.csv"
-    # The knobs in force: the solve's system, the others unset until the knob file (phase 3).
+    # The knobs in force: the solve's system and the keep rule's floor, the others unset until
+    # the knob file (phase 3).
     assert first["knobs"] == {
         "system": "bbm",
         "blend": None,
         "horizon_weight": None,
-        "protection_floor": None,
+        "protection_floor": 0.0,
         "stash_threshold": None,
         "faab_sizing": None,
         "daily_cap": None,

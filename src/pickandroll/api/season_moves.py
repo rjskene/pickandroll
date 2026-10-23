@@ -11,6 +11,12 @@ candidates whose best single move gains most.
 
 A player of mine listed O is held out past next Monday when ESPN's injury report gives a later
 return date (#97): the day a held-slot move's deferred drop is charged from.
+
+The keep rule (#124, ``season.moves``) reads Basketball Monster's rest-of-season per-game line
+for my players and the candidates under every system, scored by the league's scorer: Yahoo's
+values are seven-day projections, the wrong horizon for a season comparison. The players it keeps
+are no drop anywhere; the payload names them with their values and the best add's, and advises
+each player with an absence on the IL.
 """
 
 from __future__ import annotations
@@ -18,7 +24,7 @@ from __future__ import annotations
 import threading
 from collections import Counter
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date
 from pathlib import Path
 from typing import Any
@@ -42,6 +48,11 @@ POOL = 30
 MIN_GAIN = 0.01
 #: The alternative adds the drawer lists for a drop.
 ALTERNATIVE_ADDS = 8
+#: How far a protected player's rest-of-season per-game value must exceed the best add's: the
+#: keep rule's protection floor, a knob the hill-climb may set (docs/AUTOPILOT.md, section 6).
+PROTECTION_FLOOR = 0.0
+#: The players a points league's average is taken over: the rostered pool's size.
+POINTS_POOL = 156
 HORIZONS = ("week", "three")
 
 
@@ -55,6 +66,8 @@ class Built:
     unprojected: int
     #: The matchup weeks after this one in the league's calendar (the strategy engine's, #110).
     weeks_left: int = 0
+    #: The keep rule on my active players (#124).
+    rule: mv.KeepRule | None = None
 
 
 @dataclass(frozen=True)
@@ -197,7 +210,9 @@ def build(season: Season, today: date, data_dir: Path, system: str) -> Built | N
     slot_count = Counter(s.roster)
     # A held player whose status cleared is activated on the first day: his slot is open.
     taken = Counter(
-        sp.slot for sp in spots if sp.slot in mv.HELD and mv.eligible(sp.player.status, sp.slot)
+        sp.slot
+        for sp in spots
+        if sp.slot in mv.HELD and not mv.is_cleared(sp.player.status, sp.slot)
     )
     held_open = {k: slot_count.get(k, 0) - taken.get(k, 0) for k in mv.HELD}
     on_roster = {k for k, _ in roster} | {k for k, _ in held}
@@ -261,7 +276,33 @@ def build(season: Season, today: date, data_dir: Path, system: str) -> Built | N
     }
     unprojected = sum(1 for a in pool if a.player.yahoo_id not in rates)
     weeks_left = sum(1 for w in season.calendar.weeks if w.number > this.number)
-    return Built(problem, {"key": system, **info}, horizons, adds, unprojected, weeks_left)
+    problem = replace(
+        problem,
+        **keep_inputs(rated, cats, points),
+        season_end=max(w.end for w in season.calendar.weeks),
+        floor=PROTECTION_FLOOR,
+    )
+    rule = mv.keep_rule(problem)
+    problem = replace(problem, kept=rule.kept)
+    return Built(problem, {"key": system, **info}, horizons, adds, unprojected, weeks_left, rule)
+
+
+def keep_inputs(
+    rated: Rated, cats: tuple[str, ...], points: dict[str, float] | None
+) -> dict[str, Any]:
+    """The keep rule's values whatever the system: Basketball Monster's per-game line under the
+    league's scorer, a dead spot's (an empty line) under the same scorer, and the pool's
+    average (zero for z-sums, the best players' mean in a points league)."""
+    bbm = rated.bbm.rates
+    if not bbm:
+        return {"season_value": {}, "dead": 0.0, "average": 0.0}
+    values = wk.per_game_values(bbm, cats, points)
+    dead = wk.line_value(bbm, cats, points)({})
+    average = 0.0
+    if points:
+        best = sorted(values.values(), reverse=True)[:POINTS_POOL]
+        average = sum(best) / len(best)
+    return {"season_value": values, "dead": dead, "average": average}
 
 
 # --------------------------------------------------------------------------- the payloads
@@ -297,9 +338,122 @@ def cleared_payload(problem: mv.MoveProblem) -> list[dict[str, Any]]:
     ]
 
 
+#: Why a candidate has no move: the week's adds are used, or no player can go for him.
+NO_ADDS_LEFT = "no adds left that week"
+NO_DROP = "no drop: every rostered player is protected or held"
+
+
+def _held_for(problem: mv.MoveProblem, move: mv.Move) -> dict[str, Any] | None:
+    """The held-slot move an add without a drop needs (None: an open spot, or a drop)."""
+    return held_by_add(problem, [move]).get(move.add)
+
+
+def held_by_add(
+    problem: mv.MoveProblem, moves: list[mv.Move] | tuple[mv.Move, ...]
+) -> dict[int, Any]:
+    """The held-slot move each add without a drop takes, in the set's order once the open spots
+    are taken (``moves.held_used``): who goes to which slot to make room for him."""
+    free = [m.add for m in moves if m.drop is None][mv.open_spots(problem) :]
+    used = mv.held_used(problem, moves)
+    return {a: {"player": k, "slot": slot} for a, (k, slot) in zip(free, used, strict=False)}
+
+
+def moves_with_held(
+    problem: mv.MoveProblem, moves: list[mv.Move] | tuple[mv.Move, ...]
+) -> list[dict[str, Any]]:
+    """A set's moves, each add without a drop naming the held-slot move that makes room for him
+    (None: an open spot, or a drop)."""
+    held = held_by_add(problem, moves)
+    return [{**_move(m, problem), "held": held.get(m.add)} for m in moves]
+
+
+def no_move(problem: mv.MoveProblem, cand: int) -> str:
+    """Why ``cand`` has no feasible move."""
+    lim = mv.limit_of(problem, problem.effective[cand])
+    if lim is not None and lim.adds is not None and lim.adds <= 0:
+        return NO_ADDS_LEFT
+    return NO_DROP
+
+
+def keep_payload(built: Built) -> dict[str, Any]:
+    """The keep rule (#124): the best add's rest-of-season per-game value, the floor, and each of
+    my active players with his own value, when he is back and the three tests."""
+    p, rule = built.problem, built.rule
+    if rule is None:
+        return {"floor": p.floor, "average": _r(p.average), "best": None, "players": []}
+    players = []
+    for key, k in rule.players.items():
+        players.append(
+            {
+                "player": key,
+                "value": None if k.value is None else _r(k.value),
+                "back": k.back.isoformat() if k.back else None,
+                "net_positive": k.net_positive,
+                "beats_best": k.beats_best,
+                "returns": k.returns,
+                "protected": k.protected,
+                "bench": k.bench,
+            }
+        )
+    best = None
+    if rule.best is not None and rule.best_value is not None:
+        best = {"player": rule.best, "value": _r(rule.best_value)}
+    return {"floor": rule.floor, "average": _r(p.average), "best": best, "players": players}
+
+
+def _freed(swaps: dict[str, dict[int, list[mv.SwapGain]]]) -> dict[str, Any]:
+    """The best add for a spot a held-slot move frees, on each horizon: the best single move
+    with no drop."""
+    out: dict[str, Any] = {}
+    for key in HORIZONS:
+        free = [(c, g.gain) for c, gs in swaps[key].items() for g in gs if g.drop is None]
+        best = max(free, key=lambda x: (x[1], -x[0]), default=None)
+        out[key] = None if best is None else {"player": best[0], "gain": _r(best[1])}
+    return out
+
+
+def stash_payload(
+    built: Built, swaps: dict[str, dict[int, list[mv.SwapGain]]] | None = None
+) -> list[dict[str, Any]]:
+    """The IL advice (#124, "can and should"): each of my players with an absence, the held slots
+    his status allows and the one open for him, his value net of return, and what to do; a
+    stash names the best add for the freed spot, a full slot who should leave it."""
+    p, rule = built.problem, built.rule
+    if rule is None:
+        return []
+    freed = _freed(swaps) if swaps is not None else None
+    out = []
+    for a in mv.stash_advice(p, rule):
+        row: dict[str, Any] = {
+            "player": a.player,
+            "status": a.status,
+            "back": a.back.isoformat() if a.back else None,
+            "slots": list(a.slots),
+            "slot": a.slot,
+            "protected": a.protected,
+            "bench": a.bench,
+            "net": None if a.net is None else _r(a.net),
+            "advice": a.advice,
+            "leave": None,
+            "add": freed if a.advice == mv.STASH else None,
+        }
+        if a.leave is not None:
+            lv = a.leave
+            row["leave"] = {
+                "player": lv.player,
+                "slot": lv.slot,
+                "how": lv.how,
+                "drop": lv.drop,
+                "net": None if lv.net is None else _r(lv.net),
+                "protected": lv.protected,
+            }
+        out.append(row)
+    return out
+
+
 def moves_payload(built: Built) -> dict[str, Any]:
     """The table's gains for every candidate and the recommended set on each horizon, and first
-    the held players whose cleared status blocks every add."""
+    the held players whose cleared status blocks every add; the keep rule and the IL advice."""
     p = built.problem
     ev = mv.Evaluator(p)
     swaps = {key: mv.single_swaps(ev, key) for key in HORIZONS}
@@ -316,9 +470,12 @@ def moves_payload(built: Built) -> dict[str, Any]:
             row[key] = {
                 "gain": _r(best.gain),
                 "drop": best.drop,
+                "held": _held_for(p, mv.Move(cand)) if best.drop is None else None,
                 "next_drop": nxt.drop if nxt else None,
                 "next_price": _r(best.gain - nxt.gain) if nxt else None,
             }
+        if all(row[key] is None for key in HORIZONS):
+            row["reason"] = no_move(p, cand)
         candidates[str(cand)] = row
     recommended = {}
     for key in HORIZONS:
@@ -327,17 +484,19 @@ def moves_payload(built: Built) -> dict[str, Any]:
             key=lambda c: -swaps[key][c][0].gain,
         )
         rec = mv.recommend(ev, key, ranked[:POOL], min_gain=MIN_GAIN)
+        held = held_by_add(p, [pm.move for pm in rec.moves])
         recommended[key] = {
             "moves": [
                 {
                     **_move(pm.move, p),
+                    "held": held.get(pm.move.add),
                     "marginal": {h: _r(v) for h, v in pm.marginal.items()},
                     "price_without": _r(pm.price_without),
                     "price_keep": None if pm.price_keep is None else _r(pm.price_keep),
-                    "instead_without": [_move(m, p) for m in pm.instead_without],
+                    "instead_without": moves_with_held(p, pm.instead_without),
                     "instead_keep": None
                     if pm.instead_keep is None
-                    else [_move(m, p) for m in pm.instead_keep],
+                    else moves_with_held(p, pm.instead_keep),
                 }
                 for pm in rec.moves
             ],
@@ -347,6 +506,8 @@ def moves_payload(built: Built) -> dict[str, Any]:
         }
     return {
         "cleared": cleared_payload(p),
+        "keep_rule": keep_payload(built),
+        "stash": stash_payload(built, swaps),
         "system": built.system,
         "horizons": {key: {**built.horizons[key], "base": _r(ev.base[key])} for key in HORIZONS},
         "adds": built.adds,
@@ -424,9 +585,16 @@ def detail_payload(built: Built, add: int, drop: int | None) -> dict[str, Any] |
             "cats": {"before": _cats(ev, key, []), "after": _cats(ev, key, move)},
             "comebacks": _comebacks(mv.comebacks(p, key, move)),
         }
+    # Every drop the add can come with, those the keep rule keeps too, marked: the drawer shows
+    # what keeping them costs.
     drops = [
-        {"drop": d, **{key: _r(ev.gain(key, [mv.Move(add, d)])) for key in HORIZONS}}
-        for d in mv.drop_options(p)
+        {
+            "drop": d,
+            "kept": d in p.kept,
+            "held": _held_for(p, mv.Move(add)) if d is None else None,
+            **{key: _r(ev.gain(key, [mv.Move(add, d)])) for key in HORIZONS},
+        }
+        for d in [None, *(k for k, _ in p.roster)]
         if mv.feasible(p, [mv.Move(add, d)])
     ]
     drops.sort(key=lambda r: -r["three"])

@@ -195,7 +195,11 @@ def payload(
 def _held(p: mv.MoveProblem, s: SeasonSettings, today: Read | None) -> dict[str, Any]:
     """The held slots one by one with whoever sits in each (today's lineup when read, else the
     roster), cleared occupants marked; the open ones; the active players eligible for one; and
-    where the slots come from (a lower bound unless the settings page was read)."""
+    where the slots come from (a lower bound unless the settings page was read).
+
+    A player is listed eligible for every held kind the league has whose rule his status fits,
+    a full one included: when the IL is full the user decides whom to swap (#124), so the view
+    tells "eligible, IL full" from "eligible, 1 open" by ``open``."""
     statuses = dict(p.held)
     sitting = (
         [(sp.slot, sp.player.yahoo_id) for sp in today[0] if sp.slot in mv.HELD]
@@ -214,7 +218,7 @@ def _held(p: mv.MoveProblem, s: SeasonSettings, today: Read | None) -> dict[str,
                     "slot": kind,
                     "player": k,
                     "cleared": player is not None
-                    and not mv.eligible(player.status, kind, p.held_accepts),
+                    and mv.is_cleared(player.status, kind, p.held_accepts),
                 }
             )
         open_[kind] = max(0, n - len(here))

@@ -36,9 +36,9 @@ SHOWN_DAYS = 7
 #: hour of a solve is flagged ``near`` (``decisions.NEAR``) so a wrong zone shows.
 TRANSACTIONS_TZ = NBA_TZ
 #: The AUTOPILOT knobs (docs/AUTOPILOT.md, section 6) an entry records as in force: the
-#: projection system (the solve's own), then the blend weight, the strategy's horizon weight,
-#: the keep rule's protection floor, the stash threshold, the FAAB sizing and the daily move
-#: cap, None until the knob file (phase 3) sets them.
+#: projection system (the solve's own) and the keep rule's protection floor (#124), then the
+#: blend weight, the strategy's horizon weight, the stash threshold, the FAAB sizing and the
+#: daily move cap, None until the knob file (phase 3) sets them.
 KNOBS = (
     "blend",
     "horizon_weight",
@@ -110,9 +110,9 @@ def _week(ev: mv.Evaluator, moves: Sequence[mv.Move]) -> dict[str, Any]:
     return {"before": week_block(ev, []), "after": week_block(ev, moves)}
 
 
-def knobs(system: str) -> dict[str, Any]:
-    """The knobs in force for a solve on ``system``."""
-    return {"system": system, **dict.fromkeys(KNOBS)}
+def knobs(system: str, floor: float | None = None) -> dict[str, Any]:
+    """The knobs in force for a solve on ``system`` with the keep rule's ``floor``."""
+    return {"system": system, **dict.fromkeys(KNOBS), "protection_floor": floor}
 
 
 def _logged(move: Mapping[str, Any]) -> dict[str, Any]:
@@ -132,7 +132,7 @@ def _common(built: Built, at: datetime, source: str) -> dict[str, Any]:
         "at": at.isoformat(),
         "source": source,
         "system": built.system,
-        "knobs": knobs(built.system["key"]),
+        "knobs": knobs(built.system["key"], built.problem.floor),
         "first_day": p.first_day.isoformat(),
         "adds": built.adds,
         "horizons": {k: built.horizons[k]["label"] for k in season_moves.HORIZONS},

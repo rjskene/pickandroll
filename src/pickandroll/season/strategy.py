@@ -16,9 +16,14 @@ one recommended (:func:`choose`):
 * the move model's exact search (``moves.search``) on the weighted value (:class:`Weighted`);
 * the draft's roster MILP applied to the moves (:func:`solve_milp`), HiGHS through PuLP.
   Binaries ``a[p]`` add candidate ``p`` and ``g[q, t]`` drop my player ``q`` on date ``t``, one
-  of the days an add arrives (the first day for a free agent, the clear date for a claim): at
-  most once each, and on each date no more drops than adds. A drop keeps his games before his
-  date. Each week's adds stay within its limit. Continuous starts fill the league's slots on
+  of the days an add arrives (the first day for a free agent, the clear date for a claim) or a
+  stashed player comes back: at most once each, and on each date no more drops than arrivals
+  and returns. A drop keeps his games before his date; a player the keep rule keeps (#124) has
+  no drop. Binaries ``h[q, s]`` move my active player ``q`` to an open held slot of kind ``s``
+  his status fits (#124): no more than the open slots of each kind, never with a drop of his
+  before his return. On every day a move changes the roster, the adds arrived less the drops and
+  the stashed players not yet back stay within the spots open now. Each week's adds stay within
+  its limit. Continuous starts fill the league's slots on
   each day of this week (a matching per day, integral for a fixed roster, so the program picks
   the lineup) and are capped by count at the number of starting slots on each later day. Each
   category's total goes through the draft's piecewise Φ (``objective.add_segments``): this week
@@ -30,10 +35,11 @@ one recommended (:func:`choose`):
 On the prize leagues' data of 2026-10-21 the program was exact and fast for this week, and on
 the later weeks the exact search on the same weighted value found the better set more often:
 the count cap and a single normal for the field are not the evaluator's lineups and
-per-opponent odds. That is why both run. The program makes no held-slot moves (an add needs a
-drop or an open spot); the search does. HiGHS starts from the search's set, which it completes
-into its first incumbent, and its own model status says whether a solve finished or hit the time
-limit (PuLP calls both "Optimal").
+per-opponent odds. That is why both run. The program's set goes back through the evaluator,
+which picks the stashed players by its own order (``moves.held_moves``) and charges the returns
+its way (``moves.comebacks``), and ``moves.feasible`` guards it. HiGHS starts from the search's
+set, which it completes into its first incumbent, and its own model status says whether a solve
+finished or hit the time limit (PuLP calls both "Optimal").
 """
 
 from __future__ import annotations
@@ -327,9 +333,9 @@ def solve_milp(
     time_limit: float = TIME_LIMIT,
     gap: float = GAP,
 ) -> Milp:
-    """The program's set of moves among ``pool`` at weight ``lam``, ``keep`` never dropped,
-    started from ``start`` (the search's set). A horizon without weight is left out of the
-    model."""
+    """The program's set of moves among ``pool`` at weight ``lam``, ``keep`` and the players the
+    keep rule keeps never dropped, started from ``start`` (the search's set). A horizon without
+    weight is left out of the model."""
     t0 = time.perf_counter()
     p = problem
     held, roster = dict(p.held), dict(p.roster)
@@ -337,11 +343,22 @@ def solve_milp(
     members: dict[int, Player] = {**held, **roster, **cands}
     eff = {k: p.effective[k] for k in cands}
     avail = {**p.effective, **p.returns}
-    kept = set(keep)
+    kept = set(keep) | set(p.kept)
     slots = tuple(p.slots)
     model = pulp.LpProblem("strategy", pulp.LpMaximize)
     a = {k: model.add_variable(f"a_{k}", cat=pulp.LpBinary) for k in cands}
-    dates = sorted(set(eff.values()))
+    # The held-slot moves (#124): an eligible active player to an open slot, back on the day
+    # the out rule or his return date lets him play inside the horizons (None: not back).
+    h = {
+        (q, kind): model.add_variable(f"h_{q}_{kind.replace('+', 'p')}", cat=pulp.LpBinary)
+        for q, pl in roster.items()
+        for kind in p.held_accepts
+        if p.held_open.get(kind, 0) > 0 and mv.eligible(pl.status, kind, p.held_accepts)
+    }
+    stashed = {q: pulp.lpSum(x for (k, _), x in h.items() if k == q) for q in {k for k, _ in h}}
+    spans = (*p.horizons.get("week", ()), *p.horizons.get("three", ()))
+    back = {q: mv.comes_back(p, q, roster[q], spans) for q in stashed}
+    dates = sorted(set(eff.values()) | {d for d in back.values() if d is not None})
     g = {
         (q, t): model.add_variable(f"g_{q}_{t:%Y%m%d}", cat=pulp.LpBinary)
         for q in roster
@@ -351,10 +368,22 @@ def solve_milp(
     for q in roster:
         if q not in kept and dates:
             model += pulp.lpSum(g[q, t] for t in dates) <= 1, f"once_{q}"
+    for kind in {k for _, k in h}:
+        inside = [x for (_, k), x in h.items() if k == kind]
+        model += pulp.lpSum(inside) <= p.held_open[kind], f"held_{kind.replace('+', 'p')}"
+    for q, x in stashed.items():
+        early = [g[q, t] for t in dates if (q, t) in g and (back[q] is None or t < back[q])]
+        model += x + pulp.lpSum(early) <= 1, f"stash_{q}"
     for t in dates:
         leaving = pulp.lpSum(g[q, t] for q in roster if (q, t) in g)
-        model += leaving <= pulp.lpSum(a[k] for k in cands if eff[k] == t), f"arrive_{t:%Y%m%d}"
-    model += pulp.lpSum(a.values()) <= pulp.lpSum(g.values()) + mv.open_spots(p), "spots"
+        coming = pulp.lpSum(a[k] for k in cands if eff[k] == t)
+        coming += pulp.lpSum(x for q, x in stashed.items() if back[q] == t)
+        model += leaving <= coming, f"arrive_{t:%Y%m%d}"
+        # The spots on the day: adds arrived, less drops, less stashed players not yet back.
+        arrived = pulp.lpSum(a[k] for k in cands if eff[k] <= t)
+        dropped = pulp.lpSum(x for (_, d), x in g.items() if d <= t)
+        away = pulp.lpSum(x for q, x in stashed.items() if back[q] is None or t < back[q])
+        model += arrived - dropped - away <= mv.open_spots(p), f"spots_{t:%Y%m%d}"
     for i, lim in enumerate(p.limits):
         inside = [a[k] for k in cands if lim.start <= eff[k] <= lim.end]
         if lim.adds is not None and inside:
@@ -440,12 +469,20 @@ def solve_milp(
     }
     seed: dict[Any, float] = {}
     if start is not None:
-        seed = dict.fromkeys([*a.values(), *g.values()], 0.0)
+        seed = dict.fromkeys([*a.values(), *g.values(), *h.values()], 0.0)
         for m in start:
             if m.add in a:
                 seed[a[m.add]] = 1.0
                 if m.drop is not None and (m.drop, eff[m.add]) in g:
                     seed[g[m.drop, eff[m.add]]] = 1.0
+        # Its held-slot moves and the drops their returns force, as the evaluator makes them.
+        for q, kind in mv.held_used(p, start):
+            if (q, kind) in h:
+                seed[h[q, kind]] = 1.0
+        for key in ("week", "three"):
+            for c in mv.comebacks(p, key, start):
+                if (c.drop, c.day) in g:
+                    seed[g[c.drop, c.day]] = 1.0
     model.solve(_Started(seed, msg=False, timeLimit=time_limit, gapRel=gap))
     status = _status(model)
     if status == FAILED:

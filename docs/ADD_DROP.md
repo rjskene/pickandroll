@@ -218,6 +218,56 @@ day, dropping the weakest active player by per-game value, him included, in ever
 search weighs, the empty one too, so every gain is counted from that baseline. His slot then
 counts as open for a stash.
 
+Several players eligible for fewer open slots: the latest to return takes one first (a player
+not back this season before any), roster order breaking ties (`moves.stash_order`). An add with
+no drop and no open spot names the held move that makes room for him, "Brooks to IL", in the
+Waivers table's For column, the Moves card and the Strategy card (`held` on each move). The
+lineup route lists a player as eligible for every held kind the league has that his status fits,
+a full one included, so the Lineup view can tell "eligible, IL full" from "eligible, 1 open" by
+the slot's `open` count: when the IL is full the user decides whom to swap.
+
+### The keep rule and the IL advice (#124)
+
+The user's strategy rule of 2026-10-22, as ruled in docs/AUTOPILOT.md section 4. The three-week
+horizon, and the season the Strategy card reads from it, value a player out for three weeks at
+about nothing, so a good player out is a forced keep, not a value term (`season/moves.py`, "the
+keep rule").
+
+- **Values.** Each player's rest-of-season per-game value is Basketball Monster's line under the
+  league's scorer, whatever system the solve runs on (Yahoo's are week projections). The pool's
+  average is zero for a categories league's z-sums and the mean of the best 156 in a points
+  league.
+- **Protected**: all three of net positive (his value above the pool's average), better than
+  the best available add's value by the protection floor (`season_moves.PROTECTION_FLOOR`,
+  zero until the knob file sets it), and back this season. Out for the season, or INJ, SUSP or
+  NA with no return date, is never protected; an O without a date is back next Monday.
+- **Benched**: better than the best add by the floor, not net positive, and back within seven
+  days (`SHORT_ABSENCE_DAYS`). A replacement-level player out a few days is streamed like any
+  other.
+- **Forced keep.** Both are kept (`problem.kept`) on every horizon and every strategy weight,
+  beside the user's locks: never a drop for the search (`drop_options`) or the program (no drop
+  variable), and never the player a held player's return sends while another can go. The move
+  drawer still lists them as drops, marked kept, to show what keeping them costs. A protected
+  player out still goes to a held slot through the held move when one is open.
+- **Value net of return**: his value above an empty line (a dead spot) times his games from his
+  return to the season's last day, counted from the schedule on the days read and at the team's
+  rate on the others (82 games in 174 days for a team with no day read). It ranks the IL and is
+  shown for every protected player who is out; it never protects.
+- **The advice** (`moves_payload`'s `stash`), for each of my players who is away (back after the
+  first day, or not this season; a doubt who may play today is not): `stash` when he is
+  protected and one of the league's held slots his status fits is open for him, with the best
+  add for the spot it frees on each horizon; `il_full` when he is protected and eligible but the
+  slots are taken, naming who should leave: a cleared occupant first, activated with the
+  weakest active player dropped, else the occupant with the least value net of return, dropped
+  and marked when the rule would protect him. That is advice only, no new move kind: the search
+  never drops a held player. Then `bench` (protected with no slot for him, or the short absence)
+  and `droppable` (the moves may take him).
+- **The words.** The Waivers table says under its note whom the rule keeps and benches, and the
+  Moves card lists them with their value a game against the best add's and why, then the out
+  players' advice. A candidate with no move on either horizon carries the reason in words: "no
+  adds left that week", or "no drop: every rostered player is protected or held", which the
+  Moves card repeats.
+
 Add limit: k is the league's weekly limit minus the adds already made this week, counted from
 the transactions page; when that page does not reach back to the week's start the payload says
 the count is unknown and uses the full limit.
@@ -259,7 +309,13 @@ answer each weight (option A, provisional until the user rules):
   field (the other teams' projected weeks from every game their rosters play: the mean, and the
   spread between teams plus two teams' weekly noise). It starts from the search's set, runs for
   at most 10 s to a 10⁻⁴ gap, and HiGHS's own status says whether it solved, stopped at the time
-  limit with a set, or found none. It makes no held-slot moves; the search does.
+  limit with a set, or found none. Since #124 it makes the held-slot moves too: a binary per
+  eligible active player and open held kind, no more than that kind's open slots, never with a
+  drop of his before his return. A stashed player's return day is one of the dates a drop may
+  fall on, and on every date the adds arrived less the drops and the stashed players not yet
+  back stay within the spots open now. The keep rule's players have no drop variable. Its set
+  goes back through the evaluator, which picks the stashed players and charges the returns its
+  own way, and the search's held moves and returns seed it.
 
 The card recommends whichever set is better on the weight's exact value, and says which: the
 search's, the program's, or both when they found the same adds with the same drops on the same
@@ -341,7 +397,8 @@ when left out.
   solved. An entry holds its time, the route, the projection system with its export file, the
   knobs in force (`knobs`: the system, then the blend weight, the horizon weight, the protection
   floor, the stash threshold, the FAAB sizing and the daily move cap of docs/AUTOPILOT.md, null
-  until the knob file of phase 3 sets them), the first day a move counts, the adds left, the
+  until the knob file of phase 3 sets them; `protection_floor` is the floor the keep rule used,
+  #124), the first day a move counts, the adds left, the
   horizons' labels and the pool (the moves route's search pool, candidates and floor; the
   strategy's players and settings). Then one set per horizon (moves) or per weight (strategy):
   its moves (add, drop or nobody, the day it counts from, and the bid to make, null until the
@@ -484,7 +541,8 @@ then UI to evaluate available waiver options"). The flow:
    opponent and over three weeks, and the alternatives with their prices.
 3. **Cards in the drawer.** Roster (my players with games this week, IL and slot use),
    Matchup (both teams' projected totals and win odds per category for the week), Moves (the
-   recommended pairs for the week under the add limit), Trade (enter a proposal, read both
+   recommended pairs for the week under the add limit, then whom the keep rule keeps and the
+   advice for the players who are out, #124), Trade (enter a proposal, read both
    sides' change), and the Flag digest (every flagged player across the league's pool).
    Built in #109 on the draft's rail and keys: the rail numbers the cards 1 Waivers, 2 Moves,
    3 Trade, 4 Flags, 5 My roster, 6 The league, 7 Strategy (#110, "The strategy engine"); a

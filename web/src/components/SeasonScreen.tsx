@@ -6,6 +6,7 @@ import {
   CAT_LABEL,
   type AvailableRow,
   type Cat,
+  type HeldRef,
   type MoveCategory,
   type MoveHorizon,
   type MoveRef,
@@ -39,12 +40,17 @@ import {
   flagOf,
   flagSignals,
   flagTitle,
+  forText,
   gainLabel,
   gainTone,
   HORIZON_LABEL,
   horizonGames,
   isRefreshing,
   isStale,
+  keepLine,
+  keepRuleNote,
+  keptPlayers,
+  keptWhy,
   MOVE_HORIZON,
   NO_FILTER,
   oddsLabel,
@@ -58,6 +64,7 @@ import {
   refreshNote,
   scoreLabel,
   sortAvailable,
+  stashText,
   statusTitle,
   statusTone,
   TEXT_KEYS,
@@ -477,6 +484,7 @@ function Waivers({
   const mh = MOVE_HORIZON[horizon];
   const minGain = m?.search.min_gain ?? 0;
   const name = useNamer(s);
+  const keep = keepLine(m?.keep_rule, name);
   const rows = s.available;
   const games = (r: AvailableRow, h: Horizon) => rowGames(w, r, h);
   const totals = useMemo(() => {
@@ -608,6 +616,11 @@ function Waivers({
         {` · ${shown.length === rows.length ? `the ${rows.length} most rostered available players` : `${shown.length} of the ${rows.length} most rostered available players`}`}
         {moves.error ? <span className="bad">{` · no moves: ${moves.error.message}`}</span> : movesNote && ` · ${movesNote}`}
       </p>
+      {keep && (
+        <p className="muted small board-note" title="the keep rule (#124): a net-positive player better than the best add over the rest of the season, who returns this season, is never a drop">
+          {keep}
+        </p>
+      )}
       <div className="table-wrap">
         <table>
           <thead>
@@ -621,7 +634,7 @@ function Waivers({
                 <FlagInfo cfg={s.flag_config} silent={s.flag_inputs?.silent} />,
               )}
               {(["week", "three"] as const).map((h) => th(GAIN_KEY[h], GAIN_SHORT[h], gainTitle(h)))}
-              <th title={`the player his best move over the ${HORIZON_LABEL[horizon]} drops (the horizon at the right)`}>For</th>
+              <th title={`the player his best move over the ${HORIZON_LABEL[horizon]} drops (the horizon at the right), or the held player it moves to make room; why there is no move`}>For</th>
               {th("next_price", "Next", `how much less the move over the ${HORIZON_LABEL[horizon]} adds with the next best drop`)}
               {cats.map((c) => th(c, CAT_LABEL[c], `${CAT_LABEL[c]} over the ${HORIZON_LABEL[horizon]} (${SYSTEM_SHORT[system]})`))}
               {TREND_COLUMNS.map((c) => th(c.key, c.label, c.title))}
@@ -670,7 +683,7 @@ function Waivers({
                         {gainLabel(cand?.[h]?.gain)}
                       </td>
                     ))}
-                    <td className="dim">{best ? name(best.drop) : ""}</td>
+                    <td className="dim">{best ? forText(best, name) : (cand?.reason ?? "")}</td>
                     <td className="num dim" title={best?.next_drop != null || best?.next_price != null ? `next best: ${name(best.next_drop)}` : undefined}>
                       {best?.next_price == null ? "" : best.next_price.toFixed(2)}
                     </td>
@@ -721,9 +734,9 @@ function systemTitle(info: ProjectionSystemInfo, system: ProjectionSystem): stri
 // ---------------------------------------------------------------- moves (#94)
 const OTHER_HORIZON: Record<MoveHorizon, MoveHorizon> = { week: "three", three: "week" };
 
-/** "adds Brooks for Bey, Vucevic for an open spot", or "makes no move". */
-function insteadText(moves: MoveRef[], name: Namer): string {
-  return moves.length ? `adds ${moves.map((x) => `${name(x.add)} for ${name(x.drop)}`).join(", ")}` : "makes no move";
+/** "adds Brooks for Grant, Vucevic for Ayton to IL", or "makes no move". */
+function insteadText(moves: HeldRef[], name: Namer): string {
+  return moves.length ? `adds ${moves.map((x) => `${name(x.add)} for ${forText(x, name)}`).join(", ")}` : "makes no move";
 }
 
 /** The recommended sets, the three weeks first, then the rest of this week. */
@@ -733,20 +746,81 @@ function Moves({ q, s, onPick }: { q: UseQueryResult<MovesPayload>; s: SeasonVie
   if (q.error) return <p className="error">{q.error.message}</p>;
   const m = q.data;
   if (!m) return <p className="muted">Valuing the moves…</p>;
+  // Why some adds have no move at all: the week's adds used, or no legal drop (#124).
+  const reasons = [...new Set(Object.values(m.candidates).flatMap((c) => (c.reason ? [c.reason] : [])))];
   return (
     <>
       <p className="muted small" title={m.adds.complete ? "my adds this week from the transactions page" : "the transactions page does not reach back to the week's start: more adds may have been used"}>
         {addsNote(m.adds)}
         {m.system.fallback ? ` · ${m.system.fallback}` : ""}
       </p>
+      {(m.cleared ?? []).map((c) => (
+        <p key={c.player} className="bad small">
+          {name(c.player)}&apos;s status cleared ({c.status ?? "healthy"}): Yahoo takes no add until he leaves {c.slot}
+          {c.drop == null ? "" : c.drop === c.player ? ", and he is the one to drop" : `; activating him drops ${name(c.drop)}`}.
+        </p>
+      ))}
+      {reasons.map((r) => (
+        <p key={r} className="accent small">
+          {cap(r)}.
+        </p>
+      ))}
       {(["three", "week"] as const).map((h) => (
         <Recommended key={h} h={h} m={m} s={s} name={name} onPick={onPick} />
       ))}
+      <KeepRuleBlock m={m} name={name} />
+      {(m.stash ?? []).length > 0 && (
+        <div className="block">
+          <span className="k" title="each of my players with an absence: the held slots his status allows, and what the keep rule says to do with him">
+            Out
+          </span>
+          {(m.stash ?? []).map((a) => (
+            <p key={a.player} className="muted small">
+              {stashText(a, name)}
+            </p>
+          ))}
+        </div>
+      )}
       <p className="dim small">
         Recommended by a search over the {m.search.pool} candidates whose best single move adds most: a strong heuristic, not a proof. Each move&apos;s prices
         are re-solves: the set without his add, and the set keeping his drop.
       </p>
     </>
+  );
+}
+
+/** Whom the keep rule keeps (#124): each with his rest-of-season value a game and why. */
+function KeepRuleBlock({ m, name }: { m: MovesPayload; name: Namer }) {
+  const rule = m.keep_rule;
+  const kept = keptPlayers(rule);
+  if (!rule || !kept.length) return null;
+  return (
+    <div className="block">
+      <span className="k" title="each player's rest-of-season value a game, from the rest-of-season line whatever the system">
+        Kept by the keep rule
+      </span>
+      <p className="dim small">{keepRuleNote(rule, name)}</p>
+      <table className="season-table">
+        <thead>
+          <tr>
+            <th>Player</th>
+            <th className="num" title="rest-of-season value a game">
+              a game
+            </th>
+            <th>Why</th>
+          </tr>
+        </thead>
+        <tbody>
+          {kept.map((k) => (
+            <tr key={k.player}>
+              <td className="strong">{name(k.player)}</td>
+              <td className="num">{k.value == null ? "" : k.value.toFixed(2)}</td>
+              <td className="dim">{keptWhy(k)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   );
 }
 
@@ -790,7 +864,7 @@ function Recommended({ h, m, s, name, onPick }: { h: MoveHorizon; m: MovesPayloa
                 <td className="strong">
                   {name(x.add)} <FlagTag f={flagOf(s, x.add)} s={s} />
                 </td>
-                <td>{name(x.drop)}</td>
+                <td>{forText(x, name)}</td>
                 <td className="dim">{dayLabel(x.from)}</td>
                 <td className={`num ${gainTone(x.marginal[h], m.search.min_gain)}`}>{gainLabel(x.marginal[h])}</td>
                 <td className="num dim">{gainLabel(x.marginal[o])}</td>
@@ -805,7 +879,9 @@ function Recommended({ h, m, s, name, onPick }: { h: MoveHorizon; m: MovesPayloa
           </tbody>
         </table>
       )}
-      {set.held.length > 0 && <p className="muted small">It also moves {set.held.map((x) => `${name(x.player)} to ${x.slot}`).join(", ")}.</p>}
+      {set.held.length > 0 && !set.moves.some((x) => x.held) && (
+        <p className="muted small">It also moves {set.held.map((x) => `${name(x.player)} to ${x.slot}`).join(", ")}.</p>
+      )}
       {returns && <p className="muted small">{returns}</p>}
     </div>
   );
@@ -924,14 +1000,13 @@ function MoveDrawer({
     <>
       <div className="block">
         <span className="k">
-          Add {name(picked.add)} <FlagTag f={flagOf(s, picked.add)} s={s} /> for {name(picked.drop)}
+          Add {name(picked.add)} <FlagTag f={flagOf(s, picked.add)} s={s} /> for {forText({ drop: picked.drop, held: d?.held[0] }, name)}
         </span>
         <p className="muted small">
           {p && `${p.nba_team ?? "no team"} · ${p.positions.join(", ")} · `}
           {row ? availabilityLabel(row) : "not in the pool"}
           {d && ` · plays from ${dayLabel(d.from)}${picked.drop != null && row?.availability === "W" ? `, when ${name(picked.drop)} leaves` : ""}`}
         </p>
-        {d && d.held.length > 0 && <p className="muted small">The move also puts {d.held.map((x) => `${name(x.player)} in ${x.slot}`).join(", ")}.</p>}
         {returns && (
           <p className="muted small" title="the least valuable active player by per-game value on the return day">
             {returns}
@@ -967,7 +1042,15 @@ function MoveDrawer({
               <tbody>
                 {d.drops.map((x) => (
                   <tr key={x.drop ?? "open"} className={`pick${x.drop === picked.drop ? " hl" : ""}`} onClick={() => onPick({ add: picked.add, drop: x.drop })}>
-                    <td>{name(x.drop)}</td>
+                    <td>
+                      {forText(x, name)}
+                      {x.kept && (
+                        <span className="dim small" title="the keep rule keeps him: the search never drops him, the gain says what dropping him would bring">
+                          {" "}
+                          · kept
+                        </span>
+                      )}
+                    </td>
                     <td className={`num ${gainTone(x.week, min)}`}>{gainLabel(x.week)}</td>
                     <td className={`num ${gainTone(x.three, min)}`}>{gainLabel(x.three)}</td>
                   </tr>

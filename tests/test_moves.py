@@ -5,6 +5,7 @@ is made up; the outcomes are set by construction (games, rates) rather than read
 from __future__ import annotations
 
 import itertools
+from dataclasses import replace
 from datetime import date, timedelta
 
 import pytest
@@ -525,3 +526,219 @@ def test_adds_this_week_are_counted_from_the_transactions_page():
     assert mv.when_date("Dec 30, 1:00 pm", date(2027, 1, 2)) == date(2026, 12, 30)
     assert mv.when_date("Sept 3, 1:00 pm", date(2026, 10, 2)) == date(2026, 9, 3)
     assert mv.when_date("yesterday", today) is None
+
+
+# --------------------------------------------------------------------------- the keep rule (#124)
+def keep_league(**extra):
+    """The IL league (player 5 out, an open IL slot) with made-up rest-of-season values: player 1
+    well above the best add (candidate 10), player 2 above the average but below the add, player
+    3 below both; the season runs a fortnight past the four weeks read."""
+    roster, cands, rate, sched, opponent, field, value = il_league()
+    p = build(roster, cands, rate, sched, opponent, field, held_open={"IL": 1}, value=value)
+    season = {1: 2.0, 2: 0.3, 3: -0.5, 5: 1.5, 10: 0.8, 11: 0.4}
+    return replace(
+        p,
+        season_value=season,
+        season_end=WEEKS[3][6] + timedelta(days=14),
+        **extra,
+    )
+
+
+def test_the_keep_rule_reads_a_return_from_the_status_and_the_return_date():
+    p = keep_league()
+    hurt = dict(p.roster)[5]
+    first = WEEKS[0][0]
+    assert mv.back_from(p, 1, dict(p.roster)[1]) == first
+    # An O without a date is back next Monday, as the move model brings him back; with a
+    # later date, on it.
+    assert mv.back_from(p, 5, hurt) == WEEKS[1][0]
+    assert mv.comes_back(p, 5, hurt, (*p.horizons["week"], *p.horizons["three"])) == WEEKS[1][0]
+    q = replace(p, returns={5: WEEKS[2][3]})
+    assert mv.back_from(q, 5, hurt) == WEEKS[2][3]
+    # Out for the season, or INJ without a date, never comes back; INJ with one does.
+    assert mv.back_from(p, 5, replace(hurt, status="OFS")) is None
+    assert mv.back_from(p, 5, replace(hurt, status="INJ")) is None
+    assert mv.back_from(q, 5, replace(hurt, status="INJ")) == WEEKS[2][3]
+    # A doubt with a date is back on it; a candidate from his move's day.
+    assert mv.back_from(
+        replace(p, returns={5: first + timedelta(3)}), 5, replace(hurt, status="GTD")
+    ) == first + timedelta(3)
+    late = replace(p, effective={10: first + timedelta(2), 11: first})
+    assert mv.back_from(late, 10, dict(p.candidates)[10]) == first + timedelta(2)
+
+
+def test_games_to_the_seasons_end_count_the_schedule_read_and_the_teams_rate_after():
+    p = keep_league()
+    # MIN plays 10 of the 28 days read: 6 from the second Monday, and 14 unread days at 10/28.
+    assert mv.games_left(p, "MIN", WEEKS[1][0]) == pytest.approx(6 + 14 * 10 / 28)
+    assert mv.games_left(p, "MIN", p.season_end + timedelta(1)) == 0.0
+    assert mv.games_left(p, None, WEEKS[1][0]) == 0.0
+    assert mv.games_left(replace(p, season_end=None), "MIN", WEEKS[1][0]) == 0.0
+    # Nothing read: a season's rate a day.
+    empty = replace(p, schedule={})
+    days = (p.season_end - WEEKS[1][0]).days + 1
+    assert mv.games_left(empty, "MIN", WEEKS[1][0]) == pytest.approx(days * mv.GAMES_PER_DAY)
+
+
+def test_the_value_net_of_return_is_the_value_above_a_dead_spot_times_the_games_after_it():
+    p = keep_league(dead=0.5)
+    hurt = dict(p.roster)[5]
+    games = mv.games_left(p, "MIN", WEEKS[1][0])
+    assert mv.net_of_return(p, 5, hurt) == pytest.approx((1.5 - 0.5) * games)
+    assert mv.net_of_return(p, 5, replace(hurt, status="OFS")) == 0.0
+    assert mv.net_of_return(replace(p, season_value={}), 5, hurt) is None
+
+
+def test_the_keep_rule_protects_a_net_positive_player_better_than_the_best_add_who_returns():
+    p = keep_league()
+    rule = mv.keep_rule(p)
+    assert (rule.best, rule.best_value) == (10, 0.8)
+    one, two, three, five = (rule.players[k] for k in (1, 2, 3, 5))
+    assert (one.net_positive, one.beats_best, one.returns, one.protected) == (
+        True,
+        True,
+        True,
+        True,
+    )
+    assert (two.net_positive, two.beats_best, two.protected) == (True, False, False)
+    assert (three.net_positive, three.beats_best, three.protected) == (False, False, False)
+    # Out until next Monday, still protected: the absence never decides it.
+    assert five.protected and five.back == WEEKS[1][0] and not five.bench
+    assert rule.kept == {1, 5}
+    # The floor raises the bar over the best add's value.
+    assert mv.keep_rule(replace(p, floor=1.0)).kept == {1}
+    # Out for the season is never protected, however good.
+    ofs = replace(p, roster=(*p.roster[:3], (5, replace(p.roster[3][1], status="OFS"))))
+    assert not mv.keep_rule(ofs).players[5].protected
+    # No add with a line: any valued net-positive player beats it.
+    assert mv.keep_rule(replace(p, season_value={1: 2.0, 2: 0.3})).kept == {1, 2}
+
+
+def test_a_short_absence_keeps_a_player_better_than_the_best_add_on_the_bench():
+    """Above the best add but not net positive (a points league's average above both), back in
+    three days: kept for the solve and benched, not protected."""
+    first = WEEKS[0][0]
+    p = keep_league(average=1.8)
+    doubt = (5, replace(dict(p.roster)[5], status="GTD"))
+    p = replace(p, roster=(*p.roster[:3], doubt), returns={5: first + timedelta(3)})
+    rule = mv.keep_rule(p)
+    five = rule.players[5]
+    assert (five.net_positive, five.beats_best, five.protected, five.bench) == (
+        False,
+        True,
+        False,
+        True,
+    )
+    # Player 1 is above the average and the add: protected; nobody else.
+    assert rule.kept == {1, 5}
+    # Back in a week or more: no bench, he may be dropped.
+    later = replace(p, returns={5: first + timedelta(mv.SHORT_ABSENCE_DAYS)})
+    assert mv.keep_rule(later).kept == {1}
+
+
+def test_a_kept_player_is_never_a_drop_nor_the_one_a_return_sends():
+    roster, cands, rate, sched, opponent, field, value = il_league()
+    value |= {2: 0.5}
+    p = build(roster, cands, rate, sched, opponent, field, held_open={"IL": 1}, value=value)
+    assert mv.comebacks(p, "three", [mv.Move(11)]) == [mv.Comeback(5, "IL", WEEKS[1][0], 3)]
+    kept = replace(p, kept=frozenset({3}))
+    assert 3 not in mv.drop_options(kept) and 3 in mv.drop_options(p)
+    ev = mv.Evaluator(kept)
+    for key in ("week", "three"):
+        assert all(g.drop != 3 for gs in mv.single_swaps(ev, key).values() for g in gs)
+        assert all(m.drop != 3 for m in mv.search(ev, key, [10, 11]))
+    # The return sends the weakest player the rule does not keep.
+    assert mv.comebacks(kept, "three", [mv.Move(11)]) == [mv.Comeback(5, "IL", WEEKS[1][0], 2)]
+    # When it keeps everyone, the weakest of all goes.
+    every = replace(p, kept=frozenset({1, 2, 3, 5, 11}))
+    assert mv.comebacks(every, "three", [mv.Move(11)]) == [mv.Comeback(5, "IL", WEEKS[1][0], 3)]
+
+
+def test_the_latest_to_return_takes_the_one_open_slot_roster_order_breaking_ties():
+    roster, cands, rate, sched, opponent, field, value = il_league()
+    soon = (6, Player(6, "Soon", "MIN", ("C",), status="O"))
+    rate |= {6: rates(1.0)}
+    full = [*roster, soon]
+    returns = {5: WEEKS[1][3], 6: WEEKS[2][0]}
+    p = build(
+        full, cands, rate, sched, opponent, field, held_open={"IL": 1}, value=value, returns=returns
+    )
+    assert mv.held_moves(p) == [(6, "IL")]
+    # The same return: the first on the roster.
+    same = build(full, cands, rate, sched, opponent, field, held_open={"IL": 1}, value=value)
+    assert mv.held_moves(same) == [(5, "IL")]
+    # Out for the season before any return.
+    ofs = (7, Player(7, "Gone", "MIN", ("C",), status="OFS"))
+    rate |= {7: rates(1.0)}
+    p = build(
+        [*full, ofs],
+        cands,
+        rate,
+        sched,
+        opponent,
+        field,
+        held_open={"IL": 2},
+        value=value,
+        returns=returns,
+    )
+    assert mv.held_moves(p) == [(7, "IL"), (6, "IL")]
+
+
+def il_full_league(occupants, season):
+    """The keep league with the IL taken: ``occupants`` (key, status) sit in it."""
+    roster, cands, rate, sched, opponent, field, value = il_league()
+    held = [(k, Player(k, f"P{k}", "MIN", ("C",), status=st)) for k, st in occupants]
+    rate |= {k: rates(1.0) for k, _ in occupants}
+    p = build(
+        roster,
+        cands,
+        rate,
+        sched,
+        opponent,
+        field,
+        held=held,
+        held_slots={k: "IL" for k, _ in occupants},
+        value=value | {k: 1.0 for k, _ in occupants},
+    )
+    base = {1: 2.0, 2: 0.3, 3: -0.5, 5: 1.5, 10: 0.8, 11: 0.4}
+    return replace(p, season_value=base | season, season_end=WEEKS[3][6] + timedelta(days=14))
+
+
+def test_the_il_advice_stashes_a_protected_player_into_an_open_slot_with_the_freed_spot():
+    p = keep_league()
+    rule = mv.keep_rule(p)
+    (a,) = mv.stash_advice(p, rule)
+    assert (a.player, a.advice, a.slot, a.slots, a.protected) == (5, mv.STASH, "IL", ("IL",), True)
+    assert a.net == pytest.approx(mv.net_of_return(p, 5, dict(p.roster)[5]))
+    # Not protected (the add is better): the moves may drop him.
+    worse = replace(p, season_value=p.season_value | {5: 0.5})
+    (a,) = mv.stash_advice(worse, mv.keep_rule(worse))
+    assert a.advice == mv.DROPPABLE and a.leave is None
+    # Healthy players and a doubt who may play today have no advice.
+    assert all(x.player == 5 for x in mv.stash_advice(p, rule))
+
+
+def test_a_full_il_names_its_occupant_with_the_least_value_net_of_return():
+    # An INJ in IL would be cleared (Yahoo's IL takes O and OFS): both are O.
+    p = il_full_league([(7, "O"), (8, "O")], {7: 3.0, 8: 0.2})
+    p = replace(p, returns={8: WEEKS[2][0]})
+    rule = mv.keep_rule(p)
+    (a,) = mv.stash_advice(p, rule)
+    # The league has no IL+: the only slot is IL.
+    assert (a.advice, a.slot, a.slots) == (mv.IL_FULL, None, ("IL",))
+    lv = a.leave
+    assert (lv.player, lv.slot, lv.how, lv.drop, lv.protected) == (8, "IL", "drop", 8, False)
+    assert lv.net == pytest.approx(mv.net_of_return(p, 8, dict(p.held)[8]))
+    # The ranking governs even for a protected occupant, marked as such.
+    both = replace(p, season_value=p.season_value | {8: 1.0})
+    lv = mv.stash_advice(both, mv.keep_rule(both))[0].leave
+    assert (lv.player, lv.protected) == (8, True)
+
+
+def test_a_cleared_occupant_leaves_a_full_il_first_activated_with_the_weakest_dropped():
+    p = il_full_league([(7, "O"), (8, None)], {7: 0.1, 8: 3.0})
+    rule = mv.keep_rule(p)
+    (a,) = mv.stash_advice(p, rule)
+    sends = {c.player: c.drop for c in mv.comebacks(p, "week", ())}
+    assert a.advice == mv.IL_FULL
+    assert a.leave == mv.Leave(8, "IL", "activate", sends[8], None, False)
