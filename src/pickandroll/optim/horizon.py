@@ -239,6 +239,12 @@ def solve_horizon(
             roster_rows.append(
                 {"player": p, "slot": slots[i].name, "slot_index": i, "locked": p in problem.locks}
             )
+    if status == "Not Solved" and not plan_rows and not roster_rows:
+        # Stopped at the time limit before any plan was found (every variable reads zero): a
+        # failed solve, never an empty plan (#122).
+        raise RuntimeError(
+            f"horizon solve failed with status {status}: no plan within {time_limit:g} s"
+        )
     roster = pd.DataFrame(roster_rows).sort_values("slot_index").reset_index(drop=True)
 
     # Expected totals for every category, punted ones included, so callers can show the
