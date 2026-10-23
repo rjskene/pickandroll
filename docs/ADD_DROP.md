@@ -61,6 +61,7 @@ leagues, and Yahoo serves everything the engine needs without a sign-in:
 | this week's and next week's per-game projections with games, back-to-backs, minutes, injury, Yahoo ownership | Basketball Monster weekly export (imported with `scripts/draft_day.py week --this \| --next`, or `sources/bbm/fetch.py::weekly`, `this_week=True` for the rest of this week; `parse.py` already normalises it: `games`, `quality_games`, `back_to_backs`, `minutes`, `yahoo_owned_pct`, `bbm_adv_pct`, `injury`) | exported from the user's signed-in Chrome as the season export is, never with typed credentials |
 | rest-of-season per-game projections | Basketball Monster season export, per-game | refreshed daily in season |
 | recent production (minutes and rates over the last 7 or 14 days) | Basketball Monster past-days rankings (`fetch.py::rankings_past_days`) | the "minutes trend" signal |
+| final box scores, every player's line in every game | ESPN's public scoreboard JSON for the date, then each final game's summary (`site.api.espn.com/.../nba/summary?event=<id>`, about 0.5 MB, its `boxscore.players` and `injuries`) | read on refresh for the Monday scorecard's realized values (#126): a date cached under `data/boxscores/` once every game on it is over, never read again; about 15 to 60 KB a date kept |
 | NBA schedule by team and date | ESPN's public scoreboard JSON (`site.api.espn.com/.../nba/scoreboard?dates=YYYYMMDD`), one call per date, cached under `data/schedule/` | NBA's own cdn file answers 403. Read to the season's end for the Season view (#116): a date within the Moves card's four weeks is read again after 12 hours, a later one after a week |
 | signed-in extras for every league (the user's Chrome, read-only): Yahoo's own projections per player for the next 7 and 14 days and the remaining games, last 7, 14 and 30 day totals, averages and standard deviations, percent rostered, roster status with the availability date, player notes; the home page's live matchup scores for every league | the players page and the home page in the user's signed-in Chrome, read with Claude in Chrome or the extension | checked 2026-10-21 on league 31822; a second weekly projection system for the blend the draft edge audit recommends, and the recent-production signal for the breakout flag. For a public league the players page serves the same views without a sign-in (row above); only the private league and the home page need the user's Chrome |
 | news | ESPN injuries and Rotowire headlines (`scripts/draft_prep/news.py`, already built) | teammate injuries are the "opportunity" signal |
@@ -423,7 +424,8 @@ when left out.
   of an empty line, and on each horizon its first and last days, the games each was assumed to
   play there (the add's from the day the move counts, the drop's given up from that day or from
   his return when later) and the move's value, the add's games' less the drop's. An entry
-  logged before them leaves its moves unscored.
+  logged before them projects no move in value units, and the scorecard values the moves
+  matched to it with the scorer of the entry nearest them ("Scorecard", realized value).
 - **My moves.** My team's rows on the transactions page, one per row group: an add with the
   drop that came with it, a lone add or a lone drop, with its time and the bid as read (`bid`,
   dollars, from Yahoo's `$5 Waiver`; null for a free agent's add). A trade is not a move here.
@@ -483,15 +485,45 @@ last recorded week when left out. The metric is docs/AUTOPILOT.md's, section 6.
   odds summed) against the wins (a tie half), the expected categories against those won, the
   standing after the last week, and the moves by match with the logged projections' value
   summed on each horizon.
-- **Realized value (part 2).** The added player's games in the move's span less the dropped
-  player's from the move, valued with the entry's scorer, every game the two played counting;
-  the lines from ESPN's public box scores, cached per date once final, players matched by name
-  and team (the name alone when a trade inside the span breaks the team match), an unmatched
-  player's games a counted gap. Until it is built every move is counted unscored.
+- **Realized value (part 2).** `season/realized.py` (core, no I/O) and
+  `sources/boxscores.py`. Each move's added player's games in its span less the dropped
+  player's, both from the move's time on (a game that began before it is neither's), each
+  game's actual line valued with the entry's scorer (`weekly.net_value`, the units the entry
+  priced the move in), every game the two played counting whoever started. The spans are the
+  projection's horizons from the move: `week`, from its day to its week's end, and `three`, the
+  three matchup weeks after it. A span counts through its last day read without a gap from its
+  first (`through`, `complete`, and the days over but not read in `missing`). The scorer is the
+  matched entry's; a move with no entry, or one matched to an entry logged before entries kept
+  their scorer, takes the scorer of the entry nearest it on the system scored (`scorer.own`
+  false). A later move that drops the added player counts his games from then on against itself,
+  so a stream's moves add up to what the spot made.
+  - *Box scores.* A refresh (a public league's, and a private league's extras) caches every day
+    of the season to yesterday not cached yet, oldest first, at most 14 a refresh: the date's
+    scoreboard, then each final regular-season game's summary, every player's line (minutes,
+    points, makes and attempts, threes, rebounds offensive and defensive, assists, steals,
+    blocks, turnovers) and the injury report's players with no line. A date is written to
+    `data/boxscores/<date>.json` only once every game on it is over or will not be played on
+    it, and is never read again. The scorecard reads the cache only.
+  - *Matching.* A Yahoo player's ESPN id once matched is kept (`data/boxscores/ids.json`);
+    otherwise he is matched by name among his NBA team's players in the span's games, else by
+    the name alone over every team (a trade inside the span), with the names normalised as the
+    projections' are. A player matched by neither is a gap: his team's games in the span are
+    counted in `gaps` and the span has no value, never a zero; until his team plays there is
+    nothing to miss. On 2026-10-22 the rostered players of every league whose team had played
+    matched 185 of 188, all on their own team; the three left were in neither the box score nor
+    the injury report of their team's game.
+  - *Scored.* A move is scored when its time is on the page, a scorer values it, its week's span
+    has a day read and has a value; else `reason` says why (`no_time`, `no_scorer`, `not_read`,
+    `unmatched`). The moves summary adds the realized value summed on each horizon through the
+    days read, the spans complete, the unscored by reason, the gap games, and over the moves
+    both projected (made as recommended) and realized on a complete span, the two sums side by
+    side (`compared`).
 - **Markdown.** `markdown` in the all-leagues answer, for #127: leagues by id, no team or
   league names, no projected player line; the odds, results and standings as aggregates, a row
   per league, the private league in its own table, and my moves by the players' names and how
-  they matched.
+  they matched, then the week's moves realized, summed over the public leagues and apart for
+  the private one: how many scored, their value on the week, those made as recommended against
+  their projection, and the unscored by reason.
 - **Script.** `scripts/season.py scorecard [league ...] [--week N] [--json]`: the week's
   markdown, or one line per league named.
 
