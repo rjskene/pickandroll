@@ -229,15 +229,17 @@ def test_a_move_is_judged_on_its_sets_horizon_and_flagged_when_it_costs_the_seas
     assert judged("strategy", "natural", value) == "three"
     assert judged("strategy", "season", value) == "season"
     assert judged("strategy", "season", {"horizons": {"week": {"value": 1.0}}}) == "three"
-    # Positive on its horizon and below minus the floor times the games given up over the season.
+    # Positive on its horizon and below zero over the season, whatever the floor (#164).
     costly = dl.season_costly
-    assert costly(value, "week", 0.0) is True
-    assert costly(value, "week", 0.1) is False  # within 30 games of a 0.1 margin
-    assert costly(value, "three", 0.0) is False  # not positive on its own horizon
-    assert costly(value, "season", 0.0) is False
+    assert costly(value, "week") is True
+    assert costly(value, "three") is False  # not positive on its own horizon
+    assert costly(value, "season") is False
+    # At exactly zero over the season it costs nothing.
+    even = {"horizons": {"week": {"value": 4.0}, "season": {"value": 0.0}}}
+    assert costly(even, "week") is False
     # Without either figure there is nothing to say.
-    assert costly({"horizons": {"week": {"value": 4.0}}}, "week", 0.0) is None
-    assert costly(None, "week", 0.0) is None
+    assert costly({"horizons": {"week": {"value": 4.0}}}, "week") is None
+    assert costly(None, "week") is None
 
 
 # --------------------------------------------------------------------------- the moves made
@@ -562,11 +564,10 @@ def test_a_strategy_run_that_solved_is_logged_with_each_weights_set(client):
         assert set(logged_set["week"]["after"]["cats"]) == set(CATS)
         # The season check (#144) on each weight's judging horizon: the week's on the week, the
         # natural's on the three weeks.
-        floor = run["knobs"]["protection_floor"]
         on = {"week": "week", "natural": "three"}[logged_set["key"]]
         for x in logged_set["moves"]:
             assert "season" in x["value"]["horizons"]
-            assert x["season_costly"] == dl.season_costly(x["value"], on, floor)
+            assert x["season_costly"] == dl.season_costly(x["value"], on)
     # The same run asked again is found, not solved: nothing new to log.
     client.post(
         f"/seasons/{LEAGUE}/strategy", params={"wait": True, "pool": 12, "weights": "week,natural"}

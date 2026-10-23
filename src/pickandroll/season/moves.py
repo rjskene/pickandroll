@@ -46,8 +46,9 @@ order breaking ties (:func:`held_moves`).
 The keep rule (#124, the user's of 2026-10-22, docs/AUTOPILOT.md section 4) is a forced keep, not
 a value term: the three-week horizon, and the season the strategy engine reads from it, value a
 player out three weeks at about nothing. A player of mine is **protected** when he is net positive
-(his rest-of-season per-game value above the pool's average, ``average``), that value
-exceeds the best available add's by the floor, and he returns this season (:func:`back_from`). A
+(his rest-of-season per-game value above the pool's average, ``average``), the best
+available add's value does not beat his by the floor or more (``value + floor > best``, #164: a
+higher floor protects more), and he returns this season (:func:`back_from`). A
 player who passes the last two but not the first and is back within :data:`SHORT_ABSENCE_DAYS`
 is kept on the bench for the solve. Neither is ever a drop on any horizon (``kept``,
 :func:`drop_options`); a protected player out still goes to a held slot when one is open. His
@@ -65,9 +66,10 @@ from typing import Protocol
 from . import weekly as wk
 from .state import Player, Transaction
 
-#: How far a protected player's rest-of-season per-game value must exceed the best add's by
-#: default: the keep rule's protection floor (#124), a knob the hill-climb may raise and bring
-#: back down but never below this (docs/AUTOPILOT.md section 6, #150).
+#: By how much the best add's rest-of-season per-game value must beat a player's to take him
+#: off the protected list, by default: the keep rule's protection floor (#124, its side #164), a
+#: knob the hill-climb may raise for more protection and bring back down, never below this
+#: (docs/AUTOPILOT.md section 6, #150).
 PROTECTION_FLOOR = 0.0
 
 #: The statuses each held slot accepts (see the module docstring for the sources). The order is
@@ -173,7 +175,7 @@ class MoveProblem:
     average: float = 0.0
     #: The last day of the season's calendar.
     season_end: date | None = None
-    #: How far a protected player's per-game value must exceed the best add's (a knob).
+    #: By how much the best add's per-game value must beat a player's to unprotect him (a knob).
     floor: float = PROTECTION_FLOOR
     #: My players no move may drop: those the keep rule keeps (:func:`keep_rule`).
     kept: frozenset[int] = frozenset()
@@ -436,7 +438,7 @@ class Kept:
     #: His rest-of-season per-game value (None: no line) and the day he is back.
     value: float | None
     back: date | None
-    #: Above the pool's average; above the best add's by the floor; back this season.
+    #: Above the pool's average; not beaten by the best add's by the floor; back this season.
     net_positive: bool
     beats_best: bool
     returns: bool
@@ -467,7 +469,7 @@ def kept_of(
     value = problem.season_value.get(key)
     back = back_from(problem, key, player)
     net = value is not None and value > problem.average
-    beats = value is not None and (best_value is None or value > best_value + floor)
+    beats = value is not None and (best_value is None or value + floor > best_value)
     returns = back is not None
     protected = net and beats and returns
     away = back is not None and 0 < (back - problem.first_day).days < SHORT_ABSENCE_DAYS

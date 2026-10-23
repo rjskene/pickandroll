@@ -1343,7 +1343,7 @@ export interface KeptPlayer {
 }
 
 export interface KeepRule {
-  /** What a player's value must beat the best add's by. */
+  /** What the best add's value must beat a player's by to unprotect him (#164). */
   floor: number;
   /** The pool's average per-game value (0 for category sums). */
   average?: number;
@@ -1749,8 +1749,8 @@ export interface ScorecardMove {
   realized: Realized | null;
   /** The horizon it is judged on: the one its set was recommended for (#143, the season #144). */
   judged?: JudgedHorizon;
-  /** Projected positive on its judging horizon and below minus the protection floor over the
-   * season (#144); null for a move with no flag logged. */
+  /** Projected positive on its judging horizon and below zero over the season (#144, #164);
+   * null for a move with no flag logged. */
   season_costly?: boolean | null;
   /** The knobs in force at the entry it matched (#129). */
   knobs?: Partial<Record<KnobName, unknown>> | null;

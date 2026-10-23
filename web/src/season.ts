@@ -673,7 +673,7 @@ export function keptWhy(k: KeptPlayer): string {
  * and the floor. */
 export function keepRuleNote(rule: KeepRule, name: (id: number) => string): string {
   const best = rule.best ? `the best add (${name(rule.best.player)}, ${rule.best.value.toFixed(2)})` : "any add";
-  const by = rule.floor ? ` by more than ${rule.floor}` : "";
+  const by = rule.floor ? ` minus ${rule.floor}` : "";
   return (
     `Protected: above the pool's average (${(rule.average ?? 0).toFixed(2)} a game), better than ${best}${by} over the rest of the season, ` +
     `and back this season; benched: better than ${best}${by} and back within a week. No move drops either.`

@@ -488,8 +488,8 @@ def moves_sentence(scope: str, scoring: str, c: Mapping[str, Any]) -> dict[str, 
 
 def season_sentence(scope: str, scoring: str, c: Mapping[str, Any]) -> dict[str, str]:
     """The season check (#144): of the moves checked against the season, how many were flagged
-    season-costly (projected positive on the horizon each was recommended for, below minus the
-    protection floor over the season) and how many of those have realized below zero so far."""
+    season-costly (projected positive on the horizon each was recommended for, below zero over
+    the season) and how many of those have realized below zero so far."""
     n, flagged, below = c["checked"], c["moves"], c["below_so_far"]
     units = UNITS.get(scoring, "value units")
     checked = f"the {n} move{'s' * (n != 1)} checked against the season ({units})"
@@ -500,7 +500,7 @@ def season_sentence(scope: str, scoring: str, c: Mapping[str, Any]) -> dict[str,
         scope,
         "bad" if below else "neutral",
         f"{flagged} of {checked} {'were' if flagged != 1 else 'was'} flagged season-costly: "
-        "projected positive on the horizon recommended, below the protection floor over the "
+        "projected positive on the horizon recommended, below zero over the "
         f"season; {below} of them {'have' if below != 1 else 'has'} realized below zero so far.",
     )
 

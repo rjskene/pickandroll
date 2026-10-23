@@ -43,7 +43,7 @@ const catName = (cat: string) => CAT_LABEL[cat as Cat] ?? cat.toUpperCase();
 const madeAt = (m: ProgressMove) => (m.at ? m.at.slice(0, 16).replace("T", " ") : m.day);
 const digits = (s: Scoring) => (s === "points" ? 1 : 2);
 const games = (n: number | null) => (n == null ? null : `${Number.isInteger(n) ? n : n.toFixed(1)} game${n === 1 ? "" : "s"}`);
-const COSTLY_TITLE = "season-costly: projected positive on the horizon it was recommended for, and below minus the keep rule's protection floor over the season";
+const COSTLY_TITLE = "season-costly: projected positive on the horizon it was recommended for, and below zero over the season";
 
 /** A move's season figures in words, for the Season column's tooltip (with the flag's meaning,
  * ``flag``) and the Move card. */
@@ -489,7 +489,7 @@ export function MoveCard({ p, m }: { p: ProgressPayload; m: ProgressMove | null 
           )}
           {seasonTitle(m, false)}.
         </p>
-        {v.costly === false && <p className="small dim">The season check cleared it: not positive on its horizon, or not below the floor over the season.</p>}
+        {v.costly === false && <p className="small dim">The season check cleared it: not positive on its horizon, or not below zero over the season.</p>}
       </div>
       <div className="block">
         <span className="k">Realized</span>

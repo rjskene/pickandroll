@@ -355,14 +355,13 @@ def judging_horizon(
     return THREE if set_key in THREE_SETS else WEEK
 
 
-def season_costly(value: Mapping[str, Any] | None, judged: str, floor: float | None) -> bool | None:
+def season_costly(value: Mapping[str, Any] | None, judged: str) -> bool | None:
     """Whether a move costs the season (#144): projected above zero on the horizon it is judged
-    on and, over the season, below minus the keep rule's protection floor (a per-game margin)
-    times the games the dropped player gives up there; None when either figure is missing. It
-    measures the keep rule and changes nothing in the engine."""
+    on and below zero over the season, whatever the protection floor (#164; the season guard
+    draws the same line); None when either figure is missing. It measures the keep rule and
+    changes nothing in the engine."""
     horizons = (value or {}).get("horizons") or {}
     on, season = horizons.get(judged), horizons.get(SEASON)
     if not on or not season or on.get("value") is None or season.get("value") is None:
         return None
-    given_up = (season.get("drop_games") or 0.0) * (floor or 0.0)
-    return on["value"] > 0 and season["value"] < -given_up
+    return on["value"] > 0 and season["value"] < 0

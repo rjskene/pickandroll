@@ -20,9 +20,9 @@ weeks' set and the strategy's under the even and the natural weights on the thre
 strategy's set solved under the season weight on the season (#144), a move with no projection of
 its own on the week. Every move also carries its season horizon beside the judging
 one, projected to the season's last day and realized so far, and the flag the decision log set on
-it (``season_costly``, #144: projected positive on its judging horizon, below minus the protection
-floor over the season); the summary counts the moves projected below zero over the season and the
-flagged, each with how many of the scored realized below zero so far.
+it (``season_costly``, #144: projected positive on its judging horizon, below zero over the
+season, whatever the protection floor, #164); the summary counts the moves projected below zero
+over the season and the flagged, each with how many of the scored realized below zero so far.
 
 The system scored is the one the query names; with none, the one in force (#152): a week is
 projected on the knob file's system for the league when the week began, which each entry's knobs

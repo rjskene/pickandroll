@@ -733,7 +733,7 @@ test("the keep rule names whom it keeps and benches, and why", () => {
   assert.equal(keptWhy(rule.players[1]), "bench, back Oct 25");
   assert.equal(
     keepRuleNote({ ...rule, floor: 0.1 }, name),
-    "Protected: above the pool's average (0.00 a game), better than the best add (P9, 0.50) by more than 0.1 over the rest of the season, and back this season; benched: better than the best add (P9, 0.50) by more than 0.1 and back within a week. No move drops either.",
+    "Protected: above the pool's average (0.00 a game), better than the best add (P9, 0.50) minus 0.1 over the rest of the season, and back this season; benched: better than the best add (P9, 0.50) minus 0.1 and back within a week. No move drops either.",
   );
 });
 

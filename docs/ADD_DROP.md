@@ -250,11 +250,12 @@ keep rule").
   league's scorer, whatever system the solve runs on (Yahoo's are week projections). The pool's
   average is zero for a categories league's z-sums and, in a points league, the mean of the
   players the league rosters (its teams times their active spots, the best by value).
-- **Protected**: all three of net positive (his value above the pool's average), better than
-  the best available add's value by the protection floor (the knob file's `protection_floor`,
-  #152; `season_moves.PROTECTION_FLOOR`, zero, without one), and back this season. Out for the season, or INJ, SUSP or
+- **Protected**: all three of net positive (his value above the pool's average), not beaten by
+  the best available add's value by the protection floor or more (his value plus the floor above
+  the add's; the knob file's `protection_floor`, #152; `season_moves.PROTECTION_FLOOR`, zero,
+  without one; a higher floor protects more, #164), and back this season. Out for the season, or INJ, SUSP or
   NA with no return date, is never protected; an O without a date is back next Monday.
-- **Benched**: better than the best add by the floor, not net positive, and back within seven
+- **Benched**: not beaten by the best add by the floor, not net positive, and back within seven
   days (`SHORT_ABSENCE_DAYS`). A replacement-level player out a few days is streamed like any
   other.
 - **Forced keep.** Both are kept (`problem.kept`) on every horizon and every strategy weight,
@@ -625,9 +626,8 @@ is left out (#152). The metric is docs/AUTOPILOT.md's, section 6.
   - *The season check* (#144). At decision time the log flags a move `season_costly` when both
     hold:
     - its projected value on its judging horizon is above zero;
-    - its season projection is below minus the keep rule's protection floor (a per-game
-      margin, in the same scorer's units) times the dropped player's season games. At a floor
-      of 0 that is simply below zero.
+    - its season projection is below zero, whatever the keep rule's protection floor (#164:
+      the floor only decides who is protected; the season guard draws the same line).
 
     A move logged before the flag has none. The row carries the flag. The summary counts the
     moves projected below zero over the season (`season_negative`) and the flagged
