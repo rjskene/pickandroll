@@ -892,6 +892,12 @@ The routine writes its run marker as its last step, `data/routine/daily.json`:
 A failed step is red and a skipped one amber; a missing marker, or one from another day, reads
 as "no run recorded today", amber before the due time and red after, never an error.
 
+Every public refresh logs its start and its end, each a JSON line with the time it was written
+(`at`) and the job's status, step, counts, error and warnings, to
+`data/leagues/<id>/season/refreshes.jsonl`, and a line to the server's own log (uvicorn's
+access lines carry no times). The light shows the service's own job, or after a restart the
+last line of that log: a start with no end is red, "refresh never finished".
+
 ## Phases
 
 Each phase is one issue under the ADD/DROP tracker, built by fantasyEMISSARY in a worktree with

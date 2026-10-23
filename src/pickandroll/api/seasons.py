@@ -76,6 +76,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import threading
 from collections import Counter
 from collections.abc import Callable
@@ -144,6 +145,9 @@ TRANSACTIONS_SHOWN = 30
 BOX_DAYS = 14
 
 FetchFactory = Callable[[], public.Fetch]
+#: The server's own log, where uvicorn writes beside its access lines (which carry no times
+#: and no app lines): each refresh's start and end, with its time (#153).
+LOG = logging.getLogger("uvicorn.error")
 
 
 # --------------------------------------------------------------------------- storage
@@ -257,6 +261,30 @@ class RefreshJob:
             "error": self.error,
             "warnings": self.warnings,
         }
+
+
+def log_refresh(data_dir: Path, job: RefreshJob) -> None:
+    """A refresh job's start or end, with when it was written, appended to the league's refresh
+    log (``season_status.REFRESHES``) and a line in the server's log. The light reads the last
+    one after a restart, and a start with no end is a refresh that never finished (#153)."""
+    line = {"at": datetime.now(UTC).isoformat(), "league": job.league, **job.to_dict()}
+    path = season_dir(data_dir, job.league) / season_status.REFRESHES
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a") as f:
+            f.write(json.dumps(line, separators=(",", ":")) + "\n")
+    except OSError as exc:
+        LOG.warning("refresh %s: the job was not logged: %s", job.league, exc)
+    LOG.info(
+        "%s refresh %s %s at %s %d/%d%s",
+        line["at"],
+        job.league,
+        job.status,
+        job.step,
+        job.done,
+        job.total,
+        f": {job.error}" if job.error else "",
+    )
 
 
 class SeasonService:
@@ -931,13 +959,18 @@ class SeasonService:
             read_at = max(fetched.values(), default=None)
             folder = season_dir(self.data_dir, league)
             if is_public:
+                # The service's own job; after a restart, the last one its log has.
                 job = self.jobs.get(league)
+                last = job.to_dict() if job else season_status.last_refresh(folder)
                 snapshot = season_status.snapshot_at(folder / SNAPSHOTS, PUBLIC)
-                rows = [st.refresh_row(job.to_dict() if job else None, read_at, snapshot, now)]
+                rows = [st.refresh_row(last, read_at, snapshot, now, live=job is not None)]
+                kind = "Yahoo"
             else:
                 rows = st.pages(fetched, now)
+                newest = max(fetched, key=fetched.__getitem__, default=None)
+                kind = newest.split("/", 1)[0] if newest else "Yahoo"
             entries = season_status.latest_entries(folder, nba_today(now))
-            recs = st.recommendations(entries, projection_at, read_at, now)
+            recs = st.recommendations(entries, projection_at, read_at, now, yahoo=kind)
             name = Season.from_parts(base, parts).settings.name
             out.append(st.league(league, name, is_public, rows, recs, exports["state"]))
         routine = st.routine_row(season_status.routine_marker(self.data_dir), now)
@@ -959,6 +992,7 @@ class SeasonService:
 
     def run_refresh(self, job: RefreshJob) -> RefreshJob:
         league = job.league
+        log_refresh(self.data_dir, job)
         try:
             base, is_public = self._base(league)
             if not is_public:
@@ -1020,6 +1054,7 @@ class SeasonService:
             job.status, job.error = "failed", f"{type(exc).__name__}: {exc}"
         finally:
             job.finished_at = datetime.now(UTC)
+            log_refresh(self.data_dir, job)
         return job
 
     def _lineup_days(

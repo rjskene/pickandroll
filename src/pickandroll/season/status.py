@@ -158,27 +158,37 @@ def refresh_row(
     read_at: datetime | None,
     snapshot_at: datetime | None,
     now: datetime,
+    live: bool = True,
 ) -> dict[str, Any]:
     """A public league's last refresh, judged by its newest read (``read_at``, the season's
-    newest part) as the routine's other daily work; the service's job, when it has one (a
-    restart forgets them), says a refresh failed (red), is running or skipped pages (amber).
-    The snapshot's time is shown."""
-    status = (job or {}).get("status")
+    newest part) as the routine's other daily work. Its last job, the service's own (``live``)
+    or else the last its log has, says a refresh failed (red), never finished (red: a logged
+    start with no end, the service stopped during it), is running or skipped pages (amber).
+    The job's times, step and error and the snapshot's time are shown."""
+    job = job or {}
+    status = job.get("status")
     if status in ("failed", "private"):
         state, reason = RED, "refresh failed"
+    elif status == "running" and not live:
+        state, reason = RED, "refresh never finished"
     elif status == "running":
         state, reason = AMBER, "refreshing"
     else:
         state, reason = _today(read_at, now, "not refreshed today")
-        if state == GREEN and (job or {}).get("warnings"):
+        if state == GREEN and job.get("warnings"):
             state, reason = AMBER, "pages skipped"
     return {
         "kind": "refresh",
         "status": status,
         "read_at": _iso(read_at),
-        "finished_at": (job or {}).get("finished_at"),
-        "error": (job or {}).get("error"),
-        "warnings": dict((job or {}).get("warnings") or {}),
+        "started_at": job.get("started_at"),
+        "finished_at": job.get("finished_at"),
+        "step": job.get("step"),
+        "done": job.get("done"),
+        "total": job.get("total"),
+        "error": job.get("error"),
+        "warnings": dict(job.get("warnings") or {}),
+        "logged": bool(job) and not live,
         "snapshot_at": _iso(snapshot_at),
         "state": state,
         "reason": reason,
@@ -246,13 +256,14 @@ def recommendations(
     projection_at: datetime | None,
     yahoo_at: datetime | None,
     now: datetime,
+    yahoo: str = "Yahoo",
 ) -> dict[str, Any]:
     """The moves set and the streaming plan (in the moves entry), the daily routine's solve,
-    from its latest decision-log entry against the newest projection export and Yahoo read. The
-    strategy run and the trade evaluation are made on request, so they carry no state: the
-    strategy shows when it last ran and whether an input is newer since, the trades the inputs'
-    own times."""
-    inputs = {"projection": projection_at, "Yahoo read": yahoo_at}
+    from its latest decision-log entry against the newest projection export and Yahoo read
+    (named ``yahoo``: the private league's newest page, "lineup read newer"). The strategy run
+    and the trade evaluation are made on request, so they carry no state: the strategy shows
+    when it last ran and whether an input is newer since, the trades the inputs' own times."""
+    inputs = {"projection": projection_at, f"{yahoo} read": yahoo_at}
     moves = _latest(entries, "moves")
     plan = _built_row("plan", moves, inputs, now)
     if moves is not None and not moves.get("plan"):
