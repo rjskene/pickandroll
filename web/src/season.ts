@@ -13,6 +13,9 @@ import type {
   HeldMove,
   KeepRule,
   KeptPlayer,
+  LineupAlert,
+  LineupDay,
+  LineupPayload,
   MilpBlock,
   MoveAdds,
   MoveCandidate,
@@ -398,6 +401,92 @@ export function outlookSummary(s: OutlookSummary): string[] {
   if (s.field) out.push(`${s.field} against the field`);
   if (s.unread) out.push(`${s.unread} without odds, counted as none`);
   return out;
+}
+
+// ---------------------------------------------------------------- lineup view (#107)
+/** "Mon 19": a day's column head. */
+export function weekdayLabel(iso: string): string {
+  const d = new Date(`${iso}T12:00:00`);
+  return `${d.toLocaleDateString("en-US", { weekday: "short" })} ${d.getDate()}`;
+}
+
+/** A cell of the lineup grid: the recommended starter, or before the first day a change counts
+ * Yahoo's; ``start`` when Yahoo's lineup has the recommended starter on the bench. */
+export interface LineupCell {
+  player: number | null;
+  source: "recommended" | "yahoo" | null;
+  start: boolean;
+}
+
+/** The lineup grid: a row per starting slot in the league's order, a cell per day. Yahoo's
+ * starters fill a past day's slots of their kind in turn. */
+export function lineupGrid(p: Pick<LineupPayload, "slots" | "days">): { slot: string; cells: LineupCell[] }[] {
+  const nth = p.slots.map((slot, i) => p.slots.slice(0, i).filter((x) => x === slot).length);
+  return p.slots.map((slot, i) => ({
+    slot,
+    cells: p.days.map((d): LineupCell => {
+      if (d.recommended) {
+        const k = d.recommended[i]?.player ?? null;
+        return { player: k, source: "recommended", start: k != null && d.start.includes(k) };
+      }
+      if (d.yahoo) {
+        const k = d.yahoo.slots.filter((x) => x.slot === slot)[nth[i]]?.player ?? null;
+        return { player: k, source: "yahoo", start: false };
+      }
+      return { player: null, source: null, start: false };
+    }),
+  }));
+}
+
+/** A day's bench players who play that day: the recommended bench, or before the first day
+ * Yahoo's. */
+export function benchPlaying(d: LineupDay): number[] {
+  const plays = new Set(d.playing ?? []);
+  const bench = d.recommended ? (d.bench ?? []) : (d.yahoo?.slots ?? []).filter((x) => x.slot === "BN").map((x) => x.player);
+  return bench.filter((k) => plays.has(k));
+}
+
+/** "daily lineups, a change counts today (the settings page)". */
+export function ruleText(r: LineupPayload["rule"]): string {
+  if (!r.changes) return "the lineup rule is not read: daily lineups assumed";
+  const from = r.changes === "daily" ? `, a change counts ${r.from === "tomorrow" ? "tomorrow" : "today"}` : "";
+  return `${r.changes} lineups${from}${r.source ? ` (${r.source})` : ""}`;
+}
+
+/** The week in a line: the games Yahoo's lineup as set loses and on which days, or none; the
+ * days ahead not read. A week with none of its days read says so once. */
+export function lineupSummary(p: Pick<LineupPayload, "summary" | "days">): string {
+  const s = p.summary;
+  const ahead = p.days.filter((d) => !d.past).length;
+  if (ahead > 0 && s.unread.length === ahead) return "Yahoo's lineup is not read for these days: the recommended lineups alone";
+  const days = s.differ.map(dayLabel).join(", ");
+  const lost = s.lost > 0 ? `Yahoo's lineup as set loses ${s.lost} game${s.lost > 1 ? "s" : ""} (${days})` : "no game lost on the days read";
+  return s.unread.length ? `${lost} · not read: ${s.unread.map(dayLabel).join(", ")}` : lost;
+}
+
+/** Where a player who could go to a held slot stands: "eligible, 1 open" or "eligible, IL full"
+ * (the user decides whom to swap, #124); each kind named when there are several. */
+export function heldEligibleText(slots: string[], open: Record<string, number>): string {
+  const parts = slots.map((k) => {
+    const n = open[k] ?? 0;
+    if (n <= 0) return `${k} full`;
+    return slots.length > 1 ? `${k} ${n} open` : `${n} open`;
+  });
+  return `eligible, ${parts.join(", ")}`;
+}
+
+/** An alert of the lineup route in words, a cleared occupant first. */
+export function lineupAlertText(a: LineupAlert, name: (id: number) => string): string {
+  if (a.kind === "cleared") {
+    const drop = a.drop == null ? "" : a.drop === a.player ? "; activating him, he is the one to drop" : `; activating him drops ${name(a.drop)}`;
+    return `${name(a.player)}'s status cleared (${a.status ?? "healthy"}) in ${a.slot}: Yahoo takes no add until he is activated${drop}.`;
+  }
+  if (a.kind === "unknown_status") return `${name(a.player)} is listed ${a.status}, a status the model does not know: no held slot takes him.`;
+  if (a.kind === "held_lower_bound") {
+    const kinds = Object.entries(a.slots).map(([k, n]) => `${n} ${k}`).join(", ");
+    return `The held slots are at least ${kinds || "none"}, the most any roster read fills: the league's settings page is not read yet.`;
+  }
+  return "The lineup rule is not read: the lineups assume daily changes.";
 }
 
 // ---------------------------------------------------------------- moves (#94)

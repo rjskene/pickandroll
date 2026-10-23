@@ -1073,6 +1073,71 @@ export interface OutlookPayload {
   weeks: OutlookWeek[];
 }
 
+// ---------------------------------------------------------------- lineups (#107)
+/** A slot and who is in it (null: nobody who plays can fill it). */
+export interface LineupSlot {
+  slot: string;
+  player: number | null;
+}
+
+/** One day of a week's lineups: the recommended starters (null before the first day a change
+ * counts) and bench, Yahoo's lineup as read (null: not read), the games each starts, the games
+ * Yahoo's loses, whom to start and to sit, and whoever of mine plays. */
+export interface LineupDay {
+  date: string;
+  past: boolean;
+  recommended: LineupSlot[] | null;
+  bench: number[] | null;
+  yahoo: { read_at: string; page: string; stale: boolean; slots: { slot: string; player: number }[] } | null;
+  games: { recommended: number | null; yahoo: number | null };
+  lost: number | null;
+  start: number[];
+  sit: number[];
+  playing?: number[];
+}
+
+/** A held slot and its occupant (null: open); a cleared one blocks every add. */
+export interface HeldSlot {
+  slot: string;
+  player: number | null;
+  cleared: boolean;
+}
+
+export type LineupAlert =
+  | ({ kind: "cleared" } & ClearedPlayer)
+  | { kind: "unknown_status"; player: number; status: string }
+  | { kind: "held_lower_bound"; slots: Record<string, number> }
+  | { kind: "rule_unknown" };
+
+export interface LineupPayload {
+  week: number;
+  /** The weeks the route answers: this one and the moves' three after it. */
+  weeks?: number[];
+  start: string;
+  end: string;
+  /** The first day a change counts. */
+  first: string;
+  this_week: boolean;
+  system: ProjectionSystemInfo & { key: ProjectionSystem; fallback?: string };
+  rule: { changes: "daily" | "weekly" | null; from: "today" | "tomorrow" | null; deadline: string | null; source: string | null };
+  slots: string[];
+  held: {
+    slots: HeldSlot[];
+    /** Open slots by kind, every kind the league has (0: full). */
+    open: Record<string, number>;
+    /** My active players eligible for a kind the league has, a full one included. */
+    eligible: { player: number; slots: string[] }[];
+    source: string;
+    lower_bound: boolean;
+  };
+  alerts: LineupAlert[];
+  days: LineupDay[];
+  summary: { lost: number; differ: string[]; unread: string[] };
+  /** A private league's pages for the user's Chrome to open. */
+  needs: string[];
+  players: Record<string, { name: string; nba_team: string | null; positions: string[]; status: string | null }>;
+}
+
 // ---------------------------------------------------------------- moves (#94)
 /** The moves' horizons: the rest of this week against the opponent, and the three weeks after
  * it against the field. */
@@ -1584,6 +1649,9 @@ export const api = {
   /** My matchup this week as a scoreboard, and what each player adds to it (#116). */
   matchup: (league: string, system: ProjectionSystem) =>
     request<MatchupPayload>(`/seasons/${encodeURIComponent(league)}/matchup?system=${system}`),
+  /** A week's lineups, recommended against Yahoo's as read, and the held slots (#107). */
+  lineup: (league: string, system: ProjectionSystem, week?: number) =>
+    request<LineupPayload>(`/seasons/${encodeURIComponent(league)}/lineup?system=${system}${week == null ? "" : `&week=${week}`}`),
   /** Every week left of my season as win odds, each with its scoreboard and my players (#116). */
   outlook: (league: string, system: ProjectionSystem) =>
     request<OutlookPayload>(`/seasons/${encodeURIComponent(league)}/outlook?system=${system}`),

@@ -263,7 +263,8 @@ tr.hl td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
 .season-table.strategy-moves th, .season-table.strategy-moves td { padding: 3px 3px; }
 .lock-toggle { padding: 0 2px; vertical-align: -1px; color: var(--dim); }
 .lock-toggle:hover, .lock-toggle.on { color: var(--accent); }
-.strategy-fo { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+/* The two first-order lists side by side, stacked when the card is too narrow for a name, its "kept" tag and value. */
+.strategy-fo { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 12px; }
 .strategy-debug { overflow-wrap: anywhere; }
 
 /* controls */
@@ -595,6 +596,21 @@ tr.breakdown > td { padding: 0; white-space: normal; background: var(--panel); }
 .sv-big { font-family: var(--display); font-weight: 700; font-size: 40px; line-height: 1; color: var(--accent); }
 .mu-row.small { grid-template-columns: 110px minmax(0, 1fr) 110px; padding: 1px 0; font-size: 12px; }
 .mu-row.small .mu-bar { width: 220px; height: 6px; }
+/* The Lineup view (#107): the days across, the starting slots down; the held slots under them. */
+.lineup-view { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.lv-note { font-size: 12px; margin: 0; }
+.lv-table { overflow-x: auto; }
+.lv-grid { table-layout: fixed; min-width: 560px; }
+.lv-grid th, .lv-grid td { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lv-grid th:first-child, .lv-grid td:first-child { width: 52px; }
+.lv-grid th, .lv-grid td.num { text-align: left; }
+.lv-grid th.first { color: var(--accent); }
+.lv-grid td.lv-start { background: rgba(245, 185, 66, 0.14); color: var(--accent); font-weight: 600; }
+.lv-grid tr.lv-sub td { border-top: 1px solid var(--line); font-size: 11px; }
+.lv-grid tfoot tr:first-child td { border-top: 1px solid var(--line-2); }
+.lv-held-block { display: flex; flex-direction: column; gap: 4px; padding-top: 8px; border-top: 1px solid var(--line-2); }
+.lv-held { width: auto; }
+.lv-held td:first-child { width: 52px; }
 /* The scoreboards stack by their own width (the cards panel narrows the board column on a laptop). */
 .matchup-view, .season-view { container-type: inline-size; }
 @container (max-width: 640px) {

@@ -51,8 +51,6 @@ ALTERNATIVE_ADDS = 8
 #: How far a protected player's rest-of-season per-game value must exceed the best add's: the
 #: keep rule's protection floor, a knob the hill-climb may set (docs/AUTOPILOT.md, section 6).
 PROTECTION_FLOOR = 0.0
-#: The players a points league's average is taken over: the rostered pool's size.
-POINTS_POOL = 156
 HORIZONS = ("week", "three")
 
 
@@ -278,7 +276,7 @@ def build(season: Season, today: date, data_dir: Path, system: str) -> Built | N
     weeks_left = sum(1 for w in season.calendar.weeks if w.number > this.number)
     problem = replace(
         problem,
-        **keep_inputs(rated, cats, points),
+        **keep_inputs(rated, cats, points, s.num_teams * problem.spots),
         season_end=max(w.end for w in season.calendar.weeks),
         floor=PROTECTION_FLOOR,
     )
@@ -288,19 +286,22 @@ def build(season: Season, today: date, data_dir: Path, system: str) -> Built | N
 
 
 def keep_inputs(
-    rated: Rated, cats: tuple[str, ...], points: dict[str, float] | None
+    rated: Rated, cats: tuple[str, ...], points: dict[str, float] | None, pool: int
 ) -> dict[str, Any]:
     """The keep rule's values whatever the system: Basketball Monster's per-game line under the
     league's scorer, a dead spot's (an empty line) under the same scorer, and the pool's
-    average (zero for z-sums, the best players' mean in a points league)."""
+    average, all over ``pool``, the players the league rosters (its teams times their active
+    spots): the z-scores' pool, whose average is zero, or in a points league the best ``pool``'s
+    mean."""
     bbm = rated.bbm.rates
     if not bbm:
         return {"season_value": {}, "dead": 0.0, "average": 0.0}
-    values = wk.per_game_values(bbm, cats, points)
-    dead = wk.line_value(bbm, cats, points)({})
+    pool = max(1, pool)
+    values = wk.per_game_values(bbm, cats, points, pool)
+    dead = wk.line_value(bbm, cats, points, pool)({})
     average = 0.0
     if points:
-        best = sorted(values.values(), reverse=True)[:POINTS_POOL]
+        best = sorted(values.values(), reverse=True)[:pool]
         average = sum(best) / len(best)
     return {"season_value": values, "dead": dead, "average": average}
 

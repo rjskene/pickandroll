@@ -5,6 +5,7 @@ import {
   CAT_LABEL,
   type Cat,
   type HeldRef,
+  type KeptPlayer,
   type MoveCategory,
   type MoveRef,
   type ProjectionSystem,
@@ -27,6 +28,8 @@ import {
   gainTone,
   isSolving,
   keepLine,
+  keptPlayers,
+  keptWhy,
   milpLabel,
   oddsLabel,
   oddsTone,
@@ -200,6 +203,8 @@ function Point({
     s.roster.map((r) => r.player.yahoo_id),
     p.moves,
   );
+  // The keep rule's players: low here, yet no move drops them.
+  const kept = new Map(keptPlayers(d.keep_rule).map((k) => [k.player, k]));
   return (
     <>
       <div className="block">
@@ -253,7 +258,7 @@ function Point({
           </span>
           <div className="strategy-fo">
             <FirstOrder title="Next to look at" rows={fo.adds} name={name} />
-            <FirstOrder title="Mine, lowest" rows={fo.mine} name={name} />
+            <FirstOrder title="Mine, lowest" rows={fo.mine} name={name} kept={kept} />
           </div>
         </div>
       )}
@@ -355,7 +360,7 @@ function Cats({ cats, week, three }: { cats: Cat[]; week: { before: CatsByCat; a
   );
 }
 
-function FirstOrder({ title, rows, name }: { title: string; rows: [number, number][]; name: (id: number) => string }) {
+function FirstOrder({ title, rows, name, kept }: { title: string; rows: [number, number][]; name: (id: number) => string; kept?: Map<number, KeptPlayer> }) {
   if (!rows.length) return null;
   return (
     <table className="season-table">
@@ -366,12 +371,25 @@ function FirstOrder({ title, rows, name }: { title: string; rows: [number, numbe
         </tr>
       </thead>
       <tbody>
-        {rows.map(([id, v]) => (
-          <tr key={id}>
-            <td>{name(id)}</td>
-            <td className="num dim">{v.toFixed(2)}</td>
-          </tr>
-        ))}
+        {rows.map(([id, v]) => {
+          const k = kept?.get(id);
+          return (
+            <tr key={id}>
+              <td>
+                {name(id)}
+                {k && (
+                  <>
+                    {" "}
+                    <span className="tag tie" title={`the keep rule keeps him (${keptWhy(k)}): no move drops him`}>
+                      kept
+                    </span>
+                  </>
+                )}
+              </td>
+              <td className="num dim">{v.toFixed(2)}</td>
+            </tr>
+          );
+        })}
       </tbody>
     </table>
   );

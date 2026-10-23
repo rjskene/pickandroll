@@ -235,8 +235,8 @@ keep rule").
 
 - **Values.** Each player's rest-of-season per-game value is Basketball Monster's line under the
   league's scorer, whatever system the solve runs on (Yahoo's are week projections). The pool's
-  average is zero for a categories league's z-sums and the mean of the best 156 in a points
-  league.
+  average is zero for a categories league's z-sums and, in a points league, the mean of the
+  players the league rosters (its teams times their active spots, the best by value).
 - **Protected**: all three of net positive (his value above the pool's average), better than
   the best available add's value by the protection floor (`season_moves.PROTECTION_FLOOR`,
   zero until the knob file sets it), and back this season. Out for the season, or INJ, SUSP or
@@ -330,7 +330,8 @@ the prize leagues' data an isolated check found the starts curve equal or worse 
 At the program's solution each player also gets a first-order value: the curves' slopes there
 times his line over every game he plays, weighted as the program weighs the horizons. The card
 lists the pool's highest outside the set and my lowest not dropped, as a ranking of whom to look
-at next, not a price (the prices are the re-solves').
+at next, not a price (the prices are the re-solves'). A player of mine whom the keep rule keeps
+is marked "kept" there: low as he may rank, no move drops him (#124).
 
 `GET /seasons/{id}/strategy?system=` returns today's run for the snapshot as far as it got and
 never solves; `POST` with `pool`, `weights`, `lock` (my players never dropped, repeated) and
@@ -374,8 +375,11 @@ out, any of the Moves card's four weeks.
   slots one by one with their occupants (cleared ones marked), the open ones and the active
   players eligible for one; the rule and its source; the alerts in order (a cleared occupant
   first, then an unknown status, the held lower bound, an unknown rule); a summary (games lost,
-  the days that differ, the days not read); and the players named. Nothing here applies a
-  lineup.
+  the days that differ, the days not read); and the players named. Each day also lists my
+  players who play that day (`playing`), for the view's bench row, and `weeks` the weeks the
+  route answers. Nothing here applies a lineup.
+- **View.** The dashboard's Lineup view (`l`, "In the dashboard") shows the payload: a grid of
+  slots by days with the differences lit, the games lost per day, and the held slots.
 - **Digest.** `GET /flags/digest`'s markdown carries a Lineups section. First comes a line
   per league whose held slot holds a player whose status cleared: he blocks every add until
   activated, and the activation's drop is named. Then comes one line per league whose lineup as
@@ -557,7 +561,7 @@ then UI to evaluate available waiver options"). The flow:
    first; a click on one opens its category totals as far as its matchup page was read, or says
    it was not read).
 4. **Views** (#116). Where the board stands, the pane shows a view picked from a narrow drawer
-   at its left edge: Waivers (`w`, the table above), Matchup (`h`) and Season (`s`). The chevron
+   at its left edge: Waivers (`w`, the table above), Matchup (`h`), Season (`s`) and Lineup (`l`, #107). The chevron
    at its foot, or `[`, takes the drawer down to a 22 px handle whose dots mark the view on show;
    the view letters switch views either way, and the view and the drawer persist in the browser like the panel.
    1 Waivers shows the Waivers view first, and only there gives the board the full width. `/`
@@ -599,6 +603,19 @@ then UI to evaluate available waiver options"). The flow:
    private league whose settings page was not read begins them at the first week read with no
    pairs and none after it. A week without a roster faced has no odds and counts as none in the
    summary.
+7. **The Lineup view** (#107, `l`), `GET /seasons/{league}/lineup?week=N&system=bbm|yahoo`
+   ("Lineups"). The week's days across and the starting slots down, each cell the recommended
+   starter; a day before the first day a change counts shows Yahoo's lineup as read, dimmed. A
+   starter whom Yahoo's lineup has on the bench is lit amber. Under the slots, a Sit row (Yahoo's
+   starters to take out) and a Bench row (the bench players who play that day); in the foot, the
+   games each lineup starts and those Yahoo's loses. A day whose Yahoo lineup was not read is
+   marked in its head. Above the grid: the week (this one and the moves' three after it), the
+   rule and its source, the week's summary, the alerts (a cleared held occupant first, in red),
+   and for the private league the pages its Chrome still needs. Under the grid, the held slots
+   one by one with their occupants (a cleared one flagged: he blocks every add), the bound when
+   the settings page is not read, and each active player eligible for a held slot with "eligible,
+   1 open" or "eligible, IL full", so the user knows whether a swap is needed (#124). Nothing
+   there sets a lineup.
 
    The schedule's sources: the public refresh reads the league page for each regular week
    after this one once (and again only while it lists no pairs), and the NBA schedule to the

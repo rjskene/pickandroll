@@ -18,6 +18,7 @@ from contextlib import contextmanager
 from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
@@ -2061,3 +2062,17 @@ def test_an_add_with_no_move_says_why():
     assert season_moves.no_move(every, 10) == season_moves.NO_DROP
     shut = replace(p, limits=(mv.AddLimit(WEEKS[0][0], WEEKS[0][6], 0),))
     assert season_moves.no_move(shut, 10) == season_moves.NO_ADDS_LEFT
+
+
+def test_a_points_leagues_average_is_over_the_players_the_league_rosters():
+    """Made-up lines: four players worth 40, 30, 20 and 10 points a game."""
+    rates = {k: {"pts": float(v)} for k, v in {1: 40, 2: 30, 3: 20, 4: 10}.items()}
+    rated = SimpleNamespace(bbm=SimpleNamespace(rates=rates))
+    got = season_moves.keep_inputs(rated, ("pts",), {"pts": 1.0}, 2)
+    assert got["average"] == pytest.approx(35.0) and got["dead"] == 0.0
+    assert season_moves.keep_inputs(rated, ("pts",), {"pts": 1.0}, 4)["average"] == pytest.approx(
+        25.0
+    )
+    # A categories league's z-sums average zero over the same pool.
+    cats = season_moves.keep_inputs(rated, ("pts",), None, 4)
+    assert cats["average"] == 0.0 and sum(cats["season_value"].values()) == pytest.approx(0.0)

@@ -8,6 +8,7 @@ import type {
   FlagSignal,
   KeepRule,
   KeptPlayer,
+  LineupDay,
   MoveCandidate,
   PlayerFlag,
   Rates,
@@ -59,6 +60,13 @@ import {
   keepRuleNote,
   keptPlayers,
   keptWhy,
+  benchPlaying,
+  heldEligibleText,
+  lineupAlertText,
+  lineupGrid,
+  lineupSummary,
+  ruleText,
+  weekdayLabel,
   marginText,
   movedGames,
   movedGamesTitle,
@@ -641,6 +649,98 @@ test("a player who is out reads as a stash, a full slot's leaver, bench or dropp
   assert.equal(stashText(stash({ advice: "il_full", slots: ["IL"], net: null }), name), "P1 (O, back Nov 2): eligible, IL full.");
   assert.equal(stashText(stash({ status: "GTD", back: "2026-10-24", protected: false, bench: true }), name), "P1 (GTD, back Oct 24): bench, back Oct 24.");
   assert.equal(stashText(stash({ status: "OFS", back: null, protected: false, advice: "droppable" }), name), "P1 (OFS, no return date): droppable, the moves may take him.");
+});
+
+// ---------------------------------------------------------------- lineup view (#107)
+const lineupDay = (x: Partial<LineupDay>): LineupDay => ({
+  date: "2026-10-22",
+  past: false,
+  recommended: null,
+  bench: null,
+  yahoo: null,
+  games: { recommended: null, yahoo: null },
+  lost: null,
+  start: [],
+  sit: [],
+  playing: [],
+  ...x,
+});
+
+test("the lineup grid takes each slot's recommended starter, or a past day's Yahoo starter of its kind in turn", () => {
+  const slots = ["PG", "C", "C", "Util"];
+  const past = lineupDay({
+    date: "2026-10-20",
+    past: true,
+    yahoo: {
+      read_at: "x",
+      page: "dated page",
+      stale: false,
+      slots: [
+        { slot: "C", player: 3 },
+        { slot: "PG", player: 1 },
+        { slot: "C", player: 4 },
+        { slot: "BN", player: 9 },
+      ],
+    },
+    playing: [1, 3, 9],
+  });
+  const ahead = lineupDay({
+    recommended: [
+      { slot: "PG", player: 1 },
+      { slot: "C", player: 3 },
+      { slot: "C", player: 5 },
+      { slot: "Util", player: null },
+    ],
+    bench: [4, 9],
+    start: [5],
+    playing: [1, 3, 5, 9],
+  });
+  const grid = lineupGrid({ slots, days: [past, ahead, lineupDay({ date: "2026-10-23" })] });
+  assert.deepEqual(
+    grid.map((r) => r.cells[0].player),
+    [1, 3, 4, null],
+  );
+  assert.deepEqual(grid[2].cells[1], { player: 5, source: "recommended", start: true });
+  assert.deepEqual(grid[3].cells[1], { player: null, source: "recommended", start: false });
+  assert.deepEqual(grid[0].cells[2], { player: null, source: null, start: false });
+  // The bench players who play: the recommended bench, or a past day's Yahoo bench.
+  assert.deepEqual(benchPlaying(ahead), [9]);
+  assert.deepEqual(benchPlaying(past), [9]);
+  assert.equal(weekdayLabel("2026-10-22"), "Thu 22");
+});
+
+test("the lineup view says the rule, the week, the held slots and the alerts in words", () => {
+  const name = (id: number) => `P${id}`;
+  assert.equal(ruleText({ changes: "daily", from: "today", deadline: "Daily - Today", source: "settings page" }), "daily lineups, a change counts today (settings page)");
+  assert.equal(ruleText({ changes: "weekly", from: null, deadline: null, source: "v3 settings" }), "weekly lineups (v3 settings)");
+  assert.equal(ruleText({ changes: null, from: null, deadline: null, source: null }), "the lineup rule is not read: daily lineups assumed");
+  assert.equal(
+    lineupSummary({ summary: { lost: 2, differ: ["2026-10-23"], unread: ["2026-10-24", "2026-10-25"] }, days: [lineupDay({ date: "2026-10-23" }), lineupDay({ date: "2026-10-24" }), lineupDay({ date: "2026-10-25" })] }),
+    "Yahoo's lineup as set loses 2 games (Oct 23) · not read: Oct 24, Oct 25",
+  );
+  assert.equal(lineupSummary({ summary: { lost: 0, differ: [], unread: [] }, days: [lineupDay({ date: "2026-10-23" })] }), "no game lost on the days read");
+  // A later week, none of its days read: said once, not day by day.
+  assert.equal(
+    lineupSummary({ summary: { lost: 0, differ: [], unread: ["2026-10-26", "2026-10-27"] }, days: [lineupDay({ date: "2026-10-26" }), lineupDay({ date: "2026-10-27" })] }),
+    "Yahoo's lineup is not read for these days: the recommended lineups alone",
+  );
+  // Eligible with a slot open, or with the IL full: the user decides whom to swap.
+  assert.equal(heldEligibleText(["IL"], { IL: 1 }), "eligible, 1 open");
+  assert.equal(heldEligibleText(["IL"], { IL: 0 }), "eligible, IL full");
+  assert.equal(heldEligibleText(["IL", "IL+"], { IL: 0, "IL+": 2 }), "eligible, IL full, IL+ 2 open");
+  assert.equal(
+    lineupAlertText({ kind: "cleared", player: 1, slot: "IL", status: "Q", from: "2026-10-22", drop: 2 }, name),
+    "P1's status cleared (Q) in IL: Yahoo takes no add until he is activated; activating him drops P2.",
+  );
+  assert.equal(
+    lineupAlertText({ kind: "cleared", player: 1, slot: "IL", status: null, from: "2026-10-22", drop: 1 }, name),
+    "P1's status cleared (healthy) in IL: Yahoo takes no add until he is activated; activating him, he is the one to drop.",
+  );
+  assert.equal(
+    lineupAlertText({ kind: "held_lower_bound", slots: { IL: 2 } }, name),
+    "The held slots are at least 2 IL, the most any roster read fills: the league's settings page is not read yet.",
+  );
+  assert.equal(lineupAlertText({ kind: "rule_unknown" }, name), "The lineup rule is not read: the lineups assume daily changes.");
 });
 
 // ---------------------------------------------------------------- landing grid (#108)

@@ -310,20 +310,22 @@ test("season: ] / j k arrows Enter t m r x", () => {
   }
 });
 
-test("season: w, h and s show their views, [ the drawer, whatever the view", () => {
+test("season: w, h, s and l show their views, [ the drawer, whatever the view", () => {
   assert.deepEqual(
     SEASON_VIEWS.map((v) => [v.key, v.id]),
     [
       ["w", "waivers"],
       ["h", "matchup"],
       ["s", "season"],
+      ["l", "lineup"],
     ],
   );
-  for (const view of ["waivers", "matchup", "season"] as const) {
+  for (const view of ["waivers", "matchup", "season", "lineup"] as const) {
     const cases: [KeyLike, unknown[][]][] = [
       [key("w"), [["view", "waivers"]]],
       [key("h"), [["view", "matchup"]]],
       [key("s"), [["view", "season"]]],
+      [key("l"), [["view", "lineup"]]],
       [key("["), [["views"]]],
       [key("/"), [["search"]]],
     ];
@@ -420,5 +422,5 @@ test("each sheet names its screen's cards and lists its keys", () => {
   assert.ok(DRAFT_SHEET.cards.startsWith(`Cards are ${DRAFT_CARDS.map((c, i) => `${i + 1} ${c.title}`).join(" · ")},`));
   assert.ok(SEASON_SHEET.cards.startsWith(`Cards are ${SEASON_CARDS.map((c, i) => `${i + 1} ${c.title}`).join(" · ")},`));
   const listed = SEASON_SHEET.groups.flatMap((g) => g.rows.flatMap(([keys]) => keys));
-  for (const k of ["1", "7", "⇧ 2", "]", "[", "w", "h", "s", "x", "Esc", "/", "j", "k", "↓", "↑", "Enter", "t", "m", "r", "?"]) assert.ok(listed.includes(k), k);
+  for (const k of ["1", "7", "⇧ 2", "]", "[", "w", "h", "s", "l", "x", "Esc", "/", "j", "k", "↓", "↑", "Enter", "t", "m", "r", "?"]) assert.ok(listed.includes(k), k);
 });
