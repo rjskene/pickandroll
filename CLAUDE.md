@@ -72,5 +72,12 @@ as such, with the evidence.
   while a practice run or a mock is on the server (ask fantasyMOCK first; it wiped a finished run on
   2026-10-06). Draft night runs `pickandroll-api-draft` (same port, no `--reload`) on a frozen checkout.
 - Core packages `src/pickandroll/{projections,draft,optim,availability}` stay free of I/O.
+- Keeping up with `main` (user, 2026-10-23): after every merge the master posts a "main moved" note to each
+  building session (fantasyEMISSARY, fantasySIMIMP) with the new sha, the PR and the files it touched. A session
+  with an open branch then runs `git fetch origin && git merge origin/main` in its worktree (merge, never rebase:
+  force pushes are blocked), re-runs its gates and pushes; a session about to cut a worktree cuts it from the new
+  main. Before opening any PR a session fetches and merges `origin/main` itself, and the PR body names the main it
+  was tested against. A merge of one session's PR that touches a file another session builds on is called out in
+  the note by name, with what changed.
 - A change to #8 passes the Tier 1 replay (`docs/YAHOO_SYNC.md` §5) before review. A change to the room side
   (#9) ships with a Tier 2 scorecard from a live mock. The scorecard goes on #11 as a comment.
