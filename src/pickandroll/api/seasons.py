@@ -108,6 +108,7 @@ from ..season import (
 )
 from ..season import moves as mv
 from ..season import record as season_rec
+from ..season import status as st
 from ..season.state import SLOTS_PAGE
 from ..sources import boxscores
 from ..sources import schedule as nba_schedule
@@ -123,6 +124,7 @@ from . import (
     season_progress,
     season_record,
     season_scorecard,
+    season_status,
     season_strategy,
     season_trades,
 )
@@ -901,6 +903,37 @@ class SeasonService:
         )
         return {**out, "generated_at": self.clock().isoformat()}
 
+    # ------------------------------------------------------------------ freshness
+    def status(self) -> dict[str, Any]:
+        """The freshness light (#153): the daily exports, each league's Yahoo reads and its
+        recommendations against the inputs they rest on; reads only."""
+        now = self.clock()
+        found = season_status.exports_found(self.data_dir)
+        exports = st.exports(found, now)
+        projection_at = max((found[k][1] for k in st.RESTS_ON if found.get(k)), default=None)
+        out = []
+        for league in leagues.leagues(self.data_dir):
+            try:
+                base, is_public = self._base(league)
+            except HTTPException as exc:
+                out.append({"league": league, "state": st.RED, "error": str(exc.detail)})
+                continue
+            parts = load_parts(self.data_dir, league)
+            fetched = {k: p.fetched_at for k, p in parts.items()}
+            read_at = max(fetched.values(), default=None)
+            folder = season_dir(self.data_dir, league)
+            if is_public:
+                job = self.jobs.get(league)
+                snapshot = season_status.snapshot_at(folder / SNAPSHOTS, PUBLIC)
+                rows = [st.refresh_row(job.to_dict() if job else None, read_at, snapshot, now)]
+            else:
+                rows = st.pages(fetched, now)
+            entries = season_status.latest_entries(folder, nba_today(now))
+            recs = st.recommendations(entries, projection_at, read_at, now)
+            name = Season.from_parts(base, parts).settings.name
+            out.append(st.league(league, name, is_public, rows, recs, exports["state"]))
+        return st.payload(exports, out, season_status.routine_marker(self.data_dir), now)
+
     # ------------------------------------------------------------------ refresh
     def start_refresh(self, league: str) -> RefreshJob:
         """The league's refresh: the one running, else a new one in the background."""
@@ -1403,6 +1436,12 @@ def register(
     ) -> dict[str, Any]:
         """Every league's scorecard of a week (#126), pooled, with the markdown for #127."""
         return await asyncio.to_thread(service.scorecards, week, system)
+
+    @app.get("/seasons/status")
+    async def get_status() -> dict[str, Any]:
+        """The freshness light (#153): the daily exports, every league's Yahoo reads and when
+        its recommendations were built against their inputs; reads only."""
+        return await asyncio.to_thread(service.status)
 
     @app.get("/progress")
     async def get_progress(system: str = scorecard_system_q) -> dict[str, Any]:
