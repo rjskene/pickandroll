@@ -103,7 +103,7 @@ export function MovesView({
       ) : (
         <>
           <div className="pg-tiles">
-            <Tile k="projected" v={units.length ? units.map((s) => `${gainLabel(totals.compared[s]!.projected, digits(s))}${units.length > 1 ? ` ${UNITS_SHORT[s]}` : ""}`).join(" · ") : "—"} title="the moves' value as their solve projected it, on the horizon each was recommended for; the moves whose horizon is over">
+            <Tile k="projected" v={units.length ? units.map((s) => `${gainLabel(totals.compared[s]!.projected, digits(s))}${units.length > 1 ? ` ${UNITS_SHORT[s]}` : ""}`).join(" · ") : "—"} title="the scored moves' value as their solve projected it, on the horizon each was recommended for, once that horizon is over: the same moves the scorecard, the sentences and the Trend view count">
               {units.length ? `${complete} move${complete === 1 ? "" : "s"} over a complete horizon` : "no move's horizon is over yet"}
             </Tile>
             <Tile
@@ -119,9 +119,15 @@ export function MovesView({
                   </span>
                 );
               })}
-              {(totals.soFar > 0 || totals.unscored > 0) && (
+              {totals.soFar + totals.realizedOnly + totals.unscored > 0 && (
                 <span className="pg-unit dim">
-                  {[totals.soFar ? `${totals.soFar} still inside their horizon` : null, totals.unscored ? `${totals.unscored} not valued` : null].filter(Boolean).join(" · ")}
+                  {[
+                    totals.soFar ? `${totals.soFar} still inside their horizon` : null,
+                    totals.realizedOnly ? `${totals.realizedOnly} realized only` : null,
+                    totals.unscored ? `${totals.unscored} not valued` : null,
+                  ]
+                    .filter(Boolean)
+                    .join(" · ")}
                 </span>
               )}
             </Tile>

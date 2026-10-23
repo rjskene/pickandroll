@@ -1079,7 +1079,7 @@ test("the scorecard's week, season and moves lines in the scorer's units (#126)"
     unscored: 1,
     realized_value: { week: 40 },
     complete: { week: 2 },
-    compared: { week: { moves: 1, projected: 7.25, realized: 22, same_way: 1, share: 3.0345 } },
+    compared: { moves: 1, projected: 7.25, realized: 22, same_way: 1, share: 3.0345, horizons: { week: 1 } },
     unscored_by: { unmatched: 1 },
     gaps: 1,
   };
@@ -1088,7 +1088,7 @@ test("the scorecard's week, season and moves lines in the scorer's units (#126)"
   assert.equal(scorecardToDateLine({ ...td, projected: 0, expected_wins: null }), "1-0-1");
   assert.equal(
     movesSummaryLine(moves, "categories"),
-    "3 moves: 1 scored, 1 realized only, 1 unscored · +40.00 realized on their weeks · scored +22.00 against +7.25 projected (303%), 1 of 1 the projected way",
+    "3 moves: 1 scored, 1 realized only, 1 unscored · +40.00 realized on their weeks · scored +22.00 against +7.25 projected (303%) on their horizons, 1 of 1 the projected way",
   );
   assert.equal(movesSummaryLine({ ...moves, made: 0 }, "points"), "no moves");
   assert.equal(unitsLabel(-3.24, "points"), "−3.2");

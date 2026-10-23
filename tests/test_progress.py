@@ -257,13 +257,13 @@ def test_the_sentences_follow_their_thresholds():
             "moves",
             "pooled",
             "bad",
-            "The 8 scored moves with a complete week (category value) realized 85% of their projection: they trail it by 15%; 6 of 8 in the projected direction.",
+            "Judged on the horizon each was recommended for, the 8 scored moves whose horizon is over (category value) realized 85% of their projection: they trail it by 15%; 6 of 8 in the projected direction.",
         ),
         (
             "moves",
             "pooled",
             "neutral",
-            "The 2 scored moves with a complete week (fantasy points) realized 95% of their projection, tracking it; 2 of 2 in the projected direction.",
+            "Judged on the horizon each was recommended for, the 2 scored moves whose horizon is over (fantasy points) realized 95% of their projection, tracking it; 2 of 2 in the projected direction.",
         ),
         (
             "odds",
@@ -398,6 +398,8 @@ def test_progress_gives_the_season_by_week_pooled_with_the_moves_knobs_and_notes
     assert (move["league"], move["week"], move["group"]) == (PUBLIC, 2, "scored")
     assert move["names"] == {"add": "Player 11", "drop": "Player 12"}
     assert move["knobs"] == {"system": "bbm", "blend": 0.5}
+    # Made as the week's set recommended it: judged on its week (#143).
+    assert move["judged"] == "week"
     assert move["projected"]["odds"]["before"]["matchup"] == 0.8
     assert move["projected"]["odds"]["after"]["matchup"] == 0.85
     week = move["realized"]["horizons"]["week"]

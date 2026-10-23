@@ -240,7 +240,8 @@ scorecard (#126) over all its recorded weeks, the knob file and the notes, and w
 - each league's week rows, the private league's among them (`public` false, never pooled): the odds
   of winning the matchup against the result, the categories expected against won, the Brier score,
   the standing after it, the week's moves (by group, their value projected and realized on the week,
-  the scored ones with a complete week compared, the FAAB paid) and the lineup's games lost (null:
+  the scored ones compared on their judging horizon once it is over, the FAAB paid) and the
+  lineup's games lost (null:
   not recorded yet), each with its running sums to it;
 - the public leagues pooled by week, the same, with the category odds' buckets of the week, and the
   calibration over the season;
@@ -273,8 +274,9 @@ comes back to it.
 - **Trend** (`t`): the scope (the public leagues pooled, or one league, the private one among them)
   and the metric (wins, categories, or the standing), and a week range stepped with ‹ ›. Three
   figures over the range: the record against the wins expected (or the categories, or the place);
-  the scored moves' realized share of their projection, one share for each unit with its sums
-  beside it, never one sum across the two; and the Brier score last week and over the range.
+  the scored moves' realized share of their projection, each on its judging horizon, one share for
+  each unit with its sums beside it, never one sum across the two; and the Brier score last week
+  and over the range.
   Then the scope's sentences, the chart (actual solid, expected dashed, both summed over the
   range; the standing alone; each knob change a mark on the time axis that opens its sheet; a
   tip by week, with each league's result when pooled), the week strip, and the league table
@@ -303,8 +305,9 @@ comes back to it.
 - **Cards:** 1 Note (one Monday note at a time, stepped with ‹ ›: the action items first, as
   handled in the session, then what is working, what is not and the decision), 2 Knobs (the
   changes with their half and verdict, the knobs in force, each league's own values and the knobs
-  frozen, and any problem reading the files), 3 League (the league chosen: its record, place,
-  moves by match and sentences, and a link to its league page), or the Move in the Moves view (the
+  frozen, and any problem reading the files), 3 League (the league chosen: its record, place, its
+  moves' realized share on their judging horizons, moves by match and sentences, and a link to its
+  league page), or the Move in the Moves view (the
   move chosen: its projected and realized values, horizon and bid, how it matched the solve and
   from which set, when it was solved and made, the knobs in force at that solve, its week's result
   and the set's odds of winning the matchup and expected categories before and after it), and

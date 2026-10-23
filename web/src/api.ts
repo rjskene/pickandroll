@@ -1675,6 +1675,8 @@ export interface ScorecardMove {
     odds?: Record<"before" | "after", { matchup: number | null; expected: number | null } | null>;
   } | null;
   realized: Realized | null;
+  /** The horizon it is judged on: the one its set was recommended for (#143). */
+  judged?: MoveHorizon;
   /** The knobs in force at the entry it matched (#129). */
   knobs?: Partial<Record<KnobName, unknown>> | null;
 }
@@ -1708,6 +1710,8 @@ export interface MovesCompared {
   same_way: number;
   /** The realized sum over the projected; null when the projected is not positive. */
   share: number | null;
+  /** How many were judged on each horizon: the one each move's set was recommended for (#143). */
+  horizons?: Partial<Record<MoveHorizon, number>>;
 }
 
 export interface MovesSummary {
@@ -1724,7 +1728,8 @@ export interface MovesSummary {
   unscored: number;
   realized_value: Partial<Record<MoveHorizon, number>>;
   complete: Partial<Record<MoveHorizon, number>>;
-  compared: Partial<Record<MoveHorizon, MovesCompared>>;
+  /** The scored moves whose judging horizon is over, each on it (#143); null for none. */
+  compared: MovesCompared | null;
   unscored_by: Partial<Record<UnscoredReason, number>>;
   gaps: number;
 }
@@ -1818,7 +1823,7 @@ export interface ProgressWeek {
   /** Not recorded yet: counted once the lineup log exists. */
   lineup_lost: number | null;
   cum: ProgressRunning & {
-    moves: { made: number; realized_value: Partial<Record<MoveHorizon, number>>; compared: Partial<Record<MoveHorizon, MovesCompared>> };
+    moves: { made: number; realized_value: Partial<Record<MoveHorizon, number>>; compared: MovesCompared | null };
   };
 }
 

@@ -336,10 +336,10 @@ function Tiles({ sum, metric, scope, from, to }: { sum: RangeSum; metric: Metric
       <Tile
         k="moves"
         v={units.length ? units.map(([s, c]) => (c.share == null ? "—" : `${pct(c.share)}${units.length > 1 ? ` ${UNITS_SHORT[s]}` : ""}`)).join(" · ") : "—"}
-        title="the scored moves over a complete week: their realized value against their projected, by the units of their leagues (fantasy points and category value never sum together)"
+        title="the scored moves whose horizon is over, each judged on the horizon its set was recommended for: their realized value against their projected, by the units of their leagues (fantasy points and category value never sum together)"
       >
         {units.length === 0
-          ? `${sum.made} made · none scored over a complete week yet`
+          ? `${sum.made} made · none scored over its horizon yet`
           : units.map(([s, c]) => (
               <span key={s} className="pg-unit">
                 {gainLabel(c.realized, s === "points" ? 0 : 1)} of {gainLabel(c.projected, s === "points" ? 0 : 1)} {UNITS[s]} · {c.moves} move{c.moves === 1 ? "" : "s"}
@@ -774,6 +774,17 @@ function LeagueCard({ p, scope, onScope, onOpenLeague }: { p: ProgressPayload; s
         <Tile k="place" v={s.rankLast == null ? "—" : ordinal(s.rankLast)} title="the place after the last week scored">
           {s.rankLast == null ? "no standing read" : t?.standing ? `of ${t.standing.teams}${t.standing.record ? ` · ${t.standing.record}` : ""}` : `after week ${p.last_recorded ?? "?"}`}
         </Tile>
+        {t && (
+          <Tile
+            k="moves"
+            v={t.moves.compared?.share == null ? "—" : pct(t.moves.compared.share)}
+            title="the scored moves whose horizon is over, each judged on the horizon its set was recommended for: their realized value against their projected, as the scorecard counts them"
+          >
+            {t.moves.compared
+              ? `${unitsLabel(t.moves.compared.realized, l.scoring)} of ${unitsLabel(t.moves.compared.projected, l.scoring)} ${UNITS[l.scoring ?? "categories"]} · ${t.moves.compared.moves} move${t.moves.compared.moves === 1 ? "" : "s"}`
+              : "none scored over its horizon yet"}
+          </Tile>
+        )}
       </div>
       {t && (
         <p className="small">
@@ -874,7 +885,7 @@ function KnobSheet({ p, c, onClose, onStep }: { p: ProgressPayload; c: KnobChang
                 </tr>
                 {units.map((s) => (
                   <tr key={s}>
-                    <td title="the scored moves over a complete week, realized against projected">Moves' realized gain, {UNITS[s]}</td>
+                    <td title="the scored moves whose horizon is over, each on the horizon its set was recommended for, realized against projected">Moves' realized gain, {UNITS[s]}</td>
                     <td className="num">{share("a", s)}</td>
                     <td className="num">{share("b", s)}</td>
                   </tr>

@@ -14,7 +14,9 @@ matched, or for a move with no entry, or one logged before entries kept their sc
 of the entry nearest it on the system scored (master's ruling, 2026-10-22). A move is then in one
 of three groups: ``scored`` (projected by its own entry and realized), ``realized_only`` (realized,
 but with no projection of its own or a borrowed scorer) or ``unscored``; only the scored are set
-against their projection.
+against their projection, each on the horizon its set was recommended for (``judged``, #143): the
+week's set and the streaming plan on the week, the three weeks' set and the strategy's on the three
+weeks after, a move with no projection of its own on the week.
 
 The private league is scored on its own and never pooled: its moves are suggestions only.
 """
@@ -44,6 +46,10 @@ KINDS = (dl.AS_RECOMMENDED, dl.DIFFERENTLY, dl.NOT_RECOMMENDED, dl.NO_ENTRY)
 BOXSCORES_DIR = "boxscores"
 #: A move's group: projected by its own entry and realized, realized only, or neither.
 SCORED, REALIZED_ONLY, UNSCORED = "scored", "realized_only", "unscored"
+#: The horizon a move is judged on when nothing says otherwise: its week.
+WEEK = "week"
+#: The moves route's sets recommended for the three weeks after the week.
+_THREE_SETS = ("three",)
 _REASONS = {
     rz.NO_TIME: "with no time on the page",
     rz.NO_SCORER: "with no scorer logged",
@@ -211,6 +217,18 @@ def realized_move(
     }
 
 
+def judged_horizon(projected: Mapping[str, Any] | None, entry: Mapping[str, Any] | None) -> str:
+    """The horizon a move is judged on (#143): the one its set was recommended for. The moves
+    route's week set and streaming plan on the week, its three weeks' set on the three weeks
+    after; a strategy set on the three weeks after (the season once #144's horizon exists); a
+    move with no projection of its own on the week."""
+    if not projected:
+        return WEEK
+    if (entry or {}).get("source") == "strategy" or projected.get("set") in _THREE_SETS:
+        return "three"
+    return WEEK
+
+
 def group(row: Mapping[str, Any]) -> str:
     """A move row's group: ``scored`` when its own entry projected it and its own scorer
     realized it, ``realized_only`` when it is realized otherwise, else ``unscored``."""
@@ -245,8 +263,8 @@ def move_rows(
     system: str = SYSTEM,
 ) -> list[dict[str, Any]]:
     """My moves of the week, each with its match, the knobs in force at the entry it matched
-    (#129), the entry's projection of it (for a move made as recommended) and its realized
-    value (None without the box scores)."""
+    (#129), the entry's projection of it (for a move made as recommended), the horizon it is
+    judged on (``judged``, #143) and its realized value (None without the box scores)."""
     week = sc.week_of(record)
     players = _players(season, record) if box is not None else {}
     calendar = season.calendar if season is not None else None
@@ -257,11 +275,13 @@ def move_rows(
         if box is not None:
             realized = realized_move(m, match, week, entries, players, box, calendar, system)
         entry = next((e for e in entries if e["id"] == match.get("entry")), None)
+        projected = logged_move(entries, match)
         row = {
             **m.to_dict(),
             "match": match,
             "knobs": (entry or {}).get("knobs"),
-            "projected": logged_move(entries, match),
+            "projected": projected,
+            "judged": judged_horizon(projected, entry),
             "realized": realized,
         }
         out.append({**row, "group": group(row)})
@@ -281,9 +301,11 @@ def moves_summary(rows: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
     """The moves of some weeks: how many, by match and by group, how many the log projected
     and their projected value summed on each horizon; the realized value of every move
     realized summed on each horizon (through the days read) and the spans complete; the
-    unscored by reason and the games of players not matched; and over the scored moves on a
-    complete span (``compared``), their projected and realized values summed, the realized
-    share of the projected and how many realized in the projected direction."""
+    unscored by reason and the games of players not matched; and over the scored moves whose
+    judging horizon is over (``compared``, None without one), each on the horizon its set was
+    recommended for (#143): their projected and realized values summed, the realized share of
+    the projected, how many realized in the projected direction and how many were judged on
+    each horizon."""
     rows = list(rows)
     projected = [r["projected"] for r in rows if r.get("projected")]
     sums: dict[str, float] = {}
@@ -293,7 +315,7 @@ def moves_summary(rows: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
                 _add(sums, key, h["value"])
     real: dict[str, float] = {}
     complete: dict[str, int] = {}
-    compared: dict[str, dict[str, Any]] = {}
+    compared: dict[str, Any] | None = None
     reasons: Counter[str] = Counter()
     gaps = 0
     for r in rows:
@@ -306,17 +328,28 @@ def moves_summary(rows: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
                 continue
             _add(real, key, h["value"])
             complete[key] = complete.get(key, 0) + int(h["complete"])
-            p = ((r.get("projected") or {}).get("value") or {}).get("horizons", {}).get(key)
-            if group(r) != SCORED or not h["complete"] or not p or p.get("value") is None:
-                continue
-            c = compared.setdefault(
-                key, {"moves": 0, "projected": 0.0, "realized": 0.0, "same_way": 0}
-            )
-            c["moves"] += 1
-            c["same_way"] += int(_same_way(p["value"], h["value"]))
-            _add(c, "projected", p["value"])
-            _add(c, "realized", h["value"])
-    for c in compared.values():
+        judged = r.get("judged") or judged_horizon(r.get("projected"), None)
+        h = (x.get("horizons") or {}).get(judged)
+        p = ((r.get("projected") or {}).get("value") or {}).get("horizons", {}).get(judged)
+        if group(r) != SCORED or not h or not h["complete"] or h["value"] is None:
+            continue
+        if not p or p.get("value") is None:
+            continue
+        if compared is None:
+            compared = {
+                "moves": 0,
+                "projected": 0.0,
+                "realized": 0.0,
+                "same_way": 0,
+                "horizons": {},
+            }
+        compared["moves"] += 1
+        compared["same_way"] += int(_same_way(p["value"], h["value"]))
+        compared["horizons"][judged] = compared["horizons"].get(judged, 0) + 1
+        _add(compared, "projected", p["value"])
+        _add(compared, "realized", h["value"])
+    if compared is not None:
+        c = compared
         c["share"] = round(c["realized"] / c["projected"], 4) if c["projected"] > 0 else None
     groups = Counter(group(r) for r in rows)
     return {
@@ -529,10 +562,10 @@ def _moves_line(p: Mapping[str, Any]) -> str | None:
 def _realized_counts(rows: Sequence[Mapping[str, Any]]) -> str:
     """Moves realized as public text, counts and ratios only (master's ruling, 2026-10-22: no
     scorer-unit value, for a move or summed): the scored with their realized share of the
-    projected and how many went the projected way on the week, the realized only, the unscored
-    by reason."""
+    projected and how many went the projected way, each on the horizon its set was recommended
+    for (#143), the realized only, the unscored by reason."""
     s = moves_summary(rows)
-    c = s["compared"].get("week")
+    c = s["compared"]
     head = f"{s[SCORED]} move{'s' if s[SCORED] != 1 else ''} scored"
     if c:
         share = (
@@ -540,7 +573,11 @@ def _realized_counts(rows: Sequence[Mapping[str, Any]]) -> str:
             if c["share"] is None
             else f"realized {_pct(c['share'])} of projected"
         )
-        some = f" (the {c['moves']} with the week over)" if c["moves"] != s[SCORED] else ""
+        some = (
+            f" (the {c['moves']} with their recommended horizon over)"
+            if c["moves"] != s[SCORED]
+            else ""
+        )
         head += f": {share}, {c['same_way']} of {c['moves']} in the projected direction{some}"
     parts = [head, f"{s[REALIZED_ONLY]} realized only", f"{s[UNSCORED]} unscored"]
     if s["unscored_by"]:
