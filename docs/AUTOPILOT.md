@@ -306,14 +306,18 @@ comes back to it.
 - **Moves** (`m`): the same scope and range, and the moves made by match (as recommended,
   differently, not recommended, no solve before it), each counted. Each move is judged on the
   horizon its set was recommended for (the week's set and the streaming plan's on its week, the
-  three weeks' set and the strategy's on the three weeks after), in its league's units. Three
-  figures: projected and realized over the moves whose horizon is over, one for each unit, with
-  the realized share of the projection; and the FAAB paid, free against bid. Then the scope's
-  moves sentences, a chart of the realized against the projected summed to each week (one unit at
-  a time, switched when both are present; the knob changes marked), and the table: date, league,
-  add, for, horizon, bid, match, projected, realized ("so far" while the horizon runs) and the gap
-  once it is over. A row opens the move in card 3; ▸ opens its categories under it, a bar for the
-  realized and a tick for the projected on one scale around zero.
+  three weeks' set and the strategy's on the three weeks after, the strategy's season-weight set
+  on the season), in its league's units. Four figures: projected and realized over the moves
+  whose horizon is over, one for each unit, with the realized share of the projection; the season
+  check (#144), the moves flagged season-costly of those checked and how many went below zero so
+  far; and the FAAB paid, free against bid. Then the scope's moves sentences (the season check's
+  among them), a chart of the realized against the projected summed to each week (one unit at a
+  time, switched when both are present; the knob changes marked), and the table: date, league,
+  add, for, horizon, bid, match, projected, realized ("so far" while the horizon runs), the gap
+  once it is over, and the season beside them, never in their place (projected to the season's
+  last day, realized so far, a "costly" mark for a flagged move; its tooltip gives the games, read
+  and extrapolated). A row opens the move in card 3; ▸ opens its categories under it, a bar for
+  the realized and a tick for the projected on one scale around zero.
 - **Odds** (`o`): the matchup odds by their Brier score over the range (0.25 a coin flip, lower
   better), the record against the wins expected, and the category odds' share won against the
   odds said; the odds sentences; the Brier score by week against the coin flip, the knob changes
@@ -329,9 +333,11 @@ comes back to it.
   frozen, and any problem reading the files), 3 League (the league chosen: its record, place, its
   moves' realized share on their judging horizons, moves by match and sentences, and a link to its
   league page), or the Move in the Moves view (the
-  move chosen: its projected and realized values, horizon and bid, how it matched the solve and
-  from which set, when it was solved and made, the knobs in force at that solve, its week's result
-  and the set's odds of winning the matchup and expected categories before and after it), and
+  move chosen: its projected and realized values, horizon and bid, its season figure, how it
+  matched the solve and from which set, when it was solved and made, the knobs in force at that
+  solve, its week's result and the set's odds of winning the matchup and expected categories
+  before and after it, and over the season its projection with the games and its realized value
+  so far, with the season-costly flag or the check's clearing), and
   4 Odds (the season's Brier score and the category odds by bucket, the public leagues pooled,
   with the odds sentences).
 - **The knob sheet**, over the view (Esc closes it, ← → step through the changes): the change and

@@ -1,7 +1,7 @@
 // The Progress screen's arithmetic (#129): the payload's league weeks cut to a scope (the public
 // leagues pooled, or one league) and a week range, the running sums over that range, the headline
 // figures, and the knob changes in words. Pure, so its tests run under node.
-import type { CalibrationBucket, KnobChange, KnobName, MatchKind, MoveHorizon, MovesCompared, PooledWeek, ProgressLeague, ProgressMove, ProgressPayload, ProgressSentence, ProgressWeek, Scoring } from "./api";
+import type { CalibrationBucket, JudgedHorizon, KnobChange, KnobName, MatchKind, MovesCompared, PooledWeek, ProgressLeague, ProgressMove, ProgressPayload, ProgressSentence, ProgressWeek, Scoring } from "./api";
 
 /** The scope of the public leagues pooled; any other scope is a league's id. */
 export const POOLED = "pooled";
@@ -336,13 +336,14 @@ export const MATCH_TITLE: Record<MatchKind, string> = {
   not_recommended: "no set of the solve before it named either player",
   no_entry: "nothing was logged before it",
 };
-export const HORIZON_SHORT: Record<MoveHorizon, string> = { week: "week", three: "3 wk" };
+export const HORIZON_SHORT: Record<JudgedHorizon, string> = { week: "week", three: "3 wk", season: "season" };
 
 /** The horizon a move is judged on, as its row gives it (#143): the one its set was recommended
  * for (the week's set and the streaming plan's, the week; the three weeks' set and the
- * strategy's, the three weeks); a move with no projection of its own, its week. A row from
- * before the scorecard wrote it is judged from its set the same way. */
-export function moveHorizon(m: ProgressMove): MoveHorizon {
+ * strategy's, the three weeks; the strategy's set solved under the season weight, the season,
+ * #144); a move with no projection of its own, its week. A row from before the scorecard wrote
+ * it is judged from its set the same way. */
+export function moveHorizon(m: ProgressMove): JudgedHorizon {
   if (m.judged) return m.judged;
   const set = m.projected?.set;
   return set == null || set === "week" || set === "plan" ? "week" : "three";
@@ -352,7 +353,7 @@ export function moveHorizon(m: ProgressMove): MoveHorizon {
  * realized span is over, and the gap once it is, for a scored move only (projected by its own
  * entry and realized by its own scorer), as the scorecard compares them. */
 export interface MoveFigures {
-  horizon: MoveHorizon;
+  horizon: JudgedHorizon;
   projected: number | null;
   realized: number | null;
   complete: boolean;
@@ -367,6 +368,33 @@ export function moveFigures(m: ProgressMove): MoveFigures {
   const complete = !!span?.complete;
   const scored = m.group === "scored" && projected != null && realized != null && complete;
   return { horizon, projected, realized, complete, delta: scored ? round(realized! - projected!) : null };
+}
+
+/** A move over the season (#144), beside its judging figure: its value projected to the season's
+ * last day with the games each side was assumed to play (and how many of them were
+ * extrapolated past the schedule read), its value realized so far with the games read and the
+ * last day read, and whether the decision log flagged it as costing the season. */
+export interface SeasonFigures {
+  projected: number | null;
+  games: { add: number | null; drop: number | null; extrapolated: number };
+  realized: number | null;
+  read: { add: number | null; drop: number | null; through: string | null };
+  complete: boolean;
+  costly: boolean | null;
+}
+
+export function seasonFigures(m: ProgressMove): SeasonFigures {
+  const p = m.projected?.value.horizons.season;
+  const span = m.realized?.valued ? m.realized.horizons.season : undefined;
+  const x = p?.extrapolated_games;
+  return {
+    projected: p?.value ?? null,
+    games: { add: p?.add_games ?? null, drop: p?.drop_games ?? null, extrapolated: round((x?.add ?? 0) + (x?.drop ?? 0)) },
+    realized: span?.value ?? null,
+    read: { add: span?.add_games ?? null, drop: span?.drop_games ?? null, through: span?.through ?? null },
+    complete: !!span?.complete,
+    costly: m.season_costly ?? null,
+  };
 }
 
 /** A move's key, the same from one read to the next. */
@@ -386,21 +414,31 @@ export function matchCounts(moves: ProgressMove[]): Record<MatchKind, number> {
 }
 
 /** Some moves' totals: by scoring, the scored ones whose horizon is over summed (``compared``,
- * as the scorecard's), the others still inside their horizon, realized only or not valued; and
- * the FAAB paid. */
+ * as the scorecard's), the others still inside their horizon, realized only or not valued; the
+ * season check (#144: the moves the log flagged or cleared, the flagged, and of the scored
+ * flagged those below zero so far, as the scorecard counts them); and the FAAB paid. */
 export interface MovesTotals {
   made: number;
   compared: Partial<Record<Scoring, MovesSum>>;
   soFar: number;
   realizedOnly: number;
   unscored: number;
+  checked: number;
+  costly: number;
+  costlyBelow: number;
   paid: number;
   bids: number;
 }
 
 export function movesTotals(moves: ProgressMove[]): MovesTotals {
-  const out: MovesTotals = { made: moves.length, compared: {}, soFar: 0, realizedOnly: 0, unscored: 0, paid: 0, bids: 0 };
+  const out: MovesTotals = { made: moves.length, compared: {}, soFar: 0, realizedOnly: 0, unscored: 0, checked: 0, costly: 0, costlyBelow: 0, paid: 0, bids: 0 };
   for (const m of moves) {
+    if (m.season_costly != null) out.checked += 1;
+    if (m.season_costly) {
+      const so = seasonFigures(m).realized;
+      out.costly += 1;
+      if (m.group === "scored" && so != null && so < 0) out.costlyBelow += 1;
+    }
     const f = moveFigures(m);
     const s = m.scoring ?? "categories";
     if (f.delta != null) {

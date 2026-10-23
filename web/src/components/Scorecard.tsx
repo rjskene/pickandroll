@@ -92,7 +92,7 @@ function Moves({ moves, scoring, name }: { moves: ScorecardMove[]; scoring: Scor
               <td>
                 {moveWhat(m, name)}
                 <div className="dim small" title={m.match.near ? "within an hour of a solve: a time zone off by an hour could change the match" : undefined}>
-                  {[dayLabel(m.day), MATCH_WORDS[m.match.kind], m.judged === "three" ? "judged on the three weeks" : null].filter(Boolean).join(" · ")}
+                  {[dayLabel(m.day), MATCH_WORDS[m.match.kind], m.judged === "three" ? "judged on the three weeks" : m.judged === "season" ? "judged on the season" : null, m.season_costly ? "season-costly" : null].filter(Boolean).join(" · ")}
                   {m.match.near ? " *" : ""}
                 </div>
               </td>

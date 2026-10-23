@@ -22,6 +22,7 @@ import {
   recordLabel,
   scopeSentences,
   scopeWeeks,
+  seasonFigures,
   shownRange,
   stepChange,
   stepRange,
@@ -327,6 +328,44 @@ test("the moves are filtered by scope, week and match, and totalled by scoring",
     { week: 2, projected: 1, realized: 0.5 },
     { week: 3, projected: 1, realized: 0.5 },
   ]);
+});
+
+/** ``mv`` with a season horizon (#144): projected over the season, realized so far, the flag. */
+function seasonal(proj: number, soFar: number | null, costly: boolean | null, over: Partial<ProgressMove> = {}): ProgressMove {
+  const m = mv(over);
+  const logged = { from: "2026-10-27", to: "2027-04-04", add_games: 70.5, drop_games: 66, value: proj, cats: {}, extrapolated_games: { add: 40.5, drop: 38 } };
+  const span = { from: "2026-10-27", to: "2027-04-04", through: "2026-11-01", complete: false, missing: [], add_games: 3, drop_games: 2, add: 1, drop: 0, gaps: 0, value: soFar, cats: {} };
+  return {
+    ...m,
+    season_costly: costly,
+    projected: m.projected && { ...m.projected, value: { ...m.projected.value, horizons: { ...m.projected.value.horizons, season: logged } } },
+    realized: m.realized && { ...m.realized, horizons: { ...m.realized.horizons, ...(soFar == null ? {} : { season: span }) } },
+  };
+}
+
+test("a move's season stands beside its judging figure, and the flagged are counted", () => {
+  const v = seasonFigures(seasonal(-12.5, -1.25, true));
+  assert.deepEqual(v, {
+    projected: -12.5,
+    games: { add: 70.5, drop: 66, extrapolated: 78.5 },
+    realized: -1.25,
+    read: { add: 3, drop: 2, through: "2026-11-01" },
+    complete: false,
+    costly: true,
+  });
+  // The judging figure is untouched: the week's.
+  assert.deepEqual(moveFigures(seasonal(-12.5, -1.25, true)).horizon, "week");
+  assert.equal(moveHorizon(seasonal(5, null, false, { judged: "season" })), "season");
+  // No season horizon logged (an entry before #144): nothing, and no flag.
+  assert.deepEqual(seasonFigures(mv()), { projected: null, games: { add: null, drop: null, extrapolated: 0 }, realized: null, read: { add: null, drop: null, through: null }, complete: false, costly: null });
+  const t = movesTotals([
+    seasonal(-12.5, -1.25, true), // flagged, below zero so far
+    seasonal(-3, 0.5, true), // flagged, above so far
+    seasonal(-3, -0.5, true, { group: "realized_only" }), // flagged, not scored
+    seasonal(4, -0.5, false),
+    mv(),
+  ]);
+  assert.deepEqual([t.checked, t.costly, t.costlyBelow], [4, 3, 1]);
 });
 
 test("a move's categories, largest first, with how many beat their projection", () => {
