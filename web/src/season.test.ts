@@ -759,7 +759,7 @@ test("a player who is out reads as a stash, a full slot's leaver, bench or dropp
   assert.equal(stashText(stash({ advice: "stash", slot: "IL", add: { week: { player: 5, gain: 0.1 }, three: null } }), name).includes("P5 (+0.10 this week)"), true);
   // The freed spot's add carries his rest of the season (#151).
   const ros: MoveRos = { value: 8.4, add_games: 50, drop_games: null, extrapolated: { add: 0, drop: null }, from: "2026-10-24", to: "2027-04-12" };
-  assert.ok(stashText(stash({ advice: "stash", slot: "IL", add: { week: null, three: { player: 6, gain: 0.42, ros } } }), name, "categories").includes("P6 (+0.42 over the three weeks, ROS +8.40)"));
+  assert.ok(stashText(stash({ advice: "stash", slot: "IL", add: { week: null, three: { player: 6, gain: 0.42, ros } } }), name, "categories").includes("P6 (+0.42 over the three weeks, ROS +8.4)"));
   assert.equal(
     stashText(stash({ advice: "il_full", leave: { player: 7, slot: "IL", how: "activate", drop: 8, net: null, protected: false } }), name),
     "P1 (O, back Nov 2): eligible, IL or IL+ full; activate P7 (cleared) from IL, dropping P8; 12.3 net of return.",
@@ -1154,14 +1154,14 @@ test("a scorecard move's line, its realized cells and its tooltip (#126)", () =>
 test("a move's rest of the season reads in the scorer's units, its games and days on hover (#151)", () => {
   const name = (id: number) => ({ 11: "Brooks", 12: "Grant" })[id] ?? `player ${id}`;
   const r: MoveRos = { value: 12.345, add_games: 58, drop_games: 55, extrapolated: { add: 4, drop: 2.5 }, from: "2026-10-24", to: "2027-04-12" };
-  assert.equal(rosLabel(r, "categories"), "+12.35");
-  assert.equal(rosLabel({ value: 310.46 }, "points"), "+310.5");
+  assert.equal(rosLabel(r, "categories"), "+12.3");
+  assert.equal(rosLabel({ value: 310.46 }, "points"), "+310");
   assert.equal(rosLabel(null, "categories"), "");
   assert.equal(rosLabel({ ...r, value: null }, "categories"), "");
   // Only a season-costly figure is coloured, and only when it reads below zero.
   assert.equal(rosTone(r, "categories"), "");
   assert.equal(rosTone({ value: -0.2 }, "categories"), "bad");
-  assert.equal(rosTone({ value: -0.004 }, "categories"), "");
+  assert.equal(rosTone({ value: -0.04 }, "categories"), "");
   assert.equal(rosTone(undefined, "categories"), "");
   assert.equal(
     rosGames(r, { add: 11, drop: 12 }, name),
@@ -1192,7 +1192,7 @@ test("a plan step's figure names the later step that drops him; the plan's total
   );
   assert.equal(planStepRosTitle({ ...step, dropped_by: null }, name, "categories"), rosTitle(ros, step, name, "categories"));
   assert.equal(planRosText(streamPlan(), "categories"), null);
-  assert.equal(planRosText(streamPlan({ ros: { set: { value: 12.1 }, plan: { value: 14.2 } } }), "categories"), "ROS +14.20 against the set's +12.10");
+  assert.equal(planRosText(streamPlan({ ros: { set: { value: 12.1 }, plan: { value: 14.2 } } }), "categories"), "ROS +14.2 against the set's +12.1");
   assert.equal(planRosText(streamPlan({ ros: { set: null, plan: { value: 14.2 } } }), "categories"), null);
 });
 
@@ -1206,7 +1206,7 @@ test("a trade's rest of the season: a side's change and a player's games on hove
   const side: NonNullable<TradeSide["ros"]> = { before: 100, after: 104.5, change: 4.5, from: "2026-10-24", unvalued: 1 };
   assert.equal(
     sideRosTitle(side, "categories"),
-    "the roster to the season's end from Oct 24, 100.00 → 104.50 in the scorer's z-sum, net of an empty line: what it receives less what it sends and drops; " +
+    "the roster to the season's end from Oct 24, 100.0 → 104.5 in the scorer's z-sum, net of an empty line: what it receives less what it sends and drops; " +
       "1 player without a line counts nothing",
   );
   assert.ok(sideRosTitle({ ...side, unvalued: 0 }, "points").endsWith("what it receives less what it sends and drops"));

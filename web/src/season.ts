@@ -659,7 +659,7 @@ export function stashText(a: Stash, name: (id: number | null) => string, scoring
   if (a.advice === "stash") {
     const add = a.add?.three ?? a.add?.week ?? null;
     const span = a.add?.three ? "over the three weeks" : "this week";
-    const ros = add?.ros?.value != null ? `, ROS ${unitsLabel(add.ros.value, scoring)}` : "";
+    const ros = add?.ros?.value != null ? `, ROS ${rosLabel(add.ros, scoring)}` : "";
     const freed = add ? `, which frees a spot for ${name(add.player)} (${gainLabel(add.gain)} ${span}${ros})` : "";
     return `${who}: move to ${a.slot}${freed}${net}.`;
   }
@@ -717,9 +717,15 @@ function gamesCount(g: number): string {
   return Number.isInteger(g) ? String(g) : g.toFixed(1);
 }
 
-/** A rest of the season in a cell: "+12.40" (a points league "+310.5"); blank for none. */
+/** A rest of the season's digits: a season's value runs to hundreds, so a categories league's
+ * z-sum to one decimal and a points league's points whole. */
+function rosDigits(scoring: string | null | undefined): number {
+  return scoring === "points" ? 0 : 1;
+}
+
+/** A rest of the season in a cell: "+12.4" (a points league "+310"); blank for none. */
 export function rosLabel(r: { value: number | null } | null | undefined, scoring: string | null | undefined): string {
-  return unitsLabel(r?.value, scoring);
+  return gainLabel(r?.value, rosDigits(scoring));
 }
 
 /** A season-costly figure reads red; nothing else is coloured, since nothing ranks on it. */
@@ -767,12 +773,12 @@ export function planStepRosTitle(x: Pick<PlanStep, "add" | "drop" | "ros" | "dro
     : text;
 }
 
-/** "ROS +14.20 against the set's +12.10": the plan's rest of the season beside the set's;
- * null when either is not valued. */
+/** "ROS +14.2 against the set's +12.1": the plan's rest of the season beside the set's; null
+ * when either is not valued. */
 export function planRosText(plan: Pick<StreamPlan, "ros">, scoring: string | null | undefined): string | null {
   const r = plan.ros;
   if (!r?.plan || !r.set) return null;
-  return `ROS ${unitsLabel(r.plan.value, scoring)} against the set's ${unitsLabel(r.set.value, scoring)}`;
+  return `ROS ${rosLabel(r.plan, scoring)} against the set's ${rosLabel(r.set, scoring)}`;
 }
 
 /** A traded player's figure on hover: "58 games from Oct 24 to the season's end, 6 past the
@@ -789,7 +795,7 @@ export function sideRosTitle(r: TradeSide["ros"], scoring: string | null | undef
   if (!r) return "not valued to the season's end: no scorer for the league";
   const unvalued = r.unvalued ? `; ${r.unvalued} ${r.unvalued === 1 ? "player without a line counts" : "players without a line count"} nothing` : "";
   return (
-    `the roster to the season's end from ${dayLabel(r.from)}, ${r.before.toFixed(2)} → ${r.after.toFixed(2)} in ${valueUnits(scoring)}: ` +
+    `the roster to the season's end from ${dayLabel(r.from)}, ${r.before.toFixed(rosDigits(scoring))} → ${r.after.toFixed(rosDigits(scoring))} in ${valueUnits(scoring)}: ` +
     `what it receives less what it sends and drops${unvalued}`
   );
 }
