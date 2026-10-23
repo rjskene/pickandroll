@@ -241,7 +241,7 @@ def payload(
     calendar: Sequence[Week] = (),
     problems: Sequence[str] = (),
     skipped: Sequence[Mapping[str, str]] = (),
-    system: str = "bbm",
+    system: str | None = None,
 ) -> dict[str, Any]:
     """The Progress view: the season's weeks to this one, each league's week rows (the private
     league among them, ``public`` false, and never pooled), the public leagues pooled by week

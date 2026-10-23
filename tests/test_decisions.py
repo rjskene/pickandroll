@@ -383,6 +383,7 @@ def test_each_solve_of_the_moves_route_appends_an_entry_to_its_days_log(client):
         "stash_threshold": None,
         "faab_sizing": None,
         "daily_cap": 2,
+        "file_system": "bbm",
     }
     assert first["first_day"] == "2026-10-21" and first["adds"] == m["adds"]
     assert first["horizons"] == {k: v["label"] for k, v in m["horizons"].items()}

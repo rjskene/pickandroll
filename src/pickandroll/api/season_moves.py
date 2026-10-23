@@ -81,6 +81,9 @@ class Built:
     #: The knobs the solve ran with (#152; ``season.progress.in_force_for``), its system
     #: among them.
     knobs: dict[str, Any] = field(default_factory=lambda: dict(pg.DEFAULTS))
+    #: The system the knob file had in force for the league, which a route naming another
+    #: overrode for this solve (#152); the scorecard scores each week on it.
+    file_system: str = pg.DEFAULTS["system"]
 
 
 @dataclass(frozen=True)
@@ -212,6 +215,7 @@ def build(
     mine = s.my_team_id
     if mine is None or not season.calendar or mine not in season.rosters:
         return None
+    file_system = (knobs or {}).get("system") or pg.DEFAULTS["system"]
     knobs = {**pg.DEFAULTS, **(knobs or {}), "system": system}
     if system == "blend" and knobs["blend"] is None:
         knobs["blend"] = pg.BLEND
@@ -356,6 +360,7 @@ def build(
         rule,
         scorer,
         knobs,
+        file_system,
     )
 
 

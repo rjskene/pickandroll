@@ -24,6 +24,11 @@ it (``season_costly``, #144: projected positive on its judging horizon, below mi
 floor over the season); the summary counts the moves projected below zero over the season and the
 flagged, each with how many of the scored realized below zero so far.
 
+The system scored is the one the query names; with none, the one in force (#152): a week is
+projected on the knob file's system for the league when the week began, which each entry's knobs
+record (``file_system``; ``season.scorecard.projection``), and a move with no scorer of its own
+borrows the nearest entry's solved on the system in force when it was logged.
+
 The private league is scored on its own and never pooled: its moves are suggestions only.
 """
 
@@ -45,8 +50,9 @@ from ..season.state import Player, Transaction
 from ..sources import boxscores
 from .season_decisions import TRANSACTIONS_TZ, _names
 
-#: The system scored by default: the one the routines solve with.
-SYSTEM = "bbm"
+#: The system scored by default: the one in force (#152, ``season.scorecard.projection`` and
+#: ``on_system``).
+SYSTEM: str | None = None
 KINDS = (dl.AS_RECOMMENDED, dl.DIFFERENTLY, dl.NOT_RECOMMENDED, dl.NO_ENTRY)
 #: Where a refresh caches the box scores, under the data folder.
 BOXSCORES_DIR = "boxscores"
@@ -159,14 +165,18 @@ class BoxScores:
 
 
 def scorer_for(
-    made: dl.Made, match: Mapping[str, Any], entries: Sequence[Mapping[str, Any]], system: str
+    made: dl.Made,
+    match: Mapping[str, Any],
+    entries: Sequence[Mapping[str, Any]],
+    system: str | None,
 ) -> tuple[Mapping[str, Any] | None, Mapping[str, Any] | None]:
     """The entry whose scorer values ``made`` and that scorer: the matched entry's, else the
-    nearest entry's on ``system`` that keeps one; (None, None) when no entry does."""
+    nearest entry's on ``system`` (``season.scorecard.on_system``) that keeps one; (None, None)
+    when no entry does."""
     entry = next((e for e in entries if e["id"] == match.get("entry")), None)
     if entry is not None and entry.get("scorer"):
         return entry, entry["scorer"]
-    kept = [e for e in entries if e.get("scorer") and (e.get("system") or {}).get("key") == system]
+    kept = [e for e in entries if e.get("scorer") and sc.on_system(e, system)]
     if not kept or made.at is None:
         return None, None
     at = made.at
@@ -182,7 +192,7 @@ def realized_move(
     players: Mapping[int, Player],
     box: BoxScores,
     calendar: Calendar | None = None,
-    system: str = SYSTEM,
+    system: str | None = SYSTEM,
 ) -> dict[str, Any]:
     """A move's realized value (``season.realized``) from the cached box scores, its players
     matched by name and team, the entry whose scorer valued it (``own`` when it is the entry
@@ -269,7 +279,7 @@ def move_rows(
     me: int,
     season: Season | None = None,
     box: BoxScores | None = None,
-    system: str = SYSTEM,
+    system: str | None = SYSTEM,
 ) -> list[dict[str, Any]]:
     """My moves of the week, each with its match, the knobs in force at the entry it matched
     (#129), the entry's projection of it (for a move made as recommended), the horizon it is
@@ -406,7 +416,7 @@ def league_payload(
     is_public: bool,
     records: Sequence[Mapping[str, Any]],
     entries: Sequence[Mapping[str, Any]],
-    system: str = SYSTEM,
+    system: str | None = SYSTEM,
     week: int | None = None,
     box: BoxScores | None = None,
 ) -> dict[str, Any]:

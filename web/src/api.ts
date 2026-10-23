@@ -1843,7 +1843,8 @@ export interface CalibrationBucket {
 export interface ScorecardPayload {
   league: string;
   public: boolean;
-  system: string;
+  /** The system named in the query; null when each week is scored on its own in force (#152). */
+  system: string | null;
   status: "recorded" | "not_recorded" | "no_team";
   week: number | null;
   card: ScorecardWeek | null;
@@ -1984,6 +1985,10 @@ export interface KnobChange {
   verdict: "kept" | "reverted" | null;
   judged_on: string | null;
   rolled_out: string | null;
+  /** A change of one scoring's knob (#152): its B half is that scoring's other leagues. */
+  scoring?: "categories" | "points" | null;
+  /** The B half the Monday step recorded (#152); null on a change that names none. */
+  b_leagues?: string[] | null;
   week: number | null;
   ab: {
     window: [number, number] | null;
@@ -2015,7 +2020,8 @@ export interface ProgressSentence {
 }
 
 export interface ProgressPayload {
-  system: string;
+  /** The system named in the query; null when each week is scored on its own in force (#152). */
+  system: string | null;
   today: string;
   week: number | null;
   last_recorded: number | null;

@@ -164,6 +164,8 @@ def test_every_hooked_knob_reaches_the_solve_and_the_log(client):
         "stash_threshold": 0.2,
         "faab_sizing": None,
         "daily_cap": 1,
+        # The system the file had in force, beside the one the solve ran on.
+        "file_system": "blend",
     }
     # The strategy marks the recommended weight; nothing executes it.
     s = client.post(
@@ -191,6 +193,7 @@ def test_a_named_system_wins_over_the_knob_files(client):
     named = client.get(f"/seasons/{LEAGUE}/moves", params={"system": "bbm"}).json()
     assert named["system"]["key"] == "bbm" and named["keep_rule"]["floor"] == 0.3
     assert [e["knobs"]["system"] for e in logged(client)] == ["yahoo", "bbm"]
+    assert [e["knobs"]["file_system"] for e in logged(client)] == ["yahoo", "yahoo"]
     b = client.get(f"/seasons/{LEAGUE}/moves", params={"system": "blend"}).json()
     assert b["system"]["key"] == "blend" and b["system"]["blend"] == 0.5
     assert client.get(f"/seasons/{LEAGUE}/best").json()["system"] == "yahoo"
@@ -216,7 +219,7 @@ def test_a_missing_or_broken_file_means_the_defaults(client, body):
     m = client.get(f"/seasons/{LEAGUE}/moves").json()
     assert m["system"]["key"] == "bbm"
     [entry] = logged(client)
-    assert entry["knobs"] == dict(pg.DEFAULTS)
+    assert entry["knobs"] == {**pg.DEFAULTS, "file_system": "bbm"}
     assert season_knobs.for_league(client.data_dir, LEAGUE) == dict(pg.DEFAULTS)
 
 
@@ -225,7 +228,7 @@ def test_a_value_the_file_may_not_hold_leaves_the_default_in_the_solve(client):
     put_knobs(client, {"in_force": {"protection_floor": -0.5, "daily_cap": 9, "system": "x"}})
     client.get(f"/seasons/{LEAGUE}/moves")
     [entry] = logged(client)
-    assert entry["knobs"] == dict(pg.DEFAULTS)
+    assert entry["knobs"] == {**pg.DEFAULTS, "file_system": "bbm"}
 
 
 def test_the_routes_and_the_trade_body_take_the_blend_and_refuse_another_system(client):

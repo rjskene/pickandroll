@@ -1,5 +1,6 @@
 """The season's commands: the weekly recorder (#97), run every Monday morning, the lineup
-check (#107), the decision log (#125) and the Monday scorecard (#126), for the terminal.
+check (#107), the decision log (#125), the Monday scorecard (#126) and the Monday hill-climb step
+(#152), for the terminal.
 
     python scripts/season.py record --all              # every league's latest finished week
     python scripts/season.py record 258901 --week 3     # one league, a past week
@@ -9,6 +10,8 @@ check (#107), the decision log (#125) and the Monday scorecard (#126), for the t
     python scripts/season.py decisions 258901           # the last week's solves and my moves
     python scripts/season.py scorecard                  # the last recorded week, as markdown
     python scripts/season.py scorecard 258901 --week 2  # one league's week, in a line
+    python scripts/season.py monday --dry-run           # the hill-climb step, nothing written
+    python scripts/season.py monday                     # this Monday's step, written once
 
 It asks the API (``PICKANDROLL_API``, by default http://127.0.0.1:8000) to record each league and
 prints one line per league:
@@ -49,7 +52,14 @@ each:
 
     258901 week 2: projected 61% to win, 5.2 categories; W 5-3-1; rank 2 of 12, 9-7-2; moves 2 (1 as recommended); to date 1-1-0, wins 1 against 1.10 expected; 1 moves realized +0.85 on their weeks (1 scored, 0 realized only); 1 moves unscored
 
-Exit codes: 0 every league was asked, whatever it answered; 2 the API is unreachable.
+``monday`` runs the hill-climb step (``POST /autopilot/monday``): it prints a line saying what was
+judged and changed and what was written, then the Monday note. A second run the same Monday
+writes nothing and says so; ``--force`` undoes that Monday's own change and runs again:
+
+    2026-11-09: written autopilot/knobs.json, autopilot/notes/2026-11-09.md; K1 kept; K2 protection_floor 0.0 → 0.05 in 4 leagues
+
+Exit codes: 0 every league was asked, whatever it answered; 2 the API is unreachable; for
+``monday``, 1 when the API refused the step.
 """
 
 from __future__ import annotations
@@ -382,6 +392,57 @@ def scorecard_all(
     return 0
 
 
+def monday_line(body: dict[str, Any]) -> str:
+    """The step in a line: its Monday, what it wrote, each verdict and the change."""
+    status = body["status"]
+    if status == "already":
+        made = ", ".join(c["id"] for c in body.get("changes") or []) or "no change"
+        return f"{body['monday']}: already run ({made}); nothing written"
+    head = (
+        f"written {', '.join(body['written'])}"
+        if body["written"]
+        else ("dry run, nothing written" if status == "dry_run" else "nothing written")
+    )
+    parts = [f"{v['id']} {v['verdict']}" for v in body.get("verdicts") or []]
+    c = body.get("change")
+    if c:
+        parts.append(
+            f"{c['id']} {c['knob']} {c['from']} → {c['to']} in {len(c['leagues'])} leagues"
+        )
+    else:
+        parts.append("no change")
+    return f"{body['monday']}: {head}; " + "; ".join(parts)
+
+
+def monday_step(
+    call: Call,
+    monday: str | None = None,
+    dry_run: bool = False,
+    force: bool = False,
+    as_json: bool = False,
+) -> int:
+    """The Monday hill-climb step, its line and its note."""
+    query = [f"monday={monday}"] if monday else []
+    query += ["dry_run=true"] * dry_run + ["force=true"] * force
+    path = "/autopilot/monday" + (f"?{'&'.join(query)}" if query else "")
+    try:
+        status, body = call("POST", path)
+    except Unreachable as exc:
+        print(f"the API is unreachable: {exc}", flush=True)
+        return 2
+    if as_json:
+        print(json.dumps(body), flush=True)
+        return 0 if status == 200 else 1
+    if status != 200:
+        detail = body.get("detail") if isinstance(body, dict) else body
+        print(f"monday: refused ({status}): {detail}", flush=True)
+        return 1
+    print(monday_line(body), flush=True)
+    if body.get("note"):
+        print(body["note"], end="", flush=True)
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     sub = ap.add_subparsers(dest="command", required=True)
@@ -408,7 +469,17 @@ def main(argv: list[str] | None = None) -> int:
     sc.add_argument("--week", type=int, help="a past week; by default the last recorded")
     sc.add_argument("--api", default=API, help="the API's address")
     sc.add_argument("--json", action="store_true", help="print each answer whole")
+    mo = sub.add_parser("monday", help="the Monday hill-climb step: verdicts, a change, the note")
+    mo.add_argument("--monday", help="the Monday (YYYY-MM-DD); this week's by default")
+    mo.add_argument("--dry-run", action="store_true", help="answer the step, write nothing")
+    mo.add_argument("--force", action="store_true", help="undo the Monday's change and run again")
+    mo.add_argument("--api", default=API, help="the API's address")
+    mo.add_argument("--json", action="store_true", help="print the answer whole")
     args = ap.parse_args(argv)
+    if args.command == "monday":
+        return monday_step(
+            http(args.api.rstrip("/")), args.monday, args.dry_run, args.force, args.json
+        )
     if args.command == "scorecard":
         return scorecard_all(http(args.api.rstrip("/")), args.leagues, args.week, args.json)
     if args.command == "decisions":

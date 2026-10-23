@@ -60,7 +60,14 @@ Routes:
 ``GET /seasons/scorecard``
     Every league's scorecard of ``?week=`` (the last any league recorded), the odds pooled over
     the public leagues that projected it (the private league apart), and the week as markdown
-    for the AUTOPILOT tracker (#127).
+    for the AUTOPILOT tracker (#127). Unless ``?system=`` names one, both score each week on the
+    system in force when it began (#152): the knob file's for the league, as the decision log
+    recorded it, so a change of system scores its first week on the old one for both halves.
+``POST /autopilot/monday``
+    The Monday hill-climb step (#152, ``season_hillclimb``): the verdicts due, at most one knob
+    change from the rule table, written to the knob file with the Monday note; once a Monday
+    (``?force=true`` undoes that Monday's change and runs again), ``?dry_run=true`` writes
+    nothing.
 ``GET /flags/digest``
     The day's breakout flags across every league with a season: each league's flagged players
     with their evidence, and the digest as markdown for a public issue (leagues by id, no team
@@ -120,6 +127,7 @@ from . import (
     leagues,
     season_decisions,
     season_flags,
+    season_hillclimb,
     season_knobs,
     season_lineup,
     season_matchup,
@@ -904,12 +912,13 @@ class SeasonService:
         self,
         league: str,
         week: int | None = None,
-        system: str = season_scorecard.SYSTEM,
+        system: str | None = None,
         box: season_scorecard.BoxScores | None = None,
     ) -> dict[str, Any]:
         """A league's recorded weeks against the decision log (#126): ``week`` (the last
         recorded by default) and every week to it, its moves realized from the cached box
-        scores, the season to date and the calibration."""
+        scores, the season to date and the calibration; on ``system``, by default each week on
+        the one in force when it began (#152, ``season.scorecard.projection``)."""
         base, is_public = self._base(league)
         season = Season.from_parts(base, load_parts(self.data_dir, league))
         folder = season_dir(self.data_dir, league)
@@ -933,9 +942,7 @@ class SeasonService:
         with self._ids_lock:
             box.save()
 
-    def scorecards(
-        self, week: int | None = None, system: str = season_scorecard.SYSTEM
-    ) -> dict[str, Any]:
+    def scorecards(self, week: int | None = None, system: str | None = None) -> dict[str, Any]:
         """Every league's scorecard of ``week`` (the last any league recorded by default), the
         public leagues' odds pooled, and the week as markdown for the AUTOPILOT tracker."""
         payloads, skipped = self._all_scorecards(system)
@@ -945,7 +952,9 @@ class SeasonService:
         )
         return {**out, "skipped": skipped, "generated_at": self.clock().isoformat()}
 
-    def _all_scorecards(self, system: str) -> tuple[list[dict[str, Any]], list[dict[str, str]]]:
+    def _all_scorecards(
+        self, system: str | None
+    ) -> tuple[list[dict[str, Any]], list[dict[str, str]]]:
         """Every league's scorecard of all its recorded weeks, read with one box-score cache,
         and the leagues whose scorecard failed with the reason."""
         payloads, skipped = [], []
@@ -959,7 +968,7 @@ class SeasonService:
         self._save_ids(box)
         return payloads, skipped
 
-    def progress(self, system: str = season_scorecard.SYSTEM) -> dict[str, Any]:
+    def progress(self, system: str | None = None) -> dict[str, Any]:
         """The Progress view (#129): every league's scorecard over the season as series by week,
         pooled over the public leagues, with the knob file and the Monday notes; reads only."""
         payloads, skipped = self._all_scorecards(system)
@@ -977,6 +986,22 @@ class SeasonService:
             system,
         )
         return {**out, "generated_at": self.clock().isoformat()}
+
+    def monday(
+        self, monday: date | None = None, dry_run: bool = False, force: bool = False
+    ) -> dict[str, Any]:
+        """The Monday hill-climb step (#152) for ``monday``, this week's by default: the
+        verdicts due, at most one knob change, the knob file and the Monday note written."""
+        day = monday or season_hillclimb.monday_of(nba_today(self.clock()))
+        return season_hillclimb.run(
+            self.data_dir,
+            day,
+            self.clock(),
+            self.progress,
+            season_hillclimb.scorings(self.data_dir, self._base),
+            dry_run,
+            force,
+        )
 
     # ------------------------------------------------------------------ freshness
     def status(self) -> dict[str, Any]:
@@ -1535,13 +1560,15 @@ def register(
 
     week_q = Query(None, ge=1, description="the week; by default the last recorded")
     scorecard_system_q = Query(
-        season_scorecard.SYSTEM, pattern="^(bbm|yahoo|blend)$", description="the system scored"
+        None,
+        pattern="^(bbm|yahoo|blend)$",
+        description="the system scored; by default each week's in force when it began (#152)",
     )
 
     # Before ``/seasons/{league}``, whose pattern would refuse the word.
     @app.get("/seasons/scorecard")
     async def get_scorecards(
-        week: int | None = week_q, system: str = scorecard_system_q
+        week: int | None = week_q, system: str | None = scorecard_system_q
     ) -> dict[str, Any]:
         """Every league's scorecard of a week (#126), pooled, with the markdown for #127."""
         return await asyncio.to_thread(service.scorecards, week, system)
@@ -1553,10 +1580,24 @@ def register(
         return await asyncio.to_thread(service.status)
 
     @app.get("/progress")
-    async def get_progress(system: str = scorecard_system_q) -> dict[str, Any]:
+    async def get_progress(system: str | None = scorecard_system_q) -> dict[str, Any]:
         """The hill-climb over the season (#129): every league's weeks against their
         projection, pooled, the moves, the knob changes and the Monday notes; reads only."""
         return await asyncio.to_thread(service.progress, system)
+
+    monday_q = Query(None, description="the Monday; this week's by default")
+
+    @app.post("/autopilot/monday")
+    async def post_monday(
+        monday: date | None = monday_q,
+        dry_run: bool = Query(False, description="answer the step, write nothing"),
+        force: bool = Query(
+            False, description="undo the Monday's own change (never one judged) and run again"
+        ),
+    ) -> dict[str, Any]:
+        """The Monday hill-climb step (#152): the verdicts due, at most one knob change from
+        the rule table, the knob file and the Monday note; once a Monday."""
+        return await asyncio.to_thread(service.monday, monday, dry_run, force)
 
     @app.get("/seasons/{league}")
     def get_season(league: str = league_id) -> dict[str, Any]:
@@ -1564,7 +1605,7 @@ def register(
 
     @app.get("/seasons/{league}/scorecard")
     async def get_scorecard(
-        league: str = league_id, week: int | None = week_q, system: str = scorecard_system_q
+        league: str = league_id, week: int | None = week_q, system: str | None = scorecard_system_q
     ) -> dict[str, Any]:
         """A league's recorded weeks against the decision log (#126)."""
         return await asyncio.to_thread(service.scorecard, league, week, system)
