@@ -269,7 +269,7 @@ def test_the_sentences_follow_their_thresholds():
             "odds",
             "pooled",
             "neutral",
-            "The matchup odds' Brier score is 0.20 over 10 weeks (0.25 is a coin flip, lower is better).",
+            "The matchup odds' Brier score is 0.20 over 10 matchups (0.25 is a coin flip, lower is better).",
         ),
         (
             "odds",

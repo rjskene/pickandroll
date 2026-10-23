@@ -508,18 +508,25 @@ export const SEASON_SHEET: Sheet = {
 };
 
 // ---------------------------------------------------------------- the Progress screen (#129)
-export type ProgressCardId = "note" | "knobs" | "league";
+export type ProgressCardId = "note" | "knobs" | "league" | "odds";
 
 export const PROGRESS_CARDS: CardDef<ProgressCardId>[] = [
   { id: "note", title: "Note", blurb: "the Monday note: what is working, what is not, the decision and the action items" },
   { id: "knobs", title: "Knobs", blurb: "the knob changes, their halves and verdicts, and the settings in force; a row opens its sheet" },
-  { id: "league", title: "League", blurb: "the league chosen: its weeks against expectation, its moves and its sentences" },
+  { id: "league", title: "League", blurb: "the league chosen: its weeks against expectation, its moves and its sentences; in the Moves view, the move chosen" },
+  { id: "odds", title: "Odds", blurb: "the odds against the results: the matchup odds' Brier score and the category odds by bucket" },
 ];
 
-export type ProgressViewId = "trend";
+/** Card 3 in the Moves view: the move chosen in its table. */
+export const PROGRESS_MOVE_CARD: CardDef<ProgressCardId> = { id: "league", title: "Move", blurb: "the move chosen: projected against realized, its knobs, its match and its week's odds" };
+
+export type ProgressViewId = "trend" | "moves" | "odds" | "table";
 
 export const PROGRESS_VIEWS: ViewDef<ProgressViewId>[] = [
   { id: "trend", title: "Trend", key: "t", blurb: "wins, categories and standing over the season against their expectation" },
+  { id: "moves", title: "Moves", key: "m", blurb: "every move made, its value projected against realized, by match" },
+  { id: "odds", title: "Odds", key: "o", blurb: "the odds against the results: the Brier score by week and the category odds by bucket" },
+  { id: "table", title: "Table", key: "b", blurb: "every league by week: the result against its odds, the moves and the place" },
 ];
 
 export const DEFAULT_PROGRESS_VIEWS: Views<ProgressViewId> = { view: "trend", shown: true };
@@ -567,7 +574,7 @@ export function progressKeys(s: ProgressKeys): KeyMap {
 }
 
 export const PROGRESS_SHEET: Sheet = {
-  cards: `Cards are ${PROGRESS_CARDS.map((c, i) => `${i + 1} ${c.title}`).join(" · ")}, the numbers on the rail. Views are ${PROGRESS_VIEWS.map((v) => `${v.key} ${v.title}`).join(" · ")}, the tabs of the drawer at the left. Nothing on this screen writes anything.`,
+  cards: `Cards are ${PROGRESS_CARDS.map((c, i) => `${i + 1} ${c.title}`).join(" · ")}, the numbers on the rail (3 is the Move in the Moves view). Views are ${PROGRESS_VIEWS.map((v) => `${v.key} ${v.title}`).join(" · ")}, the tabs of the drawer at the left. Nothing on this screen writes anything.`,
   groups: [
     {
       title: "Views",

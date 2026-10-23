@@ -434,7 +434,7 @@ test("each sheet names its screen's cards and lists its keys", () => {
   for (const k of ["1", "8", "⇧ 2", "]", "[", "w", "h", "s", "l", "x", "Esc", "/", "j", "k", "↓", "↑", "Enter", "t", "m", "r", "p", "?"]) assert.ok(listed.includes(k), k);
   assert.ok(PROGRESS_SHEET.cards.startsWith(`Cards are ${PROGRESS_CARDS.map((c, i) => `${i + 1} ${c.title}`).join(" · ")},`));
   const progress = PROGRESS_SHEET.groups.flatMap((g) => g.rows.flatMap(([keys]) => keys));
-  for (const k of ["1", "3", "⇧ 3", "]", "[", "t", "x", "←", "→", "Esc", "?"]) assert.ok(progress.includes(k), k);
+  for (const k of ["1", "4", "⇧ 4", "]", "[", "t", "m", "o", "b", "x", "←", "→", "Esc", "?"]) assert.ok(progress.includes(k), k);
 });
 
 /** The Progress screen's actions, recorded. */
@@ -462,19 +462,27 @@ function fakeProgress(over: Partial<ProgressKeys> = {}) {
   return { map: progressKeys(s), calls };
 }
 
-test("progress: digits open its three cards, t its view, [ ] x the drawers", () => {
+test("progress: digits open its four cards, t m o b its views, [ ] x the drawers", () => {
   assert.deepEqual(
     PROGRESS_CARDS.map((c) => c.id),
-    ["note", "knobs", "league"],
+    ["note", "knobs", "league", "odds"],
   );
   assert.deepEqual(
     PROGRESS_VIEWS.map((v) => [v.key, v.id]),
-    [["t", "trend"]],
+    [
+      ["t", "trend"],
+      ["m", "moves"],
+      ["o", "odds"],
+      ["b", "table"],
+    ],
   );
   const cases: [KeyLike, unknown[][]][] = [
     [digit(1), [["open", "note", "top"]]],
     [digit(3, true), [["open", "league", "bottom"]]],
     [key("t"), [["view", "trend"]]],
+    [key("m"), [["view", "moves"]]],
+    [key("o"), [["view", "odds"]]],
+    [key("b"), [["view", "table"]]],
     [key("["), [["views"]]],
     [key("]"), [["toggle"]]],
     [key("x"), [["swap"]]],
@@ -485,7 +493,8 @@ test("progress: digits open its three cards, t its view, [ ] x the drawers", () 
     assert.deepEqual(calls, want, e.key);
   }
   const { map } = fakeProgress();
-  assert.equal(handleKey(digit(4), map), false);
+  assert.equal(handleKey(digit(4), map), true);
+  assert.equal(handleKey(digit(5), fakeProgress().map), false);
 });
 
 test("progress: Esc closes a change's sheet before the panel, and the arrows step only in it", () => {

@@ -2,10 +2,19 @@
 // Every value is made up; leagues are numbered 1001, 1002 (public) and 2001 (private).
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import type { KnobChange, ProgressLeague, ProgressPayload, ProgressWeek } from "./api";
+import type { KnobChange, PooledWeek, ProgressLeague, ProgressMove, ProgressPayload, ProgressWeek } from "./api";
 import {
   abGap,
   addMoves,
+  bucketsOver,
+  entryTime,
+  matchCounts,
+  moveCats,
+  moveFigures,
+  moveHorizon,
+  movesTotals,
+  movesTrend,
+  scopeMoves,
   knobValue,
   POOLED,
   rangeSum,
@@ -13,6 +22,7 @@ import {
   recordLabel,
   scopeSentences,
   scopeWeeks,
+  shownRange,
   stepChange,
   stepRange,
   trend,
@@ -197,6 +207,10 @@ test("the week range steps within the recorded weeks and never crosses itself", 
   assert.deepEqual(stepRange([1, 6], [1, 6], 1, 1), [1, 6]);
   assert.deepEqual(stepRange([3, 3], [1, 6], 0, 1), [3, 3]);
   assert.deepEqual(stepRange([1, 5], [1, 6], 0, -1), [1, 5]);
+  assert.deepEqual(shownRange([1, 6], null), [1, 6]);
+  assert.deepEqual(shownRange([2, 6], [1, 4]), [2, 4], "cut to another scope's weeks");
+  assert.deepEqual(shownRange([5, 6], [1, 3]), [5, 6], "nothing left: all of the scope's");
+  assert.deepEqual(shownRange(null, [1, 3]), [1, 0]);
 });
 
 test("a scope's sentences are the pooled ones with the leagues named, or a league's own", () => {
@@ -241,4 +255,101 @@ test("knob values read as the file holds them", () => {
   assert.equal(knobValue("natural"), "natural");
   assert.equal(knobValue(null), "—");
   assert.equal(knobValue({ a: 1 }), '{"a":1}');
+});
+
+function mv(over: Partial<ProgressMove> & { set?: string | null; proj?: number | null; real?: number | null; complete?: boolean } = {}): ProgressMove {
+  const { set = "week", proj = 1, real = 0.5, complete = true, ...rest } = over;
+  const h = set === "three" ? "three" : "week";
+  const span = (value: number | null, cats: Record<string, number>) => ({ from: "2026-10-27", to: "2026-11-01", add_games: 3, drop_games: 2, value, cats });
+  return {
+    league: "1001",
+    public: true,
+    week: 2,
+    scoring: "categories",
+    names: { add: "Player A", drop: "Player B" },
+    group: "scored",
+    day: "2026-10-27",
+    at: "2026-10-27T14:00:00Z",
+    add: 11,
+    drop: 12,
+    detail: null,
+    bid: 0,
+    match: { kind: "as_recommended", entry: "20261027T130000000000-moves-bbm", move: null, near: false },
+    projected: set == null ? null : { set, gain: {}, value: { add: 1, drop: 0, horizons: { [h]: span(proj, { pts: 0.75, reb: 0.25 }) } } },
+    realized: {
+      valued: real != null,
+      reason: real == null ? "not_read" : null,
+      add: null,
+      drop: null,
+      horizons: real == null ? {} : { [h]: { ...span(real, { pts: 0.75, reb: -0.25 }), through: "2026-11-01", complete, missing: [], add: real, drop: 0, gaps: 0 } },
+      scorer: { entry: "e", own: true },
+      lag_days: 0,
+    },
+    ...rest,
+  };
+}
+
+test("a move is judged on its set's horizon, and its gap only once that is over", () => {
+  assert.equal(moveHorizon(mv()), "week");
+  assert.equal(moveHorizon(mv({ set: "plan" })), "week");
+  assert.equal(moveHorizon(mv({ set: "three" })), "three");
+  assert.equal(moveHorizon(mv({ set: "natural" })), "three", "a strategy set");
+  assert.equal(moveHorizon(mv({ set: null })), "week");
+  assert.deepEqual(moveFigures(mv({ set: "three", proj: 2, real: 2.5 })), { horizon: "three", projected: 2, realized: 2.5, complete: true, delta: 0.5 });
+  assert.equal(moveFigures(mv({ complete: false })).delta, null, "so far");
+  assert.equal(moveFigures(mv({ real: null })).realized, null);
+});
+
+test("the moves are filtered by scope, week and match, and totalled by scoring", () => {
+  const moves = [
+    mv(),
+    mv({ league: "1002", scoring: "points", proj: 10, real: 12, bid: 3 }),
+    mv({ league: "2001", public: false }),
+    mv({ week: 3, complete: false, match: { kind: "differently", entry: null, move: null, near: false } }),
+    mv({ week: 3, real: null, set: null, match: { kind: "no_entry", entry: null, move: null, near: false } }),
+  ];
+  const p = payload([], { moves });
+  assert.equal(scopeMoves(p, POOLED).length, 4);
+  assert.equal(scopeMoves(p, "2001").length, 1);
+  assert.equal(scopeMoves(p, POOLED, 3, 3).length, 2);
+  assert.equal(scopeMoves(p, POOLED, 1, 9, "differently").length, 1);
+  assert.deepEqual(matchCounts(scopeMoves(p, POOLED)), { as_recommended: 2, differently: 1, not_recommended: 0, no_entry: 1 });
+  const t = movesTotals(scopeMoves(p, POOLED));
+  assert.deepEqual(t.compared.categories, { moves: 1, projected: 1, realized: 0.5, same_way: 1, share: 0.5 });
+  assert.deepEqual(t.compared.points, { moves: 1, projected: 10, realized: 12, same_way: 1, share: 1.2 });
+  assert.deepEqual([t.made, t.soFar, t.unscored, t.paid, t.bids], [4, 1, 1, 3, 1]);
+  assert.deepEqual(movesTrend(scopeMoves(p, POOLED), [1, 2, 3], "categories"), [
+    { week: 1, projected: 0, realized: 0 },
+    { week: 2, projected: 1, realized: 0.5 },
+    { week: 3, projected: 1, realized: 0.5 },
+  ]);
+});
+
+test("a move's categories, largest first, with how many beat their projection", () => {
+  const c = moveCats(mv());
+  assert.deepEqual(
+    c.rows.map((r) => [r.cat, r.projected, r.realized]),
+    [
+      ["pts", 0.75, 0.75],
+      ["reb", 0.25, -0.25],
+    ],
+  );
+  assert.deepEqual([c.above, c.both], [0, 2]);
+  // Logged before #129: no projected split, the realized one alone.
+  const old = mv();
+  delete old.projected!.value.horizons.week!.cats;
+  assert.deepEqual(
+    moveCats(old).rows.map((r) => r.projected),
+    [null, null],
+  );
+  assert.equal(entryTime("20261027T130500000000-moves-bbm"), "2026-10-27 13:05");
+  assert.equal(entryTime(null), null);
+});
+
+test("the odds' buckets sum over the pooled weeks by count", () => {
+  const b = (count: number, odds: number | null, won: number | null) => ({ from: 0.6, to: 0.8, count, odds, won });
+  const week = (n: number, buckets: ReturnType<typeof b>[]) => ({ week: n, buckets }) as unknown as PooledWeek;
+  const out = bucketsOver([week(1, [b(10, 0.7, 0.5)]), week(2, [b(30, 0.66, 0.7)]), week(3, [b(0, null, null)])], 1, 3);
+  assert.deepEqual(out, [{ from: 0.6, to: 0.8, count: 40, odds: 0.67, won: 0.65 }]);
+  assert.deepEqual(bucketsOver([week(1, [b(10, 0.7, 0.5)])], 2, 3), []);
 });

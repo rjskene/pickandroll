@@ -1,6 +1,6 @@
-import { Fragment, useEffect, useRef, useState, type ReactNode } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { api, type KnobChange, type KnobName, type ProgressLeague, type ProgressPayload, type ProgressSentence, type Scoring } from "../api";
+import { api, type KnobChange, type KnobName, type ProgressLeague, type ProgressPayload, type Scoring } from "../api";
 import { pct } from "../format";
 import {
   DEFAULT_PROGRESS_VIEWS,
@@ -8,6 +8,7 @@ import {
   isShown,
   parseViewsOf,
   PROGRESS_CARDS,
+  PROGRESS_MOVE_CARD,
   PROGRESS_SHEET,
   PROGRESS_VIEWS,
   progressKeys,
@@ -25,20 +26,20 @@ import {
   knobValue,
   LINEUP_LOST_TITLE,
   METRICS,
+  moveKey,
   POOLED,
   publicLeagues,
   rangeSum,
-  recordedRange,
   recordLabel,
   scopeSentences,
   scopeWeeks,
   stepChange,
-  stepRange,
   trend,
   UNITS,
   UNITS_SHORT,
   verdictLabel,
   whyTried,
+  type MatchFilter,
   type Metric,
   type MovesSum,
   type RangeSum,
@@ -48,10 +49,14 @@ import { gainLabel, ordinal, unitsLabel } from "../season";
 import { useDrawer, useHotkeys, useViewsOf } from "../useKeys";
 import Halves, { type Face } from "./Halves";
 import KeySheet from "./KeySheet";
-import ProgressChart, { type Marker, type Series } from "./ProgressChart";
+import ProgressChart, { type Series } from "./ProgressChart";
+import { MoveCard, MovesView } from "./ProgressMoves";
+import { OddsCard, OddsView } from "./ProgressOdds";
+import { knobMarkers, NothingScored, ScopeHead, Sentences, signed1, Tile, viewRange, weekDates } from "./ProgressParts";
+import { TableView } from "./ProgressTable";
 import Rail from "./Rail";
 import ViewDrawer from "./ViewDrawer";
-import { Close, PROGRESS_ICONS, PROGRESS_VIEW_ICONS } from "./icons";
+import { Close, PROGRESS_ICONS, PROGRESS_MOVE_ICON, PROGRESS_VIEW_ICONS } from "./icons";
 
 const PANEL_KEY = "pickandroll.progress.drawer";
 const VIEW_KEY = "pickandroll.progress.view";
@@ -65,17 +70,15 @@ const DEFAULT_PANEL: DrawerState<ProgressCardId> = {
   width: DRAWER_WIDTH,
 };
 const parseViews = (raw: string | null): Views<ProgressViewId> => parseViewsOf(raw, PROGRESS_VIEWS, DEFAULT_PROGRESS_VIEWS);
-
-const signed1 = (x: number) => gainLabel(x, 1);
-const weekDates = (w: { start: string; end: string }) => {
-  const d = (s: string) => new Date(`${s}T12:00:00`).toLocaleDateString("en-US", { month: "short", day: "numeric" }).toLowerCase();
-  return `${d(w.start)} – ${d(w.end)}`;
-};
+// In the Moves view card 3 is the Move: the move chosen in its table.
+const MOVES_CARDS = PROGRESS_CARDS.map((c) => (c.id === "league" ? PROGRESS_MOVE_CARD : c));
+const MOVES_ICONS = { ...PROGRESS_ICONS, league: PROGRESS_MOVE_ICON };
 
 /** The Progress screen (#129; docs/AUTOPILOT.md section 6): the hill-climb over the season,
- * read-only. The league page's shell (#109, #116): views at the left (Trend), the cards at the
- * right (the Monday note, the knobs, the league chosen) and their rail and keys; a knob
- * change's sheet over the view. Nothing on it writes anything. */
+ * read-only. The league page's shell (#109, #116): views at the left (Trend, Moves, Odds,
+ * Table), the cards at the right (the Monday note, the knobs, the league or the move chosen,
+ * the odds) and their rail and keys; a knob change's sheet over the view. Nothing on it writes
+ * anything. */
 export default function ProgressScreen({ onBack, onOpenLeague }: { onBack: () => void; onOpenLeague: (league: string) => void }) {
   const q = useQuery({ queryKey: ["progress"], queryFn: api.progress, refetchInterval: 600_000 });
   const p = q.data;
@@ -86,6 +89,8 @@ export default function ProgressScreen({ onBack, onOpenLeague }: { onBack: () =>
   const [range, setRange] = useState<[number, number] | null>(null);
   const [change, setChange] = useState<string | null>(null);
   const [noteAt, setNoteAt] = useState<number | null>(null);
+  const [match, setMatch] = useState<MatchFilter>("all");
+  const [move, setMove] = useState<string | null>(null);
   const [sheetOpen, setSheetOpen] = useState(false);
   const changes = p?.knobs.changes ?? [];
   useHotkeys(
@@ -103,13 +108,24 @@ export default function ProgressScreen({ onBack, onOpenLeague }: { onBack: () =>
       setSheetOpen,
     }),
   );
-  // A league chosen from a chip, a row or a card shows in the League card, when the panel is open.
+  const inMoves = views.view === "moves";
+  // A league chosen from a chip, a row or a card shows in the League card, when the panel is
+  // open (in the Moves view card 3 is the Move, left as it is).
   const choose = (league: string) => {
     setScope(league);
-    if (league !== POOLED && panel.drawerOpen && !isShown(panel.drawer, "league")) panel.openCard("league", "bottom");
+    if (league !== POOLED && !inMoves && panel.drawerOpen && !isShown(panel.drawer, "league")) panel.openCard("league", "bottom");
   };
+  // A move chosen in the Moves view shows in card 3, opened when it is not on show.
+  const chooseMove = (key: string) => {
+    setMove(key);
+    if (!isShown(panel.drawer, "league")) panel.openCard("league", "top");
+  };
+  const chosen = p && move ? (p.moves.find((m) => moveKey(m) === move) ?? null) : null;
   const face = (id: ProgressCardId): Face => {
     if (!p) return { body: null };
+    if (id === "league" && inMoves) {
+      return { title: PROGRESS_MOVE_CARD.title, note: chosen ? `${chosen.day ?? ""} · ${chosen.league}` : "none chosen", body: <MoveCard p={p} m={chosen} /> };
+    }
     switch (id) {
       case "note":
         return noteFace(p, noteAt, setNoteAt, setChange);
@@ -120,6 +136,8 @@ export default function ProgressScreen({ onBack, onOpenLeague }: { onBack: () =>
           note: scope === POOLED ? "all public · pooled" : p.leagues.find((l) => l.league === scope)?.public === false ? "private · suggestions only" : `league ${scope}`,
           body: <LeagueCard p={p} scope={scope} onScope={choose} onOpenLeague={onOpenLeague} />,
         };
+      case "odds":
+        return { note: "calibration · pooled", body: <OddsCard p={p} /> };
       default:
         return { body: null };
     }
@@ -150,13 +168,18 @@ export default function ProgressScreen({ onBack, onOpenLeague }: { onBack: () =>
             <div className="season-body">
               <ViewDrawer views={PROGRESS_VIEWS} icons={PROGRESS_VIEW_ICONS} view={views.view} shown={views.shown} onView={views.setView} onToggle={views.toggleViews} />
               <div className="board-col view-col">
-                <TrendView p={p} scope={scope} onScope={choose} metric={metric} setMetric={setMetric} range={range} setRange={setRange} onChange={setChange} onOpenLeague={onOpenLeague} />
+                {views.view === "trend" && (
+                  <TrendView p={p} scope={scope} onScope={choose} metric={metric} setMetric={setMetric} range={range} setRange={setRange} onChange={setChange} onOpenLeague={onOpenLeague} />
+                )}
+                {inMoves && <MovesView p={p} scope={scope} onScope={choose} range={range} setRange={setRange} match={match} setMatch={setMatch} chosen={move} onMove={chooseMove} onChange={setChange} />}
+                {views.view === "odds" && <OddsView p={p} scope={scope} onScope={choose} range={range} setRange={setRange} onChange={setChange} />}
+                {views.view === "table" && <TableView p={p} scope={scope} onScope={choose} range={range} setRange={setRange} />}
               </div>
-              <Halves d={panel} cards={PROGRESS_CARDS} face={face} />
+              <Halves d={panel} cards={inMoves ? MOVES_CARDS : PROGRESS_CARDS} face={face} />
             </div>
             <Rail
-              cards={PROGRESS_CARDS}
-              icons={PROGRESS_ICONS}
+              cards={inMoves ? MOVES_CARDS : PROGRESS_CARDS}
+              icons={inMoves ? MOVES_ICONS : PROGRESS_ICONS}
               on={(id) => isShown(panel.drawer, id)}
               onOpen={panel.openCard}
               onSheet={() => setSheetOpen(true)}
@@ -229,19 +252,11 @@ function TrendView({
   onChange: (id: string) => void;
   onOpenLeague: (league: string) => void;
 }) {
-  const recorded = p.leagues.filter((l) => l.weeks.length > 0);
-  const bounds = recordedRange(p, scope);
-  const shown: [number, number] | null = bounds && (range ? [Math.max(range[0], bounds[0]), Math.min(range[1], bounds[1])] : bounds);
-  const [from, to] = shown && shown[0] <= shown[1] ? shown : (bounds ?? [1, 0]);
+  const { bounds, from, to, step } = viewRange(p, scope, range, setRange);
   const weeks = bounds ? scopeWeeks(p, scope, from, to) : [];
   const sum = rangeSum(weeks);
   const points = trend(weeks, metric);
-  const step = (end: 0 | 1, delta: number) => {
-    if (bounds) setRange(stepRange([from, to], bounds, end, delta));
-  };
-  const markers: Marker[] = p.knobs.changes
-    .filter((c) => c.week != null && c.week >= from && c.week <= to)
-    .map((c) => ({ week: c.week!, id: c.id, title: `${c.id} · ${changeWhat(c, KNOB_TITLE)}`, onOpen: () => onChange(c.id) }));
+  const markers = knobMarkers(p, from, to, onChange);
   const series: Series[] =
     metric === "standing"
       ? [{ key: "place", label: scope === POOLED ? "mean place" : "place", tone: "actual", values: points.map((t) => t.actual) }]
@@ -253,19 +268,7 @@ function TrendView({
   const nowWeek = p.week != null && p.week > to && to === bounds?.[1] ? p.weeks.find((w) => w.week === p.week) : undefined;
   return (
     <div className="season-view progress-view">
-      <div className="sv-head">
-        <span className="k">Season to date</span>
-        <span className="seg small" role="group" aria-label="Scope">
-          <button className={scope === POOLED ? "on" : undefined} aria-pressed={scope === POOLED} onClick={() => onScope(POOLED)} title="the public leagues pooled; the private league stays apart">
-            All public · pooled
-          </button>
-          {recorded.map((l) => (
-            <button key={l.league} className={scope === l.league ? "on" : undefined} aria-pressed={scope === l.league} onClick={() => onScope(l.league)}>
-              {l.league}
-              {l.public ? "" : " · private"}
-            </button>
-          ))}
-        </span>
+      <ScopeHead p={p} title="Season to date" scope={scope} onScope={onScope} bounds={bounds} from={from} to={to} setRange={setRange} onStep={step}>
         <span className="seg small" role="tablist" aria-label="Metric">
           {METRICS.map((m) => (
             <button key={m.id} role="tab" aria-selected={metric === m.id} className={metric === m.id ? "on" : undefined} title={m.title} onClick={() => setMetric(m.id)}>
@@ -273,37 +276,9 @@ function TrendView({
             </button>
           ))}
         </span>
-        {bounds && (
-          <span className="pg-range" aria-label="Weeks shown">
-            <span className="dim">weeks</span>
-            <button className="small" disabled={from <= bounds[0]} onClick={() => step(0, -1)} aria-label="Start a week earlier">
-              ‹
-            </button>
-            <b>{from}</b>
-            <button className="small" disabled={from >= to} onClick={() => step(0, 1)} aria-label="Start a week later">
-              ›
-            </button>
-            <span className="dim">to</span>
-            <button className="small" disabled={to <= from} onClick={() => step(1, -1)} aria-label="End a week earlier">
-              ‹
-            </button>
-            <b>{to}</b>
-            <button className="small" disabled={to >= bounds[1]} onClick={() => step(1, 1)} aria-label="End a week later">
-              ›
-            </button>
-            {(from !== bounds[0] || to !== bounds[1]) && (
-              <button className="link" onClick={() => setRange(null)}>
-                all
-              </button>
-            )}
-          </span>
-        )}
-      </div>
+      </ScopeHead>
       {!bounds ? (
-        <p className="muted pg-empty">
-          {scope === POOLED ? "No public league" : `League ${scope}`} has a scored week yet. The Monday recorder scores each week once it ends, against the odds the decision log
-          held for it; the weeks show here from the first one scored.
-        </p>
+        <NothingScored scope={scope} />
       ) : (
         <>
           <Tiles sum={sum} metric={metric} scope={scope} from={from} to={to} />
@@ -376,33 +351,6 @@ function Tiles({ sum, metric, scope, from, to }: { sum: RangeSum; metric: Metric
         {sum.brier == null ? "no odds scored" : `last week · ${sum.brier.toFixed(2)} over ${over}`}
       </Tile>
     </div>
-  );
-}
-
-function Tile({ k, v, title, children }: { k: string; v: string; title: string; children: ReactNode }) {
-  return (
-    <div className="pg-tile" title={title}>
-      <span className="k">{k}</span>
-      <span className="v">{v}</span>
-      <span className="muted">{children}</span>
-    </div>
-  );
-}
-
-const TONE_MARK: Record<ProgressSentence["tone"], string> = { good: "▲", bad: "▼", neutral: "·" };
-
-function Sentences({ say }: { say: ProgressSentence[] }) {
-  return (
-    <ul className="pg-say" aria-label="What the numbers say">
-      {say.map((s, i) => (
-        <li key={i}>
-          <span className={`mark ${s.tone}`} aria-label={s.tone === "neutral" ? undefined : s.tone === "good" ? "better" : "worse"}>
-            {TONE_MARK[s.tone]}
-          </span>
-          {s.text}
-        </li>
-      ))}
-    </ul>
   );
 }
 

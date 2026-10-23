@@ -154,7 +154,18 @@ export const PROGRESS_ICONS: Record<ProgressCardId, ReactElement> = {
     </svg>
   ),
   league: SEASON_ICONS.league,
+  // A target: the odds against where they landed.
+  odds: (
+    <svg width="20" height="20" viewBox="0 0 24 24" {...stroke} aria-hidden="true">
+      <circle cx="12" cy="12" r="8" />
+      <circle cx="12" cy="12" r="3.5" />
+      <path d="M12 2v3M12 19v3M2 12h3M19 12h3" />
+    </svg>
+  ),
 };
+
+/** Card 3 in the Moves view (#129): the move chosen. */
+export const PROGRESS_MOVE_ICON = SEASON_ICONS.moves;
 
 export const PROGRESS_VIEW_ICONS: Record<ProgressViewId, ReactElement> = {
   // A climbing line over a baseline.
@@ -162,6 +173,24 @@ export const PROGRESS_VIEW_ICONS: Record<ProgressViewId, ReactElement> = {
     <svg width="18" height="18" viewBox="0 0 24 24" {...stroke} aria-hidden="true">
       <path d="M3 20h18M4 16l5-5 4 3 7-8" />
       <path d="M4 14h16" strokeDasharray="2 3" />
+    </svg>
+  ),
+  moves: (
+    <svg width="18" height="18" viewBox="0 0 24 24" {...stroke} aria-hidden="true">
+      <path d="M7 4v16M3 8l4-4 4 4M17 20V4M13 16l4 4 4-4" />
+    </svg>
+  ),
+  odds: (
+    <svg width="18" height="18" viewBox="0 0 24 24" {...stroke} aria-hidden="true">
+      <circle cx="12" cy="12" r="8" />
+      <circle cx="12" cy="12" r="3.5" />
+    </svg>
+  ),
+  // A grid: leagues down, weeks across.
+  table: (
+    <svg width="18" height="18" viewBox="0 0 24 24" {...stroke} aria-hidden="true">
+      <rect x="3" y="4" width="18" height="16" rx="2" />
+      <path d="M3 9h18M3 14h18M9 4v16" />
     </svg>
   ),
 };

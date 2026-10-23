@@ -267,17 +267,40 @@ comes back to it.
   tip by week, with each league's result when pooled), the week strip, and the league table
   (W-L, expected, the gap, moves, realized in the league's units, lineup games lost shown as a
   dash until the lineup log exists, the place), each row opening its weeks.
+- **Moves** (`m`): the same scope and range, and the moves made by match (as recommended,
+  differently, not recommended, no solve before it), each counted. Each move is judged on the
+  horizon its set was recommended for (the week's set and the streaming plan's on its week, the
+  three weeks' set and the strategy's on the three weeks after), in its league's units. Three
+  figures: projected and realized over the moves whose horizon is over, one for each unit, with
+  the realized share of the projection; and the FAAB paid, free against bid. Then the scope's
+  moves sentences, a chart of the realized against the projected summed to each week (one unit at
+  a time, switched when both are present; the knob changes marked), and the table: date, league,
+  add, for, horizon, bid, match, projected, realized ("so far" while the horizon runs) and the gap
+  once it is over. A row opens the move in card 3; ▸ opens its categories under it, a bar for the
+  realized and a tick for the projected on one scale around zero.
+- **Odds** (`o`): the matchup odds by their Brier score over the range (0.25 a coin flip, lower
+  better), the record against the wins expected, and the category odds' share won against the
+  odds said; the odds sentences; the Brier score by week against the coin flip, the knob changes
+  marked; and the category odds by bucket over the range (the odds said, the categories, the
+  share won and the gap). The buckets are the public leagues pooled whatever the scope: a league
+  alone holds too few categories to read.
+- **Table** (`b`): every league by week, the newest first, each week under a row with the public
+  leagues' record against expected and the changes that started in it: the result, its odds, the
+  gap, the categories against expected, the moves, their realized value and the place.
 - **Cards:** 1 Note (one Monday note at a time, stepped with ‹ ›: the action items first, as
   handled in the session, then what is working, what is not and the decision), 2 Knobs (the
   changes with their half and verdict, the knobs in force, each league's own values and the knobs
   frozen, and any problem reading the files), 3 League (the league chosen: its record, place,
-  moves by match and sentences, and a link to its league page).
+  moves by match and sentences, and a link to its league page), or the Move in the Moves view (the
+  move chosen: its projected and realized values, horizon and bid, how it matched the solve and
+  from which set, when it was solved and made, the knobs in force at that solve, its week's result
+  and the set's odds of winning the matchup and expected categories before and after it), and
+  4 Odds (the season's Brier score and the category odds by bucket, the public leagues pooled,
+  with the odds sentences).
 - **The knob sheet**, over the view (Esc closes it, ← → step through the changes): the change and
   its dates, its verdict as the file holds it, the wins above expected a league a week for A
   against B, the A/B table, why it was tried (the Decision of the note of its Monday, else the
   change's reason), the rule it is judged by and the leagues in A.
-
-The Moves, Odds and Table views and the Move and Odds cards follow in #129's third part.
 
 ## 7. Phases
 

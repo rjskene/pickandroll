@@ -1,7 +1,7 @@
 // The Progress screen's arithmetic (#129): the payload's league weeks cut to a scope (the public
 // leagues pooled, or one league) and a week range, the running sums over that range, the headline
 // figures, and the knob changes in words. Pure, so its tests run under node.
-import type { KnobChange, KnobName, MovesCompared, ProgressLeague, ProgressPayload, ProgressSentence, ProgressWeek, Scoring } from "./api";
+import type { CalibrationBucket, KnobChange, KnobName, MatchKind, MoveHorizon, MovesCompared, PooledWeek, ProgressLeague, ProgressMove, ProgressPayload, ProgressSentence, ProgressWeek, Scoring } from "./api";
 
 /** The scope of the public leagues pooled; any other scope is a league's id. */
 export const POOLED = "pooled";
@@ -320,4 +320,157 @@ export function whyTried(p: ProgressPayload, c: KnobChange): { text: string; fro
 /** The public leagues recorded, for a change's B half count. */
 export function publicLeagues(p: ProgressPayload): string[] {
   return p.leagues.filter((l) => l.public && l.weeks.length > 0).map((l) => l.league);
+}
+
+// ---------------------------------------------------------------- the moves (PR 3)
+export type MatchFilter = "all" | MatchKind;
+
+/** A match in a table cell, and its tag's tone. */
+export const MATCH_SHORT: Record<MatchKind, string> = { as_recommended: "as reco", differently: "differently", not_recommended: "not reco", no_entry: "no solve" };
+export const MATCH_TONE: Record<MatchKind, "good" | "accent" | "bad" | "tie"> = { as_recommended: "good", differently: "accent", not_recommended: "bad", no_entry: "tie" };
+/** What each match means, from the decision log (#125). */
+export const MATCH_TITLE: Record<MatchKind, string> = {
+  as_recommended: "a set of the solve before it held the same add with the same drop",
+  differently: "a set of the solve before it added the same player for another drop, or dropped the same player for another add",
+  not_recommended: "no set of the solve before it named either player",
+  no_entry: "nothing was logged before it",
+};
+export const HORIZON_SHORT: Record<MoveHorizon, string> = { week: "week", three: "3 wk" };
+
+/** The horizon a move is judged on: the one its set was recommended for (the week's set and
+ * the streaming plan's, the week; the three weeks' set and the strategy's, the three weeks); a
+ * move with no projection of its own, its week. */
+export function moveHorizon(m: ProgressMove): MoveHorizon {
+  const set = m.projected?.set;
+  return set == null || set === "week" || set === "plan" ? "week" : "three";
+}
+
+/** A move on its horizon: its value projected and realized (in its league's units), whether the
+ * realized span is over, and the gap once it is. */
+export interface MoveFigures {
+  horizon: MoveHorizon;
+  projected: number | null;
+  realized: number | null;
+  complete: boolean;
+  delta: number | null;
+}
+
+export function moveFigures(m: ProgressMove): MoveFigures {
+  const horizon = moveHorizon(m);
+  const projected = m.projected?.value.horizons[horizon]?.value ?? null;
+  const span = m.realized?.valued ? m.realized.horizons[horizon] : undefined;
+  const realized = span?.value ?? null;
+  const complete = !!span?.complete;
+  return { horizon, projected, realized, complete, delta: projected != null && realized != null && complete ? round(realized - projected) : null };
+}
+
+/** A move's key, the same from one read to the next. */
+export function moveKey(m: ProgressMove): string {
+  return `${m.league}:${m.at ?? m.day ?? ""}:${m.add ?? ""}:${m.drop ?? ""}`;
+}
+
+/** The moves of a scope (the public leagues', or one league's) over a week range, by match. */
+export function scopeMoves(p: ProgressPayload, scope: string, from = 1, to = Infinity, match: MatchFilter = "all"): ProgressMove[] {
+  return p.moves.filter((m) => (scope === POOLED ? m.public : m.league === scope) && m.week >= from && m.week <= to && (match === "all" || m.match.kind === match));
+}
+
+export function matchCounts(moves: ProgressMove[]): Record<MatchKind, number> {
+  const out: Record<MatchKind, number> = { as_recommended: 0, differently: 0, not_recommended: 0, no_entry: 0 };
+  for (const m of moves) out[m.match.kind] += 1;
+  return out;
+}
+
+/** Some moves' totals: by scoring, the ones projected and realized over a complete horizon
+ * summed (``compared``), the others realized so far or not at all; and the FAAB paid. */
+export interface MovesTotals {
+  made: number;
+  compared: Partial<Record<Scoring, MovesSum>>;
+  soFar: number;
+  unscored: number;
+  paid: number;
+  bids: number;
+}
+
+export function movesTotals(moves: ProgressMove[]): MovesTotals {
+  const out: MovesTotals = { made: moves.length, compared: {}, soFar: 0, unscored: 0, paid: 0, bids: 0 };
+  for (const m of moves) {
+    const f = moveFigures(m);
+    const s = m.scoring ?? "categories";
+    if (f.delta != null) {
+      out.compared[s] = addMoves(out.compared[s], { moves: 1, projected: f.projected!, realized: f.realized!, same_way: Math.sign(f.realized!) === Math.sign(f.projected!) ? 1 : 0, share: null });
+    } else if (f.realized != null) out.soFar += 1;
+    else out.unscored += 1;
+    if (m.bid) {
+      out.paid += m.bid;
+      out.bids += 1;
+    }
+  }
+  return out;
+}
+
+/** The compared moves of one scoring summed to each week: realized against projected. */
+export function movesTrend(moves: ProgressMove[], weeks: number[], scoring: Scoring): { week: number; projected: number; realized: number }[] {
+  let projected = 0;
+  let realized = 0;
+  return weeks.map((week) => {
+    for (const m of moves) {
+      if (m.week !== week || (m.scoring ?? "categories") !== scoring) continue;
+      const f = moveFigures(m);
+      if (f.delta == null) continue;
+      projected += f.projected!;
+      realized += f.realized!;
+    }
+    return { week, projected: round(projected), realized: round(realized) };
+  });
+}
+
+/** A move's value by category on its horizon, projected against realized, the largest first;
+ * with how many came in above their projection. */
+export function moveCats(m: ProgressMove): { rows: { cat: string; projected: number | null; realized: number | null }[]; above: number; both: number } {
+  const h = moveHorizon(m);
+  const proj = m.projected?.value.horizons[h]?.cats ?? {};
+  const real = (m.realized?.valued ? m.realized.horizons[h]?.cats : null) ?? {};
+  const cats = [...new Set([...Object.keys(proj), ...Object.keys(real)])];
+  const rows = cats
+    .map((cat) => ({ cat, projected: proj[cat] ?? null, realized: real[cat] ?? null }))
+    .sort((a, b) => Math.abs(b.realized ?? b.projected ?? 0) - Math.abs(a.realized ?? a.projected ?? 0));
+  const both = rows.filter((r) => r.projected != null && r.realized != null);
+  return { rows, above: both.filter((r) => r.realized! > r.projected!).length, both: both.length };
+}
+
+/** The time a decision log entry was solved, from its id ("20261027T130000…-moves-bbm"). */
+export function entryTime(id: string | null | undefined): string | null {
+  const t = id?.match(/^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})/);
+  return t ? `${t[1]}-${t[2]}-${t[3]} ${t[4]}:${t[5]}` : null;
+}
+
+// ---------------------------------------------------------------- the odds (PR 3)
+/** The category odds' buckets summed over some pooled weeks: each bucket's count, mean odds and
+ * share won, weighted by its count. */
+export function bucketsOver(weeks: PooledWeek[], from = 1, to = Infinity): CalibrationBucket[] {
+  const sums = new Map<number, { from: number; to: number; count: number; odds: number; won: number }>();
+  for (const w of weeks) {
+    if (w.week < from || w.week > to) continue;
+    w.buckets.forEach((b, i) => {
+      const s = sums.get(i) ?? { from: b.from, to: b.to, count: 0, odds: 0, won: 0 };
+      if (b.count && b.odds != null && b.won != null) {
+        s.count += b.count;
+        s.odds += b.odds * b.count;
+        s.won += b.won * b.count;
+      }
+      sums.set(i, s);
+    });
+  }
+  return [...sums.entries()]
+    .sort(([a], [b]) => a - b)
+    .map(([, s]) => ({ from: s.from, to: s.to, count: s.count, odds: s.count ? round(s.odds / s.count) : null, won: s.count ? round(s.won / s.count) : null }));
+}
+
+/** The weeks a view shows: the range chosen cut to the scope's recorded weeks, or all of them
+ * when none is chosen or the cut leaves none; [1, 0] with no week recorded. */
+export function shownRange(bounds: [number, number] | null, range: [number, number] | null): [number, number] {
+  if (!bounds) return [1, 0];
+  if (!range) return bounds;
+  const r: [number, number] = [Math.max(range[0], bounds[0]), Math.min(range[1], bounds[1])];
+  return r[0] <= r[1] ? r : bounds;
 }
