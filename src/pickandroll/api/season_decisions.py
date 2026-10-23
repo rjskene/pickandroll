@@ -6,7 +6,8 @@ An entry is written when a solve finishes: the moves route's once per day and in
 answer writes nothing), a strategy run's when it solved. It holds what the scorecard compares
 against: the system and its export, the knobs in force, the adds left, the pool, and each
 recommended set (the moves route's per horizon, the strategy's per weight) with its gains and
-this week's categories and odds before and after it. A day's file is a list, appended to.
+this week's categories and odds before and after it, and (from #126) the scorer and each move's
+own gain and value. A day's file is a list, appended to.
 """
 
 from __future__ import annotations
@@ -115,10 +116,17 @@ def knobs(system: str, floor: float | None = None) -> dict[str, Any]:
     return {"system": system, **dict.fromkeys(KNOBS), "protection_floor": floor}
 
 
-def _logged(move: Mapping[str, Any]) -> dict[str, Any]:
+def _logged(move: Mapping[str, Any], built: Built | None = None) -> dict[str, Any]:
     """A recommended move as logged: its add, drop and first day, and the bid to make (None
-    until the FAAB sizing, phase 2, sets one)."""
-    return {**{k: move[k] for k in ("add", "drop", "from")}, "bid": None}
+    until the FAAB sizing, phase 2, sets one); with the solve (``built``), its own gain on each
+    horizon as the solve priced it (None for a strategy move left unpriced) and its projection
+    in value units (``decisions.move_projection``), for the scorecard (#126)."""
+    out = {**{k: move[k] for k in ("add", "drop", "from")}, "bid": None}
+    if built is not None:
+        drop = None if move.get("drop") is None else int(move["drop"])
+        out["gain"] = move.get("marginal")
+        out["value"] = dl.move_projection(built.problem, built.scorer, int(move["add"]), drop)
+    return out
 
 
 def _moves_of(rows: Sequence[Mapping[str, Any]]) -> list[mv.Move]:
@@ -136,6 +144,7 @@ def _common(built: Built, at: datetime, source: str) -> dict[str, Any]:
         "first_day": p.first_day.isoformat(),
         "adds": built.adds,
         "horizons": {k: built.horizons[k]["label"] for k in season_moves.HORIZONS},
+        "scorer": built.scorer,
     }
 
 
@@ -146,7 +155,7 @@ def moves_entry(built: Built, payload: Mapping[str, Any], at: datetime) -> dict[
     sets = []
     for key in season_moves.HORIZONS:
         rec = payload["recommended"][key]
-        moves = [_logged(m) for m in rec["moves"]]
+        moves = [_logged(m, built) for m in rec["moves"]]
         sets.append(
             {
                 "key": key,
@@ -178,7 +187,7 @@ def strategy_entry(built: Built, payload: Mapping[str, Any], at: datetime) -> di
     for point in payload["points"]:
         if point.get("stage") != "done":
             continue
-        moves = [_logged(m) for m in point.get("moves") or []]
+        moves = [_logged(m, built) for m in point.get("moves") or []]
         sets.append(
             {
                 "key": point["key"],

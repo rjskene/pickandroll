@@ -442,33 +442,46 @@ def line_value[K: Hashable](
     return _z_scorer(rates, sorted(keys, key=lambda k: -z[k])[:pool], cats)
 
 
-def _z_scorer[K: Hashable](
+def _column(cat: str, p: float = 0.0) -> Callable[[Rates], float] | None:
+    """A category's column of the z-scores: a percentage's makes over a shooter at ``p`` on his
+    attempts, a counting stat signed so that more is better; None for a category of neither."""
+    if cat in PCT:
+        made, att = PCT[cat]
+        return lambda r: float(r.get(made, 0.0)) - p * float(r.get(att, 0.0))
+    if cat in COUNTING:
+        sign = -1.0 if cat in LOWER_WINS else 1.0
+        return lambda r: sign * float(r.get(cat, 0.0))
+    return None
+
+
+def _columns[K: Hashable](
     rates: Mapping[K, Rates], chosen: Sequence[K], cats: Sequence[str]
-) -> Callable[[Rates], float]:
-    """A line's sum of per-game z-scores over the ``chosen`` players' columns."""
-    cols: list[tuple[Callable[[Rates], float], float, float]] = []
+) -> list[tuple[str, float, float, float]]:
+    """Each category's column over the ``chosen`` players: the category, a percentage's pool
+    average (0 for a counting stat), the column's mean and its spread (1 for none)."""
+    out = []
     for cat in cats:
+        p = 0.0
         if cat in PCT:
             made, att = PCT[cat]
             m = sum(float(rates[k].get(made, 0.0)) for k in chosen)
             a = sum(float(rates[k].get(att, 0.0)) for k in chosen)
             p = m / a if a else 0.0
-
-            def col(r: Rates, made: str = made, att: str = att, p: float = p) -> float:
-                return float(r.get(made, 0.0)) - p * float(r.get(att, 0.0))
-
-        elif cat in COUNTING:
-            sign = -1.0 if cat in LOWER_WINS else 1.0
-
-            def col(r: Rates, cat: str = cat, sign: float = sign) -> float:
-                return sign * float(r.get(cat, 0.0))
-
-        else:
+        col = _column(cat, p)
+        if col is None:
             continue
         xs = [col(rates[k]) for k in chosen]
         mean = sum(xs) / len(xs) if xs else 0.0
         sd = math.sqrt(sum((x - mean) ** 2 for x in xs) / len(xs)) if xs else 0.0
-        cols.append((col, mean, sd or 1.0))
+        out.append((cat, p, mean, sd or 1.0))
+    return out
+
+
+def _z_scorer[K: Hashable](
+    rates: Mapping[K, Rates], chosen: Sequence[K], cats: Sequence[str]
+) -> Callable[[Rates], float]:
+    """A line's sum of per-game z-scores over the ``chosen`` players' columns."""
+    cols = [(_column(cat, p), mean, sd) for cat, p, mean, sd in _columns(rates, chosen, cats)]
 
     def score(r: Rates) -> float:
         z = 0.0
@@ -477,3 +490,39 @@ def _z_scorer[K: Hashable](
         return z
 
     return score
+
+
+def scorer_of[K: Hashable](
+    rates: Mapping[K, Rates],
+    cats: Sequence[str],
+    points: Mapping[str, float] | None = None,
+    pool: int = 156,
+) -> dict[str, Any]:
+    """The scorer :func:`line_value` builds, as data a decision log entry keeps (#126): a points
+    league's weights, or each category's pool average (a percentage's) and spread over the pool
+    chosen the same way. Its means are left out: :func:`net_value` needs none."""
+    if points:
+        return {"points": {stat: float(w) for stat, w in points.items()}}
+    keys = list(rates)
+    first = _z_scorer(rates, keys, cats)
+    z = {k: first(rates[k]) for k in keys}
+    chosen = sorted(keys, key=lambda k: -z[k])[:pool]
+    return {
+        "cats": {
+            cat: {"p": round(p, 6), "sd": round(sd, 6)}
+            for cat, p, _, sd in _columns(rates, chosen, cats)
+        }
+    }
+
+
+def net_value(scorer: Mapping[str, Any], line: Mapping[str, float]) -> float:
+    """A line's value under ``scorer`` (:func:`scorer_of`) net of an empty line's: per game for a
+    per-game line, and for the total of several games their sum (the value is linear)."""
+    if "points" in scorer:
+        return sum(w * float(line.get(stat, 0.0)) for stat, w in scorer["points"].items())
+    total = 0.0
+    for cat, c in scorer["cats"].items():
+        col = _column(cat, c["p"])
+        if col is not None:
+            total += col(line) / c["sd"]
+    return total

@@ -235,6 +235,26 @@ def test_per_game_values_rank_the_better_player_first():
     assert v[1] > v[2] > v[3]
 
 
+def test_a_scorer_kept_as_data_values_a_line_as_the_line_value_does():
+    r = {
+        1: rates(pts=25, reb=10, fgm=9, fga=16),
+        2: rates(),
+        3: rates(pts=5, reb=2, tov=4, fgm=2, fga=7),
+        4: rates(threes=3, ast=8, ftm=6, fta=7),
+    }
+    score = wk.line_value(r, NINE, pool=3)
+    kept = wk.scorer_of(r, NINE, pool=3)
+    assert set(kept["cats"]) == set(NINE)
+    for line in [*r.values(), rates(pts=40, tov=6)]:
+        assert wk.net_value(kept, line) == pytest.approx(score(line) - score({}), abs=1e-4)
+    # Linear: two games' total is worth both games.
+    two = {k: 2 * v for k, v in rates(pts=40).items()}
+    assert wk.net_value(kept, two) == pytest.approx(2 * wk.net_value(kept, rates(pts=40)))
+    pts = {"pts": 1.0, "reb": 1.2, "tov": -1.0}
+    assert wk.scorer_of(r, ["fpts"], pts) == {"points": pts}
+    assert wk.net_value({"points": pts}, rates()) == pytest.approx(10 + 6 - 2)
+
+
 def test_player_totals_carry_the_percentages():
     t = wk.player_totals(wk.PlayerWeek(3, 2), rates(fgm=5, fga=10), None)
     assert t["fgm"] == 10 and t["fga"] == 20 and t["fg_pct"] == 0.5

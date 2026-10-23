@@ -45,6 +45,9 @@ TAKEN_PAGES = 12
 AVAILABLE_PAGES = 8
 #: The player searches at most, per league, for the drafted players neither sweep found.
 LOOKUPS = 25
+#: How long after a week its moves are looked for in the transactions pages read (#126): a page
+#: lists the latest few dozen, so a later one has nothing of the week a nearer one lacked.
+MOVES_READ_AFTER = timedelta(days=7)
 
 
 class NeedsPages(Exception):
@@ -284,6 +287,30 @@ def read_lines(
     return found, count
 
 
+def transaction_pages(
+    snapshots: Path, week: Week, current: Part | None
+) -> list[tuple[date, list[dict[str, Any]]]]:
+    """Every transactions page read from the day before ``week`` to :data:`MOVES_READ_AFTER`
+    after it, with the day (US Eastern) each was read: each snapshot's (named by its time in
+    UTC), then the season's own part (``current``)."""
+    out: list[tuple[date, list[dict[str, Any]]]] = []
+    first = (week.start - timedelta(days=1)).strftime("%Y%m%d")
+    last = (week.end + MOVES_READ_AFTER).strftime("%Y%m%d")
+    for path in sorted(snapshots.glob("*.json")) if snapshots.exists() else []:
+        if not first <= path.name[:8] <= last:
+            continue
+        try:
+            part = (json.loads(path.read_text()).get("parts") or {}).get("transactions")
+        except ValueError:
+            continue
+        if part and part.get("fetched_at"):
+            at = datetime.fromisoformat(part["fetched_at"])
+            out.append((_et_date(at), list((part.get("data") or {}).get("rows") or [])))
+    if current is not None:
+        out.append((_et_date(current.fetched_at), list((current.data or {}).get("rows") or [])))
+    return out
+
+
 def assemble(
     league: str,
     week: Week,
@@ -294,6 +321,7 @@ def assemble(
     lines_from: str | None,
     owners: Mapping[int, int | str | None] | None,
     owners_at: datetime | None,
+    transactions: Sequence[Mapping[str, Any]] = (),
 ) -> dict[str, Any]:
     """The week's record from what was read (``season.record.settle`` stamps it)."""
     points = settings.scoring == "points"
@@ -337,4 +365,5 @@ def assemble(
         players=players,
         missing=missing,
         sources={"pages": inputs.source, **({"players": lines_from} if lines_from else {})},
+        transactions=transactions,
     )

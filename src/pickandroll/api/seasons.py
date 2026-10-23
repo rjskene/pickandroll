@@ -52,6 +52,14 @@ Routes:
     pages still to open in the user's Chrome.
 ``GET /seasons/{league}/weeks``
     The recorded weeks: my opponent, result and place after each (``/weeks/{week}``: a record).
+``GET /seasons/{league}/scorecard``
+    The Monday scorecard (#126, ``season_scorecard``): the league's recorded weeks to ``?week=``
+    (the last recorded by default), each against the decision log's projection of it, my moves
+    of each matched to the solve before them, the season to date and the odds' calibration.
+``GET /seasons/scorecard``
+    Every league's scorecard of ``?week=`` (the last any league recorded), the odds pooled over
+    the public leagues that projected it (the private league apart), and the week as markdown
+    for the AUTOPILOT tracker (#127).
 ``GET /flags/digest``
     The day's breakout flags across every league with a season: each league's flagged players
     with their evidence, and the digest as markdown for a public issue (leagues by id, no team
@@ -112,6 +120,7 @@ from . import (
     season_moves,
     season_outlook,
     season_record,
+    season_scorecard,
     season_strategy,
     season_trades,
 )
@@ -716,6 +725,10 @@ class SeasonService:
                 ) from exc
             except (public.FetchError, pages.PageError) as exc:
                 raise HTTPException(502, str(exc)) from exc
+            folder = season_dir(self.data_dir, league)
+            read_pages = season_record.transaction_pages(
+                folder / SNAPSHOTS, week, parts.get("transactions")
+            )
             new = season_record.assemble(
                 league,
                 week,
@@ -726,8 +739,8 @@ class SeasonService:
                 source if lines is not None else None,
                 owners,
                 owners_at,
+                season_rec.week_transactions(read_pages, week),
             )
-            folder = season_dir(self.data_dir, league)
             out, status = season_rec.settle(
                 season_record.load_record(folder, week.number), new, self.clock()
             )
@@ -767,6 +780,43 @@ class SeasonService:
         if out is None:
             raise HTTPException(404, f"week {number} of league {league} is not recorded")
         return out
+
+    # ------------------------------------------------------------------ the scorecard (#126)
+    def scorecard(
+        self, league: str, week: int | None = None, system: str = season_scorecard.SYSTEM
+    ) -> dict[str, Any]:
+        """A league's recorded weeks against the decision log (#126): ``week`` (the last
+        recorded by default) and every week to it, the season to date and the calibration."""
+        base, is_public = self._base(league)
+        season = Season.from_parts(base, load_parts(self.data_dir, league))
+        folder = season_dir(self.data_dir, league)
+        return season_scorecard.league_payload(
+            league,
+            season,
+            is_public,
+            season_record.records(folder),
+            season_decisions.load(folder),
+            system,
+            week,
+        )
+
+    def scorecards(
+        self, week: int | None = None, system: str = season_scorecard.SYSTEM
+    ) -> dict[str, Any]:
+        """Every league's scorecard of ``week`` (the last any league recorded by default), the
+        public leagues' odds pooled, and the week as markdown for the AUTOPILOT tracker."""
+        payloads, skipped = [], []
+        for league in leagues.leagues(self.data_dir):
+            try:
+                payloads.append(self.scorecard(league, None, system))
+            except Exception as exc:  # noqa: BLE001 - one league's failure leaves the others
+                reason = exc.detail if isinstance(exc, HTTPException) else type(exc).__name__
+                skipped.append({"league": league, "reason": str(reason)})
+        # The markdown is public: a league's own failure text stays in the JSON.
+        out = season_scorecard.all_payload(
+            payloads, week, [{**x, "reason": "its scorecard failed"} for x in skipped]
+        )
+        return {**out, "skipped": skipped, "generated_at": self.clock().isoformat()}
 
     # ------------------------------------------------------------------ refresh
     def start_refresh(self, league: str) -> RefreshJob:
@@ -1252,9 +1302,29 @@ def register(
                 out.append({"league": league, "error": str(exc.detail)})
         return out
 
+    week_q = Query(None, ge=1, description="the week; by default the last recorded")
+    scorecard_system_q = Query(
+        season_scorecard.SYSTEM, pattern="^(bbm|yahoo)$", description="the system scored"
+    )
+
+    # Before ``/seasons/{league}``, whose pattern would refuse the word.
+    @app.get("/seasons/scorecard")
+    async def get_scorecards(
+        week: int | None = week_q, system: str = scorecard_system_q
+    ) -> dict[str, Any]:
+        """Every league's scorecard of a week (#126), pooled, with the markdown for #127."""
+        return await asyncio.to_thread(service.scorecards, week, system)
+
     @app.get("/seasons/{league}")
     def get_season(league: str = league_id) -> dict[str, Any]:
         return service.view(league)
+
+    @app.get("/seasons/{league}/scorecard")
+    async def get_scorecard(
+        league: str = league_id, week: int | None = week_q, system: str = scorecard_system_q
+    ) -> dict[str, Any]:
+        """A league's recorded weeks against the decision log (#126)."""
+        return await asyncio.to_thread(service.scorecard, league, week, system)
 
     @app.post("/seasons/{league}/refresh", status_code=202)
     async def refresh_season(

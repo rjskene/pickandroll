@@ -66,6 +66,10 @@ class Built:
     weeks_left: int = 0
     #: The keep rule on my active players (#124).
     rule: mv.KeepRule | None = None
+    #: The league's scorer as data (``weekly.scorer_of``), the keep rule's: the decision log
+    #: values each recommended move with it and the scorecard the moves made (#126). None
+    #: without Basketball Monster's lines.
+    scorer: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -282,7 +286,11 @@ def build(season: Season, today: date, data_dir: Path, system: str) -> Built | N
     )
     rule = mv.keep_rule(problem)
     problem = replace(problem, kept=rule.kept)
-    return Built(problem, {"key": system, **info}, horizons, adds, unprojected, weeks_left, rule)
+    pool = max(1, s.num_teams * problem.spots)
+    scorer = wk.scorer_of(rated.bbm.rates, cats, points, pool) if rated.bbm.rates else None
+    return Built(
+        problem, {"key": system, **info}, horizons, adds, unprojected, weeks_left, rule, scorer
+    )
 
 
 def keep_inputs(
