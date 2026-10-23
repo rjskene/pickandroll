@@ -78,8 +78,9 @@ def week_moves(record: Mapping[str, Any], me: int, season: Season | None = None)
 
 def logged_move(entries: Sequence[Mapping[str, Any]], match: Mapping[str, Any]) -> dict | None:
     """The entry's own record of a move made as recommended: the set it came from, its gain on
-    each horizon as the solve priced it and its projection in value units; None for any other
-    match, or an entry logged before it kept them."""
+    each horizon as the solve priced it, its projection in value units, and the week's odds of
+    winning the matchup and expected categories before and after the set (``odds``, #129);
+    None for any other match, or an entry logged before it kept them."""
     if match.get("kind") != dl.AS_RECOMMENDED or match.get("move") is None:
         return None
     entry = next((e for e in entries if e["id"] == match["entry"]), None)
@@ -87,7 +88,14 @@ def logged_move(entries: Sequence[Mapping[str, Any]], match: Mapping[str, Any]) 
     for s in (entry or {}).get("sets") or []:
         for m in s.get("moves") or []:
             if (m.get("add"), m.get("drop")) == want and m.get("value") is not None:
-                return {"set": s["key"], "gain": m.get("gain"), "value": m["value"]}
+                week = s.get("week") or {}
+                odds = {
+                    side: {k: block.get(k) for k in ("matchup", "expected")}
+                    if (block := week.get(side))
+                    else None
+                    for side in ("before", "after")
+                }
+                return {"set": s["key"], "gain": m.get("gain"), "value": m["value"], "odds": odds}
     return None
 
 
@@ -236,8 +244,9 @@ def move_rows(
     box: BoxScores | None = None,
     system: str = SYSTEM,
 ) -> list[dict[str, Any]]:
-    """My moves of the week, each with its match, the entry's projection of it (for a move
-    made as recommended) and its realized value (None without the box scores)."""
+    """My moves of the week, each with its match, the knobs in force at the entry it matched
+    (#129), the entry's projection of it (for a move made as recommended) and its realized
+    value (None without the box scores)."""
     week = sc.week_of(record)
     players = _players(season, record) if box is not None else {}
     calendar = season.calendar if season is not None else None
@@ -247,9 +256,11 @@ def move_rows(
         realized = None
         if box is not None:
             realized = realized_move(m, match, week, entries, players, box, calendar, system)
+        entry = next((e for e in entries if e["id"] == match.get("entry")), None)
         row = {
             **m.to_dict(),
             "match": match,
+            "knobs": (entry or {}).get("knobs"),
             "projected": logged_move(entries, match),
             "realized": realized,
         }

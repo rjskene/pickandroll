@@ -120,6 +120,7 @@ from . import (
     season_matchup,
     season_moves,
     season_outlook,
+    season_progress,
     season_record,
     season_scorecard,
     season_strategy,
@@ -860,6 +861,16 @@ class SeasonService:
     ) -> dict[str, Any]:
         """Every league's scorecard of ``week`` (the last any league recorded by default), the
         public leagues' odds pooled, and the week as markdown for the AUTOPILOT tracker."""
+        payloads, skipped = self._all_scorecards(system)
+        # The markdown is public: a league's own failure text stays in the JSON.
+        out = season_scorecard.all_payload(
+            payloads, week, [{**x, "reason": "its scorecard failed"} for x in skipped]
+        )
+        return {**out, "skipped": skipped, "generated_at": self.clock().isoformat()}
+
+    def _all_scorecards(self, system: str) -> tuple[list[dict[str, Any]], list[dict[str, str]]]:
+        """Every league's scorecard of all its recorded weeks, read with one box-score cache,
+        and the leagues whose scorecard failed with the reason."""
         payloads, skipped = [], []
         box = season_scorecard.BoxScores.at(self.data_dir, nba_today(self.clock()))
         for league in leagues.leagues(self.data_dir):
@@ -869,11 +880,26 @@ class SeasonService:
                 reason = exc.detail if isinstance(exc, HTTPException) else type(exc).__name__
                 skipped.append({"league": league, "reason": str(reason)})
         self._save_ids(box)
-        # The markdown is public: a league's own failure text stays in the JSON.
-        out = season_scorecard.all_payload(
-            payloads, week, [{**x, "reason": "its scorecard failed"} for x in skipped]
+        return payloads, skipped
+
+    def progress(self, system: str = season_scorecard.SYSTEM) -> dict[str, Any]:
+        """The Progress view (#129): every league's scorecard over the season as series by week,
+        pooled over the public leagues, with the knob file and the Monday notes; reads only."""
+        payloads, skipped = self._all_scorecards(system)
+        knobs, problems = season_progress.load_knobs(self.data_dir)
+        notes, found = season_progress.load_notes(self.data_dir)
+        calendar = self._cached_calendar()
+        out = season_progress.payload(
+            payloads,
+            knobs,
+            notes,
+            nba_today(self.clock()),
+            calendar.weeks if calendar is not None else (),
+            [*problems, *found],
+            skipped,
+            system,
         )
-        return {**out, "skipped": skipped, "generated_at": self.clock().isoformat()}
+        return {**out, "generated_at": self.clock().isoformat()}
 
     # ------------------------------------------------------------------ refresh
     def start_refresh(self, league: str) -> RefreshJob:
@@ -1377,6 +1403,12 @@ def register(
     ) -> dict[str, Any]:
         """Every league's scorecard of a week (#126), pooled, with the markdown for #127."""
         return await asyncio.to_thread(service.scorecards, week, system)
+
+    @app.get("/progress")
+    async def get_progress(system: str = scorecard_system_q) -> dict[str, Any]:
+        """The hill-climb over the season (#129): every league's weeks against their
+        projection, pooled, the moves, the knob changes and the Monday notes; reads only."""
+        return await asyncio.to_thread(service.progress, system)
 
     @app.get("/seasons/{league}")
     def get_season(league: str = league_id) -> dict[str, Any]:

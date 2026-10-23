@@ -180,6 +180,76 @@ that took it, the verdict two weeks later). The narrative is generated sentences
 beside the Monday notes; the newest note's action items are listed at the top, for the session to
 act on. The private league is shown apart. Built after #125 and #126, with phase 3.
 
+**The knob file** (`data/autopilot/knobs.json`, #129). JSON the master writes, by hand until the
+Monday step of phase 3 does, and the Progress view only reads. It is meant to be edited by hand, so
+the view reads it leniently: a key it does not know, a change without a date or a knob, or a verdict
+of neither kind is named in the view's problems and left out, and never fails the page.
+
+- `in_force`: the value in force of each knob, by the names the decision log records them under
+  (#125, `knobs` in an entry) and no other: `system` and `blend` (the projection system or blend
+  weight), `horizon_weight`, `protection_floor`, `plan_floor_cats` and `plan_floor_points` (the
+  streaming floors), `stash_threshold`, `faab_sizing` and `daily_cap`.
+- `leagues`: by league id, the knobs whose value there differs from `in_force`: the half of a
+  change that kept the setting, or the user's own value.
+- `frozen`: by league id, the knobs the user set and has not freed.
+- `changes`, one a change: `id` (K1, K2, ...), `monday` (the Monday it started, YYYY-MM-DD),
+  `knob`, `from`, `to`, `leagues` (the half that took it, by league id), `source` (`master` or
+  `user`), `reason`, `decided_at` (a time), `verdict` (`kept`, `reverted`, or null while it is
+  judged), `judged_on` (the Monday it was judged) and `rolled_out` (the Monday a kept change
+  reached every league).
+
+```json
+{
+  "in_force": {"system": "bbm", "blend": 0.5, "horizon_weight": "natural", "daily_cap": 2},
+  "leagues": {"100001": {"blend": 0.6}},
+  "frozen": {"100002": ["horizon_weight"]},
+  "changes": [
+    {"id": "K1", "monday": "2026-11-09", "knob": "blend", "from": 0.5, "to": 0.6,
+     "leagues": ["100001"], "source": "master", "reason": "...",
+     "decided_at": "2026-11-09T06:12:00-06:00", "verdict": null, "judged_on": null,
+     "rolled_out": null}
+  ]
+}
+```
+
+**The Monday notes** (`data/autopilot/notes/<monday>.md`, #129). Markdown, the text the hill-climb
+step posts on #127: an optional first line `posted: <time>`, then four sections headed `## What is
+working`, `## What is not`, `## Decision` and `## Action items`, the last a numbered list (a line
+that continues an item is joined to it). The view shows a note under the week its Monday starts,
+as the note of the week before, and lists the newest note's action items at the top. A file not
+named for a date, or a section of another name, is named in the problems.
+
+**`GET /progress`** (#129, `api/season_progress.py` and `season/progress.py`) reads every league's
+scorecard (#126) over all its recorded weeks, the knob file and the notes, and writes nothing:
+
+- the season's weeks to this one;
+- each league's week rows, the private league's among them (`public` false, never pooled): the odds
+  of winning the matchup against the result, the categories expected against won, the Brier score,
+  the standing after it, the week's moves (by group, their value projected and realized on the week,
+  the scored ones with a complete week compared, the FAAB paid) and the lineup's games lost (null:
+  not recorded yet), each with its running sums to it;
+- the public leagues pooled by week, the same, with the category odds' buckets of the week, and the
+  calibration over the season;
+- every move, with its league, its players' names, the knobs in force at the entry it matched, its
+  projection and its realized value split by category;
+- the knob file as read, each change placed on its week with its A/B halves over the weeks it is
+  judged on (from its Monday, two of them as far as recorded): the wins above expected a league,
+  the moves a league a week, the standing places climbed, the Brier score and the scored moves'
+  realized value against their projected, and each week's wins above expected a league for both
+  halves;
+- the notes, and the newest note's action items;
+- the sentences, written by rule (`season/progress.py`): the pooled wins track their expectation
+  within a game, else are ahead or behind by the gap; a league a game or more off its own is named;
+  the scored moves track their projection when they realized within 10% of it, else trail or beat
+  it; the matchup odds' Brier score; a bucket of 30 category odds or more off its results by 5
+  points or more reads over-confident (the results nearer a coin flip than the odds) or timid; and
+  each change kept, reverted or pending with when it is judged;
+- the problems met reading the two files, and the leagues whose scorecard failed.
+
+A move's values are in its league's scorer's units, fantasy points or the categories' z-sum, so the
+moves are pooled by scoring and never summed across the two; their realized share of the projection
+compares across them.
+
 ## 7. Phases
 
 - **Phase 0, measurement, no clicks.** #125 the decision log and the transactions reader; #126

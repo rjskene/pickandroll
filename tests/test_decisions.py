@@ -108,6 +108,8 @@ def test_a_recommended_move_is_logged_in_the_scorers_units_with_the_games_assume
         "add_games": 2,
         "drop_games": 2,
         "value": 2 * 20.0 - 2 * 10.0,
+        # By category (#129): a points league's by scoring stat, summing to the value.
+        "cats": {"pts": 2 * 20.0 - 2 * 10.0},
     }
     three = out["horizons"]["three"]
     assert (three["from"], three["to"]) == (WEEKS[1][0].isoformat(), WEEKS[3][6].isoformat())
