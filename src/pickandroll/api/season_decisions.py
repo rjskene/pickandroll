@@ -7,7 +7,8 @@ answer writes nothing), a strategy run's when it solved. It holds what the score
 against: the system and its export, the knobs in force, the adds left, the pool, and each
 recommended set (the moves route's per horizon, the strategy's per weight) with its gains and
 this week's categories and odds before and after it, and (from #126) the scorer and each move's
-own gain and value. A day's file is a list, appended to.
+own gain and value. A recommended streaming plan (#136) is one more set, ``plan``, its steps
+dated by their ``from``. A day's file is a list, appended to.
 """
 
 from __future__ import annotations
@@ -124,13 +125,22 @@ def _logged(move: Mapping[str, Any], built: Built | None = None) -> dict[str, An
     out = {**{k: move[k] for k in ("add", "drop", "from")}, "bid": None}
     if built is not None:
         drop = None if move.get("drop") is None else int(move["drop"])
+        day = None if move.get("from") is None else date.fromisoformat(move["from"])
         out["gain"] = move.get("marginal")
-        out["value"] = dl.move_projection(built.problem, built.scorer, int(move["add"]), drop)
+        out["value"] = dl.move_projection(built.problem, built.scorer, int(move["add"]), drop, day)
     return out
 
 
 def _moves_of(rows: Sequence[Mapping[str, Any]]) -> list[mv.Move]:
-    return [mv.Move(int(r["add"]), None if r.get("drop") is None else int(r["drop"])) for r in rows]
+    """Logged moves as the model's, each counting from its ``from`` (a plan's step's day)."""
+    return [
+        mv.Move(
+            int(r["add"]),
+            None if r.get("drop") is None else int(r["drop"]),
+            None if r.get("from") is None else date.fromisoformat(r["from"]),
+        )
+        for r in rows
+    ]
 
 
 def _common(built: Built, at: datetime, source: str) -> dict[str, Any]:
@@ -164,6 +174,23 @@ def moves_entry(built: Built, payload: Mapping[str, Any], at: datetime) -> dict[
                 "held": rec["held"],
                 "comebacks": rec["comebacks"],
                 "gain": rec["gain"],
+                "week": _week(ev, _moves_of(moves)),
+            }
+        )
+    plan = payload.get("plan")
+    if plan is not None and plan["recommended"]:
+        # The streaming plan (#136) as one more set: the week set's moves it keeps, then its
+        # steps by day, each counting from its day with its own gain.
+        moves = [_logged(m, built) for m in (*plan["base"], *plan["steps"])]
+        none = plan["value"]["none"]
+        sets.append(
+            {
+                "key": "plan",
+                "weight": None,
+                "moves": moves,
+                "held": plan["held"],
+                "comebacks": plan["comebacks"],
+                "gain": {h: round(v - none[h], 3) for h, v in plan["value"]["plan"].items()},
                 "week": _week(ev, _moves_of(moves)),
             }
         )

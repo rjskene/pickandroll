@@ -17,6 +17,7 @@ import type {
   SeasonSummary,
   Stash,
   StrategyPoint,
+  StreamPlan,
   TradePlayer,
   TradeSide,
 } from "./api";
@@ -28,7 +29,10 @@ import {
   frontierMarks,
   isSolving,
   milpLabel,
+  planNote,
+  shownPlan,
   sourceText,
+  stepDay,
   strategySettingsChanged,
   strategyUnits,
   addsLeft,
@@ -582,6 +586,53 @@ test("an add goes in for his drop, the held move that makes room, or an open spo
   assert.equal(forText({ drop: 4 }, name), "P4");
   assert.equal(forText({ drop: null, held: { player: 6, slot: "IL" } }, name), "P6 to IL");
   assert.equal(forText({ drop: null, held: null }, name), "an open spot");
+});
+
+const streamPlan = (over: Partial<StreamPlan> = {}): StreamPlan => ({
+  base: [],
+  steps: [
+    { add: 10, drop: 3, from: "2026-10-22", spot: 3, marginal: { week: 0.2, three: 0 } },
+    { add: 11, drop: 10, from: "2026-10-24", spot: 3, marginal: { week: 0.1, three: 0.05 } },
+  ],
+  spots: [{ player: 3, steps: 2 }],
+  games: { none: 24, set: 27, plan: 29 },
+  held: [],
+  comebacks: {},
+  adds: { set: 3, plan: 4 },
+  value: { none: { week: 4, three: 20 }, set: { week: 4.5, three: 21 }, plan: { week: 4.8, three: 21.05 } },
+  gain: { week: 0.3, three: 0.05 },
+  recommended: true,
+  short: null,
+  floor: 0.1,
+  ...over,
+});
+
+test("a streaming plan is shown only when recommended, its steps by day", () => {
+  assert.equal(shownPlan(undefined), null);
+  assert.equal(shownPlan(null), null);
+  assert.equal(shownPlan(streamPlan({ recommended: false, short: 0.04 })), null);
+  assert.equal(shownPlan(streamPlan({ steps: [] })), null);
+  const plan = streamPlan();
+  assert.equal(shownPlan(plan), plan);
+  assert.equal(stepDay("2026-10-22"), "Thu Oct 22");
+  assert.equal(stepDay("2026-10-24"), "Sat Oct 24");
+});
+
+test("a plan's note gives the games and adds against the set, and the set's moves it keeps", () => {
+  const name = (id: number | null) => (id == null ? "an open spot" : `P${id}`);
+  assert.equal(planNote(streamPlan(), name), "29 started games against 27 with the set (24 with no move), on 4 adds against 3.");
+  const kept = streamPlan({
+    base: [
+      { add: 5, drop: 6, from: "2026-10-22", marginal: { week: 0.4, three: 0.2 } },
+      { add: 7, drop: null, from: "2026-10-22", held: { player: 8, slot: "IL" }, marginal: { week: 0.3, three: 0.1 } },
+      { add: 9, drop: null, from: "2026-10-22", marginal: { week: 0.1, three: 0 } },
+    ],
+    adds: { set: 3, plan: 1 },
+  });
+  assert.equal(
+    planNote(kept, name),
+    "29 started games against 27 with the set (24 with no move), on 1 add against 3. It keeps the set's add P5 for P6, add P7 for P8 to IL, add P9.",
+  );
 });
 
 const keepRule = (players: Partial<KeptPlayer>[]): KeepRule => ({

@@ -225,11 +225,19 @@ def _local(iso: str) -> str:
     return f"{datetime.fromisoformat(iso).astimezone(ET):%Y-%m-%d %H:%M}"
 
 
-def _moves_text(moves: list[dict[str, Any]], name: Callable[[Any], str]) -> str:
-    return ", ".join(
-        f"add {name(m['add'])}" + (f" for {name(m['drop'])}" if m.get("drop") is not None else "")
-        for m in moves
-    )
+def _moves_text(
+    moves: list[dict[str, Any]], name: Callable[[Any], str], dated: bool = False
+) -> str:
+    """The moves as words; ``dated``, each by the day it counts from (a streaming plan's)."""
+
+    def one(m: dict[str, Any]) -> str:
+        text = f"add {name(m['add'])}"
+        text += f" for {name(m['drop'])}" if m.get("drop") is not None else ""
+        if dated and m.get("from"):
+            text = f"{_day(m['from'])}: {text}"
+        return text
+
+    return ", ".join(one(m) for m in moves)
 
 
 def decision_lines(body: Any) -> list[str]:
@@ -243,8 +251,10 @@ def decision_lines(body: Any) -> list[str]:
         sets = []
         for st in e["sets"]:
             gain = st["gain"] or {}
-            value = gain.get("weighted", gain.get(st["key"]))
-            what = _moves_text(st["moves"], name) or "no move"
+            # A streaming plan (#136) is the week's: its gain and its steps by day.
+            plan = st["key"] == "plan"
+            value = gain.get("weighted", gain.get("week" if plan else st["key"]))
+            what = _moves_text(st["moves"], name, dated=plan) or "no move"
             label = st["key"] if st["weight"] is None else f"{st['key']} ({st.get('source')})"
             sets.append(
                 f"{label} {value:+.2f}: {what}" if value is not None else f"{label}: {what}"

@@ -37,6 +37,7 @@ import type {
   StrategySettings,
   StrategySource,
   StrategyWeightKey,
+  StreamPlan,
   TradeMargin,
   TradePayload,
   TradePlayer,
@@ -532,6 +533,32 @@ export function comebackText(lists: (Comeback[] | undefined)[], name: (id: numbe
  * an open spot (#124). */
 export function forText(x: { drop: number | null; held?: HeldMove | null }, name: (id: number | null) => string): string {
   return x.drop == null && x.held ? `${name(x.held.player)} to ${x.held.slot}` : name(x.drop);
+}
+
+/** The week's streaming plan to show (#136): only a recommended one. */
+export function shownPlan(plan: StreamPlan | null | undefined): StreamPlan | null {
+  return plan?.recommended && plan.steps.length ? plan : null;
+}
+
+/** "Thu Oct 23" for a plan step's day. */
+export function stepDay(iso: string): string {
+  const day = new Date(`${iso}T12:00:00`).toLocaleDateString("en-US", { weekday: "short" });
+  return `${day} ${dayLabel(iso)}`;
+}
+
+/** What the plan buys against the set: "29 started games against 27 with the set (24 with no
+ * move), on 4 adds against 3. It keeps the set's add Brooks for Grant." (#136). */
+export function planNote(plan: StreamPlan, name: (id: number | null) => string): string {
+  const g = plan.games;
+  const n = (k: number) => `${k} ${k === 1 ? "add" : "adds"}`;
+  let text =
+    `${g.plan} started ${g.plan === 1 ? "game" : "games"} against ${g.set} with the set (${g.none} with no move), ` +
+    `on ${n(plan.adds.plan)} against ${plan.adds.set}.`;
+  if (plan.base.length) {
+    const kept = plan.base.map((x) => `add ${name(x.add)}${x.drop == null && !x.held ? "" : ` for ${forText(x, name)}`}`);
+    text += ` It keeps the set's ${kept.join(", ")}.`;
+  }
+  return text;
 }
 
 /** "Brooks and Grant" (#124). */

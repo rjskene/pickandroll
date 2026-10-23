@@ -119,6 +119,38 @@ def test_a_recommended_move_is_logged_in_the_scorers_units_with_the_games_assume
     assert dl.move_projection(p, None, 9, 1) is None and dl.move_projection(p, scorer, 7, 1) is None
 
 
+def test_a_plans_steps_are_valued_from_their_days_and_sum_to_the_plan():
+    """A streaming plan (#136): Thursday's add for one of mine, then Saturday's for him. Each
+    step's add counts from its day and its drop gives up his games from that day, so the steps'
+    values sum to the first add's Thursday and Friday, the second's Saturday on, less the
+    drop's from Thursday."""
+    from tests.test_moves import WEEKS, build, player, rates, schedule
+
+    thu, sat = WEEKS[0][3], WEEKS[0][5]
+    sched = schedule({"MIN": list(range(28)), "EAR": [3, 4, 9], "LAT": [5, 6, 10]})
+    rate = {1: rates(1.0), 2: rates(1.0), 10: rates(2.0), 11: rates(3.0)}
+    p = build(
+        [player(1, "MIN"), player(2, "MIN")],
+        [player(10, "EAR"), player(11, "LAT")],
+        rate,
+        sched,
+        [player(5, "MIN")],
+        first_day=thu,
+    )
+    scorer = {"points": {"pts": 1.0}}
+    first = dl.move_projection(p, scorer, 10, 1, thu)
+    second = dl.move_projection(p, scorer, 11, 10, sat)
+    assert first["horizons"]["week"]["add_games"] == 2  # Thursday and Friday
+    assert first["horizons"]["week"]["drop_games"] == 4  # Thursday to Sunday
+    # The second step drops the first's add, a candidate: his Saturday and Sunday (none).
+    assert (second["drop"], second["horizons"]["week"]["drop_games"]) == (20.0, 0)
+    assert second["horizons"]["week"]["add_games"] == 2
+    total = first["horizons"]["week"]["value"] + second["horizons"]["week"]["value"]
+    assert total == 2 * 20.0 + 2 * 30.0 - 4 * 10.0
+    # Undated, a move counts from its add's effective day, as before.
+    assert dl.move_projection(p, scorer, 11, 1) == dl.move_projection(p, scorer, 11, 1, thu)
+
+
 # --------------------------------------------------------------------------- the moves made
 def test_a_moves_time_is_read_on_the_leagues_clock_and_its_bid_from_yahoos_words():
     assert dl.when_at("Oct 20, 3:57 am", TODAY, NBA_TZ) == et(20, 3, 57)
@@ -313,6 +345,70 @@ def test_each_solve_of_the_moves_route_appends_an_entry_to_its_days_log(client):
     entries = logged(client)
     assert [e["at"] for e in entries] == [NOW.isoformat(), later.isoformat()]
     assert entries[0] == first
+
+
+def test_the_moves_route_carries_the_weeks_streaming_plan(client):
+    """The fixture league's plan (#136) beside the week's set: its stream spots, its steps and
+    the set's moves it keeps, my started games and the values with no move, the set and the
+    plan. Every add of the week goes to the set, so the plan is the set and is not recommended,
+    and nothing more is logged."""
+    strategy_league(client)
+    m = client.get(f"/seasons/{LEAGUE}/moves").json()
+    plan, week = m["plan"], m["recommended"]["week"]
+    # The stream spots: below the best add's value and kept by nothing.
+    rule = {x["player"]: x for x in m["keep_rule"]["players"]}
+    best = m["keep_rule"]["best"]["value"]
+    assert plan["spots"]
+    for s in plan["spots"]:
+        x = rule[s["player"]]
+        assert not (x["protected"] or x["bench"]) and (x["value"] is None or x["value"] < best)
+    set_moves = {(x["add"], x["drop"]) for x in week["moves"]}
+    planned = [*plan["base"], *plan["steps"]]
+    assert {(x["add"], x["drop"]) for x in planned} == set_moves
+    for step in plan["steps"]:
+        assert step["spot"] in {s["player"] for s in plan["spots"]}
+        assert step["from"] >= m["horizons"]["week"]["from"] and set(step["marginal"]) == {
+            "week",
+            "three",
+        }
+    assert plan["adds"] == {"set": len(week["moves"]), "plan": len(planned)}
+    assert plan["games"]["none"] < plan["games"]["set"] == plan["games"]["plan"]
+    value = plan["value"]
+    for h in ("week", "three"):
+        assert value["set"][h] - value["none"][h] == pytest.approx(week["gain"][h], abs=2e-3)
+        assert plan["gain"][h] == pytest.approx(value["plan"][h] - value["set"][h], abs=2e-3)
+    assert (plan["recommended"], plan["short"], plan["floor"]) == (False, 0.1, 0.1)
+    assert [s["key"] for s in logged(client)[0]["sets"]] == ["week", "three"]
+
+
+def test_a_recommended_plan_is_logged_as_one_more_set_its_steps_by_day(client, monkeypatch):
+    from pickandroll.season import stream
+
+    # Any plan that is not behind the set clears a floor below zero.
+    monkeypatch.setattr(stream, "PLAN_FLOOR", -1.0)
+    strategy_league(client)
+    m = client.get(f"/seasons/{LEAGUE}/moves").json()
+    plan = m["plan"]
+    assert plan["recommended"] and plan["short"] is None
+    [entry] = logged(client)
+    assert [s["key"] for s in entry["sets"]] == ["week", "three", "plan"]
+    logged_plan = entry["sets"][2]
+    rows = [*plan["base"], *plan["steps"]]
+    assert [{k: x[k] for k in ("add", "drop", "from")} for x in logged_plan["moves"]] == [
+        {k: x[k] for k in ("add", "drop", "from")} for x in rows
+    ]
+    # Each move's own gain, and (#126) its value from its day.
+    assert [x["gain"] for x in logged_plan["moves"]] == [x["marginal"] for x in rows]
+    for x in logged_plan["moves"]:
+        assert x["value"]["horizons"]["week"]["add_games"] >= 0
+    none = plan["value"]["none"]
+    assert logged_plan["gain"] == pytest.approx(
+        {h: plan["value"]["plan"][h] - none[h] for h in ("week", "three")}, abs=2e-3
+    )
+    assert (logged_plan["held"], logged_plan["comebacks"]) == (plan["held"], plan["comebacks"])
+    assert logged_plan["week"]["after"]["expected"] == pytest.approx(
+        plan["value"]["plan"]["week"], abs=2e-3
+    )
 
 
 def test_a_strategy_run_that_solved_is_logged_with_each_weights_set(client):
@@ -520,5 +616,27 @@ def test_the_decisions_command_prints_each_solve_then_each_move(client):
     url = public.transactions_url("100002")
     needs = {"needs": [f"{SITE}/100002"], "week": 1, "transactions_page": url}
     assert script.describe("100002", 409, {"detail": needs}).endswith(f"; transactions page: {url}")
+    # A streaming plan's set (#136) reads as the week's gain, its moves by day.
+    plan = {
+        "id": "x",
+        "at": "2026-10-22T16:00:00+00:00",
+        "source": "moves",
+        "system": {"key": "bbm"},
+        "sets": [
+            {
+                "key": "plan",
+                "weight": None,
+                "gain": {"week": 0.42, "three": 0.1},
+                "moves": [
+                    {"add": 1, "drop": 2, "from": "2026-10-22"},
+                    {"add": 3, "drop": 1, "from": "2026-10-24"},
+                ],
+            }
+        ],
+    }
+    body = {"entries": [plan], "made": [], "players": {"1": "Brooks", "2": "Grant", "3": "Hale"}}
+    assert script.decision_lines(body) == [
+        "2026-10-22 12:00 moves bbm: plan +0.42: Thu: add Brooks for Grant, Sat: add Hale for Brooks"
+    ]
     # Nothing logged and nothing made reads as such.
     assert script.decision_lines({"entries": [], "made": [], "players": {}}) == ["nothing logged"]

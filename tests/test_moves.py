@@ -170,7 +170,7 @@ def test_a_waiver_claim_counts_from_its_clear_date_and_its_drop_plays_until_then
         roster, cands, rate, sched, opponent, field, effective={10: thursday, 11: WEEKS[0][0]}
     )
     ev = mv.Evaluator(p)
-    members, gone = ev._after("week", frozenset({mv.Move(10, 3)}))
+    members, _, gone = ev._after("week", frozenset({mv.Move(10, 3)}))
     week = wk.project_week(
         members,
         rate,
@@ -185,7 +185,7 @@ def test_a_waiver_claim_counts_from_its_clear_date_and_its_drop_plays_until_then
     assert week.players[10].games == 2  # Thursday and Saturday
     assert week.players[3].games == 2  # Monday and Wednesday, then dropped on Thursday
     # A free agent's drop stops on the first day.
-    members, gone = ev._after("week", frozenset({mv.Move(11, 3)}))
+    members, _, gone = ev._after("week", frozenset({mv.Move(11, 3)}))
     week = wk.project_week(
         members,
         rate,
@@ -216,7 +216,7 @@ def test_the_field_averages_the_odds_against_each_team_not_against_an_average_te
     span = p.horizons["three"][0]
     mine = team_week(roster, rate, sched, span.days)
     each = [wk.expected_won(wk.category_odds(mine, t, COUNTING)) for t in span.opponents]
-    assert ev._week(span, list(roster), {}) == pytest.approx(sum(each) / 2)
+    assert ev._week(span, list(roster), {}, {}) == pytest.approx(sum(each) / 2)
     # Against a team with the average of the two lines the answer is different (Jensen).
     middle = [player(60 + i, "MIN") for i in range(3)]
     rate |= {k: rates(1.6) for k, _ in middle}
