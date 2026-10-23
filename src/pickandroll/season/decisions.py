@@ -213,7 +213,8 @@ def move_projection(
     plan's step's, else the add's effective day) and the drop's given up from that day (or from
     his return, when later); the move's value is the add's games' less the drop's. A plan's
     step may drop an earlier step's add, a candidate, so its steps' values telescope to the
-    plan's. None without a scorer or a candidate of the problem's."""
+    plan's. Each horizon also splits the value by category (``cats``, #129), the same way.
+    None without a scorer or a candidate of the problem's."""
     added = dict(problem.candidates).get(add)
     if scorer is None or added is None:
         return None
@@ -225,7 +226,12 @@ def move_projection(
         line = problem.rates.get(pid)
         return None if line is None else round(wk.net_value(scorer, line), 4)
 
+    def by_cat(pid: int | None) -> dict[str, float]:
+        line = problem.rates.get(pid) if pid is not None else None
+        return wk.net_values(scorer, line or {})
+
     a, d = per_game(add), per_game(drop) if dropped is not None else None
+    a_cats, d_cats = by_cat(add), by_cat(drop if dropped is not None else None)
     horizons = {}
     for key in problem.horizons:
         add_games, first, last = _games(problem, key, add, added, start)
@@ -235,15 +241,17 @@ def move_projection(
         if dropped is not None:
             back = max(start, problem.returns.get(drop, start))
             drop_games = _games(problem, key, drop, dropped, back)[0]
-        value = None
+        value = cats = None
         if a is not None and (dropped is None or d is not None):
             value = round(add_games * a - drop_games * (d or 0.0), 4)
+            cats = {c: round(add_games * x - drop_games * d_cats[c], 4) for c, x in a_cats.items()}
         horizons[key] = {
             "from": first.isoformat(),
             "to": last.isoformat(),
             "add_games": add_games,
             "drop_games": drop_games if dropped is not None else None,
             "value": value,
+            "cats": cats,
         }
     return {
         "add": a,

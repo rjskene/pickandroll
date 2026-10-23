@@ -83,7 +83,8 @@ def span(
     today: date,
 ) -> dict[str, Any]:
     """One span of a move: the days read, each side's games and their value, and the move's
-    value (the add's less the drop's); None while a side is unmatched or no day is read."""
+    value (the add's less the drop's) with its share by category (``cats``, #129); None while a
+    side is unmatched or no day is read."""
     through = None
     day = first
     while day <= last and day in games:
@@ -106,7 +107,7 @@ def span(
         "complete": through == last,
         "missing": missing,
     }
-    gaps, values = 0, {}
+    gaps, values, by_cat = 0, {}, {}
     for key in ("add", "drop"):
         side = sides.get(key)
         if side is None:
@@ -116,7 +117,7 @@ def span(
             team = [g for g in played if side.team and side.team in (g.get("teams") or ())]
             if side.team and not team:
                 # His team has not played: no game to miss, nothing to match him on yet.
-                out[f"{key}_games"], values[key] = 0, 0.0
+                out[f"{key}_games"], values[key], by_cat[key] = 0, 0.0, {}
                 continue
             gaps += len(team)
             out[f"{key}_games"] = None
@@ -133,11 +134,18 @@ def span(
                 total[stat] = total.get(stat, 0.0) + float(x)
         out[f"{key}_games"] = len(lines)
         values[key] = round(wk.net_value(scorer, total), 4)
+        by_cat[key] = wk.net_values(scorer, total)
     out["add"], out["drop"] = values.get("add"), values.get("drop")
     out["gaps"] = gaps
     known = through is not None and all(v is not None for v in values.values())
     out["value"] = (
         round((values.get("add") or 0.0) - (values.get("drop") or 0.0), 4) if known else None
+    )
+    add, drop = by_cat.get("add") or {}, by_cat.get("drop") or {}
+    out["cats"] = (
+        {c: round(add.get(c, 0.0) - drop.get(c, 0.0), 4) for c in wk.net_values(scorer, {})}
+        if known
+        else None
     )
     return out
 

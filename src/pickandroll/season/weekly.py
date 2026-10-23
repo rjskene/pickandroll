@@ -513,14 +513,21 @@ def scorer_of[K: Hashable](
     return {"cats": {cat: {"p": p, "sd": sd} for cat, p, _, sd in _columns(rates, chosen, cats)}}
 
 
-def net_value(scorer: Mapping[str, Any], line: Mapping[str, float]) -> float:
-    """A line's value under ``scorer`` (:func:`scorer_of`) net of an empty line's: per game for a
-    per-game line, and for the total of several games their sum (the value is linear)."""
+def net_values(scorer: Mapping[str, Any], line: Mapping[str, float]) -> dict[str, float]:
+    """A line's value under ``scorer`` net of an empty line's, by category: a points league's
+    by scoring stat, a categories league's by category (#129: a move's realized value by
+    category). They sum to :func:`net_value`."""
     if "points" in scorer:
-        return sum(w * float(line.get(stat, 0.0)) for stat, w in scorer["points"].items())
-    total = 0.0
+        return {stat: w * float(line.get(stat, 0.0)) for stat, w in scorer["points"].items()}
+    out = {}
     for cat, c in scorer["cats"].items():
         col = _column(cat, c["p"])
         if col is not None:
-            total += col(line) / c["sd"]
-    return total
+            out[cat] = col(line) / c["sd"]
+    return out
+
+
+def net_value(scorer: Mapping[str, Any], line: Mapping[str, float]) -> float:
+    """A line's value under ``scorer`` (:func:`scorer_of`) net of an empty line's: per game for a
+    per-game line, and for the total of several games their sum (the value is linear)."""
+    return sum(net_values(scorer, line).values(), 0.0)

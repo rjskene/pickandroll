@@ -427,7 +427,9 @@ when left out.
   play there (the add's from the day the move counts, the drop's given up from that day or from
   his return when later) and the move's value, the add's games' less the drop's. An entry
   logged before them projects no move in value units, and the scorecard values the moves
-  matched to it with the scorer of the entry nearest them ("Scorecard", realized value).
+  matched to it with the scorer of the entry nearest them ("Scorecard", realized value). From
+  2026-10-23 each horizon of a move's value also splits it by category (`cats`: a categories
+  league's categories, a points league's scoring stats, summing to the value; #129).
 - **My moves.** My team's rows on the transactions page, one per row group: an add with the
   drop that came with it, a lone add or a lone drop, with its time and the bid as read (`bid`,
   dollars, from Yahoo's `$5 Waiver`; null for a free agent's add). A trade is not a move here.
@@ -501,7 +503,10 @@ last recorded week when left out. The metric is docs/AUTOPILOT.md's, section 6.
   entries kept their scorer, borrows the scorer of the entry nearest it on the league's system
   scored (`scorer.own` false) and is realized only (ruled 2026-10-22). A later move that drops
   the added player counts his games from then on against itself, so a stream's moves add up to
-  what the spot made.
+  what the spot made. Each span also splits its value by category (`cats`, as the logged
+  projection does; #129). A move made as recommended carries its set's odds of winning the matchup
+  and its expected categories before and after the set (`projected.odds`), and every move the
+  knobs in force at the entry it matched (`knobs`).
   - *Box scores.* A refresh (a public league's, and a private league's extras) caches every day
     of the season to yesterday not cached yet, oldest first, at most 14 a refresh: the date's
     scoreboard, then each final regular-season game's summary, every player's line (minutes,
