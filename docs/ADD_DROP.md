@@ -416,7 +416,8 @@ when left out.
   as data (`weekly.scorer_of`: a points league's weights, or each category's spread and, for
   a percentage, the pool's rate its impact column weighs a line's attempts by, unrounded), so
   the scorecard values the actual lines exactly as the solve valued the projections, without
-  rebuilding the scorer from an export that may be gone (master's ruling, 2026-10-22). Each recommended move keeps its own `gain` on each horizon as
+  rebuilding the scorer from an export that may be gone (master's ruling, 2026-10-22). Each
+  recommended move keeps its own `gain` on each horizon as
   the solve priced it (the set with it against the set without it; null for a strategy move
   left unpriced) and its `value`: the add's and the drop's per-game value under the scorer net
   of an empty line, and on each horizon its first and last days, the games each was assumed to
@@ -493,6 +494,48 @@ last recorded week when left out. The metric is docs/AUTOPILOT.md's, section 6.
   they matched.
 - **Script.** `scripts/season.py scorecard [league ...] [--week N] [--json]`: the week's
   markdown, or one line per league named.
+
+## Streaming plans (#136)
+
+A marginal spot is worth more as a stream than as a seat (user, 2026-10-22). When an active
+spot's occupant is below the waiver replacement level, turning the spot over several times in a
+week buys more games, and more of the week's categories, than any single add, and costs nothing
+on the three-week side because nobody worth keeping is lost. The Moves card's single moves
+cannot say "add A now, drop A for B on Thursday"; the plan can.
+
+- **The model.** A move gains a `day`, its effective day, at or after the candidate's earliest
+  (the first day for a free agent, the clear date for a claim), and a drop may be an earlier add.
+  A set of dated moves is a roster timeline: the evaluator derives each player's `available_from`
+  and `gone` from it and values it with `project_week` as it values single moves, which keep
+  their one day and are unchanged.
+- **Stream spots.** The active spots whose occupant is below the waiver replacement level, the
+  best available add by rest-of-season per-game value, and neither protected nor bench-kept by
+  the keep rule. Usually one or two; the planner takes them one after the other, the second given
+  the first.
+- **The plan.** For a spot, a path over the days left in the week: who holds the spot each day,
+  under Yahoo's rules and the autopilot's: the week's adds left, one per step; a free agent
+  available at once, a player I drop on waivers for the league's waiver period
+  (`waiver_days`) and not re-addable inside it, a waiver player available from his clear date;
+  a player whose game has begun locked until the next day; at most two executed moves per league
+  per day (docs/AUTOPILOT.md, section 2); the step's add with a start slot that day under the
+  lineup rules.
+- **The search.** A dynamic programme over days with a cheap score per day and holder, his games
+  that day times his per-game value under the league scorer; the best few paths are re-valued
+  exactly with the Moves card's evaluator on both horizons and the best exact one is shown. The
+  single-move set stays the baseline: a plan is recommended only when its exact week value beats
+  the set's by more than the week's noise floor (the scorecard's once it exists, a constant until
+  then). It is a heuristic, so the card says "recommended", never "optimal", and a test checks it
+  against brute force on a small league.
+- **Horizons.** A plan lives inside the current week. The three-week horizon values the spot's
+  final holder as it does today, so a stream's long-term cost stays visible beside its gain.
+- **Output.** The payload's `plan` beside `recommended`: the dated steps (day, add, drop), the
+  games the plan buys against no move and against the single-move set, the adds it spends, its
+  value on both horizons and the occupant it replaces. The Moves card gains a Plan section, the
+  steps by day with the games and the gain. The decision log (#125) logs each step as a move with
+  its day and the #126 fields, so the scorecard scores a stream like any move. The executor
+  (docs/AUTOPILOT.md, phase 2) takes the day's step only; the plan is re-solved every morning.
+- **Out of scope.** FAAB bids on a stream's claims (section 5 of docs/AUTOPILOT.md applies
+  unchanged), plans across weeks, the executor's clicks.
 
 ## The breakout flag
 
@@ -726,7 +769,8 @@ phase 2 on.
    user's Chrome. `GET /seasons/{league}/weeks` serves the Weeks block on the league card.
    `scripts/season.py record --all` prints one line per league and exits non-zero only when
    the API is unreachable. Since #126 a record also keeps the week's transactions, merged
-   across the transactions pages read through it, for the Monday scorecard's moves. The scheduled task `weekly-recorder-monday` runs it every Monday at
+   across the transactions pages read through it, for the Monday scorecard's moves. The
+   scheduled task `weekly-recorder-monday` runs it every Monday at
    06:00 on the Mac's clock and opens the private league's needed pages read-only in the
    user's Chrome (set up 2026-10-21).
 
