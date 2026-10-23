@@ -196,15 +196,20 @@ LINEUP_KEPT = timedelta(days=14)
 
 
 def save(
-    data_dir: Path, league: str, parts: dict[str, Part], received: list[Part], source: str
+    data_dir: Path,
+    league: str,
+    parts: dict[str, Part],
+    received: list[Part],
+    source: str,
+    now: datetime,
 ) -> None:
     """The season's parts, less the matchup pages whose teams were misread
-    (``unpaired_matchups``) and the lineup pages older than :data:`LINEUP_KEPT`, and a snapshot
-    of what was received."""
+    (``unpaired_matchups``) and the lineup pages older than :data:`LINEUP_KEPT` at ``now`` (the
+    service's clock), and a snapshot of what was received, named for when it was written."""
     misread = unpaired_matchups(parts)
     parts = {k: p for k, p in parts.items() if k not in misread}
     folder = season_dir(data_dir, league)
-    oldest = (datetime.now(UTC) - LINEUP_KEPT).date().isoformat()
+    oldest = (now - LINEUP_KEPT).date().isoformat()
     parts = {k: p for k, p in parts.items() if not (k.startswith("lineup/") and k[-10:] < oldest)}
     _write_json(
         folder / STATE, {"league": league, "parts": {k: p.to_dict() for k, p in parts.items()}}
@@ -803,7 +808,7 @@ class SeasonService:
     def _save_part(self, league: str, part: Part) -> None:
         with self.lock(league):
             parts = merge_part(load_parts(self.data_dir, league), part)
-            save(self.data_dir, league, parts, [part], part.source)
+            save(self.data_dir, league, parts, [part], part.source, self.clock())
 
     def weeks(self, league: str) -> dict[str, Any]:
         base, _ = self._base(league)
@@ -930,7 +935,13 @@ class SeasonService:
                 job.step, job.done, job.total = step, done, total
 
             received = public.refresh_parts(
-                league, base, fetch, today, progress=progress, warn=job.warnings.__setitem__
+                league,
+                base,
+                fetch,
+                today,
+                progress=progress,
+                warn=job.warnings.__setitem__,
+                clock=self.clock,
             )
             settings = base.merged(next(p.data for p in received if p.key == "settings"))
             job.step = "calendar"
@@ -938,7 +949,7 @@ class SeasonService:
             job.step = "pairs"
             weeks = self._unpaired(league, base, received, calendar, today)
             received += public.pairings_parts(
-                league, weeks, fetch, step=lambda step: setattr(job, "step", step)
+                league, weeks, fetch, step=lambda step: setattr(job, "step", step), clock=self.clock
             )
             job.step = "lineups"
             received += (
@@ -948,6 +959,7 @@ class SeasonService:
                     self._lineup_days(league, base.my_team_id, calendar, today),
                     fetch,
                     step=lambda step: setattr(job, "step", step),
+                    clock=self.clock,
                 )
                 if base.my_team_id is not None
                 else []
@@ -998,9 +1010,7 @@ class SeasonService:
         for part in received:
             parts = merge_part(parts, part)
         if calendar is not None:
-            parts = merge_part(
-                parts, Part("calendar", datetime.now(UTC), PUBLIC, calendar.to_dict())
-            )
+            parts = merge_part(parts, Part("calendar", self.clock(), PUBLIC, calendar.to_dict()))
         return Season.from_parts(base, parts).weeks_unpaired(today)
 
     def _save_with_schedule(
@@ -1014,7 +1024,7 @@ class SeasonService:
         """Merge ``received`` with the calendar and the NBA schedule for the days the view counts
         games on into the league's season, and save it."""
         if calendar is not None:
-            received.append(Part("calendar", datetime.now(UTC), PUBLIC, calendar.to_dict()))
+            received.append(Part("calendar", self.clock(), PUBLIC, calendar.to_dict()))
         # Read before the league's lock: a snapshot posted meanwhile does not wait on ESPN.
         days = _schedule_days(calendar, today)
         read = nba_schedule.schedule_days(
@@ -1027,10 +1037,10 @@ class SeasonService:
         with self.lock(league):
             parts = load_parts(self.data_dir, league)
             old = (parts.get("schedule").data if "schedule" in parts else {}).get("days", {})
-            received.append(Part("schedule", datetime.now(UTC), PUBLIC, {"days": {**old, **read}}))
+            received.append(Part("schedule", self.clock(), PUBLIC, {"days": {**old, **read}}))
             for part in received:
                 parts = merge_part(parts, part)
-            save(self.data_dir, league, parts, received, PUBLIC)
+            save(self.data_dir, league, parts, received, PUBLIC, self.clock())
 
     # ------------------------------------------------------------------ a private league's extras
     def start_extras(self, league: str) -> RefreshJob | None:
@@ -1108,7 +1118,7 @@ class SeasonService:
         received: list[Part] = []
         skipped: list[dict[str, str]] = []
         for page in body.pages:
-            at = page.fetched_at or datetime.now(UTC)
+            at = page.fetched_at or self.clock()
             try:
                 received.extend(_page_parts(league, page.url, page.html, at, today))
             except pages.PageError as exc:
@@ -1118,7 +1128,7 @@ class SeasonService:
                 skipped.append({"key": given.key, "reason": "unknown part"})
                 continue
             received.append(
-                Part(given.key, given.fetched_at or datetime.now(UTC), EXTENSION, given.data)
+                Part(given.key, given.fetched_at or self.clock(), EXTENSION, given.data)
             )
         with self.lock(league):
             parts = load_parts(self.data_dir, league)
@@ -1129,7 +1139,7 @@ class SeasonService:
             except (KeyError, TypeError, ValueError) as exc:
                 raise HTTPException(400, f"the snapshot does not read: {exc}") from exc
             if received:
-                save(self.data_dir, league, parts, received, EXTENSION)
+                save(self.data_dir, league, parts, received, EXTENSION, self.clock())
         if any(p.key == "available" for p in received):
             self._record_adds(league, today)
         summary = self.summary(league)
