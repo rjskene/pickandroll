@@ -80,7 +80,7 @@ import threading
 from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta, tzinfo
 from pathlib import Path
 from typing import Any
 
@@ -270,6 +270,8 @@ class SeasonService:
         self.fetch_factory = fetch_factory
         #: Now, for the NBA date the views count games from (tests pin it).
         self.clock = clock
+        #: The Mac's clock, the daily routine's day and due time (#153); None: the system's.
+        self.local_tz: tzinfo | None = None
         self.jobs: dict[str, RefreshJob] = {}
         self._locks: dict[str, threading.Lock] = {}
         self._guard = threading.Lock()
@@ -912,7 +914,8 @@ class SeasonService:
     def status(self) -> dict[str, Any]:
         """The freshness light (#153): the daily exports, each league's Yahoo reads and its
         recommendations against the inputs they rest on; reads only."""
-        now = self.clock()
+        # The Mac's clock, where the routine runs: its day and its due time.
+        now = self.clock().astimezone(self.local_tz)
         found = season_status.exports_found(self.data_dir)
         exports = st.exports(found, now)
         projection_at = max((found[k][1] for k in st.RESTS_ON if found.get(k)), default=None)
@@ -937,7 +940,8 @@ class SeasonService:
             recs = st.recommendations(entries, projection_at, read_at, now)
             name = Season.from_parts(base, parts).settings.name
             out.append(st.league(league, name, is_public, rows, recs, exports["state"]))
-        return st.payload(exports, out, season_status.routine_marker(self.data_dir), now)
+        routine = st.routine_row(season_status.routine_marker(self.data_dir), now)
+        return st.payload(routine, exports, out, now)
 
     # ------------------------------------------------------------------ refresh
     def start_refresh(self, league: str) -> RefreshJob:

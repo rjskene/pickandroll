@@ -1,30 +1,44 @@
 """The season dashboard's freshness light (#153): whether the daily updates landed, for the
 title bar's dot and its details sheet.
 
-Three sections: the Basketball Monster exports (shared by every league), each league's Yahoo
-reads, and each league's recommendations against the inputs they rest on. Every row has a state
-(green, amber or red) and a short reason; a section is its worst row, a league its worst section
-(the exports included), the whole its worst league.
+Four parts: the daily routine's run, the Basketball Monster exports (both shared by every
+league), each league's Yahoo reads, and each league's recommendations against the inputs they
+rest on. Every row has a state and a short reason: red when something failed, or is missing
+once the routine's run is due (:data:`ROUTINE_DUE`); amber when something is stale or not due
+yet; green otherwise. A section is its worst row, a league its worst section with the exports,
+the whole its worst league with the exports and the run.
+
+"Today" and the due time are the Mac's local clock, where the routine runs: every function takes
+``now`` in that zone (``api.seasons.SeasonService.status`` converts the service's clock).
+
+The run marker the routine writes as its last step, ``data/routine/daily.json``::
+
+    {
+      "started_at": "2026-10-23T05:00:12-05:00",
+      "finished_at": "2026-10-23T05:52:40-05:00",
+      "steps": {"<name>": {"status": "ok" | "failed" | "skipped", "detail": "<one line>"}},
+      "exports": {"<kind>": "<file>"}
+    }
+
+with the step names the routine's own and the export kinds :data:`EXPORTS`'. A missing marker,
+or one from another day, reads as no run recorded today.
 
 Pure: ``api.season_status`` reads the files, the refresh jobs and the decision logs these work
-on, with the service's clock.
+on.
 """
 
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping, Sequence
-from datetime import date, datetime, time, timedelta
+from datetime import date, datetime, time
 from typing import Any
-from zoneinfo import ZoneInfo
 
 GREEN, AMBER, RED = "green", "amber", "red"
 STATES = (GREEN, AMBER, RED)
-#: "Today" is the NBA's day, as everywhere in the season (``api.season_week.NBA_TZ``).
-NBA_TZ = ZoneInfo("America/New_York")
-#: The daily routine starts at 05:00 on the Mac's clock; its exports have landed by then.
-DUE = time(6, 30)
-#: A read older than this is red.
-OLD = timedelta(days=1)
+#: The daily routine starts at 05:00 on the Mac's clock and has landed everything by then.
+ROUTINE_DUE = time(6, 30)
+EXPECTED = f"expected by {ROUTINE_DUE:%H:%M}"
+STEP_STATUSES = ("ok", "failed", "skipped")
 
 #: The five daily exports, by kind, with what each covers.
 EXPORTS = {
@@ -46,47 +60,79 @@ def worst(states: Iterable[str | None]) -> str:
     return STATES[max(ranked)] if ranked else GREEN
 
 
-def day_of(at: datetime) -> date:
-    return at.astimezone(NBA_TZ).date()
+def day_of(at: datetime, now: datetime) -> date:
+    """``at``'s day on ``now``'s clock."""
+    return at.astimezone(now.tzinfo).date()
 
 
-def due_at(today: date) -> datetime:
-    """When today's exports are due."""
-    return datetime.combine(today, DUE, tzinfo=NBA_TZ)
+def due_at(now: datetime) -> datetime:
+    """When today's run is due, on ``now``'s clock."""
+    return datetime.combine(now.date(), ROUTINE_DUE, tzinfo=now.tzinfo)
 
 
 def _iso(at: datetime | None) -> str | None:
     return at.isoformat() if at is not None else None
 
 
+def _when(x: Any) -> datetime | None:
+    try:
+        return datetime.fromisoformat(str(x)) if x else None
+    except ValueError:
+        return None
+
+
 def _section(rows: list[dict[str, Any]]) -> dict[str, Any]:
     return {"state": worst(r["state"] for r in rows), "rows": rows}
 
 
-def _age(at: datetime | None, now: datetime) -> tuple[str, str]:
-    """A read's state by its day: today green, within a day amber, older or never red."""
-    if at is None:
-        return RED, "never read"
-    if day_of(at) == day_of(now):
+def _today(at: datetime | None, now: datetime, missing: str) -> tuple[str, str]:
+    """Something the routine makes every day: green from today; before the due time amber,
+    expected; after it red, ``missing``."""
+    if at is not None and day_of(at, now) == now.date():
         return GREEN, "today"
-    if now - at <= OLD:
-        return AMBER, "not today"
-    return RED, "over a day old"
+    if now < due_at(now):
+        return AMBER, EXPECTED
+    return RED, missing
+
+
+# --------------------------------------------------------------------------- the routine
+def routine_row(marker: Mapping[str, Any] | None, now: datetime) -> dict[str, Any]:
+    """The routine's run today, from its marker: a failed step is red and a skipped one amber;
+    no run recorded today, or one not finished, is amber before the due time and red after."""
+    started = _when((marker or {}).get("started_at"))
+    finished = _when((marker or {}).get("finished_at"))
+    steps = (marker or {}).get("steps") or {}
+    steps = steps if isinstance(steps, Mapping) else {}
+    status = {k: (v or {}).get("status") for k, v in steps.items() if isinstance(v, Mapping)}
+    if started is None or day_of(started, now) != now.date():
+        state = AMBER if now < due_at(now) else RED
+        reason = "no run recorded today" + (f", {EXPECTED}" if state == AMBER else "")
+    elif failed := [k for k, s in status.items() if s == "failed"]:
+        state, reason = RED, f"{', '.join(failed)} failed"
+    elif finished is None:
+        state, reason = (AMBER, "running") if now < due_at(now) else (RED, "not finished")
+    elif skipped := [k for k, s in status.items() if s == "skipped"]:
+        state, reason = AMBER, f"{', '.join(skipped)} skipped"
+    else:
+        state, reason = GREEN, "ran today"
+    return {
+        "kind": "routine",
+        "started_at": _iso(started),
+        "finished_at": _iso(finished),
+        "steps": {
+            k: {"status": v.get("status"), "detail": v.get("detail")}
+            for k, v in steps.items()
+            if isinstance(v, Mapping)
+        },
+        "state": state,
+        "reason": reason,
+    }
 
 
 # --------------------------------------------------------------------------- the exports
 def export_row(kind: str, file: str | None, as_of: datetime | None, now: datetime) -> dict:
-    """One export: green from today; before today's due time yesterday's is amber; after it, or
-    older, red."""
-    today = day_of(now)
-    if file is None or as_of is None:
-        state, reason = RED, "missing"
-    elif day_of(as_of) == today:
-        state, reason = GREEN, "today"
-    elif now < due_at(today) and day_of(as_of) == today - timedelta(days=1):
-        state, reason = AMBER, "yesterday's, today's not due yet"
-    else:
-        state, reason = RED, "today's missing"
+    """One export: green from today; amber before the due time; red once it is due."""
+    state, reason = _today(as_of, now, "today's missing" if file else "missing")
     return {
         "kind": kind,
         "label": EXPORTS[kind],
@@ -113,16 +159,17 @@ def refresh_row(
     snapshot_at: datetime | None,
     now: datetime,
 ) -> dict[str, Any]:
-    """A public league's last refresh, judged by the age of its newest read (``read_at``, the
-    season's newest part): the service's job, when it has one (a restart forgets them), says a
-    refresh is running, failed (red) or skipped pages (amber). The snapshot's time is shown."""
+    """A public league's last refresh, judged by its newest read (``read_at``, the season's
+    newest part) as the routine's other daily work; the service's job, when it has one (a
+    restart forgets them), says a refresh failed (red), is running or skipped pages (amber).
+    The snapshot's time is shown."""
     status = (job or {}).get("status")
-    if status == "running":
-        state, reason = AMBER, "refreshing"
-    elif status in ("failed", "private"):
+    if status in ("failed", "private"):
         state, reason = RED, "refresh failed"
+    elif status == "running":
+        state, reason = AMBER, "refreshing"
     else:
-        state, reason = _age(read_at, now)
+        state, reason = _today(read_at, now, "not refreshed today")
         if state == GREEN and (job or {}).get("warnings"):
             state, reason = AMBER, "pages skipped"
     return {
@@ -149,14 +196,14 @@ def newest_by_kind(fetched: Mapping[str, datetime]) -> dict[str, datetime]:
 
 
 def pages(fetched: Mapping[str, datetime], now: datetime) -> list[dict[str, Any]]:
-    """The private league's pages the extension reads, each by its newest read."""
+    """The private league's pages the routine opens for the extension, each by its newest
+    read."""
     newest = newest_by_kind(fetched)
     rows = []
     for kind in PAGES:
-        state, reason = _age(newest.get(kind), now)
-        rows.append(
-            {"kind": kind, "read_at": _iso(newest.get(kind)), "state": state, "reason": reason}
-        )
+        at = newest.get(kind)
+        state, reason = _today(at, now, "not read today" if at else "never read")
+        rows.append({"kind": kind, "read_at": _iso(at), "state": state, "reason": reason})
     return rows
 
 
@@ -172,14 +219,15 @@ def _built_row(
     inputs: Mapping[str, datetime | None],
     now: datetime,
 ) -> dict[str, Any]:
-    """A logged recommendation: red when an input it rests on is newer than it, amber when
-    nothing was built today."""
-    built = datetime.fromisoformat(entry["at"]) if entry else None
-    newer = [k for k, at in inputs.items() if at is not None and (built is None or at > built)]
-    if built is not None and newer:
-        state, reason = RED, f"{newer[0]} newer"
-    elif built is None or day_of(built) != day_of(now):
-        state, reason = AMBER, "not built today"
+    """A logged recommendation: amber when an input it rests on is newer (the view solves again
+    when it opens), or before the due time with no solve today; red with no solve today once
+    the run is due."""
+    built = _when(entry["at"]) if entry else None
+    newer = [k for k, at in inputs.items() if at is not None and built is not None and at > built]
+    if built is None or day_of(built, now) != now.date():
+        state, reason = _today(None, now, "not solved today")
+    elif newer:
+        state, reason = AMBER, f"{newer[0]} newer; re-solved on open"
     else:
         state, reason = GREEN, "on today's inputs"
     system = (entry or {}).get("system") or {}
@@ -202,17 +250,19 @@ def recommendations(
     """The moves set and the streaming plan (in the moves entry), the daily routine's solve,
     from its latest decision-log entry against the newest projection export and Yahoo read. The
     strategy run and the trade evaluation are made on request, so they carry no state: the
-    strategy shows when it last ran and whether an input is newer since."""
+    strategy shows when it last ran and whether an input is newer since, the trades the inputs'
+    own times."""
     inputs = {"projection": projection_at, "Yahoo read": yahoo_at}
     moves = _latest(entries, "moves")
     plan = _built_row("plan", moves, inputs, now)
     if moves is not None and not moves.get("plan"):
         plan = {**plan, "state": None, "reason": "no plan for this league"}
     strategy = _built_row("strategy", _latest(entries, "strategy"), inputs, now)
+    ran = strategy["built_at"] is not None
     strategy = {
         **strategy,
         "state": None,
-        "reason": "run on request" if strategy["built_at"] is None else strategy["reason"],
+        "reason": strategy["reason"] if ran else "run on request",
     }
     rows = [
         _built_row("moves", moves, inputs, now),
@@ -221,6 +271,7 @@ def recommendations(
         {
             "kind": "trades",
             "built_at": None,
+            "inputs": {k: _iso(v) for k, v in inputs.items()},
             "state": None,
             "reason": "evaluated on request, from the inputs above",
         },
@@ -253,18 +304,20 @@ def league(
 
 
 def payload(
+    routine: dict[str, Any],
     exports_section: dict[str, Any],
     leagues: list[dict[str, Any]],
-    routine: Mapping[str, Any] | None,
     now: datetime,
 ) -> dict[str, Any]:
-    """Everything the light and the sheet show: the worst league's state over all."""
+    """Everything the light and the sheet show: the worst of the run, the exports and every
+    league over all."""
+    states = [routine["state"], exports_section["state"], *(lg["state"] for lg in leagues)]
     return {
         "generated_at": now.isoformat(),
-        "today": day_of(now).isoformat(),
-        "due_at": due_at(day_of(now)).isoformat(),
-        "state": worst([exports_section["state"], *(lg["state"] for lg in leagues)]),
-        "routine": dict(routine) if routine else None,
+        "today": now.date().isoformat(),
+        "due_at": due_at(now).isoformat(),
+        "state": worst(states),
+        "routine": routine,
         "exports": exports_section,
         "leagues": leagues,
     }

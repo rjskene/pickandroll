@@ -23,7 +23,7 @@ EXPORT_PATTERNS: Mapping[str, tuple[str, ...]] = {
     "actual_7d": (season_flags.PAST_DAYS[7],),
     "actual_14d": (season_flags.PAST_DAYS[14],),
 }
-#: The daily routine's run marker, when it writes one: ``{"started_at", "finished_at"}``.
+#: The daily routine's run marker, which it writes as its last step.
 ROUTINE = Path("routine") / "daily.json"
 
 
@@ -71,11 +71,9 @@ def latest_entries(season_dir: Path, today: date, days: int = 2) -> list[dict[st
 
 
 def routine_marker(data_dir: Path) -> dict[str, Any] | None:
-    """The daily routine's last run, when it left a marker that reads."""
+    """The daily routine's last run marker (its schema in ``season.status``), when it reads."""
     try:
         marker = json.loads((data_dir / ROUTINE).read_text())
     except (OSError, ValueError):
         return None
-    if not isinstance(marker, dict):
-        return None
-    return {k: marker.get(k) for k in ("started_at", "finished_at")}
+    return marker if isinstance(marker, dict) else None

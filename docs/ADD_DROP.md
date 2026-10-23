@@ -863,6 +863,35 @@ the league part and move the current week with it. It is stored as its own part,
 Nothing on these screens acts in Yahoo. The add and drop stay the user's clicks on Yahoo's
 pages; an armed queue through the extension is a later, opt-in phase.
 
+### The freshness light (#153)
+
+`GET /seasons/status` says whether the daily updates landed: the routine's run, the five
+Basketball Monster exports (rest of season, this week, next week, the last 7 and 14 days, each
+the newest file with its as-of), each league's Yahoo reads (a public league's last refresh
+by its newest read, the private league's matchup, lineup, schedule and transactions pages) and
+each league's recommendations (the moves set and the streaming plan from the decision log's
+latest solve, against the newest projection export and Yahoo read; the strategy run and the
+trade evaluation are made on request and carry no state). The states are decided in
+`season/status.py`, on the Mac's clock, where the routine runs: **red** when something failed,
+or is missing once the run is due at 06:30 (`ROUTINE_DUE`); **amber** when something is stale
+or not due yet (a solve older than an input is amber, "re-solved on open"); **green**
+otherwise. A league is its worst section with the exports; the whole is its worst league with
+the exports and the run.
+
+The routine writes its run marker as its last step, `data/routine/daily.json`:
+
+```json
+{
+  "started_at": "2026-10-23T05:00:12-05:00",
+  "finished_at": "2026-10-23T05:52:40-05:00",
+  "steps": {"<name>": {"status": "ok | failed | skipped", "detail": "<one line>"}},
+  "exports": {"<kind>": "<file>"}
+}
+```
+
+A failed step is red and a skipped one amber; a missing marker, or one from another day, reads
+as "no run recorded today", amber before the due time and red after, never an error.
+
 ## Phases
 
 Each phase is one issue under the ADD/DROP tracker, built by fantasyEMISSARY in a worktree with

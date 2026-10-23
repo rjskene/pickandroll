@@ -1,25 +1,26 @@
-"""The freshness light's states (#153): ``season.status``, pure."""
+"""The freshness light's states (#153): ``season.status``, pure, and its route."""
 
 from __future__ import annotations
 
 import json
 import os
 from datetime import UTC, datetime, timedelta
+from zoneinfo import ZoneInfo
 
 from pickandroll.api.seasons import RefreshJob
 from pickandroll.season import status as st
 from tests.test_season import LEAGUE, fixture_names, projection_csv, season_client
 
-#: 14:00 ET on a game day, after the routine's due time; the morning before it.
-NOW = datetime(2026, 10, 21, 18, 0, tzinfo=UTC)
-MORNING = datetime(2026, 10, 21, 9, 0, tzinfo=UTC)  # 05:00 ET
-YESTERDAY = NOW - timedelta(hours=20)  # 18:00 ET the day before
-OLD = NOW - timedelta(days=3)
+#: The Mac's clock: 13:00 on a game day, past the routine's due time; 05:00 before it.
+LOCAL = ZoneInfo("America/Chicago")
+NOW = datetime(2026, 10, 21, 18, 0, tzinfo=UTC).astimezone(LOCAL)
+MORNING = datetime(2026, 10, 21, 5, 0, tzinfo=LOCAL)
+YESTERDAY = datetime(2026, 10, 20, 18, 0, tzinfo=LOCAL)
 
 
-def at(hours: float) -> datetime:
-    """``hours`` before :data:`NOW`."""
-    return NOW - timedelta(hours=hours)
+def at(hours: float, now: datetime = NOW) -> datetime:
+    """``hours`` before ``now``."""
+    return now - timedelta(hours=hours)
 
 
 def test_the_worst_state_wins_and_none_has_no_say():
@@ -28,15 +29,21 @@ def test_the_worst_state_wins_and_none_has_no_say():
     assert st.worst([None, None]) == st.GREEN == st.worst([])
 
 
+def test_the_day_and_the_due_time_are_the_macs_clock():
+    assert st.due_at(NOW).isoformat() == "2026-10-21T06:30:00-05:00"
+    # 23:30 on the Mac is already the next day in New York: the Mac's day counts.
+    late = datetime(2026, 10, 21, 23, 30, tzinfo=LOCAL)
+    assert st.day_of(late.astimezone(UTC), NOW).isoformat() == "2026-10-21"
+
+
 def test_an_export_is_green_today_amber_before_its_due_time_and_red_after():
     assert st.export_row("ros", "f.csv", at(1), NOW)["state"] == st.GREEN
-    # Yesterday's file before today's is due: amber; after the due time: red.
-    early = st.export_row("week_this", "f.xls", YESTERDAY - timedelta(hours=12), MORNING)
-    assert (early["state"], early["reason"]) == (st.AMBER, "yesterday's, today's not due yet")
+    early = st.export_row("week_this", "f.xls", YESTERDAY, MORNING)
+    assert (early["state"], early["reason"]) == (st.AMBER, "expected by 06:30")
+    # Not due yet: even an older file, or none, is only amber.
+    assert st.export_row("actual_7d", None, None, MORNING)["state"] == st.AMBER
     late = st.export_row("week_this", "f.xls", YESTERDAY, NOW)
     assert (late["state"], late["reason"]) == (st.RED, "today's missing")
-    # Older than yesterday is red even before the due time, and so is no file at all.
-    assert st.export_row("actual_7d", "f.xls", OLD, MORNING)["state"] == st.RED
     missing = st.export_row("actual_14d", None, None, NOW)
     assert (missing["state"], missing["reason"], missing["label"]) == (
         st.RED,
@@ -54,12 +61,43 @@ def test_the_exports_section_lists_the_five_kinds_and_takes_the_worst():
     assert st.exports(found, NOW)["state"] == st.RED
 
 
+def marker(**over) -> dict:
+    steps = {
+        "exports": {"status": "ok", "detail": "five exports"},
+        "refresh": {"status": "ok", "detail": "13 leagues"},
+    }
+    return {
+        "started_at": at(8).isoformat(),
+        "finished_at": at(7).isoformat(),
+        "steps": steps,
+        **over,
+    }
+
+
+def test_the_routines_run_is_read_from_its_marker():
+    ran = st.routine_row(marker(), NOW)
+    assert (ran["state"], ran["reason"]) == (st.GREEN, "ran today")
+    assert ran["steps"]["refresh"] == {"status": "ok", "detail": "13 leagues"}
+    failed = marker(steps={"refresh": {"status": "failed", "detail": "Yahoo 503"}})
+    assert st.routine_row(failed, NOW)["reason"] == "refresh failed"
+    assert st.routine_row(failed, NOW)["state"] == st.RED
+    skipped = marker(steps={"exports": {"status": "skipped", "detail": "no Chrome"}})
+    assert st.routine_row(skipped, NOW)["state"] == st.AMBER
+    running = marker(started_at=at(0.5, MORNING).isoformat(), finished_at=None)
+    assert st.routine_row(running, MORNING)["reason"] == "running"
+    assert st.routine_row(marker(finished_at=None), NOW)["reason"] == "not finished"
+    # No marker, an unreadable one or yesterday's: no run recorded today.
+    for none in (None, {"started_at": "soon"}, marker(started_at=YESTERDAY.isoformat())):
+        assert st.routine_row(none, MORNING)["state"] == st.AMBER
+        assert st.routine_row(none, MORNING)["reason"] == "no run recorded today, expected by 06:30"
+        assert st.routine_row(none, NOW)["state"] == st.RED
+
+
 def test_a_public_refresh_is_judged_by_its_newest_read_and_its_job():
     assert st.refresh_row(None, at(3), None, NOW)["state"] == st.GREEN
-    assert st.refresh_row(None, YESTERDAY, None, NOW)["reason"] == "not today"
-    assert st.refresh_row(None, YESTERDAY, None, NOW)["state"] == st.AMBER
-    assert st.refresh_row(None, OLD, None, NOW)["state"] == st.RED
-    assert st.refresh_row(None, None, None, NOW)["reason"] == "never read"
+    assert st.refresh_row(None, YESTERDAY, None, MORNING)["state"] == st.AMBER
+    late = st.refresh_row(None, YESTERDAY, None, NOW)
+    assert (late["state"], late["reason"]) == (st.RED, "not refreshed today")
     running = st.refresh_row({"status": "running"}, YESTERDAY, None, NOW)
     assert (running["state"], running["reason"]) == (st.AMBER, "refreshing")
     failed = st.refresh_row({"status": "failed", "error": "HTTP 999"}, at(3), at(3), NOW)
@@ -73,7 +111,7 @@ def test_a_public_refresh_is_judged_by_its_newest_read_and_its_job():
 def test_the_private_leagues_pages_go_by_their_newest_read():
     fetched = {
         "matchup/1/4-10": at(2),
-        "lineup/4/2026-10-20": OLD,
+        "lineup/4/2026-10-20": at(30),
         "lineup/4/2026-10-21": at(5),
         "transactions": YESTERDAY,
         "league": at(1),
@@ -82,8 +120,19 @@ def test_the_private_leagues_pages_go_by_their_newest_read():
     rows = {r["kind"]: r for r in st.pages(fetched, NOW)}
     assert list(rows) == list(st.PAGES)
     assert rows["matchup"]["state"] == rows["lineup"]["state"] == st.GREEN
-    assert rows["transactions"]["state"] == st.AMBER
+    assert (rows["transactions"]["state"], rows["transactions"]["reason"]) == (
+        st.RED,
+        "not read today",
+    )
     assert (rows["schedule"]["state"], rows["schedule"]["reason"]) == (st.RED, "never read")
+    # Before the run is due, what was not read today is only amber.
+    early = {r["kind"]: r["state"] for r in st.pages(fetched, MORNING)}
+    assert early == {
+        "matchup": st.GREEN,
+        "lineup": st.GREEN,
+        "transactions": st.AMBER,
+        "schedule": st.AMBER,
+    }
 
 
 def entry(source: str, hours: float, plan: object = None) -> dict:
@@ -95,7 +144,7 @@ def entry(source: str, hours: float, plan: object = None) -> dict:
     }
 
 
-def test_a_recommendation_is_red_when_an_input_is_newer_and_amber_when_not_built_today():
+def test_a_solve_older_than_its_inputs_is_amber_and_none_today_is_red_once_due():
     moves = entry("moves", 1, plan={"steps": []})
     recs = st.recommendations([entry("moves", 6), moves], at(4), at(2), NOW)
     rows = {r["kind"]: r for r in recs["rows"]}
@@ -105,52 +154,67 @@ def test_a_recommendation_is_red_when_an_input_is_newer_and_amber_when_not_built
     # The strategy and the trades are made on request: no state of their own.
     assert (rows["strategy"]["state"], rows["strategy"]["reason"]) == (None, "run on request")
     assert rows["trades"]["state"] is None and rows["trades"]["built_at"] is None
-    # A projection newer than the build; a Yahoo read newer than it.
+    assert rows["trades"]["inputs"] == {
+        "projection": at(4).isoformat(),
+        "Yahoo read": at(2).isoformat(),
+    }
+    # An input newer than the solve: the view solves again on open.
     stale = st.recommendations([moves], at(0.5), at(2), NOW)
-    assert (stale["state"], stale["rows"][0]["reason"]) == (st.RED, "projection newer")
+    assert (stale["state"], stale["rows"][0]["reason"]) == (
+        st.AMBER,
+        "projection newer; re-solved on open",
+    )
     read = st.recommendations([moves], at(4), at(0.5), NOW)
-    assert read["rows"][0]["reason"] == "Yahoo read newer"
-    # Built yesterday on yesterday's inputs; never built.
-    old = st.recommendations([entry("moves", 20)], at(30), at(30), NOW)
-    assert (old["state"], old["rows"][0]["reason"]) == (st.AMBER, "not built today")
-    assert st.recommendations([], at(4), at(2), NOW)["rows"][0]["state"] == st.AMBER
+    assert read["rows"][0]["reason"] == "Yahoo read newer; re-solved on open"
+    # No solve today: amber before the run is due, red after.
+    old = [entry("moves", 20)]
+    assert st.recommendations(old, at(30), at(30), MORNING)["state"] == st.AMBER
+    late = st.recommendations(old, at(30), at(30), NOW)
+    assert (late["state"], late["rows"][0]["reason"]) == (st.RED, "not solved today")
+    assert st.recommendations([], at(4), at(2), NOW)["rows"][0]["state"] == st.RED
 
 
 def test_a_league_without_a_plan_says_so_and_a_strategy_run_shows_its_inputs():
     recs = st.recommendations([entry("moves", 1), entry("strategy", 3)], at(2), at(2), NOW)
     rows = {r["kind"]: r for r in recs["rows"]}
     assert (rows["plan"]["state"], rows["plan"]["reason"]) == (None, "no plan for this league")
-    assert (rows["strategy"]["state"], rows["strategy"]["reason"]) == (None, "projection newer")
+    assert rows["strategy"]["state"] is None
+    assert rows["strategy"]["reason"] == "projection newer; re-solved on open"
     assert recs["inputs"] == {"projection": at(2).isoformat(), "Yahoo read": at(2).isoformat()}
 
 
-def test_a_league_is_its_worst_section_and_the_whole_its_worst_league():
+def test_a_league_is_its_worst_section_and_the_whole_adds_the_run_and_the_exports():
     recs = st.recommendations([entry("moves", 1, plan={"steps": []})], at(4), at(2), NOW)
     rows = [st.refresh_row(None, at(2), None, NOW)]
     green = st.league("100001", "League", True, rows, recs, st.GREEN)
     assert green["state"] == st.GREEN and green["yahoo"]["state"] == st.GREEN
     assert st.league("100001", "League", True, rows, recs, st.RED)["state"] == st.RED
-    private = st.league(
-        "100002", None, False, st.pages({"matchup/1/1-2": YESTERDAY}, NOW), recs, st.GREEN
-    )
-    assert private["state"] == st.RED  # its schedule never read
+    unread = st.pages({"matchup/1/1-2": at(2)}, NOW)
+    private = st.league("100002", None, False, unread, recs, st.GREEN)
+    assert private["state"] == st.RED  # its other pages never read
     exports = st.exports({k: (f"{k}.xls", at(2)) for k in st.EXPORTS}, NOW)
-    out = st.payload(exports, [green], {"started_at": None, "finished_at": None}, NOW)
+    ran = st.routine_row(marker(), NOW)
+    out = st.payload(ran, exports, [green], NOW)
     assert (out["state"], out["today"]) == (st.GREEN, "2026-10-21")
-    assert out["due_at"] == "2026-10-21T06:30:00-04:00"
-    assert st.payload(exports, [green, private], None, NOW)["state"] == st.RED
+    assert out["due_at"] == "2026-10-21T06:30:00-05:00"
+    assert st.payload(ran, exports, [green, private], NOW)["state"] == st.RED
+    assert st.payload(st.routine_row(None, NOW), exports, [green], NOW)["state"] == st.RED
 
 
 def test_the_status_route_lights_every_league_and_names_what_is_late(tmp_path):
-    """The route on the fixture leagues, the clock at :data:`NOW`: nothing read and no export
-    first; then the exports of today, a refresh and the moves solved; then a projection newer
-    than the moves, a missing export and a failed refresh."""
+    """The route on the fixture leagues, the clock at :data:`NOW` on the Mac's clock: nothing
+    read and no export first; then the run, the exports, a refresh and the moves solved; then
+    a projection newer than the moves, a missing export and a failed refresh."""
     with season_client(tmp_path) as client:
+        client.app.state.seasons.local_tz = LOCAL
         before = client.get("/seasons/status").json()
         assert before["state"] == st.RED and before["today"] == "2026-10-21"
+        assert before["routine"]["reason"] == "no run recorded today"
         assert {r["reason"] for r in before["exports"]["rows"]} == {"missing"}
         assert [lg["league"] for lg in before["leagues"]] == ["100001", "100002"]
 
+        (tmp_path / "routine").mkdir()
+        (tmp_path / "routine" / "daily.json").write_text(json.dumps(marker()))
         ros = tmp_path / "bbm_projections_2026-10-21.csv"
         projection_csv(ros, fixture_names())
         os.utime(ros, (at(4).timestamp(), at(4).timestamp()))
@@ -162,9 +226,9 @@ def test_the_status_route_lights_every_league_and_names_what_is_late(tmp_path):
         client.post(f"/seasons/{LEAGUE}/refresh", params={"wait": True})
         assert client.get(f"/seasons/{LEAGUE}/moves").status_code == 200
         p = client.get("/seasons/status").json()
-        assert p["exports"]["state"] == st.GREEN
+        assert p["routine"]["state"] == p["exports"]["state"] == st.GREEN
         public, private = p["leagues"]
-        assert public["yahoo"]["rows"][0]["read_at"] == NOW.isoformat()
+        assert public["yahoo"]["rows"][0]["read_at"] == NOW.astimezone(UTC).isoformat()
         assert public["recommendations"]["rows"][0]["state"] == st.GREEN
         assert public["state"] == st.GREEN
         # The private league reads no page of its own here: red, and so over all.
@@ -175,10 +239,14 @@ def test_the_status_route_lights_every_league_and_names_what_is_late(tmp_path):
         (tmp_path / "bbm_week_next_20261021-1400.xls").unlink()
         failed = RefreshJob(LEAGUE, status="failed", error="Yahoo answered 503")
         client.app.state.seasons.jobs[LEAGUE] = failed
-        public = client.get("/seasons/status").json()["leagues"][0]
+        p = client.get("/seasons/status").json()
+        public = p["leagues"][0]
         moves = public["recommendations"]["rows"][0]
-        assert (moves["state"], moves["reason"]) == (st.RED, "projection newer")
+        assert (moves["state"], moves["reason"]) == (
+            st.AMBER,
+            "projection newer; re-solved on open",
+        )
         assert public["yahoo"]["rows"][0]["error"] == "Yahoo answered 503"
         assert public["yahoo"]["state"] == st.RED
-        rows = {r["kind"]: r for r in client.get("/seasons/status").json()["exports"]["rows"]}
+        rows = {r["kind"]: r for r in p["exports"]["rows"]}
         assert rows["week_next"]["reason"] == "missing"
