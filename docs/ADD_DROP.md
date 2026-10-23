@@ -1020,6 +1020,20 @@ Every public refresh logs its start and its end, each a JSON line with the time 
 access lines carry no times). The light shows the service's own job, or after a restart the
 last line of that log: a start with no end is red, "refresh never finished".
 
+A refresh has a deadline (#166): `REFRESH_DEADLINE`, 300 seconds from its start. It is
+checked before every read and between the steps, and whenever anything reads the job:
+`?wait=true`'s wait, the status light, the season summary and a new refresh. Past it, the
+job ends `failed`, and its error names the step, the last page read and the time it ran ("past
+the 300-second deadline after 301 s: at available 26-50, reading …"). The end is logged, the light
+reads "refresh failed" with that error, and the league's next refresh can start. A read in
+flight at the deadline finishes or times out on its own socket timeout (30 seconds,
+`public.HttpFetch`). A worker stuck in one stops at its next check and changes nothing: the
+job keeps the deadline's end. The step the deadline cut is not retried in the same job, and the
+broad handlers of the box scores, the schedule and the flag inputs let the deadline through
+rather than turn it into warnings. One refresh runs at a time per league: `?wait=true` takes
+the running job, or starts one, under the service's guard as the background path does, so two
+waiting callers share one job.
+
 ## Phases
 
 Each phase is one issue under the ADD/DROP tracker, built by fantasyEMISSARY in a worktree with

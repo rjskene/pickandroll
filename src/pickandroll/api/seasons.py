@@ -12,7 +12,8 @@ Routes:
     and the flag's thresholds for the explainer (#113).
 ``POST /seasons/{league}/refresh``
     Reads the league's public sources (a public league: the prize leagues) in the background;
-    ``?wait=true`` returns once it is done. A private league answers ``409`` with what to do.
+    ``?wait=true`` returns once it is done. One refresh runs at a time per league, and each
+    within :data:`REFRESH_DEADLINE` (#166). A private league answers ``409`` with what to do.
 ``POST /seasons/{league}/snapshot``
     The extension's reads of a private league: whole pages (``{url, html}``, parsed here by
     the same parsers) or parts already parsed (``{key, data}``).
@@ -87,6 +88,7 @@ import asyncio
 import json
 import logging
 import threading
+import time
 from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -248,6 +250,20 @@ def nba_today(now: datetime) -> date:
 
 
 # --------------------------------------------------------------------------- refresh jobs
+#: How long a public refresh may run, in seconds (#166): checked before every read and between
+#: the steps, and by everything that reads the job. Past it the job ends failed, naming the step,
+#: the page and the time it ran, and the league's next refresh can start. A read in flight
+#: finishes or times out on its own socket timeout (``public.HttpFetch``); the step it cut is not
+#: retried in the same job.
+REFRESH_DEADLINE = 300.0
+
+
+class RefreshDeadline(BaseException):
+    """A refresh past its deadline. Like ``asyncio.CancelledError``, a ``BaseException``: the
+    refresh's broad handlers (a flag input, a box score day, a schedule date) let it through,
+    since the deadline ends the job and is never one more warning."""
+
+
 @dataclass
 class RefreshJob:
     league: str
@@ -261,6 +277,56 @@ class RefreshJob:
     #: What failed without failing the job: the breakout flag's inputs, by input, and the
     #: matchup pages skipped.
     warnings: dict[str, str] = field(default_factory=dict)
+    #: The seconds the job may run (a public refresh's :data:`REFRESH_DEADLINE`, #166); None
+    #: for none.
+    deadline: float | None = None
+    #: The last page the job read, for the deadline's reason.
+    page: str | None = None
+    _began: float = field(default_factory=time.monotonic, repr=False, compare=False)
+    _ending: threading.Lock = field(default_factory=threading.Lock, repr=False, compare=False)
+    _ended: threading.Event = field(default_factory=threading.Event, repr=False, compare=False)
+
+    def elapsed(self) -> float:
+        """The seconds since the job began."""
+        return time.monotonic() - self._began
+
+    def overdue(self) -> bool:
+        return self.deadline is not None and self.elapsed() > self.deadline
+
+    def late(self) -> str:
+        """The deadline's reason: the step and the page the job was on, and the time it ran."""
+        page = f", reading {self.page}" if self.page else ""
+        return (
+            f"past the {self.deadline:g}-second deadline after {self.elapsed():.0f} s: at "
+            f"{self.step}{page}"
+        )
+
+    def check(self) -> None:
+        """Raise :class:`RefreshDeadline` once the job is past its deadline."""
+        if self.overdue():
+            raise RefreshDeadline(self.late())
+
+    def at(self, step: str) -> None:
+        """Go on to ``step``, the deadline allowing."""
+        self.check()
+        self.step = step
+
+    def end(self, status: str, error: str | None = None, **fields: Any) -> bool:
+        """End the job once: the first end sets ``status``, ``error``, ``fields`` and the time
+        and says so; a later one (a stalled worker's, after the deadline ended its job) changes
+        nothing."""
+        with self._ending:
+            if self.finished_at is not None:
+                return False
+            for name, value in fields.items():
+                setattr(self, name, value)
+            self.status, self.error, self.finished_at = status, error, datetime.now(UTC)
+            self._ended.set()
+            return True
+
+    def wait(self, timeout: float) -> bool:
+        """Wait up to ``timeout`` seconds for the job to end; whether it has."""
+        return self._ended.wait(timeout)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -297,6 +363,18 @@ def log_refresh(data_dir: Path, job: RefreshJob) -> None:
         job.total,
         f": {job.error}" if job.error else "",
     )
+
+
+def deadlined(fetch: public.Fetch, job: RefreshJob) -> public.Fetch:
+    """``fetch`` for ``job``: each read first checks the job's deadline and then notes its
+    page (#166)."""
+
+    def read(url: str) -> str:
+        job.check()
+        job.page = url
+        return fetch(url)
+
+    return read
 
 
 class SeasonService:
@@ -344,8 +422,7 @@ class SeasonService:
         base, is_public = self._base(league)
         parts = load_parts(self.data_dir, league)
         season = Season.from_parts(base, parts)
-        job = self.jobs.get(league)
-        out = _summary(season, is_public, bool(parts), job)
+        out = _summary(season, is_public, bool(parts), self.job(league))
         if not parts:
             return out
         # The landing grid's card (#108): the week's score, the adds left and the flags.
@@ -374,7 +451,7 @@ class SeasonService:
         # The explainer's thresholds come from the flag itself, never from copies in the web.
         flag_view["flag_config"] = season_flags.config()
         return {
-            **_summary(season, is_public, bool(parts), self.jobs.get(league)),
+            **_summary(season, is_public, bool(parts), self.job(league)),
             **_view(season, today),
             "week_projection": week_projection(season, today, self.data_dir, WEEKS_AHEAD),
             **flag_view,
@@ -1026,7 +1103,7 @@ class SeasonService:
             folder = season_dir(self.data_dir, league)
             if is_public:
                 # The service's own job; after a restart, the last one its log has.
-                job = self.jobs.get(league)
+                job = self.job(league)
                 last = job.to_dict() if job else season_status.last_refresh(folder)
                 snapshot = season_status.snapshot_at(folder / SNAPSHOTS, PUBLIC)
                 rows = [st.refresh_row(last, read_at, snapshot, now, live=job is not None)]
@@ -1044,31 +1121,49 @@ class SeasonService:
 
     # ------------------------------------------------------------------ refresh
     def start_refresh(self, league: str) -> RefreshJob:
-        """The league's refresh: the one running, else a new one in the background."""
+        """The league's refresh: the one running, else a new one in the background, within
+        :data:`REFRESH_DEADLINE` (a running job past it is ended first, #166)."""
         self._base(league)
         with self._guard:
             job = self.jobs.get(league)
+            self.expire(job)
             if job is not None and job.status == "running":
                 return job
-            job = self.jobs[league] = RefreshJob(league)
+            job = self.jobs[league] = RefreshJob(league, deadline=REFRESH_DEADLINE)
         threading.Thread(
             target=self.run_refresh, args=(job,), daemon=True, name=f"season-{league}"
         ).start()
         return job
 
+    def job(self, league: str) -> RefreshJob | None:
+        """The league's last refresh job, ended first when it ran past its deadline (#166)."""
+        job = self.jobs.get(league)
+        self.expire(job)
+        return job
+
+    def expire(self, job: RefreshJob | None) -> None:
+        """End ``job`` failed when it is running past its deadline (#166), its worker perhaps
+        still in a read: logged, and the light and the next refresh see it ended."""
+        running = job is not None and job.status == "running"
+        if running and job.overdue() and job.end("failed", job.late()):
+            log_refresh(self.data_dir, job)
+
     def run_refresh(self, job: RefreshJob) -> RefreshJob:
         league = job.league
         log_refresh(self.data_dir, job)
+        status, error = "failed", "the refresh stopped before it ended"
         try:
             base, is_public = self._base(league)
             if not is_public:
                 raise public.PrivateLeague(
                     f"league {league} is private: open its pages in Chrome with the extension"
                 )
-            fetch = self.fetch_factory()
+            # Every read checks the deadline, and so does every step (#166).
+            fetch = deadlined(self.fetch_factory(), job)
             today = nba_today(self.clock())
 
             def progress(step: str, done: int, total: int) -> None:
+                job.check()
                 job.step, job.done, job.total = step, done, total
 
             received = public.refresh_parts(
@@ -1081,46 +1176,49 @@ class SeasonService:
                 clock=self.clock,
             )
             settings = base.merged(next(p.data for p in received if p.key == "settings"))
-            job.step = "calendar"
+            job.at("calendar")
             calendar = self._calendar(league, settings, fetch, today)
-            job.step = "pairs"
+            job.at("pairs")
             weeks = self._unpaired(league, base, received, calendar, today)
-            received += public.pairings_parts(
-                league, weeks, fetch, step=lambda step: setattr(job, "step", step), clock=self.clock
-            )
-            job.step = "lineups"
+            received += public.pairings_parts(league, weeks, fetch, step=job.at, clock=self.clock)
+            job.at("lineups")
             received += (
                 public.lineup_parts(
                     league,
                     base.my_team_id,
                     self._lineup_days(league, base.my_team_id, calendar, today),
                     fetch,
-                    step=lambda step: setattr(job, "step", step),
+                    step=job.at,
                     clock=self.clock,
                 )
                 if base.my_team_id is not None
                 else []
             )
-            job.step = "schedule"
+            job.at("schedule")
             self._save_with_schedule(league, received, calendar, fetch, today)
-            job.step = "box scores"
+            job.at("box scores")
             self._box_scores(job, fetch, today, calendar)
-            job.step = "flag inputs"
+            job.at("flag inputs")
             self._record_adds(league, today)
             self._flag_inputs(job, fetch, today)
-            # The total counted every players page; the pool may have ended sooner.
-            job.status, job.step, job.total = "done", "done", job.done
+            job.check()
+            status, error = "done", None
+        except RefreshDeadline as exc:
+            status, error = "failed", str(exc)
         except public.PrivateLeague as exc:
-            job.status, job.error = "private", str(exc)
+            status, error = "private", str(exc)
         except (public.FetchError, pages.PageError) as exc:
-            job.status, job.error = "failed", str(exc)
+            status, error = "failed", str(exc)
         except HTTPException as exc:
-            job.status, job.error = "failed", str(exc.detail)
+            status, error = "failed", str(exc.detail)
         except Exception as exc:  # noqa: BLE001 - the job reports what broke instead of dying silently
-            job.status, job.error = "failed", f"{type(exc).__name__}: {exc}"
+            status, error = "failed", f"{type(exc).__name__}: {exc}"
         finally:
-            job.finished_at = datetime.now(UTC)
-            log_refresh(self.data_dir, job)
+            # The total counted every players page; the pool may have ended sooner. A job the
+            # deadline already ended keeps that end (#166).
+            done = {"step": "done", "total": job.done} if status == "done" else {}
+            if job.end(status, error, **done):
+                log_refresh(self.data_dir, job)
         return job
 
     def _lineup_days(
@@ -1617,17 +1715,11 @@ def register(
         wait: bool = Query(False, description="return once the refresh is done"),
     ) -> dict[str, Any]:
         """Read the league's public sources again. A private league answers 409."""
-        if wait:
-            service._base(league)
-            job = service.jobs.get(league)
-            if job is None or job.status != "running":
-                job = service.jobs[league] = RefreshJob(league)
-                await asyncio.to_thread(service.run_refresh, job)
-            else:
-                while job.status == "running":
-                    await asyncio.sleep(0.25)
-        else:
-            job = service.start_refresh(league)
+        # One job per league, the running one or a new one, under the service's guard (#166).
+        job = service.start_refresh(league)
+        while wait and job.status == "running":
+            await asyncio.to_thread(job.wait, 1.0)
+            service.expire(job)
         if job.status == "private":
             raise HTTPException(409, job.error)
         if job.status == "failed":
