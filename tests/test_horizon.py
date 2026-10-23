@@ -39,6 +39,21 @@ def test_pseudo_adp_and_conditional_availability(pool):
     assert avail.at[z["total"].idxmax(), 20] < 0.05
 
 
+def test_a_solve_stopped_before_any_plan_fails_and_its_candidate_is_left_out(pool, stop_solves):
+    # Not a plan with no picks in it (#122): a priced candidate whose solve stopped so is
+    # reported failed and left out of the table, the base plan stands.
+    problem = make(pool, FOUR_TEAM_PICKS)
+    base = solve_horizon(problem)
+    stop_solves()
+    with pytest.raises(RuntimeError, match="horizon solve failed with status Not Solved"):
+        solve_horizon(problem, time_limit=2.0)
+    updates: list[dict] = []
+    candidates = list(base.plan["player"][:2])
+    table = horizon_pick_pool(problem, candidates, base=base, workers=1, progress=updates.append)
+    assert table.empty
+    assert [u["candidate"] for u in updates] == [{"player": c, "failed": True} for c in candidates]
+
+
 def test_plan_covers_every_pick_and_fills_slots(pool):
     picks = FOUR_TEAM_PICKS
     problem = make(pool, picks)

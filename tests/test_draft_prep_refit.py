@@ -7,7 +7,6 @@ for the league curve once its format has a table. Synthetic drafts and players o
 import importlib.util
 import json
 import sys
-import time
 from pathlib import Path
 
 import numpy as np
@@ -25,6 +24,7 @@ from pickandroll.availability import (
     survival_frame,
 )
 
+from .test_api import poll
 from .test_league_curve import CATS, picks, projections
 from .test_leagues import QUICK, write_league
 from .test_yahoo_room import build_league
@@ -579,12 +579,21 @@ def test_a_league_tables_session_runs_the_simulation_for_its_curve(tmp_path):
         assert s["availability_source"] == "league" and s["survival"]["blend"] == blend
         assert s["curve_fit"]["blend"]["prior_status"] == "static"
         assert s["curve_fit"]["blend"]["prior"].startswith("flat default")
-        deadline = time.time() + 60
-        while s["survival"]["curve_run"]["status"] == "building" and time.time() < deadline:
-            time.sleep(0.1)
-            s = client.get(f"/sessions/{s['id']}").json()
+        url = f"/sessions/{s['id']}"
+        s = poll(
+            lambda: client.get(url).json(),
+            lambda s: s["survival"]["curve_run"]["status"] != "building",
+            timeout=60,
+        )
         assert s["survival"]["curve_run"]["status"] == "ready", s["survival"]["curve_run"]
         assert (s["survival"]["status"], s["availability_source"]) == ("ready", "league")
+        # One read can show the run ready with the prior still static (#122): the view takes
+        # the fit before the run installs its curve, and serializes the run's status after.
+        s = poll(
+            lambda: client.get(url).json(),
+            lambda s: s["curve_fit"]["blend"]["prior_status"] != "static",
+            timeout=5,
+        )
         assert s["curve_fit"]["blend"]["prior_status"] == "ready"
         prior = s["curve_fit"]["blend"]["prior"]
         assert prior.startswith("simulated league (10 drafts")
