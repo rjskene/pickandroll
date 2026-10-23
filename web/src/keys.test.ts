@@ -268,10 +268,10 @@ function fakeSeason(over: Partial<SeasonKeys> = {}) {
   return { map: seasonKeys(s), calls };
 }
 
-test("season: digits 1 to 7 open the seven cards, shifted in the bottom half", () => {
+test("season: digits 1 to 8 open the eight cards, shifted in the bottom half", () => {
   assert.deepEqual(
     SEASON_CARDS.map((c) => c.id),
-    ["waivers", "moves", "trade", "flags", "roster", "league", "strategy"],
+    ["waivers", "moves", "trade", "flags", "roster", "league", "strategy", "scorecard"],
   );
   for (const [i, c] of SEASON_CARDS.entries()) {
     const { map, calls } = fakeSeason();
@@ -282,7 +282,7 @@ test("season: digits 1 to 7 open the seven cards, shifted in the bottom half", (
       ["open", c.id, "bottom"],
     ]);
   }
-  for (const n of [8, 9]) {
+  for (const n of [9]) {
     const { map, calls } = fakeSeason();
     assert.equal(handleKey(digit(n), map), false);
     assert.deepEqual(calls, []);
@@ -422,5 +422,5 @@ test("each sheet names its screen's cards and lists its keys", () => {
   assert.ok(DRAFT_SHEET.cards.startsWith(`Cards are ${DRAFT_CARDS.map((c, i) => `${i + 1} ${c.title}`).join(" · ")},`));
   assert.ok(SEASON_SHEET.cards.startsWith(`Cards are ${SEASON_CARDS.map((c, i) => `${i + 1} ${c.title}`).join(" · ")},`));
   const listed = SEASON_SHEET.groups.flatMap((g) => g.rows.flatMap(([keys]) => keys));
-  for (const k of ["1", "7", "⇧ 2", "]", "[", "w", "h", "s", "l", "x", "Esc", "/", "j", "k", "↓", "↑", "Enter", "t", "m", "r", "?"]) assert.ok(listed.includes(k), k);
+  for (const k of ["1", "8", "⇧ 2", "]", "[", "w", "h", "s", "l", "x", "Esc", "/", "j", "k", "↓", "↑", "Enter", "t", "m", "r", "?"]) assert.ok(listed.includes(k), k);
 });

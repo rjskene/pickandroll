@@ -13,6 +13,10 @@ import type {
   PlayerFlag,
   Rates,
   RosterRow,
+  MovesSummary,
+  ScorecardMove,
+  ScorecardToDate,
+  ScorecardWeek,
   SeasonPlayer,
   SeasonSummary,
   Stash,
@@ -81,6 +85,14 @@ import {
   tradeVerdict,
   weekResult,
   weekTone,
+  MATCH_WORDS,
+  movesSummaryLine,
+  moveWhat,
+  realizedLabel,
+  realizedTitle,
+  scorecardToDateLine,
+  scorecardWeekLine,
+  unitsLabel,
   gainTone,
   horizonGames,
   MOVE_HORIZON,
@@ -1036,4 +1048,91 @@ test("the season view's chips, the week it opens and its summary (#116)", () => 
     "1 without odds, counted as none",
   ]);
   assert.deepEqual(outlookSummary({ ...summary, weeks: 1, unread: 1 }), ["1 regular week left, none with odds yet: no roster faced was read"]);
+});
+
+test("the scorecard's week, season and moves lines in the scorer's units (#126)", () => {
+  const week: ScorecardWeek = {
+    week: 2,
+    start: "2026-10-26",
+    end: "2026-11-01",
+    scoring: "categories",
+    projected: { entry: "e1", at: "2026-10-26T12:00:00+00:00", source: "moves", expected: 4.32, matchup: 0.7 },
+    actual: { opponent: 2, result: { won: 5, lost: 3, tied: 1, outcome: "W" }, won: 1, categories: 5.5 },
+    cats: [],
+    standing: { rank: 2, record: "9-7-2", teams: 12 },
+    moves: [],
+  };
+  assert.equal(scorecardWeekLine(week), "projected 70% to win, 4.3 categories · W 5-3-1 · 2nd of 12, 9-7-2");
+  const points = { ...week, scoring: "points" as const, projected: null, actual: { opponent: 2, result: { points: 812.4, against: 790.15, outcome: "W" as const }, won: 1, categories: null } };
+  assert.equal(scorecardWeekLine(points), "not projected · W 812.4-790.1 · 2nd of 12, 9-7-2");
+  const moves: MovesSummary = {
+    made: 3,
+    as_recommended: 1,
+    differently: 0,
+    not_recommended: 1,
+    no_entry: 1,
+    near: 0,
+    projected: 1,
+    projected_value: { week: 7.25 },
+    scored: 1,
+    realized_only: 1,
+    unscored: 1,
+    realized_value: { week: 40 },
+    complete: { week: 2 },
+    compared: { week: { moves: 1, projected: 7.25, realized: 22, same_way: 1, share: 3.0345 } },
+    unscored_by: { unmatched: 1 },
+    gaps: 1,
+  };
+  const td: ScorecardToDate = { weeks: 2, projected: 1, record: "1-0-1", expected_wins: 0.7, wins: 1, expected_categories: 4.32, categories: 5.5, standing: null, moves };
+  assert.equal(scorecardToDateLine(td, 0.09), "1-0-1 · 1 win against 0.70 expected over 1 projected week · 5.5 categories against 4.3 · Brier 0.090");
+  assert.equal(scorecardToDateLine({ ...td, projected: 0, expected_wins: null }), "1-0-1");
+  assert.equal(
+    movesSummaryLine(moves, "categories"),
+    "3 moves: 1 scored, 1 realized only, 1 unscored · +40.00 realized on their weeks · scored +22.00 against +7.25 projected (303%), 1 of 1 the projected way",
+  );
+  assert.equal(movesSummaryLine({ ...moves, made: 0 }, "points"), "no moves");
+  assert.equal(unitsLabel(-3.24, "points"), "−3.2");
+  assert.equal(unitsLabel(-3.256, "categories"), "−3.26");
+});
+
+test("a scorecard move's line, its realized cells and its tooltip (#126)", () => {
+  const name = (id: number) => ({ 11: "Brooks", 12: "Grant" })[id] ?? `player ${id}`;
+  const span = { from: "2026-10-27", to: "2026-11-01", complete: true, missing: [], add_games: 2, drop_games: 1, add: 30, drop: 8, gaps: 0, value: 22 };
+  const move: ScorecardMove = {
+    group: "scored",
+    day: "2026-10-27",
+    at: "2026-10-27T09:00:00-04:00",
+    add: 11,
+    drop: 12,
+    detail: "Free Agent",
+    bid: null,
+    match: { kind: "as_recommended", entry: "e2", move: { add: 11, drop: 12 }, near: false },
+    projected: null,
+    realized: {
+      valued: true,
+      reason: null,
+      add: { yahoo: 11, espn: "e11", by: "team" },
+      drop: { yahoo: 12, espn: "e12", by: "team" },
+      horizons: {
+        week: { ...span, through: "2026-11-01" },
+        three: { ...span, from: "2026-11-02", to: "2026-11-22", through: null, complete: false, add_games: 0, drop_games: 0, add: 0, drop: 0, value: null },
+      },
+      scorer: { entry: "e2", own: false },
+      lag_days: 1,
+    },
+  };
+  assert.equal(moveWhat(move, name), "Add Brooks for Grant");
+  assert.equal(moveWhat({ add: null, drop: 12 }, name), "Drop Grant");
+  assert.equal(moveWhat({ add: 11, drop: null }, name), "Add Brooks");
+  assert.equal(realizedLabel(move, "week", "categories"), "+22.00");
+  assert.equal(realizedLabel(move, "three", "categories"), "−");
+  assert.equal(
+    realizedTitle(move, "categories"),
+    "its week (Oct 27 – Nov 1), 2 games added, 1 given up: +22.00; the three weeks after (Nov 2 – Nov 22, none read yet), 0 games added, 0 given up; " +
+      "valued with the nearest solve's scorer: realized only; made 1 day after the first day of the solve it matched",
+  );
+  const unscored = { ...move, realized: { ...move.realized!, valued: false, reason: "unmatched" as const } };
+  assert.equal(realizedLabel(unscored, "week", "categories"), "−");
+  assert.ok(realizedTitle(unscored, "categories").startsWith("no realized value: a player not matched to the box scores; "));
+  assert.equal(MATCH_WORDS.no_entry, "no solve before it");
 });

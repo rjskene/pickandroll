@@ -545,6 +545,18 @@ last recorded week when left out. The metric is docs/AUTOPILOT.md's, section 6.
   in the JSON, the script's lines and the card.
 - **Script.** `scripts/season.py scorecard [league ...] [--week N] [--json]`: the week's
   markdown, or one line per league named.
+- **The card (part 3).** Card 8 on the league page's rail, Scorecard: the last recorded week
+  by default, the arrows stepping through the others; its line (the matchup odds and expected
+  categories projected, or "not projected", the result, the standing after it), then its moves,
+  each with its day and how it matched under it, its projected value on its week, and its
+  realized value on its week and on the three weeks after, in the scorer's units (a points
+  league's to one decimal, a categories league's to two). A move realized only, or unscored,
+  shows its values dimmed or a dash; a row's tooltip lists each span's games, how far it was
+  read, its gaps and missing days, a borrowed scorer and the lag. Then the season to date: the
+  record, the wins and categories against the projected weeks' expected, the Brier score, and
+  the moves summary (the three groups, the realized sum, and the scored moves' realized sum
+  against their projected, its share and how many went the projected way). In the private
+  league the card says "suggestions only".
 
 ## Streaming plans (#136)
 
@@ -732,7 +744,8 @@ then UI to evaluate available waiver options"). The flow:
    advice for the players who are out, #124), Trade (enter a proposal, read both
    sides' change), and the Flag digest (every flagged player across the league's pool).
    Built in #109 on the draft's rail and keys: the rail numbers the cards 1 Waivers, 2 Moves,
-   3 Trade, 4 Flags, 5 My roster, 6 The league, 7 Strategy (#110, "The strategy engine"); a
+   3 Trade, 4 Flags, 5 My roster, 6 The league, 7 Strategy (#110, "The strategy engine"), 8
+   Scorecard (#126, "Scorecard"); a
    digit opens a card in the drawer's top half
    and shift with a digit in its bottom half (Moves over Flags by default, the split
    draggable), and 1 gives the Waivers board the full width. `]` collapses the drawer to the

@@ -99,6 +99,13 @@ export const SEASON_ICONS: Record<SeasonCardId, ReactElement> = {
       <circle cx="16" cy="12" r="1.5" />
     </svg>
   ),
+  // A card scored: a week's projection against its result.
+  scorecard: (
+    <svg width="20" height="20" viewBox="0 0 24 24" {...stroke} aria-hidden="true">
+      <rect x="4" y="3" width="16" height="18" rx="2" />
+      <path d="M8 8h8M8 12h5M8 16l2 2 4-4" />
+    </svg>
+  ),
 };
 
 /** The view drawer's tabs (#116). */
