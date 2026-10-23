@@ -289,6 +289,8 @@ def test_each_solve_of_the_moves_route_appends_an_entry_to_its_days_log(client):
         "blend": None,
         "horizon_weight": None,
         "protection_floor": 0.0,
+        "plan_floor_cats": 0.1,
+        "plan_floor_points": 0.01,
         "stash_threshold": None,
         "faab_sizing": None,
         "daily_cap": None,
@@ -378,14 +380,24 @@ def test_the_moves_route_carries_the_weeks_streaming_plan(client):
         assert value["set"][h] - value["none"][h] == pytest.approx(week["gain"][h], abs=2e-3)
         assert plan["gain"][h] == pytest.approx(value["plan"][h] - value["set"][h], abs=2e-3)
     assert (plan["recommended"], plan["short"], plan["floor"]) == (False, 0.1, 0.1)
-    assert [s["key"] for s in logged(client)[0]["sets"]] == ["week", "three"]
+    # The entry logs what the plan was worth against the set, whatever the verdict, with no
+    # steps unless it is recommended.
+    [entry] = logged(client)
+    assert [s["key"] for s in entry["sets"]] == ["week", "three"]
+    assert entry["plan"] == {
+        "recommended": False,
+        "value": value["plan"],
+        "set": value["set"],
+        "short": 0.1,
+        "floor": 0.1,
+    }
 
 
 def test_a_recommended_plan_is_logged_as_one_more_set_its_steps_by_day(client, monkeypatch):
     from pickandroll.season import stream
 
     # Any plan that is not behind the set clears a floor below zero.
-    monkeypatch.setattr(stream, "PLAN_FLOOR", -1.0)
+    monkeypatch.setattr(stream, "PLAN_FLOOR_CATS", -1.0)
     strategy_league(client)
     m = client.get(f"/seasons/{LEAGUE}/moves").json()
     plan = m["plan"]
@@ -406,6 +418,7 @@ def test_a_recommended_plan_is_logged_as_one_more_set_its_steps_by_day(client, m
         {h: plan["value"]["plan"][h] - none[h] for h in ("week", "three")}, abs=2e-3
     )
     assert (logged_plan["held"], logged_plan["comebacks"]) == (plan["held"], plan["comebacks"])
+    assert entry["plan"]["recommended"] and entry["plan"]["floor"] == -1.0
     assert logged_plan["week"]["after"]["expected"] == pytest.approx(
         plan["value"]["plan"]["week"], abs=2e-3
     )

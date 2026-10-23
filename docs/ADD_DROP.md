@@ -402,9 +402,9 @@ when left out.
   knobs in force (`knobs`: the system, then the blend weight, the horizon weight, the protection
   floor, the stash threshold, the FAAB sizing and the daily move cap of docs/AUTOPILOT.md, null
   until the knob file of phase 3 sets them; `protection_floor` is the floor the keep rule used,
-  #124), the first day a move counts, the adds left, the
-  horizons' labels and the pool (the moves route's search pool, candidates and floor; the
-  strategy's players and settings). Then one set per horizon (moves) or per weight (strategy):
+  #124; `plan_floor_cats` and `plan_floor_points` the streaming plan's, #136), the first day a
+  move counts, the adds left, the horizons' labels and the pool (the moves route's search pool,
+  candidates and floor; the strategy's players and settings). Then one set per horizon (moves) or per weight (strategy):
   its moves (add, drop or nobody, the day it counts from, and the bid to make, null until the
   FAAB sizing of phase 2), the held slots it uses and the comebacks it implies (moves), the
   weight and where the set came from (strategy), its gains, and this week against the named
@@ -532,8 +532,10 @@ cannot say "add A now, drop A for B on Thursday"; the plan can.
   the set leaves it (its own move for the spot, else the occupant kept), and the spot's plan is
   the one with the best week among those no worse on the three weeks after. The single-move set
   stays the baseline: a plan is recommended only when its exact week value beats the set's by
-  more than `PLAN_FLOOR`, 0.10 expected categories until the scorecard (#126) sets a noise
-  floor. It is a heuristic, so the card says "recommended", never "optimal", and a test checks it
+  more than the floor until the scorecard (#126) sets a noise floor: `PLAN_FLOOR_CATS`, 0.10
+  expected categories, in a categories league, and in a points league, whose week is the
+  matchup's win odds on [0, 1], the same share of the scale, `PLAN_FLOOR_POINTS`, 0.01. Both are
+  knobs (docs/AUTOPILOT.md, section 6) the decision log records. It is a heuristic, so the card says "recommended", never "optimal", and a test checks it
   against brute force on a small league.
 - **Horizons.** A plan lives inside the current week, and its final holder stays: the
   three-week horizon values him as it does any add. A plan never costs the three weeks after
@@ -546,9 +548,14 @@ cannot say "add A now, drop A for B on Thursday"; the plan can.
   the set and the plan; the expected categories (`value`) with no move, the set and the plan on
   both horizons, and the plan's `gain` on the set; `recommended`, and `short`, how far its week
   falls short of the floor. The Moves card shows a Streaming plan section under the week's set
-  only when it is recommended: the steps by day with each one's gain, then the started games and
-  the adds against the set and the set's moves it keeps. The decision log (#125) logs a
-  recommended plan as one more set, `plan`: the kept moves, then the steps, each with its `from`
+  when it is recommended: the steps by day with each one's gain, then the started games and the
+  adds against the set and the set's moves it keeps. A plan under the floor is one muted line
+  instead, what it would have bought ("Streaming Grant's spot buys 2 more started games for +0.04
+  this week, under the 0.10 floor."). Every moves entry of the decision log (#125) carries the
+  plan's verdict, `plan`, whatever it is: recommended or not, the plan's and the set's expected
+  values on both horizons, the shortfall and the floor, so the scorecard can count the plans
+  foregone and judge the floor; null without a stream spot. The log keeps a recommended plan's
+  steps as one more set, `plan`: the kept moves, then the steps, each with its `from`
   and the #126 fields, the step's `value` counting the add's games and the drop's from the step's
   day (the drop may be an earlier step's add), so the steps' values sum to the plan's and the
   scorecard scores a stream like any move. `scripts/season.py decisions` prints the plan's moves

@@ -7,8 +7,9 @@ answer writes nothing), a strategy run's when it solved. It holds what the score
 against: the system and its export, the knobs in force, the adds left, the pool, and each
 recommended set (the moves route's per horizon, the strategy's per weight) with its gains and
 this week's categories and odds before and after it, and (from #126) the scorer and each move's
-own gain and value. A recommended streaming plan (#136) is one more set, ``plan``, its steps
-dated by their ``from``. A day's file is a list, appended to.
+own gain and value. A moves entry also says what the week's streaming plan (#136) was worth
+against its set, whatever the verdict (``plan``), and a recommended plan is one more set,
+``plan``, its steps dated by their ``from``. A day's file is a list, appended to.
 """
 
 from __future__ import annotations
@@ -23,6 +24,7 @@ from typing import Any
 from ..season import Season
 from ..season import decisions as dl
 from ..season import moves as mv
+from ..season import stream as st
 from ..season import weekly as wk
 from . import season_moves
 from .season_moves import Built
@@ -38,9 +40,10 @@ SHOWN_DAYS = 7
 #: hour of a solve is flagged ``near`` (``decisions.NEAR``) so a wrong zone shows.
 TRANSACTIONS_TZ = NBA_TZ
 #: The AUTOPILOT knobs (docs/AUTOPILOT.md, section 6) an entry records as in force: the
-#: projection system (the solve's own) and the keep rule's protection floor (#124), then the
-#: blend weight, the strategy's horizon weight, the stash threshold, the FAAB sizing and the
-#: daily move cap, None until the knob file (phase 3) sets them.
+#: projection system (the solve's own), the keep rule's protection floor (#124) and the
+#: streaming plan's floors (#136), then the blend weight, the strategy's horizon weight, the
+#: stash threshold, the FAAB sizing and the daily move cap, None until the knob file (phase 3)
+#: sets them.
 KNOBS = (
     "blend",
     "horizon_weight",
@@ -113,8 +116,15 @@ def _week(ev: mv.Evaluator, moves: Sequence[mv.Move]) -> dict[str, Any]:
 
 
 def knobs(system: str, floor: float | None = None) -> dict[str, Any]:
-    """The knobs in force for a solve on ``system`` with the keep rule's ``floor``."""
-    return {"system": system, **dict.fromkeys(KNOBS), "protection_floor": floor}
+    """The knobs in force for a solve on ``system`` with the keep rule's ``floor``, and the
+    streaming plan's floors in a categories and a points league."""
+    return {
+        "system": system,
+        **dict.fromkeys(KNOBS),
+        "protection_floor": floor,
+        "plan_floor_cats": st.PLAN_FLOOR_CATS,
+        "plan_floor_points": st.PLAN_FLOOR_POINTS,
+    }
 
 
 def _logged(move: Mapping[str, Any], built: Built | None = None) -> dict[str, Any]:
@@ -197,12 +207,29 @@ def moves_entry(built: Built, payload: Mapping[str, Any], at: datetime) -> dict[
     search = payload.get("search") or {}
     return {
         **_common(built, at, "moves"),
+        "plan": plan_verdict(plan),
         "pool": {
             "size": search.get("pool"),
             "candidates": len(payload.get("candidates") or {}),
             "min_gain": search.get("min_gain"),
         },
         "sets": sets,
+    }
+
+
+def plan_verdict(plan: Mapping[str, Any] | None) -> dict[str, Any] | None:
+    """The week's best streaming plan against its set, as every moves entry logs it whether it
+    was recommended or not (the scorecard counts the plans foregone and judges the floor): its
+    expected value on both horizons, the set's, the shortfall and the floor in force; None
+    without a stream spot. The steps are logged only as a recommended plan's set."""
+    if plan is None:
+        return None
+    return {
+        "recommended": plan["recommended"],
+        "value": plan["value"]["plan"],
+        "set": plan["value"]["set"],
+        "short": plan["short"],
+        "floor": plan["floor"],
     }
 
 

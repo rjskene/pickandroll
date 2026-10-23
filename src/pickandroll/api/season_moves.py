@@ -547,7 +547,7 @@ def plan_payload(
     rows are ``rows``): the set's moves it keeps, its steps by day with each one's own gain on
     both horizons, the spots it turns over, my started games and the adds with no move, the set
     and the plan, and the plan's value beside the set's; recommended only when its week beats
-    the set's by :data:`season.stream.PLAN_FLOOR`, else by how much it falls short. None
+    the set's by the floor (``season.stream.floor_of``), else by how much it falls short. None
     without a stream spot or the league's scorer (the keep rule's)."""
     p = built.problem
     if built.rule is None or built.scorer is None:
@@ -563,6 +563,7 @@ def plan_payload(
         for name, moves in (("none", []), ("set", list(plan.against)), ("plan", list(plan.moves)))
     }
     gap = value["plan"]["week"] - value["set"]["week"]
+    floor = st.floor_of(p)
     recommended = st.recommended(ev, plan)
     kept = set(plan.base)
     return {
@@ -591,8 +592,8 @@ def plan_payload(
         "value": {name: {h: _r(v) for h, v in vs.items()} for name, vs in value.items()},
         "gain": {h: _r(value["plan"][h] - value["set"][h]) for h in HORIZONS},
         "recommended": recommended,
-        "short": None if recommended else _r(max(0.0, st.PLAN_FLOOR - gap)),
-        "floor": st.PLAN_FLOOR,
+        "short": None if recommended else _r(max(0.0, floor - gap)),
+        "floor": floor,
     }
 
 

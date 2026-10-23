@@ -30,6 +30,7 @@ import {
   isSolving,
   milpLabel,
   planNote,
+  planShortLine,
   shownPlan,
   sourceText,
   stepDay,
@@ -633,6 +634,22 @@ test("a plan's note gives the games and adds against the set, and the set's move
     planNote(kept, name),
     "29 started games against 27 with the set (24 with no move), on 1 add against 3. It keeps the set's add P5 for P6, add P7 for P8 to IL, add P9.",
   );
+});
+
+test("a plan under the floor is one line saying what it would have bought", () => {
+  const name = (id: number) => `P${id}`;
+  assert.equal(planShortLine(undefined, name), null);
+  assert.equal(planShortLine(streamPlan(), name), null);
+  const short = { recommended: false, short: 0.06, gain: { week: 0.04, three: 0 } };
+  assert.equal(
+    planShortLine(streamPlan(short), name),
+    "Streaming P3's spot buys 2 more started games for +0.04 this week, under the 0.10 floor.",
+  );
+  const two = streamPlan({ ...short, spots: [{ player: 3, steps: 1 }, { player: 4, steps: 1 }], games: { none: 20, set: 25, plan: 25 } });
+  assert.equal(planShortLine(two, name), "Streaming the spots of P3 and P4 buys +0.04 this week, under the 0.10 floor.");
+  // A points league's floor is on the win odds; a plan that buys nothing says so.
+  const none = streamPlan({ recommended: false, short: 0.01, gain: { week: 0, three: 0 }, floor: 0.01 });
+  assert.equal(planShortLine(none, name), "No streaming plan beats the set this week (floor 0.01).");
 });
 
 const keepRule = (players: Partial<KeptPlayer>[]): KeepRule => ({

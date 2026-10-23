@@ -22,7 +22,7 @@ the weeks after. It keeps the best :data:`KEEP` partial paths per holder and add
 leaves it (its own move for the spot, else its occupant kept): the spot's plan is the path with
 the best week among those that cost nothing on the three weeks after, since the last holder
 stays. A heuristic: the plan is recommended, never optimal, and only when its week beats the
-recommended set's by more than :data:`PLAN_FLOOR`. Pure.
+recommended set's by more than the floor (:func:`floor_of`). Pure.
 """
 
 from __future__ import annotations
@@ -42,9 +42,12 @@ DAILY_CAP = 2
 #: The partial paths kept per holder and adds used, and the whole paths valued exactly.
 KEEP = 5
 EXACT = 8
-#: How far a plan's week must beat the recommended set's, in expected categories: the week's
-#: noise floor until the scorecard (#126) sets one.
-PLAN_FLOOR = 0.10
+#: How far a plan's week must beat the recommended set's: the week's noise floor until the
+#: scorecard (#126) sets one, a knob the decision log records. In expected categories in a
+#: categories league; a points league's week is the matchup's win odds on [0, 1], so the same
+#: share of its scale.
+PLAN_FLOOR_CATS = 0.10
+PLAN_FLOOR_POINTS = 0.01
 
 
 @dataclass(frozen=True)
@@ -319,11 +322,18 @@ def plan(
     return Plan(base, tuple(planned), tuple(recommended))
 
 
+def floor_of(problem: mv.MoveProblem) -> float:
+    """The floor a plan's week must clear: :data:`PLAN_FLOOR_POINTS` in a points league, else
+    :data:`PLAN_FLOOR_CATS`."""
+    return PLAN_FLOOR_POINTS if problem.points else PLAN_FLOOR_CATS
+
+
 def recommended(ev: mv.Evaluator, plan_: Plan) -> bool:
-    """Whether the plan's week beats its set's by more than :data:`PLAN_FLOOR`."""
+    """Whether the plan's week beats its set's by more than the floor."""
     if not plan_.steps:
         return False
-    return ev.value("week", plan_.moves) - ev.value("week", plan_.against) > PLAN_FLOOR
+    gap = ev.value("week", plan_.moves) - ev.value("week", plan_.against)
+    return gap > floor_of(ev.problem)
 
 
 def step_gains(ev: mv.Evaluator, plan_: Plan) -> list[dict[str, float]]:

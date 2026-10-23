@@ -316,5 +316,13 @@ def test_a_plan_inside_the_floor_is_not_recommended():
     gap = ev.value("week", found.moves) - ev.value("week", found.against)
     assert gap > 0
     with pytest.MonkeyPatch.context() as mp:
-        mp.setattr(st, "PLAN_FLOOR", gap + 0.01)
+        mp.setattr(st, "PLAN_FLOOR_CATS", gap + 0.01)
         assert not st.recommended(ev, found)
+
+
+def test_a_points_leagues_floor_is_on_the_win_odds_scale():
+    """A points league's week is the matchup's win odds: the floor is the same share of it."""
+    problem, _ = stream_league()
+    assert st.floor_of(problem) == st.PLAN_FLOOR_CATS == 0.10
+    points = replace(problem, points={"pts": 1.0}, cats=("fpts",))
+    assert st.floor_of(points) == st.PLAN_FLOOR_POINTS == 0.01

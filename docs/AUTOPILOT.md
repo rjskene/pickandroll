@@ -150,6 +150,7 @@ the decision log (#125) and the recorder (#97).
 | projection system or blend weight | the moves solve | bbm, yahoo, blend 0.25 to 0.75 |
 | horizon weight | the strategy objective | even, natural, season |
 | the protection floor | the keep rule | the margin by which a player must beat the best add |
+| the streaming floors | the streaming plan (#136) | the margin by which a plan's week must beat the set's, in a categories and a points league |
 | the stash threshold | #124 | the margin by which the freed spot must beat the return |
 | the FAAB sizing | section 5 | the sizing rule only; no ceiling |
 | the daily move cap | section 2 | 1 to 3 |

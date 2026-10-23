@@ -58,6 +58,7 @@ import {
   openingDrop,
   pctLabel,
   planNote,
+  planShortLine,
   playersById,
   projectedTotals,
   POSITIONS,
@@ -897,11 +898,15 @@ function Recommended({ h, m, s, name, onPick }: { h: MoveHorizon; m: MovesPayloa
   );
 }
 
-/** The week's streaming plan (#136) under the week's set, shown only when it is recommended:
- * its steps by day, each with its own gain, and what it buys against the set. */
+/** The week's streaming plan (#136) under the week's set when it is recommended: its steps by
+ * day, each with its own gain, and what it buys against the set. A plan under the floor is one
+ * muted line saying what it would have bought. */
 function PlanBlock({ m, s, name }: { m: MovesPayload; s: SeasonView; name: Namer }) {
   const plan = shownPlan(m.plan);
-  if (!plan) return null;
+  if (!plan) {
+    const line = planShortLine(m.plan, name);
+    return line ? <p className="muted small">{line}</p> : null;
+  }
   return (
     <div className="block">
       <span

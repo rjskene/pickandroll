@@ -561,6 +561,21 @@ export function planNote(plan: StreamPlan, name: (id: number | null) => string):
   return text;
 }
 
+/** The line under the week's set when the best streaming plan falls short of the floor
+ * (#136), so what was weighed shows: "Streaming Grant's spot buys 2 more started games for
+ * +0.04 this week, under the 0.10 floor."; null with no plan or a recommended one (its section
+ * shows instead). */
+export function planShortLine(plan: StreamPlan | null | undefined, name: (id: number) => string): string | null {
+  if (!plan || plan.recommended) return null;
+  const floor = plan.floor.toFixed(2);
+  const spots = plan.spots.filter((x) => x.steps > 0).map((x) => x.player);
+  if (!spots.length || Number(plan.gain.week.toFixed(2)) <= 0) return `No streaming plan beats the set this week (floor ${floor}).`;
+  const who = spots.length === 1 ? `${name(spots[0])}'s spot` : `the spots of ${andList(spots, name)}`;
+  const more = plan.games.plan - plan.games.set;
+  const games = more > 0 ? `${more} more started ${more === 1 ? "game" : "games"} for ` : "";
+  return `Streaming ${who} buys ${games}${gainLabel(plan.gain.week)} this week, under the ${floor} floor.`;
+}
+
 /** "Brooks and Grant" (#124). */
 function andList(ids: number[], name: (id: number) => string): string {
   const n = ids.map(name);
