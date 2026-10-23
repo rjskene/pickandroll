@@ -1,6 +1,7 @@
 // The season view's pure helpers (#92): labels for ages, ownership and availability, the
 // available table's filters and sort, the week projection's totals and odds (#93) and the moves'
-// gains (#94), and the strategy panel's (#110). No React, so `npm test` runs them under Node.
+// gains (#94), the strategy panel's (#110) and the scorecard's (#126). No React, so `npm test` runs
+// them under Node.
 import type {
   AvailableRow,
   BestMove,
@@ -16,15 +17,20 @@ import type {
   LineupAlert,
   LineupDay,
   LineupPayload,
+  MatchKind,
   MilpBlock,
   MoveAdds,
   MoveCandidate,
   MoveHorizon,
   MoveRef,
+  MovesSummary,
   OutlookSummary,
   OutlookWeek,
   PlayerFlag,
   Rates,
+  ScorecardMove,
+  ScorecardToDate,
+  ScorecardWeek,
   SeasonPlayer,
   SeasonRefresh,
   SeasonSummary,
@@ -42,6 +48,7 @@ import type {
   TradePayload,
   TradePlayer,
   TradeSide,
+  UnscoredReason,
   WeekResult,
   WeekStat,
 } from "./api";
@@ -1104,4 +1111,106 @@ export function strategySettingsChanged(run: StrategySettings | undefined, lock:
   const a = [...run.keep].sort((x, y) => x - y);
   const b = [...new Set(lock)].sort((x, y) => x - y);
   return run.program_only !== programOnly || a.length !== b.length || a.some((x, i) => x !== b[i]);
+}
+
+// ---------------------------------------------------------------- the scorecard (#126)
+export const MATCH_WORDS: Record<MatchKind, string> = {
+  as_recommended: "as recommended",
+  differently: "differently",
+  not_recommended: "not recommended",
+  no_entry: "no solve before it",
+};
+
+export const UNSCORED_WORDS: Record<UnscoredReason, string> = {
+  no_time: "no time on the transactions page",
+  no_scorer: "no scorer logged",
+  not_read: "no box score read yet",
+  unmatched: "a player not matched to the box scores",
+};
+
+/** A value in the scorer's units: a points league's fantasy points to one decimal, a categories
+ * league's z-sum to two; blank for none. */
+export function unitsLabel(v: number | null | undefined, scoring: string | null | undefined): string {
+  return gainLabel(v, scoring === "points" ? 1 : 2);
+}
+
+/** A recorded week in a line: "projected 70% to win, 4.3 categories · W 5-3-1 · 2nd of 12, 9-7-2". */
+export function scorecardWeekLine(w: ScorecardWeek): string {
+  const points = w.scoring === "points";
+  const p = w.projected;
+  const parts = [
+    p?.matchup != null
+      ? `projected ${Math.round(p.matchup * 100)}% to win${!points && p.expected != null ? `, ${p.expected.toFixed(1)} categories` : ""}`
+      : "not projected",
+  ];
+  const r = w.actual?.result;
+  if (r) parts.push(points ? `${r.outcome} ${(r.points ?? 0).toFixed(1)}-${(r.against ?? 0).toFixed(1)}` : `${r.outcome} ${r.won}-${r.lost}-${r.tied}`);
+  else parts.push("no result");
+  const st = w.standing;
+  if (st?.rank) parts.push(`${ordinal(st.rank)} of ${st.teams}${st.record ? `, ${st.record}` : ""}`);
+  return parts.join(" · ");
+}
+
+/** The season so far in a line: the record, and over the projected weeks the wins and
+ * categories against those expected and the matchup odds' Brier score. */
+export function scorecardToDateLine(td: ScorecardToDate, brier?: number | null): string {
+  const parts = [td.record];
+  if (td.projected && td.expected_wins != null) {
+    parts.push(`${td.wins} win${td.wins === 1 ? "" : "s"} against ${td.expected_wins.toFixed(2)} expected over ${td.projected} projected week${td.projected === 1 ? "" : "s"}`);
+    if (td.categories != null && td.expected_categories != null) parts.push(`${td.categories} categories against ${td.expected_categories.toFixed(1)}`);
+    if (brier != null) parts.push(`Brier ${brier.toFixed(3)}`);
+  }
+  return parts.join(" · ");
+}
+
+/** My moves of some weeks in a line: the groups, their realized value on their weeks and the
+ * scored against their projection. */
+export function movesSummaryLine(m: MovesSummary, scoring: string | null | undefined): string {
+  if (!m.made) return "no moves";
+  const parts = [`${m.made} move${m.made === 1 ? "" : "s"}: ${m.scored} scored, ${m.realized_only} realized only, ${m.unscored} unscored`];
+  if (m.scored + m.realized_only) parts.push(`${unitsLabel(m.realized_value.week ?? 0, scoring)} realized on their weeks`);
+  const c = m.compared.week;
+  if (c) {
+    const share = c.share != null ? ` (${Math.round(c.share * 100)}%)` : "";
+    parts.push(`scored ${unitsLabel(c.realized, scoring)} against ${unitsLabel(c.projected, scoring)} projected${share}, ${c.same_way} of ${c.moves} the projected way`);
+  }
+  return parts.join(" · ");
+}
+
+/** "Add Brooks for Grant", "Add Brooks", "Drop Grant". */
+export function moveWhat(m: Pick<ScorecardMove, "add" | "drop">, name: (id: number) => string): string {
+  if (m.add != null) return `Add ${name(m.add)}${m.drop != null ? ` for ${name(m.drop)}` : ""}`;
+  return m.drop != null ? `Drop ${name(m.drop)}` : "";
+}
+
+/** A move's realized value on a horizon, or what stands in for it: "−" with no value. */
+export function realizedLabel(m: ScorecardMove, h: MoveHorizon, scoring: string | null | undefined): string {
+  const v = m.realized?.valued ? m.realized.horizons[h]?.value : null;
+  return v == null ? "−" : unitsLabel(v, scoring);
+}
+
+/** A move's realized value spelled out for its row's tooltip: each span's games and values and
+ * how far it is read, the borrowed scorer, the lag behind the solve, or why it has no value. */
+export function realizedTitle(m: ScorecardMove, scoring: string | null | undefined): string {
+  const x = m.realized;
+  if (!x) return "not valued: no box scores";
+  const n = (k: number, word: string) => `${k} ${word}${k === 1 ? "" : "s"}`;
+  const parts: string[] = [];
+  if (!x.valued && x.reason) parts.push(`no realized value: ${UNSCORED_WORDS[x.reason]}`);
+  for (const [h, label] of [
+    ["week", "its week"],
+    ["three", "the three weeks after"],
+  ] as const) {
+    const span = x.horizons[h];
+    if (!span) continue;
+    const games = [span.add_games != null && m.add != null ? `${n(span.add_games, "game")} added` : null, span.drop_games != null && m.drop != null ? `${span.drop_games} given up` : null].filter(Boolean);
+    const read = span.complete ? "" : span.through ? `, read through ${dayLabel(span.through)}` : ", none read yet";
+    const value = span.value != null ? `: ${unitsLabel(span.value, scoring)}` : "";
+    const gaps = span.gaps ? `, ${n(span.gaps, "game")} of a player not matched` : "";
+    const missing = span.missing.length ? `, ${n(span.missing.length, "day")} over not read` : "";
+    parts.push(`${label} (${dayLabel(span.from)} – ${dayLabel(span.to)}${read})${games.length ? `, ${games.join(", ")}` : ""}${gaps}${missing}${value}`);
+  }
+  if (x.scorer && !x.scorer.own) parts.push("valued with the nearest solve's scorer: realized only");
+  if (x.lag_days) parts.push(`made ${n(x.lag_days, "day")} after the first day of the solve it matched`);
+  return parts.join("; ");
 }

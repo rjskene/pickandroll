@@ -92,6 +92,7 @@ import LineupView from "./LineupView";
 import MatchupView from "./MatchupView";
 import OutlookView from "./OutlookView";
 import Rail from "./Rail";
+import Scorecard from "./Scorecard";
 import { SEASON_ICONS } from "./icons";
 import Strategy from "./Strategy";
 import Trade from "./Trade";
@@ -274,6 +275,8 @@ export default function SeasonScreen({ league, onBack }: { league: string; onBac
         };
       case "strategy":
         return { note: moves.data?.system.label, body: <Strategy league={league} s={s} system={system} onPick={pick} /> };
+      case "scorecard":
+        return { note: s.public ? undefined : "suggestions only", body: <Scorecard league={league} /> };
       default:
         return { body: null };
     }
@@ -917,7 +920,7 @@ function PlanBlock({ m, s, name }: { m: MovesPayload; s: SeasonView; name: Namer
     <div className="block">
       <span
         className="k"
-        title={`a dated sequence of adds and drops that turns the weakest spots over inside the week; recommended when its week beats the set's by more than ${plan.floor} expected categories`}
+        title={`a dated sequence of adds and drops that turns the weakest spots over inside the week; recommended when its week beats the set's by more than the floor, ${plan.floor} ${s.scoring === "points" ? "of the matchup's win odds" : "expected categories"}`}
       >
         Streaming plan for {horizonName(m, "week")} · {gainLabel(plan.gain.week)} on the set ({GAIN_SHORT.three} {gainLabel(plan.gain.three)})
       </span>
@@ -1537,7 +1540,7 @@ function SeasonFooter({ s, now }: { s: SeasonView; now: number }) {
       {waivers.length > 0 && <span>{waivers.join(" · ")}</span>}
       <span className="grow" />
       <span>
-        <kbd>?</kbd> keys · <kbd>w</kbd> <kbd>h</kbd> <kbd>s</kbd> views · <kbd>[</kbd> view drawer · <kbd>1</kbd>–<kbd>7</kbd> cards · <kbd>⇧</kbd>+digit bottom half · <kbd>]</kbd> panel
+        <kbd>?</kbd> keys · <kbd>w</kbd> <kbd>h</kbd> <kbd>s</kbd> views · <kbd>[</kbd> view drawer · <kbd>1</kbd>–<kbd>8</kbd> cards · <kbd>⇧</kbd>+digit bottom half · <kbd>]</kbd> panel
       </span>
       <span title={Object.entries(s.fetched).map(([k, f]) => `${k}: ${f.at} (${f.source})`).join("\n")}>Snapshot {ageLabel(s.updated_at, now)}</span>
       <span>League {s.league}</span>

@@ -1603,6 +1603,150 @@ export interface SeasonWeeks {
   weeks: RecordedWeek[];
 }
 
+/** How a move made compares with the solve logged before it (#125). */
+export type MatchKind = "as_recommended" | "differently" | "not_recommended" | "no_entry";
+/** A move's group on the scorecard (#126): projected by its own entry and realized, realized
+ * only (no projection of its own, or a borrowed scorer), or neither. */
+export type MoveGroup = "scored" | "realized_only" | "unscored";
+export type UnscoredReason = "no_time" | "no_scorer" | "not_read" | "unmatched";
+
+/** A move's projection as its entry logged it, in the scorer's units, on each horizon. */
+export interface LoggedSpan {
+  from: string;
+  to: string;
+  add_games: number;
+  drop_games: number | null;
+  value: number | null;
+}
+
+/** A move's realized span: its games from the move on, through the last day read. */
+export interface RealizedSpan {
+  from: string;
+  to: string;
+  through: string | null;
+  complete: boolean;
+  /** The days over but not read yet. */
+  missing: string[];
+  add_games: number | null;
+  drop_games: number | null;
+  add: number | null;
+  drop: number | null;
+  /** The games of a player not matched to the box scores. */
+  gaps: number;
+  value: number | null;
+}
+
+export interface RealizedSide {
+  yahoo: number;
+  espn: string | null;
+  by: "id" | "team" | "name" | null;
+}
+
+export interface Realized {
+  valued: boolean;
+  reason: UnscoredReason | null;
+  add: RealizedSide | null;
+  drop: RealizedSide | null;
+  horizons: Partial<Record<MoveHorizon, RealizedSpan>>;
+  /** The entry whose scorer valued it; ``own`` false for a borrowed one. */
+  scorer: { entry: string; own: boolean } | null;
+  /** The days from the matched entry's first day to the move's. */
+  lag_days: number | null;
+}
+
+export interface ScorecardMove {
+  group: MoveGroup;
+  day: string | null;
+  at: string | null;
+  add: number | null;
+  drop: number | null;
+  detail: string | null;
+  bid: number | null;
+  match: { kind: MatchKind; entry: string | null; move: { add: number; drop: number | null } | null; near: boolean };
+  projected: {
+    set: string;
+    gain: Partial<Record<MoveHorizon, number | null>>;
+    value: { add: number | null; drop: number | null; horizons: Partial<Record<MoveHorizon, LoggedSpan>> };
+  } | null;
+  realized: Realized | null;
+}
+
+export interface ScorecardCat {
+  cat: string;
+  p_win: number | null;
+  projected: { mine: number | null; theirs: number | null } | null;
+  actual: { mine: number | null; theirs: number | null } | null;
+  won: number | null;
+}
+
+/** A recorded week against the decision log's projection of it (#126). */
+export interface ScorecardWeek {
+  week: number;
+  start: string;
+  end: string;
+  scoring: "categories" | "points" | null;
+  projected: { entry: string; at: string; source: string | null; expected: number | null; matchup: number | null } | null;
+  actual: { opponent: number; result: WeekResult; won: number; categories: number | null } | null;
+  cats: ScorecardCat[];
+  standing: { rank: number | null; record: string | null; teams: number } | null;
+  moves: ScorecardMove[];
+}
+
+export interface MovesCompared {
+  moves: number;
+  projected: number;
+  realized: number;
+  /** How many realized in the projected direction. */
+  same_way: number;
+  /** The realized sum over the projected; null when the projected is not positive. */
+  share: number | null;
+}
+
+export interface MovesSummary {
+  made: number;
+  as_recommended: number;
+  differently: number;
+  not_recommended: number;
+  no_entry: number;
+  near: number;
+  projected: number;
+  projected_value: Partial<Record<MoveHorizon, number>>;
+  scored: number;
+  realized_only: number;
+  unscored: number;
+  realized_value: Partial<Record<MoveHorizon, number>>;
+  complete: Partial<Record<MoveHorizon, number>>;
+  compared: Partial<Record<MoveHorizon, MovesCompared>>;
+  unscored_by: Partial<Record<UnscoredReason, number>>;
+  gaps: number;
+}
+
+export interface ScorecardToDate {
+  weeks: number;
+  projected: number;
+  record: string;
+  expected_wins: number | null;
+  wins: number;
+  expected_categories: number | null;
+  categories: number | null;
+  standing: ScorecardWeek["standing"];
+  moves: MovesSummary;
+}
+
+export interface ScorecardPayload {
+  league: string;
+  public: boolean;
+  system: string;
+  status: "recorded" | "not_recorded" | "no_team";
+  week: number | null;
+  card: ScorecardWeek | null;
+  weeks: ScorecardWeek[];
+  to_date?: ScorecardToDate;
+  calibration?: { weeks: number; brier: number | null };
+  /** The names of the players the moves name, by Yahoo id. */
+  players?: Record<string, string>;
+}
+
 /** The season view: the summary plus the week, standings, rosters, matchup and the pool. */
 export interface SeasonView extends SeasonSummary {
   settings: {
@@ -1724,6 +1868,8 @@ export const api = {
     request<TradePayload>(`/seasons/${encodeURIComponent(league)}/trade`, { method: "POST", body: JSON.stringify(body) }),
   /** The weeks the weekly recorder has kept (#97), my result in each. */
   weeks: (league: string) => request<SeasonWeeks>(`/seasons/${encodeURIComponent(league)}/weeks`),
+  /** The recorded weeks against the decision log, the season to date and my moves realized (#126). */
+  scorecard: (league: string) => request<ScorecardPayload>(`/seasons/${encodeURIComponent(league)}/scorecard`),
   /** Read the league's public sources again, in the background; 409 for a private league. */
   refreshSeason: (league: string) =>
     request<{ refresh: SeasonRefresh; season: SeasonSummary }>(`/seasons/${encodeURIComponent(league)}/refresh`, { method: "POST" }),
