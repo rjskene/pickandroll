@@ -14,13 +14,14 @@ The ownership map for traded picks and the draft-night dashboard fixes are merge
 
 ## Roles
 
-Three Claude Desktop sessions share this checkout and reach each other with `ListAgents` / `SendMessage`.
+Four Claude Desktop sessions share this checkout and reach each other with `ListAgents` / `SendMessage`.
 
 | session | does | does not |
 |---|---|---|
 | **fantasyMASTER** | analysis, plans, metrics, spot checks, reviews and merges PRs, answers design questions | implement |
 | **fantasyEMISSARY** | implements, tests, hill-climbs `docs/YAHOO_SYNC.md`; owns #8, #9, #10; directs the drone | merge its own PRs |
 | **fantasyMOCK** (the drone) | runs Yahoo mock drafts from the user's Chrome on instruction from the emissary or the master; posts the scorecard of every mock on #11 | change code |
+| **fantasySIMIMP** | implements the season simulator (SEASON SIM, the design note at `~/code/pickandroll-scratch/master/season-sim/DESIGN.md`), in its own worktrees and PRs; started 2026-10-23 so the master stays on the non-simulator work | merge its own PRs; touch non-simulator code or the emissary's files |
 
 The user may talk to any of the three. A session that receives a decision from the user relays it to the others
 when it affects their work. Report outcomes faithfully: a failed test, a lost pick or a skipped step is stated
@@ -71,5 +72,12 @@ as such, with the evidence.
   while a practice run or a mock is on the server (ask fantasyMOCK first; it wiped a finished run on
   2026-10-06). Draft night runs `pickandroll-api-draft` (same port, no `--reload`) on a frozen checkout.
 - Core packages `src/pickandroll/{projections,draft,optim,availability}` stay free of I/O.
+- Keeping up with `main` (user, 2026-10-23): after every merge the master posts a "main moved" note to each
+  building session (fantasyEMISSARY, fantasySIMIMP) with the new sha, the PR and the files it touched. A session
+  with an open branch then runs `git fetch origin && git merge origin/main` in its worktree (merge, never rebase:
+  force pushes are blocked), re-runs its gates and pushes; a session about to cut a worktree cuts it from the new
+  main. Before opening any PR a session fetches and merges `origin/main` itself, and the PR body names the main it
+  was tested against. A merge of one session's PR that touches a file another session builds on is called out in
+  the note by name, with what changed.
 - A change to #8 passes the Tier 1 replay (`docs/YAHOO_SYNC.md` §5) before review. A change to the room side
   (#9) ships with a Tier 2 scorecard from a live mock. The scorecard goes on #11 as a comment.
