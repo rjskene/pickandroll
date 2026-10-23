@@ -1,6 +1,6 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
-import { api, type BestMove, type ProjectionSystem, type SeasonSummary } from "../api";
+import { api, type BestMove, type ProjectionSystem, type SeasonSummary, type StatusPayload } from "../api";
 import {
   addsLeft,
   addsNote,
@@ -16,6 +16,7 @@ import {
   scoreLabel,
   type GridOrder,
 } from "../season";
+import { StatusDot, StatusSheet, useSeasonStatus } from "./StatusLight";
 
 /** The grid's moves come from the league page's default projection, so a solve there shows here. */
 const SYSTEM: ProjectionSystem = "bbm";
@@ -78,6 +79,14 @@ export default function LeagueGrid({ onOpen }: { onOpen: (league: string) => voi
     mutationFn: (league: string) => api.refreshSeason(league),
     onSettled: () => void queryClient.invalidateQueries({ queryKey: ["seasons"] }),
   });
+  // Each card's freshness light (#153) and the league whose sheet is open; a new read moves it.
+  const status = useSeasonStatus();
+  const [sheetFor, setSheetFor] = useState<string | null>(null);
+  const reads = list.map((s) => s.updated_at).join();
+  useEffect(() => {
+    void queryClient.invalidateQueries({ queryKey: ["status"] });
+  }, [queryClient, reads]);
+  const open = list.find((s) => s.league === sheetFor);
   const now = Date.now();
   if (!list.length && !seasons.error) return seasons.isPending ? <p className="muted">Reading the leagues…</p> : null;
   return (
@@ -109,10 +118,28 @@ export default function LeagueGrid({ onOpen }: { onOpen: (league: string) => voi
             onSolve={() => solve.mutate(s)}
             onRefresh={() => refresh.mutate(s.league)}
             refreshing={refresh.isPending && refresh.variables === s.league}
+            status={status.data}
+            onStatus={() => setSheetFor(s.league)}
           />
         ))}
       </div>
       {refresh.isError && <p className="error">{refresh.error.message}</p>}
+      {open && status.data && (
+        <StatusSheet
+          p={status.data}
+          league={open.league}
+          onClose={() => setSheetFor(null)}
+          refresh={
+            open.public
+              ? {
+                  run: () => refresh.mutate(open.league),
+                  running: isRefreshing(open) || (refresh.isPending && refresh.variables === open.league),
+                  title: "Read the league's public Yahoo pages again (about 20 s)",
+                }
+              : undefined
+          }
+        />
+      )}
     </section>
   );
 }
@@ -128,6 +155,8 @@ function LeagueCard({
   onSolve,
   onRefresh,
   refreshing,
+  status,
+  onStatus,
 }: {
   s: SeasonSummary;
   now: number;
@@ -139,6 +168,8 @@ function LeagueCard({
   onSolve: () => void;
   onRefresh: () => void;
   refreshing: boolean;
+  status: StatusPayload | undefined;
+  onStatus: () => void;
 }) {
   const format = s.scoring === "points" ? "H2H points" : "H2H categories";
   const title = s.name ?? `League ${s.league}`;
@@ -157,13 +188,14 @@ function LeagueCard({
         ) : (
           <span className="dim">{s.public ? "not read yet" : "not read yet: open its pages in Chrome with the extension"}</span>
         )}
-        {s.public && !s.error && (
-          <div className="facts">
+        <div className="facts">
+          <StatusDot p={status} league={s.league} onOpen={onStatus} />
+          {s.public && !s.error && (
             <button className="link" disabled={isRefreshing(s) || refreshing} onClick={onRefresh}>
               {isRefreshing(s) ? refreshNote(s.refresh) : "read it now"}
             </button>
-          </div>
-        )}
+          )}
+        </div>
       </div>
     );
   }
@@ -209,6 +241,7 @@ function LeagueCard({
         {s.my_team && <span>{s.my_team.name}</span>}
         <span>{placeLabel(s)}</span>
         {s.adds && <span title={addsNote(s.adds)}>{addsLeft(s.adds)}</span>}
+        <StatusDot p={status} league={s.league} onOpen={onStatus} />
         <span className={failed ? "bad" : running ? "accent" : isStale(s.updated_at, now) ? "dim" : "muted"} title={s.refresh?.error ?? s.updated_at ?? undefined}>
           {readNote}
         </span>
