@@ -183,6 +183,43 @@ def test_a_plan_never_costs_the_weeks_after():
     assert ev.value("week", (mv.Move(10, 3, THU), mv.Move(11, 10, DAYS[2]))) > ev.value("week", ())
 
 
+def test_without_the_guard_the_plan_takes_the_best_week_whatever_it_costs_after():
+    problem, rule = stream_league(later=())
+    ev = mv.Evaluator(problem)
+    free = st.plan(ev, rule, (), per_game(problem), guard=False)
+    assert free is not None
+    assert free.steps == (mv.Move(10, 3, THU), mv.Move(11, 10, DAYS[2]))
+    assert ev.value("three", free.moves) < ev.value("three", ())
+
+
+def test_the_payload_says_the_guard_refused_a_plan_and_what_it_would_buy():
+    """The best week streams the spot but leaves it empty after: the plan is not recommended,
+    and the payload gives the refused plan's steps, games and gain for the user to weigh."""
+    from pickandroll.api.season_moves import Built, plan_payload
+
+    problem, rule = stream_league(later=())
+    ev = mv.Evaluator(problem)
+    built = Built(problem, {"key": "bbm"}, {}, {}, 0, rule=rule, scorer={"points": {"pts": 1.0}})
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(st, "PLAN_FLOOR_CATS", 0.0)
+        out = plan_payload(built, ev, [], [])
+    assert out is not None
+    assert (out["recommended"], out["reason"], out["steps"]) == (False, "guard", [])
+    guard = out["guard"]
+    assert [(x["add"], x["drop"], x["from"], x["spot"]) for x in guard["steps"]] == [
+        (10, 3, THU.isoformat(), 3),
+        (11, 10, DAYS[2].isoformat(), 3),
+    ]
+    assert guard["spots"] == [3] and guard["games"] > out["games"]["set"]
+    assert guard["gain"]["week"] > 0 > guard["gain"]["three"]
+    # With the weeks after the occupant's to lose, a plan the guard keeps carries no reason.
+    problem, rule = stream_league()
+    ev = mv.Evaluator(problem)
+    built = Built(problem, {"key": "bbm"}, {}, {}, 0, rule=rule, scorer={"points": {"pts": 1.0}})
+    out = plan_payload(built, ev, [], [])
+    assert out["recommended"] and (out["reason"], out["guard"]) == (None, None)
+
+
 def test_the_set_keeps_the_adds_for_its_other_spots():
     """Two stream spots and two adds: the set spends one on each; planning the first spot
     cannot take the second's add, so the plan is never behind the set."""

@@ -29,6 +29,7 @@ import {
   frontierMarks,
   isSolving,
   milpLabel,
+  guardSteps,
   planNote,
   planShortLine,
   shownPlan,
@@ -605,6 +606,8 @@ const streamPlan = (over: Partial<StreamPlan> = {}): StreamPlan => ({
   recommended: true,
   short: null,
   floor: 0.1,
+  reason: null,
+  guard: null,
   ...over,
 });
 
@@ -640,7 +643,7 @@ test("a plan under the floor is one line saying what it would have bought", () =
   const name = (id: number) => `P${id}`;
   assert.equal(planShortLine(undefined, name), null);
   assert.equal(planShortLine(streamPlan(), name), null);
-  const short = { recommended: false, short: 0.06, gain: { week: 0.04, three: 0 } };
+  const short = { recommended: false, short: 0.06, gain: { week: 0.04, three: 0 }, reason: "short" as const };
   assert.equal(
     planShortLine(streamPlan(short), name),
     "Streaming P3's spot buys 2 more started games for +0.04 this week, under the 0.10 floor.",
@@ -650,6 +653,31 @@ test("a plan under the floor is one line saying what it would have bought", () =
   // A points league's floor is on the win odds; a plan that buys nothing says so.
   const none = streamPlan({ recommended: false, short: 0.01, gain: { week: 0, three: 0 }, floor: 0.01 });
   assert.equal(planShortLine(none, name), "No streaming plan beats the set this week (floor 0.01).");
+  assert.equal(guardSteps(streamPlan(short), name), null);
+});
+
+test("a plan the three-week guard refused says what it buys and what it costs, and its steps", () => {
+  const name = (id: number | null) => `P${id}`;
+  const refused = streamPlan({
+    recommended: false,
+    short: 0.1,
+    gain: { week: 0, three: 0 },
+    reason: "guard",
+    guard: {
+      steps: [
+        { add: 10, drop: 3, from: "2026-10-22", spot: 3 },
+        { add: 11, drop: 10, from: "2026-10-24", spot: 3 },
+      ],
+      spots: [3],
+      games: 29,
+      gain: { week: 0.15, three: -0.47 },
+    },
+  });
+  assert.equal(
+    planShortLine(refused, name),
+    "Streaming P3's spot buys 2 more started games for +0.15 this week but costs 0.47 over three weeks; not recommended.",
+  );
+  assert.equal(guardSteps(refused, name), "Thu Oct 22: add P10 for P3; Sat Oct 24: add P11 for P10");
 });
 
 const keepRule = (players: Partial<KeptPlayer>[]): KeepRule => ({

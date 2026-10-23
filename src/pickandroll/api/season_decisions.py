@@ -220,16 +220,21 @@ def moves_entry(built: Built, payload: Mapping[str, Any], at: datetime) -> dict[
 def plan_verdict(plan: Mapping[str, Any] | None) -> dict[str, Any] | None:
     """The week's best streaming plan against its set, as every moves entry logs it whether it
     was recommended or not (the scorecard counts the plans foregone and judges the floor): its
-    expected value on both horizons, the set's, the shortfall and the floor in force; None
-    without a stream spot. The steps are logged only as a recommended plan's set."""
+    expected value on both horizons, the set's, the shortfall, the floor in force and why it was
+    not recommended (``short`` or ``guard``, the latter with the refused plan's gain on the set
+    on both horizons); None without a stream spot. The steps are logged only as a recommended
+    plan's set."""
     if plan is None:
         return None
+    guard = plan.get("guard")
     return {
         "recommended": plan["recommended"],
+        "reason": plan.get("reason"),
         "value": plan["value"]["plan"],
         "set": plan["value"]["set"],
         "short": plan["short"],
         "floor": plan["floor"],
+        "guard": None if guard is None else {"gain": guard["gain"]},
     }
 
 

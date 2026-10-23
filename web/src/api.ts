@@ -1240,6 +1240,20 @@ export interface StreamPlan {
   recommended: boolean;
   short: number | null;
   floor: number;
+  /** Why it is not recommended: under the floor, or the plan with the best week would clear it
+   * but costs the three weeks after, which the planner never trades (``guard``). */
+  reason: "short" | "guard" | null;
+  guard: PlanGuard | null;
+}
+
+/** The plan the three-week guard refused (#136): what it would buy, for the user to weigh. */
+export interface PlanGuard {
+  steps: (MoveRef & { spot: number })[];
+  spots: number[];
+  /** My started games over the rest of the week with it. */
+  games: number;
+  /** Its gain on the set on each horizon (the three weeks' negative). */
+  gain: Record<MoveHorizon, number>;
 }
 
 export interface MoveHorizonInfo {

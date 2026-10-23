@@ -547,8 +547,11 @@ def plan_payload(
     rows are ``rows``): the set's moves it keeps, its steps by day with each one's own gain on
     both horizons, the spots it turns over, my started games and the adds with no move, the set
     and the plan, and the plan's value beside the set's; recommended only when its week beats
-    the set's by the floor (``season.stream.floor_of``), else by how much it falls short. None
-    without a stream spot or the league's scorer (the keep rule's)."""
+    the set's by the floor (``season.stream.floor_of``), else by how much it falls short and
+    why: ``short``, under the floor, or ``guard``, when the plan with the best week would clear
+    it but costs the three weeks after, which the planner never trades (its steps, games and
+    gains are given so the user can make the trade by hand). None without a stream spot or the
+    league's scorer (the keep rule's)."""
     p = built.problem
     if built.rule is None or built.scorer is None:
         return None
@@ -565,6 +568,13 @@ def plan_payload(
     gap = value["plan"]["week"] - value["set"]["week"]
     floor = st.floor_of(p)
     recommended = st.recommended(ev, plan)
+    reason, guard = (None, None) if recommended else ("short", None)
+    if not recommended:
+        free = st.plan(ev, built.rule, against, per_game, guard=False)
+        if free is not None and free.steps:
+            gain = {h: ev.value(h, list(free.moves)) - value["set"][h] for h in HORIZONS}
+            if gain["week"] > floor and gain["three"] < -mv.EPS:
+                reason, guard = "guard", _guarded(ev, free, gain)
     kept = set(plan.base)
     return {
         "base": [
@@ -594,6 +604,21 @@ def plan_payload(
         "recommended": recommended,
         "short": None if recommended else _r(max(0.0, floor - gap)),
         "floor": floor,
+        "reason": reason,
+        "guard": guard,
+    }
+
+
+def _guarded(ev: mv.Evaluator, plan: st.Plan, gain: dict[str, float]) -> dict[str, Any]:
+    """The plan the three-week guard refused: its steps by day with the spots they turn over,
+    the spots, my started games with it and its gain on the set on both horizons."""
+    p = ev.problem
+    spot_of = {m: sp.occupant for sp in plan.spots for m in sp.steps}
+    return {
+        "steps": [{**_move(m, p), "spot": spot_of[m]} for m in plan.steps],
+        "spots": [sp.occupant for sp in plan.spots if sp.steps],
+        "games": _started(ev, list(plan.moves)),
+        "gain": {h: _r(v) for h, v in gain.items()},
     }
 
 

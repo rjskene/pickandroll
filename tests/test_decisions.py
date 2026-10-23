@@ -380,17 +380,24 @@ def test_the_moves_route_carries_the_weeks_streaming_plan(client):
         assert value["set"][h] - value["none"][h] == pytest.approx(week["gain"][h], abs=2e-3)
         assert plan["gain"][h] == pytest.approx(value["plan"][h] - value["set"][h], abs=2e-3)
     assert (plan["recommended"], plan["short"], plan["floor"]) == (False, 0.1, 0.1)
+    assert (plan["reason"], plan["guard"]) == ("short", None)
     # The entry logs what the plan was worth against the set, whatever the verdict, with no
     # steps unless it is recommended.
     [entry] = logged(client)
     assert [s["key"] for s in entry["sets"]] == ["week", "three"]
     assert entry["plan"] == {
         "recommended": False,
+        "reason": "short",
         "value": value["plan"],
         "set": value["set"],
         "short": 0.1,
         "floor": 0.1,
+        "guard": None,
     }
+    # A plan the three-week guard refused is logged with its gain on the set, not its steps.
+    refused = {**plan, "reason": "guard", "guard": {"steps": [], "gain": {"week": 0.2}}}
+    assert season_decisions.plan_verdict(refused)["guard"] == {"gain": {"week": 0.2}}
+    assert season_decisions.plan_verdict(None) is None
 
 
 def test_a_recommended_plan_is_logged_as_one_more_set_its_steps_by_day(client, monkeypatch):

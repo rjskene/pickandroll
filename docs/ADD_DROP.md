@@ -539,7 +539,11 @@ cannot say "add A now, drop A for B on Thursday"; the plan can.
   against brute force on a small league.
 - **Horizons.** A plan lives inside the current week, and its final holder stays: the
   three-week horizon values him as it does any add. A plan never costs the three weeks after
-  against the set (above), and its three-week change shows beside its week gain.
+  against the set (above), a hard rule for the autopilot, which cannot weigh a week's gain
+  against a later cost the way the user can; its three-week change shows beside its week gain.
+  When the plan with the best week would clear the floor but costs the weeks after, the payload
+  says the guard refused it and gives its steps, games and gain on both horizons, so the user
+  sees the trade and can make it by hand.
 - **Output.** The moves payload's `plan` beside `recommended` (null without a stream spot):
   `base`, the set's moves it keeps; `steps` by day, each a move (`add`, `drop`, `from`, its day)
   with the `spot` it turns over and its own gain on both horizons (`marginal`, the plan up to it
@@ -547,14 +551,19 @@ cannot say "add A now, drop A for B on Thursday"; the plan can.
   move, the set and the plan; the `held` slots and `comebacks` as a set has them; the `adds` of
   the set and the plan; the expected categories (`value`) with no move, the set and the plan on
   both horizons, and the plan's `gain` on the set; `recommended`, and `short`, how far its week
-  falls short of the floor. The Moves card shows a Streaming plan section under the week's set
+  falls short of the floor, and `reason`, why it is not recommended: `short`, under the floor,
+  or `guard`, with `guard` the refused plan (its steps by day, the spots, my started games with
+  it and its gain on the set on both horizons). The Moves card shows a Streaming plan section under the week's set
   when it is recommended: the steps by day with each one's gain, then the started games and the
-  adds against the set and the set's moves it keeps. A plan under the floor is one muted line
+  adds against the set and the set's moves it keeps. A plan not recommended is one muted line
   instead, what it would have bought ("Streaming Grant's spot buys 2 more started games for +0.04
-  this week, under the 0.10 floor."). Every moves entry of the decision log (#125) carries the
-  plan's verdict, `plan`, whatever it is: recommended or not, the plan's and the set's expected
-  values on both horizons, the shortfall and the floor, so the scorecard can count the plans
-  foregone and judge the floor; null without a stream spot. The log keeps a recommended plan's
+  this week, under the 0.10 floor."), or for the guard's refusal what it buys and costs
+  ("... for +0.15 this week but costs 0.47 over three weeks; not recommended.", its steps in the
+  line's tooltip). Every moves entry of the decision log (#125) carries the plan's verdict,
+  `plan`, whatever it is: recommended or not and why, the plan's and the set's expected values
+  on both horizons, the shortfall, the floor and the refused plan's gain when the guard refused
+  one, so the scorecard can count the plans foregone and judge the floor; null without a stream
+  spot. The log keeps a recommended plan's
   steps as one more set, `plan`: the kept moves, then the steps, each with its `from`
   and the #126 fields, the step's `value` counting the add's games and the drop's from the step's
   day (the drop may be an earlier step's add), so the steps' values sum to the plan's and the

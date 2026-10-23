@@ -263,11 +263,14 @@ def plan_spot(
     occupant: int,
     per_game: Mapping[int, float],
     own: Sequence[mv.Move] = (),
+    guard: bool = True,
 ) -> SpotPlan:
     """The plan for ``occupant``'s spot with ``fixed`` made, against the spot as the set leaves
     it (``own``, the set's move for it, else the occupant kept): of the best :data:`EXACT` paths
-    by cheap score, the one with the best week among those no worse on the weeks after; the
-    set's own move (or no step) when none beats it."""
+    by cheap score, the one with the best week among those no worse on the weeks after (the
+    ``guard``); the set's own move (or no step) when none beats it. Without the guard, the
+    paths are ranked by the week alone and the best week is taken whatever it costs after, the
+    plan the guard refuses."""
     p = ev.problem
     span = p.horizons["week"][0]
     used = {m.add for m in fixed}
@@ -278,7 +281,7 @@ def plan_spot(
     earliest = {k: p.effective[k] for k in scores if k != occupant}
     adds = _adds_left(p, fixed, span.days[0])
     room = _room(p, fixed, span.days)
-    after = after_scores(p, list(scores), per_game)
+    after = after_scores(p, list(scores), per_game) if guard else None
     found = [
         part.steps
         for part in paths(span.days, occupant, scores, earliest, adds, room, after)
@@ -293,7 +296,7 @@ def plan_spot(
         if steps == own or not mv.feasible(p, trial):
             continue
         v = ev.value("week", trial)
-        if v > best_v + mv.EPS and ev.value("three", trial) >= later - mv.EPS:
+        if v > best_v + mv.EPS and (not guard or ev.value("three", trial) >= later - mv.EPS):
             best, best_v = SpotPlan(occupant, steps), v
     return best
 
@@ -303,8 +306,10 @@ def plan(
     rule: mv.KeepRule,
     recommended: Sequence[mv.Move],
     per_game: Mapping[int, float],
+    guard: bool = True,
 ) -> Plan | None:
-    """The week's streaming plan against the ``recommended`` set, None without a stream spot."""
+    """The week's streaming plan against the ``recommended`` set, None without a stream spot;
+    without the ``guard``, the best week whatever it costs after (:func:`plan_spot`)."""
     p = ev.problem
     spots = stream_spots(p, rule)
     if not spots:
@@ -318,7 +323,8 @@ def plan(
     for i, occupant in enumerate(spots):
         done = [m for sp in planned for m in sp.steps]
         rest = [m for o in spots[i + 1 :] for m in own[o]]
-        planned.append(plan_spot(ev, [*base, *done, *rest], occupant, per_game, own[occupant]))
+        fixed = [*base, *done, *rest]
+        planned.append(plan_spot(ev, fixed, occupant, per_game, own[occupant], guard))
     return Plan(base, tuple(planned), tuple(recommended))
 
 

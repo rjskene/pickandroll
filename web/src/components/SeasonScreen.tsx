@@ -43,6 +43,7 @@ import {
   forText,
   gainLabel,
   gainTone,
+  guardSteps,
   HORIZON_LABEL,
   horizonGames,
   isRefreshing,
@@ -905,7 +906,12 @@ function PlanBlock({ m, s, name }: { m: MovesPayload; s: SeasonView; name: Namer
   const plan = shownPlan(m.plan);
   if (!plan) {
     const line = planShortLine(m.plan, name);
-    return line ? <p className="muted small">{line}</p> : null;
+    const steps = guardSteps(m.plan, name);
+    return line ? (
+      <p className="muted small" title={steps ? `the plan the three-week guard refused: ${steps}` : undefined}>
+        {line}
+      </p>
+    ) : null;
   }
   return (
     <div className="block">
