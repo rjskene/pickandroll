@@ -333,9 +333,14 @@ def wins_sentence(
 
 
 def moves_sentence(scope: str, scoring: str, c: Mapping[str, Any]) -> dict[str, str]:
+    """The scored moves' realized share of their projection, each judged on the horizon its set
+    was recommended for and counted once that horizon is over (#143)."""
     n, share = c["moves"], c.get("share")
     units = UNITS.get(scoring, "value units")
-    head = f"The {n} scored move{'s' * (n != 1)} with a complete week ({units})"
+    head = (
+        f"Judged on the horizon each was recommended for, the {n} scored "
+        f"move{'s' * (n != 1)} whose horizon is over ({units})"
+    )
     way = f"{c['same_way']} of {n} in the projected direction"
     if share is None:
         return _say("moves", scope, "neutral", f"{head} were projected at nothing or less; {way}.")

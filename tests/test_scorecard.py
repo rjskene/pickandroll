@@ -485,8 +485,14 @@ def test_a_moves_realized_value_comes_from_the_box_scores_of_its_players_games(r
     # Every move realized is summed; only the scored one is set against its projection.
     assert moves["realized_value"] == {"week": 40.0} and moves["complete"] == {"week": 2}
     assert moves["compared"] == {
-        "week": {"moves": 1, "projected": 7.25, "realized": 22.0, "same_way": 1, "share": 3.0345}
+        "moves": 1,
+        "projected": 7.25,
+        "realized": 22.0,
+        "same_way": 1,
+        "horizons": {"week": 1},
+        "share": 3.0345,
     }
+    assert pair["judged"] == "week" and lone["judged"] == "week"
     assert moves["unscored_by"] == {"unmatched": 1} and moves["gaps"] == 1
     # The ESPN ids matched are kept.
     ids = json.loads((realized_client.data_dir / "boxscores" / "ids.json").read_text())
@@ -547,17 +553,72 @@ def test_the_scored_moves_are_set_against_their_projection_in_share_and_directio
     # The borrowed scorer's move is realized only: summed, never compared.
     assert (s["scored"], s["realized_only"], s["unscored"]) == (3, 1, 0)
     assert s["realized_value"] == {"week": 9.5}
-    assert s["compared"]["week"] == {
+    assert s["compared"] == {
         "moves": 3,
         "projected": 2.0,
         "realized": 0.5,
         "same_way": 2,
+        "horizons": {"week": 3},
         "share": 0.25,
     }
     # A projection summed to nothing or less has no share.
     s = season_scorecard.moves_summary([row(-1.0, 1.0)])
-    assert s["compared"]["week"]["share"] is None
+    assert s["compared"]["share"] is None
     line = season_scorecard._realized_counts([row(-1.0, 1.0)])
     assert line.startswith(
         "1 move scored: projected not positive, 0 of 1 in the projected direction"
+    )
+
+
+def test_each_move_is_judged_on_the_horizon_its_set_was_recommended_for():
+    judged = season_scorecard.judged_horizon
+    moves = {"source": "moves"}
+    assert judged({"set": "week"}, moves) == "week"
+    assert judged({"set": "plan"}, moves) == "week"
+    assert judged({"set": "three"}, moves) == "three"
+    # A strategy set on the three weeks after; a move with no projection of its own on its week.
+    assert judged({"set": "w50"}, {"source": "strategy"}) == "three"
+    assert judged(None, None) == "week"
+
+    def row(judged: str, spans: dict[str, tuple[float, float, bool]]) -> dict[str, Any]:
+        r = {
+            "match": {"kind": "as_recommended", "near": False},
+            "judged": judged,
+            "projected": {
+                "value": {"horizons": {h: {"value": p} for h, (p, _, _) in spans.items()}}
+            },
+            "realized": {
+                "valued": True,
+                "scorer": {"own": True},
+                "horizons": {
+                    h: {"value": x, "complete": done, "gaps": 0}
+                    for h, (_, x, done) in spans.items()
+                },
+            },
+        }
+        return {**r, "group": season_scorecard.group(r)}
+
+    rows = [
+        # The week's set: its week over, set against its week.
+        row("week", {"week": (1.0, 2.0, True), "three": (3.0, 1.0, False)}),
+        # The three weeks' set: its three weeks over, set against them, never its week.
+        row("three", {"week": (0.5, -1.0, True), "three": (2.0, 3.0, True)}),
+        # The three weeks' set with them still running: not compared yet, its week over or not.
+        row("three", {"week": (0.5, 0.5, True), "three": (2.0, 1.0, False)}),
+    ]
+    s = season_scorecard.moves_summary(rows)
+    assert s["compared"] == {
+        "moves": 2,
+        "projected": 3.0,
+        "realized": 5.0,
+        "same_way": 2,
+        "horizons": {"week": 1, "three": 1},
+        "share": 1.6667,
+    }
+    # Every realized value is still summed on each horizon beside it.
+    assert s["realized_value"] == {"week": 1.5, "three": 5.0}
+    line = season_scorecard._realized_counts(rows)
+    assert line.startswith(
+        "3 moves scored: realized 167% of projected, 2 of 2 in the projected direction "
+        "(the 2 with their recommended horizon over)"
     )

@@ -295,9 +295,11 @@ test("a move is judged on its set's horizon, and its gap only once that is over"
   assert.equal(moveHorizon(mv({ set: "three" })), "three");
   assert.equal(moveHorizon(mv({ set: "natural" })), "three", "a strategy set");
   assert.equal(moveHorizon(mv({ set: null })), "week");
+  assert.equal(moveHorizon(mv({ judged: "three" })), "three", "the row's own judging horizon first (#143)");
   assert.deepEqual(moveFigures(mv({ set: "three", proj: 2, real: 2.5 })), { horizon: "three", projected: 2, realized: 2.5, complete: true, delta: 0.5 });
   assert.equal(moveFigures(mv({ complete: false })).delta, null, "so far");
   assert.equal(moveFigures(mv({ real: null })).realized, null);
+  assert.equal(moveFigures(mv({ group: "realized_only" })).delta, null, "only a scored move is set against its projection");
 });
 
 test("the moves are filtered by scope, week and match, and totalled by scoring", () => {
@@ -317,7 +319,9 @@ test("the moves are filtered by scope, week and match, and totalled by scoring",
   const t = movesTotals(scopeMoves(p, POOLED));
   assert.deepEqual(t.compared.categories, { moves: 1, projected: 1, realized: 0.5, same_way: 1, share: 0.5 });
   assert.deepEqual(t.compared.points, { moves: 1, projected: 10, realized: 12, same_way: 1, share: 1.2 });
-  assert.deepEqual([t.made, t.soFar, t.unscored, t.paid, t.bids], [4, 1, 1, 3, 1]);
+  assert.deepEqual([t.made, t.soFar, t.realizedOnly, t.unscored, t.paid, t.bids], [4, 1, 0, 1, 3, 1]);
+  const borrowed = movesTotals([mv({ group: "realized_only" })]);
+  assert.deepEqual([borrowed.compared, borrowed.realizedOnly], [{}, 1]);
   assert.deepEqual(movesTrend(scopeMoves(p, POOLED), [1, 2, 3], "categories"), [
     { week: 1, projected: 0, realized: 0 },
     { week: 2, projected: 1, realized: 0.5 },

@@ -72,8 +72,9 @@ def _won(card: Mapping[str, Any]) -> float | None:
 def week_row(card: Mapping[str, Any]) -> dict[str, Any]:
     """A league's week: the odds of winning the matchup against the result, the categories
     expected against won, the Brier score, the standing after it, and its moves (how many, by
-    group, their value projected and realized on the week, and the scored ones with a
-    complete week compared, ``compared``); the lineup's games lost are not recorded yet."""
+    group, their value projected and realized on the week, and the scored ones compared on the
+    horizon each was recommended for once it is over, ``compared``, #143); the lineup's games
+    lost are not recorded yet."""
     proj, act = card.get("projected"), card.get("actual")
     won = _won(card)
     expected = proj["matchup"] if proj and won is not None else None
@@ -98,7 +99,7 @@ def week_row(card: Mapping[str, Any]) -> dict[str, Any]:
             **{g: summary[g] for g in ("scored", "realized_only", "unscored")},
             "projected": summary["projected_value"].get("week"),
             "realized": summary["realized_value"].get("week"),
-            "compared": summary["compared"].get("week"),
+            "compared": summary["compared"],
             "paid": sum(m.get("bid") or 0 for m in card["moves"]),
         },
         "lineup_lost": None,
@@ -153,7 +154,7 @@ def _by_scoring(cards: Iterable[Mapping[str, Any]], week: int | None = None) -> 
         out[scoring] = {
             "made": s["made"],
             "realized": s["realized_value"].get("week"),
-            "compared": s["compared"].get("week"),
+            "compared": s["compared"],
         }
     return out
 

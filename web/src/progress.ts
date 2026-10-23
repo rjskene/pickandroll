@@ -49,7 +49,8 @@ export const UNITS_SHORT: Record<Scoring, string> = { points: "pts", categories:
 
 export const LINEUP_LOST_TITLE = "not recorded yet: counted once the lineup log exists";
 
-/** The scored moves with a complete week, summed: realized against projected. */
+/** The scored moves whose horizon is over, each on the one its set was recommended for (#143),
+ * summed: realized against projected. */
 export interface MovesSum {
   moves: number;
   projected: number;
@@ -337,16 +338,19 @@ export const MATCH_TITLE: Record<MatchKind, string> = {
 };
 export const HORIZON_SHORT: Record<MoveHorizon, string> = { week: "week", three: "3 wk" };
 
-/** The horizon a move is judged on: the one its set was recommended for (the week's set and
- * the streaming plan's, the week; the three weeks' set and the strategy's, the three weeks); a
- * move with no projection of its own, its week. */
+/** The horizon a move is judged on, as its row gives it (#143): the one its set was recommended
+ * for (the week's set and the streaming plan's, the week; the three weeks' set and the
+ * strategy's, the three weeks); a move with no projection of its own, its week. A row from
+ * before the scorecard wrote it is judged from its set the same way. */
 export function moveHorizon(m: ProgressMove): MoveHorizon {
+  if (m.judged) return m.judged;
   const set = m.projected?.set;
   return set == null || set === "week" || set === "plan" ? "week" : "three";
 }
 
 /** A move on its horizon: its value projected and realized (in its league's units), whether the
- * realized span is over, and the gap once it is. */
+ * realized span is over, and the gap once it is, for a scored move only (projected by its own
+ * entry and realized by its own scorer), as the scorecard compares them. */
 export interface MoveFigures {
   horizon: MoveHorizon;
   projected: number | null;
@@ -361,7 +365,8 @@ export function moveFigures(m: ProgressMove): MoveFigures {
   const span = m.realized?.valued ? m.realized.horizons[horizon] : undefined;
   const realized = span?.value ?? null;
   const complete = !!span?.complete;
-  return { horizon, projected, realized, complete, delta: projected != null && realized != null && complete ? round(realized - projected) : null };
+  const scored = m.group === "scored" && projected != null && realized != null && complete;
+  return { horizon, projected, realized, complete, delta: scored ? round(realized! - projected!) : null };
 }
 
 /** A move's key, the same from one read to the next. */
@@ -380,26 +385,29 @@ export function matchCounts(moves: ProgressMove[]): Record<MatchKind, number> {
   return out;
 }
 
-/** Some moves' totals: by scoring, the ones projected and realized over a complete horizon
- * summed (``compared``), the others realized so far or not at all; and the FAAB paid. */
+/** Some moves' totals: by scoring, the scored ones whose horizon is over summed (``compared``,
+ * as the scorecard's), the others still inside their horizon, realized only or not valued; and
+ * the FAAB paid. */
 export interface MovesTotals {
   made: number;
   compared: Partial<Record<Scoring, MovesSum>>;
   soFar: number;
+  realizedOnly: number;
   unscored: number;
   paid: number;
   bids: number;
 }
 
 export function movesTotals(moves: ProgressMove[]): MovesTotals {
-  const out: MovesTotals = { made: moves.length, compared: {}, soFar: 0, unscored: 0, paid: 0, bids: 0 };
+  const out: MovesTotals = { made: moves.length, compared: {}, soFar: 0, realizedOnly: 0, unscored: 0, paid: 0, bids: 0 };
   for (const m of moves) {
     const f = moveFigures(m);
     const s = m.scoring ?? "categories";
     if (f.delta != null) {
       out.compared[s] = addMoves(out.compared[s], { moves: 1, projected: f.projected!, realized: f.realized!, same_way: Math.sign(f.realized!) === Math.sign(f.projected!) ? 1 : 0, share: null });
-    } else if (f.realized != null) out.soFar += 1;
-    else out.unscored += 1;
+    } else if (f.realized == null) out.unscored += 1;
+    else if (!f.complete) out.soFar += 1;
+    else out.realizedOnly += 1;
     if (m.bid) {
       out.paid += m.bid;
       out.bids += 1;

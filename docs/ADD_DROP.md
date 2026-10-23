@@ -529,17 +529,23 @@ last recorded week when left out. The metric is docs/AUTOPILOT.md's, section 6.
     `realized_only`, realized with no projection of its own or under a borrowed scorer; or
     `unscored`. The moves summary counts the three, sums the realized value of every move
     realized on each horizon through the days read, counts the spans complete, the unscored by
-    reason and the gap games, and over the scored moves on a complete span only (`compared`)
-    sums their projected and realized values, the realized share of the projected (none when the
-    projected sum is not positive) and how many realized in the projected direction
-    (`same_way`).
+    reason and the gap games, and over the scored moves whose judging span is complete
+    (`compared`, null for none) sums their projected and realized values, the realized share of
+    the projected (none when the projected sum is not positive), how many realized in the
+    projected direction (`same_way`) and how many were judged on each horizon (`horizons`).
+  - *The judging horizon* (#143, ruled 2026-10-23). Every move is judged on the horizon its set
+    was recommended for, written on its row as `judged`: the week's set and the streaming plan on
+    the week, the three weeks' set and the strategy's on the three weeks after, a move with no
+    projection of its own on the week. `compared`, the sentences, the markdown and the Progress
+    screen all count the same moves on the same horizon; a move keeps its values on every
+    horizon beside it.
 - **Markdown.** `markdown` in the all-leagues answer, for #127: leagues by id, no team or
   league names, no projected player line; the odds, results and standings as aggregates, a row
   per league, the private league in its own table, and my moves by the players' names and how
   they matched, then the moves realized, this week's and the season's to date, pooled over the
   public leagues and apart for the private one, in counts and ratios only: the scored with
-  their realized share of the projected and how many went in the projected direction on the
-  week, the realized only, the unscored by reason and the gap games. No value in scorer units
+  their realized share of the projected and how many went in the projected direction, each on
+  its judging horizon, the realized only, the unscored by reason and the gap games. No value in scorer units
   appears there, for a move or summed (master's ruling, 2026-10-22: docs/AUTOPILOT.md section
   8 keeps Basketball Monster numbers and what reduces to one out of the issue); the values stay
   in the JSON, the script's lines and the card.

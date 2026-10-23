@@ -1164,15 +1164,15 @@ export function scorecardToDateLine(td: ScorecardToDate, brier?: number | null):
 }
 
 /** My moves of some weeks in a line: the groups, their realized value on their weeks and the
- * scored against their projection. */
+ * scored against their projection, each on the horizon its set was recommended for (#143). */
 export function movesSummaryLine(m: MovesSummary, scoring: string | null | undefined): string {
   if (!m.made) return "no moves";
   const parts = [`${m.made} move${m.made === 1 ? "" : "s"}: ${m.scored} scored, ${m.realized_only} realized only, ${m.unscored} unscored`];
   if (m.scored + m.realized_only) parts.push(`${unitsLabel(m.realized_value.week ?? 0, scoring)} realized on their weeks`);
-  const c = m.compared.week;
+  const c = m.compared;
   if (c) {
     const share = c.share != null ? ` (${Math.round(c.share * 100)}%)` : "";
-    parts.push(`scored ${unitsLabel(c.realized, scoring)} against ${unitsLabel(c.projected, scoring)} projected${share}, ${c.same_way} of ${c.moves} the projected way`);
+    parts.push(`scored ${unitsLabel(c.realized, scoring)} against ${unitsLabel(c.projected, scoring)} projected${share} on their horizons, ${c.same_way} of ${c.moves} the projected way`);
   }
   return parts.join(" · ");
 }
