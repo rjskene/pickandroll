@@ -397,4 +397,11 @@ never a Basketball Monster number.
   season dashboard gets a freshness light for the daily updates and shorter header text (#153).
   Multi-step plans cover the current week only (the streaming plan, #136); a sequence of moves
   over several weeks is never built: "too many unknowns".
+- 2026-10-23, afternoon (#152, the plan ruled on the issue): the blend system is built, its weight
+  Yahoo's share (0.5 when unset); the strategy marks the knob's weight recommended, natural by
+  default; the stash threshold and the FAAB sizing stay unhooked, and the Monday step never changes
+  an unhooked knob; the first rule table runs the season check first (per scoring, a step of 0.05 z
+  or 0.5 points a game), then the plan floors (never above four times the default), then the system
+  (20 scored moves, a step to blend 0.5, never a flip); the Monday write is an API route with a
+  script, idempotent per Monday.
 
