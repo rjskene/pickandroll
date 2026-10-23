@@ -277,6 +277,35 @@ Waiver claims (resolved 2026-10-21): the first version prices free agents and li
 players with their clear dates without pricing the claim. Priority cost and FAAB bids come
 later, keyed by the league's waiver setting.
 
+### The rest of the season beside the horizons (#151)
+
+Every move and trade the dashboard recommends or compares also carries its rest of the season
+(the ROS column): from the move's day to the calendar's last day, playoffs included, the
+decision log's own figure (`decisions.move_projection`'s season horizon, #144). That is the
+add's games less the drop's, each times his per-game value under the league's scorer net of an
+empty line, the games counted on the horizons' days and then from the schedule as far as read,
+extrapolated past it at the team's rate. The tables, the log and the scorecard so value a move
+alike. It is in value units (category z or points, over the games), not expected categories,
+so it sits beside the two horizons and ranks nothing.
+
+The payloads carry it as `ros`, `{value, add_games, drop_games, extrapolated: {add, drop},
+from, to}`:
+
+- on each candidate's `week` and `three` option, priced on that option's drop (the move the
+  row's For column shows);
+- on each recommended move, with the set's `ros` the sum of its moves';
+- on the move drawer's move, its drops and its other adds;
+- on the streaming plan's kept moves and steps, each valued as kept to the season's end, with
+  `dropped_by` naming the later step that drops a streamer; the plan's total (`ros.plan`) sits
+  beside the set's (`ros.set`), and the guard's refused plan carries its own against the set;
+- on the stash's freed-spot add (#124). An activation from a held slot is no pool add and
+  keeps the keep rule's `net`.
+
+A trade's sides carry `ros: {before, after, change, from, unvalued}`, and each moved player
+and the fill carry `ros: {value, per_game, games, extrapolated}`. These use the moves' problem
+and scorer and each player's games to the season's end as a move's are counted
+(`decisions.season_games`). The fill is valued beside the trade, as on the horizons.
+
 ## The strategy engine (#110)
 
 The Moves card answers one horizon at a time. The Strategy card weighs this week against the rest
@@ -286,7 +315,8 @@ of the season on one value, for a weight λ:
 
 where a later week is the three weeks ahead averaged: "rest of season, from the three weeks
 ahead", the three-week horizon taken as the stationary later week, times the calendar's weeks
-after this one. Four weights make the frontier: this week alone (λ = 1); this week as much as all
+after this one. Since #151 it is labelled "season pace", so it is never read as the
+schedule-based rest of the season the ROS column shows. Four weights make the frontier: this week alone (λ = 1); this week as much as all
 the rest together (λ = w / (1 + w) for w weeks left); every week alike, the natural weight (λ = ½,
 the season's own total halved); and the rest of the season alone (λ = 0). With no week after
 this one there is only this week's. A points league counts matchups where a categories league
@@ -732,8 +762,8 @@ The trading counterpart (from #79), built on the same data layer and objective. 
 proposed trade (players on each side, between my roster and one opponent's, entered on the
 dashboard), score both rosters before and after on expected categories won on the move model's
 two horizons (resolved 2026-10-21: the rest of this week, each side against its own opponent,
-and weeks 2–4 against the field with the other side's changed roster in it; a rest-of-season
-horizon needs the full-season schedule cache and is a follow-up), report the change for me and
+and weeks 2–4 against the field with the other side's changed roster in it; the rest of the
+season sits beside them since #151, "The rest of the season beside the horizons"), report the change for me and
 for the counterparty per category and in total, the slot feasibility of each resulting roster
 (an over-full side is not valid in Yahoo as entered and is shown with the least costly drop
 named; a freed spot on my side is shown with its best free-agent fill, apart from the trade's own

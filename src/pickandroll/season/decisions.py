@@ -227,6 +227,26 @@ def _season_games(
     return counted + read + extrapolated, extrapolated
 
 
+def season_games(
+    problem: MoveProblem, pid: int, player: Any, start: date
+) -> tuple[float, float] | None:
+    """The games ``player`` plays from ``start`` to the season's last day as
+    :func:`move_projection` counts an add's or a drop's (the horizons' days from ``start``, then
+    :func:`_season_games`), and how many of them are extrapolated beyond the schedule read: a
+    traded player's (#151). None without a season end, or from past it."""
+    counted, through = 0, None
+    for key in problem.horizons:
+        games, first, last = _games(problem, key, pid, player, start)
+        if first is None:
+            continue
+        counted += games
+        through = max(through or last, last)
+    end = problem.season_end
+    if through is None or end is None or start > end:
+        return None
+    return _season_games(problem, pid, player, through + timedelta(1), counted)
+
+
 def move_projection(
     problem: MoveProblem,
     scorer: Mapping[str, Any] | None,
