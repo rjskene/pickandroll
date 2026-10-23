@@ -76,11 +76,12 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import threading
 from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta, tzinfo
 from pathlib import Path
 from typing import Any
 
@@ -108,6 +109,7 @@ from ..season import (
 )
 from ..season import moves as mv
 from ..season import record as season_rec
+from ..season import status as st
 from ..season.state import SLOTS_PAGE
 from ..sources import boxscores
 from ..sources import schedule as nba_schedule
@@ -123,6 +125,7 @@ from . import (
     season_progress,
     season_record,
     season_scorecard,
+    season_status,
     season_strategy,
     season_trades,
 )
@@ -142,6 +145,9 @@ TRANSACTIONS_SHOWN = 30
 BOX_DAYS = 14
 
 FetchFactory = Callable[[], public.Fetch]
+#: The server's own log, where uvicorn writes beside its access lines (which carry no times
+#: and no app lines): each refresh's start and end, with its time (#153).
+LOG = logging.getLogger("uvicorn.error")
 
 
 # --------------------------------------------------------------------------- storage
@@ -257,6 +263,30 @@ class RefreshJob:
         }
 
 
+def log_refresh(data_dir: Path, job: RefreshJob) -> None:
+    """A refresh job's start or end, with when it was written, appended to the league's refresh
+    log (``season_status.REFRESHES``) and a line in the server's log. The light reads the last
+    one after a restart, and a start with no end is a refresh that never finished (#153)."""
+    line = {"at": datetime.now(UTC).isoformat(), "league": job.league, **job.to_dict()}
+    path = season_dir(data_dir, job.league) / season_status.REFRESHES
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a") as f:
+            f.write(json.dumps(line, separators=(",", ":")) + "\n")
+    except OSError as exc:
+        LOG.warning("refresh %s: the job was not logged: %s", job.league, exc)
+    LOG.info(
+        "%s refresh %s %s at %s %d/%d%s",
+        line["at"],
+        job.league,
+        job.status,
+        job.step,
+        job.done,
+        job.total,
+        f": {job.error}" if job.error else "",
+    )
+
+
 class SeasonService:
     def __init__(
         self,
@@ -268,6 +298,8 @@ class SeasonService:
         self.fetch_factory = fetch_factory
         #: Now, for the NBA date the views count games from (tests pin it).
         self.clock = clock
+        #: The Mac's clock, the daily routine's day and due time (#153); None: the system's.
+        self.local_tz: tzinfo | None = None
         self.jobs: dict[str, RefreshJob] = {}
         self._locks: dict[str, threading.Lock] = {}
         self._guard = threading.Lock()
@@ -906,6 +938,44 @@ class SeasonService:
         )
         return {**out, "generated_at": self.clock().isoformat()}
 
+    # ------------------------------------------------------------------ freshness
+    def status(self) -> dict[str, Any]:
+        """The freshness light (#153): the daily exports, each league's Yahoo reads and its
+        recommendations against the inputs they rest on; reads only."""
+        # The Mac's clock, where the routine runs: its day and its due time.
+        now = self.clock().astimezone(self.local_tz)
+        found = season_status.exports_found(self.data_dir)
+        exports = st.exports(found, now)
+        projection_at = max((found[k][1] for k in st.RESTS_ON if found.get(k)), default=None)
+        out = []
+        for league in leagues.leagues(self.data_dir):
+            try:
+                base, is_public = self._base(league)
+            except HTTPException as exc:
+                out.append({"league": league, "state": st.RED, "error": str(exc.detail)})
+                continue
+            parts = load_parts(self.data_dir, league)
+            fetched = {k: p.fetched_at for k, p in parts.items()}
+            read_at = max(fetched.values(), default=None)
+            folder = season_dir(self.data_dir, league)
+            if is_public:
+                # The service's own job; after a restart, the last one its log has.
+                job = self.jobs.get(league)
+                last = job.to_dict() if job else season_status.last_refresh(folder)
+                snapshot = season_status.snapshot_at(folder / SNAPSHOTS, PUBLIC)
+                rows = [st.refresh_row(last, read_at, snapshot, now, live=job is not None)]
+                kind = "Yahoo"
+            else:
+                rows = st.pages(fetched, now)
+                newest = max(fetched, key=fetched.__getitem__, default=None)
+                kind = newest.split("/", 1)[0] if newest else "Yahoo"
+            entries = season_status.latest_entries(folder, nba_today(now))
+            recs = st.recommendations(entries, projection_at, read_at, now, yahoo=kind)
+            name = Season.from_parts(base, parts).settings.name
+            out.append(st.league(league, name, is_public, rows, recs, exports["state"]))
+        routine = st.routine_row(season_status.routine_marker(self.data_dir), now)
+        return st.payload(routine, exports, out, now)
+
     # ------------------------------------------------------------------ refresh
     def start_refresh(self, league: str) -> RefreshJob:
         """The league's refresh: the one running, else a new one in the background."""
@@ -922,6 +992,7 @@ class SeasonService:
 
     def run_refresh(self, job: RefreshJob) -> RefreshJob:
         league = job.league
+        log_refresh(self.data_dir, job)
         try:
             base, is_public = self._base(league)
             if not is_public:
@@ -983,6 +1054,7 @@ class SeasonService:
             job.status, job.error = "failed", f"{type(exc).__name__}: {exc}"
         finally:
             job.finished_at = datetime.now(UTC)
+            log_refresh(self.data_dir, job)
         return job
 
     def _lineup_days(
@@ -1413,6 +1485,12 @@ def register(
     ) -> dict[str, Any]:
         """Every league's scorecard of a week (#126), pooled, with the markdown for #127."""
         return await asyncio.to_thread(service.scorecards, week, system)
+
+    @app.get("/seasons/status")
+    async def get_status() -> dict[str, Any]:
+        """The freshness light (#153): the daily exports, every league's Yahoo reads and when
+        its recommendations were built against their inputs; reads only."""
+        return await asyncio.to_thread(service.status)
 
     @app.get("/progress")
     async def get_progress(system: str = scorecard_system_q) -> dict[str, Any]:
