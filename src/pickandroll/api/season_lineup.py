@@ -144,6 +144,8 @@ def payload(
                 "lost": line.lost,
                 "start": list(line.start),
                 "sit": list(line.sit),
+                # Whoever of mine plays that day: a bench player's game, a starter's none.
+                "playing": sorted(k for k in members if day in playing.get(k, ())),
             }
         )
 
@@ -163,6 +165,7 @@ def payload(
     counted = [d for d in days if not d["past"] and d["lost"] is not None]
     return {
         "week": number,
+        "weeks": numbers,
         "start": w.start.isoformat(),
         "end": w.end.isoformat(),
         "first": first.isoformat(),

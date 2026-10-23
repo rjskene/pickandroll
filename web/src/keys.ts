@@ -336,7 +336,7 @@ export const SEASON_CARDS: CardDef<SeasonCardId>[] = [
 ];
 
 /** The views of the league page's pane (#116), the tabs of the drawer at its left edge. */
-export type SeasonViewId = "waivers" | "matchup" | "season";
+export type SeasonViewId = "waivers" | "matchup" | "season" | "lineup";
 
 export interface ViewDef {
   id: SeasonViewId;
@@ -350,6 +350,7 @@ export const SEASON_VIEWS: ViewDef[] = [
   { id: "waivers", title: "Waivers", key: "w", blurb: "the available players and their moves" },
   { id: "matchup", title: "Matchup", key: "h", blurb: "this week's matchup and what each player adds to it" },
   { id: "season", title: "Season", key: "s", blurb: "every week left: its odds, and the week a chip opens" },
+  { id: "lineup", title: "Lineup", key: "l", blurb: "each day's lineup against Yahoo's, and the held slots" },
 ];
 
 /** The view on show and whether the drawer is shown or down to its handle. */
@@ -452,7 +453,7 @@ export function seasonKeys(s: SeasonKeys): KeyMap {
 
 export const SEASON_SHEET: Sheet = {
   cards:
-    "Cards are 1 Waivers · 2 Moves · 3 Trade · 4 Flags · 5 My roster · 6 The league · 7 Strategy, the numbers on the rail. Views are w Waivers · h Matchup · s Season, the tabs of the drawer at the left. Letters do nothing while you are typing in a field.",
+    "Cards are 1 Waivers · 2 Moves · 3 Trade · 4 Flags · 5 My roster · 6 The league · 7 Strategy, the numbers on the rail. Views are w Waivers · h Matchup · s Season · l Lineup, the tabs of the drawer at the left. Letters do nothing while you are typing in a field.",
   groups: [
     {
       title: "Views",
@@ -460,6 +461,7 @@ export const SEASON_SHEET: Sheet = {
         [["w"], "the Waivers view: the available players and their moves"],
         [["h"], "the Matchup view: this week's matchup and what each player adds to it"],
         [["s"], "the Season view: every week left, its odds, and the week a chip opens"],
+        [["l"], "the Lineup view: each day's recommended lineup against Yahoo's, and the held slots"],
         [["["], "take the view drawer down to its handle, or show it (the letters work either way)"],
       ],
     },

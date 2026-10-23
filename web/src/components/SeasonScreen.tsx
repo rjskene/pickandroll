@@ -83,6 +83,7 @@ import { useDrawer, useHotkeys, useViews } from "../useKeys";
 import { FlagBreakdown, FlagInfo } from "./FlagExplain";
 import Halves, { type Face } from "./Halves";
 import KeySheet from "./KeySheet";
+import LineupView from "./LineupView";
 import MatchupView from "./MatchupView";
 import OutlookView from "./OutlookView";
 import Rail from "./Rail";
@@ -330,6 +331,11 @@ export default function SeasonScreen({ league, onBack }: { league: string; onBac
               {views.view === "season" && (
                 <div className="board-col view-col">
                   <OutlookView league={league} s={s} system={system} setSystem={setSystem} />
+                </div>
+              )}
+              {views.view === "lineup" && (
+                <div className="board-col view-col">
+                  <LineupView league={league} s={s} system={system} setSystem={setSystem} />
                 </div>
               )}
               {/* Kept mounted in another view, so its sort, filters and highlight stay. */}

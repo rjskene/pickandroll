@@ -253,6 +253,8 @@ def test_the_lineup_route_recommends_each_day_and_counts_what_yahoo_loses(client
         "2026-10-25",
         "2026-10-21",
     )
+    # The weeks the view can show: this one and the moves' three after it.
+    assert lu_["weeks"] == [1, 2, 3, 4]
     assert lu_["rule"] == {
         "changes": "daily",
         "from": "today",
@@ -278,6 +280,10 @@ def test_the_lineup_route_recommends_each_day_and_counts_what_yahoo_loses(client
     assert thu["games"]["yahoo"] == 0 and thu["lost"] == thu["games"]["recommended"] > 0
     assert sorted(thu["start"]) == sorted(x["player"] for x in thu["recommended"] if x["player"])
     assert {x["slot"] for x in thu["yahoo"]["slots"]} == {"BN"} and thu["sit"] == []
+    # Each day names whoever of mine plays: every recommended starter, and no one else starts.
+    for d in lu_["days"][2:]:
+        starters = {x["player"] for x in d["recommended"] if x["player"]}
+        assert starters <= set(d["playing"]) and len(starters) == d["games"]["recommended"]
     assert lu_["summary"]["lost"] >= thu["lost"] and "2026-10-22" in lu_["summary"]["differ"]
     # The league's three IL slots, all open; my out bench player could go to one.
     held = lu_["held"]
