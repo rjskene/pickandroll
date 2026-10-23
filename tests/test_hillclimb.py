@@ -540,24 +540,60 @@ def test_the_note_has_the_four_sections_and_names_no_league():
     assert "League 1" not in out["note"]
 
 
+def test_the_comment_for_127_gives_counts_and_ratios_and_no_projection_number():
+    first = step(None, payload(costly_moves({"1": (2, 2), "3": (1, 1), "2": (1, 0)})))
+    text = first["comment"]
+    assert text.startswith("## Hill-climb, Monday 2026-11-02\n")
+    assert (
+        "- Armed: 7 public leagues (4 categories, 3 points); the private league takes no change."
+    ) in text
+    assert (
+        "| The season check | categories | 4 season-costly moves, 3 below zero so far (75%) | yes |"
+    ) in text
+    assert (
+        "| The projection system | both | 4 moves under bbm, realized 50% of projected | no |"
+        in (text)
+    )
+    assert "- K1: The season check (categories): 3 of the 4 season-costly moves" in text
+    assert "- Leagues that take it: 1, 3; keeping the setting: 2, 4." in text
+    assert "- Judge K1 (protection_floor) two Mondays on, once its two weeks are recorded." in text
+    # A verdict by its measure and direction: the note keeps the figures, the comment does not.
+    judged = step(judged_file(), payload(rows=two_weeks(0.5, -0.5), last=3), MONDAYS[3])
+    (line,) = [x for x in judged["comment"].splitlines() if x.startswith("- K1")]
+    assert line == (
+        "- K1 (protection_floor, categories): kept on wins above expected a league: the 2 "
+        "leagues that took it did better than the 2 that kept the setting over weeks 2-3, by "
+        "0.5 or more; year to date, the gap on wins above expected a league has moved toward "
+        "them since; rolled out to 4 leagues."
+    )
+    assert "ran 1 against -1" in judged["note"] and "against -1" not in judged["comment"]
+    assert "League 1:" not in text and "League 1:" not in judged["comment"]
+
+
 # --------------------------------------------------------------------------- the route
 def test_the_monday_route_writes_the_note_once_and_says_so_after(client):  # noqa: F811
     url = "/autopilot/monday"
     knobs_path = client.data_dir / "autopilot" / "knobs.json"
     before = knobs_path.read_text()
     note = client.data_dir / "autopilot" / "notes" / "2026-11-02.md"
+    said = client.data_dir / "autopilot" / "comments" / "2026-11-02.md"
     dry = client.post(url, params={"dry_run": True})
     assert dry.status_code == 200, dry.text
     assert (dry.json()["status"], dry.json()["written"]) == ("dry_run", [])
-    assert not note.exists()
+    assert dry.json()["comment"].startswith("_Dry run: nothing was written._\n\n## Hill-climb")
+    assert not note.exists() and not said.exists()
     out = client.post(url).json()
     assert (out["monday"], out["status"]) == ("2026-11-02", "written")
-    # K1 (week 2) is not due: week 3 is not recorded. Nothing changes, so only the note is new.
+    # K1 (week 2) is not due: week 3 is not recorded. Nothing changes, so only the note and the
+    # comment are new.
     assert out["verdicts"] == [] and out["change"] is None
-    assert out["written"] == ["autopilot/notes/2026-11-02.md"]
+    assert out["written"] == ["autopilot/notes/2026-11-02.md", "autopilot/comments/2026-11-02.md"]
     assert knobs_path.read_text() == before and note.read_text() == out["note"]
+    assert said.read_text() == out["comment"]
+    assert out["comment"].startswith("## Hill-climb, Monday 2026-11-02\n")
     again = client.post(url).json()
     assert (again["status"], again["written"], again["note"]) == ("already", [], out["note"])
+    assert again["comment"] == out["comment"]
     forced = client.post(url, params={"force": True}).json()
     assert forced["status"] == "written"
     assert client.post(url, params={"monday": "2026-11-03"}).status_code == 422
@@ -582,7 +618,11 @@ def test_the_route_blocks_the_system_on_a_recent_blend_change_and_writes_a_new_o
     written = json.loads(path.read_text())
     assert written["in_force"] == {"blend": 0.5}
     assert written["leagues"] == {c["leagues"][0]: {"system": "blend"}}
-    assert out["written"] == ["autopilot/knobs.json", "autopilot/notes/2026-11-02.md"]
+    assert out["written"] == [
+        "autopilot/knobs.json",
+        "autopilot/notes/2026-11-02.md",
+        "autopilot/comments/2026-11-02.md",
+    ]
     # The solves of the league that took it now run on the blend; the private league's do not.
     from pickandroll.api import season_knobs
 
@@ -622,7 +662,13 @@ def test_the_script_prints_the_steps_line_and_its_note(client):  # noqa: F811
     out = run_script("monday", "--dry-run", call=call)
     assert out.startswith("2026-11-02: dry run, nothing written; no change\n## What is working")
     out = run_script("monday", call=call).splitlines()
-    assert out[0] == "2026-11-02: written autopilot/notes/2026-11-02.md; no change"
+    assert out[0] == (
+        "2026-11-02: written autopilot/notes/2026-11-02.md, autopilot/comments/2026-11-02.md; "
+        "no change"
+    )
     # Once a Monday: the second run says so and shows the note the first one wrote.
     out = run_script("monday", call=call).splitlines()
     assert out[:2] == ["2026-11-02: already run (no change); nothing written", "## What is working"]
+    # The comment alone, the one the first run wrote, for the routine to post on #127.
+    said = (client.data_dir / "autopilot" / "comments" / "2026-11-02.md").read_text()
+    assert run_script("monday", "--comment", call=call) == said

@@ -1,11 +1,14 @@
 """``POST /autopilot/monday`` (#152; docs/AUTOPILOT.md section 6): the Monday hill-climb step on
 the API's own data. It reads the Progress payload, the knob file and the leagues' settings, runs
-``season.hillclimb.step`` and writes the knob file (``data/autopilot/knobs.json``) and the Monday
-note (``data/autopilot/notes/<monday>.md``), under one lock.
+``season.hillclimb.step`` and writes the knob file (``data/autopilot/knobs.json``), the Monday
+note (``data/autopilot/notes/<monday>.md``) and the Monday's comment for the AUTOPILOT tracker,
+#127 (``data/autopilot/comments/<monday>.md``: counts and ratios, no team or league name, no
+projection number), under one lock.
 
-Once a Monday: a second run answers the note and the changes the first one wrote and writes
-nothing. ``force`` undoes that Monday's own change, never one already judged, and runs again,
-rewriting the note. ``dry_run`` answers the same and writes nothing. A knob file the step cannot
+Once a Monday: a second run answers the note, the comment and the changes the first one wrote and
+writes nothing. ``force`` undoes that Monday's own change, never one already judged, and runs
+again, rewriting the note and the comment. ``dry_run`` answers the same and writes nothing; its
+comment says so in its first line. A knob file the step cannot
 write without losing what is in it (not JSON, or the wrong shape) is refused (409), never
 overwritten.
 
@@ -32,10 +35,17 @@ from .season_knobs import KNOBS_FILE, autopilot_dir, load_knobs
 from .season_progress import NOTES_DIR
 
 _lock = threading.Lock()
+#: The Monday comments for #127, under ``data/autopilot``.
+COMMENTS_DIR = "comments"
+DRY_RUN = "_Dry run: nothing was written._\n\n"
 
 
 def note_path(data_dir: Path, monday: date) -> Path:
     return autopilot_dir(data_dir) / NOTES_DIR / f"{monday.isoformat()}.md"
+
+
+def comment_path(data_dir: Path, monday: date) -> Path:
+    return autopilot_dir(data_dir) / COMMENTS_DIR / f"{monday.isoformat()}.md"
 
 
 def monday_of(day: date) -> date:
@@ -52,8 +62,8 @@ def run(
     force: bool = False,
 ) -> dict[str, Any]:
     """The step for ``monday``: ``progress`` gives the Progress payload, ``scorings`` each
-    league's scoring and whether it is public. Answers the step's verdicts, rules, change and
-    note, ``status`` (``written``, ``dry_run`` or ``already``) and the files written."""
+    league's scoring and whether it is public. Answers the step's verdicts, rules, change, note
+    and comment, ``status`` (``written``, ``dry_run`` or ``already``) and the files written."""
     if monday.weekday() != 0:
         raise HTTPException(422, f"{monday.isoformat()} is not a Monday")
     m = monday.isoformat()
@@ -64,6 +74,7 @@ def run(
                 409, f"the knob file cannot be written: {'; '.join(problems or why)}"
             )
         note = note_path(data_dir, monday)
+        said = comment_path(data_dir, monday)
         made = hc.ran(raw, m)
         if not force and (made or note.exists()):
             knobs, _ = pg.knob_file(raw)
@@ -72,6 +83,7 @@ def run(
                 "status": "already",
                 "changes": [c for c in knobs["changes"] if c["id"] in made],
                 "note": note.read_text() if note.exists() else None,
+                "comment": said.read_text() if said.exists() else None,
                 "written": [],
             }
         armed = {lg: s for lg, (s, public) in scorings.items() if public}
@@ -80,15 +92,21 @@ def run(
         except ValueError as exc:
             raise HTTPException(409, str(exc)) from exc
         written = []
-        if not dry_run:
+        if dry_run:
+            out["comment"] = DRY_RUN + out["comment"]
+        else:
             if out["knobs"] != (raw or {}):
                 path = autopilot_dir(data_dir) / KNOBS_FILE
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_text(json.dumps(out["knobs"], indent=2) + "\n")
                 written.append(f"autopilot/{KNOBS_FILE}")
-            note.parent.mkdir(parents=True, exist_ok=True)
-            note.write_text(out["note"])
-            written.append(f"autopilot/{NOTES_DIR}/{note.name}")
+            for path, text, folder in (
+                (note, out["note"], NOTES_DIR),
+                (said, out["comment"], COMMENTS_DIR),
+            ):
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(text)
+                written.append(f"autopilot/{folder}/{path.name}")
         return {**out, "status": "dry_run" if dry_run else "written", "written": written}
 
 

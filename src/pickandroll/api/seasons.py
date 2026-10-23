@@ -65,9 +65,10 @@ Routes:
     recorded it, so a change of system scores its first week on the old one for both halves.
 ``POST /autopilot/monday``
     The Monday hill-climb step (#152, ``season_hillclimb``): the verdicts due, at most one knob
-    change from the rule table, written to the knob file with the Monday note; once a Monday
-    (``?force=true`` undoes that Monday's change and runs again), ``?dry_run=true`` writes
-    nothing.
+    change from the rule table, written to the knob file with the Monday note and the Monday's
+    comment for #127 (``comment``: counts and ratios, leagues by id, no team or league name, no
+    projection number); once a Monday (``?force=true`` undoes that Monday's change and runs
+    again), ``?dry_run=true`` writes nothing.
 ``GET /flags/digest``
     The day's breakout flags across every league with a season: each league's flagged players
     with their evidence, and the digest as markdown for a public issue (leagues by id, no team
