@@ -93,3 +93,19 @@ def bbm_pergame_path() -> Path:
 def big_pool() -> pd.DataFrame:
     """Enough players for a 12-team, 13-round draft (traded-pick tests)."""
     return synthetic_pool(220, seed=3)
+
+
+@pytest.fixture
+def stop_solves(monkeypatch):
+    """A function that makes every later solve stop as HiGHS does at its time limit with
+    nothing found (#122): status Not Solved and every variable at zero, so the objective still
+    reads a number."""
+    import pulp
+
+    def solve(self, solver=None, **kwargs):
+        for var in self.variables():
+            var.varValue = 0.0
+        self.status = pulp.LpStatusNotSolved
+        return self.status
+
+    return lambda: monkeypatch.setattr(pulp.LpProblem, "solve", solve)

@@ -29,6 +29,14 @@ def test_fixed_punt_fills_every_slot_legally(pool):
     assert sol.solve_seconds < 5
 
 
+def test_a_solve_stopped_before_any_roster_fails(pool, stop_solves):
+    # Not a roster with no players in it (#122): the callers' failed-solve path takes it.
+    problem = make_problem(pool, punt=frozenset())
+    stop_solves()
+    with pytest.raises(RuntimeError, match="roster solve failed with status Not Solved"):
+        solve_roster(problem, time_limit=2.0)
+
+
 def test_fixed_punt_matches_greedy_when_no_position_pressure(pool):
     # With every slot UTIL, the optimum is simply the top-13 by punt-adjusted total.
     slots = [Slot(f"U{i}") for i in range(13)]

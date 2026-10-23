@@ -49,13 +49,18 @@ def test_session_uses_adp_file(tmp_path):
                 "my_position": 1,
                 "solve_ahead": False,
                 "survival": "none",
+                # Three picks each (#122): the plan solves to optimal in well under a second,
+                # far inside its budget on a loaded machine; the full roster runs to its limit.
+                "slots": [{"name": f"U{i}"} for i in range(3)],
+                "bench": 0,
             },
         )
         assert r.status_code == 201, r.text
         s = r.json()
         assert s["adp_source"] == "file:adp.csv" and s["adp_known"] == 2
-        rec = client.post(f"/sessions/{s['id']}/recommend", json={"n": 3, "scenarios": 0}).json()
-        assert rec["adp_source"] == "file:adp.csv"
+        rec = client.post(f"/sessions/{s['id']}/recommend", json={"n": 3, "scenarios": 0})
+        assert rec.status_code == 200, rec.text
+        assert rec.json()["adp_source"] == "file:adp.csv"
         r = client.post(
             "/sessions",
             json={
