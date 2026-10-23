@@ -403,15 +403,17 @@ when left out.
   knobs in force (`knobs`: the system, then the blend weight, the horizon weight, the protection
   floor, the stash threshold, the FAAB sizing and the daily move cap of docs/AUTOPILOT.md, null
   until the knob file of phase 3 sets them; `protection_floor` is the floor the keep rule used,
-  #124), the first day a move counts, the adds left, the
-  horizons' labels and the pool (the moves route's search pool, candidates and floor; the
-  strategy's players and settings). Then one set per horizon (moves) or per weight (strategy):
+  #124; `plan_floor_cats` and `plan_floor_points` the streaming plan's, #136), the first day a
+  move counts, the adds left, the horizons' labels and the pool (the moves route's search pool,
+  candidates and floor; the strategy's players and settings). Then one set per horizon (moves)
+  or per weight (strategy):
   its moves (add, drop or nobody, the day it counts from, and the bid to make, null until the
   FAAB sizing of phase 2), the held slots it uses and the comebacks it implies (moves), the
   weight and where the set came from (strategy), its gains, and this week against the named
   opponent before and after it: each category's finals and odds, the expected categories won
-  and the odds of winning the matchup. A strategy run cut off before it solved logs nothing. A
-  failure to write loses that entry, never the answer.
+  and the odds of winning the matchup. A recommended streaming plan (#136) is one more set of
+  the moves route's, `plan`, its moves counting from their days. A strategy run cut off before
+  it solved logs nothing. A failure to write loses that entry, never the answer.
 - **Moves in value units (#126).** From 2026-10-22 an entry also keeps its `scorer`: the
   league's, the keep rule's (Basketball Monster's lines over the players the league rosters),
   as data (`weekly.scorer_of`: a points league's weights, or each category's spread and, for
@@ -542,8 +544,10 @@ cannot say "add A now, drop A for B on Thursday"; the plan can.
   their one day and are unchanged.
 - **Stream spots.** The active spots whose occupant is below the waiver replacement level, the
   best available add by rest-of-season per-game value, and neither protected nor bench-kept by
-  the keep rule. Usually one or two; the planner takes them one after the other, the second given
-  the first.
+  the keep rule. The weakest two at most (`STREAM_SPOTS`); the planner takes them one after the
+  other, each with the earlier spots' plans made and the later spots' own moves from the set, so
+  a spot never takes the adds the set gives another. The base is the week's set less its moves
+  that drop a stream spot's occupant. Open spots are not streamed: the set fills them as before.
 - **The plan.** For a spot, a path over the days left in the week: who holds the spot each day,
   under Yahoo's rules and the autopilot's: the week's adds left, one per step; a free agent
   available at once, a player I drop on waivers for the league's waiver period
@@ -551,21 +555,53 @@ cannot say "add A now, drop A for B on Thursday"; the plan can.
   a player whose game has begun locked until the next day; at most two executed moves per league
   per day (docs/AUTOPILOT.md, section 2); the step's add with a start slot that day under the
   lineup rules.
-- **The search.** A dynamic programme over days with a cheap score per day and holder, his games
-  that day times his per-game value under the league scorer; the best few paths are re-valued
-  exactly with the Moves card's evaluator on both horizons and the best exact one is shown. The
-  single-move set stays the baseline: a plan is recommended only when its exact week value beats
-  the set's by more than the week's noise floor (the scorecard's once it exists, a constant until
-  then). It is a heuristic, so the card says "recommended", never "optimal", and a test checks it
-  against brute force on a small league.
-- **Horizons.** A plan lives inside the current week. The three-week horizon values the spot's
-  final holder as it does today, so a stream's long-term cost stays visible beside its gain.
-- **Output.** The payload's `plan` beside `recommended`: the dated steps (day, add, drop), the
-  games the plan buys against no move and against the single-move set, the adds it spends, its
-  value on both horizons and the occupant it replaces. The Moves card gains a Plan section, the
-  steps by day with the games and the gain. The decision log (#125) logs each step as a move with
-  its day and the #126 fields, so the scorecard scores a stream like any move. The executor
-  (docs/AUTOPILOT.md, phase 2) takes the day's step only; the plan is re-solved every morning.
+- **The search.** A dynamic programme over days (`season/stream.py`) with a cheap score per day
+  and holder: his per-game value under the league scorer, net of an empty line, when he has a
+  game that day and would start it beside the rest of the roster. A whole path also counts its
+  last holder's games in the three weeks after at the same value. It keeps the best five partial
+  paths per holder and adds used (`KEEP`); nobody holds a spot twice in a week, which is stricter
+  than Yahoo's waiver period and keeps each player's timeline to one interval. The best eight
+  whole paths (`EXACT`) are valued exactly with the Moves card's evaluator against the spot as
+  the set leaves it (its own move for the spot, else the occupant kept), and the spot's plan is
+  the one with the best week among those no worse on the three weeks after. The single-move set
+  stays the baseline: a plan is recommended only when its exact week value beats the set's by
+  more than the floor until the scorecard (#126) sets a noise floor: `PLAN_FLOOR_CATS`, 0.10
+  expected categories, in a categories league, and in a points league, whose week is the
+  matchup's win odds on [0, 1], the same share of the scale, `PLAN_FLOOR_POINTS`, 0.01. Both are
+  knobs (docs/AUTOPILOT.md, section 6) the decision log records. It is a heuristic, so the card
+  says "recommended", never "optimal", and a test checks it against brute force on a small league.
+- **Horizons.** A plan lives inside the current week, and its final holder stays: the
+  three-week horizon values him as it does any add. A plan never costs the three weeks after
+  against the set (above), a hard rule for the autopilot, which cannot weigh a week's gain
+  against a later cost the way the user can; its three-week change shows beside its week gain.
+  When the plan with the best week would clear the floor but costs the weeks after, the payload
+  says the guard refused it and gives its steps, games and gain on both horizons, so the user
+  sees the trade and can make it by hand.
+- **Output.** The moves payload's `plan` beside `recommended` (null without a stream spot):
+  `base`, the set's moves it keeps; `steps` by day, each a move (`add`, `drop`, `from`, its day)
+  with the `spot` it turns over and its own gain on both horizons (`marginal`, the plan up to it
+  less the plan before it, so the gains telescope); `spots`; my started `games` this week with no
+  move, the set and the plan; the `held` slots and `comebacks` as a set has them; the `adds` of
+  the set and the plan; the expected categories (`value`) with no move, the set and the plan on
+  both horizons, and the plan's `gain` on the set; `recommended`, and `short`, how far its week
+  falls short of the floor, and `reason`, why it is not recommended: `short`, under the floor,
+  or `guard`, with `guard` the refused plan (its steps by day, the spots, my started games with
+  it and its gain on the set on both horizons). The Moves card shows a Streaming plan section
+  under the week's set when it is recommended: the steps by day with each one's gain, then the started games and the
+  adds against the set and the set's moves it keeps. A plan not recommended is one muted line
+  instead, what it would have bought ("Streaming Grant's spot buys 2 more started games for +0.04
+  this week, under the 0.10 floor."), or for the guard's refusal what it buys and costs
+  ("... for +0.15 this week but costs 0.47 over three weeks; not recommended.", its steps in the
+  line's tooltip). Every moves entry of the decision log (#125) carries the plan's verdict,
+  `plan`, whatever it is: recommended or not and why, the plan's and the set's expected values
+  on both horizons, the shortfall, the floor and the refused plan's gain when the guard refused
+  one, so the scorecard can count the plans foregone and judge the floor; null without a stream
+  spot. The log keeps a recommended plan's steps as one more set, `plan`: the kept moves, then
+  the steps, each with its `from` and the #126 fields, the step's `value` counting the add's games and the drop's from the step's
+  day (the drop may be an earlier step's add), so the steps' values sum to the plan's and the
+  scorecard scores a stream like any move. `scripts/season.py decisions` prints the plan's moves
+  by day. The executor (docs/AUTOPILOT.md, phase 2) takes the day's step only; the plan is
+  re-solved every morning.
 - **Out of scope.** FAAB bids on a stream's claims (section 5 of docs/AUTOPILOT.md applies
   unchanged), plans across weeks, the executor's clicks.
 

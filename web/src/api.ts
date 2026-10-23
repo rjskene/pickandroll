@@ -1211,6 +1211,51 @@ export interface RecommendedSet {
   comebacks?: Partial<Record<MoveHorizon, Comeback[]>>;
 }
 
+/** A streaming plan's step (#136): a dated move turning a stream spot over, its drop the spot's
+ * holder before (the occupant, or an earlier step's add). */
+export interface PlanStep extends MoveRef {
+  /** The occupant whose spot the step turns over. */
+  spot: number;
+  /** The step's own gain on each horizon: the plan up to it less the plan before it. */
+  marginal: Record<MoveHorizon, number>;
+}
+
+/** The week's streaming plan (#136) against its recommended set. */
+export interface StreamPlan {
+  /** The set's moves the plan keeps (those that do not drop a stream spot's occupant). */
+  base: (MoveRef & { held?: HeldMove | null; marginal: Record<MoveHorizon, number> })[];
+  /** By day. */
+  steps: PlanStep[];
+  spots: { player: number; steps: number }[];
+  /** My started games over the rest of the week with no move, the set and the plan. */
+  games: { none: number; set: number; plan: number };
+  held: HeldMove[];
+  comebacks: Partial<Record<MoveHorizon, Comeback[]>>;
+  adds: { set: number; plan: number };
+  /** Expected categories won on each horizon with no move, the set and the plan. */
+  value: Record<"none" | "set" | "plan", Record<MoveHorizon, number>>;
+  /** The plan less the set, on each horizon. */
+  gain: Record<MoveHorizon, number>;
+  /** Its week beats the set's by more than the floor; else by how much it falls short. */
+  recommended: boolean;
+  short: number | null;
+  floor: number;
+  /** Why it is not recommended: under the floor, or the plan with the best week would clear it
+   * but costs the three weeks after, which the planner never trades (``guard``). */
+  reason: "short" | "guard" | null;
+  guard: PlanGuard | null;
+}
+
+/** The plan the three-week guard refused (#136): what it would buy, for the user to weigh. */
+export interface PlanGuard {
+  steps: (MoveRef & { spot: number })[];
+  spots: number[];
+  /** My started games over the rest of the week with it. */
+  games: number;
+  /** Its gain on the set on each horizon (the three weeks' negative). */
+  gain: Record<MoveHorizon, number>;
+}
+
 export interface MoveHorizonInfo {
   label: string;
   weeks: number[];
@@ -1295,6 +1340,8 @@ export interface MovesPayload {
   /** By Yahoo player id. */
   candidates: Record<string, MoveCandidate>;
   recommended: Record<MoveHorizon, RecommendedSet>;
+  /** The week's streaming plan (#136); null without a stream spot. */
+  plan?: StreamPlan | null;
   /** Available players without a line in the system (no move valued). */
   unprojected: number;
   search: { pool: number; min_gain: number };
