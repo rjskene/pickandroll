@@ -515,8 +515,8 @@ never a Basketball Monster number.
   judged weeks, year to date read as the change in the A − B gap since the change's Monday, the
   raw figure shown beside; a measure decides only past a threshold a league of the half (0.5 wins,
   1.0 category, 0.10 of realized share, 1 season-costly move below zero), and a change none clears
-  is kept; each decision log entry records the file's system in force when it was logged, and a
-  week's projection is the last week-start entry solved on it unless the query names a system;
+  is kept; each decision log entry records the file's system in force when it was logged, and a week's projection is the last week-start entry solved on the system in force when the week began (the
+  one its first week-start entry recorded) unless the query names a system;
   armed is the public leagues; a per-scoring change carries its scoring; the blend's later step is
   0.25 toward Yahoo, never past 0.75.
 
