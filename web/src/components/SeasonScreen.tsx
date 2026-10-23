@@ -60,12 +60,18 @@ import {
   openingDrop,
   pctLabel,
   planNote,
+  planRosText,
   planShortLine,
+  planStepRosTitle,
   playersById,
   projectedTotals,
   POSITIONS,
   recordLabel,
   refreshNote,
+  rosHeadTitle,
+  rosLabel,
+  rosTitle,
+  rosTone,
   scoreLabel,
   shownPlan,
   sortAvailable,
@@ -554,6 +560,7 @@ function Waivers({
       if (key === "gain_week") return bestMove(cand, "week")?.gain ?? null;
       if (key === "gain_three") return bestMove(cand, "three")?.gain ?? null;
       if (key === "next_price") return bestMove(cand, mh)?.next_price ?? null;
+      if (key === "ros") return bestMove(cand, mh)?.ros?.value ?? null;
       if (key === "flag") return flagOf(s, r.player.yahoo_id)?.score ?? null;
       if ((cats as string[]).includes(key)) {
         // Fewer turnovers first when sorting high to low.
@@ -581,7 +588,7 @@ function Waivers({
       {extra}
     </th>
   );
-  const columns = OWN_COLUMNS.length + 1 + 2 + 2 + cats.length + TREND_COLUMNS.length;
+  const columns = OWN_COLUMNS.length + 1 + 2 + 1 + 2 + cats.length + TREND_COLUMNS.length;
   const info = w.systems[system];
   const week = w.weeks[0];
   const gainTitle = (h: MoveHorizon) =>
@@ -701,6 +708,7 @@ function Waivers({
                 <FlagInfo cfg={s.flag_config} silent={s.flag_inputs?.silent} />,
               )}
               {(["week", "three"] as const).map((h) => th(GAIN_KEY[h], GAIN_SHORT[h], gainTitle(h)))}
+              {th("ros", "ROS", rosHeadTitle(s.scoring, `his best move over the ${HORIZON_LABEL[horizon]} (the For column's)`))}
               <th title={`the player his best move over the ${HORIZON_LABEL[horizon]} drops (the horizon at the right), or the held player it moves to make room; why there is no move`}>For</th>
               {th("next_price", "Next", `how much less the move over the ${HORIZON_LABEL[horizon]} adds with the next best drop`)}
               {cats.map((c) => th(c, CAT_LABEL[c], `${CAT_LABEL[c]} over the ${HORIZON_LABEL[horizon]} (${SYSTEM_SHORT[system]})`))}
@@ -750,6 +758,9 @@ function Waivers({
                         {gainLabel(cand?.[h]?.gain)}
                       </td>
                     ))}
+                    <td className={`num ${rosTone(best?.ros, s.scoring)}`} title={best ? rosTitle(best.ros, { add: id, drop: best.drop }, name, s.scoring) : undefined}>
+                      {rosLabel(best?.ros, s.scoring)}
+                    </td>
                     <td className="dim">{best ? forText(best, name) : (cand?.reason ?? "")}</td>
                     <td className="num dim" title={best?.next_drop != null || best?.next_price != null ? `next best: ${name(best.next_drop)}` : undefined}>
                       {best?.next_price == null ? "" : best.next_price.toFixed(2)}
@@ -844,7 +855,7 @@ function Moves({ q, s, onPick }: { q: UseQueryResult<MovesPayload>; s: SeasonVie
           </span>
           {(m.stash ?? []).map((a) => (
             <p key={a.player} className="muted small">
-              {stashText(a, name)}
+              {stashText(a, name, s.scoring)}
             </p>
           ))}
         </div>
@@ -901,7 +912,7 @@ function Recommended({ h, m, s, name, onPick }: { h: MoveHorizon; m: MovesPayloa
     <div className="block">
       <span className="k" title={`${info.base.toFixed(2)} expected categories without a move${info.from ? `, from ${dayLabel(info.from)}` : ""}`}>
         Recommended for {horizonName(m, h)}
-        {set.moves.length > 0 && ` · ${gainLabel(set.gain[h])} (${GAIN_SHORT[o]} ${gainLabel(set.gain[o])})`}
+        {set.moves.length > 0 && ` · ${gainLabel(set.gain[h])} (${GAIN_SHORT[o]} ${gainLabel(set.gain[o])}${set.ros ? ` · ROS ${rosLabel(set.ros, s.scoring)}` : ""})`}
       </span>
       {set.moves.length === 0 ? (
         <p className="muted small">No move adds more than {m.search.min_gain} expected categories.</p>
@@ -917,6 +928,9 @@ function Recommended({ h, m, s, name, onPick }: { h: MoveHorizon; m: MovesPayloa
               </th>
               <th className="num" title={`what the move adds to the set over ${horizonName(m, o)}`}>
                 {GAIN_SHORT[o]}
+              </th>
+              <th className="num" title={rosHeadTitle(s.scoring)}>
+                ROS
               </th>
               <th className="num" title="what the set gives up when the search runs again without this add">
                 w/o
@@ -936,6 +950,9 @@ function Recommended({ h, m, s, name, onPick }: { h: MoveHorizon; m: MovesPayloa
                 <td className="dim">{dayLabel(x.from)}</td>
                 <td className={`num ${gainTone(x.marginal[h], m.search.min_gain)}`}>{gainLabel(x.marginal[h])}</td>
                 <td className="num dim">{gainLabel(x.marginal[o])}</td>
+                <td className={`num ${rosTone(x.ros, s.scoring) || "dim"}`} title={rosTitle(x.ros, x, name, s.scoring)}>
+                  {rosLabel(x.ros, s.scoring)}
+                </td>
                 <td className="num" title={`without ${name(x.add)} the search ${insteadText(x.instead_without, name)}`}>
                   {x.price_without.toFixed(2)}
                 </td>
@@ -960,11 +977,13 @@ function Recommended({ h, m, s, name, onPick }: { h: MoveHorizon; m: MovesPayloa
  * muted line saying what it would have bought. */
 function PlanBlock({ m, s, name }: { m: MovesPayload; s: SeasonView; name: Namer }) {
   const plan = shownPlan(m.plan);
+  const ros = plan && planRosText(plan, s.scoring);
   if (!plan) {
     const line = planShortLine(m.plan, name);
     const steps = guardSteps(m.plan, name);
+    const refused = m.plan?.guard?.ros;
     return line ? (
-      <p className="muted small" title={steps ? `the plan the three-week guard refused: ${steps}` : undefined}>
+      <p className="muted small" title={steps ? `the plan the three-week guard refused: ${steps}${refused ? `; to the season's end ${rosLabel(refused, s.scoring)} on the set` : ""}` : undefined}>
         {line}
       </p>
     ) : null;
@@ -976,6 +995,7 @@ function PlanBlock({ m, s, name }: { m: MovesPayload; s: SeasonView; name: Namer
         title={`a dated sequence of adds and drops that turns the weakest spots over inside the week; recommended when its week beats the set's by more than the floor, ${plan.floor} ${s.scoring === "points" ? "of the matchup's win odds" : "expected categories"}`}
       >
         Streaming plan for {horizonName(m, "week")} · {gainLabel(plan.gain.week)} on the set ({GAIN_SHORT.three} {gainLabel(plan.gain.three)})
+        {ros && ` · ${ros}`}
       </span>
       <table className="season-table">
         <thead>
@@ -989,6 +1009,9 @@ function PlanBlock({ m, s, name }: { m: MovesPayload; s: SeasonView; name: Namer
             <th className="num" title={`what the step adds to the plan before it over ${horizonName(m, "three")}`}>
               {GAIN_SHORT.three}
             </th>
+            <th className="num" title={`${rosHeadTitle(s.scoring, "the step")}; a streamer a later step drops is valued as kept there, and the plan's total nets the two`}>
+              ROS
+            </th>
           </tr>
         </thead>
         <tbody>
@@ -1001,6 +1024,9 @@ function PlanBlock({ m, s, name }: { m: MovesPayload; s: SeasonView; name: Namer
               <td>{name(x.drop)}</td>
               <td className={`num ${gainTone(x.marginal.week, m.search.min_gain)}`}>{gainLabel(x.marginal.week)}</td>
               <td className="num dim">{gainLabel(x.marginal.three)}</td>
+              <td className={`num ${rosTone(x.ros, s.scoring) || "dim"}`} title={planStepRosTitle(x, name, s.scoring)}>
+                {rosLabel(x.ros, s.scoring)}
+              </td>
             </tr>
           ))}
         </tbody>
@@ -1153,6 +1179,12 @@ function MoveDrawer({
             <FieldCats cats={cats} before={d.horizons.three.cats.before} after={d.horizons.three.cats.after} />
           </div>
           <div className="block">
+            <span className="k" title={rosHeadTitle(s.scoring)}>
+              Rest of the season · {d.ros?.value != null ? rosLabel(d.ros, s.scoring) : "not valued"}
+            </span>
+            <p className="muted small">{cap(rosTitle(d.ros, d, name, s.scoring))}.</p>
+          </div>
+          <div className="block">
             <span className="k">Drop instead</span>
             <table className="season-table">
               <thead>
@@ -1160,6 +1192,9 @@ function MoveDrawer({
                   <th>For</th>
                   <th className="num">{GAIN_SHORT.week}</th>
                   <th className="num">{GAIN_SHORT.three}</th>
+                  <th className="num" title={rosHeadTitle(s.scoring)}>
+                    ROS
+                  </th>
                 </tr>
               </thead>
               <tbody>
@@ -1176,6 +1211,9 @@ function MoveDrawer({
                     </td>
                     <td className={`num ${gainTone(x.week, min)}`}>{gainLabel(x.week)}</td>
                     <td className={`num ${gainTone(x.three, min)}`}>{gainLabel(x.three)}</td>
+                    <td className={`num ${rosTone(x.ros, s.scoring)}`} title={rosTitle(x.ros, { add: picked.add, drop: x.drop }, name, s.scoring)}>
+                      {rosLabel(x.ros, s.scoring)}
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -1190,6 +1228,9 @@ function MoveDrawer({
                     <th>Add</th>
                     <th className="num">{GAIN_SHORT.week}</th>
                     <th className="num">{GAIN_SHORT.three}</th>
+                    <th className="num" title={rosHeadTitle(s.scoring)}>
+                      ROS
+                    </th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1198,6 +1239,9 @@ function MoveDrawer({
                       <td>{name(x.add)}</td>
                       <td className={`num ${gainTone(x.week, min)}`}>{gainLabel(x.week)}</td>
                       <td className={`num ${gainTone(x.three, min)}`}>{gainLabel(x.three)}</td>
+                      <td className={`num ${rosTone(x.ros, s.scoring)}`} title={rosTitle(x.ros, { add: x.add, drop: picked.drop }, name, s.scoring)}>
+                        {rosLabel(x.ros, s.scoring)}
+                      </td>
                     </tr>
                   ))}
                 </tbody>

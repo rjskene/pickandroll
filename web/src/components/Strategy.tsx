@@ -34,6 +34,10 @@ import {
   oddsLabel,
   oddsTone,
   playersById,
+  rosHeadTitle,
+  rosLabel,
+  rosTitle,
+  rosTone,
   sourceText,
   strategySettingsChanged,
   strategyUnits,
@@ -42,6 +46,9 @@ import {
 
 /** The weights' short names on the frontier and the tabs. */
 const SHORT: Record<StrategyWeightKey, string> = { week: "this week", even: "even", natural: "natural", season: "season" };
+/** The sets' own later-weeks figure (#151): the three weeks' average week times the weeks left,
+ * apart from the ROS column's schedule-based one. */
+const SEASON_PACE = "season pace";
 const SOURCE_NAME: Record<StrategySource | "pending", string> = {
   search: "exact search",
   milp: "linear program",
@@ -159,8 +166,9 @@ export default function Strategy({ league, s, system, onPick }: { league: string
         </>
       )}
       <p className="dim small">
-        {cap(d.horizons?.season.label ?? "rest of season")}: their average week times the {d.weeks_left ?? "remaining"} weeks left. Recommended, not
-        proven best: each set is the better of two solvers on its weight&apos;s own value. Nothing here acts in Yahoo.
+        {cap(d.horizons?.season.label ?? SEASON_PACE)}: their average week times the {d.weeks_left ?? "remaining"} weeks left; ROS: each move to the season&apos;s
+        end on the schedule, the decision log&apos;s figure, which ranks nothing. Recommended, not proven best: each set is the better of two solvers on its
+        weight&apos;s own value. Nothing here acts in Yahoo.
       </p>
     </>
   );
@@ -209,7 +217,11 @@ function Point({
     <>
       <div className="block">
         <span className="k" title={`λ ${p.lambda}: ${gainLabel(g.weighted)} on the weight's own value`}>
-          {p.label} · {gainLabel(g.week)} {units.week} this week · {gainLabel(g.season)} {units.season} over the rest of the season
+          {p.label} · {gainLabel(g.week)} {units.week} this week ·{" "}
+          <span title={d.horizons?.season.title}>
+            {d.horizons?.season.label ?? SEASON_PACE} {gainLabel(g.season)} {units.season}
+          </span>
+          {p.ros && <span title={rosHeadTitle(s.scoring, "the set, its moves' sum,")}> · ROS {rosLabel(p.ros, s.scoring)}</span>}
         </span>
         <p className="muted small">{sourceText(p, limit)}</p>
         {p.moves.length === 0 ? (
@@ -227,6 +239,9 @@ function Point({
                 <th className="num" title="what the move adds to the set over the three weeks ahead">
                   +3wk
                 </th>
+                <th className="num" title={rosHeadTitle(s.scoring)}>
+                  ROS
+                </th>
                 <th className="num" title="what the set gives up on the weight's value when the search runs again without this add">
                   w/o
                 </th>
@@ -237,7 +252,16 @@ function Point({
             </thead>
             <tbody>
               {p.moves.map((x) => (
-                <MoveRow key={x.add} x={x} name={name} min={min} locked={x.drop != null && lock.includes(x.drop)} onLock={onLock} onPick={onPick} />
+                <MoveRow
+                  key={x.add}
+                  x={x}
+                  name={name}
+                  min={min}
+                  scoring={s.scoring}
+                  locked={x.drop != null && lock.includes(x.drop)}
+                  onLock={onLock}
+                  onPick={onPick}
+                />
               ))}
             </tbody>
           </table>
@@ -271,6 +295,7 @@ function MoveRow({
   x,
   name,
   min,
+  scoring,
   locked,
   onLock,
   onPick,
@@ -278,6 +303,7 @@ function MoveRow({
   x: StrategyMove;
   name: (id: number | null) => string;
   min: number;
+  scoring: SeasonView["scoring"];
   locked: boolean;
   onLock: (id: number) => void;
   onPick: (m: MoveKey) => void;
@@ -306,6 +332,9 @@ function MoveRow({
       <td className="dim">{dayLabel(x.from)}</td>
       <td className={`num ${gainTone(x.marginal?.week, min)}`}>{gainLabel(x.marginal?.week)}</td>
       <td className="num dim">{gainLabel(x.marginal?.three)}</td>
+      <td className={`num ${rosTone(x.ros, scoring) || "dim"}`} title={rosTitle(x.ros, x, name, scoring)}>
+        {rosLabel(x.ros, scoring)}
+      </td>
       <td className="num" title={x.instead_without ? `without ${name(x.add)} the search ${instead(x.instead_without)}` : "pricing…"}>
         {x.price_without?.toFixed(2) ?? ""}
       </td>
@@ -419,7 +448,7 @@ const H = 180;
 const M = { left: 38, right: 14, top: 18, bottom: 26 };
 const R = 5;
 
-/** The weights' recommended sets: this week's gain across, the rest of the season's up, each
+/** The weights' recommended sets: this week's gain across, the season pace up, each
  * mark filled by its source (hollow the search's, solid the program's, half both) and the
  * natural weight ringed. Hover reads a mark; a click opens its weight. */
 function Frontier({
@@ -479,7 +508,7 @@ function Frontier({
         ref={svg}
         viewBox={`0 0 ${W} ${H}`}
         role="img"
-        aria-label={`Recommended sets: ${marks.map((k) => `${k.keys.map((w) => SHORT[w]).join(" and ")} ${gainLabel(k.x)} this week, ${gainLabel(k.y)} rest of season`).join("; ")}`}
+        aria-label={`Recommended sets: ${marks.map((k) => `${k.keys.map((w) => SHORT[w]).join(" and ")} ${gainLabel(k.x)} this week, ${gainLabel(k.y)} ${SEASON_PACE}`).join("; ")}`}
         tabIndex={0}
         onPointerMove={(e) => setActive(nearest(e))}
         onPointerLeave={() => setActive(null)}
@@ -507,7 +536,7 @@ function Frontier({
         <line className="ref" x1={x(0)} x2={x(0)} y1={M.top} y2={M.top + plotH} />
         <line className="ref" x1={M.left} x2={W - M.right} y1={y(0)} y2={y(0)} />
         <text className="tick" x={M.left} y={M.top - 7}>
-          rest of season, {units.season}
+          {SEASON_PACE}, {units.season}
         </text>
         <text className="tick" x={W - M.right} y={H - 3} textAnchor="end">
           this week, {units.week}
@@ -535,7 +564,7 @@ function Frontier({
         <div className="tip" role="status" style={{ left: `${leftPct}%`, top: `${topPct}%`, transform: `translate(${tx}, ${ty})` }}>
           <div className="v">{gainLabel(m.x)}</div>
           <div className="muted">
-            {units.week} this week · {gainLabel(m.y)} {units.season} over the rest of the season
+            {units.week} this week · {gainLabel(m.y)} {units.season} {SEASON_PACE}
           </div>
           <div>{m.keys.map((w) => SHORT[w]).join(", ")}</div>
           <div className="dim">{SOURCE_NAME[m.source]}</div>

@@ -55,8 +55,9 @@ MIN_GAIN = 0.01
 #: The alternative adds the drawer lists for a drop.
 ALTERNATIVE_ADDS = 8
 #: How far a protected player's rest-of-season per-game value must exceed the best add's: the
-#: keep rule's protection floor, a knob the hill-climb may set (docs/AUTOPILOT.md, section 6).
-PROTECTION_FLOOR = 0.0
+#: keep rule's protection floor, a knob the hill-climb may set within its minimum
+#: (docs/AUTOPILOT.md, section 6; ``season.progress.KNOB_MINIMUMS``).
+PROTECTION_FLOOR = mv.PROTECTION_FLOOR
 HORIZONS = ("week", "three")
 
 
