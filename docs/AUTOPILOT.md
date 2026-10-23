@@ -185,7 +185,7 @@ The details (#144, plan ruled on the issue 2026-10-23; docs/ADD_DROP.md "Scoreca
 |---|---|---|
 | projection system or blend weight | the moves solve | bbm, yahoo, blend 0.25 to 0.75 |
 | horizon weight | the strategy objective | even, natural, season |
-| the protection floor | the keep rule | the margin by which a player must beat the best add |
+| the protection floor | the keep rule | the margin by which a player must beat the best add; at or above the default, never below it (#150, ruled 2026-10-23) |
 | the streaming floors | the streaming plan (#136) | the margin by which a plan's week must beat the set's, in a categories and a points league |
 | the stash threshold | #124 | the margin by which the freed spot must beat the return |
 | the FAAB sizing | section 5 | the sizing rule only; no ceiling |
@@ -362,7 +362,7 @@ comes back to it.
   Filed when phase 1 is in.
 - **Phase 3, the hill-climb step.** The Monday analysis over the scorecard, the knob file, the
   A/B split, the revert rule, the comment on #127. The Progress view of
-  section 6, the Monday note it renders. Filed when phase 0 has scored two weeks.
+  section 6, the Monday note it renders. Filed 2026-10-23 as #152, before two scored weeks, at the user's direction ("don't wait, we will work out the kinks as we go"); the engine reading the knob file is part of it.
 
 ## 8. What is never committed
 
@@ -387,3 +387,8 @@ never a Basketball Monster number.
   (#126).
 - 2026-10-23, night: every move judged on its recommended horizon everywhere (#143); the season
   horizon, the season check and its flag (#144), the season being what counts.
+- 2026-10-23, morning: the lineup-lost count is counted (#149); the protection floor has a minimum
+  the hill-climb may not go below, the default (#150); phase 3 is filed now, not after two scored
+  weeks (#152); every move and trade recommendation and comparison shows the rest of the season
+  beside the week and the three weeks (#151). The test hygiene issues #121 and #122 build.
+
