@@ -118,7 +118,11 @@ class AddLimit:
 class Move:
     add: int
     #: The player dropped for him, or None when the add takes an open spot or a held-slot move.
+    #: In a streaming plan (#136) the drop may be an earlier move's add.
     drop: int | None = None
+    #: The day the move counts from, at or after the add's effective day (a streaming plan's
+    #: step); None for the effective day itself, as every single move has it.
+    day: date | None = None
 
 
 @dataclass(frozen=True)
@@ -168,6 +172,25 @@ class MoveProblem:
     floor: float = 0.0
     #: My players no move may drop: those the keep rule keeps (:func:`keep_rule`).
     kept: frozenset[int] = frozenset()
+
+
+def day_of(problem: MoveProblem, move: Move) -> date:
+    """The day ``move`` counts from: its own day, else its add's effective day."""
+    return move.day if move.day is not None else problem.effective[move.add]
+
+
+def timeline(
+    problem: MoveProblem, moves: Iterable[Move]
+) -> tuple[dict[int, date], dict[int, date]]:
+    """A set of dated moves as a roster timeline: the day each add is available from and the
+    day each dropped player is gone from (a streaming plan's earlier add among them)."""
+    available, gone = {}, {}
+    for m in moves:
+        day = day_of(problem, m)
+        available[m.add] = day
+        if m.drop is not None:
+            gone[m.drop] = day
+    return available, gone
 
 
 # --------------------------------------------------------------------------- eligibility
@@ -263,7 +286,7 @@ def feasible(problem: MoveProblem, moves: Sequence[Move]) -> bool:
         return False
     counts: dict[AddLimit, int] = {}
     for m in moves:
-        lim = limit_of(problem, problem.effective[m.add])
+        lim = limit_of(problem, day_of(problem, m))
         if lim is not None and lim.adds is not None:
             counts[lim] = counts.get(lim, 0) + 1
             if counts[lim] > lim.adds:
@@ -319,7 +342,9 @@ def comebacks(problem: MoveProblem, key: str, moves: Iterable[Move]) -> list[Com
         return []
     players = dict(problem.roster)
     dropped = {m.drop for m in moves if m.drop is not None}
-    active = [k for k, _ in problem.roster if k not in dropped] + [m.add for m in moves]
+    # A streaming plan's add that a later step drops is not there to send.
+    active = [k for k, _ in problem.roster if k not in dropped]
+    active += [m.add for m in moves if m.add not in dropped]
     active += [k for k, _ in back_now]
     backs = [(problem.first_day, k, slot) for k, slot in back_now]
     for k, slot in held:
@@ -589,52 +614,65 @@ class Evaluator:
         moves = frozenset(moves)
         memo = (key, moves)
         if memo not in self._memo:
-            members, gone = self._after(key, moves)
+            members, available, gone = self._after(key, moves)
             self._memo[memo] = sum(
-                self._week(span, members, gone) for span in self.problem.horizons[key]
+                self._week(span, members, available, gone) for span in self.problem.horizons[key]
             )
         return self._memo[memo]
 
     def gain(self, key: str, moves: Iterable[Move]) -> float:
         return self.value(key, moves) - self.base[key]
 
-    def _after(self, key: str, moves: frozenset[Move]) -> tuple[list[Member], dict[int, date]]:
+    def _after(
+        self, key: str, moves: frozenset[Move]
+    ) -> tuple[list[Member], dict[int, date], dict[int, date]]:
+        """The members with ``moves`` made, the day each add is available from and the day each
+        dropped player is gone from (the comebacks' drops among them)."""
         p = self.problem
-        gone = {m.drop: p.effective[m.add] for m in moves if m.drop is not None}
+        available, gone = timeline(p, moves)
         for c in comebacks(p, key, moves):
             gone[c.drop] = c.day
         adds = [(m.add, self._by_id[m.add]) for m in moves]
-        return [*p.held, *p.roster, *adds], gone
+        return [*p.held, *p.roster, *adds], available, gone
 
     def odds(self, key: str, moves: Iterable[Move]) -> list[list[list[wk.CategoryOdds]]]:
         """Each week's category odds over horizon ``key`` with ``moves`` made, one list per
         opponent."""
-        members, gone = self._after(key, frozenset(moves))
-        return [self._odds(span, members, gone) for span in self.problem.horizons[key]]
+        members, available, gone = self._after(key, frozenset(moves))
+        return [self._odds(span, members, available, gone) for span in self.problem.horizons[key]]
 
     def mine(self, key: str, moves: Iterable[Move]) -> list[wk.TeamWeek]:
         """My projected week for each week of horizon ``key`` with ``moves`` made."""
-        members, gone = self._after(key, frozenset(moves))
-        return [self._mine(span, members, gone) for span in self.problem.horizons[key]]
+        members, available, gone = self._after(key, frozenset(moves))
+        return [
+            project_mine(self.problem, span, members, gone, available)
+            for span in self.problem.horizons[key]
+        ]
 
-    def _week(self, span: WeekSpan, members: Sequence[Member], gone: Mapping[int, date]) -> float:
-        odds = self._odds(span, members, gone)
+    def _week(
+        self,
+        span: WeekSpan,
+        members: Sequence[Member],
+        available: Mapping[int, date],
+        gone: Mapping[int, date],
+    ) -> float:
+        odds = self._odds(span, members, available, gone)
         if not odds:
             return 0.0
         return sum(wk.expected_won(o) for o in odds) / len(odds)
 
     def _odds(
-        self, span: WeekSpan, members: Sequence[Member], gone: Mapping[int, date]
+        self,
+        span: WeekSpan,
+        members: Sequence[Member],
+        available: Mapping[int, date],
+        gone: Mapping[int, date],
     ) -> list[list[wk.CategoryOdds]]:
         if not span.opponents:
             return []
-        finals = wk.finals(self._mine(span, members, gone), span.so_far, self.problem.cats)
+        mine = project_mine(self.problem, span, members, gone, available)
+        finals = wk.finals(mine, span.so_far, self.problem.cats)
         return [wk.odds_of(finals, theirs, self.problem.cats) for theirs in self._theirs[id(span)]]
-
-    def _mine(
-        self, span: WeekSpan, members: Sequence[Member], gone: Mapping[int, date]
-    ) -> wk.TeamWeek:
-        return project_mine(self.problem, span, members, gone)
 
 
 def project_mine(
@@ -642,9 +680,11 @@ def project_mine(
     span: WeekSpan,
     members: Sequence[Member] | None = None,
     gone: Mapping[int, date] | None = None,
+    available: Mapping[int, date] | None = None,
 ) -> wk.TeamWeek:
     """My week over ``span`` with ``members`` (my roster, held slots included, when None), each
-    player in ``gone`` stopped from his day on (a drop): his starts go to the bench."""
+    player in ``gone`` stopped from his day on (a drop): his starts go to the bench. An add
+    plays from his day in ``available`` (a dated move's, #136), else from his effective day."""
     p = problem
     return wk.project_week(
         [*p.held, *p.roster] if members is None else members,
@@ -657,7 +697,7 @@ def project_mine(
         games=span.games,
         points=p.points,
         no_games=p.no_games,
-        available_from={**p.effective, **p.returns},
+        available_from={**p.effective, **p.returns, **(available or {})},
         gone_from=gone or {},
     )
 

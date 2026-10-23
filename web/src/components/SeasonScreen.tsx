@@ -43,6 +43,7 @@ import {
   forText,
   gainLabel,
   gainTone,
+  guardSteps,
   HORIZON_LABEL,
   horizonGames,
   isRefreshing,
@@ -57,16 +58,20 @@ import {
   oddsTone,
   openingDrop,
   pctLabel,
+  planNote,
+  planShortLine,
   playersById,
   projectedTotals,
   POSITIONS,
   recordLabel,
   refreshNote,
   scoreLabel,
+  shownPlan,
   sortAvailable,
   stashText,
   statusTitle,
   statusTone,
+  stepDay,
   TEXT_KEYS,
   weekDates,
   weekLabel,
@@ -774,6 +779,7 @@ function Moves({ q, s, onPick }: { q: UseQueryResult<MovesPayload>; s: SeasonVie
       {(["three", "week"] as const).map((h) => (
         <Recommended key={h} h={h} m={m} s={s} name={name} onPick={onPick} />
       ))}
+      <PlanBlock m={m} s={s} name={name} />
       <KeepRuleBlock m={m} name={name} />
       {(m.stash ?? []).length > 0 && (
         <div className="block">
@@ -889,6 +895,61 @@ function Recommended({ h, m, s, name, onPick }: { h: MoveHorizon; m: MovesPayloa
         <p className="muted small">It also moves {set.held.map((x) => `${name(x.player)} to ${x.slot}`).join(", ")}.</p>
       )}
       {returns && <p className="muted small">{returns}</p>}
+    </div>
+  );
+}
+
+/** The week's streaming plan (#136) under the week's set when it is recommended: its steps by
+ * day, each with its own gain, and what it buys against the set. A plan under the floor is one
+ * muted line saying what it would have bought. */
+function PlanBlock({ m, s, name }: { m: MovesPayload; s: SeasonView; name: Namer }) {
+  const plan = shownPlan(m.plan);
+  if (!plan) {
+    const line = planShortLine(m.plan, name);
+    const steps = guardSteps(m.plan, name);
+    return line ? (
+      <p className="muted small" title={steps ? `the plan the three-week guard refused: ${steps}` : undefined}>
+        {line}
+      </p>
+    ) : null;
+  }
+  return (
+    <div className="block">
+      <span
+        className="k"
+        title={`a dated sequence of adds and drops that turns the weakest spots over inside the week; recommended when its week beats the set's by more than ${plan.floor} expected categories`}
+      >
+        Streaming plan for {horizonName(m, "week")} · {gainLabel(plan.gain.week)} on the set ({GAIN_SHORT.three} {gainLabel(plan.gain.three)})
+      </span>
+      <table className="season-table">
+        <thead>
+          <tr>
+            <th>Day</th>
+            <th>Add</th>
+            <th title="the spot's holder before: one of mine, or an earlier step's add">Drop</th>
+            <th className="num" title={`what the step adds to the plan before it over ${horizonName(m, "week")}`}>
+              {GAIN_SHORT.week}
+            </th>
+            <th className="num" title={`what the step adds to the plan before it over ${horizonName(m, "three")}`}>
+              {GAIN_SHORT.three}
+            </th>
+          </tr>
+        </thead>
+        <tbody>
+          {plan.steps.map((x) => (
+            <tr key={`${x.from}-${x.add}`}>
+              <td className="dim">{stepDay(x.from)}</td>
+              <td className="strong">
+                {name(x.add)} <FlagTag f={flagOf(s, x.add)} s={s} />
+              </td>
+              <td>{name(x.drop)}</td>
+              <td className={`num ${gainTone(x.marginal.week, m.search.min_gain)}`}>{gainLabel(x.marginal.week)}</td>
+              <td className="num dim">{gainLabel(x.marginal.three)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <p className="muted small">{planNote(plan, name)}</p>
     </div>
   );
 }

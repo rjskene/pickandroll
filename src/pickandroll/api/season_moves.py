@@ -17,6 +17,10 @@ for my players and the candidates under every system, scored by the league's sco
 values are seven-day projections, the wrong horizon for a season comparison. The players it keeps
 are no drop anywhere; the payload names them with their values and the best add's, and advises
 each player with an absence on the IL.
+
+The streaming plan (#136, ``season.stream``) turns the weakest spots over inside the week: a
+dated sequence of adds and drops the payload shows beside the week's recommended set, and
+recommends only when its week beats the set's by the planner's floor.
 """
 
 from __future__ import annotations
@@ -33,6 +37,7 @@ import pandas as pd
 
 from ..season import Player, Season
 from ..season import moves as mv
+from ..season import stream as st
 from ..season import weekly as wk
 from ..sources.injuries import Listed
 from ..sources.matching import match_players
@@ -316,7 +321,7 @@ def keep_inputs(
 
 # --------------------------------------------------------------------------- the payloads
 def _move(m: mv.Move, problem: mv.MoveProblem) -> dict[str, Any]:
-    return {"add": m.add, "drop": m.drop, "from": problem.effective[m.add].isoformat()}
+    return {"add": m.add, "drop": m.drop, "from": mv.day_of(problem, m).isoformat()}
 
 
 def _r(x: float) -> float:
@@ -487,13 +492,15 @@ def moves_payload(built: Built) -> dict[str, Any]:
             row["reason"] = no_move(p, cand)
         candidates[str(cand)] = row
     recommended = {}
+    sets: dict[str, list[mv.Move]] = {}
     for key in HORIZONS:
         ranked = sorted(
             (c for c, g in swaps[key].items() if g and g[0].gain > MIN_GAIN),
             key=lambda c: -swaps[key][c][0].gain,
         )
         rec = mv.recommend(ev, key, ranked[:POOL], min_gain=MIN_GAIN)
-        held = held_by_add(p, [pm.move for pm in rec.moves])
+        sets[key] = [pm.move for pm in rec.moves]
+        held = held_by_add(p, sets[key])
         recommended[key] = {
             "moves": [
                 {
@@ -522,8 +529,96 @@ def moves_payload(built: Built) -> dict[str, Any]:
         "adds": built.adds,
         "candidates": candidates,
         "recommended": recommended,
+        "plan": plan_payload(built, ev, sets["week"], recommended["week"]["moves"]),
         "unprojected": built.unprojected,
         "search": {"pool": POOL, "min_gain": MIN_GAIN},
+    }
+
+
+def _started(ev: mv.Evaluator, moves: list[mv.Move]) -> int:
+    """My started games over the rest of this week with ``moves`` made."""
+    return sum(pw.started for pw in ev.mine("week", moves)[0].players.values())
+
+
+def plan_payload(
+    built: Built, ev: mv.Evaluator, against: list[mv.Move], rows: list[dict[str, Any]]
+) -> dict[str, Any] | None:
+    """The week's streaming plan (#136) against its recommended set (``against``, whose payload
+    rows are ``rows``): the set's moves it keeps, its steps by day with each one's own gain on
+    both horizons, the spots it turns over, my started games and the adds with no move, the set
+    and the plan, and the plan's value beside the set's; recommended only when its week beats
+    the set's by the floor (``season.stream.floor_of``), else by how much it falls short and
+    why: ``short``, under the floor, or ``guard``, when the plan with the best week would clear
+    it but costs the three weeks after, which the planner never trades (its steps, games and
+    gains are given so the user can make the trade by hand). None without a stream spot or the
+    league's scorer (the keep rule's)."""
+    p = built.problem
+    if built.rule is None or built.scorer is None:
+        return None
+    per_game = {k: wk.net_value(built.scorer, r) for k, r in p.rates.items()}
+    plan = st.plan(ev, built.rule, against, per_game)
+    if plan is None:
+        return None
+    spot_of = {m: sp.occupant for sp in plan.spots for m in sp.steps}
+    gains = st.step_gains(ev, plan)
+    value = {
+        name: {h: ev.value(h, moves) for h in HORIZONS}
+        for name, moves in (("none", []), ("set", list(plan.against)), ("plan", list(plan.moves)))
+    }
+    gap = value["plan"]["week"] - value["set"]["week"]
+    floor = st.floor_of(p)
+    recommended = st.recommended(ev, plan)
+    reason, guard = (None, None) if recommended else ("short", None)
+    if not recommended:
+        free = st.plan(ev, built.rule, against, per_game, guard=False)
+        if free is not None and free.steps:
+            gain = {h: ev.value(h, list(free.moves)) - value["set"][h] for h in HORIZONS}
+            if gain["week"] > floor and gain["three"] < -mv.EPS:
+                reason, guard = "guard", _guarded(ev, free, gain)
+    kept = set(plan.base)
+    return {
+        "base": [
+            {k: row[k] for k in ("add", "drop", "from", "held", "marginal")}
+            for m, row in zip(against, rows, strict=True)
+            if m in kept
+        ],
+        "steps": [
+            {
+                **_move(m, p),
+                "spot": spot_of[m],
+                "marginal": {h: _r(g[h]) for h in HORIZONS},
+            }
+            for m, g in zip(plan.steps, gains, strict=True)
+        ],
+        "spots": [{"player": sp.occupant, "steps": len(sp.steps)} for sp in plan.spots],
+        "games": {
+            "none": _started(ev, []),
+            "set": _started(ev, list(plan.against)),
+            "plan": _started(ev, list(plan.moves)),
+        },
+        "held": [{"player": k, "slot": slot} for k, slot in mv.held_used(p, list(plan.moves))],
+        "comebacks": {h: _comebacks(mv.comebacks(p, h, plan.moves)) for h in p.horizons},
+        "adds": {"set": len(plan.against), "plan": len(plan.moves)},
+        "value": {name: {h: _r(v) for h, v in vs.items()} for name, vs in value.items()},
+        "gain": {h: _r(value["plan"][h] - value["set"][h]) for h in HORIZONS},
+        "recommended": recommended,
+        "short": None if recommended else _r(max(0.0, floor - gap)),
+        "floor": floor,
+        "reason": reason,
+        "guard": guard,
+    }
+
+
+def _guarded(ev: mv.Evaluator, plan: st.Plan, gain: dict[str, float]) -> dict[str, Any]:
+    """The plan the three-week guard refused: its steps by day with the spots they turn over,
+    the spots, my started games with it and its gain on the set on both horizons."""
+    p = ev.problem
+    spot_of = {m: sp.occupant for sp in plan.spots for m in sp.steps}
+    return {
+        "steps": [{**_move(m, p), "spot": spot_of[m]} for m in plan.steps],
+        "spots": [sp.occupant for sp in plan.spots if sp.steps],
+        "games": _started(ev, list(plan.moves)),
+        "gain": {h: _r(v) for h, v in gain.items()},
     }
 
 

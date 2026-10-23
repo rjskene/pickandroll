@@ -37,6 +37,7 @@ import type {
   StrategySettings,
   StrategySource,
   StrategyWeightKey,
+  StreamPlan,
   TradeMargin,
   TradePayload,
   TradePlayer,
@@ -532,6 +533,62 @@ export function comebackText(lists: (Comeback[] | undefined)[], name: (id: numbe
  * an open spot (#124). */
 export function forText(x: { drop: number | null; held?: HeldMove | null }, name: (id: number | null) => string): string {
   return x.drop == null && x.held ? `${name(x.held.player)} to ${x.held.slot}` : name(x.drop);
+}
+
+/** The week's streaming plan to show (#136): only a recommended one. */
+export function shownPlan(plan: StreamPlan | null | undefined): StreamPlan | null {
+  return plan?.recommended && plan.steps.length ? plan : null;
+}
+
+/** "Thu Oct 23" for a plan step's day. */
+export function stepDay(iso: string): string {
+  const day = new Date(`${iso}T12:00:00`).toLocaleDateString("en-US", { weekday: "short" });
+  return `${day} ${dayLabel(iso)}`;
+}
+
+/** What the plan buys against the set: "29 started games against 27 with the set (24 with no
+ * move), on 4 adds against 3. It keeps the set's add Brooks for Grant." (#136). */
+export function planNote(plan: StreamPlan, name: (id: number | null) => string): string {
+  const g = plan.games;
+  const n = (k: number) => `${k} ${k === 1 ? "add" : "adds"}`;
+  let text =
+    `${g.plan} started ${g.plan === 1 ? "game" : "games"} against ${g.set} with the set (${g.none} with no move), ` +
+    `on ${n(plan.adds.plan)} against ${plan.adds.set}.`;
+  if (plan.base.length) {
+    const kept = plan.base.map((x) => `add ${name(x.add)}${x.drop == null && !x.held ? "" : ` for ${forText(x, name)}`}`);
+    text += ` It keeps the set's ${kept.join(", ")}.`;
+  }
+  return text;
+}
+
+/** The line under the week's set when the best streaming plan is not recommended (#136), so
+ * what was weighed shows: "Streaming Grant's spot buys 2 more started games for +0.04 this week,
+ * under the 0.10 floor."; or, when the three-week guard refused the plan with the best week,
+ * "... for +0.15 this week but costs 0.47 over three weeks; not recommended."; null with no
+ * plan or a recommended one (its section shows instead). */
+export function planShortLine(plan: StreamPlan | null | undefined, name: (id: number) => string): string | null {
+  if (!plan || plan.recommended) return null;
+  const buys = (spots: number[], games: number, gain: number) => {
+    const who = spots.length === 1 ? `${name(spots[0])}'s spot` : `the spots of ${andList(spots, name)}`;
+    const more = games - plan.games.set;
+    const bought = more > 0 ? `${more} more started ${more === 1 ? "game" : "games"} for ` : "";
+    return `Streaming ${who} buys ${bought}${gainLabel(gain)} this week`;
+  };
+  const g = plan.guard;
+  if (plan.reason === "guard" && g) {
+    return `${buys(g.spots, g.games, g.gain.week)} but costs ${Math.abs(g.gain.three).toFixed(2)} over three weeks; not recommended.`;
+  }
+  const floor = plan.floor.toFixed(2);
+  const spots = plan.spots.filter((x) => x.steps > 0).map((x) => x.player);
+  if (!spots.length || Number(plan.gain.week.toFixed(2)) <= 0) return `No streaming plan beats the set this week (floor ${floor}).`;
+  return `${buys(spots, plan.games.plan, plan.gain.week)}, under the ${floor} floor.`;
+}
+
+/** The steps of the plan the three-week guard refused, by day, to make it by hand (#136): "Thu
+ * Oct 22: add Brooks for Grant; Sat Oct 24: add Hale for Brooks"; null for none. */
+export function guardSteps(plan: StreamPlan | null | undefined, name: (id: number | null) => string): string | null {
+  if (!plan?.guard || plan.reason !== "guard") return null;
+  return plan.guard.steps.map((x) => `${stepDay(x.from)}: add ${name(x.add)} for ${name(x.drop)}`).join("; ");
 }
 
 /** "Brooks and Grant" (#124). */

@@ -201,19 +201,25 @@ def _games(
 
 
 def move_projection(
-    problem: MoveProblem, scorer: Mapping[str, Any] | None, add: int, drop: int | None
+    problem: MoveProblem,
+    scorer: Mapping[str, Any] | None,
+    add: int,
+    drop: int | None,
+    day: date | None = None,
 ) -> dict[str, Any] | None:
     """A recommended move in value units: the add's and the drop's per-game value under
     ``scorer`` net of an empty line, and on each horizon its days and the games each was
-    assumed to play there, the add's from the day the move takes effect and the drop's given
-    up from that day (or from his return, when later); the move's value is the add's games'
-    less the drop's. None without a scorer or a candidate of the problem's."""
+    assumed to play there, the add's from the day the move takes effect (``day``, a streaming
+    plan's step's, else the add's effective day) and the drop's given up from that day (or from
+    his return, when later); the move's value is the add's games' less the drop's. A plan's
+    step may drop an earlier step's add, a candidate, so its steps' values telescope to the
+    plan's. None without a scorer or a candidate of the problem's."""
     added = dict(problem.candidates).get(add)
     if scorer is None or added is None:
         return None
-    mine = dict(problem.roster) | dict(problem.held)
+    mine = dict(problem.roster) | dict(problem.held) | dict(problem.candidates)
     dropped = mine.get(drop) if drop is not None else None
-    start = problem.effective.get(add, problem.first_day)
+    start = day if day is not None else problem.effective.get(add, problem.first_day)
 
     def per_game(pid: int) -> float | None:
         line = problem.rates.get(pid)
