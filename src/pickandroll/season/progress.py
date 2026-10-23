@@ -107,6 +107,7 @@ BUCKET_GAP = 0.05
 
 #: The units a league's moves are valued in, by its scoring.
 UNITS = {"points": "fantasy points", "categories": "category value"}
+SCORINGS = ("categories", "points")
 
 
 # --------------------------------------------------------------------------- the knob file
@@ -223,6 +224,8 @@ def _change(i: int, raw: Any, problems: list[str]) -> dict[str, Any] | None:
         "decided_at": raw.get("decided_at"),
         "verdict": verdict,
         **dates,
+        # A change of one scoring's knob (#152): its B half is drawn from that scoring alone.
+        "scoring": raw.get("scoring") if raw.get("scoring") in SCORINGS else None,
     }
 
 
@@ -387,11 +390,18 @@ def ab(
     leagues that kept the setting (B), each half's figures over the weeks the change is judged
     on (from its ``week``, :data:`JUDGED_WEEKS` of them, as far as recorded), and each recorded
     week's wins above expected a league for both halves, from two weeks before it. ``rows`` are
-    the public leagues' week rows; None before its week is known."""
+    the public leagues' week rows; None before its week is known. A change of one scoring's knob
+    (``scoring``, #152) draws its B half from the leagues of that scoring."""
     if week is None:
         return None
+    scoring = change.get("scoring")
     a = [lg for lg in rows if lg in change["leagues"]]
-    b = [lg for lg in rows if lg not in change["leagues"]]
+    b = [
+        lg
+        for lg in rows
+        if lg not in change["leagues"]
+        and (scoring is None or any(r.get("scoring") == scoring for r in rows[lg]))
+    ]
     end = min(week + JUDGED_WEEKS - 1, last) if last is not None else week - 1
     series = []
     for w in range(max(week - 2, 1), (last or 0) + 1):
