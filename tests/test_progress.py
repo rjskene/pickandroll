@@ -10,7 +10,8 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from pickandroll.api import SessionStore, create_app
+from pickandroll.api import SessionStore, create_app, season_moves
+from pickandroll.season import moves as mv
 from pickandroll.season import progress as pg
 from pickandroll.season import realized as rz
 from pickandroll.season import weekly as wk
@@ -123,6 +124,63 @@ def test_the_knob_file_is_read_leniently_and_its_problems_named():
     ]
     assert pg.knob_file(None) == ({"in_force": {}, "leagues": {}, "frozen": {}, "changes": []}, [])
     assert pg.knob_file([1, 2])[1] == ["the knob file is not an object"]
+
+
+def test_a_knob_under_its_minimum_is_named_and_left_out_so_the_default_stays():
+    raw = {
+        "in_force": {"protection_floor": -0.1, "daily_cap": 2, "blend": 0.1},
+        "leagues": {"100001": {"protection_floor": "low", "daily_cap": 0}},
+        "changes": [
+            {
+                "id": "K1",
+                "monday": "2026-10-26",
+                "knob": "protection_floor",
+                "from": 0.0,
+                "to": -0.2,
+            },
+            {
+                "id": "K2",
+                "monday": "2026-11-02",
+                "knob": "protection_floor",
+                "from": 0.0,
+                "to": 0.3,
+            },
+            {
+                "id": "K3",
+                "monday": "2026-11-09",
+                "knob": "protection_floor",
+                "from": 0.3,
+                "to": 0.0,
+            },
+        ],
+    }
+    knobs, problems = pg.knob_file(raw)
+    # The floor below its minimum is not in force: the default (0.0) stays.
+    assert knobs["in_force"] == {"daily_cap": 2}
+    assert knobs["leagues"] == {"100001": {}}
+    # Raised and brought back down to the minimum, both pass; below it, left out.
+    assert [c["id"] for c in knobs["changes"]] == ["K2", "K3"]
+    assert problems == [
+        "in_force: protection_floor -0.1 is below its minimum 0.0",
+        "in_force: blend 0.1 is below its minimum 0.25",
+        "league 100001: protection_floor 'low' is not a number",
+        "league 100001: daily_cap 0 is below its minimum 1",
+        "K1: protection_floor -0.2 is below its minimum 0.0",
+    ]
+    # At the minimum and above, and an unset value, pass; a knob without a minimum takes anything.
+    assert pg.below_minimum("protection_floor", 0.0) is None
+    assert pg.below_minimum("protection_floor", 0.25) is None
+    assert pg.below_minimum("protection_floor", None) is None
+    assert pg.below_minimum("protection_floor", True) == "protection_floor True is not a number"
+    assert pg.below_minimum("horizon_weight", "natural") is None
+
+
+def test_every_knob_with_a_lower_bound_has_its_minimum_and_the_floor_is_the_default():
+    assert set(pg.KNOB_MINIMUMS) <= set(pg.KNOBS)
+    # The bounds of docs/AUTOPILOT.md section 6 with a low end: the floor, the blend, the cap.
+    assert pg.KNOB_MINIMUMS == {"protection_floor": 0.0, "blend": 0.25, "daily_cap": 1}
+    assert pg.KNOB_MINIMUMS["protection_floor"] == season_moves.PROTECTION_FLOOR
+    assert mv.MoveProblem.__dataclass_fields__["floor"].default == season_moves.PROTECTION_FLOOR
 
 
 def test_a_monday_note_is_read_into_its_four_sections():

@@ -16,6 +16,8 @@ from collections.abc import Iterable, Mapping, Sequence
 from datetime import date
 from typing import Any
 
+from .moves import PROTECTION_FLOOR
+
 #: The knobs of docs/AUTOPILOT.md section 6, by the names the decision log records them under
 #: (``api.season_decisions.knobs``), and no other.
 KNOBS = (
@@ -29,6 +31,16 @@ KNOBS = (
     "faab_sizing",
     "daily_cap",
 )
+#: The lowest value a knob may take, from section 6's table (#150): the protection floor never
+#: below its default, so no setting lets the engine drop a player worth more than the best add
+#: over the rest of the season; the blend weight and the daily move cap at their bounds' low end.
+#: The knob file's values and changes under one are named as problems and left out, and the
+#: Monday step (phase 3) refuses them.
+KNOB_MINIMUMS: Mapping[str, float] = {
+    "protection_floor": PROTECTION_FLOOR,
+    "blend": 0.25,
+    "daily_cap": 1,
+}
 VERDICTS = ("kept", "reverted")
 SOURCES = ("master", "user")
 #: The Monday note's sections, by their heading (lower case), and their keys.
@@ -62,16 +74,32 @@ def _day(x: Any) -> str | None:
         return None
 
 
+def below_minimum(knob: str, value: Any) -> str | None:
+    """Why ``knob`` may not take ``value``: it is under the knob's minimum, or not a number for
+    a knob with one; None when it may (an unset value, or a knob with no minimum)."""
+    low = KNOB_MINIMUMS.get(knob)
+    if low is None or value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        return f"{knob} {value!r} is not a number"
+    if value < low:
+        return f"{knob} {value} is below its minimum {low}"
+    return None
+
+
 def _known(where: str, raw: Any, problems: list[str]) -> dict[str, Any]:
     if not isinstance(raw, Mapping):
         problems.append(f"{where} is not an object")
         return {}
     out = {}
     for k, v in raw.items():
-        if k in KNOBS:
-            out[k] = v
-        else:
+        if k not in KNOBS:
             problems.append(f"{where}: {k} is not a knob")
+        elif why := below_minimum(k, v):
+            # Left out, so the default (or the value before it) stays in force.
+            problems.append(f"{where}: {why}")
+        else:
+            out[k] = v
     return out
 
 
@@ -86,6 +114,9 @@ def _change(i: int, raw: Any, problems: list[str]) -> dict[str, Any] | None:
         return None
     if raw.get("knob") not in KNOBS:
         problems.append(f"{cid}: {raw.get('knob')} is not a knob")
+        return None
+    if why := below_minimum(raw["knob"], raw.get("to")):
+        problems.append(f"{cid}: {why}")
         return None
     verdict, source = raw.get("verdict"), raw.get("source")
     if verdict is not None and verdict not in VERDICTS:

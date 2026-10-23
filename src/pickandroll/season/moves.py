@@ -65,6 +65,11 @@ from typing import Protocol
 from . import weekly as wk
 from .state import Player, Transaction
 
+#: How far a protected player's rest-of-season per-game value must exceed the best add's by
+#: default: the keep rule's protection floor (#124), a knob the hill-climb may raise and bring
+#: back down but never below this (docs/AUTOPILOT.md section 6, #150).
+PROTECTION_FLOOR = 0.0
+
 #: The statuses each held slot accepts (see the module docstring for the sources). The order is
 #: the order a player is placed in: the most restrictive slot first.
 HELD_ACCEPTS: Mapping[str, frozenset[str]] = {
@@ -169,7 +174,7 @@ class MoveProblem:
     #: The last day of the season's calendar.
     season_end: date | None = None
     #: How far a protected player's per-game value must exceed the best add's (a knob).
-    floor: float = 0.0
+    floor: float = PROTECTION_FLOOR
     #: My players no move may drop: those the keep rule keeps (:func:`keep_rule`).
     kept: frozenset[int] = frozenset()
 
