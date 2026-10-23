@@ -1558,6 +1558,74 @@ def strategy_league(client, mine_scale: dict[str, float] | None = None) -> seaso
     return service
 
 
+def test_every_move_carries_its_rest_of_the_season_as_the_log_values_it(client):
+    """#151: every candidate's move on each horizon, the recommended sets, the plan, the drawer
+    and the stash carry the decision log's own figure to the season's last day, so the moves
+    table and the scorecard value a move alike."""
+    from pickandroll.api import season_decisions
+    from pickandroll.api.seasons import season_dir
+
+    strategy_league(client)
+    m = client.get(f"/seasons/{LEAGUE}/moves").json()
+    keys = {"value", "add_games", "drop_games", "extrapolated", "from", "to"}
+    options = [(row[k], k) for row in m["candidates"].values() for k in ("week", "three") if row[k]]
+    assert options
+    ends = set()
+    for opt, _ in options:
+        ros = opt["ros"]
+        assert set(ros) == keys and ros["value"] is not None
+        assert ros["add_games"] >= ros["extrapolated"]["add"] >= 0
+        # The move the row's For shows: its drop's games given up, none for an open spot.
+        assert (ros["drop_games"] is None) == (opt["drop"] is None)
+        ends.add(ros["to"])
+    # One season's end, past the three weeks.
+    (end,) = ends
+    assert end > max(r["ros"]["from"] for r, _ in options)
+    # The sets: each move's own figure, the set's their sum; the log has the same.
+    entry = next(
+        e
+        for e in reversed(season_decisions.load(season_dir(client.data_dir, LEAGUE), None))
+        if e["source"] == "moves"
+    )
+    logged = {
+        (x["add"], x["drop"], x["from"]): x["value"]["horizons"]["season"]["value"]
+        for st_ in entry["sets"]
+        for x in st_["moves"]
+    }
+    seen = 0
+    for key in ("week", "three"):
+        rec = m["recommended"][key]
+        assert rec["moves"]
+        for x in rec["moves"]:
+            assert x["ros"]["value"] == logged[(x["add"], x["drop"], x["from"])]
+            seen += 1
+        assert rec["ros"]["value"] == pytest.approx(sum(x["ros"]["value"] for x in rec["moves"]))
+    assert seen
+    # The drawer: the move's own figure, and each drop's and other add's.
+    best = m["recommended"]["three"]["moves"][0]
+    drop = {} if best["drop"] is None else {"drop": best["drop"]}
+    r = client.get(f"/seasons/{LEAGUE}/moves/{best['add']}", params=drop)
+    assert r.status_code == 200, (r.text, best)
+    d = r.json()
+    assert d["ros"] == best["ros"]
+    assert next(x for x in d["drops"] if x["drop"] == best["drop"])["ros"] == best["ros"]
+    assert all(x["ros"]["value"] is not None for x in (*d["drops"], *d["adds"]))
+    # The candidate's own option on that drop is the same move.
+    opt = m["candidates"][str(best["add"])]["three"]
+    if opt["drop"] == best["drop"]:
+        assert opt["ros"] == best["ros"]
+    plan = m["plan"]
+    if plan is not None:
+        rows = [*plan["base"], *plan["steps"]]
+        assert all("ros" in r and "dropped_by" in r for r in rows)
+        if all(r["ros"] for r in rows):
+            total = sum(r["ros"]["value"] for r in rows)
+            assert plan["ros"]["plan"]["value"] == pytest.approx(total)
+    for row in m["stash"]:
+        for opt in (row["add"] or {}).values():
+            assert opt is None or "ros" in opt
+
+
 def test_the_strategy_route_never_solves_on_a_get_and_a_post_fills_it(client):
     service = strategy_league(client)
     url = f"/seasons/{LEAGUE}/strategy"
@@ -1575,7 +1643,7 @@ def test_the_strategy_route_never_solves_on_a_get_and_a_post_fills_it(client):
     assert [pt["key"] for pt in s["points"]] == ["week", "natural"]
     week, natural = s["points"]
     assert (week["lambda"], natural["lambda"], natural["natural"]) == (1.0, 0.5, True)
-    assert s["horizons"]["season"]["label"] == "rest of season, from the three weeks ahead"
+    assert s["horizons"]["season"]["label"] == "season pace"
     assert s["weeks_left"] == s["horizons"]["season"]["weeks_left"] > 0
     for key in ("week", "three"):
         assert s["horizons"][key]["base"] == m["horizons"][key]["base"]
@@ -1591,6 +1659,11 @@ def test_the_strategy_route_never_solves_on_a_get_and_a_post_fills_it(client):
         )
         assert set(pt["cats"]) == {"week", "three"}
         assert all(x["priced"] and x["price_without"] >= -1e-9 for x in pt["moves"])
+        # The schedule-based rest of the season beside the pace (#151): each move's, the set's
+        # their sum.
+        assert all(x["ros"]["value"] is not None for x in pt["moves"])
+        assert pt["ros"]["value"] == pytest.approx(sum(x["ros"]["value"] for x in pt["moves"]))
+    assert "ROS column" in s["horizons"]["season"]["title"]
     # This week's set is at least the best single move, which the pool always holds.
     best = max(r["week"]["gain"] for r in m["candidates"].values() if r["week"])
     assert week["gain"]["week"] >= best - 1e-3 > 0
@@ -1701,6 +1774,22 @@ def test_a_trade_with_this_weeks_opponent_scores_both_sides(client):
     assert (flagg["from"], flagg["to"]) == (10, 4)
     g = flagg["games"]["week"]
     assert g["old"]["games"] + g["new"]["games"] == g["before"]["games"]
+    # The rest of the season (#151): each player's to the calendar's end from the trade's day,
+    # each side's change what it receives less what it sends (no drop here).
+    reed = next(p for p in t["players"] if p["name"] == "Paul Reed")
+    assert flagg["ros"]["games"] > flagg["ros"]["extrapolated"] >= 0
+    assert flagg["ros"]["value"] == pytest.approx(
+        flagg["ros"]["per_game"] * flagg["ros"]["games"], abs=1e-3
+    )
+    assert not mine["roster"]["drops"] and not theirs["roster"]["drops"]
+    change = flagg["ros"]["value"] - reed["ros"]["value"]
+    assert change > 0
+    assert mine["ros"]["change"] == pytest.approx(change, abs=2e-3)
+    assert theirs["ros"]["change"] == pytest.approx(-change, abs=2e-3)
+    for side in (mine, theirs):
+        r = side["ros"]
+        assert r["after"] - r["before"] == pytest.approx(r["change"], abs=2e-3)
+        assert (r["from"], r["unvalued"]) == (t["effective"], 0)
     m = t["margin"]
     assert m["horizon"] == t["lead"] == "three"
     assert m["change"] == mine["horizons"]["three"]["change"]

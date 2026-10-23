@@ -189,6 +189,12 @@ def test_the_season_horizon_counts_the_schedule_read_and_extrapolates_the_rest()
         "value": 9.5 * 20.0 - 8.5 * 10.0,
         "cats": {"pts": 9.5 * 20.0 - 8.5 * 10.0},
     }
+    # A player's own count, a traded player's (#151), is the add's and the drop's: the drop's
+    # from his return.
+    assert dl.season_games(p, 9, dict(p.candidates)[9], WEEKS[0][2]) == (9.5, 3.5)
+    assert dl.season_games(p, 1, dict(p.roster)[1], WEEKS[0][4]) == (8.5, 3.5)
+    assert dl.season_games(p, 9, dict(p.candidates)[9], end + timedelta(1)) is None
+    assert dl.season_games(replace(p, season_end=None), 9, dict(p.candidates)[9], end) is None
     # Dropping one out for the season (INJ without a date) gives up nothing; with a date a week
     # past the schedule read, the 8 days from it.
     hurt = dl.move_projection(p, scorer, 9, 2)["horizons"]["season"]

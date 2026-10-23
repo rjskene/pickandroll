@@ -36,6 +36,7 @@ from typing import Any
 import pandas as pd
 
 from ..season import Player, Season
+from ..season import decisions as dl
 from ..season import moves as mv
 from ..season import stream as st
 from ..season import weekly as wk
@@ -321,11 +322,53 @@ def keep_inputs(
 
 # --------------------------------------------------------------------------- the payloads
 def _move(m: mv.Move, problem: mv.MoveProblem) -> dict[str, Any]:
-    return {"add": m.add, "drop": m.drop, "from": mv.day_of(problem, m).isoformat()}
+    return {"add": m.add, "drop": m.drop, **_day(m, problem)}
+
+
+def _day(m: mv.Move, problem: mv.MoveProblem) -> dict[str, str]:
+    return {"from": mv.day_of(problem, m).isoformat()}
 
 
 def _r(x: float) -> float:
     return round(float(x), 3)
+
+
+def ros_of(
+    built: Built, add: int, drop: int | None, day: date | None = None
+) -> dict[str, Any] | None:
+    """A move's rest of the season (#151): the decision log's own figure for it
+    (``decisions.move_projection``'s season horizon, #144), from its day to the calendar's last
+    day, playoffs included, in the league's value units (category z or points, net of an empty
+    line, over the games each plays), with those games and how many are extrapolated beyond the
+    schedule read. The tables, the log and the scorecard so value a move alike; nothing ranks
+    on it. None without the league's scorer or a season end; its value None when the add or
+    the drop has no line."""
+    proj = dl.move_projection(built.problem, built.scorer, add, drop, day)
+    s = ((proj or {}).get("horizons") or {}).get(dl.SEASON)
+    if s is None:
+        return None
+    return {
+        "value": s["value"],
+        "add_games": s["add_games"],
+        "drop_games": s["drop_games"],
+        "extrapolated": s["extrapolated_games"],
+        "from": s["from"],
+        "to": s["to"],
+    }
+
+
+def ros_move(built: Built, m: mv.Move) -> dict[str, Any] | None:
+    """:func:`ros_of` for ``m`` from its day, the day the payload's row gives."""
+    return ros_of(built, m.add, m.drop, mv.day_of(built.problem, m))
+
+
+def ros_total(rows: list[dict[str, Any] | None]) -> dict[str, Any] | None:
+    """A set's rest of the season: the sum of its moves' (each valued on its own, as the log
+    values them; a set's moves have distinct adds and drops); None when one has no value."""
+    values = [None if r is None else r["value"] for r in rows]
+    if any(v is None for v in values):
+        return None
+    return {"value": round(float(sum(v for v in values if v is not None)), 4)}
 
 
 def _comebacks(cs: list[mv.Comeback] | tuple[mv.Comeback, ...]) -> list[dict[str, Any]]:
@@ -415,14 +458,22 @@ def keep_payload(built: Built) -> dict[str, Any]:
     return {"floor": rule.floor, "average": _r(p.average), "best": best, "players": players}
 
 
-def _freed(swaps: dict[str, dict[int, list[mv.SwapGain]]]) -> dict[str, Any]:
+def _freed(built: Built, swaps: dict[str, dict[int, list[mv.SwapGain]]]) -> dict[str, Any]:
     """The best add for a spot a held-slot move frees, on each horizon: the best single move
-    with no drop."""
+    with no drop, with its rest of the season (#151)."""
     out: dict[str, Any] = {}
     for key in HORIZONS:
         free = [(c, g.gain) for c, gs in swaps[key].items() for g in gs if g.drop is None]
         best = max(free, key=lambda x: (x[1], -x[0]), default=None)
-        out[key] = None if best is None else {"player": best[0], "gain": _r(best[1])}
+        out[key] = (
+            None
+            if best is None
+            else {
+                "player": best[0],
+                "gain": _r(best[1]),
+                "ros": ros_move(built, mv.Move(best[0])),
+            }
+        )
     return out
 
 
@@ -435,7 +486,7 @@ def stash_payload(
     p, rule = built.problem, built.rule
     if rule is None:
         return []
-    freed = _freed(swaps) if swaps is not None else None
+    freed = _freed(built, swaps) if swaps is not None else None
     out = []
     for a in mv.stash_advice(p, rule):
         row: dict[str, Any] = {
@@ -487,6 +538,8 @@ def moves_payload(built: Built) -> dict[str, Any]:
                 "held": _held_for(p, mv.Move(cand)) if best.drop is None else None,
                 "next_drop": nxt.drop if nxt else None,
                 "next_price": _r(best.gain - nxt.gain) if nxt else None,
+                # This horizon's move to the season's end: the move the row's For shows.
+                "ros": ros_move(built, mv.Move(cand, best.drop)),
             }
         if all(row[key] is None for key in HORIZONS):
             row["reason"] = no_move(p, cand)
@@ -501,22 +554,25 @@ def moves_payload(built: Built) -> dict[str, Any]:
         rec = mv.recommend(ev, key, ranked[:POOL], min_gain=MIN_GAIN)
         sets[key] = [pm.move for pm in rec.moves]
         held = held_by_add(p, sets[key])
+        rows = [
+            {
+                **_move(pm.move, p),
+                "held": held.get(pm.move.add),
+                "marginal": {h: _r(v) for h, v in pm.marginal.items()},
+                "ros": ros_move(built, pm.move),
+                "price_without": _r(pm.price_without),
+                "price_keep": None if pm.price_keep is None else _r(pm.price_keep),
+                "instead_without": moves_with_held(p, pm.instead_without),
+                "instead_keep": None
+                if pm.instead_keep is None
+                else moves_with_held(p, pm.instead_keep),
+            }
+            for pm in rec.moves
+        ]
         recommended[key] = {
-            "moves": [
-                {
-                    **_move(pm.move, p),
-                    "held": held.get(pm.move.add),
-                    "marginal": {h: _r(v) for h, v in pm.marginal.items()},
-                    "price_without": _r(pm.price_without),
-                    "price_keep": None if pm.price_keep is None else _r(pm.price_keep),
-                    "instead_without": moves_with_held(p, pm.instead_without),
-                    "instead_keep": None
-                    if pm.instead_keep is None
-                    else moves_with_held(p, pm.instead_keep),
-                }
-                for pm in rec.moves
-            ],
+            "moves": rows,
             "gain": {h: _r(v) for h, v in rec.gain.items()},
+            "ros": ros_total([r["ros"] for r in rows]),
             "held": [{"player": k, "slot": slot} for k, slot in rec.held],
             "comebacks": {h: _comebacks(cs) for h, cs in rec.comebacks.items()},
         }
@@ -574,22 +630,31 @@ def plan_payload(
         if free is not None and free.steps:
             gain = {h: ev.value(h, list(free.moves)) - value["set"][h] for h in HORIZONS}
             if gain["week"] > floor and gain["three"] < -mv.EPS:
-                reason, guard = "guard", _guarded(ev, free, gain)
+                reason, guard = "guard", _guarded(built, ev, free, gain, rows)
     kept = set(plan.base)
+    base = [
+        {k: row[k] for k in ("add", "drop", "from", "held", "marginal", "ros")}
+        for m, row in zip(against, rows, strict=True)
+        if m in kept
+    ]
+    steps = [
+        {
+            **_move(m, p),
+            "spot": spot_of[m],
+            "marginal": {h: _r(g[h]) for h in HORIZONS},
+            "ros": ros_move(built, m),
+        }
+        for m, g in zip(plan.steps, gains, strict=True)
+    ]
+    # Each move valued to the season's end as kept there, as the log values it: a streamer a
+    # later step drops says which (#151); the plan's total telescopes over them.
+    for row in base:
+        row["dropped_by"] = _dropped_by(row["add"], plan.steps, p)
+    for j, row in enumerate(steps):
+        row["dropped_by"] = _dropped_by(row["add"], plan.steps[j + 1 :], p)
     return {
-        "base": [
-            {k: row[k] for k in ("add", "drop", "from", "held", "marginal")}
-            for m, row in zip(against, rows, strict=True)
-            if m in kept
-        ],
-        "steps": [
-            {
-                **_move(m, p),
-                "spot": spot_of[m],
-                "marginal": {h: _r(g[h]) for h in HORIZONS},
-            }
-            for m, g in zip(plan.steps, gains, strict=True)
-        ],
+        "base": base,
+        "steps": steps,
         "spots": [{"player": sp.occupant, "steps": len(sp.steps)} for sp in plan.spots],
         "games": {
             "none": _started(ev, []),
@@ -601,6 +666,10 @@ def plan_payload(
         "adds": {"set": len(plan.against), "plan": len(plan.moves)},
         "value": {name: {h: _r(v) for h, v in vs.items()} for name, vs in value.items()},
         "gain": {h: _r(value["plan"][h] - value["set"][h]) for h in HORIZONS},
+        "ros": {
+            "set": ros_total([r["ros"] for r in rows]),
+            "plan": ros_total([r["ros"] for r in (*base, *steps)]),
+        },
         "recommended": recommended,
         "short": None if recommended else _r(max(0.0, floor - gap)),
         "floor": floor,
@@ -609,16 +678,34 @@ def plan_payload(
     }
 
 
-def _guarded(ev: mv.Evaluator, plan: st.Plan, gain: dict[str, float]) -> dict[str, Any]:
+def _dropped_by(add: int, later: tuple[mv.Move, ...], p: mv.MoveProblem) -> dict[str, Any] | None:
+    """The first of the ``later`` steps that drops ``add``, with its day; None when none does."""
+    step = next((m for m in later if m.drop == add), None)
+    return None if step is None else {"add": step.add, **_day(step, p)}
+
+
+def _guarded(
+    built: Built,
+    ev: mv.Evaluator,
+    plan: st.Plan,
+    gain: dict[str, float],
+    rows: list[dict[str, Any]],
+) -> dict[str, Any]:
     """The plan the three-week guard refused: its steps by day with the spots they turn over,
-    the spots, my started games with it and its gain on the set on both horizons."""
+    the spots, my started games with it and its gain on the set on both horizons, and on the
+    rest of the season (#151) its moves' less the set's (``rows``)."""
     p = ev.problem
     spot_of = {m: sp.occupant for sp in plan.spots for m in sp.steps}
+    mine = ros_total([ros_move(built, m) for m in plan.moves])
+    theirs = ros_total([r["ros"] for r in rows])
     return {
         "steps": [{**_move(m, p), "spot": spot_of[m]} for m in plan.steps],
         "spots": [sp.occupant for sp in plan.spots if sp.steps],
         "games": _started(ev, list(plan.moves)),
         "gain": {h: _r(v) for h, v in gain.items()},
+        "ros": None
+        if mine is None or theirs is None
+        else {"value": round(mine["value"] - theirs["value"], 4)},
     }
 
 
@@ -697,6 +784,7 @@ def detail_payload(built: Built, add: int, drop: int | None) -> dict[str, Any] |
             "kept": d in p.kept,
             "held": _held_for(p, mv.Move(add)) if d is None else None,
             **{key: _r(ev.gain(key, [mv.Move(add, d)])) for key in HORIZONS},
+            "ros": ros_move(built, mv.Move(add, d)),
         }
         for d in [None, *(k for k, _ in p.roster)]
         if mv.feasible(p, [mv.Move(add, d)])
@@ -708,14 +796,19 @@ def detail_payload(built: Built, add: int, drop: int | None) -> dict[str, Any] |
         if c != add and mv.feasible(p, [mv.Move(c, drop)])
     ]
     others.sort(key=lambda r: -r["three"])
+    shown = [
+        {**r, "ros": ros_move(built, mv.Move(r["add"], drop))} for r in others[:ALTERNATIVE_ADDS]
+    ]
     return {
         "add": add,
         "drop": drop,
         "from": p.effective[add].isoformat(),
         "held": [{"player": k, "slot": s} for k, s in mv.held_used(p, move)],
         "horizons": horizons,
+        # The move to the season's end (#151), beside its two horizons.
+        "ros": ros_move(built, move[0]),
         "drops": drops,
-        "adds": others[:ALTERNATIVE_ADDS],
+        "adds": shown,
     }
 
 

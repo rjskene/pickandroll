@@ -43,7 +43,10 @@ from . import season_moves
 POOL = season_moves.POOL
 MAX_POOL = 60
 MIN_GAIN = season_moves.MIN_GAIN
-SEASON_LABEL = "rest of season, from the three weeks ahead"
+#: The season weight's own figure: the three weeks' pace over the weeks left, never the
+#: schedule-based rest of the season the ROS column shows (#151).
+SEASON_LABEL = "season pace"
+SEASON_TITLE = "the three weeks' average week times the weeks left; the ROS column is the schedule-based figure"
 #: Runs work here, off the event loop; the programs go to the background process pool.
 _EXECUTOR = ThreadPoolExecutor(max_workers=2, thread_name_prefix="strategy")
 
@@ -136,6 +139,7 @@ class Run:
             }
             horizons["season"] = {
                 "label": SEASON_LABEL,
+                "title": SEASON_TITLE,
                 "weeks_left": b.weeks_left,
                 "base": _r(self.base["season"]) if "season" in self.base else None,
             }
@@ -324,7 +328,12 @@ class Run:
         by_add = season_moves.held_by_add(p, moves)
         if rec is None:
             rows = [
-                {**season_moves._move(m, p), "held": by_add.get(m.add), "priced": False}
+                {
+                    **season_moves._move(m, p),
+                    "held": by_add.get(m.add),
+                    "priced": False,
+                    "ros": season_moves.ros_move(self.built, m),
+                }
                 for m in moves
             ]
         else:
@@ -334,6 +343,7 @@ class Run:
                     "held": by_add.get(pm.move.add),
                     "priced": True,
                     "marginal": {h: _r(v) for h, v in pm.marginal.items()},
+                    "ros": season_moves.ros_move(self.built, pm.move),
                     "price_without": _r(pm.price_without),
                     "price_keep": None if pm.price_keep is None else _r(pm.price_keep),
                     "instead_without": season_moves.moves_with_held(p, pm.instead_without),
@@ -352,7 +362,14 @@ class Run:
         }
         # The held-slot moves the set's adds without a drop need (#124).
         held = [{"player": k, "slot": slot} for k, slot in mv.held_used(p, moves)]
-        return {"moves": rows, "gain": self._gains(wt, moves), "cats": cats, "held": held}
+        return {
+            "moves": rows,
+            "gain": self._gains(wt, moves),
+            # The schedule-based rest of the season (#151), apart from the gain's season pace.
+            "ros": season_moves.ros_total([r["ros"] for r in rows]),
+            "cats": cats,
+            "held": held,
+        }
 
 
 class Runs:
