@@ -221,7 +221,8 @@ class RefreshJob:
     started_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     finished_at: datetime | None = None
     error: str | None = None
-    #: What failed without failing the job: the breakout flag's inputs, by input.
+    #: What failed without failing the job: the breakout flag's inputs, by input, and the
+    #: matchup pages skipped.
     warnings: dict[str, str] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -795,7 +796,9 @@ class SeasonService:
             def progress(step: str, done: int, total: int) -> None:
                 job.step, job.done, job.total = step, done, total
 
-            received = public.refresh_parts(league, base, fetch, today, progress=progress)
+            received = public.refresh_parts(
+                league, base, fetch, today, progress=progress, warn=job.warnings.__setitem__
+            )
             settings = base.merged(next(p.data for p in received if p.key == "settings"))
             job.step = "calendar"
             calendar = self._calendar(league, settings, fetch, today)

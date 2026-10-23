@@ -4,8 +4,8 @@
 A public league's week comes from its public pages, read when the week is recorded:
 
 * the league page, for the standings as of the week's end;
-* one matchup page per pair, ``matchup?week=<w>&mid1=<team>`` (the page names the opponent),
-  for each team's totals, games played and result;
+* one matchup page per pair, ``matchup?date=totals&week=<w>&mid1=<team>`` (the page names the
+  opponent), for each team's totals, games played and result;
 * the draft results, once per league (kept as the season's ``draft`` part);
 * the players page in the season's totals view (``S_S_<season>``): the taken players until a
   short page, then the available ones by preseason rank (a dropped pick), then a player search
@@ -58,8 +58,7 @@ class NeedsPages(Exception):
 # --------------------------------------------------------------------------- urls
 def opponent_url(league: str, week: int, team: int, other: int | None = None) -> str:
     """A matchup page by one team (Yahoo finds its opponent), or by the pair."""
-    pair = f"&mid2={other}" if other is not None else ""
-    return f"{public.SITE}/{league}/matchup?week={week}&mid1={team}{pair}"
+    return public.matchup_url(league, week, [team] if other is None else [team, other])
 
 
 def draft_url(league: str) -> str:
