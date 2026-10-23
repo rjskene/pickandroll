@@ -116,6 +116,8 @@ games.
   (`data/autopilot/knobs.json`, docs/AUTOPILOT.md section 6) has in force for the league,
   Basketball Monster's without one; a named system wins. The dashboard always names one, so the
   file's system reaches the routines' solves (the digest's moves and lineups) and not the panel.
+  The decision log records it on each entry (`knobs.file_system`), and the scorecard projects a
+  week on the system in force when the week began ("Scorecard", below).
 - **Spread.** A counting category's weekly variance is φ_c times its weekly total. A percentage's
   variance sums, over started games, the binomial variance of makes on the attempts plus the
   attempts' own variance times (p − p_team)², taken over the team's total attempts. A points
@@ -460,8 +462,9 @@ when left out.
   league's from the knob file over the code's defaults, with the system the solve ran on: the
   system and the blend weight, the horizon weight the strategy marks recommended, the keep rule's
   protection floor, #124, the streaming plan's floors, #136, and its moves a day, and the stash
-  threshold and the FAAB sizing, recorded though nothing reads them; a strategy entry also names
-  its `recommended` weight and marks that weight's set), the first day a
+  threshold and the FAAB sizing, recorded though nothing reads them; beside them `file_system`,
+  the system the knob file had in force for the league, which a route naming another overrode;
+  a strategy entry also names its `recommended` weight and marks that weight's set), the first day a
   move counts, the adds left, the horizons' labels and the pool (the moves route's search pool,
   candidates and floor; the strategy's players and settings). Then one set per horizon (moves)
   or per weight (strategy):
@@ -520,14 +523,20 @@ when left out.
 
 `season/scorecard.py` (core, no I/O) and `api/season_scorecard.py`;
 `GET /seasons/{league}/scorecard?week=N&system=bbm` and `GET /seasons/scorecard?week=N`, the
-last recorded week when left out. The metric is docs/AUTOPILOT.md's, section 6.
+last recorded week when left out, each week on the system in force when it began when `system`
+is left out (#152). The metric is docs/AUTOPILOT.md's, section 6.
 
 - **The projection.** A week's is the decision log's last entry on the system scored whose
   first day is the week's first: a solve that saw the whole week, before its first game (once a
   day's games begin, a solve's first day is the next). Its week block before any move gives each
   category's finals and odds, the expected categories won and the odds of winning the matchup.
   A week without one is unprojected: shown, but in no sum. Week 1 is unprojected (the log began
-  on Oct 22).
+  on Oct 22). With no system named (#152), the system scored is the one in force when the week
+  began: the `file_system` its first week-start entry recorded (`bbm` for an entry logged before
+  entries kept it). The projection is then the last week-start entry with that `file_system` that
+  was solved on it, so a change of system made on the week's Monday leaves the week on the old
+  system for both halves. A named `system` wins. A move with no scorer of its own borrows the
+  nearest entry's solved on the system in force when it was logged.
 - **The result.** The weekly record's (#97): my categories won, lost and tied (a points
   league's points), the outcome, and each category's totals, a percentage from its makes and
   attempts to Yahoo's three decimals, the lower turnovers winning; my rank and record after it.

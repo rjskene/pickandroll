@@ -18,9 +18,10 @@ is not blocked decides, one change a Monday:
    toward Yahoo's, within its bounds.
 
 A sample counts only scored moves whose judging horizon is over (#143), as the scorecard compares
-them. A rule that clears is blocked when its knob is unhooked (``progress.HOOKED``), changed in
-the last four weeks or still judged, frozen in all but one league it would reach, or when the step
-would leave its bounds; the next rule then has its say. The leagues a change reaches are the armed
+them. A rule that clears is blocked when its knob is unhooked (``progress.HOOKED``), written in
+the last four weeks (a change's Monday, or its revert or rollout) or still judged, frozen in all
+but one league it would reach, or when the step would leave its bounds; the next rule then has
+its say, and the note names the one passed over. The leagues a change reaches are the armed
 leagues of its scoring (of both for the system), split in two by league id: the half that lagged
 on the rule's measure takes it (A), the other keeps the setting (B). The private league takes no
 change, and the knob file is written so that its values stay as they were.
@@ -29,9 +30,16 @@ A change is judged two Mondays on, once its two weeks are recorded: on each meas
 wins above expected a league, the categories above expected a league, the moves' realized share,
 the season-costly moves gone below zero a league), the first on which the halves differ by its
 threshold over the two weeks decides; kept when A did better, reverted when worse, kept when no
-measure tells them apart. A kept change rolls out to the leagues of its scope; a reverted one
-writes the old values back for the A leagues. A user's change is never judged, and a frozen knob
-is never written.
+measure tells them apart. B is the half the change recorded. The year to date is shown beside,
+never deciding, as a difference in differences: each measure's A − B gap to the last week less
+its gap before the change. A kept change rolls out all it set to the leagues of its scope; a
+reverted one writes the old values back for the A leagues. A user's change is never judged, and a
+frozen knob is never written.
+
+The step answers the Monday note (``progress.note`` reads it) and the Monday's comment for the
+AUTOPILOT tracker (#127): the rules' samples in counts and ratios, the verdicts by the measure that
+decided and which way, the change with its halves by league id, what is judged next; no team or
+league name and no projection number.
 
 Pure: ``api.season_hillclimb`` reads the payload and the files and writes what this returns.
 """
@@ -542,6 +550,7 @@ def verdict(
     return {
         "id": change["id"],
         "knob": change["knob"],
+        "scoring": scoring,
         "verdict": outcome,
         "decided_by": decided,
         "leagues": a,
@@ -572,6 +581,7 @@ def _judged(change: Mapping[str, Any], raw: Mapping[str, Any]) -> dict[str, Any]
     return {
         "id": change["id"],
         "knob": change["knob"],
+        "scoring": change.get("scoring"),
         "verdict": change["verdict"],
         "decided_by": j.get("decided_by"),
         "leagues": j.get("leagues") or [],
@@ -582,6 +592,7 @@ def _judged(change: Mapping[str, Any], raw: Mapping[str, Any]) -> dict[str, Any]
         "since": j.get("since") or {},
         "a_ytd": j.get("a_ytd") or {},
         "b_ytd": j.get("b_ytd") or {},
+        "reached": j.get("reached") or [],
     }
 
 
@@ -731,6 +742,40 @@ def ran(raw: Any, monday: str) -> list[str]:
 
 
 # --------------------------------------------------------------------------- the note
+def _decision(change: Mapping[str, Any] | None, outcomes: Sequence[Mapping[str, Any]]) -> list[str]:
+    """The change and why (its reason: counts and ratios), the rules that cleared before it but
+    were blocked, or why no change was made."""
+    passed = []
+    for r in outcomes:
+        if r["clears"] and not r.get("blocked"):
+            break  # the rule that made the change
+        if r["clears"]:
+            where = f" ({r['scoring']})" if r["scoring"] else ""
+            passed.append(f"{RULE_WORDS[r['rule']]}{where} cleared but {r['blocked']}")
+    blocked = "; ".join(passed)
+    if change is None:
+        if blocked:
+            return [f"No change: {blocked}."]
+        return ["No change: no rule's numbers cleared its threshold."]
+    out = [f"{change['id']}: {change['reason']}"]
+    if blocked:
+        out.append(f"Passed over before it: {blocked}.")
+    return out
+
+
+def _actions(change: Mapping[str, Any] | None, pending: Sequence[Mapping[str, Any]]) -> list[str]:
+    out = [
+        f"Judge {c['id']} ({c['knob']}) once week {c['week'] + pg.JUDGED_WEEKS - 1} is recorded."
+        for c in pending
+        if c.get("week") is not None
+    ]
+    if change is not None:
+        out.append(
+            f"Judge {change['id']} ({change['knob']}) two Mondays on, once its two weeks are recorded."
+        )
+    return out
+
+
 def note(
     monday: str,
     sentences: Sequence[Mapping[str, str]],
@@ -746,36 +791,124 @@ def note(
     working = [s["text"] for s in pooled if s.get("tone") != "bad"]
     not_working = [s["text"] for s in pooled if s.get("tone") == "bad"]
     decision = [_verdict_reason(v) for v in verdicts]
-    passed = []
-    for r in outcomes:
-        if r["clears"] and not r.get("blocked"):
-            break  # the rule that made the change
-        if r["clears"]:
-            where = f" ({r['scoring']})" if r["scoring"] else ""
-            passed.append(f"{RULE_WORDS[r['rule']]}{where} cleared but {r['blocked']}")
-    blocked = "; ".join(passed)
-    if change is not None:
-        decision.append(f"{change['id']}: {change['reason']}")
-        if blocked:
-            decision.append(f"Passed over before it: {blocked}.")
-    elif blocked:
-        decision.append(f"No change: {blocked}.")
-    else:
-        decision.append("No change: no rule's numbers cleared its threshold.")
-    actions = [
-        f"Judge {c['id']} ({c['knob']}) once week {c['week'] + pg.JUDGED_WEEKS - 1} is recorded."
-        for c in pending
-        if c.get("week") is not None
-    ]
-    if change is not None:
-        actions.append(
-            f"Judge {change['id']} ({change['knob']}) two Mondays on, once its two weeks are recorded."
-        )
+    decision += _decision(change, outcomes)
+    actions = _actions(change, pending)
     lines = ["## What is working", *(working or ["Nothing yet to say."])]
     lines += ["", "## What is not", *(not_working or ["Nothing yet to say."])]
     lines += ["", "## Decision", *decision]
     lines += ["", "## Action items"]
     lines += [f"{i}. {a}" for i, a in enumerate(actions, 1)] or ["1. None."]
+    return "\n".join(lines) + "\n"
+
+
+# --------------------------------------------------------------------------- the #127 comment
+def _s(n: int) -> str:
+    return "" if n == 1 else "s"
+
+
+def _sample(r: Mapping[str, Any]) -> str:
+    """A rule's sample in counts and ratios."""
+    n = r["numbers"]
+    if r["rule"] == "season_check":
+        k, below = n["season_costly"], n["below_zero"]
+        return f"{k} season-costly move{_s(k)}, {below} below zero so far" + (
+            f" ({below / k:.0%})" if k else ""
+        )
+    k, got = (
+        (n["plan_moves"], n["share"]) if r["rule"] == "plan_floor" else (n["moves"], n["share"])
+    )
+    what = (
+        f"{k} plan move{_s(k)}"
+        if r["rule"] == "plan_floor"
+        else f"{k} move{_s(k)} under {n['system']}"
+    )
+    return what + (f", realized {got:.0%} of projected" if got is not None else "")
+
+
+def _verdict_public(v: Mapping[str, Any]) -> str:
+    """A verdict without its figures: the measure that decided, which way, past its threshold;
+    the year to date's direction beside it; the leagues it reached."""
+    a, b = len(v["leagues"]), len(v["b_leagues"])
+    window = v.get("window") or ["?", "?"]
+    weeks = f"weeks {window[0]}-{window[1]}"
+    name = v["decided_by"]
+    if name is None:
+        said = (
+            f"kept: no measure told the {a} league{_s(a)} that took it from the {b} that kept "
+            f"the setting apart over {weeks}"
+        )
+    else:
+        threshold = next(t for m, t, _ in MEASURES if m == name)
+        way = "better" if v["verdict"] == "kept" else "worse"
+        said = (
+            f"{v['verdict']} on {MEASURE_WORDS[name]}: the {a} league{_s(a)} that took it did "
+            f"{way} than the {b} that kept the setting over {weeks}, by {threshold:g} or more"
+        )
+    shown = name or "wins_above"
+    d = (v.get("since") or {}).get(shown)
+    if d is not None:
+        more = next(up for m, _, up in MEASURES if m == shown)
+        lean = 0 if d == 0 else (1 if (d > 0) == more else -1)
+        moved = {1: "toward them", -1: "away from them", 0: "not at all"}[lean]
+        said += f"; year to date, the gap on {MEASURE_WORDS[shown]} has moved {moved} since"
+    reached = v.get("reached") or []
+    if v["verdict"] == "kept" and reached:
+        said += f"; rolled out to {len(reached)} league{_s(len(reached))}"
+    elif v["verdict"] == "reverted":
+        said += f"; the old values written back in those {a}"
+    where = f", {v['scoring']}" if v.get("scoring") else ""
+    return f"- {v['id']} ({v['knob']}{where}): {said}."
+
+
+def comment(
+    monday: str,
+    armed: Mapping[str, str],
+    verdicts: Sequence[Mapping[str, Any]],
+    change: Mapping[str, Any] | None,
+    outcomes: Sequence[Mapping[str, Any]],
+    pending: Sequence[Mapping[str, Any]],
+) -> str:
+    """The Monday's comment for the AUTOPILOT tracker (#127), public: the armed leagues counted,
+    each rule's sample in counts and ratios, the verdicts by the measure that decided (no wins or
+    categories figure: those are set against a projection), the change with the leagues of each
+    half by id, and what is judged next. No team or league name, no projection number."""
+    by = Counter(armed.values())
+    lines = [
+        f"## Hill-climb, Monday {monday}",
+        "",
+        f"- Armed: {len(armed)} public league{_s(len(armed))} ("
+        + ", ".join(f"{by[s]} {s}" for s in SCORINGS if by[s])
+        + "); the private league takes no change.",
+        "- Each rule's sample counts the scored moves whose judging horizon is over.",
+        "",
+        "| Rule | Scoring | Sample | Clears |",
+        "|---|---|---|---|",
+    ]
+    for r in outcomes:
+        clears = (
+            "no"
+            if not r["clears"]
+            else (f"yes, blocked: {r['blocked']}" if r.get("blocked") else "yes")
+        )
+        lines.append(
+            f"| {RULE_WORDS[r['rule']].capitalize()} | {r['scoring'] or 'both'} | {_sample(r)} | {clears} |"
+        )
+    lines += ["", "### Verdicts", *([_verdict_public(v) for v in verdicts] or ["- None due."])]
+    lines += ["", "### Decision"]
+    decision = _decision(change, outcomes)
+    if change is not None:
+        b = change.get("b_leagues") or []
+        decision.insert(
+            1,
+            f"Leagues that take it: {', '.join(change['leagues'])}; keeping the setting: "
+            f"{', '.join(b) or 'none'}.",
+        )
+    lines += [f"- {d}" for d in decision]
+    lines += [
+        "",
+        "### Next",
+        *([f"- {a}" for a in _actions(change, pending)] or ["- Nothing pending."]),
+    ]
     return "\n".join(lines) + "\n"
 
 
@@ -833,6 +966,7 @@ def step(
         else:
             _undo(out_raw, target or c, leagues)
             reach = v["leagues"]
+        v["reached"] = reach
         if target is not None:
             target |= {
                 "verdict": v["verdict"],
@@ -902,4 +1036,5 @@ def step(
         "change": change,
         "knobs": out_raw,
         "note": text,
+        "comment": comment(m, armed, verdicts, change, outcomes, pending),
     }

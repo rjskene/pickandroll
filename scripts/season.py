@@ -12,6 +12,7 @@ check (#107), the decision log (#125), the Monday scorecard (#126) and the Monda
     python scripts/season.py scorecard 258901 --week 2  # one league's week, in a line
     python scripts/season.py monday --dry-run           # the hill-climb step, nothing written
     python scripts/season.py monday                     # this Monday's step, written once
+    python scripts/season.py monday --comment           # only the Monday's comment for #127
 
 It asks the API (``PICKANDROLL_API``, by default http://127.0.0.1:8000) to record each league and
 prints one line per league:
@@ -56,7 +57,11 @@ each:
 judged and changed and what was written, then the Monday note. A second run the same Monday
 writes nothing and says so; ``--force`` undoes that Monday's own change and runs again:
 
-    2026-11-09: written autopilot/knobs.json, autopilot/notes/2026-11-09.md; K1 kept; K2 protection_floor 0.0 → 0.05 in 4 leagues
+    2026-11-09: written autopilot/knobs.json, autopilot/notes/2026-11-09.md, autopilot/comments/2026-11-09.md; K1 kept; K2 protection_floor 0.0 → 0.05 in 4 leagues
+
+With ``--comment`` it prints only the Monday's comment for the AUTOPILOT tracker (#127), the
+markdown to post: the step's, or on a second run the one the first wrote (nothing when that run
+kept none). The line then goes to standard error.
 
 Exit codes: 0 every league was asked, whatever it answered; 2 the API is unreachable; for
 ``monday``, 1 when the API refused the step.
@@ -420,8 +425,10 @@ def monday_step(
     dry_run: bool = False,
     force: bool = False,
     as_json: bool = False,
+    comment: bool = False,
 ) -> int:
-    """The Monday hill-climb step, its line and its note."""
+    """The Monday hill-climb step, its line and its note; with ``comment``, its comment for #127
+    alone, the line on standard error."""
     query = [f"monday={monday}"] if monday else []
     query += ["dry_run=true"] * dry_run + ["force=true"] * force
     path = "/autopilot/monday" + (f"?{'&'.join(query)}" if query else "")
@@ -437,6 +444,10 @@ def monday_step(
         detail = body.get("detail") if isinstance(body, dict) else body
         print(f"monday: refused ({status}): {detail}", flush=True)
         return 1
+    if comment:
+        print(monday_line(body), file=sys.stderr, flush=True)
+        print(body.get("comment") or "", end="", flush=True)
+        return 0
     print(monday_line(body), flush=True)
     if body.get("note"):
         print(body["note"], end="", flush=True)
@@ -475,10 +486,16 @@ def main(argv: list[str] | None = None) -> int:
     mo.add_argument("--force", action="store_true", help="undo the Monday's change and run again")
     mo.add_argument("--api", default=API, help="the API's address")
     mo.add_argument("--json", action="store_true", help="print the answer whole")
+    mo.add_argument("--comment", action="store_true", help="print only the comment for #127")
     args = ap.parse_args(argv)
     if args.command == "monday":
         return monday_step(
-            http(args.api.rstrip("/")), args.monday, args.dry_run, args.force, args.json
+            http(args.api.rstrip("/")),
+            args.monday,
+            args.dry_run,
+            args.force,
+            args.json,
+            args.comment,
         )
     if args.command == "scorecard":
         return scorecard_all(http(args.api.rstrip("/")), args.leagues, args.week, args.json)

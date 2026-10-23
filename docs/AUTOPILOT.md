@@ -67,7 +67,7 @@ them.
 | daily, an hour later | the queue is executed, less what the user struck | phase 2 |
 | Monday 06:00 | the recorder writes last week (#97) | yes (`weekly-recorder-monday`) |
 | Monday, after the recorder | the scorecard (#126): last week and YTD, projected against actual, posted on #127 | phase 0 |
-| Monday, after the scorecard | the hill-climb step (section 6): one change applied, logged on #127 | phase 3 |
+| Monday, after the scorecard | the hill-climb step (section 6): the verdicts due and at most one change applied, the comment posted on #127 | yes (#152, `scripts/season.py monday`); the Monday routine runs it from 2026-10-26 |
 | Monday, then | the week's first queue is built under the new setting, before the first claims | phase 2 |
 
 ## 4. The strategy rule (user, 2026-10-22)
@@ -198,8 +198,8 @@ The details (#144, plan ruled on the issue 2026-10-23; docs/ADD_DROP.md "Scoreca
 allow it, half of them take the change and half keep the setting (A/B), since nine to twelve
 matchups and some twenty moves a week are noise enough to chase ghosts (the draft edge audit in
 `docs/analysis` found the within-draft "edge" was an artifact). A change is judged on the next
-two weeks and YTD, reverted when worse, and every change, its reason and its result is a comment
-on #127. The master applies the change (user, 2026-10-22: "you apply the rules"); the user can
+two weeks, the year to date beside it, reverted when worse, and every change, its reason and its
+result is a comment on #127 (the Monday step, below). The master applies the change (user, 2026-10-22: "you apply the rules"); the user can
 override any of it afterwards: the live settings are `data/autopilot/knobs.json`, per league
 where the user wants it, shown read-only on the Progress view (below), changed by the master in the session when the
 user asks, and a knob the user has set is frozen until they free it.
@@ -210,8 +210,8 @@ what is working and what isn't and what decisions were made and maybe actionable
 i don't want any user inputs there ... we can handle action items in the session"). A screen of its
 own at `/progress`, read-only: no form, no editable knob, no button beyond navigation. It reads the
 decision log, the scorecard, the knob file and the Monday notes (`data/autopilot/notes/<monday>.md`,
-sections "What is working", "What is not", "Decision", "Action items": the text the hill-climb step
-also posts on the tracker) and shows, per week since the first Monday, pooled and per league:
+sections "What is working", "What is not", "Decision", "Action items", which the Monday step writes;
+the tracker gets the step's comment, below) and shows, per week since the first Monday, pooled and per league:
 expected against actual wins and categories; the moves' projected against realized gain, per move
 and cumulative; the week odds' Brier score and the category odds' hit rate by bucket; the standing
 in each league; and the knob changes as events on every chart (the Monday, the knob, the leagues
@@ -219,8 +219,8 @@ that took it, the verdict two weeks later). The narrative is generated sentences
 beside the Monday notes; the newest note's action items are listed at the top, for the session to
 act on. The private league is shown apart. Built after #125 and #126, with phase 3.
 
-**The knob file** (`data/autopilot/knobs.json`, #129). JSON the master writes, by hand until the
-Monday step of phase 3 does, and the Progress view only reads. It is meant to be edited by hand, so
+**The knob file** (`data/autopilot/knobs.json`, #129). JSON the Monday step writes (#152) and the
+master may edit by hand, and the Progress view only reads. It is meant to be edited by hand, so
 the view reads it leniently: a key it does not know, or a change without a date or a knob, is
 named in the view's problems and left out; a verdict or source of neither kind is named there and
 the change kept with none; none of it fails the page. A value outside its bounds (a system or
@@ -239,6 +239,88 @@ executed), the protection floor (the keep rule), the plan floors and the daily c
 plan). The stash threshold and the FAAB sizing are unhooked: recorded in the decision log as the
 file has them, read by nothing, and never changed by the Monday step.
 
+**The system scored** (#152). Each decision log entry records `knobs.file_system`: the system the
+knob file had in force for its league when it was logged, beside the system the solve ran on
+(`bbm` without a file; an entry logged before entries kept it counts as `bbm`). With no system
+named, the scorecard and the Progress view project each week on the system in force when it
+began: the last week-start entry whose `file_system` is the one the week's first week-start entry
+recorded, and that was solved on it. A change of system made on a week's Monday therefore leaves
+that week projected on the old system for both halves, whatever is solved after the step, and a
+revert loses no A week. A named system still wins. A move with no scorer of its own borrows the
+nearest entry's solved on the system in force when it was logged.
+
+**The Monday step** (#152; `season/hillclimb.py`, pure, and `api/season_hillclimb.py`;
+`POST /autopilot/monday`, `scripts/season.py monday`). It runs after the recorder and the
+scorecard, on the API's own data and under one lock. The armed leagues are the public ones
+(section 1). The private league takes no change; the file is written so that its values stay as
+they were, and no rollout reaches it.
+
+- **The verdicts first.** A change whose source is the master is judged once its two weeks (the
+  week of its Monday and the next) are recorded; a user's change never is. A is the leagues that
+  took it, B the half it recorded (`b_leagues`), each armed, of its scoring and not frozen for the
+  knob. The measures, in this order, each over the two weeks, with the gap the halves must differ
+  by:
+  1. wins above expected a league of the half, 0.5;
+  2. categories above expected a league of the half, 1.0;
+  3. the half's moves' realized share of their projection on their judging horizons, pooled by
+     scoring, 0.10;
+  4. the season-costly moves realized below zero so far a league of the half, 1.
+
+  The first that clears decides: kept when A did no worse, reverted when worse. A change that none
+  clears is kept: A did no worse. A half of one or two leagues is as noisy as it sounds; that is the
+  sample. Beside the verdict, never deciding, the year to date is read as a difference in
+  differences (`since`): each measure's A − B gap to the last recorded week less its gap before
+  the change (a sum over no weeks counts nothing), with the raw figures. For the sums it equals the
+  window while the judgement is on time; for the share it is the share gap now less the gap before.
+  A revert writes back the values the change replaced in the A leagues. A kept change rolls out all
+  it set to every armed league of its scope through `leagues` (`in_force` holds a value only while
+  every league shares it), and `rolled_out` is set.
+- **Then at most one change**, from the first rule in this order that clears and is not blocked.
+  A sample counts only scored moves whose judging horizon is over.
+
+  | rule | knob | sample | clears when | step |
+  |---|---|---|---|---|
+  | the season check, per scoring | `protection_floor` | the scoring's season-costly moves (#144) | 3 or more, more than half below zero over the season so far | +0.05 z a game (categories), +0.5 fantasy points a game (points) |
+  | the streaming plans, per scoring | `plan_floor_cats`, `plan_floor_points` | the scoring's plan moves (#136) | 5 or more, realized under half their projection | half its value up, never above four times the default |
+  | the projection system | `system`, `blend` | the moves under the system in force, pooled across the scorings by realized share | 20 or more, realized under half their projection season to date | Basketball Monster's (or Yahoo's) to the blend at 0.5, never a flip; a kept blend 0.25 toward Yahoo's, never past 0.75 |
+
+  Nothing reads the odds' calibration: that is the model's, not a knob's. A rule that clears is
+  blocked when:
+  - its knob has no hook (`season.progress.HOOKED`), so the stash threshold and the FAAB sizing
+    never change;
+  - the step would take the knob out of its bounds or under its minimum;
+  - the knob, or the system's family (system and blend), was written in the last four weeks, by a
+    change's Monday, its revert or its rollout;
+  - a change of it is still being judged;
+  - fewer than two leagues are left to split.
+
+  The next rule then has its say, and the note names the rule passed over.
+- **The A/B split.** The scope is the armed leagues of the rule's scoring (of both for the system),
+  less those where the knob is frozen, holding the value most of them share. It splits by league
+  id, alternately; the half that lagged on the rule's measure takes the change (A), the first half
+  on a tie.
+- **Once a Monday.** A second run answers that Monday's changes, note and comment and writes
+  nothing. `force=true` undoes that Monday's own change, never one already judged, and runs again,
+  rewriting the note and the comment; the verdicts judged that Monday stand. `dry_run=true` writes
+  nothing and says so. A day that is not a Monday is refused (422), and so is a knob file the step
+  cannot write without losing what is in it (409), which is never overwritten.
+- **What it writes**, all under `data/autopilot/`: the knob file, the Monday note
+  (`notes/<monday>.md`) and the Monday's comment for #127 (`comments/<monday>.md`).
+  `scripts/season.py monday` prints the step's line and the note; `--comment` prints only the
+  comment, for the routine to post.
+- **The comment on #127.** It has five parts:
+  - the armed leagues counted by scoring;
+  - the rules, each with its sample in counts and ratios and whether it cleared, or why it was
+    blocked;
+  - the verdicts: the measure that decided, which way and past which gap, the year to date's
+    direction, and the leagues reached, never a wins or categories figure (those are set against a
+    projection);
+  - the change, with its reason and its halves by league id;
+  - what is judged next.
+
+  No team or league name, no projection number (section 8). A dry run's comment says so in its first
+  line.
+
 - `in_force`: the value in force of each knob, by the names the decision log records them under
   (#125, `knobs` in an entry) and no other: `system` and `blend` (the projection system or blend
   weight), `horizon_weight`, `protection_floor`, `plan_floor_cats` and `plan_floor_points` (the
@@ -250,7 +332,14 @@ file has them, read by nothing, and never changed by the Monday step.
   `knob`, `from`, `to`, `leagues` (the half that took it, by league id), `source` (`master` or
   `user`), `reason`, `decided_at` (a time), `verdict` (`kept`, `reverted`, or null while it is
   judged), `judged_on` (the Monday it was judged) and `rolled_out` (the Monday a kept change
-  reached every league).
+  reached every league). The Monday step's own changes also hold `scoring` (`categories` or
+  `points` for a knob changed in one scoring only, its B half drawn from that scoring),
+  `b_leagues` (the half that kept the setting, the one the verdict compares A against), `rule`,
+  `set` (every value it wrote: a change of system sets the blend weight beside it), `was` (by
+  knob, the value it replaced in each league of A) and, once judged, `judged` (the deciding
+  measure, the window, both halves' leagues and figures, the year to date's `since` with the raw
+  figures beside it, and the leagues reached). The reader keeps `scoring` and `b_leagues`; the
+  rest is the step's record.
 
 ```json
 {
@@ -266,8 +355,8 @@ file has them, read by nothing, and never changed by the Monday step.
 }
 ```
 
-**The Monday notes** (`data/autopilot/notes/<monday>.md`, #129). Markdown, the text the hill-climb
-step posts on #127: an optional first line `posted: <time>`, then four sections headed `## What is
+**The Monday notes** (`data/autopilot/notes/<monday>.md`, #129). Markdown the Monday step writes
+(#152), local: an optional first line `posted: <time>`, then four sections headed `## What is
 working`, `## What is not`, `## Decision` and `## Action items`, the last a numbered list (a line
 that continues an item is joined to it). The view shows a note under the week its Monday starts,
 as the note of the week before, and lists the newest note's action items at the top. A file not
@@ -381,6 +470,9 @@ comes back to it.
 - **Phase 3, the hill-climb step.** The Monday analysis over the scorecard, the knob file, the
   A/B split, the revert rule, the comment on #127. The Progress view of
   section 6, the Monday note it renders. Filed 2026-10-23 as #152, before two scored weeks, at the user's direction ("don't wait, we will work out the kinks as we go"); the engine reading the knob file is part of it.
+  Built 2026-10-23 in three PRs: the engine reads the knob file at solve time, with the blend
+  system (#162); the Monday step, its verdicts, the rule table and the knob file's write (#163);
+  the comment on #127 and these docs. The first Monday step runs 2026-10-26.
 
 ## 8. What is never committed
 
