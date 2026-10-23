@@ -109,6 +109,7 @@ from ..season import (
 from ..season import moves as mv
 from ..season import record as season_rec
 from ..season.state import SLOTS_PAGE
+from ..sources import boxscores
 from ..sources import schedule as nba_schedule
 from ..sources.yahoo import pages, public
 from . import (
@@ -135,6 +136,9 @@ CALENDAR = "calendar.json"
 WEEKS_AHEAD = 4
 #: The NBA's dates (and Yahoo's pages) run on US Eastern time.
 TRANSACTIONS_SHOWN = 30
+#: The most days of box scores a refresh reads (each a scoreboard and a summary per game): a
+#: daily refresh reads one, and a cache begun late catches up over a few refreshes.
+BOX_DAYS = 14
 
 FetchFactory = Callable[[], public.Fetch]
 
@@ -261,6 +265,10 @@ class SeasonService:
         self.jobs: dict[str, RefreshJob] = {}
         self._locks: dict[str, threading.Lock] = {}
         self._guard = threading.Lock()
+        #: One reader of ESPN's box scores at a time: two refreshes read a date once (#126).
+        self._box_lock = threading.Lock()
+        #: One writer of the ESPN ids the scorecards match.
+        self._ids_lock = threading.Lock()
         self.moves_cache = season_moves.MovesCache()
         self.flags_cache = season_moves.MovesCache()
         self.strategy_runs = season_strategy.Runs()
@@ -419,6 +427,38 @@ class SeasonService:
             job.warnings |= season_flags.read_inputs(self.data_dir, fetch, today, self.clock())
         except Exception as exc:  # noqa: BLE001 - a flag input is not worth a failed refresh
             job.warnings["flag inputs"] = f"{type(exc).__name__}: {exc}"
+
+    def _box_scores(
+        self, job: RefreshJob, fetch: public.Fetch, today: date, calendar: Calendar | None
+    ) -> None:
+        """Cache the final box scores the scorecard's realized values read (#126): each day of
+        the season to yesterday not cached yet, oldest first, at most :data:`BOX_DAYS` a
+        refresh. What is not read is a warning on the job, never its end."""
+        if calendar is not None and calendar.weeks:
+            first, end = calendar.weeks[0].start, calendar.weeks[-1].end
+        else:
+            first, end = today - timedelta(BOX_DAYS), today
+        last = min(end, today - timedelta(1))
+        days = [first + timedelta(n) for n in range((last - first).days + 1)]
+        try:
+            with self._box_lock:
+                read = boxscores.read_days(
+                    days,
+                    fetch,
+                    self.data_dir / season_scorecard.BOXSCORES_DIR,
+                    self.clock(),
+                    BOX_DAYS,
+                )
+        except Exception as exc:  # noqa: BLE001 - the box scores are not worth a failed refresh
+            job.warnings["box scores"] = f"{type(exc).__name__}: {exc}"
+            return
+        left = [
+            f"{len(read[k])} {words}"
+            for k, words in (("failed", "failed"), ("left", "left for the next refresh"))
+            if read[k]
+        ]
+        if left:
+            job.warnings["box scores"] = "days " + ", ".join(left)
 
     def _record_adds(self, league: str, today: date) -> None:
         """Keep the pool's Yahoo-wide adds read today, the adds history every league shares."""
@@ -783,14 +823,21 @@ class SeasonService:
 
     # ------------------------------------------------------------------ the scorecard (#126)
     def scorecard(
-        self, league: str, week: int | None = None, system: str = season_scorecard.SYSTEM
+        self,
+        league: str,
+        week: int | None = None,
+        system: str = season_scorecard.SYSTEM,
+        box: season_scorecard.BoxScores | None = None,
     ) -> dict[str, Any]:
         """A league's recorded weeks against the decision log (#126): ``week`` (the last
-        recorded by default) and every week to it, the season to date and the calibration."""
+        recorded by default) and every week to it, its moves realized from the cached box
+        scores, the season to date and the calibration."""
         base, is_public = self._base(league)
         season = Season.from_parts(base, load_parts(self.data_dir, league))
         folder = season_dir(self.data_dir, league)
-        return season_scorecard.league_payload(
+        own = box is None
+        box = box or season_scorecard.BoxScores.at(self.data_dir, nba_today(self.clock()))
+        out = season_scorecard.league_payload(
             league,
             season,
             is_public,
@@ -798,7 +845,15 @@ class SeasonService:
             season_decisions.load(folder),
             system,
             week,
+            box,
         )
+        if own:
+            self._save_ids(box)
+        return out
+
+    def _save_ids(self, box: season_scorecard.BoxScores) -> None:
+        with self._ids_lock:
+            box.save()
 
     def scorecards(
         self, week: int | None = None, system: str = season_scorecard.SYSTEM
@@ -806,12 +861,14 @@ class SeasonService:
         """Every league's scorecard of ``week`` (the last any league recorded by default), the
         public leagues' odds pooled, and the week as markdown for the AUTOPILOT tracker."""
         payloads, skipped = [], []
+        box = season_scorecard.BoxScores.at(self.data_dir, nba_today(self.clock()))
         for league in leagues.leagues(self.data_dir):
             try:
-                payloads.append(self.scorecard(league, None, system))
+                payloads.append(self.scorecard(league, None, system, box))
             except Exception as exc:  # noqa: BLE001 - one league's failure leaves the others
                 reason = exc.detail if isinstance(exc, HTTPException) else type(exc).__name__
                 skipped.append({"league": league, "reason": str(reason)})
+        self._save_ids(box)
         # The markdown is public: a league's own failure text stays in the JSON.
         out = season_scorecard.all_payload(
             payloads, week, [{**x, "reason": "its scorecard failed"} for x in skipped]
@@ -871,6 +928,8 @@ class SeasonService:
             )
             job.step = "schedule"
             self._save_with_schedule(league, received, calendar, fetch, today)
+            job.step = "box scores"
+            self._box_scores(job, fetch, today, calendar)
             job.step = "flag inputs"
             self._record_adds(league, today)
             self._flag_inputs(job, fetch, today)
@@ -951,8 +1010,9 @@ class SeasonService:
     def start_extras(self, league: str) -> RefreshJob | None:
         """A private league's public parts, in the background, when its season lacks them or
         its schedule is older than :data:`nba_schedule.MAX_AGE`: the week calendar (the shared
-        cache a public league's refresh writes; no page of a private league answers the probe)
-        and the NBA schedule. Its Yahoo pages come from the extension's snapshots."""
+        cache a public league's refresh writes; no page of a private league answers the probe),
+        the NBA schedule and the box scores. Its Yahoo pages come from the extension's
+        snapshots."""
         parts = load_parts(self.data_dir, league)
         schedule = parts.get("schedule")
         fresh = schedule is not None and self.clock() - schedule.fetched_at < nba_schedule.MAX_AGE
@@ -972,7 +1032,10 @@ class SeasonService:
         try:
             today = nba_today(self.clock())
             fetch = self.fetch_factory()
-            self._save_with_schedule(job.league, [], self._cached_calendar(), fetch, today)
+            calendar = self._cached_calendar()
+            self._save_with_schedule(job.league, [], calendar, fetch, today)
+            job.step = "box scores"
+            self._box_scores(job, fetch, today, calendar)
             job.step = "flag inputs"
             self._flag_inputs(job, fetch, today)
             job.status, job.step = "done", "done"

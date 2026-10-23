@@ -7,32 +7,49 @@ The weeks are the weekly recorder's (#97), the projections the decision log's (#
 ``season.scorecard``. My moves of a week are its record's transactions (for a week recorded before
 the record kept them, the season's transactions page, which may have lost the oldest), each
 matched to the entry logged before it (``season.decisions``). A move made as recommended carries
-the entry's projection of it in value units; its realized value, from the box scores of the games
-the two players played, is not computed yet: every move is counted unscored.
+the entry's projection of it in value units, and every move its realized value (``season.realized``)
+from the final box scores a refresh caches (``sources.boxscores``): the scorecard reads the
+cache only, and keeps each ESPN id it matches. A move is valued with the scorer of the entry it
+matched, or for a move with no entry, or one logged before entries kept their scorer, the scorer
+of the entry nearest it on the system scored (master's ruling, 2026-10-22). A move is then in one
+of three groups: ``scored`` (projected by its own entry and realized), ``realized_only`` (realized,
+but with no projection of its own or a borrowed scorer) or ``unscored``; only the scored are set
+against their projection.
 
 The private league is scored on its own and never pooled: its moves are suggestions only.
 """
 
 from __future__ import annotations
 
+from collections import Counter
 from collections.abc import Iterable, Mapping, Sequence
-from datetime import datetime
+from dataclasses import dataclass, field
+from datetime import date, datetime, timedelta
+from pathlib import Path
 from typing import Any
 
 from ..season import Season
 from ..season import decisions as dl
+from ..season import realized as rz
 from ..season import scorecard as sc
-from ..season.state import Transaction
+from ..season.calendar import Calendar, Week
+from ..season.state import Player, Transaction
+from ..sources import boxscores
 from .season_decisions import TRANSACTIONS_TZ, _names
 
 #: The system scored by default: the one the routines solve with.
 SYSTEM = "bbm"
 KINDS = (dl.AS_RECOMMENDED, dl.DIFFERENTLY, dl.NOT_RECOMMENDED, dl.NO_ENTRY)
-#: Until the box scores are read (the second part of #126).
-UNSCORED = (
-    "The moves are not scored yet: their realized value needs the box scores of the games the "
-    "players played."
-)
+#: Where a refresh caches the box scores, under the data folder.
+BOXSCORES_DIR = "boxscores"
+#: A move's group: projected by its own entry and realized, realized only, or neither.
+SCORED, REALIZED_ONLY, UNSCORED = "scored", "realized_only", "unscored"
+_REASONS = {
+    rz.NO_TIME: "with no time on the page",
+    rz.NO_SCORER: "with no scorer logged",
+    rz.UNMATCHED: "with a player not matched to the box scores",
+    rz.NOT_READ: "with no box score read yet",
+}
 _KIND_WORDS = {
     dl.AS_RECOMMENDED: "as recommended",
     dl.DIFFERENTLY: "differently",
@@ -74,49 +91,237 @@ def logged_move(entries: Sequence[Mapping[str, Any]], match: Mapping[str, Any]) 
     return None
 
 
+# --------------------------------------------------------------------------- realized value
+@dataclass
+class BoxScores:
+    """What the realized values read: the box-score cache, each day of it read once, and the
+    ESPN ids matched so far, a new match kept until :meth:`save`; ``today`` the NBA date."""
+
+    cache_dir: Path
+    today: date
+    ids: dict[int, str] = field(default_factory=dict)
+    _days: dict[date, list[dict[str, Any]]] = field(default_factory=dict)
+    _seen: set[date] = field(default_factory=set)
+    _new: bool = False
+
+    @classmethod
+    def at(cls, data_dir: Path, today: date) -> BoxScores:
+        cache = data_dir / BOXSCORES_DIR
+        return cls(cache, today, boxscores.load_ids(cache))
+
+    def days(self, first: date, last: date) -> dict[date, list[dict[str, Any]]]:
+        """The cached days from ``first`` to ``last``, none from today on."""
+        last = min(last, self.today - timedelta(1))
+        wanted = [first + timedelta(n) for n in range((last - first).days + 1)]
+        todo = [d for d in wanted if d not in self._seen]
+        self._days |= boxscores.load_days(todo, self.cache_dir)
+        self._seen |= set(todo)
+        return {d: self._days[d] for d in wanted if d in self._days}
+
+    def match(
+        self, players: Mapping[int, tuple[str, str | None]], games: Iterable[Mapping[str, Any]]
+    ) -> dict[int, tuple[str, str]]:
+        found = boxscores.match(players, games, self.ids)
+        for k, (espn, by) in found.items():
+            if by != "id":
+                self.ids[k], self._new = espn, True
+        return found
+
+    def save(self) -> None:
+        if self._new:
+            boxscores.save_ids(self.cache_dir, self.ids)
+            self._new = False
+
+
+def scorer_for(
+    made: dl.Made, match: Mapping[str, Any], entries: Sequence[Mapping[str, Any]], system: str
+) -> tuple[Mapping[str, Any] | None, Mapping[str, Any] | None]:
+    """The entry whose scorer values ``made`` and that scorer: the matched entry's, else the
+    nearest entry's on ``system`` that keeps one; (None, None) when no entry does."""
+    entry = next((e for e in entries if e["id"] == match.get("entry")), None)
+    if entry is not None and entry.get("scorer"):
+        return entry, entry["scorer"]
+    kept = [e for e in entries if e.get("scorer") and (e.get("system") or {}).get("key") == system]
+    if not kept or made.at is None:
+        return None, None
+    at = made.at
+    nearest = min(kept, key=lambda e: abs(datetime.fromisoformat(e["at"]) - at))
+    return nearest, nearest["scorer"]
+
+
+def realized_move(
+    made: dl.Made,
+    match: Mapping[str, Any],
+    week: Week,
+    entries: Sequence[Mapping[str, Any]],
+    players: Mapping[int, Player],
+    box: BoxScores,
+    calendar: Calendar | None = None,
+    system: str = SYSTEM,
+) -> dict[str, Any]:
+    """A move's realized value (``season.realized``) from the cached box scores, its players
+    matched by name and team, the entry whose scorer valued it (``own`` when it is the entry
+    the move matched), and ``lag_days``, the days from the matched entry's first day to the
+    move's (with none, the spans are the logged ones)."""
+    entry, scorer = scorer_for(made, match, entries, system)
+    wanted = {
+        key: (pid, players.get(pid))
+        for key, pid in (("add", made.add), ("drop", made.drop))
+        if pid is not None
+    }
+    games: dict[date, list[dict[str, Any]]] = {}
+    found: dict[int, tuple[str, str]] = {}
+    if made.day is not None:
+        ends = [last for _, last in rz.spans(week, made.day, calendar).values()]
+        games = box.days(made.day, max(ends))
+        named = {pid: (p.name, p.nba_team) for pid, p in wanted.values() if p is not None}
+        found = box.match(named, [g for day in games.values() for g in day])
+    sides = {
+        key: rz.Side(pid, p.nba_team if p else None, *found.get(pid, (None, None)))
+        for key, (pid, p) in wanted.items()
+    }
+    out = rz.realized(
+        made.at,
+        made.day,
+        week,
+        sides.get("add"),
+        sides.get("drop"),
+        scorer,
+        games,
+        box.today,
+        calendar,
+    )
+    own = entry is not None and entry["id"] == match.get("entry")
+    matched = next((e for e in entries if e["id"] == match.get("entry")), None)
+    lag = None
+    if matched is not None and matched.get("first_day") and made.day is not None:
+        lag = (made.day - date.fromisoformat(matched["first_day"])).days
+    return {
+        **out,
+        "scorer": {"entry": entry["id"], "own": own} if entry else None,
+        "lag_days": lag,
+    }
+
+
+def group(row: Mapping[str, Any]) -> str:
+    """A move row's group: ``scored`` when its own entry projected it and its own scorer
+    realized it, ``realized_only`` when it is realized otherwise, else ``unscored``."""
+    x = row.get("realized") or {}
+    if not x.get("valued"):
+        return UNSCORED
+    own = (x.get("scorer") or {}).get("own")
+    return SCORED if own and row.get("projected") else REALIZED_ONLY
+
+
+def _players(season: Season | None, record: Mapping[str, Any]) -> dict[int, Player]:
+    """The players a week's moves may name, the team a transaction gives first."""
+    out: dict[int, Player] = {}
+    if season is not None:
+        out |= {p.yahoo_id: p for p in season.players.values()}
+        for spots in season.rosters.values():
+            out |= {sp.player.yahoo_id: sp.player for sp in spots}
+        out |= {a.player.yahoo_id: a.player for a in season.available}
+        out |= {t.player.yahoo_id: t.player for t in season.transactions}
+    for row in record.get("transactions") or []:
+        t = Transaction.from_dict(row)
+        out[t.player.yahoo_id] = t.player
+    return out
+
+
 def move_rows(
     record: Mapping[str, Any],
     entries: Sequence[Mapping[str, Any]],
     me: int,
     season: Season | None = None,
+    box: BoxScores | None = None,
+    system: str = SYSTEM,
 ) -> list[dict[str, Any]]:
-    """My moves of the week, each with its match and the entry's projection of it (for a move
-    made as recommended); ``realized`` stays None until the box scores are read."""
+    """My moves of the week, each with its match, the entry's projection of it (for a move
+    made as recommended) and its realized value (None without the box scores)."""
+    week = sc.week_of(record)
+    players = _players(season, record) if box is not None else {}
+    calendar = season.calendar if season is not None else None
     out = []
     for m in week_moves(record, me, season):
         match = dl.match(m, entries)
-        out.append(
-            {
-                **m.to_dict(),
-                "match": match,
-                "projected": logged_move(entries, match),
-                "realized": None,
-            }
-        )
+        realized = None
+        if box is not None:
+            realized = realized_move(m, match, week, entries, players, box, calendar, system)
+        row = {
+            **m.to_dict(),
+            "match": match,
+            "projected": logged_move(entries, match),
+            "realized": realized,
+        }
+        out.append({**row, "group": group(row)})
     return out
 
 
+def _add(sums: dict[str, float], key: str, x: float) -> None:
+    sums[key] = round(sums.get(key, 0.0) + x, 4)
+
+
+def _same_way(projected: float, realized: float) -> bool:
+    """Whether a move realized in the direction projected: the same sign, or both nothing."""
+    return (projected > 0) == (realized > 0) and (projected < 0) == (realized < 0)
+
+
 def moves_summary(rows: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
-    """The moves of some weeks: how many, by match, how many the log projected and their
-    projected value summed on each horizon, and how many are scored (none until the box
-    scores are read)."""
+    """The moves of some weeks: how many, by match and by group, how many the log projected
+    and their projected value summed on each horizon; the realized value of every move
+    realized summed on each horizon (through the days read) and the spans complete; the
+    unscored by reason and the games of players not matched; and over the scored moves on a
+    complete span (``compared``), their projected and realized values summed, the realized
+    share of the projected and how many realized in the projected direction."""
     rows = list(rows)
     projected = [r["projected"] for r in rows if r.get("projected")]
     sums: dict[str, float] = {}
     for p in projected:
         for key, h in (p["value"].get("horizons") or {}).items():
             if h.get("value") is not None:
-                sums[key] = round(sums.get(key, 0.0) + h["value"], 4)
-    scored = sum(1 for r in rows if r.get("realized") is not None)
+                _add(sums, key, h["value"])
+    real: dict[str, float] = {}
+    complete: dict[str, int] = {}
+    compared: dict[str, dict[str, Any]] = {}
+    reasons: Counter[str] = Counter()
+    gaps = 0
+    for r in rows:
+        x = r.get("realized") or {}
+        if not x.get("valued"):
+            reasons[x.get("reason") or rz.NOT_READ] += 1
+        for key, h in (x.get("horizons") or {}).items():
+            gaps += h.get("gaps") or 0
+            if not x.get("valued") or h["value"] is None:
+                continue
+            _add(real, key, h["value"])
+            complete[key] = complete.get(key, 0) + int(h["complete"])
+            p = ((r.get("projected") or {}).get("value") or {}).get("horizons", {}).get(key)
+            if group(r) != SCORED or not h["complete"] or not p or p.get("value") is None:
+                continue
+            c = compared.setdefault(
+                key, {"moves": 0, "projected": 0.0, "realized": 0.0, "same_way": 0}
+            )
+            c["moves"] += 1
+            c["same_way"] += int(_same_way(p["value"], h["value"]))
+            _add(c, "projected", p["value"])
+            _add(c, "realized", h["value"])
+    for c in compared.values():
+        c["share"] = round(c["realized"] / c["projected"], 4) if c["projected"] > 0 else None
+    groups = Counter(group(r) for r in rows)
     return {
         "made": len(rows),
         **{kind: sum(1 for r in rows if r["match"]["kind"] == kind) for kind in KINDS},
         "near": sum(1 for r in rows if r["match"].get("near")),
         "projected": len(projected),
         "projected_value": sums,
-        "realized_value": None,
-        "scored": scored,
-        "unscored": len(rows) - scored,
+        SCORED: groups[SCORED],
+        REALIZED_ONLY: groups[REALIZED_ONLY],
+        UNSCORED: groups[UNSCORED],
+        "realized_value": real,
+        "complete": complete,
+        "compared": compared,
+        "unscored_by": dict(reasons),
+        "gaps": gaps,
     }
 
 
@@ -128,10 +333,12 @@ def league_payload(
     entries: Sequence[Mapping[str, Any]],
     system: str = SYSTEM,
     week: int | None = None,
+    box: BoxScores | None = None,
 ) -> dict[str, Any]:
     """A league's scorecard: its week (``week``, by default the last recorded) and every
-    recorded week to it, each against the projection, the season to date, the odds'
-    calibration over its weeks, and the names of the players its moves name."""
+    recorded week to it, each against the projection, its moves valued from ``box``, the
+    season to date, the odds' calibration over its weeks, and the names of the players its
+    moves name."""
     me = season.settings.my_team_id
     base = {"league": league, "public": is_public, "system": system}
     shown = [r for r in records if week is None or int(r["week"]) <= week]
@@ -139,7 +346,10 @@ def league_payload(
         return {**base, "status": "no_team", "week": week, "card": None, "weeks": []}
     if not shown or (week is not None and int(shown[-1]["week"]) != week):
         return {**base, "status": "not_recorded", "week": week, "card": None, "weeks": []}
-    cards = [sc.week_card(r, entries, me, system, move_rows(r, entries, me, season)) for r in shown]
+    cards = [
+        sc.week_card(r, entries, me, system, move_rows(r, entries, me, season, box, system))
+        for r in shown
+    ]
     names = _names(season)
     for r in shown:
         for t in r.get("transactions") or []:
@@ -305,6 +515,41 @@ def _moves_line(p: Mapping[str, Any]) -> str | None:
     return f"- League {p['league']}: " + "; ".join(parts)
 
 
+def _realized_counts(rows: Sequence[Mapping[str, Any]]) -> str:
+    """Moves realized as public text, counts and ratios only (master's ruling, 2026-10-22: no
+    scorer-unit value, for a move or summed): the scored with their realized share of the
+    projected and how many went the projected way on the week, the realized only, the unscored
+    by reason."""
+    s = moves_summary(rows)
+    c = s["compared"].get("week")
+    head = f"{s[SCORED]} move{'s' if s[SCORED] != 1 else ''} scored"
+    if c:
+        share = (
+            "projected not positive"
+            if c["share"] is None
+            else f"realized {_pct(c['share'])} of projected"
+        )
+        some = f" (the {c['moves']} with the week over)" if c["moves"] != s[SCORED] else ""
+        head += f": {share}, {c['same_way']} of {c['moves']} in the projected direction{some}"
+    parts = [head, f"{s[REALIZED_ONLY]} realized only", f"{s[UNSCORED]} unscored"]
+    if s["unscored_by"]:
+        why = ", ".join(f"{n} {_REASONS[r]}" for r, n in sorted(s["unscored_by"].items()))
+        parts[-1] += f" ({why})"
+    if s["gaps"]:
+        parts.append(f"{s['gaps']} game{'s' if s['gaps'] != 1 else ''} of players not matched")
+    return "; ".join(parts)
+
+
+def _realized_line(label: str, payloads: Sequence[Mapping[str, Any]]) -> str | None:
+    """The moves of ``payloads`` realized, this week's and the season's to date."""
+    week = [m for p in payloads if p.get("card") for m in p["card"]["moves"]]
+    season = [m for p in payloads for c in p.get("weeks") or [] for m in c["moves"]]
+    if not season:
+        return None
+    this = _realized_counts(week) if week else "no moves"
+    return f"- Realized, {label}: this week {this}. Season to date {_realized_counts(season)}."
+
+
 def markdown(
     week: int,
     payloads: Sequence[Mapping[str, Any]],
@@ -348,9 +593,17 @@ def markdown(
         lines += ["", "Private league, suggestions only, never pooled:", "", *head]
         lines += [_row(p) for p in private]
     moves = [line for p in payloads if (line := _moves_line(p))]
-    if moves:
+    realized = [
+        line
+        for line in (
+            _realized_line("the public leagues", public),
+            _realized_line("the private league, suggestions only", private),
+        )
+        if line
+    ]
+    if moves or realized:
         lines += ["", "### Moves", *moves]
-        lines += ["", UNSCORED]
+        lines += ["", *realized] if realized else []
     if skipped:
         lines += [
             "",

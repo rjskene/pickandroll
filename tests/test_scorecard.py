@@ -8,7 +8,7 @@ from __future__ import annotations
 import io
 import json
 from contextlib import redirect_stdout
-from datetime import date
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -270,13 +270,14 @@ def test_a_leagues_scorecard_sets_each_recorded_week_against_its_projection(clie
     # The Monday solve, not Tuesday's (whose week had begun).
     assert card["projected"]["matchup"] == 0.7 and card["actual"]["won"] == 1.0
     # My move of the week (team 2's is not mine), matched to the solve before it, with the
-    # log's projection of it and no realized value yet.
+    # log's projection of it; no entry here keeps a scorer, so it is not scored.
     [move] = card["moves"]
     assert (move["add"], move["drop"], move["day"]) == (11, 12, "2026-10-27")
     assert move["match"]["kind"] == "as_recommended" and move["match"]["near"] is True
     assert move["projected"]["set"] == "week" and move["projected"]["gain"]["week"] == 0.21
     assert move["projected"]["value"]["horizons"]["week"]["value"] == 7.25
-    assert move["realized"] is None
+    assert move["realized"]["valued"] is False and move["realized"]["reason"] == "no_scorer"
+    assert move["group"] == "unscored"
     assert out["players"] == {"11": "Player 11", "12": "Player 12"}
     td = out["to_date"]
     assert td["weeks"] == 2 and td["projected"] == 1 and td["record"] == "1-0-1"
@@ -323,7 +324,8 @@ def test_every_leagues_scorecard_pools_the_public_leagues_and_keeps_the_private_
         f"- League {PUBLIC}: added Player 11 and dropped Player 12 (as recommended, near a solve)"
         in md
     )
-    assert season_scorecard.UNSCORED in md
+    unscored = "0 moves scored; 0 realized only; 1 unscored (1 with no scorer logged)"
+    assert f"- Realized, the public leagues: this week {unscored}. Season to date {unscored}." in md
     # Public text: leagues by id, no team names, no per-move value.
     assert "Team" not in md and "7.25" not in md
     # A week only some leagues recorded: the others say so.
@@ -372,3 +374,190 @@ def test_the_script_prints_the_weeks_markdown_or_a_line_per_league(client):
         "moves 1 (1 as recommended); to date 1-0-1, wins 1 against 0.70 expected; 1 moves unscored"
     )
     assert line[1].startswith(f"{OTHER} week 2: not projected; L 3-5-1")
+
+
+# --------------------------------------------------------------------------- realized (part 2)
+#: The entries' scorer: points on points and rebounds (made up).
+SCORER = {"points": {"pts": 1.0, "reb": 1.0}}
+
+
+def moved(kind: str, pid: int, team: str, when: str, group: int) -> dict[str, Any]:
+    """My transaction, its player on NBA team ``team``."""
+    player = {"yahoo_id": pid, "name": f"Player {pid}", "nba_team": team}
+    return {"kind": kind, "player": player, "team_id": 1, "when": when, "group": group}
+
+
+def box_game(day: str, hour: int, teams: list[str], **lines: float) -> dict[str, Any]:
+    """A final game on ``day`` at ``hour`` UTC; ``lines`` the points of ESPN players ``e<id>``,
+    each on the team his Yahoo transaction names."""
+    team_of = {"e11": "AAA", "e12": "BBB", "e15": "CCC"}
+    return {
+        "id": f"{day}-{hour}",
+        "start": f"{day}T{hour:02d}:00Z",
+        "teams": teams,
+        "players": {
+            e: {"name": f"Player {e[1:]}", "team": team_of[e], "line": {"pts": pts}}
+            for e, pts in lines.items()
+        },
+    }
+
+
+def put_box(data_dir: Path, games: list[dict[str, Any]], first: date, last: date) -> None:
+    by_day: dict[str, list[dict[str, Any]]] = {}
+    for g in games:
+        by_day.setdefault(g["start"][:10], []).append(g)
+    day = first
+    while day <= last:
+        write(
+            data_dir / "boxscores" / f"{day.isoformat()}.json",
+            {"date": day.isoformat(), "games": by_day.get(day.isoformat(), [])},
+        )
+        day = date.fromordinal(day.toordinal() + 1)
+
+
+@pytest.fixture
+def realized_client(tmp_path):
+    write_league(tmp_path, PUBLIC)
+    # Week 2: a lone add on Monday 10:00 Eastern after a solve that kept no scorer, then on
+    # Tuesday the add and drop recommended by the solve before it, then a lone drop of a player
+    # the box scores do not know.
+    rows = [
+        moved("add", 15, "CCC", "Oct 26, 10:00 am", 0),
+        moved("add", 11, "AAA", "Oct 27, 9:00 am", 1),
+        moved("drop", 12, "BBB", "Oct 27, 9:00 am", 1),
+        moved("drop", 16, "DDD", "Oct 30, 9:00 am", 2),
+    ]
+    put_week(tmp_path, PUBLIC, {**record(2), "transactions": rows})
+    monday = entry("2026-10-26T12:00:00+00:00", "2026-10-26", 0.7)
+    tuesday = {
+        **entry("2026-10-27T12:30:00+00:00", "2026-10-27", 0.8, moves=(logged(11, 12),)),
+        "scorer": SCORER,
+    }
+    put_entries(tmp_path, PUBLIC, "2026-10-26", [monday])
+    put_entries(tmp_path, PUBLIC, "2026-10-27", [tuesday])
+    games = [
+        # Monday 23:00 UTC: after the lone add, before Tuesday's move.
+        box_game("2026-10-26", 23, ["CCC", "BBB"], e15=12.0, e12=30.0),
+        box_game("2026-10-27", 23, ["AAA", "DDD"], e11=20.0),
+        box_game("2026-10-28", 23, ["BBB", "EEE"], e12=8.0),
+        box_game("2026-10-29", 23, ["AAA", "CCC"], e11=10.0, e15=6.0),
+        # The unknown player's team, after his drop.
+        box_game("2026-10-30", 23, ["DDD", "EEE"]),
+    ]
+    put_box(tmp_path, games, date(2026, 10, 26), date(2026, 11, 1))
+    app = create_app(SessionStore(), data_dir=tmp_path, season_fetch=lambda: None)
+    app.state.seasons.clock = lambda: datetime(2026, 11, 2, 12, 0, tzinfo=UTC)
+    with TestClient(app) as c:
+        c.data_dir = tmp_path  # type: ignore[attr-defined]
+        yield c
+
+
+def test_a_moves_realized_value_comes_from_the_box_scores_of_its_players_games(realized_client):
+    out = realized_client.get(f"/seasons/{PUBLIC}/scorecard").json()
+    lone, pair, gone = out["card"]["moves"]
+    # The lone add: valued with the nearest entry's scorer (the one it matched keeps none), so
+    # realized only, never set against a projection.
+    assert lone["match"]["kind"] == "not_recommended" and lone["group"] == "realized_only"
+    assert lone["realized"]["scorer"] == {
+        "entry": "2026-10-27T12:30:00+00:00-moves-bbm",
+        "own": False,
+    }
+    assert lone["realized"]["lag_days"] == 0
+    week = lone["realized"]["horizons"]["week"]
+    assert (week["from"], week["through"], week["complete"]) == ("2026-10-26", "2026-11-01", True)
+    assert (week["add_games"], week["value"]) == (2, 18.0)
+    # The pair: his games from Tuesday less the dropped player's (Monday's was before it).
+    real = pair["realized"]
+    assert pair["group"] == "scored" and real["scorer"]["own"] is True and real["lag_days"] == 0
+    assert real["add"] == {"yahoo": 11, "espn": "e11", "by": "team"}
+    week = real["horizons"]["week"]
+    assert (week["add_games"], week["drop_games"], week["value"]) == (2, 1, 22.0)
+    # The three weeks after: none of their days is over.
+    assert real["horizons"]["three"]["through"] is None
+    # A player the box scores do not know: his team's game is a gap, the move unscored.
+    assert gone["realized"]["reason"] == "unmatched" and gone["group"] == "unscored"
+    assert gone["realized"]["horizons"]["week"]["gaps"] == 1
+    # Made three days after the first day of the entry it matched.
+    assert gone["realized"]["lag_days"] == 3
+    moves = out["to_date"]["moves"]
+    groups = (moves["made"], moves["scored"], moves["realized_only"], moves["unscored"])
+    assert groups == (3, 1, 1, 1)
+    # Every move realized is summed; only the scored one is set against its projection.
+    assert moves["realized_value"] == {"week": 40.0} and moves["complete"] == {"week": 2}
+    assert moves["compared"] == {
+        "week": {"moves": 1, "projected": 7.25, "realized": 22.0, "same_way": 1, "share": 3.0345}
+    }
+    assert moves["unscored_by"] == {"unmatched": 1} and moves["gaps"] == 1
+    # The ESPN ids matched are kept.
+    ids = json.loads((realized_client.data_dir / "boxscores" / "ids.json").read_text())
+    assert ids == {"11": "e11", "12": "e12", "15": "e15"}
+    md = realized_client.get("/seasons/scorecard").json()["markdown"]
+    counts = (
+        "1 move scored: realized 303% of projected, 1 of 1 in the projected direction; "
+        "1 realized only; 1 unscored (1 with a player not matched to the box scores); "
+        "1 game of players not matched"
+    )
+    assert f"- Realized, the public leagues: this week {counts}. Season to date {counts}." in md
+    # Counts and ratios only: no value in scorer units, for a move or summed.
+    assert not any(x in md for x in ("22.0", "7.25", "40.0", "18.0"))
+
+
+def test_a_refresh_caches_the_seasons_box_scores_to_yesterday(tmp_path):
+    from pickandroll.api.seasons import RefreshJob, SeasonService
+    from pickandroll.season.calendar import Calendar
+    from pickandroll.sources import boxscores, schedule
+
+    urls: list[str] = []
+
+    def fetch(url: str) -> str:
+        urls.append(url)
+        if url.startswith(schedule.SCOREBOARD.split("?")[0]):
+            return json.dumps({"events": []})
+        raise AssertionError(url)
+
+    now = datetime(2026, 10, 22, 12, 0, tzinfo=UTC)
+    service = SeasonService(tmp_path, lambda: fetch, clock=lambda: now)
+    calendar = Calendar((Week(1, date(2026, 10, 19), date(2026, 10, 25)), WEEK2))
+    job = RefreshJob(PUBLIC)
+    service._box_scores(job, fetch, date(2026, 10, 22), calendar)
+    assert job.warnings == {}
+    cached = boxscores.load_days(
+        [date(2026, 10, 19) + timedelta(n) for n in range(4)], tmp_path / "boxscores"
+    )
+    assert sorted(cached) == [date(2026, 10, 19), date(2026, 10, 20), date(2026, 10, 21)]
+    # Read once: the next refresh asks nothing.
+    urls.clear()
+    service._box_scores(job, fetch, date(2026, 10, 22), calendar)
+    assert urls == []
+
+
+def test_the_scored_moves_are_set_against_their_projection_in_share_and_direction():
+    def row(projected: float, realized: float, own: bool = True) -> dict[str, Any]:
+        span = {"value": realized, "complete": True, "gaps": 0}
+        return {
+            "match": {"kind": "as_recommended", "near": False},
+            "projected": {"value": {"horizons": {"week": {"value": projected}}}},
+            "realized": {"valued": True, "scorer": {"own": own}, "horizons": {"week": span}},
+        }
+
+    rows = [row(2.0, 3.0), row(1.0, -0.5), row(-1.0, -2.0), row(4.0, 9.0, own=False)]
+    for r in rows:
+        r["group"] = season_scorecard.group(r)
+    s = season_scorecard.moves_summary(rows)
+    # The borrowed scorer's move is realized only: summed, never compared.
+    assert (s["scored"], s["realized_only"], s["unscored"]) == (3, 1, 0)
+    assert s["realized_value"] == {"week": 9.5}
+    assert s["compared"]["week"] == {
+        "moves": 3,
+        "projected": 2.0,
+        "realized": 0.5,
+        "same_way": 2,
+        "share": 0.25,
+    }
+    # A projection summed to nothing or less has no share.
+    s = season_scorecard.moves_summary([row(-1.0, 1.0)])
+    assert s["compared"]["week"]["share"] is None
+    line = season_scorecard._realized_counts([row(-1.0, 1.0)])
+    assert line.startswith(
+        "1 move scored: projected not positive, 0 of 1 in the projected direction"
+    )
