@@ -888,6 +888,8 @@ export type WeekStat = "pts" | "threes" | "reb" | "ast" | "stl" | "blk" | "tov" 
 export type Rates = Record<WeekStat, number>;
 /** Basketball Monster's rest-of-season export, or Yahoo's projection for the next seven days. */
 export type ProjectionSystem = "bbm" | "yahoo";
+/** A solve's system: one of the two, or the blend of them the knob file may set (#152). */
+export type SolveSystem = ProjectionSystem | "blend";
 
 export interface ProjectionSystemInfo {
   label: string;
@@ -1468,6 +1470,8 @@ export interface StrategyPoint {
   label: string;
   lambda: number;
   natural: boolean;
+  /** The weight the knob file recommends (#152): marked, never executed. */
+  recommended?: boolean;
   /** waiting → searched (the search's set) → priced → done (the program in). */
   stage: "waiting" | "searched" | "priced" | "done";
   source?: StrategySource;
@@ -1498,11 +1502,13 @@ export interface StrategySettings {
 export interface StrategyPayload {
   league: string;
   status: "not_solved" | "solving" | "solved" | "failed" | "cancelled";
-  system: ProjectionSystemInfo & { key: ProjectionSystem; fallback?: string };
+  system: ProjectionSystemInfo & { key: SolveSystem; fallback?: string; blend?: number };
   step?: string | null;
   error?: string | null;
   weeks_left?: number;
   settings?: StrategySettings;
+  /** The knob file's horizon weight (#152), natural by default. */
+  recommended?: StrategyWeightKey | null;
   keep_rule?: KeepRule;
   pool?: number[];
   horizons?: Record<MoveHorizon, MoveHorizonInfo> & { season: { label: string; title?: string; weeks_left: number; base: number | null } };

@@ -371,18 +371,18 @@ def test_each_solve_of_the_moves_route_appends_an_entry_to_its_days_log(client):
     # The system and its export, the day the moves start, the adds left, the pool.
     assert first["system"] == m["system"]
     assert first["system"]["file"] == "bbm_projections_2026-10-21.csv"
-    # The knobs in force: the solve's system and the keep rule's floor, the others unset until
-    # the knob file (phase 3).
+    # The knobs the solve ran with: with no knob file the code's defaults (#152), the blend
+    # weight, the stash threshold and the FAAB sizing unset.
     assert first["knobs"] == {
         "system": "bbm",
         "blend": None,
-        "horizon_weight": None,
+        "horizon_weight": "natural",
         "protection_floor": 0.0,
         "plan_floor_cats": 0.1,
         "plan_floor_points": 0.01,
         "stash_threshold": None,
         "faab_sizing": None,
-        "daily_cap": None,
+        "daily_cap": 2,
     }
     assert first["first_day"] == "2026-10-21" and first["adds"] == m["adds"]
     assert first["horizons"] == {k: v["label"] for k, v in m["horizons"].items()}
@@ -498,11 +498,11 @@ def test_the_moves_route_carries_the_weeks_streaming_plan(client):
     assert season_decisions.plan_verdict(None) is None
 
 
-def test_a_recommended_plan_is_logged_as_one_more_set_its_steps_by_day(client, monkeypatch):
-    from pickandroll.season import stream
-
-    # Any plan that is not behind the set clears a floor below zero.
-    monkeypatch.setattr(stream, "PLAN_FLOOR_CATS", -1.0)
+def test_a_recommended_plan_is_logged_as_one_more_set_its_steps_by_day(client):
+    # Any plan that is not behind the set clears a floor below zero, the knob file's (#152).
+    folder = client.data_dir / "autopilot"
+    folder.mkdir()
+    (folder / "knobs.json").write_text(json.dumps({"in_force": {"plan_floor_cats": -1.0}}))
     strategy_league(client)
     m = client.get(f"/seasons/{LEAGUE}/moves").json()
     plan = m["plan"]
@@ -541,7 +541,10 @@ def test_a_strategy_run_that_solved_is_logged_with_each_weights_set(client):
     assert [e["source"] for e in entries] == ["moves", "strategy"]
     run = entries[1]
     assert run["system"] == s["system"] and run["settings"] == s["settings"]
-    assert run["knobs"]["system"] == "bbm" and run["knobs"]["daily_cap"] is None
+    assert run["knobs"]["system"] == "bbm" and run["knobs"]["daily_cap"] == 2
+    # The weight the knob file recommends, natural by default (#152), marked and not executed.
+    assert run["recommended"] == s["recommended"] == "natural"
+    assert [x["recommended"] for x in run["sets"]] == [False, True]
     assert run["pool"] == {"size": len(s["pool"]), "players": s["pool"]}
     assert [x["key"] for x in run["sets"]] == ["week", "natural"]
     for logged_set, point in zip(run["sets"], s["points"], strict=True):

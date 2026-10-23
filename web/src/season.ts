@@ -1149,10 +1149,11 @@ export function strategyUnits(scoring: SeasonView["scoring"]): { week: string; s
   return scoring === "points" ? { week: "matchups", season: "matchups" } : { week: "categories", season: "category-weeks" };
 }
 
-/** The point the panel opens on: the natural weight's, else the first. */
-export function defaultWeight(points: Pick<StrategyPoint, "key" | "natural">[] | undefined): StrategyWeightKey | null {
+/** The point the panel opens on: the recommended weight's (#152), else the natural weight's, else
+ * the first. */
+export function defaultWeight(points: Pick<StrategyPoint, "key" | "natural" | "recommended">[] | undefined): StrategyWeightKey | null {
   if (!points?.length) return null;
-  return (points.find((p) => p.natural) ?? points[0]).key;
+  return (points.find((p) => p.recommended) ?? points.find((p) => p.natural) ?? points[0]).key;
 }
 
 /** The linear program's status as the panel says it: solved, time-limited, no set, running. */

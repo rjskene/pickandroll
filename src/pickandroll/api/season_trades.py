@@ -76,7 +76,9 @@ def review_days(s: SeasonSettings) -> int:
     return s.trade_review_days if s.trade_review_days is not None else REVIEW_DAYS
 
 
-def build(season: Season, today: date, data_dir: Path, system: str) -> TradeLeague | None:
+def build(
+    season: Season, today: date, data_dir: Path, system: str, blend: float | None = None
+) -> TradeLeague | None:
     """The league as ``season.trades`` values it, or None when the season lacks my team or its
     weeks."""
     s = season.settings
@@ -85,7 +87,7 @@ def build(season: Season, today: date, data_dir: Path, system: str) -> TradeLeag
         return None
     points = dict(s.points) if s.scoring == "points" and s.points else None
     cats = tuple(s.cats)
-    rated = season_moves.system_rates(season, data_dir, system)
+    rated = season_moves.system_rates(season, data_dir, system, blend)
     bbm_value = wk.per_game_values(rated.bbm.rates, cats, points)
     rostered = {sp.player.yahoo_id for spots in season.rosters.values() for sp in spots}
     rates = {**rated.rates, **{k: rated.bbm.rates[k] for k in rostered if k in rated.bbm.rates}}

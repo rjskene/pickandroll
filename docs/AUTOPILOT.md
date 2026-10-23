@@ -223,7 +223,21 @@ act on. The private league is shown apart. Built after #125 and #126, with phase
 Monday step of phase 3 does, and the Progress view only reads. It is meant to be edited by hand, so
 the view reads it leniently: a key it does not know, or a change without a date or a knob, is
 named in the view's problems and left out; a verdict or source of neither kind is named there and
-the change kept with none; none of it fails the page.
+the change kept with none; none of it fails the page. A value outside its bounds (a system or
+weight not among the choices, a number that is not one, a cap that is not whole, under a minimum
+or over a maximum) is a problem and left out, so the default stays.
+
+**At solve time** (#152, `api/season_knobs.py`). Every solve of the moves, matchup, season,
+lineup, strategy and trade routes reads the file again and runs with the code's defaults, then
+`in_force`, then the league's own values (`season.progress.in_force_for`); a missing file or one
+that is not JSON means the defaults (system `bbm`, horizon weight `natural`, protection floor 0.0,
+plan floors 0.10 and 0.01, daily cap 2). The solves kept for the day are keyed to the file's
+version, so a change is in force from the next solve. A route's named system wins over the
+file's. The engine reads the hooked knobs, `season.progress.HOOKED`: the system and the blend
+weight (the moves solve), the horizon weight (marked recommended on the Strategy panel, never
+executed), the protection floor (the keep rule), the plan floors and the daily cap (the streaming
+plan). The stash threshold and the FAAB sizing are unhooked: recorded in the decision log as the
+file has them, read by nothing, and never changed by the Monday step.
 
 - `in_force`: the value in force of each knob, by the names the decision log records them under
   (#125, `knobs` in an entry) and no other: `system` and `blend` (the projection system or blend

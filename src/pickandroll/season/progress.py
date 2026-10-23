@@ -17,6 +17,7 @@ from datetime import date
 from typing import Any
 
 from .moves import PROTECTION_FLOOR
+from .stream import DAILY_CAP, PLAN_FLOOR_CATS, PLAN_FLOOR_POINTS
 
 #: The knobs of docs/AUTOPILOT.md section 6, by the names the decision log records them under
 #: (``api.season_decisions.knobs``), and no other.
@@ -41,6 +42,48 @@ KNOB_MINIMUMS: Mapping[str, float] = {
     "blend": 0.25,
     "daily_cap": 1,
 }
+#: The highest value a knob may take, the bounds' high end (#152): the blend weight and the
+#: daily move cap.
+KNOB_MAXIMUMS: Mapping[str, float] = {"blend": 0.75, "daily_cap": 3}
+#: The values a named knob may take: the projection systems, and the strategy weights the bounds
+#: allow (the week weight never: the season is what counts).
+CHOICES: Mapping[str, tuple[str, ...]] = {
+    "system": ("bbm", "yahoo", "blend"),
+    "horizon_weight": ("even", "natural", "season"),
+}
+#: The knobs that are numbers, and those of them a count of whole moves.
+NUMBERS = frozenset(
+    {"blend", "protection_floor", "plan_floor_cats", "plan_floor_points", "daily_cap"}
+)
+WHOLE = frozenset({"daily_cap"})
+#: The knobs the engine reads at solve time (#152); the others are recorded and nothing reads
+#: them (the stash threshold, and the FAAB sizing until it exists), so the Monday step never
+#: changes one.
+HOOKED = frozenset(
+    {
+        "system",
+        "blend",
+        "horizon_weight",
+        "protection_floor",
+        "plan_floor_cats",
+        "plan_floor_points",
+        "daily_cap",
+    }
+)
+#: Each knob's value when the knob file sets none: the code's own.
+DEFAULTS: Mapping[str, Any] = {
+    "system": "bbm",
+    "blend": None,
+    "horizon_weight": "natural",
+    "protection_floor": PROTECTION_FLOOR,
+    "plan_floor_cats": PLAN_FLOOR_CATS,
+    "plan_floor_points": PLAN_FLOOR_POINTS,
+    "stash_threshold": None,
+    "faab_sizing": None,
+    "daily_cap": DAILY_CAP,
+}
+#: Yahoo's share in the blend when the file names the blend system and no weight.
+BLEND = 0.5
 VERDICTS = ("kept", "reverted")
 SOURCES = ("master", "user")
 #: The Monday note's sections, by their heading (lower case), and their keys.
@@ -87,6 +130,40 @@ def below_minimum(knob: str, value: Any) -> str | None:
     return None
 
 
+def refused(knob: str, value: Any) -> str | None:
+    """Why ``knob`` may not take ``value``: not one of its choices, not a number (a whole one
+    for a count) for a knob that is one, under its minimum (#150) or over its maximum (#152);
+    None when it may, an unset value among them."""
+    if value is None:
+        return None
+    if knob in CHOICES and value not in CHOICES[knob]:
+        return f"{knob} {value!r} is not one of {', '.join(CHOICES[knob])}"
+    if knob in NUMBERS and (isinstance(value, bool) or not isinstance(value, int | float)):
+        return f"{knob} {value!r} is not a number"
+    if knob in WHOLE and not isinstance(value, int):
+        return f"{knob} {value!r} is not a whole number"
+    if (low := below_minimum(knob, value)) is not None:
+        return low
+    high = KNOB_MAXIMUMS.get(knob)
+    if high is not None and value > high:
+        return f"{knob} {value} is above its maximum {high}"
+    return None
+
+
+def in_force_for(knobs: Mapping[str, Any], league: str) -> dict[str, Any]:
+    """The knobs a solve in ``league`` runs with: the defaults, then the file's ``in_force``,
+    then the league's own values (``knobs`` as :func:`knob_file` reads it), the blend weight
+    :data:`BLEND` when the blend system is in force and no weight is set."""
+    out = {
+        **DEFAULTS,
+        **(knobs.get("in_force") or {}),
+        **(knobs.get("leagues") or {}).get(str(league), {}),
+    }
+    if out["system"] == "blend" and out["blend"] is None:
+        out["blend"] = BLEND
+    return out
+
+
 def _known(where: str, raw: Any, problems: list[str]) -> dict[str, Any]:
     if not isinstance(raw, Mapping):
         problems.append(f"{where} is not an object")
@@ -95,7 +172,7 @@ def _known(where: str, raw: Any, problems: list[str]) -> dict[str, Any]:
     for k, v in raw.items():
         if k not in KNOBS:
             problems.append(f"{where}: {k} is not a knob")
-        elif why := below_minimum(k, v):
+        elif why := refused(k, v):
             # Left out, so the default (or the value before it) stays in force.
             problems.append(f"{where}: {why}")
         else:
@@ -115,7 +192,7 @@ def _change(i: int, raw: Any, problems: list[str]) -> dict[str, Any] | None:
     if raw.get("knob") not in KNOBS:
         problems.append(f"{cid}: {raw.get('knob')} is not a knob")
         return None
-    if why := below_minimum(raw["knob"], raw.get("to")):
+    if why := refused(raw["knob"], raw.get("to")):
         problems.append(f"{cid}: {why}")
         return None
     verdict, source = raw.get("verdict"), raw.get("source")

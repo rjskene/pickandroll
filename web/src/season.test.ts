@@ -988,6 +988,8 @@ test("a strategy run polls while it solves, and opens on the natural weight", ()
   assert.equal(defaultWeight([point("week"), point("natural"), point("season")]), "natural");
   assert.equal(defaultWeight([point("week")]), "week");
   assert.equal(defaultWeight([]), null);
+  // The knob file's recommended weight (#152) wins over the natural one.
+  assert.equal(defaultWeight([point("week"), point("natural"), point("season", { recommended: true })]), "season");
   assert.deepEqual(strategyUnits("categories"), { week: "categories", season: "category-weeks" });
   assert.deepEqual(strategyUnits("points"), { week: "matchups", season: "matchups" });
 });

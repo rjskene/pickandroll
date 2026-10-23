@@ -5,6 +5,7 @@ stint per player, the adds left, the daily cap, a start slot). Every league here
 from __future__ import annotations
 
 import itertools
+from collections import Counter
 from dataclasses import replace
 
 import pytest
@@ -294,6 +295,21 @@ def test_the_daily_room_counts_the_base_moves():
     base = [mv.Move(10, 1), mv.Move(11, 2)]
     room = st._room(problem, base, DAYS)
     assert room[THU] == 0 and all(room[d] == st.DAILY_CAP for d in DAYS[1:])
+
+
+def test_the_problems_own_cap_and_floor_are_the_knobs():
+    """The knob file's daily move cap and plan floor (#152) reach the stream through the
+    problem; None keeps the stream's own."""
+    problem, rule = stream_league()
+    capped = replace(problem, daily_cap=1, plan_floor=0.4)
+    room = st._room(capped, [mv.Move(10, 1)], DAYS)
+    assert room[THU] == 0 and all(room[d] == 1 for d in DAYS[1:])
+    assert st.floor_of(capped) == 0.4 and st.floor_of(problem) == st.PLAN_FLOOR_CATS
+    # At one move a day the plan still finds its steps, no two of them on a day.
+    found = st.plan(mv.Evaluator(capped), rule, (), per_game(capped))
+    assert found is not None and found.steps
+    days = Counter(mv.day_of(capped, m) for m in (*found.base, *found.steps))
+    assert max(days.values()) == 1
 
 
 def test_a_holder_without_a_start_slot_scores_nothing():

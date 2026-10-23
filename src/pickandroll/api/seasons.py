@@ -19,7 +19,8 @@ Routes:
 ``GET /seasons/{league}/moves``
     Every available player's best move this week and over the next three, and the recommended
     moves under the weekly add limit (#94, ``season_moves``); ``?system=yahoo`` for Yahoo's
-    projection.
+    projection, ``?system=blend`` for the blend of the two (#152), the knob file's system
+    (``api.season_knobs``) when the route names none.
 ``GET /seasons/{league}/moves/{player}``
     The move drawer: adding ``player`` (for ``?drop=``) per category on both horizons, with
     every other drop and the best other adds.
@@ -119,6 +120,7 @@ from . import (
     leagues,
     season_decisions,
     season_flags,
+    season_knobs,
     season_lineup,
     season_matchup,
     season_moves,
@@ -445,7 +447,7 @@ class SeasonService:
         line saying so (None when nothing is lost or nothing was read), and the line naming a
         held player whose status cleared; the failure, if any, stays in the JSON."""
         try:
-            out = self.lineup(league, "bbm", None)
+            out = self.lineup(league, None, None)
         except HTTPException as exc:
             return {"line": None, "error": str(exc.detail)}
         except Exception as exc:  # noqa: BLE001 - a lineup's failure leaves the digest
@@ -512,31 +514,40 @@ class SeasonService:
     # ------------------------------------------------------------------ moves
     def _moves_stamp(self, league: str) -> tuple[Any, ...]:
         """What the moves of a league depend on beyond the day: the state file, the projection
-        exports and the injury report (an O's return date)."""
+        exports, the injury report (an O's return date) and the knob file (#152)."""
         files = [
             season_dir(self.data_dir, league) / STATE,
             self.data_dir / "aliases.json",
             season_flags.injuries_path(self.data_dir),
+            season_knobs.autopilot_dir(self.data_dir) / season_knobs.KNOBS_FILE,
         ]
         for pattern in (*BBM_ROS, BBM_THIS_WEEK, BBM_NEXT_WEEK):
             files += sorted(self.data_dir.glob(pattern))
         return tuple((f.name, f.stat().st_mtime_ns) for f in files if f.exists())
 
-    def _built(self, league: str, system: str) -> season_moves.Built:
+    def _system(self, league: str, system: str | None) -> str:
+        """``system``, or when the route names none the one the knob file has in force for
+        ``league`` (#152; Basketball Monster's without one)."""
+        return system or season_knobs.for_league(self.data_dir, league)["system"]
+
+    def _built(self, league: str, system: str | None) -> season_moves.Built:
         base, _ = self._base(league)
+        system = self._system(league, system)
         today = nba_today(self.clock())
         key = (league, system, "built", today, self._moves_stamp(league))
 
         def make() -> season_moves.Built | None:
             season = Season.from_parts(base, load_parts(self.data_dir, league))
-            return season_moves.build(season, today, self.data_dir, system)
+            knobs = season_knobs.for_league(self.data_dir, league)
+            return season_moves.build(season, today, self.data_dir, system, knobs)
 
         built = self.moves_cache.get(key, make)
         if built is None:
             raise HTTPException(409, f"league {league} has no season of my team to move in yet")
         return built
 
-    def moves(self, league: str, system: str) -> dict[str, Any]:
+    def moves(self, league: str, system: str | None) -> dict[str, Any]:
+        system = self._system(league, system)
         built = self._built(league, system)
         today = nba_today(self.clock())
         key = (league, system, "moves", today, self._moves_stamp(league))
@@ -565,9 +576,10 @@ class SeasonService:
         entries = season_decisions.load(season_dir(self.data_dir, league), end)
         return season_decisions.payload(entries, season, today, start, end)
 
-    def best(self, league: str, system: str, solve: bool = False) -> dict[str, Any]:
+    def best(self, league: str, system: str | None, solve: bool = False) -> dict[str, Any]:
         """The landing grid's best move (#108): from the moves already solved today, or, with
         ``solve``, solved now. Without it nothing is solved: a cold league says so."""
+        system = self._system(league, system)
         if solve:
             self.moves(league, system)
         else:
@@ -581,9 +593,10 @@ class SeasonService:
         return {"league": league, **season_moves.best_payload(built, payload)}
 
     # ------------------------------------------------------------------ strategy
-    def strategy(self, league: str, system: str) -> dict[str, Any]:
+    def strategy(self, league: str, system: str | None) -> dict[str, Any]:
         """Today's strategy run on the league's current inputs; never solves."""
         self._base(league)
+        system = self._system(league, system)
         today = nba_today(self.clock())
         run = self.strategy_runs.get(league, system, today, self._moves_stamp(league))
         if run is None:
@@ -593,11 +606,12 @@ class SeasonService:
     def solve_strategy(
         self,
         league: str,
-        system: str,
+        system: str | None,
         settings: season_strategy.Settings,
         wait: bool = False,
     ) -> dict[str, Any]:
         """Start the strategy run with ``settings`` (or find it), and its payload so far."""
+        system = self._system(league, system)
         built = self._built(league, system)
         today = nba_today(self.clock())
         stamp = self._moves_stamp(league)
@@ -627,8 +641,9 @@ class SeasonService:
             run.done.wait()
         return {"league": league, **run.payload()}
 
-    def matchup(self, league: str, system: str) -> dict[str, Any]:
+    def matchup(self, league: str, system: str | None) -> dict[str, Any]:
         """The Matchup view (#116): my matchup's scoreboard and what each player adds to it."""
+        system = self._system(league, system)
         built = self._built(league, system)
         base, _ = self._base(league)
         today = nba_today(self.clock())
@@ -643,9 +658,10 @@ class SeasonService:
             raise HTTPException(409, f"league {league} has no matchup of my team this week")
         return {"league": league, **out}
 
-    def outlook(self, league: str, system: str) -> dict[str, Any]:
+    def outlook(self, league: str, system: str | None) -> dict[str, Any]:
         """The Season view (#116): every week left of my season as win odds, each with its
         scoreboard and what my players add to it."""
+        system = self._system(league, system)
         built = self._built(league, system)
         base, _ = self._base(league)
         today = nba_today(self.clock())
@@ -660,9 +676,10 @@ class SeasonService:
             raise HTTPException(409, f"league {league} has no season of my team to look ahead in")
         return {"league": league, **out}
 
-    def lineup(self, league: str, system: str, week: int | None) -> dict[str, Any]:
+    def lineup(self, league: str, system: str | None, week: int | None) -> dict[str, Any]:
         """The Lineup view (#107): my recommended starters for each day of ``week`` (this one
         by default) against Yahoo's lineup as read."""
+        system = self._system(league, system)
         built = self._built(league, system)
         base, is_public = self._base(league)
         today = nba_today(self.clock())
@@ -677,21 +694,25 @@ class SeasonService:
             raise HTTPException(404, f"week {week} of league {league} has no lineup to show")
         return {"league": league, **out}
 
-    def move_detail(self, league: str, add: int, drop: int | None, system: str) -> dict[str, Any]:
+    def move_detail(
+        self, league: str, add: int, drop: int | None, system: str | None
+    ) -> dict[str, Any]:
         out = season_moves.detail_payload(self._built(league, system), add, drop)
         if out is None:
             raise HTTPException(404, f"no move adds {add} for {drop or 'nobody'} in {league}")
         return out
 
     # ------------------------------------------------------------------ trades
-    def _trade_league(self, league: str, system: str) -> season_trades.TradeLeague:
+    def _trade_league(self, league: str, system: str | None) -> season_trades.TradeLeague:
         base, _ = self._base(league)
+        system = self._system(league, system)
         today = nba_today(self.clock())
         key = (league, system, "trade", today, self._moves_stamp(league))
 
         def make() -> season_trades.TradeLeague | None:
             season = Season.from_parts(base, load_parts(self.data_dir, league))
-            return season_trades.build(season, today, self.data_dir, system)
+            blend = season_knobs.for_league(self.data_dir, league)["blend"]
+            return season_trades.build(season, today, self.data_dir, system, blend)
 
         built = self.moves_cache.get(key, make)
         if built is None:
@@ -699,11 +720,12 @@ class SeasonService:
         return built
 
     def trade(self, league: str, body: TradeBody) -> dict[str, Any]:
-        built = self._trade_league(league, body.system)
+        system = self._system(league, body.system)
+        built = self._trade_league(league, system)
         # The moves' problem and scorer, for the rest of the season (#151); a trade is valued
         # on its horizons without them.
         try:
-            moves = self._built(league, body.system)
+            moves = self._built(league, system)
         except HTTPException:
             moves = None
         try:
@@ -941,7 +963,7 @@ class SeasonService:
         """The Progress view (#129): every league's scorecard over the season as series by week,
         pooled over the public leagues, with the knob file and the Monday notes; reads only."""
         payloads, skipped = self._all_scorecards(system)
-        knobs, problems = season_progress.load_knobs(self.data_dir)
+        knobs, problems = season_knobs.load_knobs(self.data_dir)
         notes, found = season_progress.load_notes(self.data_dir)
         calendar = self._cached_calendar()
         out = season_progress.payload(
@@ -1487,7 +1509,8 @@ class TradeBody(BaseModel):
     #: My players who go to them, and theirs who come to me, by Yahoo id.
     give: list[int] = Field(default_factory=list)
     get: list[int] = Field(default_factory=list)
-    system: str = Field("bbm", pattern="^(bbm|yahoo)$")
+    #: The projection system; the knob file's when None (#152).
+    system: str | None = Field(None, pattern="^(bbm|yahoo|blend)$")
     #: The day the trade takes effect; by default when Yahoo would process it if accepted today.
     effective: date | None = None
 
@@ -1512,7 +1535,7 @@ def register(
 
     week_q = Query(None, ge=1, description="the week; by default the last recorded")
     scorecard_system_q = Query(
-        season_scorecard.SYSTEM, pattern="^(bbm|yahoo)$", description="the system scored"
+        season_scorecard.SYSTEM, pattern="^(bbm|yahoo|blend)$", description="the system scored"
     )
 
     # Before ``/seasons/{league}``, whose pattern would refuse the word.
@@ -1569,22 +1592,26 @@ def register(
             raise HTTPException(502, job.error)
         return {"refresh": job.to_dict(), "season": service.summary(league)}
 
-    system_q = Query("bbm", pattern="^(bbm|yahoo)$", description="the projection system")
+    system_q = Query(
+        None,
+        pattern="^(bbm|yahoo|blend)$",
+        description="the projection system; the knob file's (#152) by default",
+    )
     from_q = Query(None, alias="from", description="the first day; a week before the last")
     to_q = Query(None, alias="to", description="the last day; today")
 
     @app.get("/seasons/{league}/moves")
-    async def get_moves(league: str = league_id, system: str = system_q) -> dict[str, Any]:
+    async def get_moves(league: str = league_id, system: str | None = system_q) -> dict[str, Any]:
         """Every available player's best move on both horizons and the recommended moves."""
         return await asyncio.to_thread(service.moves, league, system)
 
     @app.get("/seasons/{league}/best")
-    async def get_best(league: str = league_id, system: str = system_q) -> dict[str, Any]:
+    async def get_best(league: str = league_id, system: str | None = system_q) -> dict[str, Any]:
         """The best recommended move when today's moves are solved; never solves them."""
         return await asyncio.to_thread(service.best, league, system)
 
     @app.post("/seasons/{league}/best")
-    async def post_best(league: str = league_id, system: str = system_q) -> dict[str, Any]:
+    async def post_best(league: str = league_id, system: str | None = system_q) -> dict[str, Any]:
         """Solve today's moves and give the best recommended move."""
         return await asyncio.to_thread(service.best, league, system, True)
 
@@ -1593,7 +1620,7 @@ def register(
         player: int,
         league: str = league_id,
         drop: int | None = Query(None, description="the player dropped for him; none: a free spot"),
-        system: str = system_q,
+        system: str | None = system_q,
     ) -> dict[str, Any]:
         """The move drawer for adding ``player``."""
         return await asyncio.to_thread(service.move_detail, league, player, drop, system)
@@ -1601,13 +1628,13 @@ def register(
     lock_q = Query([], description="my players no move may drop")
 
     @app.get("/seasons/{league}/matchup")
-    async def get_matchup(league: str = league_id, system: str = system_q) -> dict[str, Any]:
+    async def get_matchup(league: str = league_id, system: str | None = system_q) -> dict[str, Any]:
         """My matchup this week: the projected finals and odds per category, the matchup odds,
         and what each player of both teams adds to them (#116)."""
         return await asyncio.to_thread(service.matchup, league, system)
 
     @app.get("/seasons/{league}/outlook")
-    async def get_outlook(league: str = league_id, system: str = system_q) -> dict[str, Any]:
+    async def get_outlook(league: str = league_id, system: str | None = system_q) -> dict[str, Any]:
         """Every week left of my season: the win odds against its opponent (or the field), the
         summary of the regular weeks, and each week's scoreboard and my players (#116)."""
         return await asyncio.to_thread(service.outlook, league, system)
@@ -1615,7 +1642,7 @@ def register(
     @app.get("/seasons/{league}/lineup")
     async def get_lineup(
         league: str = league_id,
-        system: str = system_q,
+        system: str | None = system_q,
         week: int | None = Query(
             None, description="a week of the moves' four; this one by default"
         ),
@@ -1633,14 +1660,16 @@ def register(
         return await asyncio.to_thread(service.decisions, league, start, end)
 
     @app.get("/seasons/{league}/strategy")
-    async def get_strategy(league: str = league_id, system: str = system_q) -> dict[str, Any]:
+    async def get_strategy(
+        league: str = league_id, system: str | None = system_q
+    ) -> dict[str, Any]:
         """Today's strategy run, as far as it got; never solves."""
         return await asyncio.to_thread(service.strategy, league, system)
 
     @app.post("/seasons/{league}/strategy")
     async def post_strategy(
         league: str = league_id,
-        system: str = system_q,
+        system: str | None = system_q,
         pool: int = Query(
             season_strategy.POOL,
             ge=1,

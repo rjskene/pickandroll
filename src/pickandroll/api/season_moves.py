@@ -27,8 +27,8 @@ from __future__ import annotations
 
 import threading
 from collections import Counter
-from collections.abc import Callable
-from dataclasses import dataclass, replace
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass, field, replace
 from datetime import date
 from pathlib import Path
 from typing import Any
@@ -38,6 +38,7 @@ import pandas as pd
 from ..season import Player, Season
 from ..season import decisions as dl
 from ..season import moves as mv
+from ..season import progress as pg
 from ..season import stream as st
 from ..season import weekly as wk
 from ..sources.injuries import Listed
@@ -77,6 +78,9 @@ class Built:
     #: values each recommended move with it and the scorecard the moves made (#126). None
     #: without Basketball Monster's lines.
     scorer: dict[str, Any] | None = None
+    #: The knobs the solve ran with (#152; ``season.progress.in_force_for``), its system
+    #: among them.
+    knobs: dict[str, Any] = field(default_factory=lambda: dict(pg.DEFAULTS))
 
 
 @dataclass(frozen=True)
@@ -91,16 +95,50 @@ class Rated:
     yahoo: sw.System
 
 
-def system_rates(season: Season, data_dir: Path, system: str) -> Rated:
-    """The rates of ``system``: Basketball Monster's, or Yahoo's next seven days for the
-    available players with Basketball Monster's line for everyone else."""
+def blend_rates(
+    bbm: Mapping[int, wk.Rates], yahoo: Mapping[int, wk.Rates], weight: float
+) -> dict[int, dict[str, float]]:
+    """Each player Yahoo projects at ``weight`` Yahoo's and the rest Basketball Monster's, stat
+    by stat (Yahoo's alone for a player Basketball Monster has no line for)."""
+    out = {}
+    for k, y in yahoo.items():
+        b = bbm.get(k)
+        if b is None:
+            out[k] = dict(y)
+            continue
+        stats = set(b) | set(y)
+        out[k] = {
+            st_: (1 - weight) * float(b.get(st_, 0.0)) + weight * float(y.get(st_, 0.0))
+            for st_ in stats
+        }
+    return out
+
+
+def system_rates(season: Season, data_dir: Path, system: str, blend: float | None = None) -> Rated:
+    """The rates of ``system``: Basketball Monster's; Yahoo's next seven days for the
+    available players with Basketball Monster's line for everyone else; or the ``blend`` of the
+    two (#152), Yahoo's share ``blend`` for each player Yahoo projects, each per-game value the
+    same mix of the two systems' own."""
     s = season.settings
     players = sw.season_players(season)
     bbm = sw.bbm_system(data_dir, players)
     yahoo = sw.yahoo_system(season)
     points = dict(s.points) if s.scoring == "points" and s.points else None
     cats = tuple(s.cats)
-    if system == "yahoo":
+    if system == "blend":
+        w = pg.BLEND if blend is None else float(blend)
+        rates = {**bbm.rates, **blend_rates(bbm.rates, yahoo.rates, w)}
+        value = wk.per_game_values(bbm.rates, cats, points)
+        theirs = wk.per_game_values(yahoo.rates, cats, points)
+        value |= {k: (1 - w) * value[k] + w * v if k in value else v for k, v in theirs.items()}
+        info = {
+            **yahoo.info,
+            "label": f"Blend: Yahoo {w:.0%}, Basketball Monster {1 - w:.0%}",
+            "blend": w,
+            "file": bbm.info.get("file"),
+            "fallback": "Basketball Monster for rostered players and anyone Yahoo does not project",
+        }
+    elif system == "yahoo":
         rates = {**bbm.rates, **yahoo.rates}
         value = {**wk.per_game_values(bbm.rates, cats, points)}
         value |= wk.per_game_values(yahoo.rates, cats, points)
@@ -160,15 +198,26 @@ def add_limits(
     return used, limits
 
 
-def build(season: Season, today: date, data_dir: Path, system: str) -> Built | None:
-    """The move problem for my team, or None when the season lacks my team or its weeks."""
+def build(
+    season: Season,
+    today: date,
+    data_dir: Path,
+    system: str,
+    knobs: Mapping[str, Any] | None = None,
+) -> Built | None:
+    """The move problem for my team, or None when the season lacks my team or its weeks; the
+    solve runs on ``system`` with ``knobs``, the league's knobs as ``api.season_knobs`` reads
+    them (the code's defaults when None)."""
     s = season.settings
     mine = s.my_team_id
     if mine is None or not season.calendar or mine not in season.rosters:
         return None
+    knobs = {**pg.DEFAULTS, **(knobs or {}), "system": system}
+    if system == "blend" and knobs["blend"] is None:
+        knobs["blend"] = pg.BLEND
     points = dict(s.points) if s.scoring == "points" and s.points else None
     cats = tuple(s.cats)
-    rated = system_rates(season, data_dir, system)
+    rated = system_rates(season, data_dir, system, knobs["blend"])
     rates, value, info, yahoo = rated.rates, rated.value, rated.info, rated.yahoo
     players = rated.players
     matchup, read_at = sw.matchup_read(season, mine)
@@ -289,14 +338,24 @@ def build(season: Season, today: date, data_dir: Path, system: str) -> Built | N
         problem,
         **keep_inputs(rated, cats, points, s.num_teams * problem.spots),
         season_end=max(w.end for w in season.calendar.weeks),
-        floor=PROTECTION_FLOOR,
+        floor=float(knobs["protection_floor"]),
+        plan_floor=float(knobs["plan_floor_points" if points else "plan_floor_cats"]),
+        daily_cap=int(knobs["daily_cap"]),
     )
     rule = mv.keep_rule(problem)
     problem = replace(problem, kept=rule.kept)
     pool = max(1, s.num_teams * problem.spots)
     scorer = wk.scorer_of(rated.bbm.rates, cats, points, pool) if rated.bbm.rates else None
     return Built(
-        problem, {"key": system, **info}, horizons, adds, unprojected, weeks_left, rule, scorer
+        problem,
+        {"key": system, **info},
+        horizons,
+        adds,
+        unprojected,
+        weeks_left,
+        rule,
+        scorer,
+        knobs,
     )
 
 
