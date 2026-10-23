@@ -22,7 +22,9 @@ not to be trusted blindly.
 From #126 on, an entry also keeps what the Monday scorecard scores a move by: its scorer (the
 league's, as data: ``weekly.scorer_of``) and, for each recommended move, its own gain on each
 horizon as the solve priced it and its projection in value units (:func:`move_projection`).
-Pure: the entries are read and written by the API.
+From #144 the projection also has a ``season`` horizon, to the season's last day, and each move
+says whether it costs the season (:func:`season_costly`) on the horizon it is judged on
+(:func:`judging_horizon`). Pure: the entries are read and written by the API.
 """
 
 from __future__ import annotations
@@ -33,6 +35,7 @@ from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta, tzinfo
 from typing import Any
 
+from . import moves as mv
 from . import weekly as wk
 from .moves import MoveProblem, when_date
 from .state import Transaction
@@ -44,6 +47,13 @@ NO_ENTRY = "no_entry"
 
 #: How close to an entry a move is flagged ``near``: the error a wrong zone would make.
 NEAR = timedelta(hours=1)
+#: The horizons a move is judged on (#143, #144): the rest of its week, the three matchup weeks
+#: after, and the rest of the season.
+WEEK, THREE, SEASON = "week", "three", "season"
+#: The moves route's sets recommended for the three weeks after.
+THREE_SETS = ("three",)
+#: The strategy's set solved under the season weight (λ = 0, the rest of the season alone).
+SEASON_SET = "season"
 
 _CLOCK = re.compile(r",\s*(\d{1,2}):(\d{2})\s*([ap])\.?m", re.IGNORECASE)
 _BID = re.compile(r"\$\s*(\d+(?:\.\d+)?)")
@@ -200,6 +210,22 @@ def _games(
     return games, min(days, default=None), max(days, default=None)
 
 
+def _season_games(
+    problem: MoveProblem, pid: int, player: Any, after: date, counted: int
+) -> tuple[float, float]:
+    """The games ``player`` was assumed to play to the season's last day, and how many of them
+    were extrapolated: on the week's and the three weeks' days, those horizons' own count
+    (``counted``); from ``after``, the day after them, from the day he is back as the keep rule
+    reads it (``moves.back_from``; none when he does not return this season), his team's games
+    on each day the schedule was read and, on the others, its rate over the read days
+    (``moves.games_ahead``, the keep rule's count)."""
+    back = mv.back_from(problem, pid, player)
+    if back is None:
+        return float(counted), 0.0
+    read, extrapolated = mv.games_ahead(problem, player.nba_team, max(after, back))
+    return counted + read + extrapolated, extrapolated
+
+
 def move_projection(
     problem: MoveProblem,
     scorer: Mapping[str, Any] | None,
@@ -214,7 +240,10 @@ def move_projection(
     his return, when later); the move's value is the add's games' less the drop's. A plan's
     step may drop an earlier step's add, a candidate, so its steps' values telescope to the
     plan's. Each horizon also splits the value by category (``cats``, #129), the same way.
-    None without a scorer or a candidate of the problem's."""
+    The ``season`` horizon (#144) runs from the move's day to the season's last day on the
+    games :func:`_season_games` counts, and says how many of them were extrapolated beyond the
+    schedule read (``extrapolated_games``). None without a scorer or a candidate of the
+    problem's."""
     added = dict(problem.candidates).get(add)
     if scorer is None or added is None:
         return None
@@ -232,19 +261,28 @@ def move_projection(
 
     a, d = per_game(add), per_game(drop) if dropped is not None else None
     a_cats, d_cats = by_cat(add), by_cat(drop if dropped is not None else None)
+    priced = a is not None and (dropped is None or d is not None)
+
+    def valued(add_games: float, drop_games: float) -> tuple[float | None, dict[str, float] | None]:
+        if not priced:
+            return None, None
+        value = round(add_games * a - drop_games * (d or 0.0), 4)
+        cats = {c: round(add_games * x - drop_games * d_cats[c], 4) for c, x in a_cats.items()}
+        return value, cats
+
+    back = max(start, problem.returns.get(drop, start)) if dropped is not None else start
     horizons = {}
+    counted = {"add": 0, "drop": 0}
+    through: date | None = None
     for key in problem.horizons:
         add_games, first, last = _games(problem, key, add, added, start)
         if first is None:
             continue
-        drop_games = 0
-        if dropped is not None:
-            back = max(start, problem.returns.get(drop, start))
-            drop_games = _games(problem, key, drop, dropped, back)[0]
-        value = cats = None
-        if a is not None and (dropped is None or d is not None):
-            value = round(add_games * a - drop_games * (d or 0.0), 4)
-            cats = {c: round(add_games * x - drop_games * d_cats[c], 4) for c, x in a_cats.items()}
+        drop_games = _games(problem, key, drop, dropped, back)[0] if dropped is not None else 0
+        counted["add"] += add_games
+        counted["drop"] += drop_games
+        through = max(through or last, last)
+        value, cats = valued(add_games, drop_games)
         horizons[key] = {
             "from": first.isoformat(),
             "to": last.isoformat(),
@@ -253,8 +291,54 @@ def move_projection(
             "value": value,
             "cats": cats,
         }
+    end = problem.season_end
+    if through is not None and end is not None and start <= end:
+        after = through + timedelta(1)
+        add_games, add_x = _season_games(problem, add, added, after, counted["add"])
+        drop_games, drop_x = 0.0, 0.0
+        if dropped is not None:
+            drop_games, drop_x = _season_games(problem, drop, dropped, after, counted["drop"])
+        value, cats = valued(add_games, drop_games)
+        horizons[SEASON] = {
+            "from": start.isoformat(),
+            "to": end.isoformat(),
+            "add_games": round(add_games, 2),
+            "drop_games": round(drop_games, 2) if dropped is not None else None,
+            "extrapolated_games": {
+                "add": round(add_x, 2),
+                "drop": round(drop_x, 2) if dropped is not None else None,
+            },
+            "value": value,
+            "cats": cats,
+        }
     return {
         "add": a,
         "drop": d,
         "horizons": horizons,
     }
+
+
+def judging_horizon(
+    source: str | None, set_key: str | None, value: Mapping[str, Any] | None
+) -> str:
+    """The horizon a recommended move is judged on (#143, #144): the one its set was recommended
+    for. The moves route's week set and streaming plan on the week, its three weeks' set on the
+    three weeks after; a strategy set on the three weeks after, the one solved under the season
+    weight on the season when its projection (``value``) has that horizon."""
+    if source == "strategy":
+        season = set_key == SEASON_SET and SEASON in ((value or {}).get("horizons") or {})
+        return SEASON if season else THREE
+    return THREE if set_key in THREE_SETS else WEEK
+
+
+def season_costly(value: Mapping[str, Any] | None, judged: str, floor: float | None) -> bool | None:
+    """Whether a move costs the season (#144): projected above zero on the horizon it is judged
+    on and, over the season, below minus the keep rule's protection floor (a per-game margin)
+    times the games the dropped player gives up there; None when either figure is missing. It
+    measures the keep rule and changes nothing in the engine."""
+    horizons = (value or {}).get("horizons") or {}
+    on, season = horizons.get(judged), horizons.get(SEASON)
+    if not on or not season or on.get("value") is None or season.get("value") is None:
+        return None
+    given_up = (season.get("drop_games") or 0.0) * (floor or 0.0)
+    return on["value"] > 0 and season["value"] < -given_up

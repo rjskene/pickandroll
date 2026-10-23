@@ -369,6 +369,45 @@ def client(tmp_path):
         yield c
 
 
+def test_the_season_check_says_how_many_were_flagged_and_how_many_went_below_zero():
+    """#144: by unit, in the moves topic, after the moves' own sentence."""
+    season = {
+        "categories": {"checked": 12, "moves": 2, "below_so_far": 1},
+        "points": {"checked": 3, "moves": 0, "below_so_far": 0},
+        "none": {"checked": 0, "moves": 0, "below_so_far": 0},
+    }
+    moves = {"categories": {"moves": 1, "projected": 1.0, "realized": 1.0, "same_way": 1}}
+    out = pg.sentences(
+        None, [], None, {**moves, "categories": {**moves["categories"], "share": 1.0}}, [], season
+    )
+    texts = [(s["topic"], s["tone"], s["text"]) for s in out]
+    assert texts[1:] == [
+        (
+            "moves",
+            "bad",
+            (
+                "2 of the 12 moves checked against the season (category value) were flagged "
+                "season-costly: projected positive on the horizon recommended, below the "
+                "protection floor over the season; 1 of them has realized below zero so far."
+            ),
+        ),
+        (
+            "moves",
+            "good",
+            (
+                "None of the 3 moves checked against the season (fantasy points) was flagged "
+                "season-costly."
+            ),
+        ),
+    ]
+    one = pg.season_sentence("pooled", "points", {"checked": 1, "moves": 1, "below_so_far": 0})
+    assert one["tone"] == "neutral"
+    assert one["text"].startswith(
+        "1 of the 1 move checked against the season (fantasy points) was flagged"
+    )
+    assert one["text"].endswith("0 of them have realized below zero so far.")
+
+
 def test_progress_gives_the_season_by_week_pooled_with_the_moves_knobs_and_notes(client):
     r = client.get("/progress")
     assert r.status_code == 200, r.text

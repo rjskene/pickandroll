@@ -536,16 +536,45 @@ last recorded week when left out. The metric is docs/AUTOPILOT.md's, section 6.
   - *The judging horizon* (#143, ruled 2026-10-23). Every move is judged on the horizon its set
     was recommended for, written on its row as `judged`: the week's set and the streaming plan on
     the week, the three weeks' set and the strategy's on the three weeks after, a move with no
-    projection of its own on the week. `compared`, the sentences, the markdown and the Progress
-    screen all count the same moves on the same horizon; a move keeps its values on every
-    horizon beside it.
+    projection of its own on the week, and (#144) a strategy set solved under the season weight
+    on the season once its projection has that horizon. `compared`, the sentences, the markdown
+    and the Progress screen all count the same moves on the same horizon; a move keeps its
+    values on every horizon beside it.
+  - *The season horizon* (#144, ruled 2026-10-23). The season is what counts, so every move
+    also carries a `season` horizon, shown beside its judging figure, never in its place. The
+    decision log projects it from the move's day to the calendar's last day (the league's, the
+    playoffs included, where the keep rule's `games_left` counts to). Its games are:
+    - on the week's and the three weeks' days, those horizons' own counts;
+    - after them, from the day the player is back as the keep rule reads it (none when he does
+      not return this season), his team's games on each day the schedule was read, and on the
+      others his team's games a day over the read days. Those last games are extrapolated, and
+      `extrapolated_games` says how many, for the add and the drop. The rate is never the
+      player's own three-week games, which are zero while he is out.
+
+    The realized value has a `season` span over the same days, complete only once the season
+    ends and "so far" until then. The summary sums it beside the others; its gaps are not
+    counted, since it overlaps the other spans.
+  - *The season check* (#144). At decision time the log flags a move `season_costly` when both
+    hold:
+    - its projected value on its judging horizon is above zero;
+    - its season projection is below minus the keep rule's protection floor (a per-game
+      margin, in the same scorer's units) times the dropped player's season games. At a floor
+      of 0 that is simply below zero.
+
+    A move logged before the flag has none. The row carries the flag. The summary counts the
+    moves projected below zero over the season (`season_negative`) and the flagged
+    (`season_costly`, of those `checked`), each with how many of the scored among them realized
+    below zero so far (`below_so_far`). A sentence on the Progress screen says the same by unit.
+    The check measures the keep rule; it changes nothing in the engine.
 - **Markdown.** `markdown` in the all-leagues answer, for #127: leagues by id, no team or
   league names, no projected player line; the odds, results and standings as aggregates, a row
   per league, the private league in its own table, and my moves by the players' names and how
   they matched, then the moves realized, this week's and the season's to date, pooled over the
   public leagues and apart for the private one, in counts and ratios only: the scored with
   their realized share of the projected and how many went in the projected direction, each on
-  its judging horizon, the realized only, the unscored by reason and the gap games. No value in scorer units
+  its judging horizon, the realized only, the unscored by reason and the gap games, and once a
+  move has a season projection, the moves projected below zero over the season and the flagged
+  season-costly, each with how many of them realized below zero so far. No value in scorer units
   appears there, for a move or summed (master's ruling, 2026-10-22: docs/AUTOPILOT.md section
   8 keeps Basketball Monster numbers and what reduces to one out of the issue); the values stay
   in the JSON, the script's lines and the card.

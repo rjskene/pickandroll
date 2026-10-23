@@ -9,7 +9,9 @@ recommended set (the moves route's per horizon, the strategy's per weight) with 
 this week's categories and odds before and after it, and (from #126) the scorer and each move's
 own gain and value. A moves entry also says what the week's streaming plan (#136) was worth
 against its set, whatever the verdict (``plan``), and a recommended plan is one more set,
-``plan``, its steps dated by their ``from``. A day's file is a list, appended to.
+``plan``, its steps dated by their ``from``. From #144 each move's value has a season horizon
+and the move says whether it costs the season (``season_costly``) on the horizon its set is
+judged on, against the protection floor in force. A day's file is a list, appended to.
 """
 
 from __future__ import annotations
@@ -141,6 +143,18 @@ def _logged(move: Mapping[str, Any], built: Built | None = None) -> dict[str, An
     return out
 
 
+def _flagged(
+    moves: list[dict[str, Any]], source: str, key: str, floor: float
+) -> list[dict[str, Any]]:
+    """``moves`` of one set, each with whether it costs the season (#144) on the horizon the set
+    is judged on (``decisions.season_costly``); None for a move with no projection."""
+    for m in moves:
+        value = m.get("value")
+        judged = dl.judging_horizon(source, key, value)
+        m["season_costly"] = dl.season_costly(value, judged, floor)
+    return moves
+
+
 def _moves_of(rows: Sequence[Mapping[str, Any]]) -> list[mv.Move]:
     """Logged moves as the model's, each counting from its ``from`` (a plan's step's day)."""
     return [
@@ -172,10 +186,11 @@ def moves_entry(built: Built, payload: Mapping[str, Any], at: datetime) -> dict[
     """The moves route's solve: each horizon's recommended set, with the held-slot moves and
     the comebacks it implies, its gains on both horizons and this week before and after."""
     ev = mv.Evaluator(built.problem)
+    floor = built.problem.floor
     sets = []
     for key in season_moves.HORIZONS:
         rec = payload["recommended"][key]
-        moves = [_logged(m, built) for m in rec["moves"]]
+        moves = _flagged([_logged(m, built) for m in rec["moves"]], "moves", key, floor)
         sets.append(
             {
                 "key": key,
@@ -192,6 +207,7 @@ def moves_entry(built: Built, payload: Mapping[str, Any], at: datetime) -> dict[
         # The streaming plan (#136) as one more set: the week set's moves it keeps, then its
         # steps by day, each counting from its day with its own gain.
         moves = [_logged(m, built) for m in (*plan["base"], *plan["steps"])]
+        moves = _flagged(moves, "moves", "plan", floor)
         none = plan["value"]["none"]
         sets.append(
             {
@@ -242,11 +258,13 @@ def strategy_entry(built: Built, payload: Mapping[str, Any], at: datetime) -> di
     """A strategy run that solved: each weight's chosen set and its source, its gains (this
     week, three weeks, the season) and this week before and after."""
     ev = mv.Evaluator(built.problem)
+    floor = built.problem.floor
     sets = []
     for point in payload["points"]:
         if point.get("stage") != "done":
             continue
         moves = [_logged(m, built) for m in point.get("moves") or []]
+        moves = _flagged(moves, "strategy", point["key"], floor)
         sets.append(
             {
                 "key": point["key"],
