@@ -2108,6 +2108,78 @@ export function strategyQuery(system: ProjectionSystem, o: StrategyOptions): str
   return q.toString();
 }
 
+// ---------------------------------------------------------------- the freshness light (#153)
+/** Red: failed, or missing once the routine's run is due; amber: stale or not due yet. */
+export type StatusState = "green" | "amber" | "red";
+
+/** One row of the light's sheet: what it is, its time, its state (none: on request) and why. */
+export interface StatusRow {
+  kind: string;
+  state: StatusState | null;
+  reason: string;
+}
+
+export interface RoutineRow extends StatusRow {
+  started_at: string | null;
+  finished_at: string | null;
+  steps: Record<string, { status: "ok" | "failed" | "skipped" | null; detail: string | null }>;
+}
+
+export interface ExportRow extends StatusRow {
+  label: string;
+  file: string | null;
+  as_of: string | null;
+}
+
+/** A public league's last refresh, or one of the private league's pages. */
+export interface YahooRow extends StatusRow {
+  read_at: string | null;
+  /** The last refresh job: the service's own, or after a restart the last its log has (logged). */
+  status?: string | null;
+  started_at?: string | null;
+  finished_at?: string | null;
+  step?: string | null;
+  done?: number | null;
+  total?: number | null;
+  error?: string | null;
+  warnings?: Record<string, string>;
+  logged?: boolean;
+  snapshot_at?: string | null;
+}
+
+export interface BuiltRow extends StatusRow {
+  built_at: string | null;
+  system?: string | null;
+  projection_file?: string | null;
+  inputs?: Record<string, string | null>;
+}
+
+export interface StatusSection<R extends StatusRow> {
+  state: StatusState;
+  rows: R[];
+}
+
+/** A league; one whose settings do not read carries only its error. */
+export interface StatusLeague {
+  league: string;
+  name?: string | null;
+  public?: boolean;
+  state: StatusState;
+  error?: string;
+  yahoo?: StatusSection<YahooRow>;
+  recommendations?: StatusSection<BuiltRow> & { inputs: Record<string, string | null> };
+}
+
+export interface StatusPayload {
+  generated_at: string;
+  today: string;
+  due_at: string;
+  state: StatusState;
+  routine: RoutineRow;
+  exports: StatusSection<ExportRow>;
+  leagues: StatusLeague[];
+}
+
 export const api = {
   /** Every league folder's season (#92), for the landing page. */
   seasons: () => request<SeasonSummary[]>("/seasons"),
@@ -2150,6 +2222,8 @@ export const api = {
   scorecard: (league: string) => request<ScorecardPayload>(`/seasons/${encodeURIComponent(league)}/scorecard`),
   /** Every league's season against its expectation, the knob changes and the Monday notes (#129). */
   progress: () => request<ProgressPayload>("/progress"),
+  /** Whether the daily updates landed (#153): the run, the exports, each league's reads and solves. */
+  status: () => request<StatusPayload>("/seasons/status"),
   /** Read the league's public sources again, in the background; 409 for a private league. */
   refreshSeason: (league: string) =>
     request<{ refresh: SeasonRefresh; season: SeasonSummary }>(`/seasons/${encodeURIComponent(league)}/refresh`, { method: "POST" }),

@@ -628,6 +628,42 @@ export function keepLine(rule: KeepRule | undefined, name: (id: number) => strin
   return `The keep rule ${parts.join(" and ")}: no move drops them.`;
 }
 
+/** The keep rule in one phrase (#153), "Keep rule protects 5" and the benched after: the count
+ * opens the Strategy card's kept list, and the names, the best add and the reason (keepLine)
+ * are its tooltip. Null when it keeps no one. */
+export function keepPhrase(rule: KeepRule | undefined): { lead: string; count: number; tail: string } | null {
+  const kept = rule?.players.filter((k) => k.protected).length ?? 0;
+  const bench = rule?.players.filter((k) => k.bench).length ?? 0;
+  if (!kept && !bench) return null;
+  if (!kept) return { lead: "Keep rule benches ", count: bench, tail: "" };
+  return { lead: "Keep rule protects ", count: kept, tail: bench ? ` and benches ${bench}` : "" };
+}
+
+/** The Waivers header in one phrase (#153), "392 players · next 3 weeks", with every other
+ * clause it carried in its "?" tooltip, one a line and unchanged. */
+export function waiversNote(a: {
+  label: string;
+  players: number | null | undefined;
+  file: string | null | undefined;
+  asOf: string | null | undefined;
+  horizon: Horizon;
+  /** The other system's short name, whose totals show on hover. */
+  other: string;
+  shown: number;
+  total: number;
+  /** What the gains mean and the players with no line, once the moves are valued. */
+  moves: string | null;
+}): { phrase: string; detail: string[] } {
+  const read = a.players ? `${a.label}: ${a.players} players` : `${a.label}: nothing read yet`;
+  const detail = [read];
+  if (a.asOf) detail.push(`${a.file ? `${a.file}, ` : "read "}${a.asOf.slice(0, 10)}`);
+  detail.push(`totals over the ${HORIZON_LABEL[a.horizon]}, every game he plays counted`, `hover a total for ${a.other}'s`);
+  detail.push(a.shown === a.total ? `the ${a.total} most rostered available players` : `${a.shown} of the ${a.total} most rostered available players`);
+  if (a.moves) detail.push(...a.moves.split(" · "));
+  const phrase = `${a.players ? `${a.players} players` : "no projection read"} · ${HORIZON_LABEL[a.horizon]}`;
+  return { phrase, detail };
+}
+
 /** Why the keep rule keeps a player: protected, or on the bench until his return. */
 export function keptWhy(k: KeptPlayer): string {
   return k.protected ? "protected" : `bench, back ${dayLabel(k.back)}`;
