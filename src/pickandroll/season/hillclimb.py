@@ -214,16 +214,21 @@ def scope(
     ]
     if not leagues:
         return [], None
-    counts = Counter(repr(value(knobs, lg, knob)) for lg in leagues)
-    values = {repr(value(knobs, lg, knob)): value(knobs, lg, knob) for lg in leagues}
+    at = _modal([value(knobs, lg, knob) for lg in leagues])
+    return _ids(lg for lg in leagues if value(knobs, lg, knob) == at), at
+
+
+def _modal(values: Sequence[Any]) -> Any:
+    """The value most of ``values`` share, the lower on a tie."""
+    counts = Counter(repr(v) for v in values)
+    by = {repr(v): v for v in values}
     top = max(counts.values())
     common = sorted(
-        (values[r] for r, n in counts.items() if n == top), key=lambda v: (v is None, str(v))
+        (by[r] for r, n in counts.items() if n == top), key=lambda v: (v is None, str(v))
     )
     if all(isinstance(v, int | float) for v in common):
         common = sorted(common)
-    at = common[0]
-    return _ids(lg for lg in leagues if value(knobs, lg, knob) == at), at
+    return common[0]
 
 
 def halves(
@@ -371,10 +376,11 @@ def _system_rule(
     if system == "blend":
         if not _kept_blend(knobs, reach):
             return {**out, "blocked": "the blend in force has not been kept yet"}
-        weights = {lg: value(knobs, lg, "blend") for lg in reach}
-        at = next(iter(weights.values()))
-        at = pg.BLEND if at is None else float(at)
-        reach = [lg for lg in reach if (weights[lg] or pg.BLEND) == at]
+        weights = {
+            lg: pg.BLEND if (w := value(knobs, lg, "blend")) is None else float(w) for lg in reach
+        }
+        at = _modal(list(weights.values()))
+        reach = [lg for lg in reach if weights[lg] == at]
         to = round(at + BLEND_STEP, 4)
         a, b = halves(reach, lag)
         return {
@@ -482,17 +488,20 @@ def verdict(
     knobs: Mapping[str, Any],
 ) -> dict[str, Any]:
     """A change's verdict over its two weeks: the halves (A the leagues that took it, B the
-    armed leagues of its scope that kept the setting), each measure for both, and the measure
-    that decided, kept when none tells them apart. The year to date is shown beside: each
-    measure for both halves to the last week and before the change."""
+    armed leagues of its scope that kept the setting: those the change recorded, when it did),
+    each measure for both, and the measure that decided, kept when none tells them apart. The
+    year to date is shown beside: each measure for both halves to the last week and before the
+    change."""
     week = int(change["week"])
     end = week + pg.JUDGED_WEEKS - 1
     scoring = change.get("scoring")
+    named = change.get("b_leagues")
     a = _ids(lg for lg in change["leagues"] if lg in armed)
     b = _ids(
         lg
         for lg, s in armed.items()
         if lg not in a
+        and (named is None or lg in named)
         and (scoring is None or s == scoring)
         and not frozen(knobs, lg, change["knob"])
     )
@@ -524,6 +533,25 @@ def verdict(
         "leagues": a,
         "b_leagues": b,
         **figures,
+    }
+
+
+def _judged(change: Mapping[str, Any], raw: Mapping[str, Any]) -> dict[str, Any] | None:
+    """The verdict the step wrote on ``raw`` (``change`` as the knob file reads it), as
+    :func:`verdict` gave it; None when it wrote none."""
+    j = raw.get("judged")
+    if not isinstance(j, dict) or change["verdict"] is None:
+        return None
+    return {
+        "id": change["id"],
+        "knob": change["knob"],
+        "verdict": change["verdict"],
+        "decided_by": j.get("decided_by"),
+        "leagues": j.get("leagues") or [],
+        "b_leagues": j.get("b_leagues") or [],
+        "window": j.get("window"),
+        "a": j.get("a") or {},
+        "b": j.get("b") or {},
     }
 
 
@@ -749,13 +777,17 @@ def step(
         c["week"] = pg.week_at(weeks, c["monday"]) if weeks else None
     verdicts = []
     for c in knobs["changes"]:
+        target = _raw_change(out_raw, c["id"])
+        if c["judged_on"] == m and target is not None and (earlier := _judged(c, target)):
+            # Judged by this Monday's first run (``force`` runs it again): the note keeps it.
+            verdicts.append(earlier)
+            continue
         if not due(c, last):
             continue
         v = verdict(c, armed, rows, moves, knobs)
         verdicts.append(v)
-        target = _raw_change(out_raw, c["id"])
         if v["verdict"] == "kept":
-            reach = _roll_out(out_raw, c, armed, leagues)
+            reach = _roll_out(out_raw, target or c, armed, leagues)
         else:
             _undo(out_raw, target or c, leagues)
             reach = v["leagues"]
@@ -767,6 +799,8 @@ def step(
                 "judged": {
                     "decided_by": v["decided_by"],
                     "window": v["window"],
+                    "leagues": v["leagues"],
+                    "b_leagues": v["b_leagues"],
                     "a": v["a"],
                     "b": v["b"],
                     "reached": reach,

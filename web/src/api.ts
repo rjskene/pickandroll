@@ -1986,6 +1986,8 @@ export interface KnobChange {
   rolled_out: string | null;
   /** A change of one scoring's knob (#152): its B half is that scoring's other leagues. */
   scoring?: "categories" | "points" | null;
+  /** The B half the Monday step recorded (#152); null on a change that names none. */
+  b_leagues?: string[] | null;
   week: number | null;
   ab: {
     window: [number, number] | null;

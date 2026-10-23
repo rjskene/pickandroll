@@ -212,6 +212,7 @@ def _change(i: int, raw: Any, problems: list[str]) -> dict[str, Any] | None:
     if not isinstance(leagues, list):
         problems.append(f"{cid}: its leagues are not a list")
         leagues = []
+    b_leagues = raw.get("b_leagues")
     return {
         "id": cid,
         "monday": monday,
@@ -226,6 +227,8 @@ def _change(i: int, raw: Any, problems: list[str]) -> dict[str, Any] | None:
         **dates,
         # A change of one scoring's knob (#152): its B half is drawn from that scoring alone.
         "scoring": raw.get("scoring") if raw.get("scoring") in SCORINGS else None,
+        # The step's own change records its B half; it is compared against those leagues.
+        "b_leagues": [str(x) for x in b_leagues] if isinstance(b_leagues, list) else None,
     }
 
 
@@ -391,15 +394,18 @@ def ab(
     on (from its ``week``, :data:`JUDGED_WEEKS` of them, as far as recorded), and each recorded
     week's wins above expected a league for both halves, from two weeks before it. ``rows`` are
     the public leagues' week rows; None before its week is known. A change of one scoring's knob
-    (``scoring``, #152) draws its B half from the leagues of that scoring."""
+    (``scoring``, #152) draws its B half from the leagues of that scoring, and one that records
+    its B half (``b_leagues``, the Monday step's) from those."""
     if week is None:
         return None
     scoring = change.get("scoring")
     a = [lg for lg in rows if lg in change["leagues"]]
+    named = change.get("b_leagues")
     b = [
         lg
         for lg in rows
         if lg not in change["leagues"]
+        and (named is None or lg in named)
         and (scoring is None or any(r.get("scoring") == scoring for r in rows[lg]))
     ]
     end = min(week + JUDGED_WEEKS - 1, last) if last is not None else week - 1

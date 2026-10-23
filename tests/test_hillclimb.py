@@ -243,6 +243,13 @@ def test_a_kept_blend_steps_a_quarter_toward_yahoo_within_its_bounds():
     assert step(pending, payload(moves))["rules"][4]["blocked"] == (
         "the blend in force has not been kept yet"
     )
+    # The step moves the weight most leagues share; a league on another weight keeps it.
+    mixed = step(
+        {"in_force": {"system": "blend"}, "leagues": {"1": {"blend": 0.75}}}, payload(moves)
+    )
+    c = mixed["change"]
+    assert (c["from"], c["to"]) == (0.5, 0.75)
+    assert "1" not in [*c["leagues"], *c["b_leagues"]]
 
 
 def test_a_knob_changed_in_the_last_four_weeks_or_frozen_is_not_changed_again():
@@ -356,6 +363,60 @@ def test_a_change_is_judged_two_mondays_on_and_a_kept_one_rolls_out_to_its_scori
         0.0,
     ]
     assert "K1 (protection_floor) is kept: on wins above expected a league" in out["note"]
+
+
+def test_a_kept_system_change_rolls_out_its_weight_against_the_half_it_recorded():
+    # K1 put leagues 1 and 3 on the blend at half, the file's weight elsewhere 0.75; it
+    # recorded leagues 2 and 4 as its B half, so the points leagues are not compared.
+    raw = {
+        "in_force": {"blend": 0.75},
+        "leagues": {"1": {"system": "blend", "blend": 0.5}, "3": {"system": "blend", "blend": 0.5}},
+        "changes": [
+            {
+                "id": "K1",
+                "monday": "2026-10-26",
+                "knob": "system",
+                "from": "bbm",
+                "to": "blend",
+                "leagues": ["1", "3"],
+                "b_leagues": ["2", "4"],
+                "source": "master",
+                "verdict": None,
+                "set": {"system": "blend", "blend": 0.5},
+                "was": {"system": {"1": "bbm", "3": "bbm"}, "blend": {"1": 0.75, "3": 0.75}},
+            }
+        ],
+    }
+    out = step(raw, payload(rows=two_weeks(0.5, -0.5), last=3), MONDAYS[3])
+    (v,) = out["verdicts"]
+    assert (v["verdict"], v["leagues"], v["b_leagues"]) == ("kept", ["1", "3"], ["2", "4"])
+    knobs, _ = pg.knob_file(out["knobs"])
+    assert {lg: pg.in_force_for(knobs, lg)["system"] for lg in EVERY} == {
+        **dict.fromkeys(ARMED, "blend"),
+        "9": "bbm",
+    }
+    assert {lg: pg.in_force_for(knobs, lg)["blend"] for lg in EVERY} == {
+        **dict.fromkeys(ARMED, 0.5),
+        "9": 0.75,
+    }
+    # The Progress view's A/B draws the same B half.
+    rows = {
+        lg: [{**r, "brier": None, "moves": {"made": 0}} for r in rs]
+        for lg, rs in two_weeks(0.5, -0.5).items()
+    }
+    half = pg.ab(knobs["changes"][0], 2, rows, 3)
+    assert (half["a"]["leagues"], half["b"]["leagues"]) == (["1", "3"], ["2", "4"])
+
+
+def test_force_on_a_monday_that_judged_keeps_its_verdict_and_judges_nothing_twice():
+    p = payload(rows=two_weeks(0.5, -0.5), last=3)
+    first = step(judged_file(), p, MONDAYS[3])
+    again = step(first["knobs"], p, MONDAYS[3], force=True)
+    assert [(v["id"], v["verdict"], v["decided_by"]) for v in again["verdicts"]] == [
+        ("K1", "kept", "wins_above")
+    ]
+    assert again["knobs"] == first["knobs"]
+    assert again["note"] == first["note"]
 
 
 def test_a_change_that_did_worse_is_reverted_to_its_old_values():
