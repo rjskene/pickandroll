@@ -52,7 +52,7 @@ _EXECUTOR = ThreadPoolExecutor(max_workers=2, thread_name_prefix="strategy")
 class Settings:
     pool: int = POOL
     weights: tuple[str, ...] = st.WEIGHT_KEYS
-    #: My players no move may drop.
+    #: My players no move may drop, beside those the keep rule keeps (#124).
     keep: tuple[int, ...] = ()
     #: The linear program's set wherever it solved, the search only its fallback (#110's B).
     program_only: bool = False
@@ -146,6 +146,7 @@ class Run:
                 "system": b.system,
                 "weeks_left": b.weeks_left,
                 "settings": self.settings.to_dict(),
+                "keep_rule": season_moves.keep_payload(b),
                 "pool": list(self.pool),
                 "horizons": horizons,
                 "adds": b.adds,
@@ -320,20 +321,25 @@ class Run:
         """The point's recommended set: its moves (priced once ``rec`` is in), gains and the
         per-category before and after on both horizons."""
         p = self.built.problem
+        by_add = season_moves.held_by_add(p, moves)
         if rec is None:
-            rows = [{**season_moves._move(m, p), "priced": False} for m in moves]
+            rows = [
+                {**season_moves._move(m, p), "held": by_add.get(m.add), "priced": False}
+                for m in moves
+            ]
         else:
             rows = [
                 {
                     **season_moves._move(pm.move, p),
+                    "held": by_add.get(pm.move.add),
                     "priced": True,
                     "marginal": {h: _r(v) for h, v in pm.marginal.items()},
                     "price_without": _r(pm.price_without),
                     "price_keep": None if pm.price_keep is None else _r(pm.price_keep),
-                    "instead_without": [season_moves._move(m, p) for m in pm.instead_without],
+                    "instead_without": season_moves.moves_with_held(p, pm.instead_without),
                     "instead_keep": None
                     if pm.instead_keep is None
-                    else [season_moves._move(m, p) for m in pm.instead_keep],
+                    else season_moves.moves_with_held(p, pm.instead_keep),
                 }
                 for pm in rec.moves
             ]
@@ -344,7 +350,9 @@ class Run:
             }
             for key in season_moves.HORIZONS
         }
-        return {"moves": rows, "gain": self._gains(wt, moves), "cats": cats}
+        # The held-slot moves the set's adds without a drop need (#124).
+        held = [{"player": k, "slot": slot} for k, slot in mv.held_used(p, moves)]
+        return {"moves": rows, "gain": self._gains(wt, moves), "cats": cats, "held": held}
 
 
 class Runs:

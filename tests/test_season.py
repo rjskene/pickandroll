@@ -55,6 +55,8 @@ from pickandroll.sources import schedule
 from pickandroll.sources.injuries import ESPN_INJURIES_URL
 from pickandroll.sources.yahoo import pages, public
 
+from .test_moves import WEEKS, build, streaming_league
+
 FIXTURES = Path(__file__).parent / "fixtures" / "season"
 LEAGUE = "100001"
 #: The day the fixture pages were read (US Eastern), mid-afternoon.
@@ -1473,15 +1475,16 @@ def test_the_best_move_comes_from_the_solved_moves_and_never_solves_them(client)
 
 
 # --------------------------------------------------------------------------- strategy (#110)
-def strategy_league(client) -> season_api.SeasonService:
+def strategy_league(client, mine_scale: dict[str, float] | None = None) -> season_api.SeasonService:
     """The fixture league refreshed with games every day and twenty available players projected
-    on lines from half to one and a half times the others', its programs solved in process."""
+    on lines from half to one and a half times the others' (mine scaled by ``mine_scale``), its
+    programs solved in process."""
     client.fake.every_day = True
     client.post(f"/seasons/{LEAGUE}/refresh", params={"wait": True})
     v = client.get(f"/seasons/{LEAGUE}").json()
     mine = set(fixture_names())
     pool = [a["player"]["name"] for a in v["available"] if a["player"]["name"] not in mine][:20]
-    scale = {name: 0.5 + i / 19 for i, name in enumerate(pool)}
+    scale = {name: 0.5 + i / 19 for i, name in enumerate(pool)} | (mine_scale or {})
     projection_csv(
         client.data_dir / "bbm_projections_2026-10-21.csv",
         [*mine, *pool],
@@ -1933,3 +1936,85 @@ def test_a_stale_past_days_export_leaves_only_the_minutes_silent():
     assert set(season_flags.silent(info)) == {"minutes"}
     assert "within 3 days" in season_flags.silent(info)["minutes"]
     assert season_flags.silent({"error": "boom"}) == {}
+
+
+# --------------------------------------------------------------------------- the keep rule (#124)
+def test_the_moves_say_whom_the_keep_rule_keeps_and_what_to_do_with_an_out_player(client):
+    """Made-up lines: the star and my out bench player above the best add, the rest below."""
+    strategy_league(client, {"Kevin Durant": 1.5, "Aaron Nesmith": 2.0})
+    v = client.get(f"/seasons/{LEAGUE}").json()
+    m = client.get(f"/seasons/{LEAGUE}/moves").json()
+    ids = {s["player"]["name"]: s["player"]["yahoo_id"] for s in v["roster"]}
+    star, out = ids["Kevin Durant"], ids["Aaron Nesmith"]
+    rule = m["keep_rule"]
+    assert rule["floor"] == 0.0 and rule["average"] == 0.0
+    assert str(rule["best"]["player"]) in m["candidates"]
+    by = {k["player"]: k for k in rule["players"]}
+    assert set(by) == {
+        s["player"]["yahoo_id"] for s in v["roster"] if s["slot"] not in ("IL", "IL+", "NA")
+    }
+    for k in by.values():
+        assert k["protected"] == (k["net_positive"] and k["beats_best"] and k["returns"])
+        assert k["value"] is None or k["protected"] == (k["value"] > rule["best"]["value"])
+    kept = {k for k, x in by.items() if x["protected"] or x["bench"]}
+    assert kept == {star, out}
+    # He is out until next Monday and still protected; the open IL takes him.
+    assert by[out]["back"] == "2026-10-26"
+    [advice] = m["stash"]
+    assert (advice["player"], advice["status"], advice["advice"], advice["slot"]) == (
+        out,
+        "O",
+        "stash",
+        "IL",
+    )
+    assert advice["slots"] == ["IL"] and advice["protected"] and advice["net"] > 0
+    assert advice["add"]["three"]["player"] in {int(c) for c in m["candidates"]}
+    # No move drops a kept player; an add with no drop names the held move that makes room.
+    for row in m["candidates"].values():
+        for key in ("week", "three"):
+            best = row[key]
+            if best is None:
+                continue
+            assert best["drop"] not in kept and best["next_drop"] not in kept
+            assert (best["held"] is not None) == (best["drop"] is None)
+    for key in ("week", "three"):
+        rec = m["recommended"][key]
+        assert not kept & {x["drop"] for x in rec["moves"]}
+        free = [x for x in rec["moves"] if x["drop"] is None]
+        assert [x["held"] for x in free] == rec["held"][: len(free)]
+    # The drawer still lists a kept player as a drop, marked: what keeping him costs.
+    pid = rule["best"]["player"]
+    d = client.get(f"/seasons/{LEAGUE}/moves/{pid}", params={"drop": star}).json()
+    marks = {x["drop"]: x["kept"] for x in d["drops"]}
+    assert marks[star] is True and marks[None] is False
+    # No drop: the out player's IL move makes the room, and the drawer names it.
+    nobody = next(x for x in d["drops"] if x["drop"] is None)
+    assert nobody["held"] == {"player": out, "slot": "IL"}
+    assert all(x["held"] is None for x in d["drops"] if x["drop"] is not None)
+    assert not any(marks[k] for k in marks if k not in kept and k is not None)
+
+
+def test_the_strategy_names_the_held_moves_and_never_drops_a_kept_player(client):
+    strategy_league(client, {"Kevin Durant": 1.5, "Aaron Nesmith": 2.0})
+    s = client.post(
+        f"/seasons/{LEAGUE}/strategy", params={"wait": True, "pool": 10, "weights": "week,natural"}
+    ).json()
+    kept = {k["player"] for k in s["keep_rule"]["players"] if k["protected"] or k["bench"]}
+    assert len(kept) == 2
+    for pt in s["points"]:
+        for block in (pt["moves"], pt["search"]["moves"], pt["milp"]["moves"] or []):
+            assert not kept & {x["drop"] for x in block}
+        free = [x for x in pt["moves"] if x["drop"] is None]
+        assert [x["held"] for x in free] == pt["held"][: len(free)]
+        assert all(x["held"] is None for x in pt["moves"] if x["drop"] is not None)
+
+
+def test_an_add_with_no_move_says_why():
+    roster, cands, rate, sched, opponent, field = streaming_league()
+    p = build(roster, cands, rate, sched, opponent, field)
+    every = replace(p, kept=frozenset(k for k, _ in roster))
+    ev = mv.Evaluator(every)
+    assert all(not gs for gs in mv.single_swaps(ev, "week").values())
+    assert season_moves.no_move(every, 10) == season_moves.NO_DROP
+    shut = replace(p, limits=(mv.AddLimit(WEEKS[0][0], WEEKS[0][6], 0),))
+    assert season_moves.no_move(shut, 10) == season_moves.NO_ADDS_LEFT

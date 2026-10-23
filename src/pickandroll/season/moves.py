@@ -38,8 +38,20 @@ A held-slot move defers a drop; it does not avoid one (#97). The player moved co
 the first day of the first week the out rule lets him play (next Monday for an O), or on his
 return date (``returns``, ESPN's) when later, and plays from then; INJ, OFS, SUSP and NA stay
 out of every horizon and cost nothing. From the day he comes back the set drops its least
-valuable active player by per-game value, him included (:func:`comebacks`). That is an
-approximation: the starters' own ranking, not each choice re-valued.
+valuable active player by per-game value, him included, never one the keep rule keeps
+(:func:`comebacks`). That is an approximation: the starters' own ranking, not each choice
+re-valued. Several eligible players for fewer open slots: the latest to return goes first, roster
+order breaking ties (:func:`held_moves`).
+
+The keep rule (#124, the user's of 2026-10-22, docs/AUTOPILOT.md section 4) is a forced keep, not
+a value term: the three-week horizon, and the season the strategy engine reads from it, value a
+player out three weeks at about nothing. A player of mine is **protected** when he is net positive
+(his rest-of-season per-game value above the pool's average, ``average``), that value
+exceeds the best available add's by the floor, and he returns this season (:func:`back_from`). A
+player who passes the last two but not the first and is back within :data:`SHORT_ABSENCE_DAYS`
+is kept on the bench for the solve. Neither is ever a drop on any horizon (``kept``,
+:func:`drop_options`); a protected player out still goes to a held slot when one is open. His
+value net of return (:func:`net_of_return`) only ranks the IL and is shown, never protects.
 """
 
 from __future__ import annotations
@@ -47,7 +59,7 @@ from __future__ import annotations
 import re
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, timedelta
 from typing import Protocol
 
 from . import weekly as wk
@@ -69,6 +81,11 @@ HELD_CONFIRMED = frozenset({"IL"})
 KNOWN_STATUSES = frozenset({"P", "Q", "D", "O", "OFS", "INJ", "GTD", "SUSP", "NA"})
 #: Gains below this are equal: the search stops on them and a re-solve must beat it to count.
 EPS = 1e-9
+#: An absence shorter than this many days keeps a player better than the best add on the bench.
+SHORT_ABSENCE_DAYS = 7
+#: An NBA team's games per day over a season (82 in about 174 days): the rate for the days the
+#: schedule has not been read, for a team with no read day.
+GAMES_PER_DAY = 82 / 174
 
 Member = tuple[int, Player]
 
@@ -138,6 +155,19 @@ class MoveProblem:
     returns: Mapping[int, date] = field(default_factory=dict)
     #: The slot each of my held players sits in (``held``'s keys).
     held_slots: Mapping[int, str] = field(default_factory=dict)
+    #: The keep rule's values (#124): each player's rest-of-season per-game value, mine and the
+    #: candidates', Basketball Monster's line under the league's scorer whatever the system.
+    season_value: Mapping[int, float] = field(default_factory=dict)
+    #: The per-game value of an empty line under that scorer (a dead spot), and the pool's
+    #: average (0 for a categories league's z-sums, the best players' mean in a points league).
+    dead: float = 0.0
+    average: float = 0.0
+    #: The last day of the season's calendar.
+    season_end: date | None = None
+    #: How far a protected player's per-game value must exceed the best add's (a knob).
+    floor: float = 0.0
+    #: My players no move may drop: those the keep rule keeps (:func:`keep_rule`).
+    kept: frozenset[int] = frozenset()
 
 
 # --------------------------------------------------------------------------- eligibility
@@ -155,6 +185,15 @@ def held_slots_for(
     return tuple(slot for slot in accepts if eligible(status, slot, accepts))
 
 
+def is_cleared(
+    status: str | None, slot: str, accepts: Mapping[str, frozenset[str]] = HELD_ACCEPTS
+) -> bool:
+    """Whether a player of ``status`` sitting in held slot ``slot`` no longer fits it: he blocks
+    every add until he is activated. The one test the move model, the moves payload and the
+    lineup route all use."""
+    return slot in HELD and not eligible(status, slot, accepts)
+
+
 def cleared(problem: MoveProblem) -> list[tuple[int, str]]:
     """My held players whose status no longer fits their slot, each with the slot: each blocks
     every add until he is activated."""
@@ -162,7 +201,7 @@ def cleared(problem: MoveProblem) -> list[tuple[int, str]]:
     return [
         (key, slot)
         for key, slot in problem.held_slots.items()
-        if key in players and not eligible(players[key].status, slot, problem.held_accepts)
+        if key in players and is_cleared(players[key].status, slot, problem.held_accepts)
     ]
 
 
@@ -174,11 +213,12 @@ def open_spots(problem: MoveProblem) -> int:
 
 def held_moves(problem: MoveProblem, dropped: Iterable[int] = ()) -> list[tuple[int, str]]:
     """The active players (not in ``dropped``) that could move to an open held slot, each with
-    the slot, placed most restrictive slot first."""
+    the slot, placed most restrictive slot first: the latest to return first, roster order
+    breaking ties (:func:`stash_order`)."""
     out_ = set(dropped)
     open_ = dict(problem.held_open)
     out: list[tuple[int, str]] = []
-    for key, player in problem.roster:
+    for key, player in stash_order(problem):
         if key in out_:
             continue
         for slot in problem.held_accepts:
@@ -187,6 +227,24 @@ def held_moves(problem: MoveProblem, dropped: Iterable[int] = ()) -> list[tuple[
                 out.append((key, slot))
                 break
     return out
+
+
+def stash_order(problem: MoveProblem) -> tuple[Member, ...]:
+    """My active players in the order a held slot takes them: the latest to return first (one
+    out for the season before any), roster order breaking ties. Kept on the problem once made:
+    every feasibility check of the searches asks for it."""
+    cached = problem.__dict__.get("_stash_order")
+    if cached is not None:
+        return cached
+
+    def later(item: tuple[int, Member]) -> tuple[int, int, int]:
+        i, (key, player) = item
+        back = back_from(problem, key, player)
+        return (0, 0, i) if back is None else (1, -back.toordinal(), i)
+
+    order = tuple(m for _, m in sorted(enumerate(problem.roster), key=later))
+    object.__setattr__(problem, "_stash_order", order)
+    return order
 
 
 def limit_of(problem: MoveProblem, day: date) -> AddLimit | None:
@@ -270,9 +328,222 @@ def comebacks(problem: MoveProblem, key: str, moves: Iterable[Move]) -> list[Com
             backs.append((day, k, slot))
     out: list[Comeback] = []
     for day, k, slot in sorted(backs):
-        weakest = min(active, key=lambda x: (problem.value.get(x, 0.0), str(x)))
+        # Never a player the keep rule keeps, while another can go.
+        pool = [x for x in active if x not in problem.kept] or active
+        weakest = min(pool, key=lambda x: (problem.value.get(x, 0.0), str(x)))
         active.remove(weakest)
         out.append(Comeback(k, slot, day, weakest))
+    return out
+
+
+# --------------------------------------------------------------------------- the keep rule
+def back_from(problem: MoveProblem, key: int, player: Player) -> date | None:
+    """The day ``player`` is back, as the keep rule reads it, never before his own first day (a
+    candidate's move's): the day the move model brings him back inside the horizons
+    (:func:`comes_back`: an O next Monday, a weekly export's games, a later return date); else
+    his return date; else None when he does not return this season (OFS, or INJ, SUSP or NA with
+    no return date), and the day after the horizons for one out through them all."""
+    if player.status == "OFS":
+        return None
+    start = problem.effective.get(key, problem.first_day)
+    spans = (*problem.horizons.get("week", ()), *problem.horizons.get("three", ()))
+    day = comes_back(problem, key, player, spans)
+    if day is not None:
+        return max(start, day)
+    ret = problem.returns.get(key)
+    if ret is not None:
+        return max(start, ret)
+    if player.status in wk.OUT_ALL:
+        return None
+    last = max((d for span in spans for d in span.days), default=start)
+    return max(start, last + timedelta(days=1))
+
+
+def games_left(problem: MoveProblem, nba_team: str | None, start: date) -> float:
+    """The games ``nba_team`` plays from ``start`` to the season's last day: the schedule's on
+    the days it was read, the team's rate over its read days on the others
+    (:data:`GAMES_PER_DAY` when no day was read)."""
+    end = problem.season_end
+    if end is None or not nba_team or start > end:
+        return 0.0
+    read = list(problem.schedule)
+    rate = sum(nba_team in problem.schedule[d] for d in read) / len(read) if read else 0.0
+    rate = rate if read else GAMES_PER_DAY
+    inside = [d for d in read if start <= d <= end]
+    unread = (end - start).days + 1 - len(inside)
+    return sum(nba_team in problem.schedule[d] for d in inside) + unread * rate
+
+
+def net_of_return(problem: MoveProblem, key: int, player: Player) -> float | None:
+    """His value net of return: his per-game value above a dead spot times his games from his
+    return to the season's last day; 0 when he does not return, None without a season value.
+    It ranks the IL and is shown; it never protects."""
+    value = problem.season_value.get(key)
+    if value is None:
+        return None
+    back = back_from(problem, key, player)
+    if back is None:
+        return 0.0
+    return (value - problem.dead) * games_left(problem, player.nba_team, back)
+
+
+@dataclass(frozen=True)
+class Kept:
+    """The keep rule on one of my players."""
+
+    player: int
+    #: His rest-of-season per-game value (None: no line) and the day he is back.
+    value: float | None
+    back: date | None
+    #: Above the pool's average; above the best add's by the floor; back this season.
+    net_positive: bool
+    beats_best: bool
+    returns: bool
+    #: All three; or the last two and back within :data:`SHORT_ABSENCE_DAYS` (on the bench).
+    protected: bool
+    bench: bool
+
+
+@dataclass(frozen=True)
+class KeepRule:
+    #: The best available add by rest-of-season per-game value, and that value.
+    best: int | None
+    best_value: float | None
+    floor: float
+    #: The rule on each of my active players.
+    players: Mapping[int, Kept]
+
+    @property
+    def kept(self) -> frozenset[int]:
+        """The players no move may drop."""
+        return frozenset(k for k, x in self.players.items() if x.protected or x.bench)
+
+
+def kept_of(
+    problem: MoveProblem, key: int, player: Player, best_value: float | None, floor: float
+) -> Kept:
+    """The keep rule's three tests on ``player`` against the best add's value."""
+    value = problem.season_value.get(key)
+    back = back_from(problem, key, player)
+    net = value is not None and value > problem.average
+    beats = value is not None and (best_value is None or value > best_value + floor)
+    returns = back is not None
+    protected = net and beats and returns
+    away = back is not None and 0 < (back - problem.first_day).days < SHORT_ABSENCE_DAYS
+    return Kept(key, value, back, net, beats, returns, protected, not protected and beats and away)
+
+
+def keep_rule(problem: MoveProblem) -> KeepRule:
+    """The keep rule on my active players against the best available add (by rest-of-season
+    per-game value, among the candidates with a line)."""
+    priced = [
+        (c, problem.season_value[c]) for c, _ in problem.candidates if c in problem.season_value
+    ]
+    best = max(priced, key=lambda x: (x[1], -x[0]), default=None)
+    best_value = best[1] if best else None
+    return KeepRule(
+        best[0] if best else None,
+        best_value,
+        problem.floor,
+        {k: kept_of(problem, k, pl, best_value, problem.floor) for k, pl in problem.roster},
+    )
+
+
+# --------------------------------------------------------------------------- the IL advice
+#: The advice for one of my players with an absence (#124, "can and should").
+STASH, IL_FULL, BENCH, DROPPABLE = "stash", "il_full", "bench", "droppable"
+
+
+@dataclass(frozen=True)
+class Leave:
+    """Who should leave a full held slot for an eligible active player."""
+
+    player: int
+    slot: str
+    #: ``activate`` (a cleared occupant: the weakest active player is dropped) or ``drop``.
+    how: str
+    #: The player the move drops: the weakest active one, or the occupant himself.
+    drop: int
+    #: The occupant's value net of return, and whether the keep rule would protect him.
+    net: float | None
+    protected: bool
+
+
+@dataclass(frozen=True)
+class Advice:
+    player: int
+    status: str | None
+    back: date | None
+    #: The league's held slots his status allows, and the one the held move gives him (None:
+    #: none open).
+    slots: tuple[str, ...]
+    slot: str | None
+    protected: bool
+    bench: bool
+    #: His value net of return (:func:`net_of_return`).
+    net: float | None
+    #: :data:`STASH`, :data:`IL_FULL`, :data:`BENCH` or :data:`DROPPABLE`.
+    advice: str
+    leave: Leave | None = None
+
+
+def leave_for(problem: MoveProblem, kinds: Iterable[str], rule: KeepRule) -> Leave | None:
+    """Who should leave a full held slot of ``kinds``: a cleared occupant first, activated with
+    the weakest active player dropped as his comeback drops him, else the occupant with the
+    least value net of return, dropped; protected or not, marked."""
+    kinds = set(kinds)
+    held = dict(problem.held)
+    sitting = [(k, s) for k, s in problem.held_slots.items() if s in kinds and k in held]
+    if not sitting:
+        return None
+    back_now = [(k, s) for k, s in cleared(problem) if s in kinds]
+    if back_now:
+        k, s = back_now[0]
+        sends = {c.player: c.drop for c in comebacks(problem, "week", ())}
+        return Leave(k, s, "activate", sends.get(k, k), None, False)
+
+    def net(item: tuple[int, str]) -> tuple[float, int]:
+        k, _ = item
+        v = net_of_return(problem, k, held[k])
+        return (v if v is not None else 0.0, k)
+
+    k, s = min(sitting, key=net)
+    who = kept_of(problem, k, held[k], rule.best_value, rule.floor)
+    return Leave(k, s, "drop", k, net((k, s))[0], who.protected)
+
+
+def stash_advice(problem: MoveProblem, rule: KeepRule) -> list[Advice]:
+    """For each of my active players with an absence (back after the first day, or not this
+    season; a doubt who may play today is none): whether a held slot takes him, whether one is
+    open, and what to do. A protected player goes to the open slot (:data:`STASH`), names who should leave a
+    full one (:data:`IL_FULL`), or waits on the bench (:data:`BENCH`) when no slot takes him; a
+    player the short-absence rule keeps waits on the bench; any other may be dropped
+    (:data:`DROPPABLE`): the search decides."""
+    assigned = dict(held_moves(problem))
+    # The league's held kinds: each of its slots is open or taken.
+    kinds = set(problem.held_open) | set(problem.held_slots.values())
+    out: list[Advice] = []
+    for key, player in problem.roster:
+        k = rule.players[key]
+        if k.back is not None and k.back <= problem.first_day:
+            continue
+        slots = tuple(s for s in held_slots_for(player.status, problem.held_accepts) if s in kinds)
+        slot = assigned.get(key)
+        leave = None
+        if k.protected and slot is not None:
+            advice = STASH
+        elif k.protected and slots:
+            advice, leave = IL_FULL, leave_for(problem, slots, rule)
+        elif k.protected or k.bench:
+            advice = BENCH
+        else:
+            advice = DROPPABLE
+        net = net_of_return(problem, key, player)
+        out.append(
+            Advice(
+                key, player.status, k.back, slots, slot, k.protected, k.bench, net, advice, leave
+            )
+        )
     return out
 
 
@@ -395,9 +666,10 @@ def project_mine(
 def drop_options(
     problem: MoveProblem, taken: Sequence[Move] = (), keep: Iterable[int] = ()
 ) -> list[int | None]:
-    """Whom one more add can replace given the moves ``taken``: every active player not dropped
-    or kept, and nobody (an open spot or a held-slot move)."""
-    dropped = {m.drop for m in taken} | set(keep)
+    """Whom one more add can replace given the moves ``taken``: every active player not dropped,
+    kept (``keep``) or kept by the keep rule (``problem.kept``), and nobody (an open spot or a
+    held-slot move)."""
+    dropped = {m.drop for m in taken} | set(keep) | problem.kept
     return [None, *(key for key, _ in problem.roster if key not in dropped)]
 
 

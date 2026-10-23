@@ -15,7 +15,7 @@ from pickandroll.season import moves as mv
 from pickandroll.season import strategy as st
 from pickandroll.season import weekly as wk
 
-from .test_moves import WEEKS, build, deep_league, streaming_league
+from .test_moves import WEEKS, build, deep_league, il_league, streaming_league
 
 WEEKS_LEFT = 10
 
@@ -162,6 +162,36 @@ def test_a_drop_for_a_claim_keeps_his_games_until_it_clears():
     assert mine.players[3].started == 2 and mine.players[10].started == 2
     for c in p.cats:
         assert m.totals["week"][c] == pytest.approx(mine.totals[c])
+
+
+def test_the_program_stashes_an_out_player_into_an_open_il_slot_for_an_add_without_a_drop():
+    """The IL league: player 5 out until next Monday, one IL slot open (#124)."""
+    roster, cands, rate, sched, opponent, field, value = il_league()
+    p = build(roster, cands, rate, sched, opponent, field, held_open={"IL": 1}, value=value)
+    ev = mv.Evaluator(p)
+    m = st.solve_milp(p, st.curves(ev), [10, 11], 1.0, WEEKS_LEFT)
+    assert m.status == st.OPTIMAL and mv.feasible(p, m.moves)
+    assert any(x.drop is None for x in m.moves)
+    assert mv.held_used(p, m.moves) == [(5, "IL")]
+    # Over the weeks after, his return needs a spot: the set stays one Yahoo takes.
+    for lam in (0.5, 0.0):
+        later = st.solve_milp(p, st.curves(ev), [10, 11], lam, WEEKS_LEFT)
+        assert later.status == st.OPTIMAL and mv.feasible(p, later.moves)
+    # The IL taken: every add comes with a drop.
+    full = build(roster, cands, rate, sched, opponent, field, value=value)
+    m = st.solve_milp(full, st.curves(mv.Evaluator(full)), [10, 11], 1.0, WEEKS_LEFT)
+    assert m.moves and all(x.drop is not None for x in m.moves)
+
+
+def test_the_program_never_drops_a_player_the_keep_rule_keeps():
+    p, pool = limited()
+    cv = st.curves(mv.Evaluator(p))
+    free = st.solve_milp(p, cv, pool, 0.5, WEEKS_LEFT)
+    drops = {x.drop for x in free.moves} - {None}
+    assert drops
+    kept = replace(p, kept=frozenset(drops))
+    m = st.solve_milp(kept, st.curves(mv.Evaluator(kept)), pool, 0.5, WEEKS_LEFT)
+    assert m.status == st.OPTIMAL and not drops & {x.drop for x in m.moves}
 
 
 # --------------------------------------------------------------------------- status and choice

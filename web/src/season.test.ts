@@ -6,12 +6,15 @@ import type {
   BestMove,
   FlagConfig,
   FlagSignal,
+  KeepRule,
+  KeptPlayer,
   MoveCandidate,
   PlayerFlag,
   Rates,
   RosterRow,
   SeasonPlayer,
   SeasonSummary,
+  Stash,
   StrategyPoint,
   TradePlayer,
   TradeSide,
@@ -50,11 +53,17 @@ import {
   comebackText,
   dayLabel,
   effectiveNote,
+  forText,
   gainLabel,
+  keepLine,
+  keepRuleNote,
+  keptPlayers,
+  keptWhy,
   marginText,
   movedGames,
   movedGamesTitle,
   rosterNote,
+  stashText,
   tradeVerdict,
   weekResult,
   weekTone,
@@ -558,6 +567,80 @@ test("a held player's return names the drop it forces, the earliest day per play
     comebackText([week, three], name),
     "From Oct 28, P7 goes on return; from Nov 2, P3 goes when P5 returns.",
   );
+});
+
+test("an add goes in for his drop, the held move that makes room, or an open spot", () => {
+  const name = (id: number | null) => (id == null ? "an open spot" : `P${id}`);
+  assert.equal(forText({ drop: 4 }, name), "P4");
+  assert.equal(forText({ drop: null, held: { player: 6, slot: "IL" } }, name), "P6 to IL");
+  assert.equal(forText({ drop: null, held: null }, name), "an open spot");
+});
+
+const keepRule = (players: Partial<KeptPlayer>[]): KeepRule => ({
+  floor: 0,
+  average: 0,
+  best: { player: 9, value: 0.5 },
+  players: players.map((k) => ({ player: 0, value: 1, back: null, net_positive: true, beats_best: true, returns: true, protected: false, bench: false, ...k })),
+});
+
+test("the keep rule names whom it keeps and benches, and why", () => {
+  const name = (id: number) => `P${id}`;
+  assert.equal(keepLine(undefined, name), null);
+  assert.equal(keepLine(keepRule([{ player: 1, beats_best: false }]), name), null);
+  const rule = keepRule([
+    { player: 1, protected: true },
+    { player: 2, bench: true, net_positive: false, back: "2026-10-25" },
+    { player: 3, protected: true },
+  ]);
+  assert.deepEqual(
+    keptPlayers(rule).map((k) => k.player),
+    [1, 3, 2],
+  );
+  assert.equal(
+    keepLine(rule, name),
+    "The keep rule keeps P1 and P3 (better than the best add, P9, over the rest of the season) and benches P2 (back Oct 25): no move drops them.",
+  );
+  assert.equal(keptWhy(rule.players[0]), "protected");
+  assert.equal(keptWhy(rule.players[1]), "bench, back Oct 25");
+  assert.equal(
+    keepRuleNote({ ...rule, floor: 0.1 }, name),
+    "Protected: above the pool's average (0.00 a game), better than the best add (P9, 0.50) by more than 0.1 over the rest of the season, and back this season; benched: better than the best add (P9, 0.50) by more than 0.1 and back within a week. No move drops either.",
+  );
+});
+
+const stash = (x: Partial<Stash>): Stash => ({
+  player: 1,
+  status: "O",
+  back: "2026-11-02",
+  slots: ["IL", "IL+"],
+  slot: null,
+  protected: true,
+  bench: false,
+  net: 12.34,
+  advice: "bench",
+  leave: null,
+  add: null,
+  ...x,
+});
+
+test("a player who is out reads as a stash, a full slot's leaver, bench or droppable", () => {
+  const name = (id: number | null) => (id == null ? "an open spot" : `P${id}`);
+  assert.equal(
+    stashText(stash({ advice: "stash", slot: "IL", add: { week: { player: 5, gain: 0.1 }, three: { player: 6, gain: 0.42 } } }), name),
+    "P1 (O, back Nov 2): move to IL, which frees a spot for P6 (+0.42 over the three weeks); 12.3 net of return.",
+  );
+  assert.equal(stashText(stash({ advice: "stash", slot: "IL", add: { week: { player: 5, gain: 0.1 }, three: null } }), name).includes("P5 (+0.10 this week)"), true);
+  assert.equal(
+    stashText(stash({ advice: "il_full", leave: { player: 7, slot: "IL", how: "activate", drop: 8, net: null, protected: false } }), name),
+    "P1 (O, back Nov 2): eligible, IL or IL+ full; activate P7 (cleared) from IL, dropping P8; 12.3 net of return.",
+  );
+  assert.equal(
+    stashText(stash({ advice: "il_full", net: null, leave: { player: 7, slot: "IL+", how: "drop", drop: 7, net: 3.21, protected: true } }), name),
+    "P1 (O, back Nov 2): eligible, IL or IL+ full; P7 should leave IL+, the least value net of return (3.2), though protected: advice only.",
+  );
+  assert.equal(stashText(stash({ advice: "il_full", slots: ["IL"], net: null }), name), "P1 (O, back Nov 2): eligible, IL full.");
+  assert.equal(stashText(stash({ status: "GTD", back: "2026-10-24", protected: false, bench: true }), name), "P1 (GTD, back Oct 24): bench, back Oct 24.");
+  assert.equal(stashText(stash({ status: "OFS", back: null, protected: false, advice: "droppable" }), name), "P1 (OFS, no return date): droppable, the moves may take him.");
 });
 
 // ---------------------------------------------------------------- landing grid (#108)
