@@ -445,7 +445,7 @@ export function forText(x: { drop: number | null; held?: HeldMove | null }, name
   return x.drop == null && x.held ? `${name(x.held.player)} to ${x.held.slot}` : name(x.drop);
 }
 
-/** "Bey and Giddey" (#124). */
+/** "Brooks and Grant" (#124). */
 function andList(ids: number[], name: (id: number) => string): string {
   const n = ids.map(name);
   return n.length > 1 ? `${n.slice(0, -1).join(", ")} and ${n[n.length - 1]}` : (n[0] ?? "");

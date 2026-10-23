@@ -734,7 +734,7 @@ function systemTitle(info: ProjectionSystemInfo, system: ProjectionSystem): stri
 // ---------------------------------------------------------------- moves (#94)
 const OTHER_HORIZON: Record<MoveHorizon, MoveHorizon> = { week: "three", three: "week" };
 
-/** "adds Brooks for Bey, Vucevic for Ayton to IL", or "makes no move". */
+/** "adds Brooks for Grant, Vucevic for Ayton to IL", or "makes no move". */
 function insteadText(moves: HeldRef[], name: Namer): string {
   return moves.length ? `adds ${moves.map((x) => `${name(x.add)} for ${forText(x, name)}`).join(", ")}` : "makes no move";
 }
