@@ -638,7 +638,7 @@ export function keepPhrase(rule: KeepRule | undefined): { lead: string; count: n
  * clause it carried in its "?" tooltip, one a line and unchanged. */
 export function waiversNote(a: {
   label: string;
-  players: number;
+  players: number | null | undefined;
   file: string | null | undefined;
   asOf: string | null | undefined;
   horizon: Horizon;
