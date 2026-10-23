@@ -182,8 +182,9 @@ act on. The private league is shown apart. Built after #125 and #126, with phase
 
 **The knob file** (`data/autopilot/knobs.json`, #129). JSON the master writes, by hand until the
 Monday step of phase 3 does, and the Progress view only reads. It is meant to be edited by hand, so
-the view reads it leniently: a key it does not know, a change without a date or a knob, or a verdict
-of neither kind is named in the view's problems and left out, and never fails the page.
+the view reads it leniently: a key it does not know, or a change without a date or a knob, is
+named in the view's problems and left out; a verdict or source of neither kind is named there and
+the change kept with none; none of it fails the page.
 
 - `in_force`: the value in force of each knob, by the names the decision log records them under
   (#125, `knobs` in an entry) and no other: `system` and `blend` (the projection system or blend
