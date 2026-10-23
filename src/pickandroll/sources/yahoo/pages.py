@@ -9,8 +9,9 @@ Each parser takes the page's HTML and returns a season part's data (``pickandrol
   waivers with their clear date, percent rostered and started (with the day's change in the
   ``R_O`` "Research" view), adds and drops; in the ``S_PS7`` view, Yahoo's projection for the
   next seven days (``parse_projection_page``);
-* a matchup page ``/nba/<league>/matchup?week=<w>&mid1=<a>&mid2=<b>``: both teams' totals and
-  games played (``mid1`` alone names the team's opponent that week);
+* a matchup page ``/nba/<league>/matchup?date=totals&week=<w>&mid1=<a>&mid2=<b>``: both
+  teams' totals and games played (``mid1`` alone names the team's opponent that week). Without
+  ``date=totals``, while games are live, Yahoo serves the Live tab, which names neither team;
 * the players page in a season view (``S_S_<season>``, totals) and the player search
   ``/nba/<league>/playersearch?search=<name>``: every row's line with its owner
   (``parse_stat_lines``);

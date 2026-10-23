@@ -544,6 +544,8 @@ class FakeYahoo:
         self.lineups: dict[tuple[int, date], str] = {}
         #: A team's page today instead of its fixture.
         self.team_pages: dict[int, str] = {}
+        #: The pairs whose matchup page names no teams even in the totals view.
+        self.live: set[tuple[int, ...]] = set()
 
     def __call__(self, url: str) -> str:
         self.urls.append(url)
@@ -591,6 +593,9 @@ class FakeYahoo:
             offset = int(re.search(r"count=(\d+)", url).group(1))
             return fixture("avail0.html" if offset == 0 else "avail25.html")
         if kind == "matchup":
+            # As on 2026-10-22: the plain page is the Live tab, the totals view the page read.
+            if "date=totals" not in url or tuple(info["teams"]) in self.live:
+                return fixture("matchup_live.html")
             return matchup_page(info["teams"])
         if kind == "transactions":
             return fixture("transactions.html")
@@ -651,7 +656,9 @@ def test_a_refresh_reads_the_public_sources_and_serves_the_season(client):
     fake = client.fake
     assert sum("/players?" in u and "S_PS7" not in u for u in fake.urls) == 2
     assert sum("/players?" in u and "S_PS7" in u for u in fake.urls) == 2
-    dated = [u for u in fake.urls if "?date=" in u and "/buzzindex" not in u]
+    dated = [
+        u for u in fake.urls if "?date=" in u and "/buzzindex" not in u and "/matchup" not in u
+    ]
     # The calendar, one request per Monday from Oct 19 to Mar 29, and my team page shown for
     # each day of this week (#107).
     week = [date(2026, 10, 19) + timedelta(days=n) for n in range(7)]
@@ -667,7 +674,7 @@ def test_a_refresh_reads_the_public_sources_and_serves_the_season(client):
     assert client.post(f"/seasons/{LEAGUE}/refresh", params={"wait": True}).status_code == 202
     # No calendar again; the days before today's lineup were read once, today's and later
     # days' are read every time.
-    assert [u for u in fake.urls if "?date=" in u] == lineups[2:]
+    assert [u for u in fake.urls if "?date=" in u and "/matchup" not in u] == lineups[2:]
     assert len(list((folder / "snapshots").iterdir())) == 2
 
 
@@ -678,6 +685,7 @@ def test_a_refresh_reads_every_pairs_matchup_page_mine_first(client):
     )
     read = [u for u in client.fake.urls if "/matchup?" in u]
     assert len(read) == 6 and read[0].endswith("mid1=4&mid2=10")
+    assert all("?date=totals&" in u for u in read)
     assert [k for k in (p.key for p in parts) if k.startswith("matchup/")][:2] == [
         "matchup/1/4-10",
         "matchup/1/1-2",
@@ -694,6 +702,26 @@ def test_a_refresh_reads_every_pairs_matchup_page_mine_first(client):
     rows = {tuple(m["teams"]): m for m in client.get(f"/seasons/{LEAGUE}").json()["matchups"]}
     assert len(rows) == 6
     assert set(rows[(7, 12)]["totals"]) == {"7", "12"}
+
+
+def test_a_matchup_page_without_its_teams_skips_that_pair_and_the_refresh_lands(client):
+    assert client.post(f"/seasons/{LEAGUE}/refresh", params={"wait": True}).status_code == 202
+    folder = client.data_dir / "leagues" / LEAGUE / "season"
+    before = json.loads((folder / "state.json").read_text())["parts"]["matchup/1/7-12"]
+    client.fake.live = {(7, 12), (3, 11)}
+    r = client.post(f"/seasons/{LEAGUE}/refresh", params={"wait": True})
+    job = r.json()["refresh"]
+    assert job["status"] == "done", job
+    assert job["warnings"]["matchups"] == (
+        "2 of 6 pairs skipped: 3-11: the matchup page does not name two teams;"
+        " 7-12: the matchup page does not name two teams"
+    )
+    # The pairs read are new; a skipped pair keeps its last read.
+    parts = json.loads((folder / "state.json").read_text())["parts"]
+    assert parts["matchup/1/7-12"] == before
+    assert parts["matchup/1/4-10"]["fetched_at"] > before["fetched_at"]
+    rows = {tuple(m["teams"]) for m in client.get(f"/seasons/{LEAGUE}").json()["matchups"]}
+    assert len(rows) == 6
 
 
 def weeks_read(client) -> list[int]:
@@ -861,6 +889,21 @@ def test_a_signed_in_matchup_page_names_its_own_teams_not_the_navigations():
     assert pages.parse_matchup_page(html, pair=[1])["teams"] == [1, 2]
     with pytest.raises(pages.PageError, match="shows teams 1 and 2; its URL asks for 1 and 7"):
         pages.parse_matchup_page(html, pair=[1, 7])
+
+
+def test_the_live_matchup_page_names_no_teams_and_the_totals_view_is_read():
+    """While games are live the plain matchup page is Yahoo's Live tab, its teams and totals
+    loaded by script: nothing to read. The URL the API builds asks for the totals view."""
+    with pytest.raises(pages.PageError, match="does not name two teams"):
+        pages.parse_matchup_page(fixture("matchup_live.html"), 1)
+    assert public.matchup_url(LEAGUE, 1, [7, 12]) == (
+        f"{public.SITE}/{LEAGUE}/matchup?date=totals&week=1&mid1=7&mid2=12"
+    )
+    assert public.matchup_url(LEAGUE, 1, [7]).endswith("matchup?date=totals&week=1&mid1=7")
+    assert pages.page_kind(public.matchup_url(LEAGUE, 3, [4, 10])) == (
+        "matchup",
+        {"league": LEAGUE, "week": 3, "teams": [4, 10]},
+    )
 
 
 def test_a_matchup_page_is_stored_as_the_pair_its_url_asks_for_or_skipped(client):

@@ -167,8 +167,11 @@ def pairings_url(league: str, week: int) -> str:
 
 
 def matchup_url(league: str, week: int, teams: Iterable[int]) -> str:
-    a, b = list(teams)
-    return f"{SITE}/{league}/matchup?week={week}&mid1={a}&mid2={b}"
+    """A matchup page by its pair, or by one team (Yahoo names the opponent), in the week's
+    totals view: while games are live the plain page names neither team (2026-10-22), the
+    totals view both."""
+    mids = "".join(f"&mid{i}={t}" for i, t in enumerate(teams, 1))
+    return f"{SITE}/{league}/matchup?date=totals&week={week}{mids}"
 
 
 def buzz_url(day: date) -> str:
@@ -254,13 +257,16 @@ def refresh_parts(
     *,
     max_available: int = MAX_AVAILABLE,
     progress: Progress | None = None,
+    warn: Callable[[str, str], None] | None = None,
 ) -> list[Part]:
     """Every public source of a league, read once, as season parts.
 
     The order is settings, the player pool, the league page (standings and this week's pairs),
     every team's page, the available players most rostered first, Yahoo's projection of them
     for the next seven days, every matchup of the week (mine first) and the transactions.
-    Raises :class:`PrivateLeague` when Yahoo serves nothing public for it.
+    A matchup page that does not parse skips its pair (the last read stays) and is reported to
+    ``warn``, never failing the rest. Raises :class:`PrivateLeague` when Yahoo serves nothing
+    public for it.
     """
     pages_needed = -(-max_available // PAGE_ROWS)
     total = 4 + base.num_teams + 2 * pages_needed + base.num_teams // 2 + 1
@@ -332,10 +338,17 @@ def refresh_parts(
         (m["teams"] for m in league_page["matchups"] if m["week"] == week),
         key=lambda t: mine not in t,
     )
+    skipped: list[str] = []
     for pair in pairs if week is not None else []:
-        data = pages.parse_matchup_page(fetch(matchup_url(league, int(week), pair)), int(week))
-        out.append(part(matchup_key(int(week), data["teams"]), data))
+        try:
+            data = pages.parse_matchup_page(fetch(matchup_url(league, int(week), pair)), int(week))
+        except pages.PageError as exc:
+            skipped.append(f"{pair[0]}-{pair[1]}: {exc}")
+        else:
+            out.append(part(matchup_key(int(week), data["teams"]), data))
         step("my matchup" if mine in pair else f"matchup {pair[0]}-{pair[1]}")
+    if skipped and warn is not None:
+        warn("matchups", f"{len(skipped)} of {len(pairs)} pairs skipped: {'; '.join(skipped)}")
     out.append(part("transactions", pages.parse_transactions_page(fetch(transactions_url(league)))))
     step("transactions")
     return out

@@ -607,7 +607,7 @@ def test_the_recorder_reads_no_matchup_page_whose_teams_are_not_a_pair():
         season_record.private_inputs(PRIVATE, week, parts, settings)
     # One page by each team instead, in the standings' order.
     assert sorted(needs.value.urls) == [
-        f"{SITE}/{PRIVATE}/matchup?week=1&mid1={t}" for t in (1, 2, 3, 4)
+        f"{SITE}/{PRIVATE}/matchup?date=totals&week=1&mid1={t}" for t in (1, 2, 3, 4)
     ]
 
 
@@ -628,9 +628,9 @@ def test_a_private_league_names_the_pages_it_needs_then_records(client):
     assert r.json()["detail"]["ahead"] == [f"{SITE}/{PRIVATE}?matchup_week=3"]
     assert needs == [
         f"{SITE}/{PRIVATE}",
-        f"{SITE}/{PRIVATE}/matchup?week=1&mid1=1&mid2=2",
-        f"{SITE}/{PRIVATE}/matchup?week=1&mid1=3",
-        f"{SITE}/{PRIVATE}/matchup?week=1&mid1=4",
+        f"{SITE}/{PRIVATE}/matchup?date=totals&week=1&mid1=1&mid2=2",
+        f"{SITE}/{PRIVATE}/matchup?date=totals&week=1&mid1=3",
+        f"{SITE}/{PRIVATE}/matchup?date=totals&week=1&mid1=4",
         f"{SITE}/{PRIVATE}/draftresults",
     ]
     # The extension posts what the user's Chrome opened: the league page, a matchup page by one
@@ -640,8 +640,8 @@ def test_a_private_league_names_the_pages_it_needs_then_records(client):
     still = client.post(f"/seasons/{PRIVATE}/record").json()["detail"]["needs"]
     # Team 3's opponent is not known until its page is read: the page by team 3 covers team 4.
     assert still == [
-        f"{SITE}/{PRIVATE}/matchup?week=1&mid1=3",
-        f"{SITE}/{PRIVATE}/matchup?week=1&mid1=4",
+        f"{SITE}/{PRIVATE}/matchup?date=totals&week=1&mid1=3",
+        f"{SITE}/{PRIVATE}/matchup?date=totals&week=1&mid1=4",
         f"{SITE}/{PRIVATE}/draftresults",
     ]
     still = [still[0], still[2]]
