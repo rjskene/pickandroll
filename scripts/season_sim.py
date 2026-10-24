@@ -1,13 +1,14 @@
 """SEASON SIM (#172): the season simulator's commands, for the terminal.
 
     python scripts/season_sim.py fetch-logs --seasons 2022-2026   # ESPN's per-game logs, cached
-    python scripts/season_sim.py fit --hold-out 2025              # the world's fit, frozen with a hash
+    python scripts/season_sim.py fit                              # the world's fit, frozen with a hash
     python scripts/season_sim.py fit --dry-run                    # the fit printed, nothing written
 
 ESPN's season id is the year the season ends in: 2025 is 2024-25, the hold-out. ``fetch-logs``
 makes one request a season through the same player view the draft-edge audit read, caches each
 under ``data/external/espn/gamelogs/`` (never committed) and never retries inside a run. ``fit``
-refuses the hold-out, fits each cached season, pools the ones that agree and writes
+refuses the hold-out whatever the flags say (``--hold-out`` may only add a second season no
+fit sees), fits each cached season, pools the ones that agree and writes
 ``data/autopilot/sim/fit/<date>/fit.json`` with ``fit.sha256`` beside it; the frozen fit's
 figures stay under ``data/`` and are described in words anywhere public.
 
@@ -48,8 +49,9 @@ NICE = 10
 TIMEOUT = 60
 #: The hold-out season (#172): 2024-25, in no fit.
 HOLD_OUT = 2025
-#: The five seasons the fit may see, ESPN ids (2022 is 2021-22).
+#: The five seasons on disk, ESPN ids (2022 is 2021-22), and the ones a fit may see.
 SEASONS = (2022, 2023, 2024, 2025, 2026)
+FIT_SEASONS = ",".join(str(s) for s in SEASONS if s != HOLD_OUT)
 
 
 # --------------------------------------------------------------------------- guard
@@ -135,16 +137,20 @@ def load_lines(seasons: Sequence[int], data: Path) -> dict[int, list[fitmod.Game
 
 
 def run_fit(
-    seasons: Sequence[int], hold_out: int | None, data: Path
+    seasons: Sequence[int], data: Path, extra_hold_out: int | None = None
 ) -> tuple[dict[str, Any], str, fitmod.Fit]:
-    """Fit every cached season of ``seasons`` but the hold-out, pool, freeze."""
-    fitmod.check_hold_out(seasons, hold_out)
+    """Fit every cached season of ``seasons``, pool, freeze. The named hold-out
+    (:data:`HOLD_OUT`) is refused whatever the flags say; ``extra_hold_out`` may add a second
+    season no fit sees, never remove the named one."""
+    fitmod.check_hold_out(seasons, HOLD_OUT)
+    fitmod.check_hold_out(seasons, extra_hold_out)
     lines = load_lines(seasons, data)
     if not lines:
         raise FileNotFoundError(f"no cached season among {list(seasons)} under {data / LOGS_DIR}")
     fits = [fitmod.fit_season(rows, season) for season, rows in sorted(lines.items())]
     pooled = fitmod.pool(fits)
-    payload, sha = fitmod.freeze(pooled, hold_out, seasons=fits)
+    extra = {"extra_hold_out": extra_hold_out} if extra_hold_out not in (None, HOLD_OUT) else {}
+    payload, sha = fitmod.freeze(pooled, HOLD_OUT, parameters=extra, seasons=fits)
     return payload, sha, pooled
 
 
@@ -166,9 +172,8 @@ def cmd_fit(args: argparse.Namespace) -> int:
     if not ok:
         print(f"refused: {why}")
         return 2
-    seasons = [s for s in parse_seasons(args.seasons) if s != args.hold_out]
     try:
-        payload, sha, _ = run_fit(seasons, args.hold_out, args.data)
+        payload, sha, _ = run_fit(parse_seasons(args.seasons), args.data, args.hold_out)
     except (fitmod.HoldOutError, FileNotFoundError) as e:
         print(f"refused: {e}")
         return 2
@@ -194,8 +199,17 @@ def main(argv: list[str] | None = None) -> int:
     fe.add_argument("--seasons", default="2022-2026", help="ESPN season ids, e.g. 2022-2026")
     fe.set_defaults(func=cmd_fetch)
     fi = sub.add_parser("fit", help="the world's fit over the cached seasons, frozen with a hash")
-    fi.add_argument("--seasons", default="2022-2026")
-    fi.add_argument("--hold-out", type=int, default=HOLD_OUT, help="the season no fit sees")
+    fi.add_argument(
+        "--seasons",
+        default=FIT_SEASONS,
+        help=f"the seasons to fit, never the hold-out {HOLD_OUT} (default {FIT_SEASONS})",
+    )
+    fi.add_argument(
+        "--hold-out",
+        type=int,
+        default=None,
+        help=f"a second season no fit sees, beside {HOLD_OUT} which is always refused",
+    )
     fi.add_argument("--dry-run", action="store_true", help="print the fit, write nothing")
     fi.set_defaults(func=cmd_fit)
     args = ap.parse_args(argv)

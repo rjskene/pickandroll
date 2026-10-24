@@ -84,47 +84,33 @@ def _cache(data: Path, seasons: list[int]) -> None:
 def test_fit_refuses_the_hold_out_and_writes_the_frozen_fit(tmp_path: Path):
     _cache(tmp_path, [2023, 2024, 2025])
     with pytest.raises(ss.fitmod.HoldOutError):
-        ss.run_fit([2023, 2024, 2025], 2025, tmp_path)
-    payload, sha, pooled = ss.run_fit([2023, 2024], 2025, tmp_path)
-    assert payload["seasons"] == [2023, 2024] and payload["hold_out"] == 2025
+        ss.run_fit([2023, 2024, 2025], tmp_path)
+    with pytest.raises(ss.fitmod.HoldOutError):
+        ss.run_fit([2023, 2024], tmp_path, extra_hold_out=2024)
+    payload, sha, pooled = ss.run_fit([2023, 2024], tmp_path)
+    assert payload["seasons"] == [2023, 2024] and payload["hold_out"] == ss.HOLD_OUT == 2025
+    assert "extra_hold_out" not in payload["parameters"]
     assert pooled.hazard.players == 24
     assert len(sha) == 64
-    code = ss.main(
-        [
-            "--data",
-            str(tmp_path),
-            "--rooms",
-            "0",
-            "fit",
-            "--seasons",
-            "2023-2025",
-            "--hold-out",
-            "2025",
-        ]
-    )
-    assert code == 0
+    data = ["--data", str(tmp_path), "--rooms", "0"]
+    assert ss.main([*data, "fit", "--seasons", "2023-2024"]) == 0
     written = list((tmp_path / ss.FIT_DIR).glob("*/fit.json"))
     assert len(written) == 1
     assert json.loads(written[0].read_text())["hold_out"] == 2025
     assert (written[0].parent / "fit.sha256").read_text().strip() == sha
-    assert ss.main(["--data", str(tmp_path), "--rooms", "1", "fit"]) == 2
-    assert (
-        ss.main(
-            [
-                "--data",
-                str(tmp_path),
-                "--rooms",
-                "0",
-                "fit",
-                "--seasons",
-                "2023-2024",
-                "--hold-out",
-                "2023",
-            ]
-        )
-        == 0
-    )
+    # The named hold-out is refused whatever the flags say: a typo in --hold-out does not
+    # let 2025 into a fit, and the flag cannot remove it.
+    assert ss.main([*data, "fit", "--seasons", "2022-2026", "--hold-out", "2024"]) == 2
+    assert ss.main([*data, "fit", "--seasons", "2023-2025"]) == 2
+    assert ss.main([*data, "fit", "--seasons", "2023-2025", "--hold-out", "2025"]) == 2
+    # The flag adds a second hold-out, recorded in the payload's parameters.
+    assert ss.main([*data, "fit", "--seasons", "2023", "--hold-out", "2024", "--dry-run"]) == 0
+    extra, _, _ = ss.run_fit([2023], tmp_path, extra_hold_out=2024)
+    assert extra["parameters"]["extra_hold_out"] == 2024 and extra["hold_out"] == 2025
+    assert ss.main([*data, "fit", "--seasons", "2023-2024", "--hold-out", "2023"]) == 2
     assert ss.main(["--data", str(tmp_path / "empty"), "--rooms", "0", "fit"]) == 2
+    assert ss.FIT_SEASONS == "2022,2023,2024,2026"
+    assert ss.parse_seasons(ss.FIT_SEASONS) == [2022, 2023, 2024, 2026]
 
 
 def test_describe_names_counts_and_no_figures():
