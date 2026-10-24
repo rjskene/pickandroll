@@ -289,7 +289,7 @@ export const DRAFT_SHEET: Sheet = {
     {
       title: "Cards",
       rows: [
-        [["1", "…", "9"], "open that card in the top half; the same key again closes it"],
+        [["1", "…", "8"], "open that card in the top half; the same key again closes it"],
         [["⇧ 1", "…", "⇧ 8"], "open it in the bottom half (mouse: shift-click or right-click the rail icon)"],
         [["]"], "collapse the drawer to the rail, or bring it back with its two cards"],
         [["Esc"], "collapse the drawer; in a field it leaves the field first"],
