@@ -458,6 +458,12 @@ def test_the_due_entries_wait_for_the_window_and_the_mode(client):
     d = client.get(url).json()
     assert [e["id"] for e in d["entries"]] == [e["id"] for e in on]
     assert [e["bid_placed"] for e in d["entries"]] == [on[0]["bid"]["amount"], 0]
+    # The extension's input: my team, each entry's add page, the claims open and the day so far.
+    assert d["team"] == 4
+    assert [e["page"] for e in d["entries"]] == [
+        f"/nba/{LEAGUE}/addplayer?apid={e['add']}" for e in on
+    ]
+    assert (d["pending"], d["done"]) == ([], 0)
     # Another day, STOP, an off league and the private league have none.
     assert client.get(url, params={"date": "2026-10-22"}).json()["entries"] == []
     stop = ap.stop_path(client.data_dir)
@@ -468,6 +474,24 @@ def test_the_due_entries_wait_for_the_window_and_the_mode(client):
     client.put(f"/leagues/{LEAGUE}/moves", json={"mode": "off"})
     assert client.get(url).json()["reason"] == qa.OFF
     assert client.get(f"/seasons/{PRIVATE}/autopilot/moves/due").json()["reason"] == qa.PRIVATE
+
+
+def test_the_due_route_counts_the_days_executed_entries_and_their_adds(client):
+    q = queued(client)
+    on = [e for e in q["entries"] if e["queued"]]
+    client.app.state.seasons.clock = lambda: NOW + timedelta(hours=1)
+    url = f"/seasons/{LEAGUE}/autopilot/moves/due"
+    before = client.get(url).json()
+    body = pass_body([check(on[0])])
+    assert client.post(f"/seasons/{LEAGUE}/autopilot/moves", json=body).status_code == 200
+    d = client.get(url).json()
+    assert [e["id"] for e in d["entries"]] == [e["id"] for e in on[1:]]
+    # A dry run's would-claim takes its place under the cap and its week's adds; it is not open.
+    assert (d["done"], d["pending"]) == (1, [])
+    clear = on[0]["from"]
+    week = next(w for w in d["adds_left"] if w["start"] <= clear <= w["end"])
+    was = next(w for w in before["adds_left"] if w["start"] == week["start"])
+    assert was["adds"] is not None and week["adds"] == max(0, was["adds"] - 1)
 
 
 def pass_body(entries, **over) -> dict:
@@ -668,7 +692,8 @@ def test_a_build_resolves_the_earlier_days_placed_claims_and_counts_the_open_one
     assert [(e["id"], e["resolved"]) for e in earlier] == [(won["id"], "won"), (open_["id"], None)]
     # The claim still open counts against its week.
     row = row_of(q)
-    assert row["pending"] == [open_["id"]]
+    assert [c["id"] for c in row["pending"]] == [open_["id"]]
+    assert row["pending"][0]["add"] == 9002 and row["pending"][0]["from"] == "2026-10-22"
     week = next(w for w in row["adds_left"] if w["start"] <= "2026-10-22" <= w["end"])
     solved = next(w for w in row["adds"]["weeks"] if w["start"] == week["start"])
     assert week["adds"] == solved["adds"] - 1

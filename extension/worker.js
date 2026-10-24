@@ -9,10 +9,10 @@
 //
 // The league reader (league.js, #98) posts the league pages the user opens to the season's
 // snapshot route here; what each post did is kept per league for the panel. On my team page it
-// also fetches the lineup executor's steps and logs its runs here (#170), the last one kept per
-// league for the panel.
+// also fetches the lineup executor's steps and logs its runs here (#170), and the moves
+// executor's due entries and its passes (#171), the last of each kept per league for the panel.
 "use strict";
-importScripts("lib/protocol.js", "lib/league.js", "lib/lineup.js");
+importScripts("lib/protocol.js", "lib/league.js", "lib/lineup.js", "lib/moves.js");
 
 const DEFAULTS = {
   api: "http://localhost:8000",
@@ -21,6 +21,7 @@ const DEFAULTS = {
   probe_round: "3", // the queue probe's round, or "off"
   search_fallback: "off", // "on": Yahoo's search box for a row scrolling did not find
   lineup_executor: "on", // "off": this browser's brake on the lineup executor, beside STOP
+  moves_executor: "on", // "off": this browser's brake on the moves executor, beside STOP
 };
 
 async function settings() {
@@ -110,6 +111,7 @@ async function attachedOr(fn) {
 const postsKey = (league) => `league:${league}`;
 const readKey = (league) => `season_read:${league}`;
 const lineupKey = (league) => `lineup:${league}`;
+const movesKey = (league) => `moves:${league}`;
 
 async function stored(key) {
   return (await chrome.storage.session.get(key))[key] || null;
@@ -238,6 +240,18 @@ const ops = {
     const moves = (run.steps || []).filter((x) => x.outcome === "would_set").length;
     const last = { at: Date.now(), day: run.day, trigger: run.trigger, outcome: run.outcome, reason: run.reason, moves };
     await chrome.storage.session.set({ [lineupKey(league)]: last });
+    return logged;
+  },
+  /** The moves executor's entries due now in ``league`` (#171), with what the page checks need. */
+  async moves_due({ league }) {
+    return api(`/seasons/${encodeURIComponent(league)}/autopilot/moves/due`, { timeout: 30000 });
+  },
+  /** An execute pass of the moves executor, for the league's log; the last one is kept for the panel. */
+  async moves_log({ league, run }) {
+    const logged = await api(`/seasons/${encodeURIComponent(league)}/autopilot/moves`, { method: "POST", body: run, timeout: 15000 });
+    const claims = (run.entries || []).filter((x) => x.outcome === "would_claim").length;
+    const last = { at: Date.now(), day: run.day, trigger: run.trigger, outcome: run.outcome, reason: run.reason, claims };
+    await chrome.storage.session.set({ [movesKey(league)]: last });
     return logged;
   },
   /** The league's season summary (GET /seasons), null when pickandroll has no folder for it. */
