@@ -16,8 +16,10 @@ A league folder holds what a session for that league needs, all local and never 
     season's earlier drafts by ``scripts/draft_day.py refit``, #77) when that covers the draft,
     and simulates its survival otherwise.
 ``armed.json`` (optional)
-    Written only by the user's own click in the dashboard (``PUT /leagues/{id}/arm``): the room
-    for this league's draft comes up in autopilot. Nothing else writes it.
+    Written only by the user's own clicks in the dashboard. ``armed`` (``PUT /leagues/{id}/arm``):
+    the room for this league's draft comes up in autopilot. ``lineups`` (``PUT
+    /leagues/{id}/lineups``, #170): the lineup executor's mode, ``off``, ``dry_run`` or
+    ``live``, with ``lineups_at`` and ``lineups_by``. Nothing else writes it.
 ``adjustments.json`` (optional)
     Games haircuts the user prepared from the news sweep (#76, ``api.adjustments``), applied
     when the league's session is made: at the room's attach.
@@ -55,6 +57,12 @@ PICKS = "picks.csv"
 #: market's ADP is another one, its rosters were drafted for another scoring.
 CROSS_FORMAT_WEIGHT = 0.5
 ARMED = "armed.json"
+#: The lineup executor's modes (#170, docs/AUTOPILOT.md section 2): it does nothing, logs what it
+#: would set, or sets the lineup. ``live`` is only ever the user's own click.
+LINEUP_MODES = ("off", "dry_run", "live")
+#: A public league's mode until the user sets one: every public league is armed in advance
+#: (docs/AUTOPILOT.md section 1), and every executor starts in dry run.
+LINEUP_DEFAULT = "dry_run"
 ADJUSTMENTS = "adjustments.json"
 #: A league id as Yahoo prints it, and as the draft client's path carries it.
 LEAGUE_ID = r"^[0-9]{1,12}$"
@@ -303,18 +311,72 @@ def armed(data_dir: Path, league: str) -> dict[str, Any] | None:
     return record if record.get("armed") is True else None
 
 
-def set_armed(data_dir: Path, league: str, on: bool, by: str) -> dict[str, Any] | None:
-    """Record (or withdraw) the user's pre-arm. Only the dashboard's own control calls this."""
+def _armed_file(data_dir: Path, league: str) -> tuple[Path, dict[str, Any]]:
+    """The league's ``armed.json`` and what it holds (empty when missing or not JSON)."""
     folder = league_dir(data_dir, league)
     if not (folder / SETTINGS).exists():
         raise LeagueError(f"no league settings: data/{LEAGUES_DIR}/{league}/{SETTINGS}")
     path = folder / ARMED
-    if not on:
+    try:
+        record = json.loads(path.read_text())
+    except (OSError, ValueError):
+        record = {}
+    return path, record if isinstance(record, dict) else {}
+
+
+def _write_armed(path: Path, record: dict[str, Any]) -> None:
+    if record:
+        path.write_text(json.dumps(record) + "\n")
+    else:
         path.unlink(missing_ok=True)
-        return None
-    record = {"armed": True, "at": datetime.now(UTC).isoformat(timespec="seconds"), "by": by}
-    path.write_text(json.dumps(record) + "\n")
-    return record
+
+
+def set_armed(data_dir: Path, league: str, on: bool, by: str) -> dict[str, Any] | None:
+    """Record (or withdraw) the user's pre-arm. Only the dashboard's own control calls this.
+    Withdrawing drops the draft's keys and keeps the lineup executor's mode (#170)."""
+    path, record = _armed_file(data_dir, league)
+    for key in ("armed", "at", "by"):
+        record.pop(key, None)
+    if on:
+        record = {
+            "armed": True,
+            "at": datetime.now(UTC).isoformat(timespec="seconds"),
+            "by": by,
+            **record,
+        }
+    _write_armed(path, record)
+    return armed(data_dir, league)
+
+
+def lineup_mode(data_dir: Path, league: str) -> dict[str, Any]:
+    """The lineup executor's mode for ``league`` (#170): ``{mode, at, by, set}``. The private
+    league is always ``off``; a public league is its file's ``lineups``, else
+    :data:`LINEUP_DEFAULT` (``set`` False)."""
+    if not load_settings(data_dir, league).get("public", True):
+        return {"mode": "off", "at": None, "by": None, "set": False, "private": True}
+    _, record = _armed_file(data_dir, league)
+    mode = record.get("lineups")
+    if mode not in LINEUP_MODES:
+        return {"mode": LINEUP_DEFAULT, "at": None, "by": None, "set": False, "private": False}
+    return {
+        "mode": mode,
+        "at": record.get("lineups_at"),
+        "by": record.get("lineups_by"),
+        "set": True,
+        "private": False,
+    }
+
+
+def set_lineups(data_dir: Path, league: str, mode: str, by: str) -> dict[str, Any]:
+    """Record the lineup executor's mode, the dashboard's own click; the draft's keys stay."""
+    if mode not in LINEUP_MODES:
+        raise LeagueError(f"a lineup mode is one of {', '.join(LINEUP_MODES)}, not {mode!r}")
+    path, record = _armed_file(data_dir, league)
+    record.update(
+        lineups=mode, lineups_at=datetime.now(UTC).isoformat(timespec="seconds"), lineups_by=by
+    )
+    _write_armed(path, record)
+    return lineup_mode(data_dir, league)
 
 
 def summary(data_dir: Path, league: str) -> dict[str, Any]:

@@ -1,14 +1,31 @@
 import { useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
-import { api, type LineupDay, type LineupPayload, type ProjectionSystem, type SeasonView } from "../api";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { api, type LineupDay, type LineupMode, type LineupPayload, type ProjectionSystem, type SeasonView } from "../api";
 import { shortName } from "../format";
-import { benchPlaying, dayLabel, heldEligibleText, lineupAlertText, lineupGrid, lineupSummary, playersById, ruleText, weekdayLabel, type LineupCell } from "../season";
+import {
+  benchPlaying,
+  dayLabel,
+  executorText,
+  heldEligibleText,
+  lineupAlertText,
+  lineupGrid,
+  lineupSummary,
+  liveText,
+  playersById,
+  ruleText,
+  runLine,
+  stepText,
+  weekdayLabel,
+  type LineupCell,
+} from "../season";
 
 /** The Lineup view (#107): a week's recommended lineup against Yahoo's as read, days across and
  * the starting slots down. A starter Yahoo's lineup has on the bench is lit, Yahoo's starters to
  * sit and the bench players who play are listed under the slots, and the foot counts the games
  * each lineup starts and those Yahoo's loses. Then the held slots: who sits in each (a cleared
- * occupant flagged: he blocks every add) and who could go there. Nothing here sets a lineup. */
+ * occupant flagged: he blocks every add) and who could go there. Last, the executor (#170): its
+ * mode in this league, STOP, and its runs today; the extension sets the lineup on the team page,
+ * never this view. */
 export default function LineupView({
   league,
   s,
@@ -91,9 +108,11 @@ export default function LineupView({
       )}
       <Grid p={p} name={name} />
       <Held p={p} name={name} />
+      <Executor league={league} name={name} />
       <p className="dim lv-note">
         Recommended: each day, the most games my players who play can start in the league&apos;s slots, the better player first where they compete. Two lineups
-        that start the same players in other slots are the same. Nothing here changes a lineup in Yahoo.
+        that start the same players in other slots are the same. Nothing here changes a lineup in Yahoo: the extension does, on the team page, in the mode set
+        above.
       </p>
     </div>
   );
@@ -234,6 +253,93 @@ function Held({ p, name }: { p: LineupPayload; name: (id: number) => string }) {
       )}
     </div>
   );
+}
+
+const MODES: { mode: LineupMode; label: string }[] = [
+  { mode: "off", label: "off" },
+  { mode: "dry_run", label: "dry run" },
+  { mode: "live", label: "live" },
+];
+
+/** The executor's mode in this league (live behind a second click, and only once the dry run has
+ * passed), STOP, the last run and today's runs with their steps. */
+function Executor({ league, name }: { league: string; name: (id: number) => string }) {
+  const queryClient = useQueryClient();
+  const q = useQuery({ queryKey: ["autopilot", league], queryFn: () => api.autopilot(league), refetchInterval: 60_000, retry: false });
+  // Live waits on its confirming click.
+  const [confirming, setConfirming] = useState(false);
+  const set = useMutation({
+    mutationFn: (mode: LineupMode) => api.setLineupMode(league, mode),
+    onSuccess: (v) => queryClient.setQueryData(["autopilot", league], v),
+    onSettled: () => setConfirming(false),
+  });
+  if (q.error) return <p className="error lv-note">{q.error.message}</p>;
+  const v = q.data;
+  if (!v) return null;
+  const pick = (mode: LineupMode) => {
+    if (mode === v.mode.mode) return;
+    if (mode === "live" && !confirming) setConfirming(true);
+    else set.mutate(mode);
+  };
+  return (
+    <div className="lv-held-block">
+      <div className="sv-head">
+        <span className="k">Lineup executor</span>
+        <span className="grow" />
+        {!v.mode.private && (
+          <div className="seg small" role="tablist" aria-label="Lineup executor">
+            {MODES.map((m) => (
+              <button
+                key={m.mode}
+                role="tab"
+                aria-selected={m.mode === v.mode.mode}
+                className={m.mode === v.mode.mode ? "on" : undefined}
+                disabled={set.isPending || (m.mode === "live" && !v.live.ok && v.mode.mode !== "live")}
+                title={m.mode === "live" ? liveText(v.live) : undefined}
+                onClick={() => pick(m.mode)}
+              >
+                {m.label}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+      <p className={`lv-note ${v.stop ? "bad" : "muted"}`}>{executorText(v)}</p>
+      {confirming && (
+        <p className="lv-note accent">
+          Live sets the lineup in Yahoo on the team page.{" "}
+          <button className="small" onClick={() => pick("live")} disabled={set.isPending}>
+            Switch to live
+          </button>{" "}
+          <button className="small" onClick={() => setConfirming(false)}>
+            Cancel
+          </button>
+        </p>
+      )}
+      {set.error && <p className="error lv-note">{set.error.message}</p>}
+      {!v.mode.private && v.mode.mode !== "live" && <p className="dim lv-note">{liveText(v.live)}</p>}
+      {v.today.length === 0 ? (
+        <p className="dim lv-note">{v.last ? `No run today. Last: ${runLine(v.last, clockLabel)}.` : "No run yet."}</p>
+      ) : (
+        v.today.map((r, i) => (
+          <div key={i}>
+            <p className="muted lv-note">{runLine(r, clockLabel)}</p>
+            {r.steps.map((st, j) => (
+              <p key={j} className="dim lv-note lv-step">
+                {stepText(st, name)}
+              </p>
+            ))}
+          </div>
+        ))
+      )}
+    </div>
+  );
+}
+
+/** "5:02 AM": a run's time on this machine's clock. */
+function clockLabel(iso: string): string {
+  const t = Date.parse(iso);
+  return Number.isNaN(t) ? iso : new Date(t).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
 }
 
 function dayTitle(d: LineupDay, first: string): string {

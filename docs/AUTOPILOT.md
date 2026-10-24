@@ -55,6 +55,39 @@ Guardrails, all of them required before the first real click:
   `data/leagues/<id>/autopilot/<date>.json`; the daily digest's summary line counts them.
 - **Never the private league, never a trade, never a sign-in.**
 
+The lineup executor (#170, ruled on the issue 2026-10-23) is the first to run under these. Its API
+side (PR 1) is in `api/season_autopilot.py`; the click is the extension's, on the team page:
+
+- **The mode.** `armed.json`'s `lineups` key, `off`, `dry_run` or `live`, with when and by whom
+  it was set (`PUT /leagues/{league}/lineups`, the Lineup view's switch). An armed public league
+  starts in `dry_run`; the private league is always `off` and refuses the switch. Disarming the
+  draft keeps the mode, and an `armed.json` holding only the mode reads as not armed.
+- **The live guard.** `live` is refused until the league's log holds dry-run lineup runs on seven
+  distinct days, on two of them a run whose steps all passed every check of the page, and STOP is
+  absent. The review on #127 and the user's own click are the other two gates; no code sets it.
+  Live itself (the submit) is PR 3, after the dry-run week; nothing in PR 1 or PR 2 clicks.
+- **STOP.** The file `data/autopilot/STOP` stops every executor: the steps answer `stop: true`
+  with none, the log takes only a run that says it stopped, the view and the digest say so.
+  Nothing in the code writes it; the user creates or removes it by hand.
+- **The steps.** `GET /seasons/{league}/lineup/steps?date=` turns Yahoo's lineup as read into the
+  recommended one for the day, from the Lineup view's own day (nothing is solved again): a list
+  of single moves, each legal on its own, in groups that share no player and no slot. A group
+  touching a player whose game has begun (the tip from the schedule copy) is dropped whole into
+  `skipped`; the rest are ordered by the earliest tip. Held slots are never touched.
+- **When it runs.** On the daily routine's fragment `#pickandroll-lineup` or the side panel's
+  button, never on a page load of its own (`trigger`: `routine`, `routine_late`, `panel`).
+- **The log.** `POST /seasons/{league}/autopilot/lineup` appends one run to
+  `data/leagues/<id>/autopilot/<date>.json` as `{"lineup": [...]}`, the only writer there; phase 2
+  adds `moves` beside it, and a run never rewrites another. A run carries the page it read, the
+  form's field names (never a value), the lineup before and after and each step's outcome. A run
+  carrying the page's crumb is refused (422), as are a dry run that says it set something, a live
+  run outside live, and any run but a stopped one under STOP or with the mode off (409). A log
+  file that does not read is refused, never overwritten.
+- **The digest.** One line for the executor in the Lineups section (the leagues in dry run, how
+  many had steps, how many none, how many did not run, the day-runs that would set, were
+  skipped, failed), then a line per league only for a skip or a failure. Under STOP the line says
+  nothing runs.
+
 ## 3. The weekly loop
 
 Times are the Mac's clock (Pacific). The routines are the master's to edit; sessions never edit
@@ -469,6 +502,8 @@ comes back to it.
   the no-drop add). Then the extension sets the lineup for today and tomorrow in an armed league
   from the lineup route's per-day slots: the first executor, reversible until tip-off. The
   executor is filed 2026-10-23 as #170 (user: "file both"), dry run first, `live` the user's click.
+  Three PRs: the API's steps, mode, STOP, log, digest line and the Lineup view's switch (section 2);
+  the extension's dry run; the live submit once the dry run has logged its week.
 - **Phase 2, moves.** The queue, the veto window, the dry-run week, the caps, the FAAB rule, the
   executor for Add and Drop with the idempotence check, the autopilot log and the digest line.
   Filed 2026-10-23 as #171, behind #170, before phase 1 was in, at the user's direction

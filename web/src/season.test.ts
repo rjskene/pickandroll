@@ -2,6 +2,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type {
+  AutopilotView,
   AvailableRow,
   BestMove,
   FlagConfig,
@@ -9,6 +10,7 @@ import type {
   KeepRule,
   KeptPlayer,
   LineupDay,
+  LineupRunLog,
   MoveCandidate,
   MoveRos,
   PlayerFlag,
@@ -86,7 +88,11 @@ import {
   keptPlayers,
   keptWhy,
   benchPlaying,
+  executorText,
   heldEligibleText,
+  liveText,
+  runLine,
+  stepText,
   lineupAlertText,
   lineupGrid,
   lineupSummary,
@@ -1298,4 +1304,27 @@ test("a trade's rest of the season: a side's change and a player's games on hove
   );
   assert.ok(sideRosTitle({ ...side, unvalued: 0 }, "points").endsWith("what it receives less what it sends and drops"));
   assert.ok(sideRosTitle(null, "categories").startsWith("not valued"));
+});
+
+test("the lineup executor's panel says what it does, why live waits, and each run and step (#170)", () => {
+  const mode = (m: AutopilotView["mode"]["mode"], priv = false): AutopilotView["mode"] => ({ mode: m, at: null, by: null, set: false, private: priv });
+  assert.equal(executorText({ mode: mode("dry_run"), stop: false }), "Dry run: on the team page, the extension logs what it would set and clicks nothing.");
+  assert.equal(executorText({ mode: mode("off"), stop: false }), "Off: the extension leaves this league's lineup alone.");
+  assert.ok(executorText({ mode: mode("live"), stop: false }).startsWith("Live: on the team page"));
+  assert.equal(executorText({ mode: mode("dry_run"), stop: true }), "STOP is on (data/autopilot/STOP): no executor runs.");
+  assert.ok(executorText({ mode: mode("off", true), stop: false }).startsWith("The private league is never touched"));
+  const needs = { dry_run_days: 7, checked_days: 2 };
+  assert.equal(liveText({ ok: false, reason: "a dry run on 7 days first: 3 so far", dry_run_days: 3, checked_days: 1, needs }), "Live waits: a dry run on 7 days first: 3 so far.");
+  assert.equal(liveText({ ok: true, reason: null, dry_run_days: 8, checked_days: 2, needs }), "The dry run has passed: 8 days, 2 with steps that passed every check.");
+  const step = { player: 1, from_slot: "BN", to_slot: "SF", with: 2, tip: null, group: 0, outcome: "would_set" as const, reason: null };
+  const run: LineupRunLog = { at: "2026-10-24T10:02:00+00:00", day: "2026-10-24", mode: "dry_run", trigger: "routine", outcome: "would_set", reason: null, steps: [step, { ...step, player: 3, with: null }], skipped: [] };
+  const clock = () => "05:02";
+  assert.equal(runLine(run, clock), `05:02 · ${weekdayLabel("2026-10-24")} · routine: would set 2 moves`);
+  assert.equal(
+    runLine({ ...run, trigger: "panel", outcome: "nothing_to_do", reason: "Yahoo's lineup already starts the recommended players", steps: [], skipped: [{ reason: "tip-off passed", players: [4] }] }, clock),
+    `05:02 · ${weekdayLabel("2026-10-24")} · side panel: nothing to do (Yahoo's lineup already starts the recommended players); 1 left out, a game began`,
+  );
+  const name = (id: number) => `P${id}`;
+  assert.equal(stepText(step, name), "P1 BN → SF, P2 to BN: would set");
+  assert.equal(stepText({ ...step, with: null, outcome: "skipped", reason: "the page did not match" }, name), "P1 BN → SF: skipped (the page did not match)");
 });

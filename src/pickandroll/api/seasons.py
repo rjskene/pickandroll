@@ -29,6 +29,14 @@ Routes:
     The Lineup view (#107, ``season_lineup``): my recommended starters for each day of a week
     (``?week=``, this one by default) against Yahoo's lineup as read, the games it loses, the
     held slots with who is eligible for them, and first any held player whose status cleared.
+``GET /seasons/{league}/lineup/steps``
+    The lineup executor's steps for ``?date=`` (today by default; #170, ``season_autopilot``):
+    the legal changes from Yahoo's lineup as read to one that starts the recommended players,
+    with each player's tip-off; none when the mode is off, STOP is on or the day is closed.
+``GET /seasons/{league}/autopilot``, ``POST /seasons/{league}/autopilot/lineup``
+    The executor's mode, STOP, the live check and its runs; a run appended to the league's log
+    (``data/leagues/<id>/autopilot/<date>.json``). ``PUT /leagues/{league}/lineups`` sets the
+    mode, the dashboard's own click; ``live`` waits for the dry run.
 ``GET /seasons/{league}/decisions``
     The decision log (#125, ``season_decisions``): every moves and strategy solve of the days
     ``?from=``..``?to=`` (the last week by default) and my moves of those days from the
@@ -98,7 +106,7 @@ from typing import Any
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi import Path as FastPath
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
 from ..season import (
     EXTENSION,
@@ -128,6 +136,7 @@ from ..sources import schedule as nba_schedule
 from ..sources.yahoo import pages, public
 from . import (
     leagues,
+    season_autopilot,
     season_decisions,
     season_flags,
     season_hillclimb,
@@ -517,6 +526,7 @@ class SeasonService:
         # The markdown is public: a league's own failure text stays in the JSON.
         unread = [(x["league"], _public_reason(x["reason"])) for x in skipped]
         markdown = season_flags.fl.digest_markdown(today, shown, notes, unread)
+        executor = season_autopilot.digest_lines(self.data_dir, self._lineup_modes(), now)
         return {
             "date": today.isoformat(),
             "generated_at": now.isoformat(),
@@ -525,8 +535,21 @@ class SeasonService:
             "leagues": rows,
             "skipped": skipped,
             "lineups": lineups,
-            "markdown": markdown + season_lineup.digest_section([*cleared_lines, *lineup_lines]),
+            "executor": executor,
+            "markdown": markdown
+            + season_lineup.digest_section([*cleared_lines, *executor, *lineup_lines]),
         }
+
+    def _lineup_modes(self) -> dict[str, dict[str, Any]]:
+        """Every league's lineup executor mode (#170); a folder that does not read is left
+        out."""
+        out = {}
+        for league in leagues.leagues(self.data_dir):
+            try:
+                out[league] = leagues.lineup_mode(self.data_dir, league)
+            except leagues.LeagueError:
+                continue
+        return out
 
     def _lineup_line(self, league: str, today: date) -> dict[str, Any]:
         """A league's lineup for the digest: today's and tomorrow's games lost as set and the
@@ -761,6 +784,70 @@ class SeasonService:
         if out is None:
             raise HTTPException(409, f"league {league} has no season of my team to look ahead in")
         return {"league": league, **out}
+
+    # ------------------------------------------------------------------ the lineup executor
+    def lineup_steps(self, league: str, day: date | None) -> dict[str, Any]:
+        """The lineup executor's steps for ``day``, today by default (#170): the Lineup view's
+        day of its week, never solved again."""
+        base, _ = self._base(league)
+        now = self.clock()
+        today = nba_today(now)
+        day = day or today
+        mode = leagues.lineup_mode(self.data_dir, league)
+        season = Season.from_parts(base, load_parts(self.data_dir, league))
+        weeks = season.calendar.weeks if season.calendar is not None else []
+        week = next((w.number for w in weeks if w.start <= day <= w.end), None)
+        lineup = None
+        if week is not None and base.my_team_id is not None:
+            try:
+                lineup = self.lineup(league, None, week)
+            except HTTPException as exc:
+                if exc.status_code != 404:
+                    raise
+        tips = nba_schedule.load_tips(day, self.data_dir / SCHEDULE_DIR)
+        stop = season_autopilot.stopped(self.data_dir)
+        return season_autopilot.steps_payload(
+            league, base.my_team_id, day, today, now, lineup, tips, mode, stop
+        )
+
+    def autopilot(self, league: str) -> dict[str, Any]:
+        """The Lineup view's executor panel (#170)."""
+        self._base(league)
+        mode = leagues.lineup_mode(self.data_dir, league)
+        return season_autopilot.view(self.data_dir, league, mode, nba_today(self.clock()))
+
+    def log_lineup_run(self, league: str, run: season_autopilot.LineupRun) -> dict[str, Any]:
+        """Append a run of the lineup executor to the league's log (#170), refused (409) when
+        the mode, STOP or the run's own outcome says it should not have run."""
+        self._base(league)
+        mode = leagues.lineup_mode(self.data_dir, league)
+        why = season_autopilot.check_run(run, mode, season_autopilot.stopped(self.data_dir))
+        if why is not None:
+            raise HTTPException(409, why)
+        record = {
+            "at": self.clock().isoformat(timespec="seconds"),
+            **run.model_dump(mode="json", by_alias=True),
+        }
+        try:
+            return season_autopilot.append_run(
+                self.data_dir, league, record, nba_today(self.clock())
+            )
+        except season_autopilot.LogError as exc:
+            raise HTTPException(409, str(exc)) from exc
+
+    def set_lineup_mode(self, league: str, mode: str) -> dict[str, Any]:
+        """The dashboard's mode switch (#170): the private league is refused, and ``live``
+        until the dry run passes (``season_autopilot.live_check``)."""
+        self._base(league)
+        current = leagues.lineup_mode(self.data_dir, league)
+        if current.get("private"):
+            raise HTTPException(409, "the private league is never touched")
+        if mode == "live":
+            check = season_autopilot.live_check(self.data_dir, league, current)
+            if not check["ok"]:
+                raise HTTPException(409, check["reason"])
+        leagues.set_lineups(self.data_dir, league, mode, by="dashboard")
+        return self.autopilot(league)
 
     def lineup(self, league: str, system: str | None, week: int | None) -> dict[str, Any]:
         """The Lineup view (#107): my recommended starters for each day of ``week`` (this one
@@ -1639,6 +1726,11 @@ class TradeBody(BaseModel):
     effective: date | None = None
 
 
+class LineupMode(BaseModel):
+    #: The lineup executor's mode (#170): ``off``, ``dry_run`` or ``live``.
+    mode: str = Field(pattern="^(off|dry_run|live)$")
+
+
 def register(
     app: FastAPI, data_dir: Path, fetch_factory: FetchFactory | None = None
 ) -> SeasonService:
@@ -1783,6 +1875,41 @@ def register(
     ) -> dict[str, Any]:
         """My recommended lineup for each day of the week against Yahoo's as read (#107)."""
         return await asyncio.to_thread(service.lineup, league, system, week)
+
+    steps_day_q = Query(None, alias="date", description="the day; today by default")
+
+    @app.get("/seasons/{league}/lineup/steps")
+    async def get_lineup_steps(
+        league: str = league_id, day: date | None = steps_day_q
+    ) -> dict[str, Any]:
+        """The lineup executor's steps for a day (#170); nothing here sets a lineup."""
+        return await asyncio.to_thread(service.lineup_steps, league, day)
+
+    @app.get("/seasons/{league}/autopilot")
+    def get_autopilot(league: str = league_id) -> dict[str, Any]:
+        """The lineup executor's mode, STOP, the live check and its runs (#170)."""
+        return service.autopilot(league)
+
+    @app.post("/seasons/{league}/autopilot/lineup")
+    def post_lineup_run(body: dict[str, Any], league: str = league_id) -> dict[str, Any]:
+        """A run of the lineup executor, for the league's log (#170). The page's crumb is never
+        posted here: a run carrying one is refused."""
+        if season_autopilot.has_crumb(body):
+            raise HTTPException(422, "a run never carries the page's crumb")
+        try:
+            run = season_autopilot.LineupRun.model_validate(body)
+        except ValidationError as exc:
+            raise HTTPException(422, exc.errors(include_url=False, include_context=False)) from exc
+        return service.log_lineup_run(league, run)
+
+    @app.put("/leagues/{league}/lineups")
+    def put_lineup_mode(body: LineupMode, league: str = league_id) -> dict[str, Any]:
+        """The Lineup view's mode switch, the user's own click (#170). No session, script or
+        routine sets ``live``."""
+        try:
+            return service.set_lineup_mode(league, body.mode)
+        except leagues.LeagueError as exc:
+            raise HTTPException(404, str(exc)) from exc
 
     @app.get("/seasons/{league}/decisions")
     async def get_decisions(
