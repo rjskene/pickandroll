@@ -11,11 +11,12 @@ the checks a verdict waits on. Pure: no file reads, no network, no clock; the re
 """
 
 from .fit import Fit, GameLine, HoldOutError, SeasonFit, fit_season, freeze, pool
-from .league import LeagueSpec, Outcome, season
+from .league import BracketUnread, LeagueSpec, Outcome, season
 from .world import STREAMS, rng
 
 __all__ = [
     "STREAMS",
+    "BracketUnread",
     "Fit",
     "GameLine",
     "HoldOutError",
