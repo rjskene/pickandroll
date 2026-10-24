@@ -1140,6 +1140,55 @@ export interface LineupPayload {
   players: Record<string, { name: string; nba_team: string | null; positions: string[]; status: string | null }>;
 }
 
+// ---------------------------------------------------------------- the lineup executor (#170)
+/** The lineup executor's mode in a league: off, a dry run (the extension logs what it would set
+ * and clicks nothing), or live (the user's own click, once the dry run has passed). */
+export type LineupMode = "off" | "dry_run" | "live";
+
+/** One step of a run, as the executor saw it on the team page. */
+export interface LineupStepLog {
+  player: number;
+  from_slot: string;
+  to_slot: string;
+  /** The player in ``to_slot`` who goes to ``from_slot``; null for an empty slot. */
+  with: number | null;
+  tip: string | null;
+  group: number | null;
+  outcome: "would_set" | "skipped" | "set" | "failed";
+  reason: string | null;
+}
+
+/** A run of the executor on one team page, as the league's log keeps it. */
+export interface LineupRunLog {
+  at: string;
+  /** The day the run set (or would have set). */
+  day: string;
+  mode: "dry_run" | "live";
+  trigger: "routine" | "routine_late" | "panel";
+  outcome: "would_set" | "nothing_to_do" | "skipped" | "set" | "failed" | "stopped";
+  reason: string | null;
+  steps: LineupStepLog[];
+  /** The groups the API left out: a player's game began. */
+  skipped: { reason: string; players: number[] }[];
+}
+
+/** The Lineup view's executor panel: the mode, STOP, whether live may be switched on, the runs. */
+export interface AutopilotView {
+  league: string;
+  mode: { mode: LineupMode; at: string | null; by: string | null; set: boolean; private: boolean };
+  stop: boolean;
+  live: {
+    ok: boolean;
+    reason: string | null;
+    dry_run_days: number;
+    checked_days: number;
+    needs: { dry_run_days: number; checked_days: number };
+  };
+  last: LineupRunLog | null;
+  today: LineupRunLog[];
+  days: string[];
+}
+
 // ---------------------------------------------------------------- moves (#94)
 /** The moves' horizons: the rest of this week against the opponent, and the three weeks after
  * it against the field. */
@@ -2242,6 +2291,11 @@ export const api = {
   /** A week's lineups, recommended against Yahoo's as read, and the held slots (#107). */
   lineup: (league: string, system: ProjectionSystem, week?: number) =>
     request<LineupPayload>(`/seasons/${encodeURIComponent(league)}/lineup?system=${system}${week == null ? "" : `&week=${week}`}`),
+  /** The lineup executor's mode, STOP, whether live may be switched on, and its runs (#170). */
+  autopilot: (league: string) => request<AutopilotView>(`/seasons/${encodeURIComponent(league)}/autopilot`),
+  /** The user's own click: the lineup executor's mode; live is refused until the dry run passes. */
+  setLineupMode: (league: string, mode: LineupMode) =>
+    request<AutopilotView>(`/leagues/${encodeURIComponent(league)}/lineups`, { method: "PUT", body: JSON.stringify({ mode }) }),
   /** Every week left of my season as win odds, each with its scoreboard and my players (#116). */
   outlook: (league: string, system: ProjectionSystem) =>
     request<OutlookPayload>(`/seasons/${encodeURIComponent(league)}/outlook?system=${system}`),

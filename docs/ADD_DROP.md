@@ -498,6 +498,30 @@ out, any of the Moves card's four weeks.
 - **Script.** `scripts/season.py lineup [league ...] --all [--days 2] [--json]` prints the same
   line per league for the terminal.
 
+### The executor's steps (#170)
+
+`season/lineup.py`'s `target_lineup`, `lineup_steps` and `apply_steps` (core, no I/O), served by
+`GET /seasons/{league}/lineup/steps?date=` (`api/season_autopilot.py`; the guardrails are in
+docs/AUTOPILOT.md section 2).
+
+- **Target.** The starters are Yahoo's as read, less the comparison's `sit`, plus its `start`:
+  the recommended set, never re-solved. They are placed in the league's starting slots so the
+  most of them stay where Yahoo has them (an exact search over the slots), everyone else goes
+  to the bench, and a held slot's player stays where he is. None when the set does not fit the
+  slots as read.
+- **Steps.** From Yahoo's lineup to the target one move at a time, each legal on its own: a
+  player into an open starting slot first, then a bench player into his slot with its occupant
+  to the bench, then a starter into another starting slot when the occupant can take his, then
+  a move to the bench. The bench takes anyone (Yahoo lets it run over its count while a starting
+  slot is empty), and a player moves at most once to his slot. Steps that share a slot or a
+  player form a group; groups share neither, so a group can be dropped without breaking another.
+- **Payload.** The day, the team page, the mode and STOP; whether the day still takes changes
+  and why not; the read the steps came from; the steps with the player swapped, his tip-off and
+  his group; the groups left out because a game began; each moved player's final slot; and the
+  games each lineup starts (recommended, Yahoo's, after the steps). Tips come from the schedule
+  copy of the day (ESPN's event times, kept beside the teams since #170); a day copied before
+  that has none, which a dry run allows and live will refuse.
+
 ## Decision log (#125)
 
 `season/decisions.py` (core, no I/O) and `api/season_decisions.py`;

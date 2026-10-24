@@ -1971,8 +1971,11 @@ def test_the_flag_digest_lists_every_league_with_a_season(client):
     # The five most added are watch-level: one line of names, the evidence in the JSON.
     assert "- watch (5): Keldon Johnson (SAS), Andre Drummond (NYK), Zaccharie Risacher" in md
     assert top[0]["line"] not in md and top[0]["signals"]["opportunity"]["reason"]
-    # The leagues not read close the markdown, by id.
-    assert md.rstrip().endswith("Not read: League 100002 (no season read yet).")
+    # The leagues not read close the flags, by id; the lineups follow, the lineup executor's
+    # summary among them (#170).
+    flags, lineups = md.split("\n### Lineups\n")
+    assert flags.rstrip().endswith("Not read: League 100002 (no season read yet).")
+    assert "- Lineup executor (dry run in 1): " in lineups
 
 
 def test_the_buzz_day_file_keeps_the_larger_adds_and_the_latest_read(tmp_path):

@@ -4,6 +4,9 @@ One request per date; each date is cached as ``<cache>/<YYYY-MM-DD>.json`` and r
 once its copy is older than ``max_age`` (a game can be postponed), or ``far_max_age`` for a date
 weeks away (the rest of the season, which the Season view counts games on, #116). Team names
 are returned in Yahoo's abbreviations, the ones the league pages and the player pool use.
+
+Each date's copy also keeps every team's tip-off (``tips``, UTC, from the same response), for the
+lineup executor's steps (#170): a copy written before it has none (:func:`load_tips`).
 """
 
 from __future__ import annotations
@@ -43,6 +46,32 @@ def teams_playing(body: Any) -> list[str]:
     return sorted(teams)
 
 
+def tips_of(body: Any) -> dict[str, str]:
+    """Each team's tip-off in an ESPN scoreboard response (the game's ``date``, UTC, as ESPN
+    writes it), in Yahoo's abbreviations; a game that will not be played on its date is left
+    out, as :func:`teams_playing` leaves it."""
+    tips: dict[str, str] = {}
+    for event in (body or {}).get("events") or []:
+        status = ((event.get("status") or {}).get("type") or {}).get("name")
+        start = event.get("date")
+        if status in NOT_PLAYED or not start:
+            continue
+        for comp in event.get("competitions") or []:
+            for side in comp.get("competitors") or []:
+                abbr = ((side.get("team") or {}).get("abbreviation") or "").upper()
+                if abbr:
+                    tips[ESPN_TO_YAHOO.get(abbr, abbr)] = start
+    return dict(sorted(tips.items()))
+
+
+def load_tips(day: date, cache_dir: Path) -> dict[str, str] | None:
+    """The tip-offs of ``day``'s copy (:func:`tips_of`), None when it has no copy or a copy
+    written before the tip-offs were kept."""
+    cached = _read(cache_dir / f"{day.isoformat()}.json")
+    tips = cached.get("tips") if cached is not None else None
+    return dict(tips) if isinstance(tips, dict) else None
+
+
 def schedule_days(
     days: Iterable[date],
     fetch: Callable[[str], str],
@@ -71,12 +100,13 @@ def schedule_days(
                 out[day.isoformat()] = cached["teams"]
                 continue
         try:
-            teams = teams_playing(json.loads(fetch(scoreboard_url(day))))
+            body = json.loads(fetch(scoreboard_url(day)))
+            teams, tips = teams_playing(body), tips_of(body)
         except Exception:  # noqa: BLE001 - a date the source cannot give is reported missing
             if cached is not None:
                 out[day.isoformat()] = cached["teams"]
             continue
-        path.write_text(json.dumps({"fetched_at": now.isoformat(), "teams": teams}))
+        path.write_text(json.dumps({"fetched_at": now.isoformat(), "teams": teams, "tips": tips}))
         out[day.isoformat()] = teams
     return out
 

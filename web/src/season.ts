@@ -14,9 +14,12 @@ import type {
   HeldMove,
   KeepRule,
   KeptPlayer,
+  AutopilotView,
   LineupAlert,
   LineupDay,
   LineupPayload,
+  LineupRunLog,
+  LineupStepLog,
   MatchKind,
   MilpBlock,
   MoveAdds,
@@ -501,6 +504,48 @@ export function lineupAlertText(a: LineupAlert, name: (id: number) => string): s
     return `The held slots are at least ${kinds || "none"}, the most any roster read fills: the league's settings page is not read yet.`;
   }
   return "The lineup rule is not read: the lineups assume daily changes.";
+}
+
+// ---------------------------------------------------------------- the lineup executor (#170)
+/** What the lineup executor does in the league, in a line. */
+export function executorText(v: Pick<AutopilotView, "mode" | "stop">): string {
+  if (v.mode.private) return "The private league is never touched: its lineups here are recommendations for you to set by hand.";
+  if (v.stop) return "STOP is on (data/autopilot/STOP): no executor runs.";
+  if (v.mode.mode === "off") return "Off: the extension leaves this league's lineup alone.";
+  if (v.mode.mode === "dry_run") return "Dry run: on the team page, the extension logs what it would set and clicks nothing.";
+  return "Live: on the team page, the extension sets the recommended lineup for today and tomorrow.";
+}
+
+/** Why live waits, or that the dry run has passed. */
+export function liveText(l: AutopilotView["live"]): string {
+  if (!l.ok) return `Live waits: ${l.reason ?? "the dry run"}.`;
+  return `The dry run has passed: ${l.dry_run_days} days, ${l.checked_days} with steps that passed every check.`;
+}
+
+const RUN_OUTCOME: Record<LineupRunLog["outcome"], string> = {
+  would_set: "would set",
+  nothing_to_do: "nothing to do",
+  skipped: "skipped",
+  set: "set",
+  failed: "failed",
+  stopped: "stopped by STOP",
+};
+const TRIGGER: Record<LineupRunLog["trigger"], string> = { routine: "routine", routine_late: "late routine", panel: "side panel" };
+
+/** A run in a line: "05:02 · Sat 24 · routine: would set 2 moves". ``clock`` writes its time. */
+export function runLine(r: LineupRunLog, clock: (iso: string) => string): string {
+  const n = r.steps.length;
+  const moves = r.outcome === "would_set" || r.outcome === "set" ? ` ${n} move${n === 1 ? "" : "s"}` : "";
+  const why = r.reason ? ` (${r.reason})` : "";
+  const left = r.skipped.length ? `; ${r.skipped.length} left out, a game began` : "";
+  return `${clock(r.at)} · ${weekdayLabel(r.day)} · ${TRIGGER[r.trigger]}: ${RUN_OUTCOME[r.outcome]}${moves}${why}${left}`;
+}
+
+/** A step in words: "Brooks BN → SF, Reed to BN: would set". */
+export function stepText(s: LineupStepLog, name: (id: number) => string): string {
+  const other = s.with != null ? `, ${name(s.with)} to ${s.from_slot}` : "";
+  const outcome = s.outcome === "would_set" ? "would set" : s.outcome;
+  return `${name(s.player)} ${s.from_slot} → ${s.to_slot}${other}: ${outcome}${s.reason ? ` (${s.reason})` : ""}`;
 }
 
 // ---------------------------------------------------------------- moves (#94)
