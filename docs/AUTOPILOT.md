@@ -467,10 +467,12 @@ comes back to it.
   once #126 is merged.
 - **Phase 1, lineups.** #107 and #124 first (the lineup route, the Lineup view, the IL rules and
   the no-drop add). Then the extension sets the lineup for today and tomorrow in an armed league
-  from the lineup route's per-day slots: the first executor, reversible until tip-off.
+  from the lineup route's per-day slots: the first executor, reversible until tip-off. The
+  executor is filed 2026-10-23 as #170 (user: "file both"), dry run first, `live` the user's click.
 - **Phase 2, moves.** The queue, the veto window, the dry-run week, the caps, the FAAB rule, the
   executor for Add and Drop with the idempotence check, the autopilot log and the digest line.
-  Filed when phase 1 is in.
+  Filed 2026-10-23 as #171, behind #170, before phase 1 was in, at the user's direction
+  ("file both"); built after #170, plan comment first.
 - **Phase 3, the hill-climb step.** The Monday analysis over the scorecard, the knob file, the
   A/B split, the revert rule, the comment on #127. The Progress view of
   section 6, the Monday note it renders. Filed 2026-10-23 as #152, before two scored weeks, at the user's direction ("don't wait, we will work out the kinks as we go"); the engine reading the knob file is part of it.
@@ -531,4 +533,6 @@ never a Basketball Monster number.
   the margin an add must beat a player by (a higher floor protects more), and the season-costly
   flag reads a season projection below zero whatever the floor; a move with no season line counts
   as zero for the guard and marks the total partial.
-
+- 2026-10-23, evening: the two executors are filed together (#170 lineups, #171 moves) and built in
+  that order ("file both"); each starts in dry run, and only the user's own click on the dashboard
+  switches a league to live, after its dry-run week is reviewed on #127.
