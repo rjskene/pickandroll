@@ -651,3 +651,24 @@ def test_the_digest_says_when_there_is_no_queue_and_nothing_when_nothing_is_arme
     ]
     private = {PRIVATE: leagues.executor_mode(client.data_dir, PRIVATE, leagues.MOVES)}
     assert ap.moves_digest_lines(client.data_dir, private, None, NOW) == []
+
+
+def test_a_build_resolves_the_earlier_days_placed_claims_and_counts_the_open_ones(
+    client, monkeypatch
+):
+    folder = client.data_dir / "autopilot" / "queue"
+    folder.mkdir(parents=True)
+    claim = {"league": LEAGUE, "outcome": "claimed", "resolved": None, "from": "2026-10-22"}
+    won = {**claim, "id": f"2026-10-20:{LEAGUE}:9001:0", "add": 9001}
+    open_ = {**claim, "id": f"2026-10-20:{LEAGUE}:9002:0", "add": 9002}
+    (folder / "2026-10-20.json").write_text(json.dumps({"entries": [won, open_]}))
+    monkeypatch.setattr(season_queue, "resolutions", lambda s, e, d: {won["id"]: "won"})
+    q = queued(client)
+    earlier = json.loads((folder / "2026-10-20.json").read_text())["entries"]
+    assert [(e["id"], e["resolved"]) for e in earlier] == [(won["id"], "won"), (open_["id"], None)]
+    # The claim still open counts against its week.
+    row = row_of(q)
+    assert row["pending"] == [open_["id"]]
+    week = next(w for w in row["adds_left"] if w["start"] <= "2026-10-22" <= w["end"])
+    solved = next(w for w in row["adds"]["weeks"] if w["start"] == week["start"])
+    assert week["adds"] == solved["adds"] - 1

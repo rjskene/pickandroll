@@ -1043,11 +1043,10 @@ class SeasonService:
                 "entries": sorted(out, key=season_queue.sort_key),
             }
 
-        for day, q in earlier.items():
-            ids = {e["id"] for e in q.get("entries") or []} & set(resolved)
-            if ids:
-                season_queue.update(self.data_dir, day, _resolver(resolved, now))
         try:
+            for day, q in earlier.items():
+                if {e["id"] for e in q.get("entries") or []} & set(resolved):
+                    season_queue.update(self.data_dir, day, _resolver(resolved, now))
             body = season_queue.update(self.data_dir, today, change)
         except season_queue.QueueError as exc:
             raise HTTPException(409, str(exc)) from exc
