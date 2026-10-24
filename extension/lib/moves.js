@@ -6,7 +6,7 @@
 // The routine opens each due entry's add page itself, with the fragment, in a tab of its own (the
 // ruling on #171): this build is the dry run there. It reads the page and logs the claim it would
 // place. Nothing here toggles a drop, types a bid or submits the form, nothing fetches a page,
-// and nothing reads the form's crumb.
+// and nothing reads the form's anti-forgery field: the log says only whether it is there.
 (function (root, factory) {
   const api = factory();
   if (typeof module === "object" && module.exports) module.exports = api;
@@ -29,6 +29,10 @@
   const DROP_FIELD = "dpid";
   const BID_FIELD = "faab";
   const SUBMIT = "submit_drop_player";
+  /** Yahoo's anti-forgery field, by its name. The page side never reads its value and never
+   * passes its name on: a pass logs only ``token``, whether the form has it (the ruling on #171). */
+  const TOKEN_FIELD = "crumb";
+  const TOKEN = new RegExp(TOKEN_FIELD, "i");
   /** The marker icons of a row (Yahoo's legend on the add page), by their class. */
   const MARKERS = {
     "T-action-icon-cantcut": "cantcut",
@@ -93,15 +97,17 @@
   }
 
   /** The add page as the content script extracted it (``{path, heading, form: {action, method,
-   * fields: [{name, tag, type, value, checked}]} | null, submit, panel, hint, add_row: {id,
-   * classes} | null, rows: [{id, box, classes}], message}``, the crumb's value never read) read
+   * fields: [{name, tag, type, value, checked}], token} | null, submit, panel, hint, add_row: {id,
+   * classes} | null, rows: [{id, box, classes}], message}``, the anti-forgery field left out and
+   * ``token`` saying whether the form has it) read
    * into what the checks use: the form's league and team, the add it claims, my roster's rows
    * with their markers, the bid field, its range, the budget and the waiver date shown, the
    * submit's name, and the names of the form's fields. ``near`` is the entry's clear date, for the
    * year of the page's waiver date. */
   function readAddPage(raw, near = null) {
     const form = raw.form || null;
-    const fields = form ? form.fields || [] : [];
+    const all = form ? form.fields || [] : [];
+    const fields = all.filter((f) => !TOKEN.test(f.name || ""));
     const named = (n) => fields.filter((f) => f.name === n);
     const add = named(ADD_FIELD)[0];
     const action = form ? form.action || null : null;
@@ -133,7 +139,7 @@
       bid_max: range ? Number(range[2]) : null,
       waiver_date: /waiver date/i.test(panel) ? pageDay(panel.split(/waiver date/i)[1], near) : null,
       submit: raw.submit || null,
-      crumb: fields.some((f) => /crumb/i.test(f.name)),
+      token: Boolean(form && (form.token || all.length > fields.length)),
       message: raw.message || null,
       fields: [...new Set(fields.map((f) => f.name).filter(Boolean))],
     };
@@ -202,8 +208,8 @@
   }
 
   /** The claim the form would carry for ``entry``: its action and the fields this pass would
-   * fill, one drop only. Every other field would post as the page has it; the crumb is no part
-   * of this. */
+   * fill, one drop only. Every other field would post as the page has it; the anti-forgery
+   * field is no part of this. */
   function wouldFill(entry, page) {
     return { action: page.action, [ADD_FIELD]: entry.add, [DROP_FIELD]: entry.drop, [BID_FIELD]: entry.bid_placed ?? 0, submit: SUBMIT };
   }
@@ -228,8 +234,8 @@
             action: page.action,
             method: page.method,
             heading: page.heading,
-            fields: page.fields.filter((n) => !FILLED.has(n) && !/crumb/i.test(n)),
-            ...(page.crumb ? { crumb: "present" } : {}),
+            fields: page.fields.filter((n) => !FILLED.has(n)),
+            token: page.token,
             waiver_date: page.waiver_date,
             budget: page.budget,
             bid_range: page.bid_min == null ? null : [page.bid_min, page.bid_max],
@@ -323,6 +329,8 @@
     FORM_ID,
     CLAIM_HEADING,
     SUBMIT,
+    TOKEN_FIELD,
+    TOKEN,
     MARKERS,
     movesTriggerOf,
     addPageOf,

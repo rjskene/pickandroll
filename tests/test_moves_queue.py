@@ -581,9 +581,9 @@ def test_the_log_refuses_a_crumb_a_dry_claim_a_struck_entry_and_another_move(cli
         return r.json()["detail"]
 
     assert "crumb" in refused(pass_body([check(on[0], controls={"crumb": "x"})]), 422)
-    assert "crumb" in refused(pass_body([check(on[0], controls={"crumb_value": "present"})]), 422)
-    # The page's note that it had one, and nothing else, passes.
-    noted = pass_body([check(on[0], controls={"crumb": "present"})])
+    assert "crumb" in refused(pass_body([check(on[0], controls={"crumb": "present"})]), 422)
+    # The page's note that its anti-forgery field is there is a flag under another name.
+    noted = pass_body([check(on[0], controls={"token": True})])
     assert client.post(url, json=noted).status_code == 200
     assert refused(pass_body([check(on[0], outcome="claimed")])) == "a dry run claims nothing"
     assert refused(pass_body([], mode="live", outcome="claimed")).startswith("a live pass")

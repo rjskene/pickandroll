@@ -23,9 +23,10 @@ const CANTCUT = [2012, 2013];
 const hidden = (name, value) => ({ name, tag: "input", type: "hidden", value, checked: false });
 const ICON = { cantcut: "noactioncc-cantcut F-icon T-action-icon-cantcut", locked: "noactionl- F-icon T-action-icon-locked" };
 
-/** An add page as the content script extracts it from the rendered page: the crumb's value never
- * read. ``markers`` puts an icon on a roster row, ``addClasses`` on the add's own row. */
-function rawPage({ add = ADD, budget = 100, waiver = "Oct 26", heading = X.CLAIM_HEADING, form = true, markers = {}, addClasses = "noactionda- F-icon T-action-icon-disabled-add", action = `/nba/${LEAGUE}/${TEAM}/addplayer`, submit = X.SUBMIT, hint = true, message = null } = {}) {
+/** An add page as the content script extracts it from the rendered page: the anti-forgery field
+ * left out, ``token`` saying the form has it. ``markers`` puts an icon on a roster row,
+ * ``addClasses`` on the add's own row. */
+function rawPage({ token = true, add = ADD, budget = 100, waiver = "Oct 26", heading = X.CLAIM_HEADING, form = true, markers = {}, addClasses = "noactionda- F-icon T-action-icon-disabled-add", action = `/nba/${LEAGUE}/${TEAM}/addplayer`, submit = X.SUBMIT, hint = true, message = null } = {}) {
   const cut = new Set([...CANTCUT, ...Object.keys(markers).map(Number)]);
   return {
     path: `/nba/${LEAGUE}/addplayer?apid=${add}`,
@@ -36,13 +37,13 @@ function rawPage({ add = ADD, budget = 100, waiver = "Oct 26", heading = X.CLAIM
           method: "post",
           fields: [
             hidden("stage", "2"),
-            { name: "crumb", tag: "input", type: "hidden", value: null, checked: false },
             hidden("stat1", "P"),
             hidden("stat2", "P"),
             hidden("apid", String(add)),
             ...ROSTER.filter((k) => !cut.has(k)).map((k) => ({ name: "dpid", tag: "input", type: "checkbox", value: String(k), checked: false })),
             { name: "faab", tag: "input", type: "text", value: "0", checked: false },
           ],
+          token,
         }
       : null,
     submit: form ? submit : null,
@@ -108,8 +109,9 @@ test("the add page's controls as the DOM read on #171 found them", () => {
   assert.deepEqual(p.cantcut, CANTCUT);
   assert.deepEqual(p.add_row, { id: ADD, markers: ["disabled_add"] });
   assert.deepEqual([p.bid, p.budget, p.bid_min, p.bid_max, p.waiver_date], [true, 100, 0, 100, CLEARS]);
-  assert.deepEqual([p.submit, p.crumb, p.heading], [X.SUBMIT, true, X.CLAIM_HEADING]);
-  assert.deepEqual(p.fields, ["stage", "crumb", "stat1", "stat2", "apid", "dpid", "faab"]);
+  assert.deepEqual([p.submit, p.token, p.heading], [X.SUBMIT, true, X.CLAIM_HEADING]);
+  assert.deepEqual(p.fields, ["stage", "stat1", "stat2", "apid", "dpid", "faab"]);
+  assert.equal(X.readAddPage(rawPage({ token: false }), CLEARS).token, false);
 });
 
 test("the page's waiver date takes the year nearest the clear date", () => {
@@ -130,11 +132,11 @@ test("every check passes: the claim it would place, one drop, with the form as i
   assert.deepEqual(line.controls.would_fill, { action: `/nba/${LEAGUE}/${TEAM}/addplayer`, apid: ADD, dpid: 2005, faab: 3, submit: X.SUBMIT });
   const c = line.controls;
   assert.deepEqual(c.fields, ["stage", "stat1", "stat2"]);
-  assert.deepEqual([c.crumb, c.heading, c.waiver_date, c.budget, c.adds_left, c.read_at], ["present", X.CLAIM_HEADING, CLEARS, 100, 4, READ_AT]);
+  assert.deepEqual([c.token, c.heading, c.waiver_date, c.budget, c.adds_left, c.read_at], [true, X.CLAIM_HEADING, CLEARS, 100, 4, READ_AT]);
   assert.deepEqual([c.cantcut, c.add_markers, c.bid_range, c.drops], [CANTCUT, ["disabled_add"], [0, 100], 11]);
-  // The only key naming the crumb says it was there, nothing more.
-  const keys = (o) => (o && typeof o === "object" ? Object.entries(o).flatMap(([k, v]) => [[k, v], ...keys(v)]) : []);
-  assert.deepEqual(keys(line).filter(([k]) => /crumb/i.test(k)), [["crumb", "present"]]);
+  // The log says only whether the anti-forgery field is there: nothing spells its name.
+  assert.ok(!X.TOKEN.test(JSON.stringify(line)));
+  assert.equal(X.moveCheck(e, check, X.readAddPage(rawPage({ token: false }), e.from), due(), READ_AT).controls.token, false);
 });
 
 test("a struck bid is a $0 claim", () => {
@@ -236,10 +238,9 @@ const el = (props = {}) => ({ textContent: "", className: "", getAttribute: (a) 
  * the add's row and my roster's rows with their player ids and icons. */
 function addDom({ add = ADD, budget = 100, waiver = "Oct 26" } = {}) {
   const input = (name, type, value) => ({ name, tagName: "INPUT", type, value, checked: false });
-  const crumb = input("crumb", "hidden", "SECRET-TOKEN");
   const elements = [
     input("stage", "hidden", "2"),
-    crumb,
+    input(X.TOKEN_FIELD, "hidden", "SECRET-VALUE"),
     input("stat1", "hidden", "P"),
     input("stat2", "hidden", "P"),
     input("apid", "hidden", String(add)),
@@ -257,7 +258,6 @@ function addDom({ add = ADD, budget = 100, waiver = "Oct 26" } = {}) {
   const addCell = el({ attrs: { "data-ys-playerid": String(add) }, closest: (sel) => (sel === "tr" ? addTr : null) });
   const rows = ROSTER.map((k) => tr(k, CANTCUT.includes(k) ? ICON.cantcut : ""));
   return {
-    crumb,
     querySelector: (sel) => (sel === "form#add-drop-players-form" ? form : sel === "table#statTable-add tbody tr [data-ys-playerid]" ? addCell : null),
     querySelectorAll: (sel) =>
       sel === "h1, h2, h3"
@@ -345,8 +345,9 @@ test("the routine's link: the fragment dropped, the page's entry checked on the 
   assert.deepEqual(run.entries.map((e) => [e.id, e.outcome]), [[entry().id, "would_claim"]]);
   const c = run.entries[0].controls;
   assert.deepEqual(c.would_fill, { action: `/nba/${LEAGUE}/${TEAM}/addplayer`, apid: ADD, dpid: 2005, faab: 3, submit: X.SUBMIT });
-  assert.deepEqual([c.crumb, c.cantcut, c.add_markers, c.fields], ["present", CANTCUT, ["disabled_add"], ["stage", "stat1", "stat2"]]);
-  assert.ok(!JSON.stringify(v.sent).includes("SECRET-TOKEN"), "the crumb's value never leaves the page");
+  assert.deepEqual([c.token, c.cantcut, c.add_markers, c.fields], [true, CANTCUT, ["disabled_add"], ["stage", "stat1", "stat2"]]);
+  const sent = JSON.stringify(v.sent);
+  assert.ok(!sent.includes("SECRET-VALUE") && !X.TOKEN.test(sent), "the anti-forgery field's value and name never leave the page");
   assert.match(v.strip.textContent, /^pickandroll moves: dry run · would claim for \$3, dropping 2005; logged \d\d:\d\d$/);
 });
 

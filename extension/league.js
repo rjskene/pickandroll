@@ -212,11 +212,14 @@
   const movesStrip = (line) => strip(line, "moves");
 
   /** The rendered add page as a plain object for ``readAddPage``: the claim form's action, its
-   * fields' names and values (the crumb's value never read), the heading, the bid panel and its
-   * hint, the submit's name (in a noscript until a drop is picked), the add's row and my roster's
-   * rows with their player ids and marker icons. The waiver-order table is never read. */
+   * fields' names and values less the anti-forgery field (only whether the form has it, as
+   * ``token``), the heading, the bid panel and its hint, the submit's name (in a noscript until a
+   * drop is picked), the add's row and my roster's rows with their player ids and marker icons.
+   * The waiver-order table is never read. */
   function addControls() {
     const form = document.querySelector(`form#${PR.FORM_ID}`);
+    const named = form ? [...form.elements].filter((el) => el.name) : [];
+    const fields = named.filter((el) => !PR.TOKEN.test(el.name));
     let action = null;
     try {
       action = form ? new URL(form.getAttribute("action") || "", location.href).pathname : null;
@@ -239,15 +242,14 @@
         ? {
             action,
             method: form.getAttribute("method") || "get",
-            fields: [...form.elements]
-              .filter((el) => el.name)
-              .map((el) => ({
-                name: el.name,
-                tag: el.tagName.toLowerCase(),
-                type: String(el.type || "").toLowerCase(),
-                value: /crumb/i.test(el.name) ? null : el.value,
-                checked: Boolean(el.checked),
-              })),
+            fields: fields.map((el) => ({
+              name: el.name,
+              tag: el.tagName.toLowerCase(),
+              type: String(el.type || "").toLowerCase(),
+              value: el.value,
+              checked: Boolean(el.checked),
+            })),
+            token: fields.length < named.length,
           }
         : null,
       submit,

@@ -161,10 +161,10 @@ nothing, fetches nothing from Yahoo and posts nothing about the add page but the
    (the heading's own text, or the drop's id and the icon found). The add is `gone` only when the page shows it on
    a team; a page with no claim form is skipped as not read, so the late pass tries again.
 5. The pass goes to the league's log (`POST /seasons/<id>/autopilot/moves`) as a dry run: the outcome and reason,
-   the form's action and field names (never a value), `crumb: present` when the form had one, the heading, the
-   waiver date, the budget, the range, the adds left, my roster's can't-cut ids, the add's row icons, when the
-   page was read, and the fields the claim would fill (`apid`, `dpid`, `faab` and the submit's name). The
-   waiver-order table is never read. A dry run sets no outcome on the queue. The strip and the side panel show
+   the form's action and field names (never a value, and never the anti-forgery field's), `token` (whether the
+   form has that field), the heading, the waiver date, the budget, the range, the adds left, my roster's
+   can't-cut ids, the add's row icons, when the page was read, and the fields the claim would fill (`apid`,
+   `dpid`, `faab` and the submit's name). The waiver-order table is never read. A dry run sets no outcome on the queue. The strip and the side panel show
    the pass. **Moves executor in this browser** off in the settings is this browser's brake.
 
 The live submit is a later build after the dry-run week (#171, PR 3): it submits the form on the rendered page,
@@ -188,7 +188,7 @@ so the crumb travels only in the browser's own submission.
 - **Moves executor (0.7.0):** on an add page opened from the routine's or the panel's link, the claim form's
   action and field names, what the page shows (the heading, the budget, the waiver date, the bid range, my
   roster's player ids and their icons) and the pass's outcome, to the same API. Nothing is fetched from Yahoo;
-  the form's crumb is never read (the log says only that it was there); nothing is toggled, set or submitted.
+  the form's crumb is never read (the log's `token` says only whether it is there); nothing is toggled, set or submitted.
 - **Never:** cookies, the `?auth=` part of the room URL, anything you type, or any page other than the draft
   client and the league pages above.
 
