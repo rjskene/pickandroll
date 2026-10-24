@@ -74,6 +74,14 @@
         projections) and the matchup. Nothing is clicked in Yahoo.</p>
       <button id="league-reload" type="button">Refresh this page</button>
 
+      <div id="league-lineup" hidden>
+        <h2>Lineup executor</h2>
+        <p id="lineup-last" class="small">-</p>
+        <p class="muted small">Checks the day's recommended changes on this page's lineup form and logs what it would set, in the
+          league's mode. This build clicks nothing and sets nothing in Yahoo.</p>
+        <button id="lineup-run" type="button">Set lineup now</button>
+      </div>
+
       <div id="league-read" hidden>
         <h2>All available players</h2>
         <p id="read-note" class="muted small">Opens the first players page and follows its Next 25 link page by page,
@@ -91,6 +99,7 @@
       <a href="#" id="options">Settings</a>
     </footer>
     <script src="../lib/league.js"></script>
+    <script src="../lib/lineup.js"></script>
     <script src="panel.js"></script>
   </body>
 </html>

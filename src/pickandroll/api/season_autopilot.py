@@ -110,7 +110,9 @@ def steps_payload(
     the schedule's copy predates the tip-offs), ``group`` the step's group. A group with a
     player whose tip-off has passed is left out whole, under ``skipped``; the others run in the
     order of their first tip-off. ``target`` is each moved player's slot after the steps,
-    ``games`` the starts that play as recommended, as read and after. No steps when the mode is
+    ``games`` the starts that play as recommended, as read and after. ``slots`` are the league's
+    starting slots and ``yahoo`` each player's slot as read, for the page's own check that it is
+    the lineup the steps were built from and that an empty target slot is open. No steps when the mode is
     off, STOP is on, or the day is closed (``open`` false: past, before the rule's first day, a
     weekly league's day after the week opened) or not read; ``reason`` says which."""
     out: dict[str, Any] = {
@@ -128,6 +130,8 @@ def steps_payload(
         "target": {},
         "games": None,
         "tips": tips is not None,
+        "slots": [],
+        "yahoo": {},
     }
 
     def closed(reason: str) -> dict[str, Any]:
@@ -152,6 +156,8 @@ def steps_payload(
     if d["yahoo"] is None:
         return closed("Yahoo's lineup for the day is not read")
     out["read"] = {"at": d["yahoo"]["read_at"], "page": d["yahoo"]["page"]}
+    out["slots"] = list(lineup["slots"])
+    out["yahoo"] = {str(x["player"]): x["slot"] for x in d["yahoo"]["slots"]}
     if mode["mode"] == "off":
         return closed("the lineup executor is off in this league")
     if stop:

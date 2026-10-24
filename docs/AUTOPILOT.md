@@ -76,6 +76,15 @@ side (PR 1) is in `api/season_autopilot.py`; the click is the extension's, on th
   `skipped`; the rest are ordered by the earliest tip. Held slots are never touched.
 - **When it runs.** On the daily routine's fragment `#pickandroll-lineup` or the side panel's
   button, never on a page load of its own (`trigger`: `routine`, `routine_late`, `panel`).
+- **The page check (PR 2, extension 0.6.0).** A run posts the team page, then takes the steps only
+  when they were built from that post (`read.at` is the post's time) and the page's lineup is the
+  one they read (`yahoo`). The page must be my team's own editable lineup form for the steps' day.
+  Each step is checked on the form: the player in the step's slot with a select (a hidden field is
+  a locked player), the target among his options, the player swapped back able to take the step's
+  slot, or the target open (`slots`). A group with a failing step is skipped whole. The run logs
+  the form's action and field names (never a value, never the crumb's), each moved player's
+  control and the select values it would set; it sets nothing. The settings page's "Lineup
+  executor in this browser" is the browser's own brake beside STOP.
 - **The log.** `POST /seasons/{league}/autopilot/lineup` appends one run to
   `data/leagues/<id>/autopilot/<date>.json` as `{"lineup": [...]}`, the only writer there; phase 2
   adds `moves` beside it, and a run never rewrites another. A run carries the page it read, the

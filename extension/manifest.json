@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "pickandroll draft room",
-  "version": "0.5.3",
-  "description": "Mirrors your Yahoo fantasy basketball draft room into a pickandroll session running on this computer, and reads your league's pages for its season view.",
+  "version": "0.6.0",
+  "description": "Mirrors your Yahoo fantasy basketball draft room into a pickandroll session running on this computer, reads your league's pages for its season view, and dry-runs the lineup executor on your team page.",
   "minimum_chrome_version": "116",
   "permissions": [
     "storage",
@@ -45,6 +45,7 @@
       ],
       "js": [
         "lib/league.js",
+        "lib/lineup.js",
         "league.js"
       ],
       "run_at": "document_idle"

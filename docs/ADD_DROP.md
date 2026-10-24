@@ -520,7 +520,9 @@ docs/AUTOPILOT.md section 2).
   his group; the groups left out because a game began; each moved player's final slot; and the
   games each lineup starts (recommended, Yahoo's, after the steps). Tips come from the schedule
   copy of the day (ESPN's event times, kept beside the teams since #170); a day copied before
-  that has none, which a dry run allows and live will refuse.
+  that has none, which a dry run allows and live will refuse. For the page's own check the
+  payload also carries the league's starting slots (`slots`) and each player's slot as read
+  (`yahoo`): the extension runs only against the lineup the steps were built from.
 
 ### The moves executor's queue (#171)
 
