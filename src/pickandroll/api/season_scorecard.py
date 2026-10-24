@@ -318,6 +318,21 @@ def _same_way(projected: float, realized: float) -> bool:
     return (projected > 0) == (realized > 0) and (projected < 0) == (realized < 0)
 
 
+def compared_move(row: Mapping[str, Any]) -> tuple[str, float, float] | None:
+    """A scored move whose judging horizon is over: that horizon, and the move's projected and
+    realized value on it (the moves executor's noise floor reads these, #171); None for any
+    other move."""
+    x = row.get("realized") or {}
+    judged = row.get("judged") or judged_horizon(row.get("projected"), None)
+    h = (x.get("horizons") or {}).get(judged)
+    p = ((row.get("projected") or {}).get("value") or {}).get("horizons", {}).get(judged)
+    if group(row) != SCORED or not h or not h["complete"] or h["value"] is None:
+        return None
+    if not p or p.get("value") is None:
+        return None
+    return judged, p["value"], h["value"]
+
+
 def moves_summary(rows: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
     """The moves of some weeks: how many, by match and by group, how many the log projected
     and their projected value summed on each horizon; the realized value of every move
@@ -367,13 +382,10 @@ def moves_summary(rows: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
         if r.get("season_costly"):
             costly["moves"] += 1
             costly["below_so_far"] += below
-        judged = r.get("judged") or judged_horizon(r.get("projected"), None)
-        h = (x.get("horizons") or {}).get(judged)
-        p = ((r.get("projected") or {}).get("value") or {}).get("horizons", {}).get(judged)
-        if group(r) != SCORED or not h or not h["complete"] or h["value"] is None:
+        pair = compared_move(r)
+        if pair is None:
             continue
-        if not p or p.get("value") is None:
-            continue
+        judged, projected_value, realized_value = pair
         if compared is None:
             compared = {
                 "moves": 0,
@@ -383,10 +395,10 @@ def moves_summary(rows: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
                 "horizons": {},
             }
         compared["moves"] += 1
-        compared["same_way"] += int(_same_way(p["value"], h["value"]))
+        compared["same_way"] += int(_same_way(projected_value, realized_value))
         compared["horizons"][judged] = compared["horizons"].get(judged, 0) + 1
-        _add(compared, "projected", p["value"])
-        _add(compared, "realized", h["value"])
+        _add(compared, "projected", projected_value)
+        _add(compared, "realized", realized_value)
     if compared is not None:
         c = compared
         c["share"] = round(c["realized"] / c["projected"], 4) if c["projected"] > 0 else None

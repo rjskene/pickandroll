@@ -13,7 +13,11 @@ import type {
   LineupRunLog,
   MoveCandidate,
   MoveRos,
+  MovesPassLog,
+  MovesView,
   PlayerFlag,
+  QueueEntry,
+  QueuePayload,
   Rates,
   RosterRow,
   MovesSummary,
@@ -89,6 +93,15 @@ import {
   keptWhy,
   benchPlaying,
   executorText,
+  bidLabel,
+  countdownLabel,
+  movesExecutorText,
+  movesLiveText,
+  passLine,
+  queueFloorLine,
+  queueFoldLine,
+  queueMoveText,
+  queueStateText,
   heldEligibleText,
   liveText,
   runLine,
@@ -1327,4 +1340,94 @@ test("the lineup executor's panel says what it does, why live waits, and each ru
   const name = (id: number) => `P${id}`;
   assert.equal(stepText(step, name), "P1 BN → SF, P2 to BN: would set");
   assert.equal(stepText({ ...step, with: null, outcome: "skipped", reason: "the page did not match" }, name), "P1 BN → SF: skipped (the page did not match)");
+});
+
+test("the Queue card says what the moves executor does, each entry's state and bid, and the passes (#171)", () => {
+  const mode = (m: MovesView["mode"]["mode"], priv = false): MovesView["mode"] => ({ mode: m, at: null, by: null, set: false, private: priv, cap: null });
+  assert.ok(movesExecutorText({ mode: mode("dry_run"), stop: false }).startsWith("Dry run: each morning's queue is built"));
+  assert.equal(movesExecutorText({ mode: mode("off"), stop: false }), "Off: nothing of this league is queued; its moves stay suggestions.");
+  assert.equal(movesExecutorText({ mode: mode("live"), stop: true }), "STOP is on (data/autopilot/STOP): no executor runs.");
+  assert.ok(movesExecutorText({ mode: mode("dry_run", true), stop: false }).startsWith("The private league is never touched"));
+  const needs = { dry_run_days: 7, checked_days: 2 };
+  assert.equal(movesLiveText({ ok: true, reason: null, dry_run_days: 7, checked_days: 3, needs }), "The dry run has passed: 7 days, 3 that read the add page.");
+  const now = Date.parse("2026-10-24T15:00:00Z");
+  assert.equal(countdownLabel("2026-10-24T15:42:10Z", now), "in 43 min");
+  assert.equal(countdownLabel("2026-10-24T17:05:00Z", now), "in 2 h 5 min");
+  assert.equal(countdownLabel("2026-10-24T17:00:00Z", now), "in 2 h");
+  assert.equal(countdownLabel("2026-10-24T14:00:00Z", now), "due");
+  assert.equal(countdownLabel(null, now), "");
+  const floor = { plan: 0.1, scored: null, moves: 3, needs: 20, applies: "plan" as const };
+  const e: QueueEntry = {
+    id: "2026-10-24:900001:101:201",
+    date: "2026-10-24",
+    league: "900001",
+    scoring: "categories",
+    set: "three",
+    decision: null,
+    add: 101,
+    drop: 201,
+    from: "2026-10-25",
+    availability: "W",
+    judged: "three",
+    gain: 0.21,
+    value: 410,
+    season: 900,
+    season_costly: false,
+    flag: "add",
+    floor: { ...floor, below: null },
+    bid: { amount: 4, reason: "$4: gain 2x the typical (the plan floor until 10 moves), x2 for a breakout flag", base: 2, factor: 2, sizing: 1, typical: 0.1, typical_from: "the plan floor until 10 moves" },
+    queued: true,
+    reason: null,
+    rank: 1,
+    queued_at: "2026-10-24T10:00:00Z",
+    executes_at: "2026-10-24T16:00:00Z",
+    struck: false,
+    bid_struck: false,
+    outcome: null,
+    outcome_reason: null,
+    outcome_at: null,
+    resolved: null,
+  };
+  const name = (id: number) => `P${id}`;
+  assert.equal(queueMoveText(e, name), "P101 for P201");
+  assert.equal(queueMoveText({ ...e, drop: null }, name), "P101 for an open spot");
+  assert.equal(queueStateText(e, now), "executes in 1 h");
+  assert.equal(queueStateText({ ...e, struck: true }, now), "struck");
+  assert.equal(queueStateText(e, now + 3_600_000), "due at the next pass");
+  assert.equal(queueStateText({ ...e, outcome: "claimed", resolved: "won" }, now), "claimed, won");
+  assert.equal(queueStateText({ ...e, outcome: "gone", outcome_reason: null }, now), "gone: another team had him first");
+  assert.equal(queueStateText({ ...e, queued: false, reason: "below the noise floor", floor: { ...floor, below: "scored" } }, now), "below the scored floor");
+  assert.equal(queueStateText({ ...e, queued: false, reason: "over the day's cap" }, now), "over the day's cap");
+  assert.equal(bidLabel(e), "$4 claim");
+  assert.equal(bidLabel({ ...e, bid_struck: true }), "$0 claim (the $4 bid struck)");
+  assert.equal(bidLabel({ ...e, availability: "FA" }), "free agent, $0");
+  assert.equal(
+    queueFloorLine({ scoring: "categories", floor, typical: { value: 0.1, from: "the plan floor until 10 moves" } }),
+    "Floor: a gain of 0.1 expected categories over the three weeks; the scorecard's spread joins it once 20 moves are scored (3 so far). Bids scale by a typical gain of 0.1 (the plan floor until 10 moves).",
+  );
+  assert.ok(queueFloorLine({ scoring: "points", floor: { ...floor, scored: 41.25, moves: 22, applies: "plan and scored" }, typical: { value: 0.02, from: "the fortnight's median" } }).includes("0.1 points over the three weeks and the scorecard's spread of 41.3 in value units over 22 moves"));
+  const pass: MovesPassLog = {
+    at: "2026-10-24T16:01:00Z",
+    day: "2026-10-24",
+    mode: "dry_run",
+    trigger: "routine",
+    outcome: "would_claim",
+    reason: null,
+    entries: [
+      { id: e.id, add: 101, drop: 201, bid: 4, outcome: "would_claim", reason: null },
+      { id: "x", add: 102, drop: null, bid: 1, outcome: "gone", reason: null },
+    ],
+  };
+  assert.equal(passLine(pass, () => "9:01 AM"), `9:01 AM · ${weekdayLabel("2026-10-24")} · routine: would claim 1 (1 gone)`);
+  assert.equal(passLine({ ...pass, outcome: "nothing_due", entries: [] }, () => "9:01 AM"), `9:01 AM · ${weekdayLabel("2026-10-24")} · routine: nothing due`);
+  const settings = { execute_time: "09:00", at: null, by: null, set: false };
+  const q: QueuePayload = { date: "2026-10-24", built: [], execute_time: null, leagues: [], entries: [], settings, stop: false, now: "2026-10-24T15:00:00Z" };
+  assert.equal(queueFoldLine(q), "no queue built today: the morning routine builds it · executes from 09:00 PT");
+  const leagues = [
+    { league: "900001", scoring: "categories" as const, mode: "dry_run" as const, status: "queued" as const, reason: null },
+    { league: "900002", scoring: "points" as const, mode: "dry_run" as const, status: "not_solved" as const, reason: "not solved today" },
+  ];
+  const built = { ...q, built: ["2026-10-24T10:00:00Z"], leagues, entries: [e, { ...e, id: "y", struck: true }, { ...e, id: "z", queued: false }] };
+  assert.equal(queueFoldLine(built), "1 queued in 1 league · 1 struck · 1 not solved today · executes from 09:00 PT");
+  assert.equal(queueFoldLine({ ...built, stop: true }), "STOP is on (data/autopilot/STOP): nothing executes");
 });

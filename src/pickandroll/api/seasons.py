@@ -37,6 +37,13 @@ Routes:
     The executor's mode, STOP, the live check and its runs; a run appended to the league's log
     (``data/leagues/<id>/autopilot/<date>.json``). ``PUT /leagues/{league}/lineups`` sets the
     mode, the dashboard's own click; ``live`` waits for the dry run.
+``GET /autopilot/queue``, ``POST /autopilot/queue/build``, ``POST /autopilot/queue/{id}/strike``,
+``PUT /autopilot/queue/settings``
+    The moves executor's queue (#171, ``season_queue``): built from the day's moves solves in the
+    decision log, never solved; the user's veto and execute time. ``GET`` and ``POST
+    /seasons/{league}/autopilot/moves``, ``GET …/moves/due``: the league's Queue card, its pass
+    log under ``moves`` and the entries due for the extension; ``PUT /leagues/{league}/moves``
+    sets the mode and the user's cap.
 ``GET /seasons/{league}/decisions``
     The decision log (#125, ``season_decisions``): every moves and strategy solve of the days
     ``?from=``..``?to=`` (the last week by default) and my moves of those days from the
@@ -127,6 +134,7 @@ from ..season import (
     roster_key,
     unpaired_matchups,
 )
+from ..season import autopilot as qa
 from ..season import moves as mv
 from ..season import record as season_rec
 from ..season import status as st
@@ -146,6 +154,7 @@ from . import (
     season_moves,
     season_outlook,
     season_progress,
+    season_queue,
     season_record,
     season_scorecard,
     season_status,
@@ -527,6 +536,12 @@ class SeasonService:
         unread = [(x["league"], _public_reason(x["reason"])) for x in skipped]
         markdown = season_flags.fl.digest_markdown(today, shown, notes, unread)
         executor = season_autopilot.digest_lines(self.data_dir, self._lineup_modes(), now)
+        moves_executor = season_autopilot.moves_digest_lines(
+            self.data_dir,
+            self._modes(leagues.MOVES),
+            season_queue.latest(self.data_dir, today),
+            now,
+        )
         return {
             "date": today.isoformat(),
             "generated_at": now.isoformat(),
@@ -536,20 +551,15 @@ class SeasonService:
             "skipped": skipped,
             "lineups": lineups,
             "executor": executor,
+            "moves_executor": moves_executor,
             "markdown": markdown
-            + season_lineup.digest_section([*cleared_lines, *executor, *lineup_lines]),
+            + season_lineup.digest_section([*cleared_lines, *executor, *lineup_lines])
+            + season_autopilot.moves_digest_section(moves_executor),
         }
 
     def _lineup_modes(self) -> dict[str, dict[str, Any]]:
-        """Every league's lineup executor mode (#170); a folder that does not read is left
-        out."""
-        out = {}
-        for league in leagues.leagues(self.data_dir):
-            try:
-                out[league] = leagues.lineup_mode(self.data_dir, league)
-            except leagues.LeagueError:
-                continue
-        return out
+        """Every league's lineup executor mode (#170)."""
+        return self._modes(leagues.LINEUPS)
 
     def _lineup_line(self, league: str, today: date) -> dict[str, Any]:
         """A league's lineup for the digest: today's and tomorrow's games lost as set and the
@@ -848,6 +858,407 @@ class SeasonService:
                 raise HTTPException(409, check["reason"])
         leagues.set_lineups(self.data_dir, league, mode, by="dashboard")
         return self.autopilot(league)
+
+    # ------------------------------------------------------------------ the moves executor
+    def _modes(self, kind: str) -> dict[str, dict[str, Any]]:
+        """Every league's mode of an executor (``leagues.LINEUPS``, ``leagues.MOVES``); a folder
+        that does not read is left out."""
+        out = {}
+        for league in leagues.leagues(self.data_dir):
+            try:
+                out[league] = leagues.executor_mode(self.data_dir, league, kind)
+            except leagues.LeagueError:
+                continue
+        return out
+
+    def _read_queue(self, day: date) -> dict[str, Any] | None:
+        try:
+            return season_queue.read(self.data_dir, day)
+        except season_queue.QueueError as exc:
+            raise HTTPException(409, str(exc)) from exc
+
+    def _queue_payload(self, day: date, body: dict[str, Any] | None) -> dict[str, Any]:
+        return {
+            "date": day.isoformat(),
+            "built": [],
+            "execute_time": None,
+            "leagues": [],
+            "entries": [],
+            **(body or {}),
+            "settings": season_queue.settings(self.data_dir),
+            "stop": season_autopilot.stopped(self.data_dir),
+            "now": self.clock().isoformat(),
+        }
+
+    def queue(self, day: date | None = None) -> dict[str, Any]:
+        """A day's queue of the moves executor (#171), today's by default; reads only."""
+        day = day or nba_today(self.clock())
+        return self._queue_payload(day, self._read_queue(day))
+
+    def build_queue(self) -> dict[str, Any]:
+        """Build today's queue (#171) from each armed league's last moves solve of the day in the
+        decision log: never a solve. A rebuild keeps the entries struck or executed by id and
+        gives an entry new to the queue its full window; a league the build cannot read keeps
+        its entries as they were. Claims placed on earlier days are resolved from the leagues'
+        transactions on the way."""
+        now = self.clock()
+        today = nba_today(now)
+        execute_time = season_queue.settings(self.data_dir)["execute_time"]
+        modes = self._modes(leagues.MOVES)
+        since = today - timedelta(days=season_queue.PENDING_DAYS)
+        try:
+            earlier = {
+                d: q
+                for d in season_queue.days(self.data_dir)
+                if since <= d < today and (q := season_queue.read(self.data_dir, d)) is not None
+            }
+            old = season_queue.read(self.data_dir, today) or {}
+        except season_queue.QueueError as exc:
+            raise HTTPException(409, str(exc)) from exc
+        rows: list[dict[str, Any]] = []
+        reads: dict[str, tuple[Season, list[dict[str, Any]]]] = {}
+        scoring: dict[str, str] = {}
+        for league in leagues.leagues(self.data_dir):
+            try:
+                base, _ = base_settings(self.data_dir, league)
+            except leagues.LeagueError:
+                continue
+            scoring[league] = base.scoring
+            mode = modes.get(league)
+            if mode is None:
+                continue
+            row = {"league": league, "scoring": base.scoring, "mode": mode["mode"]}
+            if mode.get("private"):
+                rows.append({**row, "status": season_queue.PRIVATE, "reason": qa.PRIVATE})
+                continue
+            if mode["mode"] == "off":
+                rows.append({**row, "status": season_queue.OFF, "reason": qa.OFF})
+                continue
+            try:
+                season = Season.from_parts(base, load_parts(self.data_dir, league))
+                entries = season_decisions.load(season_dir(self.data_dir, league), today)
+            except Exception as exc:  # noqa: BLE001 - one league's failure leaves the others
+                rows.append({**row, "status": season_queue.FAILED, "reason": _failure(exc)})
+                continue
+            reads[league] = (season, entries)
+        try:
+            payloads, _ = self._all_scorecards(None)
+        except Exception:  # noqa: BLE001 - without the scorecards the plan floor applies
+            payloads = []
+        differences = season_queue.scored_differences(payloads, scoring)
+        gains: dict[str, list[float]] = {}
+        for league, (_, entries) in reads.items():
+            gains.setdefault(scoring[league], []).extend(season_queue.recent_gains(entries, today))
+        resolved: dict[str, str] = {}
+        builds: dict[str, list[dict[str, Any]]] = {}
+        for league, (season, entries) in sorted(reads.items()):
+            mode, kind = modes[league], scoring[league]
+            row = {"league": league, "scoring": kind, "mode": mode["mode"]}
+            claims = season_queue.pending(earlier.values(), league)
+            settled = season_queue.resolutions(season, claims, today)
+            resolved |= settled
+            claims = [c for c in claims if c["id"] not in settled]
+            entry = season_queue.day_entry(entries, today)
+            if entry is None:
+                reason = season_queue.NOT_SOLVED_REASON
+                rows.append({**row, "status": season_queue.NOT_SOLVED, "reason": reason})
+                continue
+            system = (entry.get("system") or {}).get("key")
+            try:
+                built = self._built(league, system)
+                _, flags, _ = self._flags(league)
+            except Exception as exc:  # noqa: BLE001 - one league's failure leaves the others
+                rows.append({**row, "status": season_queue.FAILED, "reason": _failure(exc)})
+                continue
+            knobs = entry.get("knobs") or {}
+            plan = season_queue.plan_floor(knobs, kind)
+            floor = qa.noise_floor(differences.get(kind, []), plan)
+            typical = qa.typical_gain(gains.get(kind, []), plan)
+            cap, cap_from = season_queue.daily_cap(mode, knobs)
+            todays = [e for e in old.get("entries") or [] if e.get("league") == league]
+            keep = [e for e in todays if qa.kept(e)]
+            holding = [e for e in keep if qa.holds_place(e)]
+            protected = season_queue.protected_of(built.rule)
+            left = season_queue.adds_left(entry.get("adds"), [*claims, *holding])
+            budget = season_queue.budget_of(season)
+            day = qa.LeagueDay(
+                league=league,
+                scoring=kind,
+                entry=entry,
+                mode=mode["mode"],
+                private=False,
+                protected=protected,
+                availability={
+                    a.player.yahoo_id: (a.availability, a.clears) for a in season.available
+                },
+                flags={k: f.level for k, f in flags.items()},
+                dropped=season_queue.dropped_recently(season, today),
+                budget=budget,
+                cap=cap,
+                adds_left=left,
+                kept=frozenset(e["id"] for e in keep),
+                done=len(holding),
+            )
+            builds[league] = qa.queue_of(day, today, floor, typical, knobs.get("faab_sizing"))
+            rows.append(
+                {
+                    **row,
+                    "status": season_queue.QUEUED,
+                    "reason": None,
+                    "decision": entry.get("id"),
+                    "system": system,
+                    "cap": cap,
+                    "cap_from": cap_from,
+                    "budget": budget,
+                    "adds": entry.get("adds"),
+                    "adds_left": [
+                        {"start": s.isoformat(), "end": e.isoformat(), "adds": n}
+                        for (s, e), n in left.items()
+                    ],
+                    "pending": [c["id"] for c in claims],
+                    "protected": {str(k): why for k, why in protected.items()},
+                    "floor": floor.to_dict(),
+                    "typical": {"value": typical[0], "from": typical[1]},
+                    "queued": sum(1 for e in builds[league] if e["queued"]) + len(holding),
+                    "built_at": now.isoformat(),
+                }
+            )
+
+        def change(body: dict[str, Any] | None) -> dict[str, Any]:
+            body = body or {}
+            # Merged with the queue as read under the store's lock: a strike made while the
+            # leagues were read is kept.
+            out = []
+            for e in body.get("entries") or []:
+                if e.get("league") not in builds:
+                    out.append(e)
+            for league, new in builds.items():
+                todays = [e for e in body.get("entries") or [] if e.get("league") == league]
+                out += qa.merge(todays, new, today, execute_time, now)
+            return {
+                "date": today.isoformat(),
+                "built": [*(body.get("built") or []), now.isoformat()],
+                "execute_time": execute_time,
+                "leagues": sorted(rows, key=lambda r: r["league"]),
+                "entries": sorted(out, key=season_queue.sort_key),
+            }
+
+        try:
+            for day, q in earlier.items():
+                if {e["id"] for e in q.get("entries") or []} & set(resolved):
+                    season_queue.update(self.data_dir, day, _resolver(resolved, now))
+            body = season_queue.update(self.data_dir, today, change)
+        except season_queue.QueueError as exc:
+            raise HTTPException(409, str(exc)) from exc
+        return self._queue_payload(today, body)
+
+    def strike(self, entry_id: str, bid_only: bool, undo: bool) -> dict[str, Any]:
+        """The user's veto on a queue entry (#171): strike it, or its bid alone (a $0 claim), or
+        undo either; refused once it executed, and an undone strike refused while the league's
+        cap is full."""
+        day = season_queue.day_of(entry_id)
+        if day is None:
+            raise HTTPException(404, f"no queue entry {entry_id}")
+        now = self.clock()
+
+        def change(body: dict[str, Any] | None) -> dict[str, Any]:
+            entries = (body or {}).get("entries") or []
+            e = next((x for x in entries if x.get("id") == entry_id), None)
+            if body is None or e is None:
+                raise HTTPException(404, f"no queue entry {entry_id}")
+            if e.get("outcome"):
+                raise HTTPException(409, "executed already: a strike comes before the pass")
+            if not e.get("queued"):
+                raise HTTPException(409, "not queued: there is nothing to strike")
+            if bid_only:
+                e["bid_struck"] = not undo
+            else:
+                if undo and e.get("struck"):
+                    row = next(
+                        (r for r in body.get("leagues") or [] if r["league"] == e["league"]), {}
+                    )
+                    holding = sum(
+                        1
+                        for x in entries
+                        if x["league"] == e["league"] and x["id"] != entry_id and qa.holds_place(x)
+                    )
+                    if row.get("cap") is not None and holding >= row["cap"]:
+                        raise HTTPException(
+                            409, "the day's cap is full: strike another entry first"
+                        )
+                e["struck"] = not undo
+            e["struck_at"] = now.isoformat()
+            e["struck_by"] = "dashboard"
+            return body
+
+        try:
+            body = season_queue.update(self.data_dir, day, change)
+        except season_queue.QueueError as exc:
+            raise HTTPException(409, str(exc)) from exc
+        return self._queue_payload(day, body)
+
+    def set_execute_time(self, value: str) -> dict[str, Any]:
+        """The execute time, the dashboard's own click (#171): today's entries not executed are
+        timed again, never sooner than a full window after they were queued."""
+        try:
+            season_queue.set_execute_time(self.data_dir, value, by="dashboard")
+        except season_queue.QueueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        today = nba_today(self.clock())
+        if self._read_queue(today) is not None:
+
+            def change(body: dict[str, Any] | None) -> dict[str, Any]:
+                body = body or {}
+                entries = qa.retime(body.get("entries") or [], today, value)
+                return {**body, "execute_time": value, "entries": entries}
+
+            season_queue.update(self.data_dir, today, change)
+        return self.queue(today)
+
+    def moves_view(self, league: str) -> dict[str, Any]:
+        """The league's Queue card (#171): the mode, STOP, the live check, the passes, and its
+        row and entries of today's queue."""
+        self._base(league)
+        today = nba_today(self.clock())
+        mode = leagues.executor_mode(self.data_dir, league, leagues.MOVES)
+        try:
+            body = season_queue.read(self.data_dir, today) or {}
+        except season_queue.QueueError:
+            body = {}
+        entries = [e for e in body.get("entries") or [] if e.get("league") == league]
+        row = next((r for r in body.get("leagues") or [] if r["league"] == league), None)
+        return {
+            **season_autopilot.moves_view(self.data_dir, league, mode, today, entries),
+            "row": row,
+            "settings": season_queue.settings(self.data_dir),
+        }
+
+    def moves_due(self, league: str, day: date | None) -> dict[str, Any]:
+        """The entries of the league due now (#171), for the extension's execute pass: queued,
+        not struck, not executed, their window over, each with the bid to place; with the
+        players protected and why (the stored keep rule's and the engine's now: the page check
+        refuses a protected drop whatever the queue says), the day's cap, the adds left as read
+        and the budget. None when the mode is off, STOP is on or the day is not today."""
+        self._base(league)
+        now = self.clock()
+        today = nba_today(now)
+        day = day or today
+        mode = leagues.executor_mode(self.data_dir, league, leagues.MOVES)
+        stop = season_autopilot.stopped(self.data_dir)
+        out: dict[str, Any] = {
+            "league": league,
+            "date": day.isoformat(),
+            "mode": mode["mode"],
+            "stop": stop,
+            "reason": None,
+            "entries": [],
+            "next": None,
+            "protected": {},
+            "cap": None,
+            "adds_left": [],
+            "budget": None,
+            "at": now.isoformat(),
+        }
+
+        def closed(reason: str) -> dict[str, Any]:
+            return {**out, "reason": reason}
+
+        if mode.get("private"):
+            return closed(qa.PRIVATE)
+        if mode["mode"] == "off":
+            return closed(qa.OFF)
+        if stop:
+            return closed("STOP is on (data/autopilot/STOP)")
+        if day != today:
+            return closed("only today's queue executes")
+        body = self._read_queue(day)
+        if body is None:
+            return closed("no queue today: the build runs at the end of the morning routine")
+        row = next((r for r in body.get("leagues") or [] if r["league"] == league), None)
+        if row is None or row.get("status") != season_queue.QUEUED:
+            return closed((row or {}).get("reason") or "the league is not in the day's queue")
+        protected = dict(row.get("protected") or {})
+        try:
+            rule = self._built(league, row.get("system")).rule
+            protected |= {str(k): why for k, why in season_queue.protected_of(rule).items()}
+        except Exception:  # noqa: BLE001, S110 - the build's keep rule still holds
+            pass
+        mine = [e for e in body.get("entries") or [] if e.get("league") == league]
+        due = [{**e, "bid_placed": qa.effective_bid(e)} for e in qa.due(mine, now)]
+        later = sorted(
+            at
+            for e in mine
+            if e.get("queued")
+            and not e.get("struck")
+            and not e.get("outcome")
+            and e.get("executes_at")
+            and (at := datetime.fromisoformat(e["executes_at"])) > now
+        )
+        return {
+            **out,
+            "reason": None if due else "nothing due now",
+            "entries": due,
+            "next": later[0].isoformat() if later else None,
+            "protected": protected,
+            "cap": row.get("cap"),
+            "adds_left": row.get("adds_left") or [],
+            "budget": row.get("budget"),
+        }
+
+    def log_moves_run(self, league: str, run: season_autopilot.MovesRun) -> dict[str, Any]:
+        """Append an execute pass to the league's log under ``moves`` (#171) and set its outcomes
+        on the queue's entries; refused (409) when the mode, STOP, the queue or the pass's own
+        outcome says it should not have run."""
+        self._base(league)
+        mode = leagues.executor_mode(self.data_dir, league, leagues.MOVES)
+        body = self._read_queue(run.day) or {}
+        mine = {e["id"]: e for e in body.get("entries") or [] if e.get("league") == league}
+        why = season_autopilot.check_moves_run(
+            run, mode, season_autopilot.stopped(self.data_dir), mine
+        )
+        if why is not None:
+            raise HTTPException(409, why)
+        now = self.clock()
+        record = {"at": now.isoformat(timespec="seconds"), **run.model_dump(mode="json")}
+        try:
+            season_autopilot.append_run(
+                self.data_dir, league, record, nba_today(now), season_autopilot.MOVES
+            )
+        except season_autopilot.LogError as exc:
+            raise HTTPException(409, str(exc)) from exc
+        checks = {c.id: c for c in run.entries}
+        if checks:
+
+            def change(q: dict[str, Any] | None) -> dict[str, Any]:
+                q = q or {}
+                for e in q.get("entries") or []:
+                    c = checks.get(e.get("id"))
+                    if c is not None and e.get("league") == league:
+                        e.update(
+                            outcome=c.outcome,
+                            outcome_reason=c.reason,
+                            outcome_at=now.isoformat(),
+                            bid_placed=c.bid,
+                        )
+                return q
+
+            season_queue.update(self.data_dir, run.day, change)
+        return record
+
+    def set_moves_mode(self, league: str, mode: str, cap: int | None) -> dict[str, Any]:
+        """The Queue card's mode switch and cap, the user's own click (#171): the private league
+        is refused, and ``live`` until the dry run passes
+        (``season_autopilot.moves_live_check``)."""
+        self._base(league)
+        current = leagues.executor_mode(self.data_dir, league, leagues.MOVES)
+        if current.get("private"):
+            raise HTTPException(409, qa.PRIVATE)
+        if mode == "live":
+            check = season_autopilot.moves_live_check(self.data_dir, league, current)
+            if not check["ok"]:
+                raise HTTPException(409, check["reason"])
+        leagues.set_executor(self.data_dir, league, leagues.MOVES, mode, by="dashboard", cap=cap)
+        return self.moves_view(league)
 
     def lineup(self, league: str, system: str | None, week: int | None) -> dict[str, Any]:
         """The Lineup view (#107): my recommended starters for each day of ``week`` (this one
@@ -1479,6 +1890,29 @@ class SeasonService:
 NO_SEASON = "no season read yet"
 
 
+def _failure(exc: Exception) -> str:
+    """A league's failure for the queue's row: an HTTP refusal's own words, else the type."""
+    if isinstance(exc, HTTPException):
+        return str(exc.detail)
+    return f"{type(exc).__name__}: {exc}"
+
+
+def _resolver(
+    resolved: dict[str, str], now: datetime
+) -> Callable[[dict[str, Any] | None], dict[str, Any]]:
+    """An earlier queue's change that sets the claims the transactions settled (#171)."""
+
+    def change(body: dict[str, Any] | None) -> dict[str, Any]:
+        body = body or {}
+        for e in body.get("entries") or []:
+            if e.get("id") in resolved and not e.get("resolved"):
+                e["resolved"] = resolved[e["id"]]
+                e["resolved_at"] = now.isoformat()
+        return body
+
+    return change
+
+
 def _public_reason(reason: str) -> str:
     return reason if reason == NO_SEASON else "its flags failed"
 
@@ -1731,6 +2165,24 @@ class LineupMode(BaseModel):
     mode: str = Field(pattern="^(off|dry_run|live)$")
 
 
+class MovesMode(BaseModel):
+    #: The moves executor's mode (#171), and the user's own cap on the day's moves (None: the
+    #: knob's). The body is the whole setting: a mode sent without a cap clears the user's.
+    mode: str = Field(pattern="^(off|dry_run|live)$")
+    cap: int | None = Field(None, ge=0, le=10)
+
+
+class StrikeBody(BaseModel):
+    #: Strike the bid alone (the claim placed for $0), and undo a strike.
+    bid_only: bool = False
+    undo: bool = False
+
+
+class QueueSettings(BaseModel):
+    #: The day's execute time on the Pacific clock.
+    execute_time: str = Field(pattern=r"^([01][0-9]|2[0-3]):[0-5][0-9]$")
+
+
 def register(
     app: FastAPI, data_dir: Path, fetch_factory: FetchFactory | None = None
 ) -> SeasonService:
@@ -1789,6 +2241,30 @@ def register(
         """The Monday hill-climb step (#152): the verdicts due, at most one knob change from
         the rule table, the knob file and the Monday note; once a Monday."""
         return await asyncio.to_thread(service.monday, monday, dry_run, force)
+
+    queue_day_q = Query(None, alias="date", description="the day; today by default")
+
+    @app.get("/autopilot/queue")
+    def get_queue(day: date | None = queue_day_q) -> dict[str, Any]:
+        """A day's queue of the moves executor (#171); reads only."""
+        return service.queue(day)
+
+    @app.post("/autopilot/queue/build")
+    async def post_queue_build() -> dict[str, Any]:
+        """Build today's queue from the day's moves solves in the decision log (#171); never a
+        solve. Again the same day, it keeps what was struck or executed."""
+        return await asyncio.to_thread(service.build_queue)
+
+    @app.put("/autopilot/queue/settings")
+    def put_queue_settings(body: QueueSettings) -> dict[str, Any]:
+        """The day's execute time, the dashboard's own click (#171)."""
+        return service.set_execute_time(body.execute_time)
+
+    @app.post("/autopilot/queue/{entry}/strike")
+    def post_strike(entry: str, body: StrikeBody | None = None) -> dict[str, Any]:
+        """The user's veto on a queue entry (#171): strike it or its bid, or undo either."""
+        body = body or StrikeBody()
+        return service.strike(entry, body.bid_only, body.undo)
 
     @app.get("/seasons/{league}")
     def get_season(league: str = league_id) -> dict[str, Any]:
@@ -1908,6 +2384,39 @@ def register(
         routine sets ``live``."""
         try:
             return service.set_lineup_mode(league, body.mode)
+        except leagues.LeagueError as exc:
+            raise HTTPException(404, str(exc)) from exc
+
+    @app.get("/seasons/{league}/autopilot/moves")
+    def get_moves_autopilot(league: str = league_id) -> dict[str, Any]:
+        """The moves executor's mode, STOP, the live check, its passes and the league's entries
+        of today's queue (#171)."""
+        return service.moves_view(league)
+
+    @app.get("/seasons/{league}/autopilot/moves/due")
+    def get_moves_due(league: str = league_id, day: date | None = steps_day_q) -> dict[str, Any]:
+        """The league's queue entries due now, for the extension's execute pass (#171); nothing
+        here claims or drops anyone."""
+        return service.moves_due(league, day)
+
+    @app.post("/seasons/{league}/autopilot/moves")
+    def post_moves_run(body: dict[str, Any], league: str = league_id) -> dict[str, Any]:
+        """An execute pass of the moves executor, for the league's log (#171). The page's crumb
+        is never posted here: a pass carrying one is refused."""
+        if season_autopilot.has_crumb(body):
+            raise HTTPException(422, "a pass never carries the page's crumb")
+        try:
+            run = season_autopilot.MovesRun.model_validate(body)
+        except ValidationError as exc:
+            raise HTTPException(422, exc.errors(include_url=False, include_context=False)) from exc
+        return service.log_moves_run(league, run)
+
+    @app.put("/leagues/{league}/moves")
+    def put_moves_mode(body: MovesMode, league: str = league_id) -> dict[str, Any]:
+        """The Queue card's mode switch and cap, the user's own click (#171). No session, script
+        or routine sets ``live``."""
+        try:
+            return service.set_moves_mode(league, body.mode, body.cap)
         except leagues.LeagueError as exc:
             raise HTTPException(404, str(exc)) from exc
 

@@ -97,6 +97,54 @@ side (PR 1) is in `api/season_autopilot.py`; the click is the extension's, on th
   skipped, failed), then a line per league only for a skip or a failure. Under STOP the line says
   nothing runs.
 
+The moves executor (#171, ruled on the issue 2026-10-23) follows. Its API side (PR 1) is the queue
+in `season/autopilot.py` (pure) and `api/season_queue.py`; the claim is the extension's, on the add
+page, from PR 2:
+
+- **The queue.** `POST /autopilot/queue/build` (the end of the 05:00 routine, again after the
+  Monday hill-climb) takes each armed league's last moves solve of the day from the decision log
+  and its three weeks' set (`three`, season first); it never solves, and a league not solved that
+  day says so. Every move of the set is an entry with the set, the decision and the knobs in
+  force, queued or with the first reason it is not: the private league or the mode off; a drop
+  the keep rule protects (read from the engine, never re-solved); a move flagged season-costly; an
+  add the league dropped within the waiver days (or one the set drops); below the noise floor; no
+  adds left in the week of its clear date; over the day's cap. The rest are queued by their gain
+  on the three weeks after, highest first. The streaming plan stays a dashboard suggestion.
+  `data/autopilot/queue/<date>.json` holds the day; nothing else writes it.
+- **The noise floor.** The plan floor of the knobs against the move's gain; once 20 moves are
+  scored, also the scorecard's spread (the standard deviation of realized less projected value of
+  the public leagues' scored moves, by scoring) against the move's value on its judging horizon,
+  in the scorer's units. The scored floor never lets a move through below the plan floor: a move
+  clears both, and the entry names both figures and which one stopped it.
+- **The veto window and the execute time.** An entry executes at the later of an hour after it was
+  queued and the day's execute time (09:00 Pacific until the user sets another on the landing
+  page's Queue line, `PUT /autopilot/queue/settings`; the day's entries not executed are timed
+  again, never inside their hour). The Queue card (9) strikes an entry or its bid alone (a $0
+  claim) or undoes either, until it executes (`POST /autopilot/queue/{id}/strike`). A rebuild
+  the same day keeps the struck and executed entries by id, leaves their moves out of the build,
+  and gives an entry new to the queue its full hour.
+- **The caps.** The league's add limit, each claim counted in the week of its clear date from
+  the moment it is placed (a claim placed and not yet processed counts, won or not; the next
+  build reads the adds used from the page and the transactions); the day's cap, the knob's
+  `daily_cap` unless the user set the league's own (`PUT /leagues/{league}/moves` `{mode, cap}`).
+  A placed claim is resolved `won` or `lost` from the transactions at the next build.
+- **What the extension reads.** `GET /seasons/{league}/autopilot/moves/due`: the entries due now
+  with the bid to place, the players protected and why (the build's and the engine's now: the
+  page check refuses a protected drop whatever the queue says), the day's cap, the adds left as
+  read and the budget; none when the mode is off, STOP is on or the day is not today.
+- **The mode, the log and the live guard.** `armed.json`'s `moves` key and `moves_cap`, like the
+  lineups'. A pass is `POST /seasons/{league}/autopilot/moves`, logged under `moves` beside
+  `lineup` in the league's day file, each entry's outcome set on the queue (`would_claim`,
+  `claimed`, `added`, `skipped`, `failed`, or `gone` when another team had the add first, never
+  retried that day). Refused: a crumb (422); a dry run that claims, a live pass outside live, an
+  entry not in the day's queue, struck, already executed or naming another move, and anything
+  but a stopped pass under STOP or with the mode off (409). `live` waits for dry-run passes on
+  seven days, two of them checked: a pass that opened the add page and logged its controls for
+  at least one entry (a pass that found nothing due is a dry-run day, not a checked one).
+- **The digest.** A Moves section: the latest queue's entries queued and struck, the last day's
+  entries would-be-claimed (or claimed), skipped, failed and gone, then a line per league only for
+  a skip or a failure; under STOP the line says nothing runs.
+
 ## 3. The weekly loop
 
 Times are the Mac's clock (Pacific). The routines are the master's to edit; sessions never edit
@@ -171,6 +219,12 @@ The default rule, until the user sets another or the hill-climb tunes it within 
   rare); the bid is sized to the move's value and the budget left, and the hill-climb may tune
   the sizing;
 - the bid and its reason go in the queue, so a veto can strike the bid, not only the move.
+
+As built (#171, the ruling's point 3): `max(1, round(gain / typical))` dollars, doubled for a
+breakout flag and tripled for a strong one, times `faab_sizing` (1.0 while it is unset), clamped
+to the budget left and nothing else; a struck bid is a $0 claim. `typical` is the fortnight's
+median gain on the three weeks after of the armed leagues' recommended moves, per scoring, or
+the plan floor until ten such moves exist.
 
 
 ## 6. The hill-climb

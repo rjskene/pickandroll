@@ -524,6 +524,24 @@ docs/AUTOPILOT.md section 2).
   payload also carries the league's starting slots (`slots`) and each player's slot as read
   (`yahoo`): the extension runs only against the lineup the steps were built from.
 
+### The moves executor's queue (#171)
+
+`season/autopilot.py` (core, no I/O: the entries, the floor, the bid, the veto window) and
+`api/season_queue.py` (the store and what a build reads); the routes and the guardrails are in
+docs/AUTOPILOT.md section 2, the bid in section 5.
+
+- **Reads, never a solve.** A build reads each armed league's last moves entry of the day in the
+  decision log, its three weeks' set and knobs; the keep rule's protected players from the
+  engine's build of the day (`Built.rule`, the same rule the solve ran under); the breakout
+  flags; each available player's `FA` or `W` and clear date; my team's FAAB budget; my drops
+  within the waiver days from the transactions page; the adds left per week from the entry's
+  `adds`, less the claims placed and not processed.
+- **The scored floor's spread** pools the public leagues' scorecard rows of group `scored` whose
+  judging horizon is complete (`season_scorecard.compared_move`, the rows the Monday summary
+  compares), by scoring, and never the private league.
+- **The typical gain** is the median of the armed leagues' three weeks' moves over the last 14
+  days (each day's last moves entry), by scoring.
+
 ## Decision log (#125)
 
 `season/decisions.py` (core, no I/O) and `api/season_decisions.py`;
