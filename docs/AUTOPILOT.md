@@ -133,23 +133,49 @@ page, from PR 2:
   the engine's now: the page check refuses a protected drop whatever the queue says), the claims
   still open (earlier days' placed and unresolved, and today's placed), the day's cap and how many
   of the day's entries took their place, the adds left as read less every claim since, and the
-  budget; none when the mode is off, STOP is on or the day is not today.
-- **The page check (PR 2, extension 0.7.0).** A pass runs on my team page, opened from the
-  routine's link (`#pickandroll-moves`, or `#pickandroll-moves-late` for a late pass) or the side
-  panel's **Check moves now**. Each due entry is checked before its page (struck, an open-spot
-  claim, a protected drop, an open claim on the add, the pass's own claims, the cap and the week's
-  adds), then its add page (`/nba/<league>/addplayer?apid=<add>`, Yahoo's own add link) is read by a
-  plain GET with the user's session, one page at a time, parsed without rendering and with the
-  crumb taken out first: the claim form is my team's and names the add, the waiver date is the
-  queue's, the drop has its control (none on Yahoo's can't-cut list), Yahoo shows moves left, the
-  budget covers the bid and the form has its bid field and claim submit. The pass logs
-  `would_claim` with the fields the claim would fill (`apid`, `dpid`, `faab`, the submit's name);
-  it toggles, sets and submits nothing. The control names are the DOM read on #171 (2026-10-24).
+  budget; none when the mode is off, STOP is on or the day is not today. Each entry's `page` is
+  its add page, `/nba/<league>/addplayer?apid=<add>` (Yahoo's own add link, a GET that adds
+  nothing; no team in it).
+- **The page check (PR 2, extension 0.7.0).** The routine opens the due pages: each due entry's
+  `page` with `#pickandroll-moves` in a tab of its own (`#pickandroll-moves-late` for the late
+  pass, trigger `routine_late`). The side panel's **Check moves now** lists the due entries as
+  links with `#pickandroll-moves-panel` (trigger `panel`) for the user to open; the extension
+  opens no tab. On an add page with one of those fragments the content script drops the fragment
+  (a reload is a plain visit), takes the add from the address and the league from the path,
+  fetches `due` and checks the one entry whose add it is; no such entry, nothing is logged. It
+  fetches no Yahoo page and navigates nowhere. The checks, each a skip with its reason:
+  - **The queue's:** the mode is dry run or live and STOP off; not struck; not an open-spot
+    claim (not read yet); the drop not protected; no pending claim names the add; the day's cap
+    not reached; the clear date's week has an add left.
+  - **The page's identity:** the claim form (`form#add-drop-players-form`) posts to
+    `/nba/<league>/<team>/addplayer` with the entry's league and `due.team`, carries `stage` and
+    `apid`, and its `apid` is the add.
+  - **The heading and the date:** the heading is "Claim Player From Waivers" and its waiver date
+    is the entry's clear date. Any other heading skips with the heading's text, never `gone`.
+  - **The drop:** exactly one `dpid` checkbox for it in my roster's table and no can't-cut or
+    locked icon on its row; the reason names the marker found (`cantcut`, `locked` or `none`)
+    and the id. Never a fallback drop.
+  - **Adds left:** `due.adds_left` covers the claim and the add's row has no "no more roster
+    moves" icon.
+  - **The bid:** a whole dollar inside the page's "between $x and $y" and at most the budget.
+  - **The submit:** the claim submit `submit_drop_player` is on the page.
+
+  `gone` only when the page shows the add on a team (an on-team icon on the add's row, or a
+  page without the form saying so); a page without the claim form is skipped "page not read",
+  so the late pass retries. A pass that passes logs `would_claim` with the fields the claim
+  would fill (`{action, apid, dpid, faab, submit}`), the form's other field names,
+  `crumb: present`, the heading, the waiver date, the budget, the bid range, the adds left, my
+  roster's can't-cut ids, the add's row icons and when the page was read: ids, dollars and
+  dates only. The waiver-order table is never read. It toggles, sets and submits nothing. The
+  control names are the DOM read on #171 (2026-10-24); PR 3 submits this rendered form, so the
+  crumb travels only in the browser's own submission.
 - **The mode, the log and the live guard.** `armed.json`'s `moves` key and `moves_cap`, like the
   lineups'. A pass is `POST /seasons/{league}/autopilot/moves`, logged under `moves` beside
-  `lineup` in the league's day file, each entry's outcome set on the queue (`would_claim`,
-  `claimed`, `added`, `skipped`, `failed`, or `gone` when another team had the add first, never
-  retried that day). Refused: a crumb (422); a dry run that claims, a live pass outside live, an
+  `lineup` in the league's day file. A live pass sets each entry's outcome on the queue
+  (`claimed`, `added`, `skipped`, `failed`, or `gone` when another team had the add first, never
+  retried that day); a dry run moves no queue outcome, so the day's entries stay due for the
+  late pass and the next day's dry run. Refused: a crumb (422; the one key `crumb` whose value is `present` is the page's
+  only crumb word and passes); a dry run that claims, a live pass outside live, an
   entry not in the day's queue, struck, already executed or naming another move, and anything
   but a stopped pass under STOP or with the mode off (409). `live` waits for dry-run passes on
   seven days, two of them checked: a pass that opened the add page and logged its controls for

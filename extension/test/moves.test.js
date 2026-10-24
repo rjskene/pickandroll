@@ -1,55 +1,63 @@
 // node --test extension/test/*.test.js
-// The moves executor's dry run (#171): the add page's controls read, every due entry's checks on
-// them, the pass the log takes and the strip. Fixtures carry Yahoo ids, slot codes and dollar
-// figures only.
+// The moves executor's dry run (#171): the add page's controls read, a due entry's checks on them,
+// the pass the log takes, the strip, the panel's links, and the content script on an add page
+// opened with the routine's fragment. Fixtures carry Yahoo ids, slot codes and dollar figures only.
 "use strict";
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const path = require("node:path");
+const vm = require("node:vm");
 const X = require("../lib/moves.js");
 
+const DIR = path.join(__dirname, "..");
+const SITE = "https://basketball.fantasysports.yahoo.com";
 const LEAGUE = "100001";
 const TEAM = 4;
 const DAY = "2026-10-24";
 const CLEARS = "2026-10-26";
-const ROSTER = [2001, 2002, 2003, 2004, 2005, 2006, 2007, 2008, 2009, 2010, 2011];
+const ADD = 3001;
+const ROSTER = [2001, 2002, 2003, 2004, 2005, 2006, 2007, 2008, 2009, 2010, 2011, 2012, 2013];
+const CANTCUT = [2012, 2013];
 
 const hidden = (name, value) => ({ name, tag: "input", type: "hidden", value, checked: false });
+const ICON = { cantcut: "noactioncc-cantcut F-icon T-action-icon-cantcut", locked: "noactionl- F-icon T-action-icon-locked" };
 
-/** An add page as the content script extracts it: the crumb taken out before the read. */
-function rawPage({ add = 3001, drops = ROSTER, budget = 100, waiver = "Oct 26", submit = X.SUBMIT, form = true, path = null, message = null, noMoves = false } = {}) {
+/** An add page as the content script extracts it from the rendered page: the crumb's value never
+ * read. ``markers`` puts an icon on a roster row, ``addClasses`` on the add's own row. */
+function rawPage({ add = ADD, budget = 100, waiver = "Oct 26", heading = X.CLAIM_HEADING, form = true, markers = {}, addClasses = "noactionda- F-icon T-action-icon-disabled-add", action = `/nba/${LEAGUE}/${TEAM}/addplayer`, submit = X.SUBMIT, hint = true, message = null } = {}) {
+  const cut = new Set([...CANTCUT, ...Object.keys(markers).map(Number)]);
   return {
-    path: path || X.addPath(LEAGUE, add),
-    heading: "Claim Player From Waivers",
-    token: form,
+    path: `/nba/${LEAGUE}/addplayer?apid=${add}`,
+    heading,
     form: form
       ? {
-          action: `/nba/${LEAGUE}/${TEAM}/addplayer`,
+          action,
           method: "post",
           fields: [
             hidden("stage", "2"),
+            { name: "crumb", tag: "input", type: "hidden", value: null, checked: false },
             hidden("stat1", "P"),
             hidden("stat2", "P"),
             hidden("apid", String(add)),
-            ...drops.map((k) => ({ name: "dpid", tag: "input", type: "checkbox", value: String(k), checked: false })),
+            ...ROSTER.filter((k) => !cut.has(k)).map((k) => ({ name: "dpid", tag: "input", type: "checkbox", value: String(k), checked: false })),
             { name: "faab", tag: "input", type: "text", value: "0", checked: false },
-            // Parsed without script, the noscript's submit is one of the form's elements.
-            { name: X.SUBMIT, tag: "input", type: "submit", value: "Create claim", checked: false },
           ],
         }
       : null,
     submit: form ? submit : null,
     panel: `Your Bid $ Your Budget $${budget}${waiver ? ` Waiver Date ${waiver}` : ""}`,
-    hint: `Must be between $0 and $${budget}`,
-    cantcut: 2,
-    no_moves: noMoves,
+    hint: hint ? `Must be between $0 and $${budget}` : null,
+    add_row: { id: String(add), classes: addClasses },
+    rows: ROSTER.map((k) => ({ id: String(k), classes: CANTCUT.includes(k) ? ICON.cantcut : markers[k] ? ICON[markers[k]] : "" })),
     message,
   };
 }
 
 const entry = (over = {}) => ({
-  id: `${DAY}:${LEAGUE}:3001:2005`,
+  id: `${DAY}:${LEAGUE}:${ADD}:2005`,
   league: LEAGUE,
-  add: 3001,
+  add: ADD,
   drop: 2005,
   from: CLEARS,
   availability: "W",
@@ -57,6 +65,7 @@ const entry = (over = {}) => ({
   struck: false,
   bid: 3,
   bid_placed: 3,
+  page: `/nba/${LEAGUE}/addplayer?apid=${ADD}`,
   ...over,
 });
 
@@ -77,24 +86,30 @@ const due = (over = {}) => ({
   ...over,
 });
 
-test("the fragments that start a pass; any other is a plain visit", () => {
+const READ_AT = "2026-10-24T16:00:08.000Z";
+const checkOn = (raw, d = due(), e = entry()) => X.pageCheck(e, X.readAddPage(raw, e.from), d);
+
+test("the fragments that start a pass and the add page they run on", () => {
   assert.equal(X.movesTriggerOf("#pickandroll-moves"), "routine");
   assert.equal(X.movesTriggerOf("#pickandroll-moves-late"), "routine_late");
+  assert.equal(X.movesTriggerOf("#pickandroll-moves-panel"), "panel");
   assert.equal(X.movesTriggerOf("#pickandroll-lineup"), null);
   assert.equal(X.movesTriggerOf(""), null);
-  assert.equal(X.addPath(LEAGUE, 3001), `/nba/${LEAGUE}/addplayer?apid=3001`);
+  assert.deepEqual(X.addPageOf(`${SITE}/nba/${LEAGUE}/addplayer?apid=${ADD}#pickandroll-moves`), { league: LEAGUE, add: ADD });
+  assert.equal(X.addPageOf(`${SITE}/nba/${LEAGUE}/addplayer`), null);
+  assert.equal(X.addPageOf(`${SITE}/nba/${LEAGUE}/${TEAM}`), null);
+  assert.equal(X.addPageOf(`https://example.com/nba/${LEAGUE}/addplayer?apid=1`), null);
 });
 
 test("the add page's controls as the DOM read on #171 found them", () => {
   const p = X.readAddPage(rawPage(), CLEARS);
-  assert.equal(p.action, `/nba/${LEAGUE}/${TEAM}/addplayer`);
-  assert.equal(p.method, "post");
-  assert.equal(p.add, 3001);
-  assert.equal(p.stage, "2");
-  assert.deepEqual(p.drops, ROSTER);
-  assert.deepEqual([p.bid, p.budget, p.bid_max, p.waiver_date], [true, 100, 100, CLEARS]);
-  assert.deepEqual([p.submit, p.token, p.cantcut, p.no_moves], [X.SUBMIT, true, 2, false]);
-  assert.deepEqual(p.fields, ["stage", "stat1", "stat2", "apid", "dpid", "faab", X.SUBMIT]);
+  assert.deepEqual([p.action, p.league, p.team, p.method, p.stage, p.add], [`/nba/${LEAGUE}/${TEAM}/addplayer`, LEAGUE, TEAM, "post", true, ADD]);
+  assert.deepEqual(p.boxes, ROSTER.filter((k) => !CANTCUT.includes(k)));
+  assert.deepEqual(p.cantcut, CANTCUT);
+  assert.deepEqual(p.add_row, { id: ADD, markers: ["disabled_add"] });
+  assert.deepEqual([p.bid, p.budget, p.bid_min, p.bid_max, p.waiver_date], [true, 100, 0, 100, CLEARS]);
+  assert.deepEqual([p.submit, p.crumb, p.heading], [X.SUBMIT, true, X.CLAIM_HEADING]);
+  assert.deepEqual(p.fields, ["stage", "crumb", "stat1", "stat2", "apid", "dpid", "faab"]);
 });
 
 test("the page's waiver date takes the year nearest the clear date", () => {
@@ -104,303 +119,267 @@ test("the page's waiver date takes the year nearest the clear date", () => {
   assert.equal(X.pageDay("soon", "2026-10-26"), null);
 });
 
-test("every check passes: the claim it would place, with the form as it would fill it", () => {
+test("every check passes: the claim it would place, one drop, with the form as it would fill it", () => {
   const e = entry();
   const page = X.readAddPage(rawPage(), e.from);
-  assert.equal(X.entryProblem(e, due(), []), null);
+  assert.equal(X.entryProblem(e, due()), null);
   const check = X.pageCheck(e, page, due());
   assert.deepEqual(check, { outcome: "would_claim", reason: null });
-  const line = X.moveCheck(e, check, page);
-  assert.deepEqual([line.id, line.add, line.drop, line.bid, line.outcome, line.page], [e.id, 3001, 2005, 3, "would_claim", X.addPath(LEAGUE, 3001)]);
-  assert.deepEqual(line.controls.would_fill, { apid: 3001, dpid: 2005, faab: 3, submit: X.SUBMIT });
-  // Field names only, never the crumb: the log refuses any key naming it.
-  const keys = JSON.stringify(line).match(/"[^"]+":/g).map((k) => k.slice(1, -2));
-  assert.ok(!keys.some((k) => /crumb/i.test(k)));
+  const line = X.moveCheck(e, check, page, due(), READ_AT);
+  assert.deepEqual([line.id, line.add, line.drop, line.bid, line.outcome, line.page], [e.id, ADD, 2005, 3, "would_claim", e.page]);
+  assert.deepEqual(line.controls.would_fill, { action: `/nba/${LEAGUE}/${TEAM}/addplayer`, apid: ADD, dpid: 2005, faab: 3, submit: X.SUBMIT });
+  const c = line.controls;
+  assert.deepEqual(c.fields, ["stage", "stat1", "stat2"]);
+  assert.deepEqual([c.crumb, c.heading, c.waiver_date, c.budget, c.adds_left, c.read_at], ["present", X.CLAIM_HEADING, CLEARS, 100, 4, READ_AT]);
+  assert.deepEqual([c.cantcut, c.add_markers, c.bid_range, c.drops], [CANTCUT, ["disabled_add"], [0, 100], 11]);
+  // The only key naming the crumb says it was there, nothing more.
+  const keys = (o) => (o && typeof o === "object" ? Object.entries(o).flatMap(([k, v]) => [[k, v], ...keys(v)]) : []);
+  assert.deepEqual(keys(line).filter(([k]) => /crumb/i.test(k)), [["crumb", "present"]]);
 });
 
 test("a struck bid is a $0 claim", () => {
   const e = entry({ bid_placed: 0 });
   const page = X.readAddPage(rawPage(), e.from);
   assert.equal(X.pageCheck(e, page, due()).outcome, "would_claim");
-  assert.equal(X.moveCheck(e, { outcome: "would_claim" }, page).controls.would_fill.faab, 0);
+  assert.equal(X.moveCheck(e, { outcome: "would_claim" }, page, due(), READ_AT).controls.would_fill.faab, 0);
 });
 
-test("the checks before any page: struck, open spot, protected, pending, the pass's own claims, the cap and the week's adds", () => {
-  const d = due();
-  assert.equal(X.entryProblem(entry({ struck: true }), d, []), "struck: it is never executed");
-  assert.equal(X.entryProblem(entry({ drop: null }), d, []), "an open-spot claim is not read yet");
-  assert.equal(X.entryProblem(entry({ drop: 2001 }), d, []), "the drop is protected (kept: beats the best add)");
-  assert.equal(X.entryProblem(entry(), due({ pending: [{ id: "x", add: 3001, drop: 2009 }] }), []), "a claim on the add is pending");
-  assert.equal(X.entryProblem(entry(), d, [entry({ id: "y", drop: 2006 })]), "this pass claims the add already");
-  assert.equal(X.entryProblem(entry(), d, [entry({ id: "y", add: 3002 })]), "this pass drops that player already");
-  assert.equal(X.entryProblem(entry(), due({ done: 1 }), [entry({ id: "y", add: 3002, drop: 2006 })]), "over the day's cap");
-  const tight = due({ cap: 3, adds_left: [{ start: "2026-10-20", end: "2026-10-26", adds: 1 }] });
-  assert.equal(X.entryProblem(entry(), tight, [entry({ id: "y", add: 3002, drop: 2006 })]), "no adds left this week");
-  // A claim clearing in the next week does not use this week's adds.
-  const next = due({ cap: 3, adds_left: [{ start: "2026-10-20", end: "2026-10-26", adds: 1 }, { start: "2026-10-27", end: "2026-11-02", adds: 4 }] });
-  assert.equal(X.entryProblem(entry({ from: "2026-10-27" }), next, [entry({ id: "y", add: 3002, drop: 2006 })]), null);
+test("the checks before the page: the state, struck, open spot, protected, pending, the cap and the week's adds", () => {
+  assert.equal(X.entryProblem(entry(), due({ mode: "off" })), "the moves executor is off in this league");
+  assert.equal(X.entryProblem(entry(), due({ stop: true })), "STOP is on (data/autopilot/STOP)");
+  assert.equal(X.entryProblem(entry({ struck: true }), due()), "struck: it is never executed");
+  assert.equal(X.entryProblem(entry({ queued: false }), due()), "not queued: it is never executed");
+  assert.equal(X.entryProblem(entry({ drop: null }), due()), "an open-spot claim is not read yet");
+  assert.equal(X.entryProblem(entry({ drop: 2001 }), due()), "the drop is protected (kept: beats the best add)");
+  assert.equal(X.entryProblem(entry(), due({ pending: [{ id: "x", add: ADD, drop: 2009, from: CLEARS }] })), "a claim on the add is pending");
+  assert.equal(X.entryProblem(entry(), due({ done: 2 })), "over the day's cap");
+  assert.equal(X.entryProblem(entry(), due({ adds_left: [{ start: "2026-10-20", end: "2026-10-26", adds: 0 }] })), "no adds left this week");
+  // A claim clearing in the next week does not need this week's adds.
+  const next = due({ adds_left: [{ start: "2026-10-20", end: "2026-10-26", adds: 0 }, { start: "2026-10-27", end: "2026-11-02", adds: 4 }] });
+  assert.equal(X.entryProblem(entry({ from: "2026-10-27" }), next), null);
+  assert.equal(X.entryProblem(entry(), due({ mode: "live" })), null);
 });
 
-test("the page's checks: what the page shows against the entry", () => {
-  const e = entry();
-  const check = (raw, d = due(), x = e) => X.pageCheck(x, X.readAddPage(raw, x.from), d);
-  assert.deepEqual(check(rawPage({ path: `/nba/${LEAGUE}/players` })), { outcome: "skipped", reason: `the add page answered /nba/${LEAGUE}/players` });
-  assert.deepEqual(check(rawPage({ path: `/nba/${LEAGUE}/addplayer?apid=3002` })).outcome, "skipped");
-  // Yahoo may add its own parameters to the add page's address.
-  assert.equal(check(rawPage({ path: `${X.addPath(LEAGUE, 3001)}&stat1=P` })).outcome, "would_claim");
-  assert.deepEqual(check(rawPage({ form: false })), { outcome: "skipped", reason: "the add page has no claim form" });
-  assert.deepEqual(check(rawPage({ form: false, message: "This player is no longer available." })), { outcome: "gone", reason: "This player is no longer available." });
-  assert.equal(check(rawPage(), due({ team: 9 })).reason, "the form is not my team's claim");
-  assert.equal(check(rawPage({ add: 3009, path: X.addPath(LEAGUE, 3001) })).reason, "the page claims another player than the entry");
-  assert.equal(check(rawPage({ waiver: null })).reason, "the page shows no waiver date: the add is not on waivers");
-  assert.equal(check(rawPage({ waiver: "Oct 27" })).reason, "the page's waiver date is 2026-10-27, the queue's 2026-10-26");
-  assert.equal(check(rawPage(), due(), entry({ availability: "FA" })).reason, "a free-agent add is not read yet");
-  assert.equal(check(rawPage({ drops: ROSTER.filter((k) => k !== 2005) })).reason, "the drop has no control on the page (not on my roster, or on Yahoo's can't-cut list)");
-  assert.equal(check(rawPage({ noMoves: true })).reason, "Yahoo shows no moves left");
-  assert.equal(check(rawPage({ budget: 2 })).reason, "the bid ($3) is over the $2 left");
-  assert.equal(check(rawPage({ submit: null })).reason, "the page has no claim submit");
+test("the page's checks: identity, the claim heading, waivers, the drop's marker, moves left, the bid and the submit", () => {
+  const skipped = (raw, d, e) => checkOn(raw, d, e).reason;
+  assert.deepEqual(checkOn(rawPage({ form: false })), { outcome: "skipped", reason: "page not read" });
+  assert.equal(skipped(rawPage({ heading: "Add Player" })), 'the page\'s heading is "Add Player", not the claim\'s');
+  assert.equal(skipped(rawPage({ action: `/nba/100002/${TEAM}/addplayer` })), "the form is not this league's claim");
+  assert.equal(skipped(rawPage(), due({ team: 9 })), "the form is not my team's claim");
+  assert.equal(skipped(rawPage({ add: 3009 })), "the page claims another player than the entry");
+  assert.equal(skipped(rawPage({ waiver: null })), "the page shows no waiver date");
+  assert.equal(skipped(rawPage({ waiver: "Oct 27" })), "the page's waiver date is 2026-10-27, the queue's 2026-10-26");
+  assert.equal(skipped(rawPage(), due(), entry({ drop: 2012 })), "the drop 2012 cannot be picked (cantcut)");
+  assert.equal(skipped(rawPage({ markers: { 2005: "locked" } })), "the drop 2005 cannot be picked (locked)");
+  assert.equal(skipped(rawPage(), due(), entry({ drop: 2999 })), "the drop 2999 cannot be picked (none)");
+  assert.equal(skipped(rawPage({ addClasses: "noactionna- F-icon T-action-icon-no-add" })), "Yahoo shows no more roster moves on the add");
+  assert.equal(skipped(rawPage({ budget: 2 })), "the bid ($3) is outside the page's $0 to $2");
+  assert.equal(skipped(rawPage(), due(), entry({ bid_placed: 2.5 })), "the bid (2.5) is not a whole dollar");
+  assert.equal(skipped(rawPage({ hint: false })), "the page shows no bid range");
+  assert.equal(skipped(rawPage({ submit: null })), "the page has no claim submit");
 });
 
-test("the pass the log takes: would claim, skipped, nothing due, stopped and failed", () => {
+test("gone only when the page shows the add on a team; a page with no form is not read", () => {
+  const onTeam = rawPage({ addClasses: "F-icon T-action-icon-trade" });
+  assert.deepEqual(checkOn(onTeam), { outcome: "gone", reason: "the page shows the add on a team" });
+  assert.equal(checkOn(rawPage({ form: false, message: "This player is owned by another team." })).outcome, "gone");
+  assert.equal(checkOn(rawPage({ form: false, message: "Something went wrong." })).reason, "page not read");
+});
+
+test("the pass the log takes: would claim, skipped, gone and stopped", () => {
   const e = entry();
   const page = X.readAddPage(rawPage(), e.from);
-  const ok = X.moveCheck(e, X.pageCheck(e, page, due()), page);
-  const skipped = X.moveCheck(entry({ id: "y", drop: 2001 }), { outcome: "skipped", reason: "the drop is protected (kept)" });
-  let run = X.movesPass({ due: due(), trigger: "routine", checks: [ok, skipped], extension: "0.7.0" });
+  const line = (check) => X.moveCheck(e, check, page, due(), READ_AT);
+  let run = X.movesPass({ due: due(), trigger: "routine", checks: [line(X.pageCheck(e, page, due()))], extension: "0.7.0" });
   assert.deepEqual([run.day, run.mode, run.trigger, run.outcome, run.reason, run.extension], [DAY, "dry_run", "routine", "would_claim", null, "0.7.0"]);
-  assert.equal(run.entries.length, 2);
-  assert.equal(run.entries[1].controls, null);
-  run = X.movesPass({ due: due(), trigger: "panel", checks: [skipped] });
-  assert.deepEqual([run.outcome, run.reason], ["skipped", "every due entry failed a check"]);
-  run = X.movesPass({ due: due({ entries: [], reason: "nothing due now" }), trigger: "routine" });
-  assert.deepEqual([run.outcome, run.reason, run.entries], ["nothing_due", "nothing due now", []]);
+  run = X.movesPass({ due: due(), trigger: "routine_late", checks: [line({ outcome: "skipped", reason: "page not read" })] });
+  assert.deepEqual([run.outcome, run.reason], ["skipped", "page not read"]);
+  run = X.movesPass({ due: due(), trigger: "routine", checks: [line({ outcome: "gone", reason: "the page shows the add on a team" })] });
+  assert.equal(run.outcome, "skipped");
   run = X.movesPass({ due: due({ stop: true, entries: [] }), trigger: "routine" });
-  assert.deepEqual([run.outcome, run.reason], ["stopped", "STOP is on (data/autopilot/STOP)"]);
-  run = X.movesPass({ due: due(), trigger: "routine", error: "not signed in to Yahoo" });
-  assert.deepEqual([run.outcome, run.reason], ["failed", "not signed in to Yahoo"]);
+  assert.deepEqual([run.outcome, run.reason, run.entries], ["stopped", "STOP is on (data/autopilot/STOP)", []]);
+  // A live league still logs a dry run: this build claims nothing.
+  run = X.movesPass({ due: due({ mode: "live" }), trigger: "panel", checks: [line({ outcome: "would_claim" })] });
+  assert.equal(run.mode, "dry_run");
 });
 
-test("the strip and the panel's line", () => {
+test("the strip, the panel's line and the panel's links", () => {
   const at = new Date(2026, 9, 24, 9, 2).getTime();
   assert.equal(X.movesStripText({ browserOff: true }), "off in this browser (the extension's settings)");
   assert.equal(X.movesStripText({ due: due({ mode: "off" }) }), "off in this league");
   assert.equal(X.movesStripText({ due: due({ stop: true }) }), "STOP is on: nothing runs");
-  assert.equal(X.movesStripText({ due: due({ entries: [], reason: "nothing due now" }) }), "dry run · nothing due now");
+  assert.equal(X.movesStripText({ due: due(), none: true }), "dry run · this player is not due in the queue: nothing logged");
   const e = entry();
   const page = X.readAddPage(rawPage(), e.from);
-  const run = X.movesPass({ due: due(), trigger: "routine", checks: [X.moveCheck(e, X.pageCheck(e, page, due()), page)] });
-  assert.equal(X.movesStripText({ due: due(), run, at }), "dry run · 1 claim logged 09:02");
-  const last = { day: DAY, trigger: "routine", outcome: "would_claim", reason: null, claims: 2 };
-  assert.equal(X.movesLastText(last, "3 min ago"), `${DAY} · routine: would claim 2, 3 min ago`);
+  const run = X.movesPass({ due: due(), trigger: "routine", checks: [X.moveCheck(e, X.pageCheck(e, page, due()), page, due(), READ_AT)] });
+  assert.equal(X.movesStripText({ due: due(), run, at }), "dry run · would claim for $3, dropping 2005; logged 09:02");
+  const last = { day: DAY, trigger: "routine_late", outcome: "would_claim", reason: null };
+  assert.equal(X.movesLastText(last, "3 min ago"), `${DAY} · late routine: would claim, 3 min ago`);
   assert.equal(X.movesLastText(null, ""), "no pass from this browser yet");
+  assert.deepEqual(X.dueLinks(due()), [{ id: e.id, href: `${SITE}${e.page}#pickandroll-moves-panel`, text: "add 3001, drop 2005, $3" }]);
 });
 
-test("the library toggles no drop, sets no bid and submits nothing", () => {
-  const src = require("node:fs").readFileSync(require("node:path").join(__dirname, "..", "lib", "moves.js"), "utf8");
-  assert.ok(!/\.click\(|dispatchEvent|submit\(|requestSubmit|fetch\(/.test(src));
-  assert.ok(!/\.(value|selectedIndex|checked)\s*=[^=]/.test(src));
+test("the moves code clicks, toggles, sets, submits and fetches nothing", () => {
+  for (const f of ["lib/moves.js", "league.js"]) {
+    const src = fs.readFileSync(path.join(DIR, f), "utf8");
+    assert.ok(!/\.click\(|dispatchEvent|submit\(|requestSubmit/.test(src), `${f} clicks or submits`);
+    assert.ok(!/\.(value|selectedIndex|checked)\s*=[^=]/.test(src), `${f} sets a field`);
+    assert.ok(!/\bfetch\(|XMLHttpRequest|DOMParser/.test(src), `${f} fetches a page`);
+  }
 });
 
-// ---------------------------------------------------------------- the content script's pass
-const fs = require("node:fs");
-const path = require("node:path");
-const vm = require("node:vm");
-const DIR = path.join(__dirname, "..");
-const SITE = "https://basketball.fantasysports.yahoo.com";
-
+// ---------------------------------------------------------------- the content script on an add page
 /** A fake element: its text, attributes and children by selector. */
-const el = (props = {}) => ({ textContent: "", getAttribute: (a) => (props.attrs || {})[a] ?? null, querySelectorAll: () => [], querySelector: () => null, ...props });
+const el = (props = {}) => ({ textContent: "", className: "", getAttribute: (a) => (props.attrs || {})[a] ?? null, querySelectorAll: () => [], querySelector: () => null, closest: () => null, ...props });
 
-/** An add page parsed, as the fake DOMParser gives it: the form and controls the DOM read found. */
-function addDoc({ add = 3001, drops = ROSTER, budget = 100, waiver = "Oct 26" } = {}) {
-  const removed = new Set();
-  const crumb = { name: "crumb", tagName: "INPUT", type: "hidden", value: "SECRET-TOKEN", remove: () => removed.add(crumb) };
+/** The rendered add page as the content script sees it: the form, the noscript's submit as text,
+ * the add's row and my roster's rows with their player ids and icons. */
+function addDom({ add = ADD, budget = 100, waiver = "Oct 26" } = {}) {
   const input = (name, type, value) => ({ name, tagName: "INPUT", type, value, checked: false });
-  const all = [
+  const crumb = input("crumb", "hidden", "SECRET-TOKEN");
+  const elements = [
     input("stage", "hidden", "2"),
     crumb,
     input("stat1", "hidden", "P"),
     input("stat2", "hidden", "P"),
     input("apid", "hidden", String(add)),
-    ...drops.map((k) => input("dpid", "checkbox", String(k))),
+    ...ROSTER.filter((k) => !CANTCUT.includes(k)).map((k) => input("dpid", "checkbox", String(k))),
     input("faab", "text", "0"),
-    input(X.SUBMIT, "submit", "Create claim"),
   ];
   const hint = el({ textContent: ` Must be between $0 and $${budget} ` });
-  const form = el({
-    attrs: { action: `/nba/${LEAGUE}/${TEAM}/addplayer`, method: "post" },
-    querySelectorAll: (sel) => (sel === "p, span, div" ? [hint] : sel.startsWith(".T-action-icon-cantcut") ? [el(), el()] : []),
-  });
-  // Live, as a form's elements are: an input taken out is gone from them.
-  Object.defineProperty(form, "elements", { get: () => all.filter((x) => !removed.has(x)) });
+  const form = el({ attrs: { action: `${SITE}/nba/${LEAGUE}/${TEAM}/addplayer`, method: "post" }, elements, querySelectorAll: (sel) => (sel === "p, span, div" ? [hint] : []) });
+  const tr = (id, classes) =>
+    el({
+      querySelector: (sel) => (sel === "[data-ys-playerid]" ? el({ attrs: { "data-ys-playerid": String(id) } }) : null),
+      querySelectorAll: (sel) => (sel === '[class*="T-action-icon-"]' && classes ? [el({ className: classes })] : []),
+    });
+  const addTr = tr(add, "noactionda- F-icon T-action-icon-disabled-add");
+  const addCell = el({ attrs: { "data-ys-playerid": String(add) }, closest: (sel) => (sel === "tr" ? addTr : null) });
+  const rows = ROSTER.map((k) => tr(k, CANTCUT.includes(k) ? ICON.cantcut : ""));
   return {
-    removed,
-    querySelectorAll: (sel) => (sel.includes("crumb") ? [crumb].filter((x) => !removed.has(x)) : sel === "h1, h2, h3" ? [el({ textContent: "Claim Player From Waivers" })] : []),
-    querySelector: (sel) => (sel === "form#add-drop-players-form" ? form : sel === "#submit-add-drop-button" ? el({ attrs: { name: X.SUBMIT } }) : null),
-    getElementById: (id) => (id === "faab-bid-fieldset" ? el({ textContent: `Your Bid $ Your Budget $${budget} Waiver Date ${waiver}` }) : id === "add-drop-submit-container" ? el() : null),
+    crumb,
+    querySelector: (sel) => (sel === "form#add-drop-players-form" ? form : sel === "table#statTable-add tbody tr [data-ys-playerid]" ? addCell : null),
+    querySelectorAll: (sel) =>
+      sel === "h1, h2, h3"
+        ? [el({ textContent: "Yahoo Sports Fantasy Basketball" }), el({ textContent: ` ${X.CLAIM_HEADING} ` })]
+        : sel === "table.statTable-drop tbody tr"
+          ? rows
+          : [],
+    getElementById: (id) =>
+      id === "faab-bid-fieldset"
+        ? el({ textContent: `Your Bid $ Your Budget $${budget} Waiver Date ${waiver}` })
+        : id === "add-drop-submit-container"
+          ? el({ textContent: ` <input type="submit" id="submit-add-drop-button" name="${X.SUBMIT}" value="Create claim"> ` })
+          : null,
   };
 }
 
-/** league.js on my team page (``hash`` its fragment): a chrome whose worker answers each op with
- * ``answer``, a fetch whose add pages ``pages`` gives (by apid; a function throws), and the
- * DOMParser that reads them. Returns the messages, the GETs, the strips and the URL replaced. */
-async function visitMoves({ hash = "#pickandroll-moves", answer, pages = {}, team = TEAM }) {
+/** league.js on the add page of ``add`` (``hash`` its fragment), a chrome whose worker answers
+ * each op with ``answer``. Returns the messages sent, the URLs replaced and the strip. */
+async function visitAdd({ hash = "#pickandroll-moves", answer, add = ADD }) {
+  const dom = addDom({ add });
   const nodes = {};
   const doc = {
-    querySelector: () => null,
-    querySelectorAll: () => [],
-    getElementById: (id) => nodes[id] || null,
+    ...dom,
+    getElementById: (id) => nodes[id] || dom.getElementById(id),
     createElement: () => ({ style: {}, setAttribute() {}, textContent: "" }),
     documentElement: {
-      cloneNode: () => ({ querySelectorAll: () => [], outerHTML: "<html></html>" }),
       append: (e) => {
         nodes[e.id] = e;
       },
     },
   };
-  const url = new URL(`${SITE}/nba/${LEAGUE}/${team}${hash}`);
-  const location = { href: url.href, hash: url.hash, pathname: url.pathname, search: url.search, origin: url.origin, assign() {} };
+  const url = new URL(`${SITE}/nba/${LEAGUE}/addplayer?apid=${add}${hash}`);
+  const location = { href: url.href, hash: url.hash, pathname: url.pathname, search: url.search, assign() {} };
   const sent = [];
-  const gets = [];
-  const parsed = [];
   const replaced = [];
-  const listeners = [];
-  const delays = [];
   const timers = [];
   const chrome = {
     runtime: {
       connect: () => ({}),
       getManifest: () => ({ version: "0.7.0" }),
-      onMessage: { addListener: (fn) => listeners.push(fn) },
+      onMessage: { addListener() {} },
       sendMessage: async (msg) => {
         sent.push(JSON.parse(JSON.stringify(msg)));
         return answer(msg, sent);
       },
     },
   };
-  async function fetch(p, opts = {}) {
-    gets.push({ path: p, ...JSON.parse(JSON.stringify({ method: opts.method, body: opts.body, credentials: opts.credentials })) });
-    const u = new URL(p, SITE);
-    const page = pages[u.searchParams.get("apid")];
-    if (typeof page === "function") page();
-    return { ok: true, status: 200, url: u.href, text: async () => u.searchParams.get("apid") };
-  }
-  class DOMParser {
-    parseFromString(apid) {
-      const d = pages[apid] || addDoc({ add: Number(apid) });
-      parsed.push(d);
-      return d;
-    }
-  }
   const ctx = vm.createContext({
     chrome,
     location,
     document: doc,
     history: { replaceState: (_s, _t, u) => replaced.push(u) },
-    setTimeout: (fn, ms) => {
-      delays.push(ms);
-      if (ms === 1500) timers.push(fn);
-      else if (ms !== 20000) Promise.resolve().then(fn);
-      return delays.length;
-    },
-    clearTimeout: () => {},
-    AbortController,
+    setTimeout: (fn) => timers.push(fn),
     URL,
     URLSearchParams,
     Date,
     console,
-    fetch,
-    DOMParser,
   });
   ctx.window = ctx;
   ctx.globalThis = ctx;
   for (const file of ["lib/league.js", "lib/lineup.js", "lib/moves.js", "league.js"]) vm.runInContext(fs.readFileSync(path.join(DIR, file), "utf8"), ctx);
   for (const fn of timers.splice(0)) await fn();
-  return { sent, gets, parsed, replaced, listeners, delays, strip: nodes["pickandroll-moves-strip"] };
+  return { sent, replaced, strip: nodes["pickandroll-strip"] };
 }
 
-/** The worker's answers: the post accepted, the due entries, the log taking the pass. */
-const movesWorker =
+/** The worker's answers: the settings, the due entries and the log taking the pass. */
+const worker =
   (over = {}, settings = {}) =>
   (msg) => {
-    if (msg.op === "season_page") return { ok: true, data: { post: { accepted: ["roster/4"] }, follow: null } };
     if (msg.op === "settings") return { ok: true, data: { lineup_executor: "on", moves_executor: "on", ...settings } };
     if (msg.op === "moves_due") return { ok: true, data: due(over) };
     if (msg.op === "moves_log") return { ok: true, data: { at: "x" } };
     return { ok: false, error: `unexpected ${msg.op}` };
   };
-
-const withPage = (e) => ({ ...e, page: X.addPath(LEAGUE, e.add) });
 const ops = (v) => v.sent.map((m) => m.op);
-const keysOf = (o) => (o && typeof o === "object" ? Object.entries(o).flatMap(([k, v]) => [k, ...keysOf(v)]) : []);
 
-test("the routine's link reads each due entry's add page, one at a time, and logs the claims it would place", async () => {
-  const entries = [withPage(entry({ id: "a", drop: 2001 })), withPage(entry({ id: "b" })), withPage(entry({ id: "c", add: 3002, drop: 2006, bid_placed: 0 }))];
-  const v = await visitMoves({ answer: movesWorker({ entries, cap: 3 }) });
-  assert.deepEqual(ops(v), ["season_page", "settings", "moves_due", "moves_log"]);
-  // The protected drop never reaches its page; the other two are GETs with the page's own session.
-  assert.deepEqual(v.gets, [
-    { path: SITE + X.addPath(LEAGUE, 3001), credentials: "same-origin" },
-    { path: SITE + X.addPath(LEAGUE, 3002), credentials: "same-origin" },
-  ]);
-  assert.ok(v.delays.includes(2000), "a pause between two add pages");
-  // The crumb was taken out of every page before it was read.
-  assert.ok(v.parsed.every((d) => d.removed.size === 1));
-  const run = v.sent[3].run;
+test("the routine's link: the fragment dropped, the page's entry checked on the rendered form and the claim it would place logged", async () => {
+  const v = await visitAdd({ answer: worker({ entries: [entry({ id: "other", add: 3002, page: `/nba/${LEAGUE}/addplayer?apid=3002` }), entry()] }) });
+  assert.deepEqual(v.replaced, [`/nba/${LEAGUE}/addplayer?apid=${ADD}`]);
+  // Nothing is posted for the add page: the due entries, then the pass.
+  assert.deepEqual(ops(v), ["settings", "moves_due", "moves_log"]);
+  assert.equal(v.sent[1].league, LEAGUE);
+  const run = v.sent[2].run;
   assert.deepEqual([run.mode, run.trigger, run.outcome, run.extension], ["dry_run", "routine", "would_claim", "0.7.0"]);
-  assert.deepEqual(run.entries.map((e) => [e.id, e.outcome]), [["a", "skipped"], ["b", "would_claim"], ["c", "would_claim"]]);
-  assert.equal(run.entries[0].reason, "the drop is protected (kept: beats the best add)");
-  assert.deepEqual(run.entries[2].controls.would_fill, { apid: 3002, dpid: 2006, faab: 0, submit: X.SUBMIT });
-  assert.deepEqual(run.entries[1].controls.fields, ["stage", "stat1", "stat2", "apid", "dpid", "faab", X.SUBMIT]);
-  assert.equal(run.entries[1].controls.token, true);
-  assert.ok(!keysOf(run).some((k) => /crumb/i.test(k)) && !JSON.stringify(run).includes("SECRET-TOKEN"));
-  assert.match(v.strip.textContent, /^pickandroll moves: dry run · 2 claims logged \d\d:\d\d$/);
-  assert.deepEqual(v.replaced, [`/nba/${LEAGUE}/${TEAM}`]);
+  assert.deepEqual(run.entries.map((e) => [e.id, e.outcome]), [[entry().id, "would_claim"]]);
+  const c = run.entries[0].controls;
+  assert.deepEqual(c.would_fill, { action: `/nba/${LEAGUE}/${TEAM}/addplayer`, apid: ADD, dpid: 2005, faab: 3, submit: X.SUBMIT });
+  assert.deepEqual([c.crumb, c.cantcut, c.add_markers, c.fields], ["present", CANTCUT, ["disabled_add"], ["stage", "stat1", "stat2"]]);
+  assert.ok(!JSON.stringify(v.sent).includes("SECRET-TOKEN"), "the crumb's value never leaves the page");
+  assert.match(v.strip.textContent, /^pickandroll moves: dry run · would claim for \$3, dropping 2005; logged \d\d:\d\d$/);
 });
 
-test("a plain visit or the lineup's link runs no moves pass", async () => {
-  for (const hash of ["", "#pickandroll-lineup"]) {
-    const v = await visitMoves({ hash, answer: movesWorker() });
-    assert.ok(!ops(v).some((op) => op.startsWith("moves_")), hash);
-    assert.deepEqual(v.gets, []);
-  }
+test("the late pass and the panel's link carry their triggers", async () => {
+  let v = await visitAdd({ hash: "#pickandroll-moves-late", answer: worker() });
+  assert.equal(v.sent[2].run.trigger, "routine_late");
+  v = await visitAdd({ hash: "#pickandroll-moves-panel", answer: worker() });
+  assert.equal(v.sent[2].run.trigger, "panel");
 });
 
-test("off in the league, the browser's brake, another team's page and STOP", async () => {
-  let v = await visitMoves({ answer: movesWorker({ mode: "off", entries: [] }) });
+test("a plain visit runs nothing; a player not due logs nothing", async () => {
+  let v = await visitAdd({ hash: "", answer: worker() });
+  assert.deepEqual([ops(v), v.replaced], [[], []]);
+  v = await visitAdd({ answer: worker({ entries: [] }) });
+  assert.deepEqual(ops(v), ["settings", "moves_due"]);
+  assert.equal(v.strip.textContent, "pickandroll moves: dry run · this player is not due in the queue: nothing logged");
+});
+
+test("off in the league, the browser's brake and STOP", async () => {
+  let v = await visitAdd({ answer: worker({ mode: "off", entries: [] }) });
   assert.ok(!ops(v).includes("moves_log"));
   assert.equal(v.strip.textContent, "pickandroll moves: off in this league");
-  v = await visitMoves({ answer: movesWorker({}, { moves_executor: "off" }) });
-  assert.deepEqual(ops(v), ["season_page", "settings"]);
+  v = await visitAdd({ answer: worker({}, { moves_executor: "off" }) });
+  assert.deepEqual(ops(v), ["settings"]);
   assert.equal(v.strip.textContent, "pickandroll moves: off in this browser (the extension's settings)");
-  v = await visitMoves({ team: 9, answer: movesWorker() });
-  assert.ok(!ops(v).includes("moves_log"));
-  v = await visitMoves({ answer: movesWorker({ stop: true, entries: [] }) });
-  assert.equal(v.sent[3].run.outcome, "stopped");
-  assert.deepEqual(v.gets, []);
+  v = await visitAdd({ answer: worker({ stop: true, entries: [] }) });
+  assert.deepEqual([v.sent[2].run.outcome, v.sent[2].run.entries], ["stopped", []]);
 });
 
-test("an add page that cannot be read stops the pass: the rest are not read", async () => {
-  const entries = [withPage(entry({ id: "b" })), withPage(entry({ id: "c", add: 3002, drop: 2006 }))];
-  const pages = {
-    3001: () => {
-      throw new Error("Failed to fetch");
-    },
-  };
-  const v = await visitMoves({ answer: movesWorker({ entries }), pages });
-  assert.equal(v.gets.length, 1);
-  const run = v.sent.find((m) => m.op === "moves_log").run;
-  assert.deepEqual([run.outcome, run.reason], ["failed", "the add page could not be read: Failed to fetch"]);
-  assert.deepEqual(run.entries.map((e) => [e.id, e.outcome]), [["b", "failed"], ["c", "skipped"]]);
-  assert.equal(run.entries[1].reason, "the pass stopped at an add page it could not read");
-});
-
-test("the side panel's button runs a pass from a fresh post of the page", async () => {
-  const v = await visitMoves({ hash: "", answer: movesWorker({ entries: [withPage(entry())] }) });
-  const reply = await new Promise((resolve) => {
-    for (const fn of v.listeners) if (fn({ op: "moves_run" }, {}, resolve) === true) return;
-  });
-  assert.equal(reply.ok, true);
-  assert.deepEqual([reply.data.pass.trigger, reply.data.pass.outcome], ["panel", "would_claim"]);
-  assert.deepEqual(ops(v), ["season_page", "season_page", "settings", "moves_due", "moves_log"]);
+test("a check that fails before the page still logs what the page showed", async () => {
+  const v = await visitAdd({ answer: worker({ protected: { 2005: "kept: returns" } }) });
+  const e = v.sent[2].run.entries[0];
+  assert.deepEqual([e.outcome, e.reason], ["skipped", "the drop is protected (kept: returns)"]);
+  assert.equal(e.controls.would_fill, null);
+  assert.equal(e.controls.heading, X.CLAIM_HEADING);
 });

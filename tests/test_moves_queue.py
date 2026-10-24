@@ -482,16 +482,32 @@ def test_the_due_route_counts_the_days_executed_entries_and_their_adds(client):
     client.app.state.seasons.clock = lambda: NOW + timedelta(hours=1)
     url = f"/seasons/{LEAGUE}/autopilot/moves/due"
     before = client.get(url).json()
+    # A dry run's would-claim moves nothing: the entry is still due.
     body = pass_body([check(on[0])])
     assert client.post(f"/seasons/{LEAGUE}/autopilot/moves", json=body).status_code == 200
+    assert client.get(url).json()["entries"] == before["entries"]
+    # A live claim takes its place under the cap and its week's adds, and is open until resolved.
+    placed(client, on[0]["id"], "claimed")
     d = client.get(url).json()
     assert [e["id"] for e in d["entries"]] == [e["id"] for e in on[1:]]
-    # A dry run's would-claim takes its place under the cap and its week's adds; it is not open.
-    assert (d["done"], d["pending"]) == (1, [])
+    assert d["done"] == 1 and [c["id"] for c in d["pending"]] == [on[0]["id"]]
+    assert d["pending"][0]["add"] == on[0]["add"]
     clear = on[0]["from"]
     week = next(w for w in d["adds_left"] if w["start"] <= clear <= w["end"])
     was = next(w for w in before["adds_left"] if w["start"] == week["start"])
     assert was["adds"] is not None and week["adds"] == max(0, was["adds"] - 1)
+
+
+def placed(client, entry_id: str, outcome: str) -> None:
+    """Set ``outcome`` on a day's queue entry as a live pass would (PR 3)."""
+
+    def change(q):
+        for e in q["entries"]:
+            if e["id"] == entry_id:
+                e["outcome"] = outcome
+        return q
+
+    season_queue.update(client.data_dir, DAY, change)
 
 
 def pass_body(entries, **over) -> dict:
@@ -535,20 +551,21 @@ def test_a_pass_is_logged_under_moves_and_sets_the_entries_outcomes(client):
         "would_claim",
         "gone",
     ]
+    # A dry run moves no outcome on the queue: the late pass reads the same entries again.
     by = {e["id"]: e for e in client.get("/autopilot/queue").json()["entries"]}
-    assert by[on[0]["id"]]["outcome"] == "would_claim" and by[on[0]["id"]]["outcome_at"]
-    assert (by[on[1]["id"]]["outcome"], by[on[1]["id"]]["outcome_reason"]) == (
-        "gone",
-        "another team has him",
-    )
+    assert [by[e["id"]]["outcome"] for e in on[:2]] == [None, None]
     view = client.get(url).json()
     assert view["last"]["outcome"] == "would_claim" and len(view["entries"]) == len(q["entries"])
     assert view["live"]["dry_run_days"] == 1 and view["live"]["checked_days"] == 1
-    # An executed entry is never executed again, a rebuild keeps it, and a strike comes too late.
+    late = pass_body([check(on[0])], trigger="routine_late")
+    assert client.post(url, json=late).status_code == 200
+    # An entry a live pass executed is never executed again, a rebuild keeps it, and a strike
+    # comes too late.
+    placed(client, on[0]["id"], "claimed")
     r = client.post(url, json=pass_body([check(on[0])]))
     assert r.status_code == 409 and "executed already" in r.json()["detail"]
     again = {e["id"]: e for e in client.post("/autopilot/queue/build").json()["entries"]}
-    assert again[on[0]["id"]]["outcome"] == "would_claim"
+    assert again[on[0]["id"]]["outcome"] == "claimed"
     assert strike(client, on[0]["id"]).status_code == 409
 
 
@@ -564,6 +581,10 @@ def test_the_log_refuses_a_crumb_a_dry_claim_a_struck_entry_and_another_move(cli
         return r.json()["detail"]
 
     assert "crumb" in refused(pass_body([check(on[0], controls={"crumb": "x"})]), 422)
+    assert "crumb" in refused(pass_body([check(on[0], controls={"crumb_value": "present"})]), 422)
+    # The page's note that it had one, and nothing else, passes.
+    noted = pass_body([check(on[0], controls={"crumb": "present"})])
+    assert client.post(url, json=noted).status_code == 200
     assert refused(pass_body([check(on[0], outcome="claimed")])) == "a dry run claims nothing"
     assert refused(pass_body([], mode="live", outcome="claimed")).startswith("a live pass")
     assert "never executed" in refused(pass_body([check(out)]))

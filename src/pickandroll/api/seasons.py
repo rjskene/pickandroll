@@ -1229,9 +1229,10 @@ class SeasonService:
         }
 
     def log_moves_run(self, league: str, run: season_autopilot.MovesRun) -> dict[str, Any]:
-        """Append an execute pass to the league's log under ``moves`` (#171) and set its outcomes
-        on the queue's entries; refused (409) when the mode, STOP, the queue or the pass's own
-        outcome says it should not have run."""
+        """Append an execute pass to the league's log under ``moves`` (#171) and, for a live pass,
+        set its outcomes on the queue's entries (a dry run moves none: the ruling on #171, so the
+        late pass reads the same entries again); refused (409) when the mode, STOP, the queue or
+        the pass's own outcome says it should not have run."""
         self._base(league)
         mode = leagues.executor_mode(self.data_dir, league, leagues.MOVES)
         body = self._read_queue(run.day) or {}
@@ -1250,7 +1251,7 @@ class SeasonService:
         except season_autopilot.LogError as exc:
             raise HTTPException(409, str(exc)) from exc
         checks = {c.id: c for c in run.entries}
-        if checks:
+        if checks and run.mode == "live":
 
             def change(q: dict[str, Any] | None) -> dict[str, Any]:
                 q = q or {}

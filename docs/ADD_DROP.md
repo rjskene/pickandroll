@@ -541,6 +541,12 @@ docs/AUTOPILOT.md section 2, the bid in section 5.
   compares), by scoring, and never the private league.
 - **The typical gain** is the median of the armed leagues' three weeks' moves over the last 14
   days (each day's last moves entry), by scoring.
+- **The dry-run pass (PR 2, extension 0.7.0).** The routine opens each due entry's add page with
+  `#pickandroll-moves` (and later `#pickandroll-moves-late`); the extension checks that entry on
+  the rendered claim form and logs the claim it would place, submitting nothing (AUTOPILOT
+  section 2, "The page check"). The due route gives it my team, each entry's page, the claims
+  still pending, the day's entries executed and the adds left less every claim since. A dry
+  run moves no queue outcome: the pass is in the log and the digest, and the entry stays due.
 
 ## Decision log (#125)
 

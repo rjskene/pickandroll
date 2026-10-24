@@ -3,7 +3,7 @@
 // attach a session, see the mode and detach. On a league page instead (#98): what the league
 // reader posted, the season it fed, a Refresh of the page and the multi-page read of the
 // players page; on my team page, the lineup executor's last run and its button (#170), and the
-// moves executor's last pass and its button (#171).
+// moves executor's last pass and the links to the due entries' add pages (#171).
 "use strict";
 const L = globalThis.PickAndRoll;
 
@@ -353,17 +353,33 @@ $("lineup-run").addEventListener("click", async () => {
     load();
   }
 });
+// "Check moves now": the league's due entries as links to their add pages, with the panel's
+// fragment; the user opens each (the panel opens no tab itself).
 $("moves-run").addEventListener("click", async () => {
   if (!league) return;
   $("moves-run").disabled = true;
-  text("moves-last", "running…");
+  $("moves-due").replaceChildren();
   try {
-    await chrome.tabs.sendMessage(league.tab_id, { op: "moves_run" });
+    const due = await call("moves_due", { league: league.league });
+    const links = L.dueLinks(due);
+    $("moves-due").replaceChildren(
+      ...(links.length
+        ? links.map((x) => {
+            const li = document.createElement("li");
+            const a = document.createElement("a");
+            a.href = x.href;
+            a.target = "_blank";
+            a.rel = "noopener";
+            a.textContent = x.text;
+            li.append(a);
+            return li;
+          })
+        : [Object.assign(document.createElement("li"), { className: "muted", textContent: due.reason || "nothing due now" })]),
+    );
   } catch (e) {
-    text("moves-last", `not run: ${e.message}`);
+    text("moves-last", `not read: ${e.message}`);
   } finally {
     $("moves-run").disabled = false;
-    load();
   }
 });
 $("read-start").addEventListener("click", async () => {

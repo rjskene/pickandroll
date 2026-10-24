@@ -272,10 +272,20 @@ class LineupRun(BaseModel):
     extension: str | None = None
 
 
+#: The one value a key naming the crumb may carry: the moves pass's note that the page had one
+#: (the ruling on #171), never the token itself.
+CRUMB_PRESENT = "present"
+
+
 def has_crumb(value: Any) -> bool:
-    """Whether ``value`` carries a key naming Yahoo's form token anywhere."""
+    """Whether ``value`` carries a key naming Yahoo's form token anywhere, other than the key
+    ``crumb`` saying only :data:`CRUMB_PRESENT`."""
     if isinstance(value, Mapping):
-        return any("crumb" in str(k).lower() or has_crumb(v) for k, v in value.items())
+        return any(
+            ("crumb" in str(k).lower() and not (k == "crumb" and v == CRUMB_PRESENT))
+            or has_crumb(v)
+            for k, v in value.items()
+        )
     if isinstance(value, list | tuple):
         return any(has_crumb(v) for v in value)
     return False

@@ -85,9 +85,11 @@
       <div id="league-moves" hidden>
         <h2>Moves executor</h2>
         <p id="moves-last" class="small">-</p>
-        <p class="muted small">Reads Yahoo's add page for each of the day's queued moves that is due and logs the claim it
-          would place, in the league's mode. This build claims nothing and drops nothing in Yahoo.</p>
+        <p class="muted small">Lists the day's queued moves that are due, each a link to its add page; opening one checks
+          the claim on that page and logs what it would place, in the league's mode. This build claims nothing and drops
+          nothing in Yahoo.</p>
         <button id="moves-run" type="button">Check moves now</button>
+        <ul id="moves-due" class="posts"></ul>
       </div>
 
       <div id="league-read" hidden>
