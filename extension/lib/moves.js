@@ -122,8 +122,10 @@
    * my team in this league. */
   function pageCheck(entry, page, due) {
     const skip = (reason) => ({ outcome: "skipped", reason });
-    const want = addPath(due.league, entry.add);
-    if (page.path !== want) return skip(`the add page answered ${page.path || "nothing"}`);
+    const [where, query = ""] = String(page.path || "").split("?");
+    if (where !== `/nba/${due.league}/addplayer` || new URLSearchParams(query).get(ADD_FIELD) !== String(entry.add)) {
+      return skip(`the add page answered ${page.path || "nothing"}`);
+    }
     if (!page.action) {
       if (page.message && GONE.test(page.message)) return { outcome: "gone", reason: page.message };
       return skip("the add page has no claim form");

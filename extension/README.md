@@ -136,6 +136,35 @@ dry run: it reads the page's lineup form and logs what it would set, and it sets
 
 The live click, the form's submit, is a later build after the dry-run week (#170, PR 3).
 
+## The moves executor's dry run (0.7.0, #171)
+
+On your own team page the extension is also the moves executor's execute pass (docs/AUTOPILOT.md section 2).
+This build is its dry run: it reads Yahoo's add page for each queued move that is due and logs the claim it
+would place. It toggles no drop, sets no bid, submits nothing and posts nothing to Yahoo.
+
+1. A pass starts only when the team page was opened from the routine's link, with the fragment
+   `#pickandroll-moves` (or `#pickandroll-moves-late`), or from the side panel's **Check moves now**. A plain
+   visit runs no pass.
+2. A pass fetches the league's due entries (`GET /seasons/<id>/autopilot/moves/due`): the day's queued moves
+   whose veto hour is over, each with its bid and add page; my team; the protected players; the open claims; the
+   day's cap and the adds left. Nothing is due in a league whose mode is off, in the private league or under STOP.
+3. Each entry is checked before its page (struck, an open-spot claim, a protected drop, an open claim on the
+   add, the pass's own claims, the cap, the week's adds). One that passes has its add page
+   (`/nba/<id>/addplayer?apid=<player>`) fetched with a plain GET, one page at a time with a pause between. The
+   page's HTML is parsed without rendering it, so none of Yahoo's script runs, and its crumb is taken out before
+   anything is read.
+4. On the page: the claim form is my team's (`form#add-drop-players-form`, posting to
+   `/nba/<id>/<team>/addplayer`) and claims the entry's add; the add is still on waivers with the queue's waiver
+   date; the drop has its `dpid` control (a player on Yahoo's can't-cut list has none); Yahoo shows moves left;
+   the budget covers the bid; the form has its bid field and its claim submit. A page with no form whose text
+   says the player is gone logs `gone`. A page that cannot be read stops the pass.
+5. The pass goes to the league's log (`POST /seasons/<id>/autopilot/moves`): every entry's outcome and reason,
+   and for each page read its form's action, field names (never a value, never the crumb's), what it shows,
+   and the fields the claim would fill (`apid`, `dpid`, `faab` and the submit's name). The strip and the side
+   panel show the outcome. **Moves executor in this browser** off in the settings is this browser's brake.
+
+The live submit is a later build after the dry-run week (#171, PR 3).
+
 ## What it reads and sends
 
 - **Reads:** the text frames of the draft room's own WebSocket. The page script adds a listener to the socket
@@ -151,6 +180,9 @@ The live click, the form's submit, is a later build after the dry-run week (#170
 - **Lineup executor (0.6.0):** on your team page, the lineup form's action, field names, players' slots and
   options, and the run's outcome, to the same API. The form's crumb is never read; no field is set and the form
   is never submitted.
+- **Moves executor (0.7.0):** GETs of the add pages of the day's due moves, with your Yahoo session, nothing
+  else to Yahoo; to the API, each add page's form action, field names and what it shows, and the pass's
+  outcome. The add page's crumb is taken out before the page is read; nothing is toggled, set or submitted.
 - **Never:** cookies, the `?auth=` part of the room URL, anything you type, or any page other than the draft
   client and the league pages above.
 
@@ -165,12 +197,13 @@ The live click, the form's submit, is a later build after the dry-run week (#170
 | `lib/room.js` | `RoomTracker`: picks, the pick on the clock, the sync cursor, how my picks landed (pure) |
 | `lib/drafter.js` | armed mode: one turn at a time, a newer turn supersedes an older one, the queue backstop and the probe (pure, through a page adapter) |
 | `lib/yahoo.js` | Yahoo's player table: row matching by headshot id and name, label checks, the plan's candidates (pure) |
-| `league.js` | isolated world, league pages: posts the page to the worker, follows Next 25 only during an armed read; on my team page, the lineup executor's dry run and its strip |
+| `league.js` | isolated world, league pages: posts the page to the worker, follows Next 25 only during an armed read; on my team page, the lineup executor's dry run, the moves executor's dry-run pass (the add pages' GETs) and their strips |
 | `lib/league.js` | which league pages are read, the snapshot body, the multi-page read (pure) |
 | `lib/lineup.js` | the lineup executor's page side: the form read, the steps' checks, the run for the log, the strip (pure) |
+| `lib/moves.js` | the moves executor's page side: the add page read, the entries' checks, the pass for the log, the strip (pure) |
 | `worker.js` | service worker: the only caller of the API; per-tab state for the panel in `chrome.storage.session` |
-| `sidepanel/` | side panel: room state, attach a session, mode, plan, detach; on a league page, its posts and the read; on my team page, the lineup executor's last run and **Set lineup now** |
-| `options/` | API and web app addresses (localhost only), Yahoo players file, the queue probe's round, the search fallback, the lineup executor's brake |
+| `sidepanel/` | side panel: room state, attach a session, mode, plan, detach; on a league page, its posts and the read; on my team page, the lineup executor's last run and **Set lineup now**, the moves executor's last pass and **Check moves now** |
+| `options/` | API and web app addresses (localhost only), Yahoo players file, the queue probe's round, the search fallback, the lineup and moves executors' brakes |
 | `test/*.test.js` | unit tests (`node --test extension/test/*.test.js` from the repo root) |
 | `test/harness/` | Tier 1 for the extension: a recorded room played through the real scripts against the API |
 

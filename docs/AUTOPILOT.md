@@ -129,9 +129,22 @@ page, from PR 2:
   `daily_cap` unless the user set the league's own (`PUT /leagues/{league}/moves` `{mode, cap}`).
   A placed claim is resolved `won` or `lost` from the transactions at the next build.
 - **What the extension reads.** `GET /seasons/{league}/autopilot/moves/due`: the entries due now
-  with the bid to place, the players protected and why (the build's and the engine's now: the
-  page check refuses a protected drop whatever the queue says), the day's cap, the adds left as
-  read and the budget; none when the mode is off, STOP is on or the day is not today.
+  with the bid to place and the add page, my team, the players protected and why (the build's and
+  the engine's now: the page check refuses a protected drop whatever the queue says), the claims
+  still open (earlier days' placed and unresolved, and today's placed), the day's cap and how many
+  of the day's entries took their place, the adds left as read less every claim since, and the
+  budget; none when the mode is off, STOP is on or the day is not today.
+- **The page check (PR 2, extension 0.7.0).** A pass runs on my team page, opened from the
+  routine's link (`#pickandroll-moves`, or `#pickandroll-moves-late` for a late pass) or the side
+  panel's **Check moves now**. Each due entry is checked before its page (struck, an open-spot
+  claim, a protected drop, an open claim on the add, the pass's own claims, the cap and the week's
+  adds), then its add page (`/nba/<league>/addplayer?apid=<add>`, Yahoo's own add link) is read by a
+  plain GET with the user's session, one page at a time, parsed without rendering and with the
+  crumb taken out first: the claim form is my team's and names the add, the waiver date is the
+  queue's, the drop has its control (none on Yahoo's can't-cut list), Yahoo shows moves left, the
+  budget covers the bid and the form has its bid field and claim submit. The pass logs
+  `would_claim` with the fields the claim would fill (`apid`, `dpid`, `faab`, the submit's name);
+  it toggles, sets and submits nothing. The control names are the DOM read on #171 (2026-10-24).
 - **The mode, the log and the live guard.** `armed.json`'s `moves` key and `moves_cap`, like the
   lineups'. A pass is `POST /seasons/{league}/autopilot/moves`, logged under `moves` beside
   `lineup` in the league's day file, each entry's outcome set on the queue (`would_claim`,
