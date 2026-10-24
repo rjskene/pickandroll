@@ -242,7 +242,7 @@
     const ctl = new AbortController();
     const timer = setTimeout(() => ctl.abort(), PAGE_TIMEOUT_MS);
     try {
-      const r = await fetch(path, { credentials: "same-origin", redirect: "follow", signal: ctl.signal });
+      const r = await fetch(new URL(path, location.href).href, { credentials: "same-origin", redirect: "follow", signal: ctl.signal });
       const at = new URL(r.url || path, location.href);
       if (at.origin !== location.origin) return { error: "the add page went to another site (signed out of Yahoo?)" };
       if (!r.ok) return { error: `the add page answered HTTP ${r.status}` };

@@ -340,8 +340,8 @@ test("the routine's link reads each due entry's add page, one at a time, and log
   assert.deepEqual(ops(v), ["season_page", "settings", "moves_due", "moves_log"]);
   // The protected drop never reaches its page; the other two are GETs with the page's own session.
   assert.deepEqual(v.gets, [
-    { path: X.addPath(LEAGUE, 3001), credentials: "same-origin" },
-    { path: X.addPath(LEAGUE, 3002), credentials: "same-origin" },
+    { path: SITE + X.addPath(LEAGUE, 3001), credentials: "same-origin" },
+    { path: SITE + X.addPath(LEAGUE, 3002), credentials: "same-origin" },
   ]);
   assert.ok(v.delays.includes(2000), "a pause between two add pages");
   // The crumb was taken out of every page before it was read.
