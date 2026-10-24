@@ -103,6 +103,7 @@ import LineupView from "./LineupView";
 import MatchupView from "./MatchupView";
 import OutlookView from "./OutlookView";
 import Rail from "./Rail";
+import QueueCard from "./QueueCard";
 import Scorecard from "./Scorecard";
 import { SEASON_ICONS, VIEW_ICONS } from "./icons";
 import Strategy from "./Strategy";
@@ -304,6 +305,8 @@ export default function SeasonScreen({ league, onBack, onProgress }: { league: s
         return { note: moves.data?.system.label, body: <Strategy league={league} s={s} system={system} onPick={pick} /> };
       case "scorecard":
         return { note: s.public ? undefined : "suggestions only", body: <Scorecard league={league} /> };
+      case "queue":
+        return { note: s.public ? undefined : "suggestions only", body: <QueueCard league={league} s={s} /> };
       default:
         return { body: null };
     }
@@ -1654,7 +1657,7 @@ function SeasonFooter({ s, now }: { s: SeasonView; now: number }) {
       {waivers.length > 0 && <span>{waivers.join(" · ")}</span>}
       <span className="grow" />
       <span>
-        <kbd>?</kbd> keys · <kbd>w</kbd> <kbd>h</kbd> <kbd>s</kbd> views · <kbd>[</kbd> view drawer · <kbd>1</kbd>–<kbd>8</kbd> cards · <kbd>⇧</kbd>+digit bottom half · <kbd>]</kbd> panel · <kbd>p</kbd> progress
+        <kbd>?</kbd> keys · <kbd>w</kbd> <kbd>h</kbd> <kbd>s</kbd> views · <kbd>[</kbd> view drawer · <kbd>1</kbd>–<kbd>9</kbd> cards · <kbd>⇧</kbd>+digit bottom half · <kbd>]</kbd> panel · <kbd>p</kbd> progress
       </span>
       <span title={Object.entries(s.fetched).map(([k, f]) => `${k}: ${f.at} (${f.source})`).join("\n")}>Snapshot {ageLabel(s.updated_at, now)}</span>
       <span>League {s.league}</span>

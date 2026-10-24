@@ -289,7 +289,7 @@ export const DRAFT_SHEET: Sheet = {
     {
       title: "Cards",
       rows: [
-        [["1", "…", "8"], "open that card in the top half; the same key again closes it"],
+        [["1", "…", "9"], "open that card in the top half; the same key again closes it"],
         [["⇧ 1", "…", "⇧ 8"], "open it in the bottom half (mouse: shift-click or right-click the rail icon)"],
         [["]"], "collapse the drawer to the rail, or bring it back with its two cards"],
         [["Esc"], "collapse the drawer; in a field it leaves the field first"],
@@ -323,7 +323,7 @@ export const DRAFT_SHEET: Sheet = {
 };
 
 // ---------------------------------------------------------------- the league page
-export type SeasonCardId = "waivers" | "moves" | "trade" | "flags" | "roster" | "league" | "strategy" | "scorecard";
+export type SeasonCardId = "waivers" | "moves" | "trade" | "flags" | "roster" | "league" | "strategy" | "scorecard" | "queue";
 
 export const SEASON_CARDS: CardDef<SeasonCardId>[] = [
   { id: "waivers", title: "Waivers", blurb: "the available players; the board at full width", halves: false },
@@ -334,6 +334,7 @@ export const SEASON_CARDS: CardDef<SeasonCardId>[] = [
   { id: "league", title: "The league", blurb: "the standings and the weeks recorded, or this week's matchups" },
   { id: "strategy", title: "Strategy", blurb: "this week against the rest of the season: the recommended set at each weight" },
   { id: "scorecard", title: "Scorecard", blurb: "a recorded week against its projection, the season to date, and my moves projected and realized" },
+  { id: "queue", title: "Queue", blurb: "the moves executor: today's queue, each move's bid and when it executes, the veto, and the passes" },
 ];
 
 /** The views of the league page's pane (#116), the tabs of the drawer at its left edge. */
@@ -462,7 +463,7 @@ export function seasonKeys(s: SeasonKeys): KeyMap {
 
 export const SEASON_SHEET: Sheet = {
   cards:
-    "Cards are 1 Waivers · 2 Moves · 3 Trade · 4 Flags · 5 My roster · 6 The league · 7 Strategy · 8 Scorecard, the numbers on the rail. Views are w Waivers · h Matchup · s Season · l Lineup, the tabs of the drawer at the left. Letters do nothing while you are typing in a field.",
+    "Cards are 1 Waivers · 2 Moves · 3 Trade · 4 Flags · 5 My roster · 6 The league · 7 Strategy · 8 Scorecard · 9 Queue, the numbers on the rail. Views are w Waivers · h Matchup · s Season · l Lineup, the tabs of the drawer at the left. Letters do nothing while you are typing in a field.",
   groups: [
     {
       title: "Views",
@@ -477,8 +478,8 @@ export const SEASON_SHEET: Sheet = {
     {
       title: "Cards",
       rows: [
-        [["1", "…", "8"], "open that card in the top half; the same key again closes it (1 Waivers shows the Waivers view; there it gives the board the full width, and again brings the panel back)"],
-        [["⇧ 2", "…", "⇧ 8"], "open it in the bottom half (mouse: shift-click or right-click the rail icon)"],
+        [["1", "…", "9"], "open that card in the top half; the same key again closes it (1 Waivers shows the Waivers view; there it gives the board the full width, and again brings the panel back)"],
+        [["⇧ 2", "…", "⇧ 9"], "open it in the bottom half (mouse: shift-click or right-click the rail icon)"],
         [["]"], "collapse the panel to the rail, or bring it back with its two cards"],
         [["x"], "swap the top and bottom cards"],
         [["Esc"], "leave a field, then close a flag breakdown, then the move drawer, then collapse the panel"],

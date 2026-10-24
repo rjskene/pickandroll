@@ -106,6 +106,14 @@ export const SEASON_ICONS: Record<SeasonCardId, ReactElement> = {
       <path d="M8 8h8M8 12h5M8 16l2 2 4-4" />
     </svg>
   ),
+  // A queue against a clock: the day's moves and when they execute.
+  queue: (
+    <svg width="20" height="20" viewBox="0 0 24 24" {...stroke} aria-hidden="true">
+      <path d="M3 6h9M3 12h7M3 18h9" />
+      <circle cx="17.5" cy="12" r="4.5" />
+      <path d="M17.5 9.5V12l1.5 1.5" />
+    </svg>
+  ),
 };
 
 /** The view drawer's tabs (#116). */

@@ -1189,6 +1189,124 @@ export interface AutopilotView {
   days: string[];
 }
 
+// ---------------------------------------------------------------- the moves executor (#171)
+/** Why a move of the day is not queued, in the ruling's order. */
+export type QueueReason =
+  | "the private league is never touched"
+  | "the moves executor is off in this league"
+  | "the drop is protected"
+  | "season-costly"
+  | "the add is a player this queue drops today or dropped within the waiver days"
+  | "below the noise floor"
+  | "no adds left this week"
+  | "over the day's cap";
+
+/** An execute pass's outcome for one entry: ``gone`` when another team had the add first. */
+export type MoveOutcome = "would_claim" | "claimed" | "added" | "skipped" | "failed" | "gone";
+
+/** The noise floor a move must clear (the ruling's point 2): the plan floor against its gain,
+ * and once twenty moves are scored the scorecard's spread against its value. */
+export interface QueueFloor {
+  plan: number;
+  scored: number | null;
+  moves: number;
+  needs: number;
+  applies: "plan" | "plan and scored";
+}
+
+/** A move of the day's queue: the three weeks' set's, queued or with its reason. */
+export interface QueueEntry {
+  id: string;
+  date: string;
+  league: string;
+  scoring: "categories" | "points";
+  set: "three";
+  decision: string | null;
+  add: number;
+  drop: number | null;
+  /** The day the claim clears. */
+  from: string | null;
+  availability: "FA" | "W" | null;
+  judged: "three";
+  gain: number | null;
+  /** The move's value on the judging horizon and over the season, in the scorer's units. */
+  value: number | null;
+  season: number | null;
+  season_costly: boolean | null;
+  flag: FlagLevel | null;
+  floor: QueueFloor & { below: "plan" | "scored" | null };
+  bid: { amount: number; reason: string; base: number; factor: number; sizing: number; typical: number; typical_from: string };
+  queued: boolean;
+  reason: QueueReason | null;
+  rank: number | null;
+  queued_at: string | null;
+  executes_at: string | null;
+  struck: boolean;
+  bid_struck: boolean;
+  struck_at?: string;
+  outcome: MoveOutcome | null;
+  outcome_reason: string | null;
+  outcome_at: string | null;
+  bid_placed?: number | null;
+  /** A placed claim the morning after, from the transactions. */
+  resolved: "won" | "lost" | null;
+}
+
+/** A league's row of the day's queue. */
+export interface QueueLeague {
+  league: string;
+  scoring: "categories" | "points";
+  mode: LineupMode;
+  status: "queued" | "not_solved" | "off" | "private" | "failed";
+  reason: string | null;
+  decision?: string;
+  system?: string;
+  cap?: number;
+  cap_from?: "the user" | "the knob";
+  budget?: number | null;
+  adds_left?: { start: string; end: string; adds: number | null }[];
+  pending?: string[];
+  protected?: Record<string, string>;
+  floor?: QueueFloor;
+  typical?: { value: number; from: string };
+  queued?: number;
+  built_at?: string;
+}
+
+/** A day's queue, with the execute time (Pacific) and STOP. */
+export interface QueuePayload {
+  date: string;
+  built: string[];
+  execute_time: string | null;
+  leagues: QueueLeague[];
+  entries: QueueEntry[];
+  settings: { execute_time: string; at: string | null; by: string | null; set: boolean };
+  stop: boolean;
+  now: string;
+}
+
+/** An execute pass in one league, as its log keeps it. */
+export interface MovesPassLog {
+  at: string;
+  day: string;
+  mode: "dry_run" | "live";
+  trigger: "routine" | "routine_late" | "panel";
+  outcome: "would_claim" | "nothing_due" | "skipped" | "claimed" | "failed" | "stopped";
+  reason: string | null;
+  entries: { id: string; add: number; drop: number | null; bid: number | null; outcome: MoveOutcome; reason: string | null }[];
+}
+
+/** The league's Queue card: the moves executor's mode with the user's cap, STOP, the live check,
+ * the passes, and its row and entries of today's queue. */
+export interface MovesView extends Omit<AutopilotView, "mode" | "last" | "today"> {
+  mode: AutopilotView["mode"] & { cap: number | null };
+  last: MovesPassLog | null;
+  today: MovesPassLog[];
+  entries: QueueEntry[];
+  row: QueueLeague | null;
+  settings: QueuePayload["settings"];
+}
+
 // ---------------------------------------------------------------- moves (#94)
 /** The moves' horizons: the rest of this week against the opponent, and the three weeks after
  * it against the field. */
@@ -2296,6 +2414,19 @@ export const api = {
   /** The user's own click: the lineup executor's mode; live is refused until the dry run passes. */
   setLineupMode: (league: string, mode: LineupMode) =>
     request<AutopilotView>(`/leagues/${encodeURIComponent(league)}/lineups`, { method: "PUT", body: JSON.stringify({ mode }) }),
+  /** A day's queue of the moves executor (#171), today's by default; reads only. */
+  queue: (date?: string) => request<QueuePayload>(`/autopilot/queue${date ? `?date=${date}` : ""}`),
+  /** The user's veto: strike a queue entry, or its bid alone, or undo either. */
+  strike: (id: string, body: { bid_only?: boolean; undo?: boolean }) =>
+    request<QueuePayload>(`/autopilot/queue/${encodeURIComponent(id)}/strike`, { method: "POST", body: JSON.stringify(body) }),
+  /** The user's own click: the day's execute time on the Pacific clock (HH:MM). */
+  setExecuteTime: (execute_time: string) =>
+    request<QueuePayload>("/autopilot/queue/settings", { method: "PUT", body: JSON.stringify({ execute_time }) }),
+  /** The league's Queue card: the moves executor's mode, its passes and today's entries (#171). */
+  movesView: (league: string) => request<MovesView>(`/seasons/${encodeURIComponent(league)}/autopilot/moves`),
+  /** The user's own click: the moves executor's mode and cap (null: the knob's); live waits. */
+  setMovesMode: (league: string, mode: LineupMode, cap: number | null) =>
+    request<MovesView>(`/leagues/${encodeURIComponent(league)}/moves`, { method: "PUT", body: JSON.stringify({ mode, cap }) }),
   /** Every week left of my season as win odds, each with its scoreboard and my players (#116). */
   outlook: (league: string, system: ProjectionSystem) =>
     request<OutlookPayload>(`/seasons/${encodeURIComponent(league)}/outlook?system=${system}`),

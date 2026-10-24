@@ -26,13 +26,19 @@ import type {
   MoveCandidate,
   MoveHorizon,
   MoveRef,
+  MoveOutcome,
   MoveRos,
+  MovesPassLog,
   MovesSummary,
+  MovesView,
   OutlookSummary,
   OutlookWeek,
   PlanStep,
   PlayerFlag,
   PlayerRos,
+  QueueEntry,
+  QueueLeague,
+  QueuePayload,
   Rates,
   ScorecardMove,
   ScorecardToDate,
@@ -546,6 +552,117 @@ export function stepText(s: LineupStepLog, name: (id: number) => string): string
   const other = s.with != null ? `, ${name(s.with)} to ${s.from_slot}` : "";
   const outcome = s.outcome === "would_set" ? "would set" : s.outcome;
   return `${name(s.player)} ${s.from_slot} → ${s.to_slot}${other}: ${outcome}${s.reason ? ` (${s.reason})` : ""}`;
+}
+
+// ---------------------------------------------------------------- the moves executor (#171)
+/** What the moves executor does in the league, in a line. */
+export function movesExecutorText(v: Pick<MovesView, "mode" | "stop">): string {
+  if (v.mode.private) return "The private league is never touched: its moves here are suggestions for you to make by hand.";
+  if (v.stop) return "STOP is on (data/autopilot/STOP): no executor runs.";
+  if (v.mode.mode === "off") return "Off: nothing of this league is queued; its moves stay suggestions.";
+  if (v.mode.mode === "dry_run") return "Dry run: each morning's queue is built, and for each move due the extension reads Yahoo's add page and claims nothing.";
+  return "Live: each move due is claimed on Yahoo's add page with its bid once its veto window is over.";
+}
+
+/** Why the moves executor's live waits, or that its dry run has passed. */
+export function movesLiveText(l: MovesView["live"]): string {
+  if (!l.ok) return `Live waits: ${l.reason ?? "the dry run"}.`;
+  return `The dry run has passed: ${l.dry_run_days} days, ${l.checked_days} that read the add page.`;
+}
+
+/** "in 42 min", "in 2 h 5 min", "due": the time until an entry executes; blank for none. */
+export function countdownLabel(at: string | null | undefined, now: number): string {
+  const t = at ? Date.parse(at) : NaN;
+  if (Number.isNaN(t)) return "";
+  if (t <= now) return "due";
+  const min = Math.ceil((t - now) / 60_000);
+  const h = Math.floor(min / 60);
+  const m = min % 60;
+  return h ? `in ${h} h${m ? ` ${m} min` : ""}` : `in ${m} min`;
+}
+
+const MOVE_OUTCOME: Record<MoveOutcome, string> = {
+  would_claim: "would be claimed",
+  claimed: "claimed",
+  added: "added",
+  skipped: "skipped",
+  failed: "failed",
+  gone: "gone: another team had him first",
+};
+
+/** An entry's state: its outcome (and a placed claim's result), struck, when it executes, or why
+ * it is not queued. */
+export function queueStateText(e: QueueEntry, now: number): string {
+  if (e.outcome) return `${MOVE_OUTCOME[e.outcome]}${e.outcome_reason ? ` (${e.outcome_reason})` : ""}${e.resolved ? `, ${e.resolved}` : ""}`;
+  if (!e.queued) return e.reason === "below the noise floor" && e.floor.below ? `below the ${e.floor.below} floor` : (e.reason ?? "not queued");
+  if (e.struck) return "struck";
+  const when = countdownLabel(e.executes_at, now);
+  return when === "due" ? "due at the next pass" : `executes ${when}`;
+}
+
+/** "$2 claim", "$0 claim (the $2 bid struck)", "free agent, $0". */
+export function bidLabel(e: Pick<QueueEntry, "availability" | "bid" | "bid_struck">): string {
+  if (e.availability === "FA") return "free agent, $0";
+  if (e.bid_struck) return `$0 claim (the $${e.bid.amount} bid struck)`;
+  return `$${e.bid.amount} claim`;
+}
+
+/** "Brooks for Reed", "Brooks for an open spot": the move in words. */
+export function queueMoveText(e: Pick<QueueEntry, "add" | "drop">, name: (id: number) => string): string {
+  return `${name(e.add)} for ${e.drop == null ? "an open spot" : name(e.drop)}`;
+}
+
+/** The floor and the typical gain the league's entries were judged with, in a line. */
+export function queueFloorLine(r: Pick<QueueLeague, "floor" | "typical" | "scoring">): string {
+  const f = r.floor;
+  if (!f || !r.typical) return "";
+  const units = r.scoring === "points" ? "points" : "expected categories";
+  const scored =
+    f.scored == null
+      ? `; the scorecard's spread joins it once ${f.needs} moves are scored (${f.moves} so far)`
+      : ` and the scorecard's spread of ${f.scored.toFixed(1)} in value units over ${f.moves} moves`;
+  return `Floor: a gain of ${f.plan} ${units} over the three weeks${scored}. Bids scale by a typical gain of ${r.typical.value} (${r.typical.from}).`;
+}
+
+const PASS_OUTCOME: Record<MovesPassLog["outcome"], string> = {
+  would_claim: "would claim",
+  nothing_due: "nothing due",
+  skipped: "skipped",
+  claimed: "claimed",
+  failed: "failed",
+  stopped: "stopped by STOP",
+};
+
+/** A pass in a line: "9:00 AM · Thu 23 · routine: would claim 2 (1 gone)". ``clock`` writes its time. */
+export function passLine(r: MovesPassLog, clock: (iso: string) => string): string {
+  const done = r.entries.filter((e) => e.outcome === "would_claim" || e.outcome === "claimed" || e.outcome === "added").length;
+  const others = (["skipped", "failed", "gone"] as const).map((k) => [k, r.entries.filter((e) => e.outcome === k).length] as const).filter(([, n]) => n);
+  const count = done ? ` ${done}` : "";
+  const rest = others.length ? ` (${others.map(([k, n]) => `${n} ${k}`).join(", ")})` : "";
+  return `${clock(r.at)} · ${weekdayLabel(r.day)} · ${TRIGGER[r.trigger]}: ${PASS_OUTCOME[r.outcome]}${count}${rest}${r.reason ? ` (${r.reason})` : ""}`;
+}
+
+/** The landing's line for today's queue across the leagues. */
+export function queueFoldLine(q: QueuePayload): string {
+  const time = `executes from ${q.settings.execute_time} PT`;
+  if (q.stop) return "STOP is on (data/autopilot/STOP): nothing executes";
+  if (!q.built.length) return `no queue built today: the morning routine builds it · ${time}`;
+  const live = q.entries.filter((e) => e.queued && !e.struck && !e.outcome);
+  const struck = q.entries.filter((e) => e.struck).length;
+  const done = q.entries.filter((e) => e.outcome === "would_claim" || e.outcome === "claimed" || e.outcome === "added").length;
+  const leagues = new Set(live.map((e) => e.league)).size;
+  const unsolved = q.leagues.filter((l) => l.status === "not_solved").length;
+  const failed = q.leagues.filter((l) => l.status === "failed").length;
+  return [
+    `${live.length} queued${live.length ? ` in ${leagues} league${leagues === 1 ? "" : "s"}` : ""}`,
+    struck ? `${struck} struck` : null,
+    done ? `${done} executed` : null,
+    unsolved ? `${unsolved} not solved today` : null,
+    failed ? `${failed} not read` : null,
+    time,
+  ]
+    .filter(Boolean)
+    .join(" · ");
 }
 
 // ---------------------------------------------------------------- moves (#94)

@@ -1,11 +1,12 @@
 import { useCallback, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, type LeagueSummary, type ProgressPayload, type RoomSummary } from "../api";
 import { DRAFT_SEASON_DAYS, draftDay, draftsAhead, finishedDrafts, LAYOUTS, pageFor, type Layout } from "../format";
 import DraftSeason from "./DraftSeason";
 import DraftsDrawer, { type DrawerView } from "./DraftsDrawer";
 import LeagueGrid from "./LeagueGrid";
 import { POOLED, rangeSum, recordLabel, scopeWeeks } from "../progress";
+import { queueFoldLine } from "../season";
 import { useNow } from "./YahooSync";
 
 const LAYOUT_KEY = "pickandroll.layout";
@@ -93,6 +94,7 @@ export default function Landing({
         <div className="landing-grid">
           <LeagueGrid onOpen={onOpenLeague} />
           <ProgressFold onOpen={onProgress} />
+          <QueueFold />
           <DraftsFold leagues={leagues.data ?? []} rooms={rooms.data ?? []} now={now} onDrafts={() => setDrawer("drafts")} onNew={() => setDrawer("new")} />
         </div>
       )}
@@ -130,6 +132,44 @@ function progressLine(p: ProgressPayload): string {
   ]
     .filter(Boolean)
     .join(" · ");
+}
+
+/** The moves executor's queue today (#171) in one line, and the day's execute time on the Pacific
+ * clock, the user's own setting: no move executes before it, nor within an hour of its queueing.
+ * Each league's entries and their veto are on its Queue card (9). */
+function QueueFold() {
+  const queryClient = useQueryClient();
+  const q = useQuery({ queryKey: ["queue"], queryFn: () => api.queue(), refetchInterval: 60_000 });
+  const [draft, setDraft] = useState<string | null>(null);
+  const set = useMutation({
+    mutationFn: (t: string) => api.setExecuteTime(t),
+    onSuccess: (v) => {
+      queryClient.setQueryData(["queue"], v);
+      void queryClient.invalidateQueries({ queryKey: ["movesView"] });
+      setDraft(null);
+    },
+  });
+  const current = q.data?.settings.execute_time;
+  const shown = draft ?? current ?? "";
+  return (
+    <div className="fold">
+      <span className="k">Queue</span>
+      <span className="muted">{q.data ? queueFoldLine(q.data) : q.isError ? "not read" : "reading…"}</span>
+      <span className="grow" />
+      {current && (
+        <label className="small muted" title="the day's execute time on the Pacific clock: each move executes at it, or an hour after it is queued if later">
+          execute at{" "}
+          <input type="time" value={shown} onChange={(e) => setDraft(e.target.value)} disabled={set.isPending} aria-label="execute time, Pacific" /> PT
+        </label>
+      )}
+      {draft != null && draft !== current && (
+        <button className="small primary" disabled={set.isPending || !draft} onClick={() => set.mutate(draft)}>
+          Set
+        </button>
+      )}
+      {set.error && <span className="error small">{set.error.message}</span>}
+    </div>
+  );
 }
 
 /** In season the drafts fold into one line: what is ahead, live and finished, and the drawer. */
