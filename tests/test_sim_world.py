@@ -161,3 +161,16 @@ def test_player_season_and_team_week():
     totals = w.team_week(lines, roster, [1, 2], ["Util", "Util"], value)
     # Day 1: two slots, b and c start, a sits; day 2: a alone.
     assert totals == {"pts": 35.0, "reb": 16.0}
+
+
+def test_threes_never_exceed_the_field_goals_made():
+    heavy = {**RATES, "threes": 6.5, "fgm": 7.0}
+    lines = [w.game_line(5, 0, 0, g, heavy, PHI, 0.3) for g in range(2000)]
+    assert all(ln["threes"] <= ln["fgm"] for ln in lines)
+    threes = np.array([ln["threes"] for ln in lines])
+    assert abs(threes.mean() - 6.5) < 0.3
+    assert all(ln["pts"] == 2 * ln["fgm"] + ln["threes"] + ln["ftm"] for ln in lines)
+    # Without field goals in the line, threes are drawn like any count.
+    alone = w.game_line(5, 0, 0, 1, {"threes": 2.0, "reb": 5.0}, PHI, 0.0)
+    assert "threes" in alone and "fgm" not in alone
+    assert w.STREAMS["market"] == 7
