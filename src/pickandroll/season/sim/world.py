@@ -40,6 +40,7 @@ STREAMS: Mapping[str, int] = {
     "duration": 4,
     "refresh": 5,
     "news": 6,
+    "market": 7,
 }
 #: The spread of the return date the policy sees around the true one, in days.
 NEWS_SD_DAYS = 2.0
@@ -118,13 +119,14 @@ def game_line(
 ) -> dict[str, float]:
     """One player's line in one game he plays. Counting stats and attempts are negative binomial
     around ``rate × minutes factor`` with ``phi[stat]``; makes are binomial on the attempts at
-    the projected percentage; points are two a field goal, one more a three, one a free throw
-    when the makes are projected, else drawn like the other counts."""
+    the projected percentage; threes are binomial on the field goals made at the projected share
+    (never more threes than field goals, PR 2b); points are two a field goal, one more a three,
+    one a free throw when the makes are projected, else drawn like the other counts."""
     factor = minutes_factor(seed, path, player, game, sigma)
     g = rng(seed, path, player, game, STREAMS["line"])
     line: dict[str, float] = {}
     for stat in DISPERSED:
-        if stat == "pts":
+        if stat in ("pts", "threes"):
             continue
         if stat in rates:
             line[stat] = float(_negbin(g, rates[stat] * factor, phi.get(stat, 1.0)))
@@ -135,6 +137,13 @@ def game_line(
             line[num] = float(g.binomial(attempts, p)) if attempts else 0.0
         elif num in rates:
             line[num] = float(_negbin(g, rates[num] * factor, phi.get(num, 1.0)))
+    if "threes" in rates:
+        if "fgm" in line and rates.get("fgm", 0.0) > 0:
+            share = min(1.0, max(0.0, rates["threes"] / rates["fgm"]))
+            made_ = int(line["fgm"])
+            line["threes"] = float(g.binomial(made_, share)) if made_ else 0.0
+        else:
+            line["threes"] = float(_negbin(g, rates["threes"] * factor, phi.get("threes", 1.0)))
     if "pts" in rates:
         if "fgm" in line and "ftm" in line:
             threes = line.get("threes", 0.0)
