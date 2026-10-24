@@ -6,6 +6,7 @@ from __future__ import annotations
 import pytest
 
 from pickandroll.season.sim import league as lg
+from pickandroll.season.state import SeasonSettings
 
 CATS = ("fg_pct", "ft_pct", "threes", "pts", "reb", "ast", "stl", "blk", "tov")
 
@@ -139,3 +140,87 @@ def test_a_season_end_to_end_with_a_summary():
         "matchup_wins": 0.0,
         "record": [0, 3, 0],
     }
+
+
+# --------------------------------------------------------------------------- from the settings
+def settings(**kw):
+    """A league's settings as read, the bracket's rows included unless ``kw`` unsets them."""
+    base = {
+        "league": "1",
+        "scoring": "categories",
+        "cats": tuple(CATS),
+        "roster": ("PG", "SG", "C", "Util", "BN"),
+        "num_teams": 6,
+        "my_team_id": 1,
+        "playoff_teams": 6,
+        "playoff_weeks": (20, 21, 22),
+        "playoff_tiebreak": "Higher seed wins",
+        "playoff_reseeding": True,
+        "divisions": False,
+    }
+    return SeasonSettings(**{**base, **kw})
+
+
+def test_the_spec_is_built_from_the_settings_page_once_the_bracket_rows_are_read():
+    pairings = {1: ((1, 2), (3, 4), (5, 6))}
+    s = lg.LeagueSpec.from_settings(settings(), [1, 2, 3, 4, 5, 6], pairings)
+    assert s.teams == (1, 2, 3, 4, 5, 6) and s.pairings == {1: ((1, 2), (3, 4), (5, 6))}
+    assert (s.playoff_teams, s.byes, s.playoff_weeks) == (6, 2, (20, 21, 22))
+    assert s.reseed is True and s.playoff_tiebreak == "higher_seed"
+    assert s.cats == tuple(CATS) and s.scoring == "categories" and s.points is None
+    # Four teams in two weeks: no byes; no reseeding plays the fixed bracket.
+    four = lg.LeagueSpec.from_settings(
+        settings(playoff_teams=4, playoff_weeks=(21, 22), playoff_reseeding=False), [1, 2, 3, 4], {}
+    )
+    assert (four.byes, four.reseed) == (0, False)
+
+
+def test_no_spec_before_the_settings_page_is_read_for_the_bracket():
+    teams, pairings = [1, 2, 3, 4, 5, 6], {}
+    with pytest.raises(lg.BracketUnread, match="playoff_tiebreak, playoff_reseeding, divisions"):
+        lg.LeagueSpec.from_settings(
+            settings(playoff_tiebreak=None, playoff_reseeding=None, divisions=None), teams, pairings
+        )
+    with pytest.raises(lg.BracketUnread, match="playoff_reseeding"):
+        lg.LeagueSpec.from_settings(settings(playoff_reseeding=None), teams, pairings)
+    with pytest.raises(lg.BracketUnread, match="divisions"):
+        lg.LeagueSpec.from_settings(settings(divisions=True), teams, pairings)
+    with pytest.raises(lg.BracketUnread, match="not played"):
+        lg.LeagueSpec.from_settings(settings(playoff_tiebreak="Bench points"), teams, pairings)
+    with pytest.raises(lg.BracketUnread, match="need 3 weeks"):
+        lg.LeagueSpec.from_settings(settings(playoff_weeks=(21, 22)), teams, pairings)
+    with pytest.raises(lg.BracketUnread, match="playoff teams"):
+        lg.LeagueSpec.from_settings(settings(playoff_teams=None), teams, pairings)
+
+
+def test_the_fixed_bracket_keeps_its_slots_when_the_league_does_not_reseed():
+    assert lg.bracket_order(3) == [1, 8, 4, 5, 2, 7, 3, 6]
+    assert lg.bracket_order(2) == [1, 4, 2, 3]
+    seeds = {i: 10 + i for i in range(1, 7)}
+    # Seeds 6 and 5 upset 3 and 4 in the first round.
+    week = {
+        20: {13: totals(90.0), 16: totals(100.0), 14: totals(90.0), 15: totals(100.0)},
+        # Fixed bracket: 1 meets the winner of 4-5 (seed 5), 2 meets the winner of 3-6 (seed 6).
+        # Seed 5 beats seed 1; seed 2 beats seed 6.
+        21: {11: totals(90.0), 15: totals(100.0), 12: totals(100.0), 16: totals(90.0)},
+        22: {12: totals(100.0), 15: totals(90.0)},
+    }
+    fixed = spec(
+        teams=6, weeks=1, playoff_teams=6, byes=2, playoff_weeks=(20, 21, 22), reseed=False
+    )
+    p = lg.playoffs(seeds, week, fixed)
+    assert p.rounds[0] == ((3, 6, 6), (4, 5, 5))
+    assert p.rounds[1] == ((1, 5, 5), (2, 6, 2))
+    assert p.rounds[2] == ((2, 5, 2),) and p.champion == 12
+    # Reseeded, the same upsets send 1 against 6 (the worst left) and 2 against 5; both ties
+    # go to the higher seed.
+    reseeded = spec(teams=6, weeks=1, playoff_teams=6, byes=2, playoff_weeks=(20, 21, 22))
+    assert lg.playoffs(seeds, week, reseeded).rounds[1] == ((1, 6, 1), (2, 5, 2))
+
+
+def test_a_spec_with_a_tie_breaker_the_bracket_does_not_play_is_refused():
+    s = spec(
+        teams=4, weeks=1, playoff_teams=4, byes=0, playoff_weeks=(4, 5), playoff_tiebreak="coin"
+    )
+    with pytest.raises(ValueError, match="not played"):
+        lg.playoffs({1: 1, 2: 2, 3: 3, 4: 4}, {}, s)

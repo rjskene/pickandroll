@@ -269,8 +269,10 @@ def lineup_rule(deadline: str | None) -> tuple[str | None, str | None]:
 def parse_settings_page(html: str) -> dict[str, Any]:
     """The settings page: the roster positions in order, held slots included (``IL``, ``IL+``,
     ``NA``: Yahoo's v3 settings leave them out), the lineup deadline as printed with what it
-    means (:func:`lineup_rule`), the playoff weeks, and whether an injured player can be added
-    straight to an injury slot."""
+    means (:func:`lineup_rule`), the playoff weeks, whether an injured player can be added
+    straight to an injury slot, and the bracket's rules (#172): the playoff tie-breaker as
+    printed, whether the bracket reseeds each round, and whether the league has divisions.
+    A row the page does not print is None."""
     root = parse(html)
     _require(root, "settings")
     rows: dict[str, str] = {}
@@ -292,6 +294,7 @@ def parse_settings_page(html: str) -> dict[str, Any]:
     direct = rows.get(
         "allow injured players from waivers or free agents to be added directly to injury slot"
     )
+    tiebreak = rows.get("playoff tie-breaker")
     return {
         "roster": [x.strip() for x in positions.split(",") if x.strip()],
         "lineup_deadline": deadline,
@@ -299,7 +302,17 @@ def parse_settings_page(html: str) -> dict[str, Any]:
         "lineup_from": effective,
         "playoff_weeks": playoffs,
         "injured_add_to_slot": None if direct is None else direct.strip().lower() == "yes",
+        "playoff_tiebreak": tiebreak.strip() if tiebreak else None,
+        "playoff_reseeding": _yes_no(rows.get("playoff reseeding")),
+        "divisions": _yes_no(rows.get("divisions")),
     }
+
+
+def _yes_no(text: str | None) -> bool | None:
+    """A settings row printed ``Yes`` or ``No``; None when not printed."""
+    if text is None:
+        return None
+    return text.strip().lower() == "yes"
 
 
 def parse_players_page(html: str, today: date) -> dict[str, Any]:

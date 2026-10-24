@@ -14,8 +14,9 @@ Part keys and their data:
     :class:`SeasonSettings` fields read from Yahoo (name, weeks, waiver and add rules).
 ``league_settings``
     The league's settings page (#107): the roster positions with the held slots (IL, IL+, NA,
-    which Yahoo's v3 settings leave out), the lineup deadline and the playoff weeks. The source
-    of the held slots; without it they are the most any read roster fills, a lower bound.
+    which Yahoo's v3 settings leave out), the lineup deadline, the playoff weeks and the
+    bracket's rules (the playoff tie-breaker, reseeding, divisions; #172). The source of the
+    held slots; without it they are the most any read roster fills, a lower bound.
 ``players``
     Yahoo's player pool for the league: a list of :class:`Player`.
 ``league``
@@ -65,6 +66,10 @@ HELD_SLOTS = ("IL", "IL+", "NA")
 #: Where a season's held slot counts come from.
 SLOTS_PAGE = "settings page"
 SLOTS_ROSTERS = "rosters read"
+
+
+def _opt_bool(x: Any) -> bool | None:
+    return None if x is None else bool(x)
 
 
 def _opt_int(v: Any) -> int | None:
@@ -117,6 +122,12 @@ class SeasonSettings:
     held_from: str | None = None
     #: Whether an injured player can be added straight to an injury slot.
     injured_add_to_slot: bool | None = None
+    #: The bracket's rules from the settings page (#172), None until it is read: the playoff
+    #: tie-breaker as printed (``Higher seed wins``), whether the bracket reseeds each round,
+    #: and whether the league has divisions.
+    playoff_tiebreak: str | None = None
+    playoff_reseeding: bool | None = None
+    divisions: bool | None = None
 
     @property
     def first_playoff_week(self) -> int | None:
@@ -172,9 +183,10 @@ class SeasonSettings:
             lineup_changes=d.get("lineup_changes"),
             lineup_from=d.get("lineup_from"),
             held_from=d.get("held_from"),
-            injured_add_to_slot=None
-            if d.get("injured_add_to_slot") is None
-            else bool(d["injured_add_to_slot"]),
+            injured_add_to_slot=_opt_bool(d.get("injured_add_to_slot")),
+            playoff_tiebreak=d.get("playoff_tiebreak") or None,
+            playoff_reseeding=_opt_bool(d.get("playoff_reseeding")),
+            divisions=_opt_bool(d.get("divisions")),
         )
 
     def merged(self, read: Mapping[str, Any]) -> SeasonSettings:
@@ -203,6 +215,9 @@ class SeasonSettings:
                 lineup_from=page.get("lineup_from") if read else effective,
                 held_from=SLOTS_PAGE,
                 injured_add_to_slot=page.get("injured_add_to_slot"),
+                playoff_tiebreak=page.get("playoff_tiebreak") or None,
+                playoff_reseeding=_opt_bool(page.get("playoff_reseeding")),
+                divisions=_opt_bool(page.get("divisions")),
             )
         seen: dict[str, int] = {}
         any_read = False

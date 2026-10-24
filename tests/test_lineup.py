@@ -76,8 +76,20 @@ def test_the_settings_page_gives_the_held_slots_the_lineup_rule_and_the_playoffs
     )
     assert d["playoff_weeks"] == [20, 21, 22]
     assert d["injured_add_to_slot"] is False
+    # The bracket's rules (#172): the tie-breaker as printed, reseeding and divisions.
+    assert d["playoff_tiebreak"] == "Higher seed wins"
+    assert d["playoff_reseeding"] is True and d["divisions"] is False
     with pytest.raises(pages.PageError):
         pages.parse_settings_page("<html><body><table></table></body></html>")
+
+
+def test_a_settings_page_without_the_bracket_rows_leaves_them_unread():
+    html = fixture("settings_page.html")
+    for label in ("Playoff Tie-Breaker", "Playoff Reseeding", "Divisions"):
+        html = re.sub(rf"<tr[^>]*>\s*<td[^>]*>{label}:</td>.*?</tr>", "", html, flags=re.DOTALL)
+    d = pages.parse_settings_page(html)
+    assert d["playoff_weeks"] == [20, 21, 22]
+    assert (d["playoff_tiebreak"], d["playoff_reseeding"], d["divisions"]) == (None, None, None)
 
 
 @pytest.mark.parametrize(
@@ -133,6 +145,19 @@ def test_the_settings_page_is_the_source_of_the_held_slots():
     )
     # The page names the playoff weeks: no estimate from the bracket.
     assert s.first_playoff_week == 20 and s.injured_add_to_slot is False
+    # And the bracket's rules, carried through the settings' round trip (#172).
+    assert (s.playoff_tiebreak, s.playoff_reseeding, s.divisions) == (
+        "Higher seed wins",
+        True,
+        False,
+    )
+    again = SeasonSettings.from_dict(s.to_dict())
+    assert (again.playoff_tiebreak, again.playoff_reseeding, again.divisions) == (
+        "Higher seed wins",
+        True,
+        False,
+    )
+    assert SeasonSettings.from_dict(base().to_dict()).playoff_tiebreak is None
 
 
 def test_without_the_settings_page_the_held_slots_are_the_most_any_roster_fills():

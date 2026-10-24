@@ -53,9 +53,20 @@ The frozen fit's figures stay under `data/` and are described in words anywhere 
 
 Weeks are scored as the record scores a real one: percentages from makes and attempts to Yahoo's
 three decimals, the lower turnovers winning, a tie half. Standings order by win percentage, then
-a parameterised tiebreak (total category wins, then head to head) until the settings page is read
-for the real one. The bracket seeds the top six with two byes, reseeds each round, and sends the
-higher seed through a tie. A points league scores on the weighted points.
+a parameterised tiebreak (total category wins, then head to head; the settings page does not print
+the regular season's rule). The bracket seeds the top `playoff_teams` with the byes the rounds
+need (`2^rounds − playoff_teams`), reseeds each round or plays the fixed bracket as the league
+does, and sends the higher seed through a tie. A points league scores on the weighted points.
+
+The bracket's rules come from the league's settings page, which prints `Playoff Tie-Breaker`,
+`Playoff Reseeding` and `Divisions` beside the playoff weeks. The page reaches the season view the
+way every page does: the API's own read for a public league, the user's Chrome posting the page
+through the extension's league reader for the private one; `parse_settings_page` keeps the three
+rows and `SeasonSettings` carries them, None until read. `LeagueSpec.from_settings` builds the
+simulator's spec from those settings and refuses (`BracketUnread`) a league whose page has not been
+read for them, one with divisions, or a tie-breaker the bracket does not play. No run trusts a
+bracket it has assumed: until the read is on file a run writes no playoff odds and reports rank and
+category wins only.
 
 ## The gates (`season/sim/validate.py`)
 
