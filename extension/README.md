@@ -110,6 +110,32 @@ with the recommended lineup. The settings page gives the held slots (IL, IL+, NA
 count; until it is posted the held slots are the most any roster read holds. The weekly recorder's response
 and the season script list the pages still to open (`lineup pages`).
 
+## The lineup executor's dry run (0.6.0, #170)
+
+On your own team page the extension is also the lineup executor (docs/AUTOPILOT.md section 2). This build is its
+dry run: it reads the page's lineup form and logs what it would set, and it sets nothing and submits nothing.
+
+1. A run starts only when the page was opened from the routine's link, with the fragment `#pickandroll-lineup`
+   (or `#pickandroll-lineup-late`, the pass before the day's first tip-off), or from the side panel's
+   **Set lineup now**. The fragment never reaches Yahoo, and the run drops it so a reload is a plain visit. A
+   plain visit posts the page as before and shows the strip, a small line at the foot of the page saying what a
+   run would do.
+2. A run posts the page, then fetches the day's steps (`GET /seasons/<id>/lineup/steps?date=`). It goes on only
+   when the steps were built from that very post (their `read.at` is the post's time) and the page's lineup is
+   the one they read. The page must be the league's team page for your team, with its own editable lineup form
+   for the steps' day.
+3. Each step is checked on the form: the player is on the page in the step's slot, with a select (a hidden field
+   means his game began), the target slot is among his options, and the player swapped back may take the step's
+   slot, or the target is open. A group whose step fails is skipped whole, with that step's reason.
+4. The run goes to the league's log (`POST /seasons/<id>/autopilot/lineup`) with the form's action, its field
+   names (never a value, never the crumb's), each moved player's control and the select values it would set.
+   The strip and the side panel show the outcome.
+5. Nothing runs in a league whose mode is off (the dashboard's Lineup view sets it), under the API's STOP file
+   (a run logs that it stopped), or with **Lineup executor in this browser** off in the settings, this browser's
+   brake.
+
+The live click, the form's submit, is a later build after the dry-run week (#170, PR 3).
+
 ## What it reads and sends
 
 - **Reads:** the text frames of the draft room's own WebSocket. The page script adds a listener to the socket
@@ -122,6 +148,9 @@ and the season script list the pages still to open (`lineup pages`).
 - **League pages (0.5.0):** the page as Chrome rendered it, less its scripts, styles, frames and form fields, with its URL
   and the time it was read, to the same API through the service worker. Only the league's own pages under
   `/nba/<id>/` (above); never the draft client, and nothing on them is clicked.
+- **Lineup executor (0.6.0):** on your team page, the lineup form's action, field names, players' slots and
+  options, and the run's outcome, to the same API. The form's crumb is never read; no field is set and the form
+  is never submitted.
 - **Never:** cookies, the `?auth=` part of the room URL, anything you type, or any page other than the draft
   client and the league pages above.
 
@@ -136,11 +165,12 @@ and the season script list the pages still to open (`lineup pages`).
 | `lib/room.js` | `RoomTracker`: picks, the pick on the clock, the sync cursor, how my picks landed (pure) |
 | `lib/drafter.js` | armed mode: one turn at a time, a newer turn supersedes an older one, the queue backstop and the probe (pure, through a page adapter) |
 | `lib/yahoo.js` | Yahoo's player table: row matching by headshot id and name, label checks, the plan's candidates (pure) |
-| `league.js` | isolated world, league pages: posts the page to the worker, follows Next 25 only during an armed read |
+| `league.js` | isolated world, league pages: posts the page to the worker, follows Next 25 only during an armed read; on my team page, the lineup executor's dry run and its strip |
 | `lib/league.js` | which league pages are read, the snapshot body, the multi-page read (pure) |
+| `lib/lineup.js` | the lineup executor's page side: the form read, the steps' checks, the run for the log, the strip (pure) |
 | `worker.js` | service worker: the only caller of the API; per-tab state for the panel in `chrome.storage.session` |
-| `sidepanel/` | side panel: room state, attach a session, mode, plan, detach; on a league page, its posts and the read |
-| `options/` | API and web app addresses (localhost only), Yahoo players file, the queue probe's round, the search fallback |
+| `sidepanel/` | side panel: room state, attach a session, mode, plan, detach; on a league page, its posts and the read; on my team page, the lineup executor's last run and **Set lineup now** |
+| `options/` | API and web app addresses (localhost only), Yahoo players file, the queue probe's round, the search fallback, the lineup executor's brake |
 | `test/*.test.js` | unit tests (`node --test extension/test/*.test.js` from the repo root) |
 | `test/harness/` | Tier 1 for the extension: a recorded room played through the real scripts against the API |
 

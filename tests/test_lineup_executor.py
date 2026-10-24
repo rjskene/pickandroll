@@ -215,6 +215,13 @@ def benched_saturday(client) -> None:
     lineup_league(client, **{"2026-10-24": moved(fixture("team4.html"), bench_all=True)})
 
 
+def lineup_slots(client) -> list[str]:
+    """The league's starting slots, as the Lineup view's days list them."""
+    lineup = client.get(f"/seasons/{LEAGUE}/lineup").json()
+    day = next(d for d in lineup["days"] if d["recommended"] is not None)
+    return [x["slot"] for x in day["recommended"]]
+
+
 def test_the_steps_turn_yahoos_lineup_into_the_recommended_one(client):
     benched_thursday(client)
     r = client.get(f"/seasons/{LEAGUE}/lineup/steps", params={"date": "2026-10-22"})
@@ -240,6 +247,10 @@ def test_the_steps_turn_yahoos_lineup_into_the_recommended_one(client):
     # Each step names its group and its tip-off (the fixture scoreboards carry none).
     assert all(x["group"] is not None and x["tip"] is None for x in s["steps"])
     assert s["skipped"] == []
+    # The page's own check: the league's starting slots and Yahoo's lineup as read.
+    assert s["slots"] == lineup_slots(client)
+    assert s["yahoo"] == {str(x["player"]): x["slot"] for x in day["yahoo"]["slots"]}
+    assert all(s["yahoo"][str(x["player"])] == x["from_slot"] for x in s["steps"])
 
 
 def test_a_group_whose_game_began_is_left_out_whole_and_the_rest_ordered_by_tip(client):

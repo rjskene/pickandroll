@@ -2,7 +2,7 @@
 // chrome.storage.session by the service worker) plus the API's view of it, and the controls to
 // attach a session, see the mode and detach. On a league page instead (#98): what the league
 // reader posted, the season it fed, a Refresh of the page and the multi-page read of the
-// players page.
+// players page; on my team page, the lineup executor's last run and its button (#170).
 "use strict";
 const L = globalThis.PickAndRoll;
 
@@ -31,7 +31,7 @@ let tab = null; // the draft tab's report
 let room = null; // GET /rooms/{d}
 let sessions = null;
 let busy = false;
-// The active tab's league page: {league, kind, url, tab_id, posts, read}, and its season summary
+// The active tab's league page: {league, kind, url, tab_id, posts, read, lineup}, and its season summary
 // (undefined until the API answers, null when pickandroll has no folder for the league).
 let league = null;
 let leagueSeason;
@@ -45,7 +45,13 @@ async function load() {
     const [active] = await chrome.tabs.query({ active: true, currentWindow: true });
     const page = active && all[`league_tab:${active.id}`];
     league = page
-      ? { ...page, tab_id: active.id, posts: all[`league:${page.league}`] || {}, read: all[`season_read:${page.league}`] || null }
+      ? {
+          ...page,
+          tab_id: active.id,
+          posts: all[`league:${page.league}`] || {},
+          read: all[`season_read:${page.league}`] || null,
+          lineup: all[`lineup:${page.league}`] || null,
+        }
       : null;
     // The draft tab: the active one, else the last draft tab seen, unless a league page is active.
     tab = league
@@ -157,6 +163,8 @@ function renderLeague() {
     li.textContent = "none yet";
     $("league-posts").append(li);
   }
+  show("league-lineup", league.kind === "team");
+  text("lineup-last", L.lastRunText(league.lineup, league.lineup ? L.ago(league.lineup.at, now) : ""));
   const reading = Boolean(league.read);
   show("league-read", league.kind === "players" || reading);
   show("read-start", !reading);
@@ -327,6 +335,19 @@ $("detach-btn").addEventListener("click", async () => {
 });
 $("league-reload").addEventListener("click", () => {
   if (league) chrome.tabs.reload(league.tab_id);
+});
+$("lineup-run").addEventListener("click", async () => {
+  if (!league) return;
+  $("lineup-run").disabled = true;
+  text("lineup-last", "running…");
+  try {
+    await chrome.tabs.sendMessage(league.tab_id, { op: "lineup_run" });
+  } catch (e) {
+    text("lineup-last", `not run: ${e.message}`);
+  } finally {
+    $("lineup-run").disabled = false;
+    load();
+  }
 });
 $("read-start").addEventListener("click", async () => {
   if (!league) return;

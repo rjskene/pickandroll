@@ -8,9 +8,11 @@
 // synced_through. What the side panel shows per tab is kept in chrome.storage.session.
 //
 // The league reader (league.js, #98) posts the league pages the user opens to the season's
-// snapshot route here; what each post did is kept per league for the panel.
+// snapshot route here; what each post did is kept per league for the panel. On my team page it
+// also fetches the lineup executor's steps and logs its runs here (#170), the last one kept per
+// league for the panel.
 "use strict";
-importScripts("lib/protocol.js", "lib/league.js");
+importScripts("lib/protocol.js", "lib/league.js", "lib/lineup.js");
 
 const DEFAULTS = {
   api: "http://localhost:8000",
@@ -18,6 +20,7 @@ const DEFAULTS = {
   players_file: "",
   probe_round: "3", // the queue probe's round, or "off"
   search_fallback: "off", // "on": Yahoo's search box for a row scrolling did not find
+  lineup_executor: "on", // "off": this browser's brake on the lineup executor, beside STOP
 };
 
 async function settings() {
@@ -106,6 +109,7 @@ async function attachedOr(fn) {
 // ------------------------------------------------------------------ league pages (#98)
 const postsKey = (league) => `league:${league}`;
 const readKey = (league) => `season_read:${league}`;
+const lineupKey = (league) => `lineup:${league}`;
 
 async function stored(key) {
   return (await chrome.storage.session.get(key))[key] || null;
@@ -222,6 +226,19 @@ const ops = {
     const read = L.startRead(league, Math.min(Number(pages), L.READ_PAGES), Date.now(), view);
     await chrome.storage.session.set({ [readKey(league)]: read });
     return { read };
+  },
+  /** The lineup executor's steps for my team's page of ``date`` (#170). */
+  async lineup_steps({ league, date }) {
+    const q = `date=${encodeURIComponent(date)}`;
+    return api(`/seasons/${encodeURIComponent(league)}/lineup/steps?${q}`, { timeout: 30000 });
+  },
+  /** A run of the lineup executor, for the league's log; the last one is kept for the panel. */
+  async lineup_log({ league, run }) {
+    const logged = await api(`/seasons/${encodeURIComponent(league)}/autopilot/lineup`, { method: "POST", body: run, timeout: 15000 });
+    const moves = (run.steps || []).filter((x) => x.outcome === "would_set").length;
+    const last = { at: Date.now(), day: run.day, trigger: run.trigger, outcome: run.outcome, reason: run.reason, moves };
+    await chrome.storage.session.set({ [lineupKey(league)]: last });
+    return logged;
   },
   /** The league's season summary (GET /seasons), null when pickandroll has no folder for it. */
   async season({ league }) {
