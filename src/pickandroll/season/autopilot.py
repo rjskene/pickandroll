@@ -77,6 +77,12 @@ def entry_id(day: date, league: str, add: int, drop: int | None) -> str:
     return f"{day.isoformat()}:{league}:{add}:{drop or 0}"
 
 
+def add_page(league: str, add: int) -> str:
+    """The add page of ``add`` in ``league``: Yahoo's own add link, a GET that adds nothing (the
+    DOM read on #171). The extension's execute pass reads it; only PR 3's live pass submits it."""
+    return f"/nba/{league}/addplayer?apid={add}"
+
+
 def _half_up(x: float) -> int:
     return math.floor(x + 0.5)
 

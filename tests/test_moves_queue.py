@@ -458,6 +458,12 @@ def test_the_due_entries_wait_for_the_window_and_the_mode(client):
     d = client.get(url).json()
     assert [e["id"] for e in d["entries"]] == [e["id"] for e in on]
     assert [e["bid_placed"] for e in d["entries"]] == [on[0]["bid"]["amount"], 0]
+    # The extension's input: my team, each entry's add page, the claims open and the day so far.
+    assert d["team"] == 4
+    assert [e["page"] for e in d["entries"]] == [
+        f"/nba/{LEAGUE}/addplayer?apid={e['add']}" for e in on
+    ]
+    assert (d["pending"], d["done"]) == ([], 0)
     # Another day, STOP, an off league and the private league have none.
     assert client.get(url, params={"date": "2026-10-22"}).json()["entries"] == []
     stop = ap.stop_path(client.data_dir)
@@ -468,6 +474,40 @@ def test_the_due_entries_wait_for_the_window_and_the_mode(client):
     client.put(f"/leagues/{LEAGUE}/moves", json={"mode": "off"})
     assert client.get(url).json()["reason"] == qa.OFF
     assert client.get(f"/seasons/{PRIVATE}/autopilot/moves/due").json()["reason"] == qa.PRIVATE
+
+
+def test_the_due_route_counts_the_days_executed_entries_and_their_adds(client):
+    q = queued(client)
+    on = [e for e in q["entries"] if e["queued"]]
+    client.app.state.seasons.clock = lambda: NOW + timedelta(hours=1)
+    url = f"/seasons/{LEAGUE}/autopilot/moves/due"
+    before = client.get(url).json()
+    # A dry run's would-claim moves nothing: the entry is still due.
+    body = pass_body([check(on[0])])
+    assert client.post(f"/seasons/{LEAGUE}/autopilot/moves", json=body).status_code == 200
+    assert client.get(url).json()["entries"] == before["entries"]
+    # A live claim takes its place under the cap and its week's adds, and is open until resolved.
+    placed(client, on[0]["id"], "claimed")
+    d = client.get(url).json()
+    assert [e["id"] for e in d["entries"]] == [e["id"] for e in on[1:]]
+    assert d["done"] == 1 and [c["id"] for c in d["pending"]] == [on[0]["id"]]
+    assert d["pending"][0]["add"] == on[0]["add"]
+    clear = on[0]["from"]
+    week = next(w for w in d["adds_left"] if w["start"] <= clear <= w["end"])
+    was = next(w for w in before["adds_left"] if w["start"] == week["start"])
+    assert was["adds"] is not None and week["adds"] == max(0, was["adds"] - 1)
+
+
+def placed(client, entry_id: str, outcome: str) -> None:
+    """Set ``outcome`` on a day's queue entry as a live pass would (PR 3)."""
+
+    def change(q):
+        for e in q["entries"]:
+            if e["id"] == entry_id:
+                e["outcome"] = outcome
+        return q
+
+    season_queue.update(client.data_dir, DAY, change)
 
 
 def pass_body(entries, **over) -> dict:
@@ -511,20 +551,21 @@ def test_a_pass_is_logged_under_moves_and_sets_the_entries_outcomes(client):
         "would_claim",
         "gone",
     ]
+    # A dry run moves no outcome on the queue: the late pass reads the same entries again.
     by = {e["id"]: e for e in client.get("/autopilot/queue").json()["entries"]}
-    assert by[on[0]["id"]]["outcome"] == "would_claim" and by[on[0]["id"]]["outcome_at"]
-    assert (by[on[1]["id"]]["outcome"], by[on[1]["id"]]["outcome_reason"]) == (
-        "gone",
-        "another team has him",
-    )
+    assert [by[e["id"]]["outcome"] for e in on[:2]] == [None, None]
     view = client.get(url).json()
     assert view["last"]["outcome"] == "would_claim" and len(view["entries"]) == len(q["entries"])
     assert view["live"]["dry_run_days"] == 1 and view["live"]["checked_days"] == 1
-    # An executed entry is never executed again, a rebuild keeps it, and a strike comes too late.
+    late = pass_body([check(on[0])], trigger="routine_late")
+    assert client.post(url, json=late).status_code == 200
+    # An entry a live pass executed is never executed again, a rebuild keeps it, and a strike
+    # comes too late.
+    placed(client, on[0]["id"], "claimed")
     r = client.post(url, json=pass_body([check(on[0])]))
     assert r.status_code == 409 and "executed already" in r.json()["detail"]
     again = {e["id"]: e for e in client.post("/autopilot/queue/build").json()["entries"]}
-    assert again[on[0]["id"]]["outcome"] == "would_claim"
+    assert again[on[0]["id"]]["outcome"] == "claimed"
     assert strike(client, on[0]["id"]).status_code == 409
 
 
@@ -540,6 +581,10 @@ def test_the_log_refuses_a_crumb_a_dry_claim_a_struck_entry_and_another_move(cli
         return r.json()["detail"]
 
     assert "crumb" in refused(pass_body([check(on[0], controls={"crumb": "x"})]), 422)
+    assert "crumb" in refused(pass_body([check(on[0], controls={"crumb": "present"})]), 422)
+    # The page's note that its anti-forgery field is there is a flag under another name.
+    noted = pass_body([check(on[0], controls={"token": True})])
+    assert client.post(url, json=noted).status_code == 200
     assert refused(pass_body([check(on[0], outcome="claimed")])) == "a dry run claims nothing"
     assert refused(pass_body([], mode="live", outcome="claimed")).startswith("a live pass")
     assert "never executed" in refused(pass_body([check(out)]))
@@ -668,7 +713,8 @@ def test_a_build_resolves_the_earlier_days_placed_claims_and_counts_the_open_one
     assert [(e["id"], e["resolved"]) for e in earlier] == [(won["id"], "won"), (open_["id"], None)]
     # The claim still open counts against its week.
     row = row_of(q)
-    assert row["pending"] == [open_["id"]]
+    assert [c["id"] for c in row["pending"]] == [open_["id"]]
+    assert row["pending"][0]["add"] == 9002 and row["pending"][0]["from"] == "2026-10-22"
     week = next(w for w in row["adds_left"] if w["start"] <= "2026-10-22" <= w["end"])
     solved = next(w for w in row["adds"]["weeks"] if w["start"] == week["start"])
     assert week["adds"] == solved["adds"] - 1

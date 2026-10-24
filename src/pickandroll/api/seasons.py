@@ -105,7 +105,7 @@ import logging
 import threading
 import time
 from collections import Counter
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta, tzinfo
 from pathlib import Path
@@ -1015,7 +1015,9 @@ class SeasonService:
                         {"start": s.isoformat(), "end": e.isoformat(), "adds": n}
                         for (s, e), n in left.items()
                     ],
-                    "pending": [c["id"] for c in claims],
+                    "pending": [
+                        {k: c.get(k) for k in ("id", "add", "drop", "from")} for c in claims
+                    ],
                     "protected": {str(k): why for k, why in protected.items()},
                     "floor": floor.to_dict(),
                     "typical": {"value": typical[0], "from": typical[1]},
@@ -1135,11 +1137,13 @@ class SeasonService:
 
     def moves_due(self, league: str, day: date | None) -> dict[str, Any]:
         """The entries of the league due now (#171), for the extension's execute pass: queued,
-        not struck, not executed, their window over, each with the bid to place; with the
-        players protected and why (the stored keep rule's and the engine's now: the page check
-        refuses a protected drop whatever the queue says), the day's cap, the adds left as read
-        and the budget. None when the mode is off, STOP is on or the day is not today."""
-        self._base(league)
+        not struck, not executed, their window over, each with the bid to place and its add page;
+        with my team, the players protected and why (the stored keep rule's and the engine's now:
+        the page check refuses a protected drop whatever the queue says), the claims still open
+        (earlier days' placed and unresolved, and today's placed), the day's cap and how many of
+        today's entries took their place, the adds left as read less every claim since, and the
+        budget. None when the mode is off, STOP is on or the day is not today."""
+        base, _ = self._base(league)
         now = self.clock()
         today = nba_today(now)
         day = day or today
@@ -1151,10 +1155,13 @@ class SeasonService:
             "mode": mode["mode"],
             "stop": stop,
             "reason": None,
+            "team": base.my_team_id,
             "entries": [],
             "next": None,
             "protected": {},
+            "pending": [],
             "cap": None,
+            "done": 0,
             "adds_left": [],
             "budget": None,
             "at": now.isoformat(),
@@ -1184,7 +1191,14 @@ class SeasonService:
         except Exception:  # noqa: BLE001, S110 - the build's keep rule still holds
             pass
         mine = [e for e in body.get("entries") or [] if e.get("league") == league]
-        due = [{**e, "bid_placed": qa.effective_bid(e)} for e in qa.due(mine, now)]
+        due = [
+            {**e, "bid_placed": qa.effective_bid(e), "page": qa.add_page(league, e["add"])}
+            for e in qa.due(mine, now)
+        ]
+        done = [e for e in mine if e.get("outcome") in qa.EXECUTED]
+        earlier = [p for p in row.get("pending") or [] if isinstance(p, Mapping)]
+        placed = [e for e in done if e.get("outcome") in qa.PLACED]
+        left = season_queue.adds_left(row.get("adds"), [*earlier, *done])
         later = sorted(
             at
             for e in mine
@@ -1200,15 +1214,25 @@ class SeasonService:
             "entries": due,
             "next": later[0].isoformat() if later else None,
             "protected": protected,
+            "pending": [
+                {k: c.get(k) for k in ("id", "add", "drop", "from")} for c in [*earlier, *placed]
+            ],
             "cap": row.get("cap"),
-            "adds_left": row.get("adds_left") or [],
+            "done": len(done),
+            "adds_left": [
+                {"start": s.isoformat(), "end": e.isoformat(), "adds": n}
+                for (s, e), n in left.items()
+            ]
+            if row.get("adds")
+            else row.get("adds_left") or [],
             "budget": row.get("budget"),
         }
 
     def log_moves_run(self, league: str, run: season_autopilot.MovesRun) -> dict[str, Any]:
-        """Append an execute pass to the league's log under ``moves`` (#171) and set its outcomes
-        on the queue's entries; refused (409) when the mode, STOP, the queue or the pass's own
-        outcome says it should not have run."""
+        """Append an execute pass to the league's log under ``moves`` (#171) and, for a live pass,
+        set its outcomes on the queue's entries (a dry run moves none: the ruling on #171, so the
+        late pass reads the same entries again); refused (409) when the mode, STOP, the queue or
+        the pass's own outcome says it should not have run."""
         self._base(league)
         mode = leagues.executor_mode(self.data_dir, league, leagues.MOVES)
         body = self._read_queue(run.day) or {}
@@ -1227,7 +1251,7 @@ class SeasonService:
         except season_autopilot.LogError as exc:
             raise HTTPException(409, str(exc)) from exc
         checks = {c.id: c for c in run.entries}
-        if checks:
+        if checks and run.mode == "live":
 
             def change(q: dict[str, Any] | None) -> dict[str, Any]:
                 q = q or {}

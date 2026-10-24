@@ -82,6 +82,16 @@
         <button id="lineup-run" type="button">Set lineup now</button>
       </div>
 
+      <div id="league-moves" hidden>
+        <h2>Moves executor</h2>
+        <p id="moves-last" class="small">-</p>
+        <p class="muted small">Lists the day's queued moves that are due, each a link to its add page; opening one checks
+          the claim on that page and logs what it would place, in the league's mode. This build claims nothing and drops
+          nothing in Yahoo.</p>
+        <button id="moves-run" type="button">Check moves now</button>
+        <ul id="moves-due" class="posts"></ul>
+      </div>
+
       <div id="league-read" hidden>
         <h2>All available players</h2>
         <p id="read-note" class="muted small">Opens the first players page and follows its Next 25 link page by page,
@@ -100,6 +110,7 @@
     </footer>
     <script src="../lib/league.js"></script>
     <script src="../lib/lineup.js"></script>
+    <script src="../lib/moves.js"></script>
     <script src="panel.js"></script>
   </body>
 </html>

@@ -344,10 +344,10 @@ test("a refused run is not kept as the last one", async () => {
 
 test("the dry run sets no field and submits nothing; the reader loads the executor's library", () => {
   const manifest = JSON.parse(fs.readFileSync(path.join(DIR, "manifest.json"), "utf8"));
-  assert.equal(manifest.version, "0.6.0");
+  assert.equal(manifest.version, "0.7.0");
   const reader = manifest.content_scripts.find((c) => c.js.includes("league.js"));
-  assert.deepEqual(reader.js, ["lib/league.js", "lib/lineup.js", "league.js"]);
-  for (const f of ["league.js", "lib/lineup.js"]) {
+  assert.deepEqual(reader.js, ["lib/league.js", "lib/lineup.js", "lib/moves.js", "league.js"]);
+  for (const f of ["league.js", "lib/lineup.js", "lib/moves.js"]) {
     const src = fs.readFileSync(path.join(DIR, f), "utf8");
     assert.ok(!/\.click\(|dispatchEvent|submit\(|requestSubmit/.test(src), `${f} clicks or submits`);
     assert.ok(!/\.(value|selectedIndex|checked)\s*=[^=]/.test(src), `${f} sets a field`);
@@ -411,7 +411,7 @@ async function visitPage({ hash = "", answer, lock = [] }) {
   });
   ctx.window = ctx;
   ctx.globalThis = ctx;
-  for (const file of ["lib/league.js", "lib/lineup.js", "league.js"]) vm.runInContext(fs.readFileSync(path.join(DIR, file), "utf8"), ctx);
+  for (const file of ["lib/league.js", "lib/lineup.js", "lib/moves.js", "league.js"]) vm.runInContext(fs.readFileSync(path.join(DIR, file), "utf8"), ctx);
   for (const fn of timers.splice(0)) await fn();
   return { sent, strip: nodes["pickandroll-strip"], replaced, listeners };
 }

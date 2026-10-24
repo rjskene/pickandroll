@@ -10,16 +10,24 @@
 // the API's steps built from that post, checks each on the page's form and logs what it would
 // set. Any other visit only shows the strip, a line saying what a run would do.
 //
-// It never clicks anything, never sets a field, never reads the form's crumb and never runs on
-// the draft client. It navigates only to follow the players page's Next 25 link during a
-// multi-page read the user armed from the side panel.
+// On an add page (/nba/<league>/addplayer?apid=<player>) it is the moves executor's dry run
+// (#171, lib/moves.js), and only when the page was opened with the routine's fragment
+// (#pickandroll-moves, #pickandroll-moves-late) or the side panel's link: the routine opens each
+// due queue entry's add page in a tab of its own. It drops the fragment, fetches the league's due
+// entries, checks the one whose add is this page's on the rendered claim form and logs the claim it
+// would place. It posts nothing for the add page.
+//
+// It never clicks anything, never sets a field, never reads a form's crumb, never fetches a Yahoo
+// page and never runs on the draft client. It navigates only to follow the players page's Next 25
+// link during a multi-page read the user armed from the side panel.
 (() => {
   "use strict";
   const PR = globalThis.PickAndRoll;
   const KEY = "__pickandrollLeague";
   const STRIP = "pickandroll-strip";
   const page = PR.leaguePage(location.href);
-  if (!page || window[KEY]) return;
+  const addPage = page ? null : PR.addPageOf(location.href);
+  if ((!page && !addPage) || window[KEY]) return;
   window[KEY] = true;
 
   // Yahoo's league pages are served whole; a moment after load leaves room for anything the
@@ -103,7 +111,7 @@
     };
   }
 
-  function strip(line) {
+  function strip(line, label = "lineup") {
     let el = document.getElementById(STRIP);
     if (!el) {
       el = document.createElement("div");
@@ -114,7 +122,15 @@
         "font:12px/1.4 system-ui,sans-serif;background:#1f2933;color:#f5f7fa;opacity:.92;pointer-events:none";
       document.documentElement.append(el);
     }
-    el.textContent = `pickandroll lineup: ${line}`;
+    el.textContent = `pickandroll ${label}: ${line}`;
+  }
+
+  function extensionVersion() {
+    try {
+      return chrome.runtime.getManifest().version;
+    } catch (_) {
+      return null;
+    }
   }
 
   let running = false;
@@ -147,13 +163,7 @@
     const problem = PR.pageProblem(page, controls, steps);
     const checked = problem ? null : PR.checkSteps(controls, steps.steps, steps.slots || []);
     const where = location.pathname + location.search;
-    const extension = (() => {
-      try {
-        return chrome.runtime.getManifest().version;
-      } catch (_) {
-        return null;
-      }
-    })();
+    const extension = extensionVersion();
     const run = PR.dryRun({
       steps,
       trigger,
@@ -196,6 +206,111 @@
     );
     return true;
   });
+
+  // ---------------------------------------------------------------- the moves executor (#171)
+  const textOf = (el) => (el ? el.textContent.trim().replace(/\s+/g, " ") : "");
+  const movesStrip = (line) => strip(line, "moves");
+
+  /** The rendered add page as a plain object for ``readAddPage``: the claim form's action, its
+   * fields' names and values less the anti-forgery field (only whether the form has it, as
+   * ``token``), the heading, the bid panel and its hint, the submit's name (in a noscript until a
+   * drop is picked), the add's row and my roster's rows with their player ids and marker icons.
+   * The waiver-order table is never read. */
+  function addControls() {
+    const form = document.querySelector(`form#${PR.FORM_ID}`);
+    const named = form ? [...form.elements].filter((el) => el.name) : [];
+    const fields = named.filter((el) => !PR.TOKEN.test(el.name));
+    let action = null;
+    try {
+      action = form ? new URL(form.getAttribute("action") || "", location.href).pathname : null;
+    } catch (_) {
+      action = null;
+    }
+    const icons = (tr) => [...tr.querySelectorAll('[class*="T-action-icon-"]')].map((x) => x.className).join(" ");
+    const row = (tr) => {
+      const id = tr.querySelector("[data-ys-playerid]");
+      return id ? { id: id.getAttribute("data-ys-playerid"), classes: icons(tr) } : null;
+    };
+    const addRow = document.querySelector("table#statTable-add tbody tr [data-ys-playerid]");
+    const box = document.getElementById("add-drop-submit-container");
+    const button = document.querySelector("#submit-add-drop-button");
+    const submit = button ? button.getAttribute("name") : box ? (/name="([^"]+)"/.exec(box.textContent || "") || [])[1] || null : null;
+    return {
+      path: location.pathname + location.search,
+      heading: [...document.querySelectorAll("h1, h2, h3")].map(textOf).find((x) => /(?:claim|add|drop) player/i.test(x)) || null,
+      form: form
+        ? {
+            action,
+            method: form.getAttribute("method") || "get",
+            fields: fields.map((el) => ({
+              name: el.name,
+              tag: el.tagName.toLowerCase(),
+              type: String(el.type || "").toLowerCase(),
+              value: el.value,
+              checked: Boolean(el.checked),
+            })),
+            token: fields.length < named.length,
+          }
+        : null,
+      submit,
+      panel: textOf(document.getElementById("faab-bid-fieldset")) || null,
+      hint: form ? [...form.querySelectorAll("p, span, div")].map(textOf).find((x) => /^must be between \$\d+ and \$\d+$/i.test(x)) || null : null,
+      add_row: addRow ? row(addRow.closest("tr")) : null,
+      rows: [...document.querySelectorAll("table.statTable-drop tbody tr")].map(row).filter(Boolean),
+      message: form ? null : [...document.querySelectorAll(".Alert, .alert, .error, .Error, .F-negative, p")].map(textOf).find((x) => x && x.length < 200) || null,
+    };
+  }
+
+  /** The moves executor's dry run on this add page, opened with ``trigger``'s fragment: the
+   * league's due entries, the one whose add is this page's checked on the rendered form, and the
+   * pass logged. No entry for this player: nothing is logged. Answers the pass logged, or null. */
+  async function claim(trigger) {
+    // A routine's pass happens once: a reload of the page is a plain visit.
+    if (location.hash) history.replaceState(null, "", location.pathname + location.search);
+    const settings = await send({ op: "settings" });
+    if (settings && settings.ok && settings.data.moves_executor === "off") {
+      movesStrip(PR.movesStripText({ browserOff: true }));
+      return null;
+    }
+    const r = await send({ op: "moves_due", league: addPage.league });
+    if (!r || !r.ok) {
+      movesStrip(PR.movesStripText({ error: (r && r.error) || "no answer from the extension" }));
+      return null;
+    }
+    const due = r.data;
+    if (due.mode === "off") {
+      movesStrip(PR.movesStripText({ due }));
+      return null;
+    }
+    const extension = extensionVersion();
+    let run;
+    if (due.stop) run = PR.movesPass({ due, trigger, extension });
+    else {
+      const entry = (due.entries || []).find((e) => e.add === addPage.add);
+      if (!entry) {
+        movesStrip(PR.movesStripText({ due, none: true }));
+        return null;
+      }
+      const readAt = new Date().toISOString();
+      const seen = PR.readAddPage(addControls(), entry.from);
+      const why = PR.entryProblem(entry, due);
+      const check = why ? { outcome: "skipped", reason: why } : PR.pageCheck(entry, seen, due);
+      run = PR.movesPass({ due, trigger, checks: [PR.moveCheck(entry, check, seen, due, readAt)], extension });
+    }
+    const logged = await send({ op: "moves_log", league: addPage.league, run });
+    if (!logged || !logged.ok) {
+      movesStrip(`not logged: ${(logged && logged.error) || "no answer from the extension"}`);
+      return null;
+    }
+    movesStrip(PR.movesStripText({ due, run }));
+    return run;
+  }
+
+  if (addPage) {
+    const trigger = PR.movesTriggerOf(location.hash);
+    if (trigger) setTimeout(() => claim(trigger), SETTLE_MS);
+    return;
+  }
 
   setTimeout(() => visit(PR.triggerOf(location.hash)), SETTLE_MS);
 })();

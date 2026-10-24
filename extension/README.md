@@ -136,6 +136,40 @@ dry run: it reads the page's lineup form and logs what it would set, and it sets
 
 The live click, the form's submit, is a later build after the dry-run week (#170, PR 3).
 
+## The moves executor's dry run (0.7.0, #171)
+
+On Yahoo's add page (`/nba/<id>/addplayer?apid=<player>`) the extension is also the moves executor's execute
+pass (docs/AUTOPILOT.md section 2). This build is its dry run: on the add page of a queued move that is due, it
+reads the rendered claim form and logs the claim it would place. It toggles no drop, sets no bid, submits
+nothing, fetches nothing from Yahoo and posts nothing about the add page but the pass.
+
+1. The routine opens each due entry's add page itself, in a tab of its own, with the fragment
+   `#pickandroll-moves` (or `#pickandroll-moves-late` for a late pass). The side panel's **Check moves now** lists
+   the league's due entries as links to their add pages with `#pickandroll-moves-panel`; you open them, nothing is
+   opened for you. A plain visit to an add page runs no pass, and a reload of one is a plain visit: the fragment is
+   dropped first.
+2. A pass fetches the league's due entries (`GET /seasons/<id>/autopilot/moves/due`) and takes the one whose add
+   is the page's. None: nothing is logged and the strip says so. Nothing is due in a league whose mode is off, in
+   the private league or under STOP; under STOP the pass is logged as stopped.
+3. The entry is checked against the queue: struck, an open-spot claim, a protected drop, a claim on the add still
+   pending, the day's cap and the week's adds.
+4. Then against the page: the claim form (`form#add-drop-players-form`) posts to this league's and my team's
+   `/nba/<id>/<team>/addplayer` and carries `stage` and `apid`, naming the add; the heading is Yahoo's claim
+   heading and the waiver date the queue's clear date; the drop is one checkbox in my roster's table with no
+   can't-cut or locked icon; the add's row has no "no more roster moves" icon; the bid is a whole dollar inside
+   the page's range and the budget; the claim submit is there. A failed check skips the entry with its reason
+   (the heading's own text, or the drop's id and the icon found). The add is `gone` only when the page shows it on
+   a team; a page with no claim form is skipped as not read, so the late pass tries again.
+5. The pass goes to the league's log (`POST /seasons/<id>/autopilot/moves`) as a dry run: the outcome and reason,
+   the form's action and field names (never a value, and never the anti-forgery field's), `token` (whether the
+   form has that field), the heading, the waiver date, the budget, the range, the adds left, my roster's
+   can't-cut ids, the add's row icons, when the page was read, and the fields the claim would fill (`apid`,
+   `dpid`, `faab` and the submit's name). The waiver-order table is never read. A dry run sets no outcome on the queue. The strip and the side panel show
+   the pass. **Moves executor in this browser** off in the settings is this browser's brake.
+
+The live submit is a later build after the dry-run week (#171, PR 3): it submits the form on the rendered page,
+so the crumb travels only in the browser's own submission.
+
 ## What it reads and sends
 
 - **Reads:** the text frames of the draft room's own WebSocket. The page script adds a listener to the socket
@@ -151,6 +185,10 @@ The live click, the form's submit, is a later build after the dry-run week (#170
 - **Lineup executor (0.6.0):** on your team page, the lineup form's action, field names, players' slots and
   options, and the run's outcome, to the same API. The form's crumb is never read; no field is set and the form
   is never submitted.
+- **Moves executor (0.7.0):** on an add page opened from the routine's or the panel's link, the claim form's
+  action and field names, what the page shows (the heading, the budget, the waiver date, the bid range, my
+  roster's player ids and their icons) and the pass's outcome, to the same API. Nothing is fetched from Yahoo;
+  the form's crumb is never read (the log's `token` says only whether it is there); nothing is toggled, set or submitted.
 - **Never:** cookies, the `?auth=` part of the room URL, anything you type, or any page other than the draft
   client and the league pages above.
 
@@ -165,12 +203,13 @@ The live click, the form's submit, is a later build after the dry-run week (#170
 | `lib/room.js` | `RoomTracker`: picks, the pick on the clock, the sync cursor, how my picks landed (pure) |
 | `lib/drafter.js` | armed mode: one turn at a time, a newer turn supersedes an older one, the queue backstop and the probe (pure, through a page adapter) |
 | `lib/yahoo.js` | Yahoo's player table: row matching by headshot id and name, label checks, the plan's candidates (pure) |
-| `league.js` | isolated world, league pages: posts the page to the worker, follows Next 25 only during an armed read; on my team page, the lineup executor's dry run and its strip |
+| `league.js` | isolated world, league pages: posts the page to the worker, follows Next 25 only during an armed read; on my team page, the lineup executor's dry run; on an add page opened with the fragment, the moves executor's dry run; their strips |
 | `lib/league.js` | which league pages are read, the snapshot body, the multi-page read (pure) |
 | `lib/lineup.js` | the lineup executor's page side: the form read, the steps' checks, the run for the log, the strip (pure) |
+| `lib/moves.js` | the moves executor's page side: the add page read, the entries' checks, the pass for the log, the strip (pure) |
 | `worker.js` | service worker: the only caller of the API; per-tab state for the panel in `chrome.storage.session` |
-| `sidepanel/` | side panel: room state, attach a session, mode, plan, detach; on a league page, its posts and the read; on my team page, the lineup executor's last run and **Set lineup now** |
-| `options/` | API and web app addresses (localhost only), Yahoo players file, the queue probe's round, the search fallback, the lineup executor's brake |
+| `sidepanel/` | side panel: room state, attach a session, mode, plan, detach; on a league page, its posts and the read; on my team page, the lineup executor's last run and **Set lineup now**, the moves executor's last pass and **Check moves now** (the due entries' add pages as links) |
+| `options/` | API and web app addresses (localhost only), Yahoo players file, the queue probe's round, the search fallback, the lineup and moves executors' brakes |
 | `test/*.test.js` | unit tests (`node --test extension/test/*.test.js` from the repo root) |
 | `test/harness/` | Tier 1 for the extension: a recorded room played through the real scripts against the API |
 
