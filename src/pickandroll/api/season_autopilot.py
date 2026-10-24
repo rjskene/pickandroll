@@ -14,6 +14,11 @@ league's own team page; nothing here clicks or submits anything.
 ``GET /seasons/{league}/autopilot``
     The mode, STOP, the live check, the last run and today's runs, for the Lineup view.
 
+The moves executor (#171) logs its execute passes in the same file under ``moves``
+(:class:`MovesRun`, :func:`append_run` by key), and has its own live check
+(:func:`moves_live_check`) and digest line (:func:`moves_digest_lines`); its queue is
+``season_queue``'s.
+
 ``data/autopilot/STOP`` stops every executor: the steps answer ``stop: true`` with none, and the
 log takes only a run that says it stopped. Nothing here writes the file.
 
@@ -26,6 +31,7 @@ from __future__ import annotations
 import json
 import os
 import threading
+from collections import Counter
 from collections.abc import Mapping, Sequence
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -43,6 +49,9 @@ STOP = "STOP"
 #: The executors' log under the league folder: one file per NBA date.
 LOG_DIR = "autopilot"
 LINEUP = "lineup"
+#: The moves executor's execute passes, beside the lineup's runs in the same file (#171).
+MOVES = "moves"
+LOG_KEYS = (LINEUP, MOVES)
 TRIGGERS = ("routine", "routine_late", "panel")
 RUN_OUTCOMES = ("would_set", "nothing_to_do", "skipped", "set", "failed", "stopped")
 STEP_OUTCOMES = ("would_set", "skipped", "set", "failed")
@@ -276,14 +285,14 @@ def read_log(data_dir: Path, league: str, day: date) -> dict[str, Any] | None:
         return None
     except (OSError, ValueError) as exc:
         raise LogError(f"{path.name} does not read: {exc}") from exc
-    if not isinstance(body, dict) or not isinstance(body.get(LINEUP, []), list):
+    if not isinstance(body, dict) or not all(isinstance(body.get(k, []), list) for k in LOG_KEYS):
         raise LogError(f"{path.name} is not an autopilot log")
     return body
 
 
-def lineup_runs(data_dir: Path, league: str) -> list[tuple[date, dict[str, Any]]]:
-    """Every lineup run logged for ``league``, oldest first, with its file's date; a file that
-    does not read is left out."""
+def runs(data_dir: Path, league: str, key: str = LINEUP) -> list[tuple[date, dict[str, Any]]]:
+    """Every run logged for ``league`` under ``key`` (the lineup's or the moves'), oldest first,
+    with its file's date; a file that does not read is left out."""
     out = []
     folder = log_dir(data_dir, league)
     for path in sorted(folder.glob("*.json")) if folder.exists() else []:
@@ -292,18 +301,27 @@ def lineup_runs(data_dir: Path, league: str) -> list[tuple[date, dict[str, Any]]
             body = read_log(data_dir, league, day)
         except (ValueError, LogError):
             continue
-        out += [(day, run) for run in (body or {}).get(LINEUP, []) if isinstance(run, dict)]
+        out += [(day, run) for run in (body or {}).get(key, []) if isinstance(run, dict)]
     return out
 
 
-def append_run(data_dir: Path, league: str, run: Mapping[str, Any], today: date) -> dict[str, Any]:
-    """Append ``run`` to today's log, never rewriting another run: the file's other keys (phase
-    2's ``moves``) and runs stay as they are, and a file that does not read is refused, never
-    overwritten. Written whole to a temporary file and moved into place."""
+def lineup_runs(data_dir: Path, league: str) -> list[tuple[date, dict[str, Any]]]:
+    """Every lineup run logged for ``league``: :func:`runs` of ``lineup``."""
+    return runs(data_dir, league, LINEUP)
+
+
+def append_run(
+    data_dir: Path, league: str, run: Mapping[str, Any], today: date, key: str = LINEUP
+) -> dict[str, Any]:
+    """Append ``run`` to today's log under ``key``, never rewriting another run: the file's other
+    key and runs stay as they are, and a file that does not read is refused, never overwritten.
+    Written whole to a temporary file and moved into place."""
+    if key not in LOG_KEYS:
+        raise LogError(f"a log key is one of {', '.join(LOG_KEYS)}, not {key!r}")
     folder = log_dir(data_dir, league)
     with _lock:
         body = read_log(data_dir, league, today) or {}
-        body = {**body, LINEUP: [*body.get(LINEUP, []), dict(run)]}
+        body = {**body, key: [*body.get(key, []), dict(run)]}
         folder.mkdir(parents=True, exist_ok=True)
         path = folder / f"{today.isoformat()}.json"
         tmp = path.with_suffix(".json.tmp")
@@ -323,9 +341,15 @@ def live_check(data_dir: Path, league: str, mode: Mapping[str, Any]) -> dict[str
     lineup runs on :data:`DRY_RUN_DAYS` distinct days, on :data:`CHECKED_DAYS` of them a run
     whose steps all passed every check, and STOP absent. The review on #127 and the user's
     click are the other two gates."""
-    runs = [(d, r) for d, r in lineup_runs(data_dir, league) if r.get("mode") == "dry_run"]
-    days = {d for d, _ in runs}
-    checked = {d for d, r in runs if checks_passed(r)}
+    dry = [(d, r) for d, r in lineup_runs(data_dir, league) if r.get("mode") == "dry_run"]
+    days = {d for d, _ in dry}
+    checked = {d for d, r in dry if checks_passed(r)}
+    return _gate(data_dir, mode, days, checked, "with steps that passed every check")
+
+
+def _gate(
+    data_dir: Path, mode: Mapping[str, Any], days: set[date], checked: set[date], what: str
+) -> dict[str, Any]:
     reason = None
     if mode.get("private"):
         reason = "the private league is never touched"
@@ -334,10 +358,7 @@ def live_check(data_dir: Path, league: str, mode: Mapping[str, Any]) -> dict[str
     elif len(days) < DRY_RUN_DAYS:
         reason = f"a dry run on {DRY_RUN_DAYS} days first: {len(days)} so far"
     elif len(checked) < CHECKED_DAYS:
-        reason = (
-            f"{CHECKED_DAYS} dry-run days with steps that passed every check first: "
-            f"{len(checked)} so far"
-        )
+        reason = f"{CHECKED_DAYS} dry-run days {what} first: {len(checked)} so far"
     return {
         "ok": reason is None,
         "reason": reason,
@@ -374,6 +395,116 @@ def view(data_dir: Path, league: str, mode: Mapping[str, Any], today: date) -> d
         "last": runs[-1][1] if runs else None,
         "today": [r for d, r in runs if d == today],
         "days": sorted({d.isoformat() for d, _ in runs}),
+    }
+
+
+# --------------------------------------------------------------------------- the moves executor
+MOVE_OUTCOMES = ("would_claim", "claimed", "added", "skipped", "failed", "gone")
+MOVES_RUN_OUTCOMES = ("would_claim", "nothing_due", "skipped", "claimed", "failed", "stopped")
+
+
+class MoveCheck(BaseModel):
+    """One queue entry as an execute pass saw it on the add page (#171)."""
+
+    #: The queue entry's id (``season.autopilot.entry_id``).
+    id: str
+    add: int
+    drop: int | None = None
+    #: The bid the claim was (or in a dry run would be) placed with, in dollars.
+    bid: int | None = None
+    #: ``gone``: another team had the add before the pass reached him; never retried that day.
+    outcome: Literal["would_claim", "claimed", "added", "skipped", "failed", "gone"]
+    reason: str | None = None
+    #: The add page's path.
+    page: str | None = None
+    #: What the page showed: the form's action and method, its field names (never a value), the
+    #: drop's control and the bid's input.
+    controls: dict[str, Any] | None = None
+    #: Yahoo's message after a live submit, as the page printed it.
+    message: str | None = None
+
+
+class MovesRun(BaseModel):
+    """An execute pass of the moves executor in one league, for the log (#171)."""
+
+    day: date
+    mode: Literal["dry_run", "live"]
+    trigger: Literal["routine", "routine_late", "panel"]
+    outcome: Literal["would_claim", "nothing_due", "skipped", "claimed", "failed", "stopped"]
+    reason: str | None = None
+    entries: list[MoveCheck] = []
+    extension: str | None = None
+
+
+def check_moves_run(
+    run: MovesRun, mode: Mapping[str, Any], stop: bool, queue: Mapping[str, Mapping[str, Any]]
+) -> str | None:
+    """Why the log refuses an execute pass, None when it takes it. ``queue`` is the day's
+    entries of the league by id: a pass reports only on those, and never executes one struck or
+    not queued."""
+    if mode.get("private"):
+        return "the private league is never touched"
+    if stop and run.outcome != "stopped":
+        return "STOP is on: a pass can only say it stopped"
+    if mode["mode"] == "off" and run.outcome != "stopped":
+        return "the moves executor is off in this league"
+    if run.mode == "live" and mode["mode"] != "live":
+        return "a live pass in a league that is not live"
+    placed = ("claimed", "added")
+    if run.mode == "dry_run" and (
+        run.outcome == "claimed" or any(e.outcome in placed for e in run.entries)
+    ):
+        return "a dry run claims nothing"
+    for e in run.entries:
+        q = queue.get(e.id)
+        if q is None:
+            return f"{e.id} is not in the day's queue"
+        if (e.add, e.drop) != (q.get("add"), q.get("drop")):
+            return f"{e.id} names another move than the queue's"
+        executed = e.outcome in ("would_claim", *placed)
+        if executed and (not q.get("queued") or q.get("struck")):
+            return f"{e.id} is struck or not queued: it is never executed"
+        if q.get("outcome") in ("would_claim", *placed):
+            return f"{e.id} was executed already"
+    return None
+
+
+def moves_checked(run: Mapping[str, Any]) -> bool:
+    """A pass that opened the add page and logged its controls for at least one entry (the
+    ruling on #171): a pass that found nothing due is a dry-run day, never a checked one."""
+    return any(e.get("controls") for e in run.get("entries") or [])
+
+
+def moves_live_check(data_dir: Path, league: str, mode: Mapping[str, Any]) -> dict[str, Any]:
+    """Whether the league's moves executor may be switched to ``live``: dry-run passes on
+    :data:`DRY_RUN_DAYS` distinct days, :data:`CHECKED_DAYS` of them checked
+    (:func:`moves_checked`), and STOP absent. The reviewed week on #127 and the user's click are
+    the other gates."""
+    dry = [(d, r) for d, r in runs(data_dir, league, MOVES) if r.get("mode") == "dry_run"]
+    days = {d for d, _ in dry}
+    checked = {d for d, r in dry if moves_checked(r)}
+    return _gate(data_dir, mode, days, checked, "that read the add page")
+
+
+def moves_view(
+    data_dir: Path,
+    league: str,
+    mode: Mapping[str, Any],
+    today: date,
+    entries: Sequence[Mapping[str, Any]],
+) -> dict[str, Any]:
+    """The Queue card's league: the mode, STOP, the live check, the last pass, today's passes
+    and the league's entries of the day's queue."""
+    passes = runs(data_dir, league, MOVES)
+    return {
+        "league": league,
+        "mode": dict(mode),
+        "stop": stopped(data_dir),
+        "live": moves_live_check(data_dir, league, mode),
+        "last": passes[-1][1] if passes else None,
+        "today": [r for d, r in passes if d == today],
+        "days": sorted({d.isoformat() for d, _ in passes}),
+        "entries": list(entries),
     }
 
 
@@ -467,6 +598,74 @@ def digest_lines(
         if parts:
             lines.append(f"- League {lg}: " + "; ".join(parts))
     return lines
+
+
+def moves_digest_lines(
+    data_dir: Path,
+    modes: Mapping[str, Mapping[str, Any]],
+    queue: Mapping[str, Any] | None,
+    now: datetime,
+) -> list[str]:
+    """The digest's lines for the moves executor (#171): one summary over the armed leagues, the
+    latest queue's entries (``queue``, ``season_queue``'s day) counted queued and struck and the
+    entries the last day's passes reported counted by outcome, then a line per league only for
+    what it skipped or failed. Leagues by id; no player, team or projection number."""
+    armed = {
+        lg: m["mode"] for lg, m in modes.items() if not m.get("private") and m["mode"] != "off"
+    }
+    if not armed:
+        return []
+    if stopped(data_dir):
+        return ["- Moves executor: STOP is on (data/autopilot/STOP); nothing runs."]
+    since = now - DIGEST_SPAN
+    recent = {
+        lg: [r for _, r in runs(data_dir, lg, MOVES) if (at := _at(r.get("at"))) and at >= since]
+        for lg in armed
+    }
+    entries = [e for e in (queue or {}).get("entries") or [] if e.get("league") in armed]
+    queued = sum(1 for e in entries if e.get("queued") and not e.get("struck"))
+    struck = sum(1 for e in entries if e.get("struck"))
+    checks = [e for rs in recent.values() for r in rs for e in r.get("entries") or []]
+    count = Counter(e.get("outcome") for e in checks)
+    by_mode = {m: [lg for lg, x in armed.items() if x == m] for m in ("dry_run", "live")}
+    modes_text = ", ".join(
+        f"{'dry run' if m == 'dry_run' else 'live'} in {len(lgs)}"
+        for m, lgs in by_mode.items()
+        if lgs
+    )
+    executed = count["would_claim"] + count["claimed"] + count["added"]
+    if not by_mode["dry_run"]:
+        verb = "claimed"
+    else:
+        verb = "would be claimed" if not by_mode["live"] else "claimed or would be claimed"
+    day = (queue or {}).get("date")
+    gone = f", {count['gone']} gone" if count["gone"] else ""
+    lines = [
+        f"- Moves executor ({modes_text}): "
+        + (f"{_weekday(day)}'s queue " if day else "no queue; ")
+        + (f"{queued} queued, {struck} struck; " if day else "")
+        + f"{executed} {verb}, {count['skipped']} skipped, {count['failed']} failed{gone}."
+    ]
+    for lg in sorted(recent):
+        parts = []
+        for r in recent[lg]:
+            bad = [e for e in r.get("entries") or [] if e.get("outcome") in ("skipped", "failed")]
+            if r.get("outcome") in ("skipped", "failed") and not bad:
+                reason = f" ({r['reason']})" if r.get("reason") else ""
+                parts.append(f"{_weekday(r['day'])} {r['outcome']}{reason}")
+            for e in bad:
+                reason = f" ({e['reason']})" if e.get("reason") else ""
+                parts.append(f"{_weekday(r['day'])} {e['outcome']}{reason}")
+        if parts:
+            lines.append(f"- League {lg}: moves " + "; ".join(parts))
+    return lines
+
+
+def moves_digest_section(lines: Sequence[str]) -> str:
+    """The digest's moves section; nothing without a line."""
+    if not lines:
+        return ""
+    return "\n".join(["", "### Moves", "", *lines]) + "\n"
 
 
 def _at(raw: Any) -> datetime | None:

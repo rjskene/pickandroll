@@ -19,7 +19,9 @@ A league folder holds what a session for that league needs, all local and never 
     Written only by the user's own clicks in the dashboard. ``armed`` (``PUT /leagues/{id}/arm``):
     the room for this league's draft comes up in autopilot. ``lineups`` (``PUT
     /leagues/{id}/lineups``, #170): the lineup executor's mode, ``off``, ``dry_run`` or
-    ``live``, with ``lineups_at`` and ``lineups_by``. Nothing else writes it.
+    ``live``, with ``lineups_at`` and ``lineups_by``. ``moves`` (``PUT /leagues/{id}/moves``,
+    #171) the same for the moves executor, with ``moves_cap``, the user's own cap on the day's
+    moves. Nothing else writes it.
 ``adjustments.json`` (optional)
     Games haircuts the user prepared from the news sweep (#76, ``api.adjustments``), applied
     when the league's session is made: at the room's attach.
@@ -63,6 +65,10 @@ LINEUP_MODES = ("off", "dry_run", "live")
 #: A public league's mode until the user sets one: every public league is armed in advance
 #: (docs/AUTOPILOT.md section 1), and every executor starts in dry run.
 LINEUP_DEFAULT = "dry_run"
+#: The executors whose mode ``armed.json`` keeps: the lineup's (#170) and the moves' (#171).
+LINEUPS = "lineups"
+MOVES = "moves"
+EXECUTORS = (LINEUPS, MOVES)
 ADJUSTMENTS = "adjustments.json"
 #: A league id as Yahoo prints it, and as the draft client's path carries it.
 LEAGUE_ID = r"^[0-9]{1,12}$"
@@ -348,35 +354,74 @@ def set_armed(data_dir: Path, league: str, on: bool, by: str) -> dict[str, Any] 
     return armed(data_dir, league)
 
 
-def lineup_mode(data_dir: Path, league: str) -> dict[str, Any]:
-    """The lineup executor's mode for ``league`` (#170): ``{mode, at, by, set}``. The private
-    league is always ``off``; a public league is its file's ``lineups``, else
-    :data:`LINEUP_DEFAULT` (``set`` False)."""
+def executor_mode(data_dir: Path, league: str, kind: str) -> dict[str, Any]:
+    """An executor's mode for ``league``: the lineup executor's (``lineups``, #170) or the moves
+    executor's (``moves``, #171), ``{mode, at, by, set, private}``, the moves' with the user's own
+    cap on the day's moves (``cap``, None for the knob's). The private league is always ``off``; a
+    public league is its file's mode, else :data:`LINEUP_DEFAULT` (``set`` False)."""
+    if kind not in EXECUTORS:
+        raise LeagueError(f"an executor is one of {', '.join(EXECUTORS)}, not {kind!r}")
+    extra = {"cap": None} if kind == MOVES else {}
     if not load_settings(data_dir, league).get("public", True):
-        return {"mode": "off", "at": None, "by": None, "set": False, "private": True}
+        return {"mode": "off", "at": None, "by": None, "set": False, "private": True, **extra}
     _, record = _armed_file(data_dir, league)
-    mode = record.get("lineups")
+    if kind == MOVES:
+        cap = record.get(f"{kind}_cap")
+        extra = {"cap": cap if isinstance(cap, int) and not isinstance(cap, bool) else None}
+    mode = record.get(kind)
     if mode not in LINEUP_MODES:
-        return {"mode": LINEUP_DEFAULT, "at": None, "by": None, "set": False, "private": False}
+        return {
+            "mode": LINEUP_DEFAULT,
+            "at": None,
+            "by": None,
+            "set": False,
+            "private": False,
+            **extra,
+        }
     return {
         "mode": mode,
-        "at": record.get("lineups_at"),
-        "by": record.get("lineups_by"),
+        "at": record.get(f"{kind}_at"),
+        "by": record.get(f"{kind}_by"),
         "set": True,
         "private": False,
+        **extra,
     }
+
+
+def set_executor(
+    data_dir: Path, league: str, kind: str, mode: str, by: str, cap: int | None = None
+) -> dict[str, Any]:
+    """Record an executor's mode, the dashboard's own click; the draft's keys and the other
+    executor's stay. The moves executor's ``cap`` is the user's own cap on the day's moves (None:
+    the knob's)."""
+    if kind not in EXECUTORS:
+        raise LeagueError(f"an executor is one of {', '.join(EXECUTORS)}, not {kind!r}")
+    if mode not in LINEUP_MODES:
+        raise LeagueError(f"a mode is one of {', '.join(LINEUP_MODES)}, not {mode!r}")
+    path, record = _armed_file(data_dir, league)
+    record.update(
+        {
+            kind: mode,
+            f"{kind}_at": datetime.now(UTC).isoformat(timespec="seconds"),
+            f"{kind}_by": by,
+        }
+    )
+    if kind == MOVES:
+        record.pop(f"{kind}_cap", None)
+        if cap is not None:
+            record[f"{kind}_cap"] = cap
+    _write_armed(path, record)
+    return executor_mode(data_dir, league, kind)
+
+
+def lineup_mode(data_dir: Path, league: str) -> dict[str, Any]:
+    """The lineup executor's mode for ``league`` (#170): :func:`executor_mode` of ``lineups``."""
+    return executor_mode(data_dir, league, LINEUPS)
 
 
 def set_lineups(data_dir: Path, league: str, mode: str, by: str) -> dict[str, Any]:
     """Record the lineup executor's mode, the dashboard's own click; the draft's keys stay."""
-    if mode not in LINEUP_MODES:
-        raise LeagueError(f"a lineup mode is one of {', '.join(LINEUP_MODES)}, not {mode!r}")
-    path, record = _armed_file(data_dir, league)
-    record.update(
-        lineups=mode, lineups_at=datetime.now(UTC).isoformat(timespec="seconds"), lineups_by=by
-    )
-    _write_armed(path, record)
-    return lineup_mode(data_dir, league)
+    return set_executor(data_dir, league, LINEUPS, mode, by)
 
 
 def summary(data_dir: Path, league: str) -> dict[str, Any]:
