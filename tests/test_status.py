@@ -53,6 +53,46 @@ def test_an_export_is_green_today_amber_before_its_due_time_and_red_after():
     )
 
 
+#: Saturday's export, Sunday past the due time, late on Sunday, and Monday before and after it.
+SATURDAY = datetime(2026, 10, 24, 5, 40, tzinfo=LOCAL)
+SUNDAY = datetime(2026, 10, 25, 13, 0, tzinfo=LOCAL)
+SUNDAY_LATE = datetime(2026, 10, 25, 23, 30, tzinfo=LOCAL)
+MONDAY_EARLY = datetime(2026, 10, 26, 5, 0, tzinfo=LOCAL)
+MONDAY = datetime(2026, 10, 26, 13, 0, tzinfo=LOCAL)
+
+
+def test_the_this_week_export_is_not_due_on_a_sunday_by_the_lights_clock():
+    row = st.export_row("week_this", "f.xls", SATURDAY, SUNDAY)
+    assert (row["state"], row["reason"], row["file"], row["as_of"]) == (
+        st.GREEN,
+        st.NOT_DUE,
+        "f.xls",
+        SATURDAY.isoformat(),
+    )
+    assert st.NOT_DUE == "not due on the week's last day"
+    none = st.export_row("week_this", None, None, SUNDAY)
+    assert (none["state"], none["reason"]) == (st.GREEN, st.NOT_DUE)
+    # The light's own clock decides: 23:30 on the Mac's Sunday is Monday in UTC.
+    assert st.export_row("week_this", None, None, SUNDAY_LATE.astimezone(LOCAL))["reason"] == (
+        st.NOT_DUE
+    )
+    # Today's file on a Sunday reads as today's.
+    assert st.export_row("week_this", "f.xls", at(1, SUNDAY), SUNDAY)["reason"] == "today"
+    # Every other export keeps its rule on a Sunday.
+    assert st.export_row("ros", None, None, SUNDAY)["state"] == st.RED
+    nxt = st.export_row("week_next", "f.xls", SATURDAY, SUNDAY)
+    assert (nxt["state"], nxt["reason"]) == (st.RED, "today's missing")
+    # The section follows.
+    found = {k: (f"{k}.xls", at(2, SUNDAY)) for k in st.EXPORTS}
+    found["week_this"] = ("f.xls", SATURDAY)
+    assert st.exports(found, SUNDAY)["state"] == st.GREEN
+    # Monday with no file: amber before the due time, red after.
+    early = st.export_row("week_this", None, None, MONDAY_EARLY)
+    assert (early["state"], early["reason"]) == (st.AMBER, "expected by 06:30")
+    late = st.export_row("week_this", None, None, MONDAY)
+    assert (late["state"], late["reason"]) == (st.RED, "missing")
+
+
 def test_the_exports_section_lists_the_five_kinds_and_takes_the_worst():
     found = {k: (f"{k}.xls", at(2)) for k in st.EXPORTS}
     section = st.exports(found, NOW)

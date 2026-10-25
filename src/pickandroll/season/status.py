@@ -130,9 +130,19 @@ def routine_row(marker: Mapping[str, Any] | None, now: datetime) -> dict[str, An
 
 
 # --------------------------------------------------------------------------- the exports
+#: The export the routine skips on the week's last day, and the light's words for it (#181):
+#: on a Sunday Basketball Monster's Remaining Week covers that one day, a file nothing reads.
+NOT_DUE_ON_SUNDAY = "week_this"
+NOT_DUE = "not due on the week's last day"
+
+
 def export_row(kind: str, file: str | None, as_of: datetime | None, now: datetime) -> dict:
-    """One export: green from today; amber before the due time; red once it is due."""
+    """One export: green from today; amber before the due time; red once it is due. The
+    this-week export is not due on a Sunday on the light's clock (#181): green with
+    :data:`NOT_DUE` unless today's file is there, whatever the file's own dates say."""
     state, reason = _today(as_of, now, "today's missing" if file else "missing")
+    if kind == NOT_DUE_ON_SUNDAY and state != GREEN and now.weekday() == 6:
+        state, reason = GREEN, NOT_DUE
     return {
         "kind": kind,
         "label": EXPORTS[kind],

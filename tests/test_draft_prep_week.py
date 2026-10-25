@@ -199,10 +199,36 @@ def test_the_season_sample_is_refused(runbook, monkeypatch, capsys, bbm_totals_p
     assert not list(runbook.DATA.glob("bbm_week_*"))
 
 
+def test_a_one_day_span_takes_a_seventh_of_the_floor(runbook, monkeypatch, capsys):
+    """Sunday's Remaining Week lists only the players with a game that day (#181)."""
+    sunday = datetime(2026, 10, 25, 15, 0, tzinfo=UTC)
+    week = prep(runbook)
+    monkeypatch.setattr(week, "now", lambda: sunday)
+    assert [week.min_players("this", d) for d in (1, 2, 4, 7, 9)] == [43, 86, 172, 300, 300]
+    assert week.min_players("next", 1) == week.min_players("next", 7) == 300
+    write(download(runbook), lines(1, n=39), sunday)
+    assert command(runbook, monkeypatch, "week", "--this") == runbook.ERROR
+    out = capsys.readouterr().out
+    assert "holds 39 players, under 43 for a 1-day span (300 × 1/7): a partial export" in out
+    assert not list(runbook.DATA.glob("bbm_week_*"))
+    write(download(runbook), lines(1, n=139), sunday)
+    assert command(runbook, monkeypatch, "week", "--this") == runbook.OK
+    (saved,) = runbook.DATA.glob("bbm_week_this_*.csv")
+    assert (sidecar(saved)["start"], sidecar(saved)["end"]) == ("2026-10-25", "2026-10-25")
+    assert "Sun 2026-10-25 to Sun 2026-10-25 (1 day), 139 players" in capsys.readouterr().out
+    # Next week keeps the full floor.
+    write(download(runbook), lines(3, n=299, seed=1), sunday)
+    assert command(runbook, monkeypatch, "week", "--next") == runbook.ERROR
+    assert "holds 299 players, under 300: a partial export" in capsys.readouterr().out
+
+
 def test_a_partial_or_unreadable_export_or_none_is_refused(runbook, monkeypatch, capsys, tmp_path):
     write(download(runbook), lines(3, n=40), NOW)
     assert command(runbook, monkeypatch, "week", "--this") == runbook.ERROR
-    assert "holds 40 players, under 300: a partial export" in capsys.readouterr().out
+    assert (
+        "holds 40 players, under 172 for a 4-day span (300 × 4/7): a partial export"
+        in capsys.readouterr().out
+    )
     bad = write(tmp_path / "bad.csv", lines(3).drop(columns=["field_goals_attempted"]), NOW)
     assert command(runbook, monkeypatch, "week", "--this", "--export", str(bad)) == runbook.ERROR
     assert "is not a Basketball Monster weekly export" in capsys.readouterr().out
