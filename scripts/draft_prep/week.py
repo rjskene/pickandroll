@@ -15,8 +15,9 @@ The import validates the export with the reader the week projection uses and cop
 ``data/bbm_week_<this|next>_<UTC stamp>.xls`` (the name ``sources.bbm.fetch.weekly`` saves
 under), keeping its file time, with the sidecar ``api/season_week.py`` matches to the week
 (``start``, ``end``). It refuses a file that fails the schema, has a player with more games than
-the span has days (a season export saved as a weekly one), holds fewer than ``MIN_PLAYERS``
-players (a filtered page), was made on the wrong day for its span (a this-week export must be
+the span has days (a season export saved as a weekly one), holds fewer players than
+``min_players`` asks (a filtered page: ``MIN_PLAYERS`` for next week, that share of seven days
+for the rest of this week), was made on the wrong day for its span (a this-week export must be
 today's, a next-week one from the week before; the check is off with ``--start``), or is the
 other kind's saved export (a download that did not land). An export identical to the newest
 saved one of its kind, for the same span, saves nothing.
@@ -27,6 +28,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import os
 import shutil
 from datetime import UTC, date, datetime, timedelta
@@ -48,10 +50,21 @@ SAVED = {"this": "bbm_week_this_", "next": "bbm_week_next_"}
 #: The page's button for each kind, and the span's words in the output.
 BUTTON = {"this": "Remaining Week", "next": "Next Week"}
 WORDS = {"this": "the rest of this week", "next": "next week"}
-#: An export with fewer players is a partial one (Only Top Players, a cut-off download). The page
-#: lists every player on All Players, those without a game in the span too.
+#: An export of a full week with fewer players is a partial one (Only Top Players, a cut-off
+#: download). On All Players the page lists every player then, those without a game in the
+#: span too; over a shorter span it lists only the players with a game in it (#181).
 MIN_PLAYERS = 300
 NBA_TZ = ZoneInfo("America/New_York")
+
+
+def min_players(which: str, days: int) -> int:
+    """The fewest players a ``which`` export over ``days`` days may hold (#181): next week's the
+    full :data:`MIN_PLAYERS`; the rest of this week's that share of a seven-day span, since a
+    short span's page lists only the players with a game in it (139 on Sunday 2026-10-25, one
+    day, about a third of the teams playing)."""
+    if which == "next":
+        return MIN_PLAYERS
+    return math.ceil(MIN_PLAYERS * min(1.0, days / 7))
 
 
 def day(text: str) -> date:
@@ -180,11 +193,13 @@ def import_export(
             f"{source} has a player with {most:g} games in a {days}-day span "
             f"({dates(first, last)}): a season or longer export? Nothing saved",
         )
-    if len(df) < MIN_PLAYERS:
+    floor = min_players(which, days)
+    if len(df) < floor:
+        scaled = f" for a {days}-day span ({MIN_PLAYERS} × {days}/7)" if floor < MIN_PLAYERS else ""
         raise stop(
             runbook.ERROR,
-            f"{source} holds {len(df)} players, under {MIN_PLAYERS}: a partial export (Only Top "
-            "Players, or a cut-off download?); nothing saved",
+            f"{source} holds {len(df)} players, under {floor}{scaled}: a partial export (Only "
+            "Top Players, or a cut-off download?); nothing saved",
         )
     at = datetime.fromtimestamp(source.stat().st_mtime, UTC)
     made = at.astimezone(NBA_TZ).date()
@@ -238,7 +253,7 @@ def import_export(
     playing = int((df["games"] > 0).sum())
     say(
         f"saved data/{target.name} from {source}: {WORDS[which]}, {dates(first, last)} "
-        f"({days} days), {len(df)} players, {playing} with games, at most {most:g}, exported "
+        f"({days} day{'s' if days != 1 else ''}), {len(df)} players, {playing} with games, at most {most:g}, exported "
         f"{at.astimezone():%a %Y-%m-%d %H:%M}"
     )
     return target

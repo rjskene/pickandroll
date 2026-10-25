@@ -1050,6 +1050,15 @@ or not due yet (a solve older than an input is amber, "re-solved on open"); **gr
 otherwise. A league is its worst section with the exports; the whole is its worst league with
 the exports and the run.
 
+The this-week export is not due on a Sunday (#181). Basketball Monster's Remaining Week then
+covers that one day and lists only the players with a game (139 on 2026-10-25). The routine
+skips that export, and nothing downstream reads a one-day file: the week solve runs on per-game
+rates and the schedule. On a Sunday on the light's own clock (never a file's dates), the row is
+green, "not due on the week's last day", unless today's file is there, and it still names the
+newest file. If the user imports a Sunday export by hand, the import's floor scales with the
+span: `scripts/draft_prep/week.py`'s `min_players` asks for `ceil(300 × days / 7)` players on
+`--this` (43 for one day), and 300 on `--next`.
+
 The routine writes its run marker as its last step, `data/routine/daily.json`:
 
 ```json
