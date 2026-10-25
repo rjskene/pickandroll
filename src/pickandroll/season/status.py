@@ -162,13 +162,15 @@ def refresh_row(
 ) -> dict[str, Any]:
     """A public league's last refresh, judged by its newest read (``read_at``, the season's
     newest part) as the routine's other daily work. Its last job, the service's own (``live``)
-    or else the last its log has, says a refresh failed (red), never finished (red: a logged
-    start with no end, the service stopped during it), is running or skipped pages (amber).
-    The job's times, step and error and the snapshot's time are shown."""
+    or else the last its log has, says a refresh failed (red; "rate limited by Yahoo" when the
+    limit ended it, #180), never finished (red: a logged start with no end, the service stopped
+    during it), is running or skipped pages (amber). The job's times, step and error and the
+    snapshot's time are shown."""
     job = job or {}
     status = job.get("status")
     if status in ("failed", "private"):
-        state, reason = RED, "refresh failed"
+        limited = job.get("rate_limited")
+        state, reason = RED, "rate limited by Yahoo" if limited else "refresh failed"
     elif status == "running" and not live:
         state, reason = RED, "refresh never finished"
     elif status == "running":

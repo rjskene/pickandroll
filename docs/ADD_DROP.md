@@ -1084,6 +1084,38 @@ rather than turn it into warnings. One refresh runs at a time per league: `?wait
 the running job, or starts one, under the service's guard as the background path does, so two
 waiting callers share one job.
 
+Yahoo rate limits its readers (#180). On 2026-10-24 and 10-25 it answered HTTP 999 at 05:18,
+once the daily routine had read about 380 pages in four minutes (twelve leagues of 47 pages back
+to back, a read every 0.3 s). An immediate retry failed the same way, and a read three and a
+half hours later worked.
+
+- **The pace.** Every Yahoo read of the API process goes through one pacer
+  (`public.Pacer`): one read at a time, a second after the last one ended. That covers the
+  refreshes, the 15:00 pass and the Monday recorder, which all read through the API.
+- **The backoff.** A page that answers 999 or 429 is read again after a minute, then after two,
+  then the reader gives up. A refresh's backoff waits only while 30 seconds would remain before
+  its deadline; otherwise the read gives up at once.
+- **The cool-off.** After a give-up every Yahoo read of the process is refused for 15 minutes,
+  or for Yahoo's own `Retry-After` when longer, without a request.
+- **What the refresh answers.** A refresh the limit ends is `failed` with `rate_limited: true`
+  and `retry_after`. Its error reads "rate limited by Yahoo (HTTP 999) at <step> <done>/<total>;
+  <n> pages held until HH:MM; read again in 15 min". `POST /seasons/<id>/refresh` answers 503
+  with a `Retry-After` header (any other failure is 502), and the recorder's route does the
+  same. The light reads "rate limited by Yahoo".
+- **The resume.** The refresh keeps the Yahoo pages it read, gzipped, each with its read time.
+  The league's next refresh within an hour takes them instead of reading them, so it reads from
+  the page the limit stopped on, and its parts carry their own page's read time; the summary's
+  `updated_at` is the completing refresh's newest read. Nothing is saved until a refresh
+  completes, so the season never mixes a half-read. A completed refresh or any other failure
+  drops the pages.
+- **The log.** Each `refreshes.jsonl` line has the last page reached (`page`), `rate_limited`,
+  `retry_after`, the pages `held` and those `resumed`.
+- **In memory only.** The pace, the cool-off and the held pages are never on disk: an API
+  restart starts clean, at the first page.
+- **Outside the pacer.** The reads the extension's page posts start (a private league's extras:
+  the schedule, the box scores, the flag inputs) are never paced with, nor refused by, the
+  limit, and ESPN's hosts are never paced as Yahoo.
+
 ## Phases
 
 Each phase is one issue under the ADD/DROP tracker, built by fantasyEMISSARY in a worktree with
