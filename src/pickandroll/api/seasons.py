@@ -14,6 +14,8 @@ Routes:
     Reads the league's public sources (a public league: the prize leagues) in the background;
     ``?wait=true`` returns once it is done. One refresh runs at a time per league, and each
     within :data:`REFRESH_DEADLINE` (#166). A private league answers ``409`` with what to do.
+    Yahoo's rate limit answers ``503`` with a ``Retry-After`` header, any other failure ``502``;
+    the next refresh resumes at the page the limit stopped (#180).
 ``POST /seasons/{league}/snapshot``
     The extension's reads of a private league: whole pages (``{url, html}``, parsed here by
     the same parsers) or parts already parsed (``{key, data}``).
@@ -100,8 +102,10 @@ NBA schedule is cached by date in ``data/schedule/``.
 from __future__ import annotations
 
 import asyncio
+import gzip
 import json
 import logging
+import math
 import threading
 import time
 from collections import Counter
@@ -274,6 +278,12 @@ def nba_today(now: datetime) -> date:
 #: finishes or times out on its own socket timeout (``public.HttpFetch``); the step it cut is not
 #: retried in the same job.
 REFRESH_DEADLINE = 300.0
+#: The seconds a refresh keeps for its reads after a backoff on Yahoo's rate limit: a wait that
+#: would leave less before the deadline is not slept and the read gives up (#180).
+WAIT_MARGIN = 30.0
+#: How long the Yahoo pages of a refresh the rate limit ended are kept for the league's next one
+#: (#180): a page read longer ago is read again.
+HOLD = timedelta(minutes=60)
 
 
 class RefreshDeadline(BaseException):
@@ -300,6 +310,13 @@ class RefreshJob:
     deadline: float | None = None
     #: The last page the job read, for the deadline's reason.
     page: str | None = None
+    #: Yahoo's rate limit ended the job (#180), and the seconds before Yahoo may be read again.
+    rate_limited: bool = False
+    retry_after: float | None = None
+    #: The Yahoo pages kept for the league's next refresh when the limit ended the job, and the
+    #: pages this job took from an earlier one's instead of reading them (#180).
+    held: int = 0
+    resumed: int = 0
     _began: float = field(default_factory=time.monotonic, repr=False, compare=False)
     _ending: threading.Lock = field(default_factory=threading.Lock, repr=False, compare=False)
     _ended: threading.Event = field(default_factory=threading.Event, repr=False, compare=False)
@@ -329,6 +346,11 @@ class RefreshJob:
         self.check()
         self.step = step
 
+    def may_wait(self, seconds: float) -> bool:
+        """Whether a backoff of ``seconds`` on Yahoo's rate limit still leaves
+        :data:`WAIT_MARGIN` before the deadline (#180)."""
+        return self.deadline is None or self.elapsed() + seconds + WAIT_MARGIN <= self.deadline
+
     def end(self, status: str, error: str | None = None, **fields: Any) -> bool:
         """End the job once: the first end sets ``status``, ``error``, ``fields`` and the time
         and says so; a later one (a stalled worker's, after the deadline ended its job) changes
@@ -356,7 +378,66 @@ class RefreshJob:
             "finished_at": self.finished_at.isoformat() if self.finished_at else None,
             "error": self.error,
             "warnings": self.warnings,
+            "page": self.page,
+            "rate_limited": self.rate_limited,
+            "retry_after": self.retry_after,
+            "held": self.held,
+            "resumed": self.resumed,
         }
+
+
+class Hold:
+    """The Yahoo pages a refresh reads, kept for the league's next refresh when the rate limit
+    ends it (#180): by URL, gzipped, each with the time it was read. The next refresh takes a
+    page an earlier one read within :data:`HOLD` from here and reads the rest, from the page the
+    limit stopped on; its parts carry their own page's read time (:meth:`stamp`). A page read
+    twice in one refresh is read twice, as before. Nothing reaches the season until a refresh
+    completes, so the state never mixes a half-read. In memory only, never on disk: an API
+    restart starts clean, at the first page."""
+
+    def __init__(self, clock: Callable[[], datetime]) -> None:
+        self.clock = clock
+        #: The pages earlier refreshes read, and the ones this one read.
+        self.earlier: dict[str, tuple[datetime, bytes]] = {}
+        self.pages: dict[str, tuple[datetime, bytes]] = {}
+        #: The earlier pages taken instead of read.
+        self.taken: set[str] = set()
+        self._read_at: datetime | None = None
+
+    def wrap(self, fetch: public.Fetch) -> public.Fetch:
+        """``fetch`` through the hold: an earlier page still fresh comes from here, any other
+        is read and, a Yahoo page, kept."""
+
+        def read(url: str) -> str:
+            kept = self.earlier.get(url)
+            if kept is not None and self.clock() - kept[0] <= HOLD:
+                self._read_at = kept[0]
+                self.taken.add(url)
+                return gzip.decompress(kept[1]).decode("utf-8")
+            text = fetch(url)
+            self._read_at = self.clock()
+            if public.is_yahoo(url):
+                self.pages[url] = (self._read_at, gzip.compress(text.encode("utf-8")))
+            return text
+
+        return read
+
+    def stamp(self) -> datetime:
+        """When the page last returned was read: the stamp of the part built from it."""
+        return self._read_at or self.clock()
+
+    def kept(self) -> Hold:
+        """The pages still fresh, earlier ones and this refresh's, for the next refresh."""
+        out = Hold(self.clock)
+        now = self.clock()
+        pages = {**self.earlier, **self.pages}
+        out.earlier = {u: v for u, v in pages.items() if now - v[0] <= HOLD}
+        return out
+
+    def until(self) -> datetime | None:
+        """When the oldest page kept is too old to take."""
+        times = [t for t, _ in self.earlier.values()]
+        return min(times) + HOLD if times else None
 
 
 def log_refresh(data_dir: Path, job: RefreshJob) -> None:
@@ -381,6 +462,12 @@ def log_refresh(data_dir: Path, job: RefreshJob) -> None:
         job.total,
         f": {job.error}" if job.error else "",
     )
+
+
+def retry_after(seconds: float | None) -> dict[str, str]:
+    """The ``Retry-After`` header of a 503 on Yahoo's rate limit (#180), the cool-off's length
+    when Yahoo named none."""
+    return {"Retry-After": str(math.ceil(seconds if seconds is not None else public.COOL_OFF))}
 
 
 def deadlined(fetch: public.Fetch, job: RefreshJob) -> public.Fetch:
@@ -409,6 +496,8 @@ class SeasonService:
         #: The Mac's clock, the daily routine's day and due time (#153); None: the system's.
         self.local_tz: tzinfo | None = None
         self.jobs: dict[str, RefreshJob] = {}
+        #: Each league's Yahoo pages kept from a refresh the rate limit ended (#180).
+        self.held: dict[str, Hold] = {}
         self._locks: dict[str, threading.Lock] = {}
         self._guard = threading.Lock()
         #: One reader of ESPN's box scores at a time: two refreshes read a date once (#126).
@@ -1445,6 +1534,8 @@ class SeasonService:
                         "transactions_page": moves_page,
                     },
                 ) from exc
+            except public.RateLimited as exc:
+                raise HTTPException(503, str(exc), headers=retry_after(exc.retry_after)) from exc
             except (public.FetchError, pages.PageError) as exc:
                 raise HTTPException(502, str(exc)) from exc
             folder = season_dir(self.data_dir, league)
@@ -1674,14 +1765,19 @@ class SeasonService:
         league = job.league
         log_refresh(self.data_dir, job)
         status, error = "failed", "the refresh stopped before it ended"
+        # The pages an earlier refresh read before the rate limit stopped it (#180).
+        hold = self.held.pop(league, None) or Hold(self.clock)
+        hold.clock = self.clock
+        limited: public.RateLimited | None = None
         try:
             base, is_public = self._base(league)
             if not is_public:
                 raise public.PrivateLeague(
                     f"league {league} is private: open its pages in Chrome with the extension"
                 )
-            # Every read checks the deadline, and so does every step (#166).
-            fetch = deadlined(self.fetch_factory(), job)
+            # Every read checks the deadline, and so does every step (#166); a backoff on the
+            # rate limit waits only inside it, and the pages read are held for a resume (#180).
+            fetch = deadlined(hold.wrap(public.bounded(self.fetch_factory(), job.may_wait)), job)
             today = nba_today(self.clock())
 
             def progress(step: str, done: int, total: int) -> None:
@@ -1695,14 +1791,14 @@ class SeasonService:
                 today,
                 progress=progress,
                 warn=job.warnings.__setitem__,
-                clock=self.clock,
+                clock=hold.stamp,
             )
             settings = base.merged(next(p.data for p in received if p.key == "settings"))
             job.at("calendar")
             calendar = self._calendar(league, settings, fetch, today)
             job.at("pairs")
             weeks = self._unpaired(league, base, received, calendar, today)
-            received += public.pairings_parts(league, weeks, fetch, step=job.at, clock=self.clock)
+            received += public.pairings_parts(league, weeks, fetch, step=job.at, clock=hold.stamp)
             job.at("lineups")
             received += (
                 public.lineup_parts(
@@ -1711,7 +1807,7 @@ class SeasonService:
                     self._lineup_days(league, base.my_team_id, calendar, today),
                     fetch,
                     step=job.at,
-                    clock=self.clock,
+                    clock=hold.stamp,
                 )
                 if base.my_team_id is not None
                 else []
@@ -1729,6 +1825,9 @@ class SeasonService:
             status, error = "failed", str(exc)
         except public.PrivateLeague as exc:
             status, error = "private", str(exc)
+        except public.RateLimited as exc:
+            limited = exc
+            status, error = "failed", self._limited(job, hold, exc)
         except (public.FetchError, pages.PageError) as exc:
             status, error = "failed", str(exc)
         except HTTPException as exc:
@@ -1737,11 +1836,33 @@ class SeasonService:
             status, error = "failed", f"{type(exc).__name__}: {exc}"
         finally:
             # The total counted every players page; the pool may have ended sooner. A job the
-            # deadline already ended keeps that end (#166).
+            # deadline already ended keeps that end (#166). Only the rate limit keeps the pages
+            # read for the next refresh (#180).
             done = {"step": "done", "total": job.done} if status == "done" else {}
-            if job.end(status, error, **done):
+            if limited is not None:
+                kept = self.held[league] = hold.kept()
+                done |= {
+                    "rate_limited": True,
+                    "retry_after": limited.retry_after,
+                    "held": len(kept.earlier),
+                }
+            if job.end(status, error, resumed=len(hold.taken), **done):
                 log_refresh(self.data_dir, job)
         return job
+
+    def _limited(self, job: RefreshJob, hold: Hold, exc: public.RateLimited) -> str:
+        """The error of a refresh Yahoo's rate limit ended: the answer, where the job got to and
+        the pages held for the next one, until when on the Mac's clock (#180)."""
+        why = f"HTTP {exc.status}" if exc.status else "its reads paused"
+        kept = hold.kept()
+        until = kept.until()
+        held = (
+            f"{len(kept.earlier)} pages held until {until.astimezone(self.local_tz):%H:%M}"
+            if until is not None
+            else "no pages held"
+        )
+        wait = f"; read again in {math.ceil((exc.retry_after or 0) / 60)} min"
+        return f"rate limited by Yahoo ({why}) at {job.step} {job.done}/{job.total}; {held}{wait}"
 
     def _lineup_days(
         self, league: str, team: int | None, calendar: Calendar | None, today: date
@@ -1829,7 +1950,9 @@ class SeasonService:
     def run_extras(self, job: RefreshJob) -> RefreshJob:
         try:
             today = nba_today(self.clock())
-            fetch = self.fetch_factory()
+            # The extension's page posts start these reads: never paced with, nor refused by,
+            # the public refreshes' Yahoo limit (#180).
+            fetch = public.unpaced(self.fetch_factory())
             calendar = self._cached_calendar()
             self._save_with_schedule(job.league, [], calendar, fetch, today)
             job.step = "box scores"
@@ -2314,6 +2437,8 @@ def register(
             service.expire(job)
         if job.status == "private":
             raise HTTPException(409, job.error)
+        if job.status == "failed" and job.rate_limited:
+            raise HTTPException(503, job.error, headers=retry_after(job.retry_after))
         if job.status == "failed":
             raise HTTPException(502, job.error)
         return {"refresh": job.to_dict(), "season": service.summary(league)}
