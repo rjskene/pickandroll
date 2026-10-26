@@ -428,6 +428,27 @@ def test_the_lineup_route_recommends_each_day_and_counts_what_yahoo_loses(client
     assert client.get(f"/seasons/{LEAGUE}/lineup", params={"week": 9}).status_code == 404
 
 
+def test_a_player_held_now_but_benched_on_an_earlier_days_page_leaves_the_lineup_alone(client):
+    """#196: Jakob Poeltl (healthy, his team plays Wednesday) sits in IL in the snapshot and on
+    the bench of Tuesday's page: his games ahead are in the payload's playing days, and the
+    recommendation is the active roster's alone."""
+    client.fake.team_pages[4] = moved(fixture("team4.html"), {"Jakob Poeltl": "IL"})
+    lineup_league(client, **{"2026-10-20": moved(fixture("team4.html"), {"Jakob Poeltl": "BN"})})
+    v = client.get(f"/seasons/{LEAGUE}").json()
+    held = next(s["player"]["yahoo_id"] for s in v["roster"] if s["slot"] == "IL")
+    r = client.get(f"/seasons/{LEAGUE}/lineup")
+    assert r.status_code == 200, r.text
+    days = {d["date"]: d for d in r.json()["days"]}
+    assert {"slot": "BN", "player": held} in days["2026-10-20"]["yahoo"]["slots"]
+    ahead = [d for d in days.values() if not d["past"]]
+    # He plays the days ahead, as the compare counts him, and is never recommended nor benched.
+    assert held in days["2026-10-21"]["playing"]
+    for d in ahead:
+        assert held not in {x["player"] for x in d["recommended"]} and held not in d["bench"]
+    r = client.get(f"/seasons/{LEAGUE}/lineup/steps")
+    assert r.status_code == 200, r.text
+
+
 def test_a_held_player_whose_status_cleared_is_the_first_thing_said(client):
     """Paul Reed (healthy) sits in an IL slot: Yahoo refuses every add until he is activated."""
     client.fake.team_pages[4] = moved(fixture("team4.html"), {"Paul Reed": "IL"})
