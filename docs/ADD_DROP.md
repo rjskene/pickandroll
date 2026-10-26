@@ -910,6 +910,16 @@ app opens its explanation through a portal on the page's body, above the columns
 so a scrolling column never clips it; it follows its button when a column scrolls and closes
 once the button leaves the column's view.
 
+The tag (#186). A flag's tag reads its level and score, "ADD 1.7" (the score cut to one decimal,
+never rounded up to a floor it has not reached), in the level's colour with the score in the
+text colour, over a thin meter that fills the score's share of `flag_config.max` and is ticked
+at each level's floor, a reached tick brighter and thicker. "Show under watch" on the Flags card,
+off by default and kept per browser, adds the players under the watch level (a score above zero,
+below its floor) after the flagged ones, with a dimmed "UNDER 0.6" tag there and on Waivers; an
+opportunity score alone is still no flag. The Flags card sorts by level, then by score, and
+shows the signals that spoke as chips; the legend draws the same tags, a dimmed "under" sample
+and a meter at the add floor.
+
 ## The trade evaluator
 
 The trading counterpart (from #79), built on the same data layer and objective. Given a

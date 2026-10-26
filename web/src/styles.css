@@ -398,7 +398,7 @@ table.keepers tr.err td { background: rgba(239, 107, 107, 0.14); }
 .popover b { color: #ffffff; font-weight: 600; }
 
 /* tags, ties and the category strip */
-.tag { display: inline-block; padding: 0 6px; border-radius: 4px; border: 1px solid currentColor; font-family: var(--display); font-size: 11px; font-weight: 600; letter-spacing: 0.06em; line-height: 16px; text-transform: uppercase; vertical-align: middle; }
+.tag { display: inline-block; padding: 0 6px; border-radius: 4px; border: 1px solid currentColor; font-family: var(--display); font-size: 11px; font-weight: 600; letter-spacing: 0.06em; line-height: 16px; text-transform: uppercase; vertical-align: middle; white-space: nowrap; }
 .tag.bad { color: var(--bad); background: rgba(239, 107, 107, 0.12); }
 .tag.good { color: var(--good); background: rgba(61, 220, 132, 0.12); }
 .tag.accent { color: var(--accent); background: rgba(245, 185, 66, 0.12); }
@@ -485,6 +485,25 @@ tr.tie td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
 /* The breakout flag's breakdown under a row (#113): four 0-to-1 bars with their evidence, then the sum against the levels. */
 .flag-btn { padding: 0; border: 0; background: none; cursor: pointer; line-height: 0; }
 .flag-btn[aria-expanded="true"] .tag { box-shadow: 0 0 0 1px currentColor; }
+/* The flag's tag (#186): level and score in the level's tone, the score in the text colour, over a
+   thin meter of the score ticked at the level floors; a reached tick is brighter and thicker. */
+.flag-tag { display: inline-flex; flex-direction: column; gap: 2px; vertical-align: middle; line-height: normal; }
+.tag .score { margin-left: 3px; color: var(--text); font-family: var(--body); font-weight: 500; letter-spacing: 0; }
+.tag.under { color: var(--dim); border-color: var(--line-2); background: none; }
+.tag.under .score { color: var(--muted); }
+.flag-meter { position: relative; display: block; height: 3px; border-radius: 2px; background: var(--line-2); }
+.flag-meter > span { position: absolute; inset: 0 auto 0 0; border-radius: 2px; }
+.flag-meter.good > span { background: var(--good); }
+.flag-meter.accent > span { background: var(--accent); }
+.flag-meter.tie > span { background: var(--muted); }
+.flag-meter.under > span { background: var(--dim); }
+.flag-meter > i { position: absolute; top: -1px; bottom: -1px; width: 1px; margin-left: -0.5px; background: var(--dim); }
+.flag-meter > i.on { top: -2px; bottom: -2px; width: 2px; margin-left: -1px; background: var(--text); }
+.flag-watch { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+td.sigs { white-space: normal; }
+.sig-chip { display: inline-block; margin: 1px 4px 1px 0; padding: 0 5px; border: 1px solid var(--line-2); border-radius: 8px; font-size: 11px; line-height: 15px; color: var(--muted); white-space: nowrap; }
+.flag-sample { display: flex; align-items: center; gap: 10px; }
+.flag-sample .flag-tag { flex: none; }
 .flag-btn:focus-visible { outline: none; }
 .flag-btn:focus-visible .tag { outline: 2px solid var(--accent); outline-offset: 1px; }
 /* The flags legend (#185): the levels as the table draws them, then the signals. */
@@ -502,7 +521,7 @@ tr.breakdown > td { padding: 0; white-space: normal; background: var(--panel); }
 .fb-bar { position: relative; height: 6px; border-radius: 3px; background: var(--line-2); }
 .fb-bar > span { position: absolute; inset: 0 auto 0 0; border-radius: 3px; background: var(--accent); }
 .fb-bar > i { position: absolute; top: -3px; width: 2px; height: 12px; margin-left: -1px; background: var(--dim); }
-.fb-bar > i.on { background: var(--text); }
+.fb-bar > i.on { width: 3px; margin-left: -1.5px; background: var(--text); }
 /* A phone: the evidence and the sum's line under the bar, the move button on a line of its own. */
 @media (max-width: 600px) {
   .fb-signal, .fb-sum { grid-template-columns: 84px minmax(0, 1fr) 34px; row-gap: 2px; }

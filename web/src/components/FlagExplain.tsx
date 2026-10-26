@@ -1,9 +1,11 @@
 import { useLayoutEffect, useRef } from "react";
 import type { FlagConfig, FlagInputs, FlagLevel, PlayerFlag } from "../api";
-import { FLAG_SHORT, FLAG_TONE, flagBreakdown, flagLegend, flagTitle } from "../season";
+import { FLAG_SHORT, FLAG_TONE, flagBreakdown, flagLegend, flagMeter, flagScore, flagTag, flagTitle } from "../season";
 import Info from "./Info";
 
-/** A level as the table draws it: its short label in its tone. */
+const pct = (x: number) => `${Math.round(Math.min(1, Math.max(0, x)) * 1000) / 10}%`;
+
+/** A level as the table draws it: its name in its tone. */
 export function LevelTag({ level, title }: { level: FlagLevel; title?: string }) {
   return (
     <span className={`tag ${FLAG_TONE[level]}`} title={title}>
@@ -12,10 +14,35 @@ export function LevelTag({ level, title }: { level: FlagLevel; title?: string })
   );
 }
 
-/** A breakout flag's level as a tag (W, A, M+), its evidence on hover; nothing under watch. */
-export function FlagTag({ f, cfg }: { f: PlayerFlag | undefined; cfg: FlagConfig | undefined }) {
-  if (!f?.level) return null;
-  return <LevelTag level={f.level} title={flagTitle(f, cfg)} />;
+/** The score against the level floors (#186): a thin bar filling the score's share of the most
+ * the signals add up to, ticked at each floor, a reached tick brighter and thicker. */
+export function FlagMeter({ score, cfg, tone }: { score: number; cfg: FlagConfig | undefined; tone: string }) {
+  const m = flagMeter(score, cfg);
+  return (
+    <span className={`flag-meter ${tone}`} role="meter" aria-label={`the flag's score, 0 to ${m.max}`} aria-valuemin={0} aria-valuemax={m.max} aria-valuenow={score}>
+      <span style={{ width: pct(m.fill) }} />
+      {m.ticks.map((t) => (
+        <i key={t.level} className={t.reached ? "on" : undefined} style={{ left: pct(t.at) }} />
+      ))}
+    </span>
+  );
+}
+
+/** A breakout flag's tag (#186): its level and score, "ADD 1.7", in the level's tone with the
+ * score in the text colour, over its meter; the evidence on hover. A player under watch shows a
+ * dimmed "UNDER 0.6" only with ``watch`` on; opportunity alone shows nothing. */
+export function FlagTag({ f, cfg, watch = false }: { f: PlayerFlag | undefined; cfg: FlagConfig | undefined; watch?: boolean }) {
+  const t = flagTag(f, watch);
+  if (!t || !f) return null;
+  const tone = t.level ? FLAG_TONE[t.level] : "under";
+  return (
+    <span className="flag-tag" title={flagTitle(f, cfg)}>
+      <span className={`tag ${tone}`}>
+        {t.label} <span className="score">{t.score}</span>
+      </span>
+      <FlagMeter score={f.score} cfg={cfg} tone={tone} />
+    </span>
+  );
 }
 
 /** The breakout flag's legend behind an "i" (#113, #185): the levels lowest first, each as the
@@ -57,8 +84,29 @@ export function FlagInfo({
               <td>{l.means}</td>
             </tr>
           ))}
+          <tr className="dim">
+            <td>
+              <span className="tag under">under</span>
+            </td>
+            <td>under watch</td>
+            <td className="num">below {x.under.below}</td>
+            <td>{x.under.means}</td>
+          </tr>
         </tbody>
       </table>
+      {x.sample && (
+        <span className="flag-sample">
+          <span className="flag-tag">
+            <span className={`tag ${FLAG_TONE[x.sample.level]}`}>
+              {FLAG_SHORT[x.sample.level]} <span className="score">{flagScore(x.sample.score)}</span>
+            </span>
+            <FlagMeter score={x.sample.score} cfg={cfg} tone={FLAG_TONE[x.sample.level]} />
+          </span>
+          <span className="dim">
+            The tag reads the level and the score, over a meter of the score up to {cfg.max} ticked at each floor; a tick the score reaches is brighter and thicker.
+          </span>
+        </span>
+      )}
       <span className="dim">{x.scale} Four signals:</span>
       {x.signals.map((sg) => (
         <span key={sg.key}>

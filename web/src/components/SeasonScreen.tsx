@@ -38,6 +38,7 @@ import {
   flagLevels,
   flagOf,
   flagSignals,
+  flagTag,
   flagTitle,
   forText,
   gainLabel,
@@ -65,6 +66,7 @@ import {
   playersById,
   projectedTotals,
   POSITIONS,
+  readWatch,
   recordLabel,
   refreshNote,
   rosHeadTitle,
@@ -86,6 +88,7 @@ import {
   weekLabel,
   weekResult,
   weekTone,
+  writeWatch,
   type AvailableFilter,
   type AvailableSort,
   type AvailableSortKey,
@@ -146,6 +149,7 @@ export default function SeasonScreen({ league, onBack, onProgress }: { league: s
     },
   });
   const now = useNow(30_000);
+  const [watch, setWatch] = useShowWatch();
   const s = season.data;
   const running = isRefreshing(s) || refresh.isPending;
   const [chosen, setSystem] = useState<ProjectionSystem | null>(null);
@@ -283,7 +287,19 @@ export default function SeasonScreen({ league, onBack, onProgress }: { league: s
         return {
           note: flagCount(s),
           action: <FlagInfo cfg={s.flag_config} inputs={s.flag_inputs} now={now} align="right" label="how flags work" />,
-          body: <Flags s={s} m={moves.data} mh={mh} now={now} onPick={pick} open={breakdown?.where === "flags" ? breakdown.id : null} onToggle={(id) => toggleBreakdown("flags", id)} />,
+          body: (
+            <Flags
+              s={s}
+              m={moves.data}
+              mh={mh}
+              now={now}
+              onPick={pick}
+              open={breakdown?.where === "flags" ? breakdown.id : null}
+              onToggle={(id) => toggleBreakdown("flags", id)}
+              watch={watch}
+              setWatch={setWatch}
+            />
+          ),
         };
       case "roster":
         return { note: s.my_team?.name, body: <Roster rows={s.roster} w={s.week_projection} /> };
@@ -397,6 +413,7 @@ export default function SeasonScreen({ league, onBack, onProgress }: { league: s
                   onToggleFlag={(id) => toggleBreakdown("waivers", id)}
                   onKeep={showStrategy}
                   now={now}
+                  watch={watch}
                 />
               </div>
               <Halves d={panel} cards={SEASON_CARDS} face={face} keep={["trade"]} />
@@ -426,6 +443,24 @@ export default function SeasonScreen({ league, onBack, onProgress }: { league: s
       )}
     </main>
   );
+}
+
+/** The "show under watch" toggle (#186), kept per browser; it lasts the page when the browser
+ * keeps nothing. */
+function useShowWatch(): [boolean, (on: boolean) => void] {
+  const store = () => {
+    try {
+      return window.localStorage;
+    } catch {
+      return null;
+    }
+  };
+  const [on, setOn] = useState(() => readWatch(store()));
+  const set = useCallback((v: boolean) => {
+    setOn(v);
+    writeWatch(store(), v);
+  }, []);
+  return [on, set];
 }
 
 /** Where a flag breakdown is open: under the Flags card's row or the Waivers row of a player. */
@@ -506,6 +541,7 @@ function Waivers({
   onToggleFlag,
   onKeep,
   now,
+  watch,
 }: {
   s: SeasonView;
   system: ProjectionSystem;
@@ -525,6 +561,8 @@ function Waivers({
   /** Opens the Strategy card, at the keep rule's players. */
   onKeep: () => void;
   now: number;
+  /** The "show under watch" toggle (#186): the players under watch get their dimmed tag. */
+  watch: boolean;
 }) {
   const w = s.week_projection;
   const cats = s.settings.cats;
@@ -700,7 +738,7 @@ function Waivers({
               {th(
                 "flag",
                 "Flag",
-                "the breakout flag: W watch, A add, M+ must-add, from four signals (adds surge, minutes trend, value gap, opportunity); click a row's tag for the breakdown",
+                "the breakout flag: its level (watch, add, must-add) and score over a meter ticked at the level floors, from four signals (adds surge, minutes trend, value gap, opportunity); click a row's tag for the breakdown",
                 false,
                 <FlagInfo cfg={s.flag_config} inputs={s.flag_inputs} now={now} name="how flags work" />,
               )}
@@ -719,7 +757,8 @@ function Waivers({
               const cand = m?.candidates[String(id)];
               const best = bestMove(cand, mh);
               const f = flagOf(s, id);
-              const open = flagOpen === id && Boolean(f?.level);
+              const tag = flagTag(f, watch);
+              const open = flagOpen === id && tag != null;
               return (
                 <Fragment key={id}>
                   <tr
@@ -735,7 +774,7 @@ function Waivers({
                     <td className="num">{games(r, "week") ?? ""}</td>
                     <td className="num dim">{games(r, "next3") ?? ""}</td>
                     <td>
-                      {f?.level && (
+                      {f && tag && (
                         <button
                           className="flag-btn"
                           aria-expanded={open}
@@ -746,7 +785,7 @@ function Waivers({
                             onToggleFlag(id);
                           }}
                         >
-                          <FlagTag f={f} cfg={s.flag_config} />
+                          <FlagTag f={f} cfg={s.flag_config} watch={watch} />
                         </button>
                       )}
                     </td>
@@ -1065,6 +1104,8 @@ function Flags({
   onPick,
   open,
   onToggle,
+  watch,
+  setWatch,
 }: {
   s: SeasonView;
   m: MovesPayload | undefined;
@@ -1073,10 +1114,16 @@ function Flags({
   onPick: (m: MoveKey) => void;
   open: number | null;
   onToggle: (id: number) => void;
+  watch: boolean;
+  setWatch: (on: boolean) => void;
 }) {
-  const rows = flagged(s);
+  const rows = flagged(s, { watch });
+  const lowest = s.flag_config ? Math.min(...s.flag_config.levels.map((l) => l.floor)) : null;
   return (
     <>
+      <label className="small muted flag-watch" title={`the players under the watch level${lowest != null ? ` (a score above 0, below ${lowest})` : ""}, dimmed, after the flagged ones; kept in this browser`}>
+        <input type="checkbox" checked={watch} onChange={(e) => setWatch(e.target.checked)} /> show under watch
+      </label>
       {rows.length === 0 ? (
         <p className="muted small">No available player is flagged.</p>
       ) : (
@@ -1101,12 +1148,18 @@ function Flags({
                     onClick={() => onToggle(id)}
                   >
                     <td>
-                      <FlagTag f={flag} cfg={s.flag_config} />
+                      <FlagTag f={flag} cfg={s.flag_config} watch={watch} />
                     </td>
                     <td className="strong">
                       {row.player.name} <span className="dim">{row.player.nba_team}</span>
                     </td>
-                    <td className="dim">{flagSignals(flag).map((k) => FLAG_SIGNAL_NAME[k]).join(", ")}</td>
+                    <td className="sigs">
+                      {flagSignals(flag).map((k) => (
+                        <span key={k} className="sig-chip">
+                          {FLAG_SIGNAL_NAME[k]}
+                        </span>
+                      ))}
+                    </td>
                   </tr>
                   {shown && (
                     <tr className="breakdown">

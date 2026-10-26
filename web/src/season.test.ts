@@ -140,7 +140,14 @@ import {
   FLAG_READS,
   FLAG_SHORT,
   FLAG_TONE,
+  FLAG_UNDER_MEANS,
   flagged,
+  flagMeter,
+  flagScore,
+  flagTag,
+  readWatch,
+  WATCH_KEY,
+  writeWatch,
   flagInputsNote,
   flagLegend,
   flagLevels,
@@ -449,8 +456,8 @@ const CONFIG: FlagConfig = {
 
 test("a flag's tag, its signals loudest first and its evidence on hover", () => {
   const f = flag("add", 1, 0.75);
-  assert.equal(FLAG_SHORT.add, "A");
-  assert.equal(FLAG_SHORT["must-add"], "M+");
+  assert.equal(FLAG_SHORT.add, "add");
+  assert.equal(FLAG_SHORT["must-add"], "must-add");
   assert.deepEqual(flagSignals(flag("watch", 0.3, 0, 0, 0.5)), ["opportunity", "surge"]);
   // The thresholds are the API's, so the hover follows a retune; without them it names none.
   assert.equal(levelsLine(CONFIG), "watch 0.8, add 1.5, must-add 2.2");
@@ -597,6 +604,97 @@ test("the Flags card counts the flagged players by level, the highest first", ()
   assert.equal(flagCounts(flagLevels(s)), "1 must-add · 1 add · 2 watch");
   // An empty level is left out.
   assert.equal(flagCounts(flagLevels({ available: [p(3)], flags: { "3": flag("watch", 0.9) } })), "1 watch");
+});
+
+test("the tag reads the level and the score cut to one decimal; under watch only with the toggle on", () => {
+  assert.deepEqual(flagTag(flag("add", 1, 0.73)), { label: "add", score: "1.7", level: "add" });
+  assert.deepEqual(flagTag(flag("must-add", 1, 1, 0.4)), { label: "must-add", score: "2.4", level: "must-add" });
+  // A 1.46 is a watch under the 1.5 floor: it never reads as 1.5.
+  assert.equal(flagScore(1.46), "1.4");
+  assert.equal(flagScore(1.5), "1.5");
+  assert.equal(flagScore(0.3 + 0.2), "0.5");
+  // Under watch: a dimmed "under" with the toggle on, nothing without it.
+  const under = flag(null, 0.42, 0.2);
+  assert.equal(flagTag(under), null);
+  assert.deepEqual(flagTag(under, true), { label: "under", score: "0.6", level: null });
+  // Opportunity alone: the server scores it 0, so never a tag, toggle or not.
+  assert.equal(flagTag({ ...flag(null, 0, 0, 0, 0.5), score: 0 }, true), null);
+  assert.equal(flagTag(undefined, true), null);
+});
+
+test("the tag's meter fills the score's share of the most and ticks each floor, the API's numbers", () => {
+  // TUNED: floors 1.15, 2.05, 3.1 of 5.
+  const m = flagMeter(2.4, TUNED);
+  assert.equal(m.fill, 2.4 / 5);
+  assert.equal(m.max, 5);
+  assert.deepEqual(
+    m.ticks.map((t) => [t.level, t.floor, t.at, t.reached]),
+    [
+      ["watch", 1.15, 1.15 / 5, true],
+      ["add", 2.05, 2.05 / 5, true],
+      ["must-add", 3.1, 3.1 / 5, false],
+    ],
+  );
+  // At a floor exactly, the tick is reached; the fill is clamped to the bar.
+  assert.equal(flagMeter(2.05, TUNED).ticks[1].reached, true);
+  assert.equal(flagMeter(6, TUNED).fill, 1);
+  assert.equal(flagMeter(-0.2, TUNED).fill, 0);
+  // Without the config: the four signals' most, and no ticks.
+  assert.deepEqual(flagMeter(1, undefined), { fill: 0.25, max: 4, ticks: [] });
+});
+
+test("the legend shows the levels' tags, a dimmed under-watch sample and a meter at the second floor", () => {
+  const x = flagLegend(TUNED, undefined, 0);
+  assert.deepEqual(x.under, { below: 1.15, means: FLAG_UNDER_MEANS });
+  assert.deepEqual(x.sample, { level: "add", score: 2.05 });
+  assert.deepEqual(
+    x.levels.map((l) => FLAG_SHORT[l.level]),
+    ["watch", "add", "must-add"],
+  );
+});
+
+test("the show-under-watch toggle is kept per browser, off by default and when storage fails", () => {
+  const kept = new Map<string, string>();
+  const store = { getItem: (k: string) => kept.get(k) ?? null, setItem: (k: string, v: string) => void kept.set(k, v) };
+  assert.equal(readWatch(store), false);
+  writeWatch(store, true);
+  assert.equal(kept.get(WATCH_KEY), "1");
+  assert.equal(readWatch(store), true);
+  writeWatch(store, false);
+  assert.equal(readWatch(store), false);
+  kept.set(WATCH_KEY, "junk");
+  assert.equal(readWatch(store), false);
+  // A browser that refuses storage: off, and a write that throws is swallowed.
+  const refuses = {
+    getItem: (): string | null => {
+      throw new Error("SecurityError");
+    },
+    setItem: () => {
+      throw new Error("QuotaExceededError");
+    },
+  };
+  assert.equal(readWatch(refuses), false);
+  assert.doesNotThrow(() => writeWatch(refuses, true));
+  assert.equal(readWatch(null), false);
+});
+
+test("the Flags card orders by level, then score, then name; under watch follows with the toggle on", () => {
+  const p = (n: number, name: string) => row(player(name, ["G"], { yahoo_id: n }));
+  const s = {
+    available: [p(1, "Ann"), p(2, "Bea"), p(3, "Cal"), p(4, "Dee"), p(5, "Eve"), p(6, "Fay"), p(7, "Gus")],
+    flags: {
+      "1": flag("watch", 0.9),
+      "2": flag("must-add", 2.3),
+      "3": flag("add", 1.6),
+      "4": flag("add", 1.9),
+      "5": flag(null, 0.5),
+      "6": flag("add", 1.6),
+      "7": { ...flag(null, 0, 0, 0, 0.5), score: 0 },
+    },
+  };
+  const names = (opts?: { watch?: boolean }) => flagged(s, opts).map((x) => x.row.player.name);
+  assert.deepEqual(names(), ["Bea", "Dee", "Cal", "Fay", "Ann"]);
+  assert.deepEqual(names({ watch: true }), ["Bea", "Dee", "Cal", "Fay", "Ann", "Eve"]);
 });
 
 test("the flagged players have a level, the highest first; a signal alone is not a flag", () => {
