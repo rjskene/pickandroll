@@ -47,6 +47,7 @@ import type {
   QueuePass,
   QueuePayload,
   Rates,
+  RoutinePass,
   ScorecardMove,
   ScorecardToDate,
   ScorecardWeek,
@@ -711,8 +712,10 @@ export function queueFoldLine(q: QueuePayload): string {
   const leagues = new Set(live.map((e) => e.league)).size;
   const unsolved = q.leagues.filter((l) => l.status === "not_solved").length;
   const failed = q.leagues.filter((l) => l.status === "failed").length;
+  const running = q.active ? `pass running · ${passLeague(q.active)} of ${q.active.leagues.total}` : null;
   return [
     `${live.length} queued${live.length ? ` in ${leagues} league${leagues === 1 ? "" : "s"}` : ""}`,
+    running,
     struck ? `${struck} struck` : null,
     done ? `${done} executed` : null,
     passTally(q.passes) || null,
@@ -722,6 +725,72 @@ export function queueFoldLine(q: QueuePayload): string {
   ]
     .filter(Boolean)
     .join(" · ");
+}
+
+// ---------------------------------------------------------------- a routine's pass, live (#201)
+const PASS_RESULT_WORDS: Record<string, string> = {
+  would_claim: "would claim",
+  claimed: "claimed",
+  skipped: "skipped",
+  gone: "gone",
+  failed: "failed",
+  would_set: "would set",
+  set: "set",
+  nothing_to_do: "nothing to do",
+};
+const PASS_TRIGGER_WORDS: Record<RoutinePass["trigger"], string> = { routine: "Morning", routine_late: "Late" };
+/** How long a closed pass's line stays on the Queue screen. */
+export const PASS_END_SHOWN_MS = 10 * 60_000;
+
+/** The league a running pass is on, by its place in the pass's order: the one it is opening, else
+ * the count done. */
+export function passLeague(p: Pick<RoutinePass, "leagues" | "current">): number {
+  const at = p.current ? p.leagues.order.indexOf(p.current.league) : -1;
+  return at >= 0 ? at + 1 : p.leagues.done;
+}
+
+/** "6 would claim, 2 skipped": a pass's results, the counts above zero in the record's order. */
+export function passResults(p: Pick<RoutinePass, "results">, sep = ", "): string {
+  return Object.entries(p.results)
+    .filter(([, n]) => n)
+    .map(([k, n]) => `${n} ${PASS_RESULT_WORDS[k] ?? k}`)
+    .join(sep);
+}
+
+/** The Queue screen's bar while a routine's pass runs: "Morning moves pass running · league 5 of
+ * 12 · 8 of 20 checked · 6 would claim, 2 skipped"; "Late lineup pass running · 7 of 12 team
+ * pages". */
+export function passBar(p: RoutinePass): string {
+  const head = `${PASS_TRIGGER_WORDS[p.trigger]} ${p.kind} pass running`;
+  const at = passLeague(p);
+  const parts =
+    p.kind === "moves"
+      ? [`league ${at} of ${p.leagues.total}`, p.entries ? `${p.entries.done}${p.entries.total != null ? ` of ${p.entries.total}` : ""} checked` : null]
+      : [`${at} of ${p.leagues.total} team pages`];
+  return [head, ...parts, passResults(p) || null].filter(Boolean).join(" · ");
+}
+
+/** The line a closed pass leaves on the Queue screen for ten minutes: "moves pass done 9:35 AM CT ·
+ * 13 would claim · 7 skipped", "… stale …" for one that went quiet; blank after. */
+export function passEndLine(p: RoutinePass | null | undefined, now: number): string {
+  if (!p || !p.ended || !p.end) return "";
+  const ended = Date.parse(p.ended);
+  if (Number.isNaN(ended) || now - ended > PASS_END_SHOWN_MS) return "";
+  return [`${p.kind} pass ${p.end} ${centralClock(p.ended)}`, passResults(p, " · ") || null, p.summary].filter(Boolean).join(" · ");
+}
+
+/** Whether a running pass is checking ``e`` now: it is the entry being opened, and no post about it
+ * has landed since the opening. */
+export function checkingNow(e: Pick<QueueEntry, "id" | "pass">, p: RoutinePass | null | undefined): boolean {
+  if (!p?.current?.entry || p.current.entry !== e.id) return false;
+  const since = Date.parse(p.current.since);
+  const at = e.pass?.at ? Date.parse(e.pass.at) : NaN;
+  return Number.isNaN(at) || at < since;
+}
+
+/** The Queue screen's and the landing's poll: every 3 s while a routine's pass runs, else a minute. */
+export function queuePoll(q: Pick<QueuePayload, "active"> | undefined): number {
+  return q?.active ? 3_000 : 60_000;
 }
 
 // ---------------------------------------------------------------- the Queue screen (#194)

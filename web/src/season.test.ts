@@ -22,6 +22,7 @@ import type {
   QueueLeague,
   QueuePass,
   QueuePayload,
+  RoutinePass,
   Rates,
   RosterRow,
   MovesSummary,
@@ -113,6 +114,12 @@ import {
   queueFloorLine,
   queueFlagWord,
   queueFoldLine,
+  passBar,
+  passEndLine,
+  passLeague,
+  passResults,
+  checkingNow,
+  queuePoll,
   queueMoveText,
   queueNamer,
   queueOrder,
@@ -1863,6 +1870,54 @@ test("the Queue screen orders the day's entries across the leagues, says why a l
   assert.equal(centralClock("2026-10-24T12:00:00Z"), "7:00 AM CT");
   assert.equal(centralClock("2026-12-01T13:00:00Z"), "7:00 AM CT");
   assert.equal(centralClock(null), "");
+});
+
+test("a routine's pass reads live: the league it is on, the entries checked, its results, and its end for ten minutes (#201)", () => {
+  const moves: RoutinePass = {
+    id: "2026-10-26:moves:1",
+    kind: "moves",
+    trigger: "routine",
+    started: "2026-10-26T14:14:00Z",
+    updated: "2026-10-26T14:20:00Z",
+    ended: null,
+    end: null,
+    leagues: { done: 4, total: 12, order: ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12"] },
+    entries: { done: 8, total: 20 },
+    current: { league: "5", entry: "e5", since: "2026-10-26T14:19:30Z" },
+    results: { would_claim: 6, claimed: 0, skipped: 2, gone: 0, failed: 0 },
+    summary: null,
+  };
+  // The league is the one being opened, by its place in the order; else the count done.
+  assert.equal(passLeague(moves), 5);
+  assert.equal(passLeague({ ...moves, current: null }), 4);
+  assert.equal(passResults(moves), "6 would claim, 2 skipped");
+  assert.equal(passBar(moves), "Morning moves pass running · league 5 of 12 · 8 of 20 checked · 6 would claim, 2 skipped");
+  assert.equal(passBar({ ...moves, trigger: "routine_late", entries: { done: 3, total: null }, results: { would_claim: 0, claimed: 0, skipped: 0, gone: 0, failed: 0 } }), "Late moves pass running · league 5 of 12 · 3 checked");
+  const lineup: RoutinePass = { ...moves, id: "2026-10-26:lineup:1", kind: "lineup", entries: null, current: { league: "7", entry: null, since: moves.updated }, results: { would_set: 3, set: 0, nothing_to_do: 3, skipped: 0, failed: 0 } };
+  assert.equal(passBar(lineup), "Morning lineup pass running · 7 of 12 team pages · 3 would set, 3 nothing to do");
+  // Closed: its end line for ten minutes after it ended, then nothing.
+  const done: RoutinePass = { ...moves, ended: "2026-10-26T14:35:00Z", end: "done", current: null, results: { would_claim: 13, claimed: 0, skipped: 7, gone: 0, failed: 0 } };
+  const ended = Date.parse("2026-10-26T14:35:00Z");
+  assert.equal(passEndLine(done, ended + 60_000), "moves pass done 9:35 AM CT · 13 would claim · 7 skipped");
+  assert.equal(passEndLine({ ...done, end: "stale", summary: null }, ended), "moves pass stale 9:35 AM CT · 13 would claim · 7 skipped");
+  assert.equal(passEndLine({ ...done, summary: "all 12 read" }, ended), "moves pass done 9:35 AM CT · 13 would claim · 7 skipped · all 12 read");
+  assert.equal(passEndLine(done, ended + 10 * 60_000 + 1), "");
+  assert.equal(passEndLine(null, ended), "");
+  assert.equal(passEndLine(moves, ended), "");
+  // An entry reads "checking…" while it is the one opened and no post about it landed since.
+  assert.equal(checkingNow({ id: "e5", pass: null }, moves), true);
+  assert.equal(checkingNow({ id: "e5", pass: { at: "2026-10-26T14:19:00Z", trigger: "routine", outcome: "skipped", reason: null, extension: null } }, moves), true);
+  assert.equal(checkingNow({ id: "e5", pass: { at: "2026-10-26T14:19:45Z", trigger: "routine", outcome: "would_claim", reason: null, extension: null } }, moves), false);
+  assert.equal(checkingNow({ id: "e4", pass: null }, moves), false);
+  assert.equal(checkingNow({ id: "e5", pass: null }, null), false);
+  // The poll: every 3 s while a pass runs, else a minute; the landing's line says it runs.
+  assert.equal(queuePoll({ active: moves }), 3_000);
+  assert.equal(queuePoll({ active: null }), 60_000);
+  assert.equal(queuePoll(undefined), 60_000);
+  const settings = { execute_time: "09:00", at: null, by: null, set: false };
+  const q: QueuePayload = { date: "2026-10-26", built: ["2026-10-26T11:00:00Z"], execute_time: null, leagues: [], entries: [], settings, stop: false, now: "2026-10-26T14:20:00Z" };
+  assert.equal(queueFoldLine({ ...q, active: moves }), "0 queued · pass running · 5 of 12 · executes from 09:00 CT");
+  assert.equal(queueFoldLine({ ...q, active: null }), "0 queued · executes from 09:00 CT");
 });
 
 test("the Queue screen's one switch covers every public league, the points ones too, and says what live does to each (#205)", () => {

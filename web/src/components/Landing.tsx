@@ -9,7 +9,7 @@ import DraftsDrawer, { type DrawerView } from "./DraftsDrawer";
 import ExecuteTime from "./ExecuteTime";
 import LeagueGrid from "./LeagueGrid";
 import { POOLED, rangeSum, recordLabel, scopeWeeks } from "../progress";
-import { queueFoldLine } from "../season";
+import { queueFoldLine, queuePoll } from "../season";
 import { useNow } from "./YahooSync";
 
 const LAYOUT_KEY = "pickandroll.layout";
@@ -143,7 +143,7 @@ function progressLine(p: ProgressPayload): string {
 /** The moves executor's queue today (#171) in one line, the day's execute time (#193) and the
  * Queue screen (#194), every league's entries and their veto in one view. */
 function QueueFold({ onOpen }: { onOpen: () => void }) {
-  const q = useQuery({ queryKey: ["queue"], queryFn: () => api.queue(), refetchInterval: 60_000 });
+  const q = useQuery({ queryKey: ["queue"], queryFn: () => api.queue(), refetchInterval: (query) => queuePoll(query.state.data) });
   return (
     <div className="fold">
       <span className="k">Queue</span>

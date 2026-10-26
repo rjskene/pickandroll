@@ -145,6 +145,10 @@ button.primary kbd { background: rgba(0, 0, 0, 0.18); border-color: rgba(0, 0, 0
 .qs-chip > button.link:hover { color: var(--accent); text-decoration: none; }
 .qs-facts { display: flex; flex-wrap: wrap; gap: 2px 10px; color: var(--muted); }
 .qs-modes { display: grid; gap: 2px; margin-top: 4px; }
+.qs-pass { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; margin-top: 4px; }
+.qs-bar { flex: 0 0 160px; height: 6px; border-radius: 3px; background: var(--line-2); overflow: hidden; }
+.qs-bar span { display: block; height: 100%; background: var(--accent); transition: width 0.4s; }
+.qs-chip.current { border-color: var(--accent); }
 .qs-modes .row { flex-wrap: wrap; gap: 4px 10px; }
 .mode-switch { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; min-width: 0; }
 .mode-switch .lv-note { margin: 0; text-align: right; }
