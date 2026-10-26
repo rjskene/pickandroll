@@ -172,6 +172,46 @@ page, from PR 2:
     CT: <reason>" (gone and failed alike), its trigger and extension on hover; else the countdown.
   - The head and the landing's Queue line add the tally ("13 would claim · 7 skipped · last pass
     9:35 AM CT"), and a chip adds "n would claim".
+
+  **A pass, live (#201).** A routine's pass is recorded while it runs, so the screen shows it:
+  - **The record.** `data/autopilot/passes/<date>.json` (the NBA day of the open) holds the day's
+    passes (`api/season_passes.py`), written whole under a lock like the queue. A pass is its
+    `id` (`<date>:<kind>:<n>`), kind (`moves` or `lineup`), trigger (`routine` or
+    `routine_late`), the leagues in the order the routine opens them, for a moves pass the
+    entries it will check, `started` and `updated`, `current` (the league and entry being
+    opened), the leagues done, each entry's (or a lineup pass's team page's) latest outcome, and
+    `ended`, `end` (`done` or `stale`) and the routine's `summary`.
+  - **The routine's three calls.**
+    - `POST /autopilot/passes {kind, trigger, leagues, entries?}` opens a pass. It is refused
+      (409) while a pass of the kind is open; a moves pass and a lineup pass may run together. The
+      private league in `leagues` is refused (409), an unknown one is not found (404).
+    - `POST /autopilot/passes/{id}/opening {league, entry?}` names what is opened now; a league
+      the pass did not name is refused.
+    - `POST /autopilot/passes/{id}/done {summary?}` closes it.
+    - Either call on a pass that is done or stale is refused (409), and an unknown id is not
+      found (404).
+  - **Stale is read, not timed.** A pass with no word (an open, an opening, a post given to it)
+    for 15 minutes reads as closed: `end: "stale"`, ended 15 minutes after its last word. No timer
+    runs; the next open of the day writes the stale end down.
+  - **The posts.** A post the league's log takes (`POST /seasons/{league}/autopilot/moves` or
+    `…/lineup`) is given to the open pass of its kind when the pass names the league: the league
+    done, each entry's latest outcome (`added` counts with `claimed`, as in #200), the pass's last
+    word now. A panel's post, a post the log refuses, and a post with no pass open are the log's
+    alone. The record changes nothing in what a post logs or answers, and a record that does not
+    read never fails a post.
+  - **The payload.** `active` is the newest open moves pass, else the newest open lineup pass,
+    else null: `{id, kind, trigger, started, leagues: {done, total, order}, entries: {done,
+    total} (a moves pass's; the total null without a list), current, results, …}`. `last_pass`
+    is the day's most recently closed pass. A lineup pass's results are its own counts (would set,
+    set, nothing to do, skipped, failed) and join no tally.
+  - **The screen.** While a pass runs the Queue screen and the landing's Queue line read every 3 s
+    (else every minute). Under the head a bar fills with the leagues done beside its words:
+    "Morning moves pass running · league 5 of 12 · 8 of 20 checked · 6 would claim, 2 skipped"
+    ("Late lineup pass running · 7 of 12 team pages · …"); the league being opened has an accent
+    border and says "opening the add page…" (or the team page); the entry being opened reads
+    "checking…" until a post about it lands, and every row takes its result through its `pass` as
+    it lands. For ten minutes after the pass closes the head says "moves pass done 9:35 AM CT · 13
+    would claim · 7 skipped" (or "stale"). The landing's Queue line adds "pass running · 5 of 12".
 - **The caps.** The league's add limit, each claim counted in the week of its clear date from
   the moment it is placed (a claim placed and not yet processed counts, won or not; the next
   build reads the adds used from the page and the transactions); the day's cap, the knob's
@@ -295,7 +335,7 @@ them.
 |---|---|---|
 | daily 05:00 | Basketball Monster exports, public refresh, breakout digest on #99 | yes (`breakout-digest-daily`) |
 | daily, after the refresh | the moves solve per league writes its decision-log entry (#125); the queue is built from the armed leagues' recommended sets; the lineup for today and tomorrow is set | phase 1, 2 |
-| daily 09:00 | the moves pass opens the due entries' add pages, less what the user struck (the day's execute time, 07:00 Central unless the user set another, has passed; the pass runs at 09:00 so a later setting still gets a morning pass); the late pass at 15:00 catches the rest | yes (`moves-morning-daily`; a league places its claims once the user switches it live, #171 PR 3) |
+| daily 09:00 | the moves pass opens the due entries' add pages, less what the user struck (the day's execute time, 07:00 Central unless the user set another, has passed; the pass runs at 09:00 so a later setting still gets a morning pass); the late pass at 15:00 catches the rest | yes (`moves-morning-daily`; a league places its claims once the user switches it live, #171 PR 3; the routine opens, names each opening and closes its pass record, #201) |
 | Monday 06:00 | the recorder writes last week (#97) | yes (`weekly-recorder-monday`) |
 | Monday, after the recorder | the scorecard (#126): last week and YTD, projected against actual, posted on #127 | phase 0 |
 | Monday, after the scorecard | the hill-climb step (section 6): the verdicts due and at most one change applied, the comment posted on #127 | yes (#152, `scripts/season.py monday`); the Monday routine runs it from 2026-10-26 |

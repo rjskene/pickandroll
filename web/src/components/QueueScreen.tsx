@@ -10,6 +10,7 @@ import {
   bestNamer,
   bidLabel,
   centralClock,
+  checkingNow,
   commonMode,
   dayLabel,
   gainLabel,
@@ -19,6 +20,8 @@ import {
   modesWord,
   movesLiveText,
   notQueued,
+  passBar,
+  passEndLine,
   passTitle,
   queueFlagWord,
   queueFloorLine,
@@ -26,6 +29,7 @@ import {
   queueMoveText,
   queueNamer,
   queueOrder,
+  queuePoll,
   queueStateText,
   queueStateTone,
   roomNote,
@@ -55,7 +59,7 @@ const SEASON_TITLE = "the move to the season's end in the scorer's units (fantas
  * league's recommended set is listed as suggestions to make by hand, from its best route. */
 export default function QueueScreen({ onBack, onOpenLeague }: { onBack: () => void; onOpenLeague: (league: string) => void }) {
   const queryClient = useQueryClient();
-  const q = useQuery({ queryKey: ["queue"], queryFn: () => api.queue(), refetchInterval: 60_000 });
+  const q = useQuery({ queryKey: ["queue"], queryFn: () => api.queue(), refetchInterval: (query) => queuePoll(query.state.data) });
   const seasons = useQuery({ queryKey: ["seasons"], queryFn: api.seasons, refetchInterval: 60_000 });
   const now = useNow(30_000);
   const strike = useMutation({
@@ -100,6 +104,7 @@ export default function QueueScreen({ onBack, onOpenLeague }: { onBack: () => vo
               executes; strike a move to veto it.
             </p>
             <AllModes rows={p.leagues} title={title} />
+            <PassLine p={p} now={now} />
           </div>
           {p.leagues.length > 0 && (
             <div className="qs-strip" aria-label="leagues">
@@ -115,6 +120,25 @@ export default function QueueScreen({ onBack, onOpenLeague }: { onBack: () => vo
       )}
     </main>
   );
+}
+
+/** A routine's pass while it runs (#201): a bar of the leagues done with its words; for ten minutes
+ * after it closes, its end line; else nothing. The numbers are all in the words. */
+function PassLine({ p, now }: { p: QueuePayload; now: number }) {
+  const a = p.active;
+  if (a) {
+    const pct = a.leagues.total ? Math.round((100 * a.leagues.done) / a.leagues.total) : 0;
+    return (
+      <div className="qs-pass" role="status">
+        <div className="qs-bar" aria-hidden="true">
+          <span style={{ width: `${pct}%` }} />
+        </div>
+        <span>{passBar(a)}</span>
+      </div>
+    );
+  }
+  const end = passEndLine(p.last_pass, now);
+  return end ? <p className={p.last_pass?.end === "stale" ? "accent small" : "muted small"}>{end}</p> : null;
 }
 
 /** Refetch the queue and every league's Queue card after a mode switch. */
@@ -195,6 +219,7 @@ function Chip({ row, p, title, onOpen }: { row: QueueLeague; p: QueuePayload; ti
   const would = mine.filter((e) => !e.struck && !e.outcome && e.pass?.outcome === "would_claim").length;
   const adds = addsThisWeek(row, p.date);
   const why = stripReason(row, p.entries);
+  const opening = p.active?.current?.league === row.league ? p.active : null;
   const facts = [
     row.status === "private" ? "suggestions only" : null,
     row.scoring === "points" ? "points" : null,
@@ -204,11 +229,12 @@ function Chip({ row, p, title, onOpen }: { row: QueueLeague; p: QueuePayload; ti
     would ? `${would} would claim` : null,
   ].filter(Boolean);
   return (
-    <div className={`qs-chip ${row.status === "private" ? "private" : ""}`}>
+    <div className={`qs-chip ${row.status === "private" ? "private" : ""} ${opening ? "current" : ""}`}>
       <button className="link" onClick={onOpen} title="open the league">
         {title}
       </button>
       {row.status !== "private" && <ChipMode row={row} title={title} />}
+      {opening && <span className="accent">{opening.kind === "moves" ? "opening the add page…" : "opening the team page…"}</span>}
       <span className="qs-facts">
         {facts.map((f) => (
           <span key={f}>{f}</span>
@@ -268,9 +294,13 @@ function Today({ p, now, title, strike, onOpenLeague }: { p: QueuePayload; now: 
                   <td>{queueFlagWord(e.flag)}</td>
                   <td title={e.bid.reason}>{bidLabel(e)}</td>
                   <td>{centralClock(e.executes_at)}</td>
-                  <td className={queueStateTone(e) || (e.struck ? "dim" : "muted")} title={passTitle(e) || undefined}>
-                    {queueStateText(e, now)}
-                  </td>
+                  {checkingNow(e, p.active) ? (
+                    <td className="accent">checking…</td>
+                  ) : (
+                    <td className={queueStateTone(e) || (e.struck ? "dim" : "muted")} title={passTitle(e) || undefined}>
+                      {queueStateText(e, now)}
+                    </td>
+                  )}
                   <td className="acts">
                     <Veto e={e} strike={strike} />
                   </td>

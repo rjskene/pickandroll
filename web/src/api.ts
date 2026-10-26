@@ -1344,6 +1344,30 @@ export interface QueuePayload {
   names?: Record<string, string>;
   /** The day's pass results (#200); null before any pass names an entry. */
   passes?: PassTally | null;
+  /** The routine's pass while it runs (#201): the moves pass when both kinds run; null when none
+   * runs. Absent from a server before it. */
+  active?: RoutinePass | null;
+  /** The day's most recently closed pass, done or stale (#201). */
+  last_pass?: RoutinePass | null;
+}
+
+/** A routine's execute pass as the record keeps it (#201): the leagues done of those it named (in
+ * the order named), a moves pass's entries checked of those named (the total null without a list;
+ * a lineup pass has none), the league and entry it is opening, and its results, each entry (or
+ * team page) by its latest post. */
+export interface RoutinePass {
+  id: string;
+  kind: "moves" | "lineup";
+  trigger: "routine" | "routine_late";
+  started: string;
+  updated: string;
+  ended: string | null;
+  end: "done" | "stale" | null;
+  leagues: { done: number; total: number; order: string[] };
+  entries: { done: number; total: number | null } | null;
+  current: { league: string; entry: string | null; since: string } | null;
+  results: Record<string, number>;
+  summary: string | null;
 }
 
 /** An execute pass in one league, as its log keeps it. */

@@ -113,7 +113,7 @@ from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta, tzinfo
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi import Path as FastPath
@@ -157,6 +157,7 @@ from . import (
     season_matchup,
     season_moves,
     season_outlook,
+    season_passes,
     season_progress,
     season_queue,
     season_record,
@@ -931,11 +932,13 @@ class SeasonService:
             **run.model_dump(mode="json", by_alias=True),
         }
         try:
-            return season_autopilot.append_run(
+            out = season_autopilot.append_run(
                 self.data_dir, league, record, nba_today(self.clock())
             )
         except season_autopilot.LogError as exc:
             raise HTTPException(409, str(exc)) from exc
+        self._attribute("lineup", league, run.trigger, {league: run.outcome})
+        return out
 
     def set_lineup_mode(self, league: str, mode: str) -> dict[str, Any]:
         """The dashboard's mode switch (#170): the private league is refused, and ``live``
@@ -988,8 +991,12 @@ class SeasonService:
         latest = {
             k: v for x in lines.values() for k, v in season_autopilot.latest_passes(x).items()
         }
+        passes = self._passes(day)
         return {
             **out,
+            # The routine's pass while it runs, and the day's last one closed (#201).
+            "active": season_passes.active(passes),
+            "last_pass": season_passes.last_closed(passes),
             # The modes now (#205): a switch after the build shows on the next read.
             "leagues": [self._row_now(r) for r in out["leagues"]],
             # The day's pass results (#200), read from the leagues' logs: never stored on the queue.
@@ -1404,7 +1411,68 @@ class SeasonService:
                 return q
 
             season_queue.update(self.data_dir, run.day, change)
+        self._attribute("moves", league, run.trigger, {c.id: c.outcome for c in run.entries})
         return record
+
+    # ------------------------------------------------------------------ the pass record (#201)
+    def _attribute(self, kind: str, league: str, trigger: str, outcomes: Mapping[str, str]) -> None:
+        """Give a post the log took to the open pass of its kind (#201); a panel's never. The
+        record changes nothing in what the post logged or answers: a record that does not take
+        it is logged here and left."""
+        if trigger == "panel":
+            return
+        now = self.clock()
+        try:
+            season_passes.attribute(self.data_dir, nba_today(now), now, kind, league, outcomes)
+        except Exception:  # the record never fails the log's post
+            LOG.warning("the pass record did not take %s's %s post", league, kind, exc_info=True)
+
+    def open_pass(self, body: PassOpen) -> dict[str, Any]:
+        """Open a routine's pass (#201): the leagues it will open, in order, and the entries a
+        moves pass will check; the private league is refused, as everywhere."""
+        for league in body.leagues:
+            _, is_public = self._base(league)
+            if not is_public:
+                raise HTTPException(409, qa.PRIVATE)
+        now = self.clock()
+        try:
+            p = season_passes.open_pass(
+                self.data_dir,
+                nba_today(now),
+                now,
+                body.kind,
+                body.trigger,
+                body.leagues,
+                body.entries,
+            )
+        except season_passes.PassError as exc:
+            raise HTTPException(exc.status, str(exc)) from exc
+        return season_passes.view(p)
+
+    def pass_opening(self, pass_id: str, body: PassOpening) -> dict[str, Any]:
+        """The league (and entry) the routine opens now."""
+        try:
+            p = season_passes.opening(self.data_dir, pass_id, self.clock(), body.league, body.entry)
+        except season_passes.PassError as exc:
+            raise HTTPException(exc.status, str(exc)) from exc
+        return season_passes.view(p)
+
+    def pass_done(self, pass_id: str, body: PassDone) -> dict[str, Any]:
+        """The routine's end of its pass."""
+        try:
+            p = season_passes.done(self.data_dir, pass_id, self.clock(), body.summary)
+        except season_passes.PassError as exc:
+            raise HTTPException(exc.status, str(exc)) from exc
+        return season_passes.view(p)
+
+    def _passes(self, day: date) -> list[dict[str, Any]]:
+        """The day's passes as they read now; none when the record does not read (the queue
+        still answers)."""
+        try:
+            return season_passes.read(self.data_dir, day, self.clock())
+        except season_passes.PassError:
+            LOG.warning("the pass record of %s does not read", day, exc_info=True)
+            return []
 
     def set_moves_mode(self, league: str, mode: str, cap: int | None) -> dict[str, Any]:
         """The Queue card's mode switch and cap, the user's own click (#171): the private league
@@ -2408,6 +2476,24 @@ class LineupMode(BaseModel):
     mode: str = Field(pattern="^(off|dry_run|live)$")
 
 
+class PassOpen(BaseModel):
+    #: A routine's pass (#201): its kind and trigger, the leagues in the order it opens them and,
+    #: for a moves pass, the entries it will check.
+    kind: Literal["moves", "lineup"]
+    trigger: Literal["routine", "routine_late"]
+    leagues: list[str] = Field(min_length=1)
+    entries: list[str] | None = None
+
+
+class PassOpening(BaseModel):
+    league: str
+    entry: str | None = None
+
+
+class PassDone(BaseModel):
+    summary: str | None = Field(None, max_length=500)
+
+
 class AllMovesMode(BaseModel):
     #: The Queue screen's one switch (#205): the moves executor's mode for every public league.
     #: No cap: each league keeps the user's own.
@@ -2670,6 +2756,22 @@ def register(
             return service.set_moves_mode(league, body.mode, body.cap)
         except leagues.LeagueError as exc:
             raise HTTPException(404, str(exc)) from exc
+
+    @app.post("/autopilot/passes")
+    def post_pass(body: PassOpen) -> dict[str, Any]:
+        """Open a routine's execute pass (#201), for the Queue screen to show it live; refused
+        while a pass of its kind is open."""
+        return service.open_pass(body)
+
+    @app.post("/autopilot/passes/{pass_id}/opening")
+    def post_pass_opening(pass_id: str, body: PassOpening) -> dict[str, Any]:
+        """The league (and entry) the routine's pass opens now (#201)."""
+        return service.pass_opening(pass_id, body)
+
+    @app.post("/autopilot/passes/{pass_id}/done")
+    def post_pass_done(pass_id: str, body: PassDone | None = None) -> dict[str, Any]:
+        """The routine's end of its pass (#201); refused once it is done or stale."""
+        return service.pass_done(pass_id, body or PassDone())
 
     @app.put("/autopilot/moves/mode")
     def put_all_moves_modes(body: AllMovesMode) -> dict[str, Any]:
