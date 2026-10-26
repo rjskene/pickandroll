@@ -544,7 +544,12 @@ const RUN_OUTCOME: Record<LineupRunLog["outcome"], string> = {
   failed: "failed",
   stopped: "stopped by STOP",
 };
-const TRIGGER: Record<LineupRunLog["trigger"], string> = { routine: "routine", routine_late: "late routine", panel: "side panel" };
+const TRIGGER: Record<LineupRunLog["trigger"] | MovesPassLog["trigger"], string> = {
+  routine: "routine",
+  routine_late: "late routine",
+  routine_evening: "evening routine",
+  panel: "side panel",
+};
 
 /** A run in a line: "05:02 · Sat 24 · routine: would set 2 moves". ``clock`` writes its time. */
 export function runLine(r: LineupRunLog, clock: (iso: string) => string): string {
@@ -738,7 +743,7 @@ const PASS_RESULT_WORDS: Record<string, string> = {
   set: "set",
   nothing_to_do: "nothing to do",
 };
-const PASS_TRIGGER_WORDS: Record<RoutinePass["trigger"], string> = { routine: "Morning", routine_late: "Late" };
+const PASS_TRIGGER_WORDS: Record<RoutinePass["trigger"], string> = { routine: "Morning", routine_late: "Late", routine_evening: "Evening" };
 /** How long a closed pass's line stays on the Queue screen. */
 export const PASS_END_SHOWN_MS = 10 * 60_000;
 

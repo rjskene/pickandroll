@@ -145,9 +145,9 @@ fetches nothing from Yahoo and posts nothing about the add page but the pass. In
 guard holds, the same checks place the claim (below).
 
 1. The routine opens each due entry's add page itself, in a tab of its own, with the fragment
-   `#pickandroll-moves` (or `#pickandroll-moves-late` for a late pass). The side panel's **Check moves now** lists
-   the league's due entries as links to their add pages with `#pickandroll-moves-panel`; you open them, nothing is
-   opened for you. A plain visit to an add page runs no pass, and a reload of one is a plain visit: the fragment is
+   `#pickandroll-moves` (`#pickandroll-moves-late` for a late pass, `#pickandroll-moves-evening` for the evening's,
+   0.8.3, #209). The side panel's **Check moves now** lists the league's due entries as links to their add pages
+   with `#pickandroll-moves-panel`; you open them, nothing is opened for you. A plain visit to an add page runs no pass, and a reload of one is a plain visit: the fragment is
    dropped first.
 2. A pass fetches the league's due entries (`GET /seasons/<id>/autopilot/moves/due`) and takes the one whose add
    is the page's. None: nothing is logged and the strip says so. Nothing is due in a league whose mode is off, in
