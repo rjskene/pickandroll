@@ -43,6 +43,9 @@ from .state import Setup, SimState, add_totals
 
 #: The execution model every run's payload names (#172, the master's ruling on PR 2's plan).
 EXECUTIONS = "free_agents_next_day"
+#: A decided move lands this long after it is made: it takes effect then, and is charged to the
+#: week of the day it is made, as Yahoo charges a free-agent add (never the week it lands in).
+LANDS_AFTER = timedelta(1)
 #: The live moves route's figures (``api.season_moves``): the candidates the recommended set is
 #: searched among and the least gain a move must add.
 POOL = 30
@@ -174,15 +177,19 @@ def problem_of(
     taken = Counter(slot for k, slot in held_pairs if not mv.is_cleared(status.get(k), slot))
     held_open = {k: slot_count.get(k, 0) - taken.get(k, 0) for k in mv.HELD}
     # Free agents land the next day: every candidate's move takes effect tomorrow.
-    effective_day = day + timedelta(1)
+    effective_day = day + LANDS_AFTER
     candidates = tuple(members_of(setup, sorted(k for k in state.pool if k in beliefs), status))
     effective = {k: effective_day for k, _ in candidates}
     limit = setup.max_weekly_adds
     used = int(state.adds_used.get(me, 0))
+    # The engine charges a move to the week its day falls in, and a move's day here is the day
+    # it lands, one after it is made. So each week's window is its days shifted by the lag: a
+    # move made on Sunday lands Monday and spends the ending week's adds, as on Yahoo. This
+    # week's window opens today, so a plan step dated today is charged here too.
     limits = tuple(
         mv.AddLimit(
-            w.start,
-            w.end,
+            day if i == 0 else w.start + LANDS_AFTER,
+            w.end + LANDS_AFTER,
             None if limit is None else (max(0, limit - used) if i == 0 else limit),
         )
         for i, w in enumerate(weeks)

@@ -102,6 +102,9 @@ keep rule does not keep, when it gains, with no evaluator. The executor lands ye
 team by team in a rotating order: a drop goes to the pool, the add takes his slot, an add another
 team took first is gone and counted. Every add is a free agent landing the next day
 (`EXECUTIONS = "free_agents_next_day"`): no waiver clear dates, no bids, the caps the autopilot's.
+An add is charged to the week of the day it is made, as Yahoo charges a free agent, never the
+week it lands in: one made on Sunday spends the ending week's adds and plays from Monday, and
+Monday's count starts over only once it is in.
 Each day's starters are the most valuable set the slots hold among the players whose team plays
 and whom the policy has not heard are out; their lines are the week's totals.
 
