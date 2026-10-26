@@ -124,6 +124,14 @@ import {
   centralClock,
   notQueued,
   stripOrder,
+  switchRows,
+  switchScope,
+  modesWord,
+  commonMode,
+  liveSplit,
+  allLiveLine,
+  allLiveTitle,
+  keptLines,
   stripReason,
   addBasis,
   basisPhrase,
@@ -1855,6 +1863,48 @@ test("the Queue screen orders the day's entries across the leagues, says why a l
   assert.equal(centralClock("2026-10-24T12:00:00Z"), "7:00 AM CT");
   assert.equal(centralClock("2026-12-01T13:00:00Z"), "7:00 AM CT");
   assert.equal(centralClock(null), "");
+});
+
+test("the Queue screen's one switch covers every public league, the points ones too, and says what live does to each (#205)", () => {
+  const ok = { ok: true, reason: null, dry_run_days: 2, checked_days: 2, needs: { dry_run_days: 1, checked_days: 1 } };
+  const wait = { ...ok, ok: false, reason: "a dry run on 1 day first: 0 so far" };
+  const row = (league: string, over: Partial<QueueLeague> = {}): QueueLeague => ({ league, scoring: "categories", mode: "dry_run", status: "queued", reason: null, user_cap: null, live: ok, ...over });
+  const priv = row("900000", { status: "private", mode: "off", live: undefined });
+  const rows = [priv, row("900001"), row("900002", { scoring: "points" }), row("900003", { status: "off", mode: "dry_run", scoring: "points" })];
+  // The private league is never one of them; the points leagues the landing hides are, and said.
+  assert.deepEqual(switchRows(rows).map((r) => r.league), ["900001", "900002", "900003"]);
+  assert.equal(switchScope(rows), "all 3 public leagues, the 2 points leagues the landing hides among them");
+  assert.equal(switchScope([priv, row("900001")]), "the 1 public league");
+  // The modes in force: live first, then dry run, then off; one mode, or none when they differ.
+  assert.equal(modesWord(rows), "3 dry run");
+  assert.equal(commonMode(rows), "dry_run");
+  const mixed = [priv, row("900001", { mode: "live" }), row("900002", { mode: "off" }), row("900003"), row("900004", { mode: "live" })];
+  assert.equal(modesWord(mixed), "2 live · 1 dry run · 1 off");
+  assert.equal(commonMode(mixed), null);
+  assert.equal(commonMode([priv]), null);
+  // Live: every league whose guard holds, the points ones among them; those it keeps, and those
+  // already live, are said.
+  assert.equal(allLiveLine(rows), "Switch all 3 to live, the 2 points leagues among them: each claims its due moves on Yahoo's add page with its bid.");
+  assert.equal(allLiveLine([priv, row("900001"), row("900002")]), "Switch all 2 to live: each claims its due moves on Yahoo's add page with its bid.");
+  const some = [priv, row("900001"), row("900002", { live: wait, scoring: "points" }), row("900003", { mode: "live" })];
+  assert.deepEqual(liveSplit(some).ready.map((r) => r.league), ["900001"]);
+  assert.deepEqual(liveSplit(some).waiting.map((r) => r.league), ["900002"]);
+  assert.equal(allLiveLine(some), "Switch 1 of the 3 to live: each claims its due moves on Yahoo's add page with its bid; 1 keeps its mode: live waits; 1 already live.");
+  const names: Record<string, string> = { "900001": "Alpha", "900002": "Bravo", "900003": "Charlie" };
+  const title = (l: string) => names[l] ?? `league ${l}`;
+  assert.equal(allLiveTitle(some, title), "Live waits in Bravo (a dry run on 1 day first: 0 so far).");
+  assert.equal(allLiveTitle(rows, title), "The dry run has passed in every league not live.");
+  assert.equal(allLiveTitle([priv, row("900001", { mode: "live" })], title), "Every public league is live.");
+  // The answer: the leagues kept in their mode, each with why.
+  const answer = {
+    mode: "live" as const,
+    leagues: [
+      { league: "900001", mode: "live" as const, ok: true, reason: null },
+      { league: "900002", mode: "dry_run" as const, ok: false, reason: "a dry run on 1 day first: 0 so far" },
+      { league: "900003", mode: "dry_run" as const, ok: false, reason: "STOP is on (data/autopilot/STOP)" },
+    ],
+  };
+  assert.deepEqual(keptLines(answer, title), ["Bravo stays dry run: a dry run on 1 day first: 0 so far", "Charlie stays dry run: STOP is on (data/autopilot/STOP)"]);
 });
 
 test("an entry reads its latest pass after its outcome, why it is not queued and a strike; the day's tally joins the line (#200)", () => {

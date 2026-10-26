@@ -4,12 +4,20 @@ import { api, type LineupMode, type ProjectionSystem, type QueueEntry, type Queu
 import { queueKeys } from "../keys";
 import {
   addsThisWeek,
+  allLiveLine,
+  allLiveTitle,
   bestLine,
   bestNamer,
   bidLabel,
   centralClock,
+  commonMode,
   dayLabel,
   gainLabel,
+  keptLines,
+  liveSplit,
+  MODE_WORDS,
+  modesWord,
+  movesLiveText,
   notQueued,
   passTitle,
   queueFlagWord,
@@ -27,21 +35,24 @@ import {
   setSummary,
   stripOrder,
   stripReason,
+  switchRows,
+  switchScope,
 } from "../season";
 import { useHotkeys } from "../useKeys";
 import ExecuteTime from "./ExecuteTime";
-import { Veto, type Strike } from "./QueueCard";
+import ModeSwitch from "./ModeSwitch";
+import { LIVE_CONFIRM, Veto, type Strike } from "./QueueCard";
 import { useNow } from "./YahooSync";
 
 const SYSTEM: ProjectionSystem = "bbm";
-const MODE_WORD: Record<LineupMode, string> = { off: "off", dry_run: "dry run", live: "live" };
 const GAIN_TITLE = "the gain over the three weeks, on the judging horizon: expected categories, or points in a points league";
 const SEASON_TITLE = "the move to the season's end in the scorer's units (fantasy points in a points league, the z-sum in a categories league), as the decision log values it; nothing ranks on it";
 
 /** The Queue screen (#194) at /queue: every league's proposed moves today in one view. It reads
  * only: nothing on it solves, builds or executes. Its writes are the user's own, as on the Queue
- * card and the landing: the veto on an entry and the day's execute time. The private league's
- * recommended set is listed as suggestions to make by hand, from its best route. */
+ * card and the landing: the veto on an entry, the day's execute time and the moves executor's mode,
+ * for every public league at once from the head or for one from its chip (#205). The private
+ * league's recommended set is listed as suggestions to make by hand, from its best route. */
 export default function QueueScreen({ onBack, onOpenLeague }: { onBack: () => void; onOpenLeague: (league: string) => void }) {
   const queryClient = useQueryClient();
   const q = useQuery({ queryKey: ["queue"], queryFn: () => api.queue(), refetchInterval: 60_000 });
@@ -88,6 +99,7 @@ export default function QueueScreen({ onBack, onOpenLeague }: { onBack: () => vo
               {p.built.length ? `Built ${p.built.map(centralClock).join(", ")}` : "Not built today: the morning routine builds it from the day's solve"}. Nothing here solves, builds or
               executes; strike a move to veto it.
             </p>
+            <AllModes rows={p.leagues} title={title} />
           </div>
           {p.leagues.length > 0 && (
             <div className="qs-strip" aria-label="leagues">
@@ -105,8 +117,78 @@ export default function QueueScreen({ onBack, onOpenLeague }: { onBack: () => vo
   );
 }
 
-/** A league's chip: its mode, its cap and where the cap is from, the adds left this week, what
- * it queued, and why it queued none. */
+/** Refetch the queue and every league's Queue card after a mode switch. */
+function useModesSettled() {
+  const queryClient = useQueryClient();
+  return () => {
+    void queryClient.invalidateQueries({ queryKey: ["queue"] });
+    void queryClient.invalidateQueries({ queryKey: ["movesView"] });
+  };
+}
+
+/** The head's one switch (#205): the moves executor's mode in every public league, the points
+ * leagues the landing hides among them; the guard checks each league on its own and the leagues it
+ * keeps are listed with why until the next switch. */
+function AllModes({ rows, title }: { rows: QueueLeague[]; title: (league: string) => string }) {
+  const settled = useModesSettled();
+  const set = useMutation({ mutationFn: (mode: LineupMode) => api.setAllMovesModes(mode), onSettled: settled });
+  if (!switchRows(rows).length) return null;
+  const { ready } = liveSplit(rows);
+  const kept = set.data ? keptLines(set.data, title) : [];
+  return (
+    <div className="qs-modes">
+      <div className="row">
+        <span className="k">Moves executor</span>
+        <span className="muted small">
+          {switchScope(rows)}: {modesWord(rows)}
+        </span>
+        <span className="grow" />
+        <ModeSwitch
+          mode={commonMode(rows)}
+          liveOk={ready.length > 0}
+          liveTitle={allLiveTitle(rows, title)}
+          confirm={allLiveLine(rows)}
+          confirmButton={`Switch ${ready.length} to live`}
+          pending={set.isPending}
+          label="Moves executor in every public league"
+          onPick={(mode) => set.mutate(mode)}
+        />
+      </div>
+      {kept.map((line) => (
+        <p key={line} className="dim small">
+          {line}
+        </p>
+      ))}
+      {set.error && <p className="error small">{set.error.message}</p>}
+    </div>
+  );
+}
+
+/** A chip's switch for its league alone, the Queue card's route: it sends the user's own cap back,
+ * so a row read without it (``user_cap`` missing) shows its mode and no switch. */
+function ChipMode({ row, title }: { row: QueueLeague; title: string }) {
+  const settled = useModesSettled();
+  const set = useMutation({ mutationFn: (mode: LineupMode) => api.setMovesMode(row.league, mode, row.user_cap ?? null), onSettled: settled });
+  if (row.user_cap === undefined || !row.live) return <span>{MODE_WORDS[row.mode]}</span>;
+  return (
+    <>
+      <ModeSwitch
+        mode={row.mode}
+        liveOk={row.live.ok}
+        liveTitle={movesLiveText(row.live)}
+        confirm={LIVE_CONFIRM}
+        confirmButton="Switch to live"
+        pending={set.isPending}
+        label={`Moves executor in ${title}`}
+        onPick={(mode) => set.mutate(mode)}
+      />
+      {set.error && <span className="error">{set.error.message}</span>}
+    </>
+  );
+}
+
+/** A league's chip: its mode and its switch, its cap and where the cap is from, the adds left this
+ * week, what it queued, and why it queued none. */
 function Chip({ row, p, title, onOpen }: { row: QueueLeague; p: QueuePayload; title: string; onOpen: () => void }) {
   const mine = p.entries.filter((e) => e.league === row.league && e.queued);
   const struck = mine.filter((e) => e.struck).length;
@@ -114,7 +196,7 @@ function Chip({ row, p, title, onOpen }: { row: QueueLeague; p: QueuePayload; ti
   const adds = addsThisWeek(row, p.date);
   const why = stripReason(row, p.entries);
   const facts = [
-    row.status === "private" ? "suggestions only" : MODE_WORD[row.mode],
+    row.status === "private" ? "suggestions only" : null,
     row.scoring === "points" ? "points" : null,
     row.cap != null ? `cap ${row.cap} (${row.cap_from === "the user" ? "yours" : "the knob's"})` : null,
     adds != null ? `${adds} add${adds === 1 ? "" : "s"} left this week` : null,
@@ -126,6 +208,7 @@ function Chip({ row, p, title, onOpen }: { row: QueueLeague; p: QueuePayload; ti
       <button className="link" onClick={onOpen} title="open the league">
         {title}
       </button>
+      {row.status !== "private" && <ChipMode row={row} title={title} />}
       <span className="qs-facts">
         {facts.map((f) => (
           <span key={f}>{f}</span>

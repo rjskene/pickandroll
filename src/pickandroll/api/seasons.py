@@ -284,6 +284,9 @@ WAIT_MARGIN = 30.0
 #: How long the Yahoo pages of a refresh the rate limit ended are kept for the league's next one
 #: (#180): a page read longer ago is read again.
 HOLD = timedelta(minutes=60)
+#: Who ``armed.json`` says set a moves mode from the Queue screen's one switch (#205); the
+#: Queue card's single switch records ``dashboard``.
+EVERY_LEAGUE = "dashboard: every league"
 
 
 class RefreshDeadline(BaseException):
@@ -987,6 +990,8 @@ class SeasonService:
         }
         return {
             **out,
+            # The modes now (#205): a switch after the build shows on the next read.
+            "leagues": [self._row_now(r) for r in out["leagues"]],
             # The day's pass results (#200), read from the leagues' logs: never stored on the queue.
             "entries": [{**e, "pass": latest.get(str(e["id"]))} for e in out["entries"]],
             "passes": season_autopilot.pass_tally(lines),
@@ -1254,7 +1259,7 @@ class SeasonService:
         row = next((r for r in body.get("leagues") or [] if r["league"] == league), None)
         return {
             **season_autopilot.moves_view(self.data_dir, league, mode, today, entries),
-            "row": row,
+            "row": self._row_now(row) if row else None,
             "settings": season_queue.settings(self.data_dir),
         }
 
@@ -1415,6 +1420,54 @@ class SeasonService:
                 raise HTTPException(409, check["reason"])
         leagues.set_executor(self.data_dir, league, leagues.MOVES, mode, by="dashboard", cap=cap)
         return self.moves_view(league)
+
+    def set_all_moves_modes(self, mode: str) -> dict[str, Any]:
+        """The Queue screen's one switch (#205), the user's own click: ``mode`` for every public
+        league of the queue build's set, the points leagues the landing hides among them, under
+        the single switch's rules. ``live`` is checked per league (``moves_live_check``, STOP
+        included) and a league it refuses keeps its mode; a league already in the mode is left
+        as it is; each keeps the user's own cap. The private league's file and the lineup
+        executor's keys are never written."""
+        out: list[dict[str, Any]] = []
+        for league in leagues.leagues(self.data_dir):
+            try:
+                base_settings(self.data_dir, league)
+                current = leagues.executor_mode(self.data_dir, league, leagues.MOVES)
+            except leagues.LeagueError:
+                continue
+            if current.get("private"):
+                continue
+            row = {"league": league, "mode": current["mode"], "ok": True, "reason": None}
+            if current["mode"] != mode and mode == "live":
+                check = season_autopilot.moves_live_check(self.data_dir, league, current)
+                if not check["ok"]:
+                    row |= {"ok": False, "reason": check["reason"]}
+            if current["mode"] != mode and row["ok"]:
+                try:
+                    done = leagues.set_executor(
+                        self.data_dir, league, leagues.MOVES, mode, EVERY_LEAGUE, current["cap"]
+                    )
+                    row["mode"] = done["mode"]
+                except (OSError, leagues.LeagueError) as exc:
+                    row |= {"ok": False, "reason": _failure(exc)}
+            out.append(row)
+        return {"mode": mode, "leagues": out}
+
+    def _row_now(self, row: Mapping[str, Any]) -> dict[str, Any]:
+        """A league's row of the day's queue with what has moved since the build (#205): the
+        moves executor's mode and the user's own cap now, and the live guard now; a row the build
+        left off whose league was switched on since says so. The private row is as built."""
+        if row.get("status") == season_queue.PRIVATE:
+            return dict(row)
+        try:
+            mode = leagues.executor_mode(self.data_dir, str(row["league"]), leagues.MOVES)
+        except leagues.LeagueError:
+            return dict(row)
+        live = season_autopilot.moves_live_check(self.data_dir, str(row["league"]), mode)
+        out = {**row, "mode": mode["mode"], "user_cap": mode["cap"], "live": live}
+        if row.get("status") == season_queue.OFF and mode["mode"] != "off":
+            out["reason"] = qa.SWITCHED_ON
+        return out
 
     def lineup(self, league: str, system: str | None, week: int | None) -> dict[str, Any]:
         """The Lineup view (#107): my recommended starters for each day of ``week`` (this one
@@ -2355,6 +2408,12 @@ class LineupMode(BaseModel):
     mode: str = Field(pattern="^(off|dry_run|live)$")
 
 
+class AllMovesMode(BaseModel):
+    #: The Queue screen's one switch (#205): the moves executor's mode for every public league.
+    #: No cap: each league keeps the user's own.
+    mode: str = Field(pattern="^(off|dry_run|live)$")
+
+
 class MovesMode(BaseModel):
     #: The moves executor's mode (#171), and the user's own cap on the day's moves (None: the
     #: knob's). The body is the whole setting: a mode sent without a cap clears the user's.
@@ -2611,6 +2670,13 @@ def register(
             return service.set_moves_mode(league, body.mode, body.cap)
         except leagues.LeagueError as exc:
             raise HTTPException(404, str(exc)) from exc
+
+    @app.put("/autopilot/moves/mode")
+    def put_all_moves_modes(body: AllMovesMode) -> dict[str, Any]:
+        """The Queue screen's one switch for every public league's moves executor, the user's
+        own click (#205): each league's live guard is checked on its own and a league it refuses
+        keeps its mode. No session, script or routine sets ``live``."""
+        return service.set_all_moves_modes(body.mode)
 
     @app.get("/seasons/{league}/decisions")
     async def get_decisions(
