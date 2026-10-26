@@ -95,7 +95,10 @@ def build(
     matchup, read_at = sw.matchup_read(season, mine)
     since = sw.first_day(read_at, today) if matchup is not None else today
     ahead = sw.spans(season, today, data_dir, season_moves.WEEKS_AHEAD, rated.players, since)
-    if not ahead or not ahead[0].days:
+    # This week with no days left (a Sunday read once its games began, #209) is an empty week
+    # horizon, as the moves have it: the trade changes only the weeks after.
+    over = not ahead[0].days if ahead else False
+    if not ahead or (over and len(ahead) < 2):
         return None
     pairs: dict[int, int] = {}
     so_far: dict[int, dict[str, float]] = {}
@@ -140,13 +143,15 @@ def build(
         for a in season.available
         if a.player.yahoo_id not in rostered and a.player.yahoo_id in rates
     )
-    _, limits = season_moves.add_limits(season, mine, ahead, today)
+    _, limits = season_moves.add_limits(season, mine, ahead[1:] if over else ahead, today)
     this = ahead[0].week
     horizons = {
         "week": {
-            "label": f"rest of week {this.number}",
+            "label": f"week {this.number} has no days left"
+            if over
+            else f"rest of week {this.number}",
             "weeks": [this.number],
-            "from": since.isoformat(),
+            "from": None if over else since.isoformat(),
         },
         "three": {
             "label": f"weeks {ahead[1].week.number}-{ahead[-1].week.number} against the field"

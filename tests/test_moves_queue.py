@@ -600,7 +600,30 @@ def test_the_due_route_counts_the_days_executed_entries_and_their_adds(client):
     assert was["adds"] is not None and week["adds"] == max(0, was["adds"] - 1)
 
 
-def placed(client, entry_id: str, outcome: str) -> None:
+def test_a_sunday_evening_build_queues_monday_claims_on_the_new_weeks_adds(client):
+    # #209: Sunday, 9:30 pm Central, the week's last games begun. The solve answers, and the
+    # build queues claims that clear Monday, each counted in the new week.
+    sunday = datetime(2026, 10, 26, 2, 30, tzinfo=UTC)
+    client.app.state.seasons.clock = lambda: sunday
+    q = queued(client)
+    assert q["date"] == "2026-10-25" and row_of(q)["status"] == "queued"
+    on = [e for e in q["entries"] if e["queued"]]
+    assert on and all(e["from"] >= "2026-10-26" for e in on)
+    assert row_of(q)["adds_left"][0]["start"] == "2026-10-26"
+    # Due after the full window, before the Eastern midnight; each placed claim takes a new
+    # week's add.
+    client.app.state.seasons.clock = lambda: sunday + timedelta(hours=1)
+    url = f"/seasons/{LEAGUE}/autopilot/moves/due"
+    d = client.get(url).json()
+    assert [e["id"] for e in d["entries"]] == [e["id"] for e in on]
+    placed(client, on[0]["id"], "claimed", date(2026, 10, 25))
+    after = client.get(url).json()
+    new = next(w for w in after["adds_left"] if w["start"] == "2026-10-26")
+    was = next(w for w in d["adds_left"] if w["start"] == "2026-10-26")
+    assert new["adds"] == was["adds"] - 1
+
+
+def placed(client, entry_id: str, outcome: str, day: date = DAY) -> None:
     """Set ``outcome`` on a day's queue entry as a live pass would (PR 3)."""
 
     def change(q):
@@ -609,7 +632,7 @@ def placed(client, entry_id: str, outcome: str) -> None:
                 e["outcome"] = outcome
         return q
 
-    season_queue.update(client.data_dir, DAY, change)
+    season_queue.update(client.data_dir, day, change)
 
 
 def pass_body(entries, **over) -> dict:

@@ -317,10 +317,13 @@ def plan(
     guard: bool = True,
     allowed: mv.Allowed | None = None,
 ) -> Plan | None:
-    """The week's streaming plan against the ``recommended`` set, None without a stream spot;
-    without the ``guard``, the best week whatever it costs after, and every spot's path kept
-    to ``allowed`` (the season guard) with the plan around it (:func:`plan_spot`)."""
+    """The week's streaming plan against the ``recommended`` set, None without a stream spot or
+    a day left in the week (a Sunday solve once its games began, #209); without the ``guard``,
+    the best week whatever it costs after, and every spot's path kept to ``allowed`` (the
+    season guard) with the plan around it (:func:`plan_spot`)."""
     p = ev.problem
+    if not p.horizons["week"][0].days:
+        return None
     spots = stream_spots(p, rule)
     if not spots:
         return None

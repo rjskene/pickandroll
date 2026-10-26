@@ -1335,6 +1335,64 @@ def test_moves_need_a_season_of_my_team(client):
     assert client.get("/seasons/999999/moves").status_code == 404
 
 
+def evening_moves(client, at: datetime) -> dict:
+    """The moves solved from a refresh read at ``at``, after that evening's games began."""
+    projection_csv(client.data_dir / "bbm_projections_2026-10-21.csv", fixture_names())
+    client.app.state.seasons.clock = lambda: at
+    assert client.post(f"/seasons/{LEAGUE}/refresh", params={"wait": True}).status_code == 202
+    r = client.get(f"/seasons/{LEAGUE}/moves")
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+def test_a_sunday_evening_solve_moves_into_the_next_week(client):
+    # #209: read Sunday at 10:30 pm Eastern, the week's last games have begun and its rest has no
+    # days; the solve still answers, every move taking effect from Monday in the weeks after.
+    m = evening_moves(client, datetime(2026, 10, 26, 2, 30, tzinfo=UTC))
+    week, three = m["horizons"]["week"], m["horizons"]["three"]
+    assert (week["label"], week["weeks"], week["from"]) == ("week 1 has no days left", [1], None)
+    assert (three["weeks"], three["from"]) == ([2, 3, 4], "2026-10-26")
+    # The adds are the new week's: none used yet, every one left, and the weeks from Monday.
+    adds = m["adds"]
+    assert (adds["used"], adds["left"]) == (0, adds["limit"])
+    assert [w["start"] for w in adds["weeks"]] == ["2026-10-26", "2026-11-02", "2026-11-09"]
+    # No move changes the week that is over; the three weeks carry the recommendation.
+    assert all(c["week"]["gain"] == pytest.approx(0.0, abs=1e-9) for c in m["candidates"].values())
+    assert m["recommended"]["week"]["moves"] == []
+    for c in m["candidates"].values():
+        assert c["from"] >= "2026-10-26"
+    # The decision log has the evening's solve.
+    log = client.get(f"/seasons/{LEAGUE}/decisions").json()
+    assert log["entries"] and log["entries"][-1]["source"] == "moves"
+    # The Matchup view reads the week as over: no day, no game left, nobody adds anything.
+    r = client.get(f"/seasons/{LEAGUE}/matchup")
+    assert r.status_code == 200, r.text
+    mu = r.json()
+    assert (mu["from"], mu["days"]) == (None, 0)
+    rows = [*mu["players"]["mine"], *mu["players"]["theirs"]]
+    assert rows and all(x["games"] == 0 and x["cats"] == 0 for x in rows)
+
+
+def test_a_sunday_evening_trade_changes_only_the_weeks_after(client):
+    client.app.state.seasons.clock = lambda: datetime(2026, 10, 26, 2, 30, tzinfo=UTC)
+    ids = trade_league(client)
+    body = {"team": 10, "give": [ids["Paul Reed"]], "get": [ids["Cooper Flagg"]]}
+    r = client.post(f"/seasons/{LEAGUE}/trade", json=body)
+    assert r.status_code == 200, r.text
+    t = r.json()
+    assert t["horizons"]["week"] == {"label": "week 1 has no days left", "weeks": [1], "from": None}
+    mine = t["sides"]["mine"]["horizons"]
+    assert mine["week"]["change"] == 0 and mine["three"]["change"] > 0
+
+
+def test_a_saturday_evening_solve_keeps_sunday_in_this_week(client):
+    m = evening_moves(client, datetime(2026, 10, 25, 2, 30, tzinfo=UTC))
+    week = m["horizons"]["week"]
+    assert (week["label"], week["from"]) == ("rest of week 1 against Team 10", "2026-10-25")
+    assert m["horizons"]["three"]["weeks"] == [2, 3, 4]
+    assert m["adds"]["weeks"][0]["start"] == "2026-10-19"
+
+
 # --------------------------------------------------------------------------- matchup view (#116)
 def test_the_matchup_route_scores_my_week_and_what_each_player_adds(client):
     projection_csv(
