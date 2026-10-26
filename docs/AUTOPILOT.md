@@ -295,8 +295,10 @@ page, from PR 2:
        naming the signs missing;
      - types the whole-dollar bid into `faab` only then, after checking it as Yahoo does (a whole
        number from $0 to the field's `data-faab-balance`), so Yahoo's check never alerts;
-     - reads the form back (one box ticked and it is the drop, `apid` the add, the bid as typed, the
-       final button the claim's) and clicks the final button once.
+     - reads the form back (one box ticked and it is the drop, `apid` the add, the bid as typed, and
+       the final button by its identity: still the one Yahoo drew, shown, and named
+       `submit_drop_player` only if it carries a name, since Yahoo's handler submits the form
+       itself and posts no button name) and clicks the final button once.
      A skip or failure after the first click leaves the page as it is: the extension never clicks
      Cancel, the routine navigates away, and the first stage places nothing.
      **Yahoo's alerts.** Yahoo answers an error in the first stage's reply, or a bid its check

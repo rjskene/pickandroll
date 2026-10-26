@@ -278,9 +278,10 @@ test("only the live claim touches a page: the drop's button, its bid and the fin
  * (the reply's box is not ticked), or an alert's text (Yahoo alerts and swaps nothing).
  * ``finalAlert`` is Yahoo's alert on the final click, ``finalName`` the final button's name,
  * ``balance`` the bid field's (null: none), ``sticky`` a bid that refuses what is typed,
- * ``buttons: false`` a page with no drop buttons, ``dupe`` a second button for that drop. Every
- * click, value set and event goes in ``touched``. */
-function claimStep({ ticked = [], after = 1, reply = "swap", finalAlert = null, finalName = null, balance = 100, sticky = false, add = ADD, buttons = true, dupe = null } = {}) {
+ * ``buttons: false`` a page with no drop buttons, ``dupe`` a second button for that drop, ``rehide``
+ * the container hidden again once the bid is typed. Every click, value set and event goes in
+ * ``touched``. */
+function claimStep({ ticked = [], after = 1, reply = "swap", finalAlert = null, finalName = null, balance = 100, sticky = false, add = ADD, buttons = true, dupe = null, rehide = false } = {}) {
   const touched = [];
   const alerts = [];
   const droppable = ROSTER.filter((k) => !CANTCUT.includes(k));
@@ -296,6 +297,7 @@ function claimStep({ ticked = [], after = 1, reply = "swap", finalAlert = null, 
   };
   let boxes = droppable.map((k) => box(k, ticked.includes(k)));
   let bidValue = "0";
+  let hiddenAgain = false;
   const bid = {
     name: "faab",
     tagName: "INPUT",
@@ -307,6 +309,7 @@ function claimStep({ ticked = [], after = 1, reply = "swap", finalAlert = null, 
     set value(v) {
       touched.push(`set faab ${v}`);
       if (!sticky) bidValue = v;
+      if (rehide) hiddenAgain = true;
     },
     getAttribute: (a) => (a === X.BALANCE_ATTR && balance != null ? String(balance) : null),
     dispatchEvent: (ev) => touched.push(`event ${ev.type}`),
@@ -345,7 +348,7 @@ function claimStep({ ticked = [], after = 1, reply = "swap", finalAlert = null, 
   };
   const container = {
     get className() {
-      return swapped && reply !== "hidden" ? "Inline" : `Inline ${X.SUBMIT_HIDDEN}`;
+      return swapped && reply !== "hidden" && !hiddenAgain ? "Inline" : `Inline ${X.SUBMIT_HIDDEN}`;
     },
     querySelector: (sel) => (sel === X.FINAL_BUTTON && swapped ? final : null),
     textContent: ` <input type="submit" id="submit-add-drop-button" name="${X.SUBMIT}" value="Create claim"> `,
@@ -464,6 +467,8 @@ test("the bid is checked as Yahoo checks it, after the reply, and read back befo
   [got, touched] = await run({ add: 3002 });
   assert.deepEqual([got.reason, touched.includes("click final")], ["the form did not take the claim: its apid is not the add", false]);
   [got, touched] = await run({ finalName: "submit_something_else" });
+  assert.deepEqual([got.reason, touched.includes("click final")], ["the form did not take the claim: its final button is not the claim's", false]);
+  [got, touched] = await run({ rehide: true });
   assert.deepEqual([got.reason, touched.includes("click final")], ["the form did not take the claim: its final button is not the claim's", false]);
 });
 

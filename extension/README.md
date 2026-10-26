@@ -191,7 +191,8 @@ that passes every check above is placed, on a page opened with a moves fragment 
      `Hidden-submit`, the drop's box checked; a reply short of any is a skip naming what is missing), it types the
      whole-dollar bid into `faab`, checked first as Yahoo checks it (a whole number from $0 to the field's
      `data-faab-balance`), reads the form back (one box ticked and it is the drop, `apid` the add, the bid as typed,
-     the final button the claim's) and clicks the final button once.
+     the final button by its identity: still the one Yahoo drew and shown, its name `submit_drop_player` only if it
+     has one, since Yahoo's handler posts no button name) and clicks the final button once.
    The form posts as Yahoo's script sends it; the anti-forgery field travels in the browser's own submission and is
    never read. A skip after the first click leaves the page as it is (no Cancel click). On an add page opened with
    a moves fragment, `addpage.js` (the page's own world, `document_start`) keeps Yahoo's alerts as text on the root

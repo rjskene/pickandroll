@@ -424,8 +424,11 @@
     if (ticked.length !== 1 || ticked[0] !== drop) wrong.push(`the drops ticked are ${ticked.join(", ") || "none"}`);
     if (add.length !== 1 || Number(add[0].value) !== entry.add) wrong.push("its apid is not the add");
     if (bid.value !== String(amount)) wrong.push(`its bid reads ${bid.value}`);
+    // The final button by its identity: still the one Yahoo drew, shown, and named as the claim's
+    // when it carries a name at all (Yahoo's handler submits the form itself).
+    const now = signs();
     const name = s.final.getAttribute("name");
-    if (name != null && name !== SUBMIT) wrong.push("its final button is not the claim's");
+    if (now.final !== s.final || !now.shown || (name != null && name !== SUBMIT)) wrong.push("its final button is not the claim's");
     if (wrong.length) return skip(`the form did not take the claim: ${wrong.join("; ")}`);
     if (yahoo().length) return skip(`Yahoo alerted before the final click: "${yahoo()[0]}"`);
     s.final.click();
