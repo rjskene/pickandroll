@@ -32,6 +32,9 @@
   const DROP_FIELD = "dpid";
   const BID_FIELD = "faab";
   const SUBMIT = "submit_drop_player";
+  /** An entry with no drop whose page shows no drop section (#199), and why live still holds it. */
+  const OPEN_SPOT = "open spot";
+  const OPEN_SPOT_HELD = "open spot, read only: an open-spot claim is not submitted until Yahoo's open-spot page has been seen";
   /** The claim submit Yahoo draws once a drop is picked (in a noscript until then). */
   const SUBMIT_BUTTON = "#submit-add-drop-button";
   /** How long a submit waits for its landed page in the same tab before the next pass in the
@@ -165,8 +168,7 @@
     if (due.stop) return "STOP is on (data/autopilot/STOP)";
     if (entry.struck) return "struck: it is never executed";
     if (!entry.queued) return "not queued: it is never executed";
-    if (entry.drop == null) return "an open-spot claim is not read yet";
-    const guard = (due.protected || {})[String(entry.drop)];
+    const guard = entry.drop != null && (due.protected || {})[String(entry.drop)];
     if (guard) return `the drop is protected (${guard})`;
     if ((due.pending || []).some((c) => c.add === entry.add)) return "a claim on the add is pending";
     if (due.cap != null && (due.done || 0) >= due.cap) return "over the day's cap";
@@ -176,7 +178,8 @@
   }
 
   /** What the add page ``page`` (``readAddPage``'s) says against ``entry``: ``{outcome, reason}``,
-   * ``would_claim`` with no reason when every check passes. ``due`` is the due route's answer. */
+   * ``would_claim`` when every check passes, with no reason, or "open spot" for an entry with no
+   * drop whose page shows no drop section (#199). ``due`` is the due route's answer. */
   function pageCheck(entry, page, due) {
     const skip = (reason) => ({ outcome: "skipped", reason });
     const onTeam = page.add_row && page.add_row.markers.includes("on_team");
@@ -193,17 +196,28 @@
     if (page.add !== entry.add) return skip("the page claims another player than the entry");
     if (!page.waiver_date) return skip("the page shows no waiver date");
     if (entry.from && page.waiver_date !== entry.from) return skip(`the page's waiver date is ${page.waiver_date}, the queue's ${entry.from}`);
-    const row = page.rows.filter((r) => r.id === entry.drop);
-    const marker = !row.length
-      ? "none"
-      : row[0].markers.includes("cantcut")
-        ? "cantcut"
-        : row[0].markers.includes("locked")
-          ? "locked"
-          : row[0].box !== 1 || row.length !== 1
-            ? "none"
-            : null;
-    if (marker) return skip(`the drop ${entry.drop} cannot be picked (${marker})`);
+    if (entry.drop == null) {
+      // An entry with no drop (#199): the drop section decides. Shown (any roster row or drop box),
+      // the roster is full and the claim would post without the drop the page asks for; never a
+      // fallback drop. None shown is an open spot.
+      if (page.rows.length || page.boxes.length) {
+        const held = entry.basis === "held" && entry.held_move ? entry.held_move.player : null;
+        const listed = `(the page lists ${page.boxes.length} to drop)`;
+        return skip(held != null ? `the roster is full: ${held} to IL first ${listed}` : `the roster is full and the entry carries no drop ${listed}`);
+      }
+    } else {
+      const row = page.rows.filter((r) => r.id === entry.drop);
+      const marker = !row.length
+        ? "none"
+        : row[0].markers.includes("cantcut")
+          ? "cantcut"
+          : row[0].markers.includes("locked")
+            ? "locked"
+            : row[0].box !== 1 || row.length !== 1
+              ? "none"
+              : null;
+      if (marker) return skip(`the drop ${entry.drop} cannot be picked (${marker})`);
+    }
     if (page.add_row && page.add_row.markers.includes("no_moves")) return skip("Yahoo shows no more roster moves on the add");
     if (!page.bid) return skip("the page has no bid field");
     const bid = entry.bid_placed ?? 0;
@@ -212,14 +226,14 @@
     if (bid < page.bid_min || bid > page.bid_max) return skip(`the bid ($${bid}) is outside the page's $${page.bid_min} to $${page.bid_max}`);
     if (page.budget == null || bid > page.budget) return skip(`the bid ($${bid}) is over the $${page.budget ?? "?"} left`);
     if (page.submit !== SUBMIT) return skip("the page has no claim submit");
-    return { outcome: "would_claim", reason: null };
+    return { outcome: "would_claim", reason: entry.drop == null ? OPEN_SPOT : null };
   }
 
   /** The claim the form would carry for ``entry``: its action and the fields this pass would
    * fill, one drop only. Every other field would post as the page has it; the anti-forgery
    * field is no part of this. */
   function wouldFill(entry, page) {
-    return { action: page.action, [ADD_FIELD]: entry.add, [DROP_FIELD]: entry.drop, [BID_FIELD]: entry.bid_placed ?? 0, submit: SUBMIT };
+    return { action: page.action, [ADD_FIELD]: entry.add, [DROP_FIELD]: entry.drop ?? null, [BID_FIELD]: entry.bid_placed ?? 0, submit: SUBMIT };
   }
 
   const FILLED = new Set([ADD_FIELD, DROP_FIELD, BID_FIELD, SUBMIT]);
@@ -306,10 +320,11 @@
   }
 
   /** Why a claim that passed every check is still not submitted live, null when it may be: a
-   * free-agent add (this build places waiver claims only) or an open-spot claim (#199). */
+   * free-agent add (this build places waiver claims only) or an open-spot claim, read (#199) but
+   * not submitted until Yahoo's open-spot page has been seen on a real page. */
   function submitProblem(entry, page) {
     if (entry.availability === "FA" || page.heading !== CLAIM_HEADING) return "a free-agent add: this build places waiver claims only";
-    if (entry.drop == null) return "an open-spot claim is not read yet";
+    if (entry.drop == null) return OPEN_SPOT_HELD;
     return null;
   }
 
@@ -413,9 +428,14 @@
     const e = run.entries[0];
     const refused = run.mode === "dry_run" && due.mode === "live" ? ` (${passMode(due).refused})` : "";
     const head = run.mode === "live" ? "live" : `dry run${refused}`;
-    if (run.outcome === "would_claim") return `${head} · would claim for $${e.bid}, dropping ${e.drop}; logged ${clockOf(at)}`;
+    if (run.outcome === "would_claim") return `${head} · would claim for $${e.bid}, ${dropWords(e.drop)}; logged ${clockOf(at)}`;
     const what = e && e.outcome === "gone" ? "gone" : run.outcome === "failed" ? "failed" : "skipped";
     return `${head} · ${what}: ${(e && e.reason) || run.reason} (${clockOf(at)})`;
+  }
+
+  /** "dropping 2005", or "into an open spot" for a claim with no drop. */
+  function dropWords(drop) {
+    return drop == null ? "into an open spot" : `dropping ${drop}`;
   }
 
   /** The strip's line on the page Yahoo landed on after a claim's submit: what was logged. */
@@ -423,7 +443,7 @@
     const e = run.entries[0];
     if (e.outcome === "failed") return `live · claim failed: ${e.reason} (${clockOf(at)})`;
     const said = e.reason || (e.message ? `Yahoo: ${e.message}` : "placed");
-    return `live · claimed for $${e.bid}, dropping ${e.drop}: ${said}; logged ${clockOf(at)}`;
+    return `live · claimed for $${e.bid}, ${dropWords(e.drop)}: ${said}; logged ${clockOf(at)}`;
   }
 
   const MOVES_OUTCOME_WORDS = {
@@ -446,13 +466,13 @@
 
   /** The panel's links to the league's due entries' add pages, with the panel's fragment: the
    * user opens each; nothing is opened for them. In a live league whose guard holds, opening one
-   * places the claim, and the link says so. */
+   * places the claim, and the link says so; an open spot is only read there (#199). */
   function dueLinks(due, site = "https://basketball.fantasysports.yahoo.com") {
     const live = passMode(due).mode === "live";
     return (due.entries || []).map((e) => ({
       id: e.id,
       href: `${site}${e.page}#${PANEL_FRAGMENT}`,
-      text: `${live ? "claim: " : ""}add ${e.add}, drop ${e.drop ?? "none"}, $${e.bid_placed ?? 0}`,
+      text: `${live && e.drop != null ? "claim: " : ""}add ${e.add}, ${e.drop == null ? "open spot" : `drop ${e.drop}`}, $${e.bid_placed ?? 0}`,
     }));
   }
 
@@ -475,6 +495,8 @@
     FORM_ID,
     CLAIM_HEADING,
     SUBMIT,
+    OPEN_SPOT,
+    OPEN_SPOT_HELD,
     SUBMIT_BUTTON,
     LANDING_MS,
     TOKEN_FIELD,
