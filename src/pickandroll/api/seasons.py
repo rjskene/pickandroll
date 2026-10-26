@@ -288,6 +288,8 @@ HOLD = timedelta(minutes=60)
 #: Who ``armed.json`` says set a moves mode from the Queue screen's one switch (#205); the
 #: Queue card's single switch records ``dashboard``.
 EVERY_LEAGUE = "dashboard: every league"
+#: The evening routine's pass is a moves pass (#209): the evening sets no lineup.
+EVENING_MOVES_ONLY = "the evening pass is a moves pass"
 
 
 class RefreshDeadline(BaseException):
@@ -1430,6 +1432,8 @@ class SeasonService:
     def open_pass(self, body: PassOpen) -> dict[str, Any]:
         """Open a routine's pass (#201): the leagues it will open, in order, and the entries a
         moves pass will check; the private league is refused, as everywhere."""
+        if body.kind == "lineup" and body.trigger == "routine_evening":
+            raise HTTPException(409, EVENING_MOVES_ONLY)
         for league in body.leagues:
             _, is_public = self._base(league)
             if not is_public:
@@ -2480,7 +2484,8 @@ class PassOpen(BaseModel):
     #: A routine's pass (#201): its kind and trigger, the leagues in the order it opens them and,
     #: for a moves pass, the entries it will check.
     kind: Literal["moves", "lineup"]
-    trigger: Literal["routine", "routine_late"]
+    #: ``routine_evening`` opens a moves pass only (#209): the evening has no lineup pass.
+    trigger: Literal["routine", "routine_late", "routine_evening"]
     leagues: list[str] = Field(min_length=1)
     entries: list[str] | None = None
 

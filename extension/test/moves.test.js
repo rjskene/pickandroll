@@ -95,6 +95,7 @@ const checkOn = (raw, d = due(), e = entry()) => X.pageCheck(e, X.readAddPage(ra
 test("the fragments that start a pass and the add page they run on", () => {
   assert.equal(X.movesTriggerOf("#pickandroll-moves"), "routine");
   assert.equal(X.movesTriggerOf("#pickandroll-moves-late"), "routine_late");
+  assert.equal(X.movesTriggerOf("#pickandroll-moves-evening"), "routine_evening");
   assert.equal(X.movesTriggerOf("#pickandroll-moves-panel"), "panel");
   assert.equal(X.movesTriggerOf("#pickandroll-lineup"), null);
   assert.equal(X.movesTriggerOf(""), null);
@@ -240,6 +241,7 @@ test("the strip, the panel's line and the panel's links", () => {
   assert.equal(X.movesStripText({ due: due(), run, at }), "dry run · would claim for $3, dropping 2005; logged 09:02");
   const last = { day: DAY, trigger: "routine_late", outcome: "would_claim", reason: null };
   assert.equal(X.movesLastText(last, "3 min ago"), `${DAY} · late routine: would claim, 3 min ago`);
+  assert.equal(X.movesLastText({ ...last, trigger: "routine_evening" }, "1 min ago"), `${DAY} · evening routine: would claim, 1 min ago`);
   assert.equal(X.movesLastText(null, ""), "no pass from this browser yet");
   assert.deepEqual(X.dueLinks(due()), [{ id: e.id, href: `${SITE}${e.page}#pickandroll-moves-panel`, text: "add 3001, drop 2005, $3" }]);
   // In a live league whose guard holds, the panel's link places the claim and says so.
@@ -505,7 +507,7 @@ test("the alert recorder: only on an add page opened with a moves fragment", () 
     q.win.alert("shown");
     assert.deepEqual([q.installed, q.shown], [false, ["shown"]]);
   }
-  for (const hash of ["#pickandroll-moves-late", "#pickandroll-moves-panel"]) assert.equal(page(`/nba/${LEAGUE}/addplayer`, hash).installed, true);
+  for (const hash of ["#pickandroll-moves-late", "#pickandroll-moves-evening", "#pickandroll-moves-panel"]) assert.equal(page(`/nba/${LEAGUE}/addplayer`, hash).installed, true);
 });
 
 test("the page Yahoo lands on: placed, refused or not recognised", () => {
@@ -683,9 +685,11 @@ test("the routine's link: the fragment dropped, the page's entry checked on the 
   assert.match(v.strip.textContent, /^pickandroll moves: dry run · would claim for \$3, dropping 2005; logged \d\d:\d\d$/);
 });
 
-test("the late pass and the panel's link carry their triggers", async () => {
+test("the late and evening passes and the panel's link carry their triggers", async () => {
   let v = await visitAdd({ hash: "#pickandroll-moves-late", answer: worker() });
   assert.equal(sentOf(v, "moves_log")[0].run.trigger, "routine_late");
+  v = await visitAdd({ hash: "#pickandroll-moves-evening", answer: worker() });
+  assert.equal(sentOf(v, "moves_log")[0].run.trigger, "routine_evening");
   v = await visitAdd({ hash: "#pickandroll-moves-panel", answer: worker() });
   assert.equal(sentOf(v, "moves_log")[0].run.trigger, "panel");
 });

@@ -55,7 +55,9 @@ LINEUP = "lineup"
 #: The moves executor's execute passes, beside the lineup's runs in the same file (#171).
 MOVES = "moves"
 LOG_KEYS = (LINEUP, MOVES)
-TRIGGERS = ("routine", "routine_late", "panel")
+#: What started a pass: the morning routine, the late one, the side panel, and for the moves
+#: executor alone the evening routine (#209).
+TRIGGERS = ("routine", "routine_late", "panel", "routine_evening")
 RUN_OUTCOMES = ("would_set", "nothing_to_do", "skipped", "set", "failed", "stopped")
 STEP_OUTCOMES = ("would_set", "skipped", "set", "failed")
 #: The dry run ``live`` waits for (the 2026-10-23 ruling on #170): dry-run lineup runs on this many
@@ -453,7 +455,7 @@ class MovesRun(BaseModel):
 
     day: date
     mode: Literal["dry_run", "live"]
-    trigger: Literal["routine", "routine_late", "panel"]
+    trigger: Literal["routine", "routine_late", "panel", "routine_evening"]
     outcome: Literal["would_claim", "nothing_due", "skipped", "claimed", "failed", "stopped"]
     reason: str | None = None
     entries: list[MoveCheck] = []

@@ -176,11 +176,13 @@ page, from PR 2:
   **A pass, live (#201).** A routine's pass is recorded while it runs, so the screen shows it:
   - **The record.** `data/autopilot/passes/<date>.json` (the NBA day of the open) holds the day's
     passes (`api/season_passes.py`), written whole under a lock like the queue. A pass is its
-    `id` (`<date>:<kind>:<n>`), kind (`moves` or `lineup`), trigger (`routine` or
-    `routine_late`), the leagues in the order the routine opens them, for a moves pass the
-    entries it will check, `started` and `updated`, `current` (the league and entry being
-    opened), the leagues done, each entry's (or a lineup pass's team page's) latest outcome, and
-    `ended`, `end` (`done` or `stale`) and the routine's `summary`.
+    `id` (`<date>:<kind>:<n>`), kind (`moves` or `lineup`), trigger (`routine`,
+    `routine_late`, or for a moves pass `routine_evening`, #209), the leagues in the order the
+    routine opens them, for a moves pass the entries it will check, `started` and `updated`,
+    `current` (the league and entry being opened), the leagues done, each entry's (or a lineup
+    pass's team page's) latest outcome, and `ended`, `end` (`done` or `stale`) and the routine's
+    `summary`. A lineup pass opened with `routine_evening` is refused: the evening sets no
+    lineup.
   - **The routine's three calls.**
     - `POST /autopilot/passes {kind, trigger, leagues, entries?}` opens a pass. It is refused
       (409) while a pass of the kind is open; a moves pass and a lineup pass may run together. The
@@ -229,7 +231,8 @@ page, from PR 2:
   `live.ok`. The extension fetches `due` afresh on each page and never keeps it.
 - **The page check (PR 2, extension 0.7.0).** The routine opens the due pages: each due entry's
   `page` with `#pickandroll-moves` in a tab of its own (`#pickandroll-moves-late` for the late
-  pass, trigger `routine_late`). The side panel's **Check moves now** lists the due entries as
+  pass, trigger `routine_late`; `#pickandroll-moves-evening` for the evening's, trigger
+  `routine_evening`, #209). The side panel's **Check moves now** lists the due entries as
   links with `#pickandroll-moves-panel` (trigger `panel`) for the user to open; the extension
   opens no tab. On an add page with one of those fragments the content script drops the fragment
   (a reload is a plain visit), takes the add from the address and the league from the path,

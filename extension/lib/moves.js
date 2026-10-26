@@ -19,11 +19,13 @@
 })(typeof globalThis !== "undefined" ? globalThis : this, function () {
   "use strict";
 
-  /** The fragments a pass starts from on an add page: the routine's link, its late pass and the
-   * side panel's link. Yahoo never sees a fragment; any other visit runs no pass. */
+  /** The fragments a pass starts from on an add page: the routine's link, its late pass, its
+   * evening pass (#209) and the side panel's link. Yahoo never sees a fragment; any other visit
+   * runs no pass. */
   const MOVES_TRIGGERS = {
     "pickandroll-moves": "routine",
     "pickandroll-moves-late": "routine_late",
+    "pickandroll-moves-evening": "routine_evening",
     "pickandroll-moves-panel": "panel",
   };
   const PANEL_FRAGMENT = "pickandroll-moves-panel";
@@ -544,7 +546,12 @@
     failed: "failed",
     stopped: "stopped by STOP",
   };
-  const MOVES_TRIGGER_WORDS = { routine: "routine", routine_late: "late routine", panel: "side panel" };
+  const MOVES_TRIGGER_WORDS = {
+    routine: "routine",
+    routine_late: "late routine",
+    routine_evening: "evening routine",
+    panel: "side panel",
+  };
 
   /** The panel's line for the league's last pass from this browser (the worker keeps it):
    * "2026-10-24 · routine: would claim, 3 min ago". ``when`` is its age in words. */

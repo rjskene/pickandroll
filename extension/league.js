@@ -12,8 +12,8 @@
 //
 // On an add page (/nba/<league>/addplayer?apid=<player>) it is the moves executor (#171,
 // lib/moves.js), and only when the page was opened with the routine's fragment
-// (#pickandroll-moves, #pickandroll-moves-late) or the side panel's link: the routine opens each
-// due queue entry's add page in a tab of its own. It drops the fragment, fetches the league's due
+// (#pickandroll-moves, #pickandroll-moves-late, #pickandroll-moves-evening) or the side panel's
+// link: the routine opens each due queue entry's add page in a tab of its own. It drops the fragment, fetches the league's due
 // entries, checks the one whose add is this page's on the rendered claim form, and logs the claim it
 // would place; in a live league whose guard holds (PR 3) it places it instead (``fillClaim``), and
 // the page Yahoo lands on in the same tab, any page of the league, logs what Yahoo answered. It

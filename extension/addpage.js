@@ -1,8 +1,8 @@
 // pickandroll, the add page's alert recorder (#171, 0.8.2; the page's own world, at
 // document_start). Yahoo's add page answers a refused drop or a bid out of range with
 // ``alert``, which would block the tab, and the routine's pass with it, until someone dismissed
-// it. On an add page opened with a moves fragment (the routine's link, its late pass or the side
-// panel's), and nowhere else, ``alert`` keeps its text on the root element instead, where the
+// it. On an add page opened with a moves fragment (the routine's link, its late or evening pass,
+// or the side panel's), and nowhere else, ``alert`` keeps its text on the root element instead, where the
 // moves executor (lib/moves.js, ``alertsOf``) reads it and logs the entry with Yahoo's words. A
 // page the user opens by hand keeps Yahoo's alerts. It reads nothing on the page and sends
 // nothing.
@@ -10,7 +10,12 @@
   "use strict";
   /** The moves fragments (lib/moves.js ``MOVES_TRIGGERS``) and where the texts are kept
    * (``ALERTS_ATTR``); this world loads none of the extension's libraries. */
-  const FRAGMENTS = ["pickandroll-moves", "pickandroll-moves-late", "pickandroll-moves-panel"];
+  const FRAGMENTS = [
+    "pickandroll-moves",
+    "pickandroll-moves-late",
+    "pickandroll-moves-evening",
+    "pickandroll-moves-panel",
+  ];
   const ATTR = "data-pickandroll-alerts";
   const ADD_PAGE = /^\/nba\/\d+\/addplayer\/?$/;
   /** The longest text kept of one alert. */
