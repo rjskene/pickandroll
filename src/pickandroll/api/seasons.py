@@ -978,7 +978,20 @@ class SeasonService:
             "stop": season_autopilot.stopped(self.data_dir),
             "now": self.clock().isoformat(),
         }
-        return {**out, "names": self._queue_names(out["entries"])}
+        lines = {
+            league: season_autopilot.day_lines(self.data_dir, league, day)
+            for league in sorted({str(e["league"]) for e in out["entries"]})
+        }
+        latest = {
+            k: v for x in lines.values() for k, v in season_autopilot.latest_passes(x).items()
+        }
+        return {
+            **out,
+            # The day's pass results (#200), read from the leagues' logs: never stored on the queue.
+            "entries": [{**e, "pass": latest.get(str(e["id"]))} for e in out["entries"]],
+            "passes": season_autopilot.pass_tally(lines),
+            "names": self._queue_names(out["entries"]),
+        }
 
     def _queue_names(self, entries: Iterable[Mapping[str, Any]]) -> dict[str, str]:
         """Every player the day's entries mention (the add, the drop, the held move's player), by

@@ -411,9 +411,10 @@ def test_the_build_reads_the_days_solve_and_never_solves(client):
         "status": "private",
         "reason": qa.PRIVATE,
     }
-    # The store holds what the route answered.
+    # The store holds what the route answered, less each entry's pass read from the logs (#200).
     stored = json.loads((client.data_dir / "autopilot" / "queue" / "2026-10-21.json").read_text())
-    assert stored["entries"] == q["entries"] and client.get("/autopilot/queue").json() == q
+    answered = [{k: v for k, v in e.items() if k != "pass"} for e in q["entries"]]
+    assert stored["entries"] == answered and client.get("/autopilot/queue").json() == q
 
 
 def test_an_off_league_queues_nothing_and_the_users_cap_replaces_the_knobs(client):
@@ -605,6 +606,58 @@ def test_a_pass_is_logged_under_moves_and_sets_the_entries_outcomes(client):
     again = {e["id"]: e for e in client.post("/autopilot/queue/build").json()["entries"]}
     assert again[on[0]["id"]]["outcome"] == "claimed"
     assert strike(client, on[0]["id"]).status_code == 409
+
+
+def test_the_queue_reads_each_entrys_latest_pass_and_the_days_tally_from_the_logs(client):
+    q = queued(client)
+    assert q["passes"] is None and all(e["pass"] is None for e in q["entries"])
+    on = [e for e in q["entries"] if e["queued"]]
+    url = f"/seasons/{LEAGUE}/autopilot/moves"
+    cut = check(on[1], outcome="skipped", reason="the drop 9 cannot be picked (cantcut)")
+    first = pass_body([check(on[0]), cut], outcome="skipped")
+    assert client.post(url, json=first).status_code == 200
+    # A pass that found nothing due names no entry and counts no page.
+    assert client.post(url, json=pass_body([], outcome="nothing_due")).status_code == 200
+    again = check(on[0], outcome="skipped", reason="page not read")
+    late = pass_body([again], trigger="routine_late", outcome="skipped", extension="0.7.1")
+    assert client.post(url, json=late).status_code == 200
+    # Only the queue day's lines: a line of another day in the file names no entry's pass.
+    out = next(e for e in q["entries"] if not e["queued"])
+    other = {"at": NOW.isoformat(), "day": "2026-10-20", "trigger": "routine", "entries": []}
+    other["entries"] = [{"id": out["id"], "outcome": "would_claim", "reason": None}]
+    ap.append_run(client.data_dir, LEAGUE, other, DAY, ap.MOVES)
+    log = ap.read_log(client.data_dir, LEAGUE, DAY)["moves"]
+    got = client.get("/autopilot/queue").json()
+    by = {e["id"]: e for e in got["entries"]}
+    # Each entry its latest line: the entry's own outcome and reason, the pass's time and trigger.
+    assert by[on[0]["id"]]["pass"] == {
+        "at": log[2]["at"],
+        "trigger": "routine_late",
+        "outcome": "skipped",
+        "reason": "page not read",
+        "extension": "0.7.1",
+    }
+    assert by[on[1]["id"]]["pass"]["reason"] == "the drop 9 cannot be picked (cantcut)"
+    assert by[out["id"]]["pass"] is None
+    # Each entry counted once by its latest line; every entry line a page; the last line's time.
+    assert got["passes"] == {
+        "last": log[2]["at"],
+        "would_claim": 0,
+        "claimed": 0,
+        "skipped": 2,
+        "gone": 0,
+        "failed": 0,
+        "pages": 3,
+    }
+    # A dry run still moves no outcome; the queue file keeps no pass.
+    assert by[on[0]["id"]]["outcome"] is None
+    assert all("pass" not in e for e in season_queue.read(client.data_dir, DAY)["entries"])
+    # The Queue card's entries say the same, and so does the strike's answer.
+    card = {e["id"]: e for e in client.get(url).json()["entries"]}
+    assert card[on[0]["id"]]["pass"] == by[on[0]["id"]]["pass"]
+    struck = strike(client, on[1]["id"]).json()
+    assert struck["passes"] == got["passes"]
+    assert {e["id"]: e["pass"] for e in struck["entries"]}[on[0]["id"]]["outcome"] == "skipped"
 
 
 def test_the_log_refuses_a_crumb_a_dry_claim_a_struck_entry_and_another_move(client):
