@@ -344,7 +344,7 @@ test("a refused run is not kept as the last one", async () => {
 
 test("the dry run sets no field and submits nothing; the reader loads the executor's library", () => {
   const manifest = JSON.parse(fs.readFileSync(path.join(DIR, "manifest.json"), "utf8"));
-  assert.equal(manifest.version, "0.8.0");
+  assert.equal(manifest.version, "0.8.1");
   const reader = manifest.content_scripts.find((c) => c.js.includes("league.js"));
   assert.deepEqual(reader.js, ["lib/league.js", "lib/lineup.js", "lib/moves.js", "league.js"]);
   // The moves executor's live claim (``fillClaim``, #171 PR 3) is the one place that touches a

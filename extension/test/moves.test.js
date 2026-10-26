@@ -28,7 +28,7 @@ const ICON = { cantcut: "noactioncc-cantcut F-icon T-action-icon-cantcut", locke
 /** An add page as the content script extracts it from the rendered page: the anti-forgery field
  * left out, ``token`` saying the form has it. ``markers`` puts an icon on a roster row,
  * ``addClasses`` on the add's own row. */
-function rawPage({ token = true, add = ADD, budget = 100, waiver = "Oct 26", heading = X.CLAIM_HEADING, form = true, markers = {}, addClasses = "noactionda- F-icon T-action-icon-disabled-add", action = `/nba/${LEAGUE}/${TEAM}/addplayer`, submit = X.SUBMIT, hint = true, message = null } = {}) {
+function rawPage({ token = true, add = ADD, budget = 100, waiver = "Oct 26", heading = X.CLAIM_HEADING, form = true, markers = {}, addClasses = "noactionda- F-icon T-action-icon-disabled-add", action = `/nba/${LEAGUE}/${TEAM}/addplayer`, submit = X.SUBMIT, hint = true, message = null, drops = true } = {}) {
   const cut = new Set([...CANTCUT, ...Object.keys(markers).map(Number)]);
   return {
     path: `/nba/${LEAGUE}/addplayer?apid=${add}`,
@@ -42,7 +42,7 @@ function rawPage({ token = true, add = ADD, budget = 100, waiver = "Oct 26", hea
             hidden("stat1", "P"),
             hidden("stat2", "P"),
             hidden("apid", String(add)),
-            ...ROSTER.filter((k) => !cut.has(k)).map((k) => ({ name: "dpid", tag: "input", type: "checkbox", value: String(k), checked: false })),
+            ...(drops ? ROSTER : []).filter((k) => !cut.has(k)).map((k) => ({ name: "dpid", tag: "input", type: "checkbox", value: String(k), checked: false })),
             { name: "faab", tag: "input", type: "text", value: "0", checked: false },
           ],
           token,
@@ -52,7 +52,7 @@ function rawPage({ token = true, add = ADD, budget = 100, waiver = "Oct 26", hea
     panel: `Your Bid $ Your Budget $${budget}${waiver ? ` Waiver Date ${waiver}` : ""}`,
     hint: hint ? `Must be between $0 and $${budget}` : null,
     add_row: { id: String(add), classes: addClasses },
-    rows: ROSTER.map((k) => ({ id: String(k), classes: CANTCUT.includes(k) ? ICON.cantcut : markers[k] ? ICON[markers[k]] : "" })),
+    rows: (drops ? ROSTER : []).map((k) => ({ id: String(k), classes: CANTCUT.includes(k) ? ICON.cantcut : markers[k] ? ICON[markers[k]] : "" })),
     message,
   };
 }
@@ -153,7 +153,8 @@ test("the checks before the page: the state, struck, open spot, protected, pendi
   assert.equal(X.entryProblem(entry(), due({ stop: true })), "STOP is on (data/autopilot/STOP)");
   assert.equal(X.entryProblem(entry({ struck: true }), due()), "struck: it is never executed");
   assert.equal(X.entryProblem(entry({ queued: false }), due()), "not queued: it is never executed");
-  assert.equal(X.entryProblem(entry({ drop: null }), due()), "an open-spot claim is not read yet");
+  // An entry with no drop is read on its page (#199); a drop is checked against the protected.
+  assert.equal(X.entryProblem(entry({ drop: null }), due()), null);
   assert.equal(X.entryProblem(entry({ drop: 2001 }), due()), "the drop is protected (kept: beats the best add)");
   assert.equal(X.entryProblem(entry(), due({ pending: [{ id: "x", add: ADD, drop: 2009, from: CLEARS }] })), "a claim on the add is pending");
   assert.equal(X.entryProblem(entry(), due({ done: 2 })), "over the day's cap");
@@ -224,7 +225,7 @@ test("the mode a pass runs in: live only where the league is live and its guard 
   assert.equal(X.submitProblem(entry(), page), null);
   assert.equal(X.submitProblem(entry({ availability: "FA" }), page), "a free-agent add: this build places waiver claims only");
   assert.equal(X.submitProblem(entry(), X.readAddPage(rawPage({ heading: "Add Player" }), CLEARS)), "a free-agent add: this build places waiver claims only");
-  assert.equal(X.submitProblem(entry({ drop: null }), page), "an open-spot claim is not read yet");
+  assert.equal(X.submitProblem(entry({ drop: null }), page), "open spot, read only: an open-spot claim is not submitted until Yahoo's open-spot page has been seen");
 });
 
 test("the strip, the panel's line and the panel's links", () => {
@@ -244,6 +245,10 @@ test("the strip, the panel's line and the panel's links", () => {
   // In a live league whose guard holds, the panel's link places the claim and says so.
   const live = due({ mode: "live", live: { ok: true, reason: null } });
   assert.equal(X.dueLinks(live)[0].text, "claim: add 3001, drop 2005, $3");
+  // An open spot is only read in live (#199): its link places nothing and says no "claim".
+  const open = { ...e, drop: null };
+  assert.equal(X.dueLinks({ ...live, entries: [open] })[0].text, "add 3001, open spot, $3");
+  assert.equal(X.dueLinks({ ...due(), entries: [open] })[0].text, "add 3001, open spot, $3");
   const refused = due({ mode: "live", live: { ok: false, reason: "a dry run on 7 days first: 3 so far" } });
   const dry = X.movesPass({ due: refused, trigger: "routine", checks: [X.moveCheck(e, X.pageCheck(e, page, refused), page, refused, READ_AT)] });
   assert.equal(X.movesStripText({ due: refused, run: dry, at }), "dry run (live refused: a dry run on 7 days first: 3 so far) · would claim for $3, dropping 2005; logged 09:02");
@@ -768,3 +773,54 @@ test("the worker puts submits on record one at a time, never past the cap or twi
   assert.equal((await w.send({ op: "moves_submitting", league: "100009", record: record("e5", 3001) }, 8)).ok, true);
   assert.equal((await w.send({ op: "moves_submitting", league: LEAGUE, record: { ...record("e6", 3006), day: "2026-10-25" } }, 8)).ok, true);
 });
+
+// ---------------------------------------------------------------- the open-spot claim (#199)
+test("an entry with no drop: an open spot when the page shows no drop section, never a fallback drop", () => {
+  const open = entry({ id: `${DAY}:${LEAGUE}:${ADD}:0`, drop: null, basis: "open", held_move: null });
+  // No drop rows and no drop box: the roster has an open spot.
+  const page = X.readAddPage(rawPage({ drops: false }), CLEARS);
+  assert.deepEqual([page.rows, page.boxes], [[], []]);
+  const check = X.pageCheck(open, page, due());
+  assert.deepEqual(check, { outcome: "would_claim", reason: "open spot" });
+  const line = X.moveCheck(open, check, page, due(), READ_AT);
+  assert.deepEqual([line.drop, line.reason, line.controls.drops], [null, "open spot", 0]);
+  assert.deepEqual(line.controls.would_fill, { action: `/nba/${LEAGUE}/${TEAM}/addplayer`, apid: ADD, dpid: null, faab: 3, submit: X.SUBMIT });
+  const run = X.movesPass({ due: due(), trigger: "routine", checks: [line] });
+  assert.deepEqual([run.outcome, run.reason, run.entries[0].reason], ["would_claim", null, "open spot"]);
+  assert.equal(X.movesStripText({ due: due(), run, at: new Date(2026, 9, 24, 9, 2).getTime() }), "dry run · would claim for $3, into an open spot; logged 09:02");
+  // A drop section shown: the roster is full. A held add names its IL move; any other says so.
+  const full = X.readAddPage(rawPage(), CLEARS);
+  const held = entry({ drop: null, basis: "held", held_move: { player: 2009, slot: "IL" } });
+  assert.deepEqual(X.pageCheck(held, full, due()), { outcome: "skipped", reason: "the roster is full: 2009 to IL first (the page lists 11 to drop)" });
+  assert.deepEqual(X.pageCheck(open, full, due()), { outcome: "skipped", reason: "the roster is full and the entry carries no drop (the page lists 11 to drop)" });
+  assert.deepEqual(X.pageCheck(entry({ drop: null }), full, due()), { outcome: "skipped", reason: "the roster is full and the entry carries no drop (the page lists 11 to drop)" });
+  // The skip still logs what the page showed, the drop section's size with it.
+  assert.equal(X.moveCheck(held, X.pageCheck(held, full, due()), full, due(), READ_AT).controls.drops, 11);
+  // A held add whose IL move was made reads as an open spot.
+  assert.deepEqual(X.pageCheck(held, page, due()), { outcome: "would_claim", reason: "open spot" });
+  // The other checks still hold for an entry with no drop.
+  assert.equal(X.pageCheck(open, X.readAddPage(rawPage({ drops: false, heading: "Add Player" }), CLEARS), due()).reason, 'the page\'s heading is "Add Player", not the claim\'s');
+  assert.equal(X.pageCheck(open, X.readAddPage(rawPage({ drops: false, waiver: "Oct 27" }), CLEARS), due()).reason, "the page's waiver date is 2026-10-27, the queue's 2026-10-26");
+  assert.equal(X.pageCheck(open, X.readAddPage(rawPage({ drops: false, budget: 2 }), CLEARS), due()).reason, "the bid ($3) is outside the page's $0 to $2");
+  assert.equal(X.pageCheck(open, X.readAddPage(rawPage({ drops: false, submit: null }), CLEARS), due()).reason, "the page has no claim submit");
+});
+
+test("in a live league an open spot is read, never submitted: the page is left untouched", async () => {
+  const open = entry({ id: `${DAY}:${LEAGUE}:${ADD}:0`, drop: null, basis: "open", held_move: null });
+  const v = await visitAdd({ answer: worker({ ...LIVE, entries: [open] }), dom: openSpotDom() });
+  assert.deepEqual([ops(v), v.touched], [[...PASS, "moves_log"], []]);
+  const run = sentOf(v, "moves_log")[0].run;
+  assert.deepEqual([run.mode, run.outcome, run.entries[0].outcome, run.entries[0].reason, run.entries[0].controls.drops], ["live", "skipped", "skipped", X.OPEN_SPOT_HELD, 0]);
+  // In a dry run the same page logs the claim it would place.
+  const dry = await visitAdd({ answer: worker({ entries: [open] }), dom: openSpotDom() });
+  const line = sentOf(dry, "moves_log")[0].run.entries[0];
+  assert.deepEqual([line.outcome, line.reason, line.controls.would_fill.dpid, dry.touched], ["would_claim", "open spot", null, []]);
+});
+
+/** The add page with no drop section: ``addDom``'s, less my roster's rows and drop boxes. */
+function openSpotDom() {
+  const dom = addDom();
+  const form = dom.querySelector("form#add-drop-players-form");
+  form.elements = form.elements.filter((x) => x.name !== "dpid");
+  return { ...dom, querySelectorAll: (sel) => (sel === "table.statTable-drop tbody tr" ? [] : dom.querySelectorAll(sel)) };
+}
