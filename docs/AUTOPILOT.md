@@ -113,7 +113,8 @@ page, from PR 2:
   `data/autopilot/queue/<date>.json` holds the day; nothing else writes it. Each entry carries its
   move's `basis` (`open`, `held` or `drop`) and `held_move`, the held-slot move a `held` add needs
   (#187; null when the decision log entry was written before #187). The live claim (PR 3) reads
-  them: a `held` add executes after its held move, never as an open-spot claim.
+  them: a `held` add executes after its held move (its page then shows an open spot, #199), never
+  before it as an open-spot claim.
 - **The noise floor.** The plan floor of the knobs against the move's gain; once 20 moves are
   scored, also the scorecard's spread (the standard deviation of realized less projected value of
   the public leagues' scored moves, by scoring) against the move's value on its judging horizon,
@@ -179,9 +180,9 @@ page, from PR 2:
   (a reload is a plain visit), takes the add from the address and the league from the path,
   fetches `due` and checks the one entry whose add it is; no such entry, nothing is logged. It
   fetches no Yahoo page and navigates nowhere. The checks, each a skip with its reason:
-  - **The queue's:** the mode is dry run or live and STOP off; not struck; not an open-spot
-    claim (not read yet); the drop not protected; no pending claim names the add; the day's cap
-    not reached; the clear date's week has an add left.
+  - **The queue's:** the mode is dry run or live and STOP off; not struck; the drop, when the
+    entry has one, not protected; no pending claim names the add; the day's cap not reached; the
+    clear date's week has an add left.
   - **The page's identity:** the claim form (`form#add-drop-players-form`) posts to
     `/nba/<league>/<team>/addplayer` with the entry's league and `due.team`, carries `stage` and
     `apid`, and its `apid` is the add.
@@ -190,6 +191,17 @@ page, from PR 2:
   - **The drop:** exactly one `dpid` checkbox for it in my roster's table and no can't-cut or
     locked icon on its row; the reason names the marker found (`cantcut`, `locked` or `none`)
     and the id. Never a fallback drop.
+  - **No drop (#199, extension 0.8.1):** the page's drop section decides. None shown (no
+    `table.statTable-drop` row and no `dpid` box) is an open spot: `would_claim` with reason
+    "open spot". One shown means the roster is full, and the entry skips with the count: "the
+    roster is full: <id> to IL first (the page lists N to drop)" for a `held` add, whose IL move
+    is the lineup executor's, else "the roster is full and the entry carries no drop (…)". Never
+    a fallback drop. The markers are those read on 2026-10-26 (#199's plan): the full-roster page
+    of a held add shows "Select a player to drop" over `table#statTable-drop-1.statTable-drop`, one
+    row per player and a `dpid` box (`checkbox-<id>`) on each droppable one, the held player's
+    included; nothing on it says a drop is required. No league had an open spot that day, so the
+    open-spot rendering is unseen: the controls are logged on a skip too, and the first open-spot
+    page's line shows what Yahoo drew.
   - **Adds left:** `due.adds_left` covers the claim and the add's row has no "no more roster
     moves" icon.
   - **The bid:** a whole dollar inside the page's "between $x and $y" and at most the budget.
@@ -198,7 +210,7 @@ page, from PR 2:
   `gone` only when the page shows the add on a team (an on-team icon on the add's row, or a
   page without the form saying so); a page without the claim form is skipped "page not read",
   so the late pass retries. A pass that passes logs `would_claim` with the fields the claim
-  would fill (`{action, apid, dpid, faab, submit}`), the form's other field names (the
+  would fill (`{action, apid, dpid, faab, submit}`, `dpid` null for an open spot), the form's other field names (the
   anti-forgery field's left out), `token` (whether the form has that field), the heading, the
   waiver date, the budget, the bid range, the adds left, my roster's can't-cut ids, the add's
   row icons and when the page was read: ids, dollars and dates only. The waiver-order table is never read. A dry run toggles, sets and submits nothing. The
@@ -230,8 +242,11 @@ page, from PR 2:
      once the API has the pass.
 
   Held back in live: free-agent adds (the "Add Player" page; a follow-up builds that form once the
-  dry run has logged one) and open-spot claims (#199). The side panel's links say "claim: …" where
-  opening one places the claim. Nothing in the build or its tests reaches Yahoo; the first live
+  dry run has logged one) and open-spot claims. Since #199 (extension 0.8.1) an open spot is read
+  in live as in a dry run but never submitted: it is skipped with "open spot, read only: an
+  open-spot claim is not submitted until Yahoo's open-spot page has been seen", nothing on the page
+  touched, and the skip stays due. The side panel's links say "claim: …" where
+  opening one places the claim, and "open spot" with no "claim" for an entry with no drop. Nothing in the build or its tests reaches Yahoo; the first live
   claim is the user's own switch, after the Chrome reload to 0.8.0.
 - **The mode, the log and the live guard.** `armed.json`'s `moves` key and `moves_cap`, like the
   lineups'. A pass is `POST /seasons/{league}/autopilot/moves`, logged under `moves` beside

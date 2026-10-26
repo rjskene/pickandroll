@@ -660,6 +660,58 @@ def test_the_queue_reads_each_entrys_latest_pass_and_the_days_tally_from_the_log
     assert {e["id"]: e["pass"] for e in struck["entries"]}[on[0]["id"]]["outcome"] == "skipped"
 
 
+def open_spot(client, entry_id: str) -> None:
+    """Make a day's queue entry an add with no drop, as the solve gives one with an open spot."""
+
+    def change(q):
+        for e in q["entries"]:
+            if e["id"] == entry_id:
+                e.update(drop=None, basis="open", held_move=None)
+        return q
+
+    season_queue.update(client.data_dir, DAY, change)
+
+
+OPEN_SPOT_HELD = (
+    "open spot, read only: an open-spot claim is not submitted until Yahoo's open-spot page has"
+    " been seen"
+)
+
+
+def test_an_open_spot_claim_is_logged_with_no_drop_and_a_live_one_is_read_only(client):
+    q = queued(client)
+    on = [e for e in q["entries"] if e["queued"]]
+    open_spot(client, on[0]["id"])
+    url = f"/seasons/{LEAGUE}/autopilot/moves"
+    due_url = f"/seasons/{LEAGUE}/autopilot/moves/due"
+    entry = {**on[0], "drop": None}
+    fill = {"apid": on[0]["add"], "dpid": None, "faab": on[0]["bid"]["amount"]}
+    controls = {"form": "addplayer", "fields": ["apid", "faab"], "drops": 0, "would_fill": fill}
+    # The page showed no drop section (#199): a dry run says it would claim into the open spot.
+    claim = check(entry, reason="open spot", controls=controls)
+    r = client.post(url, json=pass_body([claim], extension="0.8.1"))
+    assert r.status_code == 200, r.text
+    by = {e["id"]: e for e in client.get("/autopilot/queue").json()["entries"]}
+    assert by[on[0]["id"]]["drop"] is None and by[on[0]["id"]]["outcome"] is None
+    assert by[on[0]["id"]]["pass"]["outcome"] == "would_claim"
+    assert by[on[0]["id"]]["pass"]["reason"] == "open spot"
+    # The entry is the queue's own: a pass naming a drop for it names another move.
+    r = client.post(url, json=pass_body([check(entry, drop=on[1]["drop"])]))
+    assert r.status_code == 409 and "another move" in r.json()["detail"]
+    # Live, the open spot is read and never submitted: a skip, and it stays due for the late pass.
+    live_league(client)
+    client.app.state.seasons.clock = lambda: NOW + timedelta(hours=1)
+    held = check(entry, outcome="skipped", reason=OPEN_SPOT_HELD, controls=controls)
+    body = pass_body([held], mode="live", outcome="skipped", extension="0.8.1")
+    assert client.post(url, json=body).status_code == 200
+    d = client.get(due_url).json()
+    assert on[0]["id"] in [e["id"] for e in d["entries"]]
+    assert next(e for e in d["entries"] if e["id"] == on[0]["id"])["drop"] is None
+    by = {e["id"]: e for e in client.get("/autopilot/queue").json()["entries"]}
+    assert by[on[0]["id"]]["outcome"] is None
+    assert by[on[0]["id"]]["pass"]["reason"] == OPEN_SPOT_HELD
+
+
 def test_the_log_refuses_a_crumb_a_dry_claim_a_struck_entry_and_another_move(client):
     q = queued(client)
     on = [e for e in q["entries"] if e["queued"]]
