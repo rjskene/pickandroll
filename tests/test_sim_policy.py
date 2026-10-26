@@ -54,6 +54,30 @@ def test_the_problem_mirrors_the_live_route():
     assert built_for(setup, state=used).problem.limits[0].adds == 1
 
 
+def test_an_add_is_charged_to_the_week_it_is_made_in_and_plays_the_next_day():
+    """Yahoo charges a free-agent add to the week it is made in, whenever it lands: a move on
+    Sunday spends the ending week's adds and plays from Monday; a midweek one spends this week's
+    and plays tomorrow."""
+    setup = make_setup()
+    base = initial(setup)
+    sunday = setup.calendar.weeks[0].end
+    assert sunday.weekday() == 6
+    move = mv.Move(min(base.pool), base.active(1)[0])
+    for today in (sunday, setup.start + timedelta(2)):
+        tomorrow = today + timedelta(1)
+        p = built_for(setup, state=SimState(today, base.rosters, base.pool, {1: 3})).problem
+        assert mv.day_of(p, move) == tomorrow
+        # The week's last add pays for him, even when he lands in the next week.
+        assert mv.limit_of(p, tomorrow) == p.limits[0] and p.limits[0].adds == 1
+        assert mv.feasible(p, (move,))
+        spent = SimState(today, base.rosters, base.pool, {1: 4})
+        assert not mv.feasible(built_for(setup, state=spent).problem, (move,))
+    # The windows: this week's opens today and runs a day past its end; the next starts after.
+    p = built_for(setup, state=SimState(sunday, base.rosters, base.pool, {})).problem
+    assert (p.limits[0].start, p.limits[0].end) == (sunday, sunday + timedelta(1))
+    assert p.limits[1].start == sunday + timedelta(2) and p.limits[1].adds == 4
+
+
 def test_no_problem_past_the_season():
     setup = make_setup()
     late = SimState(
