@@ -10,16 +10,19 @@
 // the API's steps built from that post, checks each on the page's form and logs what it would
 // set. Any other visit only shows the strip, a line saying what a run would do.
 //
-// On an add page (/nba/<league>/addplayer?apid=<player>) it is the moves executor's dry run
-// (#171, lib/moves.js), and only when the page was opened with the routine's fragment
+// On an add page (/nba/<league>/addplayer?apid=<player>) it is the moves executor (#171,
+// lib/moves.js), and only when the page was opened with the routine's fragment
 // (#pickandroll-moves, #pickandroll-moves-late) or the side panel's link: the routine opens each
 // due queue entry's add page in a tab of its own. It drops the fragment, fetches the league's due
-// entries, checks the one whose add is this page's on the rendered claim form and logs the claim it
-// would place. It posts nothing for the add page.
+// entries, checks the one whose add is this page's on the rendered claim form, and logs the claim it
+// would place; in a live league whose guard holds (PR 3) it places it instead (``fillClaim``), and
+// the page Yahoo lands on in the same tab, any page of the league, logs what Yahoo answered. It
+// posts nothing for the add page.
 //
-// It never clicks anything, never sets a field, never reads a form's crumb, never fetches a Yahoo
-// page and never runs on the draft client. It navigates only to follow the players page's Next 25
-// link during a multi-page read the user armed from the side panel.
+// It clicks, sets and submits only there: the entry's one drop box, the bid and the claim submit,
+// once, on a page opened with a moves fragment. It never reads a form's crumb, never fetches a
+// Yahoo page and never runs on the draft client. It navigates only to follow the players page's
+// Next 25 link during a multi-page read the user armed from the side panel.
 (() => {
   "use strict";
   const PR = globalThis.PickAndRoll;
@@ -27,7 +30,9 @@
   const STRIP = "pickandroll-strip";
   const page = PR.leaguePage(location.href);
   const addPage = page ? null : PR.addPageOf(location.href);
-  if ((!page && !addPage) || window[KEY]) return;
+  // Any page of a league may be the one a claim's submit lands on (#171 PR 3).
+  const league = PR.leagueOfPage(location.href);
+  if (!league || window[KEY]) return;
   window[KEY] = true;
 
   // Yahoo's league pages are served whole; a moment after load leaves room for anything the
@@ -199,7 +204,7 @@
 
   // The side panel's "Set lineup now": post the page again and run from that post.
   chrome.runtime.onMessage.addListener((msg, _sender, reply) => {
-    if (!msg || msg.op !== "lineup_run") return false;
+    if (!msg || msg.op !== "lineup_run" || !page) return false;
     visit("panel").then(
       (run) => reply({ ok: true, data: { run } }),
       (e) => reply({ ok: false, error: String((e && e.message) || e) }),
@@ -261,9 +266,59 @@
     };
   }
 
-  /** The moves executor's dry run on this add page, opened with ``trigger``'s fragment: the
-   * league's due entries, the one whose add is this page's checked on the rendered form, and the
-   * pass logged. No entry for this player: nothing is logged. Answers the pass logged, or null. */
+  /** The page Yahoo landed on after a claim's submit, for ``readLanded``: its path, heading,
+   * whether the claim form is back, its notices and errors, and whether it shows the add with the
+   * word "pending". Ids and Yahoo's own short messages only. */
+  function landedControls(add) {
+    const texts = (sel) => [...document.querySelectorAll(sel)].map(textOf).filter((x) => x && x.length < 300);
+    const errors = texts(".error, .Error, .F-negative, [class*='Alert-error'], [class*='alert-error']");
+    const shown = Boolean(document.querySelector(`[data-ys-playerid="${add}"]`));
+    return {
+      path: location.pathname + location.search,
+      heading: [...document.querySelectorAll("h1, h2, h3")].map(textOf).find((x) => x && !/^yahoo/i.test(x)) || null,
+      form: Boolean(document.querySelector(`form#${PR.FORM_ID}`)),
+      notes: texts(".Alert, .alert, [role=alert], .F-positive, .success, .Success, .notice, .Notice").filter((x) => !errors.includes(x)),
+      errors,
+      pending: shown && /pending/i.test(textOf(document.body)),
+    };
+  }
+
+  /** On any page of the league: a claim this tab submitted and whose answer is not logged yet
+   * (the worker keeps it) is read from this page and its live pass logged. The worker drops the
+   * record only once the API has the pass. Answers the pass logged, or null. */
+  async function landed() {
+    const r = await send({ op: "moves_landed", league });
+    if (!r || !r.ok || !r.data) return null;
+    const record = r.data;
+    const raw = landedControls(record.line.add);
+    const run = PR.landedPass(record, PR.readLanded(raw), { path: raw.path, heading: raw.heading }, extensionVersion());
+    const logged = await send({ op: "moves_log", league, run });
+    if (!logged || !logged.ok) {
+      movesStrip(`claim submitted, not logged: ${(logged && logged.error) || "no answer from the extension"}`);
+      return null;
+    }
+    movesStrip(PR.landedStripText(run));
+    return run;
+  }
+
+  /** Claims submitted in the league whose answer never came (the tab closed, a page the reader
+   * missed): each is logged before this pass, ``claimed`` with its answer not read, and never
+   * submitted again. Answers the ids of every submit still on record. */
+  async function unread() {
+    const r = await send({ op: "moves_submits", league });
+    const records = (r && r.ok && r.data) || [];
+    const now = Date.now();
+    for (const record of records.filter((x) => now - x.at >= PR.LANDING_MS)) {
+      await send({ op: "moves_log", league, run: PR.landedPass(record, null, null, extensionVersion()) });
+    }
+    return new Set(records.map((x) => x.line.id));
+  }
+
+  /** The moves executor on this add page, opened with ``trigger``'s fragment: the league's due
+   * entries, the one whose add is this page's checked on the rendered form, and the pass logged;
+   * in a live league whose guard holds, a claim that passes is submitted instead and its pass is
+   * the landed page's. No entry for this player: nothing is logged. Answers the pass logged, or
+   * null. */
   async function claim(trigger) {
     // A routine's pass happens once: a reload of the page is a plain visit.
     if (location.hash) history.replaceState(null, "", location.pathname + location.search);
@@ -272,6 +327,8 @@
       movesStrip(PR.movesStripText({ browserOff: true }));
       return null;
     }
+    const submitted = await unread();
+    // ``due`` is read fresh on each page and never kept.
     const r = await send({ op: "moves_due", league: addPage.league });
     if (!r || !r.ok) {
       movesStrip(PR.movesStripText({ error: (r && r.error) || "no answer from the extension" }));
@@ -291,10 +348,29 @@
         movesStrip(PR.movesStripText({ due, none: true }));
         return null;
       }
+      if (submitted.has(entry.id)) {
+        movesStrip(`${PR.passMode(due).mode === "live" ? "live" : "dry run"} · a submit of this claim awaits Yahoo's answer: nothing done`);
+        return null;
+      }
       const readAt = new Date().toISOString();
       const seen = PR.readAddPage(addControls(), entry.from);
       const why = PR.entryProblem(entry, due);
-      const check = why ? { outcome: "skipped", reason: why } : PR.pageCheck(entry, seen, due);
+      let check = why ? { outcome: "skipped", reason: why } : PR.pageCheck(entry, seen, due);
+      if (check.outcome === "would_claim" && PR.passMode(due).mode === "live") {
+        const held = PR.submitProblem(entry, seen);
+        if (held) check = { outcome: "skipped", reason: held };
+        else {
+          const line = PR.moveCheck(entry, check, seen, due, readAt);
+          // On record before the page is touched: no pass submits this entry again.
+          const kept = await send({ op: "moves_submitting", league, record: { day: due.date, trigger, line } });
+          const problem = kept && kept.ok ? await PR.fillClaim(document, entry) : "the submit could not be put on record";
+          if (problem === null) {
+            movesStrip(`live · claim submitted for $${line.bid}, dropping ${line.drop}: reading Yahoo's answer…`);
+            return null;
+          }
+          check = { outcome: "skipped", reason: problem };
+        }
+      }
       run = PR.movesPass({ due, trigger, checks: [PR.moveCheck(entry, check, seen, due, readAt)], extension });
     }
     const logged = await send({ op: "moves_log", league: addPage.league, run });
@@ -306,11 +382,13 @@
     return run;
   }
 
-  if (addPage) {
-    const trigger = PR.movesTriggerOf(location.hash);
-    if (trigger) setTimeout(() => claim(trigger), SETTLE_MS);
-    return;
-  }
-
-  setTimeout(() => visit(PR.triggerOf(location.hash)), SETTLE_MS);
+  // A live pass submits only on a page opened with a moves fragment; any other page of the league
+  // reads a claim this tab submitted, first.
+  const trigger = addPage ? PR.movesTriggerOf(location.hash) : null;
+  const lineupTrigger = page ? PR.triggerOf(location.hash) : null;
+  setTimeout(async () => {
+    await landed();
+    if (trigger) await claim(trigger);
+    else if (page) await visit(lineupTrigger);
+  }, SETTLE_MS);
 })();
