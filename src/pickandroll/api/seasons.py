@@ -980,7 +980,7 @@ class SeasonService:
             "leagues": [],
             "entries": [],
             **(body or {}),
-            "settings": season_queue.settings(self.data_dir),
+            "settings": season_queue.settings(self.data_dir, day),
             "stop": season_autopilot.stopped(self.data_dir),
             "now": self.clock().isoformat(),
         }
@@ -1038,7 +1038,7 @@ class SeasonService:
         transactions on the way."""
         now = self.clock()
         today = nba_today(now)
-        execute_time = season_queue.settings(self.data_dir)["execute_time"]
+        execute_time = season_queue.settings(self.data_dir, today)["in_force"]
         modes = self._modes(leagues.MOVES)
         since = today - timedelta(days=season_queue.PENDING_DAYS)
         try:
@@ -1234,14 +1234,24 @@ class SeasonService:
             raise HTTPException(409, str(exc)) from exc
         return self._queue_payload(day, body)
 
-    def set_execute_time(self, value: str) -> dict[str, Any]:
-        """The execute time, the dashboard's own click (#171): today's entries not executed are
-        timed again, never sooner than a full window after they were queued."""
+    def set_execute_time(self, body: QueueSettings) -> dict[str, Any]:
+        """The execute times, the dashboard's own click (#171): the day's and Sunday's (#209),
+        each when sent; today's entries not executed are timed again by the one in force today,
+        never sooner than a full window after they were queued."""
+        sent = body.model_fields_set
+        if body.execute_time is None and "sunday_execute_time" not in sent:
+            raise HTTPException(422, "send an execute time, Sunday's, or both")
         try:
-            season_queue.set_execute_time(self.data_dir, value, by="dashboard")
+            if body.execute_time is not None:
+                season_queue.set_execute_time(self.data_dir, body.execute_time, by="dashboard")
+            if "sunday_execute_time" in sent:
+                season_queue.set_sunday_execute_time(
+                    self.data_dir, body.sunday_execute_time, by="dashboard"
+                )
         except season_queue.QueueError as exc:
             raise HTTPException(422, str(exc)) from exc
         today = nba_today(self.clock())
+        value = season_queue.settings(self.data_dir, today)["in_force"]
         if self._read_queue(today) is not None:
 
             def change(body: dict[str, Any] | None) -> dict[str, Any]:
@@ -1267,7 +1277,7 @@ class SeasonService:
         return {
             **season_autopilot.moves_view(self.data_dir, league, mode, today, entries),
             "row": self._row_now(row) if row else None,
-            "settings": season_queue.settings(self.data_dir),
+            "settings": season_queue.settings(self.data_dir, today),
         }
 
     def moves_due(self, league: str, day: date | None) -> dict[str, Any]:
@@ -2514,8 +2524,10 @@ class StrikeBody(BaseModel):
 
 
 class QueueSettings(BaseModel):
-    #: The day's execute time on the Central clock.
-    execute_time: str = Field(pattern=r"^([01][0-9]|2[0-3]):[0-5][0-9]$")
+    #: The day's execute time on the Central clock, and Sunday's own (#209): either may be sent
+    #: alone; Sunday's sent null clears it.
+    execute_time: str | None = Field(None, pattern=r"^([01][0-9]|2[0-3]):[0-5][0-9]$")
+    sunday_execute_time: str | None = Field(None, pattern=r"^([01][0-9]|2[0-3]):[0-5][0-9]$")
 
 
 def register(
@@ -2592,8 +2604,8 @@ def register(
 
     @app.put("/autopilot/queue/settings")
     def put_queue_settings(body: QueueSettings) -> dict[str, Any]:
-        """The day's execute time, the dashboard's own click (#171)."""
-        return service.set_execute_time(body.execute_time)
+        """The execute times, the dashboard's own click (#171, Sunday's #209)."""
+        return service.set_execute_time(body)
 
     @app.post("/autopilot/queue/{entry}/strike")
     def post_strike(entry: str, body: StrikeBody | None = None) -> dict[str, Any]:

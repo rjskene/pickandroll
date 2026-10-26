@@ -127,6 +127,17 @@ page, from PR 2:
   claim) or undoes either, until it executes (`POST /autopilot/queue/{id}/strike`). A rebuild
   the same day keeps the struck and executed entries by id, leaves their moves out of the build,
   and gives an entry new to the queue its full hour.
+  - **Sunday's own execute time (#209).** Null until the user sets one beside the execute time.
+    It is set alone in `sunday_execute_time` on the same route, and null clears it. On a Sunday,
+    when set, it holds instead of the day's (the settings' `in_force`). A Sunday claim clears on
+    Monday, so set to the evening (22:30) it makes Sunday's claims wait for the evening's solve:
+    the morning and late passes find nothing due, and the evening pass places what the evening
+    rebuild queued. Monday to Saturday keep the day's.
+  - **Superseded.** A queued entry not executed that a rebuild's solve no longer recommends is
+    kept in the day's file, not queued, with the reason "superseded by a later solve"
+    (`superseded_at`, the first rebuild that dropped it). It holds no place, is never due and
+    has nothing to strike. If a later solve recommends it again, it is queued again with a new
+    hour. The Monday re-solve's rebuild does the same. `struck` is set by the user alone.
 - **The Queue screen (#194).** `/queue`, from the landing's Queue line or `q` there (not from a
   field or a select): every league's proposed moves of the day in one view. It reads
   `GET /autopilot/queue` every minute and never solves, builds or executes; its only writes are

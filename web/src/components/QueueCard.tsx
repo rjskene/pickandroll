@@ -110,7 +110,7 @@ export function Veto({ e, strike }: { e: QueueEntry; strike: Strike }) {
 
 function Today({ v, queued, left, now, name, strike }: { v: MovesView; queued: QueueEntry[]; left: QueueEntry[]; now: number; name: (id: number) => string; strike: Strike }) {
   const row = v.row;
-  const time = v.settings.execute_time;
+  const time = v.settings.in_force;
   if (!row) return <p className="dim lv-note">No queue built today: the morning routine builds it from the day's solve; nothing executes before {time} CT.</p>;
   if (row.status !== "queued") return <p className="dim lv-note">{row.reason}</p>;
   const struckCount = queued.filter((e) => e.struck).length;

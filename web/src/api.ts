@@ -1336,7 +1336,18 @@ export interface QueuePayload {
   execute_time: string | null;
   leagues: QueueLeague[];
   entries: QueueEntry[];
-  settings: { execute_time: string; at: string | null; by: string | null; set: boolean };
+  /** The execute times (Central): the day's, and Sunday's own (#209, null until set), with
+   * ``in_force`` the one that holds on the payload's day. */
+  settings: {
+    execute_time: string;
+    at: string | null;
+    by: string | null;
+    set: boolean;
+    sunday_execute_time: string | null;
+    sunday_at: string | null;
+    sunday_by: string | null;
+    in_force: string;
+  };
   stop: boolean;
   now: string;
   /** A name for every player the entries mention (ids as strings), read from each league's
@@ -2520,6 +2531,9 @@ export const api = {
   /** The user's own click: the day's execute time on the Central clock (HH:MM). */
   setExecuteTime: (execute_time: string) =>
     request<QueuePayload>("/autopilot/queue/settings", { method: "PUT", body: JSON.stringify({ execute_time }) }),
+  /** Sunday's own execute time (#209); null clears it, and Sunday keeps the day's. */
+  setSundayExecuteTime: (sunday_execute_time: string | null) =>
+    request<QueuePayload>("/autopilot/queue/settings", { method: "PUT", body: JSON.stringify({ sunday_execute_time }) }),
   /** The league's Queue card: the moves executor's mode, its passes and today's entries (#171). */
   movesView: (league: string) => request<MovesView>(`/seasons/${encodeURIComponent(league)}/autopilot/moves`),
   /** The user's own click: the moves executor's mode and cap (null: the knob's); live waits. */

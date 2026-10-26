@@ -49,6 +49,9 @@ TYPICAL_DAYS = 14
 WINDOW = timedelta(minutes=60)
 EXECUTE_TIME = "07:00"
 EXECUTE_TZ = ZoneInfo("America/Chicago")
+#: The day a Sunday execute time of its own holds for (#209): Sunday's claims clear on Monday, and
+#: the user may have them wait for the evening's solve.
+SUNDAY = 6
 #: The bid's factor for a breakout flag (``season.flags.LEVELS``): doubled for one, tripled for a
 #: strong one; a player only watched is a routine stream.
 FLAG_FACTOR: Mapping[str, int] = {"add": 2, "must-add": 3}
@@ -64,6 +67,9 @@ READD = "the add is a player this queue drops today or dropped within the waiver
 BELOW_FLOOR = "below the noise floor"
 NO_ADDS = "no adds left this week"
 OVER_CAP = "over the day's cap"
+#: A queued entry a rebuild's solve no longer recommends (#209): kept in the day's file, not
+#: queued and holding no place, so the Queue screen shows what changed.
+SUPERSEDED = "superseded by a later solve"
 
 #: An execution's outcome, from the extension's page check; ``won`` and ``lost`` resolve a claim
 #: the morning after, from the league's transactions.
@@ -338,6 +344,12 @@ def holds_place(e: Mapping[str, Any]) -> bool:
     )
 
 
+def day_time(day: date, execute_time: str, sunday: str | None) -> str:
+    """The execute time in force on ``day``: Sunday's own when the user set one (#209), else the
+    day's."""
+    return sunday if sunday is not None and day.weekday() == SUNDAY else execute_time
+
+
 def executes_at(queued_at: datetime, day: date, execute_time: str = EXECUTE_TIME) -> datetime:
     """When an entry executes, in UTC: the later of its queueing plus the veto window and the
     day's execute time on the Central clock (the ruling's addition: a window that closes while
@@ -357,7 +369,10 @@ def merge(
     """A rebuild of the day: the old entries struck or executed kept by id as they are; the new
     build's others, each queued one with when it was first queued (an entry the old build queued
     keeps its time; one new to the queue is queued now, with a full window) and when it
-    executes (:func:`executes_at`)."""
+    executes (:func:`executes_at`). An old entry queued and not executed that the new build no
+    longer has, or one an earlier rebuild superseded, is kept :data:`SUPERSEDED` (#209): not
+    queued, holding no place, queued again with a new window if a later solve has it again."""
+    new = list(new)
     keep = {e["id"]: dict(e) for e in old if kept(e)}
     before = {e["id"]: e for e in old}
     out = list(keep.values())
@@ -370,6 +385,21 @@ def merge(
             queued_at = (prior.get("queued_at") if prior.get("queued") else None) or now.isoformat()
             at = executes_at(datetime.fromisoformat(queued_at), day, execute_time).isoformat()
         out.append({**e, "queued_at": queued_at, "executes_at": at})
+    ids = {e["id"] for e in new}
+    for e in old:
+        if e["id"] in keep or e["id"] in ids:
+            continue
+        if e.get("queued") or e.get("reason") == SUPERSEDED:
+            out.append(
+                {
+                    **e,
+                    "queued": False,
+                    "reason": SUPERSEDED,
+                    "rank": None,
+                    "executes_at": None,
+                    "superseded_at": e.get("superseded_at") or now.isoformat(),
+                }
+            )
     return out
 
 

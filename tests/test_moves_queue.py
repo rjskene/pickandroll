@@ -261,6 +261,9 @@ def test_the_default_execute_time_is_07_00_on_the_central_clock_either_side_of_t
         "at": None,
         "by": None,
         "set": False,
+        "sunday_execute_time": None,
+        "sunday_at": None,
+        "sunday_by": None,
     }
     early = datetime(2026, 10, 21, 5, 0, tzinfo=UTC)
     assert qa.executes_at(early, DAY) == datetime(2026, 10, 21, 12, 0, tzinfo=UTC)
@@ -268,6 +271,64 @@ def test_the_default_execute_time_is_07_00_on_the_central_clock_either_side_of_t
     assert qa.executes_at(datetime(2026, 12, 1, 5, 0, tzinfo=UTC), winter) == datetime(
         2026, 12, 1, 13, 0, tzinfo=UTC
     )
+
+
+def test_a_sunday_execute_time_holds_on_sundays_only():
+    # #209: null until the user sets one, and then Sunday's alone.
+    sunday, monday = date(2026, 10, 25), date(2026, 10, 26)
+    assert qa.day_time(sunday, "09:00", None) == "09:00"
+    assert qa.day_time(sunday, "09:00", "22:30") == "22:30"
+    assert qa.day_time(monday, "09:00", "22:30") == "09:00"
+    # A Sunday entry queued in the morning executes at 22:30 Central (03:30 UTC Monday).
+    morning = datetime(2026, 10, 25, 10, 0, tzinfo=UTC)
+    at = qa.executes_at(morning, sunday, qa.day_time(sunday, "09:00", "22:30"))
+    assert at == datetime(2026, 10, 26, 3, 30, tzinfo=UTC)
+
+
+def test_a_rebuild_keeps_an_entry_its_solve_no_longer_has_as_superseded():
+    # #209: the morning queues 101 and 102; the evening's solve has 102 and 104 instead.
+    morning = datetime(2026, 10, 21, 10, 0, tzinfo=UTC)
+    first = qa.merge(
+        [],
+        qa.queue_of(
+            league_day(entry(move(101, 201, 0.9), move(102, 202, 0.8))), DAY, PLAN, TYPICAL, None
+        ),
+        DAY,
+        "09:00",
+        morning,
+    )
+    first.append(
+        {**first[0], "id": "x:900001:105:0", "add": 105, "queued": False, "reason": qa.BELOW_FLOOR}
+    )
+    evening = datetime(2026, 10, 22, 2, 30, tzinfo=UTC)
+    new = qa.queue_of(
+        league_day(entry(move(102, 202, 0.8), move(104, 204, 0.7))), DAY, PLAN, TYPICAL, None
+    )
+    again = qa.merge(first, new, DAY, "09:00", evening)
+    by = {x["add"]: x for x in again}
+    gone = by[101]
+    assert (gone["queued"], gone["reason"], gone["rank"], gone["executes_at"]) == (
+        False,
+        qa.SUPERSEDED,
+        None,
+        None,
+    )
+    assert gone["superseded_at"] == evening.isoformat() and gone["queued_at"] == morning.isoformat()
+    # It holds no place and is never due; the one kept keeps its time, the new one its hour.
+    assert not qa.holds_place(gone)
+    assert {x["add"] for x in qa.due(again, evening + timedelta(days=1))} == {102, 104}
+    assert by[102]["queued_at"] == morning.isoformat()
+    assert by[104]["queued_at"] == evening.isoformat()
+    # An entry the morning never queued and the evening does not have is left out, as before.
+    assert 105 not in by
+    # Superseded again, it keeps its first time; queued again, a new window from that solve.
+    later = evening + timedelta(minutes=30)
+    third = qa.merge(again, new, DAY, "09:00", later)
+    assert {x["add"]: x for x in third}[101]["superseded_at"] == evening.isoformat()
+    back = qa.queue_of(league_day(entry(move(101, 201, 0.9))), DAY, PLAN, TYPICAL, None)
+    fourth = {x["add"]: x for x in qa.merge(third, back, DAY, "09:00", later)}
+    assert fourth[101]["queued"] and fourth[101]["queued_at"] == later.isoformat()
+    assert fourth[101]["executes_at"] == (later + qa.WINDOW).isoformat()
 
 
 def test_the_entries_due_are_the_queued_ones_past_their_window_with_the_bid_to_place():
@@ -1027,6 +1088,83 @@ def test_the_execute_time_is_the_users_and_times_the_days_entries_again(client):
     assert {e["executes_at"] for e in r.json()["entries"] if e["queued"]} == {
         (NOW + timedelta(hours=1)).isoformat()
     }
+
+
+def test_sundays_execute_time_is_set_alone_holds_on_sunday_and_clears(client):
+    # #209: a weekday keeps the day's time; Sunday's entries wait for Sunday's.
+    queued(client)
+    url = "/autopilot/queue/settings"
+    r = client.put(url, json={"sunday_execute_time": "22:30"})
+    assert r.status_code == 200, r.text
+    s = r.json()["settings"]
+    assert (s["execute_time"], s["set"], s["sunday_execute_time"], s["sunday_by"]) == (
+        "07:00",
+        False,
+        "22:30",
+        "dashboard",
+    )
+    # Wednesday's entries are not timed again by it.
+    assert s["in_force"] == "07:00"
+    assert {e["executes_at"] for e in r.json()["entries"] if e["queued"]} == {
+        (NOW + timedelta(hours=1)).isoformat()
+    }
+    # On a Sunday the build times every entry by it; the morning's pass finds none due.
+    sunday = datetime(2026, 10, 25, 14, 0, tzinfo=UTC)  # 09:00 Central
+    client.app.state.seasons.clock = lambda: sunday
+    q = queued(client)
+    assert q["date"] == "2026-10-25" and q["settings"]["in_force"] == "22:30"
+    on = [e for e in q["entries"] if e["queued"]]
+    assert on and {e["executes_at"] for e in on} == {"2026-10-26T03:30:00+00:00"}
+    due = f"/seasons/{LEAGUE}/autopilot/moves/due"
+    assert client.get(due).json()["entries"] == []
+    client.app.state.seasons.clock = lambda: datetime(2026, 10, 26, 3, 31, tzinfo=UTC)
+    assert [e["id"] for e in client.get(due).json()["entries"]] == [e["id"] for e in on]
+    # Cleared, Sunday keeps the day's time and today's entries are timed by it again.
+    client.app.state.seasons.clock = lambda: sunday
+    r = client.put(url, json={"sunday_execute_time": None})
+    assert r.json()["settings"]["sunday_execute_time"] is None
+    assert r.json()["settings"]["in_force"] == "07:00"
+    assert {e["executes_at"] for e in r.json()["entries"] if e["queued"]} == {
+        (sunday + timedelta(hours=1)).isoformat()
+    }
+    # Both at once; neither is refused; a bad time is.
+    r = client.put(url, json={"execute_time": "09:00", "sunday_execute_time": "21:45"})
+    assert (r.json()["settings"]["execute_time"], r.json()["settings"]["in_force"]) == (
+        "09:00",
+        "21:45",
+    )
+    assert client.put(url, json={}).status_code == 422
+    assert client.put(url, json={"sunday_execute_time": "10pm"}).status_code == 422
+    # The Queue card says the same.
+    assert client.get(f"/seasons/{LEAGUE}/autopilot/moves").json()["settings"]["in_force"] == (
+        "21:45"
+    )
+
+
+def test_an_evening_rebuild_keeps_what_its_solve_dropped_as_superseded(client):
+    # #209: the evening's solve no longer recommends a queued move; it stays, not queued.
+    q = queued(client)
+    on = [e for e in q["entries"] if e["queued"]]
+    assert len(on) >= 2
+    path = client.data_dir / "leagues" / LEAGUE / "season" / "decisions" / "2026-10-21.json"
+    logged = json.loads(path.read_text())
+    three = next(s for s in logged[-1]["sets"] if s["key"] == "three")
+    three["moves"] = [m for m in three["moves"] if m["add"] != on[0]["add"]]
+    path.write_text(json.dumps(logged))
+    client.app.state.seasons.clock = lambda: NOW + timedelta(minutes=30)
+    r = client.post("/autopilot/queue/build")
+    assert r.status_code == 200, r.text
+    by = {e["id"]: e for e in r.json()["entries"]}
+    gone = by[on[0]["id"]]
+    assert (gone["queued"], gone["reason"], gone["executes_at"]) == (False, qa.SUPERSEDED, None)
+    # It is struck by nobody, never due, and holds no place: the rest are due as they were.
+    assert gone["struck"] is False
+    client.app.state.seasons.clock = lambda: NOW + timedelta(hours=2)
+    due = client.get(f"/seasons/{LEAGUE}/autopilot/moves/due").json()
+    assert on[0]["id"] not in {e["id"] for e in due["entries"]}
+    assert on[1]["id"] in {e["id"] for e in due["entries"]}
+    # Nothing to strike in it.
+    assert strike(client, on[0]["id"]).status_code == 409
 
 
 def test_a_queue_file_that_does_not_read_is_refused_never_overwritten(client):
