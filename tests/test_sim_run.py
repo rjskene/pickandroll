@@ -3,14 +3,16 @@ paired difference, the room's rotation, a replay's league, the payload's verdict
 
 from __future__ import annotations
 
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from datetime import date, timedelta
 
 import numpy as np
 import pytest
 
+from pickandroll.season import moves as mv
 from pickandroll.season import weekly as wk
 from pickandroll.season.sim import opponents as op
+from pickandroll.season.sim import policy
 from pickandroll.season.sim import run as rn
 from pickandroll.season.sim.state import Member, initial
 from tests.sim_league import HAZARD, KNOBS, PHI, arm, inputs, make_setup
@@ -131,6 +133,34 @@ def test_common_random_numbers_a_roster_change_moves_no_other_players_line():
     assert rb.executed >= rq.executed == 0
     k = next(k for k in setup.pool if setup.players[k].nba_team in setup.schedule[day])
     assert w.line(k, day) == rn.forward_world(setup, inputs(), 5, 0, 0.0).line(k, day)
+
+
+@dataclass(frozen=True)
+class OnDays:
+    """A seat that adds the pool's first player for its roster's first on the given weekdays."""
+
+    days: tuple[int, ...]
+    kind: str = "on_days"
+
+    def decide(self, setup, state, team, beliefs, status, returns, g):
+        pool, roster = sorted(state.pool), state.active(team)
+        if state.day.weekday() not in self.days or not pool or not roster:
+            return policy.NONE
+        return policy.Decision((mv.Move(pool[0], roster[0]),), (), (), 0, self.kind)
+
+
+def test_an_add_made_on_sunday_spends_the_ending_week_not_mondays():
+    """One add a week. Made on Sunday it lands Monday and is charged to the week it was made in,
+    as on Yahoo, so Monday's add is still there to make, and both land."""
+    setup = make_setup(weeks=2, playoff_weeks=1, max_weekly_adds=1, bracket=False)
+    sunday = setup.calendar.weeks[0].end
+    setup = replace(setup, start=sunday)
+    w = rn.forward_world(setup, inputs(), 5, 0, 0.0)
+    static = {t: op.Static() for t in setup.teams}
+    (both,) = rn.simulate(setup, w, [{**static, 1: OnDays((6, 0))}])
+    assert both.executed == 2 and both.gone == 0
+    (mondays,) = rn.simulate(setup, w, [{**static, 1: OnDays((0,))}])
+    assert mondays.executed == 1
 
 
 def test_the_room_rotates_arms_across_paths_and_pools_by_arm():

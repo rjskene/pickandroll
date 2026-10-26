@@ -435,11 +435,13 @@ def simulate(
         week = setup.week_of(day)
         if week is None:
             continue
+        # Yesterday's moves land first: on a Monday they were made on Sunday and spend the
+        # ending week's adds, so the week's count starts over only once they are in.
+        order = _rotation(setup.teams, di)
+        states = [policy.land(s, order) for s in states]
         if day.weekday() == 0 and day != setup.start:
             week_index += 1
             states = [policy.new_week(s) for s in states]
-        order = _rotation(setup.teams, di)
-        states = [policy.land(s, order) for s in states]
         beliefs = w.beliefs(week_index)
         status, returns = w.status_on(day)
         value = wk.per_game_values(beliefs, setup.cats, points)
