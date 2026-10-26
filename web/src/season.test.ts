@@ -1762,8 +1762,8 @@ test("the Queue card says what the moves executor does, each entry's state and b
     ],
   };
   assert.equal(passLine(pass, () => "9:01 AM"), `9:01 AM · ${weekdayLabel("2026-10-24")} · routine: would claim 1 (1 gone)`);
-  assert.equal(passLine({ ...pass, outcome: "nothing_due", entries: [] }, () => "9:01 AM"), `9:01 AM · ${weekdayLabel("2026-10-24")} · routine: nothing due`);
   assert.equal(passLine({ ...pass, trigger: "routine_evening", outcome: "nothing_due", entries: [] }, () => "10:41 PM"), `10:41 PM · ${weekdayLabel("2026-10-24")} · evening routine: nothing due`);
+  assert.equal(passLine({ ...pass, outcome: "nothing_due", entries: [] }, () => "9:01 AM"), `9:01 AM · ${weekdayLabel("2026-10-24")} · routine: nothing due`);
   const settings = { execute_time: "09:00", at: null, by: null, set: false };
   const q: QueuePayload = { date: "2026-10-24", built: [], execute_time: null, leagues: [], entries: [], settings, stop: false, now: "2026-10-24T15:00:00Z" };
   assert.equal(queueFoldLine(q), "no queue built today: the morning routine builds it · executes from 09:00 CT");
