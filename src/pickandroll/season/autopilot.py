@@ -56,6 +56,8 @@ FREE_AGENT = "FA"
 
 PRIVATE = "the private league is never touched"
 OFF = "the moves executor is off in this league"
+#: A league the build left off, switched on since (#205).
+SWITCHED_ON = "switched on after today's build: its moves queue at the next build"
 PROTECTED = "the drop is protected"
 SEASON_COSTLY = "season-costly"
 READD = "the add is a player this queue drops today or dropped within the waiver days"

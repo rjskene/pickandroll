@@ -1,14 +1,12 @@
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 import { useMutation, useQuery, useQueryClient, type UseMutationResult } from "@tanstack/react-query";
 import { api, type LineupMode, type MovesView, type QueueEntry, type QueuePayload, type SeasonView } from "../api";
 import { bidLabel, gainLabel, movesExecutorText, movesLiveText, passLine, passTitle, playersById, queueFlagWord, queueFloorLine, queueMoveText, queueStateText, queueStateTone } from "../season";
+import ModeSwitch from "./ModeSwitch";
 import { useNow } from "./YahooSync";
 
-const MODES: { mode: LineupMode; label: string }[] = [
-  { mode: "off", label: "off" },
-  { mode: "dry_run", label: "dry run" },
-  { mode: "live", label: "live" },
-];
+/** The single switch's confirm line on live, the Queue card's and each Queue screen chip's. */
+export const LIVE_CONFIRM = "Live claims each move due on Yahoo's add page with its bid.";
 const CAPS = [0, 1, 2, 3, 4, 5];
 
 /** The Queue card (#171): the moves executor in this league, its mode (live behind a second
@@ -20,11 +18,12 @@ export default function QueueCard({ league, s }: { league: string; s: SeasonView
   const key = ["movesView", league];
   const q = useQuery({ queryKey: key, queryFn: () => api.movesView(league), refetchInterval: 60_000, retry: false });
   const now = useNow(30_000);
-  const [confirming, setConfirming] = useState(false);
   const set = useMutation({
     mutationFn: ({ mode, cap }: { mode: LineupMode; cap: number | null }) => api.setMovesMode(league, mode, cap),
-    onSuccess: (v) => queryClient.setQueryData(key, v),
-    onSettled: () => setConfirming(false),
+    onSuccess: (v) => {
+      queryClient.setQueryData(key, v);
+      void queryClient.invalidateQueries({ queryKey: ["queue"] });
+    },
   });
   const strike = useMutation({
     mutationFn: ({ id, bid_only, undo }: { id: string; bid_only: boolean; undo: boolean }) => api.strike(id, { bid_only, undo }),
@@ -38,11 +37,6 @@ export default function QueueCard({ league, s }: { league: string; s: SeasonView
   if (q.error) return <p className="error small">{q.error.message}</p>;
   const v = q.data;
   if (!v) return <p className="dim small">Reading the queue…</p>;
-  const pick = (mode: LineupMode) => {
-    if (mode === v.mode.mode) return;
-    if (mode === "live" && !confirming) setConfirming(true);
-    else set.mutate({ mode, cap: v.mode.cap });
-  };
   const queued = v.entries.filter((e) => e.queued);
   const left = v.entries.filter((e) => !e.queued);
   return (
@@ -68,36 +62,20 @@ export default function QueueCard({ league, s }: { league: string; s: SeasonView
                   ))}
                 </select>
               </label>
-              <div className="seg small" role="tablist" aria-label="Moves executor">
-                {MODES.map((m) => (
-                  <button
-                    key={m.mode}
-                    role="tab"
-                    aria-selected={m.mode === v.mode.mode}
-                    className={m.mode === v.mode.mode ? "on" : undefined}
-                    disabled={set.isPending || (m.mode === "live" && !v.live.ok && v.mode.mode !== "live")}
-                    title={m.mode === "live" ? movesLiveText(v.live) : undefined}
-                    onClick={() => pick(m.mode)}
-                  >
-                    {m.label}
-                  </button>
-                ))}
-              </div>
+              <ModeSwitch
+                mode={v.mode.mode}
+                liveOk={v.live.ok}
+                liveTitle={movesLiveText(v.live)}
+                confirm={LIVE_CONFIRM}
+                confirmButton="Switch to live"
+                pending={set.isPending}
+                label="Moves executor"
+                onPick={(mode) => set.mutate({ mode, cap: v.mode.cap })}
+              />
             </>
           )}
         </div>
         <p className={`lv-note ${v.stop ? "bad" : "muted"}`}>{movesExecutorText(v)}</p>
-        {confirming && (
-          <p className="lv-note accent">
-            Live claims each move due on Yahoo's add page with its bid.{" "}
-            <button className="small" onClick={() => pick("live")} disabled={set.isPending}>
-              Switch to live
-            </button>{" "}
-            <button className="small" onClick={() => setConfirming(false)}>
-              Cancel
-            </button>
-          </p>
-        )}
         {set.error && <p className="error lv-note">{set.error.message}</p>}
         {!v.mode.private && v.mode.mode !== "live" && <p className="dim lv-note">{movesLiveText(v.live)}</p>}
       </div>

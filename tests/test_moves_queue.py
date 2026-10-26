@@ -19,9 +19,11 @@ from pickandroll.api import leagues, season_queue
 from pickandroll.api import season_autopilot as ap
 from pickandroll.season import autopilot as qa
 from pickandroll.season.state import Player, Transaction
-from tests.test_season import LEAGUE, NOW, season_client, strategy_league
+from tests.test_season import LEAGUE, NOW, season_client, strategy_league, write_folder
 
 PRIVATE = "100002"
+#: A points league: the landing hides it, the Queue screen's one switch does not (#205).
+POINTS = "100003"
 DAY = date(2026, 10, 21)
 WEEK = (date(2026, 10, 19), date(2026, 10, 25))
 NEXT = (date(2026, 10, 26), date(2026, 11, 1))
@@ -856,6 +858,107 @@ def test_a_claim_whose_answer_was_not_read_keeps_its_reason_on_the_screen_and_th
         "- Moves executor (live in 1): Wed's queue 1 queued, 1 struck; 1 claimed, 0 skipped, 0 failed.",
         f"- League {LEAGUE}: moves Wed claimed ({why})",
     ]
+
+
+def armed_of(client, league: str) -> dict:
+    return json.loads((client.data_dir / "leagues" / league / "armed.json").read_text())
+
+
+def test_one_switch_sets_every_public_league_the_points_ones_too_and_never_the_private_one(client):
+    write_folder(client.data_dir, POINTS, scoring="points", points={"pts": 1.0})
+    url = "/autopilot/moves/mode"
+    # The private league's file and the lineup executor's keys are never written; the user's
+    # own cap stays.
+    private = client.data_dir / "leagues" / PRIVATE / "armed.json"
+    private.write_text(json.dumps({"lineups": "off", "moves": "off"}) + "\n")
+    held = private.read_bytes()
+    assert client.put(f"/leagues/{LEAGUE}/lineups", json={"mode": "off"}).status_code == 200
+    r = client.put(f"/leagues/{LEAGUE}/moves", json={"mode": "dry_run", "cap": 2})
+    assert r.status_code == 200, r.text
+    lineups = {k: v for k, v in armed_of(client, LEAGUE).items() if k.startswith("lineups")}
+    assert lineups["lineups"] == "off"
+    r = client.put(url, json={"mode": "off"})
+    assert r.status_code == 200, r.text
+    assert r.json() == {
+        "mode": "off",
+        "leagues": [
+            {"league": LEAGUE, "mode": "off", "ok": True, "reason": None},
+            {"league": POINTS, "mode": "off", "ok": True, "reason": None},
+        ],
+    }
+    mine = armed_of(client, LEAGUE)
+    assert (mine["moves"], mine["moves_cap"], mine["moves_by"]) == (
+        "off",
+        2,
+        "dashboard: every league",
+    )
+    assert datetime.fromisoformat(mine["moves_at"]).tzinfo is not None
+    assert {k: v for k, v in mine.items() if k.startswith("lineups")} == lineups
+    points = armed_of(client, POINTS)
+    assert points["moves"] == "off" and not any(k.startswith("lineups") for k in points)
+    # A league already in the mode is left as it is: its file is not written again.
+    files = {lg: armed_of(client, lg) for lg in (LEAGUE, POINTS)}
+    assert all(x["ok"] for x in client.put(url, json={"mode": "off"}).json()["leagues"])
+    assert {lg: armed_of(client, lg) for lg in (LEAGUE, POINTS)} == files
+    # The queue's rows are read with the modes now: a row the build left off says it was
+    # switched on since, with the user's own cap and the live guard now.
+    r = client.post("/autopilot/queue/build")
+    assert r.status_code == 200, r.text
+    assert {x["league"]: x["status"] for x in r.json()["leagues"]} == {
+        LEAGUE: "off",
+        PRIVATE: "private",
+        POINTS: "off",
+    }
+    assert client.put(url, json={"mode": "dry_run"}).status_code == 200
+    rows = {x["league"]: x for x in client.get("/autopilot/queue").json()["leagues"]}
+    assert (rows[LEAGUE]["mode"], rows[LEAGUE]["user_cap"], rows[POINTS]["user_cap"]) == (
+        "dry_run",
+        2,
+        None,
+    )
+    assert rows[LEAGUE]["status"] == "off" and rows[LEAGUE]["reason"] == qa.SWITCHED_ON
+    assert rows[POINTS]["live"]["reason"] == "a dry run on 7 days first: 0 so far"
+    assert "live" not in rows[PRIVATE] and rows[PRIVATE]["mode"] == "off"
+    card = client.get(f"/seasons/{LEAGUE}/autopilot/moves").json()["row"]
+    assert (card["mode"], card["reason"]) == ("dry_run", qa.SWITCHED_ON)
+    # The stored queue keeps the build's rows.
+    stored = {x["league"]: x for x in season_queue.read(client.data_dir, DAY)["leagues"]}
+    assert stored[LEAGUE]["mode"] == "off" and "live" not in stored[LEAGUE]
+    # Live is checked per league: STOP refuses it everywhere and every league keeps its mode.
+    stop = ap.stop_path(client.data_dir)
+    stop.parent.mkdir(parents=True, exist_ok=True)
+    stop.write_text("")
+    out = client.put(url, json={"mode": "live"}).json()["leagues"]
+    assert {(x["mode"], x["ok"], x["reason"]) for x in out} == {
+        ("dry_run", False, "STOP is on (data/autopilot/STOP)")
+    }
+    stop.unlink()
+    # A league whose guard holds goes live; one it refuses keeps its mode, with the reason.
+    settings_file(client, {"live_after": {"dry_run_days": 1, "checked_days": 0}})
+    run = {"day": "2026-10-20", "mode": "dry_run", "outcome": "nothing_due", "entries": []}
+    ap.append_run(client.data_dir, LEAGUE, run, date(2026, 10, 20), ap.MOVES)
+    out = {x["league"]: x for x in client.put(url, json={"mode": "live"}).json()["leagues"]}
+    assert out[LEAGUE] == {"league": LEAGUE, "mode": "live", "ok": True, "reason": None}
+    assert out[POINTS] == {
+        "league": POINTS,
+        "mode": "dry_run",
+        "ok": False,
+        "reason": "a dry run on 1 day first: 0 so far",
+    }
+    assert (armed_of(client, LEAGUE)["moves"], armed_of(client, POINTS)["moves"]) == (
+        "live",
+        "dry_run",
+    )
+    assert armed_of(client, LEAGUE)["moves_cap"] == 2
+    rows = {x["league"]: x for x in client.get("/autopilot/queue").json()["leagues"]}
+    assert (rows[LEAGUE]["mode"], rows[POINTS]["mode"]) == ("live", "dry_run")
+    # Nothing here wrote the private league's file.
+    assert private.read_bytes() == held
+    assert PRIVATE not in {
+        x["league"] for x in client.put(url, json={"mode": "off"}).json()["leagues"]
+    }
+    assert private.read_bytes() == held
+    assert client.put(url, json={"mode": "on"}).status_code == 422
 
 
 def test_the_execute_time_is_the_users_and_times_the_days_entries_again(client):

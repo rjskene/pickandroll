@@ -129,11 +129,26 @@ page, from PR 2:
 - **The Queue screen (#194).** `/queue`, from the landing's Queue line or `q` there (not from a
   field or a select): every league's proposed moves of the day in one view. It reads
   `GET /autopilot/queue` every minute and never solves, builds or executes; its only writes are
-  the user's veto and the execute time, as on the Queue card and the landing line, the same
-  components. The head carries the build times and the execute time on the Central clock, STOP and
+  the user's veto, the execute time and the moves executor's mode, as on the Queue card and the
+  landing line, the same components. The head carries the build times and the execute time on the Central clock, STOP and
   the landing's line. A chip per league row (the private league's first, then by name; its name
   opens the league) gives the mode, the cap and where it is from, the adds left this week, what it
-  queued and, with none, why: the row's reason, else the reason most of its entries share. The
+  queued and, with none, why: the row's reason, else the reason most of its entries share.
+  **One switch (#205).** The head's off · dry run · live sets the moves executor's mode in every
+  public league of the build's set, the points leagues the landing hides among them, and says so
+  with the modes in force ("all 12 public leagues, the 3 points leagues the landing hides among
+  them: 9 live · 3 dry run"); each chip has the same control for its league alone (the Queue
+  card's `PUT /leagues/{league}/moves`, its cap sent back). One component (`ModeSwitch`) serves
+  the card, the head and the chips, live behind its confirm line. The head's route,
+  `PUT /autopilot/moves/mode {mode}`, follows the single switch's rules per league: live is
+  checked on each league's own guard (`moves_live_check`, the counts in force, STOP included) and
+  a league it refuses keeps its mode; a league already in the mode is left as it is; each keeps
+  the user's own cap; `armed.json` records `by: "dashboard: every league"` and the time. It
+  answers `{mode, leagues: [{league, mode, ok, reason}]}`, and the leagues it kept are listed
+  under the head with why. It never writes the private league's file nor the lineup executor's
+  keys. Since the rows are stored at build time, the payload reads each public row's `mode`,
+  `user_cap` and `live` now; a row the build left off whose league was switched on since reads
+  "switched on after today's build: its moves queue at the next build". The
   table lists the day's queued entries of every league, points leagues included, in the order
   they execute (the time, then the league's rank, then the league): the move, its gain on the
   three weeks and its season figure in the scorer's units, the flag, the bid, when it executes,

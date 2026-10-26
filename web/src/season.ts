@@ -4,6 +4,7 @@
 // scorecard's (#126). No React, so `npm test` runs them under Node.
 import type {
   AddBasis,
+  AllModesAnswer,
   AvailableRow,
   BestMove,
   BestSetLine,
@@ -17,6 +18,7 @@ import type {
   KeepRule,
   KeptPlayer,
   AutopilotView,
+  LineupMode,
   LineupAlert,
   LineupDay,
   LineupPayload,
@@ -768,6 +770,75 @@ export function stripReason(row: QueueLeague, entries: QueueEntry[]): string {
   let top = "";
   for (const [why, n] of counts) if (!top || n > counts.get(top)!) top = why;
   return top || "nothing queued";
+}
+
+// ---------------------------------------------------------------- one switch (#205)
+const MODE_ORDER: LineupMode[] = ["live", "dry_run", "off"];
+export const MODE_WORDS: Record<LineupMode, string> = { off: "off", dry_run: "dry run", live: "live" };
+type SwitchRow = Pick<QueueLeague, "league" | "status" | "scoring" | "mode" | "live">;
+
+/** The leagues the Queue screen's one switch sets: every row but the private one, the points
+ * leagues the landing hides among them. */
+export function switchRows<T extends Pick<QueueLeague, "status">>(rows: T[]): T[] {
+  return rows.filter((r) => r.status !== "private");
+}
+
+/** "all 12 public leagues, the 3 points leagues the landing hides among them": what the one
+ * switch covers, the points leagues said. */
+export function switchScope(rows: Pick<QueueLeague, "status" | "scoring">[]): string {
+  const mine = switchRows(rows);
+  const points = mine.filter((r) => r.scoring === "points").length;
+  const all = mine.length === 1 ? "the 1 public league" : `all ${mine.length} public leagues`;
+  return points ? `${all}, the ${points} points league${points === 1 ? "" : "s"} the landing hides among them` : all;
+}
+
+/** The modes in force across the public leagues: "12 dry run", "9 live · 3 dry run". */
+export function modesWord(rows: Pick<QueueLeague, "status" | "mode">[]): string {
+  const mine = switchRows(rows);
+  return MODE_ORDER.map((m) => [m, mine.filter((r) => r.mode === m).length] as const)
+    .filter(([, n]) => n)
+    .map(([m, n]) => `${n} ${MODE_WORDS[m]}`)
+    .join(" · ");
+}
+
+/** The mode every public league is in; null when they differ, or there is none. */
+export function commonMode(rows: Pick<QueueLeague, "status" | "mode">[]): LineupMode | null {
+  const modes = new Set(switchRows(rows).map((r) => r.mode));
+  return modes.size === 1 ? [...modes][0] : null;
+}
+
+/** The public leagues not live: those the guard lets go live now, and those it keeps. */
+export function liveSplit<T extends SwitchRow>(rows: T[]): { ready: T[]; waiting: T[] } {
+  const rest = switchRows(rows).filter((r) => r.mode !== "live");
+  return { ready: rest.filter((r) => r.live?.ok), waiting: rest.filter((r) => !r.live?.ok) };
+}
+
+/** The one switch's confirm line on live: "Switch all 12 to live: each claims its due moves on
+ * Yahoo's add page with its bid." Leagues already live, or that their guard keeps, are said. */
+export function allLiveLine(rows: SwitchRow[]): string {
+  const mine = switchRows(rows);
+  const { ready, waiting } = liveSplit(rows);
+  const points = ready.filter((r) => r.scoring === "points").length;
+  const among = points ? `, the ${points} points league${points === 1 ? "" : "s"} among them` : "";
+  const head = ready.length === mine.length ? `Switch all ${ready.length} to live${among}` : `Switch ${ready.length} of the ${mine.length} to live${among}`;
+  const already = mine.length - ready.length - waiting.length;
+  const rest = [
+    waiting.length ? `${waiting.length} keep${waiting.length === 1 ? "s" : ""} ${waiting.length === 1 ? "its" : "their"} mode: live waits` : "",
+    already ? `${already} already live` : "",
+  ].filter(Boolean);
+  return `${head}: each claims its due moves on Yahoo's add page with its bid${rest.length ? `; ${rest.join("; ")}` : ""}.`;
+}
+
+/** The hover on the one switch's live: the guard's reasons for the leagues it keeps. */
+export function allLiveTitle(rows: SwitchRow[], title: (league: string) => string): string {
+  const { ready, waiting } = liveSplit(rows);
+  if (!waiting.length) return ready.length ? "The dry run has passed in every league not live." : "Every public league is live.";
+  return `Live waits in ${waiting.map((r) => `${title(r.league)} (${r.live?.reason ?? "the dry run"})`).join(", ")}.`;
+}
+
+/** The leagues the one switch left in their mode, each with why. */
+export function keptLines(a: AllModesAnswer, title: (league: string) => string): string[] {
+  return a.leagues.filter((x) => !x.ok).map((x) => `${title(x.league)} stays ${MODE_WORDS[x.mode]}: ${x.reason ?? "refused"}`);
 }
 
 /** The adds left in the week holding ``today`` as the build read them; null for no limit, or a

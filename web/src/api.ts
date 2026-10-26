@@ -1316,6 +1316,17 @@ export interface QueueLeague {
   typical?: { value: number; from: string };
   queued?: number;
   built_at?: string;
+  /** Read at request time (#205), on every public row: the mode above is the executor's now, and
+   * these are the user's own cap now (null: the knob's) and the live guard now. */
+  user_cap?: number | null;
+  live?: AutopilotView["live"];
+}
+
+/** The Queue screen's one switch's answer (#205): each public league's mode after it, and why a
+ * league kept its mode (the live guard's reason, or its file's error). */
+export interface AllModesAnswer {
+  mode: LineupMode;
+  leagues: { league: string; mode: LineupMode; ok: boolean; reason: string | null }[];
 }
 
 /** A day's queue, with the execute time (Central) and STOP. */
@@ -2490,6 +2501,9 @@ export const api = {
   /** The user's own click: the moves executor's mode and cap (null: the knob's); live waits. */
   setMovesMode: (league: string, mode: LineupMode, cap: number | null) =>
     request<MovesView>(`/leagues/${encodeURIComponent(league)}/moves`, { method: "PUT", body: JSON.stringify({ mode, cap }) }),
+  /** The user's own click (#205): the moves executor's mode in every public league, each keeping
+   * its cap; a league whose live guard refuses keeps its mode. */
+  setAllMovesModes: (mode: LineupMode) => request<AllModesAnswer>("/autopilot/moves/mode", { method: "PUT", body: JSON.stringify({ mode }) }),
   /** Every week left of my season as win odds, each with its scoreboard and my players (#116). */
   outlook: (league: string, system: ProjectionSystem) =>
     request<OutlookPayload>(`/seasons/${encodeURIComponent(league)}/outlook?system=${system}`),
