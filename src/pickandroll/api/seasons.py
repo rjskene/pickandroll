@@ -109,7 +109,7 @@ import math
 import threading
 import time
 from collections import Counter
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta, tzinfo
 from pathlib import Path
@@ -967,7 +967,7 @@ class SeasonService:
             raise HTTPException(409, str(exc)) from exc
 
     def _queue_payload(self, day: date, body: dict[str, Any] | None) -> dict[str, Any]:
-        return {
+        out = {
             "date": day.isoformat(),
             "built": [],
             "execute_time": None,
@@ -978,6 +978,27 @@ class SeasonService:
             "stop": season_autopilot.stopped(self.data_dir),
             "now": self.clock().isoformat(),
         }
+        return {**out, "names": self._queue_names(out["entries"])}
+
+    def _queue_names(self, entries: Iterable[Mapping[str, Any]]) -> dict[str, str]:
+        """Every player the day's entries mention (the add, the drop, the held move's player), by
+        id (#194): each league's read from its own snapshot at request time; a league whose
+        snapshot does not read names none, and the web says "player N"."""
+        wanted: dict[str, set[int]] = {}
+        for e in entries:
+            held = e.get("held_move") or {}
+            for k in (e.get("add"), e.get("drop"), held.get("player")):
+                if k is not None:
+                    wanted.setdefault(str(e["league"]), set()).add(int(k))
+        out: dict[str, str] = {}
+        for league, ids in wanted.items():
+            try:
+                base, _ = base_settings(self.data_dir, league)
+                players = Season.from_parts(base, load_parts(self.data_dir, league)).players
+            except Exception:  # noqa: BLE001, S112 - one league's snapshot leaves the others
+                continue
+            out |= {str(k): players[k].name for k in sorted(ids) if k in players}
+        return out
 
     def queue(self, day: date | None = None) -> dict[str, Any]:
         """A day's queue of the moves executor (#171), today's by default; reads only."""
