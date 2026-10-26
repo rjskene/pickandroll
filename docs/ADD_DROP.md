@@ -79,7 +79,12 @@ games.
 
 - **Weeks.** The current matchup week and the next three. The current week counts from today,
   or from tomorrow once the matchup page was read at or after 19:00 ET, when the day's games
-  are already in the week so far.
+  are already in the week so far. On the week's last day (a Sunday) read from 19:00 ET, the
+  week has no days left (#209). The moves solve still answers:
+  - the week horizon is that week, empty and labelled "week N has no days left", with `from`
+    null; no move changes it, and its streaming plan is null;
+  - the three weeks after take every move, from Monday;
+  - the adds are counted from the new week (a claim placed on Sunday clears on Monday).
 - **Games.** The game days of the player's NBA team in the ESPN schedule cache, then the out
   rule: INJ, OFS, SUSP and NA play no games in any week; O misses the rest of this week, and so
   does a GTD whom Yahoo's projection gives no games; D, Q and P keep their games. The row shows

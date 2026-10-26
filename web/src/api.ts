@@ -996,8 +996,9 @@ export interface MatchupPayload {
   week: number;
   start: string | null;
   end: string | null;
-  /** The first day projected. */
-  from: string;
+  /** The first day projected; null when the week has no day left (a Sunday read once its games
+   * began, #209). */
+  from: string | null;
   /** Days left, from the first day projected. */
   days: number;
   /** Mine, then the opponent. */

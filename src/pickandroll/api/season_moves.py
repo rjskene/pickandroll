@@ -233,7 +233,10 @@ def build(
     matchup, read_at = sw.matchup_read(season, mine)
     since = sw.first_day(read_at, today) if matchup is not None else today
     ahead = sw.spans(season, today, data_dir, WEEKS_AHEAD, players, since)
-    if not ahead or not ahead[0].days:
+    # This week with no days left (a Sunday read once its games began, #209) stays the week
+    # horizon, an empty one no move changes; every move takes effect in the weeks after it.
+    over = bool(ahead) and not ahead[0].days
+    if not ahead or (over and len(ahead) < 2):
         return None
     slots = wk.starting_slots(s.roster)
 
@@ -293,7 +296,9 @@ def build(
     }
     limit = s.max_weekly_adds
     this = ahead[0].week
-    used, limits = add_limits(season, mine, ahead, today)
+    # The adds are counted from the first week a move can take effect in: the next one when
+    # this week is over (a claim placed on Sunday clears on Monday, #209).
+    used, limits = add_limits(season, mine, ahead[1:] if over else ahead, today)
     problem = mv.MoveProblem(
         roster=roster,
         held=held,
@@ -317,10 +322,14 @@ def build(
     names = {t.team_id: t.name for t in season.teams}
     horizons = {
         "week": {
-            "label": f"rest of week {this.number}"
-            + (f" against {names.get(other, f'team {other}')}" if other is not None else ""),
+            "label": (
+                f"week {this.number} has no days left"
+                if over
+                else f"rest of week {this.number}"
+                + (f" against {names.get(other, f'team {other}')}" if other is not None else "")
+            ),
             "weeks": [this.number],
-            "from": since.isoformat(),
+            "from": None if over else since.isoformat(),
             "opponent": other,
         },
         "three": {

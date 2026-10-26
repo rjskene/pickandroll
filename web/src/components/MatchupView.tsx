@@ -118,7 +118,7 @@ export default function MatchupView({
       ))}
       <Players
         title={`My players · ${name(mine)}`}
-        note={`what each adds to the ${oddsLabel(m.win)}: out from ${dayLabel(m.from)}, his starts refilled from the bench`}
+        note={m.from ? `what each adds to the ${oddsLabel(m.win)}: out from ${dayLabel(m.from)}, his starts refilled from the bench` : "the week has no day left: its score so far is its final"}
         rows={m.players.mine}
         m={m}
         mine
@@ -171,7 +171,7 @@ function Players({
             <tr>
               <th>Player</th>
               <th>Slot</th>
-              <th className="num" title={`games left from ${dayLabel(m.from)}`}>
+              <th className="num" title={m.from ? `games left from ${dayLabel(m.from)}` : "games left: none, the week is over"}>
                 G
               </th>
               {cols.map((c) => (
@@ -180,7 +180,7 @@ function Players({
                 </th>
               ))}
               {!points && (
-                <th className="num" title={`expected categories he adds: the week with him less the week without him from ${dayLabel(m.from)}`}>
+                <th className="num" title={`expected categories he adds: the week with him less the week without him${m.from ? ` from ${dayLabel(m.from)}` : ""}`}>
                   Cats
                 </th>
               )}
