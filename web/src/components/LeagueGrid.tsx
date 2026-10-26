@@ -1,26 +1,15 @@
 import { useEffect, useState } from "react";
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
-import { api, type BestMove, type ProjectionSystem, type SeasonSummary, type StatusPayload } from "../api";
-import {
-  addsLeft,
-  addsNote,
-  ageLabel,
-  bestLine,
-  flagCounts,
-  gainLabel,
-  gridOrder,
-  isRefreshing,
-  isStale,
-  placeLabel,
-  refreshNote,
-  scoreLabel,
-  type GridOrder,
-} from "../season";
-import { StatusDot, StatusSheet, useSeasonStatus } from "./StatusLight";
+import { api, type BestMove, type ProjectionSystem, type SeasonSummary } from "../api";
+import type { SeasonViewId } from "../keys";
+import { isExpanded, isRefreshing, landingRows, leaguesLabel, onLanding, toggleExpanded, type GridOrder } from "../season";
+import { LeagueBlock, UnreadBlock } from "./LeagueBlock";
+import { StatusSheet, useSeasonStatus } from "./StatusLight";
 
-/** The grid's moves come from the league page's default projection, so a solve there shows here. */
+/** The table's moves come from the league page's default projection, so a solve there shows here. */
 const SYSTEM: ProjectionSystem = "bbm";
 const ORDER_KEY = "pickandroll.landing.order";
+const POINTS_KEY = "pickandroll.landing.points";
 
 function savedOrder(): GridOrder {
   try {
@@ -30,11 +19,22 @@ function savedOrder(): GridOrder {
   }
 }
 
-/** The leagues in season as a grid (#108, variant A): one card per league with this week's
+function savedPoints(): boolean {
+  try {
+    return localStorage.getItem(POINTS_KEY) === "shown";
+  } catch {
+    return false;
+  }
+}
+
+/** The leagues in season as a table (#191, after the #108 grid): two rows per league, this week's
  * score, the opponent, my place, the adds left, the flags, the best recommended move with its
- * gain and any read error. The best move is only ever read from the moves already solved today:
- * loading the grid solves nothing, a league without an answer says so, and its button solves it. */
-export default function LeagueGrid({ onOpen }: { onOpen: (league: string) => void }) {
+ * gain and the freshness light, then the format, my team, the week and the set in a line; a
+ * chevron opens the whole recommended set and the league's facts. The private league is pinned
+ * first and opens expanded; the points leagues are hidden until shown. The best move is only
+ * ever read from the moves already solved today: loading the table solves nothing, a league
+ * without an answer says so, and its button solves it. */
+export default function LeagueGrid({ onOpen }: { onOpen: (league: string, view?: SeasonViewId) => void }) {
   const queryClient = useQueryClient();
   const seasons = useQuery({
     queryKey: ["seasons"],
@@ -51,9 +51,22 @@ export default function LeagueGrid({ onOpen }: { onOpen: (league: string) => voi
       // The order is a convenience: it resets without storage.
     }
   };
+  const [showPoints, setShowPointsState] = useState(savedPoints);
+  const setShowPoints = (shown: boolean) => {
+    setShowPointsState(shown);
+    try {
+      localStorage.setItem(POINTS_KEY, shown ? "shown" : "hidden");
+    } catch {
+      // Like the order: hidden again without storage.
+    }
+  };
+  // The panels opened or closed by hand; the private league's starts open.
+  const [toggled, setToggled] = useState<ReadonlyMap<string, boolean>>(new Map());
   const list = seasons.data ?? [];
-  const movable = list.filter((s) => s.has_snapshot && !s.error && s.my_team);
-  // One look per league, each card filling in as its answer lands; a new snapshot looks again.
+  // Only the leagues shown look for their best move: a hidden points league costs no request.
+  const shown = list.filter((s) => onLanding(s, showPoints));
+  const movable = shown.filter((s) => s.has_snapshot && !s.error && s.my_team);
+  // One look per league, each row filling in as its answer lands; a new snapshot looks again.
   const looks = useQueries({
     queries: movable.map((s) => ({
       queryKey: ["best", s.league, SYSTEM, s.updated_at],
@@ -79,7 +92,7 @@ export default function LeagueGrid({ onOpen }: { onOpen: (league: string) => voi
     mutationFn: (league: string) => api.refreshSeason(league),
     onSettled: () => void queryClient.invalidateQueries({ queryKey: ["seasons"] }),
   });
-  // Each card's freshness light (#153) and the league whose sheet is open; a new read moves it.
+  // Each row's freshness light (#153) and the league whose sheet is open; a new read moves it.
   const status = useSeasonStatus();
   const [sheetFor, setSheetFor] = useState<string | null>(null);
   const reads = list.map((s) => s.updated_at).join();
@@ -89,11 +102,41 @@ export default function LeagueGrid({ onOpen }: { onOpen: (league: string) => voi
   const open = list.find((s) => s.league === sheetFor);
   const now = Date.now();
   if (!list.length && !seasons.error) return seasons.isPending ? <p className="muted">Reading the leagues…</p> : null;
+  const rows = landingRows(list, best, order, showPoints);
+  const block = (s: SeasonSummary) => {
+    const common = {
+      s,
+      status: status.data,
+      refreshing: refresh.isPending && refresh.variables === s.league,
+      onRefresh: () => refresh.mutate(s.league),
+      onStatus: () => setSheetFor(s.league),
+    };
+    if (s.error || !s.has_snapshot) return <UnreadBlock key={s.league} {...common} />;
+    return (
+      <LeagueBlock
+        key={s.league}
+        {...common}
+        now={now}
+        best={best.get(s.league)}
+        lookError={lookError.get(s.league) ?? null}
+        solving={solving.has(s.league)}
+        solveError={solve.isError && solve.variables?.league === s.league ? solve.error.message : null}
+        open={isExpanded(s, toggled)}
+        onToggle={() => setToggled((t) => toggleExpanded(s, t))}
+        onOpen={() => onOpen(s.league)}
+        onLineup={() => onOpen(s.league, "lineup")}
+        onSolve={() => solve.mutate(s)}
+      />
+    );
+  };
   return (
     <section className="league-grid" aria-label="Leagues">
       <div className="lg-head">
         <h2>LEAGUES</h2>
-        <span className="muted">this week's score, place and the best move in each · click a card for its league page</span>
+        <span className="muted">
+          {leaguesLabel([...rows.pinned, ...rows.rest])} · the private league first, then the rest by {order === "gain" ? "most to gain" : "name"} · a
+          chevron opens the league's recommended set, its name the league page
+        </span>
         <span className="grow" />
         <label className="inline muted">
           sorted by
@@ -104,25 +147,40 @@ export default function LeagueGrid({ onOpen }: { onOpen: (league: string) => voi
         </label>
       </div>
       {seasons.error && <p className="error">{seasons.error.message}</p>}
-      <div className="grid">
-        {gridOrder(list, best, order).map((s) => (
-          <LeagueCard
-            key={s.league}
-            s={s}
-            now={now}
-            best={best.get(s.league)}
-            lookError={lookError.get(s.league) ?? null}
-            solving={solving.has(s.league)}
-            solveError={solve.isError && solve.variables?.league === s.league ? solve.error.message : null}
-            onOpen={() => onOpen(s.league)}
-            onSolve={() => solve.mutate(s)}
-            onRefresh={() => refresh.mutate(s.league)}
-            refreshing={refresh.isPending && refresh.variables === s.league}
-            status={status.data}
-            onStatus={() => setSheetFor(s.league)}
-          />
-        ))}
+      <div className="lt-scroll">
+        <div className="lt">
+          <div className="lt-head">
+            <span />
+            <span className="k">League</span>
+            <span className="k">This week</span>
+            <span className="k">Place</span>
+            <span className="k">Adds</span>
+            <span className="k">Flags</span>
+            <span className="k">Best move</span>
+            <span className="k lt-gain">Gain</span>
+            <span className="k">Read</span>
+            <span />
+          </div>
+          {rows.pinned.map(block)}
+          {rows.rest.map(block)}
+        </div>
       </div>
+      {list.some((s) => s.public !== false && s.scoring === "points") && (
+        <p className="lt-foot muted">
+          {showPoints ? (
+            <button className="link" onClick={() => setShowPoints(false)}>
+              hide the points leagues
+            </button>
+          ) : (
+            <>
+              {rows.hidden} points league{rows.hidden === 1 ? "" : "s"} hidden{" "}
+              <button className="link" onClick={() => setShowPoints(true)}>
+                show them
+              </button>
+            </>
+          )}
+        </p>
+      )}
       {refresh.isError && <p className="error">{refresh.error.message}</p>}
       {open && status.data && (
         <StatusSheet
@@ -144,157 +202,3 @@ export default function LeagueGrid({ onOpen }: { onOpen: (league: string) => voi
   );
 }
 
-function LeagueCard({
-  s,
-  now,
-  best,
-  lookError,
-  solving,
-  solveError,
-  onOpen,
-  onSolve,
-  onRefresh,
-  refreshing,
-  status,
-  onStatus,
-}: {
-  s: SeasonSummary;
-  now: number;
-  best: BestMove | undefined;
-  lookError: Error | null;
-  solving: boolean;
-  solveError: string | null;
-  onOpen: () => void;
-  onSolve: () => void;
-  onRefresh: () => void;
-  refreshing: boolean;
-  status: StatusPayload | undefined;
-  onStatus: () => void;
-}) {
-  const format = s.scoring === "points" ? "H2H points" : "H2H categories";
-  const title = s.name ?? `League ${s.league}`;
-  if (s.error || !s.has_snapshot) {
-    return (
-      <div className="lcard unread">
-        <div className="top">
-          <span className="name">{title}</span>
-          <span className="meta">
-            {format}
-            {s.public === false ? " · private" : ""}
-          </span>
-        </div>
-        {s.error ? (
-          <span className="bad">{s.error}</span>
-        ) : (
-          <span className="dim">{s.public ? "not read yet" : "not read yet: open its pages in Chrome with the extension"}</span>
-        )}
-        <div className="facts">
-          <StatusDot p={status} league={s.league} onOpen={onStatus} />
-          {s.public && !s.error && (
-            <button className="link" disabled={isRefreshing(s) || refreshing} onClick={onRefresh}>
-              {isRefreshing(s) ? refreshNote(s.refresh) : "read it now"}
-            </button>
-          )}
-        </div>
-      </div>
-    );
-  }
-  const running = isRefreshing(s) || refreshing;
-  const failed = s.refresh?.status === "failed";
-  const readNote = refreshNote(s.refresh) || `read ${ageLabel(s.updated_at, now)}`;
-  // A click anywhere on the card opens its league page; its own buttons do not.
-  const stop = (f: () => void) => (e: React.MouseEvent) => {
-    e.stopPropagation();
-    f();
-  };
-  return (
-    <div
-      className="lcard"
-      role="link"
-      tabIndex={0}
-      aria-label={`${title}: open its league page`}
-      onClick={onOpen}
-      onKeyDown={(e) => {
-        if (e.key === "Enter" && e.target === e.currentTarget) onOpen();
-      }}
-    >
-      <div className="top">
-        <span className="name">{title}</span>
-        <span className={s.flags?.["must-add"] || s.flags?.add ? "accent" : "dim"} title={s.flags_error ?? "the waiver pool's breakout flags, by level"}>
-          {s.flags_error ? "flags did not read" : flagCounts(s.flags)}
-        </span>
-      </div>
-      <div className="score">
-        <span className="big" title={s.scoring === "points" ? "this week's points so far, mine first" : "categories won so far this week, mine first"}>
-          {scoreLabel(s)}
-        </span>
-        <span className="muted">
-          {s.opponent ? `vs ${s.opponent.name}` : "no opponent read"}
-          {s.week != null ? ` · week ${s.week}` : ""}
-        </span>
-      </div>
-      <div className="facts">
-        <span className="meta">
-          {format}
-          {s.public ? "" : " · private"}
-        </span>
-        {s.my_team && <span>{s.my_team.name}</span>}
-        <span>{placeLabel(s)}</span>
-        {s.adds && <span title={addsNote(s.adds)}>{addsLeft(s.adds)}</span>}
-        <StatusDot p={status} league={s.league} onOpen={onStatus} />
-        <span className={failed ? "bad" : running ? "accent" : isStale(s.updated_at, now) ? "dim" : "muted"} title={s.refresh?.error ?? s.updated_at ?? undefined}>
-          {readNote}
-        </span>
-        {s.public && !running && (
-          <button className="link" onClick={stop(onRefresh)} title="Read the league's public Yahoo pages again (about 20 s)">
-            refresh
-          </button>
-        )}
-      </div>
-      <BestRow s={s} best={best} lookError={lookError} solving={solving} solveError={solveError} onSolve={stop(onSolve)} />
-    </div>
-  );
-}
-
-function BestRow({
-  s,
-  best,
-  lookError,
-  solving,
-  solveError,
-  onSolve,
-}: {
-  s: SeasonSummary;
-  best: BestMove | undefined;
-  lookError: Error | null;
-  solving: boolean;
-  solveError: string | null;
-  onSolve: (e: React.MouseEvent) => void;
-}) {
-  if (!s.my_team) return null;
-  const error = solveError ?? lookError?.message;
-  if (solving) return <div className="move dim">solving the moves… (a few seconds)</div>;
-  if (error) return <div className="move bad">{error}</div>;
-  if (!best) return <div className="move dim">looking for a solved move…</div>;
-  if (best.status === "not_solved") {
-    return (
-      <div className="move dim">
-        <span>not solved yet</span>
-        <span className="grow" />
-        <button className="small" onClick={onSolve} title="Solve today's moves for this league (a few seconds)">
-          Solve
-        </button>
-      </div>
-    );
-  }
-  const unit = s.scoring === "points" ? "matchups won" : "categories won";
-  if (!best.move) return <div className="move dim" title={`over ${best.label}`}>{bestLine(best)}</div>;
-  return (
-    <div className="move" title={`expected ${unit} the move adds over ${best.label}; the ${best.moves} recommended together add ${gainLabel(best.gain)}`}>
-      <span className="k">Move</span>
-      <span>{bestLine(best)}</span>
-      <span className="grow" />
-      <span className="good">{gainLabel(best.move.gain)}</span>
-    </div>
-  );
-}

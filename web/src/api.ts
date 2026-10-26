@@ -799,7 +799,23 @@ export type BestMove =
       moves: number;
       gain: number;
       min_gain: number;
+      /** The landing table's panel (#191): the whole set on the horizon, the room and a name
+       * for every player they mention (ids as strings); absent from a server before #191. */
+      set?: BestSetLine[];
+      room?: MoveRoom;
+      names?: Record<string, string>;
     };
+
+/** A move of the recommended set as the landing table's panel lists it (#191): its gain on the
+ * best move's horizon, its basis and the held move that makes room for it (#187). */
+export interface BestSetLine {
+  add: number;
+  drop: number | null;
+  from: string;
+  gain: number;
+  basis: AddBasis;
+  held: HeldMove | null;
+}
 
 export interface BestMoveLine {
   add: number;

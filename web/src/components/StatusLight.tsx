@@ -9,8 +9,19 @@ export function useSeasonStatus() {
   return useQuery({ queryKey: ["status"], queryFn: api.status, refetchInterval: 60_000 });
 }
 
-/** The dot and its word for a league: the hover line on hover, its sheet on click. */
-export function StatusDot({ p, league, onOpen }: { p: StatusPayload | undefined; league: string; onOpen: () => void }) {
+/** The dot and its word for a league: the hover line on hover, its sheet on click. Without
+ * ``word`` the dot alone (the landing table's Read column, #191). */
+export function StatusDot({
+  p,
+  league,
+  onOpen,
+  word = true,
+}: {
+  p: StatusPayload | undefined;
+  league: string;
+  onOpen: () => void;
+  word?: boolean;
+}) {
   const state = lightOf(p, league);
   if (!p || !state) return null;
   return (
@@ -24,7 +35,7 @@ export function StatusDot({ p, league, onOpen }: { p: StatusPayload | undefined;
       }}
     >
       <span className={`dot ${STATE_TONE[state]}`} />
-      <span className={STATE_TONE[state]}>{STATE_WORD[state]}</span>
+      {word && <span className={STATE_TONE[state]}>{STATE_WORD[state]}</span>}
     </button>
   );
 }

@@ -6,6 +6,7 @@ import type {
   AddBasis,
   AvailableRow,
   BestMove,
+  BestSetLine,
   Cat,
   Comeback,
   FlagConfig,
@@ -1502,6 +1503,86 @@ export function gridOrder(seasons: SeasonSummary[], best: Map<string, BestMove |
       ? Number(read(b)) - Number(read(a)) || title(a).localeCompare(title(b))
       : group(a) - group(b) || gain(b) - gain(a) || title(a).localeCompare(title(b)),
   );
+}
+
+// ---------------------------------------------------------------- landing table (#191)
+/** The landing table's leagues: the private league pinned first whatever the sort, then the rest
+ * in the grid's order; the points leagues held back unless shown, with how many were. A private
+ * points league is pinned, never hidden. */
+export interface LandingRows {
+  pinned: SeasonSummary[];
+  rest: SeasonSummary[];
+  hidden: number;
+}
+
+/** Whether the landing table shows a league: the private one always, a points league only when
+ * the points leagues are shown. */
+export function onLanding(s: Pick<SeasonSummary, "public" | "scoring">, showPoints: boolean): boolean {
+  return s.public === false || showPoints || s.scoring !== "points";
+}
+
+export function landingRows(
+  seasons: SeasonSummary[],
+  best: Map<string, BestMove | undefined>,
+  by: GridOrder,
+  showPoints: boolean,
+): LandingRows {
+  const others = seasons.filter((s) => s.public !== false);
+  const shown = others.filter((s) => onLanding(s, showPoints));
+  const pinned = seasons.filter((s) => s.public === false);
+  return { pinned: gridOrder(pinned, best, by), rest: gridOrder(shown, best, by), hidden: others.length - shown.length };
+}
+
+/** The table's head: "9 categories leagues", or with the points leagues shown "12 leagues: 9
+ * categories, 3 points". */
+export function leaguesLabel(shown: Pick<SeasonSummary, "scoring">[]): string {
+  const points = shown.filter((s) => s.scoring === "points").length;
+  const cats = shown.length - points;
+  const of = (n: number, kind: string) => `${n} ${kind} league${n === 1 ? "" : "s"}`;
+  if (!points) return of(cats, "categories");
+  if (!cats) return of(points, "points");
+  return `${shown.length} leagues: ${cats} categories, ${points} points`;
+}
+
+/** The recommended set in a line: "3 moves recommended together add +0.60 over weeks 2-4 against
+ * the field"; "not solved yet" before today's solve; blank while the look runs. */
+export function setSummary(b: BestMove | undefined): string {
+  if (!b) return "";
+  if (b.status !== "solved") return "not solved yet";
+  if (!b.moves) return `no move gains ${b.min_gain} over ${b.label}`;
+  return b.moves === 1
+    ? `1 move recommended adds ${gainLabel(b.gain)} over ${b.label}`
+    : `${b.moves} moves recommended together add ${gainLabel(b.gain)} over ${b.label}`;
+}
+
+/** A player the best route names, by id; "player 7" for one it does not. */
+export function bestNamer(b: Extract<BestMove, { status: "solved" }>): (id: number) => string {
+  return (id) => b.names?.[String(id)] ?? `player ${id}`;
+}
+
+/** A set's move as the panel lists it: "Add X for Y", "Add X after Z to IL", "Add X (free: open
+ * spot)" (#187's words), and the kind for its last column: "drop", "IL move" or "open spot". */
+export function setLine(m: BestSetLine, name: (id: number) => string): { text: string; kind: string; basis: Basis } {
+  const basis = addBasis(m, name);
+  const kind = basis.kind === "drop" ? "drop" : basis.kind === "held" && m.held ? `${m.held.slot} move` : "open spot";
+  return { text: `Add ${name(m.add)} ${basisPhrase(basis)}`, kind, basis };
+}
+
+/** My place's tone: good in the top two, bad when last. */
+export function placeTone(s: Pick<SeasonSummary, "my_team" | "num_teams">): "good" | "bad" | "" {
+  const rank = s.my_team?.rank;
+  if (rank == null) return "";
+  return rank <= 2 ? "good" : rank === s.num_teams ? "bad" : "";
+}
+
+/** Whether a league's panel is open: the user's toggle, else open for the private league only. */
+export function isExpanded(s: Pick<SeasonSummary, "league" | "public">, toggled: ReadonlyMap<string, boolean>): boolean {
+  return toggled.get(s.league) ?? s.public === false;
+}
+
+/** The toggles after the chevron of ``s`` is clicked. */
+export function toggleExpanded(s: Pick<SeasonSummary, "league" | "public">, toggled: ReadonlyMap<string, boolean>): Map<string, boolean> {
+  return new Map(toggled).set(s.league, !isExpanded(s, toggled));
 }
 
 // ---------------------------------------------------------------- strategy (#110)
