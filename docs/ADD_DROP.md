@@ -898,6 +898,18 @@ scores nothing because its input is missing says so rather than reading as a zer
 past-days export older than its limit the minutes trend, no injury report read the opportunity);
 an opportunity score on its own is marked as not counted.
 
+The legend (#185). The "i" is the flags' legend: the levels lowest first, each drawn as the
+table's tag with its floor and what it recommends (watch: no move on the flag alone; add: open
+his move and take it if the Moves card recommends it; must-add: look first today, the Moves card
+saying whether the add is recommended), then each signal's rule with what it reads, the rule that
+opportunity alone flags no one, what the flags were read from today and the signals that input
+leaves silent; every floor and threshold from `flag_config`. On the Flags card it is labelled
+"how flags work" in the card's header row, whose note counts the flagged players by level ("2
+must-add · 3 add · 5 watch"); on Waivers it is the Flag column header's "i". Every "i" in the
+app opens its explanation through a portal on the page's body, above the columns and the drawer,
+so a scrolling column never clips it; it follows its button when a column scrolls and closes
+once the button leaves the column's view.
+
 ## The trade evaluator
 
 The trading counterpart (from #79), built on the same data layer and objective. Given a

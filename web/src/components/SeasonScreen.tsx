@@ -11,7 +11,6 @@ import {
   type MoveHorizon,
   type MoveRef,
   type MovesPayload,
-  type PlayerFlag,
   type ProjectionSystem,
   type ProjectionSystemInfo,
   type RecordedWeek,
@@ -32,11 +31,11 @@ import {
   dayLabel,
   DEFAULT_AVAILABLE_SORT,
   filterAvailable,
-  FLAG_SHORT,
   FLAG_SIGNAL_NAME,
-  FLAG_TONE,
+  flagCounts,
   flagged,
   flagInputsNote,
+  flagLevels,
   flagOf,
   flagSignals,
   flagTitle,
@@ -95,7 +94,7 @@ import {
 } from "../season";
 import { DRAWER_WIDTH, isShown, SEASON_CARDS, SEASON_SHEET, SEASON_VIEWS, seasonKeys, stepHighlight, type DrawerState, type Half, type SeasonCardId } from "../keys";
 import { useDrawer, useHotkeys, useViews } from "../useKeys";
-import { FlagBreakdown, FlagInfo } from "./FlagExplain";
+import { FlagBreakdown, FlagInfo, FlagTag } from "./FlagExplain";
 import { StatusDot, StatusSheet, useSeasonStatus } from "./StatusLight";
 import Halves, { type Face } from "./Halves";
 import KeySheet from "./KeySheet";
@@ -283,7 +282,7 @@ export default function SeasonScreen({ league, onBack, onProgress }: { league: s
       case "flags":
         return {
           note: flagCount(s),
-          action: <FlagInfo cfg={s.flag_config} silent={s.flag_inputs?.silent} align="right" />,
+          action: <FlagInfo cfg={s.flag_config} inputs={s.flag_inputs} now={now} align="right" label="how flags work" />,
           body: <Flags s={s} m={moves.data} mh={mh} now={now} onPick={pick} open={breakdown?.where === "flags" ? breakdown.id : null} onToggle={(id) => toggleBreakdown("flags", id)} />,
         };
       case "roster":
@@ -397,6 +396,7 @@ export default function SeasonScreen({ league, onBack, onProgress }: { league: s
                   flagOpen={breakdown?.where === "waivers" ? breakdown.id : null}
                   onToggleFlag={(id) => toggleBreakdown("waivers", id)}
                   onKeep={showStrategy}
+                  now={now}
                 />
               </div>
               <Halves d={panel} cards={SEASON_CARDS} face={face} keep={["trade"]} />
@@ -432,16 +432,6 @@ export default function SeasonScreen({ league, onBack, onProgress }: { league: s
 interface FlagOpen {
   where: "flags" | "waivers";
   id: number;
-}
-
-/** A breakout flag's level as a tag (W, A, M+), its evidence on hover; nothing under watch. */
-function FlagTag({ f, s }: { f: PlayerFlag | undefined; s: SeasonView }) {
-  if (!f?.level) return null;
-  return (
-    <span className={`tag ${FLAG_TONE[f.level]}`} title={flagTitle(f, s.flag_config)}>
-      {FLAG_SHORT[f.level]}
-    </span>
-  );
 }
 
 function Status({ player }: { player: SeasonPlayer }) {
@@ -515,6 +505,7 @@ function Waivers({
   flagOpen,
   onToggleFlag,
   onKeep,
+  now,
 }: {
   s: SeasonView;
   system: ProjectionSystem;
@@ -533,6 +524,7 @@ function Waivers({
   onToggleFlag: (id: number) => void;
   /** Opens the Strategy card, at the keep rule's players. */
   onKeep: () => void;
+  now: number;
 }) {
   const w = s.week_projection;
   const cats = s.settings.cats;
@@ -710,7 +702,7 @@ function Waivers({
                 "Flag",
                 "the breakout flag: W watch, A add, M+ must-add, from four signals (adds surge, minutes trend, value gap, opportunity); click a row's tag for the breakdown",
                 false,
-                <FlagInfo cfg={s.flag_config} silent={s.flag_inputs?.silent} />,
+                <FlagInfo cfg={s.flag_config} inputs={s.flag_inputs} now={now} name="how flags work" />,
               )}
               {(["week", "three"] as const).map((h) => th(GAIN_KEY[h], GAIN_SHORT[h], gainTitle(h)))}
               {th("ros", "ROS", rosHeadTitle(s.scoring, `his best move over the ${HORIZON_LABEL[horizon]} (the For column's)`))}
@@ -754,7 +746,7 @@ function Waivers({
                             onToggleFlag(id);
                           }}
                         >
-                          <FlagTag f={f} s={s} />
+                          <FlagTag f={f} cfg={s.flag_config} />
                         </button>
                       )}
                     </td>
@@ -949,7 +941,7 @@ function Recommended({ h, m, s, name, onPick }: { h: MoveHorizon; m: MovesPayloa
             {set.moves.map((x) => (
               <tr key={x.add} className="pick" onClick={() => onPick(x)}>
                 <td className="strong">
-                  {name(x.add)} <FlagTag f={flagOf(s, x.add)} s={s} />
+                  {name(x.add)} <FlagTag f={flagOf(s, x.add)} cfg={s.flag_config} />
                 </td>
                 <td>{forText(x, name)}</td>
                 <td className="dim">{dayLabel(x.from)}</td>
@@ -1039,7 +1031,7 @@ function PlanBlock({ m, s, name }: { m: MovesPayload; s: SeasonView; name: Namer
             <tr key={`${x.from}-${x.add}`}>
               <td className="dim">{stepDay(x.from)}</td>
               <td className="strong">
-                {name(x.add)} <FlagTag f={flagOf(s, x.add)} s={s} />
+                {name(x.add)} <FlagTag f={flagOf(s, x.add)} cfg={s.flag_config} />
               </td>
               <td>{name(x.drop)}</td>
               <td className={`num ${gainTone(x.marginal.week, m.search.min_gain)}`}>{gainLabel(x.marginal.week)}</td>
@@ -1057,9 +1049,10 @@ function PlanBlock({ m, s, name }: { m: MovesPayload; s: SeasonView; name: Namer
 }
 
 // ---------------------------------------------------------------- flags (#95)
+/** The Flags card's note: the flagged players by level, "2 must-add · 3 add · 5 watch" (#185). */
 function flagCount(s: SeasonView): string | undefined {
-  const n = flagged(s).length;
-  return s.flag_inputs?.error ? "not made" : n ? `${n} flagged` : undefined;
+  if (s.flag_inputs?.error) return "not made";
+  return flagged(s).length ? flagCounts(flagLevels(s)) : undefined;
 }
 
 /** The flagged available players, the highest first; a click opens his breakdown under the row,
@@ -1108,7 +1101,7 @@ function Flags({
                     onClick={() => onToggle(id)}
                   >
                     <td>
-                      <FlagTag f={flag} s={s} />
+                      <FlagTag f={flag} cfg={s.flag_config} />
                     </td>
                     <td className="strong">
                       {row.player.name} <span className="dim">{row.player.nba_team}</span>
@@ -1169,7 +1162,7 @@ function MoveDrawer({
     <>
       <div className="block">
         <span className="k">
-          Add {name(picked.add)} <FlagTag f={flagOf(s, picked.add)} s={s} /> for {forText({ drop: picked.drop, held: d?.held[0] }, name)}
+          Add {name(picked.add)} <FlagTag f={flagOf(s, picked.add)} cfg={s.flag_config} /> for {forText({ drop: picked.drop, held: d?.held[0] }, name)}
         </span>
         <p className="muted small">
           {p && `${p.nba_team ?? "no team"} · ${p.positions.join(", ")} · `}

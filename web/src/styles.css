@@ -386,13 +386,15 @@ table.keepers tr.err td { background: rgba(239, 107, 107, 0.14); }
 @media (max-width: 1100px) { :root { --drawer: 340px; } .sheet .groups { grid-template-columns: 1fr; } }
 
 /* info popovers */
-.info { position: relative; display: inline-flex; vertical-align: middle; margin-left: 6px; }
+/* The stacking ladder, written once (#185): 20 the toast, 25 the announcer, 30 the drawer and the
+   sheet, 40 an "i"'s explanation, which opens through a portal on the body above them all. */
+.info { display: inline-flex; vertical-align: middle; margin-left: 6px; }
 .info-btn { width: 16px; height: 16px; padding: 0; border-radius: 50%; border: 1px solid var(--line-2); background: var(--panel-2); color: var(--muted); font-family: var(--body); font-size: 10px; font-weight: 600; line-height: 14px; text-transform: none; letter-spacing: 0; display: inline-flex; align-items: center; justify-content: center; }
 .info-btn:hover, .info-btn[aria-expanded="true"] { color: var(--accent); border-color: var(--accent); }
-.popover { position: absolute; top: 22px; left: 0; z-index: 12; width: 340px; padding: 10px 12px; background: var(--panel-2); border: 1px solid var(--line-2); border-radius: 8px; box-shadow: 0 18px 50px rgba(0, 0, 0, 0.6); font-family: var(--body); font-size: 12px; font-weight: 400; line-height: 1.45; color: var(--text); text-transform: none; letter-spacing: 0; white-space: normal; text-align: left; display: grid; gap: 6px; cursor: default; }
-.popover.right { left: auto; right: 0; }
-.popover { overflow-y: auto; }
-.popover.up { top: auto; bottom: 22px; }
+.info-btn.labelled { width: auto; gap: 5px; padding: 0 8px 0 2px; border-radius: 8px; font-size: 11px; font-weight: 500; white-space: nowrap; }
+.info-btn.labelled .info-i { width: 12px; height: 12px; border-radius: 50%; border: 1px solid currentColor; font-size: 9px; font-weight: 600; line-height: 10px; display: inline-flex; align-items: center; justify-content: center; }
+.popover { position: fixed; z-index: 40; width: 340px; max-width: calc(100vw - 16px); padding: 10px 12px; background: var(--panel-2); border: 1px solid var(--line-2); border-radius: 8px; box-shadow: 0 18px 50px rgba(0, 0, 0, 0.6); font-family: var(--body); font-size: 12px; font-weight: 400; line-height: 1.45; color: var(--text); text-transform: none; letter-spacing: 0; white-space: normal; text-align: left; display: grid; gap: 6px; overflow-y: auto; cursor: default; }
+.popover.wide { width: 440px; }
 .popover b { color: #ffffff; font-weight: 600; }
 
 /* tags, ties and the category strip */
@@ -483,6 +485,12 @@ tr.tie td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
 /* The breakout flag's breakdown under a row (#113): four 0-to-1 bars with their evidence, then the sum against the levels. */
 .flag-btn { padding: 0; border: 0; background: none; cursor: pointer; line-height: 0; }
 .flag-btn[aria-expanded="true"] .tag { box-shadow: 0 0 0 1px currentColor; }
+.flag-btn:focus-visible { outline: none; }
+.flag-btn:focus-visible .tag { outline: 2px solid var(--accent); outline-offset: 1px; }
+/* The flags legend (#185): the levels as the table draws them, then the signals. */
+.flag-legend { width: 100%; border-collapse: collapse; }
+.flag-legend td { padding: 3px 6px 3px 0; vertical-align: top; border: 0; background: none; position: static; white-space: normal; font-size: 12px; }
+.flag-legend td.num { white-space: nowrap; color: var(--muted); }
 tr.breakdown > td { padding: 0; white-space: normal; background: var(--panel); }
 .flag-breakdown { display: grid; gap: 5px; padding: 8px 10px 10px; border-left: 2px solid var(--accent); font-size: 12px; line-height: 1.4; }
 .season-board .flag-breakdown { position: sticky; left: 0; max-width: 760px; }
