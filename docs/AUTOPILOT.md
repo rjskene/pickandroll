@@ -280,11 +280,33 @@ page, from PR 2:
      count as placed on the league's other pages (against the day's cap, as pending claims and
      against their week's adds), and the worker takes one record at a time, refusing one past the
      cap or on an add already in flight.
-  2. The page: a click on the entry's one `dpid` box (Yahoo draws the claim submit only once a drop
-     is picked), the claim submit waited for, the whole-dollar bid typed into `faab`, the form read
-     back (one box ticked and it is the drop, `apid` the add, the bid as typed, the submit
-     `submit_drop_player`), the submit clicked once. Nothing else on the page is touched. A form
-     that does not take the claim is a skip and nothing is clicked.
+  2. The page, with a user's two clicks and nothing else (extension 0.8.2; 0.8.0 and 0.8.1 clicked
+     the hidden `dpid` box, which Yahoo's script never hears, and the first live pass on 2026-10-26
+     placed nothing). Yahoo's add page claims in two steps: its script, delegated on
+     `.add-drop-trigger-btn`, takes a click on the button beside a drop box, ticks the box, posts
+     the form's first stage and swaps its reply into the page (the player cards, the drop table and
+     the submit container, whose `Hidden-submit` it then removes); the reply carries the final
+     button, whose click runs Yahoo's bid check and submits the form. The `submit_drop_player`
+     submit is only a `<noscript>`, never in the page. So the pass:
+     - clicks the one `button.add-drop-trigger-btn` whose `data-check-box-value`, trimmed (Yahoo
+       pads it with a space), is the drop; none or more than one is a skip, nothing touched;
+     - waits up to 15 s for the reply's three signs (the final button in the submit container, the
+       container no longer hidden, the drop's box checked); a reply that does not come is a skip
+       naming the signs missing;
+     - types the whole-dollar bid into `faab` only then, after checking it as Yahoo does (a whole
+       number from $0 to the field's `data-faab-balance`), so Yahoo's check never alerts;
+     - reads the form back (one box ticked and it is the drop, `apid` the add, the bid as typed, the
+       final button the claim's) and clicks the final button once.
+     A skip or failure after the first click leaves the page as it is: the extension never clicks
+     Cancel, the routine navigates away, and the first stage places nothing.
+     **Yahoo's alerts.** Yahoo answers an error in the first stage's reply, or a bid its check
+     refuses, with `alert`, which would block the tab and the routine's pass with it. On an add page
+     opened with a moves fragment, and nowhere else, a page-world script loaded at
+     `document_start` (`extension/addpage.js`) keeps each alert's text on the root element
+     instead. An alert on the first stage's reply logs the entry `failed` with Yahoo's words
+     quoted, never retried that day; one on the final click logs it skipped, since Yahoo sent
+     nothing. The final button is never clicked once an alert is kept. A page the user opens by
+     hand keeps Yahoo's alerts.
   3. The page Yahoo lands on, any page of the league in the same tab within two minutes, logs the
      live pass: Yahoo's words that the claim went in, or the add shown with "pending", are
      `claimed` with Yahoo's message; an error, or the claim form back with a message, is `failed`
@@ -300,7 +322,8 @@ page, from PR 2:
   dry run has logged one) and open-spot claims. Since #199 (extension 0.8.1) an open spot is read
   in live as in a dry run but never submitted: it is skipped with "open spot, read only: an
   open-spot claim is not submitted until Yahoo's open-spot page has been seen", nothing on the page
-  touched, and the skip stays due. The side panel's links say "claim: …" where
+  touched, and the skip stays due (Yahoo's `button-no-drop` branch, its open-spot submit, is read in
+  its script but not yet on a page). The side panel's links say "claim: …" where
   opening one places the claim, and "open spot" with no "claim" for an entry with no drop. Nothing in the build or its tests reaches Yahoo; the first live
   claim is the user's own switch, after the Chrome reload to 0.8.0.
 - **The mode, the log and the live guard.** `armed.json`'s `moves` key and `moves_cap`, like the

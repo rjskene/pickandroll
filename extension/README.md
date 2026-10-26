@@ -136,7 +136,7 @@ dry run: it reads the page's lineup form and logs what it would set, and it sets
 
 The live click, the form's submit, is a later build after the dry-run week (#170, PR 3).
 
-## The moves executor (0.7.0 dry run, 0.8.0 live claim, #171; 0.8.1 open spots, #199)
+## The moves executor (0.7.0 dry run, 0.8.0 live claim, #171; 0.8.1 open spots, #199; 0.8.2 Yahoo's claim step)
 
 On Yahoo's add page (`/nba/<id>/addplayer?apid=<player>`) the extension is also the moves executor's execute
 pass (docs/AUTOPILOT.md section 2). In a dry run, on the add page of a queued move that is due, it reads the
@@ -172,7 +172,7 @@ guard holds, the same checks place the claim (below).
    `dpid`, `faab` and the submit's name). The waiver-order table is never read. A dry run sets no outcome on the queue. The strip and the side panel show
    the pass. **Moves executor in this browser** off in the settings is this browser's brake.
 
-### The live claim (0.8.0, #171 PR 3)
+### The live claim (0.8.0, #171 PR 3; Yahoo's claim step 0.8.2)
 
 `due` carries `live: {ok, reason}`, the live guard now. A pass runs live only when the league's mode is `live` and
 `live.ok`; a live league whose guard refuses runs a dry run whose reason says "live refused: …". In live, a claim
@@ -182,12 +182,22 @@ that passes every check above is placed, on a page opened with a moves fragment 
    restart): while it is there no pass submits that entry again, whatever the tab. Claims on record count as
    placed in the league's other pages (the day's cap, the pending claims, their week's adds), and the worker
    takes one record at a time, refusing one past the cap or on an add already in flight.
-2. It ticks the entry's one `dpid` box (a click: Yahoo draws the claim submit only once a drop is picked), waits
-   for the claim submit, types the whole-dollar bid into `faab`, reads the form back (one box ticked and it is the
-   drop, `apid` the add, the bid as typed, the submit `submit_drop_player`) and clicks the submit once. The form
-   posts as the page has it; the anti-forgery field travels in the browser's own submission and is never read.
-   Nothing else on the page is touched. A form that does not take the claim is logged skipped and nothing is
-   clicked.
+2. It clicks what a user clicks, twice and nothing else (0.8.2; 0.8.0 and 0.8.1 clicked the hidden `dpid` box,
+   which Yahoo's script never hears, so the first live pass placed nothing):
+   - the one `button.add-drop-trigger-btn` whose `data-check-box-value`, trimmed, is the drop. Yahoo's own script
+     then ticks the box, posts the form's first stage and swaps its reply in, the final button with it; the
+     extension fetches nothing itself;
+   - after up to 15 s for that reply (the final button in `#add-drop-submit-container`, the container no longer
+     `Hidden-submit`, the drop's box checked; a reply short of any is a skip naming what is missing), it types the
+     whole-dollar bid into `faab`, checked first as Yahoo checks it (a whole number from $0 to the field's
+     `data-faab-balance`), reads the form back (one box ticked and it is the drop, `apid` the add, the bid as typed,
+     the final button the claim's) and clicks the final button once.
+   The form posts as Yahoo's script sends it; the anti-forgery field travels in the browser's own submission and is
+   never read. A skip after the first click leaves the page as it is (no Cancel click). On an add page opened with
+   a moves fragment, `addpage.js` (the page's own world, `document_start`) keeps Yahoo's alerts as text on the root
+   element instead of letting them block the tab: an alert on the reply logs the entry `failed` in Yahoo's words, one
+   on the final click a skip, and the final button is never clicked after one. A page opened by hand keeps Yahoo's
+   alerts.
 3. The page Yahoo lands on, any page of the league in the same tab within two minutes, is read: its words saying
    the claim went in, or the add shown with "pending", log `claimed` with Yahoo's message; an error, or the claim
    form back with a message, logs `failed` with it (never retried that day). Anything else, a confirm step
@@ -217,12 +227,13 @@ opening one places the claim. An entry with no drop reads "open spot" and never 
 - **Lineup executor (0.6.0):** on your team page, the lineup form's action, field names, players' slots and
   options, and the run's outcome, to the same API. The form's crumb is never read; no field is set and the form
   is never submitted.
-- **Moves executor (0.7.0, live 0.8.0, open spots read 0.8.1):** on an add page opened from the routine's or the panel's link, the claim form's
+- **Moves executor (0.7.0, live 0.8.0, open spots read 0.8.1, claim step 0.8.2):** on an add page opened from the routine's or the panel's link, the claim form's
   action and field names, what the page shows (the heading, the budget, the waiver date, the bid range, my
   roster's player ids and their icons) and the pass's outcome, to the same API. Nothing is fetched from Yahoo;
   the form's crumb is never read (the log's `token` says only whether it is there). In a dry run nothing is
-  toggled, set or submitted; a live claim ticks its one drop box, types its bid and clicks the claim submit, and
-  the page Yahoo lands on sends its path, heading and Yahoo's message about the claim.
+  toggled, set or submitted; a live claim clicks its one drop button, types its bid and clicks Yahoo's final
+  button, and the page Yahoo lands on sends its path, heading and Yahoo's message about the claim. On such a page
+  Yahoo's alerts are kept as text and logged with the pass.
 - **Never:** cookies, the `?auth=` part of the room URL, anything you type, or any page other than the draft
   client and the league pages above.
 
@@ -237,7 +248,8 @@ opening one places the claim. An entry with no drop reads "open spot" and never 
 | `lib/room.js` | `RoomTracker`: picks, the pick on the clock, the sync cursor, how my picks landed (pure) |
 | `lib/drafter.js` | armed mode: one turn at a time, a newer turn supersedes an older one, the queue backstop and the probe (pure, through a page adapter) |
 | `lib/yahoo.js` | Yahoo's player table: row matching by headshot id and name, label checks, the plan's candidates (pure) |
-| `league.js` | isolated world, league pages: posts the page to the worker, follows Next 25 only during an armed read; on my team page, the lineup executor's dry run; on an add page opened with the fragment, the moves executor's dry run; their strips |
+| `addpage.js` | page world, `document_start`, league pages: on an add page opened with a moves fragment only, keeps Yahoo's alerts as text on the root element (0.8.2) |
+| `league.js` | isolated world, league pages: posts the page to the worker, follows Next 25 only during an armed read; on my team page, the lineup executor's dry run; on an add page opened with the fragment, the moves executor's pass (dry run, or the live claim); their strips |
 | `lib/league.js` | which league pages are read, the snapshot body, the multi-page read (pure) |
 | `lib/lineup.js` | the lineup executor's page side: the form read, the steps' checks, the run for the log, the strip (pure) |
 | `lib/moves.js` | the moves executor's page side: the add page read, the entries' checks, the pass for the log, the strip (pure) |

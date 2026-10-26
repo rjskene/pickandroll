@@ -19,10 +19,12 @@
 // the page Yahoo lands on in the same tab, any page of the league, logs what Yahoo answered. It
 // posts nothing for the add page.
 //
-// It clicks, sets and submits only there: the entry's one drop box, the bid and the claim submit,
-// once, on a page opened with a moves fragment. It never reads a form's crumb, never fetches a
-// Yahoo page and never runs on the draft client. It navigates only to follow the players page's
-// Next 25 link during a multi-page read the user armed from the side panel.
+// It clicks and sets only there, on a page opened with a moves fragment: the entry's one drop
+// button, the bid and Yahoo's final button, once each (addpage.js keeps Yahoo's alerts on such a
+// page as text, so an alert is logged and never blocks the tab). It never reads a form's crumb,
+// never fetches a Yahoo page (the tick's post is Yahoo's own script's) and never runs on the draft
+// client. It navigates only to follow the players page's Next 25 link during a multi-page read the
+// user armed from the side panel.
 (() => {
   "use strict";
   const PR = globalThis.PickAndRoll;
@@ -369,12 +371,12 @@
           // On record before the page is touched: no pass submits this entry again.
           const record = { day: due.date, trigger, line, cap: r.data.cap, done: r.data.done };
           const kept = await send({ op: "moves_submitting", league, record });
-          const problem = kept && kept.ok ? await PR.fillClaim(document, entry) : "the submit could not be put on record";
-          if (problem === null) {
+          const placed = kept && kept.ok ? await PR.fillClaim(document, entry) : { outcome: "skipped", reason: "the submit could not be put on record" };
+          if (placed === null) {
             movesStrip(`live · claim submitted for $${line.bid}, dropping ${line.drop}: reading Yahoo's answer…`);
             return null;
           }
-          check = { outcome: "skipped", reason: problem };
+          check = placed;
         }
       }
       run = PR.movesPass({ due, trigger, checks: [PR.moveCheck(entry, check, seen, due, readAt)], extension });

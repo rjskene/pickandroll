@@ -6,10 +6,12 @@
 // The routine opens each due entry's add page itself, with the fragment, in a tab of its own (the
 // ruling on #171). In a dry run, or a live league whose guard refuses now, it reads the page and
 // logs the claim it would place. In a live league whose guard holds (``due.live``, PR 3) and with
-// every check passed, ``fillClaim`` alone touches the page: it ticks the entry's one drop box,
-// types the bid and clicks the claim submit once; the page Yahoo lands on is read by
-// ``readLanded``. Nothing fetches a page, and nothing reads the form's anti-forgery field (it
-// travels in the browser's own submission): the log says only whether it is there.
+// every check passed, ``fillClaim`` alone touches the page, with a user's two clicks: the entry's
+// one drop button (Yahoo's own script then ticks the box, posts the form's first stage and swaps
+// its reply in), then, once the bid is typed and the form read back, Yahoo's final button; the
+// page Yahoo lands on is read by ``readLanded``. Nothing here fetches a page, and nothing reads the
+// form's anti-forgery field (it travels in the browser's own submission): the log says only
+// whether it is there.
 (function (root, factory) {
   const api = factory();
   if (typeof module === "object" && module.exports) module.exports = api;
@@ -35,8 +37,24 @@
   /** An entry with no drop whose page shows no drop section (#199), and why live still holds it. */
   const OPEN_SPOT = "open spot";
   const OPEN_SPOT_HELD = "open spot, read only: an open-spot claim is not submitted until Yahoo's open-spot page has been seen";
-  /** The claim submit Yahoo draws once a drop is picked (in a noscript until then). */
-  const SUBMIT_BUTTON = "#submit-add-drop-button";
+  /** Yahoo's claim step (its add page's script, read 2026-10-26, #171 0.8.2). The button beside
+   * each drop box is what a user clicks: Yahoo's script, delegated on that class, then ticks the
+   * box, posts the form's first stage and swaps its reply into the page, the final button with it.
+   * A click on the box itself reaches none of that, and the noscript submit is never in the DOM.
+   * The button names its drop in ``data-check-box-value``, with a trailing space. */
+  const DROP_TRIGGER = "button.add-drop-trigger-btn";
+  const DROP_TRIGGER_VALUE = "data-check-box-value";
+  const SUBMIT_CONTAINER = "add-drop-submit-container";
+  const SUBMIT_HIDDEN = "Hidden-submit";
+  /** The final button the reply brings into the submit container. */
+  const FINAL_BUTTON = ".add-drop-player-submit-btn";
+  /** Yahoo's own bid check reads the balance off the bid field. */
+  const BALANCE_ATTR = "data-faab-balance";
+  /** How long the claim waits for Yahoo's reply to the tick. */
+  const SWAP_MS = 15 * 1000;
+  /** Yahoo's alerts on an add page opened with a moves fragment, as addpage.js records them on
+   * the root element (a JSON list of their texts). */
+  const ALERTS_ATTR = "data-pickandroll-alerts";
   /** How long a submit waits for its landed page in the same tab before the next pass in the
    * league logs it with its answer not read. */
   const LANDING_MS = 2 * 60 * 1000;
@@ -328,42 +346,91 @@
     return null;
   }
 
-  /** The live claim on the rendered add page ``doc`` (#171 PR 3), every check passed: tick the
-   * entry's one drop box (a click: Yahoo draws the claim submit only once a drop is picked), wait
-   * for that submit, type the whole-dollar bid, read the form back and click the submit once.
-   * Answers null once clicked, else why nothing was submitted. Nothing else on the page is
-   * touched; the anti-forgery field travels in the browser's own submission and is never read.
-   * ``wait`` is the pause between looks for the submit (``tries`` of them). */
-  async function fillClaim(doc, entry, { wait = (ms) => new Promise((r) => setTimeout(r, ms)), tries = 25, every = 200 } = {}) {
-    const form = doc.querySelector(`form#${FORM_ID}`);
-    if (!form) return "the claim form is gone";
-    const named = (n) => [...form.elements].filter((el) => el.name === n);
-    const boxes = named(DROP_FIELD).filter((el) => String(el.type).toLowerCase() === "checkbox");
-    const mine = boxes.filter((el) => Number(el.value) === entry.drop);
-    if (mine.length !== 1) return `no single drop box for ${entry.drop}`;
-    if (boxes.some((el) => el.checked)) return "a drop box was ticked before the pass";
-    const [bid] = named(BID_FIELD);
-    if (!bid) return "the page has no bid field";
-    mine[0].click();
-    let button = doc.querySelector(SUBMIT_BUTTON);
-    for (let i = 0; i < tries && !button; i++) {
-      await wait(every);
-      button = doc.querySelector(SUBMIT_BUTTON);
+  /** Yahoo's alerts on the page ``doc``, as addpage.js recorded them: none on a page opened
+   * without a moves fragment, where Yahoo's alerts show as ever. */
+  function alertsOf(doc) {
+    const root = doc && doc.documentElement;
+    const raw = root && typeof root.getAttribute === "function" ? root.getAttribute(ALERTS_ATTR) : null;
+    try {
+      const kept = JSON.parse(raw || "[]");
+      return Array.isArray(kept) ? kept.map(String) : [];
+    } catch (_) {
+      return [];
     }
-    if (!button) return "the claim submit did not appear once the drop was ticked";
-    const amount = String(entry.bid_placed ?? 0);
-    bid.value = amount;
+  }
+
+  /** Why Yahoo's own check would refuse ``amount`` on the bid field ``bid`` (it alerts then and
+   * submits nothing), null when it takes it: a whole number from $0 to the field's balance. A
+   * field that shows no balance is refused here. */
+  function bidProblem(bid, amount) {
+    const balance = parseInt(bid && typeof bid.getAttribute === "function" ? bid.getAttribute(BALANCE_ATTR) : "", 10);
+    if (Number.isNaN(balance)) return "the bid field shows no balance";
+    if (!Number.isInteger(amount) || amount < 0 || amount > balance) return `the bid ($${amount}) is outside Yahoo's $0 to $${balance}`;
+    return null;
+  }
+
+  /** The live claim on the rendered add page ``doc`` (#171 PR 3; Yahoo's claim step, 0.8.2),
+   * every check passed, with a user's two clicks and nothing else: the entry's one drop button,
+   * then, once Yahoo's reply is in (its final button shown and the drop picked, within ``cap``
+   * ms), the bid typed and checked as Yahoo checks it and the form read back, the final button
+   * once. Answers null once that is clicked, else the entry's ``{outcome, reason}``: ``failed``
+   * when Yahoo alerted on the tick's reply, quoted, ``skipped`` otherwise. After an alert the final
+   * button is never clicked, and the page is left as it is. The anti-forgery field travels in the
+   * browser's own submission and is never read. ``wait`` is the pause between looks at the page,
+   * ``every`` ms apart. */
+  async function fillClaim(doc, entry, { wait = (ms) => new Promise((r) => setTimeout(r, ms)), every = 200, cap = SWAP_MS } = {}) {
+    const skip = (reason) => ({ outcome: "skipped", reason });
+    const form = doc.querySelector(`form#${FORM_ID}`);
+    if (!form) return skip("the claim form is gone");
+    const named = (n) => [...form.elements].filter((el) => el.name === n);
+    const boxes = () => named(DROP_FIELD).filter((el) => String(el.type).toLowerCase() === "checkbox");
+    const drop = String(entry.drop);
+    if (boxes().filter((el) => String(el.value) === drop).length !== 1) return skip(`no single drop box for ${entry.drop}`);
+    if (boxes().some((el) => el.checked)) return skip("a drop box was ticked before the pass");
+    if (!named(BID_FIELD).length) return skip("the page has no bid field");
+    const triggers = [...form.querySelectorAll(DROP_TRIGGER)].filter((b) => String(b.getAttribute(DROP_TRIGGER_VALUE) ?? "").trim() === drop);
+    if (triggers.length !== 1) return skip(`no single drop button for ${entry.drop} (${triggers.length} on the page)`);
+    const before = alertsOf(doc).length;
+    const yahoo = () => alertsOf(doc).slice(before);
+    triggers[0].click();
+    // Yahoo's reply to the tick, by its three signs; the boxes are the reply's own.
+    const signs = () => {
+      const box = doc.getElementById(SUBMIT_CONTAINER);
+      return {
+        final: box ? box.querySelector(FINAL_BUTTON) : null,
+        shown: Boolean(box) && !String(box.className || "").split(/\s+/).includes(SUBMIT_HIDDEN),
+        picked: boxes().some((el) => String(el.value) === drop && el.checked),
+      };
+    };
+    let s = signs();
+    for (let waited = 0; waited < cap && !(s.final && s.shown && s.picked) && !yahoo().length; waited += every) {
+      await wait(every);
+      s = signs();
+    }
+    if (yahoo().length) return { outcome: "failed", reason: `Yahoo answered the drop's tick: "${yahoo()[0]}"` };
+    const missing = [!s.final && "the final button is not there", !s.shown && "the submit is still hidden", !s.picked && "the drop box is not checked"].filter(Boolean);
+    if (missing.length) return skip(`Yahoo's claim step did not come back within ${Math.round(cap / 1000)} s: ${missing.join("; ")}`);
+    const [bid] = named(BID_FIELD);
+    if (!bid) return skip("the page has no bid field once the drop was ticked");
+    const amount = entry.bid_placed ?? 0;
+    const refused = bidProblem(bid, amount);
+    if (refused) return skip(refused);
+    bid.value = String(amount);
     bid.dispatchEvent(new Event("input", { bubbles: true }));
     bid.dispatchEvent(new Event("change", { bubbles: true }));
-    const ticked = boxes.filter((el) => el.checked).map((el) => Number(el.value));
+    const ticked = boxes().filter((el) => el.checked).map((el) => String(el.value));
     const add = named(ADD_FIELD);
     const wrong = [];
-    if (ticked.length !== 1 || ticked[0] !== entry.drop) wrong.push(`the drops ticked are ${ticked.join(", ") || "none"}`);
+    if (ticked.length !== 1 || ticked[0] !== drop) wrong.push(`the drops ticked are ${ticked.join(", ") || "none"}`);
     if (add.length !== 1 || Number(add[0].value) !== entry.add) wrong.push("its apid is not the add");
-    if (bid.value !== amount) wrong.push(`its bid reads ${bid.value}`);
-    if (button.getAttribute("name") !== SUBMIT) wrong.push("its submit is not the claim's");
-    if (wrong.length) return `the form did not take the claim: ${wrong.join("; ")}`;
-    button.click();
+    if (bid.value !== String(amount)) wrong.push(`its bid reads ${bid.value}`);
+    const name = s.final.getAttribute("name");
+    if (name != null && name !== SUBMIT) wrong.push("its final button is not the claim's");
+    if (wrong.length) return skip(`the form did not take the claim: ${wrong.join("; ")}`);
+    if (yahoo().length) return skip(`Yahoo alerted before the final click: "${yahoo()[0]}"`);
+    s.final.click();
+    // Yahoo's handler checks the bid as it runs: an alert then means nothing was sent.
+    if (yahoo().length) return skip(`Yahoo refused the final click: "${yahoo()[0]}"`);
     return null;
   }
 
@@ -497,7 +564,14 @@
     SUBMIT,
     OPEN_SPOT,
     OPEN_SPOT_HELD,
-    SUBMIT_BUTTON,
+    DROP_TRIGGER,
+    DROP_TRIGGER_VALUE,
+    SUBMIT_CONTAINER,
+    SUBMIT_HIDDEN,
+    FINAL_BUTTON,
+    BALANCE_ATTR,
+    SWAP_MS,
+    ALERTS_ATTR,
     LANDING_MS,
     TOKEN_FIELD,
     TOKEN,
@@ -515,6 +589,8 @@
     movesPass,
     withInflight,
     submitProblem,
+    alertsOf,
+    bidProblem,
     fillClaim,
     readLanded,
     unreadReason,
