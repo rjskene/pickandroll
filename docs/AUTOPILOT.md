@@ -120,7 +120,7 @@ page, from PR 2:
   in the scorer's units. The scored floor never lets a move through below the plan floor: a move
   clears both, and the entry names both figures and which one stopped it.
 - **The veto window and the execute time.** An entry executes at the later of an hour after it was
-  queued and the day's execute time (09:00 Pacific until the user sets another on the landing
+  queued and the day's execute time (07:00 Central until the user sets another on the landing
   page's Queue line, `PUT /autopilot/queue/settings`; the day's entries not executed are timed
   again, never inside their hour). The Queue card (9) strikes an entry or its bid alone (a $0
   claim) or undoes either, until it executes (`POST /autopilot/queue/{id}/strike`). A rebuild
@@ -188,7 +188,7 @@ page, from PR 2:
 
 ## 3. The weekly loop
 
-Times are the Mac's clock, in whatever zone it is set to (Central at the time of writing); the queue's execute time is the exception, on the Pacific clock. The routines are the master's to edit; sessions never edit
+Times are the Mac's clock, in whatever zone it is set to (Central at the time of writing). The routines are the master's to edit; sessions never edit
 them.
 
 | when | what | exists |

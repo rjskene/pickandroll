@@ -135,8 +135,8 @@ function progressLine(p: ProgressPayload): string {
     .join(" · ");
 }
 
-/** The moves executor's queue today (#171) in one line, and the day's execute time on the Pacific
- * clock, the user's own setting: no move executes before it, nor within an hour of its queueing.
+/** The moves executor's queue today (#171) in one line, and the day's execute time on the Central
+ * clock (#193), the user's own setting: no move executes before it, nor within an hour of its queueing.
  * Each league's entries and their veto are on its Queue card (9). */
 function QueueFold() {
   const queryClient = useQueryClient();
@@ -158,9 +158,9 @@ function QueueFold() {
       <span className="muted">{q.data ? queueFoldLine(q.data) : q.isError ? "not read" : "reading…"}</span>
       <span className="grow" />
       {current && (
-        <label className="small muted" title="the day's execute time on the Pacific clock: each move executes at it, or an hour after it is queued if later">
+        <label className="small muted" title="the day's execute time on the Central clock: each move executes at it, or an hour after it is queued if later">
           execute at{" "}
-          <input type="time" value={shown} onChange={(e) => setDraft(e.target.value)} disabled={set.isPending} aria-label="execute time, Pacific" /> PT
+          <input type="time" value={shown} onChange={(e) => setDraft(e.target.value)} disabled={set.isPending} aria-label="execute time, Central" /> CT
         </label>
       )}
       {draft != null && draft !== current && (

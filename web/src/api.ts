@@ -1293,7 +1293,7 @@ export interface QueueLeague {
   built_at?: string;
 }
 
-/** A day's queue, with the execute time (Pacific) and STOP. */
+/** A day's queue, with the execute time (Central) and STOP. */
 export interface QueuePayload {
   date: string;
   built: string[];
@@ -2452,7 +2452,7 @@ export const api = {
   /** The user's veto: strike a queue entry, or its bid alone, or undo either. */
   strike: (id: string, body: { bid_only?: boolean; undo?: boolean }) =>
     request<QueuePayload>(`/autopilot/queue/${encodeURIComponent(id)}/strike`, { method: "POST", body: JSON.stringify(body) }),
-  /** The user's own click: the day's execute time on the Pacific clock (HH:MM). */
+  /** The user's own click: the day's execute time on the Central clock (HH:MM). */
   setExecuteTime: (execute_time: string) =>
     request<QueuePayload>("/autopilot/queue/settings", { method: "PUT", body: JSON.stringify({ execute_time }) }),
   /** The league's Queue card: the moves executor's mode, its passes and today's entries (#171). */

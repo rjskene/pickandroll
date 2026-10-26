@@ -14,7 +14,7 @@ time, and the reads a build makes of each league; the entries themselves are
     The user's veto, from the dashboard: strike an entry, or its bid alone (a $0 claim), or undo
     either; refused once the entry executed.
 ``PUT /autopilot/queue/settings``
-    The day's execute time on the Pacific clock (``HH:MM``, 09:00 until the user sets one); the
+    The day's execute time on the Central clock (``HH:MM``, 07:00 until the user sets one); the
     day's entries not executed are timed again, never sooner than a full window after queueing.
 ``GET /seasons/{league}/autopilot/moves``, ``…/moves/due``, ``POST …/moves``
     The league's Queue card (the mode, the live check, the passes, its entries); the entries due
@@ -146,7 +146,7 @@ def day_of(entry_id: str) -> date | None:
 
 # --------------------------------------------------------------------------- the execute time
 def settings(data_dir: Path) -> dict[str, Any]:
-    """The execute time (``HH:MM`` on the Pacific clock) with who set it and when; the code's
+    """The execute time (``HH:MM`` on the Central clock) with who set it and when; the code's
     default until the user sets one (``set`` False). A file that does not read is the default."""
     try:
         body = _read(autopilot_dir(data_dir) / SETTINGS, dict) or {}
