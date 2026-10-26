@@ -18,7 +18,9 @@ import type {
   MovesView,
   PlayerFlag,
   QueueEntry,
+  PassTally,
   QueueLeague,
+  QueuePass,
   QueuePayload,
   Rates,
   RosterRow,
@@ -115,6 +117,9 @@ import {
   queueNamer,
   queueOrder,
   queueStateText,
+  queueStateTone,
+  passTally,
+  passTitle,
   addsThisWeek,
   centralClock,
   notQueued,
@@ -1755,41 +1760,45 @@ test("the Queue card says what the moves executor does, each entry's state and b
   assert.equal(queueFoldLine({ ...built, stop: true }), "STOP is on (data/autopilot/STOP): nothing executes");
 });
 
+// The Queue screen's entries (#194, #200): one of league 900002, queued, executing at noon UTC.
+const QUEUE_FLOOR = { plan: 0.1, scored: null, moves: 3, needs: 20, applies: "plan" as const, below: null };
+const QUEUE_BID = { amount: 2, reason: "$2", base: 2, factor: 1, sizing: 1, typical: 0.1, typical_from: "the plan floor" };
+const QUEUE_BASE: QueueEntry = {
+  id: "a",
+  date: "2026-10-24",
+  league: "900002",
+  scoring: "categories",
+  set: "three",
+  decision: null,
+  add: 101,
+  drop: 201,
+  from: "2026-10-25",
+  availability: "W",
+  judged: "three",
+  gain: 0.3,
+  value: null,
+  season: null,
+  season_costly: false,
+  flag: null,
+  floor: QUEUE_FLOOR,
+  bid: QUEUE_BID,
+  queued: true,
+  reason: null,
+  rank: 1,
+  queued_at: "2026-10-24T10:00:00Z",
+  executes_at: "2026-10-24T12:00:00Z",
+  struck: false,
+  bid_struck: false,
+  outcome: null,
+  outcome_reason: null,
+  outcome_at: null,
+  resolved: null,
+};
+const queueEntry = (id: string, over: Partial<QueueEntry> = {}): QueueEntry => ({ ...QUEUE_BASE, id, ...over });
+
 test("the Queue screen orders the day's entries across the leagues, says why a league queued none and names from the payload (#194)", () => {
-  const floor = { plan: 0.1, scored: null, moves: 3, needs: 20, applies: "plan" as const, below: null };
-  const bid = { amount: 2, reason: "$2", base: 2, factor: 1, sizing: 1, typical: 0.1, typical_from: "the plan floor" };
-  const base: QueueEntry = {
-    id: "a",
-    date: "2026-10-24",
-    league: "900002",
-    scoring: "categories",
-    set: "three",
-    decision: null,
-    add: 101,
-    drop: 201,
-    from: "2026-10-25",
-    availability: "W",
-    judged: "three",
-    gain: 0.3,
-    value: null,
-    season: null,
-    season_costly: false,
-    flag: null,
-    floor,
-    bid,
-    queued: true,
-    reason: null,
-    rank: 1,
-    queued_at: "2026-10-24T10:00:00Z",
-    executes_at: "2026-10-24T12:00:00Z",
-    struck: false,
-    bid_struck: false,
-    outcome: null,
-    outcome_reason: null,
-    outcome_at: null,
-    resolved: null,
-  };
-  const at = (id: string, over: Partial<QueueEntry>): QueueEntry => ({ ...base, id, ...over });
+  const floor = QUEUE_FLOOR;
+  const at = queueEntry;
   const entries = [
     at("late", { executes_at: "2026-10-24T15:00:00Z" }),
     at("untimed", { executes_at: null }),
@@ -1846,4 +1855,39 @@ test("the Queue screen orders the day's entries across the leagues, says why a l
   assert.equal(centralClock("2026-10-24T12:00:00Z"), "7:00 AM CT");
   assert.equal(centralClock("2026-12-01T13:00:00Z"), "7:00 AM CT");
   assert.equal(centralClock(null), "");
+});
+
+test("an entry reads its latest pass after its outcome, why it is not queued and a strike; the day's tally joins the line (#200)", () => {
+  const now = Date.parse("2026-10-24T11:00:00Z");
+  const at = "2026-10-24T14:32:00Z"; // 9:32 AM CDT
+  const pass = (over: Partial<QueuePass> = {}): QueuePass => ({ at, trigger: "routine", outcome: "would_claim", reason: null, extension: "0.7.0", ...over });
+  const e = queueEntry("a", { pass: pass() });
+  assert.equal(queueStateText(e, now), "would claim · 9:32 AM CT");
+  assert.equal(queueStateText(queueEntry("a", { pass: pass({ outcome: "skipped", reason: "page not read" }) }), now), "skipped 9:32 AM CT: page not read");
+  assert.equal(queueStateText(queueEntry("a", { pass: pass({ outcome: "gone", reason: "the page shows the add on a team" }) }), now), "gone 9:32 AM CT: the page shows the add on a team");
+  assert.equal(queueStateText(queueEntry("a", { pass: pass({ outcome: "failed", reason: "no answer" }) }), now), "failed 9:32 AM CT: no answer");
+  assert.equal(queueStateText(queueEntry("a", { pass: pass({ reason: "open spot" }) }), now), "would claim · 9:32 AM CT: open spot");
+  // A live outcome, a move not queued and a strike each come first; with no pass, the countdown.
+  assert.equal(queueStateText({ ...e, outcome: "claimed", resolved: "won" }, now), "claimed, won");
+  assert.equal(queueStateText({ ...e, queued: false, reason: "over the day's cap" }, now), "over the day's cap");
+  assert.equal(queueStateText({ ...e, struck: true }, now), "struck");
+  assert.equal(queueStateText(queueEntry("a"), now), "executes in 1 h");
+  assert.equal(queueStateText(queueEntry("a", { pass: null }), now + 3_600_000), "due at the next pass");
+  // The tone: a claim good, a failure bad; a struck entry's pass is not its state.
+  assert.equal(queueStateTone(e), "good");
+  assert.equal(queueStateTone(queueEntry("a", { pass: pass({ outcome: "skipped" }) })), "");
+  assert.equal(queueStateTone(queueEntry("a", { pass: pass({ outcome: "failed" }) })), "bad");
+  assert.equal(queueStateTone({ ...e, struck: true }), "");
+  assert.equal(queueStateTone(queueEntry("a", { outcome: "claimed" })), "good");
+  assert.equal(passTitle(e), "routine pass at 9:32 AM CT, extension 0.7.0");
+  assert.equal(passTitle(queueEntry("a", { pass: pass({ trigger: "routine_late", extension: null }) })), "late routine pass at 9:32 AM CT");
+  assert.equal(passTitle(queueEntry("a")), "");
+  // The tally: the counts at zero left out, in order, then the last pass.
+  const tally: PassTally = { last: "2026-10-24T14:35:00Z", would_claim: 13, claimed: 0, skipped: 7, gone: 0, failed: 1, pages: 22 };
+  assert.equal(passTally(tally), "13 would claim · 7 skipped · 1 failed · last pass 9:35 AM CT");
+  assert.equal(passTally(null), "");
+  const settings = { execute_time: "09:00", at: null, by: null, set: false };
+  const q: QueuePayload = { date: "2026-10-24", built: ["2026-10-24T10:00:00Z"], execute_time: null, leagues: [], entries: [e], settings, stop: false, now: "2026-10-24T15:00:00Z" };
+  assert.equal(queueFoldLine({ ...q, passes: tally }), "1 queued in 1 league · 13 would claim · 7 skipped · 1 failed · last pass 9:35 AM CT · executes from 09:00 CT");
+  assert.equal(queueFoldLine({ ...q, passes: null }), "1 queued in 1 league · executes from 09:00 CT");
 });

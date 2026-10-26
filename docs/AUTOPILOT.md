@@ -142,6 +142,20 @@ page, from PR 2:
   from `GET /seasons/{league}/best?system=bbm`, "not solved yet" before the league page solves it.
   The payload's `names` gives a name for every player the entries mention (the add, the drop, the
   held move's player), read from each league's snapshot at request time.
+  **Pass results (#200).** A dry run moves no queue outcome, so the payload reads the passes from
+  the leagues' logs:
+  - Each entry's `pass` is the latest line naming it among the queue day's lines (the entry's
+    outcome and reason, the pass's time, trigger and extension), and null before any pass has read
+    it.
+  - `passes` is the day's tally over every league: each entry counted once by its latest line
+    (`would_claim`, `claimed` for a live claim or add, `skipped`, `gone`, `failed`), `pages` for
+    every entry line logged, and `last` for the latest line's time.
+  - Neither is stored on the queue.
+  - The State column (and the Queue card's Today list) reads, in this order: a live outcome; not
+    queued with its reason; struck; else the pass, "would claim · 9:32 AM CT" or "skipped 9:32 AM
+    CT: <reason>" (gone and failed alike), its trigger and extension on hover; else the countdown.
+  - The head and the landing's Queue line add the tally ("13 would claim · 7 skipped · last pass
+    9:35 AM CT"), and a chip adds "n would claim".
 - **The caps.** The league's add limit, each claim counted in the week of its clear date from
   the moment it is placed (a claim placed and not yet processed counts, won or not; the next
   build reads the adds used from the page and the transactions); the day's cap, the knob's
@@ -197,7 +211,9 @@ page, from PR 2:
   pass outside live, an entry not in the day's queue, struck, already executed or naming another
   move, and anything but a stopped pass under STOP or with the mode off (409). `live` waits for
   dry-run passes on seven days, two of them checked: a pass that opened the add page and logged its controls for
-  at least one entry (a pass that found nothing due is a dry-run day, not a checked one).
+  at least one entry (a pass that found nothing due is a dry-run day, not a checked one). The
+  queue's payload and the Queue card read each entry's latest line of the day and the day's tally
+  from this log (#200, above), as the digest does.
 - **The digest.** A Moves section: the latest queue's entries queued and struck, the last day's
   entries would-be-claimed (or claimed), skipped, failed and gone, then a line per league only for
   a skip or a failure; under STOP the line says nothing runs.

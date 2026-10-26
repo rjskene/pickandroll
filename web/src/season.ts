@@ -39,8 +39,10 @@ import type {
   PlanStep,
   PlayerFlag,
   PlayerRos,
+  PassTally,
   QueueEntry,
   QueueLeague,
+  QueuePass,
   QueuePayload,
   Rates,
   ScorecardMove,
@@ -593,14 +595,63 @@ const MOVE_OUTCOME: Record<MoveOutcome, string> = {
   gone: "gone: another team had him first",
 };
 
-/** An entry's state: its outcome (and a placed claim's result), struck, when it executes, or why
- * it is not queued. */
+const PASS_OUTCOME_WORD: Record<MoveOutcome, string> = {
+  would_claim: "would claim",
+  claimed: "claimed",
+  added: "added",
+  skipped: "skipped",
+  failed: "failed",
+  gone: "gone",
+};
+
+/** An entry's state: its outcome (and a placed claim's result), why it is not queued, struck, the
+ * latest pass's result (#200), or when it executes. */
 export function queueStateText(e: QueueEntry, now: number): string {
   if (e.outcome) return `${MOVE_OUTCOME[e.outcome]}${e.outcome_reason ? ` (${e.outcome_reason})` : ""}${e.resolved ? `, ${e.resolved}` : ""}`;
   if (!e.queued) return e.reason === "below the noise floor" && e.floor.below ? `below the ${e.floor.below} floor` : (e.reason ?? "not queued");
   if (e.struck) return "struck";
+  if (e.pass) return passText(e.pass);
   const when = countdownLabel(e.executes_at, now);
   return when === "due" ? "due at the next pass" : `executes ${when}`;
+}
+
+/** A pass's result for its entry: "would claim · 9:32 AM CT", "skipped 9:32 AM CT: page not
+ * read". */
+export function passText(p: QueuePass): string {
+  const clock = centralClock(p.at);
+  const word = PASS_OUTCOME_WORD[p.outcome] ?? p.outcome;
+  const head = p.outcome === "would_claim" ? `${word}${clock ? ` · ${clock}` : ""}` : `${word}${clock ? ` ${clock}` : ""}`;
+  return p.reason ? `${head}: ${p.reason}` : head;
+}
+
+/** The state's tone: good for a claim (a pass that would claim, or one placed), bad for a failure. */
+export function queueStateTone(e: QueueEntry): "good" | "bad" | "" {
+  const o = e.outcome ?? (e.queued && !e.struck ? e.pass?.outcome : null);
+  if (o === "would_claim" || o === "claimed" || o === "added") return "good";
+  return o === "failed" ? "bad" : "";
+}
+
+/** The state's hover: "routine pass at 9:32 AM CT, extension 0.7.0"; blank without a pass. */
+export function passTitle(e: Pick<QueueEntry, "pass">): string {
+  const p = e.pass;
+  if (!p) return "";
+  const clock = centralClock(p.at);
+  return `${p.trigger ? TRIGGER[p.trigger] : "a"} pass${clock ? ` at ${clock}` : ""}${p.extension ? `, extension ${p.extension}` : ""}`;
+}
+
+/** The day's pass results in a line: "13 would claim · 7 skipped · last pass 9:35 AM CT", the
+ * counts at zero left out; blank without any. */
+export function passTally(t: PassTally | null | undefined): string {
+  if (!t) return "";
+  const parts: [number, string][] = [
+    [t.would_claim, "would claim"],
+    [t.claimed, "claimed"],
+    [t.skipped, "skipped"],
+    [t.gone, "gone"],
+    [t.failed, "failed"],
+  ];
+  const clock = centralClock(t.last);
+  return [...parts.filter(([n]) => n).map(([n, w]) => `${n} ${w}`), clock ? `last pass ${clock}` : null].filter(Boolean).join(" · ");
 }
 
 /** "$2 claim", "$0 claim (the $2 bid struck)", "free agent, $0". */
@@ -662,6 +713,7 @@ export function queueFoldLine(q: QueuePayload): string {
     `${live.length} queued${live.length ? ` in ${leagues} league${leagues === 1 ? "" : "s"}` : ""}`,
     struck ? `${struck} struck` : null,
     done ? `${done} executed` : null,
+    passTally(q.passes) || null,
     unsolved ? `${unsolved} not solved today` : null,
     failed ? `${failed} not read` : null,
     time,

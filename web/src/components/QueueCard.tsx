@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient, type UseMutationResult } from "@tanstack/react-query";
 import { api, type LineupMode, type MovesView, type QueueEntry, type QueuePayload, type SeasonView } from "../api";
-import { bidLabel, gainLabel, movesExecutorText, movesLiveText, passLine, playersById, queueFlagWord, queueFloorLine, queueMoveText, queueStateText } from "../season";
+import { bidLabel, gainLabel, movesExecutorText, movesLiveText, passLine, passTitle, playersById, queueFlagWord, queueFloorLine, queueMoveText, queueStateText, queueStateTone } from "../season";
 import { useNow } from "./YahooSync";
 
 const MODES: { mode: LineupMode; label: string }[] = [
@@ -152,7 +152,9 @@ function Today({ v, queued, left, now, name, strike }: { v: MovesView; queued: Q
             {queueFlagWord(e.flag) ? ` · ${queueFlagWord(e.flag)}` : ""}
           </span>
           <span>
-            <span className={e.struck ? "dim" : "muted"}>{queueStateText(e, now)}</span>
+            <span className={queueStateTone(e) || (e.struck ? "dim" : "muted")} title={passTitle(e) || undefined}>
+              {queueStateText(e, now)}
+            </span>
             {!e.outcome && " "}
             <Veto e={e} strike={strike} />
           </span>
