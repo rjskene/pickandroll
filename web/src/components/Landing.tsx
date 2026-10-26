@@ -2,6 +2,7 @@ import { useCallback, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, type LeagueSummary, type ProgressPayload, type RoomSummary } from "../api";
 import { DRAFT_SEASON_DAYS, draftDay, draftsAhead, finishedDrafts, LAYOUTS, pageFor, type Layout } from "../format";
+import type { SeasonViewId } from "../keys";
 import DraftSeason from "./DraftSeason";
 import DraftsDrawer, { type DrawerView } from "./DraftsDrawer";
 import LeagueGrid from "./LeagueGrid";
@@ -29,7 +30,7 @@ export default function Landing({
   onProgress,
   error,
 }: {
-  onOpenLeague: (league: string) => void;
+  onOpenLeague: (league: string, view?: SeasonViewId) => void;
   onOpenSession: (id: string) => void;
   onProgress: () => void;
   error: Error | null;

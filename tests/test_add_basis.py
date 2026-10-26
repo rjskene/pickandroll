@@ -205,3 +205,34 @@ def test_the_queue_entry_copies_the_moves_basis_and_held_move():
             del m["basis"], m["held"]
     (e,) = qa.queue_of(day_of(entry), date(2026, 10, 26), qa.noise_floor([], 0.1), (0.1, "x"), None)
     assert (e["basis"], e["held_move"]) == (None, None)
+
+
+# --------------------------------------------------------------------------- the landing (#191)
+@pytest.mark.parametrize(
+    ("league", "line", "names"),
+    [
+        ("held", (11, None, dl.HELD, IL5), {"11": "P11", "5": "Hurt"}),
+        ("open", (11, None, dl.OPEN, None), {"11": "P11"}),
+        ("drop", (11, 2, dl.DROP, None), {"11": "P11", "2": "P2", "5": "Hurt"}),
+    ],
+)
+def test_the_landing_line_carries_the_set_with_each_basis_the_room_and_their_names(
+    league, line, names
+):
+    roster, cands, rate, sched, opponent, field, value = il_league()
+    p = {
+        "held": lambda: build(
+            roster, cands, rate, sched, opponent, field, held_open={"IL": 1}, value=value
+        ),
+        "open": lambda: build(*streaming_league(), spots=4),
+        "drop": lambda: il_full_league([(7, "O")], {}),
+    }[league]()
+    built = built_of(p)
+    out = sm.moves_payload(built)
+    b = sm.best_payload(built, out)
+    rec = out["recommended"][b["horizon"]]
+    assert b["horizon"] == "three" and pairs(rec) == [(m["add"], m["drop"]) for m in b["set"]]
+    assert [(m["add"], m["drop"], m["basis"], m["held"]) for m in b["set"]] == [line]
+    assert b["set"][0]["gain"] == rec["moves"][0]["marginal"]["three"] == b["move"]["gain"]
+    # The room is the payload's; the names cover the held and the waiting players too.
+    assert b["room"] == out["room"] and b["names"] == names

@@ -5,6 +5,7 @@ import type {
   AutopilotView,
   AvailableRow,
   BestMove,
+  BestSetLine,
   FlagConfig,
   FlagSignal,
   KeepRule,
@@ -67,6 +68,14 @@ import {
   bestLine,
   flagCounts,
   gridOrder,
+  isExpanded,
+  landingRows,
+  leaguesLabel,
+  bestNamer,
+  placeTone,
+  setLine,
+  setSummary,
+  toggleExpanded,
   placeLabel,
   scoreLabel,
   daysLeftLabel,
@@ -1229,6 +1238,96 @@ test("the grid puts most to gain first, then the leagues not solved, no move, an
     gridOrder(seasons, best, "name").map((s) => s.league),
     ["big", "cold", "none", "small", "broken", "unread"],
   );
+});
+
+// ---------------------------------------------------------------- landing table (#191)
+test("the private league is pinned first under either sort, even with the least to gain", () => {
+  const seasons = [card("big", { public: true }), card("mine", { public: false }), card("small", { public: true }), card("cold", { public: true })];
+  const best = new Map<string, BestMove | undefined>([
+    ["big", solved("big", 0.5)],
+    ["mine", solved("mine", 0.05)],
+    ["small", solved("small", 0.1)],
+    ["cold", { league: "cold", status: "not_solved", system: "bbm" }],
+  ]);
+  const ids = (r: ReturnType<typeof landingRows>) => [r.pinned.map((s) => s.league), r.rest.map((s) => s.league)];
+  assert.deepEqual(ids(landingRows(seasons, best, "gain", false)), [["mine"], ["big", "small", "cold"]]);
+  assert.deepEqual(ids(landingRows(seasons, best, "name", false)), [["mine"], ["big", "cold", "small"]]);
+});
+
+test("the points leagues are hidden and counted, and shown sort with the rest", () => {
+  const seasons = [
+    card("mine", { public: false }),
+    card("cats", { public: true }),
+    card("pts1", { public: true, scoring: "points" }),
+    card("pts2", { public: true, scoring: "points" }),
+    card("unread", { public: true, has_snapshot: false }),
+  ];
+  const best = new Map<string, BestMove | undefined>([
+    ["cats", solved("cats", 0.2)],
+    ["pts1", solved("pts1", 0.9)],
+    ["pts2", solved("pts2", null)],
+  ]);
+  const hidden = landingRows(seasons, best, "gain", false);
+  assert.deepEqual(hidden.rest.map((s) => s.league), ["cats", "unread"]);
+  assert.equal(hidden.hidden, 2);
+  const shown = landingRows(seasons, best, "gain", true);
+  assert.deepEqual(shown.pinned.map((s) => s.league), ["mine"]);
+  assert.deepEqual(shown.rest.map((s) => s.league), ["pts1", "cats", "pts2", "unread"]);
+  assert.equal(shown.hidden, 0);
+  // A private points league is pinned, never hidden.
+  const privatePoints = landingRows([card("mine", { public: false, scoring: "points" })], best, "gain", false);
+  assert.deepEqual([privatePoints.pinned.length, privatePoints.hidden], [1, 0]);
+});
+
+test("the head counts the leagues shown", () => {
+  const cats = Array.from({ length: 9 }, () => ({ scoring: "categories" as const }));
+  const points = Array.from({ length: 3 }, () => ({ scoring: "points" as const }));
+  assert.equal(leaguesLabel(cats), "9 categories leagues");
+  assert.equal(leaguesLabel([...cats, ...points]), "12 leagues: 9 categories, 3 points");
+  assert.equal(leaguesLabel(points.slice(0, 1)), "1 points league");
+});
+
+test("the set reads in a line: together, one move, none, or not solved", () => {
+  const b = solved("1", 0.25) as Extract<BestMove, { status: "solved" }>;
+  assert.equal(setSummary({ ...b, moves: 3, gain: 0.6 }), "3 moves recommended together add +0.60 over weeks 2-4 against the field");
+  assert.equal(setSummary(b), "1 move recommended adds +0.25 over weeks 2-4 against the field");
+  assert.equal(setSummary(solved("1", null)), "no move gains 0.01 over weeks 2-4 against the field");
+  assert.equal(setSummary({ league: "1", status: "not_solved", system: "bbm" }), "not solved yet");
+  assert.equal(setSummary(undefined), "");
+});
+
+test("a set's move reads by its basis, with the kind for the panel's last column", () => {
+  const b = { ...(solved("1", 0.4) as Extract<BestMove, { status: "solved" }>), names: { "10": "Brooks", "3": "Reed", "5": "Hurt" } };
+  const name = bestNamer(b);
+  const line = (m: Partial<BestSetLine>) => setLine({ add: 10, drop: null, from: "2026-10-26", gain: 0.4, basis: "open", held: null, ...m }, name);
+  const drop = line({ drop: 3, basis: "drop" });
+  assert.deepEqual([drop.text, drop.kind, drop.basis.kind], ["Add Brooks for Reed", "drop", "drop"]);
+  const held = line({ basis: "held", held: { player: 5, slot: "IL" } });
+  assert.deepEqual([held.text, held.kind], ["Add Brooks after Hurt to IL", "IL move"]);
+  assert.match(held.basis.title, /Hurt's status fits the open IL slot/);
+  const open = line({});
+  assert.deepEqual([open.text, open.kind], ["Add Brooks (free: open spot)", "open spot"]);
+  // A player the route does not name reads by id.
+  assert.equal(name(99), "player 99");
+});
+
+test("my place is good in the top two and bad when last", () => {
+  const at = (rank: number) => card("1", { my_team: { team_id: 1, name: "T", record: "0-0-0", rank } });
+  assert.deepEqual([1, 2, 3, 11, 12].map((r) => placeTone(at(r))), ["good", "good", "", "", "bad"]);
+  assert.equal(placeTone(card("1")), "");
+});
+
+test("the private league's panel starts open, the others closed, and a toggle wins either way", () => {
+  const mine = card("mine", { public: false });
+  const other = card("other", { public: true });
+  const none = new Map<string, boolean>();
+  assert.deepEqual([isExpanded(mine, none), isExpanded(other, none)], [true, false]);
+  const once = toggleExpanded(mine, toggleExpanded(other, none));
+  assert.deepEqual([isExpanded(mine, once), isExpanded(other, once)], [false, true]);
+  const twice = toggleExpanded(mine, once);
+  assert.equal(isExpanded(mine, twice), true);
+  // The toggles are a new map each time: the old one is untouched.
+  assert.equal(none.size, 0);
 });
 
 // ---------------------------------------------------------------- strategy (#110)

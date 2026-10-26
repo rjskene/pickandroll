@@ -131,6 +131,13 @@ export function statusLine(p: StatusPayload, league: string, now: Date): string 
   return `all updates landed ${when(landed, now)}; recommendations ${when(moves, now)}`;
 }
 
+/** The reasons of a league's amber or red recommendations rows, each once ("Yahoo read newer;
+ * re-solved on open"), for the landing table (#191); null when none is. */
+export function recsReason(p: StatusPayload | undefined, league: string): string | null {
+  const late = leagueOf(p, league)?.recommendations?.rows.filter((r) => (r.state === "amber" || r.state === "red") && r.reason) ?? [];
+  return late.length ? [...new Set(late.map((r) => r.reason))].join("; ") : null;
+}
+
 /** The newest of ISO times (they may carry different offsets). */
 function latest(xs: (string | null | undefined)[]): string | null {
   let out: string | null = null;

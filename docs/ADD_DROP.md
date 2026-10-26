@@ -383,7 +383,7 @@ column shows, each move valued on its own from its day as the log values it
 - **The Moves card.** Under a set the guard changed, one muted line: "The season guard held back
   a set that gains +1.50 on the week but costs the season −95.0; this one forgoes 1.15." A
   partial total says so. The held set's moves are in its tooltip, flagged season-costly, never
-  shown as recommended. The landing grid's best move reads the guarded set, as it reads
+  shown as recommended. The landing table's best move reads the guarded set, as it reads
   `recommended`. The Strategy card says when the guard held back the program's set.
 - **The plan.** When the season guard, not the three-week guard, is what keeps the best-week
   plan out, its `reason` is `season` and `guard` gives the refused plan as for the three-week
@@ -985,15 +985,29 @@ Everything here lives inside the pickandroll web app and API, not in scripts or 
 (user, 2026-10-21: "I need this to be inside pickandroll so it has UI to pick which league and
 then UI to evaluate available waiver options"). The flow:
 
-1. **Pick a league.** In season the landing page is a grid (#108): one card per league folder
-   under `data/leagues/` with this week's score (mine first), the opponent, my place, the adds
+1. **Pick a league.** In season the landing page lists the leagues as a table (#191, after the
+   #108 grid), two rows per league folder under `data/leagues/`. Row 1 has a header's columns:
+   the league's name (a button that opens the season view at `?league=<id>`), this week's score
+   (mine first) with the opponent, my place (green in the top two, red when last), the adds
    left, the pool's flag counts, the best recommended move with its gain over the three weeks
-   after this one, and how old the snapshot is or why it did not read. The cards sort by most
-   to gain. Clicking a card opens the season view at `?league=<id>`; a refresh link pulls a new
-   snapshot from the public sources (the private league shows the extension's last post). The
-   grid never solves a move on load: each card reads `GET /seasons/{id}/best`, which answers
-   from the moves already solved today, and a league without an answer says "not solved yet"
-   and solves on its button (`POST`). A Layout control in the top bar switches between this
+   after this one, the freshness light with the snapshot's age, and refresh for a public league
+   (Solve while today's moves are not solved). Row 2, muted: the format, my team, the week, the
+   recommended set in a line ("3 moves recommended together add +0.60 over weeks 2-4 against
+   the field") and, when the light's recommendations row is not green, its reason. A chevron
+   opens a panel under the rows: the whole recommended set, each move with its gain on that
+   horizon and its basis (a drop, an open spot, or a spot an IL move frees), the room, the
+   league's facts and the buttons Open league, Lineup (the season view on its Lineup view),
+   Solve when not solved, and refresh. The private league is pinned first whatever the sort,
+   on the accent border and tint with a PRIVATE tag, and opens expanded; the others sort below
+   it by most to gain or by name. The points leagues are hidden behind "3 points leagues hidden
+   · show them" (kept in the browser); this is the landing page only, and the routines and the
+   executors still cover every armed public league. A league with a read error or no snapshot
+   is one row with its error and the read-it-now link. On a narrow screen the table scrolls
+   sideways. The table never solves a move on load: each league reads
+   `GET /seasons/{id}/best`, which answers from the moves already solved today (the best move,
+   and for the panel the set with each move's `basis` and `held`, the `room` and the players'
+   `names`), and a league without an answer says "not solved yet" and solves on its button
+   (`POST`). A Layout control in the top bar switches between this
    page and the draft-season one; auto shows the draft-season page while a league's draft runs
    or is less than fourteen days away. In season the drafts fold into one line and a Drafts
    drawer (the drafts ahead with Arm, live and finished drafts, the sessions, a New draft).

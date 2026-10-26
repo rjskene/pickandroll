@@ -99,7 +99,7 @@ import {
   type Horizon,
   type PositionFilter,
 } from "../season";
-import { DRAWER_WIDTH, isShown, SEASON_CARDS, SEASON_SHEET, SEASON_VIEWS, seasonKeys, stepHighlight, type DrawerState, type Half, type SeasonCardId } from "../keys";
+import { DRAWER_WIDTH, isShown, SEASON_CARDS, SEASON_SHEET, SEASON_VIEWS, seasonKeys, stepHighlight, type DrawerState, type Half, type SeasonCardId, type SeasonViewId } from "../keys";
 import { useDrawer, useHotkeys, useViews } from "../useKeys";
 import { FlagBreakdown, FlagInfo, FlagTag } from "./FlagExplain";
 import { StatusDot, StatusSheet, useSeasonStatus } from "./StatusLight";
@@ -138,7 +138,18 @@ const KEEP_RULE_TITLE = "the keep rule (#124): a net-positive player better than
  * a two-half panel of cards (the moves, a trade, the flags, my roster, the league and the
  * strategy, #110) and the draft's rail and keys. Yahoo's own columns, the weekly projection's
  * (#93) and the moves' gains (#94). */
-export default function SeasonScreen({ league, onBack, onProgress }: { league: string; onBack: () => void; onProgress: () => void }) {
+export default function SeasonScreen({
+  league,
+  view,
+  onBack,
+  onProgress,
+}: {
+  league: string;
+  /** The view to open on (the landing table's Lineup, #191), set once on mount; else the saved one. */
+  view?: SeasonViewId;
+  onBack: () => void;
+  onProgress: () => void;
+}) {
   const queryClient = useQueryClient();
   const season = useQuery({
     queryKey: ["season", league],
@@ -164,6 +175,11 @@ export default function SeasonScreen({ league, onBack, onProgress }: { league: s
   const panel = useDrawer(PANEL_KEY, isPanelCard, DEFAULT_PANEL, DEFAULT_PANEL.last);
   // The view where the board stands and the drawer that picks it (#116), kept like the panel.
   const views = useViews(VIEW_KEY);
+  const { setView } = views;
+  const askedView = useRef(view);
+  useEffect(() => {
+    if (askedView.current) setView(askedView.current);
+  }, [setView]);
   const [leagueTab, setLeagueTab] = useState<LeagueTab>("standings");
   const [sheetOpen, setSheetOpen] = useState(false);
   // The freshness light's sheet (#153).

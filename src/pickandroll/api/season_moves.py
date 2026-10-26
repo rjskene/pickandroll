@@ -906,12 +906,31 @@ def _guarded(
 
 
 def best_payload(built: Built, payload: dict[str, Any]) -> dict[str, Any]:
-    """The landing grid's line for a league (#108): the recommended move that adds most on the
-    three weeks ahead (the rest of this week when no week follows), with the set's gain."""
+    """The landing table's line for a league (#108, #191): the recommended move that adds most
+    on the three weeks ahead (the rest of this week when no week follows), with the set's gain;
+    for the row's panel the whole set on that horizon, each move with its basis and held move,
+    the room, and the names of every player they mention."""
     key = "three" if built.horizons["three"]["weeks"] else "week"
     rec = payload["recommended"][key]
     p = built.problem
     names = {k: player.name for k, player in (*p.roster, *p.held, *p.candidates)}
+    lines = [
+        {
+            "add": m["add"],
+            "drop": m["drop"],
+            "from": m["from"],
+            "gain": m["marginal"][key],
+            "basis": dl.basis_of(m["drop"], m["held"]),
+            "held": m["held"],
+        }
+        for m in rec["moves"]
+    ]
+    room = payload.get("room")
+    named = [
+        *(k for m in lines for k in (m["add"], m["drop"])),
+        *(m["held"]["player"] for m in lines if m["held"]),
+        *(room["eligible"] if room else ()),
+    ]
     best = max(rec["moves"], key=lambda m: m["marginal"][key], default=None)
     move = None
     if best is not None:
@@ -932,6 +951,9 @@ def best_payload(built: Built, payload: dict[str, Any]) -> dict[str, Any]:
         "moves": len(rec["moves"]),
         "gain": rec["gain"][key],
         "min_gain": MIN_GAIN,
+        "set": lines,
+        "room": room,
+        "names": {str(k): names[k] for k in named if k is not None and k in names},
     }
 
 

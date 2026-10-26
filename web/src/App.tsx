@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, ownerOf, teamLabel, type PickRow, type RoomEventEntry, type RoomStatus, type SolveEvent, type SurvivalEvent } from "./api";
 import { CARDS, DraftProvider, Hotkeys, useDraft } from "./draft";
-import { DRAFT_SHEET } from "./keys";
+import { DRAFT_SHEET, type SeasonViewId } from "./keys";
 import Announcer, { type Announcement } from "./components/Announcer";
 import Board from "./components/Board";
 import Drawer from "./components/Drawer";
@@ -197,6 +197,8 @@ export default function App() {
   const [sessionId, setSessionId] = useState<string | null>(() => new URLSearchParams(location.search).get("session"));
   // The league whose season view is open (#92); a draft session takes the page over it.
   const [leagueId, setLeagueId] = useState<string | null>(() => new URLSearchParams(location.search).get("league"));
+  // The view the league page opens on when asked for (the landing table's Lineup, #191).
+  const [leagueView, setLeagueView] = useState<SeasonViewId | null>(null);
   // The Progress screen (#129) at /progress; a league opened from it comes back to it.
   const [progress, setProgress] = useState(() => location.pathname === "/progress");
   const [solveEvents, setSolveEvents] = useState<SolveEvent[]>([]);
@@ -311,11 +313,20 @@ export default function App() {
 
   const openProgress = () => {
     setLeagueId(null);
+    setLeagueView(null);
     setProgress(true);
   };
-  if (!sessionId && leagueId) return <SeasonScreen league={leagueId} onBack={() => setLeagueId(null)} onProgress={openProgress} />;
+  const openLeague = (league: string, view?: SeasonViewId) => {
+    setLeagueView(view ?? null);
+    setLeagueId(league);
+  };
+  const leaveLeague = () => {
+    setLeagueId(null);
+    setLeagueView(null);
+  };
+  if (!sessionId && leagueId) return <SeasonScreen league={leagueId} view={leagueView ?? undefined} onBack={leaveLeague} onProgress={openProgress} />;
   if (!sessionId && progress) return <ProgressScreen onBack={() => setProgress(false)} onOpenLeague={setLeagueId} />;
-  if (!sessionId || !session.data) return <Landing onOpenLeague={setLeagueId} onOpenSession={setSessionId} onProgress={openProgress} error={session.error} />;
+  if (!sessionId || !session.data) return <Landing onOpenLeague={openLeague} onOpenSession={setSessionId} onProgress={openProgress} error={session.error} />;
   return (
     <DraftProvider
       session={session.data}

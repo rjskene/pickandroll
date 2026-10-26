@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { BuiltRow, StatusLeague, StatusPayload, YahooRow } from "./api";
-import { jobText, lightOf, sheetSections, statusLine, when, worstOf } from "./seasonStatus.ts";
+import { jobText, lightOf, recsReason, sheetSections, statusLine, when, worstOf } from "./seasonStatus.ts";
 
 // The viewer's clock is the Mac's: every time below reads on it.
 process.env.TZ = "America/Chicago";
@@ -90,6 +90,27 @@ test("a league's light is its own state and the daily run's", () => {
   // A league the status does not list yet; no status read yet.
   assert.equal(lightOf(p, "999"), "amber");
   assert.equal(lightOf(undefined, "100001"), null);
+});
+
+test("the landing table names why the recommendations are not up to date, and nothing when they are", () => {
+  // Green, and the rows made on request (no state), say nothing.
+  assert.equal(recsReason(payload(), "100001"), null);
+  const late: StatusLeague = {
+    ...payload().leagues[0],
+    recommendations: recs({
+      moves: built("moves", T("06:02"), "amber", "Yahoo read newer; re-solved on open"),
+      plan: built("plan", null, "red", "not built today"),
+    }),
+  };
+  assert.equal(recsReason(payload({ leagues: [late] }), "100001"), "Yahoo read newer; re-solved on open; not built today");
+  // The moves and the plan late for one reason say it once.
+  const both: StatusLeague = {
+    ...late,
+    recommendations: recs({ moves: built("moves", null, "amber", "expected by 06:30"), plan: built("plan", null, "amber", "expected by 06:30") }),
+  };
+  assert.equal(recsReason(payload({ leagues: [both] }), "100001"), "expected by 06:30");
+  assert.equal(recsReason(payload(), "999"), null);
+  assert.equal(recsReason(undefined, "100001"), null);
 });
 
 test("the hover line says when everything landed, or what to look at, red first", () => {

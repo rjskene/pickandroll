@@ -96,20 +96,41 @@ button.primary kbd { background: rgba(0, 0, 0, 0.18); border-color: rgba(0, 0, 0
 .lg-head { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 14px; }
 .lg-head h2 { font-size: 22px; }
 .lg-head label.inline { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; }
-.league-grid .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; }
-.lcard { display: grid; gap: 7px; align-content: start; min-width: 0; padding: 12px 14px; border: 1px solid var(--line-2); border-radius: 10px; background: var(--panel); cursor: pointer; }
-.lcard:hover, .lcard:focus-visible { border-color: var(--muted); outline: none; }
-.lcard.unread { cursor: default; opacity: 0.75; }
-.lcard.unread:hover { border-color: var(--line-2); }
-.lcard .top { display: flex; align-items: baseline; gap: 8px; min-width: 0; font-size: 12px; }
+/* The landing table (#191): two rows per league in the header's columns, a chevron's panel under
+ * them; the private league pinned first on the --mine tint. A narrow screen scrolls it sideways. */
+.lt-scroll { overflow-x: auto; }
+.lt { --lt-cols: 22px minmax(190px, 232px) 150px 78px 116px 122px minmax(220px, 1fr) 60px 120px 92px; display: flex; flex-direction: column; min-width: 1180px; }
+.lt-head, .lt-main { display: grid; grid-template-columns: var(--lt-cols); column-gap: 14px; align-items: baseline; padding: 0 12px; }
+.lt-head { padding-bottom: 6px; border-bottom: 1px solid var(--line-2); }
+.lt-block { border-bottom: 1px solid var(--line); }
+.lt-block:hover { background: var(--panel-2); }
+.lt-block.pinned { margin: 8px 0 10px; border: 1.5px solid var(--accent); border-radius: 8px; background: var(--mine); }
+.lt-block.pinned:hover { background: rgba(245, 185, 66, 0.16); }
+.lt-block.unread { opacity: 0.75; }
+.lt-main { row-gap: 3px; padding-top: 9px; padding-bottom: 9px; font-size: 12px; }
+.lt-chev { width: 20px; height: 20px; align-self: center; }
+.lt-chev svg { width: 12px; height: 12px; }
+.lt-name { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 8px; min-width: 0; }
 /* A league's name wraps rather than lose the part that tells two prize leagues apart. */
-.lcard .name { flex: 1; min-width: 0; overflow-wrap: anywhere; font-family: var(--display); font-size: 19px; font-weight: 700; line-height: 1.15; color: #ffffff; letter-spacing: 0.02em; }
-.lcard .top > :last-child { white-space: nowrap; }
-.lcard .meta { font-size: 11px; color: var(--dim); }
-.lcard .score { display: flex; align-items: baseline; flex-wrap: wrap; gap: 10px; }
-.lcard .score .big { font-family: var(--display); font-size: 26px; font-weight: 700; color: #ffffff; line-height: 1; }
-.lcard .facts { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 12px; font-size: 12px; color: var(--muted); }
-.lcard .move { display: flex; align-items: center; gap: 6px; min-height: 26px; padding-top: 6px; border-top: 1px solid var(--line); font-size: 12px; }
+.lt-name > button.link, .lt-name > .name { min-width: 0; overflow-wrap: anywhere; text-align: left; font-family: var(--display); font-size: 18px; font-weight: 700; line-height: 1.1; color: #ffffff; letter-spacing: 0.02em; }
+.lt-name > button.link:hover { color: var(--accent); text-decoration: none; }
+.lt-score .big { font-family: var(--display); font-size: 20px; font-weight: 700; line-height: 1; color: #ffffff; }
+.lt-score small { margin-left: 6px; font-size: 12px; color: var(--muted); }
+.lt-gain { text-align: right; font-weight: 600; }
+.lt-read { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.lt-acts { display: flex; align-items: center; justify-content: flex-end; gap: 10px; }
+.lt-wide { grid-column: span 6; }
+.lt-sub { grid-column: 2 / -1; display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 11px; color: var(--muted); }
+.lt-detail { display: grid; grid-template-columns: minmax(0, 1fr) 380px; gap: 10px 28px; padding: 10px 12px 14px 48px; border-top: 1px solid var(--line); background: rgba(0, 0, 0, 0.18); font-size: 12px; }
+.lt-block.pinned .lt-detail { border-top-color: rgba(245, 185, 66, 0.35); border-radius: 0 0 8px 8px; }
+.lt-set, .lt-facts { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.lt-lines { display: grid; gap: 5px; }
+.lt-line { display: grid; grid-template-columns: minmax(0, 1fr) 60px 90px; column-gap: 14px; }
+.lt-line > :nth-child(2) { text-align: right; }
+.lt-facts dl { display: grid; grid-template-columns: 72px minmax(0, 1fr); gap: 5px 12px; margin: 0; }
+.lt-facts dd { margin: 0; }
+.lt-btns { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.lt-foot { margin: 0; padding: 0 12px; font-size: 12px; }
 /* In season the drafts fold into one line, and open in a drawer over the grid. */
 .fold { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 14px; padding: 10px 14px; border: 1px solid var(--line-2); border-radius: 10px; background: var(--panel-2); }
 .fold .k { color: var(--text); }
