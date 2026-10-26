@@ -1265,7 +1265,9 @@ class SeasonService:
         the page check refuses a protected drop whatever the queue says), the claims still open
         (earlier days' placed and unresolved, and today's placed), the day's cap and how many of
         today's entries took their place, the adds left as read less every claim since, and the
-        budget. None when the mode is off, STOP is on or the day is not today."""
+        budget. None when the mode is off, STOP is on or the day is not today. Every answer
+        carries ``live``, the live guard now (``season_autopilot.moves_live_check``): a pass
+        places its claims only in a live league where it holds (#171 PR 3)."""
         base, _ = self._base(league)
         now = self.clock()
         today = nba_today(now)
@@ -1287,6 +1289,7 @@ class SeasonService:
             "done": 0,
             "adds_left": [],
             "budget": None,
+            "live": season_autopilot.moves_live_check(self.data_dir, league, mode),
             "at": now.isoformat(),
         }
 
@@ -1353,15 +1356,21 @@ class SeasonService:
 
     def log_moves_run(self, league: str, run: season_autopilot.MovesRun) -> dict[str, Any]:
         """Append an execute pass to the league's log under ``moves`` (#171) and, for a live pass,
-        set its outcomes on the queue's entries (a dry run moves none: the ruling on #171, so the
-        late pass reads the same entries again); refused (409) when the mode, STOP, the queue or
-        the pass's own outcome says it should not have run."""
+        set its placed, failed and gone outcomes on the queue's entries: a dry run moves none (the
+        ruling on #171) and a live skip none (#171 PR 3), so the late pass reads those entries
+        again; refused (409) when the mode, STOP, the live guard, the queue or the pass's own
+        outcome says it should not have run."""
         self._base(league)
         mode = leagues.executor_mode(self.data_dir, league, leagues.MOVES)
         body = self._read_queue(run.day) or {}
         mine = {e["id"]: e for e in body.get("entries") or [] if e.get("league") == league}
+        live = (
+            season_autopilot.moves_live_check(self.data_dir, league, mode)
+            if run.mode == "live"
+            else None
+        )
         why = season_autopilot.check_moves_run(
-            run, mode, season_autopilot.stopped(self.data_dir), mine
+            run, mode, season_autopilot.stopped(self.data_dir), mine, live
         )
         if why is not None:
             raise HTTPException(409, why)
@@ -1373,7 +1382,7 @@ class SeasonService:
             )
         except season_autopilot.LogError as exc:
             raise HTTPException(409, str(exc)) from exc
-        checks = {c.id: c for c in run.entries}
+        checks = {c.id: c for c in run.entries if c.outcome in season_autopilot.STICKS}
         if checks and run.mode == "live":
 
             def change(q: dict[str, Any] | None) -> dict[str, Any]:

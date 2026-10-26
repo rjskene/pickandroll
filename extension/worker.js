@@ -11,6 +11,9 @@
 // snapshot route here; what each post did is kept per league for the panel. On my team page it
 // also fetches the lineup executor's steps and logs its runs here (#170), and the moves
 // executor's due entries and its passes (#171), the last of each kept per league for the panel.
+// A live claim is put on record here before its page is touched (``moves_submit:<entry>`` in
+// chrome.storage.local, so a restart keeps it) and dropped only once the API has its pass: while
+// it is there no pass submits that entry again.
 "use strict";
 importScripts("lib/protocol.js", "lib/league.js", "lib/lineup.js", "lib/moves.js");
 
@@ -112,6 +115,17 @@ const postsKey = (league) => `league:${league}`;
 const readKey = (league) => `season_read:${league}`;
 const lineupKey = (league) => `lineup:${league}`;
 const movesKey = (league) => `moves:${league}`;
+const submitKey = (id) => `moves_submit:${id}`;
+/** The submits put on record one after another, so two pages never pass the cap together. */
+let submitting = Promise.resolve();
+
+/** The live claims on record in ``league``: submitted, their pass not yet taken by the API. */
+async function submits(league) {
+  const all = await chrome.storage.local.get(null);
+  return Object.entries(all)
+    .filter(([k, v]) => k.startsWith("moves_submit:") && v && v.league === String(league))
+    .map(([, v]) => v);
+}
 
 async function stored(key) {
   return (await chrome.storage.session.get(key))[key] || null;
@@ -246,13 +260,47 @@ const ops = {
   async moves_due({ league }) {
     return api(`/seasons/${encodeURIComponent(league)}/autopilot/moves/due`, { timeout: 30000 });
   },
-  /** An execute pass of the moves executor, for the league's log; the last one is kept for the panel. */
+  /** An execute pass of the moves executor, for the league's log; the last one is kept for the
+   * panel. Once the API has a live pass, its entries' submit records are dropped. */
   async moves_log({ league, run }) {
     const logged = await api(`/seasons/${encodeURIComponent(league)}/autopilot/moves`, { method: "POST", body: run, timeout: 15000 });
-    const claims = (run.entries || []).filter((x) => x.outcome === "would_claim").length;
+    if (run.mode === "live") await chrome.storage.local.remove((run.entries || []).map((x) => submitKey(x.id)));
+    const claims = (run.entries || []).filter((x) => ["would_claim", "claimed"].includes(x.outcome)).length;
     const last = { at: Date.now(), day: run.day, trigger: run.trigger, outcome: run.outcome, reason: run.reason, claims };
     await chrome.storage.session.set({ [movesKey(league)]: last });
     return logged;
+  },
+  /** A live claim about to be submitted from the add page in ``sender``'s tab (#171 PR 3):
+   * ``record`` is its day, trigger, the log's line for it and the day's cap and claims as the API
+   * counted them. One at a time, and refused when the entry is on record already (it is never
+   * submitted twice), when a claim on the same add is in flight, or when the claims in flight
+   * that day would pass the cap. */
+  moves_submitting({ league, record }, sender) {
+    const run = submitting.then(async () => {
+      const key = submitKey(record.line.id);
+      if ((await chrome.storage.local.get(key))[key]) throw new Error("this claim was submitted already");
+      const inflight = (await submits(league)).filter((x) => x.day === record.day);
+      if (inflight.some((x) => x.line.add === record.line.add)) throw new Error("a claim on this add is in flight");
+      if (record.cap != null && (record.done || 0) + inflight.length >= record.cap) throw new Error("over the day's cap with claims in flight");
+      const kept = { ...record, league: String(league), tab: sender && sender.tab ? sender.tab.id : null, at: Date.now() };
+      await chrome.storage.local.set({ [key]: kept });
+      return { kept: true };
+    });
+    submitting = run.catch(() => {});
+    return run;
+  },
+  /** The claim ``sender``'s tab submitted in ``league`` and whose pass is not logged, while its
+   * answer may still be on this page (``LANDING_MS``); null otherwise. */
+  async moves_landed({ league }, sender) {
+    const tab = sender && sender.tab ? sender.tab.id : null;
+    const now = Date.now();
+    const mine = (await submits(league)).filter((x) => x.tab === tab && now - x.at < self.PickAndRoll.LANDING_MS);
+    return mine.sort((a, b) => b.at - a.at)[0] || null;
+  },
+  /** Every live claim on record in ``league``: the add page logs the stale ones first and never
+   * submits one of them again. */
+  async moves_submits({ league }) {
+    return submits(league);
   },
   /** The league's season summary (GET /seasons), null when pickandroll has no folder for it. */
   async season({ league }) {

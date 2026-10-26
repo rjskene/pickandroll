@@ -1,7 +1,9 @@
 // node --test extension/test/*.test.js
-// The moves executor's dry run (#171): the add page's controls read, a due entry's checks on them,
-// the pass the log takes, the strip, the panel's links, and the content script on an add page
-// opened with the routine's fragment. Fixtures carry Yahoo ids, slot codes and dollar figures only.
+// The moves executor (#171): the add page's controls read, a due entry's checks on them, the pass
+// the log takes, the strip, the panel's links, the content script on an add page opened with the
+// routine's fragment, and the live claim (PR 3): the submit on a fake page, the page Yahoo lands
+// on, and the worker's record of a submit. Nothing here reaches Yahoo. Fixtures carry Yahoo ids,
+// slot codes and dollar figures only.
 "use strict";
 const test = require("node:test");
 const assert = require("node:assert/strict");
@@ -200,9 +202,29 @@ test("the pass the log takes: would claim, skipped, gone and stopped", () => {
   assert.equal(run.outcome, "skipped");
   run = X.movesPass({ due: due({ stop: true, entries: [] }), trigger: "routine" });
   assert.deepEqual([run.outcome, run.reason, run.entries], ["stopped", "STOP is on (data/autopilot/STOP)", []]);
-  // A live league still logs a dry run: this build claims nothing.
-  run = X.movesPass({ due: due({ mode: "live" }), trigger: "panel", checks: [line({ outcome: "would_claim" })] });
-  assert.equal(run.mode, "dry_run");
+  // A live league whose guard refuses now logs a dry run that says why.
+  const refused = due({ mode: "live", live: { ok: false, reason: "a dry run on 7 days first: 3 so far" } });
+  run = X.movesPass({ due: refused, trigger: "panel", checks: [line({ outcome: "would_claim" })] });
+  assert.deepEqual([run.mode, run.outcome, run.reason], ["dry_run", "would_claim", "live refused: a dry run on 7 days first: 3 so far"]);
+  // Where the guard holds, a pass from the add page logs only what it skipped.
+  run = X.movesPass({ due: due({ mode: "live", live: { ok: true, reason: null } }), trigger: "routine", checks: [line({ outcome: "skipped", reason: "page not read" })] });
+  assert.deepEqual([run.mode, run.outcome, run.reason], ["live", "skipped", "page not read"]);
+});
+
+test("the mode a pass runs in: live only where the league is live and its guard holds now", () => {
+  assert.deepEqual(X.passMode(due()), { mode: "dry_run", refused: null });
+  assert.deepEqual(X.passMode(due({ mode: "live", live: { ok: true, reason: null } })), { mode: "live", refused: null });
+  assert.deepEqual(X.passMode(due({ mode: "live", live: { ok: false, reason: "STOP is on (data/autopilot/STOP)" } })), {
+    mode: "dry_run",
+    refused: "live refused: STOP is on (data/autopilot/STOP)",
+  });
+  assert.deepEqual(X.passMode(due({ mode: "live" })), { mode: "dry_run", refused: "live refused: the guard did not answer" });
+  // Held back in live whatever the page: a free-agent add and an open-spot claim.
+  const page = X.readAddPage(rawPage(), CLEARS);
+  assert.equal(X.submitProblem(entry(), page), null);
+  assert.equal(X.submitProblem(entry({ availability: "FA" }), page), "a free-agent add: this build places waiver claims only");
+  assert.equal(X.submitProblem(entry(), X.readAddPage(rawPage({ heading: "Add Player" }), CLEARS)), "a free-agent add: this build places waiver claims only");
+  assert.equal(X.submitProblem(entry({ drop: null }), page), "an open-spot claim is not read yet");
 });
 
 test("the strip, the panel's line and the panel's links", () => {
@@ -219,15 +241,140 @@ test("the strip, the panel's line and the panel's links", () => {
   assert.equal(X.movesLastText(last, "3 min ago"), `${DAY} · late routine: would claim, 3 min ago`);
   assert.equal(X.movesLastText(null, ""), "no pass from this browser yet");
   assert.deepEqual(X.dueLinks(due()), [{ id: e.id, href: `${SITE}${e.page}#pickandroll-moves-panel`, text: "add 3001, drop 2005, $3" }]);
+  // In a live league whose guard holds, the panel's link places the claim and says so.
+  const live = due({ mode: "live", live: { ok: true, reason: null } });
+  assert.equal(X.dueLinks(live)[0].text, "claim: add 3001, drop 2005, $3");
+  const refused = due({ mode: "live", live: { ok: false, reason: "a dry run on 7 days first: 3 so far" } });
+  const dry = X.movesPass({ due: refused, trigger: "routine", checks: [X.moveCheck(e, X.pageCheck(e, page, refused), page, refused, READ_AT)] });
+  assert.equal(X.movesStripText({ due: refused, run: dry, at }), "dry run (live refused: a dry run on 7 days first: 3 so far) · would claim for $3, dropping 2005; logged 09:02");
+  assert.equal(X.movesStripText({ due: live }), "live · nothing due now");
 });
 
-test("the moves code clicks, toggles, sets, submits and fetches nothing", () => {
+test("only the live claim touches a page: its drop box, its bid and its submit, nothing fetched", () => {
+  const claim = X.fillClaim.toString();
   for (const f of ["lib/moves.js", "league.js"]) {
-    const src = fs.readFileSync(path.join(DIR, f), "utf8");
-    assert.ok(!/\.click\(|dispatchEvent|submit\(|requestSubmit/.test(src), `${f} clicks or submits`);
-    assert.ok(!/\.(value|selectedIndex|checked)\s*=[^=]/.test(src), `${f} sets a field`);
+    const src = fs.readFileSync(path.join(DIR, f), "utf8").replace(claim, "");
+    assert.ok(!/\.click\(|dispatchEvent|submit\(|requestSubmit/.test(src), `${f} clicks or submits outside fillClaim`);
+    assert.ok(!/\.(value|selectedIndex|checked)\s*=[^=]/.test(src), `${f} sets a field outside fillClaim`);
     assert.ok(!/\bfetch\(|XMLHttpRequest|DOMParser/.test(src), `${f} fetches a page`);
   }
+  assert.equal(claim.match(/\.click\(\)/g).length, 2, "the drop box and the submit");
+  assert.deepEqual(claim.match(/\w+\.(value|checked|selectedIndex)\s*=[^=]/g), ["bid.value = "]);
+  assert.ok(!/submit\(|requestSubmit|crumb|TOKEN|fetch\(/.test(claim));
+});
+
+// ---------------------------------------------------------------- the live claim on a fake page
+/** A claim form as the browser has it: the drop boxes tick on a click, the claim submit appears
+ * once one is ticked (Yahoo draws it then), and every click, value set and event is recorded in
+ * ``touched``. ``button: false`` never draws it; ``sticky`` makes the bid refuse what is typed. */
+function claimDoc({ ticked = [], button = true, sticky = false, add = ADD } = {}) {
+  const touched = [];
+  const input = (name, type, value) => ({ name, type, value, checked: false });
+  const boxes = ROSTER.filter((k) => !CANTCUT.includes(k)).map((k) => {
+    const b = input("dpid", "checkbox", String(k));
+    b.checked = ticked.includes(k);
+    b.click = () => {
+      touched.push(`click dpid ${k}`);
+      b.checked = !b.checked;
+    };
+    return b;
+  });
+  let bidValue = "0";
+  const bid = {
+    name: "faab",
+    type: "text",
+    get value() {
+      return bidValue;
+    },
+    set value(v) {
+      touched.push(`set faab ${v}`);
+      if (!sticky) bidValue = v;
+    },
+    dispatchEvent: (ev) => touched.push(`event ${ev.type}`),
+  };
+  const elements = [input("stage", "hidden", "2"), input(X.TOKEN_FIELD, "hidden", "SECRET-VALUE"), input("apid", "hidden", String(add)), ...boxes, bid];
+  const submit = { getAttribute: (a) => (a === "name" ? X.SUBMIT : null), click: () => touched.push("click submit") };
+  const doc = {
+    querySelector: (sel) =>
+      sel === `form#${X.FORM_ID}` ? { elements } : sel === X.SUBMIT_BUTTON && button && boxes.some((b) => b.checked) ? submit : null,
+  };
+  return { doc, touched };
+}
+
+const noWait = async () => {};
+
+test("the live claim ticks the one drop box, types the bid and clicks the claim submit once", async () => {
+  const { doc, touched } = claimDoc();
+  assert.equal(await X.fillClaim(doc, entry(), { wait: noWait }), null);
+  assert.deepEqual(touched, ["click dpid 2005", "set faab 3", "event input", "event change", "click submit"]);
+  // A struck bid is a $0 claim.
+  const zero = claimDoc();
+  assert.equal(await X.fillClaim(zero.doc, entry({ bid_placed: 0 }), { wait: noWait }), null);
+  assert.ok(zero.touched.includes("set faab 0"));
+});
+
+test("the live claim clicks no submit when the form does not take it", async () => {
+  // No single box for the drop, or a box ticked before the pass: nothing is touched.
+  let v = claimDoc();
+  assert.equal(await X.fillClaim(v.doc, entry({ drop: 2012 }), { wait: noWait }), "no single drop box for 2012");
+  assert.deepEqual(v.touched, []);
+  v = claimDoc({ ticked: [2001] });
+  assert.equal(await X.fillClaim(v.doc, entry(), { wait: noWait }), "a drop box was ticked before the pass");
+  assert.deepEqual(v.touched, []);
+  // The submit never drawn: the box ticked, nothing typed or clicked after it.
+  v = claimDoc({ button: false });
+  let waits = 0;
+  const counted = async () => {
+    waits += 1;
+  };
+  assert.equal(await X.fillClaim(v.doc, entry(), { wait: counted, tries: 3 }), "the claim submit did not appear once the drop was ticked");
+  assert.deepEqual([v.touched, waits], [["click dpid 2005"], 3]);
+  // The form read back wrong: no submit.
+  v = claimDoc({ sticky: true });
+  assert.equal(await X.fillClaim(v.doc, entry(), { wait: noWait }), "the form did not take the claim: its bid reads 0");
+  assert.ok(!v.touched.includes("click submit"));
+  v = claimDoc({ add: 3002 });
+  assert.equal(await X.fillClaim(v.doc, entry(), { wait: noWait }), "the form did not take the claim: its apid is not the add");
+  assert.ok(!v.touched.includes("click submit"));
+  assert.equal(await X.fillClaim({ querySelector: () => null }, entry(), { wait: noWait }), "the claim form is gone");
+});
+
+test("the page Yahoo lands on: placed, refused or not recognised", () => {
+  const read = (over) => X.readLanded({ path: `/nba/${LEAGUE}/${TEAM}`, heading: null, form: false, notes: [], errors: [], pending: false, ...over });
+  assert.deepEqual(read({ notes: ["Your waiver claim has been submitted."] }), { outcome: "claimed", message: "Your waiver claim has been submitted." });
+  assert.deepEqual(read({ pending: true }), { outcome: "claimed", message: "the add shows among the pending claims" });
+  assert.deepEqual(read({ errors: ["You have exceeded the maximum number of adds."] }), { outcome: "failed", message: "You have exceeded the maximum number of adds." });
+  assert.deepEqual(read({ form: true, notes: ["Bid must be a whole number."] }), { outcome: "failed", message: "Bid must be a whole number." });
+  // The claim form back with nothing said, a confirm step, any other page: not recognised.
+  assert.equal(read({ form: true }), null);
+  assert.equal(read({ heading: "Confirm Transaction" }), null);
+  assert.equal(read({ form: true, pending: true }), null);
+});
+
+test("a submitted claim's live pass: Yahoo's answer, or its answer not read", () => {
+  const e = entry();
+  const page = X.readAddPage(rawPage(), e.from);
+  const live = due({ mode: "live", live: { ok: true, reason: null } });
+  const line = X.moveCheck(e, { outcome: "would_claim", reason: null }, page, live, READ_AT);
+  const at = new Date(2026, 9, 24, 9, 2).getTime();
+  const record = { day: DAY, trigger: "routine", line, league: LEAGUE, tab: 7, at };
+  const seen = { path: `/nba/${LEAGUE}/${TEAM}`, heading: null };
+  let run = X.landedPass(record, { outcome: "claimed", message: "claim submitted" }, seen, "0.8.0");
+  assert.deepEqual([run.day, run.mode, run.trigger, run.outcome, run.reason, run.extension], [DAY, "live", "routine", "claimed", null, "0.8.0"]);
+  const got = run.entries[0];
+  assert.deepEqual([got.id, got.outcome, got.reason, got.message, got.bid, got.drop], [e.id, "claimed", null, "claim submitted", 3, 2005]);
+  // The fields it filled and the page it landed on; never the anti-forgery field.
+  assert.deepEqual(got.controls.would_fill, { action: `/nba/${LEAGUE}/${TEAM}/addplayer`, apid: ADD, dpid: 2005, faab: 3, submit: X.SUBMIT });
+  assert.deepEqual(got.controls.landed, seen);
+  assert.ok(!X.TOKEN.test(JSON.stringify(run)));
+  run = X.landedPass(record, { outcome: "failed", message: "Too many adds." }, seen);
+  assert.deepEqual([run.outcome, run.reason, run.entries[0].reason, run.entries[0].message], ["failed", "Too many adds.", "Too many adds.", "Too many adds."]);
+  // Not recognised or never read: claimed, so it counts and is never submitted again.
+  run = X.landedPass(record, null, null);
+  assert.deepEqual([run.outcome, run.entries[0].outcome, run.entries[0].reason], ["claimed", "claimed", "submitted 09:02; Yahoo's answer was not read: check the pending claims"]);
+  assert.match(X.landedStripText(X.landedPass(record, { outcome: "claimed", message: "claim submitted" }, seen), at), /^live · claimed for \$3, dropping 2005: Yahoo: claim submitted; logged 09:02$/);
+  assert.equal(X.leagueOfPage(`${SITE}/nba/${LEAGUE}/${TEAM}/addplayer`), LEAGUE);
+  assert.equal(X.leagueOfPage(`${SITE}/draftclient/${LEAGUE}`), null);
 });
 
 // ---------------------------------------------------------------- the content script on an add page
@@ -237,7 +384,19 @@ const el = (props = {}) => ({ textContent: "", className: "", getAttribute: (a) 
 /** The rendered add page as the content script sees it: the form, the noscript's submit as text,
  * the add's row and my roster's rows with their player ids and icons. */
 function addDom({ add = ADD, budget = 100, waiver = "Oct 26" } = {}) {
-  const input = (name, type, value) => ({ name, tagName: "INPUT", type, value, checked: false });
+  const touched = [];
+  const input = (name, type, value) => ({
+    name,
+    tagName: "INPUT",
+    type,
+    value,
+    checked: false,
+    click() {
+      touched.push(`click ${name} ${value}`);
+      this.checked = !this.checked;
+    },
+    dispatchEvent: (ev) => touched.push(`event ${ev.type}`),
+  });
   const elements = [
     input("stage", "hidden", "2"),
     input(X.TOKEN_FIELD, "hidden", "SECRET-VALUE"),
@@ -247,6 +406,7 @@ function addDom({ add = ADD, budget = 100, waiver = "Oct 26" } = {}) {
     ...ROSTER.filter((k) => !CANTCUT.includes(k)).map((k) => input("dpid", "checkbox", String(k))),
     input("faab", "text", "0"),
   ];
+  const submit = { getAttribute: (a) => (a === "name" ? X.SUBMIT : null), click: () => touched.push("click submit") };
   const hint = el({ textContent: ` Must be between $0 and $${budget} ` });
   const form = el({ attrs: { action: `${SITE}/nba/${LEAGUE}/${TEAM}/addplayer`, method: "post" }, elements, querySelectorAll: (sel) => (sel === "p, span, div" ? [hint] : []) });
   const tr = (id, classes) =>
@@ -258,7 +418,15 @@ function addDom({ add = ADD, budget = 100, waiver = "Oct 26" } = {}) {
   const addCell = el({ attrs: { "data-ys-playerid": String(add) }, closest: (sel) => (sel === "tr" ? addTr : null) });
   const rows = ROSTER.map((k) => tr(k, CANTCUT.includes(k) ? ICON.cantcut : ""));
   return {
-    querySelector: (sel) => (sel === "form#add-drop-players-form" ? form : sel === "table#statTable-add tbody tr [data-ys-playerid]" ? addCell : null),
+    touched,
+    querySelector: (sel) =>
+      sel === "form#add-drop-players-form"
+        ? form
+        : sel === "table#statTable-add tbody tr [data-ys-playerid]"
+          ? addCell
+          : sel === X.SUBMIT_BUTTON && elements.some((x) => x.name === "dpid" && x.checked)
+            ? submit
+            : null,
     querySelectorAll: (sel) =>
       sel === "h1, h2, h3"
         ? [el({ textContent: "Yahoo Sports Fantasy Basketball" }), el({ textContent: ` ${X.CLAIM_HEADING} ` })]
@@ -275,9 +443,9 @@ function addDom({ add = ADD, budget = 100, waiver = "Oct 26" } = {}) {
 }
 
 /** league.js on the add page of ``add`` (``hash`` its fragment), a chrome whose worker answers
- * each op with ``answer``. Returns the messages sent, the URLs replaced and the strip. */
-async function visitAdd({ hash = "#pickandroll-moves", answer, add = ADD }) {
-  const dom = addDom({ add });
+ * each op with ``answer``. Returns the messages sent, the URLs replaced, the strip and what was
+ * touched on the page. ``dom`` and ``url`` put it on another page of the league. */
+async function visitAdd({ hash = "#pickandroll-moves", answer, add = ADD, dom = addDom({ add }), url: at = `${SITE}/nba/${LEAGUE}/addplayer?apid=${add}${hash}` }) {
   const nodes = {};
   const doc = {
     ...dom,
@@ -289,7 +457,7 @@ async function visitAdd({ hash = "#pickandroll-moves", answer, add = ADD }) {
       },
     },
   };
-  const url = new URL(`${SITE}/nba/${LEAGUE}/addplayer?apid=${add}${hash}`);
+  const url = new URL(at);
   const location = { href: url.href, hash: url.hash, pathname: url.pathname, search: url.search, assign() {} };
   const sent = [];
   const replaced = [];
@@ -297,7 +465,7 @@ async function visitAdd({ hash = "#pickandroll-moves", answer, add = ADD }) {
   const chrome = {
     runtime: {
       connect: () => ({}),
-      getManifest: () => ({ version: "0.7.0" }),
+      getManifest: () => ({ version: "0.8.0" }),
       onMessage: { addListener() {} },
       sendMessage: async (msg) => {
         sent.push(JSON.parse(JSON.stringify(msg)));
@@ -314,34 +482,44 @@ async function visitAdd({ hash = "#pickandroll-moves", answer, add = ADD }) {
     URL,
     URLSearchParams,
     Date,
+    Event,
     console,
   });
   ctx.window = ctx;
   ctx.globalThis = ctx;
   for (const file of ["lib/league.js", "lib/lineup.js", "lib/moves.js", "league.js"]) vm.runInContext(fs.readFileSync(path.join(DIR, file), "utf8"), ctx);
   for (const fn of timers.splice(0)) await fn();
-  return { sent, replaced, strip: nodes["pickandroll-strip"] };
+  return { sent, replaced, strip: nodes["pickandroll-strip"], touched: dom.touched || [] };
 }
 
-/** The worker's answers: the settings, the due entries and the log taking the pass. */
+/** The worker's answers: the settings, the due entries, the log taking the pass and the submit
+ * records (``records`` on file, ``landing`` this tab's claim awaiting its answer, ``kept`` whether
+ * a new one is put on record). */
 const worker =
-  (over = {}, settings = {}) =>
+  (over = {}, settings = {}, { records = [], landing = null, kept = true } = {}) =>
   (msg) => {
     if (msg.op === "settings") return { ok: true, data: { lineup_executor: "on", moves_executor: "on", ...settings } };
     if (msg.op === "moves_due") return { ok: true, data: due(over) };
     if (msg.op === "moves_log") return { ok: true, data: { at: "x" } };
+    if (msg.op === "moves_landed") return { ok: true, data: landing };
+    if (msg.op === "moves_submits") return { ok: true, data: records };
+    if (msg.op === "moves_submitting") return kept ? { ok: true, data: { kept: true } } : { ok: false, error: "this claim was submitted already" };
     return { ok: false, error: `unexpected ${msg.op}` };
   };
 const ops = (v) => v.sent.map((m) => m.op);
+const sentOf = (v, op) => v.sent.filter((m) => m.op === op);
+const PASS = ["moves_landed", "settings", "moves_submits", "moves_due"];
 
 test("the routine's link: the fragment dropped, the page's entry checked on the rendered form and the claim it would place logged", async () => {
   const v = await visitAdd({ answer: worker({ entries: [entry({ id: "other", add: 3002, page: `/nba/${LEAGUE}/addplayer?apid=3002` }), entry()] }) });
   assert.deepEqual(v.replaced, [`/nba/${LEAGUE}/addplayer?apid=${ADD}`]);
-  // Nothing is posted for the add page: the due entries, then the pass.
-  assert.deepEqual(ops(v), ["settings", "moves_due", "moves_log"]);
-  assert.equal(v.sent[1].league, LEAGUE);
-  const run = v.sent[2].run;
-  assert.deepEqual([run.mode, run.trigger, run.outcome, run.extension], ["dry_run", "routine", "would_claim", "0.7.0"]);
+  // Nothing is posted for the add page: a claim awaiting its answer, the submits on record, the
+  // due entries, then the pass. A dry run touches nothing.
+  assert.deepEqual(ops(v), [...PASS, "moves_log"]);
+  assert.equal(sentOf(v, "moves_due")[0].league, LEAGUE);
+  assert.deepEqual(v.touched, []);
+  const run = sentOf(v, "moves_log")[0].run;
+  assert.deepEqual([run.mode, run.trigger, run.outcome, run.extension], ["dry_run", "routine", "would_claim", "0.8.0"]);
   assert.deepEqual(run.entries.map((e) => [e.id, e.outcome]), [[entry().id, "would_claim"]]);
   const c = run.entries[0].controls;
   assert.deepEqual(c.would_fill, { action: `/nba/${LEAGUE}/${TEAM}/addplayer`, apid: ADD, dpid: 2005, faab: 3, submit: X.SUBMIT });
@@ -353,16 +531,17 @@ test("the routine's link: the fragment dropped, the page's entry checked on the 
 
 test("the late pass and the panel's link carry their triggers", async () => {
   let v = await visitAdd({ hash: "#pickandroll-moves-late", answer: worker() });
-  assert.equal(v.sent[2].run.trigger, "routine_late");
+  assert.equal(sentOf(v, "moves_log")[0].run.trigger, "routine_late");
   v = await visitAdd({ hash: "#pickandroll-moves-panel", answer: worker() });
-  assert.equal(v.sent[2].run.trigger, "panel");
+  assert.equal(sentOf(v, "moves_log")[0].run.trigger, "panel");
 });
 
 test("a plain visit runs nothing; a player not due logs nothing", async () => {
+  // A plain visit only asks whether this tab submitted a claim awaiting its answer.
   let v = await visitAdd({ hash: "", answer: worker() });
-  assert.deepEqual([ops(v), v.replaced], [[], []]);
+  assert.deepEqual([ops(v), v.replaced], [["moves_landed"], []]);
   v = await visitAdd({ answer: worker({ entries: [] }) });
-  assert.deepEqual(ops(v), ["settings", "moves_due"]);
+  assert.deepEqual(ops(v), PASS);
   assert.equal(v.strip.textContent, "pickandroll moves: dry run · this player is not due in the queue: nothing logged");
 });
 
@@ -371,16 +550,221 @@ test("off in the league, the browser's brake and STOP", async () => {
   assert.ok(!ops(v).includes("moves_log"));
   assert.equal(v.strip.textContent, "pickandroll moves: off in this league");
   v = await visitAdd({ answer: worker({}, { moves_executor: "off" }) });
-  assert.deepEqual(ops(v), ["settings"]);
+  assert.deepEqual(ops(v), ["moves_landed", "settings"]);
   assert.equal(v.strip.textContent, "pickandroll moves: off in this browser (the extension's settings)");
   v = await visitAdd({ answer: worker({ stop: true, entries: [] }) });
-  assert.deepEqual([v.sent[2].run.outcome, v.sent[2].run.entries], ["stopped", []]);
+  const run = sentOf(v, "moves_log")[0].run;
+  assert.deepEqual([run.outcome, run.entries], ["stopped", []]);
 });
 
 test("a check that fails before the page still logs what the page showed", async () => {
   const v = await visitAdd({ answer: worker({ protected: { 2005: "kept: returns" } }) });
-  const e = v.sent[2].run.entries[0];
+  const e = sentOf(v, "moves_log")[0].run.entries[0];
   assert.deepEqual([e.outcome, e.reason], ["skipped", "the drop is protected (kept: returns)"]);
   assert.equal(e.controls.would_fill, null);
   assert.equal(e.controls.heading, X.CLAIM_HEADING);
+});
+
+// ---------------------------------------------------------------- the live claim from the content script
+const LIVE = { mode: "live", live: { ok: true, reason: null } };
+
+test("in a live league whose guard holds, the claim is put on record, then placed on the page; its pass waits for the answer", async () => {
+  const v = await visitAdd({ answer: worker(LIVE) });
+  assert.deepEqual(ops(v), [...PASS, "moves_submitting"]);
+  assert.deepEqual(v.touched, ["click dpid 2005", "event input", "event change", "click submit"]);
+  const { record, league } = sentOf(v, "moves_submitting")[0];
+  assert.equal(league, LEAGUE);
+  assert.deepEqual([record.day, record.trigger, record.line.id, record.line.outcome, record.line.bid], [DAY, "routine", entry().id, "would_claim", 3]);
+  assert.deepEqual(record.line.controls.would_fill, { action: `/nba/${LEAGUE}/${TEAM}/addplayer`, apid: ADD, dpid: 2005, faab: 3, submit: X.SUBMIT });
+  assert.ok(!JSON.stringify(v.sent).includes("SECRET-VALUE") && !X.TOKEN.test(JSON.stringify(v.sent)));
+  assert.equal(v.strip.textContent, "pickandroll moves: live · claim submitted for $3, dropping 2005: reading Yahoo's answer…");
+});
+
+test("a live league with the guard refusing, a failed check, a free-agent add or no record: nothing is touched", async () => {
+  // The guard refusing now: a dry run that says why.
+  let v = await visitAdd({ answer: worker({ mode: "live", live: { ok: false, reason: "a dry run on 7 days first: 3 so far" } }) });
+  let run = sentOf(v, "moves_log")[0].run;
+  assert.deepEqual([run.mode, run.outcome, run.reason, v.touched], ["dry_run", "would_claim", "live refused: a dry run on 7 days first: 3 so far", []]);
+  // A check that fails: a live skip, which stays due for the late pass.
+  v = await visitAdd({ answer: worker({ ...LIVE, protected: { 2005: "kept: returns" } }) });
+  run = sentOf(v, "moves_log")[0].run;
+  assert.deepEqual([run.mode, run.outcome, run.entries[0].reason, v.touched, sentOf(v, "moves_submitting")], ["live", "skipped", "the drop is protected (kept: returns)", [], []]);
+  // A free-agent add is held back in live.
+  v = await visitAdd({ answer: worker({ ...LIVE, entries: [entry({ availability: "FA" })] }) });
+  run = sentOf(v, "moves_log")[0].run;
+  assert.deepEqual([run.outcome, run.entries[0].reason, v.touched], ["skipped", "a free-agent add: this build places waiver claims only", []]);
+  // The worker refuses to put the submit on record: nothing is touched.
+  v = await visitAdd({ answer: worker(LIVE, {}, { kept: false }) });
+  run = sentOf(v, "moves_log")[0].run;
+  assert.deepEqual([run.outcome, run.entries[0].reason, v.touched], ["skipped", "the submit could not be put on record", []]);
+  // A plain visit to the add page of a live league submits nothing.
+  v = await visitAdd({ hash: "", answer: worker(LIVE) });
+  assert.deepEqual([ops(v), v.touched], [["moves_landed"], []]);
+});
+
+test("a submit on record is never made again: a stale one is logged first with its answer not read", async () => {
+  const line = { id: entry().id, add: ADD, drop: 2005, bid: 3, outcome: "would_claim", reason: null, page: entry().page, controls: { would_fill: { dpid: 2005 } }, message: null };
+  const fresh = { day: DAY, trigger: "routine", line, league: LEAGUE, tab: 9, at: Date.now() };
+  let v = await visitAdd({ answer: worker(LIVE, {}, { records: [fresh] }) });
+  assert.deepEqual([ops(v), v.touched], [PASS, []]);
+  assert.equal(v.strip.textContent, "pickandroll moves: live · a submit of this claim awaits Yahoo's answer: nothing done");
+  const stale = { ...fresh, at: Date.now() - X.LANDING_MS - 1000 };
+  v = await visitAdd({ answer: worker(LIVE, {}, { records: [stale] }) });
+  const [first] = sentOf(v, "moves_log");
+  assert.deepEqual(ops(v).slice(0, 4), ["moves_landed", "settings", "moves_submits", "moves_log"]);
+  assert.deepEqual([first.run.mode, first.run.outcome, first.run.entries[0].outcome], ["live", "claimed", "claimed"]);
+  assert.match(first.run.entries[0].reason, /^submitted \d\d:\d\d; Yahoo's answer was not read: check the pending claims$/);
+  assert.deepEqual(v.touched, []);
+});
+
+/** The page Yahoo lands on after a submit: any page of the league, here the claim form's own
+ * address. ``notes`` and ``errors`` are its messages, ``form`` whether the claim form is back. */
+function landedDom({ notes = [], errors = [], form = false, heading = "Team page" } = {}) {
+  const text = (t) => el({ textContent: t });
+  return {
+    querySelector: (sel) => (sel === `form#${X.FORM_ID}` && form ? el() : null),
+    querySelectorAll: (sel) =>
+      sel === "h1, h2, h3"
+        ? [text("Yahoo Sports Fantasy Basketball"), text(heading)]
+        : sel.startsWith(".error")
+          ? errors.map(text)
+          : sel.startsWith(".Alert")
+            ? [...notes, ...errors].map(text)
+            : [],
+    getElementById: () => null,
+    body: text([...notes, ...errors].join(" ")),
+  };
+}
+
+test("the page Yahoo lands on logs the claim's live pass: placed, refused, or its answer not read", async () => {
+  const line = X.moveCheck(entry(), { outcome: "would_claim", reason: null }, X.readAddPage(rawPage(), CLEARS), due(LIVE), READ_AT);
+  const landing = { day: DAY, trigger: "routine_late", line, league: LEAGUE, tab: 9, at: Date.now() };
+  const landedAt = (dom) => visitAdd({ answer: worker(LIVE, {}, { landing }), dom, url: `${SITE}/nba/${LEAGUE}/${TEAM}/addplayer` });
+  let v = await landedAt(landedDom({ notes: ["Your waiver claim has been submitted."] }));
+  assert.deepEqual(ops(v), ["moves_landed", "moves_log"]);
+  let run = sentOf(v, "moves_log")[0].run;
+  assert.deepEqual([run.day, run.mode, run.trigger, run.outcome], [DAY, "live", "routine_late", "claimed"]);
+  assert.deepEqual([run.entries[0].message, run.entries[0].controls.landed], ["Your waiver claim has been submitted.", { path: `/nba/${LEAGUE}/${TEAM}/addplayer`, heading: "Team page" }]);
+  assert.match(v.strip.textContent, /^pickandroll moves: live · claimed for \$3, dropping 2005: Yahoo: Your waiver claim has been submitted\.; logged \d\d:\d\d$/);
+  v = await landedAt(landedDom({ form: true, errors: ["You have reached the maximum number of adds."] }));
+  run = sentOf(v, "moves_log")[0].run;
+  assert.deepEqual([run.outcome, run.entries[0].reason], ["failed", "You have reached the maximum number of adds."]);
+  v = await landedAt(landedDom({ heading: "Confirm Transaction" }));
+  run = sentOf(v, "moves_log")[0].run;
+  assert.deepEqual([run.outcome, run.entries[0].outcome], ["claimed", "claimed"]);
+  assert.match(run.entries[0].reason, /Yahoo's answer was not read/);
+  // No claim awaiting its answer in this tab: the page logs nothing.
+  v = await visitAdd({ answer: worker(LIVE), dom: landedDom(), url: `${SITE}/nba/${LEAGUE}/${TEAM}/addplayer` });
+  assert.deepEqual(ops(v), ["moves_landed"]);
+});
+
+// ---------------------------------------------------------------- the worker's record of a submit
+/** worker.js with its storage in memory, a fetch answering ``reply(f)`` with [status, data], and
+ * messages sent from tab ``tab``. */
+function loadWorker(reply) {
+  const listeners = [];
+  const fetches = [];
+  const local = new Map([["api", "http://api.test"]]);
+  const session = new Map();
+  const area = (m) => ({
+    get: async (keys) => {
+      const want = keys == null ? [...m.keys()] : Array.isArray(keys) ? keys : [keys];
+      return Object.fromEntries(want.filter((k) => m.has(k)).map((k) => [k, structuredClone(m.get(k))]));
+    },
+    set: async (obj) => {
+      for (const [k, v] of Object.entries(obj)) m.set(k, structuredClone(v));
+    },
+    remove: async (keys) => {
+      for (const k of Array.isArray(keys) ? keys : [keys]) m.delete(k);
+    },
+  });
+  const evt = (list) => ({ addListener: (fn) => list.push(fn) });
+  const chrome = {
+    runtime: { onMessage: evt(listeners), onConnect: evt([]), onInstalled: evt([]), onStartup: evt([]) },
+    storage: { local: area(local), session: area(session) },
+    sidePanel: { setPanelBehavior: async () => {} },
+  };
+  async function fetch(url, { method, body } = {}) {
+    const f = { url, method, body: body ? JSON.parse(body) : null };
+    fetches.push(f);
+    const [status, data] = reply(f);
+    return { ok: status < 400, status, text: async () => JSON.stringify(data) };
+  }
+  const ctx = vm.createContext({ chrome, fetch, AbortController, setTimeout, clearTimeout, console, URL });
+  ctx.self = ctx;
+  ctx.importScripts = (...files) => {
+    for (const f of files) vm.runInContext(fs.readFileSync(path.join(DIR, f), "utf8"), ctx);
+  };
+  vm.runInContext(fs.readFileSync(path.join(DIR, "worker.js"), "utf8"), ctx);
+  const send = (msg, tab = 7) =>
+    new Promise((resolve) => {
+      const done = (r) => resolve(JSON.parse(JSON.stringify(r)));
+      for (const fn of listeners) if (fn(msg, { tab: { id: tab } }, done) === true) return;
+      resolve(undefined);
+    });
+  return { send, fetches, local };
+}
+
+test("the worker keeps a submit on record until the API has its live pass, and never takes it twice", async () => {
+  let status = 409;
+  const w = loadWorker(() => [status, status < 400 ? { at: "x" } : { detail: "STOP is on: a pass can only say it stopped" }]);
+  const line = { id: entry().id, add: ADD, drop: 2005, bid: 3, outcome: "would_claim" };
+  const record = { day: DAY, trigger: "routine", line };
+  assert.deepEqual(await w.send({ op: "moves_submitting", league: LEAGUE, record }), { ok: true, data: { kept: true } });
+  const kept = w.local.get(`moves_submit:${entry().id}`);
+  assert.deepEqual([kept.league, kept.tab, kept.day, kept.line.id], [LEAGUE, 7, DAY, entry().id]);
+  // A second submit of the entry is refused, whatever the tab.
+  const again = await w.send({ op: "moves_submitting", league: LEAGUE, record }, 8);
+  assert.deepEqual([again.ok, again.error], [false, "this claim was submitted already"]);
+  // The landed page in the same tab finds it; another tab or league does not.
+  assert.equal((await w.send({ op: "moves_landed", league: LEAGUE })).data.line.id, entry().id);
+  assert.equal((await w.send({ op: "moves_landed", league: LEAGUE }, 8)).data, null);
+  assert.equal((await w.send({ op: "moves_landed", league: "100009" })).data, null);
+  assert.equal((await w.send({ op: "moves_submits", league: LEAGUE })).data.length, 1);
+  // Past the landing window it is no longer this page's, but stays on record for the next pass.
+  w.local.set(`moves_submit:${entry().id}`, { ...kept, at: Date.now() - X.LANDING_MS - 1 });
+  assert.equal((await w.send({ op: "moves_landed", league: LEAGUE })).data, null);
+  assert.equal((await w.send({ op: "moves_submits", league: LEAGUE })).data.length, 1);
+  // The API refusing the pass keeps the record; taking it drops it. A dry run drops nothing.
+  const run = { day: DAY, mode: "live", trigger: "routine", outcome: "claimed", entries: [{ ...line, outcome: "claimed" }] };
+  assert.equal((await w.send({ op: "moves_log", league: LEAGUE, run })).ok, false);
+  assert.ok(w.local.has(`moves_submit:${entry().id}`));
+  status = 200;
+  assert.equal((await w.send({ op: "moves_log", league: LEAGUE, run: { ...run, mode: "dry_run", outcome: "would_claim" } })).ok, true);
+  assert.ok(w.local.has(`moves_submit:${entry().id}`));
+  assert.equal((await w.send({ op: "moves_log", league: LEAGUE, run })).ok, true);
+  assert.equal(w.local.has(`moves_submit:${entry().id}`), false);
+  assert.deepEqual((await w.send({ op: "moves_submits", league: LEAGUE })).data, []);
+});
+
+test("claims in flight count as placed: against the cap, as pending and against their week's adds", () => {
+  const flying = (id, add, over = {}) => ({ day: DAY, trigger: "routine", league: LEAGUE, tab: 9, at: Date.now(), line: { id, add, drop: 2007, controls: { waiver_date: CLEARS } }, ...over });
+  const d = due({ ...LIVE, cap: 1 });
+  assert.equal(X.withInflight(d, []), d);
+  const got = X.withInflight(d, [flying("a", 3009), flying("old", 3010, { day: "2026-10-23" })]);
+  assert.equal(got.done, 1);
+  assert.deepEqual(got.pending, [{ id: "a", add: 3009, drop: 2007, from: CLEARS }]);
+  assert.deepEqual(got.adds_left, [{ start: "2026-10-20", end: "2026-10-26", adds: 3 }]);
+  assert.equal(X.entryProblem(entry(), got), "over the day's cap");
+  assert.equal(X.entryProblem(entry(), X.withInflight(due(LIVE), [flying("b", ADD)])), "a claim on the add is pending");
+  // A claim the API already counts is not counted twice.
+  const counted = due({ ...LIVE, done: 1, pending: [{ id: "a", add: 3009, drop: 2007, from: CLEARS }] });
+  assert.equal(X.withInflight(counted, [flying("a", 3009)]), counted);
+});
+
+test("the worker puts submits on record one at a time, never past the cap or twice on one add", async () => {
+  const w = loadWorker(() => [200, { at: "x" }]);
+  const record = (id, add) => ({ day: DAY, trigger: "routine", line: { id, add, drop: 2005, outcome: "would_claim" }, cap: 1, done: 0 });
+  const [one, two] = await Promise.all([
+    w.send({ op: "moves_submitting", league: LEAGUE, record: record("e1", 3001) }, 7),
+    w.send({ op: "moves_submitting", league: LEAGUE, record: record("e2", 3002) }, 8),
+  ]);
+  assert.deepEqual([one.ok, two.ok, two.error], [true, false, "over the day's cap with claims in flight"]);
+  const more = (r) => ({ ...r, cap: 3 });
+  const same = await w.send({ op: "moves_submitting", league: LEAGUE, record: more(record("e3", 3001)) }, 8);
+  assert.deepEqual([same.ok, same.error], [false, "a claim on this add is in flight"]);
+  assert.equal((await w.send({ op: "moves_submitting", league: LEAGUE, record: more(record("e4", 3004)) }, 8)).ok, true);
+  // Another league's or another day's claims are not this one's.
+  assert.equal((await w.send({ op: "moves_submitting", league: "100009", record: record("e5", 3001) }, 8)).ok, true);
+  assert.equal((await w.send({ op: "moves_submitting", league: LEAGUE, record: { ...record("e6", 3006), day: "2026-10-25" } }, 8)).ok, true);
 });

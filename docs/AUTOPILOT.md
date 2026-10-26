@@ -168,7 +168,9 @@ page, from PR 2:
   of the day's entries took their place, the adds left as read less every claim since, and the
   budget; none when the mode is off, STOP is on or the day is not today. Each entry's `page` is
   its add page, `/nba/<league>/addplayer?apid=<add>` (Yahoo's own add link, a GET that adds
-  nothing; no team in it).
+  nothing; no team in it). Every answer carries `live: {ok, reason, dry_run_days, checked_days,
+  needs}`, the live guard now (PR 3): a pass places its claims only where the mode is `live` and
+  `live.ok`. The extension fetches `due` afresh on each page and never keeps it.
 - **The page check (PR 2, extension 0.7.0).** The routine opens the due pages: each due entry's
   `page` with `#pickandroll-moves` in a tab of its own (`#pickandroll-moves-late` for the late
   pass, trigger `routine_late`). The side panel's **Check moves now** lists the due entries as
@@ -199,24 +201,60 @@ page, from PR 2:
   would fill (`{action, apid, dpid, faab, submit}`), the form's other field names (the
   anti-forgery field's left out), `token` (whether the form has that field), the heading, the
   waiver date, the budget, the bid range, the adds left, my roster's can't-cut ids, the add's
-  row icons and when the page was read: ids, dollars and dates only. The waiver-order table is never read. It toggles, sets and submits nothing. The
-  control names are the DOM read on #171 (2026-10-24); PR 3 submits this rendered form, so the
-  crumb travels only in the browser's own submission.
+  row icons and when the page was read: ids, dollars and dates only. The waiver-order table is never read. A dry run toggles, sets and submits nothing. The
+  control names are the DOM read on #171 (2026-10-24); the live claim below submits this
+  rendered form, so the crumb travels only in the browser's own submission.
+- **The live claim (PR 3, extension 0.8.0; ruled on #171 2026-10-26).** A pass is live only in a
+  league whose mode is `live` and whose `due.live.ok` holds; a live league whose guard refuses now
+  logs a dry run whose reason is "live refused: <reason>". In live, on a page opened with a moves
+  fragment only, an entry that passes every check above is placed:
+  1. The worker puts it on record first (`moves_submit:<entry>` in the extension's local storage,
+     kept across a restart); while it is there no pass submits that entry again. Claims on record
+     count as placed on the league's other pages (against the day's cap, as pending claims and
+     against their week's adds), and the worker takes one record at a time, refusing one past the
+     cap or on an add already in flight.
+  2. The page: a click on the entry's one `dpid` box (Yahoo draws the claim submit only once a drop
+     is picked), the claim submit waited for, the whole-dollar bid typed into `faab`, the form read
+     back (one box ticked and it is the drop, `apid` the add, the bid as typed, the submit
+     `submit_drop_player`), the submit clicked once. Nothing else on the page is touched. A form
+     that does not take the claim is a skip and nothing is clicked.
+  3. The page Yahoo lands on, any page of the league in the same tab within two minutes, logs the
+     live pass: Yahoo's words that the claim went in, or the add shown with "pending", are
+     `claimed` with Yahoo's message; an error, or the claim form back with a message, is `failed`
+     with it. Anything else, a confirm step included, is `claimed` with "submitted HH:MM; Yahoo's
+     answer was not read: check the pending claims", so a claim that may be placed counts against
+     the cap and the adds and is never submitted again; the extension never clicks twice. The
+     entry's line carries the fields filled and the landed page's path and heading.
+  4. A submit whose answer was never read (the tab closed, a page the reader missed) is logged the
+     same way by the next pass in the league, before anything else. The record is dropped only
+     once the API has the pass.
+
+  Held back in live: free-agent adds (the "Add Player" page; a follow-up builds that form once the
+  dry run has logged one) and open-spot claims (#199). The side panel's links say "claim: …" where
+  opening one places the claim. Nothing in the build or its tests reaches Yahoo; the first live
+  claim is the user's own switch, after the Chrome reload to 0.8.0.
 - **The mode, the log and the live guard.** `armed.json`'s `moves` key and `moves_cap`, like the
   lineups'. A pass is `POST /seasons/{league}/autopilot/moves`, logged under `moves` beside
-  `lineup` in the league's day file. A live pass sets each entry's outcome on the queue
-  (`claimed`, `added`, `skipped`, `failed`, or `gone` when another team had the add first, never
-  retried that day); a dry run moves no queue outcome, so the day's entries stay due for the
-  late pass and the next day's dry run. Refused: a crumb (422); a dry run that claims, a live
-  pass outside live, an entry not in the day's queue, struck, already executed or naming another
-  move, and anything but a stopped pass under STOP or with the mode off (409). `live` waits for
-  dry-run passes on seven days, two of them checked: a pass that opened the add page and logged its controls for
-  at least one entry (a pass that found nothing due is a dry-run day, not a checked one). The
+  `lineup` in the league's day file. A live pass sets its placed, failed and gone outcomes on the
+  queue (`claimed`, `added`, `failed`, or `gone` when another team had the add first; none of
+  them is retried that day); a live skip and a dry run move no queue outcome, so those entries
+  stay due for the late pass (and, in a dry run, the next day's). Refused: a crumb (422); a dry
+  run that claims, a live pass outside live or under a guard that refuses now ("live refused:
+  …"), a live pass that says `would_claim`, an entry not in the day's queue, struck, already
+  executed, failed or gone that day, or naming another move, and anything but a stopped pass
+  under STOP or with the mode off (409). `live` waits for dry-run passes on seven days, two of
+  them checked: a pass that opened the add page and logged its controls for at least one entry (a
+  pass that found nothing due is a dry-run day, not a checked one). The seven and the two are
+  defaults: `data/autopilot/executor.json`'s `live_after: {dry_run_days, checked_days}`, read at
+  request time, sets either (a whole number of at least 0; the master sets it on the user's word,
+  and the dashboard's execute-time Set keeps it). The guard's reasons name the counts in force; the
+  lineup executor's keeps seven and two. The
   queue's payload and the Queue card read each entry's latest line of the day and the day's tally
   from this log (#200, above), as the digest does.
 - **The digest.** A Moves section: the latest queue's entries queued and struck, the last day's
   entries would-be-claimed (or claimed), skipped, failed and gone, then a line per league only for
-  a skip or a failure; under STOP the line says nothing runs.
+  a skip, a failure or a claim placed with a reason (its answer not read); under STOP the line
+  says nothing runs. The Queue screen's State column shows a placed claim's reason beside it.
 
 ## 3. The weekly loop
 
@@ -227,7 +265,7 @@ them.
 |---|---|---|
 | daily 05:00 | Basketball Monster exports, public refresh, breakout digest on #99 | yes (`breakout-digest-daily`) |
 | daily, after the refresh | the moves solve per league writes its decision-log entry (#125); the queue is built from the armed leagues' recommended sets; the lineup for today and tomorrow is set | phase 1, 2 |
-| daily 09:00 | the moves pass opens the due entries' add pages, less what the user struck (the day's execute time, 07:00 Central unless the user set another, has passed; the pass runs at 09:00 so a later setting still gets a morning pass); the late pass at 15:00 catches the rest | yes (`moves-morning-daily`, dry run until #171's live claim) |
+| daily 09:00 | the moves pass opens the due entries' add pages, less what the user struck (the day's execute time, 07:00 Central unless the user set another, has passed; the pass runs at 09:00 so a later setting still gets a morning pass); the late pass at 15:00 catches the rest | yes (`moves-morning-daily`; a league places its claims once the user switches it live, #171 PR 3) |
 | Monday 06:00 | the recorder writes last week (#97) | yes (`weekly-recorder-monday`) |
 | Monday, after the recorder | the scorecard (#126): last week and YTD, projected against actual, posted on #127 | phase 0 |
 | Monday, after the scorecard | the hill-climb step (section 6): the verdicts due and at most one change applied, the comment posted on #127 | yes (#152, `scripts/season.py monday`); the Monday routine runs it from 2026-10-26 |

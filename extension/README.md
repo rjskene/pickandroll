@@ -136,12 +136,13 @@ dry run: it reads the page's lineup form and logs what it would set, and it sets
 
 The live click, the form's submit, is a later build after the dry-run week (#170, PR 3).
 
-## The moves executor's dry run (0.7.0, #171)
+## The moves executor (0.7.0 dry run, 0.8.0 live claim, #171)
 
 On Yahoo's add page (`/nba/<id>/addplayer?apid=<player>`) the extension is also the moves executor's execute
-pass (docs/AUTOPILOT.md section 2). This build is its dry run: on the add page of a queued move that is due, it
-reads the rendered claim form and logs the claim it would place. It toggles no drop, sets no bid, submits
-nothing, fetches nothing from Yahoo and posts nothing about the add page but the pass.
+pass (docs/AUTOPILOT.md section 2). In a dry run, on the add page of a queued move that is due, it reads the
+rendered claim form and logs the claim it would place: it toggles no drop, sets no bid and submits nothing. It
+fetches nothing from Yahoo and posts nothing about the add page but the pass. In a league switched live whose
+guard holds, the same checks place the claim (below).
 
 1. The routine opens each due entry's add page itself, in a tab of its own, with the fragment
    `#pickandroll-moves` (or `#pickandroll-moves-late` for a late pass). The side panel's **Check moves now** lists
@@ -167,8 +168,33 @@ nothing, fetches nothing from Yahoo and posts nothing about the add page but the
    `dpid`, `faab` and the submit's name). The waiver-order table is never read. A dry run sets no outcome on the queue. The strip and the side panel show
    the pass. **Moves executor in this browser** off in the settings is this browser's brake.
 
-The live submit is a later build after the dry-run week (#171, PR 3): it submits the form on the rendered page,
-so the crumb travels only in the browser's own submission.
+### The live claim (0.8.0, #171 PR 3)
+
+`due` carries `live: {ok, reason}`, the live guard now. A pass runs live only when the league's mode is `live` and
+`live.ok`; a live league whose guard refuses runs a dry run whose reason says "live refused: …". In live, a claim
+that passes every check above is placed, on a page opened with a moves fragment only:
+
+1. It is put on record first (the worker's `moves_submit:<entry>` in `chrome.storage.local`, kept across a
+   restart): while it is there no pass submits that entry again, whatever the tab. Claims on record count as
+   placed in the league's other pages (the day's cap, the pending claims, their week's adds), and the worker
+   takes one record at a time, refusing one past the cap or on an add already in flight.
+2. It ticks the entry's one `dpid` box (a click: Yahoo draws the claim submit only once a drop is picked), waits
+   for the claim submit, types the whole-dollar bid into `faab`, reads the form back (one box ticked and it is the
+   drop, `apid` the add, the bid as typed, the submit `submit_drop_player`) and clicks the submit once. The form
+   posts as the page has it; the anti-forgery field travels in the browser's own submission and is never read.
+   Nothing else on the page is touched. A form that does not take the claim is logged skipped and nothing is
+   clicked.
+3. The page Yahoo lands on, any page of the league in the same tab within two minutes, is read: its words saying
+   the claim went in, or the add shown with "pending", log `claimed` with Yahoo's message; an error, or the claim
+   form back with a message, logs `failed` with it (never retried that day). Anything else, a confirm step
+   included, logs `claimed` with "Yahoo's answer was not read: check the pending claims", so it counts against the
+   cap and the adds and is never submitted again; the extension never clicks a second time.
+4. A submit whose answer was never read (the tab closed, a page the reader missed) is logged the same way by the
+   next pass in the league, before anything else. The record is dropped only once the API has the pass.
+
+Held back in live: free-agent adds (the "Add Player" page) and open-spot claims (#199). A live skip stays due,
+so the late pass reads the page again. The panel's links read "claim: …" in a live league whose guard holds:
+opening one places the claim. The first live claim is the user's own switch on the dashboard.
 
 ## What it reads and sends
 
@@ -181,14 +207,16 @@ so the crumb travels only in the browser's own submission.
   `localhost`/`127.0.0.1`, and only from the service worker; the Yahoo page itself never calls localhost.
 - **League pages (0.5.0):** the page as Chrome rendered it, less its scripts, styles, frames and form fields, with its URL
   and the time it was read, to the same API through the service worker. Only the league's own pages under
-  `/nba/<id>/` (above); never the draft client, and nothing on them is clicked.
+  `/nba/<id>/` (above); never the draft client, and nothing on them is clicked but the live claim below.
 - **Lineup executor (0.6.0):** on your team page, the lineup form's action, field names, players' slots and
   options, and the run's outcome, to the same API. The form's crumb is never read; no field is set and the form
   is never submitted.
-- **Moves executor (0.7.0):** on an add page opened from the routine's or the panel's link, the claim form's
+- **Moves executor (0.7.0, live 0.8.0):** on an add page opened from the routine's or the panel's link, the claim form's
   action and field names, what the page shows (the heading, the budget, the waiver date, the bid range, my
   roster's player ids and their icons) and the pass's outcome, to the same API. Nothing is fetched from Yahoo;
-  the form's crumb is never read (the log's `token` says only whether it is there); nothing is toggled, set or submitted.
+  the form's crumb is never read (the log's `token` says only whether it is there). In a dry run nothing is
+  toggled, set or submitted; a live claim ticks its one drop box, types its bid and clicks the claim submit, and
+  the page Yahoo lands on sends its path, heading and Yahoo's message about the claim.
 - **Never:** cookies, the `?auth=` part of the room URL, anything you type, or any page other than the draft
   client and the league pages above.
 

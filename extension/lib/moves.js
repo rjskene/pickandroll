@@ -4,9 +4,12 @@
 // and calls these.
 //
 // The routine opens each due entry's add page itself, with the fragment, in a tab of its own (the
-// ruling on #171): this build is the dry run there. It reads the page and logs the claim it would
-// place. Nothing here toggles a drop, types a bid or submits the form, nothing fetches a page,
-// and nothing reads the form's anti-forgery field: the log says only whether it is there.
+// ruling on #171). In a dry run, or a live league whose guard refuses now, it reads the page and
+// logs the claim it would place. In a live league whose guard holds (``due.live``, PR 3) and with
+// every check passed, ``fillClaim`` alone touches the page: it ticks the entry's one drop box,
+// types the bid and clicks the claim submit once; the page Yahoo lands on is read by
+// ``readLanded``. Nothing fetches a page, and nothing reads the form's anti-forgery field (it
+// travels in the browser's own submission): the log says only whether it is there.
 (function (root, factory) {
   const api = factory();
   if (typeof module === "object" && module.exports) module.exports = api;
@@ -29,6 +32,11 @@
   const DROP_FIELD = "dpid";
   const BID_FIELD = "faab";
   const SUBMIT = "submit_drop_player";
+  /** The claim submit Yahoo draws once a drop is picked (in a noscript until then). */
+  const SUBMIT_BUTTON = "#submit-add-drop-button";
+  /** How long a submit waits for its landed page in the same tab before the next pass in the
+   * league logs it with its answer not read. */
+  const LANDING_MS = 2 * 60 * 1000;
   /** Yahoo's anti-forgery field, by its name. The page side never reads its value and never
    * passes its name on: a pass logs only ``token``, whether the form has it (the ruling on #171). */
   const TOKEN_FIELD = "crumb";
@@ -251,11 +259,21 @@
     };
   }
 
+  /** The mode a pass runs in (#171 PR 3): ``live`` only in a live league whose guard holds now
+   * (``due.live``); a live league with the guard refusing runs a dry run that says why. */
+  function passMode(due) {
+    if (due.mode !== "live") return { mode: "dry_run", refused: null };
+    if (due.live && due.live.ok) return { mode: "live", refused: null };
+    return { mode: "dry_run", refused: `live refused: ${(due.live && due.live.reason) || "the guard did not answer"}` };
+  }
+
   /** The pass the log takes (the API's ``MovesRun``): this page's one entry, as ``checks``.
-   * ``due`` is the due route's answer. This build always logs a dry run: it claims nothing,
-   * whatever the league's mode. */
+   * ``due`` is the due route's answer and sets the mode (``passMode``). A live pass from the add
+   * page logs only a skip: a claim that passed is submitted, and its pass is the landed page's
+   * (``landedPass``). */
   function movesPass({ due, trigger, checks = [], extension = null }) {
-    const base = { day: due.date, mode: "dry_run", trigger, reason: null, entries: [], extension };
+    const { mode, refused } = passMode(due);
+    const base = { day: due.date, mode, trigger, reason: null, entries: [], extension };
     if (due.stop) return { ...base, outcome: "stopped", reason: "STOP is on (data/autopilot/STOP)" };
     const would = checks.filter((c) => c.outcome === "would_claim").length;
     const failed = checks.find((c) => c.outcome === "failed");
@@ -264,8 +282,113 @@
       ...base,
       entries: checks,
       outcome: would ? "would_claim" : failed ? "failed" : "skipped",
-      reason: would ? null : first ? first.reason : "every check failed",
+      reason: refused || (would ? null : first ? first.reason : "every check failed"),
     };
+  }
+
+  /** ``due`` with the claims this browser submitted and whose pass the API does not have yet (the
+   * worker's records, ``records``) counted as placed: against the day's cap, as pending claims and
+   * against their week's adds, so a second page of the league never claims past them (#171 PR 3). */
+  function withInflight(due, records) {
+    const known = new Set((due.pending || []).map((c) => c.id));
+    const mine = (records || []).filter((r) => r.line && r.day === due.date && !known.has(r.line.id));
+    if (!mine.length) return due;
+    const clears = (r) => (r.line.controls && r.line.controls.waiver_date) || null;
+    return {
+      ...due,
+      done: (due.done || 0) + mine.length,
+      pending: [...(due.pending || []), ...mine.map((r) => ({ id: r.line.id, add: r.line.add, drop: r.line.drop, from: clears(r) }))],
+      adds_left: (due.adds_left || []).map((w) => {
+        const n = mine.filter((r) => clears(r) && w.start <= clears(r) && clears(r) <= w.end).length;
+        return w.adds == null || !n ? w : { ...w, adds: Math.max(0, w.adds - n) };
+      }),
+    };
+  }
+
+  /** Why a claim that passed every check is still not submitted live, null when it may be: a
+   * free-agent add (this build places waiver claims only) or an open-spot claim (#199). */
+  function submitProblem(entry, page) {
+    if (entry.availability === "FA" || page.heading !== CLAIM_HEADING) return "a free-agent add: this build places waiver claims only";
+    if (entry.drop == null) return "an open-spot claim is not read yet";
+    return null;
+  }
+
+  /** The live claim on the rendered add page ``doc`` (#171 PR 3), every check passed: tick the
+   * entry's one drop box (a click: Yahoo draws the claim submit only once a drop is picked), wait
+   * for that submit, type the whole-dollar bid, read the form back and click the submit once.
+   * Answers null once clicked, else why nothing was submitted. Nothing else on the page is
+   * touched; the anti-forgery field travels in the browser's own submission and is never read.
+   * ``wait`` is the pause between looks for the submit (``tries`` of them). */
+  async function fillClaim(doc, entry, { wait = (ms) => new Promise((r) => setTimeout(r, ms)), tries = 25, every = 200 } = {}) {
+    const form = doc.querySelector(`form#${FORM_ID}`);
+    if (!form) return "the claim form is gone";
+    const named = (n) => [...form.elements].filter((el) => el.name === n);
+    const boxes = named(DROP_FIELD).filter((el) => String(el.type).toLowerCase() === "checkbox");
+    const mine = boxes.filter((el) => Number(el.value) === entry.drop);
+    if (mine.length !== 1) return `no single drop box for ${entry.drop}`;
+    if (boxes.some((el) => el.checked)) return "a drop box was ticked before the pass";
+    const [bid] = named(BID_FIELD);
+    if (!bid) return "the page has no bid field";
+    mine[0].click();
+    let button = doc.querySelector(SUBMIT_BUTTON);
+    for (let i = 0; i < tries && !button; i++) {
+      await wait(every);
+      button = doc.querySelector(SUBMIT_BUTTON);
+    }
+    if (!button) return "the claim submit did not appear once the drop was ticked";
+    const amount = String(entry.bid_placed ?? 0);
+    bid.value = amount;
+    bid.dispatchEvent(new Event("input", { bubbles: true }));
+    bid.dispatchEvent(new Event("change", { bubbles: true }));
+    const ticked = boxes.filter((el) => el.checked).map((el) => Number(el.value));
+    const add = named(ADD_FIELD);
+    const wrong = [];
+    if (ticked.length !== 1 || ticked[0] !== entry.drop) wrong.push(`the drops ticked are ${ticked.join(", ") || "none"}`);
+    if (add.length !== 1 || Number(add[0].value) !== entry.add) wrong.push("its apid is not the add");
+    if (bid.value !== amount) wrong.push(`its bid reads ${bid.value}`);
+    if (button.getAttribute("name") !== SUBMIT) wrong.push("its submit is not the claim's");
+    if (wrong.length) return `the form did not take the claim: ${wrong.join("; ")}`;
+    button.click();
+    return null;
+  }
+
+  /** Yahoo's words saying a claim went in. */
+  const PLACED = /\b(?:claim|transaction|request)\b[^.]{0,60}\b(?:submitted|placed|received|successful)|successfully (?:submitted|placed|added|processed)|pending (?:claim|waiver|transaction)/i;
+
+  /** What the page Yahoo lands on after a claim's submit says (#171 PR 3), from the content
+   * script's plain read ``{path, heading, form, notes, errors, pending}``: ``claimed`` when it
+   * says the claim went in or shows the add among pending claims, ``failed`` with Yahoo's words
+   * when an error stands on the page or the claim form came back with a message; null when the
+   * answer is not recognised (logged ``claimed``, its answer not read: the ruling on #171). */
+  function readLanded(raw) {
+    const said = [...(raw.notes || []), ...(raw.errors || []), raw.heading || ""].filter(Boolean);
+    const placed = said.find((x) => PLACED.test(x));
+    if (placed) return { outcome: "claimed", message: placed };
+    if ((raw.errors || []).length) return { outcome: "failed", message: raw.errors[0] };
+    if (raw.form && (raw.notes || []).length) return { outcome: "failed", message: raw.notes[0] };
+    if (raw.pending && !raw.form) return { outcome: "claimed", message: "the add shows among the pending claims" };
+    return null;
+  }
+
+  /** The reason a claim whose answer was not read carries: it may be placed, so it counts. */
+  function unreadReason(at) {
+    return `submitted ${clockOf(at)}; Yahoo's answer was not read: check the pending claims`;
+  }
+
+  /** The live pass for a submitted claim (``record``, kept by the worker from the add page's
+   * read) once its answer is known: ``landed`` is ``readLanded``'s answer, null when it was not
+   * recognised or never read; ``seen`` the landed page's path and heading. */
+  function landedPass(record, landed, seen = null, extension = null) {
+    const outcome = landed ? landed.outcome : "claimed";
+    const reason = !landed ? unreadReason(record.at) : outcome === "failed" ? landed.message : null;
+    const line = {
+      ...record.line,
+      outcome,
+      reason,
+      message: landed ? landed.message : null,
+      controls: { ...record.line.controls, landed: seen },
+    };
+    return { day: record.day, mode: "live", trigger: record.trigger, outcome, reason: outcome === "failed" ? reason : null, entries: [line], extension };
   }
 
   /** "05:02", a time on this machine's clock. */
@@ -274,7 +397,7 @@
     return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
   }
 
-  const MOVES_MODE_WORDS = { dry_run: "dry run", live: "live (this build logs only)", off: "off" };
+  const MOVES_MODE_WORDS = { dry_run: "dry run", live: "live", off: "off" };
 
   /** The strip's line on an add page: the brake, the league's mode and STOP, then the pass's
    * outcome at ``at``, or why this page had none. */
@@ -287,13 +410,20 @@
     const mode = MOVES_MODE_WORDS[due.mode] || due.mode;
     if (none) return `${mode} · this player is not due in the queue: nothing logged`;
     if (!run) return `${mode} · ${due.reason || "nothing due now"}`;
-    if (run.outcome === "would_claim") {
-      const e = run.entries[0];
-      return `${mode} · would claim for $${e.bid}, dropping ${e.drop}; logged ${clockOf(at)}`;
-    }
     const e = run.entries[0];
+    const refused = run.mode === "dry_run" && due.mode === "live" ? ` (${passMode(due).refused})` : "";
+    const head = run.mode === "live" ? "live" : `dry run${refused}`;
+    if (run.outcome === "would_claim") return `${head} · would claim for $${e.bid}, dropping ${e.drop}; logged ${clockOf(at)}`;
     const what = e && e.outcome === "gone" ? "gone" : run.outcome === "failed" ? "failed" : "skipped";
-    return `${mode} · ${what}: ${run.reason} (${clockOf(at)})`;
+    return `${head} · ${what}: ${(e && e.reason) || run.reason} (${clockOf(at)})`;
+  }
+
+  /** The strip's line on the page Yahoo landed on after a claim's submit: what was logged. */
+  function landedStripText(run, at = Date.now()) {
+    const e = run.entries[0];
+    if (e.outcome === "failed") return `live · claim failed: ${e.reason} (${clockOf(at)})`;
+    const said = e.reason || (e.message ? `Yahoo: ${e.message}` : "placed");
+    return `live · claimed for $${e.bid}, dropping ${e.drop}: ${said}; logged ${clockOf(at)}`;
   }
 
   const MOVES_OUTCOME_WORDS = {
@@ -315,13 +445,29 @@
   }
 
   /** The panel's links to the league's due entries' add pages, with the panel's fragment: the
-   * user opens each; nothing is opened for them. */
+   * user opens each; nothing is opened for them. In a live league whose guard holds, opening one
+   * places the claim, and the link says so. */
   function dueLinks(due, site = "https://basketball.fantasysports.yahoo.com") {
+    const live = passMode(due).mode === "live";
     return (due.entries || []).map((e) => ({
       id: e.id,
       href: `${site}${e.page}#${PANEL_FRAGMENT}`,
-      text: `add ${e.add}, drop ${e.drop ?? "none"}, $${e.bid_placed ?? 0}`,
+      text: `${live ? "claim: " : ""}add ${e.add}, drop ${e.drop ?? "none"}, $${e.bid_placed ?? 0}`,
     }));
+  }
+
+  /** The league of a Yahoo league page (``/nba/<league>/…``), null elsewhere: any of them may be
+   * the page a claim's submit lands on. */
+  function leagueOfPage(url) {
+    let u;
+    try {
+      u = new URL(url);
+    } catch (_) {
+      return null;
+    }
+    if (u.hostname !== "basketball.fantasysports.yahoo.com") return null;
+    const m = /^\/nba\/(\d+)(?:\/|$)/.exec(u.pathname);
+    return m ? m[1] : null;
   }
 
   return {
@@ -329,6 +475,8 @@
     FORM_ID,
     CLAIM_HEADING,
     SUBMIT,
+    SUBMIT_BUTTON,
+    LANDING_MS,
     TOKEN_FIELD,
     TOKEN,
     MARKERS,
@@ -341,8 +489,17 @@
     pageCheck,
     wouldFill,
     moveCheck,
+    passMode,
     movesPass,
+    withInflight,
+    submitProblem,
+    fillClaim,
+    readLanded,
+    unreadReason,
+    landedPass,
+    leagueOfPage,
     movesStripText,
+    landedStripText,
     movesLastText,
     dueLinks,
   };
