@@ -195,7 +195,7 @@ them.
 |---|---|---|
 | daily 05:00 | Basketball Monster exports, public refresh, breakout digest on #99 | yes (`breakout-digest-daily`) |
 | daily, after the refresh | the moves solve per league writes its decision-log entry (#125); the queue is built from the armed leagues' recommended sets; the lineup for today and tomorrow is set | phase 1, 2 |
-| daily, an hour later | the queue is executed, less what the user struck | phase 2 |
+| daily 07:45 | the moves pass opens the due entries' add pages, less what the user struck (the day's execute time, 07:00 Central unless the user set another, has passed); the late pass at 15:00 catches the rest | yes (`moves-morning-daily`, dry run until #171's live claim) |
 | Monday 06:00 | the recorder writes last week (#97) | yes (`weekly-recorder-monday`) |
 | Monday, after the recorder | the scorecard (#126): last week and YTD, projected against actual, posted on #127 | phase 0 |
 | Monday, after the scorecard | the hill-climb step (section 6): the verdicts due and at most one change applied, the comment posted on #127 | yes (#152, `scripts/season.py monday`); the Monday routine runs it from 2026-10-26 |
