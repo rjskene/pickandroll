@@ -188,7 +188,7 @@ page, from PR 2:
 
 ## 3. The weekly loop
 
-Times are the Mac's clock (Pacific). The routines are the master's to edit; sessions never edit
+Times are the Mac's clock, in whatever zone it is set to (Central at the time of writing); the queue's execute time is the exception, on the Pacific clock. The routines are the master's to edit; sessions never edit
 them.
 
 | when | what | exists |
