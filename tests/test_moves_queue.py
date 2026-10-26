@@ -751,8 +751,10 @@ def test_the_live_guard_reads_its_counts_from_the_settings_file_at_request_time(
         assert client.get(url).json()["live"]["needs"] == seven
     settings_file(client, "not json")
     assert client.get(url).json()["live"]["needs"] == seven
-    # The reason names the counts in force; the lineup executor's guard keeps its own.
-    settings_file(client, {"live_after": {"dry_run_days": 1, "checked_days": 1}})
+    # The reason names the counts in force; the lineup executor's guard keeps its own. Who set
+    # the knob and when sit beside the counts.
+    who = {"set_at": "2026-10-26T16:01:27+00:00", "by": "master on the user's word"}
+    settings_file(client, {"live_after": {"dry_run_days": 1, "checked_days": 1, **who}})
     run = {"day": "2026-10-01", "mode": "dry_run", "outcome": "nothing_due", "entries": []}
     ap.append_run(client.data_dir, LEAGUE, run, date(2026, 10, 1), ap.MOVES)
     live = client.get(url).json()["live"]
