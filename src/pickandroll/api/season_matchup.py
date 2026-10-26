@@ -85,7 +85,9 @@ def payload(built: Built, season: Season) -> dict[str, Any] | None:
     ft = wk.finals(full_theirs, theirs_so_far, cats)
     odds = wk.odds_of(fm, ft, cats)
     expected, win = wk.expected_won(odds), wk.matchup_won(odds)
-    first = span.days[0]
+    # None on the week's last day read once its games began (#209): no day left, no player
+    # started, so nobody is taken out.
+    first = span.days[0] if span.days else None
 
     def row(key: int, slot: str, week: wk.TeamWeek, without: Sequence[wk.CategoryOdds] | None):
         pw = week.players.get(key, wk.PlayerWeek(0, 0))
@@ -139,7 +141,7 @@ def payload(built: Built, season: Season) -> dict[str, Any] | None:
         "week": matchup.week,
         "start": week.start.isoformat() if week else None,
         "end": week.end.isoformat() if week else None,
-        "from": first.isoformat(),
+        "from": first.isoformat() if first else None,
         "days": len(span.days),
         "teams": [mine, other],
         # A team whose page was never read projects as an empty roster.
