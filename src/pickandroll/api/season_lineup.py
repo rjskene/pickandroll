@@ -155,12 +155,15 @@ def payload(
         past = wk.game_days(player.nba_team, [d for d in w.days() if d < first], p.schedule)
         playing[k] = [*past, *playing.get(k, [])]
     active = list(p.roster)
+    # The recommendation is the active roster's alone: a day page's player held now, or gone,
+    # plays in the compare and never in the lineup (#196).
+    starting = {k: playing.get(k, []) for k, _ in active}
     weekly = s.lineup_changes == "weekly"
     if weekly:
-        fixed = lu.weekly_lineup(active, playing, ahead, p.slots, p.value)
+        fixed = lu.weekly_lineup(active, starting, ahead, p.slots, p.value)
         recs: Mapping[date, Mapping[int, str]] = {d: fixed for d in ahead}
     else:
-        recs = wk.daily_starters(active, playing, ahead, p.slots, p.value)
+        recs = wk.daily_starters(active, starting, ahead, p.slots, p.value)
 
     days = []
     mentioned: set[int] = {k for k, _ in p.roster} | {k for k, _ in p.held}
