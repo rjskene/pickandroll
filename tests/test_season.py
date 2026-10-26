@@ -1529,6 +1529,19 @@ def test_the_best_move_comes_from_the_solved_moves_and_never_solves_them(client)
     names |= {s["player"]["yahoo_id"]: s["player"]["name"] for s in v["roster"]}
     assert b["move"]["add_name"] == names[best["add"]]
     assert b["move"]["drop_name"] == names.get(best["drop"])
+    # The row's panel (#191): the whole set in its order, each gain on the horizon, its basis
+    # and held move as the payload has them, the room, and a name for every player named.
+    assert [(x["add"], x["drop"], x["from"], x["held"]) for x in b["set"]] == [
+        (x["add"], x["drop"], x["from"], x["held"]) for x in rec["moves"]
+    ]
+    assert [x["gain"] for x in b["set"]] == [x["marginal"]["three"] for x in rec["moves"]]
+    assert [x["basis"] for x in b["set"]] == [
+        "drop" if x["drop"] is not None else "held" if x["held"] else "open" for x in rec["moves"]
+    ]
+    assert b["room"] == m["room"]
+    ids = {x["add"] for x in b["set"]} | {x["drop"] for x in b["set"] if x["drop"] is not None}
+    ids |= {x["held"]["player"] for x in b["set"] if x["held"]} | set(m["room"]["eligible"])
+    assert b["names"] == {str(k): names[k] for k in ids}
     # Solved, the look answers the same; another system is still cold.
     assert client.get(f"/seasons/{LEAGUE}/best", params=yahoo).json() == b
     assert client.get(f"/seasons/{LEAGUE}/best").json()["status"] == "not_solved"
@@ -1718,6 +1731,8 @@ def test_a_solved_set_without_a_move_says_so():
     b = season_moves.best_payload(built, payload)
     # The last week has no three weeks after it: the rest of this week answers.
     assert (b["horizon"], b["move"], b["moves"], b["gain"]) == ("week", None, 0, 0.0)
+    # An empty set, and a payload without the room (#191): the panel lists nothing.
+    assert (b["set"], b["room"], b["names"]) == ([], None, {})
 
 
 def test_a_cache_peek_makes_nothing():
