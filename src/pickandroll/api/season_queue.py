@@ -19,14 +19,16 @@ time, and the reads a build makes of each league; the entries themselves are
 ``GET /seasons/{league}/autopilot/moves``, ``…/moves/due``, ``POST …/moves``
     The league's Queue card (the mode, the live check, the passes, its entries); the entries due
     now for the extension's execute pass, with the players protected and why, the day's cap, the
-    adds left as read and the budget; a pass appended to the league's log under ``moves``
-    (``season_autopilot``), its outcomes set on the queue's entries.
+    adds left as read, the budget and whether a pass may place its claims (``live``); a pass
+    appended to the league's log under ``moves`` (``season_autopilot``), a live pass's placed,
+    failed and gone outcomes set on the queue's entries.
 ``PUT /leagues/{league}/moves``
     The moves executor's mode and the user's own cap on the day's moves.
 
 ``data/autopilot/queue/<date>.json`` holds a day's queue, ``data/autopilot/executor.json`` the
-execute time; each is written whole to a temporary file and moved into place, and a file that
-does not read is refused, never overwritten. Nothing else writes under either.
+execute time and the live guard's counts (``live_after``, set by hand on the user's word); each
+is written whole to a temporary file and moved into place, and a file that does not read is
+refused, never overwritten. Nothing else writes under either.
 """
 
 from __future__ import annotations
@@ -50,6 +52,8 @@ from .season_week import NBA_TZ
 
 QUEUE_DIR = "queue"
 SETTINGS = "executor.json"
+#: The live guard's counts the settings file may set (``live_after``).
+LIVE_AFTER = ("dry_run_days", "checked_days")
 EXECUTE_TIME = re.compile(r"^([01][0-9]|2[0-3]):[0-5][0-9]$")
 #: The waiver days when a league's settings do not say: the public leagues' (read 2026-10-23).
 WAIVER_DAYS = 2
@@ -158,8 +162,27 @@ def settings(data_dir: Path) -> dict[str, Any]:
     return {"execute_time": value, "at": body.get("at"), "by": body.get("by"), "set": True}
 
 
+def live_after(data_dir: Path) -> dict[str, int]:
+    """The moves executor's live-guard counts set in the settings file (``live_after``, #171 PR 3):
+    ``dry_run_days`` and ``checked_days``, each a whole number of at least 0. A count missing or
+    not such a number is left out, so the guard keeps its default; a file that does not read sets
+    none. Read at request time: a change needs no restart."""
+    try:
+        body = _read(autopilot_dir(data_dir) / SETTINGS, dict) or {}
+    except QueueError:
+        body = {}
+    raw = body.get("live_after")
+    if not isinstance(raw, dict):
+        return {}
+    return {
+        k: v
+        for k in LIVE_AFTER
+        if isinstance(v := raw.get(k), int) and not isinstance(v, bool) and v >= 0
+    }
+
+
 def set_execute_time(data_dir: Path, value: str, by: str) -> dict[str, Any]:
-    """Record the execute time, the dashboard's own click."""
+    """Record the execute time, the dashboard's own click; the file's other keys are kept."""
     if not EXECUTE_TIME.match(value):
         raise QueueError(f"an execute time is HH:MM, not {value!r}")
     with _lock:

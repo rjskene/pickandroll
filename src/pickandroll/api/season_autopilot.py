@@ -16,8 +16,9 @@ league's own team page; nothing here clicks or submits anything.
 
 The moves executor (#171) logs its execute passes in the same file under ``moves``
 (:class:`MovesRun`, :func:`append_run` by key), and has its own live check
-(:func:`moves_live_check`) and digest line (:func:`moves_digest_lines`); its queue is
-``season_queue``'s. The queue's payload and the Queue card read each entry's latest line of the
+(:func:`moves_live_check`, its counts the code's defaults unless the settings file's
+``live_after`` sets them, read at request time: #171 PR 3) and digest line
+(:func:`moves_digest_lines`); its queue is ``season_queue``'s. The queue's payload and the Queue card read each entry's latest line of the
 queue's day and the day's tally from it (:func:`latest_passes`, :func:`pass_tally`, #200).
 
 ``data/autopilot/STOP`` stops every executor: the steps answer ``stop: true`` with none, and the
@@ -45,6 +46,7 @@ from ..season import weekly as wk
 from ..sources.yahoo import public
 from . import leagues
 from .season_knobs import autopilot_dir
+from .season_queue import live_after
 
 STOP = "STOP"
 #: The executors' log under the league folder: one file per NBA date.
@@ -57,7 +59,8 @@ TRIGGERS = ("routine", "routine_late", "panel")
 RUN_OUTCOMES = ("would_set", "nothing_to_do", "skipped", "set", "failed", "stopped")
 STEP_OUTCOMES = ("would_set", "skipped", "set", "failed")
 #: The dry run ``live`` waits for (the 2026-10-23 ruling on #170): dry-run lineup runs on this many
-#: distinct days, and on this many of them a run whose steps all passed every check.
+#: distinct days, and on this many of them a run whose steps all passed every check. The moves
+#: executor's are the defaults of ``data/autopilot/executor.json``'s ``live_after`` (#171 PR 3).
 DRY_RUN_DAYS = 7
 CHECKED_DAYS = 2
 #: The digest counts the runs of the last day.
@@ -351,28 +354,39 @@ def live_check(data_dir: Path, league: str, mode: Mapping[str, Any]) -> dict[str
     dry = [(d, r) for d, r in lineup_runs(data_dir, league) if r.get("mode") == "dry_run"]
     days = {d for d, _ in dry}
     checked = {d for d, r in dry if checks_passed(r)}
-    return _gate(data_dir, mode, days, checked, "with steps that passed every check")
+    needs = {"dry_run_days": DRY_RUN_DAYS, "checked_days": CHECKED_DAYS}
+    return _gate(data_dir, mode, days, checked, "with steps that passed every check", needs)
 
 
 def _gate(
-    data_dir: Path, mode: Mapping[str, Any], days: set[date], checked: set[date], what: str
+    data_dir: Path,
+    mode: Mapping[str, Any],
+    days: set[date],
+    checked: set[date],
+    what: str,
+    needs: Mapping[str, int],
 ) -> dict[str, Any]:
     reason = None
     if mode.get("private"):
         reason = "the private league is never touched"
     elif stopped(data_dir):
         reason = "STOP is on (data/autopilot/STOP)"
-    elif len(days) < DRY_RUN_DAYS:
-        reason = f"a dry run on {DRY_RUN_DAYS} days first: {len(days)} so far"
-    elif len(checked) < CHECKED_DAYS:
-        reason = f"{CHECKED_DAYS} dry-run days {what} first: {len(checked)} so far"
+    elif len(days) < needs["dry_run_days"]:
+        reason = f"a dry run on {_days(needs['dry_run_days'])} first: {len(days)} so far"
+    elif len(checked) < needs["checked_days"]:
+        n = needs["checked_days"]
+        reason = f"{n} dry-run {'day' if n == 1 else 'days'} {what} first: {len(checked)} so far"
     return {
         "ok": reason is None,
         "reason": reason,
         "dry_run_days": len(days),
         "checked_days": len(checked),
-        "needs": {"dry_run_days": DRY_RUN_DAYS, "checked_days": CHECKED_DAYS},
+        "needs": dict(needs),
     }
+
+
+def _days(n: int) -> str:
+    return f"{n} day" if n == 1 else f"{n} days"
 
 
 def check_run(run: LineupRun, mode: Mapping[str, Any], stop: bool) -> str | None:
@@ -407,6 +421,9 @@ def view(data_dir: Path, league: str, mode: Mapping[str, Any], today: date) -> d
 
 # --------------------------------------------------------------------------- the moves executor
 MOVE_OUTCOMES = ("would_claim", "claimed", "added", "skipped", "failed", "gone")
+#: A live pass's outcomes that go on the queue's entry and take it out of the day's due ones: a
+#: live skip stays due, so the late pass reads the page again (#171 PR 3).
+STICKS = ("claimed", "added", "failed", "gone")
 MOVES_RUN_OUTCOMES = ("would_claim", "nothing_due", "skipped", "claimed", "failed", "stopped")
 
 
@@ -444,11 +461,16 @@ class MovesRun(BaseModel):
 
 
 def check_moves_run(
-    run: MovesRun, mode: Mapping[str, Any], stop: bool, queue: Mapping[str, Mapping[str, Any]]
+    run: MovesRun,
+    mode: Mapping[str, Any],
+    stop: bool,
+    queue: Mapping[str, Mapping[str, Any]],
+    live: Mapping[str, Any] | None = None,
 ) -> str | None:
     """Why the log refuses an execute pass, None when it takes it. ``queue`` is the day's
     entries of the league by id: a pass reports only on those, and never executes one struck or
-    not queued."""
+    not queued. ``live`` is :func:`moves_live_check`'s answer now: a live pass needs it to hold,
+    and places a claim or says why not, never that it would (#171 PR 3)."""
     if mode.get("private"):
         return "the private league is never touched"
     if stop and run.outcome != "stopped":
@@ -457,6 +479,12 @@ def check_moves_run(
         return "the moves executor is off in this league"
     if run.mode == "live" and mode["mode"] != "live":
         return "a live pass in a league that is not live"
+    if run.mode == "live" and live is not None and not live.get("ok"):
+        return f"live refused: {live.get('reason')}"
+    if run.mode == "live" and (
+        run.outcome == "would_claim" or any(e.outcome == "would_claim" for e in run.entries)
+    ):
+        return "a live pass places a claim or says why not; it never says would"
     placed = ("claimed", "added")
     if run.mode == "dry_run" and (
         run.outcome == "claimed" or any(e.outcome in placed for e in run.entries)
@@ -473,6 +501,8 @@ def check_moves_run(
             return f"{e.id} is struck or not queued: it is never executed"
         if q.get("outcome") in ("would_claim", *placed):
             return f"{e.id} was executed already"
+        if q.get("outcome") in ("failed", "gone"):
+            return f"{e.id} is {q['outcome']} today: it is never retried that day"
     return None
 
 
@@ -482,15 +512,22 @@ def moves_checked(run: Mapping[str, Any]) -> bool:
     return any(e.get("controls") for e in run.get("entries") or [])
 
 
+def moves_needs(data_dir: Path) -> dict[str, int]:
+    """The moves executor's live-guard counts in force: :data:`DRY_RUN_DAYS` and
+    :data:`CHECKED_DAYS` unless the settings file's ``live_after`` sets them (#171 PR 3)."""
+    return {"dry_run_days": DRY_RUN_DAYS, "checked_days": CHECKED_DAYS, **live_after(data_dir)}
+
+
 def moves_live_check(data_dir: Path, league: str, mode: Mapping[str, Any]) -> dict[str, Any]:
-    """Whether the league's moves executor may be switched to ``live``: dry-run passes on
-    :data:`DRY_RUN_DAYS` distinct days, :data:`CHECKED_DAYS` of them checked
-    (:func:`moves_checked`), and STOP absent. The reviewed week on #127 and the user's click are
-    the other gates."""
+    """Whether the league's moves executor may be live: dry-run passes on the days
+    :func:`moves_needs` asks, that many of them checked (:func:`moves_checked`), and STOP absent.
+    It gates the switch to ``live`` and, in a live league, every pass that places a claim (``due``'s
+    ``live``, #171 PR 3). The reviewed week on #127 and the user's click are the other gates."""
     dry = [(d, r) for d, r in runs(data_dir, league, MOVES) if r.get("mode") == "dry_run"]
     days = {d for d, _ in dry}
     checked = {d for d, r in dry if moves_checked(r)}
-    return _gate(data_dir, mode, days, checked, "that read the add page")
+    needs = moves_needs(data_dir)
+    return _gate(data_dir, mode, days, checked, "that read the add page", needs)
 
 
 def moves_view(
@@ -676,7 +713,8 @@ def moves_digest_lines(
     """The digest's lines for the moves executor (#171): one summary over the armed leagues, the
     latest queue's entries (``queue``, ``season_queue``'s day) counted queued and struck and the
     entries the last day's passes reported counted by outcome, then a line per league only for
-    what it skipped or failed. Leagues by id; no player, team or projection number."""
+    what it skipped or failed, or placed with a reason (a claim whose answer was not read, #171
+    PR 3). Leagues by id; no player, team or projection number."""
     armed = {
         lg: m["mode"] for lg, m in modes.items() if not m.get("private") and m["mode"] != "off"
     }
@@ -716,7 +754,12 @@ def moves_digest_lines(
     for lg in sorted(recent):
         parts = []
         for r in recent[lg]:
-            bad = [e for e in r.get("entries") or [] if e.get("outcome") in ("skipped", "failed")]
+            bad = [
+                e
+                for e in r.get("entries") or []
+                if e.get("outcome") in ("skipped", "failed")
+                or (e.get("outcome") in ("claimed", "added") and e.get("reason"))
+            ]
             if r.get("outcome") in ("skipped", "failed") and not bad:
                 reason = f" ({r['reason']})" if r.get("reason") else ""
                 parts.append(f"{_weekday(r['day'])} {r['outcome']}{reason}")

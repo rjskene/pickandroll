@@ -727,6 +727,135 @@ def test_live_waits_for_seven_dry_run_days_two_of_them_reading_the_add_page(clie
     assert r.status_code == 200 and r.json()["mode"]["mode"] == "live"
 
 
+def settings_file(client, body) -> None:
+    path = client.data_dir / "autopilot" / "executor.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(body if isinstance(body, str) else json.dumps(body))
+
+
+def test_the_live_guard_reads_its_counts_from_the_settings_file_at_request_time(client):
+    url = f"/seasons/{LEAGUE}/autopilot/moves/due"
+    seven = {"dry_run_days": 7, "checked_days": 2}
+    assert client.get(url).json()["live"] == {
+        "ok": False,
+        "reason": "a dry run on 7 days first: 0 so far",
+        "dry_run_days": 0,
+        "checked_days": 0,
+        "needs": seven,
+    }
+    # Each count read on its own: one that is not a whole number of at least 0 keeps its default.
+    settings_file(client, {"live_after": {"dry_run_days": 1, "checked_days": -1}})
+    assert client.get(url).json()["live"]["needs"] == {"dry_run_days": 1, "checked_days": 2}
+    for bad in ({"dry_run_days": True}, {"dry_run_days": "2"}, {"dry_run_days": 1.5}, [3, 1]):
+        settings_file(client, {"live_after": bad})
+        assert client.get(url).json()["live"]["needs"] == seven
+    settings_file(client, "not json")
+    assert client.get(url).json()["live"]["needs"] == seven
+    # The reason names the counts in force; the lineup executor's guard keeps its own.
+    settings_file(client, {"live_after": {"dry_run_days": 1, "checked_days": 1}})
+    run = {"day": "2026-10-01", "mode": "dry_run", "outcome": "nothing_due", "entries": []}
+    ap.append_run(client.data_dir, LEAGUE, run, date(2026, 10, 1), ap.MOVES)
+    live = client.get(url).json()["live"]
+    assert live["reason"] == "1 dry-run day that read the add page first: 0 so far"
+    lineup = ap.live_check(client.data_dir, LEAGUE, leagues.lineup_mode(client.data_dir, LEAGUE))
+    assert lineup["needs"] == seven
+    # The dashboard's Set keeps the knob; the private league is never live.
+    assert (
+        client.put("/autopilot/queue/settings", json={"execute_time": "09:00"}).status_code == 200
+    )
+    assert client.get(url).json()["live"]["needs"] == {"dry_run_days": 1, "checked_days": 1}
+    private = client.get(f"/seasons/{PRIVATE}/autopilot/moves/due").json()["live"]
+    assert private["ok"] is False and private["reason"] == "the private league is never touched"
+
+
+def live_league(client) -> None:
+    """The fixture league switched live, its guard waived by the knob (the master's on the
+    user's word)."""
+    settings_file(client, {"live_after": {"dry_run_days": 0, "checked_days": 0}})
+    r = client.put(f"/leagues/{LEAGUE}/moves", json={"mode": "live"})
+    assert r.status_code == 200, r.text
+
+
+def test_a_live_pass_places_its_claims_and_a_skip_stays_due_for_the_late_pass(client):
+    q = queued(client)
+    on = [e for e in q["entries"] if e["queued"]]
+    live_league(client)
+    due_url = f"/seasons/{LEAGUE}/autopilot/moves/due"
+    url = f"/seasons/{LEAGUE}/autopilot/moves"
+    # The execute time holds in live: nothing is due inside the window.
+    d = client.get(due_url).json()
+    assert d["mode"] == "live" and d["live"]["ok"] and d["entries"] == []
+    client.app.state.seasons.clock = lambda: NOW + timedelta(hours=1)
+    assert [e["id"] for e in client.get(due_url).json()["entries"]] == [e["id"] for e in on]
+
+    def live(entries, **over):
+        return pass_body(entries, mode="live", extension="0.8.0", **over)
+
+    # A live pass places a claim or says why not, never that it would.
+    r = client.post(url, json=live([check(on[0])]))
+    assert r.status_code == 409 and "never says would" in r.json()["detail"]
+    # The claim goes on its entry; the skip stays due, so the late pass reads its page again.
+    claim = check(on[0], outcome="claimed", message="claim submitted")
+    skip = check(on[1], outcome="skipped", reason="page not read")
+    r = client.post(url, json=live([claim, skip], outcome="claimed"))
+    assert r.status_code == 200, r.text
+    by = {e["id"]: e for e in client.get("/autopilot/queue").json()["entries"]}
+    assert by[on[0]["id"]]["outcome"] == "claimed"
+    assert by[on[0]["id"]]["bid_placed"] == on[0]["bid"]["amount"]
+    assert by[on[1]["id"]]["outcome"] is None
+    d = client.get(due_url).json()
+    assert [e["id"] for e in d["entries"]] == [on[1]["id"]]
+    assert d["done"] == 1 and [c["id"] for c in d["pending"]] == [on[0]["id"]]
+    # A failure goes on its entry and is never retried that day.
+    failed = check(on[1], outcome="failed", reason="Yahoo refused the claim", message="refused")
+    late = live([failed], trigger="routine_late", outcome="failed")
+    assert client.post(url, json=late).status_code == 200
+    assert client.get(due_url).json()["entries"] == []
+    by = {e["id"]: e for e in client.get("/autopilot/queue").json()["entries"]}
+    assert (by[on[1]["id"]]["outcome"], by[on[1]["id"]]["outcome_reason"]) == (
+        "failed",
+        "Yahoo refused the claim",
+    )
+    r = client.post(url, json=live([check(on[1], outcome="claimed")], outcome="claimed"))
+    assert r.status_code == 409 and "never retried that day" in r.json()["detail"]
+    # A guard that refuses now refuses the live pass too; so does STOP.
+    settings_file(client, {"live_after": {"dry_run_days": 9}})
+    r = client.post(url, json=live([], outcome="nothing_due"))
+    assert r.status_code == 409
+    assert r.json()["detail"] == "live refused: a dry run on 9 days first: 0 so far"
+    assert client.get(due_url).json()["live"]["ok"] is False
+    stop = ap.stop_path(client.data_dir)
+    stop.parent.mkdir(parents=True, exist_ok=True)
+    stop.write_text("")
+    assert client.get(due_url).json()["live"]["reason"] == "STOP is on (data/autopilot/STOP)"
+    stop.unlink()
+
+
+def test_a_claim_whose_answer_was_not_read_keeps_its_reason_on_the_screen_and_the_digest(client):
+    q = queued(client)
+    on = [e for e in q["entries"] if e["queued"]]
+    live_league(client)
+    strike(client, on[1]["id"])
+    client.app.state.seasons.clock = lambda: NOW + timedelta(hours=1)
+    # The strike holds in live: the struck entry is not due.
+    due = client.get(f"/seasons/{LEAGUE}/autopilot/moves/due").json()
+    assert [e["id"] for e in due["entries"]] == [on[0]["id"]]
+    why = "submitted 10:00 AM CT; Yahoo's answer was not read: check the pending claims"
+    body = pass_body(
+        [check(on[0], outcome="claimed", reason=why)],
+        mode="live",
+        outcome="claimed",
+        extension="0.8.0",
+    )
+    assert client.post(f"/seasons/{LEAGUE}/autopilot/moves", json=body).status_code == 200
+    by = {e["id"]: e for e in client.get("/autopilot/queue").json()["entries"]}
+    assert (by[on[0]["id"]]["outcome"], by[on[0]["id"]]["outcome_reason"]) == ("claimed", why)
+    assert client.get("/flags/digest").json()["moves_executor"] == [
+        "- Moves executor (live in 1): Wed's queue 1 queued, 1 struck; 1 claimed, 0 skipped, 0 failed.",
+        f"- League {LEAGUE}: moves Wed claimed ({why})",
+    ]
+
+
 def test_the_execute_time_is_the_users_and_times_the_days_entries_again(client):
     q = queued(client)
     r = client.put("/autopilot/queue/settings", json={"execute_time": "15:30"})
