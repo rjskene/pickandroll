@@ -6,6 +6,7 @@ import {
   CAT_LABEL,
   type AvailableRow,
   type Cat,
+  type HeldMove,
   type HeldRef,
   type MoveCategory,
   type MoveHorizon,
@@ -33,6 +34,8 @@ import {
   filterAvailable,
   FLAG_SIGNAL_NAME,
   flagCounts,
+  addBasis,
+  basisPhrase,
   flagged,
   flagInputsNote,
   flagLevels,
@@ -58,6 +61,7 @@ import {
   oddsLabel,
   oddsTone,
   openingDrop,
+  roomNote,
   pctLabel,
   planNote,
   planRosText,
@@ -260,7 +264,7 @@ export default function SeasonScreen({ league, onBack, onProgress }: { league: s
       case "moves":
         return {
           title: picked ? "MOVE" : "MOVES",
-          note: moves.data?.system.label,
+          note: movesNote(moves.data, s),
           action: picked ? (
             <button className="link" onClick={() => setPicked(null)} title="Back to the recommended moves (Esc)">
               recommended
@@ -797,7 +801,7 @@ function Waivers({
                     <td className={`num ${rosTone(best?.ros, s.scoring)}`} title={best ? rosTitle(best.ros, { add: id, drop: best.drop }, name, s.scoring) : undefined}>
                       {rosLabel(best?.ros, s.scoring)}
                     </td>
-                    <td className="dim">{best ? forText(best, name) : (cand?.reason ?? "")}</td>
+                    {best ? <BasisCell x={best} name={name} className="dim" /> : <td className="dim">{cand?.reason ?? ""}</td>}
                     <td className="num dim" title={best?.next_drop != null || best?.next_price != null ? `next best: ${name(best.next_drop)}` : undefined}>
                       {best?.next_price == null ? "" : best.next_price.toFixed(2)}
                     </td>
@@ -851,6 +855,26 @@ const OTHER_HORIZON: Record<MoveHorizon, MoveHorizon> = { week: "three", three: 
 /** "adds Brooks for Grant, Vucevic for Ayton to IL", or "makes no move". */
 function insteadText(moves: HeldRef[], name: Namer): string {
   return moves.length ? `adds ${moves.map((x) => `${name(x.add)} for ${forText(x, name)}`).join(", ")}` : "makes no move";
+}
+
+/** The Moves card's note: the system, then the room an add without a drop has (#187). */
+function movesNote(m: MovesPayload | undefined, s: SeasonView): string | undefined {
+  if (!m) return undefined;
+  const byId = playersById(s);
+  const room = m.room ? roomNote(m.room, (id) => byId.get(id)?.name ?? `player ${id}`) : null;
+  return [m.system.label, room].filter(Boolean).join(" · ");
+}
+
+/** A For cell (#187): the drop's name, "after Hurt to IL" or "free: open spot", with the rule
+ * that applied as its title. */
+function BasisCell({ x, name, className, children }: { x: { drop: number | null; held?: HeldMove | null }; name: Namer; className?: string; children?: ReactNode }) {
+  const b = addBasis(x, name);
+  return (
+    <td className={className} title={b.title}>
+      {b.cell}
+      {children}
+    </td>
+  );
 }
 
 /** The recommended sets, the three weeks first, then the rest of this week. */
@@ -982,7 +1006,7 @@ function Recommended({ h, m, s, name, onPick }: { h: MoveHorizon; m: MovesPayloa
                 <td className="strong">
                   {name(x.add)} <FlagTag f={flagOf(s, x.add)} cfg={s.flag_config} />
                 </td>
-                <td>{forText(x, name)}</td>
+                <BasisCell x={x} name={name} />
                 <td className="dim">{dayLabel(x.from)}</td>
                 <td className={`num ${gainTone(x.marginal[h], m.search.min_gain)}`}>{gainLabel(x.marginal[h])}</td>
                 <td className="num dim">{gainLabel(x.marginal[o])}</td>
@@ -1211,11 +1235,14 @@ function MoveDrawer({
   const cats = s.settings.cats;
   const min = m?.search.min_gain ?? 0;
   const returns = d ? comebackText([d.horizons.week.comebacks, d.horizons.three.comebacks], name) : null;
+  // An add with no drop has its basis once the move is read: an open spot or a held move.
+  const basis = d || picked.drop != null ? addBasis({ drop: picked.drop, held: d?.held[0] }, name) : null;
   return (
     <>
       <div className="block">
         <span className="k">
-          Add {name(picked.add)} <FlagTag f={flagOf(s, picked.add)} cfg={s.flag_config} /> for {forText({ drop: picked.drop, held: d?.held[0] }, name)}
+          Add {name(picked.add)} <FlagTag f={flagOf(s, picked.add)} cfg={s.flag_config} />{" "}
+          {basis ? <span title={basis.title}>{basisPhrase(basis)}</span> : "with no drop"}
         </span>
         <p className="muted small">
           {p && `${p.nba_team ?? "no team"} · ${p.positions.join(", ")} · `}
@@ -1266,15 +1293,14 @@ function MoveDrawer({
               <tbody>
                 {d.drops.map((x) => (
                   <tr key={x.drop ?? "open"} className={`pick${x.drop === picked.drop ? " hl" : ""}`} onClick={() => onPick({ add: picked.add, drop: x.drop })}>
-                    <td>
-                      {forText(x, name)}
+                    <BasisCell x={x} name={name}>
                       {x.kept && (
                         <span className="dim small" title="the keep rule keeps him: the search never drops him, the gain says what dropping him would bring">
                           {" "}
                           · kept
                         </span>
                       )}
-                    </td>
+                    </BasisCell>
                     <td className={`num ${gainTone(x.week, min)}`}>{gainLabel(x.week)}</td>
                     <td className={`num ${gainTone(x.three, min)}`}>{gainLabel(x.three)}</td>
                     <td className={`num ${rosTone(x.ros, s.scoring)}`} title={rosTitle(x.ros, { add: picked.add, drop: x.drop }, name, s.scoring)}>

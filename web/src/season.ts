@@ -3,6 +3,7 @@
 // gains (#94) with their rest of the season (#151), the strategy panel's (#110) and the
 // scorecard's (#126). No React, so `npm test` runs them under Node.
 import type {
+  AddBasis,
   AvailableRow,
   BestMove,
   Cat,
@@ -27,6 +28,7 @@ import type {
   MoveHorizon,
   MoveRef,
   MoveOutcome,
+  MoveRoom,
   MoveRos,
   MovesPassLog,
   MovesSummary,
@@ -607,9 +609,11 @@ export function bidLabel(e: Pick<QueueEntry, "availability" | "bid" | "bid_struc
   return `$${e.bid.amount} claim`;
 }
 
-/** "Brooks for Reed", "Brooks for an open spot": the move in words. */
-export function queueMoveText(e: Pick<QueueEntry, "add" | "drop">, name: (id: number) => string): string {
-  return `${name(e.add)} for ${e.drop == null ? "an open spot" : name(e.drop)}`;
+/** "Brooks for Reed", "Brooks after Hurt to IL", "Brooks (free: open spot)": the move in words,
+ * by its basis (#187). An entry logged before the basis with no drop says only that. */
+export function queueMoveText(e: Pick<QueueEntry, "add" | "drop" | "basis" | "held_move">, name: (id: number) => string): string {
+  if (e.drop == null && e.basis == null) return `${name(e.add)} with no drop`;
+  return `${name(e.add)} ${basisPhrase(addBasis({ drop: e.drop, held: e.held_move }, name))}`;
 }
 
 /** The floor and the typical gain the league's entries were judged with, in a line. */
@@ -708,6 +712,49 @@ export function comebackText(lists: (Comeback[] | undefined)[], name: (id: numbe
  * an open spot (#124). */
 export function forText(x: { drop: number | null; held?: HeldMove | null }, name: (id: number | null) => string): string {
   return x.drop == null && x.held ? `${name(x.held.player)} to ${x.held.slot}` : name(x.drop);
+}
+
+/** An add's basis in words (#187): the kind, its text, the For column's cell (a drop's name
+ * alone: the header says "For") and the rule that applied, for a title. */
+export interface Basis {
+  kind: AddBasis;
+  text: string;
+  cell: string;
+  title: string;
+}
+
+export function addBasis(x: { drop: number | null; held?: HeldMove | null }, name: (id: number) => string): Basis {
+  if (x.drop != null) {
+    const who = name(x.drop);
+    const title = "a drop: no active spot is open, and no held move makes room or it is worth less than this drop (the held move is priced against every drop)";
+    return { kind: "drop", text: `for ${who}`, cell: who, title };
+  }
+  if (x.held) {
+    const who = name(x.held.player);
+    const text = `after ${who} to ${x.held.slot}`;
+    const title = `${who}'s status fits the open ${x.held.slot} slot: he moves there for the add, and his return sends the weakest active player then`;
+    return { kind: "held", text, cell: text, title };
+  }
+  return { kind: "open", text: "free: open spot", cell: "free: open spot", title: "an active spot is open: no drop" };
+}
+
+/** The basis after an add's name: "for Reed", "after Hurt to IL", "(free: open spot)". */
+export function basisPhrase(b: Basis): string {
+  return b.kind === "open" ? `(${b.text})` : b.text;
+}
+
+/** The Moves card's room (#187): "1 open spot · IL open: 1" when any room is open; else
+ * "roster full, IL full" (with who waits for it) or "roster full, no held slots". */
+export function roomNote(room: MoveRoom, name: (id: number) => string): string {
+  const kinds = Object.entries(room.held_open);
+  const open = [
+    ...(room.open_spots > 0 ? [`${room.open_spots} open spot${room.open_spots === 1 ? "" : "s"}`] : []),
+    ...kinds.filter(([, n]) => n > 0).map(([k, n]) => `${k} open: ${n}`),
+  ];
+  if (open.length) return open.join(" · ");
+  if (!kinds.length) return "roster full, no held slots";
+  const waits = room.eligible.length ? ` (${room.eligible.map(name).join(", ")} ${room.eligible.length === 1 ? "waits" : "wait"})` : "";
+  return `roster full, ${kinds.map(([k]) => `${k} full`).join(", ")}${waits}`;
 }
 
 /** The line under a recommended set the season guard changed (#164): "The season guard held back

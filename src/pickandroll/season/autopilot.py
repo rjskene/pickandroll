@@ -299,6 +299,9 @@ def queue_of(
                 "season": _horizon(m, SEASON),
                 "season_costly": m.get("season_costly"),
                 "held": list(s.get("held") or []),
+                # The move's basis and its held-slot move (#187): None in an entry logged before.
+                "basis": m.get("basis"),
+                "held_move": m.get("held"),
                 "flag": lg.flags.get(add),
                 "floor": {**floor.to_dict(), "below": below},
                 "bid": {**bid.to_dict(), "typical": typical[0], "typical_from": typical[1]},

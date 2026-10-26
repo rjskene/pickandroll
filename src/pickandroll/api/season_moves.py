@@ -552,6 +552,18 @@ def cleared_payload(problem: mv.MoveProblem) -> list[dict[str, Any]]:
     ]
 
 
+def room_payload(problem: mv.MoveProblem) -> dict[str, Any]:
+    """The room an add without a drop has (#187, ``moves.room``): the open active spots, each
+    held kind's open slots (a full one at zero) and my active players whose status fits one,
+    so the web says which case applies without inferring it."""
+    r = mv.room(problem)
+    return {
+        "open_spots": r.open_spots,
+        "held_open": dict(r.held_open),
+        "eligible": list(r.eligible),
+    }
+
+
 #: Why a candidate has no move: the week's adds are used, or no player can go for him.
 NO_ADDS_LEFT = "no adds left that week"
 NO_DROP = "no drop: every rostered player is protected or held"
@@ -675,7 +687,8 @@ def stash_payload(
 
 def moves_payload(built: Built) -> dict[str, Any]:
     """The table's gains for every candidate and the recommended set on each horizon, and first
-    the held players whose cleared status blocks every add; the keep rule and the IL advice."""
+    the held players whose cleared status blocks every add and the room a no-drop add has; the
+    keep rule and the IL advice."""
     p = built.problem
     ev = mv.Evaluator(p)
     swaps = {key: mv.single_swaps(ev, key) for key in HORIZONS}
@@ -746,6 +759,7 @@ def moves_payload(built: Built) -> dict[str, Any]:
         }
     return {
         "cleared": cleared_payload(p),
+        "room": room_payload(p),
         "keep_rule": keep_payload(built),
         "stash": stash_payload(built, swaps),
         "system": built.system,
