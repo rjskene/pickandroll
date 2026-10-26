@@ -456,9 +456,10 @@
    * script's plain read ``{path, heading, form, notes, errors, pending, claim}``: ``claimed`` when
    * the page links the claim among its pending transactions (``claim``: a View Waiver link whose
    * claim id is this add and drop), says the claim went in or shows the add among pending claims;
-   * ``failed`` with Yahoo's words when an error stands on the page or the claim form came back
-   * with a message; null when the answer is not recognised (logged ``claimed``, its answer not
-   * read: the ruling on #171). The real page (2026-10-26) lands on my team page with "You have
+   * ``failed`` with Yahoo's words when an error with words in it stands on the page or the claim
+   * form came back with a worded message, never when a sign of placement is there (those win
+   * over any error); null when the answer is not recognised (logged ``claimed``, its answer not
+   * read: the ruling on #171), so a claim that may be placed never frees its place. The real page (2026-10-26) lands on my team page with "You have
    * successfully created a waiver claim for … dropping …", the claim's link, and red stat
    * figures in the error classes. */
   function readLanded(raw) {
@@ -468,7 +469,8 @@
     if (placed) return { outcome: "claimed", message: placed };
     if (raw.claim) return { outcome: "claimed", message: "the claim shows among the pending transactions" };
     if (errors.length) return { outcome: "failed", message: errors[0] };
-    if (raw.form && notes.length) return { outcome: "failed", message: notes[0] };
+    const said = notes.filter((x) => WORDS.test(x));
+    if (raw.form && said.length) return { outcome: "failed", message: said[0] };
     if (raw.pending && !raw.form) return { outcome: "claimed", message: "the add shows among the pending claims" };
     return null;
   }

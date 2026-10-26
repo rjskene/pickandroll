@@ -523,8 +523,15 @@ test("the page Yahoo lands on: placed, refused or not recognised", () => {
   const real = { heading: "News", notes: ["You have successfully created a waiver claim for A dropping B", ""], errors: ["(-5)", ""] };
   assert.deepEqual(read(real), { outcome: "claimed", message: "You have successfully created a waiver claim for A dropping B" });
   assert.deepEqual(read({ ...real, notes: [], claim: true }), { outcome: "claimed", message: "the claim shows among the pending transactions" });
-  // A stat figure is never an error: unrecognised, so its answer is not read and it counts.
+  // A sign of placement wins over any error on the page.
+  const refusal = "You have exceeded the maximum number of adds.";
+  assert.equal(read({ ...real, errors: [refusal, "(-5)"] }).outcome, "claimed");
+  assert.equal(read({ errors: [refusal], claim: true }).outcome, "claimed");
+  // A stat figure is never an error, nor a bare figure a message: unrecognised, so its answer is
+  // not read and it counts as placed.
   assert.equal(read({ errors: ["(-5)", "", "-12"] }), null);
+  assert.equal(read({ form: true, notes: ["(-5)"] }), null);
+  assert.equal(read({ heading: "News", errors: ["(-5)"] }), null);
 });
 
 test("a submitted claim's live pass: Yahoo's answer, or its answer not read", () => {

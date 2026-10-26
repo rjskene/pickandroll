@@ -316,8 +316,9 @@ page, from PR 2:
   3. The page Yahoo lands on, any page of the league in the same tab within two minutes, logs the
      live pass: Yahoo's words that the claim went in, the claim's View Waiver link among the
      pending transactions (its `claim_id` is `<team>_<add>_<drop>`), or the add shown with
-     "pending", are `claimed` with Yahoo's message; an error with words in it, or the claim form
-     back with a message, is `failed` with it. The real page, read after a claim the user placed by
+     "pending", are `claimed` with Yahoo's message, and a sign of placement wins over any error on
+     the page; an error with words in it, or the claim form back with a worded message, is
+     `failed` with it. The real page, read after a claim the user placed by
      hand on 2026-10-26, is my team page (`/nba/<league>/<team>?date=…`) with "You have
      successfully created a waiver claim for … dropping …", the claim's link under "Pending
      Transactions", and red stat figures such as "(-5)" in the error classes, which are never
