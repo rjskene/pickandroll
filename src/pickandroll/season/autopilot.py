@@ -45,10 +45,10 @@ SCORED_MIN = 20
 TYPICAL_MIN = 10
 TYPICAL_DAYS = 14
 #: The veto window: an entry executes no sooner than this after it is queued, and no sooner than
-#: the day's execute time (09:00 Pacific unless the user set another).
+#: the day's execute time (07:00 Central, the Mac's clock, unless the user set another; #193).
 WINDOW = timedelta(minutes=60)
-EXECUTE_TIME = "09:00"
-EXECUTE_TZ = ZoneInfo("America/Los_Angeles")
+EXECUTE_TIME = "07:00"
+EXECUTE_TZ = ZoneInfo("America/Chicago")
 #: The bid's factor for a breakout flag (``season.flags.LEVELS``): doubled for one, tripled for a
 #: strong one; a player only watched is a routine stream.
 FLAG_FACTOR: Mapping[str, int] = {"add": 2, "must-add": 3}
@@ -338,7 +338,7 @@ def holds_place(e: Mapping[str, Any]) -> bool:
 
 def executes_at(queued_at: datetime, day: date, execute_time: str = EXECUTE_TIME) -> datetime:
     """When an entry executes, in UTC: the later of its queueing plus the veto window and the
-    day's execute time on the Pacific clock (the ruling's addition: a window that closes while
+    day's execute time on the Central clock (the ruling's addition: a window that closes while
     the user sleeps is no veto)."""
     hh, mm = (int(x) for x in execute_time.split(":"))
     at = datetime.combine(day, time(hh, mm), EXECUTE_TZ)

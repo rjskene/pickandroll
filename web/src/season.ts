@@ -649,7 +649,7 @@ export function passLine(r: MovesPassLog, clock: (iso: string) => string): strin
 
 /** The landing's line for today's queue across the leagues. */
 export function queueFoldLine(q: QueuePayload): string {
-  const time = `executes from ${q.settings.execute_time} PT`;
+  const time = `executes from ${q.settings.execute_time} CT`;
   if (q.stop) return "STOP is on (data/autopilot/STOP): nothing executes";
   if (!q.built.length) return `no queue built today: the morning routine builds it · ${time}`;
   const live = q.entries.filter((e) => e.queued && !e.struck && !e.outcome);

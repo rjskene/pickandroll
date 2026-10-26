@@ -2326,7 +2326,7 @@ class StrikeBody(BaseModel):
 
 
 class QueueSettings(BaseModel):
-    #: The day's execute time on the Pacific clock.
+    #: The day's execute time on the Central clock.
     execute_time: str = Field(pattern=r"^([01][0-9]|2[0-3]):[0-5][0-9]$")
 
 

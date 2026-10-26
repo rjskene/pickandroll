@@ -218,19 +218,19 @@ def test_the_private_league_and_an_off_league_queue_nothing():
 
 def test_a_rebuild_keeps_struck_and_executed_entries_and_a_new_entry_gets_its_full_hour():
     e = entry(move(101, 201, 0.9), move(102, 202, 0.8), move(103, 203, 0.7))
-    early = datetime(2026, 10, 21, 10, 0, tzinfo=UTC)  # 03:00 Pacific
+    early = datetime(2026, 10, 21, 10, 0, tzinfo=UTC)  # 05:00 Central
     first = qa.merge([], qa.queue_of(league_day(e), DAY, PLAN, TYPICAL, None), DAY, "09:00", early)
-    nine = "2026-10-21T16:00:00+00:00"
+    nine = "2026-10-21T14:00:00+00:00"  # 09:00 Central (#193)
     assert [(x["add"], x["queued"], x["executes_at"]) for x in first] == [
         (101, True, nine),
         (102, True, nine),
         (103, False, None),
     ]
-    # The user strikes the first; a rebuild at 08:30 Pacific keeps it struck, leaves its move
+    # The user strikes the first; a rebuild at 08:30 Central keeps it struck, leaves its move
     # out of the build and queues the next with a full window from now.
     first[0]["struck"] = True
     kept = [x for x in first if qa.kept(x)]
-    later = datetime(2026, 10, 21, 15, 30, tzinfo=UTC)
+    later = datetime(2026, 10, 21, 13, 30, tzinfo=UTC)
     day = league_day(
         e,
         kept=frozenset(x["id"] for x in kept),
@@ -241,20 +241,40 @@ def test_a_rebuild_keeps_struck_and_executed_entries_and_a_new_entry_gets_its_fu
     assert by[101]["struck"] and by[101]["executes_at"] == nine
     assert (by[102]["queued_at"], by[102]["executes_at"]) == (early.isoformat(), nine)
     assert by[103]["queued"] and by[103]["queued_at"] == later.isoformat()
-    assert by[103]["executes_at"] == "2026-10-21T16:30:00+00:00"
+    assert by[103]["executes_at"] == "2026-10-21T14:30:00+00:00"
     # Another execute time later: each not executed is timed again, never sooner than its hour.
     retimed = {x["add"]: x["executes_at"] for x in qa.retime(again, DAY, "08:00")}
-    assert retimed[102] == "2026-10-21T15:00:00+00:00"
-    assert retimed[103] == "2026-10-21T16:30:00+00:00"
+    assert retimed[102] == "2026-10-21T13:00:00+00:00"
+    assert retimed[103] == "2026-10-21T14:30:00+00:00"
+
+
+def test_the_default_execute_time_is_07_00_on_the_central_clock_either_side_of_the_dst_change(
+    tmp_path,
+):
+    # #193: 07:00 Central until the user sets another, 12:00 UTC in October (CDT) and 13:00 UTC
+    # in December (CST).
+    assert (qa.EXECUTE_TIME, qa.EXECUTE_TZ.key) == ("07:00", "America/Chicago")
+    assert season_queue.settings(tmp_path) == {
+        "execute_time": "07:00",
+        "at": None,
+        "by": None,
+        "set": False,
+    }
+    early = datetime(2026, 10, 21, 5, 0, tzinfo=UTC)
+    assert qa.executes_at(early, DAY) == datetime(2026, 10, 21, 12, 0, tzinfo=UTC)
+    winter = date(2026, 12, 1)
+    assert qa.executes_at(datetime(2026, 12, 1, 5, 0, tzinfo=UTC), winter) == datetime(
+        2026, 12, 1, 13, 0, tzinfo=UTC
+    )
 
 
 def test_the_entries_due_are_the_queued_ones_past_their_window_with_the_bid_to_place():
     e = entry(move(101, 201, 0.3), move(102, 202, 0.2))
-    now = datetime(2026, 10, 21, 10, 0, tzinfo=UTC)
+    now = datetime(2026, 10, 21, 10, 0, tzinfo=UTC)  # 05:00 Central
     out = qa.merge([], qa.queue_of(league_day(e), DAY, PLAN, TYPICAL, None), DAY, "09:00", now)
-    assert qa.due(out, now + timedelta(hours=5)) == []
+    assert qa.due(out, now + timedelta(hours=3)) == []
     out[1]["bid_struck"] = True
-    due = qa.due(out, datetime(2026, 10, 21, 16, 0, tzinfo=UTC))
+    due = qa.due(out, datetime(2026, 10, 21, 14, 0, tzinfo=UTC))
     assert [x["add"] for x in due] == [101, 102]
     assert [qa.effective_bid(x) for x in due] == [3, 0]
     out[0]["struck"], out[1]["outcome"] = True, "would_claim"
@@ -380,7 +400,7 @@ def test_the_build_reads_the_days_solve_and_never_solves(client):
     on = [e for e in q["entries"] if e["queued"]]
     assert [e["rank"] for e in on] == [1, 2] and row["queued"] == 2
     assert all(e["availability"] == "W" and e["bid"]["amount"] >= 1 for e in on)
-    # Queued at 11:00 Pacific, after the day's execute time: a full hour from now.
+    # Queued at 13:00 Central, after the day's execute time: a full hour from now.
     assert {e["executes_at"] for e in on} == {(NOW + timedelta(hours=1)).isoformat()}
     assert q["built"] == [NOW.isoformat(), NOW.isoformat()]
     # The private league is never queued.
@@ -642,7 +662,7 @@ def test_the_execute_time_is_the_users_and_times_the_days_entries_again(client):
     assert r.status_code == 200
     assert r.json()["settings"]["execute_time"] == "15:30" and r.json()["execute_time"] == "15:30"
     on = [e for e in r.json()["entries"] if e["queued"]]
-    assert {e["executes_at"] for e in on} == {"2026-10-21T22:30:00+00:00"}
+    assert {e["executes_at"] for e in on} == {"2026-10-21T20:30:00+00:00"}  # 15:30 Central
     assert len(r.json()["entries"]) == len(q["entries"])
     assert client.put("/autopilot/queue/settings", json={"execute_time": "9am"}).status_code == 422
     # Earlier than the hour after queueing: the hour holds.

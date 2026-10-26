@@ -1736,12 +1736,12 @@ test("the Queue card says what the moves executor does, each entry's state and b
   assert.equal(passLine({ ...pass, outcome: "nothing_due", entries: [] }, () => "9:01 AM"), `9:01 AM · ${weekdayLabel("2026-10-24")} · routine: nothing due`);
   const settings = { execute_time: "09:00", at: null, by: null, set: false };
   const q: QueuePayload = { date: "2026-10-24", built: [], execute_time: null, leagues: [], entries: [], settings, stop: false, now: "2026-10-24T15:00:00Z" };
-  assert.equal(queueFoldLine(q), "no queue built today: the morning routine builds it · executes from 09:00 PT");
+  assert.equal(queueFoldLine(q), "no queue built today: the morning routine builds it · executes from 09:00 CT");
   const leagues = [
     { league: "900001", scoring: "categories" as const, mode: "dry_run" as const, status: "queued" as const, reason: null },
     { league: "900002", scoring: "points" as const, mode: "dry_run" as const, status: "not_solved" as const, reason: "not solved today" },
   ];
   const built = { ...q, built: ["2026-10-24T10:00:00Z"], leagues, entries: [e, { ...e, id: "y", struck: true }, { ...e, id: "z", queued: false }] };
-  assert.equal(queueFoldLine(built), "1 queued in 1 league · 1 struck · 1 not solved today · executes from 09:00 PT");
+  assert.equal(queueFoldLine(built), "1 queued in 1 league · 1 struck · 1 not solved today · executes from 09:00 CT");
   assert.equal(queueFoldLine({ ...built, stop: true }), "STOP is on (data/autopilot/STOP): nothing executes");
 });

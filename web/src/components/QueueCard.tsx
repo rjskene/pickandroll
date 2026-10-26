@@ -111,7 +111,7 @@ type Strike = UseMutationResult<QueuePayload, Error, { id: string; bid_only: boo
 function Today({ v, queued, left, now, name, strike }: { v: MovesView; queued: QueueEntry[]; left: QueueEntry[]; now: number; name: (id: number) => string; strike: Strike }) {
   const row = v.row;
   const time = v.settings.execute_time;
-  if (!row) return <p className="dim lv-note">No queue built today: the morning routine builds it from the day's solve; nothing executes before {time} PT.</p>;
+  if (!row) return <p className="dim lv-note">No queue built today: the morning routine builds it from the day's solve; nothing executes before {time} CT.</p>;
   if (row.status !== "queued") return <p className="dim lv-note">{row.reason}</p>;
   const struckCount = queued.filter((e) => e.struck).length;
   return (
@@ -119,7 +119,7 @@ function Today({ v, queued, left, now, name, strike }: { v: MovesView; queued: Q
       <div className="row">
         <span className="k">Today</span>
         <span className="small muted" title="the veto window: a move executes no sooner than an hour after it is queued, and no sooner than the execute time (set on the landing page)">
-          {queued.filter((e) => !e.struck).length} queued{struckCount ? ` · ${struckCount} struck` : ""} · cap {row.cap} ({row.cap_from}) · executes from {time} PT
+          {queued.filter((e) => !e.struck).length} queued{struckCount ? ` · ${struckCount} struck` : ""} · cap {row.cap} ({row.cap_from}) · executes from {time} CT
         </span>
       </div>
       {queued.length === 0 && <p className="dim lv-note">Nothing queued today.</p>}
