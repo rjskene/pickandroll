@@ -17,7 +17,8 @@ league's own team page; nothing here clicks or submits anything.
 The moves executor (#171) logs its execute passes in the same file under ``moves``
 (:class:`MovesRun`, :func:`append_run` by key), and has its own live check
 (:func:`moves_live_check`) and digest line (:func:`moves_digest_lines`); its queue is
-``season_queue``'s.
+``season_queue``'s. The queue's payload and the Queue card read each entry's latest line of the
+queue's day and the day's tally from it (:func:`latest_passes`, :func:`pass_tally`, #200).
 
 ``data/autopilot/STOP`` stops every executor: the steps answer ``stop: true`` with none, and the
 log takes only a run that says it stopped. Nothing here writes the file.
@@ -32,7 +33,7 @@ import json
 import os
 import threading
 from collections import Counter
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any, Literal
@@ -502,15 +503,75 @@ def moves_view(
     """The Queue card's league: the mode, STOP, the live check, the last pass, today's passes
     and the league's entries of the day's queue."""
     passes = runs(data_dir, league, MOVES)
+    todays = [r for d, r in passes if d == today]
+    latest = latest_passes(r for r in todays if r.get("day") == today.isoformat())
     return {
         "league": league,
         "mode": dict(mode),
         "stop": stopped(data_dir),
         "live": moves_live_check(data_dir, league, mode),
         "last": passes[-1][1] if passes else None,
-        "today": [r for d, r in passes if d == today],
+        "today": todays,
         "days": sorted({d.isoformat() for d, _ in passes}),
-        "entries": list(entries),
+        "entries": [{**e, "pass": latest.get(str(e.get("id")))} for e in entries],
+    }
+
+
+# --------------------------------------------------------------------------- the pass results
+def day_lines(data_dir: Path, league: str, day: date) -> list[dict[str, Any]]:
+    """The league's moves passes of the queue's ``day`` (#200): its day file's lines whose ``day``
+    is that day, oldest first; none when the file does not read."""
+    try:
+        body = read_log(data_dir, league, day) or {}
+    except LogError:
+        return []
+    return [
+        r for r in body.get(MOVES, []) if isinstance(r, dict) and r.get("day") == day.isoformat()
+    ]
+
+
+def latest_passes(lines: Iterable[Mapping[str, Any]]) -> dict[str, dict[str, Any]]:
+    """Each entry's latest line among ``lines`` (oldest first), by entry id (#200): the entry's own
+    outcome and reason, with its pass's time, trigger and extension."""
+    out: dict[str, dict[str, Any]] = {}
+    for run in lines:
+        for e in run.get("entries") or []:
+            if isinstance(e, Mapping) and e.get("id"):
+                out[str(e["id"])] = {
+                    "at": run.get("at"),
+                    "trigger": run.get("trigger"),
+                    "outcome": e.get("outcome"),
+                    "reason": e.get("reason"),
+                    "extension": run.get("extension"),
+                }
+    return out
+
+
+def pass_tally(lines_by_league: Mapping[str, Sequence[Mapping[str, Any]]]) -> dict[str, Any] | None:
+    """The day's pass results over every league (#200): each entry counted once, by its latest
+    line; ``claimed`` counts a live claim or add; ``pages`` every entry line logged (a page read,
+    re-reads included); ``last`` the latest line that names an entry. None when none does."""
+    latest: dict[str, dict[str, Any]] = {}
+    pages, last = 0, None
+    for lines in lines_by_league.values():
+        for run in lines:
+            named = [e for e in run.get("entries") or [] if isinstance(e, Mapping) and e.get("id")]
+            at = _at(run.get("at"))
+            if named and at is not None and (last is None or at > last):
+                last = at
+            pages += len(named)
+        latest |= latest_passes(lines)
+    if not latest:
+        return None
+    n = Counter(p["outcome"] for p in latest.values())
+    return {
+        "last": last.isoformat() if last is not None else None,
+        "would_claim": n["would_claim"],
+        "claimed": n["claimed"] + n["added"],
+        "skipped": n["skipped"],
+        "gone": n["gone"],
+        "failed": n["failed"],
+        "pages": pages,
     }
 
 

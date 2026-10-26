@@ -1270,6 +1270,31 @@ export interface QueueEntry {
   bid_placed?: number | null;
   /** A placed claim the morning after, from the transactions. */
   resolved: "won" | "lost" | null;
+  /** The latest pass line naming the entry on the queue's day (#200), read from the league's log;
+   * null when no pass has read it, absent from a server before it. */
+  pass?: QueuePass | null;
+}
+
+/** An entry as a pass last read it (#200): the entry's own outcome and reason, the pass's time,
+ * trigger and extension. */
+export interface QueuePass {
+  at: string | null;
+  trigger: MovesPassLog["trigger"] | null;
+  outcome: MoveOutcome;
+  reason: string | null;
+  extension: string | null;
+}
+
+/** The day's pass results over every league (#200): each entry once, by its latest line; ``pages``
+ * every entry line logged; ``last`` the latest line's time. */
+export interface PassTally {
+  last: string | null;
+  would_claim: number;
+  claimed: number;
+  skipped: number;
+  gone: number;
+  failed: number;
+  pages: number;
 }
 
 /** A league's row of the day's queue. */
@@ -1306,6 +1331,8 @@ export interface QueuePayload {
   /** A name for every player the entries mention (ids as strings), read from each league's
    * snapshot (#194); absent from a server before it. */
   names?: Record<string, string>;
+  /** The day's pass results (#200); null before any pass names an entry. */
+  passes?: PassTally | null;
 }
 
 /** An execute pass in one league, as its log keeps it. */

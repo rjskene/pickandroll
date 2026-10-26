@@ -11,6 +11,7 @@ import {
   dayLabel,
   gainLabel,
   notQueued,
+  passTitle,
   queueFlagWord,
   queueFloorLine,
   queueFoldLine,
@@ -18,6 +19,7 @@ import {
   queueNamer,
   queueOrder,
   queueStateText,
+  queueStateTone,
   roomNote,
   rosLabel,
   rosTone,
@@ -108,6 +110,7 @@ export default function QueueScreen({ onBack, onOpenLeague }: { onBack: () => vo
 function Chip({ row, p, title, onOpen }: { row: QueueLeague; p: QueuePayload; title: string; onOpen: () => void }) {
   const mine = p.entries.filter((e) => e.league === row.league && e.queued);
   const struck = mine.filter((e) => e.struck).length;
+  const would = mine.filter((e) => !e.struck && !e.outcome && e.pass?.outcome === "would_claim").length;
   const adds = addsThisWeek(row, p.date);
   const why = stripReason(row, p.entries);
   const facts = [
@@ -116,6 +119,7 @@ function Chip({ row, p, title, onOpen }: { row: QueueLeague; p: QueuePayload; ti
     row.cap != null ? `cap ${row.cap} (${row.cap_from === "the user" ? "yours" : "the knob's"})` : null,
     adds != null ? `${adds} add${adds === 1 ? "" : "s"} left this week` : null,
     row.status === "queued" ? `${mine.length - struck} queued${struck ? ` · ${struck} struck` : ""}` : null,
+    would ? `${would} would claim` : null,
   ].filter(Boolean);
   return (
     <div className={`qs-chip ${row.status === "private" ? "private" : ""}`}>
@@ -181,7 +185,9 @@ function Today({ p, now, title, strike, onOpenLeague }: { p: QueuePayload; now: 
                   <td>{queueFlagWord(e.flag)}</td>
                   <td title={e.bid.reason}>{bidLabel(e)}</td>
                   <td>{centralClock(e.executes_at)}</td>
-                  <td className={e.struck ? "dim" : "muted"}>{queueStateText(e, now)}</td>
+                  <td className={queueStateTone(e) || (e.struck ? "dim" : "muted")} title={passTitle(e) || undefined}>
+                    {queueStateText(e, now)}
+                  </td>
                   <td className="acts">
                     <Veto e={e} strike={strike} />
                   </td>
