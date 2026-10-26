@@ -1,10 +1,12 @@
 import { useCallback, useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { api, type LeagueSummary, type ProgressPayload, type RoomSummary } from "../api";
 import { DRAFT_SEASON_DAYS, draftDay, draftsAhead, finishedDrafts, LAYOUTS, pageFor, type Layout } from "../format";
-import type { SeasonViewId } from "../keys";
+import { landingKeys, type SeasonViewId } from "../keys";
+import { useHotkeys } from "../useKeys";
 import DraftSeason from "./DraftSeason";
 import DraftsDrawer, { type DrawerView } from "./DraftsDrawer";
+import ExecuteTime from "./ExecuteTime";
 import LeagueGrid from "./LeagueGrid";
 import { POOLED, rangeSum, recordLabel, scopeWeeks } from "../progress";
 import { queueFoldLine } from "../season";
@@ -28,11 +30,13 @@ export default function Landing({
   onOpenLeague,
   onOpenSession,
   onProgress,
+  onQueue,
   error,
 }: {
   onOpenLeague: (league: string, view?: SeasonViewId) => void;
   onOpenSession: (id: string) => void;
   onProgress: () => void;
+  onQueue: () => void;
   error: Error | null;
 }) {
   const [layout, setLayoutState] = useState<Layout>(savedLayout);
@@ -56,6 +60,7 @@ export default function Landing({
     setDrawer("new");
   };
   const closeDrawer = useCallback(() => setDrawer(null), []);
+  useHotkeys(landingKeys(drawer ? null : onQueue));
   const ready = leagues.data !== undefined || leagues.isError;
   const page = pageFor(layout, leagues.data ?? [], rooms.data ?? [], now);
   const soon = draftsAhead(leagues.data ?? [], rooms.data ?? [], now).filter((l) => l.draft_time && Date.parse(l.draft_time) < now + DRAFT_SEASON_DAYS * 86_400_000);
@@ -95,7 +100,7 @@ export default function Landing({
         <div className="landing-grid">
           <LeagueGrid onOpen={onOpenLeague} />
           <ProgressFold onOpen={onProgress} />
-          <QueueFold />
+          <QueueFold onOpen={onQueue} />
           <DraftsFold leagues={leagues.data ?? []} rooms={rooms.data ?? []} now={now} onDrafts={() => setDrawer("drafts")} onNew={() => setDrawer("new")} />
         </div>
       )}
@@ -135,40 +140,19 @@ function progressLine(p: ProgressPayload): string {
     .join(" · ");
 }
 
-/** The moves executor's queue today (#171) in one line, and the day's execute time on the Central
- * clock (#193), the user's own setting: no move executes before it, nor within an hour of its queueing.
- * Each league's entries and their veto are on its Queue card (9). */
-function QueueFold() {
-  const queryClient = useQueryClient();
+/** The moves executor's queue today (#171) in one line, the day's execute time (#193) and the
+ * Queue screen (#194), every league's entries and their veto in one view. */
+function QueueFold({ onOpen }: { onOpen: () => void }) {
   const q = useQuery({ queryKey: ["queue"], queryFn: () => api.queue(), refetchInterval: 60_000 });
-  const [draft, setDraft] = useState<string | null>(null);
-  const set = useMutation({
-    mutationFn: (t: string) => api.setExecuteTime(t),
-    onSuccess: (v) => {
-      queryClient.setQueryData(["queue"], v);
-      void queryClient.invalidateQueries({ queryKey: ["movesView"] });
-      setDraft(null);
-    },
-  });
-  const current = q.data?.settings.execute_time;
-  const shown = draft ?? current ?? "";
   return (
     <div className="fold">
       <span className="k">Queue</span>
       <span className="muted">{q.data ? queueFoldLine(q.data) : q.isError ? "not read" : "reading…"}</span>
       <span className="grow" />
-      {current && (
-        <label className="small muted" title="the day's execute time on the Central clock: each move executes at it, or an hour after it is queued if later">
-          execute at{" "}
-          <input type="time" value={shown} onChange={(e) => setDraft(e.target.value)} disabled={set.isPending} aria-label="execute time, Central" /> CT
-        </label>
-      )}
-      {draft != null && draft !== current && (
-        <button className="small primary" disabled={set.isPending || !draft} onClick={() => set.mutate(draft)}>
-          Set
-        </button>
-      )}
-      {set.error && <span className="error small">{set.error.message}</span>}
+      <ExecuteTime q={q.data} />
+      <button className="small" onClick={onOpen} title="every league's proposed moves today in one view, with the veto (q)">
+        Queue
+      </button>
     </div>
   );
 }

@@ -1303,6 +1303,9 @@ export interface QueuePayload {
   settings: { execute_time: string; at: string | null; by: string | null; set: boolean };
   stop: boolean;
   now: string;
+  /** A name for every player the entries mention (ids as strings), read from each league's
+   * snapshot (#194); absent from a server before it. */
+  names?: Record<string, string>;
 }
 
 /** An execute pass in one league, as its log keeps it. */

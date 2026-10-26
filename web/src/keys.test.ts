@@ -10,6 +10,8 @@ import {
   DRAFT_SHEET,
   draftKeys,
   handleKey,
+  landingKeys,
+  queueKeys,
   DEFAULT_VIEWS,
   openCard,
   parseDrawer,
@@ -521,4 +523,21 @@ test("a screen's views come back from the browser by its own definitions", () =>
   assert.deepEqual(parseViewsOf(JSON.stringify({ view: "trend", shown: false }), PROGRESS_VIEWS, DEFAULT_PROGRESS_VIEWS), { view: "trend", shown: false });
   // The league page's view is not one of the Progress screen's.
   assert.deepEqual(parseViewsOf(JSON.stringify({ view: "matchup", shown: true }), PROGRESS_VIEWS, DEFAULT_PROGRESS_VIEWS), DEFAULT_PROGRESS_VIEWS);
+});
+
+test("the landing's q opens the Queue screen, but not from a field, a select or under the drafts drawer; Esc on it goes back (#194)", () => {
+  let opened = 0;
+  const map = landingKeys(() => opened++);
+  const time = { tagName: "INPUT", type: "time", blurred: 0, blur() { this.blurred++; } };
+  assert.equal(handleKey(key("q"), map), true);
+  assert.equal(handleKey(key("q", { target: { tagName: "BUTTON" } }), map), true);
+  assert.equal(opened, 2);
+  for (const target of [field, time, checkbox, select]) assert.equal(handleKey(key("q", { target }), map), false, target.type ?? target.tagName);
+  assert.equal(handleKey(key("q", { metaKey: true }), map), false);
+  assert.equal(handleKey(key("q"), landingKeys(null)), false);
+  assert.equal(opened, 2);
+  let back = 0;
+  assert.equal(handleKey(key("Escape"), queueKeys(() => back++)), true);
+  assert.equal(back, 1);
+  assert.equal(handleKey(key("q"), queueKeys(() => back++)), false);
 });

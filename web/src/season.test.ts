@@ -18,6 +18,7 @@ import type {
   MovesView,
   PlayerFlag,
   QueueEntry,
+  QueueLeague,
   QueuePayload,
   Rates,
   RosterRow,
@@ -108,9 +109,17 @@ import {
   movesLiveText,
   passLine,
   queueFloorLine,
+  queueFlagWord,
   queueFoldLine,
   queueMoveText,
+  queueNamer,
+  queueOrder,
   queueStateText,
+  addsThisWeek,
+  centralClock,
+  notQueued,
+  stripOrder,
+  stripReason,
   addBasis,
   basisPhrase,
   roomNote,
@@ -1744,4 +1753,97 @@ test("the Queue card says what the moves executor does, each entry's state and b
   const built = { ...q, built: ["2026-10-24T10:00:00Z"], leagues, entries: [e, { ...e, id: "y", struck: true }, { ...e, id: "z", queued: false }] };
   assert.equal(queueFoldLine(built), "1 queued in 1 league · 1 struck · 1 not solved today · executes from 09:00 CT");
   assert.equal(queueFoldLine({ ...built, stop: true }), "STOP is on (data/autopilot/STOP): nothing executes");
+});
+
+test("the Queue screen orders the day's entries across the leagues, says why a league queued none and names from the payload (#194)", () => {
+  const floor = { plan: 0.1, scored: null, moves: 3, needs: 20, applies: "plan" as const, below: null };
+  const bid = { amount: 2, reason: "$2", base: 2, factor: 1, sizing: 1, typical: 0.1, typical_from: "the plan floor" };
+  const base: QueueEntry = {
+    id: "a",
+    date: "2026-10-24",
+    league: "900002",
+    scoring: "categories",
+    set: "three",
+    decision: null,
+    add: 101,
+    drop: 201,
+    from: "2026-10-25",
+    availability: "W",
+    judged: "three",
+    gain: 0.3,
+    value: null,
+    season: null,
+    season_costly: false,
+    flag: null,
+    floor,
+    bid,
+    queued: true,
+    reason: null,
+    rank: 1,
+    queued_at: "2026-10-24T10:00:00Z",
+    executes_at: "2026-10-24T12:00:00Z",
+    struck: false,
+    bid_struck: false,
+    outcome: null,
+    outcome_reason: null,
+    outcome_at: null,
+    resolved: null,
+  };
+  const at = (id: string, over: Partial<QueueEntry>): QueueEntry => ({ ...base, id, ...over });
+  const entries = [
+    at("late", { executes_at: "2026-10-24T15:00:00Z" }),
+    at("untimed", { executes_at: null }),
+    at("b2", { league: "900001", rank: 2 }),
+    at("struck", { league: "900001", rank: 1, struck: true }),
+    at("done", { league: "900003", outcome: "would_claim" }),
+    at("rank2", { rank: 2 }),
+    at("left-a", { league: "900002", queued: false, reason: "over the day's cap", gain: 0.2 }),
+    at("left-b", { league: "900001", queued: false, reason: "season-costly", gain: 0.1 }),
+    at("left-c", { league: "900002", queued: false, reason: "no adds left this week", gain: 0.5 }),
+  ];
+  // By the time it executes, then the league's rank, then the league; struck and executed keep
+  // their place, and an entry with no time goes last.
+  assert.deepEqual(
+    queueOrder(entries).map((e) => e.id),
+    ["struck", "done", "b2", "rank2", "late", "untimed"],
+  );
+  // The moves left out: by league, then the gain.
+  assert.deepEqual(
+    notQueued(entries).map((e) => e.id),
+    ["left-b", "left-c", "left-a"],
+  );
+  const row = (status: QueueLeague["status"], over: Partial<QueueLeague> = {}): QueueLeague => ({ league: "900004", scoring: "categories", mode: "dry_run", status, reason: null, ...over });
+  // A league that did not build says its row's reason, or the status in words without one.
+  assert.equal(stripReason(row("not_solved", { reason: "not solved today: the build reads the decision log and never solves" }), entries), "not solved today: the build reads the decision log and never solves");
+  assert.equal(stripReason(row("off", { reason: "the moves executor is off in this league" }), entries), "the moves executor is off in this league");
+  assert.equal(stripReason(row("private", { reason: "the private league is never touched" }), entries), "the private league is never touched");
+  assert.equal(stripReason(row("failed"), entries), "not read");
+  // A league that built: none when it queued; else the reason most of its entries share.
+  assert.equal(stripReason(row("queued", { league: "900002" }), entries), "");
+  const none = [
+    at("x1", { league: "900004", queued: false, reason: "below the noise floor", floor: { ...floor, below: "plan" } }),
+    at("x2", { league: "900004", queued: false, reason: "below the noise floor", floor: { ...floor, below: "plan" } }),
+    at("x3", { league: "900004", queued: false, reason: "the drop is protected" }),
+  ];
+  assert.equal(stripReason(row("queued"), none), "below the plan floor");
+  assert.equal(stripReason(row("queued"), []), "nothing queued");
+  // The adds left in the week holding the day; null for an unread week or no limit.
+  const weeks = { adds_left: [{ start: "2026-10-20", end: "2026-10-26", adds: 3 }, { start: "2026-10-27", end: "2026-11-02", adds: null }] };
+  assert.equal(addsThisWeek(weeks, "2026-10-24"), 3);
+  assert.equal(addsThisWeek(weeks, "2026-10-28"), null);
+  assert.equal(addsThisWeek({}, "2026-10-24"), null);
+  // The strip: the private league first, then by name.
+  const names: Record<string, string> = { "900001": "Bravo", "900002": "Alpha", "900003": "Charlie" };
+  const strip = stripOrder([row("queued", { league: "900001" }), row("queued", { league: "900002" }), row("private", { league: "900003" })], (l) => names[l]);
+  assert.deepEqual(strip.map((r) => r.league), ["900003", "900002", "900001"]);
+  // Names from the payload, "player N" without one.
+  const name = queueNamer({ names: { "101": "P101" } });
+  assert.equal(name(101), "P101");
+  assert.equal(name(7), "player 7");
+  assert.equal(queueNamer({})(7), "player 7");
+  // The Queue card's flag words, and a time on the Central clock (CDT on the day).
+  assert.deepEqual(([null, "watch", "add", "must-add"] as const).map(queueFlagWord), ["", "", "breakout", "strong breakout"]);
+  assert.equal(centralClock("2026-10-24T12:00:00Z"), "7:00 AM CT");
+  assert.equal(centralClock("2026-12-01T13:00:00Z"), "7:00 AM CT");
+  assert.equal(centralClock(null), "");
 });

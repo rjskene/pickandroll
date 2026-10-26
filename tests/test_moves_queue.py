@@ -435,6 +435,24 @@ def strike(client, entry_id: str, **body):
     return client.post(f"/autopilot/queue/{entry_id}/strike", json=body)
 
 
+def test_the_queue_names_every_player_its_entries_mention_from_the_snapshot(client):
+    # An empty day names nobody.
+    assert client.get("/autopilot/queue").json()["names"] == {}
+    q = queued(client)
+    ids = {e["add"] for e in q["entries"]} | {
+        e["drop"] for e in q["entries"] if e["drop"] is not None
+    }
+    ids |= {e["held_move"]["player"] for e in q["entries"] if e.get("held_move")}
+    v = client.get(f"/seasons/{LEAGUE}").json()
+    names = {a["player"]["yahoo_id"]: a["player"]["name"] for a in v["available"]}
+    names |= {s["player"]["yahoo_id"]: s["player"]["name"] for s in v["roster"]}
+    # Read at request time (#194): every id the entries mention, each by the snapshot's name.
+    assert q["names"] == {str(k): names[k] for k in ids}
+    assert client.get("/autopilot/queue").json()["names"] == q["names"]
+    # The strike's answer is the same payload, names and all.
+    assert strike(client, q["entries"][0]["id"]).json()["names"] == q["names"]
+
+
 def test_the_user_strikes_an_entry_or_its_bid_and_a_rebuild_keeps_it(client):
     q = queued(client)
     first, second, third = q["entries"][:3]
