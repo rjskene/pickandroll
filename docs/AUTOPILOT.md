@@ -314,9 +314,14 @@ page, from PR 2:
      nothing. The final button is never clicked once an alert is kept. A page the user opens by
      hand keeps Yahoo's alerts.
   3. The page Yahoo lands on, any page of the league in the same tab within two minutes, logs the
-     live pass: Yahoo's words that the claim went in, or the add shown with "pending", are
-     `claimed` with Yahoo's message; an error, or the claim form back with a message, is `failed`
-     with it. Anything else, a confirm step included, is `claimed` with "submitted HH:MM; Yahoo's
+     live pass: Yahoo's words that the claim went in, the claim's View Waiver link among the
+     pending transactions (its `claim_id` is `<team>_<add>_<drop>`), or the add shown with
+     "pending", are `claimed` with Yahoo's message; an error with words in it, or the claim form
+     back with a message, is `failed` with it. The real page, read after a claim the user placed by
+     hand on 2026-10-26, is my team page (`/nba/<league>/<team>?date=…`) with "You have
+     successfully created a waiver claim for … dropping …", the claim's link under "Pending
+     Transactions", and red stat figures such as "(-5)" in the error classes, which are never
+     errors (0.8.0's reader would have logged that claim `failed`; fixed in 0.8.2). Anything else, a confirm step included, is `claimed` with "submitted HH:MM; Yahoo's
      answer was not read: check the pending claims", so a claim that may be placed counts against
      the cap and the adds and is never submitted again; the extension never clicks twice. The
      entry's line carries the fields filled and the landed page's path and heading.

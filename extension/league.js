@@ -268,20 +268,25 @@
     };
   }
 
-  /** The page Yahoo landed on after a claim's submit, for ``readLanded``: its path, heading,
-   * whether the claim form is back, its notices and errors, and whether it shows the add with the
-   * word "pending". Ids and Yahoo's own short messages only. */
-  function landedControls(add) {
+  /** The page Yahoo landed on after a claim's submit, for ``readLanded``: its path, heading (not
+   * one of Yahoo's header or navigation), whether the claim form is back, its notices and errors,
+   * whether it shows the add with the word "pending", and whether it links the claim (``line``'s
+   * add and drop) among the pending transactions: Yahoo's View Waiver link carries the claim's id,
+   * ``<team>_<add>_<drop>``. Ids and Yahoo's own short messages only. */
+  function landedControls(line) {
     const texts = (sel) => [...document.querySelectorAll(sel)].map(textOf).filter((x) => x && x.length < 300);
     const errors = texts(".error, .Error, .F-negative, [class*='Alert-error'], [class*='alert-error']");
-    const shown = Boolean(document.querySelector(`[data-ys-playerid="${add}"]`));
+    const shown = Boolean(document.querySelector(`[data-ys-playerid="${line.add}"]`));
+    const chrome = (h) => typeof h.closest === "function" && Boolean(h.closest("header, nav, [role=navigation], #ybar"));
+    const id = new RegExp(`[?&]claim_id=\\d+_${line.add}_${line.drop == null ? "\\d*" : line.drop}(?:&|$)`);
     return {
       path: location.pathname + location.search,
-      heading: [...document.querySelectorAll("h1, h2, h3")].map(textOf).find((x) => x && !/^yahoo/i.test(x)) || null,
+      heading: [...document.querySelectorAll("h1, h2, h3")].filter((h) => !chrome(h)).map(textOf).find((x) => x && !/^yahoo/i.test(x)) || null,
       form: Boolean(document.querySelector(`form#${PR.FORM_ID}`)),
       notes: texts(".Alert, .alert, [role=alert], .F-positive, .success, .Success, .notice, .Notice").filter((x) => !errors.includes(x)),
       errors,
       pending: shown && /pending/i.test(textOf(document.body)),
+      claim: [...document.querySelectorAll('a[href*="viewwaiver"]')].some((a) => id.test(a.getAttribute("href") || "")),
     };
   }
 
@@ -292,7 +297,7 @@
     const r = await send({ op: "moves_landed", league });
     if (!r || !r.ok || !r.data) return null;
     const record = r.data;
-    const raw = landedControls(record.line.add);
+    const raw = landedControls(record.line);
     const run = PR.landedPass(record, PR.readLanded(raw), { path: raw.path, heading: raw.heading }, extensionVersion());
     const logged = await send({ op: "moves_log", league, run });
     if (!logged || !logged.ok) {

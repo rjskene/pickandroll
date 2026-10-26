@@ -201,8 +201,11 @@ that passes every check above is placed, on a page opened with a moves fragment 
    on the final click a skip, and the final button is never clicked after one. A page opened by hand keeps Yahoo's
    alerts.
 3. The page Yahoo lands on, any page of the league in the same tab within two minutes, is read: its words saying
-   the claim went in, or the add shown with "pending", log `claimed` with Yahoo's message; an error, or the claim
-   form back with a message, logs `failed` with it (never retried that day). Anything else, a confirm step
+   the claim went in ("You have successfully created a waiver claim for … dropping …" on my team page, as read on
+   2026-10-26), the claim's View Waiver link among the pending transactions (`claim_id=<team>_<add>_<drop>`), or the
+   add shown with "pending", log `claimed` with Yahoo's message; an error with words in it (Yahoo's red stat
+   figures, "(-5)", share its classes and never count), or the claim form back with a message, logs `failed` with it
+   (never retried that day). Anything else, a confirm step
    included, logs `claimed` with "Yahoo's answer was not read: check the pending claims", so it counts against the
    cap and the adds and is never submitted again; the extension never clicks a second time.
 4. A submit whose answer was never read (the tab closed, a page the reader missed) is logged the same way by the

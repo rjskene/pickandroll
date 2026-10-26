@@ -518,6 +518,13 @@ test("the page Yahoo lands on: placed, refused or not recognised", () => {
   assert.equal(read({ form: true }), null);
   assert.equal(read({ heading: "Confirm Transaction" }), null);
   assert.equal(read({ form: true, pending: true }), null);
+  // The real landed page (2026-10-26, a claim the user placed by hand): my team page, Yahoo's
+  // notice, the claim's View Waiver link, and a red stat figure in the error classes.
+  const real = { heading: "News", notes: ["You have successfully created a waiver claim for A dropping B", ""], errors: ["(-5)", ""] };
+  assert.deepEqual(read(real), { outcome: "claimed", message: "You have successfully created a waiver claim for A dropping B" });
+  assert.deepEqual(read({ ...real, notes: [], claim: true }), { outcome: "claimed", message: "the claim shows among the pending transactions" });
+  // A stat figure is never an error: unrecognised, so its answer is not read and it counts.
+  assert.equal(read({ errors: ["(-5)", "", "-12"] }), null);
 });
 
 test("a submitted claim's live pass: Yahoo's answer, or its answer not read", () => {
@@ -769,18 +776,22 @@ test("a submit on record is never made again: a stale one is logged first with i
 
 /** The page Yahoo lands on after a submit: any page of the league, here the claim form's own
  * address. ``notes`` and ``errors`` are its messages, ``form`` whether the claim form is back. */
-function landedDom({ notes = [], errors = [], form = false, heading = "Team page" } = {}) {
+function landedDom({ notes = [], errors = [], form = false, heading = "Team page", claimId = null } = {}) {
   const text = (t) => el({ textContent: t });
+  const nav = el({ textContent: "News", closest: (sel) => (sel.includes("nav") ? el() : null) });
+  const link = (id) => el({ attrs: { href: `/nba/${LEAGUE}/${TEAM}/viewwaiver?claim_id=${id}&activity=transaction` } });
   return {
     querySelector: (sel) => (sel === `form#${X.FORM_ID}` && form ? el() : null),
     querySelectorAll: (sel) =>
       sel === "h1, h2, h3"
-        ? [text("Yahoo Sports Fantasy Basketball"), text(heading)]
+        ? [nav, text("Yahoo Sports Fantasy Basketball"), text(heading)]
         : sel.startsWith(".error")
           ? errors.map(text)
           : sel.startsWith(".Alert")
             ? [...notes, ...errors].map(text)
-            : [],
+            : sel === 'a[href*="viewwaiver"]' && claimId
+              ? [link(claimId)]
+              : [],
     getElementById: () => null,
     body: text([...notes, ...errors].join(" ")),
   };
@@ -803,6 +814,16 @@ test("the page Yahoo lands on logs the claim's live pass: placed, refused, or it
   run = sentOf(v, "moves_log")[0].run;
   assert.deepEqual([run.outcome, run.entries[0].outcome], ["claimed", "claimed"]);
   assert.match(run.entries[0].reason, /Yahoo's answer was not read/);
+  // Yahoo's real answer (2026-10-26): its notice with a stat figure in the error classes, or only
+  // the claim's link among the pending transactions; another claim's link is not this one.
+  v = await landedAt(landedDom({ notes: ["You have successfully created a waiver claim for A dropping B"], errors: ["(-5)"] }));
+  run = sentOf(v, "moves_log")[0].run;
+  assert.deepEqual([run.outcome, run.entries[0].message], ["claimed", "You have successfully created a waiver claim for A dropping B"]);
+  v = await landedAt(landedDom({ claimId: `${TEAM}_${ADD}_2005`, errors: ["(-5)"] }));
+  run = sentOf(v, "moves_log")[0].run;
+  assert.deepEqual([run.outcome, run.entries[0].message, run.entries[0].controls.landed.heading], ["claimed", "the claim shows among the pending transactions", "Team page"]);
+  v = await landedAt(landedDom({ claimId: `${TEAM}_${ADD}_2006` }));
+  assert.match(sentOf(v, "moves_log")[0].run.entries[0].reason, /Yahoo's answer was not read/);
   // No claim awaiting its answer in this tab: the page logs nothing.
   v = await visitAdd({ answer: worker(LIVE), dom: landedDom(), url: `${SITE}/nba/${LEAGUE}/${TEAM}/addplayer` });
   assert.deepEqual(ops(v), ["moves_landed"]);

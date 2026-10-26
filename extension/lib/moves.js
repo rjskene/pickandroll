@@ -448,19 +448,27 @@
   }
 
   /** Yahoo's words saying a claim went in. */
-  const PLACED = /\b(?:claim|transaction|request)\b[^.]{0,60}\b(?:submitted|placed|received|successful)|successfully (?:submitted|placed|added|processed)|pending (?:claim|waiver|transaction)/i;
+  const PLACED = /\b(?:claim|transaction|request)\b[^.]{0,60}\b(?:submitted|placed|received|successful)|successfully (?:submitted|placed|added|processed|created)|pending (?:claim|waiver|transaction)/i;
+  /** An error worth the name has words: Yahoo's red stat figures ("(-5)") share its classes. */
+  const WORDS = /[A-Za-z]{3}/;
 
   /** What the page Yahoo lands on after a claim's submit says (#171 PR 3), from the content
-   * script's plain read ``{path, heading, form, notes, errors, pending}``: ``claimed`` when it
-   * says the claim went in or shows the add among pending claims, ``failed`` with Yahoo's words
-   * when an error stands on the page or the claim form came back with a message; null when the
-   * answer is not recognised (logged ``claimed``, its answer not read: the ruling on #171). */
+   * script's plain read ``{path, heading, form, notes, errors, pending, claim}``: ``claimed`` when
+   * the page links the claim among its pending transactions (``claim``: a View Waiver link whose
+   * claim id is this add and drop), says the claim went in or shows the add among pending claims;
+   * ``failed`` with Yahoo's words when an error stands on the page or the claim form came back
+   * with a message; null when the answer is not recognised (logged ``claimed``, its answer not
+   * read: the ruling on #171). The real page (2026-10-26) lands on my team page with "You have
+   * successfully created a waiver claim for … dropping …", the claim's link, and red stat
+   * figures in the error classes. */
   function readLanded(raw) {
-    const said = [...(raw.notes || []), ...(raw.errors || []), raw.heading || ""].filter(Boolean);
-    const placed = said.find((x) => PLACED.test(x));
+    const notes = (raw.notes || []).filter(Boolean);
+    const errors = (raw.errors || []).filter((x) => WORDS.test(x || ""));
+    const placed = [...notes, ...errors, raw.heading || ""].filter(Boolean).find((x) => PLACED.test(x));
     if (placed) return { outcome: "claimed", message: placed };
-    if ((raw.errors || []).length) return { outcome: "failed", message: raw.errors[0] };
-    if (raw.form && (raw.notes || []).length) return { outcome: "failed", message: raw.notes[0] };
+    if (raw.claim) return { outcome: "claimed", message: "the claim shows among the pending transactions" };
+    if (errors.length) return { outcome: "failed", message: errors[0] };
+    if (raw.form && notes.length) return { outcome: "failed", message: notes[0] };
     if (raw.pending && !raw.form) return { outcome: "claimed", message: "the add shows among the pending claims" };
     return null;
   }
