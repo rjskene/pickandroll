@@ -116,6 +116,8 @@ const readKey = (league) => `season_read:${league}`;
 const lineupKey = (league) => `lineup:${league}`;
 const movesKey = (league) => `moves:${league}`;
 const submitKey = (id) => `moves_submit:${id}`;
+/** The submits put on record one after another, so two pages never pass the cap together. */
+let submitting = Promise.resolve();
 
 /** The live claims on record in ``league``: submitted, their pass not yet taken by the API. */
 async function submits(league) {
@@ -269,14 +271,23 @@ const ops = {
     return logged;
   },
   /** A live claim about to be submitted from the add page in ``sender``'s tab (#171 PR 3):
-   * ``record`` is its day, trigger and the log's line for it. Refused when the entry is on record
-   * already: it is never submitted twice. */
-  async moves_submitting({ league, record }, sender) {
-    const key = submitKey(record.line.id);
-    if ((await chrome.storage.local.get(key))[key]) throw new Error("this claim was submitted already");
-    const kept = { ...record, league: String(league), tab: sender && sender.tab ? sender.tab.id : null, at: Date.now() };
-    await chrome.storage.local.set({ [key]: kept });
-    return { kept: true };
+   * ``record`` is its day, trigger, the log's line for it and the day's cap and claims as the API
+   * counted them. One at a time, and refused when the entry is on record already (it is never
+   * submitted twice), when a claim on the same add is in flight, or when the claims in flight
+   * that day would pass the cap. */
+  moves_submitting({ league, record }, sender) {
+    const run = submitting.then(async () => {
+      const key = submitKey(record.line.id);
+      if ((await chrome.storage.local.get(key))[key]) throw new Error("this claim was submitted already");
+      const inflight = (await submits(league)).filter((x) => x.day === record.day);
+      if (inflight.some((x) => x.line.add === record.line.add)) throw new Error("a claim on this add is in flight");
+      if (record.cap != null && (record.done || 0) + inflight.length >= record.cap) throw new Error("over the day's cap with claims in flight");
+      const kept = { ...record, league: String(league), tab: sender && sender.tab ? sender.tab.id : null, at: Date.now() };
+      await chrome.storage.local.set({ [key]: kept });
+      return { kept: true };
+    });
+    submitting = run.catch(() => {});
+    return run;
   },
   /** The claim ``sender``'s tab submitted in ``league`` and whose pass is not logged, while its
    * answer may still be on this page (``LANDING_MS``); null otherwise. */

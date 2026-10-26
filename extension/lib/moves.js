@@ -286,6 +286,25 @@
     };
   }
 
+  /** ``due`` with the claims this browser submitted and whose pass the API does not have yet (the
+   * worker's records, ``records``) counted as placed: against the day's cap, as pending claims and
+   * against their week's adds, so a second page of the league never claims past them (#171 PR 3). */
+  function withInflight(due, records) {
+    const known = new Set((due.pending || []).map((c) => c.id));
+    const mine = (records || []).filter((r) => r.line && r.day === due.date && !known.has(r.line.id));
+    if (!mine.length) return due;
+    const clears = (r) => (r.line.controls && r.line.controls.waiver_date) || null;
+    return {
+      ...due,
+      done: (due.done || 0) + mine.length,
+      pending: [...(due.pending || []), ...mine.map((r) => ({ id: r.line.id, add: r.line.add, drop: r.line.drop, from: clears(r) }))],
+      adds_left: (due.adds_left || []).map((w) => {
+        const n = mine.filter((r) => clears(r) && w.start <= clears(r) && clears(r) <= w.end).length;
+        return w.adds == null || !n ? w : { ...w, adds: Math.max(0, w.adds - n) };
+      }),
+    };
+  }
+
   /** Why a claim that passed every check is still not submitted live, null when it may be: a
    * free-agent add (this build places waiver claims only) or an open-spot claim (#199). */
   function submitProblem(entry, page) {
@@ -472,6 +491,7 @@
     moveCheck,
     passMode,
     movesPass,
+    withInflight,
     submitProblem,
     fillClaim,
     readLanded,

@@ -209,7 +209,10 @@ page, from PR 2:
   logs a dry run whose reason is "live refused: <reason>". In live, on a page opened with a moves
   fragment only, an entry that passes every check above is placed:
   1. The worker puts it on record first (`moves_submit:<entry>` in the extension's local storage,
-     kept across a restart); while it is there no pass submits that entry again.
+     kept across a restart); while it is there no pass submits that entry again. Claims on record
+     count as placed on the league's other pages (against the day's cap, as pending claims and
+     against their week's adds), and the worker takes one record at a time, refusing one past the
+     cap or on an add already in flight.
   2. The page: a click on the entry's one `dpid` box (Yahoo draws the claim submit only once a drop
      is picked), the claim submit waited for, the whole-dollar bid typed into `faab`, the form read
      back (one box ticked and it is the drop, `apid` the add, the bid as typed, the submit

@@ -736,3 +736,35 @@ test("the worker keeps a submit on record until the API has its live pass, and n
   assert.equal(w.local.has(`moves_submit:${entry().id}`), false);
   assert.deepEqual((await w.send({ op: "moves_submits", league: LEAGUE })).data, []);
 });
+
+test("claims in flight count as placed: against the cap, as pending and against their week's adds", () => {
+  const flying = (id, add, over = {}) => ({ day: DAY, trigger: "routine", league: LEAGUE, tab: 9, at: Date.now(), line: { id, add, drop: 2007, controls: { waiver_date: CLEARS } }, ...over });
+  const d = due({ ...LIVE, cap: 1 });
+  assert.equal(X.withInflight(d, []), d);
+  const got = X.withInflight(d, [flying("a", 3009), flying("old", 3010, { day: "2026-10-23" })]);
+  assert.equal(got.done, 1);
+  assert.deepEqual(got.pending, [{ id: "a", add: 3009, drop: 2007, from: CLEARS }]);
+  assert.deepEqual(got.adds_left, [{ start: "2026-10-20", end: "2026-10-26", adds: 3 }]);
+  assert.equal(X.entryProblem(entry(), got), "over the day's cap");
+  assert.equal(X.entryProblem(entry(), X.withInflight(due(LIVE), [flying("b", ADD)])), "a claim on the add is pending");
+  // A claim the API already counts is not counted twice.
+  const counted = due({ ...LIVE, done: 1, pending: [{ id: "a", add: 3009, drop: 2007, from: CLEARS }] });
+  assert.equal(X.withInflight(counted, [flying("a", 3009)]), counted);
+});
+
+test("the worker puts submits on record one at a time, never past the cap or twice on one add", async () => {
+  const w = loadWorker(() => [200, { at: "x" }]);
+  const record = (id, add) => ({ day: DAY, trigger: "routine", line: { id, add, drop: 2005, outcome: "would_claim" }, cap: 1, done: 0 });
+  const [one, two] = await Promise.all([
+    w.send({ op: "moves_submitting", league: LEAGUE, record: record("e1", 3001) }, 7),
+    w.send({ op: "moves_submitting", league: LEAGUE, record: record("e2", 3002) }, 8),
+  ]);
+  assert.deepEqual([one.ok, two.ok, two.error], [true, false, "over the day's cap with claims in flight"]);
+  const more = (r) => ({ ...r, cap: 3 });
+  const same = await w.send({ op: "moves_submitting", league: LEAGUE, record: more(record("e3", 3001)) }, 8);
+  assert.deepEqual([same.ok, same.error], [false, "a claim on this add is in flight"]);
+  assert.equal((await w.send({ op: "moves_submitting", league: LEAGUE, record: more(record("e4", 3004)) }, 8)).ok, true);
+  // Another league's or another day's claims are not this one's.
+  assert.equal((await w.send({ op: "moves_submitting", league: "100009", record: record("e5", 3001) }, 8)).ok, true);
+  assert.equal((await w.send({ op: "moves_submitting", league: LEAGUE, record: { ...record("e6", 3006), day: "2026-10-25" } }, 8)).ok, true);
+});

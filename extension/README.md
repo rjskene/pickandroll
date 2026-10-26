@@ -175,7 +175,9 @@ guard holds, the same checks place the claim (below).
 that passes every check above is placed, on a page opened with a moves fragment only:
 
 1. It is put on record first (the worker's `moves_submit:<entry>` in `chrome.storage.local`, kept across a
-   restart): while it is there no pass submits that entry again, whatever the tab.
+   restart): while it is there no pass submits that entry again, whatever the tab. Claims on record count as
+   placed in the league's other pages (the day's cap, the pending claims, their week's adds), and the worker
+   takes one record at a time, refusing one past the cap or on an add already in flight.
 2. It ticks the entry's one `dpid` box (a click: Yahoo draws the claim submit only once a drop is picked), waits
    for the claim submit, types the whole-dollar bid into `faab`, reads the form back (one box ticked and it is the
    drop, `apid` the add, the bid as typed, the submit `submit_drop_player`) and clicks the submit once. The form

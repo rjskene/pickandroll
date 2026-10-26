@@ -303,15 +303,19 @@
 
   /** Claims submitted in the league whose answer never came (the tab closed, a page the reader
    * missed): each is logged before this pass, ``claimed`` with its answer not read, and never
-   * submitted again. Answers the ids of every submit still on record. */
+   * submitted again. Answers the submits still on record: in flight, or refused by the log. */
   async function unread() {
-    const r = await send({ op: "moves_submits", league });
-    const records = (r && r.ok && r.data) || [];
+    const submits = async () => {
+      const r = await send({ op: "moves_submits", league });
+      return (r && r.ok && r.data) || [];
+    };
     const now = Date.now();
-    for (const record of records.filter((x) => now - x.at >= PR.LANDING_MS)) {
+    const records = await submits();
+    const stale = records.filter((x) => now - x.at >= PR.LANDING_MS);
+    for (const record of stale) {
       await send({ op: "moves_log", league, run: PR.landedPass(record, null, null, extensionVersion()) });
     }
-    return new Set(records.map((x) => x.line.id));
+    return stale.length ? submits() : records;
   }
 
   /** The moves executor on this add page, opened with ``trigger``'s fragment: the league's due
@@ -327,14 +331,15 @@
       movesStrip(PR.movesStripText({ browserOff: true }));
       return null;
     }
-    const submitted = await unread();
-    // ``due`` is read fresh on each page and never kept.
+    const records = await unread();
+    const submitted = new Set(records.map((x) => x.line.id));
+    // ``due`` is read fresh on each page and never kept; the claims in flight count as placed.
     const r = await send({ op: "moves_due", league: addPage.league });
     if (!r || !r.ok) {
       movesStrip(PR.movesStripText({ error: (r && r.error) || "no answer from the extension" }));
       return null;
     }
-    const due = r.data;
+    const due = PR.withInflight(r.data, records);
     if (due.mode === "off") {
       movesStrip(PR.movesStripText({ due }));
       return null;
@@ -362,7 +367,8 @@
         else {
           const line = PR.moveCheck(entry, check, seen, due, readAt);
           // On record before the page is touched: no pass submits this entry again.
-          const kept = await send({ op: "moves_submitting", league, record: { day: due.date, trigger, line } });
+          const record = { day: due.date, trigger, line, cap: r.data.cap, done: r.data.done };
+          const kept = await send({ op: "moves_submitting", league, record });
           const problem = kept && kept.ok ? await PR.fillClaim(document, entry) : "the submit could not be put on record";
           if (problem === null) {
             movesStrip(`live · claim submitted for $${line.bid}, dropping ${line.drop}: reading Yahoo's answer…`);
