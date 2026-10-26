@@ -46,8 +46,13 @@
   const DROP_TRIGGER_VALUE = "data-check-box-value";
   const SUBMIT_CONTAINER = "add-drop-submit-container";
   const SUBMIT_HIDDEN = "Hidden-submit";
-  /** The final button the reply brings into the submit container. */
-  const FINAL_BUTTON = ".add-drop-player-submit-btn";
+  /** What the reply brings, as a hand tick showed it (2026-10-26, #171): the final button in the
+   * submit container (a submit input that also carries the trigger class, so Yahoo's handler
+   * takes its click), named unlike the noscript's; the stage it sets; and the drop moved from
+   * the boxes, which the reply removes, to one hidden ``dpid`` field. */
+  const FINAL_BUTTON = "#submit-add-drop-button.add-drop-player-submit-btn";
+  const FINAL_SUBMIT = "submit_add_player";
+  const FINAL_STAGE = "3";
   /** Yahoo's own bid check reads the balance off the bid field. */
   const BALANCE_ATTR = "data-faab-balance";
   /** How long the claim waits for Yahoo's reply to the tick. */
@@ -251,10 +256,10 @@
    * fill, one drop only. Every other field would post as the page has it; the anti-forgery
    * field is no part of this. */
   function wouldFill(entry, page) {
-    return { action: page.action, [ADD_FIELD]: entry.add, [DROP_FIELD]: entry.drop ?? null, [BID_FIELD]: entry.bid_placed ?? 0, submit: SUBMIT };
+    return { action: page.action, [ADD_FIELD]: entry.add, [DROP_FIELD]: entry.drop ?? null, [BID_FIELD]: entry.bid_placed ?? 0, submit: FINAL_SUBMIT };
   }
 
-  const FILLED = new Set([ADD_FIELD, DROP_FIELD, BID_FIELD, SUBMIT]);
+  const FILLED = new Set([ADD_FIELD, DROP_FIELD, BID_FIELD, SUBMIT, FINAL_SUBMIT]);
 
   /** The log's line for ``entry`` (the API's ``MoveCheck``) from its check and its page: ids,
    * dollars, dates and the page's own words for its heading only. The waiver-order table is
@@ -393,13 +398,18 @@
     const before = alertsOf(doc).length;
     const yahoo = () => alertsOf(doc).slice(before);
     triggers[0].click();
-    // Yahoo's reply to the tick, by its three signs; the boxes are the reply's own.
+    // Yahoo's reply to the tick, by its three signs. The drop is picked when the form carries it
+    // alone: the reply takes the boxes away and leaves one hidden field with the drop.
+    const picked = () => {
+      const drops = named(DROP_FIELD);
+      return drops.length === 1 && String(drops[0].value) === drop && (String(drops[0].type).toLowerCase() === "hidden" || drops[0].checked);
+    };
     const signs = () => {
       const box = doc.getElementById(SUBMIT_CONTAINER);
       return {
         final: box ? box.querySelector(FINAL_BUTTON) : null,
         shown: Boolean(box) && !String(box.className || "").split(/\s+/).includes(SUBMIT_HIDDEN),
-        picked: boxes().some((el) => String(el.value) === drop && el.checked),
+        picked: picked(),
       };
     };
     let s = signs();
@@ -408,7 +418,7 @@
       s = signs();
     }
     if (yahoo().length) return { outcome: "failed", reason: `Yahoo answered the drop's tick: "${yahoo()[0]}"` };
-    const missing = [!s.final && "the final button is not there", !s.shown && "the submit is still hidden", !s.picked && "the drop box is not checked"].filter(Boolean);
+    const missing = [!s.final && "the final button is not there", !s.shown && "the submit is still hidden", !s.picked && "the form does not carry the drop alone"].filter(Boolean);
     if (missing.length) return skip(`Yahoo's claim step did not come back within ${Math.round(cap / 1000)} s: ${missing.join("; ")}`);
     const [bid] = named(BID_FIELD);
     if (!bid) return skip("the page has no bid field once the drop was ticked");
@@ -418,17 +428,17 @@
     bid.value = String(amount);
     bid.dispatchEvent(new Event("input", { bubbles: true }));
     bid.dispatchEvent(new Event("change", { bubbles: true }));
-    const ticked = boxes().filter((el) => el.checked).map((el) => String(el.value));
+    const drops = named(DROP_FIELD).map((el) => String(el.value));
     const add = named(ADD_FIELD);
+    const stage = named("stage");
     const wrong = [];
-    if (ticked.length !== 1 || ticked[0] !== drop) wrong.push(`the drops ticked are ${ticked.join(", ") || "none"}`);
+    if (!picked()) wrong.push(`its drops are ${drops.join(", ") || "none"}`);
+    if (stage.length !== 1 || String(stage[0].value) !== FINAL_STAGE) wrong.push(`its stage reads ${stage.map((el) => el.value).join(", ") || "none"}`);
     if (add.length !== 1 || Number(add[0].value) !== entry.add) wrong.push("its apid is not the add");
     if (bid.value !== String(amount)) wrong.push(`its bid reads ${bid.value}`);
-    // The final button by its identity: still the one Yahoo drew, shown, and named as the claim's
-    // when it carries a name at all (Yahoo's handler submits the form itself).
+    // The final button by its identity: still the one Yahoo drew, shown, and named as the claim's.
     const now = signs();
-    const name = s.final.getAttribute("name");
-    if (now.final !== s.final || !now.shown || (name != null && name !== SUBMIT)) wrong.push("its final button is not the claim's");
+    if (now.final !== s.final || !now.shown || s.final.getAttribute("name") !== FINAL_SUBMIT) wrong.push("its final button is not the claim's");
     if (wrong.length) return skip(`the form did not take the claim: ${wrong.join("; ")}`);
     if (yahoo().length) return skip(`Yahoo alerted before the final click: "${yahoo()[0]}"`);
     s.final.click();
@@ -572,6 +582,8 @@
     SUBMIT_CONTAINER,
     SUBMIT_HIDDEN,
     FINAL_BUTTON,
+    FINAL_SUBMIT,
+    FINAL_STAGE,
     BALANCE_ATTR,
     SWAP_MS,
     ALERTS_ATTR,

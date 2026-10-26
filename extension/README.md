@@ -188,11 +188,12 @@ that passes every check above is placed, on a page opened with a moves fragment 
      then ticks the box, posts the form's first stage and swaps its reply in, the final button with it; the
      extension fetches nothing itself;
    - after up to 15 s for that reply (the final button in `#add-drop-submit-container`, the container no longer
-     `Hidden-submit`, the drop's box checked; a reply short of any is a skip naming what is missing), it types the
+     `Hidden-submit`, the drop in the form's one `dpid` field, the hidden one the reply leaves in place of the boxes; a
+     reply short of any is a skip naming what is missing), it types the
      whole-dollar bid into `faab`, checked first as Yahoo checks it (a whole number from $0 to the field's
-     `data-faab-balance`), reads the form back (one box ticked and it is the drop, `apid` the add, the bid as typed,
-     the final button by its identity: still the one Yahoo drew and shown, its name `submit_drop_player` only if it
-     has one, since Yahoo's handler posts no button name) and clicks the final button once.
+     `data-faab-balance`), reads the form back (one `dpid` field and it is the drop, stage 3, `apid` the add, the bid
+     as typed, the final button by its identity: still the one Yahoo drew, `#submit-add-drop-button`, shown and named
+     `submit_add_player`) and clicks the final button once. The markers are a hand tick's read (2026-10-26).
    The form posts as Yahoo's script sends it; the anti-forgery field travels in the browser's own submission and is
    never read. A skip after the first click leaves the page as it is (no Cancel click). On an add page opened with
    a moves fragment, `addpage.js` (the page's own world, `document_start`) keeps Yahoo's alerts as text on the root

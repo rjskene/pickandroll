@@ -291,14 +291,18 @@ page, from PR 2:
      - clicks the one `button.add-drop-trigger-btn` whose `data-check-box-value`, trimmed (Yahoo
        pads it with a space), is the drop; none or more than one is a skip, nothing touched;
      - waits up to 15 s for the reply's three signs (the final button in the submit container, the
-       container no longer hidden, the drop's box checked); a reply that does not come is a skip
-       naming the signs missing;
+       container no longer hidden, and the drop picked: the reply takes the boxes away and leaves
+       the drop in one hidden `dpid` field, `#hidden-field-dpid`); a reply that does not come is a
+       skip naming the signs missing;
      - types the whole-dollar bid into `faab` only then, after checking it as Yahoo does (a whole
        number from $0 to the field's `data-faab-balance`), so Yahoo's check never alerts;
-     - reads the form back (one box ticked and it is the drop, `apid` the add, the bid as typed, and
-       the final button by its identity: still the one Yahoo drew, shown, and named
-       `submit_drop_player` only if it carries a name, since Yahoo's handler submits the form
-       itself and posts no button name) and clicks the final button once.
+     - reads the form back (one `dpid` field and it is the drop, the stage the reply set (3),
+       `apid` the add, the bid as typed, and the final button by its identity: still the one Yahoo
+       drew, `input#submit-add-drop-button.add-drop-player-submit-btn`, shown and named
+       `submit_add_player`, not the noscript's `submit_drop_player`) and clicks the final button
+       once.
+     The markers are a hand tick's (2026-10-26, a dry-run reading in a public league: the user
+     clicked a drop's button, the emissary read the page, the user clicked Cancel).
      A skip or failure after the first click leaves the page as it is: the extension never clicks
      Cancel, the routine navigates away, and the first stage places nothing.
      **Yahoo's alerts.** Yahoo answers an error in the first stage's reply, or a bid its check
