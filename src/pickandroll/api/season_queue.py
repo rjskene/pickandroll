@@ -14,8 +14,10 @@ time, and the reads a build makes of each league; the entries themselves are
     The user's veto, from the dashboard: strike an entry, or its bid alone (a $0 claim), or undo
     either; refused once the entry executed.
 ``PUT /autopilot/queue/settings``
-    The day's execute time on the Central clock (``HH:MM``, 07:00 until the user sets one); the
-    day's entries not executed are timed again, never sooner than a full window after queueing.
+    The day's execute time on the Central clock (``HH:MM``, 07:00 until the user sets one), and
+    Sunday's own (#209, null until set; null clears it), each sent alone or together; today's
+    entries not executed are timed again by the one in force today, never sooner than a full
+    window after queueing.
 ``GET /seasons/{league}/autopilot/moves``, ``…/moves/due``, ``POST …/moves``
     The league's Queue card (the mode, the live check, the passes, its entries); the entries due
     now for the extension's execute pass, with the players protected and why, the day's cap, the
@@ -26,7 +28,7 @@ time, and the reads a build makes of each league; the entries themselves are
     The moves executor's mode and the user's own cap on the day's moves.
 
 ``data/autopilot/queue/<date>.json`` holds a day's queue, ``data/autopilot/executor.json`` the
-execute time and the live guard's counts (``live_after``, set by hand on the user's word); each
+execute times and the live guard's counts (``live_after``, set by hand on the user's word); each
 is written whole to a temporary file and moved into place, and a file that does not read is
 refused, never overwritten. Nothing else writes under either.
 """
@@ -149,17 +151,37 @@ def day_of(entry_id: str) -> date | None:
 
 
 # --------------------------------------------------------------------------- the execute time
-def settings(data_dir: Path) -> dict[str, Any]:
+def settings(data_dir: Path, day: date | None = None) -> dict[str, Any]:
     """The execute time (``HH:MM`` on the Central clock) with who set it and when; the code's
-    default until the user sets one (``set`` False). A file that does not read is the default."""
+    default until the user sets one (``set`` False). Sunday's own (#209), null until one is set,
+    with its own who and when. With ``day``, ``in_force`` is the one that holds on it. A file
+    that does not read is the default."""
     try:
         body = _read(autopilot_dir(data_dir) / SETTINGS, dict) or {}
     except QueueError:
         body = {}
     value = body.get("execute_time")
     if not isinstance(value, str) or not EXECUTE_TIME.match(value):
-        return {"execute_time": qa.EXECUTE_TIME, "at": None, "by": None, "set": False}
-    return {"execute_time": value, "at": body.get("at"), "by": body.get("by"), "set": True}
+        out = {"execute_time": qa.EXECUTE_TIME, "at": None, "by": None, "set": False}
+    else:
+        out = {"execute_time": value, "at": body.get("at"), "by": body.get("by"), "set": True}
+    sunday = body.get("sunday_execute_time")
+    if isinstance(sunday, str) and EXECUTE_TIME.match(sunday):
+        out |= {
+            "sunday_execute_time": sunday,
+            "sunday_at": body.get("sunday_at"),
+            "sunday_by": body.get("sunday_by"),
+        }
+    else:
+        out |= {"sunday_execute_time": None, "sunday_at": None, "sunday_by": None}
+    if day is not None:
+        out["in_force"] = in_force(out, day)
+    return out
+
+
+def in_force(s: Mapping[str, Any], day: date) -> str:
+    """The execute time that holds on ``day`` by the settings ``s``."""
+    return qa.day_time(day, s["execute_time"], s.get("sunday_execute_time"))
 
 
 def live_after(data_dir: Path) -> dict[str, int]:
@@ -190,6 +212,19 @@ def set_execute_time(data_dir: Path, value: str, by: str) -> dict[str, Any]:
         body = _read(path, dict) or {}
         at = datetime.now(UTC).isoformat(timespec="seconds")
         _write(path, {**body, "execute_time": value, "at": at, "by": by})
+    return settings(data_dir)
+
+
+def set_sunday_execute_time(data_dir: Path, value: str | None, by: str) -> dict[str, Any]:
+    """Record Sunday's own execute time (#209), or clear it (None: Sunday keeps the day's); the
+    file's other keys are kept."""
+    if value is not None and not EXECUTE_TIME.match(value):
+        raise QueueError(f"an execute time is HH:MM, not {value!r}")
+    with _lock:
+        path = autopilot_dir(data_dir) / SETTINGS
+        body = _read(path, dict) or {}
+        at = datetime.now(UTC).isoformat(timespec="seconds")
+        _write(path, {**body, "sunday_execute_time": value, "sunday_at": at, "sunday_by": by})
     return settings(data_dir)
 
 
