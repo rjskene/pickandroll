@@ -1369,7 +1369,8 @@ export interface QueuePayload {
 export interface RoutinePass {
   id: string;
   kind: "moves" | "lineup";
-  trigger: "routine" | "routine_late";
+  /** ``routine_evening`` is a moves pass's alone (#209). */
+  trigger: "routine" | "routine_late" | "routine_evening";
   started: string;
   updated: string;
   ended: string | null;
@@ -1386,7 +1387,7 @@ export interface MovesPassLog {
   at: string;
   day: string;
   mode: "dry_run" | "live";
-  trigger: "routine" | "routine_late" | "panel";
+  trigger: "routine" | "routine_late" | "routine_evening" | "panel";
   outcome: "would_claim" | "nothing_due" | "skipped" | "claimed" | "failed" | "stopped";
   reason: string | null;
   entries: { id: string; add: number; drop: number | null; bid: number | null; outcome: MoveOutcome; reason: string | null }[];

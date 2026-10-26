@@ -158,6 +158,40 @@ def test_a_pass_opens_once_a_kind_follows_the_routine_and_takes_the_logs_posts(c
     assert r.json()["id"] == "2026-10-21:moves:2" and r.json()["entries"]["total"] is None
 
 
+def test_the_evening_routine_opens_a_moves_pass_and_its_posts_are_logged_and_taken(client):
+    # #209: the evening routine's trigger word, through the record and the log.
+    q = queued(client)
+    on = [e for e in q["entries"] if e["queued"]]
+    lineup = {"kind": "lineup", "trigger": "routine_evening", "leagues": [LEAGUE]}
+    r = client.post(URL, json=lineup)
+    assert r.status_code == 409 and r.json()["detail"] == "the evening pass is a moves pass"
+    r = client.post(
+        URL,
+        json={
+            "kind": "moves",
+            "trigger": "routine_evening",
+            "leagues": [LEAGUE],
+            "entries": [on[0]["id"]],
+        },
+    )
+    assert r.status_code == 200, r.text
+    assert (r.json()["trigger"], r.json()["entries"]["total"]) == ("routine_evening", 1)
+    url = f"/seasons/{LEAGUE}/autopilot/moves"
+    r = client.post(url, json=pass_body([check(on[0])], trigger="routine_evening"))
+    assert r.status_code == 200, r.text
+    assert ap.read_log(client.data_dir, LEAGUE, DAY)["moves"][-1]["trigger"] == "routine_evening"
+    active = client.get("/autopilot/queue").json()["active"]
+    assert active["trigger"] == "routine_evening" and active["results"]["would_claim"] == 1
+    # The queue's entry names the evening pass as its latest.
+    by = {e["id"]: e for e in client.get("/autopilot/queue").json()["entries"]}
+    assert by[on[0]["id"]]["pass"]["trigger"] == "routine_evening"
+    # A lineup run is never the evening's.
+    r = client.post(
+        f"/seasons/{LEAGUE}/autopilot/lineup", json=lineup_body(trigger="routine_evening")
+    )
+    assert r.status_code == 422
+
+
 def test_a_pass_with_no_word_for_fifteen_minutes_reads_stale_and_the_next_open_writes_it(client):
     r = client.post(URL, json={"kind": "lineup", "trigger": "routine_late", "leagues": [LEAGUE]})
     pid = r.json()["id"]

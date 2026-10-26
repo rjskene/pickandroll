@@ -1762,6 +1762,7 @@ test("the Queue card says what the moves executor does, each entry's state and b
     ],
   };
   assert.equal(passLine(pass, () => "9:01 AM"), `9:01 AM · ${weekdayLabel("2026-10-24")} · routine: would claim 1 (1 gone)`);
+  assert.equal(passLine({ ...pass, trigger: "routine_evening", outcome: "nothing_due", entries: [] }, () => "10:41 PM"), `10:41 PM · ${weekdayLabel("2026-10-24")} · evening routine: nothing due`);
   assert.equal(passLine({ ...pass, outcome: "nothing_due", entries: [] }, () => "9:01 AM"), `9:01 AM · ${weekdayLabel("2026-10-24")} · routine: nothing due`);
   const settings = { execute_time: "09:00", at: null, by: null, set: false, sunday_execute_time: null, sunday_at: null, sunday_by: null, in_force: "09:00" };
   const q: QueuePayload = { date: "2026-10-24", built: [], execute_time: null, leagues: [], entries: [], settings, stop: false, now: "2026-10-24T15:00:00Z" };
@@ -1896,6 +1897,8 @@ test("a routine's pass reads live: the league it is on, the entries checked, its
   assert.equal(passResults(moves), "6 would claim, 2 skipped");
   assert.equal(passBar(moves), "Morning moves pass running · league 5 of 12 · 8 of 20 checked · 6 would claim, 2 skipped");
   assert.equal(passBar({ ...moves, trigger: "routine_late", entries: { done: 3, total: null }, results: { would_claim: 0, claimed: 0, skipped: 0, gone: 0, failed: 0 } }), "Late moves pass running · league 5 of 12 · 3 checked");
+  // The evening's pass (#209): a moves pass, with the leagues of the set.
+  assert.equal(passBar({ ...moves, trigger: "routine_evening", leagues: { done: 2, total: 9, order: ["1", "2", "3"] }, current: { league: "3", entry: "e3", since: moves.updated } }), "Evening moves pass running · league 3 of 9 · 8 of 20 checked · 6 would claim, 2 skipped");
   const lineup: RoutinePass = { ...moves, id: "2026-10-26:lineup:1", kind: "lineup", entries: null, current: { league: "7", entry: null, since: moves.updated }, results: { would_set: 3, set: 0, nothing_to_do: 3, skipped: 0, failed: 0 } };
   assert.equal(passBar(lineup), "Morning lineup pass running · 7 of 12 team pages · 3 would set, 3 nothing to do");
   // Closed: its end line for ten minutes after it ended, then nothing.
@@ -1989,6 +1992,7 @@ test("an entry reads its latest pass after its outcome, why it is not queued and
   assert.equal(queueStateTone(queueEntry("a", { outcome: "claimed" })), "good");
   assert.equal(passTitle(e), "routine pass at 9:32 AM CT, extension 0.7.0");
   assert.equal(passTitle(queueEntry("a", { pass: pass({ trigger: "routine_late", extension: null }) })), "late routine pass at 9:32 AM CT");
+  assert.equal(passTitle(queueEntry("a", { pass: pass({ trigger: "routine_evening", extension: "0.8.3" }) })), "evening routine pass at 9:32 AM CT, extension 0.8.3");
   assert.equal(passTitle(queueEntry("a")), "");
   // The tally: the counts at zero left out, in order, then the last pass.
   const tally: PassTally = { last: "2026-10-24T14:35:00Z", would_claim: 13, claimed: 0, skipped: 7, gone: 0, failed: 1, pages: 22 };
