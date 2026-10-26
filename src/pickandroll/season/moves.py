@@ -287,6 +287,42 @@ def stash_order(problem: MoveProblem) -> tuple[Member, ...]:
     return order
 
 
+def held_kinds(problem: MoveProblem) -> tuple[str, ...]:
+    """The league's held slot kinds, each of its slots open or taken, in placement order."""
+    kinds = set(problem.held_open) | set(problem.held_slots.values())
+    order = list(problem.held_accepts)
+    return tuple(sorted(kinds, key=lambda s: (order.index(s) if s in order else len(order), s)))
+
+
+@dataclass(frozen=True)
+class Room:
+    """The room an add without a drop has (#187)."""
+
+    #: Active spots free now (:func:`open_spots`).
+    open_spots: int
+    #: Every held kind of the league with its open slots, a full one at zero.
+    held_open: Mapping[str, int]
+    #: My active players whose status fits one of those kinds, open or full, in the order a
+    #: held slot takes them (:func:`stash_order`).
+    eligible: tuple[int, ...]
+
+
+def room(problem: MoveProblem) -> Room:
+    """The room an add without a drop has today: the open active spots, the open slots of each
+    held kind and who could go to one. It states the problem; the search decides the moves."""
+    kinds = held_kinds(problem)
+    accepts = problem.held_accepts
+    return Room(
+        open_spots(problem),
+        {k: problem.held_open.get(k, 0) for k in kinds},
+        tuple(
+            key
+            for key, player in stash_order(problem)
+            if any(eligible(player.status, k, accepts) for k in kinds)
+        ),
+    )
+
+
 def limit_of(problem: MoveProblem, day: date) -> AddLimit | None:
     return next((lim for lim in problem.limits if lim.start <= day <= lim.end), None)
 
@@ -597,8 +633,7 @@ def stash_advice(problem: MoveProblem, rule: KeepRule) -> list[Advice]:
     player the short-absence rule keeps waits on the bench; any other may be dropped
     (:data:`DROPPABLE`): the search decides."""
     assigned = dict(held_moves(problem))
-    # The league's held kinds: each of its slots is open or taken.
-    kinds = set(problem.held_open) | set(problem.held_slots.values())
+    kinds = held_kinds(problem)
     out: list[Advice] = []
     for key, player in problem.roster:
         k = rule.players[key]

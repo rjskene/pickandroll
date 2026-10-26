@@ -110,7 +110,10 @@ page, from PR 2:
   add the league dropped within the waiver days (or one the set drops); below the noise floor; no
   adds left in the week of its clear date; over the day's cap. The rest are queued by their gain
   on the three weeks after, highest first. The streaming plan stays a dashboard suggestion.
-  `data/autopilot/queue/<date>.json` holds the day; nothing else writes it.
+  `data/autopilot/queue/<date>.json` holds the day; nothing else writes it. Each entry carries its
+  move's `basis` (`open`, `held` or `drop`) and `held_move`, the held-slot move a `held` add needs
+  (#187; null when the decision log entry was written before #187). The live claim (PR 3) reads
+  them: a `held` add executes after its held move, never as an open-spot claim.
 - **The noise floor.** The plan floor of the knobs against the move's gain; once 20 moves are
   scored, also the scorecard's spread (the standard deviation of realized less projected value of
   the public leagues' scored moves, by scoring) against the move's value on its judging horizon,

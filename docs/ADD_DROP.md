@@ -233,11 +233,41 @@ counts as open for a stash.
 
 Several players eligible for fewer open slots: the latest to return takes one first (a player
 not back this season before any), roster order breaking ties (`moves.stash_order`). An add with
-no drop and no open spot names the held move that makes room for him, "Brooks to IL", in the
-Waivers table's For column, the Moves card and the Strategy card (`held` on each move). The
+no drop and no open spot names the held move that makes room for him (`held` on each move):
+"after Brooks to IL" in the Waivers table's For column and the Moves card (#187), "Brooks to IL"
+on the Strategy card. The
 lineup route lists a player as eligible for every held kind the league has that his status fits,
 a full one included, so the Lineup view can tell "eligible, IL full" from "eligible, 1 open" by
 the slot's `open` count: when the IL is full the user decides whom to swap.
+
+**An add's basis (#187).** Every recommended add has one of three bases, and the dashboard names
+it with the rule that applied as its title:
+
+- an open active spot, "free: open spot": no drop;
+- a held move, "after Hurt to IL": an active player whose status fits an open held slot moves
+  there to make room, and his return sends the weakest active player then;
+- a drop, "for Reed".
+
+The For columns (the Waivers table's, the Moves card's and the move drawer's drop list) show a
+drop's name alone, since the header says For, and the other two bases in their words. The
+drawer's line and the Queue card put the basis after the add: "Brooks for Reed", "Brooks after
+Hurt to IL", "Brooks (free: open spot)".
+
+There is no stash threshold. The search prices the held move against every drop on each horizon
+and takes the better, and a tie goes to the move with no drop. So the held move wins when the
+freed spot plays more than the deferred drop costs. A plain drop wins when the drop the return
+would force costs more than dropping now. `stash_threshold` stays an unhooked knob, recorded in
+the decision log as docs/AUTOPILOT.md section 6 says.
+
+The moves payload states the room (`room`, from `moves.room`), so the web never infers it:
+
+- `open_spots`: the active spots free now;
+- `held_open`: every held kind the league has with its open slots, a full one at 0;
+- `eligible`: my active players whose status fits one of those kinds, open or full, in
+  `stash_order`.
+
+The Moves card's note reads it after the system: "1 open spot · IL open: 1" when either is above
+zero, otherwise "roster full, IL full" with who waits for it, or "roster full, no held slots".
 
 ### The keep rule and the IL advice (#124)
 
@@ -547,6 +577,10 @@ docs/AUTOPILOT.md section 2, the bid in section 5.
   section 2, "The page check"). The due route gives it my team, each entry's page, the claims
   still pending, the day's entries executed and the adds left less every claim since. A dry
   run moves no queue outcome: the pass is in the log and the digest, and the entry stays due.
+- **The basis (#187).** Each entry copies its move's `basis` and its held move as `held_move`,
+  beside the set's `held` list, and the Queue card names it ("Brooks after Hurt to IL"). Both are
+  null in an entry built from a log written before #187, and the card then says only "with no
+  drop".
 
 ## Decision log (#125)
 
@@ -574,8 +608,12 @@ when left out.
   opponent before and after it: each category's finals and odds, the expected categories won
   and the odds of winning the matchup. A recommended streaming plan (#136) is one more set of
   the moves route's, `plan`, its moves counting from their days. Since #164 each set also
-  carries the season guard's record, `season_guard` ("The season guard"). A strategy run cut
-  off before it solved logs nothing. A failure to write loses that entry, never the answer.
+  carries the season guard's record, `season_guard` ("The season guard"). From #187 each move
+  records its basis on every set (the moves route's, the plan's and the strategy's): `basis`
+  (`open`, `held` or `drop`, `decisions.basis_of`) and `held`, the held move it takes (null
+  except for `held`). Both are read from the set as a whole, as the payload reads them. An entry
+  logged before #187 has neither, which reads as unknown; the scorecard's split by basis comes
+  later. A strategy run cut off before it solved logs nothing. A failure to write loses that entry, never the answer.
 - **Moves in value units (#126).** From 2026-10-22 an entry also keeps its `scorer`: the
   league's, the keep rule's (Basketball Monster's lines over the players the league rosters),
   as data (`weekly.scorer_of`: a points league's weights, or each category's spread and, for

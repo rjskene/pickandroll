@@ -102,6 +102,9 @@ import {
   queueFoldLine,
   queueMoveText,
   queueStateText,
+  addBasis,
+  basisPhrase,
+  roomNote,
   heldEligibleText,
   liveText,
   runLine,
@@ -811,6 +814,37 @@ test("an add goes in for his drop, the held move that makes room, or an open spo
   assert.equal(forText({ drop: 4 }, name), "P4");
   assert.equal(forText({ drop: null, held: { player: 6, slot: "IL" } }, name), "P6 to IL");
   assert.equal(forText({ drop: null, held: null }, name), "an open spot");
+});
+
+test("an add's basis reads as an open spot, a held move or a drop, the For cell a drop's name alone", () => {
+  const name = (id: number) => `P${id}`;
+  const open = addBasis({ drop: null, held: null }, name);
+  assert.deepEqual([open.kind, open.text, open.cell], ["open", "free: open spot", "free: open spot"]);
+  assert.match(open.title, /active spot is open/);
+  assert.equal(basisPhrase(open), "(free: open spot)");
+  const held = addBasis({ drop: null, held: { player: 5, slot: "IL" } }, name);
+  assert.deepEqual([held.kind, held.text, held.cell], ["held", "after P5 to IL", "after P5 to IL"]);
+  assert.match(held.title, /P5's status fits the open IL slot/);
+  assert.match(held.title, /his return sends the weakest active player/);
+  assert.equal(basisPhrase(held), "after P5 to IL");
+  const drop = addBasis({ drop: 4, held: null }, name);
+  assert.deepEqual([drop.kind, drop.text, drop.cell], ["drop", "for P4", "P4"]);
+  assert.match(drop.title, /priced against every drop/);
+  assert.equal(basisPhrase(drop), "for P4");
+  // A drop is a drop, whatever a stale held field says; held absent is an open spot.
+  assert.equal(addBasis({ drop: 4, held: { player: 5, slot: "IL" } }, name).kind, "drop");
+  assert.equal(addBasis({ drop: null }, name).kind, "open");
+});
+
+test("the Moves card names the room: what is open, else what is full and who waits", () => {
+  const name = (id: number) => `P${id}`;
+  assert.equal(roomNote({ open_spots: 1, held_open: { IL: 1 }, eligible: [5] }, name), "1 open spot · IL open: 1");
+  assert.equal(roomNote({ open_spots: 2, held_open: { IL: 0 }, eligible: [] }, name), "2 open spots");
+  assert.equal(roomNote({ open_spots: 0, held_open: { IL: 1, "IL+": 0 }, eligible: [5] }, name), "IL open: 1");
+  assert.equal(roomNote({ open_spots: 0, held_open: { IL: 0 }, eligible: [] }, name), "roster full, IL full");
+  assert.equal(roomNote({ open_spots: 0, held_open: { IL: 0 }, eligible: [5] }, name), "roster full, IL full (P5 waits)");
+  assert.equal(roomNote({ open_spots: 0, held_open: { IL: 0, "IL+": 0 }, eligible: [6, 5] }, name), "roster full, IL full, IL+ full (P6, P5 wait)");
+  assert.equal(roomNote({ open_spots: 0, held_open: {}, eligible: [] }, name), "roster full, no held slots");
 });
 
 const streamPlan = (over: Partial<StreamPlan> = {}): StreamPlan => ({
@@ -1566,7 +1600,12 @@ test("the Queue card says what the moves executor does, each entry's state and b
   };
   const name = (id: number) => `P${id}`;
   assert.equal(queueMoveText(e, name), "P101 for P201");
-  assert.equal(queueMoveText({ ...e, drop: null }, name), "P101 for an open spot");
+  // By the move's basis (#187): an open spot, a held move, a drop; an entry logged before the
+  // basis with no drop says no more than that.
+  assert.equal(queueMoveText({ ...e, drop: null, basis: "open", held_move: null }, name), "P101 (free: open spot)");
+  assert.equal(queueMoveText({ ...e, drop: null, basis: "held", held_move: { player: 5, slot: "IL" } }, name), "P101 after P5 to IL");
+  assert.equal(queueMoveText({ ...e, basis: "drop", held_move: null }, name), "P101 for P201");
+  assert.equal(queueMoveText({ ...e, drop: null }, name), "P101 with no drop");
   assert.equal(queueStateText(e, now), "executes in 1 h");
   assert.equal(queueStateText({ ...e, struck: true }, now), "struck");
   assert.equal(queueStateText(e, now + 3_600_000), "due at the next pass");

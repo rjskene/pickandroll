@@ -1233,6 +1233,10 @@ export interface QueueEntry {
   value: number | null;
   season: number | null;
   season_costly: boolean | null;
+  /** The move's basis and the held-slot move it takes (#187); absent or null in an entry logged
+   * before. */
+  basis?: AddBasis | null;
+  held_move?: HeldMove | null;
   flag: FlagLevel | null;
   floor: QueueFloor & { below: "plan" | "scored" | null };
   bid: { amount: number; reason: string; base: number; factor: number; sizing: number; typical: number; typical_from: string };
@@ -1386,6 +1390,17 @@ export interface HeldRef extends MoveRef {
 export interface HeldMove {
   player: number;
   slot: string;
+}
+
+/** An add's basis (#187): an open active spot, a held-slot move that makes room, or a drop. */
+export type AddBasis = "open" | "held" | "drop";
+
+/** The room an add without a drop has (#187): the open active spots, each held kind's open
+ * slots (a full one at 0) and my active players whose status fits one, open or full. */
+export interface MoveRoom {
+  open_spots: number;
+  held_open: Record<string, number>;
+  eligible: number[];
 }
 
 /** A player moved to a held slot who comes back inside a horizon, and whom the return sends:
@@ -1565,6 +1580,8 @@ export interface Stash {
 export interface MovesPayload {
   system: ProjectionSystemInfo & { key: ProjectionSystem; fallback?: string };
   cleared?: ClearedPlayer[];
+  /** Absent until the API serves it (#187). */
+  room?: MoveRoom;
   keep_rule?: KeepRule;
   stash?: Stash[];
   horizons: Record<MoveHorizon, MoveHorizonInfo>;

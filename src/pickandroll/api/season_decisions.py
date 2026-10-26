@@ -11,8 +11,9 @@ own gain and value. A moves entry also says what the week's streaming plan (#136
 against its set, whatever the verdict (``plan``), and a recommended plan is one more set,
 ``plan``, its steps dated by their ``from``. From #144 each move's value has a season horizon
 and the move says whether it costs the season (``season_costly``) on the horizon its set is
-judged on: below zero over the season, whatever the protection floor (#164). A day's file is a
-list, appended to.
+judged on: below zero over the season, whatever the protection floor (#164). From #187 each
+move records its basis (an open spot, a held-slot move, a drop) and the held move it takes. A
+day's file is a list, appended to.
 """
 
 from __future__ import annotations
@@ -128,6 +129,17 @@ def _logged(move: Mapping[str, Any], built: Built | None = None) -> dict[str, An
     return out
 
 
+def _based(moves: list[dict[str, Any]], built: Built) -> list[dict[str, Any]]:
+    """``moves`` of one set, each with its basis (#187, ``decisions.basis_of``) and the held-slot
+    move that makes room for it (``held``, None but for a ``held`` basis), read from the set as
+    a whole as the payload reads it (``season_moves.held_by_add``): one rule for every set."""
+    held = season_moves.held_by_add(built.problem, _moves_of(moves))
+    for m in moves:
+        m["held"] = None if m.get("drop") is not None else held.get(int(m["add"]))
+        m["basis"] = dl.basis_of(m.get("drop"), m["held"])
+    return moves
+
+
 def _flagged(moves: list[dict[str, Any]], source: str, key: str) -> list[dict[str, Any]]:
     """``moves`` of one set, each with whether it costs the season (#144) on the horizon the set
     is judged on (``decisions.season_costly``); None for a move with no projection."""
@@ -197,7 +209,7 @@ def moves_entry(built: Built, payload: Mapping[str, Any], at: datetime) -> dict[
     sets = []
     for key in season_moves.HORIZONS:
         rec = payload["recommended"][key]
-        moves = _flagged([_logged(m, built) for m in rec["moves"]], "moves", key)
+        moves = _flagged(_based([_logged(m, built) for m in rec["moves"]], built), "moves", key)
         sets.append(
             {
                 "key": key,
@@ -215,7 +227,7 @@ def moves_entry(built: Built, payload: Mapping[str, Any], at: datetime) -> dict[
         # The streaming plan (#136) as one more set: the week set's moves it keeps, then its
         # steps by day, each counting from its day with its own gain.
         moves = [_logged(m, built) for m in (*plan["base"], *plan["steps"])]
-        moves = _flagged(moves, "moves", "plan")
+        moves = _flagged(_based(moves, built), "moves", "plan")
         none = plan["value"]["none"]
         sets.append(
             {
@@ -273,7 +285,7 @@ def strategy_entry(built: Built, payload: Mapping[str, Any], at: datetime) -> di
         if point.get("stage") != "done":
             continue
         moves = [_logged(m, built) for m in point.get("moves") or []]
-        moves = _flagged(moves, "strategy", point["key"])
+        moves = _flagged(_based(moves, built), "strategy", point["key"])
         sets.append(
             {
                 "key": point["key"],

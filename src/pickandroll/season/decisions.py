@@ -24,7 +24,9 @@ league's, as data: ``weekly.scorer_of``) and, for each recommended move, its own
 horizon as the solve priced it and its projection in value units (:func:`move_projection`).
 From #144 the projection also has a ``season`` horizon, to the season's last day, and each move
 says whether it costs the season (:func:`season_costly`) on the horizon it is judged on
-(:func:`judging_horizon`). Pure: the entries are read and written by the API.
+(:func:`judging_horizon`). From #187 each move also records its basis (:func:`basis_of`): an
+open active spot, a held-slot move that makes room for the add, or a drop; an older entry has
+none, which reads as unknown. Pure: the entries are read and written by the API.
 """
 
 from __future__ import annotations
@@ -55,6 +57,8 @@ THREE_SETS = ("three",)
 #: The strategy's sets solved under the week weight (λ = 1, this week alone) and under the season
 #: weight (λ = 0, the rest of the season alone).
 WEEK_SET, SEASON_SET = "week", "season"
+#: An add's basis (#187): an open active spot, a held-slot move that makes room, or a drop.
+OPEN, HELD, DROP = "open", "held", "drop"
 
 _CLOCK = re.compile(r",\s*(\d{1,2}):(\d{2})\s*([ap])\.?m", re.IGNORECASE)
 _BID = re.compile(r"\$\s*(\d+(?:\.\d+)?)")
@@ -143,6 +147,14 @@ def recommended(entry: Mapping[str, Any]) -> list[tuple[int, int | None]]:
         for s in entry.get("sets") or []
         for m in s.get("moves") or []
     ]
+
+
+def basis_of(drop: int | None, held: Mapping[str, Any] | None) -> str:
+    """A recommended add's basis (#187): :data:`DROP` when it drops a player, :data:`HELD` when a
+    held-slot move (``held``, who goes to which slot) makes room for him, else :data:`OPEN`."""
+    if drop is not None:
+        return DROP
+    return HELD if held else OPEN
 
 
 def before(made: Made, entries: Iterable[Mapping[str, Any]]) -> Mapping[str, Any] | None:
