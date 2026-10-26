@@ -1058,8 +1058,8 @@ export const FLAG_SIGNAL_NAME: Record<FlagSignalKey, string> = {
   value: "value gap",
   opportunity: "opportunity",
 };
-/** The Waivers column's tag: W, A, M+. */
-export const FLAG_SHORT: Record<FlagLevel, string> = { watch: "W", add: "A", "must-add": "M+" };
+/** The tag's label: the level's name, which the tag's CSS upper-cases (#186). */
+export const FLAG_SHORT: Record<FlagLevel, string> = { watch: "watch", add: "add", "must-add": "must-add" };
 export const FLAG_TONE: Record<FlagLevel, "tie" | "accent" | "good"> = { watch: "tie", add: "accent", "must-add": "good" };
 /** What each level recommends, as the flags legend says it (#185, ruled on the issue). */
 export const FLAG_MEANS: Record<FlagLevel, string> = {
@@ -1075,6 +1075,11 @@ export const FLAG_READS: Record<FlagSignalKey, string> = {
   opportunity: "ESPN's injury report and the rest-of-season export",
 };
 
+/** What the legend says of a player under watch, shown dimmed with the toggle on (#186). */
+export const FLAG_UNDER_MEANS = "shown dimmed with “show under watch” on; no move is recommended on the flag alone";
+/** Where the "show under watch" toggle is kept, per browser. */
+export const WATCH_KEY = "pickandroll.flags.watch";
+
 /** A player's flag, when a signal speaks for him. */
 export function flagOf(s: Pick<SeasonView, "flags">, id: number): PlayerFlag | undefined {
   return s.flags?.[String(id)];
@@ -1083,6 +1088,57 @@ export function flagOf(s: Pick<SeasonView, "flags">, id: number): PlayerFlag | u
 /** The signals that spoke, loudest first. */
 export function flagSignals(f: PlayerFlag): FlagSignalKey[] {
   return FLAG_SIGNALS.filter((k) => (f.signals[k]?.score ?? 0) > 0).sort((a, b) => f.signals[b].score - f.signals[a].score);
+}
+
+/** A score as the tag reads it: one decimal, cut rather than rounded, so a 1.46 never reads as a
+ * 1.5 floor it has not reached. */
+export function flagScore(score: number): string {
+  return (Math.floor(score * 10 + 1e-9) / 10).toFixed(1);
+}
+
+/** Under watch: no level, but a score that counts (opportunity alone scores 0 and is not). */
+export function underWatch(f: PlayerFlag | undefined): f is PlayerFlag {
+  return f != null && f.level == null && f.score > 0;
+}
+
+/** What a flag's tag reads (#186): its level and score, "add 1.7"; a player under watch reads
+ * "under 0.6", and only with ``watch`` on; null for no flag, and for opportunity alone. */
+export function flagTag(f: PlayerFlag | undefined, watch = false): { label: string; score: string; level: FlagLevel | null } | null {
+  if (f?.level) return { label: FLAG_SHORT[f.level], score: flagScore(f.score), level: f.level };
+  return watch && underWatch(f) ? { label: "under", score: flagScore(f.score), level: null } : null;
+}
+
+/** The tag's meter (#186): the score's share of the most the four signals add up to, and a tick
+ * at each level's floor, lowest first, marked when the score reaches it. */
+export function flagMeter(
+  score: number,
+  cfg?: FlagConfig,
+): { fill: number; max: number; ticks: { level: FlagLevel; floor: number; at: number; reached: boolean }[] } {
+  const max = cfg?.max ?? FLAG_SIGNALS.length;
+  const share = (x: number) => Math.min(1, Math.max(0, x / max));
+  const ticks = cfg
+    ? [...cfg.levels].sort((a, b) => a.floor - b.floor).map((l) => ({ level: l.level, floor: l.floor, at: share(l.floor), reached: score >= l.floor - 1e-9 }))
+    : [];
+  return { fill: share(score), max, ticks };
+}
+
+/** The "show under watch" toggle as this browser keeps it: on only when stored on, off when the
+ * storage cannot be read. */
+export function readWatch(store: Pick<Storage, "getItem"> | null): boolean {
+  try {
+    return store?.getItem(WATCH_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+/** Keeps the toggle; when the storage refuses, it lasts the page. */
+export function writeWatch(store: Pick<Storage, "setItem"> | null, on: boolean): void {
+  try {
+    store?.setItem(WATCH_KEY, on ? "1" : "0");
+  } catch {
+    // Private mode or blocked storage: the toggle lasts the page.
+  }
 }
 
 /** Opportunity alone: the server scores the flag 0, since it counts only beside another signal. */
@@ -1208,6 +1264,10 @@ export function flagLegend(
   now: number,
 ): {
   levels: { level: FlagLevel; floor: number; means: string }[];
+  /** Under watch: below the lowest floor, shown dimmed with the toggle on. */
+  under: { below: number; means: string };
+  /** The meter's sample: a tag at the second level's floor, its tick reached. */
+  sample: { level: FlagLevel; score: number } | null;
   scale: string;
   signals: { key: FlagSignalKey; name: string; rule: string; reads: string; silent: string | null }[];
   alone: string | null;
@@ -1215,8 +1275,11 @@ export function flagLegend(
   caveat: string;
 } {
   const x = flagExplainer(cfg, inputs?.silent);
+  const levels = [...cfg.levels].sort((a, b) => a.floor - b.floor).map((l) => ({ level: l.level, floor: l.floor, means: FLAG_MEANS[l.level] }));
   return {
-    levels: [...cfg.levels].sort((a, b) => a.floor - b.floor).map((l) => ({ level: l.level, floor: l.floor, means: FLAG_MEANS[l.level] })),
+    levels,
+    under: { below: levels[0]?.floor ?? 0, means: FLAG_UNDER_MEANS },
+    sample: levels.length > 1 ? { level: levels[1].level, score: levels[1].floor } : null,
     scale: `Each signal scores from 0 to 1; the level comes from their sum, at most ${cfg.max}.`,
     signals: x.signals.map((sg) => ({ key: sg.key, name: sg.name, rule: sg.text, reads: FLAG_READS[sg.key], silent: sg.silent })),
     alone: x.alone,
@@ -1233,12 +1296,17 @@ export function flagLevels(s: Pick<SeasonView, "flags" | "available">): Record<F
   return n;
 }
 
-/** The flagged players (a level, not just a signal), the highest score first. */
-export function flagged(s: Pick<SeasonView, "flags" | "available">): { row: AvailableRow; flag: PlayerFlag }[] {
+const LEVEL_RANK: Record<FlagLevel, number> = { "must-add": 0, add: 1, watch: 2 };
+
+/** The flagged players (a level, not just a signal), by level, the highest first, and within a
+ * level the highest score first, the name breaking ties; with ``watch`` the players under watch
+ * follow (#186). */
+export function flagged(s: Pick<SeasonView, "flags" | "available">, opts: { watch?: boolean } = {}): { row: AvailableRow; flag: PlayerFlag }[] {
+  const rank = (f: PlayerFlag) => (f.level ? LEVEL_RANK[f.level] : 3);
   return s.available
     .map((row) => ({ row, flag: flagOf(s, row.player.yahoo_id) }))
-    .filter((x): x is { row: AvailableRow; flag: PlayerFlag } => x.flag?.level != null)
-    .sort((a, b) => b.flag.score - a.flag.score || a.row.player.name.localeCompare(b.row.player.name));
+    .filter((x): x is { row: AvailableRow; flag: PlayerFlag } => x.flag?.level != null || (Boolean(opts.watch) && underWatch(x.flag)))
+    .sort((a, b) => rank(a.flag) - rank(b.flag) || b.flag.score - a.flag.score || a.row.player.name.localeCompare(b.row.player.name));
 }
 
 /** What the flags were read from: "buzz index read 5 min ago · 81 on the injury report · past 7
