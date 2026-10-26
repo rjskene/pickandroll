@@ -136,9 +136,14 @@ import {
   projectedTotals,
   DEFAULT_AVAILABLE_SORT,
   filterAvailable,
+  FLAG_MEANS,
+  FLAG_READS,
   FLAG_SHORT,
+  FLAG_TONE,
   flagged,
   flagInputsNote,
+  flagLegend,
+  flagLevels,
   flagOf,
   flagBreakdown,
   flagExplainer,
@@ -513,12 +518,85 @@ test("the flag's explainer takes every number from the API and names the signals
   assert.equal(x.levels, "Each signal scores from 0 to 1 and the level comes from their sum, at most 4: watch from 0.8, add from 1.5, must-add from 2.2.");
   assert.ok(x.signals[1].text.includes("(2 in 7 days, 4 in 14 days)") && x.signals[1].text.includes("last 3 days"));
   assert.ok(x.signals[2].text.startsWith("ranked inside the top 120") && x.signals[2].text.includes("under 50%"));
-  assert.ok(x.signals[3].text.endsWith("It counts toward the level only beside another signal."));
+  assert.ok(x.signals[3].text.endsWith("nothing while he is out himself."));
+  assert.equal(x.alone, "Alone, opportunity flags no one: it counts toward the level only beside another signal.");
   assert.ok(x.caveat.includes("first guess"));
   // A retune shows at once.
   const tuned = flagExplainer({ ...CONFIG, opportunity_needs_another: false, signals: { ...CONFIG.signals, value: { ...CONFIG.signals.value, rank: 150 } } });
   assert.ok(tuned.signals[2].text.startsWith("ranked inside the top 150"));
-  assert.ok(!tuned.signals[3].text.includes("beside another signal"));
+  assert.equal(tuned.alone, null);
+});
+
+// A retuned config: every floor and threshold differs from today's, so a number written into the
+// web would show here.
+const TUNED: FlagConfig = {
+  levels: [
+    { level: "must-add", floor: 3.1 },
+    { level: "add", floor: 2.05 },
+    { level: "watch", floor: 1.15 },
+  ],
+  max: 5,
+  opportunity_needs_another: true,
+  past_days_max_days: 6,
+  signals: {
+    surge: { name: "adds surge", jump_full: 3.5, jump_floor: 2, history_days: 5, adds_full: 9, adds_floor: 35, buzz_rows: 60, buzz_last: 0.4 },
+    minutes: { name: "minutes up", minutes_full: 7, usage_full: 6, usage_weight: 0.6, min_games: { "14": 5, "7": 3 } },
+    value: { name: "value gap", rank: 130, pct: 45, rank_scale: 260 },
+    opportunity: { name: "opportunity", out_days: 12, full: 28, unknown_mpg: 14 },
+  },
+};
+
+test("the flags legend: the levels lowest first with their floors and what each recommends, every number the API's", () => {
+  const now = Date.parse("2026-10-25T15:00:00Z");
+  const inputs = { buzz: { today: "2026-10-25T14:55:00Z", rows: 50, earlier_days: 2 }, injuries: { read_at: "2026-10-25T14:50:00Z", players: 81 }, silent: { minutes: "no past-days export within 6 days" } };
+  const x = flagLegend(TUNED, inputs, now);
+  assert.deepEqual(
+    x.levels.map((l) => [l.level, l.floor]),
+    [
+      ["watch", 1.15],
+      ["add", 2.05],
+      ["must-add", 3.1],
+    ],
+  );
+  assert.deepEqual(
+    x.levels.map((l) => l.means),
+    [FLAG_MEANS.watch, FLAG_MEANS.add, FLAG_MEANS["must-add"]],
+  );
+  assert.equal(x.scale, "Each signal scores from 0 to 1; the level comes from their sum, at most 5.");
+  assert.deepEqual(
+    x.signals.map((sg) => [sg.key, sg.name, sg.reads, sg.silent]),
+    [
+      ["surge", "adds surge", FLAG_READS.surge, null],
+      ["minutes", "minutes up", FLAG_READS.minutes, "no past-days export within 6 days"],
+      ["value", "value gap", FLAG_READS.value, null],
+      ["opportunity", "opportunity", FLAG_READS.opportunity, null],
+    ],
+  );
+  // Each rule carries the tuned numbers.
+  assert.ok(x.signals[0].rule.includes("3.5×") && x.signals[0].rule.includes("the 60th 0.4"));
+  assert.ok(x.signals[1].rule.includes("(3 in 7 days, 5 in 14 days)") && x.signals[1].rule.includes("last 6 days"));
+  assert.ok(x.signals[2].rule.startsWith("ranked inside the top 130") && x.signals[2].rule.includes("under 45%"));
+  assert.ok(x.signals[3].rule.includes("at least 12 more days") && x.signals[3].rule.includes("28 minutes"));
+  assert.equal(x.alone, "Alone, opportunity flags no one: it counts toward the level only beside another signal.");
+  assert.equal(flagLegend({ ...TUNED, opportunity_needs_another: false }, inputs, now).alone, null);
+  assert.equal(x.read, flagInputsNote(inputs, now));
+  assert.ok(x.caveat.includes("first guess"));
+  // Every level has its tag, its tone and its words; the wording recommends, never claims the best.
+  for (const l of x.levels) assert.ok(FLAG_SHORT[l.level] && FLAG_TONE[l.level] && FLAG_MEANS[l.level]);
+  const text = JSON.stringify(x);
+  assert.ok(text.includes("recommended") && !/optimal/i.test(text));
+});
+
+test("the Flags card counts the flagged players by level, the highest first", () => {
+  const p = (n: number) => row(player(`Player ${n}`, ["G"], { yahoo_id: n }));
+  const s = {
+    available: [p(1), p(2), p(3), p(4), p(5), p(6)],
+    flags: { "1": flag("must-add", 2.4), "2": flag("add", 1.6), "3": flag("watch", 0.9), "4": flag("watch", 0.85), "5": flag(null, 0.3), "6": flag(null, 0, 0, 0, 0.5) },
+  };
+  assert.deepEqual(flagLevels(s), { "must-add": 1, add: 1, watch: 2 });
+  assert.equal(flagCounts(flagLevels(s)), "1 must-add · 1 add · 2 watch");
+  // An empty level is left out.
+  assert.equal(flagCounts(flagLevels({ available: [p(3)], flags: { "3": flag("watch", 0.9) } })), "1 watch");
 });
 
 test("the flagged players have a level, the highest first; a signal alone is not a flag", () => {

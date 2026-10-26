@@ -1061,6 +1061,19 @@ export const FLAG_SIGNAL_NAME: Record<FlagSignalKey, string> = {
 /** The Waivers column's tag: W, A, M+. */
 export const FLAG_SHORT: Record<FlagLevel, string> = { watch: "W", add: "A", "must-add": "M+" };
 export const FLAG_TONE: Record<FlagLevel, "tie" | "accent" | "good"> = { watch: "tie", add: "accent", "must-add": "good" };
+/** What each level recommends, as the flags legend says it (#185, ruled on the issue). */
+export const FLAG_MEANS: Record<FlagLevel, string> = {
+  watch: "worth watching; no move is recommended on the flag alone",
+  add: "worth an add: open his move (evaluate move) and take it if the Moves card recommends it",
+  "must-add": "look first today: open his move; the Moves card says whether the add is recommended, over the player it drops or into an open spot",
+};
+/** What each signal reads, in words. */
+export const FLAG_READS: Record<FlagSignalKey, string> = {
+  surge: "Yahoo's buzz index and the players page's % rostered",
+  minutes: "the 7- and 14-day past-days exports against the rest-of-season export",
+  value: "the rest-of-season export and % rostered",
+  opportunity: "ESPN's injury report and the rest-of-season export",
+};
 
 /** A player's flag, when a signal speaks for him. */
 export function flagOf(s: Pick<SeasonView, "flags">, id: number): PlayerFlag | undefined {
@@ -1155,7 +1168,7 @@ export function flagBreakdown(f: PlayerFlag, cfg?: FlagConfig, silent?: FlagInpu
 export function flagExplainer(
   cfg: FlagConfig,
   silent?: FlagInputs["silent"],
-): { signals: { key: FlagSignalKey; name: string; text: string; silent: string | null }[]; levels: string; caveat: string } {
+): { signals: { key: FlagSignalKey; name: string; text: string; silent: string | null }[]; alone: string | null; levels: string; caveat: string } {
   const { surge, minutes, value, opportunity } = cfg.signals;
   const windows = Object.entries(minutes.min_games)
     .sort((a, b) => Number(a[0]) - Number(b[0]))
@@ -1173,17 +1186,51 @@ export function flagExplainer(
     value: `ranked inside the top ${value.rank} on the league's own scoring and rostered in under ${value.pct}% of Yahoo leagues: the better the rank and the lower the %, the higher the score.`,
     opportunity:
       `teammates in his position group (guard, forward, centre) out at least ${opportunity.out_days} more days, by their projected minutes: ${opportunity.full} minutes a game out scores 1, ` +
-      `a teammate without a projection counting ${opportunity.unknown_mpg}; nothing while he is out himself.` +
-      (cfg.opportunity_needs_another ? " It counts toward the level only beside another signal." : ""),
+      `a teammate without a projection counting ${opportunity.unknown_mpg}; nothing while he is out himself.`,
   };
   return {
     signals: FLAG_SIGNALS.map((key) => ({ key, name: cfg.signals[key].name, text: text[key], silent: silent?.[key] ?? null })),
+    alone: cfg.opportunity_needs_another ? `Alone, ${cfg.signals.opportunity.name} flags no one: it counts toward the level only beside another signal.` : null,
     levels: `Each signal scores from 0 to 1 and the level comes from their sum, at most ${cfg.max}: ${[...cfg.levels]
       .sort((a, b) => a.floor - b.floor)
       .map((l) => `${l.level} from ${l.floor}`)
       .join(", ")}.`,
     caveat: "Every threshold is a first guess, to be tuned once two weeks of buzz-index history are kept. The flag never adds anyone.",
   };
+}
+
+/** The flags legend (#185), every number from the API's config: the levels lowest first with
+ * their floors and what each recommends, the signals with their rule and what they read (a silent
+ * one says why), the opportunity-only rule, what the flags were read from today, the caveat. */
+export function flagLegend(
+  cfg: FlagConfig,
+  inputs: FlagInputs | undefined,
+  now: number,
+): {
+  levels: { level: FlagLevel; floor: number; means: string }[];
+  scale: string;
+  signals: { key: FlagSignalKey; name: string; rule: string; reads: string; silent: string | null }[];
+  alone: string | null;
+  read: string;
+  caveat: string;
+} {
+  const x = flagExplainer(cfg, inputs?.silent);
+  return {
+    levels: [...cfg.levels].sort((a, b) => a.floor - b.floor).map((l) => ({ level: l.level, floor: l.floor, means: FLAG_MEANS[l.level] })),
+    scale: `Each signal scores from 0 to 1; the level comes from their sum, at most ${cfg.max}.`,
+    signals: x.signals.map((sg) => ({ key: sg.key, name: sg.name, rule: sg.text, reads: FLAG_READS[sg.key], silent: sg.silent })),
+    alone: x.alone,
+    read: flagInputsNote(inputs, now),
+    caveat: x.caveat,
+  };
+}
+
+/** The flagged available players counted by level, for :func:`flagCounts` (the Flags card's
+ * note, #185, as the landing grid's). */
+export function flagLevels(s: Pick<SeasonView, "flags" | "available">): Record<FlagLevel, number> {
+  const n: Record<FlagLevel, number> = { "must-add": 0, add: 0, watch: 0 };
+  for (const { flag } of flagged(s)) if (flag.level) n[flag.level] += 1;
+  return n;
 }
 
 /** The flagged players (a level, not just a signal), the highest score first. */

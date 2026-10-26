@@ -1,23 +1,73 @@
 import { useLayoutEffect, useRef } from "react";
-import type { FlagConfig, FlagInputs, PlayerFlag } from "../api";
-import { flagBreakdown, flagExplainer } from "../season";
+import type { FlagConfig, FlagInputs, FlagLevel, PlayerFlag } from "../api";
+import { FLAG_SHORT, FLAG_TONE, flagBreakdown, flagLegend, flagTitle } from "../season";
 import Info from "./Info";
 
-/** The breakout flag's "i" (#113): what each signal reads and how it scores, the levels and the
- * signals today's inputs leave silent, every number from the API's config. */
-export function FlagInfo({ cfg, silent, align = "left" }: { cfg: FlagConfig | undefined; silent?: FlagInputs["silent"]; align?: "left" | "right" }) {
-  if (!cfg) return null;
-  const x = flagExplainer(cfg, silent);
+/** A level as the table draws it: its short label in its tone. */
+export function LevelTag({ level, title }: { level: FlagLevel; title?: string }) {
   return (
-    <Info title="the breakout flag" align={align}>
-      <span>Signs that an available player may outlast his projection, which lags a role change by days. Four signals:</span>
+    <span className={`tag ${FLAG_TONE[level]}`} title={title}>
+      {FLAG_SHORT[level]}
+    </span>
+  );
+}
+
+/** A breakout flag's level as a tag (W, A, M+), its evidence on hover; nothing under watch. */
+export function FlagTag({ f, cfg }: { f: PlayerFlag | undefined; cfg: FlagConfig | undefined }) {
+  if (!f?.level) return null;
+  return <LevelTag level={f.level} title={flagTitle(f, cfg)} />;
+}
+
+/** The breakout flag's legend behind an "i" (#113, #185): the levels lowest first, each as the
+ * table draws it with its floor and what it recommends; each signal's rule and what it reads, a
+ * silent one saying why; the opportunity-only rule and what the flags were read from today.
+ * Every number from the API's config. ``label`` shows a short text beside the "i" (the Flags
+ * card's "how flags work"); ``name`` names a bare one. */
+export function FlagInfo({
+  cfg,
+  inputs,
+  now,
+  align = "left",
+  label,
+  name,
+}: {
+  cfg: FlagConfig | undefined;
+  inputs: FlagInputs | undefined;
+  now: number;
+  align?: "left" | "right";
+  label?: string;
+  name?: string;
+}) {
+  if (!cfg) return null;
+  const x = flagLegend(cfg, inputs, now);
+  return (
+    <Info title="the breakout flag" align={align} label={label} name={name} wide>
+      <span>Signs that an available player may outlast his projection, which lags a role change by days. The flag never adds anyone.</span>
+      <table className="flag-legend">
+        <tbody>
+          {x.levels.map((l) => (
+            <tr key={l.level}>
+              <td>
+                <LevelTag level={l.level} />
+              </td>
+              <td>
+                <b>{l.level}</b>
+              </td>
+              <td className="num">from {l.floor}</td>
+              <td>{l.means}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <span className="dim">{x.scale} Four signals:</span>
       {x.signals.map((sg) => (
         <span key={sg.key}>
-          <b>{sg.name}</b>: {sg.text}
+          <b>{sg.name}</b>: {sg.rule} <span className="dim">Reads {sg.reads}.</span>
           {sg.silent && <span className="bad"> Silent today: {sg.silent}.</span>}
         </span>
       ))}
-      <span>{x.levels}</span>
+      {x.alone && <span>{x.alone}</span>}
+      <span className="dim">Read today: {x.read}.</span>
       <span className="dim">{x.caveat} Click a flagged player for his breakdown.</span>
     </Info>
   );
