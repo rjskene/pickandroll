@@ -172,8 +172,9 @@ export interface KeyMap {
   setSheetOpen: (open: boolean) => void;
   /** Esc once the sheet is closed and no field has focus. */
   escape: () => void;
-  /** The other keys by ``KeyboardEvent.key``; a handler returning false leaves the key alone. */
-  keys: Record<string, (ctx: { control: boolean }) => boolean | void>;
+  /** The other keys by ``KeyboardEvent.key``; a handler returning false leaves the key alone.
+   * ``field`` is a form field with focus that letters reach (a time input, a checkbox). */
+  keys: Record<string, (ctx: { control: boolean; field: boolean }) => boolean | void>;
 }
 
 /** One keydown: true when a shortcut took it (the caller prevents the browser's default).
@@ -206,7 +207,7 @@ export function handleKey(e: KeyLike, map: KeyMap): boolean {
   }
   if (f.tag === "SELECT") return false; // letters change the selection natively
   const run = Object.hasOwn(map.keys, e.key) ? map.keys[e.key] : undefined;
-  if (!run || run({ control: f.control }) === false) return false;
+  if (!run || run({ control: f.control, field: f.tag === "INPUT" }) === false) return false;
   closeSheet();
   return true;
 }
@@ -604,3 +605,27 @@ export const PROGRESS_SHEET: Sheet = {
   ],
   footer: "Every key mirrors a visible control. Action items and knob changes are handled in the session with the master; this screen only reads.",
 };
+
+// ---------------------------------------------------------------- the landing and the Queue screen (#194)
+/** The landing's one key: ``q`` opens the Queue screen, unless a field has focus or ``openQueue``
+ * is null (the drafts drawer is open). */
+export function landingKeys(openQueue: (() => void) | null): KeyMap {
+  return {
+    cards: 0,
+    openCard: () => {},
+    sheetOpen: false,
+    setSheetOpen: () => {},
+    escape: () => {},
+    keys: {
+      q: ({ field }) => {
+        if (field || !openQueue) return false;
+        openQueue();
+      },
+    },
+  };
+}
+
+/** The Queue screen's key: Esc goes back. */
+export function queueKeys(back: () => void): KeyMap {
+  return { cards: 0, openCard: () => {}, sheetOpen: false, setSheetOpen: () => {}, escape: back, keys: {} };
+}

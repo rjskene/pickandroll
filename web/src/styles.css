@@ -134,6 +134,23 @@ button.primary kbd { background: rgba(0, 0, 0, 0.18); border-color: rgba(0, 0, 0
 /* In season the drafts fold into one line, and open in a drawer over the grid. */
 .fold { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 14px; padding: 10px 14px; border: 1px solid var(--line-2); border-radius: 10px; background: var(--panel-2); }
 .fold .k { color: var(--text); }
+/* The Queue screen (#194): the head, a chip per league (the private league's on the --mine tint),
+ * the day's queue across the leagues, the moves left out, and the private league's suggestions. */
+.qs-head { display: grid; gap: 4px; font-size: 13px; }
+.qs-head p { margin: 0; }
+.qs-strip { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 8px; }
+.qs-chip { display: flex; flex-direction: column; gap: 3px; min-width: 0; padding: 8px 10px; border: 1px solid var(--line-2); border-radius: 8px; background: var(--panel-2); font-size: 12px; }
+.qs-chip.private { border-color: var(--accent); background: var(--mine); }
+.qs-chip > button.link { align-self: flex-start; text-align: left; overflow-wrap: anywhere; font-family: var(--display); font-size: 15px; font-weight: 700; color: #ffffff; }
+.qs-chip > button.link:hover { color: var(--accent); text-decoration: none; }
+.qs-facts { display: flex; flex-wrap: wrap; gap: 2px 10px; color: var(--muted); }
+.qs-section { display: grid; gap: 8px; }
+details.qs-section > summary { cursor: pointer; }
+.qs-scroll { overflow-x: auto; }
+.qs-table td { font-size: 12px; }
+.qs-table tr.struck td:not(.acts) { opacity: 0.55; }
+.qs-table td.acts { text-align: right; }
+.qs-sugg { display: grid; gap: 8px; padding: 10px 14px; border: 1.5px solid var(--accent); border-radius: 10px; background: var(--mine); font-size: 12px; }
 .shade { position: fixed; inset: 0; z-index: 29; background: rgba(11, 15, 20, 0.55); }
 .slide { position: fixed; top: 0; right: 0; bottom: 0; z-index: 30; width: min(560px, 100vw); display: flex; flex-direction: column; background: var(--panel); border-left: 1px solid var(--line-2); box-shadow: -30px 0 80px rgba(0, 0, 0, 0.6); }
 .slide > header { display: flex; align-items: center; gap: 10px; padding: 14px 18px; border-bottom: 1px solid var(--line); }

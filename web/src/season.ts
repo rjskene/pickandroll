@@ -670,6 +670,78 @@ export function queueFoldLine(q: QueuePayload): string {
     .join(" · ");
 }
 
+// ---------------------------------------------------------------- the Queue screen (#194)
+/** A player the day's queue names, by id; "player 7" for one it does not. */
+export function queueNamer(q: Pick<QueuePayload, "names">): (id: number) => string {
+  return (id) => q.names?.[String(id)] ?? `player ${id}`;
+}
+
+/** The day's queued entries of every league (queued, struck or executed) in the order they
+ * execute: by the time (none last), then the league's rank, then the league. */
+export function queueOrder(entries: QueueEntry[]): QueueEntry[] {
+  const at = (e: QueueEntry) => {
+    const t = e.executes_at ? Date.parse(e.executes_at) : NaN;
+    return Number.isNaN(t) ? Infinity : t;
+  };
+  return entries
+    .filter((e) => e.queued)
+    .sort((a, b) => at(a) - at(b) || (a.rank ?? Infinity) - (b.rank ?? Infinity) || a.league.localeCompare(b.league));
+}
+
+/** The entries the build left out, by league, then the gain (most first). */
+export function notQueued(entries: QueueEntry[]): QueueEntry[] {
+  return entries.filter((e) => !e.queued).sort((a, b) => a.league.localeCompare(b.league) || (b.gain ?? -Infinity) - (a.gain ?? -Infinity));
+}
+
+const ROW_STATUS: Record<QueueLeague["status"], string> = {
+  queued: "",
+  not_solved: "not solved today",
+  off: "the moves executor is off",
+  private: "the private league is never touched",
+  failed: "not read",
+};
+
+/** Why a league's chip shows none queued: the row's own reason when it did not build (not solved,
+ * off, private, failed); for a league that built and queued nothing, the reason most of its
+ * entries share, else "nothing queued"; blank for one that queued. */
+export function stripReason(row: QueueLeague, entries: QueueEntry[]): string {
+  if (row.status !== "queued") return row.reason ?? ROW_STATUS[row.status];
+  const mine = entries.filter((e) => e.league === row.league);
+  if (mine.some((e) => e.queued)) return "";
+  const counts = new Map<string, number>();
+  for (const e of mine) {
+    const why = queueStateText(e, 0);
+    counts.set(why, (counts.get(why) ?? 0) + 1);
+  }
+  let top = "";
+  for (const [why, n] of counts) if (!top || n > counts.get(top)!) top = why;
+  return top || "nothing queued";
+}
+
+/** The adds left in the week holding ``today`` as the build read them; null for no limit, or a
+ * week it did not read. */
+export function addsThisWeek(row: Pick<QueueLeague, "adds_left">, today: string): number | null {
+  return row.adds_left?.find((w) => w.start <= today && today <= w.end)?.adds ?? null;
+}
+
+/** "7:00 AM CT": an instant on the Central clock the execute time is set on (#193); blank for
+ * none. */
+export function centralClock(iso: string | null | undefined): string {
+  const t = iso ? Date.parse(iso) : NaN;
+  if (Number.isNaN(t)) return "";
+  return `${new Date(t).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: "America/Chicago" })} CT`;
+}
+
+/** An entry's flag in the Queue card's words: "strong breakout", "breakout", or blank. */
+export function queueFlagWord(flag: QueueEntry["flag"]): string {
+  return flag === "must-add" ? "strong breakout" : flag && flag !== "watch" ? "breakout" : "";
+}
+
+/** The strip's order: the private league first, then the rest by name (its id without one). */
+export function stripOrder<T extends Pick<QueueLeague, "league" | "status">>(rows: T[], title: (league: string) => string): T[] {
+  return [...rows].sort((a, b) => Number(b.status === "private") - Number(a.status === "private") || title(a.league).localeCompare(title(b.league)));
+}
+
 // ---------------------------------------------------------------- moves (#94)
 /** The moves' horizon behind the table's: the rest of this week, or the three weeks after it. */
 export const MOVE_HORIZON: Record<Horizon, MoveHorizon> = { week: "week", next3: "three" };

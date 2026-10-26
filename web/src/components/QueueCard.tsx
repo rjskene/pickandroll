@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient, type UseMutationResult } from "@tanstack/react-query";
 import { api, type LineupMode, type MovesView, type QueueEntry, type QueuePayload, type SeasonView } from "../api";
-import { bidLabel, gainLabel, movesExecutorText, movesLiveText, passLine, playersById, queueFloorLine, queueMoveText, queueStateText } from "../season";
+import { bidLabel, gainLabel, movesExecutorText, movesLiveText, passLine, playersById, queueFlagWord, queueFloorLine, queueMoveText, queueStateText } from "../season";
 import { useNow } from "./YahooSync";
 
 const MODES: { mode: LineupMode; label: string }[] = [
@@ -106,7 +106,29 @@ export default function QueueCard({ league, s }: { league: string; s: SeasonView
   );
 }
 
-type Strike = UseMutationResult<QueuePayload, Error, { id: string; bid_only: boolean; undo: boolean }>;
+export type Strike = UseMutationResult<QueuePayload, Error, { id: string; bid_only: boolean; undo: boolean }>;
+
+/** The user's veto on a queued entry: strike it or undo, and for a waiver claim strike its bid
+ * (a $0 claim) or bid it back; gone once the entry has an outcome. The Queue card and the Queue
+ * screen (#194) both render it. */
+export function Veto({ e, strike }: { e: QueueEntry; strike: Strike }) {
+  if (e.outcome) return null;
+  return (
+    <>
+      <button className="small" disabled={strike.isPending} onClick={() => strike.mutate({ id: e.id, bid_only: false, undo: e.struck })} title={e.struck ? "queue it again" : "veto this move: it is not executed"}>
+        {e.struck ? "undo" : "strike"}
+      </button>
+      {!e.struck && e.availability !== "FA" && (
+        <>
+          {" "}
+          <button className="small" disabled={strike.isPending} onClick={() => strike.mutate({ id: e.id, bid_only: true, undo: e.bid_struck })} title={e.bid_struck ? "bid the queue's amount again" : "keep the claim, for $0"}>
+            {e.bid_struck ? "bid back" : "strike bid"}
+          </button>
+        </>
+      )}
+    </>
+  );
+}
 
 function Today({ v, queued, left, now, name, strike }: { v: MovesView; queued: QueueEntry[]; left: QueueEntry[]; now: number; name: (id: number) => string; strike: Strike }) {
   const row = v.row;
@@ -127,26 +149,12 @@ function Today({ v, queued, left, now, name, strike }: { v: MovesView; queued: Q
         <div key={e.id} className="row small">
           <span title={e.bid.reason}>
             {e.rank}. {queueMoveText(e, name)} · {gainLabel(e.gain)} · {bidLabel(e)}
-            {e.flag && e.flag !== "watch" ? ` · ${e.flag === "must-add" ? "strong breakout" : "breakout"}` : ""}
+            {queueFlagWord(e.flag) ? ` · ${queueFlagWord(e.flag)}` : ""}
           </span>
           <span>
             <span className={e.struck ? "dim" : "muted"}>{queueStateText(e, now)}</span>
-            {!e.outcome && (
-              <>
-                {" "}
-                <button className="small" disabled={strike.isPending} onClick={() => strike.mutate({ id: e.id, bid_only: false, undo: e.struck })} title={e.struck ? "queue it again" : "veto this move: it is not executed"}>
-                  {e.struck ? "undo" : "strike"}
-                </button>
-                {!e.struck && e.availability !== "FA" && (
-                  <>
-                    {" "}
-                    <button className="small" disabled={strike.isPending} onClick={() => strike.mutate({ id: e.id, bid_only: true, undo: e.bid_struck })} title={e.bid_struck ? "bid the queue's amount again" : "keep the claim, for $0"}>
-                      {e.bid_struck ? "bid back" : "strike bid"}
-                    </button>
-                  </>
-                )}
-              </>
-            )}
+            {!e.outcome && " "}
+            <Veto e={e} strike={strike} />
           </span>
         </div>
       ))}

@@ -126,6 +126,22 @@ page, from PR 2:
   claim) or undoes either, until it executes (`POST /autopilot/queue/{id}/strike`). A rebuild
   the same day keeps the struck and executed entries by id, leaves their moves out of the build,
   and gives an entry new to the queue its full hour.
+- **The Queue screen (#194).** `/queue`, from the landing's Queue line or `q` there (not from a
+  field or a select): every league's proposed moves of the day in one view. It reads
+  `GET /autopilot/queue` every minute and never solves, builds or executes; its only writes are
+  the user's veto and the execute time, as on the Queue card and the landing line, the same
+  components. The head carries the build times and the execute time on the Central clock, STOP and
+  the landing's line. A chip per league row (the private league's first, then by name; its name
+  opens the league) gives the mode, the cap and where it is from, the adds left this week, what it
+  queued and, with none, why: the row's reason, else the reason most of its entries share. The
+  table lists the day's queued entries of every league, points leagues included, in the order
+  they execute (the time, then the league's rank, then the league): the move, its gain on the
+  three weeks and its season figure in the scorer's units, the flag, the bid, when it executes,
+  its state and the veto. The moves the build left out are folded under it with their reasons.
+  The private league is never queued: its recommended set is listed as suggestions to make by hand
+  from `GET /seasons/{league}/best?system=bbm`, "not solved yet" before the league page solves it.
+  The payload's `names` gives a name for every player the entries mention (the add, the drop, the
+  held move's player), read from each league's snapshot at request time.
 - **The caps.** The league's add limit, each claim counted in the week of its clear date from
   the moment it is placed (a claim placed and not yet processed counts, won or not; the next
   build reads the adds used from the page and the transactions); the day's cap, the knob's
