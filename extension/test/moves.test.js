@@ -1,8 +1,8 @@
 // node --test extension/test/*.test.js
 // The moves executor (#171): the add page's controls read, a due entry's checks on them, the pass
 // the log takes, the strip, the panel's links, the content script on an add page opened with the
-// routine's fragment, and the live claim (PR 3): the submit on a fake page, the page Yahoo lands
-// on, and the worker's record of a submit. Nothing here reaches Yahoo. Fixtures carry Yahoo ids,
+// routine's fragment, and the live claim (PR 3): Yahoo's claim step on a fake page (0.8.2), the
+// alert recorder, the page Yahoo lands on, and the worker's record of a submit. Nothing here reaches Yahoo. Fixtures carry Yahoo ids,
 // slot codes and dollar figures only.
 "use strict";
 const test = require("node:test");
@@ -131,7 +131,7 @@ test("every check passes: the claim it would place, one drop, with the form as i
   assert.deepEqual(check, { outcome: "would_claim", reason: null });
   const line = X.moveCheck(e, check, page, due(), READ_AT);
   assert.deepEqual([line.id, line.add, line.drop, line.bid, line.outcome, line.page], [e.id, ADD, 2005, 3, "would_claim", e.page]);
-  assert.deepEqual(line.controls.would_fill, { action: `/nba/${LEAGUE}/${TEAM}/addplayer`, apid: ADD, dpid: 2005, faab: 3, submit: X.SUBMIT });
+  assert.deepEqual(line.controls.would_fill, { action: `/nba/${LEAGUE}/${TEAM}/addplayer`, apid: ADD, dpid: 2005, faab: 3, submit: X.FINAL_SUBMIT });
   const c = line.controls;
   assert.deepEqual(c.fields, ["stage", "stat1", "stat2"]);
   assert.deepEqual([c.token, c.heading, c.waiver_date, c.budget, c.adds_left, c.read_at], [true, X.CLAIM_HEADING, CLEARS, 100, 4, READ_AT]);
@@ -255,93 +255,257 @@ test("the strip, the panel's line and the panel's links", () => {
   assert.equal(X.movesStripText({ due: live }), "live · nothing due now");
 });
 
-test("only the live claim touches a page: its drop box, its bid and its submit, nothing fetched", () => {
+test("only the live claim touches a page: the drop's button, its bid and the final button, nothing fetched", () => {
   const claim = X.fillClaim.toString();
-  for (const f of ["lib/moves.js", "league.js"]) {
+  for (const f of ["lib/moves.js", "league.js", "addpage.js"]) {
     const src = fs.readFileSync(path.join(DIR, f), "utf8").replace(claim, "");
     assert.ok(!/\.click\(|dispatchEvent|submit\(|requestSubmit/.test(src), `${f} clicks or submits outside fillClaim`);
     assert.ok(!/\.(value|selectedIndex|checked)\s*=[^=]/.test(src), `${f} sets a field outside fillClaim`);
     assert.ok(!/\bfetch\(|XMLHttpRequest|DOMParser/.test(src), `${f} fetches a page`);
   }
-  assert.equal(claim.match(/\.click\(\)/g).length, 2, "the drop box and the submit");
+  assert.equal(claim.match(/\.click\(\)/g).length, 2, "the drop's button and the final button");
   assert.deepEqual(claim.match(/\w+\.(value|checked|selectedIndex)\s*=[^=]/g), ["bid.value = "]);
   assert.ok(!/submit\(|requestSubmit|crumb|TOKEN|fetch\(/.test(claim));
 });
 
 // ---------------------------------------------------------------- the live claim on a fake page
-/** A claim form as the browser has it: the drop boxes tick on a click, the claim submit appears
- * once one is ticked (Yahoo draws it then), and every click, value set and event is recorded in
- * ``touched``. ``button: false`` never draws it; ``sticky`` makes the bid refuse what is typed. */
-function claimDoc({ ticked = [], button = true, sticky = false, add = ADD } = {}) {
+/** Yahoo's claim step on a fake add page, as its script reads and a hand tick showed it
+ * (2026-10-26). Beside each drop box is a button whose ``data-check-box-value`` names the drop
+ * with a trailing space. A click on it ticks the box and posts the form's first stage; the reply
+ * lands ``after`` looks later (a look is one ``wait``): it takes the boxes away, leaves the drop
+ * in one hidden ``dpid`` field, sets the stage to 3, swaps in the final button and shows the submit
+ * container. A click on a box itself only ticks it: no reply, no final button.
+ * ``reply``: "swap", "none" (it never comes), "hidden" (the container stays hidden), "nodrop"
+ * (the reply leaves no drop), or an alert's text (Yahoo alerts and swaps nothing).
+ * ``finalAlert`` is Yahoo's alert on the final click, ``finalName`` the final button's name,
+ * ``balance`` the bid field's (null: none), ``sticky`` a bid that refuses what is typed,
+ * ``buttons: false`` a page with no drop buttons, ``dupe`` a second button for that drop, ``rehide``
+ * the container hidden again once the bid is typed, ``stageAfter`` the stage the reply sets. Every click, value set and event goes in
+ * ``touched``. */
+function claimStep({ ticked = [], after = 1, reply = "swap", finalAlert = null, finalName = X.FINAL_SUBMIT, balance = 100, sticky = false, add = ADD, buttons = true, dupe = null, rehide = false, stageAfter = "3" } = {}) {
   const touched = [];
-  const input = (name, type, value) => ({ name, type, value, checked: false });
-  const boxes = ROSTER.filter((k) => !CANTCUT.includes(k)).map((k) => {
+  const alerts = [];
+  const droppable = ROSTER.filter((k) => !CANTCUT.includes(k));
+  const input = (name, type, value) => ({ name, tagName: "INPUT", type, value, checked: false, dispatchEvent: (ev) => touched.push(`event ${ev.type}`) });
+  const box = (k, checked) => {
     const b = input("dpid", "checkbox", String(k));
-    b.checked = ticked.includes(k);
+    b.checked = checked;
     b.click = () => {
       touched.push(`click dpid ${k}`);
       b.checked = !b.checked;
     };
     return b;
-  });
+  };
+  let boxes = droppable.map((k) => box(k, ticked.includes(k)));
   let bidValue = "0";
+  let hiddenAgain = false;
   const bid = {
     name: "faab",
+    tagName: "INPUT",
     type: "text",
+    checked: false,
     get value() {
       return bidValue;
     },
     set value(v) {
       touched.push(`set faab ${v}`);
       if (!sticky) bidValue = v;
+      if (rehide) hiddenAgain = true;
     },
+    getAttribute: (a) => (a === X.BALANCE_ATTR && balance != null ? String(balance) : null),
     dispatchEvent: (ev) => touched.push(`event ${ev.type}`),
   };
-  const elements = [input("stage", "hidden", "2"), input(X.TOKEN_FIELD, "hidden", "SECRET-VALUE"), input("apid", "hidden", String(add)), ...boxes, bid];
-  const submit = { getAttribute: (a) => (a === "name" ? X.SUBMIT : null), click: () => touched.push("click submit") };
-  const doc = {
-    querySelector: (sel) =>
-      sel === `form#${X.FORM_ID}` ? { elements } : sel === X.SUBMIT_BUTTON && button && boxes.some((b) => b.checked) ? submit : null,
+  const stage = input("stage", "hidden", "2");
+  const fixed = [stage, input(X.TOKEN_FIELD, "hidden", "SECRET-VALUE"), input("stat1", "hidden", "P"), input("stat2", "hidden", "P"), input("apid", "hidden", String(add))];
+  let swapped = false;
+  let pending = null;
+  const land = () => {
+    pending = null;
+    if (reply === "none") return;
+    if (!["swap", "hidden", "nodrop"].includes(reply)) {
+      alerts.push(reply);
+      return;
+    }
+    const drop = boxes.find((b) => b.checked);
+    boxes = reply === "nodrop" || !drop ? [] : [input("dpid", "hidden", drop.value)];
+    stage.value = stageAfter;
+    swapped = true;
   };
-  return { doc, touched };
+  const trigger = (k) => ({
+    getAttribute: (a) => (a === X.DROP_TRIGGER_VALUE ? `${k} ` : null),
+    click: () => {
+      touched.push(`click drop button ${k}`);
+      const b = boxes.find((x) => x.value === String(k));
+      if (b) b.checked = true;
+      pending = after;
+      if (pending <= 0) land();
+    },
+  });
+  const triggers = buttons ? [...droppable, ...(dupe != null ? [dupe] : [])].map(trigger) : [];
+  const final = {
+    getAttribute: (a) => (a === "name" ? finalName : null),
+    click: () => {
+      touched.push("click final");
+      if (finalAlert) alerts.push(finalAlert);
+    },
+  };
+  const container = {
+    get className() {
+      return swapped && reply !== "hidden" && !hiddenAgain ? "Inline" : `Inline ${X.SUBMIT_HIDDEN}`;
+    },
+    querySelector: (sel) => (sel === X.FINAL_BUTTON && swapped ? final : null),
+    textContent: ` <input type="submit" id="submit-add-drop-button" name="${X.SUBMIT}" value="Create claim"> `,
+  };
+  const form = {
+    get elements() {
+      return [...fixed, ...boxes, bid];
+    },
+    querySelectorAll: (sel) => (sel === X.DROP_TRIGGER ? triggers : []),
+  };
+  const wait = async () => {
+    if (pending != null && --pending <= 0) land();
+  };
+  const root = { getAttribute: (a) => (a === X.ALERTS_ATTR && alerts.length ? JSON.stringify(alerts) : null) };
+  return { form, container, root, wait, touched, boxes: () => boxes };
 }
 
-const noWait = async () => {};
+/** ``claimStep``'s page as ``fillClaim`` reads it. */
+function claimDoc(opts = {}) {
+  const step = claimStep(opts);
+  const doc = {
+    querySelector: (sel) => (sel === `form#${X.FORM_ID}` ? step.form : null),
+    getElementById: (id) => (id === X.SUBMIT_CONTAINER ? step.container : null),
+    documentElement: step.root,
+  };
+  return { ...step, doc };
+}
 
-test("the live claim ticks the one drop box, types the bid and clicks the claim submit once", async () => {
-  const { doc, touched } = claimDoc();
-  assert.equal(await X.fillClaim(doc, entry(), { wait: noWait }), null);
-  assert.deepEqual(touched, ["click dpid 2005", "set faab 3", "event input", "event change", "click submit"]);
-  // A struck bid is a $0 claim.
-  const zero = claimDoc();
-  assert.equal(await X.fillClaim(zero.doc, entry({ bid_placed: 0 }), { wait: noWait }), null);
-  assert.ok(zero.touched.includes("set faab 0"));
+test("Yahoo's page: a click on the drop box brings no claim step, its button does (0.8.1's miss)", async () => {
+  // 0.8.1 clicked the box and waited for the submit: the page never answers that.
+  let v = claimDoc();
+  v.boxes().find((b) => b.value === "2005").click();
+  for (let i = 0; i < 100; i++) await v.wait();
+  assert.deepEqual([v.container.querySelector(X.FINAL_BUTTON), v.container.className], [null, `Inline ${X.SUBMIT_HIDDEN}`]);
+  // The button: Yahoo's reply brings the final button, shows the container and ticks the drop.
+  v = claimDoc();
+  v.form.querySelectorAll(X.DROP_TRIGGER)[4].click();
+  await v.wait();
+  assert.ok(v.container.querySelector(X.FINAL_BUTTON));
+  assert.equal(v.container.className, "Inline");
+  assert.deepEqual(v.boxes().map((b) => [b.type, b.value]), [["hidden", "2005"]]);
 });
 
-test("the live claim clicks no submit when the form does not take it", async () => {
-  // No single box for the drop, or a box ticked before the pass: nothing is touched.
-  let v = claimDoc();
-  assert.equal(await X.fillClaim(v.doc, entry({ drop: 2012 }), { wait: noWait }), "no single drop box for 2012");
-  assert.deepEqual(v.touched, []);
-  v = claimDoc({ ticked: [2001] });
-  assert.equal(await X.fillClaim(v.doc, entry(), { wait: noWait }), "a drop box was ticked before the pass");
-  assert.deepEqual(v.touched, []);
-  // The submit never drawn: the box ticked, nothing typed or clicked after it.
-  v = claimDoc({ button: false });
-  let waits = 0;
-  const counted = async () => {
-    waits += 1;
+test("the live claim clicks the drop's button, waits for Yahoo's reply, types the bid and clicks the final button once", async () => {
+  const v = claimDoc({ after: 3 });
+  assert.equal(await X.fillClaim(v.doc, entry(), { wait: v.wait }), null);
+  // Never the box, the bid only once the reply is in, and nothing else.
+  assert.deepEqual(v.touched, ["click drop button 2005", "set faab 3", "event input", "event change", "click final"]);
+  // A struck bid is a $0 claim.
+  const zero = claimDoc();
+  assert.equal(await X.fillClaim(zero.doc, entry({ bid_placed: 0 }), { wait: zero.wait }), null);
+  assert.ok(zero.touched.includes("set faab 0") && zero.touched.includes("click final"));
+});
+
+test("the live claim touches nothing before its button: no single box or button, a box ticked, no form", async () => {
+  const run = async (opts, e = entry()) => {
+    const v = claimDoc(opts);
+    return [await X.fillClaim(v.doc, e, { wait: v.wait }), v.touched];
   };
-  assert.equal(await X.fillClaim(v.doc, entry(), { wait: counted, tries: 3 }), "the claim submit did not appear once the drop was ticked");
-  assert.deepEqual([v.touched, waits], [["click dpid 2005"], 3]);
-  // The form read back wrong: no submit.
-  v = claimDoc({ sticky: true });
-  assert.equal(await X.fillClaim(v.doc, entry(), { wait: noWait }), "the form did not take the claim: its bid reads 0");
-  assert.ok(!v.touched.includes("click submit"));
-  v = claimDoc({ add: 3002 });
-  assert.equal(await X.fillClaim(v.doc, entry(), { wait: noWait }), "the form did not take the claim: its apid is not the add");
-  assert.ok(!v.touched.includes("click submit"));
-  assert.equal(await X.fillClaim({ querySelector: () => null }, entry(), { wait: noWait }), "the claim form is gone");
+  const skip = (reason) => ({ outcome: "skipped", reason });
+  assert.deepEqual(await run({}, entry({ drop: 2012 })), [skip("no single drop box for 2012"), []]);
+  assert.deepEqual(await run({ ticked: [2001] }), [skip("a drop box was ticked before the pass"), []]);
+  assert.deepEqual(await run({ buttons: false }), [skip("no single drop button for 2005 (0 on the page)"), []]);
+  assert.deepEqual(await run({ dupe: 2005 }), [skip("no single drop button for 2005 (2 on the page)"), []]);
+  assert.deepEqual(await X.fillClaim({ querySelector: () => null }, entry(), { wait: async () => {} }), skip("the claim form is gone"));
+});
+
+test("Yahoo's reply that never comes, or comes short, is a skip naming the signs missing; the page is left as it is", async () => {
+  const run = async (opts) => {
+    const v = claimDoc(opts);
+    let looks = 0;
+    const wait = async () => {
+      looks += 1;
+      await v.wait();
+    };
+    return [await X.fillClaim(v.doc, entry(), { wait, every: 200, cap: 1000 }), v.touched, looks];
+  };
+  const late = "Yahoo's claim step did not come back within 1 s: ";
+  const all = "the final button is not there; the submit is still hidden; the form does not carry the drop alone";
+  assert.deepEqual(await run({ reply: "none" }), [{ outcome: "skipped", reason: `${late}${all}` }, ["click drop button 2005"], 5]);
+  assert.deepEqual(await run({ reply: "hidden" }), [{ outcome: "skipped", reason: `${late}the submit is still hidden` }, ["click drop button 2005"], 5]);
+  assert.deepEqual(await run({ reply: "nodrop" }), [{ outcome: "skipped", reason: `${late}the form does not carry the drop alone` }, ["click drop button 2005"], 5]);
+  // Too slow: the reply landing after the cap is never acted on.
+  assert.deepEqual((await run({ after: 6 }))[0].reason, `${late}${all}`);
+  assert.equal(X.SWAP_MS, 15000);
+});
+
+test("Yahoo's alerts: the tick's is a failure in Yahoo's words, the final click's a skip; no final click after one", async () => {
+  let v = claimDoc({ reply: "This player cannot be dropped." });
+  assert.deepEqual(await X.fillClaim(v.doc, entry(), { wait: v.wait }), { outcome: "failed", reason: 'Yahoo answered the drop\'s tick: "This player cannot be dropped."' });
+  assert.deepEqual(v.touched, ["click drop button 2005"]);
+  v = claimDoc({ finalAlert: "FAAB bid must be a whole number betweed $0 and $100" });
+  assert.deepEqual(await X.fillClaim(v.doc, entry(), { wait: v.wait }), { outcome: "skipped", reason: 'Yahoo refused the final click: "FAAB bid must be a whole number betweed $0 and $100"' });
+  assert.equal(v.touched.filter((t) => t === "click final").length, 1);
+  // Alerts kept before the pass are not this claim's.
+  v = claimDoc();
+  const kept = v.doc.documentElement;
+  v.doc.documentElement = { getAttribute: (a) => (a === X.ALERTS_ATTR ? JSON.stringify(["an earlier alert"]) : kept.getAttribute(a)) };
+  assert.equal(await X.fillClaim(v.doc, entry(), { wait: v.wait }), null);
+  assert.deepEqual(X.alertsOf({ documentElement: { getAttribute: () => "not json" } }), []);
+  assert.deepEqual(X.alertsOf({}), []);
+});
+
+test("the bid is checked as Yahoo checks it, after the reply, and read back before the final click", async () => {
+  const run = async (opts, e = entry()) => {
+    const v = claimDoc(opts);
+    return [await X.fillClaim(v.doc, e, { wait: v.wait }), v.touched];
+  };
+  const tick = "click drop button 2005";
+  assert.deepEqual(await run({ balance: 2 }), [{ outcome: "skipped", reason: "the bid ($3) is outside Yahoo's $0 to $2" }, [tick]]);
+  assert.deepEqual(await run({ balance: null }), [{ outcome: "skipped", reason: "the bid field shows no balance" }, [tick]]);
+  assert.deepEqual(await run({}, entry({ bid_placed: 2.5 })), [{ outcome: "skipped", reason: "the bid ($2.5) is outside Yahoo's $0 to $100" }, [tick]]);
+  assert.equal(X.bidProblem({ getAttribute: () => "3" }, 3), null);
+  // The form read back wrong: no final click.
+  let [got, touched] = await run({ sticky: true });
+  assert.deepEqual([got.reason, touched.includes("click final")], ["the form did not take the claim: its bid reads 0", false]);
+  [got, touched] = await run({ add: 3002 });
+  assert.deepEqual([got.reason, touched.includes("click final")], ["the form did not take the claim: its apid is not the add", false]);
+  [got, touched] = await run({ finalName: X.SUBMIT });
+  assert.deepEqual([got.reason, touched.includes("click final")], ["the form did not take the claim: its final button is not the claim's", false]);
+  [got, touched] = await run({ stageAfter: "2" });
+  assert.deepEqual([got.reason, touched.includes("click final")], ["the form did not take the claim: its stage reads 2", false]);
+  [got, touched] = await run({ rehide: true });
+  assert.deepEqual([got.reason, touched.includes("click final")], ["the form did not take the claim: its final button is not the claim's", false]);
+});
+
+test("the alert recorder: only on an add page opened with a moves fragment", () => {
+  const R = require("../addpage.js");
+  assert.deepEqual([...R.FRAGMENTS].sort(), Object.keys(X.MOVES_TRIGGERS).sort());
+  assert.equal(R.ATTR, X.ALERTS_ATTR);
+  const page = (pathname, hash) => {
+    const attrs = {};
+    const shown = [];
+    const win = {
+      location: { pathname, hash },
+      alert: (m) => shown.push(m),
+      document: { documentElement: { getAttribute: (a) => attrs[a] ?? null, setAttribute: (a, v) => (attrs[a] = v) } },
+    };
+    return { win, shown, installed: R.install(win) };
+  };
+  const p = page(`/nba/${LEAGUE}/addplayer`, "#pickandroll-moves");
+  assert.equal(p.installed, true);
+  p.win.alert("This player cannot be dropped.");
+  p.win.alert("x".repeat(400));
+  assert.deepEqual(p.shown, []);
+  const got = X.alertsOf(p.win.document);
+  assert.deepEqual([got[0], got[1].length], ["This player cannot be dropped.", 300]);
+  // A page opened by hand, or another page of the league, keeps Yahoo's alerts.
+  for (const [where, hash] of [[`/nba/${LEAGUE}/addplayer`, ""], [`/nba/${LEAGUE}/addplayer`, "#other"], [`/nba/${LEAGUE}/${TEAM}`, "#pickandroll-moves"]]) {
+    const q = page(where, hash);
+    q.win.alert("shown");
+    assert.deepEqual([q.installed, q.shown], [false, ["shown"]]);
+  }
+  for (const hash of ["#pickandroll-moves-late", "#pickandroll-moves-panel"]) assert.equal(page(`/nba/${LEAGUE}/addplayer`, hash).installed, true);
 });
 
 test("the page Yahoo lands on: placed, refused or not recognised", () => {
@@ -354,6 +518,20 @@ test("the page Yahoo lands on: placed, refused or not recognised", () => {
   assert.equal(read({ form: true }), null);
   assert.equal(read({ heading: "Confirm Transaction" }), null);
   assert.equal(read({ form: true, pending: true }), null);
+  // The real landed page (2026-10-26, a claim the user placed by hand): my team page, Yahoo's
+  // notice, the claim's View Waiver link, and a red stat figure in the error classes.
+  const real = { heading: "News", notes: ["You have successfully created a waiver claim for A dropping B", ""], errors: ["(-5)", ""] };
+  assert.deepEqual(read(real), { outcome: "claimed", message: "You have successfully created a waiver claim for A dropping B" });
+  assert.deepEqual(read({ ...real, notes: [], claim: true }), { outcome: "claimed", message: "the claim shows among the pending transactions" });
+  // A sign of placement wins over any error on the page.
+  const refusal = "You have exceeded the maximum number of adds.";
+  assert.equal(read({ ...real, errors: [refusal, "(-5)"] }).outcome, "claimed");
+  assert.equal(read({ errors: [refusal], claim: true }).outcome, "claimed");
+  // A stat figure is never an error, nor a bare figure a message: unrecognised, so its answer is
+  // not read and it counts as placed.
+  assert.equal(read({ errors: ["(-5)", "", "-12"] }), null);
+  assert.equal(read({ form: true, notes: ["(-5)"] }), null);
+  assert.equal(read({ heading: "News", errors: ["(-5)"] }), null);
 });
 
 test("a submitted claim's live pass: Yahoo's answer, or its answer not read", () => {
@@ -369,7 +547,7 @@ test("a submitted claim's live pass: Yahoo's answer, or its answer not read", ()
   const got = run.entries[0];
   assert.deepEqual([got.id, got.outcome, got.reason, got.message, got.bid, got.drop], [e.id, "claimed", null, "claim submitted", 3, 2005]);
   // The fields it filled and the page it landed on; never the anti-forgery field.
-  assert.deepEqual(got.controls.would_fill, { action: `/nba/${LEAGUE}/${TEAM}/addplayer`, apid: ADD, dpid: 2005, faab: 3, submit: X.SUBMIT });
+  assert.deepEqual(got.controls.would_fill, { action: `/nba/${LEAGUE}/${TEAM}/addplayer`, apid: ADD, dpid: 2005, faab: 3, submit: X.FINAL_SUBMIT });
   assert.deepEqual(got.controls.landed, seen);
   assert.ok(!X.TOKEN.test(JSON.stringify(run)));
   run = X.landedPass(record, { outcome: "failed", message: "Too many adds." }, seen);
@@ -386,34 +564,14 @@ test("a submitted claim's live pass: Yahoo's answer, or its answer not read", ()
 /** A fake element: its text, attributes and children by selector. */
 const el = (props = {}) => ({ textContent: "", className: "", getAttribute: (a) => (props.attrs || {})[a] ?? null, querySelectorAll: () => [], querySelector: () => null, closest: () => null, ...props });
 
-/** The rendered add page as the content script sees it: the form, the noscript's submit as text,
- * the add's row and my roster's rows with their player ids and icons. */
-function addDom({ add = ADD, budget = 100, waiver = "Oct 26" } = {}) {
-  const touched = [];
-  const input = (name, type, value) => ({
-    name,
-    tagName: "INPUT",
-    type,
-    value,
-    checked: false,
-    click() {
-      touched.push(`click ${name} ${value}`);
-      this.checked = !this.checked;
-    },
-    dispatchEvent: (ev) => touched.push(`event ${ev.type}`),
-  });
-  const elements = [
-    input("stage", "hidden", "2"),
-    input(X.TOKEN_FIELD, "hidden", "SECRET-VALUE"),
-    input("stat1", "hidden", "P"),
-    input("stat2", "hidden", "P"),
-    input("apid", "hidden", String(add)),
-    ...ROSTER.filter((k) => !CANTCUT.includes(k)).map((k) => input("dpid", "checkbox", String(k))),
-    input("faab", "text", "0"),
-  ];
-  const submit = { getAttribute: (a) => (a === "name" ? X.SUBMIT : null), click: () => touched.push("click submit") };
+/** The rendered add page as the content script sees it: the form with Yahoo's claim step
+ * (``claimStep``, its reply landing on the drop button's click; ``step`` passes options to it), the
+ * noscript's submit as text, the add's row and my roster's rows with their player ids and icons. */
+function addDom({ add = ADD, budget = 100, waiver = "Oct 26", step: opts = {} } = {}) {
+  const step = claimStep({ add, balance: budget, after: 0, ...opts });
   const hint = el({ textContent: ` Must be between $0 and $${budget} ` });
-  const form = el({ attrs: { action: `${SITE}/nba/${LEAGUE}/${TEAM}/addplayer`, method: "post" }, elements, querySelectorAll: (sel) => (sel === "p, span, div" ? [hint] : []) });
+  const form = el({ attrs: { action: `${SITE}/nba/${LEAGUE}/${TEAM}/addplayer`, method: "post" }, querySelectorAll: (sel) => (sel === "p, span, div" ? [hint] : step.form.querySelectorAll(sel)) });
+  Object.defineProperty(form, "elements", { get: () => step.form.elements, configurable: true });
   const tr = (id, classes) =>
     el({
       querySelector: (sel) => (sel === "[data-ys-playerid]" ? el({ attrs: { "data-ys-playerid": String(id) } }) : null),
@@ -423,15 +581,9 @@ function addDom({ add = ADD, budget = 100, waiver = "Oct 26" } = {}) {
   const addCell = el({ attrs: { "data-ys-playerid": String(add) }, closest: (sel) => (sel === "tr" ? addTr : null) });
   const rows = ROSTER.map((k) => tr(k, CANTCUT.includes(k) ? ICON.cantcut : ""));
   return {
-    touched,
-    querySelector: (sel) =>
-      sel === "form#add-drop-players-form"
-        ? form
-        : sel === "table#statTable-add tbody tr [data-ys-playerid]"
-          ? addCell
-          : sel === X.SUBMIT_BUTTON && elements.some((x) => x.name === "dpid" && x.checked)
-            ? submit
-            : null,
+    touched: step.touched,
+    documentElement: step.root,
+    querySelector: (sel) => (sel === "form#add-drop-players-form" ? form : sel === "table#statTable-add tbody tr [data-ys-playerid]" ? addCell : null),
     querySelectorAll: (sel) =>
       sel === "h1, h2, h3"
         ? [el({ textContent: "Yahoo Sports Fantasy Basketball" }), el({ textContent: ` ${X.CLAIM_HEADING} ` })]
@@ -439,11 +591,7 @@ function addDom({ add = ADD, budget = 100, waiver = "Oct 26" } = {}) {
           ? rows
           : [],
     getElementById: (id) =>
-      id === "faab-bid-fieldset"
-        ? el({ textContent: `Your Bid $ Your Budget $${budget} Waiver Date ${waiver}` })
-        : id === "add-drop-submit-container"
-          ? el({ textContent: ` <input type="submit" id="submit-add-drop-button" name="${X.SUBMIT}" value="Create claim"> ` })
-          : null,
+      id === "faab-bid-fieldset" ? el({ textContent: `Your Bid $ Your Budget $${budget} Waiver Date ${waiver}` }) : id === X.SUBMIT_CONTAINER ? step.container : null,
   };
 }
 
@@ -460,6 +608,7 @@ async function visitAdd({ hash = "#pickandroll-moves", answer, add = ADD, dom = 
       append: (e) => {
         nodes[e.id] = e;
       },
+      getAttribute: (a) => (dom.documentElement ? dom.documentElement.getAttribute(a) : null),
     },
   };
   const url = new URL(at);
@@ -527,7 +676,7 @@ test("the routine's link: the fragment dropped, the page's entry checked on the 
   assert.deepEqual([run.mode, run.trigger, run.outcome, run.extension], ["dry_run", "routine", "would_claim", "0.8.0"]);
   assert.deepEqual(run.entries.map((e) => [e.id, e.outcome]), [[entry().id, "would_claim"]]);
   const c = run.entries[0].controls;
-  assert.deepEqual(c.would_fill, { action: `/nba/${LEAGUE}/${TEAM}/addplayer`, apid: ADD, dpid: 2005, faab: 3, submit: X.SUBMIT });
+  assert.deepEqual(c.would_fill, { action: `/nba/${LEAGUE}/${TEAM}/addplayer`, apid: ADD, dpid: 2005, faab: 3, submit: X.FINAL_SUBMIT });
   assert.deepEqual([c.token, c.cantcut, c.add_markers, c.fields], [true, CANTCUT, ["disabled_add"], ["stage", "stat1", "stat2"]]);
   const sent = JSON.stringify(v.sent);
   assert.ok(!sent.includes("SECRET-VALUE") && !X.TOKEN.test(sent), "the anti-forgery field's value and name never leave the page");
@@ -576,13 +725,23 @@ const LIVE = { mode: "live", live: { ok: true, reason: null } };
 test("in a live league whose guard holds, the claim is put on record, then placed on the page; its pass waits for the answer", async () => {
   const v = await visitAdd({ answer: worker(LIVE) });
   assert.deepEqual(ops(v), [...PASS, "moves_submitting"]);
-  assert.deepEqual(v.touched, ["click dpid 2005", "event input", "event change", "click submit"]);
+  assert.deepEqual(v.touched, ["click drop button 2005", "set faab 3", "event input", "event change", "click final"]);
   const { record, league } = sentOf(v, "moves_submitting")[0];
   assert.equal(league, LEAGUE);
   assert.deepEqual([record.day, record.trigger, record.line.id, record.line.outcome, record.line.bid], [DAY, "routine", entry().id, "would_claim", 3]);
-  assert.deepEqual(record.line.controls.would_fill, { action: `/nba/${LEAGUE}/${TEAM}/addplayer`, apid: ADD, dpid: 2005, faab: 3, submit: X.SUBMIT });
+  assert.deepEqual(record.line.controls.would_fill, { action: `/nba/${LEAGUE}/${TEAM}/addplayer`, apid: ADD, dpid: 2005, faab: 3, submit: X.FINAL_SUBMIT });
   assert.ok(!JSON.stringify(v.sent).includes("SECRET-VALUE") && !X.TOKEN.test(JSON.stringify(v.sent)));
   assert.equal(v.strip.textContent, "pickandroll moves: live · claim submitted for $3, dropping 2005: reading Yahoo's answer…");
+});
+
+test("in a live league Yahoo's alert on the drop's tick is the entry's failure, in Yahoo's words: no bid, no final click", async () => {
+  const v = await visitAdd({ answer: worker(LIVE), dom: addDom({ step: { reply: "This player cannot be dropped." } }) });
+  assert.deepEqual(ops(v), [...PASS, "moves_submitting", "moves_log"]);
+  assert.deepEqual(v.touched, ["click drop button 2005"]);
+  const run = sentOf(v, "moves_log")[0].run;
+  assert.deepEqual([run.mode, run.outcome, run.entries[0].outcome], ["live", "failed", "failed"]);
+  assert.equal(run.entries[0].reason, 'Yahoo answered the drop\'s tick: "This player cannot be dropped."');
+  assert.match(v.strip.textContent, /^pickandroll moves: live · failed: Yahoo answered the drop's tick: "This player cannot be dropped\." \(\d\d:\d\d\)$/);
 });
 
 test("a live league with the guard refusing, a failed check, a free-agent add or no record: nothing is touched", async () => {
@@ -624,18 +783,22 @@ test("a submit on record is never made again: a stale one is logged first with i
 
 /** The page Yahoo lands on after a submit: any page of the league, here the claim form's own
  * address. ``notes`` and ``errors`` are its messages, ``form`` whether the claim form is back. */
-function landedDom({ notes = [], errors = [], form = false, heading = "Team page" } = {}) {
+function landedDom({ notes = [], errors = [], form = false, heading = "Team page", claimId = null } = {}) {
   const text = (t) => el({ textContent: t });
+  const nav = el({ textContent: "News", closest: (sel) => (sel.includes("nav") ? el() : null) });
+  const link = (id) => el({ attrs: { href: `/nba/${LEAGUE}/${TEAM}/viewwaiver?claim_id=${id}&activity=transaction` } });
   return {
     querySelector: (sel) => (sel === `form#${X.FORM_ID}` && form ? el() : null),
     querySelectorAll: (sel) =>
       sel === "h1, h2, h3"
-        ? [text("Yahoo Sports Fantasy Basketball"), text(heading)]
+        ? [nav, text("Yahoo Sports Fantasy Basketball"), text(heading)]
         : sel.startsWith(".error")
           ? errors.map(text)
           : sel.startsWith(".Alert")
             ? [...notes, ...errors].map(text)
-            : [],
+            : sel === 'a[href*="viewwaiver"]' && claimId
+              ? [link(claimId)]
+              : [],
     getElementById: () => null,
     body: text([...notes, ...errors].join(" ")),
   };
@@ -658,6 +821,16 @@ test("the page Yahoo lands on logs the claim's live pass: placed, refused, or it
   run = sentOf(v, "moves_log")[0].run;
   assert.deepEqual([run.outcome, run.entries[0].outcome], ["claimed", "claimed"]);
   assert.match(run.entries[0].reason, /Yahoo's answer was not read/);
+  // Yahoo's real answer (2026-10-26): its notice with a stat figure in the error classes, or only
+  // the claim's link among the pending transactions; another claim's link is not this one.
+  v = await landedAt(landedDom({ notes: ["You have successfully created a waiver claim for A dropping B"], errors: ["(-5)"] }));
+  run = sentOf(v, "moves_log")[0].run;
+  assert.deepEqual([run.outcome, run.entries[0].message], ["claimed", "You have successfully created a waiver claim for A dropping B"]);
+  v = await landedAt(landedDom({ claimId: `${TEAM}_${ADD}_2005`, errors: ["(-5)"] }));
+  run = sentOf(v, "moves_log")[0].run;
+  assert.deepEqual([run.outcome, run.entries[0].message, run.entries[0].controls.landed.heading], ["claimed", "the claim shows among the pending transactions", "Team page"]);
+  v = await landedAt(landedDom({ claimId: `${TEAM}_${ADD}_2006` }));
+  assert.match(sentOf(v, "moves_log")[0].run.entries[0].reason, /Yahoo's answer was not read/);
   // No claim awaiting its answer in this tab: the page logs nothing.
   v = await visitAdd({ answer: worker(LIVE), dom: landedDom(), url: `${SITE}/nba/${LEAGUE}/${TEAM}/addplayer` });
   assert.deepEqual(ops(v), ["moves_landed"]);
@@ -784,7 +957,7 @@ test("an entry with no drop: an open spot when the page shows no drop section, n
   assert.deepEqual(check, { outcome: "would_claim", reason: "open spot" });
   const line = X.moveCheck(open, check, page, due(), READ_AT);
   assert.deepEqual([line.drop, line.reason, line.controls.drops], [null, "open spot", 0]);
-  assert.deepEqual(line.controls.would_fill, { action: `/nba/${LEAGUE}/${TEAM}/addplayer`, apid: ADD, dpid: null, faab: 3, submit: X.SUBMIT });
+  assert.deepEqual(line.controls.would_fill, { action: `/nba/${LEAGUE}/${TEAM}/addplayer`, apid: ADD, dpid: null, faab: 3, submit: X.FINAL_SUBMIT });
   const run = X.movesPass({ due: due(), trigger: "routine", checks: [line] });
   assert.deepEqual([run.outcome, run.reason, run.entries[0].reason], ["would_claim", null, "open spot"]);
   assert.equal(X.movesStripText({ due: due(), run, at: new Date(2026, 9, 24, 9, 2).getTime() }), "dry run · would claim for $3, into an open spot; logged 09:02");
@@ -821,6 +994,7 @@ test("in a live league an open spot is read, never submitted: the page is left u
 function openSpotDom() {
   const dom = addDom();
   const form = dom.querySelector("form#add-drop-players-form");
-  form.elements = form.elements.filter((x) => x.name !== "dpid");
+  const all = Object.getOwnPropertyDescriptor(form, "elements").get;
+  Object.defineProperty(form, "elements", { get: () => all().filter((x) => x.name !== "dpid") });
   return { ...dom, querySelectorAll: (sel) => (sel === "table.statTable-drop tbody tr" ? [] : dom.querySelectorAll(sel)) };
 }

@@ -19,10 +19,12 @@
 // the page Yahoo lands on in the same tab, any page of the league, logs what Yahoo answered. It
 // posts nothing for the add page.
 //
-// It clicks, sets and submits only there: the entry's one drop box, the bid and the claim submit,
-// once, on a page opened with a moves fragment. It never reads a form's crumb, never fetches a
-// Yahoo page and never runs on the draft client. It navigates only to follow the players page's
-// Next 25 link during a multi-page read the user armed from the side panel.
+// It clicks and sets only there, on a page opened with a moves fragment: the entry's one drop
+// button, the bid and Yahoo's final button, once each (addpage.js keeps Yahoo's alerts on such a
+// page as text, so an alert is logged and never blocks the tab). It never reads a form's crumb,
+// never fetches a Yahoo page (the tick's post is Yahoo's own script's) and never runs on the draft
+// client. It navigates only to follow the players page's Next 25 link during a multi-page read the
+// user armed from the side panel.
 (() => {
   "use strict";
   const PR = globalThis.PickAndRoll;
@@ -266,20 +268,25 @@
     };
   }
 
-  /** The page Yahoo landed on after a claim's submit, for ``readLanded``: its path, heading,
-   * whether the claim form is back, its notices and errors, and whether it shows the add with the
-   * word "pending". Ids and Yahoo's own short messages only. */
-  function landedControls(add) {
+  /** The page Yahoo landed on after a claim's submit, for ``readLanded``: its path, heading (not
+   * one of Yahoo's header or navigation), whether the claim form is back, its notices and errors,
+   * whether it shows the add with the word "pending", and whether it links the claim (``line``'s
+   * add and drop) among the pending transactions: Yahoo's View Waiver link carries the claim's id,
+   * ``<team>_<add>_<drop>``. Ids and Yahoo's own short messages only. */
+  function landedControls(line) {
     const texts = (sel) => [...document.querySelectorAll(sel)].map(textOf).filter((x) => x && x.length < 300);
     const errors = texts(".error, .Error, .F-negative, [class*='Alert-error'], [class*='alert-error']");
-    const shown = Boolean(document.querySelector(`[data-ys-playerid="${add}"]`));
+    const shown = Boolean(document.querySelector(`[data-ys-playerid="${line.add}"]`));
+    const chrome = (h) => typeof h.closest === "function" && Boolean(h.closest("header, nav, [role=navigation], #ybar"));
+    const id = new RegExp(`[?&]claim_id=\\d+_${line.add}_${line.drop == null ? "\\d*" : line.drop}(?:&|$)`);
     return {
       path: location.pathname + location.search,
-      heading: [...document.querySelectorAll("h1, h2, h3")].map(textOf).find((x) => x && !/^yahoo/i.test(x)) || null,
+      heading: [...document.querySelectorAll("h1, h2, h3")].filter((h) => !chrome(h)).map(textOf).find((x) => x && !/^yahoo/i.test(x)) || null,
       form: Boolean(document.querySelector(`form#${PR.FORM_ID}`)),
       notes: texts(".Alert, .alert, [role=alert], .F-positive, .success, .Success, .notice, .Notice").filter((x) => !errors.includes(x)),
       errors,
       pending: shown && /pending/i.test(textOf(document.body)),
+      claim: [...document.querySelectorAll('a[href*="viewwaiver"]')].some((a) => id.test(a.getAttribute("href") || "")),
     };
   }
 
@@ -290,7 +297,7 @@
     const r = await send({ op: "moves_landed", league });
     if (!r || !r.ok || !r.data) return null;
     const record = r.data;
-    const raw = landedControls(record.line.add);
+    const raw = landedControls(record.line);
     const run = PR.landedPass(record, PR.readLanded(raw), { path: raw.path, heading: raw.heading }, extensionVersion());
     const logged = await send({ op: "moves_log", league, run });
     if (!logged || !logged.ok) {
@@ -369,12 +376,12 @@
           // On record before the page is touched: no pass submits this entry again.
           const record = { day: due.date, trigger, line, cap: r.data.cap, done: r.data.done };
           const kept = await send({ op: "moves_submitting", league, record });
-          const problem = kept && kept.ok ? await PR.fillClaim(document, entry) : "the submit could not be put on record";
-          if (problem === null) {
+          const placed = kept && kept.ok ? await PR.fillClaim(document, entry) : { outcome: "skipped", reason: "the submit could not be put on record" };
+          if (placed === null) {
             movesStrip(`live · claim submitted for $${line.bid}, dropping ${line.drop}: reading Yahoo's answer…`);
             return null;
           }
-          check = { outcome: "skipped", reason: problem };
+          check = placed;
         }
       }
       run = PR.movesPass({ due, trigger, checks: [PR.moveCheck(entry, check, seen, due, readAt)], extension });
