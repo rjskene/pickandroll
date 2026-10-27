@@ -140,6 +140,12 @@
    * with their markers, the bid field, its range, the budget and the waiver date shown, the
    * submit's name, and the names of the form's fields. ``near`` is the entry's clear date, for the
    * year of the page's waiver date. */
+  /** The empty spots Yahoo's words on the add page name, 0 when it says none. */
+  function openSpots(text) {
+    const m = /you currently have (\d+) empty spots? on your roster/i.exec(String(text || ""));
+    return m ? Number(m[1]) : 0;
+  }
+
   function readAddPage(raw, near = null) {
     const form = raw.form || null;
     const all = form ? form.fields || [] : [];
@@ -177,6 +183,9 @@
       submit: raw.submit || null,
       token: Boolean(form && (form.token || all.length > fields.length)),
       message: raw.message || null,
+      // Yahoo's open-spot words (step 0, #214): "You currently have 1 empty spot on your roster
+      // and are not required to drop a player"; the drop table is drawn beside them.
+      open_spots: openSpots(raw.empty),
       fields: [...new Set(fields.map((f) => f.name).filter(Boolean))],
     };
   }
@@ -224,8 +233,9 @@
     if (entry.drop == null) {
       // An entry with no drop (#199): the drop section decides. Shown (any roster row or drop box),
       // the roster is full and the claim would post without the drop the page asks for; never a
-      // fallback drop. None shown is an open spot.
-      if (page.rows.length || page.boxes.length) {
+      // fallback drop. None shown is an open spot, and so is a page whose words say it has an
+      // empty spot (the drop table is drawn there too, for a drop the claim does not need).
+      if (!page.open_spots && (page.rows.length || page.boxes.length)) {
         const held = entry.basis === "held" && entry.held_move ? entry.held_move.player : null;
         const listed = `(the page lists ${page.boxes.length} to drop)`;
         return skip(held != null ? `the roster is full: ${held} to IL first ${listed}` : `the roster is full and the entry carries no drop ${listed}`);

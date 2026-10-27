@@ -80,8 +80,8 @@ test("the page checks, the mode and the same-day rule", () => {
   assert.deepEqual(S.startActiveMode(row(LIVE)), { mode: "live", reason: null });
   assert.deepEqual(S.startActiveMode(row({ mode: "live", live: { ok: false, reason: "a dry run on 7 days first" } })), { mode: "dry_run", reason: "live refused: a dry run on 7 days first" });
 
-  // One press a day (ruling on #215): the guard lifts when the page's roster differs from the
-  // press's, players or held, or when the need rule says roster_changed / il_moved.
+  // One press a day (rulings on #215 and #214): the guard lifts only when the page's roster
+  // differs from the press's, players or held; the need rule's reasons never lift it alone.
   const record = { day: DAY, roster: ROSTER, logged: true };
   assert.equal(S.sameDayProblem(null, row(), DAY), null);
   assert.equal(S.sameDayProblem({ ...record, day: "2026-10-26" }, row(), DAY), null);
@@ -89,8 +89,9 @@ test("the page checks, the mode and the same-day rule", () => {
   assert.match(S.sameDayProblem(record, row({ reasons: ["no_run"] }), DAY), /roster has not changed/);
   assert.equal(S.sameDayProblem(record, row({ reasons: ["no_run"], roster: { players: [2001, 2002, 2003, 2005], held: [2004] } }), DAY), null);
   assert.equal(S.sameDayProblem(record, row({ reasons: ["no_run"], roster: { players: ROSTER.players, held: [2003, 2004] } }), DAY), null);
-  assert.equal(S.sameDayProblem(record, row({ reasons: ["roster_changed"] }), DAY), null);
-  assert.equal(S.sameDayProblem(record, row({ reasons: ["il_moved"] }), DAY), null);
+  assert.match(S.sameDayProblem(record, row({ reasons: ["roster_changed"] }), DAY), /roster has not changed/);
+  assert.match(S.sameDayProblem(record, row({ reasons: ["il_moved"] }), DAY), /roster has not changed/);
+  assert.equal(S.sameDayProblem(record, row({ reasons: ["roster_changed"], roster: { players: [2001], held: [] } }), DAY), null);
   // An unknown roster never lifts it; the same roster in another order is the same roster.
   assert.match(S.sameDayProblem({ ...record, roster: null }, row({ reasons: ["no_run"] }), DAY), /ran in this league today/);
   assert.equal(S.rosterDiffers(ROSTER, { players: [2004, 2003, 2002, 2001], held: [2004] }), false);
@@ -217,7 +218,7 @@ test("the presses stop where the page does not answer as step 0 read it", async 
 test("only pressStartActive touches a page: two clicks, no field set, nothing fetched", () => {
   const pressed = S.pressStartActive.toString();
   for (const f of ["lib/startactive.js", "league.js", "addpage.js", "worker.js"]) {
-    const src = fs.readFileSync(path.join(DIR, f), "utf8").replace(pressed, "").replace(require("../lib/moves.js").fillClaim.toString(), "");
+    const src = fs.readFileSync(path.join(DIR, f), "utf8").replace(pressed, "").replace(require("../lib/moves.js").fillClaim.toString(), "").replace(require("../lib/ilmove.js").moveToIL.toString(), "");
     assert.ok(!/\.click\(|dispatchEvent|submit\(|requestSubmit/.test(src), `${f} clicks or submits outside the two presses`);
     assert.ok(!/\.(value|selectedIndex|checked)\s*=[^=]/.test(src), `${f} sets a field`);
   }
@@ -296,7 +297,7 @@ async function visitTeam({ hash = "#pickandroll-start-active", answer, dom = saD
   });
   ctx.window = ctx;
   ctx.globalThis = ctx;
-  for (const file of ["lib/league.js", "lib/lineup.js", "lib/moves.js", "lib/startactive.js", "league.js"]) vm.runInContext(fs.readFileSync(path.join(DIR, file), "utf8"), ctx);
+  for (const file of ["lib/league.js", "lib/lineup.js", "lib/moves.js", "lib/startactive.js", "lib/ilmove.js", "league.js"]) vm.runInContext(fs.readFileSync(path.join(DIR, file), "utf8"), ctx);
   ctx.started = true;
   for (const fn of timers.splice(0)) await fn();
   return { sent, replaced, strip: nodes["pickandroll-strip"], touched: dom.touched };

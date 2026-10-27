@@ -87,7 +87,9 @@
         <p id="moves-last" class="small">-</p>
         <p class="muted small">Lists the day's queued moves that are due, each a link to its add page; opening one checks
           the claim on that page and logs what it would place. In a league you switched live whose guard holds, the link
-          reads "claim:" and opening it places the waiver claim (its one drop, its bid, the claim's submit).</p>
+          reads "claim:" and opening it places the waiver claim (its one drop, its bid, the claim's submit). A claim
+          behind an IL move links its team page instead: opening it moves the player to the IL (live: "move:") and
+          then opens the claim.</p>
         <button id="moves-run" type="button">Check moves now</button>
         <ul id="moves-due" class="posts"></ul>
       </div>
@@ -121,6 +123,7 @@
     <script src="../lib/lineup.js"></script>
     <script src="../lib/moves.js"></script>
     <script src="../lib/startactive.js"></script>
+    <script src="../lib/ilmove.js"></script>
     <script src="panel.js"></script>
   </body>
 </html>

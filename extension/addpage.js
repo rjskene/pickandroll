@@ -2,8 +2,8 @@
 // document_start). Yahoo's add page answers a refused drop or a bid out of range with
 // ``alert``, which would block the tab, and the routine's pass with it, until someone dismissed
 // it. On an add page opened with a moves fragment (the routine's link, its late or evening pass,
-// or the side panel's), and on a team page opened with a start-active fragment (#215, 0.9.0), and
-// nowhere else, ``alert`` keeps its text on the root element instead, where the executor
+// or the side panel's), and on a team page opened with a start-active fragment (#215, 0.9.0) or an
+// IL one (#214, 0.9.1), and nowhere else, ``alert`` keeps its text on the root element instead, where the executor
 // (lib/moves.js ``alertsOf``, lib/startactive.js) reads it and logs the run with Yahoo's words. A
 // page the user opens by hand keeps Yahoo's alerts. It reads nothing on the page and sends
 // nothing.
@@ -25,6 +25,13 @@
     "pickandroll-start-active-daily",
     "pickandroll-start-active-panel",
   ];
+  /** The IL move's (lib/ilmove.js ``IL_TRIGGERS``, #214, 0.9.1). */
+  const IL_FRAGMENTS = [
+    "pickandroll-il",
+    "pickandroll-il-late",
+    "pickandroll-il-evening",
+    "pickandroll-il-panel",
+  ];
   const ATTR = "data-pickandroll-alerts";
   const ADD_PAGE = /^\/nba\/\d+\/addplayer\/?$/;
   const TEAM_PAGE = /^\/nba\/\d+\/\d+\/?$/;
@@ -37,7 +44,7 @@
     const loc = win.location;
     const hash = String(loc.hash || "").replace(/^#/, "");
     const add = ADD_PAGE.test(loc.pathname) && FRAGMENTS.includes(hash);
-    const team = TEAM_PAGE.test(loc.pathname) && START_ACTIVE_FRAGMENTS.includes(hash);
+    const team = TEAM_PAGE.test(loc.pathname) && (START_ACTIVE_FRAGMENTS.includes(hash) || IL_FRAGMENTS.includes(hash));
     if (!add && !team) return false;
     const root = win.document.documentElement;
     win.alert = function alert(message) {
@@ -54,6 +61,6 @@
     return true;
   }
 
-  if (typeof window === "undefined") module.exports = { install, FRAGMENTS, START_ACTIVE_FRAGMENTS, ATTR };
+  if (typeof window === "undefined") module.exports = { install, FRAGMENTS, START_ACTIVE_FRAGMENTS, IL_FRAGMENTS, ATTR };
   else install(window);
 })();
