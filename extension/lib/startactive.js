@@ -118,20 +118,22 @@
 
   const ids = (xs) => [...new Set((xs || []).map(Number))].sort((a, b) => a - b).join(",");
 
-  /** Whether ``a`` and ``b`` (``{players, held}`` by id) are different rosters. */
+  /** Whether ``a`` and ``b`` (``{players, held}`` by id) are different rosters; false when either
+   * is unknown, so an unknown roster never lifts the same-day guard. */
   function rosterDiffers(a, b) {
-    if (!a || !b) return true;
+    if (!a || !b) return false;
     return ids(a.players) !== ids(b.players) || ids(a.held) !== ids(b.held);
   }
 
-  /** Why a second live run in the league today is refused (the master's rule on #215), null when
-   * it may run: ``record`` is the press on record in this browser. One per day unless the need
-   * rule says the roster changed (or an IL move landed) and the roster differs from the one that
-   * press ran on. */
+  /** Why a second live run in the league today is refused (the master's rulings on #215), null
+   * when it may run: ``record`` is the press on record in this browser, ``row`` the due route's row
+   * read after the page was posted. One per day; the guard lifts when the page's roster differs
+   * from the one the day's press ran on (players or held), or when the need rule says
+   * ``roster_changed`` or ``il_moved``. */
   function sameDayProblem(record, row, day) {
     if (!record || record.day !== day) return null;
-    const again = (row.reasons || []).some((r) => SA_AGAIN.includes(r));
-    if (again && rosterDiffers(record.roster, row.roster)) return null;
+    if ((row.reasons || []).some((r) => SA_AGAIN.includes(r))) return null;
+    if (rosterDiffers(record.roster, row.roster)) return null;
     return "Start Active ran in this league today; the roster has not changed since";
   }
 
@@ -189,7 +191,8 @@
     return out(answer.outcome, null, answer.message);
   }
 
-  /** The run the log takes (``POST /seasons/{league}/autopilot/start-active``). */
+  /** The run the log takes (``POST /seasons/{league}/autopilot/start-active``), with the roster
+   * it ran on: the row's, read from the page just posted. */
   function startActiveRun({ row, day, trigger, mode, outcome, reason = null, message = null, today = null, rest_of_week = null, controls = null, page = null, extension = null }) {
     return {
       day,
@@ -201,6 +204,7 @@
       today,
       rest_of_week,
       message,
+      roster: row && row.roster ? row.roster : null,
       page,
       controls,
       extension,
@@ -208,10 +212,11 @@
   }
 
   /** A press on record whose run was never logged, as the next visit logs it: pressed, its answer
-   * not read; never pressed again that day unless the roster changes. */
+   * not read, with the roster the press ran on; never pressed again that day unless the roster
+   * changes. */
   function unreadRun(record, extension) {
     return startActiveRun({
-      row: { reasons: record.reasons || [] },
+      row: { reasons: record.reasons || [], roster: record.roster || null },
       day: record.day,
       trigger: record.trigger,
       mode: "live",

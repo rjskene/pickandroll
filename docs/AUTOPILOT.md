@@ -153,9 +153,10 @@ side (PR 1) is in `api/season_autopilot.py`; the click is the extension's, on th
   - a dry run, or a live league whose guard refuses now, logs `would_start` (with "live
     refused: …") and presses nothing, not even the main button;
   - live: one press per run. The press goes on record in this browser before the page is
-    touched (`start_active_press:<league>`), and a second run in the league the same day is
-    refused unless the need rule says `roster_changed` (or `il_moved`) and the roster differs
-    from the one the day's press ran on. The run then presses the main button, waits up to 10 s
+    touched (`start_active_press:<league>`), with the page's roster (the run presses only from a
+    page the API took). A second press in the league the same day is refused unless the page's
+    roster differs from the one the day's press ran on (players or held) or the need rule says
+    `roster_changed` or `il_moved` (ruled on #215). The run then presses the main button, waits up to 10 s
     for the dialog's Rest of Week row with its Start enabled, reads it again, presses it once,
     and waits up to 15 s for Yahoo's words in the dialog (open or closed): "N lineups updated"
     or "We optimized …" log `started`, "Already optimized" `already`, the error `failed`; no
@@ -164,7 +165,8 @@ side (PR 1) is in `api/season_autopilot.py`; the click is the extension's, on th
     never read as a count;
   - a press whose run never reached the log (the tab closed mid-run, a log that failed) is
     logged by the next run in the league after a minute: its run as read, else `failed`
-    "pressed; Yahoo's answer was not read". A log the API refuses closes the press as it is.
+    "pressed; Yahoo's answer was not read", with the press's roster as `roster`. A log the API
+    refuses closes the press as it is.
 
   The side panel shows the last run from this browser on my team page and has **Start active
   players now** (the same run, trigger `panel`). Which team pages the routines open is the

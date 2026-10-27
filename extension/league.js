@@ -451,7 +451,7 @@
         saStrip(PR.startActiveStripText({ browserOff: true }));
         return null;
       }
-      await post();
+      const posted = await post();
       const extension = extensionVersion();
       const record = await pressRecord(extension);
       const r = await send({ op: "start_active_due" });
@@ -483,7 +483,9 @@
         const controls = PR.readStartActive(startActiveControls());
         const dialog = document.querySelector(PR.SA_DIALOG);
         const rows = PR.dialogRows(dialog ? dialog.textContent : "");
-        const problem = PR.startActiveProblem(row, page, controls) || (mode.mode === "live" ? PR.sameDayProblem(record, row, due.date) : null);
+        // Live, the row's roster must be this page's (the same-day guard compares it): the post taken.
+        const unposted = mode.mode === "live" && !posted.accepted ? "the page was not posted, so its roster is not known" : null;
+        const problem = PR.startActiveProblem(row, page, controls) || unposted || (mode.mode === "live" ? PR.sameDayProblem(record, row, due.date) : null);
         if (problem) run = PR.startActiveRun({ ...base, ...rows, mode: mode.mode, outcome: "skipped", reason: problem, controls });
         else if (mode.mode !== "live") run = PR.startActiveRun({ ...base, ...rows, mode: "dry_run", outcome: "would_start", reason: mode.reason, controls });
         else {

@@ -80,21 +80,25 @@ test("the page checks, the mode and the same-day rule", () => {
   assert.deepEqual(S.startActiveMode(row(LIVE)), { mode: "live", reason: null });
   assert.deepEqual(S.startActiveMode(row({ mode: "live", live: { ok: false, reason: "a dry run on 7 days first" } })), { mode: "dry_run", reason: "live refused: a dry run on 7 days first" });
 
-  // One press a day; another only once the roster differs from the one it ran on.
+  // One press a day (ruling on #215): the guard lifts when the page's roster differs from the
+  // press's, players or held, or when the need rule says roster_changed / il_moved.
   const record = { day: DAY, roster: ROSTER, logged: true };
   assert.equal(S.sameDayProblem(null, row(), DAY), null);
   assert.equal(S.sameDayProblem({ ...record, day: "2026-10-26" }, row(), DAY), null);
   assert.match(S.sameDayProblem(record, row(), DAY), /ran in this league today/);
-  assert.match(S.sameDayProblem(record, row({ reasons: ["roster_changed"] }), DAY), /roster has not changed/);
-  assert.equal(S.sameDayProblem(record, row({ reasons: ["roster_changed"], roster: { players: [2001, 2002, 2003, 2005], held: [] } }), DAY), null);
-  assert.equal(S.sameDayProblem(record, row({ reasons: ["il_moved"], roster: { players: ROSTER.players, held: [2003, 2004] } }), DAY), null);
-  // The same roster in another order is the same roster.
+  assert.match(S.sameDayProblem(record, row({ reasons: ["no_run"] }), DAY), /roster has not changed/);
+  assert.equal(S.sameDayProblem(record, row({ reasons: ["no_run"], roster: { players: [2001, 2002, 2003, 2005], held: [2004] } }), DAY), null);
+  assert.equal(S.sameDayProblem(record, row({ reasons: ["no_run"], roster: { players: ROSTER.players, held: [2003, 2004] } }), DAY), null);
+  assert.equal(S.sameDayProblem(record, row({ reasons: ["roster_changed"] }), DAY), null);
+  assert.equal(S.sameDayProblem(record, row({ reasons: ["il_moved"] }), DAY), null);
+  // An unknown roster never lifts it; the same roster in another order is the same roster.
+  assert.match(S.sameDayProblem({ ...record, roster: null }, row({ reasons: ["no_run"] }), DAY), /ran in this league today/);
   assert.equal(S.rosterDiffers(ROSTER, { players: [2004, 2003, 2002, 2001], held: [2004] }), false);
 });
 
 test("the run the log takes, the strip and the panel's line", () => {
   const run = S.startActiveRun({ row: row(LIVE), day: DAY, trigger: "routine", mode: "live", outcome: "started", message: UPDATED, rest_of_week: { label: "Rest of Week 2", range: "Tue, Oct 27 - Sun, Nov 01" }, page: `/nba/${LEAGUE}/${TEAM}`, extension: "0.9.0" });
-  assert.deepEqual(Object.keys(run).sort(), ["controls", "day", "extension", "message", "mode", "outcome", "page", "reason", "reasons", "rest_of_week", "today", "trigger"]);
+  assert.deepEqual(Object.keys(run).sort(), ["controls", "day", "extension", "message", "mode", "outcome", "page", "reason", "reasons", "rest_of_week", "roster", "today", "trigger"]);
   assert.deepEqual(run.reasons, ["week_start"]);
   assert.equal(S.startActiveStripText({ run }), `live · started active players, Rest of Week 2 · ${UPDATED}`);
   const dry = S.startActiveRun({ row: row(), day: DAY, trigger: "routine_daily", mode: "dry_run", outcome: "would_start" });
@@ -104,7 +108,9 @@ test("the run the log takes, the strip and the panel's line", () => {
   assert.equal(S.startActiveLastText(null, ""), "no run from this browser yet");
   assert.equal(S.startActiveLastText({ day: DAY, trigger: "routine_daily", mode: "live", outcome: "already", message: "Already optimized" }, "2 min ago"), `${DAY} · daily routine, live: already optimized · Already optimized, 2 min ago`);
   const late = S.unreadRun({ day: DAY, trigger: "routine", reasons: ["no_run"], page: `/nba/${LEAGUE}/${TEAM}` }, "0.9.0");
-  assert.deepEqual([late.mode, late.outcome, late.reason, late.reasons], ["live", "failed", "pressed; Yahoo's answer was not read", ["no_run"]]);
+  assert.deepEqual([late.mode, late.outcome, late.reason, late.reasons, late.roster], ["live", "failed", "pressed; Yahoo's answer was not read", ["no_run"], null]);
+  assert.deepEqual(S.unreadRun({ day: DAY, trigger: "routine", reasons: ["no_run"], roster: ROSTER }, "0.9.0").roster, ROSTER);
+  assert.deepEqual(run.roster, ROSTER);
 });
 
 // ---------------------------------------------------------------- the presses on a fake page
@@ -354,9 +360,13 @@ test("a live run presses nothing when it may not: not due, STOP, the same day, t
   v = await visitTeam({ answer: worker(due(LIVE), { record: today }) });
   assert.deepEqual([ops(v), v.touched], [[...RUN, "start_active_log"], []]);
   assert.match(logOf(v)[0].run.reason, /ran in this league today/);
-  // The roster changed since: it runs again.
-  v = await visitTeam({ answer: worker(due({ ...LIVE, reasons: ["roster_changed"], roster: { players: [2001, 2002, 2003, 2009], held: [] } }), { record: today }) });
+  // The page's roster differs from the press's: it runs again, with no reason but no_run.
+  v = await visitTeam({ answer: worker(due({ ...LIVE, reasons: ["no_run"], roster: { players: [2001, 2002, 2003, 2009], held: [] } }), { record: today }) });
   assert.deepEqual(v.touched, ["click main", "click start"]);
+  // The page not taken by the API: its roster is not known, so live presses nothing.
+  const unposted = (msg, sent) => (msg.op === "season_page" ? { ok: true, data: { post: { accepted: [], skipped: ["x"] }, follow: null } } : worker(due(LIVE))(msg, sent));
+  v = await visitTeam({ answer: unposted });
+  assert.deepEqual([logOf(v)[0].run.outcome, logOf(v)[0].run.reason, v.touched], ["skipped", "the page was not posted, so its roster is not known", []]);
   // The worker refuses the record: nothing pressed.
   v = await visitTeam({ answer: worker(due(LIVE), { kept: false }) });
   assert.deepEqual([logOf(v)[0].run.outcome, logOf(v)[0].run.reason, v.touched], ["skipped", "the press could not be put on record: a press in this league awaits its log", []]);
@@ -377,7 +387,7 @@ test("a press whose run never reached the log is logged first, as read or with i
   const stale = { day: DAY, trigger: "routine", reasons: ["no_run"], roster: ROSTER, page: `/nba/${LEAGUE}/${TEAM}`, logged: false, at: Date.now() - S.SA_UNREAD_MS - 1 };
   let v = await visitTeam({ answer: worker(due(LIVE), { record: stale }) });
   const [late, now] = logOf(v);
-  assert.deepEqual([late.run.outcome, late.run.reason, late.pressed], ["failed", "pressed; Yahoo's answer was not read", true]);
+  assert.deepEqual([late.run.outcome, late.run.reason, late.run.roster, late.pressed], ["failed", "pressed; Yahoo's answer was not read", ROSTER, true]);
   // The worker answers the same stale record here, so today's run is refused by the same-day rule.
   assert.deepEqual([now.run.outcome, v.touched], ["skipped", []]);
   const read = { ...stale, run: { day: DAY, mode: "live", trigger: "routine", outcome: "started", message: UPDATED } };
@@ -461,9 +471,9 @@ test("the worker: one press on record at a time, kept until the API has its run,
   assert.deepEqual([w.session.get(`start_active:${LEAGUE}`).outcome, w.session.get(`start_active:${LEAGUE}`).message], ["started", UPDATED]);
   // The same day on the same roster is refused; a changed roster is taken, and when that press is
   // never made the day's first press comes back.
-  const same = await w.send({ op: "start_active_pressing", league: LEAGUE, record: { ...record, reasons: ["roster_changed"] } });
+  const same = await w.send({ op: "start_active_pressing", league: LEAGUE, record: { ...record, reasons: ["no_run"] } });
   assert.match(same.error, /ran in this league today/);
-  const changed = { ...record, reasons: ["roster_changed"], roster: { players: [2001, 2009], held: [] } };
+  const changed = { ...record, reasons: ["no_run"], roster: { players: [2001, 2009], held: [] } };
   assert.equal((await w.send({ op: "start_active_pressing", league: LEAGUE, record: changed })).ok, true);
   assert.equal(w.local.get(key).prev.run.message, UPDATED);
   await w.send({ op: "start_active_log", league: LEAGUE, run: { ...run, outcome: "skipped", reason: "x", message: null }, release: true });

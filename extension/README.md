@@ -229,8 +229,8 @@ yet, a new week, a roster change, an IL move). The page is posted first and the 
 - **Live:** the press goes on record in this browser before the page is touched, then the main button
   (`button.start-active-players` in `#fantasy_start_active_overlay`) is pressed once, and the dialog's Rest of
   Week Start (`button.start-players-interval`) once, after it is read again. Yahoo's words ("6 lineups updated",
-  "Already optimized", the error) are logged as words. One press a day per league, unless the roster changed
-  since the day's press. A press whose answer was never read is logged by the next run as `failed` and is not
+  "Already optimized", the error) are logged as words. One press a day per league, unless the page's roster
+  differs from the day's press's (players or held) or the need rule says the roster changed or an IL move landed. A press whose answer was never read is logged by the next run as `failed` and is not
   pressed again for it.
 - Under STOP the run logs `stopped`; a league not due, or a plain visit, logs nothing. The options page's moves
   brake also stops it.
