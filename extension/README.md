@@ -217,6 +217,26 @@ Yahoo's open-spot page has been seen. A live skip stays due,
 so the late pass reads the page again. The panel's links read "claim: …" in a live league whose guard holds:
 opening one places the claim. An entry with no drop reads "open spot" and never "claim". The first live claim is the user's own switch on the dashboard.
 
+## Start Active Players (0.9.0, #215)
+
+On my team page opened with a start-active fragment (`#pickandroll-start-active`, `-late`, `-evening`, `-daily`)
+or from the side panel's **Start active players now**, the extension runs Yahoo's own Start Active Players for the
+rest of the week, when the API's need rule says the league wants it (`GET /autopilot/start-active/due`: no run
+yet, a new week, a roster change, an IL move). The page is posted first and the due route read fresh.
+
+- **Dry run** (and a live league whose guard refuses): logs `would_start` and presses nothing, not even the main
+  button, which runs Today Only by itself.
+- **Live:** the press goes on record in this browser before the page is touched, then the main button
+  (`button.start-active-players` in `#fantasy_start_active_overlay`) is pressed once, and the dialog's Rest of
+  Week Start (`button.start-players-interval`) once, after it is read again. Yahoo's words ("6 lineups updated",
+  "Already optimized", the error) are logged as words. One press a day per league, unless the roster changed
+  since the day's press. A press whose answer was never read is logged by the next run as `failed` and is not
+  pressed again for it.
+- Under STOP the run logs `stopped`; a league not due, or a plain visit, logs nothing. The options page's moves
+  brake also stops it.
+
+Every run goes to `POST /seasons/{league}/autopilot/start-active` (docs/AUTOPILOT.md §2).
+
 ## What it reads and sends
 
 - **Reads:** the text frames of the draft room's own WebSocket. The page script adds a listener to the socket
@@ -239,6 +259,10 @@ opening one places the claim. An entry with no drop reads "open spot" and never 
   toggled, set or submitted; a live claim clicks its one drop button, types its bid and clicks Yahoo's final
   button, and the page Yahoo lands on sends its path, heading and Yahoo's message about the claim. On such a page
   Yahoo's alerts are kept as text and logged with the pass.
+- **Start Active (0.9.0):** on my team page opened with a start-active fragment, the control's shape (how many
+  buttons, visible, disabled, the dialog there and open), the dialog's two rows and Yahoo's words after the
+  press, and the run's outcome, to the same API. Nothing is fetched from Yahoo and no field is set; a live run
+  clicks Yahoo's button and the Rest of Week Start, once each.
 - **Never:** cookies, the `?auth=` part of the room URL, anything you type, or any page other than the draft
   client and the league pages above.
 
@@ -253,13 +277,14 @@ opening one places the claim. An entry with no drop reads "open spot" and never 
 | `lib/room.js` | `RoomTracker`: picks, the pick on the clock, the sync cursor, how my picks landed (pure) |
 | `lib/drafter.js` | armed mode: one turn at a time, a newer turn supersedes an older one, the queue backstop and the probe (pure, through a page adapter) |
 | `lib/yahoo.js` | Yahoo's player table: row matching by headshot id and name, label checks, the plan's candidates (pure) |
-| `addpage.js` | page world, `document_start`, league pages: on an add page opened with a moves fragment only, keeps Yahoo's alerts as text on the root element (0.8.2) |
-| `league.js` | isolated world, league pages: posts the page to the worker, follows Next 25 only during an armed read; on my team page, the lineup executor's dry run; on an add page opened with the fragment, the moves executor's pass (dry run, or the live claim); their strips |
+| `addpage.js` | page world, `document_start`, league pages: on an add page opened with a moves fragment, or my team page opened with a start-active one (0.9.0), and nowhere else, keeps Yahoo's alerts as text on the root element (0.8.2) |
+| `league.js` | isolated world, league pages: posts the page to the worker, follows Next 25 only during an armed read; on my team page, the lineup executor's dry run; on an add page opened with the fragment, the moves executor's pass (dry run, or the live claim); on my team page opened with a start-active fragment, Start Active Players; their strips |
 | `lib/league.js` | which league pages are read, the snapshot body, the multi-page read (pure) |
 | `lib/lineup.js` | the lineup executor's page side: the form read, the steps' checks, the run for the log, the strip (pure) |
 | `lib/moves.js` | the moves executor's page side: the add page read, the entries' checks, the pass for the log, the strip (pure) |
+| `lib/startactive.js` | Start Active Players: the control read, the checks, the same-day rule, the two presses (`pressStartActive`, the one step that clicks), the run for the log, the strip (#215) |
 | `worker.js` | service worker: the only caller of the API; per-tab state for the panel in `chrome.storage.session` |
-| `sidepanel/` | side panel: room state, attach a session, mode, plan, detach; on a league page, its posts and the read; on my team page, the lineup executor's last run and **Set lineup now**, the moves executor's last pass and **Check moves now** (the due entries' add pages as links) |
+| `sidepanel/` | side panel: room state, attach a session, mode, plan, detach; on a league page, its posts and the read; on my team page, the lineup executor's last run and **Set lineup now**, the moves executor's last pass and **Check moves now** (the due entries' add pages as links), Start Active's last run and **Start active players now** |
 | `options/` | API and web app addresses (localhost only), Yahoo players file, the queue probe's round, the search fallback, the lineup and moves executors' brakes |
 | `test/*.test.js` | unit tests (`node --test extension/test/*.test.js` from the repo root) |
 | `test/harness/` | Tier 1 for the extension: a recorded room played through the real scripts against the API |

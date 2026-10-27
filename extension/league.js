@@ -19,7 +19,13 @@
 // the page Yahoo lands on in the same tab, any page of the league, logs what Yahoo answered. It
 // posts nothing for the add page.
 //
-// It clicks and sets only there, on a page opened with a moves fragment: the entry's one drop
+// On my team page opened with a start-active fragment (#pickandroll-start-active, -late, -evening,
+// -daily, or the side panel's button) it is Yahoo's Start Active Players for the rest of the week
+// (#215, lib/startactive.js): it posts the page, reads the API's due fresh, and in a live league
+// whose guard holds and whose need rule says so, presses Yahoo's button and the dialog's Rest of
+// Week Start once each (``pressStartActive``) and logs Yahoo's words; a dry run presses nothing.
+//
+// Outside ``pressStartActive`` it clicks and sets only on a page opened with a moves fragment: the entry's one drop
 // button, the bid and Yahoo's final button, once each (addpage.js keeps Yahoo's alerts on such a
 // page as text, so an alert is logged and never blocks the tab). It never reads a form's crumb,
 // never fetches a Yahoo page (the tick's post is Yahoo's own script's) and never runs on the draft
@@ -395,13 +401,140 @@
     return run;
   }
 
+  // ---------------------------------------------------------------- Start Active (#215)
+  const saStrip = (line) => strip(line, "start active");
+
+  /** Yahoo's Start Active control on my team page as a plain object for ``readStartActive``:
+   * the buttons in its root (visible, disabled), any outside it, the dialog (there, open) and its
+   * Rest of Week Starts. Nothing is read from the roster form. */
+  function startActiveControls() {
+    const visible = (el) => typeof el.getClientRects === "function" && el.getClientRects().length > 0;
+    const inside = [...document.querySelectorAll(`${PR.SA_OVERLAY} ${PR.SA_BUTTON}`)];
+    const dialog = document.querySelector(PR.SA_DIALOG);
+    return {
+      path: location.pathname + location.search,
+      buttons: inside.map((b) => ({ visible: visible(b), disabled: Boolean(b.disabled) })),
+      outside: document.querySelectorAll(PR.SA_BUTTON).length - inside.length,
+      dialog: dialog ? { present: true, open: Boolean(dialog.open) } : null,
+      intervals: dialog ? [...dialog.querySelectorAll(PR.SA_INTERVAL)].map((b) => ({ disabled: Boolean(b.disabled) })) : [],
+    };
+  }
+
+  /** The press on record in this browser for the league, logging first one whose run never
+   * reached the log (the tab closed mid-run, a log that failed): its run as read, else pressed
+   * with its answer not read. It is never pressed again for it. */
+  async function pressRecord(extension) {
+    const read = async () => {
+      const r = await send({ op: "start_active_record", league: page.league });
+      return (r && r.ok && r.data) || null;
+    };
+    const record = await read();
+    if (!record || record.logged || Date.now() - record.at < PR.SA_UNREAD_MS) return record;
+    await send({ op: "start_active_log", league: page.league, run: record.run || PR.unreadRun(record, extension), pressed: true });
+    return read();
+  }
+
+  /** Yahoo's Start Active Players on my team page, opened with ``trigger``'s fragment (#215): the
+   * page posted, the API's due read fresh and my league's row taken. Under STOP the run says it
+   * stopped; a league not due logs nothing; a dry run, or a live league whose guard refuses, logs
+   * ``would_start`` and presses nothing; a live league presses once a day, the press put on
+   * record before the page is touched (``pressStartActive``), unless the roster changed since.
+   * Answers the run logged, or null. */
+  async function startActive(trigger) {
+    // A routine's run happens once: a reload of the page is a plain visit.
+    if (location.hash) history.replaceState(null, "", location.pathname + location.search);
+    if (running) return null;
+    running = true;
+    try {
+      const settings = await send({ op: "settings" });
+      if (settings && settings.ok && settings.data.moves_executor === "off") {
+        saStrip(PR.startActiveStripText({ browserOff: true }));
+        return null;
+      }
+      await post();
+      const extension = extensionVersion();
+      const record = await pressRecord(extension);
+      const r = await send({ op: "start_active_due" });
+      if (!r || !r.ok) {
+        saStrip(PR.startActiveStripText({ error: (r && r.error) || "no answer from the extension" }));
+        return null;
+      }
+      const due = r.data;
+      const row = (due.leagues || []).find((x) => String(x.league) === String(page.league));
+      if (!row) {
+        saStrip(PR.startActiveStripText({ none: "not armed here: the moves executor is off or the league is private" }));
+        return null;
+      }
+      if (row.error) {
+        saStrip(PR.startActiveStripText({ error: row.error }));
+        return null;
+      }
+      const where = location.pathname + location.search;
+      const base = { row, day: due.date, trigger, page: where, extension };
+      const mode = PR.startActiveMode(row);
+      let run;
+      let pressed = false;
+      let release = false;
+      if (due.stop) run = PR.startActiveRun({ ...base, mode: row.mode === "live" ? "live" : "dry_run", outcome: "stopped", reason: due.reason });
+      else if (!row.need) {
+        saStrip(PR.startActiveStripText({ row }));
+        return null;
+      } else {
+        const controls = PR.readStartActive(startActiveControls());
+        const dialog = document.querySelector(PR.SA_DIALOG);
+        const rows = PR.dialogRows(dialog ? dialog.textContent : "");
+        const problem = PR.startActiveProblem(row, page, controls) || (mode.mode === "live" ? PR.sameDayProblem(record, row, due.date) : null);
+        if (problem) run = PR.startActiveRun({ ...base, ...rows, mode: mode.mode, outcome: "skipped", reason: problem, controls });
+        else if (mode.mode !== "live") run = PR.startActiveRun({ ...base, ...rows, mode: "dry_run", outcome: "would_start", reason: mode.reason, controls });
+        else {
+          // On record before the page is touched: no run presses this league again today.
+          const put = await send({
+            op: "start_active_pressing",
+            league: page.league,
+            record: { day: due.date, trigger, reasons: row.reasons || [], roster: row.roster || null, page: where },
+          });
+          if (!put || !put.ok) {
+            const why = (put && put.error) || "no answer from the extension";
+            run = PR.startActiveRun({ ...base, ...rows, mode: "live", outcome: "skipped", reason: `the press could not be put on record: ${why}`, controls });
+          } else {
+            const got = await PR.pressStartActive(document);
+            pressed = got.outcome !== "skipped";
+            release = !pressed;
+            run = PR.startActiveRun({ ...base, mode: "live", outcome: got.outcome, reason: got.reason, message: got.message, today: got.today, rest_of_week: got.rest_of_week, controls });
+          }
+        }
+      }
+      const logged = await send({ op: "start_active_log", league: page.league, run, pressed, release });
+      if (!logged || !logged.ok) {
+        saStrip(`${pressed ? "pressed, " : ""}not logged: ${(logged && logged.error) || "no answer from the extension"}`);
+        return null;
+      }
+      saStrip(PR.startActiveStripText({ run }));
+      return run;
+    } finally {
+      running = false;
+    }
+  }
+
+  // The side panel's "Start active players now": the same run, its trigger the panel's.
+  chrome.runtime.onMessage.addListener((msg, _sender, reply) => {
+    if (!msg || msg.op !== "start_active_run" || !page || page.kind !== "team") return false;
+    startActive("panel").then(
+      (run) => reply({ ok: true, data: { run } }),
+      (e) => reply({ ok: false, error: String((e && e.message) || e) }),
+    );
+    return true;
+  });
+
   // A live pass submits only on a page opened with a moves fragment; any other page of the league
   // reads a claim this tab submitted, first.
   const trigger = addPage ? PR.movesTriggerOf(location.hash) : null;
   const lineupTrigger = page ? PR.triggerOf(location.hash) : null;
+  const saTrigger = page && page.kind === "team" ? PR.startActiveTriggerOf(location.hash) : null;
   setTimeout(async () => {
     await landed();
     if (trigger) await claim(trigger);
+    else if (saTrigger) await startActive(saTrigger);
     else if (page) await visit(lineupTrigger);
   }, SETTLE_MS);
 })();

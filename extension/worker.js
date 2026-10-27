@@ -15,7 +15,7 @@
 // chrome.storage.local, so a restart keeps it) and dropped only once the API has its pass: while
 // it is there no pass submits that entry again.
 "use strict";
-importScripts("lib/protocol.js", "lib/league.js", "lib/lineup.js", "lib/moves.js");
+importScripts("lib/protocol.js", "lib/league.js", "lib/lineup.js", "lib/moves.js", "lib/startactive.js");
 
 const DEFAULTS = {
   api: "http://localhost:8000",
@@ -118,6 +118,11 @@ const movesKey = (league) => `moves:${league}`;
 const submitKey = (id) => `moves_submit:${id}`;
 /** The submits put on record one after another, so two pages never pass the cap together. */
 let submitting = Promise.resolve();
+/** Start Active (#215): the last run for the panel (session) and the press on record (local). */
+const startActiveKey = (league) => `start_active:${league}`;
+const pressKey = (league) => `start_active_press:${league}`;
+/** The presses put on record one after another, so two tabs never press one league together. */
+let pressing = Promise.resolve();
 
 /** The live claims on record in ``league``: submitted, their pass not yet taken by the API. */
 async function submits(league) {
@@ -301,6 +306,64 @@ const ops = {
    * submits one of them again. */
   async moves_submits({ league }) {
     return submits(league);
+  },
+  /** Every armed public league and whether it wants Start Active Players now (#215). */
+  async start_active_due() {
+    return api("/autopilot/start-active/due", { timeout: 30000 });
+  },
+  /** The Start Active press on record in this browser for ``league``, null when none. */
+  async start_active_record({ league }) {
+    const key = pressKey(league);
+    return (await chrome.storage.local.get(key))[key] || null;
+  },
+  /** A live Start Active press about to be made on the team page in ``sender``'s tab:
+   * ``record`` is its day, trigger, the need rule's reasons and the roster it runs on. One at a
+   * time, and refused while another press in the league awaits its log, or when the league was
+   * pressed that day and the roster has not changed since (``sameDayProblem``). */
+  start_active_pressing({ league, record }, sender) {
+    const run = pressing.then(async () => {
+      const key = pressKey(league);
+      const prev = (await chrome.storage.local.get(key))[key] || null;
+      if (prev && !prev.logged) throw new Error("a press in this league awaits its log");
+      const why = self.PickAndRoll.sameDayProblem(prev, record, record.day);
+      if (why) throw new Error(why);
+      const kept = {
+        ...record,
+        league: String(league),
+        prev: prev ? { ...prev, prev: null } : null,
+        logged: false,
+        tab: sender && sender.tab ? sender.tab.id : null,
+        at: Date.now(),
+      };
+      await chrome.storage.local.set({ [key]: kept });
+      return { kept: true };
+    });
+    pressing = run.catch(() => {});
+    return run;
+  },
+  /** A Start Active run, for the league's log; the last one is kept for the panel. ``pressed``:
+   * the run of the press on record, kept on it until the API has it (a refusal also ends it: it
+   * is never sent or pressed again). ``release``: the press on record was never made, so the
+   * record before it comes back. */
+  async start_active_log({ league, run, pressed = false, release = false }) {
+    const key = pressKey(league);
+    const record = (await chrome.storage.local.get(key))[key] || null;
+    const open = record && !record.logged ? record : null;
+    if (open && release) {
+      if (open.prev) await chrome.storage.local.set({ [key]: open.prev });
+      else await chrome.storage.local.remove(key);
+    } else if (open && pressed) await chrome.storage.local.set({ [key]: { ...open, run } });
+    let logged;
+    try {
+      logged = await api(`/seasons/${encodeURIComponent(league)}/autopilot/start-active`, { method: "POST", body: run, timeout: 15000 });
+    } catch (e) {
+      if (open && pressed && e.status >= 400 && e.status < 500) await chrome.storage.local.set({ [key]: { ...open, run, logged: true, refused: e.message } });
+      throw e;
+    }
+    if (open && pressed) await chrome.storage.local.set({ [key]: { ...open, run, logged: true } });
+    const last = { at: Date.now(), day: run.day, trigger: run.trigger, mode: run.mode, outcome: run.outcome, reason: run.reason, message: run.message };
+    await chrome.storage.session.set({ [startActiveKey(league)]: last });
+    return logged;
   },
   /** The league's season summary (GET /seasons), null when pickandroll has no folder for it. */
   async season({ league }) {
