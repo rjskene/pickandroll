@@ -14,6 +14,7 @@ import type {
   LineupRunLog,
   MoveCandidate,
   MoveRos,
+  ILRunLog,
   MovesPassLog,
   MovesView,
   PlayerFlag,
@@ -123,8 +124,12 @@ import {
   queueMoveText,
   queueNamer,
   queueOrder,
+  queueStateLine,
   queueStateText,
   queueStateTone,
+  ilLine,
+  ilText,
+  passIL,
   passTally,
   passTitle,
   addsThisWeek,
@@ -2002,4 +2007,52 @@ test("an entry reads its latest pass after its outcome, why it is not queued and
   const q: QueuePayload = { date: "2026-10-24", built: ["2026-10-24T10:00:00Z"], execute_time: null, leagues: [], entries: [e], settings, stop: false, now: "2026-10-24T15:00:00Z" };
   assert.equal(queueFoldLine({ ...q, passes: tally }), "1 queued in 1 league · 13 would claim · 7 skipped · 1 failed · last pass 9:35 AM CT · executes from 09:00 CT");
   assert.equal(queueFoldLine({ ...q, passes: null }), "1 queued in 1 league · executes from 09:00 CT");
+});
+
+test("an open-spot claim's IL move reads on its entry, in the card's lines and in the pass's counts (#214)", () => {
+  const name = (id: number) => `P${id}`;
+  const e: QueueEntry = { ...QUEUE_BASE, drop: null, basis: "held", held_move: { player: 5, slot: "IL" } };
+  const now = Date.parse("2026-10-24T11:00:00Z");
+  // Before any run: no IL words, and the state reads as before.
+  assert.equal(ilText(e, name), "");
+  assert.equal(queueStateLine(e, now, name), queueStateText(e, now));
+  const run = { at: "2026-10-24T14:13:00Z", trigger: "routine" as const, reason: null, player: 5, to_slot: "IL" as const, dated: "2026-10-24", extension: "0.9.0" };
+  assert.equal(ilText({ ...e, il_pass: { ...run, outcome: "would_move" } }, name), "would move P5 to IL first");
+  assert.equal(ilText({ ...e, il_pass: { ...run, outcome: "moved" } }, name), "moved P5 to IL 9:13 AM CT");
+  // A move dated the next day (today's page locked) says so.
+  assert.equal(ilText({ ...e, il_pass: { ...run, outcome: "moved", dated: "2026-10-25" } }, name), `moved P5 to IL 9:13 AM CT (dated ${weekdayLabel("2026-10-25")})`);
+  assert.equal(ilText({ ...e, il_pass: { ...run, outcome: "skipped", reason: "the page lists no IL row" } }, name), "IL move skipped 9:13 AM CT: the page lists no IL row");
+  assert.equal(ilText({ ...e, il_pass: { ...run, outcome: "stopped" } }, name), "IL move stopped by STOP");
+  // The queue's own mark when the log line is not read.
+  assert.equal(ilText({ ...e, il: { outcome: "failed", at: run.at, reason: "the save did not land", message: null } }, name), "IL move failed 9:13 AM CT: the save did not land");
+  // After the claim's state, never on a struck entry.
+  const pass = { at: "2026-10-24T14:14:00Z", trigger: "routine" as const, outcome: "would_claim" as const, reason: null, extension: "0.9.0" };
+  const both = { ...e, pass, il_pass: { ...run, outcome: "would_move" as const } };
+  assert.equal(queueStateLine(both, now, name), "would claim · 9:14 AM CT · would move P5 to IL first");
+  assert.equal(queueStateLine({ ...both, struck: true }, now, name), "struck");
+  // The card's line for a run.
+  const log: ILRunLog = { ...run, day: "2026-10-24", mode: "dry_run", outcome: "would_move", entry: "a", from_slot: "C", message: null };
+  assert.equal(ilLine(log, () => "9:13 AM", name), `9:13 AM · ${weekdayLabel("2026-10-24")} · routine: would move P5 to IL`);
+  assert.equal(ilLine({ ...log, mode: "live", outcome: "skipped", reason: "no IL row" }, () => "9:13 AM", name), `9:13 AM · ${weekdayLabel("2026-10-24")} · routine: IL move skipped (no IL row)`);
+  // The pass's counts: after its claims', blank before an IL run.
+  const p: RoutinePass = {
+    id: "2026-10-24:moves:1",
+    kind: "moves",
+    trigger: "routine",
+    started: "2026-10-24T14:10:00Z",
+    updated: "2026-10-24T14:14:00Z",
+    ended: null,
+    end: null,
+    leagues: { done: 1, total: 9, order: ["1", "2"] },
+    entries: { done: 1, total: 4 },
+    current: null,
+    results: { would_claim: 1, claimed: 0, skipped: 0, gone: 0, failed: 0 },
+    il: { would_move: 1, moved: 0, skipped: 1, failed: 0 },
+    summary: null,
+  };
+  assert.equal(passIL(p), "1 would move to IL, 1 IL skipped");
+  assert.equal(passIL({ il: null }), "");
+  assert.equal(passBar(p), "Morning moves pass running · league 1 of 9 · 1 of 4 checked · 1 would claim · 1 would move to IL, 1 IL skipped");
+  const done = { ...p, end: "done" as const, ended: "2026-10-24T14:35:00Z" };
+  assert.equal(passEndLine(done, Date.parse(done.ended)), "moves pass done 9:35 AM CT · 1 would claim · 1 would move to IL · 1 IL skipped");
 });

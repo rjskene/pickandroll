@@ -1,7 +1,7 @@
 import { useMemo } from "react";
 import { useMutation, useQuery, useQueryClient, type UseMutationResult } from "@tanstack/react-query";
 import { api, type LineupMode, type MovesView, type QueueEntry, type QueuePayload, type SeasonView } from "../api";
-import { bidLabel, gainLabel, movesExecutorText, movesLiveText, passLine, passTitle, playersById, queueFlagWord, queueFloorLine, queueMoveText, queueStateText, queueStateTone } from "../season";
+import { bidLabel, gainLabel, ilLine, movesExecutorText, movesLiveText, passLine, passTitle, playersById, queueFlagWord, queueFloorLine, queueMoveText, queueStateLine, queueStateText, queueStateTone } from "../season";
 import ModeSwitch from "./ModeSwitch";
 import { useNow } from "./YahooSync";
 
@@ -131,7 +131,7 @@ function Today({ v, queued, left, now, name, strike }: { v: MovesView; queued: Q
           </span>
           <span>
             <span className={queueStateTone(e) || (e.struck ? "dim" : "muted")} title={passTitle(e) || undefined}>
-              {queueStateText(e, now)}
+              {queueStateLine(e, now, name)}
             </span>
             {!e.outcome && " "}
             <Veto e={e} strike={strike} />
@@ -159,6 +159,11 @@ function Today({ v, queued, left, now, name, strike }: { v: MovesView; queued: Q
           </p>
         ))
       )}
+      {(v.il_today ?? []).map((r, i) => (
+        <p key={`il${i}`} className={`${r.outcome === "failed" ? "bad" : "muted"} lv-note`}>
+          {ilLine(r, clockLabel, name)}
+        </p>
+      ))}
     </div>
   );
 }

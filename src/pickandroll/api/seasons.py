@@ -44,8 +44,9 @@ Routes:
     The moves executor's queue (#171, ``season_queue``): built from the day's moves solves in the
     decision log, never solved; the user's veto and execute time. ``GET`` and ``POST
     /seasons/{league}/autopilot/moves``, ``GET …/moves/due``: the league's Queue card, its pass
-    log under ``moves`` and the entries due for the extension; ``PUT /leagues/{league}/moves``
-    sets the mode and the user's cap.
+    log under ``moves`` and the entries due for the extension, with the IL moves their open-spot
+    claims need first (``il_first``, #214); ``POST /seasons/{league}/autopilot/il`` logs those
+    under ``il``; ``PUT /leagues/{league}/moves`` sets the mode and the user's cap.
 ``GET /seasons/{league}/decisions``
     The decision log (#125, ``season_decisions``): every moves and strategy solve of the days
     ``?from=``..``?to=`` (the last week by default) and my moves of those days from the
@@ -993,6 +994,13 @@ class SeasonService:
         latest = {
             k: v for x in lines.values() for k, v in season_autopilot.latest_passes(x).items()
         }
+        il = {
+            k: v
+            for league in lines
+            for k, v in season_autopilot.latest_il(
+                season_autopilot.il_lines(self.data_dir, league, day)
+            ).items()
+        }
         passes = self._passes(day)
         return {
             **out,
@@ -1002,7 +1010,10 @@ class SeasonService:
             # The modes now (#205): a switch after the build shows on the next read.
             "leagues": [self._row_now(r) for r in out["leagues"]],
             # The day's pass results (#200), read from the leagues' logs: never stored on the queue.
-            "entries": [{**e, "pass": latest.get(str(e["id"]))} for e in out["entries"]],
+            "entries": [
+                {**e, "pass": latest.get(str(e["id"])), "il_pass": il.get(str(e["id"]))}
+                for e in out["entries"]
+            ],
             "passes": season_autopilot.pass_tally(lines),
             "names": self._queue_names(out["entries"]),
         }
@@ -1313,6 +1324,7 @@ class SeasonService:
             "done": 0,
             "adds_left": [],
             "budget": None,
+            "il_first": [],
             "live": season_autopilot.moves_live_check(self.data_dir, league, mode),
             "at": now.isoformat(),
         }
@@ -1358,25 +1370,95 @@ class SeasonService:
             and e.get("executes_at")
             and (at := datetime.fromisoformat(e["executes_at"])) > now
         )
+        pending = [
+            {k: c.get(k) for k in ("id", "add", "drop", "from")} for c in [*earlier, *placed]
+        ]
+        adds_left = (
+            [
+                {"start": s.isoformat(), "end": e.isoformat(), "adds": n}
+                for (s, e), n in left.items()
+            ]
+            if row.get("adds")
+            else row.get("adds_left") or []
+        )
+        blocked = row.get("cap") is not None and len(done) >= row["cap"]
         return {
             **out,
             "reason": None if due else "nothing due now",
             "entries": due,
             "next": later[0].isoformat() if later else None,
             "protected": protected,
-            "pending": [
-                {k: c.get(k) for k in ("id", "add", "drop", "from")} for c in [*earlier, *placed]
-            ],
+            "pending": pending,
             "cap": row.get("cap"),
             "done": len(done),
-            "adds_left": [
-                {"start": s.isoformat(), "end": e.isoformat(), "adds": n}
-                for (s, e), n in left.items()
-            ]
-            if row.get("adds")
-            else row.get("adds_left") or [],
+            "adds_left": adds_left,
             "budget": row.get("budget"),
+            "il_first": []
+            if blocked
+            else self._il_first(league, base, mine, due, pending, adds_left),
         }
+
+    def _il_first(
+        self,
+        league: str,
+        base: Any,
+        mine: list[dict[str, Any]],
+        due: list[dict[str, Any]],
+        pending: list[dict[str, Any]],
+        adds_left: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        """The IL moves the due open-spot claims need first (#214), for the routine to open the
+        team page before the league's add pages: each due entry whose basis is ``held`` and whose
+        claim nothing else stops (no claim on the add open, an add left in its week), its held
+        player once, in the queue's order, unless he was moved to the IL today or the entry's
+        move failed today. ``date`` is the first day he can still be moved: today, or tomorrow
+        once his team's game has tipped off (null tip: today's page says)."""
+        moved = {
+            (e.get("held_move") or {}).get("player")
+            for e in mine
+            if (e.get("il") or {}).get("outcome") == "moved"
+        }
+        claimed = {c.get("add") for c in pending}
+        out: list[dict[str, Any]] = []
+        for e in due:
+            held = e.get("held_move") or {}
+            player, slot = held.get("player"), held.get("slot")
+            if e.get("basis") != "held" or e.get("drop") is not None:
+                continue
+            if player is None or slot not in season_autopilot.IL_SLOTS:
+                continue
+            if player in moved or (e.get("il") or {}).get("outcome") in season_autopilot.IL_STICKS:
+                continue
+            if e.get("add") in claimed or any(x["player"] == player for x in out):
+                continue
+            week = next(
+                (w for w in adds_left if e.get("from") and w["start"] <= e["from"] <= w["end"]),
+                None,
+            )
+            if week is not None and week.get("adds") is not None and week["adds"] < 1:
+                continue
+            out.append({"entry": e["id"], "player": player, "slot": slot})
+        if not out:
+            return out
+        now = self.clock()
+        today = nba_today(now)
+        tips = nba_schedule.load_tips(today, self.data_dir / SCHEDULE_DIR) or {}
+        try:
+            players = Season.from_parts(base, load_parts(self.data_dir, league)).players
+        except Exception:  # noqa: BLE001 - no team read: today's page says whether he is locked
+            players = {}
+        for x in out:
+            team = players[x["player"]].nba_team if x["player"] in players else None
+            tip = season_autopilot.tip_at(tips, team)
+            day = today + timedelta(days=1) if tip is not None and tip <= now else today
+            x |= {
+                "date": day.isoformat(),
+                "tip": tip.isoformat() if tip is not None else None,
+                "page": public.team_url(league, base.my_team_id, day)
+                if base.my_team_id is not None
+                else None,
+            }
+        return out
 
     def log_moves_run(self, league: str, run: season_autopilot.MovesRun) -> dict[str, Any]:
         """Append an execute pass to the league's log under ``moves`` (#171) and, for a live pass,
@@ -1426,16 +1508,73 @@ class SeasonService:
         self._attribute("moves", league, run.trigger, {c.id: c.outcome for c in run.entries})
         return record
 
+    def log_il_run(self, league: str, run: season_autopilot.ILRun) -> dict[str, Any]:
+        """Log an IL move the extension made (or would make) on the team page for an open-spot
+        claim (#214), under ``il`` in the league's day file. A live ``moved`` or ``failed`` goes
+        on the queue's entry as its ``il`` (never its outcome or place): the player is not moved
+        again that day, and a failed move is never retried that day. Refused (409) when the mode,
+        STOP, the live guard or the queue says it should not have run, or names another move than
+        the entry's ``held_move``. The run goes to the open moves pass, apart from its claims."""
+        self._base(league)
+        mode = leagues.executor_mode(self.data_dir, league, leagues.MOVES)
+        body = self._read_queue(run.day) or {}
+        mine = {e["id"]: e for e in body.get("entries") or [] if e.get("league") == league}
+        live = (
+            season_autopilot.moves_live_check(self.data_dir, league, mode)
+            if run.mode == "live"
+            else None
+        )
+        why = season_autopilot.check_il_run(
+            run, mode, season_autopilot.stopped(self.data_dir), mine, live
+        )
+        if why is not None:
+            raise HTTPException(409, why)
+        now = self.clock()
+        record = {"at": now.isoformat(timespec="seconds"), **run.model_dump(mode="json")}
+        try:
+            season_autopilot.append_run(
+                self.data_dir, league, record, nba_today(now), season_autopilot.IL
+            )
+        except season_autopilot.LogError as exc:
+            raise HTTPException(409, str(exc)) from exc
+        if run.mode == "live" and run.outcome in season_autopilot.IL_STICKS:
+
+            def change(q: dict[str, Any] | None) -> dict[str, Any]:
+                q = q or {}
+                for e in q.get("entries") or []:
+                    if e.get("id") == run.entry and e.get("league") == league:
+                        e["il"] = {
+                            "outcome": run.outcome,
+                            "at": now.isoformat(),
+                            "reason": run.reason,
+                            "message": run.message,
+                        }
+                return q
+
+            season_queue.update(self.data_dir, run.day, change)
+        if run.entry is not None:
+            self._attribute("moves", league, run.trigger, {run.entry: run.outcome}, key="il")
+        return record
+
     # ------------------------------------------------------------------ the pass record (#201)
-    def _attribute(self, kind: str, league: str, trigger: str, outcomes: Mapping[str, str]) -> None:
+    def _attribute(
+        self,
+        kind: str,
+        league: str,
+        trigger: str,
+        outcomes: Mapping[str, str],
+        key: str = "outcomes",
+    ) -> None:
         """Give a post the log took to the open pass of its kind (#201); a panel's never. The
         record changes nothing in what the post logged or answers: a record that does not take
-        it is logged here and left."""
+        it is logged here and left. ``key`` ``il`` is an IL run's (#214)."""
         if trigger == "panel":
             return
         now = self.clock()
         try:
-            season_passes.attribute(self.data_dir, nba_today(now), now, kind, league, outcomes)
+            season_passes.attribute(
+                self.data_dir, nba_today(now), now, kind, league, outcomes, key=key
+            )
         except Exception:  # the record never fails the log's post
             LOG.warning("the pass record did not take %s's %s post", league, kind, exc_info=True)
 
@@ -2764,6 +2903,18 @@ def register(
         except ValidationError as exc:
             raise HTTPException(422, exc.errors(include_url=False, include_context=False)) from exc
         return service.log_moves_run(league, run)
+
+    @app.post("/seasons/{league}/autopilot/il")
+    def post_il_run(body: dict[str, Any], league: str = league_id) -> dict[str, Any]:
+        """An IL move on the team page for an open-spot claim, for the league's log (#214). The
+        page's crumb is never posted here: a run carrying one is refused."""
+        if season_autopilot.has_crumb(body):
+            raise HTTPException(422, "a run never carries the page's crumb")
+        try:
+            run = season_autopilot.ILRun.model_validate(body)
+        except ValidationError as exc:
+            raise HTTPException(422, exc.errors(include_url=False, include_context=False)) from exc
+        return service.log_il_run(league, run)
 
     @app.put("/leagues/{league}/moves")
     def put_moves_mode(body: MovesMode, league: str = league_id) -> dict[str, Any]:

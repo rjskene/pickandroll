@@ -1274,6 +1274,43 @@ export interface QueueEntry {
   /** The latest pass line naming the entry on the queue's day (#200), read from the league's log;
    * null when no pass has read it, absent from a server before it. */
   pass?: QueuePass | null;
+  /** A live IL move made or failed for the entry's open-spot claim (#214): the held player is not
+   * moved again that day, and a failed move is never retried that day. Never the entry's outcome
+   * or place. Absent before one. */
+  il?: { outcome: "moved" | "failed"; at: string; reason: string | null; message: string | null } | null;
+  /** The latest IL run naming the entry on the queue's day (#214), read from the league's log;
+   * null before one, absent from a server before it. */
+  il_pass?: QueueILPass | null;
+}
+
+/** An entry's IL move as a pass last made (or would make) it (#214): the run's outcome and reason,
+ * the player and slot, the team page's date, the run's time, trigger and extension. */
+export interface QueueILPass {
+  at: string | null;
+  trigger: ILRunLog["trigger"] | null;
+  outcome: ILRunLog["outcome"];
+  reason: string | null;
+  player: number | null;
+  to_slot: "IL" | "IL+" | null;
+  dated: string | null;
+  extension: string | null;
+}
+
+/** An IL move on the team page for an open-spot claim (#214), as the league's log keeps it. */
+export interface ILRunLog {
+  at: string;
+  day: string;
+  mode: "dry_run" | "live";
+  trigger: MovesPassLog["trigger"];
+  outcome: "would_move" | "moved" | "skipped" | "failed" | "stopped";
+  reason: string | null;
+  entry: string | null;
+  player: number | null;
+  from_slot: string | null;
+  to_slot: "IL" | "IL+" | null;
+  dated: string | null;
+  message: string | null;
+  extension: string | null;
 }
 
 /** An entry as a pass last read it (#200): the entry's own outcome and reason, the pass's time,
@@ -1380,6 +1417,9 @@ export interface RoutinePass {
   entries: { done: number; total: number | null } | null;
   current: { league: string; entry: string | null; since: string } | null;
   results: Record<string, number>;
+  /** A moves pass's IL runs by outcome, each entry by its latest run (#214); null before one,
+   * absent from a server before it. */
+  il?: Record<"would_move" | "moved" | "skipped" | "failed", number> | null;
   summary: string | null;
 }
 
@@ -1400,6 +1440,8 @@ export interface MovesView extends Omit<AutopilotView, "mode" | "last" | "today"
   mode: AutopilotView["mode"] & { cap: number | null };
   last: MovesPassLog | null;
   today: MovesPassLog[];
+  /** Today's IL runs (#214); absent from a server before it. */
+  il_today?: ILRunLog[];
   entries: QueueEntry[];
   row: QueueLeague | null;
   settings: QueuePayload["settings"];

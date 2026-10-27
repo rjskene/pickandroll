@@ -30,6 +30,7 @@ import {
   queueNamer,
   queueOrder,
   queuePoll,
+  queueStateLine,
   queueStateText,
   queueStateTone,
   roomNote,
@@ -298,7 +299,7 @@ function Today({ p, now, title, strike, onOpenLeague }: { p: QueuePayload; now: 
                     <td className="accent">checking…</td>
                   ) : (
                     <td className={queueStateTone(e) || (e.struck ? "dim" : "muted")} title={passTitle(e) || undefined}>
-                      {queueStateText(e, now)}
+                      {queueStateLine(e, now, name)}
                     </td>
                   )}
                   <td className="acts">

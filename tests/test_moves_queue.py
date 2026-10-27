@@ -474,9 +474,10 @@ def test_the_build_reads_the_days_solve_and_never_solves(client):
         "status": "private",
         "reason": qa.PRIVATE,
     }
-    # The store holds what the route answered, less each entry's pass read from the logs (#200).
+    # The store holds what the route answered, less each entry's pass and IL run read from the
+    # logs (#200, #214).
     stored = json.loads((client.data_dir / "autopilot" / "queue" / "2026-10-21.json").read_text())
-    answered = [{k: v for k, v in e.items() if k != "pass"} for e in q["entries"]]
+    answered = [{k: v for k, v in e.items() if k not in ("pass", "il_pass")} for e in q["entries"]]
     assert stored["entries"] == answered and client.get("/autopilot/queue").json() == q
 
 

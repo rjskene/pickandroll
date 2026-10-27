@@ -15,6 +15,7 @@ import type {
   FlagLevel,
   FlagSignalKey,
   HeldMove,
+  ILRunLog,
   KeepRule,
   KeptPlayer,
   AutopilotView,
@@ -632,6 +633,37 @@ export function passText(p: QueuePass): string {
   return p.reason ? `${head}: ${p.reason}` : head;
 }
 
+const IL_WORDS: Record<ILRunLog["outcome"], string> = {
+  would_move: "would move",
+  moved: "moved",
+  skipped: "IL move skipped",
+  failed: "IL move failed",
+  stopped: "IL move stopped by STOP",
+};
+
+/** An open-spot claim's IL move (#214), from the latest run naming the entry, else the queue's own
+ * mark: "would move P5 to IL first", "moved P5 to IL 9:13 AM CT (dated Tue 28)", "IL move skipped
+ * 9:13 AM CT: the page lists no IL row"; blank before one. */
+export function ilText(e: Pick<QueueEntry, "date" | "held_move" | "il" | "il_pass">, name: (id: number) => string): string {
+  const r = e.il_pass ?? (e.il ? { ...e.il, player: null, to_slot: null, dated: null } : null);
+  if (!r) return "";
+  const k = r.player ?? e.held_move?.player;
+  const who = k != null ? name(k) : "the held player";
+  const slot = r.to_slot ?? e.held_move?.slot ?? "IL";
+  const clock = centralClock(r.at);
+  const dated = r.dated && r.dated !== e.date ? ` (dated ${weekdayLabel(r.dated)})` : "";
+  if (r.outcome === "would_move") return `would move ${who} to ${slot} first${dated}`;
+  if (r.outcome === "moved") return `moved ${who} to ${slot}${clock ? ` ${clock}` : ""}${dated}`;
+  const head = `${IL_WORDS[r.outcome] ?? r.outcome}${clock && r.outcome !== "stopped" ? ` ${clock}` : ""}`;
+  return r.reason ? `${head}: ${r.reason}` : head;
+}
+
+/** An entry's state with its IL move after it (#214): "skipped 9:14 AM CT: … · moved P5 to IL 9:13
+ * AM CT". */
+export function queueStateLine(e: QueueEntry, now: number, name: (id: number) => string): string {
+  return [queueStateText(e, now), e.queued && !e.struck ? ilText(e, name) : ""].filter(Boolean).join(" · ");
+}
+
 /** The state's tone: good for a claim (a pass that would claim, or one placed), bad for a failure. */
 export function queueStateTone(e: QueueEntry): "good" | "bad" | "" {
   const o = e.outcome ?? (e.queued && !e.struck ? e.pass?.outcome : null);
@@ -706,6 +738,15 @@ export function passLine(r: MovesPassLog, clock: (iso: string) => string): strin
   return `${clock(r.at)} · ${weekdayLabel(r.day)} · ${TRIGGER[r.trigger]}: ${PASS_OUTCOME[r.outcome]}${count}${rest}${r.reason ? ` (${r.reason})` : ""}`;
 }
 
+/** An IL run in a line (#214): "9:13 AM · Tue 27 · routine: would move P5 to IL", "… · late: IL
+ * move skipped (the page lists no IL row)". ``clock`` writes its time. */
+export function ilLine(r: ILRunLog, clock: (iso: string) => string, name: (id: number) => string): string {
+  const who = r.player != null ? name(r.player) : "the held player";
+  const dated = r.dated && r.dated !== r.day ? ` (dated ${weekdayLabel(r.dated)})` : "";
+  const what = r.outcome === "would_move" || r.outcome === "moved" ? `${IL_WORDS[r.outcome]} ${who} to ${r.to_slot ?? "IL"}${dated}` : IL_WORDS[r.outcome];
+  return `${clock(r.at)} · ${weekdayLabel(r.day)} · ${TRIGGER[r.trigger]}: ${what}${r.reason ? ` (${r.reason})` : ""}`;
+}
+
 /** The landing's line for today's queue across the leagues. */
 export function queueFoldLine(q: QueuePayload): string {
   const time = `executes from ${q.settings.in_force} CT`;
@@ -762,6 +803,22 @@ export function passResults(p: Pick<RoutinePass, "results">, sep = ", "): string
     .join(sep);
 }
 
+const IL_RESULT_WORDS: Record<keyof NonNullable<RoutinePass["il"]>, string> = {
+  would_move: "would move to IL",
+  moved: "moved to IL",
+  skipped: "IL skipped",
+  failed: "IL failed",
+};
+
+/** "1 moved to IL, 1 IL skipped": a moves pass's IL runs (#214), the counts above zero; blank
+ * before one. */
+export function passIL(p: Pick<RoutinePass, "il">, sep = ", "): string {
+  return Object.entries(p.il ?? {})
+    .filter(([, n]) => n)
+    .map(([k, n]) => `${n} ${IL_RESULT_WORDS[k as keyof typeof IL_RESULT_WORDS] ?? k}`)
+    .join(sep);
+}
+
 /** The Queue screen's bar while a routine's pass runs: "Morning moves pass running · league 5 of
  * 12 · 8 of 20 checked · 6 would claim, 2 skipped"; "Late lineup pass running · 7 of 12 team
  * pages". */
@@ -772,7 +829,7 @@ export function passBar(p: RoutinePass): string {
     p.kind === "moves"
       ? [`league ${at} of ${p.leagues.total}`, p.entries ? `${p.entries.done}${p.entries.total != null ? ` of ${p.entries.total}` : ""} checked` : null]
       : [`${at} of ${p.leagues.total} team pages`];
-  return [head, ...parts, passResults(p) || null].filter(Boolean).join(" · ");
+  return [head, ...parts, passResults(p) || null, passIL(p) || null].filter(Boolean).join(" · ");
 }
 
 /** The line a closed pass leaves on the Queue screen for ten minutes: "moves pass done 9:35 AM CT ·
@@ -781,7 +838,7 @@ export function passEndLine(p: RoutinePass | null | undefined, now: number): str
   if (!p || !p.ended || !p.end) return "";
   const ended = Date.parse(p.ended);
   if (Number.isNaN(ended) || now - ended > PASS_END_SHOWN_MS) return "";
-  return [`${p.kind} pass ${p.end} ${centralClock(p.ended)}`, passResults(p, " · ") || null, p.summary].filter(Boolean).join(" · ");
+  return [`${p.kind} pass ${p.end} ${centralClock(p.ended)}`, passResults(p, " · ") || null, passIL(p, " · ") || null, p.summary].filter(Boolean).join(" · ");
 }
 
 /** Whether a running pass is checking ``e`` now: it is the entry being opened, and no post about it
