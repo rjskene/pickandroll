@@ -97,7 +97,7 @@ side (PR 1) is in `api/season_autopilot.py`; the click is the extension's, on th
   skipped, failed), then a line per league only for a skip or a failure. Under STOP the line says
   nothing runs.
 - **Yahoo's baseline: Start Active Players for the rest of the week (#215; PR 1 the API and the
-  web, the extension's presses in PR 2).** The user's rule (2026-10-27): at the start of every
+  web, the extension's presses in PR 2, ext 0.9.0).** The user's rule (2026-10-27): at the start of every
   week and after every roster move, Yahoo's own Start Active Players fills the week's remaining
   days, and the lineup executor sets its days on top of it, never in its place. The read of
   2026-10-27 (step 0, #214):
@@ -140,6 +140,37 @@ side (PR 1) is in `api/season_autopilot.py`; the click is the extension's, on th
   lists today's runs (`start_active_today`), the queue's payload carries each league's latest
   (`start_active`) and its fold line says "Start Active: N started, …". The digest counts the
   leagues it ran in and names a skip or a failure on its league's line.
+
+  The extension (0.9.0, `extension/lib/startactive.js`) runs on my team page opened with a
+  start-active fragment: `#pickandroll-start-active` (a moves pass), `-late`, `-evening`,
+  `-daily` (the 05:00 daily, `routine_daily`) or the side panel's button (`panel`). Any other
+  visit runs nothing. A run drops the fragment, posts the page, then reads the due route fresh
+  and takes the league's row:
+  - under STOP it logs `stopped`; a league not due logs nothing ("not due: nothing pressed");
+  - the page checks: my team's page of the league, one visible, enabled
+    `button.start-active-players` in Yahoo's root (`#fantasy_start_active_overlay`), its dialog
+    there and closed; a failed check logs `skipped` with why and presses nothing;
+  - a dry run, or a live league whose guard refuses now, logs `would_start` (with "live
+    refused: …") and presses nothing, not even the main button;
+  - live: one press per run. The press goes on record in this browser before the page is
+    touched (`start_active_press:<league>`), with the page's roster (the run presses only from a
+    page the API took). A second press in the league the same day is refused unless the page's
+    roster differs from the one the day's press ran on (players or held) or the need rule says
+    `roster_changed` or `il_moved` (ruled on #215). The run then presses the main button, waits up to 10 s
+    for the dialog's Rest of Week row with its Start enabled, reads it again, presses it once,
+    and waits up to 15 s for Yahoo's words in the dialog (open or closed): "N lineups updated"
+    or "We optimized …" log `started`, "Already optimized" `already`, the error `failed`; no
+    words, a row that never shows (Today Only ran) or an alert Yahoo raises (kept as text, as
+    on the add page) log `failed`, never pressed again. Yahoo's words are logged as words,
+    never read as a count;
+  - a press whose run never reached the log (the tab closed mid-run, a log that failed) is
+    logged by the next run in the league after a minute: its run as read, else `failed`
+    "pressed; Yahoo's answer was not read", with the press's roster as `roster`. A log the API
+    refuses closes the press as it is.
+
+  The side panel shows the last run from this browser on my team page and has **Start active
+  players now** (the same run, trigger `panel`). Which team pages the routines open is the
+  routines' (the master's, after PR 2).
 
 The moves executor (#171, ruled on the issue 2026-10-23) follows. Its API side (PR 1) is the queue
 in `season/autopilot.py` (pure) and `api/season_queue.py`; the claim is the extension's, on the add

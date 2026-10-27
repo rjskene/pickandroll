@@ -92,6 +92,15 @@
         <ul id="moves-due" class="posts"></ul>
       </div>
 
+      <div id="league-start-active" hidden>
+        <h2>Start Active Players</h2>
+        <p id="start-active-last" class="small">-</p>
+        <p class="muted small">Yahoo's Start Active Players for the rest of the week, when the league's roster or week calls
+          for it. In a league you switched live whose guard holds, it presses Yahoo's button and the Rest of Week Start once
+          and logs Yahoo's words; otherwise it logs what it would do and presses nothing.</p>
+        <button id="start-active-run" type="button">Start active players now</button>
+      </div>
+
       <div id="league-read" hidden>
         <h2>All available players</h2>
         <p id="read-note" class="muted small">Opens the first players page and follows its Next 25 link page by page,
@@ -111,6 +120,7 @@
     <script src="../lib/league.js"></script>
     <script src="../lib/lineup.js"></script>
     <script src="../lib/moves.js"></script>
+    <script src="../lib/startactive.js"></script>
     <script src="panel.js"></script>
   </body>
 </html>
