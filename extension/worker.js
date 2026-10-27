@@ -15,7 +15,7 @@
 // chrome.storage.local, so a restart keeps it) and dropped only once the API has its pass: while
 // it is there no pass submits that entry again.
 "use strict";
-importScripts("lib/protocol.js", "lib/league.js", "lib/lineup.js", "lib/moves.js", "lib/startactive.js");
+importScripts("lib/protocol.js", "lib/league.js", "lib/lineup.js", "lib/moves.js", "lib/startactive.js", "lib/ilmove.js");
 
 const DEFAULTS = {
   api: "http://localhost:8000",
@@ -123,6 +123,9 @@ const startActiveKey = (league) => `start_active:${league}`;
 const pressKey = (league) => `start_active_press:${league}`;
 /** The presses put on record one after another, so two tabs never press one league together. */
 let pressing = Promise.resolve();
+/** The IL move on record for a queue entry (local), one after another (#214). */
+const ilKey = (entry) => `il_move:${entry}`;
+let moving = Promise.resolve();
 
 /** The live claims on record in ``league``: submitted, their pass not yet taken by the API. */
 async function submits(league) {
@@ -363,6 +366,49 @@ const ops = {
     if (open && pressed) await chrome.storage.local.set({ [key]: { ...open, run, logged: true } });
     const last = { at: Date.now(), day: run.day, trigger: run.trigger, mode: run.mode, outcome: run.outcome, reason: run.reason, message: run.message };
     await chrome.storage.session.set({ [startActiveKey(league)]: last });
+    return logged;
+  },
+  /** The IL move on record in this browser for the queue's ``entry``, null when none. */
+  async il_record({ entry }) {
+    const key = ilKey(entry);
+    return (await chrome.storage.local.get(key))[key] || null;
+  },
+  /** A live IL move about to be made on the team page in ``sender``'s tab (#214): ``record`` is its
+   * day, entry, player, slot, the page's date, trigger and page. One at a time, and refused while
+   * the entry's move awaits its log or when it was made that day already. */
+  il_moving({ league, record }, sender) {
+    const run = moving.then(async () => {
+      const key = ilKey(record.entry);
+      const prev = (await chrome.storage.local.get(key))[key] || null;
+      if (prev && !prev.logged) throw new Error("this move awaits its log");
+      if (prev && prev.day === record.day) throw new Error("this move was made already today");
+      const kept = { ...record, league: String(league), prev, logged: false, tab: sender && sender.tab ? sender.tab.id : null, at: Date.now() };
+      await chrome.storage.local.set({ [key]: kept });
+      return { kept: true };
+    });
+    moving = run.catch(() => {});
+    return run;
+  },
+  /** An IL run, for the league's log (``POST /seasons/{league}/autopilot/il``). ``clicked``: the
+   * run of the move on record, kept on it until the API has it (a refusal also ends it: it is
+   * never sent or made again). ``release``: the move on record was never made, so the record
+   * before it comes back. */
+  async il_log({ league, run, clicked = false, release = false }) {
+    const key = ilKey(run.entry);
+    const record = run.entry ? (await chrome.storage.local.get(key))[key] || null : null;
+    const open = record && !record.logged ? record : null;
+    if (open && release) {
+      if (open.prev) await chrome.storage.local.set({ [key]: open.prev });
+      else await chrome.storage.local.remove(key);
+    } else if (open && clicked) await chrome.storage.local.set({ [key]: { ...open, run } });
+    let logged;
+    try {
+      logged = await api(`/seasons/${encodeURIComponent(league)}/autopilot/il`, { method: "POST", body: run, timeout: 15000 });
+    } catch (e) {
+      if (open && clicked && e.status >= 400 && e.status < 500) await chrome.storage.local.set({ [key]: { ...open, run, logged: true, refused: e.message } });
+      throw e;
+    }
+    if (open && clicked) await chrome.storage.local.set({ [key]: { ...open, run, logged: true } });
     return logged;
   },
   /** The league's season summary (GET /seasons), null when pickandroll has no folder for it. */

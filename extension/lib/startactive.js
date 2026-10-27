@@ -38,8 +38,6 @@
   /** A press on record whose run was not logged within this is logged by the next visit in the
    * league with its answer not read. */
   const SA_UNREAD_MS = 60 * 1000;
-  /** The need rule's reasons that let a league run again the same day. */
-  const SA_AGAIN = ["roster_changed", "il_moved"];
   /** Yahoo's alerts on a page opened with a start-active fragment, kept by addpage.js. */
   const SA_ALERTS_ATTR = "data-pickandroll-alerts";
 
@@ -125,14 +123,13 @@
     return ids(a.players) !== ids(b.players) || ids(a.held) !== ids(b.held);
   }
 
-  /** Why a second live run in the league today is refused (the master's rulings on #215), null
-   * when it may run: ``record`` is the press on record in this browser, ``row`` the due route's row
-   * read after the page was posted. One per day; the guard lifts when the page's roster differs
-   * from the one the day's press ran on (players or held), or when the need rule says
-   * ``roster_changed`` or ``il_moved``. */
+  /** Why a second live run in the league today is refused (the master's rulings on #215 and
+   * #214), null when it may run: ``record`` is the press on record in this browser, ``row`` the
+   * due route's row read after the page was posted. One per day; the guard lifts only when the
+   * page's roster differs from the one the day's press ran on (players or held). The need rule's
+   * reasons never lift it alone, and an unknown roster never lifts it. */
   function sameDayProblem(record, row, day) {
     if (!record || record.day !== day) return null;
-    if ((row.reasons || []).some((r) => SA_AGAIN.includes(r))) return null;
     if (rosterDiffers(record.roster, row.roster)) return null;
     return "Start Active ran in this league today; the roster has not changed since";
   }
@@ -275,7 +272,6 @@
     SA_ROWS_MS,
     SA_ANSWER_MS,
     SA_UNREAD_MS,
-    SA_AGAIN,
     startActiveTriggerOf,
     dialogRows,
     yahooAnswer,

@@ -643,7 +643,7 @@ async function visitAdd({ hash = "#pickandroll-moves", answer, add = ADD, dom = 
   });
   ctx.window = ctx;
   ctx.globalThis = ctx;
-  for (const file of ["lib/league.js", "lib/lineup.js", "lib/moves.js", "lib/startactive.js", "league.js"]) vm.runInContext(fs.readFileSync(path.join(DIR, file), "utf8"), ctx);
+  for (const file of ["lib/league.js", "lib/lineup.js", "lib/moves.js", "lib/startactive.js", "lib/ilmove.js", "league.js"]) vm.runInContext(fs.readFileSync(path.join(DIR, file), "utf8"), ctx);
   for (const fn of timers.splice(0)) await fn();
   return { sent, replaced, strip: nodes["pickandroll-strip"], touched: dom.touched || [] };
 }
@@ -975,6 +975,11 @@ test("an entry with no drop: an open spot when the page shows no drop section, n
   assert.equal(X.moveCheck(held, X.pageCheck(held, full, due()), full, due(), READ_AT).controls.drops, 11);
   // A held add whose IL move was made reads as an open spot.
   assert.deepEqual(X.pageCheck(held, page, due()), { outcome: "would_claim", reason: "open spot" });
+  // So does a page whose words say it has an empty spot, its drop table drawn beside them (#214).
+  const words = X.readAddPage({ ...rawPage(), empty: "You currently have 1 empty spot on your roster" }, CLEARS);
+  assert.deepEqual([words.open_spots, words.rows.length > 0, full.open_spots], [1, true, 0]);
+  assert.deepEqual(X.pageCheck(held, words, due()), { outcome: "would_claim", reason: "open spot" });
+  assert.equal(X.readAddPage({ ...rawPage(), empty: "You currently have 2 empty spots on your roster" }, CLEARS).open_spots, 2);
   // The other checks still hold for an entry with no drop.
   assert.equal(X.pageCheck(open, X.readAddPage(rawPage({ drops: false, heading: "Add Player" }), CLEARS), due()).reason, 'the page\'s heading is "Add Player", not the claim\'s');
   assert.equal(X.pageCheck(open, X.readAddPage(rawPage({ drops: false, waiver: "Oct 27" }), CLEARS), due()).reason, "the page's waiver date is 2026-10-27, the queue's 2026-10-26");

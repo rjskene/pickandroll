@@ -25,12 +25,19 @@
 // whose guard holds and whose need rule says so, presses Yahoo's button and the dialog's Rest of
 // Week Start once each (``pressStartActive``) and logs Yahoo's words; a dry run presses nothing.
 //
-// Outside ``pressStartActive`` it clicks and sets only on a page opened with a moves fragment: the entry's one drop
+// On my team page opened with an IL fragment (#pickandroll-il, -il-late, -il-evening, -il-panel)
+// it is the IL move an open-spot claim needs first (#214, lib/ilmove.js): it posts the page, reads
+// the moves executor's due fresh, and in a live league whose guard holds makes the ``il_first``
+// item's move (``moveToIL``: the player's slot label, then the empty IL row's, once each), logs
+// it, then goes to the entry's add page with the moves fragment; a dry run clicks nothing.
+//
+// Outside ``pressStartActive`` and ``moveToIL`` it clicks and sets only on a page opened with a
+// moves fragment: the entry's one drop
 // button, the bid and Yahoo's final button, once each (addpage.js keeps Yahoo's alerts on such a
 // page as text, so an alert is logged and never blocks the tab). It never reads a form's crumb,
 // never fetches a Yahoo page (the tick's post is Yahoo's own script's) and never runs on the draft
 // client. It navigates only to follow the players page's Next 25 link during a multi-page read the
-// user armed from the side panel.
+// user armed from the side panel, and from an IL move's team page to its claim's add page.
 (() => {
   "use strict";
   const PR = globalThis.PickAndRoll;
@@ -271,6 +278,8 @@
       add_row: addRow ? row(addRow.closest("tr")) : null,
       rows: [...document.querySelectorAll("table.statTable-drop tbody tr")].map(row).filter(Boolean),
       message: form ? null : [...document.querySelectorAll(".Alert, .alert, .error, .Error, .F-negative, p")].map(textOf).find((x) => x && x.length < 200) || null,
+      // Yahoo's open-spot words only (#214), never the rest of the page's text.
+      empty: (/you currently have \d+ empty spots? on your roster/i.exec(textOf(document.body)) || [])[0] || null,
     };
   }
 
@@ -374,6 +383,11 @@
       const seen = PR.readAddPage(addControls(), entry.from);
       const why = PR.entryProblem(entry, due);
       let check = why ? { outcome: "skipped", reason: why } : PR.pageCheck(entry, seen, due);
+      // A full roster after this browser moved the held player on a later day's page (#214).
+      if (entry.held_move) {
+        const moved = await send({ op: "il_record", entry: entry.id });
+        check = PR.claimWaits(check, moved && moved.ok ? moved.data : null, due.date);
+      }
       if (check.outcome === "would_claim" && PR.passMode(due).mode === "live") {
         const held = PR.submitProblem(entry, seen);
         if (held) check = { outcome: "skipped", reason: held };
@@ -528,15 +542,136 @@
     return true;
   });
 
+  // ---------------------------------------------------------------- the IL move (#214)
+  const ilStrip = (line) => strip(line, "IL move");
+
+  /** Yahoo's swap controls on my team page as a plain object for ``readILPage``: whether the
+   * manager is editable, and each roster row's player id, classes that matter (editable, empty)
+   * and slot labels (slot, a button, visible). No field is read. */
+  function ilControls() {
+    const manager = document.querySelector(PR.IL_MANAGER);
+    const visible = (el) => typeof el.getClientRects === "function" && el.getClientRects().length > 0;
+    return {
+      path: location.pathname + location.search,
+      editable: manager ? manager.getAttribute("data-is-editable") === "true" : null,
+      rows: [...document.querySelectorAll(PR.IL_ROWS)].map((tr) => {
+        const id = tr.querySelector("[data-ys-playerid]");
+        return {
+          player: id ? Number(id.getAttribute("data-ys-playerid")) : null,
+          editable: tr.classList.contains("editable"),
+          empty: tr.classList.contains("empty-bench"),
+          labels: [...tr.querySelectorAll(PR.IL_LABEL)].map((l) => ({ pos: l.getAttribute("data-pos"), button: l.getAttribute("role") === "button", visible: visible(l) })),
+        };
+      }),
+    };
+  }
+
+  /** The move on record in this browser for ``entry``, logging first one whose run never reached
+   * the log: its run as read, else clicked with its answer not read. It is never made again. */
+  async function ilRecord(entry, extension) {
+    const read = async () => {
+      const r = await send({ op: "il_record", entry });
+      return (r && r.ok && r.data) || null;
+    };
+    const record = await read();
+    if (!record || record.logged || Date.now() - record.at < PR.IL_UNREAD_MS) return record;
+    await send({ op: "il_log", league: page.league, run: record.run || PR.unreadIL(record, extension), clicked: true });
+    return read();
+  }
+
+  /** The IL move on my team page opened with ``trigger``'s IL fragment (#214): the page posted,
+   * the moves executor's due read fresh and the ``il_first`` item whose page this is taken. Under
+   * STOP the run says it stopped; no item logs nothing; a dry run, or a live league whose guard
+   * refuses, logs ``would_move`` and clicks nothing; a live league makes the move once, put on
+   * record before the page is touched (``moveToIL``). After any logged run but a stop, the tab
+   * goes to the entry's add page with the moves fragment, where the claim reads the page again.
+   * Answers the run logged, or null. */
+  async function ilMove(trigger) {
+    // A routine's run happens once: a reload of the page is a plain visit.
+    if (location.hash) history.replaceState(null, "", location.pathname + location.search);
+    if (running) return null;
+    running = true;
+    try {
+      const settings = await send({ op: "settings" });
+      if (settings && settings.ok && settings.data.moves_executor === "off") {
+        ilStrip(PR.ilStripText({ browserOff: true }));
+        return null;
+      }
+      await post();
+      const extension = extensionVersion();
+      const r = await send({ op: "moves_due", league: page.league });
+      if (!r || !r.ok) {
+        ilStrip(PR.ilStripText({ error: (r && r.error) || "no answer from the extension" }));
+        return null;
+      }
+      const due = r.data;
+      if (due.mode === "off") {
+        ilStrip(PR.ilStripText({ none: "the moves executor is off in this league" }));
+        return null;
+      }
+      const where = location.pathname + location.search;
+      const mode = PR.passMode(due);
+      let run;
+      let item = null;
+      let clicked = false;
+      let release = false;
+      if (due.stop) run = PR.ilRun({ day: due.date, trigger, mode: mode.mode, outcome: "stopped", reason: due.reason, page: where, extension });
+      else {
+        item = PR.ilItemFor(due, where);
+        if (!item) {
+          ilStrip(PR.ilStripText({ none: "no IL move due on this page" }));
+          return null;
+        }
+        const record = await ilRecord(item.entry, extension);
+        const controls = PR.readILPage(ilControls(), item);
+        const base = { item, day: due.date, trigger, page: where, controls, extension };
+        const done = mode.mode === "live" && record && record.day === due.date ? "this move was made from this browser today" : null;
+        const problem = PR.ilProblem(item, controls) || done;
+        if (problem) run = PR.ilRun({ ...base, mode: mode.mode, outcome: "skipped", reason: problem });
+        else if (mode.mode !== "live") run = PR.ilRun({ ...base, mode: "dry_run", outcome: "would_move", reason: mode.refused });
+        else {
+          // On record before the page is touched: the move is never made twice.
+          const put = await send({
+            op: "il_moving",
+            league: page.league,
+            record: { day: due.date, entry: item.entry, player: item.player, slot: item.slot, dated: item.date, trigger, page: where },
+          });
+          if (!put || !put.ok) {
+            const why = (put && put.error) || "no answer from the extension";
+            run = PR.ilRun({ ...base, mode: "live", outcome: "skipped", reason: `the move could not be put on record: ${why}` });
+          } else {
+            const got = await PR.moveToIL(document, item);
+            clicked = got.outcome !== "skipped";
+            release = !clicked;
+            run = PR.ilRun({ ...base, mode: "live", outcome: got.outcome, reason: got.reason, message: got.message });
+          }
+        }
+      }
+      const logged = await send({ op: "il_log", league: page.league, run, clicked, release });
+      if (!logged || !logged.ok) {
+        ilStrip(`${clicked ? "clicked, " : ""}not logged: ${(logged && logged.error) || "no answer from the extension"}`);
+        return null;
+      }
+      const next = run.outcome === "stopped" ? null : PR.ilNext(due, item, trigger, location.origin);
+      ilStrip(PR.ilStripText({ run, next }));
+      if (next) location.assign(next);
+      return run;
+    } finally {
+      running = false;
+    }
+  }
+
   // A live pass submits only on a page opened with a moves fragment; any other page of the league
   // reads a claim this tab submitted, first.
   const trigger = addPage ? PR.movesTriggerOf(location.hash) : null;
   const lineupTrigger = page ? PR.triggerOf(location.hash) : null;
   const saTrigger = page && page.kind === "team" ? PR.startActiveTriggerOf(location.hash) : null;
+  const ilTrigger = page && page.kind === "team" ? PR.ilTriggerOf(location.hash) : null;
   setTimeout(async () => {
     await landed();
     if (trigger) await claim(trigger);
     else if (saTrigger) await startActive(saTrigger);
+    else if (ilTrigger) await ilMove(ilTrigger);
     else if (page) await visit(lineupTrigger);
   }, SETTLE_MS);
 })();

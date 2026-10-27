@@ -230,12 +230,29 @@ yet, a new week, a roster change, an IL move). The page is posted first and the 
   (`button.start-active-players` in `#fantasy_start_active_overlay`) is pressed once, and the dialog's Rest of
   Week Start (`button.start-players-interval`) once, after it is read again. Yahoo's words ("6 lineups updated",
   "Already optimized", the error) are logged as words. One press a day per league, unless the page's roster
-  differs from the day's press's (players or held) or the need rule says the roster changed or an IL move landed. A press whose answer was never read is logged by the next run as `failed` and is not
+  differs from the day's press's (players or held; 0.9.1: the need rule's reasons alone never lift it). A press whose answer was never read is logged by the next run as `failed` and is not
   pressed again for it.
 - Under STOP the run logs `stopped`; a league not due, or a plain visit, logs nothing. The options page's moves
   brake also stops it.
 
 Every run goes to `POST /seasons/{league}/autopilot/start-active` (docs/AUTOPILOT.md §2).
+
+## The IL move before an open-spot claim (0.9.1, #214)
+
+A queued claim with no drop behind a held player (IL, IL+) needs that player moved first: Yahoo's add page has
+no IL control. The routine (or the side panel's due list) opens the player's team page with an IL fragment
+(`#pickandroll-il`, `-il-late`, `-il-evening`, `-il-panel`), the one `GET …/moves/due` names in `il_first`.
+
+- **Dry run** (and a live league whose guard refuses): logs `would_move` and clicks nothing.
+- **Live:** the move goes on record in this browser before the page is touched, then the player's slot label is
+  clicked once and, once Yahoo's swap shows it, the empty IL row's label once; Yahoo saves on that click ("All
+  changes saved"). Never made twice for an entry in a day, never retried after a failure; the hidden Save
+  button and selects are never touched.
+- After the run (not a stop) the tab goes on to the claim's add page with the moves fragment, which reads the
+  page again: an open spot there is the open-spot claim (read only until its submit ships); a full roster
+  after a move dated tomorrow logs "move dated <day>, claim waits".
+
+Every run goes to `POST /seasons/{league}/autopilot/il` (docs/AUTOPILOT.md §2).
 
 ## What it reads and sends
 
@@ -263,6 +280,10 @@ Every run goes to `POST /seasons/{league}/autopilot/start-active` (docs/AUTOPILO
   buttons, visible, disabled, the dialog there and open), the dialog's two rows and Yahoo's words after the
   press, and the run's outcome, to the same API. Nothing is fetched from Yahoo and no field is set; a live run
   clicks Yahoo's button and the Rest of Week Start, once each.
+- **IL move (0.9.1):** on my team page opened with an IL fragment, the swap controls' shape (each row's player
+  id, whether it is editable or empty, its slot labels), Yahoo's save notice and the run's outcome, to the same
+  API. Nothing is fetched and no field is set; a live move clicks two slot labels, once each. On the add page
+  it also reads Yahoo's "You currently have N empty spot(s)" words.
 - **Never:** cookies, the `?auth=` part of the room URL, anything you type, or any page other than the draft
   client and the league pages above.
 
@@ -277,11 +298,12 @@ Every run goes to `POST /seasons/{league}/autopilot/start-active` (docs/AUTOPILO
 | `lib/room.js` | `RoomTracker`: picks, the pick on the clock, the sync cursor, how my picks landed (pure) |
 | `lib/drafter.js` | armed mode: one turn at a time, a newer turn supersedes an older one, the queue backstop and the probe (pure, through a page adapter) |
 | `lib/yahoo.js` | Yahoo's player table: row matching by headshot id and name, label checks, the plan's candidates (pure) |
-| `addpage.js` | page world, `document_start`, league pages: on an add page opened with a moves fragment, or my team page opened with a start-active one (0.9.0), and nowhere else, keeps Yahoo's alerts as text on the root element (0.8.2) |
-| `league.js` | isolated world, league pages: posts the page to the worker, follows Next 25 only during an armed read; on my team page, the lineup executor's dry run; on an add page opened with the fragment, the moves executor's pass (dry run, or the live claim); on my team page opened with a start-active fragment, Start Active Players; their strips |
+| `addpage.js` | page world, `document_start`, league pages: on an add page opened with a moves fragment, or my team page opened with a start-active one (0.9.0) or an IL one (0.9.1), and nowhere else, keeps Yahoo's alerts as text on the root element (0.8.2) |
+| `league.js` | isolated world, league pages: posts the page to the worker, follows Next 25 only during an armed read; on my team page, the lineup executor's dry run; on an add page opened with the fragment, the moves executor's pass (dry run, or the live claim); on my team page opened with a start-active fragment, Start Active Players, or with an IL fragment, the IL move and on to its claim; their strips |
 | `lib/league.js` | which league pages are read, the snapshot body, the multi-page read (pure) |
 | `lib/lineup.js` | the lineup executor's page side: the form read, the steps' checks, the run for the log, the strip (pure) |
 | `lib/moves.js` | the moves executor's page side: the add page read, the entries' checks, the pass for the log, the strip (pure) |
+| `lib/ilmove.js` | the IL move: the item for the page, the swap controls read, the checks, the two clicks (`moveToIL`, the one step that clicks), the run for the log, the way on to the claim, the claim's wait (#214) |
 | `lib/startactive.js` | Start Active Players: the control read, the checks, the same-day rule, the two presses (`pressStartActive`, the one step that clicks), the run for the log, the strip (#215) |
 | `worker.js` | service worker: the only caller of the API; per-tab state for the panel in `chrome.storage.session` |
 | `sidepanel/` | side panel: room state, attach a session, mode, plan, detach; on a league page, its posts and the read; on my team page, the lineup executor's last run and **Set lineup now**, the moves executor's last pass and **Check moves now** (the due entries' add pages as links), Start Active's last run and **Start active players now** |

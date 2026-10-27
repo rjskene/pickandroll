@@ -155,8 +155,8 @@ side (PR 1) is in `api/season_autopilot.py`; the click is the extension's, on th
   - live: one press per run. The press goes on record in this browser before the page is
     touched (`start_active_press:<league>`), with the page's roster (the run presses only from a
     page the API took). A second press in the league the same day is refused unless the page's
-    roster differs from the one the day's press ran on (players or held) or the need rule says
-    `roster_changed` or `il_moved` (ruled on #215). The run then presses the main button, waits up to 10 s
+    roster differs from the one the day's press ran on (players or held); the need rule's reasons
+    never lift it alone, and an unknown roster never does (ruled on #214, ext 0.9.1). The run then presses the main button, waits up to 10 s
     for the dialog's Rest of Week row with its Start enabled, reads it again, presses it once,
     and waits up to 15 s for Yahoo's words in the dialog (open or closed): "N lineups updated"
     or "We optimized …" log `started`, "Already optimized" `already`, the error `failed`; no
@@ -456,6 +456,35 @@ page, from PR 2:
   latest IL run (`il_pass`) and the card today's runs (`il_today`); the Queue screen's State says
   "would move <player> to IL first", "moved <player> to IL <time>" (with the date when it was
   tomorrow's page) or the skip's reason after the claim's state.
+
+  The extension's move (ext 0.9.1, `extension/lib/ilmove.js`, from step 0's read: the swap saves
+  on its own, there is no Save step) runs on the item's team page opened with an IL fragment:
+  `#pickandroll-il` (`routine`), `-il-late`, `-il-evening` or `-il-panel` (the side panel's due
+  list links an entry behind an IL move to its team page, "move: …" in live). Any other visit runs
+  nothing. A run drops the fragment, posts the page, reads `moves/due` fresh and takes the item
+  whose `page` is this page (my team, the item's date); none logs nothing:
+  - under STOP it logs `stopped` (no entry) and the tab stays;
+  - the page checks: the swap manager editable, the player once on the page, his slot one visible
+    label button (`span.pos-label[role=button]`) in an editable row and not IL / IL+ already, an
+    empty editable row with a label of the item's slot; a failed check logs `skipped`;
+  - a dry run, or a live league whose guard refuses now, logs `would_move` and clicks nothing;
+  - live: the move goes on record in this browser before any click (`il_move:<entry>`), never
+    made twice that day. The run clicks the player's label once, waits up to 5 s for exactly one
+    visible label of the slot in an empty row, reads it again and clicks it once; Yahoo saves on
+    that click. It waits up to 10 s for the save notice (`.rostersave-msg.saved`, "All changes
+    saved", one that was not on the page before) with the player's label now on the slot:
+    `moved` with Yahoo's words; Yahoo's error, an alert (kept as text) or no answer log `failed`,
+    never retried. The hidden Save button and fallback selects are never touched;
+  - a move on record whose run never reached the log is logged by the next run as `failed`
+    "clicked; Yahoo's answer was not read".
+
+  After any logged run but a stop, the tab goes to the entry's add page with the moves fragment
+  of the run's trigger (the ruling on #214: the routine opens one link per `il_first` item and
+  the add pages of the due entries without one). There the claim reads the page again: an open
+  spot (no drop section, or Yahoo's "You currently have N empty spot(s) on your roster" with the
+  drop table beside it) is the open-spot claim, held read-only until its submit ships (PR 4); a
+  full roster after a move this browser made on a later day's page logs `skipped` "move dated
+  <day>, claim waits", and the morning pass retries.
 - **The mode, the log and the live guard.** `armed.json`'s `moves` key and `moves_cap`, like the
   lineups'. A pass is `POST /seasons/{league}/autopilot/moves`, logged under `moves` beside
   `lineup` in the league's day file. A live pass sets its placed, failed and gone outcomes on the
