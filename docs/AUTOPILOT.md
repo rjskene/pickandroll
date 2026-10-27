@@ -96,6 +96,50 @@ side (PR 1) is in `api/season_autopilot.py`; the click is the extension's, on th
   many had steps, how many none, how many did not run, the day-runs that would set, were
   skipped, failed), then a line per league only for a skip or a failure. Under STOP the line says
   nothing runs.
+- **Yahoo's baseline: Start Active Players for the rest of the week (#215; PR 1 the API and the
+  web, the extension's presses in PR 2).** The user's rule (2026-10-27): at the start of every
+  week and after every roster move, Yahoo's own Start Active Players fills the week's remaining
+  days, and the lineup executor sets its days on top of it, never in its place. The read of
+  2026-10-27 (step 0, #214):
+  - pressing `button.start-active-players` runs Today Only at once (a `PUT` of the team's
+    roster to Yahoo's API);
+  - the dialog then lists "Rest of Week N" with its own Start (`button.start-players-interval`,
+    no Fantasy Plus lock), whose press answers "N lineups updated";
+  - a repeat re-posts and says the same, never "Already optimized".
+
+  Its mode is the moves executor's (the user's moves switch) and STOP holds. `GET
+  /autopilot/start-active/due` names each armed public league (moves mode not off) with `need`
+  and its `reasons`:
+  - `no_run`: no run yet in the league's mode (a dry run's `would_start` does not count once
+    the league is live);
+  - `week_start`: the last run's day is before the first day of the league's week, from its
+    calendar, else the Monday. So on a Monday every armed league is due before any run of the
+    week, and the Monday recorder needs no step of its own;
+  - `roster_changed`: my players, or who is held (IL, IL+, NA), differ from the roster the
+    last run recorded, with the ids `added`, `dropped`, `held` and `returned` (a won claim, a
+    drop, a trade, an IL move);
+  - `il_moved`: a live IL move (#214) landed since the last run.
+
+  Each row also carries the team page of today, my roster as last read, the last run and the
+  live guard. Under STOP no league needs a run. A run is `POST
+  /seasons/{league}/autopilot/start-active` (`StartActiveRun`: `day`, `mode`, `trigger`, which
+  includes `routine_daily` for the 05:00 daily, `outcome` of `would_start`, `started`,
+  `already`, `skipped`, `failed` or `stopped`, `reason`, `reasons`, `today` and `rest_of_week`
+  as the dialog printed them, `message`, `roster`, `page`, `controls`, `extension`). It is
+  logged under `start_active` in the league's day file with the roster it ran on: the page's
+  when the run carries it, else my roster as last read. Only `started` and `already` (live) or
+  `would_start` (dry run) count as a run; a skip, a failure and a stop leave the league due.
+
+  The log refuses, as the moves pass does: the private league, STOP but for a stopped run, off,
+  a live run outside live or under a guard that refuses now, a crumb (422). It also refuses a
+  live `would_start`, and a dry `started` or `already`: a dry run presses nothing, not even the
+  main button, since that runs Today Only.
+
+  A moves pass's run goes to the open moves pass under `start_active`, by league, apart from
+  its claims and leaving the league not done; the 05:00 daily's goes to none. The Queue card
+  lists today's runs (`start_active_today`), the queue's payload carries each league's latest
+  (`start_active`) and its fold line says "Start Active: N started, …". The digest counts the
+  leagues it ran in and names a skip or a failure on its league's line.
 
 The moves executor (#171, ruled on the issue 2026-10-23) follows. Its API side (PR 1) is the queue
 in `season/autopilot.py` (pure) and `api/season_queue.py`; the claim is the extension's, on the add
@@ -264,7 +308,8 @@ page, from PR 2:
     `table.statTable-drop` row and no `dpid` box) is an open spot: `would_claim` with reason
     "open spot". One shown means the roster is full, and the entry skips with the count: "the
     roster is full: <id> to IL first (the page lists N to drop)" for a `held` add, whose IL move
-    is the lineup executor's, else "the roster is full and the entry carries no drop (…)". Never
+    the moves executor makes first on the team page (#214, below), else "the roster is full and
+    the entry carries no drop (…)". Never
     a fallback drop. The markers are those read on 2026-10-26 (#199's plan): the full-roster page
     of a held add shows "Select a player to drop" over `table#statTable-drop-1.statTable-drop`, one
     row per player and a `dpid` box (`checkbox-<id>`) on each droppable one, the held player's
@@ -352,6 +397,34 @@ page, from PR 2:
   its script but not yet on a page). The side panel's links say "claim: …" where
   opening one places the claim, and "open spot" with no "claim" for an entry with no drop. Nothing in the build or its tests reaches Yahoo; the first live
   claim is the user's own switch, after the Chrome reload to 0.8.0.
+- **The IL move first (#214; PR 1 the API and the web, the extension's move in PR 2 after step
+  0, the user's own move by hand read on the page).** A `held` add with no drop waits on its held player's
+  move to his held slot: Yahoo's add page has no IL control, so the full roster shows a drop list
+  and the claim skips. `GET …/moves/due` carries `il_first`: for each due entry with basis `held`,
+  no drop and a `held_move` to `IL` or `IL+`, its held player once (in the queue's order), unless
+  he was moved to the IL today, the entry's IL move failed today, the add has a claim open, or the
+  entry's week has no adds left; none past the day's cap, and none in an answer that is closed
+  (off, STOP, private, another day, no queue). Each item is `{entry, player, slot, date, tip,
+  page}`: `date` is the team page's day, today unless his NBA team's tip-off today has passed
+  (today's page is locked: tomorrow's), `tip` that tip-off (null when the day's schedule copy has
+  none) and `page` the team page of that day. The routine opens each item's team page before the
+  league's add pages, in the moves executor's mode. The run is `POST /seasons/{league}/autopilot/il`
+  (`ILRun`: `day`, `mode`, `trigger`, `outcome` of `would_move`, `moved`, `skipped`, `failed` or
+  `stopped`, `reason`, `entry`, `player`, `from_slot`, `to_slot`, `dated`, `page`, `controls`,
+  `landed`, `message`, `extension`), logged under `il` beside `moves` in the league's day file.
+  Refused, beside the moves pass's own rules (private, STOP, off, a live run outside live or
+  under a guard that refuses now, a crumb with 422): a live run that says `would_move`, a dry run
+  that says `moved`, a run that does not name its entry, player and slot, an entry not in the
+  day's queue or not a `held` add with no drop, a player or slot other than its `held_move`, a
+  `would_move` or `moved` for a struck or unqueued entry, a player moved to the IL already that day,
+  and an entry whose move failed that day. A live `moved` or `failed` goes on the queue's entry as
+  `il` (`{outcome, at, reason, message}`); it is never the entry's outcome and never moves its
+  place, so the claim is still due. The run goes to the open moves pass under `il`, apart from its
+  claims, and leaves the league not done (its add pages come after); the pass's view carries the
+  IL counts (`il`, null before one). The queue's payload and the Queue card carry each entry's
+  latest IL run (`il_pass`) and the card today's runs (`il_today`); the Queue screen's State says
+  "would move <player> to IL first", "moved <player> to IL <time>" (with the date when it was
+  tomorrow's page) or the skip's reason after the claim's state.
 - **The mode, the log and the live guard.** `armed.json`'s `moves` key and `moves_cap`, like the
   lineups'. A pass is `POST /seasons/{league}/autopilot/moves`, logged under `moves` beside
   `lineup` in the league's day file. A live pass sets its placed, failed and gone outcomes on the
@@ -372,8 +445,9 @@ page, from PR 2:
   from this log (#200, above), as the digest does.
 - **The digest.** A Moves section: the latest queue's entries queued and struck, the last day's
   entries would-be-claimed (or claimed), skipped, failed and gone, then a line per league only for
-  a skip, a failure or a claim placed with a reason (its answer not read); under STOP the line
-  says nothing runs. The Queue screen's State column shows a placed claim's reason beside it.
+  a skip, a failure or a claim placed with a reason (its answer not read), and the IL moves made
+  (or that would be made) for open-spot claims with an IL skip or failure on its league's line
+  (#214); under STOP the line says nothing runs. The Queue screen's State column shows a placed claim's reason beside it.
 
 ## 3. The weekly loop
 

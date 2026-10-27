@@ -43,6 +43,10 @@ RESULTS: Mapping[str, tuple[str, ...]] = {
     "lineup": ("would_set", "set", "nothing_to_do", "skipped", "failed"),
 }
 JOINS = {"added": "claimed"}
+#: A moves pass's IL runs (#214), each entry by its latest run, apart from its claims' outcomes;
+#: its Start Active runs (#215), each league by its latest run.
+IL_RESULTS = ("would_move", "moved", "skipped", "failed")
+SA_RESULTS = ("would_start", "started", "already", "skipped", "failed")
 
 _lock = threading.Lock()
 
@@ -190,20 +194,29 @@ def done(data_dir: Path, pass_id: str, now: datetime, summary: str | None) -> di
 
 
 def attribute(
-    data_dir: Path, day: date, now: datetime, kind: str, league: str, outcomes: Mapping[str, str]
+    data_dir: Path,
+    day: date,
+    now: datetime,
+    kind: str,
+    league: str,
+    outcomes: Mapping[str, str],
+    key: str = "outcomes",
 ) -> dict[str, Any] | None:
     """A post the league's log took, given to the open pass of its kind (the caller leaves out a
     panel's): the league done, each entry's (or the team page's) latest outcome, the pass's last
-    word now. None, and nothing written, when no such pass is open or it does not name the
-    league; ``current`` stays until the next opening."""
+    word now. An IL run (``key`` ``il``, #214) keeps its entry's outcome apart from the claim's
+    and leaves the league as it was: its add pages come after; so does a Start Active run
+    (``start_active``, #215), by league. None, and nothing written, when
+    no such pass is open or it does not name the league; ``current`` stays until the next
+    opening."""
     with _lock:
         passes = read(data_dir, day, now)
         p = next((x for x in passes if x["kind"] == kind and x.get("end") is None), None)
         if p is None or league not in p["leagues"]:
             return None
-        if league not in p["done"]:
+        if key == "outcomes" and league not in p["done"]:
             p["done"].append(league)
-        p["outcomes"] = {**p.get("outcomes", {}), **outcomes}
+        p[key] = {**(p.get(key) or {}), **outcomes}
         p["updated"] = now.isoformat(timespec="seconds")
         _write(data_dir, day, passes)
         return p
@@ -220,10 +233,32 @@ def results(p: Mapping[str, Any]) -> dict[str, int]:
     return out
 
 
+def il_results(p: Mapping[str, Any]) -> dict[str, int] | None:
+    """A moves pass's IL runs by outcome, each entry by its latest run (#214); None before one."""
+    return _side(p, "il", IL_RESULTS)
+
+
+def start_active_results(p: Mapping[str, Any]) -> dict[str, int] | None:
+    """A moves pass's Start Active runs by outcome, each league by its latest run (#215); None
+    before one."""
+    return _side(p, "start_active", SA_RESULTS)
+
+
+def _side(p: Mapping[str, Any], key: str, keys: tuple[str, ...]) -> dict[str, int] | None:
+    runs = p.get(key) or {}
+    if not runs:
+        return None
+    out = dict.fromkeys(keys, 0)
+    for outcome in runs.values():
+        if outcome in out:
+            out[outcome] += 1
+    return out
+
+
 def view(p: Mapping[str, Any]) -> dict[str, Any]:
     """A pass for the API: its progress (the leagues done of those named, in the order named; a
     moves pass's entries checked of those named, the total null without a list; a lineup pass's
-    none) and its results."""
+    none), its results and a moves pass's IL runs (#214) and Start Active runs (#215)."""
     entries = p.get("entries")
     checked = [k for k in p.get("outcomes") or {} if entries is None or k in entries]
     return {
@@ -242,6 +277,8 @@ def view(p: Mapping[str, Any]) -> dict[str, Any]:
         ),
         "current": p.get("current"),
         "results": results(p),
+        "il": il_results(p),
+        "start_active": start_active_results(p),
         "summary": p.get("summary"),
     }
 

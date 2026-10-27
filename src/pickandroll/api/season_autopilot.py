@@ -19,7 +19,12 @@ The moves executor (#171) logs its execute passes in the same file under ``moves
 (:func:`moves_live_check`, its counts the code's defaults unless the settings file's
 ``live_after`` sets them, read at request time: #171 PR 3) and digest line
 (:func:`moves_digest_lines`); its queue is ``season_queue``'s. The queue's payload and the Queue card read each entry's latest line of the
-queue's day and the day's tally from it (:func:`latest_passes`, :func:`pass_tally`, #200).
+queue's day and the day's tally from it (:func:`latest_passes`, :func:`pass_tally`, #200). The
+IL move an open-spot claim needs first (#214) is logged under ``il`` (:class:`ILRun`,
+:func:`check_il_run`), from the team page, by the moves executor's mode and live guard; so is
+Yahoo's Start Active Players for the rest of the week (#215), under ``start_active``
+(:class:`StartActiveRun`, :func:`check_start_active_run`), with the roster each run ran on and the
+need rule that says which leagues want a run (:func:`start_active_need`).
 
 ``data/autopilot/STOP`` stops every executor: the steps answer ``stop: true`` with none, and the
 log takes only a run that says it stopped. Nothing here writes the file.
@@ -54,7 +59,11 @@ LOG_DIR = "autopilot"
 LINEUP = "lineup"
 #: The moves executor's execute passes, beside the lineup's runs in the same file (#171).
 MOVES = "moves"
-LOG_KEYS = (LINEUP, MOVES)
+#: The IL moves made for an open-spot claim (#214), beside them.
+IL = "il"
+#: Yahoo's Start Active Players for the rest of the week (#215), beside them.
+START_ACTIVE = "start_active"
+LOG_KEYS = (LINEUP, MOVES, IL, START_ACTIVE)
 #: What started a pass: the morning routine, the late one, the side panel, and for the moves
 #: executor alone the evening routine (#209).
 TRIGGERS = ("routine", "routine_late", "panel", "routine_evening")
@@ -88,7 +97,8 @@ def log_dir(data_dir: Path, league: str) -> Path:
 
 
 # --------------------------------------------------------------------------- the steps
-def _tip(tips: Mapping[str, str] | None, team: str | None) -> datetime | None:
+def tip_at(tips: Mapping[str, str] | None, team: str | None) -> datetime | None:
+    """``team``'s tip-off in a day's ``tips`` (the schedule copy's), None when it has none."""
     raw = (tips or {}).get(team or "")
     try:
         return datetime.fromisoformat(raw) if raw else None
@@ -180,7 +190,7 @@ def steps_payload(
         return closed("the recommended starters do not fit Yahoo's lineup as read")
 
     def tip(k: int | None) -> datetime | None:
-        return None if k is None else _tip(tips, players.get(str(k), {}).get("nba_team"))
+        return None if k is None else tip_at(tips, players.get(str(k), {}).get("nba_team"))
 
     kept: list[tuple[datetime | None, list[lu.Step[int]]]] = []
     for group in groups:
@@ -508,6 +518,237 @@ def check_moves_run(
     return None
 
 
+# --------------------------------------------------------------------------- the IL move (#214)
+IL_OUTCOMES = ("would_move", "moved", "skipped", "failed", "stopped")
+#: The held slots an IL move may take: the solve's ``held_move.slot``, never another.
+IL_SLOTS = ("IL", "IL+")
+#: A live IL run's outcomes that go on the queue's entry (``il``): the player is not moved again
+#: that day, and a failure is never retried that day; a live skip stays, so a later pass reads the
+#: team page again.
+IL_STICKS = ("moved", "failed")
+
+
+class ILRun(BaseModel):
+    """An IL move on the team page, made for one open-spot claim of the day's queue (#214): the
+    entry's held player to its held slot, by the moves executor's mode."""
+
+    day: date
+    mode: Literal["dry_run", "live"]
+    trigger: Literal["routine", "routine_late", "panel", "routine_evening"]
+    outcome: Literal["would_move", "moved", "skipped", "failed", "stopped"]
+    reason: str | None = None
+    #: The queue entry the move serves; null only in a run that says it stopped.
+    entry: str | None = None
+    player: int | None = None
+    from_slot: str | None = None
+    to_slot: Literal["IL", "IL+"] | None = None
+    #: The team page's date: the day the move was (or would be) made on.
+    dated: date | None = None
+    #: The team page's path.
+    page: str | None = None
+    #: What the page showed: the swap controls read, never a value of the form's token.
+    controls: dict[str, Any] | None = None
+    #: The page Yahoo landed on after the save: its path and what it says.
+    landed: dict[str, Any] | None = None
+    #: Yahoo's words after a live save, as the page printed them.
+    message: str | None = None
+    extension: str | None = None
+
+
+def check_il_run(
+    run: ILRun,
+    mode: Mapping[str, Any],
+    stop: bool,
+    queue: Mapping[str, Mapping[str, Any]],
+    live: Mapping[str, Any] | None = None,
+) -> str | None:
+    """Why the log refuses an IL run, None when it takes it: the moves executor's own rules
+    (:func:`check_moves_run`), and the move the queue's entry names, nothing else. ``queue`` is
+    the day's entries of the league by id."""
+    if mode.get("private"):
+        return "the private league is never touched"
+    if stop and run.outcome != "stopped":
+        return "STOP is on: a run can only say it stopped"
+    if mode["mode"] == "off" and run.outcome != "stopped":
+        return "the moves executor is off in this league"
+    if run.mode == "live" and mode["mode"] != "live":
+        return "a live run in a league that is not live"
+    if run.mode == "live" and run.outcome != "stopped" and live is not None and not live.get("ok"):
+        return f"live refused: {live.get('reason')}"
+    if run.mode == "live" and run.outcome == "would_move":
+        return "a live run moves the player or says why not; it never says would"
+    if run.mode == "dry_run" and run.outcome == "moved":
+        return "a dry run moves nobody"
+    if run.outcome == "stopped":
+        return None
+    if run.entry is None or run.player is None or run.to_slot is None:
+        return "an IL run names its entry, its player and the held slot"
+    q = queue.get(run.entry)
+    if q is None:
+        return f"{run.entry} is not in the day's queue"
+    held = q.get("held_move") or {}
+    if q.get("basis") != "held" or q.get("drop") is not None or not held:
+        return f"{run.entry} is not an open-spot claim behind an IL move"
+    if (run.player, run.to_slot) != (held.get("player"), held.get("slot")):
+        return f"{run.entry} names another IL move than the queue's"
+    if run.outcome in ("would_move", "moved") and (not q.get("queued") or q.get("struck")):
+        return f"{run.entry} is struck or not queued: its IL move is never made"
+    for other in queue.values():
+        mine = (other.get("held_move") or {}).get("player") == run.player
+        if mine and (other.get("il") or {}).get("outcome") == "moved":
+            return f"{run.player} was moved to the IL already today"
+    if (q.get("il") or {}).get("outcome") == "failed":
+        return f"{run.entry}'s IL move failed today: it is never retried that day"
+    return None
+
+
+def il_lines(data_dir: Path, league: str, day: date) -> list[dict[str, Any]]:
+    """The league's IL runs of the queue's ``day``, oldest first; none when the file does not
+    read."""
+    try:
+        body = read_log(data_dir, league, day) or {}
+    except LogError:
+        return []
+    return [r for r in body.get(IL, []) if isinstance(r, dict) and r.get("day") == day.isoformat()]
+
+
+def latest_il(lines: Iterable[Mapping[str, Any]]) -> dict[str, dict[str, Any]]:
+    """Each entry's latest IL run among ``lines`` (oldest first), by entry id: its outcome and
+    reason, the player and slot, the page's date, the run's time, trigger and extension."""
+    keys = ("at", "trigger", "outcome", "reason", "player", "to_slot", "dated", "extension")
+    return {str(r["entry"]): {k: r.get(k) for k in keys} for r in lines if r.get("entry")}
+
+
+# --------------------------------------------------------------------------- Start Active (#215)
+SA_OUTCOMES = ("would_start", "started", "already", "skipped", "failed", "stopped")
+#: The outcomes that count as the league's run in a mode: the roster they record is the one the
+#: need rule compares against. A skip, a failure and a stop leave the league needing a run.
+SA_RAN = {"dry_run": ("would_start",), "live": ("started", "already")}
+
+
+class StartActiveRun(BaseModel):
+    """Yahoo's Start Active Players on the team page, rest of the week (#215): pressing the main
+    button runs Today Only, and the dialog's Rest of Week row has its own Start. By the moves
+    executor's mode: a dry run presses nothing."""
+
+    day: date
+    mode: Literal["dry_run", "live"]
+    trigger: Literal["routine", "routine_late", "routine_evening", "routine_daily", "panel"]
+    outcome: Literal["would_start", "started", "already", "skipped", "failed", "stopped"]
+    reason: str | None = None
+    #: Why the run was due (``start_active_need``'s reasons, as the routine read them).
+    reasons: list[str] = Field(default_factory=list)
+    #: The dialog's two rows as the page printed them: each its label, range and Yahoo's words.
+    today: dict[str, Any] | None = None
+    rest_of_week: dict[str, Any] | None = None
+    #: Yahoo's words after the press ("6 lineups updated", "Already optimized", the error).
+    message: str | None = None
+    #: The roster the page showed, ``{players, held}`` by id; the API's own read when absent.
+    roster: dict[str, list[int]] | None = None
+    page: str | None = None
+    controls: dict[str, Any] | None = None
+    extension: str | None = None
+
+
+def check_start_active_run(
+    run: StartActiveRun,
+    mode: Mapping[str, Any],
+    stop: bool,
+    live: Mapping[str, Any] | None = None,
+) -> str | None:
+    """Why the log refuses a Start Active run, None when it takes it: the moves executor's own
+    rules (:func:`check_moves_run`); a dry run presses nothing, not even the main button, since
+    that runs Today Only."""
+    if mode.get("private"):
+        return "the private league is never touched"
+    if stop and run.outcome != "stopped":
+        return "STOP is on: a run can only say it stopped"
+    if mode["mode"] == "off" and run.outcome != "stopped":
+        return "the moves executor is off in this league"
+    if run.mode == "live" and mode["mode"] != "live":
+        return "a live run in a league that is not live"
+    if run.mode == "live" and run.outcome != "stopped" and live is not None and not live.get("ok"):
+        return f"live refused: {live.get('reason')}"
+    if run.mode == "live" and run.outcome == "would_start":
+        return "a live run starts the players or says why not; it never says would"
+    if run.mode == "dry_run" and run.outcome in ("started", "already"):
+        return "a dry run presses nothing"
+    return None
+
+
+def roster_record(spots: Iterable[Any]) -> dict[str, list[int]]:
+    """My roster as the need rule keeps it: every player's id, and those in a held slot (IL, IL+,
+    NA), each sorted. ``spots`` are the season state's roster spots."""
+    spots = list(spots)
+    return {
+        "players": sorted(x.player.yahoo_id for x in spots),
+        "held": sorted(x.player.yahoo_id for x in spots if x.slot.upper() in lu.HELD_SLOTS),
+    }
+
+
+def start_active_need(
+    data_dir: Path,
+    league: str,
+    mode: Mapping[str, Any],
+    week_start: date,
+    roster: Mapping[str, list[int]] | None,
+) -> dict[str, Any]:
+    """Whether the league wants a Start Active run (#215): ``no_run`` before any run in its
+    mode, ``week_start`` when its last run is before the week's first day, ``roster_changed``
+    when my players or who is held differ from the roster its last run recorded (a won claim, a
+    drop, a trade, an IL move), with the ids in and out; ``il_moved`` beside it when an IL move
+    of #214 landed since. A run in the other mode does not count: a league switched live runs
+    again. No need while the mode is off or the league is private."""
+    out: dict[str, Any] = {"need": False, "reasons": [], "changes": None, "last": None}
+    if mode.get("private") or mode["mode"] == "off":
+        return out
+    ran = [
+        (d, r)
+        for d, r in runs(data_dir, league, START_ACTIVE)
+        if r.get("mode") == mode["mode"] and r.get("outcome") in SA_RAN[mode["mode"]]
+    ]
+    if not ran:
+        return {**out, "need": True, "reasons": ["no_run"]}
+    day, last = ran[-1]
+    reasons: list[str] = []
+    if date.fromisoformat(last.get("day") or day.isoformat()) < week_start:
+        reasons.append("week_start")
+    was = last.get("roster") or {}
+    changes = None
+    if roster is not None and was:
+        now_p, was_p = set(roster["players"]), set(was.get("players") or [])
+        now_h, was_h = set(roster["held"]), set(was.get("held") or [])
+        if now_p != was_p or now_h != was_h:
+            reasons.append("roster_changed")
+            changes = {
+                "added": sorted(now_p - was_p),
+                "dropped": sorted(was_p - now_p),
+                "held": sorted(now_h - was_h),
+                "returned": sorted(was_h - now_h),
+            }
+    since = _at(last.get("at"))
+    if since is not None and any(
+        r.get("mode") == "live"
+        and r.get("outcome") == "moved"
+        and (at := _at(r.get("at"))) is not None
+        and at > since
+        for _, r in runs(data_dir, league, IL)
+    ):
+        reasons.append("il_moved")
+    last_view = {k: last.get(k) for k in ("at", "day", "trigger", "outcome", "message")}
+    return {"need": bool(reasons), "reasons": reasons, "changes": changes, "last": last_view}
+
+
+def start_active_lines(data_dir: Path, league: str, day: date) -> list[dict[str, Any]]:
+    """The league's Start Active runs logged on ``day``, oldest first; none when the file does not
+    read."""
+    try:
+        body = read_log(data_dir, league, day) or {}
+    except LogError:
+        return []
+    return [r for r in body.get(START_ACTIVE, []) if isinstance(r, dict)]
+
+
 def moves_checked(run: Mapping[str, Any]) -> bool:
     """A pass that opened the add page and logged its controls for at least one entry (the
     ruling on #171): a pass that found nothing due is a dry-run day, never a checked one."""
@@ -539,11 +780,13 @@ def moves_view(
     today: date,
     entries: Sequence[Mapping[str, Any]],
 ) -> dict[str, Any]:
-    """The Queue card's league: the mode, STOP, the live check, the last pass, today's passes
-    and the league's entries of the day's queue."""
+    """The Queue card's league: the mode, STOP, the live check, the last pass, today's passes,
+    IL runs (#214) and Start Active runs (#215), and the league's entries of the day's queue."""
     passes = runs(data_dir, league, MOVES)
     todays = [r for d, r in passes if d == today]
     latest = latest_passes(r for r in todays if r.get("day") == today.isoformat())
+    il_today = [r for d, r in runs(data_dir, league, IL) if d == today]
+    il = latest_il(r for r in il_today if r.get("day") == today.isoformat())
     return {
         "league": league,
         "mode": dict(mode),
@@ -551,8 +794,13 @@ def moves_view(
         "live": moves_live_check(data_dir, league, mode),
         "last": passes[-1][1] if passes else None,
         "today": todays,
+        "il_today": il_today,
+        "start_active_today": [r for d, r in runs(data_dir, league, START_ACTIVE) if d == today],
         "days": sorted({d.isoformat() for d, _ in passes}),
-        "entries": [{**e, "pass": latest.get(str(e.get("id")))} for e in entries],
+        "entries": [
+            {**e, "pass": latest.get(str(e.get("id"))), "il_pass": il.get(str(e.get("id")))}
+            for e in entries
+        ],
     }
 
 
@@ -747,11 +995,40 @@ def moves_digest_lines(
         verb = "would be claimed" if not by_mode["live"] else "claimed or would be claimed"
     day = (queue or {}).get("date")
     gone = f", {count['gone']} gone" if count["gone"] else ""
+    # The IL moves made for open-spot claims (#214): counted when there are any, and each skip or
+    # failure on its league's line.
+    il_recent = {
+        lg: [r for _, r in runs(data_dir, lg, IL) if (at := _at(r.get("at"))) and at >= since]
+        for lg in armed
+    }
+    il_count = Counter(r.get("outcome") for rs in il_recent.values() for r in rs)
+    il_made = il_count["moved"] + il_count["would_move"]
+    il_verb = {"claimed": "moved", "would be claimed": "would be moved"}.get(
+        verb, "moved or would be moved"
+    )
+    il_text = f", {il_made} {il_verb} to the IL" if il_made else ""
+    # Yahoo's Start Active Players (#215): the leagues it ran in, and each skip or failure.
+    sa_recent = {
+        lg: [
+            r
+            for _, r in runs(data_dir, lg, START_ACTIVE)
+            if (at := _at(r.get("at"))) and at >= since
+        ]
+        for lg in armed
+    }
+    sa_ran = sum(
+        1
+        for rs in sa_recent.values()
+        if any(r.get("outcome") in ("would_start", "started", "already") for r in rs)
+    )
+    sa_verb = {"claimed": "ran", "would be claimed": "would run"}.get(verb, "ran or would run")
+    il_text += f", Start Active {sa_verb} in {sa_ran}" if sa_ran else ""
     lines = [
         f"- Moves executor ({modes_text}): "
         + (f"{_weekday(day)}'s queue " if day else "no queue; ")
         + (f"{queued} queued, {struck} struck; " if day else "")
-        + f"{executed} {verb}, {count['skipped']} skipped, {count['failed']} failed{gone}."
+        + f"{executed} {verb}, {count['skipped']} skipped, {count['failed']} failed{gone}"
+        + f"{il_text}."
     ]
     for lg in sorted(recent):
         parts = []
@@ -768,6 +1045,22 @@ def moves_digest_lines(
             for e in bad:
                 reason = f" ({e['reason']})" if e.get("reason") else ""
                 parts.append(f"{_weekday(r['day'])} {e['outcome']}{reason}")
+        parts += [
+            f"{_weekday(r['day'])} IL move {r['outcome']}"
+            + (f" ({r['reason']})" if r.get("reason") else "")
+            for r in il_recent[lg]
+            if r.get("outcome") in ("skipped", "failed")
+        ]
+        parts += [
+            f"{_weekday(r['day'])} Start Active {r['outcome']}"
+            + (
+                f" ({r.get('reason') or r.get('message')})"
+                if r.get("reason") or r.get("message")
+                else ""
+            )
+            for r in sa_recent[lg]
+            if r.get("outcome") in ("skipped", "failed")
+        ]
         if parts:
             lines.append(f"- League {lg}: moves " + "; ".join(parts))
     return lines
