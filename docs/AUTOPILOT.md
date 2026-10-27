@@ -397,7 +397,7 @@ page, from PR 2:
   its script but not yet on a page). The side panel's links say "claim: …" where
   opening one places the claim, and "open spot" with no "claim" for an entry with no drop. Nothing in the build or its tests reaches Yahoo; the first live
   claim is the user's own switch, after the Chrome reload to 0.8.0.
-- **The IL move first (#214; PR 1 the API and the web, the extension's move in PR 2 after step
+- **The IL move first (#214; PR 1 the API and the web, the extension's move in PR 3 after step
   0, the user's own move by hand read on the page).** A `held` add with no drop waits on its held player's
   move to his held slot: Yahoo's add page has no IL control, so the full roster shows a drop list
   and the claim skips. `GET …/moves/due` carries `il_first`: for each due entry with basis `held`,
