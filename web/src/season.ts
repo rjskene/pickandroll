@@ -37,6 +37,7 @@ import type {
   MovesPassLog,
   MovesSummary,
   MovesView,
+  StartActiveRunLog,
   OutlookSummary,
   OutlookWeek,
   PlanStep,
@@ -545,10 +546,11 @@ const RUN_OUTCOME: Record<LineupRunLog["outcome"], string> = {
   failed: "failed",
   stopped: "stopped by STOP",
 };
-const TRIGGER: Record<LineupRunLog["trigger"] | MovesPassLog["trigger"], string> = {
+const TRIGGER: Record<LineupRunLog["trigger"] | StartActiveRunLog["trigger"], string> = {
   routine: "routine",
   routine_late: "late routine",
   routine_evening: "evening routine",
+  routine_daily: "daily routine",
   panel: "side panel",
 };
 
@@ -747,6 +749,41 @@ export function ilLine(r: ILRunLog, clock: (iso: string) => string, name: (id: n
   return `${clock(r.at)} · ${weekdayLabel(r.day)} · ${TRIGGER[r.trigger]}: ${what}${r.reason ? ` (${r.reason})` : ""}`;
 }
 
+const SA_WORDS: Record<StartActiveRunLog["outcome"], string> = {
+  would_start: "would start active players for the rest of the week",
+  started: "started active players",
+  already: "already optimized",
+  skipped: "Start Active skipped",
+  failed: "Start Active failed",
+  stopped: "Start Active stopped by STOP",
+};
+
+/** A Start Active run in a line (#215): "5:02 AM · Wed 21 · daily routine: started active players,
+ * Rest of Week 2 (Tue, Oct 27 - Sun, Nov 01) · 6 lineups updated". ``clock`` writes its time. */
+export function startActiveLine(r: StartActiveRunLog, clock: (iso: string) => string): string {
+  const row = r.rest_of_week;
+  const week = r.outcome === "started" && row?.label ? `, ${row.label}${row.range ? ` (${row.range})` : ""}` : "";
+  const why = r.reason ? ` (${r.reason})` : "";
+  const words = r.message ? ` · ${r.message}` : "";
+  return `${clock(r.at)} · ${weekdayLabel(r.day)} · ${TRIGGER[r.trigger]}: ${SA_WORDS[r.outcome]}${week}${why}${words}`;
+}
+
+const SA_TALLY: [StartActiveRunLog["outcome"], string][] = [
+  ["started", "started"],
+  ["already", "already optimized"],
+  ["would_start", "would start"],
+  ["skipped", "skipped"],
+  ["failed", "failed"],
+];
+
+/** "Start Active: 3 started, 1 would start": the leagues' latest runs of the day (#215); blank
+ * before one. */
+export function startActiveTally(runs: Record<string, StartActiveRunLog> | undefined): string {
+  const all = Object.values(runs ?? {});
+  const parts = SA_TALLY.map(([k, w]) => [all.filter((r) => r.outcome === k).length, w] as const).filter(([n]) => n);
+  return parts.length ? `Start Active: ${parts.map(([n, w]) => `${n} ${w}`).join(", ")}` : "";
+}
+
 /** The landing's line for today's queue across the leagues. */
 export function queueFoldLine(q: QueuePayload): string {
   const time = `executes from ${q.settings.in_force} CT`;
@@ -765,6 +802,7 @@ export function queueFoldLine(q: QueuePayload): string {
     struck ? `${struck} struck` : null,
     done ? `${done} executed` : null,
     passTally(q.passes) || null,
+    startActiveTally(q.start_active) || null,
     unsolved ? `${unsolved} not solved today` : null,
     failed ? `${failed} not read` : null,
     time,
@@ -810,12 +848,22 @@ const IL_RESULT_WORDS: Record<keyof NonNullable<RoutinePass["il"]>, string> = {
   failed: "IL failed",
 };
 
-/** "1 moved to IL, 1 IL skipped": a moves pass's IL runs (#214), the counts above zero; blank
- * before one. */
-export function passIL(p: Pick<RoutinePass, "il">, sep = ", "): string {
-  return Object.entries(p.il ?? {})
-    .filter(([, n]) => n)
-    .map(([k, n]) => `${n} ${IL_RESULT_WORDS[k as keyof typeof IL_RESULT_WORDS] ?? k}`)
+const SA_RESULT_WORDS: Record<keyof NonNullable<RoutinePass["start_active"]>, string> = {
+  would_start: "would start active",
+  started: "started active",
+  already: "already optimized",
+  skipped: "Start Active skipped",
+  failed: "Start Active failed",
+};
+
+/** "1 moved to IL, 1 IL skipped, 2 started active": a moves pass's IL runs (#214) and Start
+ * Active runs (#215), the counts above zero; blank before one. */
+export function passIL(p: Pick<RoutinePass, "il" | "start_active">, sep = ", "): string {
+  const il = Object.entries(p.il ?? {}).map(([k, n]) => [n, IL_RESULT_WORDS[k as keyof typeof IL_RESULT_WORDS] ?? k] as const);
+  const sa = Object.entries(p.start_active ?? {}).map(([k, n]) => [n, SA_RESULT_WORDS[k as keyof typeof SA_RESULT_WORDS] ?? k] as const);
+  return [...il, ...sa]
+    .filter(([n]) => n)
+    .map(([n, w]) => `${n} ${w}`)
     .join(sep);
 }
 

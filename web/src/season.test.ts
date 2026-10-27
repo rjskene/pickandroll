@@ -16,6 +16,7 @@ import type {
   MoveRos,
   ILRunLog,
   MovesPassLog,
+  StartActiveRunLog,
   MovesView,
   PlayerFlag,
   QueueEntry,
@@ -130,6 +131,8 @@ import {
   ilLine,
   ilText,
   passIL,
+  startActiveLine,
+  startActiveTally,
   passTally,
   passTitle,
   addsThisWeek,
@@ -2055,4 +2058,32 @@ test("an open-spot claim's IL move reads on its entry, in the card's lines and i
   assert.equal(passBar(p), "Morning moves pass running · league 1 of 9 · 1 of 4 checked · 1 would claim · 1 would move to IL, 1 IL skipped");
   const done = { ...p, end: "done" as const, ended: "2026-10-24T14:35:00Z" };
   assert.equal(passEndLine(done, Date.parse(done.ended)), "moves pass done 9:35 AM CT · 1 would claim · 1 would move to IL · 1 IL skipped");
+});
+
+test("Yahoo's Start Active Players reads in the card's lines, the queue's fold line and the pass's counts (#215)", () => {
+  const run: StartActiveRunLog = {
+    at: "2026-10-27T10:02:00Z",
+    day: "2026-10-27",
+    mode: "live",
+    trigger: "routine_daily",
+    outcome: "started",
+    reason: null,
+    reasons: ["roster_changed"],
+    today: { label: "Today Only", range: "Tue, Oct 27" },
+    rest_of_week: { label: "Rest of Week 2", range: "Tue, Oct 27 - Sun, Nov 01" },
+    message: "6 lineups updated",
+    roster: { players: [1, 2], held: [] },
+    extension: "0.9.0",
+  };
+  const day = weekdayLabel("2026-10-27");
+  assert.equal(startActiveLine(run, () => "5:02 AM"), `5:02 AM · ${day} · daily routine: started active players, Rest of Week 2 (Tue, Oct 27 - Sun, Nov 01) · 6 lineups updated`);
+  assert.equal(startActiveLine({ ...run, mode: "dry_run", outcome: "would_start", message: null, trigger: "routine" }, () => "9:14 AM"), `9:14 AM · ${day} · routine: would start active players for the rest of the week`);
+  assert.equal(startActiveLine({ ...run, outcome: "failed", message: "An error occurred, please try again" }, () => "5:02 AM"), `5:02 AM · ${day} · daily routine: Start Active failed · An error occurred, please try again`);
+  assert.equal(startActiveLine({ ...run, outcome: "skipped", reason: "no button", message: null }, () => "5:02 AM"), `5:02 AM · ${day} · daily routine: Start Active skipped (no button)`);
+  // The fold line's tally: each league by its latest run.
+  assert.equal(startActiveTally(undefined), "");
+  assert.equal(startActiveTally({ a: run, b: run, c: { ...run, outcome: "would_start" } }), "Start Active: 2 started, 1 would start");
+  // The pass's counts sit after its IL runs'.
+  assert.equal(passIL({ il: null, start_active: { would_start: 0, started: 2, already: 1, skipped: 0, failed: 0 } }), "2 started active, 1 already optimized");
+  assert.equal(passIL({ il: { would_move: 1, moved: 0, skipped: 0, failed: 0 }, start_active: { would_start: 1, started: 0, already: 0, skipped: 0, failed: 0 } }), "1 would move to IL, 1 would start active");
 });

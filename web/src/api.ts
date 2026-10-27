@@ -1313,6 +1313,23 @@ export interface ILRunLog {
   extension: string | null;
 }
 
+/** Yahoo's Start Active Players on a team page, rest of the week (#215), as the league's log keeps
+ * it: the dialog's rows and Yahoo's words as the page printed them, and the roster it ran on. */
+export interface StartActiveRunLog {
+  at: string;
+  day: string;
+  mode: "dry_run" | "live";
+  trigger: MovesPassLog["trigger"] | "routine_daily";
+  outcome: "would_start" | "started" | "already" | "skipped" | "failed" | "stopped";
+  reason: string | null;
+  reasons: string[];
+  today: { label?: string; range?: string; words?: string } | null;
+  rest_of_week: { label?: string; range?: string; words?: string } | null;
+  message: string | null;
+  roster: { players: number[]; held: number[] } | null;
+  extension: string | null;
+}
+
 /** An entry as a pass last read it (#200): the entry's own outcome and reason, the pass's time,
  * trigger and extension. */
 export interface QueuePass {
@@ -1398,6 +1415,8 @@ export interface QueuePayload {
   active?: RoutinePass | null;
   /** The day's most recently closed pass, done or stale (#201). */
   last_pass?: RoutinePass | null;
+  /** Each league's latest Start Active run of the day (#215); absent from a server before it. */
+  start_active?: Record<string, StartActiveRunLog>;
 }
 
 /** A routine's execute pass as the record keeps it (#201): the leagues done of those it named (in
@@ -1420,6 +1439,8 @@ export interface RoutinePass {
   /** A moves pass's IL runs by outcome, each entry by its latest run (#214); null before one,
    * absent from a server before it. */
   il?: Record<"would_move" | "moved" | "skipped" | "failed", number> | null;
+  /** Its Start Active runs by outcome, each league by its latest run (#215). */
+  start_active?: Record<"would_start" | "started" | "already" | "skipped" | "failed", number> | null;
   summary: string | null;
 }
 
@@ -1442,6 +1463,8 @@ export interface MovesView extends Omit<AutopilotView, "mode" | "last" | "today"
   today: MovesPassLog[];
   /** Today's IL runs (#214); absent from a server before it. */
   il_today?: ILRunLog[];
+  /** Today's Start Active runs (#215); absent from a server before it. */
+  start_active_today?: StartActiveRunLog[];
   entries: QueueEntry[];
   row: QueueLeague | null;
   settings: QueuePayload["settings"];

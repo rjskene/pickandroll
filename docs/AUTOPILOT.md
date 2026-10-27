@@ -96,6 +96,50 @@ side (PR 1) is in `api/season_autopilot.py`; the click is the extension's, on th
   many had steps, how many none, how many did not run, the day-runs that would set, were
   skipped, failed), then a line per league only for a skip or a failure. Under STOP the line says
   nothing runs.
+- **Yahoo's baseline: Start Active Players for the rest of the week (#215; PR 1 the API and the
+  web, the extension's presses in PR 2).** The user's rule (2026-10-27): at the start of every
+  week and after every roster move, Yahoo's own Start Active Players fills the week's remaining
+  days, and the lineup executor sets its days on top of it, never in its place. The read of
+  2026-10-27 (step 0, #214):
+  - pressing `button.start-active-players` runs Today Only at once (a `PUT` of the team's
+    roster to Yahoo's API);
+  - the dialog then lists "Rest of Week N" with its own Start (`button.start-players-interval`,
+    no Fantasy Plus lock), whose press answers "N lineups updated";
+  - a repeat re-posts and says the same, never "Already optimized".
+
+  Its mode is the moves executor's (the user's moves switch) and STOP holds. `GET
+  /autopilot/start-active/due` names each armed public league (moves mode not off) with `need`
+  and its `reasons`:
+  - `no_run`: no run yet in the league's mode (a dry run's `would_start` does not count once
+    the league is live);
+  - `week_start`: the last run's day is before the first day of the league's week, from its
+    calendar, else the Monday. So on a Monday every armed league is due before any run of the
+    week, and the Monday recorder needs no step of its own;
+  - `roster_changed`: my players, or who is held (IL, IL+, NA), differ from the roster the
+    last run recorded, with the ids `added`, `dropped`, `held` and `returned` (a won claim, a
+    drop, a trade, an IL move);
+  - `il_moved`: a live IL move (#214) landed since the last run.
+
+  Each row also carries the team page of today, my roster as last read, the last run and the
+  live guard. Under STOP no league needs a run. A run is `POST
+  /seasons/{league}/autopilot/start-active` (`StartActiveRun`: `day`, `mode`, `trigger`, which
+  includes `routine_daily` for the 05:00 daily, `outcome` of `would_start`, `started`,
+  `already`, `skipped`, `failed` or `stopped`, `reason`, `reasons`, `today` and `rest_of_week`
+  as the dialog printed them, `message`, `roster`, `page`, `controls`, `extension`). It is
+  logged under `start_active` in the league's day file with the roster it ran on: the page's
+  when the run carries it, else my roster as last read. Only `started` and `already` (live) or
+  `would_start` (dry run) count as a run; a skip, a failure and a stop leave the league due.
+
+  The log refuses, as the moves pass does: the private league, STOP but for a stopped run, off,
+  a live run outside live or under a guard that refuses now, a crumb (422). It also refuses a
+  live `would_start`, and a dry `started` or `already`: a dry run presses nothing, not even the
+  main button, since that runs Today Only.
+
+  A moves pass's run goes to the open moves pass under `start_active`, by league, apart from
+  its claims and leaving the league not done; the 05:00 daily's goes to none. The Queue card
+  lists today's runs (`start_active_today`), the queue's payload carries each league's latest
+  (`start_active`) and its fold line says "Start Active: N started, …". The digest counts the
+  leagues it ran in and names a skip or a failure on its league's line.
 
 The moves executor (#171, ruled on the issue 2026-10-23) follows. Its API side (PR 1) is the queue
 in `season/autopilot.py` (pure) and `api/season_queue.py`; the claim is the extension's, on the add

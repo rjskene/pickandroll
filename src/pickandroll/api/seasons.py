@@ -46,7 +46,10 @@ Routes:
     /seasons/{league}/autopilot/moves``, ``GET …/moves/due``: the league's Queue card, its pass
     log under ``moves`` and the entries due for the extension, with the IL moves their open-spot
     claims need first (``il_first``, #214); ``POST /seasons/{league}/autopilot/il`` logs those
-    under ``il``; ``PUT /leagues/{league}/moves`` sets the mode and the user's cap.
+    under ``il``; ``PUT /leagues/{league}/moves`` sets the mode and the user's cap. ``GET
+    /autopilot/start-active/due`` and ``POST /seasons/{league}/autopilot/start-active``: the
+    leagues that want Yahoo's Start Active Players for the rest of the week and the runs' log
+    under ``start_active`` (#215).
 ``GET /seasons/{league}/decisions``
     The decision log (#125, ``season_decisions``): every moves and strategy solve of the days
     ``?from=``..``?to=`` (the last week by default) and my moves of those days from the
@@ -1015,6 +1018,16 @@ class SeasonService:
                 for e in out["entries"]
             ],
             "passes": season_autopilot.pass_tally(lines),
+            # Each league's latest Start Active run of the day (#215), read from its log.
+            "start_active": {
+                str(r["league"]): runs[-1]
+                for r in out["leagues"]
+                if (
+                    runs := season_autopilot.start_active_lines(
+                        self.data_dir, str(r["league"]), day
+                    )
+                )
+            },
             "names": self._queue_names(out["entries"]),
         }
 
@@ -1554,6 +1567,102 @@ class SeasonService:
             season_queue.update(self.data_dir, run.day, change)
         if run.entry is not None:
             self._attribute("moves", league, run.trigger, {run.entry: run.outcome}, key="il")
+        return record
+
+    # ------------------------------------------------------------------ Start Active (#215)
+    def _my_roster(self, league: str) -> tuple[Any, Season | None, dict[str, list[int]] | None]:
+        """The league's base, season and my roster as the need rule keeps it; the season and
+        roster None when the snapshot does not read or has no team of mine."""
+        base, _ = self._base(league)
+        try:
+            season = Season.from_parts(base, load_parts(self.data_dir, league))
+        except Exception:  # noqa: BLE001 - no read: the need rule goes on the runs alone
+            return base, None, None
+        spots = season.rosters.get(base.my_team_id) if base.my_team_id is not None else None
+        return base, season, season_autopilot.roster_record(spots) if spots else None
+
+    def start_active_due(self) -> dict[str, Any]:
+        """The armed public leagues and whether each wants Yahoo's Start Active Players for the
+        rest of the week (#215): ``season_autopilot.start_active_need`` on the moves mode, the
+        week's first day from the league's calendar (else the Monday) and my roster as last read,
+        with the team page of today to open and the live guard. On a Monday every armed league's
+        last run is last week's, so it says ``week_start`` before any run of the week. Under STOP
+        none needs a run. Nothing here opens a page."""
+        now = self.clock()
+        today = nba_today(now)
+        stop = season_autopilot.stopped(self.data_dir)
+        rows = []
+        for league, mode in self._modes(leagues.MOVES).items():
+            if mode.get("private") or mode["mode"] == "off":
+                continue
+            row: dict[str, Any] = {"league": league, "mode": mode["mode"]}
+            try:
+                base, season, roster = self._my_roster(league)
+            except HTTPException as exc:
+                rows.append({**row, "need": False, "reasons": [], "error": str(exc.detail)})
+                continue
+            week = season.calendar.week_of(today) if season and season.calendar else None
+            start = week.start if week is not None else today - timedelta(days=today.weekday())
+            need = season_autopilot.start_active_need(self.data_dir, league, mode, start, roster)
+            if stop:
+                need = {**need, "need": False}
+            team = base.my_team_id
+            rows.append(
+                {
+                    **row,
+                    **need,
+                    "team": team,
+                    "week": {"start": start.isoformat(), "end": week.end.isoformat()}
+                    if week is not None
+                    else {"start": start.isoformat(), "end": None},
+                    "roster": roster,
+                    "page": public.team_url(league, team, today) if team is not None else None,
+                    "live": season_autopilot.moves_live_check(self.data_dir, league, mode),
+                }
+            )
+        return {
+            "date": today.isoformat(),
+            "stop": stop,
+            "reason": "STOP is on (data/autopilot/STOP)" if stop else None,
+            "leagues": rows,
+            "at": now.isoformat(),
+        }
+
+    def log_start_active_run(
+        self, league: str, run: season_autopilot.StartActiveRun
+    ) -> dict[str, Any]:
+        """Log a Start Active run the extension made (or would make) on the team page (#215),
+        under ``start_active`` in the league's day file, with the roster it ran on: the page's
+        when the run carries it, else my roster as last read. Refused (409) when the mode, STOP or
+        the live guard says it should not have run. A routine's moves-pass run goes to the open moves
+        pass, by league."""
+        _, _, roster = self._my_roster(league)
+        mode = leagues.executor_mode(self.data_dir, league, leagues.MOVES)
+        live = (
+            season_autopilot.moves_live_check(self.data_dir, league, mode)
+            if run.mode == "live"
+            else None
+        )
+        why = season_autopilot.check_start_active_run(
+            run, mode, season_autopilot.stopped(self.data_dir), live
+        )
+        if why is not None:
+            raise HTTPException(409, why)
+        now = self.clock()
+        record = {
+            "at": now.isoformat(timespec="seconds"),
+            **run.model_dump(mode="json"),
+            "roster": run.roster if run.roster is not None else roster,
+        }
+        try:
+            season_autopilot.append_run(
+                self.data_dir, league, record, nba_today(now), season_autopilot.START_ACTIVE
+            )
+        except season_autopilot.LogError as exc:
+            raise HTTPException(409, str(exc)) from exc
+        # The 05:00 daily opens no moves pass: its runs are logged and go to none.
+        if run.trigger != "routine_daily":
+            self._attribute("moves", league, run.trigger, {league: run.outcome}, key="start_active")
         return record
 
     # ------------------------------------------------------------------ the pass record (#201)
@@ -2915,6 +3024,24 @@ def register(
         except ValidationError as exc:
             raise HTTPException(422, exc.errors(include_url=False, include_context=False)) from exc
         return service.log_il_run(league, run)
+
+    @app.get("/autopilot/start-active/due")
+    def get_start_active_due() -> dict[str, Any]:
+        """The armed public leagues that want Yahoo's Start Active Players for the rest of the
+        week, and why (#215); nothing here presses anything."""
+        return service.start_active_due()
+
+    @app.post("/seasons/{league}/autopilot/start-active")
+    def post_start_active_run(body: dict[str, Any], league: str = league_id) -> dict[str, Any]:
+        """A Start Active run on the team page, for the league's log (#215). The page's crumb is
+        never posted here: a run carrying one is refused."""
+        if season_autopilot.has_crumb(body):
+            raise HTTPException(422, "a run never carries the page's crumb")
+        try:
+            run = season_autopilot.StartActiveRun.model_validate(body)
+        except ValidationError as exc:
+            raise HTTPException(422, exc.errors(include_url=False, include_context=False)) from exc
+        return service.log_start_active_run(league, run)
 
     @app.put("/leagues/{league}/moves")
     def put_moves_mode(body: MovesMode, league: str = league_id) -> dict[str, Any]:
