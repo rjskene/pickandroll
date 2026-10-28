@@ -136,7 +136,7 @@ dry run: it reads the page's lineup form and logs what it would set, and it sets
 
 The live click, the form's submit, is a later build after the dry-run week (#170, PR 3).
 
-## The moves executor (0.7.0 dry run, 0.8.0 live claim, #171; 0.8.1 open spots, #199; 0.8.2 Yahoo's claim step)
+## The moves executor (0.7.0 dry run, 0.8.0 live claim, #171; 0.8.1 open spots, #199; 0.8.2 Yahoo's claim step; 0.9.2 the open-spot submit, #214)
 
 On Yahoo's add page (`/nba/<id>/addplayer?apid=<player>`) the extension is also the moves executor's execute
 pass (docs/AUTOPILOT.md section 2). In a dry run, on the add page of a queued move that is due, it reads the
@@ -211,11 +211,18 @@ that passes every check above is placed, on a page opened with a moves fragment 
 4. A submit whose answer was never read (the tab closed, a page the reader missed) is logged the same way by the
    next pass in the league, before anything else. The record is dropped only once the API has the pass.
 
-Held back in live: free-agent adds (the "Add Player" page) and open-spot claims. Since 0.8.1 an open spot is read
-in live as in a dry run but never submitted ("open spot, read only: …"); nothing on the page is touched until
-Yahoo's open-spot page has been seen. A live skip stays due,
-so the late pass reads the page again. The panel's links read "claim: …" in a live league whose guard holds:
-opening one places the claim. An entry with no drop reads "open spot" and never "claim". The first live claim is the user's own switch on the dashboard.
+Held back in live: free-agent adds (the "Add Player" page), and an open spot whose page does not say, in Yahoo's
+words, "You currently have N empty spot(s) on your roster" ("open spot, read only: the page does not say it has an
+empty spot"; nothing on the page touched). Since 0.9.2 (#214) an open spot whose page says so is submitted as step
+0b read Yahoo's page on 2026-10-27: no drop box ticked, the one bid field typed and read back, the stage 2 and the
+add's `apid` read back, then Yahoo's one visible "Add … now, don't drop anyone" button (`input.button-no-drop`,
+named `submit_add_drop`) clicked once. That click is the submit: Yahoo's script submits the form and the page
+lands on my team page with the claim among the pending transactions; there is no confirm page. The landed page
+reads the claim by its id (`<team>_<add>_0`) and its bid from the pending line ("Bid $N for …", no "Bid $" at $0);
+a claim placed at another bid than the queue's is logged `claimed` with "placed at $N, the queue's $M: edit the
+bid in Yahoo's pending claims" and never submitted again. A live skip stays due, so the late pass reads the page
+again. The panel's links read "claim: …" in a live league whose guard holds: opening one places the claim. The
+first live claim is the user's own switch on the dashboard.
 
 ## Start Active Players (0.9.0, #215)
 
@@ -249,7 +256,7 @@ no IL control. The routine (or the side panel's due list) opens the player's tea
   changes saved"). Never made twice for an entry in a day, never retried after a failure; the hidden Save
   button and selects are never touched.
 - After the run (not a stop) the tab goes on to the claim's add page with the moves fragment, which reads the
-  page again: an open spot there is the open-spot claim (read only until its submit ships); a full roster
+  page again: an open spot there is the open-spot claim (submitted since 0.9.2); a full roster
   after a move dated tomorrow logs "move dated <day>, claim waits".
 
 Every run goes to `POST /seasons/{league}/autopilot/il` (docs/AUTOPILOT.md §2).
@@ -269,7 +276,7 @@ Every run goes to `POST /seasons/{league}/autopilot/il` (docs/AUTOPILOT.md §2).
 - **Lineup executor (0.6.0):** on your team page, the lineup form's action, field names, players' slots and
   options, and the run's outcome, to the same API. The form's crumb is never read; no field is set and the form
   is never submitted.
-- **Moves executor (0.7.0, live 0.8.0, open spots read 0.8.1, claim step 0.8.2):** on an add page opened from the routine's or the panel's link, the claim form's
+- **Moves executor (0.7.0, live 0.8.0, open spots read 0.8.1, claim step 0.8.2, open-spot submit 0.9.2):** on an add page opened from the routine's or the panel's link, the claim form's
   action and field names, what the page shows (the heading, the budget, the waiver date, the bid range, my
   roster's player ids and their icons) and the pass's outcome, to the same API. Nothing is fetched from Yahoo;
   the form's crumb is never read (the log's `token` says only whether it is there). In a dry run nothing is

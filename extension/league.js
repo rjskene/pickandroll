@@ -293,7 +293,7 @@
     const errors = texts(".error, .Error, .F-negative, [class*='Alert-error'], [class*='alert-error']");
     const shown = Boolean(document.querySelector(`[data-ys-playerid="${line.add}"]`));
     const chrome = (h) => typeof h.closest === "function" && Boolean(h.closest("header, nav, [role=navigation], #ybar"));
-    const id = new RegExp(`[?&]claim_id=\\d+_${line.add}_${line.drop == null ? "\\d*" : line.drop}(?:&|$)`);
+    const id = new RegExp(`[?&]claim_id=\\d+_${line.add}_${line.drop == null ? 0 : line.drop}(?:&|$)`);
     return {
       path: location.pathname + location.search,
       heading: [...document.querySelectorAll("h1, h2, h3")].filter((h) => !chrome(h)).map(textOf).find((x) => x && !/^yahoo/i.test(x)) || null,
@@ -302,6 +302,15 @@
       errors,
       pending: shown && /pending/i.test(textOf(document.body)),
       claim: [...document.querySelectorAll('a[href*="viewwaiver"]')].some((a) => id.test(a.getAttribute("href") || "")),
+      // The claim's bid on its pending line, the link's own text (#214): "Waiver 1 (Oct 29): Bid $1
+      // for …", no "Bid $" when it is $0; null when the link is not there or not in those words.
+      bid: (() => {
+        const link = [...document.querySelectorAll('a[href*="viewwaiver"]')].find((a) => id.test(a.getAttribute("href") || ""));
+        const text = link ? textOf(link) : "";
+        if (!/^Waiver \d+ \(/.test(text)) return null;
+        const m = /\bBid \$(\d+)/.exec(text);
+        return m ? Number(m[1]) : 0;
+      })(),
     };
   }
 
@@ -313,7 +322,7 @@
     if (!r || !r.ok || !r.data) return null;
     const record = r.data;
     const raw = landedControls(record.line);
-    const run = PR.landedPass(record, PR.readLanded(raw), { path: raw.path, heading: raw.heading }, extensionVersion());
+    const run = PR.landedPass(record, PR.readLanded(raw), { path: raw.path, heading: raw.heading, bid: raw.bid }, extensionVersion());
     const logged = await send({ op: "moves_log", league, run });
     if (!logged || !logged.ok) {
       movesStrip(`claim submitted, not logged: ${(logged && logged.error) || "no answer from the extension"}`);
@@ -398,7 +407,7 @@
           const kept = await send({ op: "moves_submitting", league, record });
           const placed = kept && kept.ok ? await PR.fillClaim(document, entry) : { outcome: "skipped", reason: "the submit could not be put on record" };
           if (placed === null) {
-            movesStrip(`live · claim submitted for $${line.bid}, dropping ${line.drop}: reading Yahoo's answer…`);
+            movesStrip(`live · claim submitted for $${line.bid}, ${PR.dropWords(line.drop)}: reading Yahoo's answer…`);
             return null;
           }
           check = placed;
