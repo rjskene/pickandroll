@@ -138,6 +138,14 @@ def test_the_keep_rule_runs_its_three_tests_on_held_players_apart():
     assert not mv.keep_rule(churn_league("OFS", {7: 3.0})).held[7].protected
 
 
+def test_a_held_player_on_yahoos_cant_cut_list_is_never_a_churns_drop():
+    p = churn_league(cantcut=frozenset({7}))
+    rule = mv.keep_rule(p)
+    assert rule.held[7].cantcut and rule.held[7].protected and 7 in rule.kept
+    assert 7 not in mv.drop_options(replace(p, kept=rule.kept))
+    assert "can't-cut" in season_queue.protected_of(rule)[7]
+
+
 # --------------------------------------------------------------------------- ties go to the season
 def test_a_churn_that_ties_the_plain_swap_on_the_horizon_is_decided_by_the_season():
     # Both out past every horizon: dropping either for the holder is worth the same on both.
