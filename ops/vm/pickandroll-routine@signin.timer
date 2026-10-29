@@ -1,0 +1,14 @@
+# The signin routine's timer: 04:50 every day, the sign-in check, on the Central clock whatever the host's zone. Persistent: a run
+# missed while the host was down starts at boot, and the routine itself refuses when its window
+# has passed.
+[Unit]
+Description=pickandroll signin routine (04:50 every day, the sign-in check Central)
+
+[Timer]
+OnCalendar=*-*-* 04:50:00 America/Chicago
+AccuracySec=15s
+Persistent=true
+Unit=pickandroll-routine@signin.service
+
+[Install]
+WantedBy=timers.target

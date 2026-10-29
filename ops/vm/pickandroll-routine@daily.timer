@@ -1,0 +1,14 @@
+# The daily routine's timer: 05:00 every day, on the Central clock whatever the host's zone. Persistent: a run
+# missed while the host was down starts at boot, and the routine itself refuses when its window
+# has passed.
+[Unit]
+Description=pickandroll daily routine (05:00 every day Central)
+
+[Timer]
+OnCalendar=*-*-* 05:00:00 America/Chicago
+AccuracySec=15s
+Persistent=true
+Unit=pickandroll-routine@daily.service
+
+[Install]
+WantedBy=timers.target

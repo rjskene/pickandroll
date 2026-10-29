@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- The Mac's nightly copy of the routine host's data/ at 03:30 (launchd runs a missed time
+     after sleep): ops/mac/rsync-from-droplet.sh, which does nothing until
+     ~/.config/pickandroll/rsync.env exists (written at cut-over). __HOME__ is replaced by
+     the install line in ops/mac/README.md. -->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.pickandroll.rsync</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>__HOME__/code/pickandroll/ops/mac/rsync-from-droplet.sh</string>
+  </array>
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key>
+    <integer>3</integer>
+    <key>Minute</key>
+    <integer>30</integer>
+  </dict>
+  <key>StandardOutPath</key>
+  <string>/tmp/com.pickandroll.rsync.log</string>
+  <key>StandardErrorPath</key>
+  <string>/tmp/com.pickandroll.rsync.log</string>
+</dict>
+</plist>

@@ -1,0 +1,12 @@
+# 06:45 Central, after the daily's window (05:00 to 06:20).
+[Unit]
+Description=pickandroll watchdog (06:45 Central)
+
+[Timer]
+OnCalendar=*-*-* 06:45:00 America/Chicago
+AccuracySec=15s
+Persistent=true
+Unit=pickandroll-watchdog.service
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,22 @@
+# The pickandroll API on the routine host: uvicorn on 127.0.0.1:8000, always up, on the Central
+# clock. The solver pool's workers live in the service's cgroup, so a stop or restart takes them
+# with the listener (the orphan lesson of 2026-10-29). Installed into ~/.config/systemd/user by
+# ops/vm/install.sh; the runbook is docs/OPS.md.
+[Unit]
+Description=pickandroll API (uvicorn on 127.0.0.1:8000)
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+WorkingDirectory=%h/pickandroll
+Environment=TZ=America/Chicago
+Environment=PYTHONUNBUFFERED=1
+ExecStart=%h/pickandroll/.venv/bin/uvicorn pickandroll.api:app --host 127.0.0.1 --port 8000 --timeout-graceful-shutdown 3
+Restart=always
+RestartSec=5
+TimeoutStopSec=15
+KillMode=control-group
+OOMScoreAdjust=-500
+
+[Install]
+WantedBy=default.target
