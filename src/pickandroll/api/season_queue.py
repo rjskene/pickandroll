@@ -340,10 +340,9 @@ def scored_differences(
         if not p.get("public") or kind is None:
             continue
         for card in p.get("weeks") or []:
-            for row in card.get("moves") or []:
-                pair = season_scorecard.compared_move(row)
-                if pair is not None:
-                    out.setdefault(kind, []).append(round(pair[2] - pair[1], 4))
+            # A week plan's steps are one decision (#221 part 2): one difference, not one a step.
+            for _, projected, realized in season_scorecard.compared_units(card.get("moves") or []):
+                out.setdefault(kind, []).append(round(realized - projected, 4))
     return out
 
 

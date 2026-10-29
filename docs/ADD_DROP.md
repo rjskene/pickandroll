@@ -623,7 +623,8 @@ docs/AUTOPILOT.md section 2, the bid in section 5.
   `adds`, less the claims placed and not processed.
 - **The scored floor's spread** pools the public leagues' scorecard rows of group `scored` whose
   judging horizon is complete (`season_scorecard.compared_move`, the rows the Monday summary
-  compares), by scoring, and never the private league.
+  compares; a week plan's steps one difference, `compared_units`, #221), by scoring, and never
+  the private league.
 - **The typical gain** is the median of the armed leagues' three weeks' moves over the last 14
   days (each day's last moves entry), by scoring.
 - **The dry-run pass (PR 2, extension 0.7.0).** The routine opens each due entry's add page with
@@ -934,6 +935,50 @@ cannot say "add A now, drop A for B on Thursday"; the plan can.
   re-solved every morning.
 - **Out of scope.** FAAB bids on a stream's claims (section 5 of docs/AUTOPILOT.md applies
   unchanged), plans across weeks, the executor's clicks.
+
+## Week plans (#221 part 2)
+
+The streaming plan turns over a weak spot; a week plan orders the week's moves of every kind
+(user ruling on #221, 2026-10-29: current week only, beam 8, the step's seconds in the payload).
+`season/plans.py` (pure) and `season_moves.week_plans_payload`.
+
+- **A plan** is at most four dated moves (`PLAN_STEPS`) inside this week: each step a
+  `moves.Move` with its day, its drop on the roster, held, or an earlier step's add, at most the
+  daily cap a day, and `moves.feasible` on the whole (room, the churn rule, the weekly adds). A
+  churn is a step like any other.
+- **The pool** is blocks: the week's twelve best single moves (`SINGLES`, each with its two best
+  drops, `DROPS`) from the week's `single_swaps`, each a block of one, and each stream spot's
+  chain from the streaming plan, whole, so a step that drops an earlier step's add never comes
+  without it.
+- **The search** is a beam over the blocks, eight wide (`BEAM`), by a cheap score (each block's
+  own week gain); the eight best (`EXACT`) are valued exactly with the Moves card's evaluator.
+  Every searched plan passes the season guard. A heuristic: "recommended", never "optimal".
+- **The steps' increments.** A step's gain on each horizon is the plan up to it less the plan
+  before it, so the increments telescope to the plan's total.
+- **The roster's own changes** inside the week are zero-choice steps on their day (`backs`): a
+  cleared player's activation, a held move's comeback, a held player's return (#221 part 1), each
+  with the drop it forces. A held return's `gain` is the plan with him back less the plan with
+  him held past the horizons; shown, never summed in the total (null for the others).
+- **Plan 1** is the recommended week set unless a searched plan beats its week by the plan floor
+  (`stream.floor_of`); the others by their week, five at most (`WEEK_PLANS`), distinct by moves
+  and days.
+- **The queue's plan.** The plan worth most on the three weeks after among those that beat the
+  three weeks' set there by the plan floor (`plans.for_queue`; the queue's judging horizon, so a
+  plan never takes the queue on its week alone); none when none does. The decision log keeps it as
+  one more set, `week_plan`, its steps by day, each with its increment as `gain`, its `after` (the
+  steps before it) and `plan` (the plan's id, `<entry id>:week_plan`, its day, its step and
+  steps); the queue then takes its steps instead of the three weeks' set (docs/AUTOPILOT.md
+  section 2, "The week plan"). The plan is the unit for the floor and the season guard, and the
+  scorecard judges its steps made as one decision (`season_scorecard.compared_units`: their
+  projected and realized values summed on the three weeks after), in the Monday summary and in
+  the noise floor's spread.
+- **Output.** The moves payload's `week_plans`: `plans` (each with `source`, `set` or `search`;
+  `steps` with `add`, `drop`, `from`, `held`, `held_drop`, `basis`, `gain` on both horizons,
+  `ros` and `after`; `backs`; `total`; `ros`), `queue` (an index, null for none), `floor`,
+  `limits` and `seconds`; null with no day left in the week. `search.seconds` beside it times the
+  whole moves solve. Every moves entry of the decision log carries `week_plans`: each plan's
+  source, moves, total and rest of the season, the queue's index, the floor and the seconds.
+- **Out of scope.** Plans across weeks; the Moves card's section is part 2b.
 
 ## The breakout flag
 

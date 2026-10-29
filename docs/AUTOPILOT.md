@@ -186,13 +186,31 @@ page, from PR 2:
   move flagged season-costly; an add the league dropped within the waiver days (or one the set
   drops); below the noise floor; no adds left in the week of its clear date; over the day's cap.
   The rest are queued by their gain
-  on the three weeks after, highest first. The streaming plan stays a dashboard suggestion.
+  on the three weeks after, highest first (a week plan's steps instead, below). The streaming
+  plan stays a dashboard suggestion.
   `data/autopilot/queue/<date>.json` holds the day; nothing else writes it. Each entry carries its
   move's `basis` (`open`, `held`, `drop` or `churn`) and `held_move`, the held-slot move a `held`
   add or a churn needs (#187; null when the decision log entry was written before #187), and a
   churn's `held_drop`, the held player it drops and his slot (#221). The live claim (PR 3) reads
   them: a `held` add executes after its held move (its page then shows an open spot, #199), never
   before it as an open-spot claim.
+- **The week plan (#221 part 2, ruled 2026-10-29).** When the day's solve logged a week plan for
+  the queue (the set `week_plan`, docs/ADD_DROP.md "Week plans": a plan that beats the three weeks'
+  set on the three weeks after by the plan floor and passed the season guard on its total), the
+  build takes its steps instead of the three weeks' set, in the plan's order, each entry with the
+  set `week_plan`, the plan (`plan`: its id, day, step and steps) and the ids of the steps before
+  it (`after`). The plan is the unit for the floor and the season guard: no step is held below the
+  floor or as season-costly on its own. Only today's executable steps are queued (a free agent
+  dated today, a claim dated at the day it clears when placed today); a later step's reason is
+  "a later step of the week plan: queued at its day's build", and the build of its day re-derives
+  it from that day's solve, never carrying it over. A step after one that is not queued (a churn,
+  a protected drop, a later step) is "an earlier step of the week plan is not queued". The due
+  route holds a queued step until every step before it has landed (added, a claim won, or in a
+  dry run a free agent it would claim): its `held` list gives each with `waits` ("waits for step N
+  to land", that step's entry and add), the Queue route's entries carry the same `waits`, and a
+  moves pass's done writes the steps it left held in the pass record (`held`, by entry). A step
+  whose earlier step failed or was lost is held all day, never executed out of order, and the
+  day's cap counts only what executed. A churn step stays read-only (`CHURN_HELD`).
 - **The noise floor.** The plan floor of the knobs against the move's gain; once 20 moves are
   scored, also the scorecard's spread (the standard deviation of realized less projected value of
   the public leagues' scored moves, by scoring) against the move's value on its judging horizon,

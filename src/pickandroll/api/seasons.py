@@ -1008,6 +1008,7 @@ class SeasonService:
             ).items()
         }
         passes = self._passes(day)
+        by_id = {e["id"]: e for e in out["entries"]}
         return {
             **out,
             # The routine's pass while it runs, and the day's last one closed (#201).
@@ -1016,8 +1017,14 @@ class SeasonService:
             # The modes now (#205): a switch after the build shows on the next read.
             "leagues": [self._row_now(r) for r in out["leagues"]],
             # The day's pass results (#200), read from the leagues' logs: never stored on the queue.
+            # A week plan's step (#221 part 2) with what it waits for, None for nothing.
             "entries": [
-                {**e, "pass": latest.get(str(e["id"])), "il_pass": il.get(str(e["id"]))}
+                {
+                    **e,
+                    "pass": latest.get(str(e["id"])),
+                    "il_pass": il.get(str(e["id"])),
+                    "waits": qa.waits(e, by_id),
+                }
                 for e in out["entries"]
             ],
             "passes": season_autopilot.pass_tally(lines),
@@ -1301,7 +1308,10 @@ class SeasonService:
             body = season_queue.read(self.data_dir, today) or {}
         except season_queue.QueueError:
             body = {}
-        entries = [e for e in body.get("entries") or [] if e.get("league") == league]
+        mine = [e for e in body.get("entries") or [] if e.get("league") == league]
+        # A week plan's step with what it waits for (#221 part 2), as the Queue route reads it.
+        by_id = {e["id"]: e for e in mine}
+        entries = [{**e, "waits": qa.waits(e, by_id)} for e in mine]
         row = next((r for r in body.get("leagues") or [] if r["league"] == league), None)
         return {
             **season_autopilot.moves_view(self.data_dir, league, mode, today, entries),
@@ -1341,6 +1351,7 @@ class SeasonService:
             "adds_left": [],
             "budget": None,
             "il_first": [],
+            "held": [],
             "live": season_autopilot.moves_live_check(self.data_dir, league, mode),
             "at": now.isoformat(),
         }
@@ -1398,10 +1409,13 @@ class SeasonService:
             else row.get("adds_left") or []
         )
         blocked = row.get("cap") is not None and len(done) >= row["cap"]
+        held = qa.held(mine, now)
         return {
             **out,
-            "reason": None if due else "nothing due now",
+            "reason": None if due else (held[0]["waits"]["text"] if held else "nothing due now"),
             "entries": due,
+            # A week plan's steps whose window is over, held on an earlier step (#221 part 2).
+            "held": held,
             "next": later[0].isoformat() if later else None,
             "protected": protected,
             "pending": pending,
@@ -1725,12 +1739,37 @@ class SeasonService:
         return season_passes.view(p)
 
     def pass_done(self, pass_id: str, body: PassDone) -> dict[str, Any]:
-        """The routine's end of its pass."""
+        """The routine's end of its pass, with the week plan's steps of its leagues it leaves
+        held on an earlier step (#221 part 2), read from the day's queue."""
+        now = self.clock()
         try:
-            p = season_passes.done(self.data_dir, pass_id, self.clock(), body.summary)
+            held = self._held_of(pass_id, now)
+            p = season_passes.done(self.data_dir, pass_id, now, body.summary, held)
         except season_passes.PassError as exc:
             raise HTTPException(exc.status, str(exc)) from exc
         return season_passes.view(p)
+
+    def _held_of(self, pass_id: str, now: datetime) -> dict[str, dict[str, Any]]:
+        """The day's queued entries of the pass's leagues (those it named, if any) that
+        ``autopilot.held`` holds now, by id; none when the queue does not read."""
+        day = season_passes.day_of(pass_id)
+        p = next((x for x in self._passes(day) if x["id"] == pass_id), None)
+        if p is None or p["kind"] != "moves":
+            return {}
+        try:
+            body = season_queue.read(self.data_dir, day)
+        except season_queue.QueueError:
+            LOG.warning("the queue of %s does not read: the pass records no holds", day)
+            return {}
+        if body is None:
+            return {}
+        named = p.get("entries")
+        mine = [e for e in body.get("entries") or [] if str(e.get("league")) in p["leagues"]]
+        return {
+            h["id"]: {"add": h["add"], **h["waits"]}
+            for h in qa.held(mine, now)
+            if named is None or h["id"] in named
+        }
 
     def _passes(self, day: date) -> list[dict[str, Any]]:
         """The day's passes as they read now; none when the record does not read (the queue

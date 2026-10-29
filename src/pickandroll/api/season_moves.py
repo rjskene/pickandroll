@@ -22,6 +22,12 @@ The streaming plan (#136, ``season.stream``) turns the weakest spots over inside
 dated sequence of adds and drops the payload shows beside the week's recommended set, and
 recommends only when its week beats the set's by the planner's floor.
 
+The week plans (#221 part 2, ``season.plans``) are a few dated sequences of at most four moves
+over the rest of this week, each step with what it adds to the plan before it on both horizons
+and the roster's own changes on their day (``week_plans``): plan 1 the week set unless a plan
+beats it by the plan floor; ``queue`` names the plan the queue takes instead of the three weeks'
+set, when one beats it there by the floor. Their search's seconds sit beside the solve's.
+
 The season guard (#164, ``season.moves.season_guard``) holds every recommended set, its re-solves
 and the plan to a rest of the season of zero or more, on the log's own figure for each move
 (:func:`ros_of`). When the search without it finds a set that beats the guarded one on the
@@ -38,6 +44,7 @@ drop re-solves to a set worth the same on the horizon.
 from __future__ import annotations
 
 import threading
+import time
 from collections import Counter
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
@@ -50,6 +57,7 @@ import pandas as pd
 from ..season import Player, Season
 from ..season import decisions as dl
 from ..season import moves as mv
+from ..season import plans as pl
 from ..season import progress as pg
 from ..season import stream as st
 from ..season import weekly as wk
@@ -564,7 +572,7 @@ def held_back(
     }
 
 
-def _comebacks(cs: list[mv.Comeback] | tuple[mv.Comeback, ...]) -> list[dict[str, Any]]:
+def comebacks_rows(cs: list[mv.Comeback] | tuple[mv.Comeback, ...]) -> list[dict[str, Any]]:
     return [
         {"player": c.player, "slot": c.slot, "from": c.day.isoformat(), "drop": c.drop} for c in cs
     ]
@@ -770,7 +778,8 @@ def churn_of(recommended: Mapping[str, Any] | None, player: int) -> dict[str, An
 def moves_payload(built: Built) -> dict[str, Any]:
     """The table's gains for every candidate and the recommended set on each horizon, and first
     the held players whose cleared status blocks every add and the room a no-drop add has; the
-    keep rule and the IL advice."""
+    keep rule and the IL advice; the streaming plan and the week plans; the solve's seconds."""
+    began = time.perf_counter()
     p = built.problem
     ev = mv.Evaluator(p)
     swaps = {key: mv.single_swaps(ev, key) for key in HORIZONS}
@@ -843,7 +852,7 @@ def moves_payload(built: Built) -> dict[str, Any]:
             "gain": {h: _r(v) for h, v in rec.gain.items()},
             "ros": ros_total([r["ros"] for r in rows]),
             "held": [{"player": k, "slot": slot} for k, slot in rec.held],
-            "comebacks": {h: _comebacks(cs) for h, cs in rec.comebacks.items()},
+            "comebacks": {h: comebacks_rows(cs) for h, cs in rec.comebacks.items()},
             "season_guard": held_back(built, ev, key, sets[key], ros, free),
         }
     return {
@@ -857,8 +866,15 @@ def moves_payload(built: Built) -> dict[str, Any]:
         "candidates": candidates,
         "recommended": recommended,
         "plan": plan_payload(built, ev, sets["week"], recommended["week"]["moves"], guard),
+        "week_plans": week_plans_payload(
+            built, ev, sets["week"], sets["three"], swaps["week"], guard
+        ),
         "unprojected": built.unprojected,
-        "search": {"pool": POOL, "min_gain": MIN_GAIN},
+        "search": {
+            "pool": POOL,
+            "min_gain": MIN_GAIN,
+            "seconds": round(time.perf_counter() - began, 3),
+        },
     }
 
 
@@ -946,7 +962,7 @@ def plan_payload(
             "plan": _started(ev, list(plan.moves)),
         },
         "held": [{"player": k, "slot": slot} for k, slot in mv.held_used(p, list(plan.moves))],
-        "comebacks": {h: _comebacks(mv.comebacks(p, h, plan.moves)) for h in p.horizons},
+        "comebacks": {h: comebacks_rows(mv.comebacks(p, h, plan.moves)) for h in p.horizons},
         "adds": {"set": len(plan.against), "plan": len(plan.moves)},
         "value": {name: {h: _r(v) for h, v in vs.items()} for name, vs in value.items()},
         "gain": {h: _r(value["plan"][h] - value["set"][h]) for h in HORIZONS},
@@ -959,6 +975,82 @@ def plan_payload(
         "floor": floor,
         "reason": reason,
         "guard": guard,
+    }
+
+
+def week_plans_payload(
+    built: Built,
+    ev: mv.Evaluator,
+    week_set: list[mv.Move],
+    three_set: list[mv.Move],
+    swaps: dict[int, list[mv.SwapGain]],
+    allowed: mv.Allowed | None = None,
+) -> dict[str, Any] | None:
+    """The week plans (#221 part 2, ``season.plans``): each plan's steps by day, each with its
+    basis, its held moves, what it adds to the plan before it on both horizons, its rest of the
+    season and the earlier steps it waits on (``after``, the ruling's condition: every earlier
+    step), the roster's own changes on their day, the plan's total and its rest of the season;
+    the plan the queue takes instead of the three weeks' set (``queue``, an index, None for
+    none), the floor, the search's limits and its seconds. None with no day left in the week."""
+    p = built.problem
+    if not p.horizons["week"][0].days:
+        return None
+    began = time.perf_counter()
+    stream = None
+    if built.rule is not None and built.scorer is not None:
+        per_game = {k: wk.net_value(built.scorer, r) for k, r in p.rates.items()}
+        stream = st.plan(ev, built.rule, week_set, per_game, allowed=allowed)
+    plans = pl.week_plans(ev, week_set, swaps, stream, allowed, pl.held_out(ev))
+    chosen = pl.for_queue(ev, plans, three_set)
+    seconds = time.perf_counter() - began
+    return {
+        "plans": [_week_plan(built, w) for w in plans],
+        "queue": None if chosen is None else plans.index(chosen),
+        "floor": st.floor_of(p),
+        "limits": {
+            "plans": pl.WEEK_PLANS,
+            "steps": pl.PLAN_STEPS,
+            "beam": pl.BEAM,
+            "exact": pl.EXACT,
+        },
+        "seconds": round(seconds, 3),
+    }
+
+
+def _week_plan(built: Built, w: pl.WeekPlan) -> dict[str, Any]:
+    p = built.problem
+    held = held_by_add(p, list(w.moves))
+    steps = []
+    for i, s in enumerate(w.steps):
+        h = held.get(s.move.add) if mv.needs_spot(p, s.move) else None
+        steps.append(
+            {
+                **_move(s.move, p),
+                "held": h,
+                "held_drop": held_drop(p, s.move),
+                "basis": basis(p, s.move, h),
+                "gain": {k: _r(v) for k, v in s.gain.items()},
+                "ros": ros_move(built, s.move),
+                "after": list(range(i)),
+            }
+        )
+    backs = [
+        {
+            "player": b.player,
+            "slot": b.slot,
+            "day": b.day.isoformat(),
+            "drop": b.drop,
+            "returning": b.returning,
+            "gain": None if b.gain is None else {k: _r(v) for k, v in b.gain.items()},
+        }
+        for b in w.backs
+    ]
+    return {
+        "source": w.source,
+        "steps": steps,
+        "backs": backs,
+        "total": {k: _r(v) for k, v in w.total.items()},
+        "ros": ros_total([r["ros"] for r in steps]),
     }
 
 
@@ -1082,7 +1174,7 @@ def detail_payload(built: Built, add: int, drop: int | None) -> dict[str, Any] |
             "after": _r(ev.value(key, move)),
             "gain": _r(ev.gain(key, move)),
             "cats": {"before": _cats(ev, key, []), "after": _cats(ev, key, move)},
-            "comebacks": _comebacks(mv.comebacks(p, key, move)),
+            "comebacks": comebacks_rows(mv.comebacks(p, key, move)),
         }
     # Every drop the add can come with, those the keep rule keeps too, marked: the drawer shows
     # what keeping them costs.
