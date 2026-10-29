@@ -12,7 +12,8 @@
 #              soak, the Mac still live
 #   --cutover  ROUTINE_FLAGS= (posts on), the timers enabled; the modes are the user's own
 #              clicks on the dashboard
-#   --stop     the timers disabled (the rollback's first step); the API and Xvfb stay up
+#   --stop     the timers disabled and nothing else touched (the rollback's first step: no
+#              pull, no restart); the API and Xvfb stay up
 # What stays the user's is printed at the end. The runbook is docs/OPS.md.
 set -euo pipefail
 
@@ -40,6 +41,15 @@ pickandroll-routine@signin.timer pickandroll-watchdog.timer"
 
 say() { printf '%s\n' "$*"; }
 
+# 0. --stop: the timers off, first and alone, so a rollback never waits on a pull or a restart
+if [ "$mode" = "stop" ]; then
+  # shellcheck disable=SC2086
+  systemctl --user disable -q --now $timers
+  say "timers: disabled; the API and Xvfb stay up, the checkout is untouched"
+  systemctl --user list-timers --all --no-pager 'pickandroll-*' | sed 's/^/  /'
+  exit 0
+fi
+
 # 1. the draft-room guard: no pull and no restart under a live room
 rooms=$(curl -s --max-time 5 "$api/rooms" 2>/dev/null || true)
 if [ -n "$rooms" ] && [ "$rooms" != "[]" ]; then
@@ -54,6 +64,11 @@ git -C "$repo" checkout -q "$branch"
 git -C "$repo" pull -q --ff-only origin "$branch"
 after=$(git -C "$repo" rev-parse HEAD)
 say "checkout: $branch at ${after:0:7}$([ "$before" = "$after" ] && echo ' (unchanged)' || echo " (was ${before:0:7})")"
+if [ ! -d "$repo/ops/vm" ] || [ ! -f "$repo/scripts/routine.py" ]; then
+  say "refused: $branch at ${after:0:7} has no ops/vm or no scripts/routine.py; the units were left as they were"
+  git -C "$repo" checkout -q - 2>/dev/null && say "checkout: back on $(git -C "$repo" rev-parse --abbrev-ref HEAD)"
+  exit 1
+fi
 
 # 3. the venv and the browser
 [ -x "$py" ] || python3 -m venv "$repo/.venv"
@@ -128,11 +143,6 @@ print(" ".join(str(s["league"]) for s in json.load(sys.stdin) if "league" in s))
     # shellcheck disable=SC2086
     systemctl --user enable -q --now $timers
     say "timers: enabled (cut-over); the leagues' switches are the user's own clicks on the dashboard"
-    ;;
-  stop)
-    # shellcheck disable=SC2086
-    systemctl --user disable -q --now $timers
-    say "timers: disabled; the API and Xvfb stay up"
     ;;
   "")
     say "timers: left as they are (install.sh --soak, --cutover or --stop changes them)"

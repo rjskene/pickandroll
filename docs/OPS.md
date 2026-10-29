@@ -134,7 +134,7 @@ is a follow-up for the user, not part of the move.
 
 ## 6. Rollback
 
-Any time, in this order: droplet `install.sh --stop`; Mac `launchctl unload` of both agents
+Any time, in this order: droplet `install.sh --stop` (the timers off, nothing else touched); Mac `launchctl unload` of both agents
 and `rsync.env` deleted (`ops/mac/README.md`); one last copy droplet to Mac by hand (`bash
 ops/mac/rsync-from-droplet.sh` before the env file goes, or the rsync line of §5 step 3 with
 the two hosts swapped); the Mac's API started again through `launch.json`; the master
