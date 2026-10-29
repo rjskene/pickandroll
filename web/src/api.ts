@@ -1219,7 +1219,9 @@ export type QueueReason =
   | "below the noise floor"
   | "no adds left this week"
   | "over the day's cap"
-  | "churn, read only: the executor has no standalone drop yet";
+  | "churn, read only: the executor has no standalone drop yet"
+  | "a later step of the week plan: queued at its day's build"
+  | "an earlier step of the week plan is not queued";
 
 /** An execute pass's outcome for one entry: ``gone`` when another team had the add first. */
 export type MoveOutcome = "would_claim" | "claimed" | "added" | "skipped" | "failed" | "gone";
@@ -1240,7 +1242,8 @@ export interface QueueEntry {
   date: string;
   league: string;
   scoring: "categories" | "points";
-  set: "three";
+  /** The three weeks' set, or the day's week plan in its place (#221 part 2). */
+  set: "three" | "week_plan";
   decision: string | null;
   add: number;
   drop: number | null;
@@ -1259,6 +1262,12 @@ export interface QueueEntry {
   held_move?: HeldMove | null;
   /** A churn's held drop and the slot he leaves (#221). */
   held_drop?: HeldMove | null;
+  /** A week plan's step (#221 part 2): its plan and the ids of the steps before it; null and empty
+   * for a move of the three weeks' set, absent from a server before it. */
+  plan?: QueuePlanStep | null;
+  after?: string[];
+  /** What a queued step waits for, read at request time: null when nothing. */
+  waits?: QueueWait | null;
   flag: FlagLevel | null;
   floor: QueueFloor & { below: "plan" | "scored" | null };
   bid: { amount: number; reason: string; base: number; factor: number; sizing: number; typical: number; typical_from: string };
@@ -1286,6 +1295,22 @@ export interface QueueEntry {
   /** The latest IL run naming the entry on the queue's day (#214), read from the league's log;
    * null before one, absent from a server before it. */
   il_pass?: QueueILPass | null;
+}
+
+/** A week plan's step on the queue (#221 part 2): the plan's id and day, the step and the steps. */
+export interface QueuePlanStep {
+  id: string;
+  day: string;
+  step: number;
+  steps: number;
+}
+
+/** The earlier step a week plan's step waits for: its entry, step and add, and the line. */
+export interface QueueWait {
+  entry: string;
+  step: number | null;
+  add: number | null;
+  text: string;
 }
 
 /** An entry's IL move as a pass last made (or would make) it (#214): the run's outcome and reason,
@@ -1446,6 +1471,9 @@ export interface RoutinePass {
   il?: Record<"would_move" | "moved" | "skipped" | "failed", number> | null;
   /** Its Start Active runs by outcome, each league by its latest run (#215). */
   start_active?: Record<"would_start" | "started" | "already" | "skipped" | "failed", number> | null;
+  /** The week plan's steps a moves pass left held on an earlier step, by entry (#221 part 2): null
+   * before it is done, absent from a server before it. */
+  held?: Record<string, QueueWait & { add: number }> | null;
   summary: string | null;
 }
 
@@ -1772,9 +1800,54 @@ export interface MovesPayload {
   recommended: Record<MoveHorizon, RecommendedSet>;
   /** The week's streaming plan (#136); null without a stream spot. */
   plan?: StreamPlan | null;
+  /** The week plans (#221 part 2); null with no day left in the week, absent before. */
+  week_plans?: WeekPlans | null;
   /** Available players without a line in the system (no move valued). */
   unprojected: number;
-  search: { pool: number; min_gain: number };
+  /** ``seconds``: the whole solve's (#221 part 2), absent before. */
+  search: { pool: number; min_gain: number; seconds?: number };
+}
+
+/** A week plan's step (#221 part 2): a dated move, its basis and held moves, what it adds to the
+ * plan before it on each horizon, its rest of the season and the steps before it. */
+export interface WeekPlanStep extends MoveRef {
+  held: HeldMove | null;
+  held_drop: HeldMove | null;
+  basis: AddBasis;
+  gain: Record<MoveHorizon, number>;
+  ros: MoveRos | null;
+  after: number[];
+}
+
+/** The roster's own change inside the week, a step with no choice: a cleared player's activation,
+ * a held move's comeback or a held player's return, with the drop it forces; a return's ``gain``
+ * is the plan with him back less with him held (shown, never in the total), else null. */
+export interface WeekPlanBack {
+  player: number;
+  slot: string;
+  day: string;
+  drop: number;
+  returning: boolean;
+  gain: Record<MoveHorizon, number> | null;
+}
+
+export interface WeekPlan {
+  /** The recommended week set as dated steps, or a searched plan. */
+  source: "set" | "search";
+  steps: WeekPlanStep[];
+  backs: WeekPlanBack[];
+  /** Its steps' gains summed, on each horizon: the plan less no move. */
+  total: Record<MoveHorizon, number>;
+  ros: RosTotal | null;
+}
+
+export interface WeekPlans {
+  plans: WeekPlan[];
+  /** The plan the queue takes in place of the three weeks' set; null for none. */
+  queue: number | null;
+  floor: number;
+  limits: { plans: number; steps: number; beam: number; exact: number };
+  seconds: number;
 }
 
 /** A category over a horizon: expected wins summed over its weeks; this week's finals too. */

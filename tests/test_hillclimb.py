@@ -189,6 +189,13 @@ def test_the_plan_floor_rises_by_half_its_value_never_above_four_times_its_defau
     c = out["change"]
     assert (c["knob"], c["from"], c["to"]) == ("plan_floor_cats", 0.1, 0.15)
     assert out["rules"][2]["numbers"] == {"plan_moves": 5, "share": 0.4}
+    # The week plan's steps clear the same floor and join the sample (#221 part 2).
+    mixed = [*plans[:3], *(move("1", 1, 1.0, 0.4, set="week_plan") for _ in range(2))]
+    rule = step(None, payload(mixed))["rules"][2]
+    assert rule["numbers"] == {"plan_moves": 5, "share": 0.4}
+    assert rule["clears"] and step(None, payload(mixed))["change"]["reason"].startswith(
+        "The streaming and week plans (categories)"
+    )
     # Near the cap it stops at it; at the cap the rule is blocked and the next one has its say.
     near = step({"in_force": {"plan_floor_cats": 0.3}}, payload(plans))["change"]
     assert (near["from"], near["to"]) == (0.3, 0.4)

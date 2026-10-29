@@ -855,6 +855,7 @@ def moves_payload(built: Built) -> dict[str, Any]:
             "comebacks": {h: comebacks_rows(cs) for h, cs in rec.comebacks.items()},
             "season_guard": held_back(built, ev, key, sets[key], ros, free),
         }
+    stream = stream_of(built, ev, sets["week"], guard)
     return {
         "cleared": cleared_payload(p),
         "room": room_payload(p),
@@ -865,9 +866,9 @@ def moves_payload(built: Built) -> dict[str, Any]:
         "adds": built.adds,
         "candidates": candidates,
         "recommended": recommended,
-        "plan": plan_payload(built, ev, sets["week"], recommended["week"]["moves"], guard),
+        "plan": plan_payload(built, ev, sets["week"], recommended["week"]["moves"], stream, guard),
         "week_plans": week_plans_payload(
-            built, ev, sets["week"], sets["three"], swaps["week"], guard
+            built, ev, sets["week"], sets["three"], swaps["week"], stream, guard
         ),
         "unprojected": built.unprojected,
         "search": {
@@ -883,15 +884,27 @@ def _started(ev: mv.Evaluator, moves: list[mv.Move]) -> int:
     return sum(pw.started for pw in ev.mine("week", moves)[0].players.values())
 
 
+def stream_of(
+    built: Built, ev: mv.Evaluator, against: list[mv.Move], allowed: mv.Allowed | None = None
+) -> st.Plan | None:
+    """The week's streaming plan (#136) against ``against``, solved once a moves solve for its
+    section and the week plans' pool (#221 part 2); None without the league's scorer."""
+    if built.rule is None or built.scorer is None:
+        return None
+    per_game = {k: wk.net_value(built.scorer, r) for k, r in built.problem.rates.items()}
+    return st.plan(ev, built.rule, against, per_game, allowed=allowed)
+
+
 def plan_payload(
     built: Built,
     ev: mv.Evaluator,
     against: list[mv.Move],
     rows: list[dict[str, Any]],
+    plan: st.Plan | None,
     allowed: mv.Allowed | None = None,
 ) -> dict[str, Any] | None:
-    """The week's streaming plan (#136) against its recommended set (``against``, whose payload
-    rows are ``rows``): the set's moves it keeps, its steps by day with each one's own gain on
+    """The week's streaming plan (#136, ``plan``: :func:`stream_of` on the same set and guard)
+    against its recommended set (``against``, whose payload rows are ``rows``): the set's moves it keeps, its steps by day with each one's own gain on
     both horizons, the spots it turns over, my started games and the adds with no move, the set
     and the plan, and the plan's value beside the set's; recommended only when its week beats
     the set's by the floor (``season.stream.floor_of``), else by how much it falls short and
@@ -904,7 +917,6 @@ def plan_payload(
     if built.rule is None or built.scorer is None:
         return None
     per_game = {k: wk.net_value(built.scorer, r) for k, r in p.rates.items()}
-    plan = st.plan(ev, built.rule, against, per_game, allowed=allowed)
     if plan is None:
         return None
     spot_of = {m: sp.occupant for sp in plan.spots for m in sp.steps}
@@ -984,9 +996,11 @@ def week_plans_payload(
     week_set: list[mv.Move],
     three_set: list[mv.Move],
     swaps: dict[int, list[mv.SwapGain]],
+    stream: st.Plan | None,
     allowed: mv.Allowed | None = None,
 ) -> dict[str, Any] | None:
-    """The week plans (#221 part 2, ``season.plans``): each plan's steps by day, each with its
+    """The week plans (#221 part 2, ``season.plans``; ``stream``, the week's streaming plan whose
+    chains join the pool): each plan's steps by day, each with its
     basis, its held moves, what it adds to the plan before it on both horizons, its rest of the
     season and the earlier steps it waits on (``after``, the ruling's condition: every earlier
     step), the roster's own changes on their day, the plan's total and its rest of the season;
@@ -996,10 +1010,6 @@ def week_plans_payload(
     if not p.horizons["week"][0].days:
         return None
     began = time.perf_counter()
-    stream = None
-    if built.rule is not None and built.scorer is not None:
-        per_game = {k: wk.net_value(built.scorer, r) for k, r in p.rates.items()}
-        stream = st.plan(ev, built.rule, week_set, per_game, allowed=allowed)
     plans = pl.week_plans(ev, week_set, swaps, stream, allowed, pl.held_out(ev))
     chosen = pl.for_queue(ev, plans, three_set)
     seconds = time.perf_counter() - began

@@ -147,8 +147,13 @@ def costly(moves: Iterable[Mapping[str, Any]]) -> tuple[int, int]:
     return len(flagged), below
 
 
+#: The sets that clear the plan floor: the streaming plan (#136) and the week plan the queue takes
+#: in place of the three weeks' set (#221 part 2).
+PLAN_SETS = frozenset({"plan", "week_plan"})
+
+
 def _plan(m: Mapping[str, Any]) -> bool:
-    return (m.get("projected") or {}).get("set") == "plan"
+    return (m.get("projected") or {}).get("set") in PLAN_SETS
 
 
 def _system(m: Mapping[str, Any]) -> str | None:
@@ -341,7 +346,7 @@ def _plan_rule(
 
     a, b = halves(reach, lag)
     reason = (
-        f"The streaming plans ({scoring}): the {n} plan moves whose horizon is over realized "
+        f"The streaming and week plans ({scoring}): the {n} plan moves whose horizon is over realized "
         f"{got:.0%} of their projection, under {PLAN_SHARE:.0%}; the plan floor rises "
         f"{at:g} → {to:g} in {len(a)} of the {len(reach)} {scoring} leagues, the half whose "
         "plans realized less."

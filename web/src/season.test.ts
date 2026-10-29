@@ -39,6 +39,9 @@ import type {
   StreamPlan,
   TradePlayer,
   TradeSide,
+  WeekPlan,
+  WeekPlanBack,
+  WeekPlans,
 } from "./api";
 import {
   matchupColumns,
@@ -102,6 +105,10 @@ import {
   dayLabel,
   effectiveNote,
   forText,
+  waitText,
+  weekBackLine,
+  weekPlanHead,
+  shownWeekPlans,
   gainLabel,
   keepLine,
   keepPhrase,
@@ -120,6 +127,8 @@ import {
   queueFoldLine,
   passBar,
   passEndLine,
+  passHeld,
+  planStepTag,
   passLeague,
   passResults,
   checkingNow,
@@ -1773,6 +1782,16 @@ test("the Queue card says what the moves executor does, each entry's state and b
   assert.equal(queueMoveText({ ...e, drop: null, basis: "held", held_move: { player: 5, slot: "IL" } }, name), "P101 after P5 to IL");
   assert.equal(queueMoveText({ ...e, basis: "drop", held_move: null }, name), "P101 for P201");
   assert.equal(queueMoveText({ ...e, drop: null }, name), "P101 with no drop");
+  // A week plan's step (#221 part 2): its place in the plan, and what it waits for while queued.
+  const plan = { id: "d:week_plan", day: "2026-10-24", step: 2, steps: 3 };
+  const step: QueueEntry = { ...e, set: "week_plan", plan, after: ["x"], waits: { entry: "x", step: 1, add: 11, text: "waits for step 1 to land" } };
+  assert.equal(planStepTag(step), "step 2 of 3");
+  assert.equal(planStepTag(e), "");
+  assert.equal(queueMoveText(step, name), "P101 for P201 (step 2 of 3 of the week plan)");
+  assert.equal(queueStateLine(step, now + 3_600_000, name), "waits for step 1 to land (P11)");
+  assert.equal(queueStateLine({ ...step, waits: null }, now + 3_600_000, name), "due at the next pass");
+  assert.equal(queueStateLine({ ...step, outcome: "added" }, now, name), queueStateText({ ...step, outcome: "added" }, now));
+  assert.equal(waitText(null, name), "");
   assert.equal(queueStateText(e, now), "executes in 1 h");
   assert.equal(queueStateText({ ...e, struck: true }, now), "struck");
   assert.equal(queueStateText(e, now + 3_600_000), "due at the next pass");
@@ -1946,6 +1965,11 @@ test("a routine's pass reads live: the league it is on, the entries checked, its
   assert.equal(passEndLine(done, ended + 60_000), "moves pass done 9:35 AM CT · 13 would claim · 7 skipped");
   assert.equal(passEndLine({ ...done, end: "stale", summary: null }, ended), "moves pass stale 9:35 AM CT · 13 would claim · 7 skipped");
   assert.equal(passEndLine({ ...done, summary: "all 12 read" }, ended), "moves pass done 9:35 AM CT · 13 would claim · 7 skipped · all 12 read");
+  // A moves pass that left a week plan's steps held says so (#221 part 2).
+  const held = { a: { entry: "e1", step: 1, add: 11, text: "waits for step 1 to land" }, b: { entry: "e1", step: 1, add: 11, text: "waits for step 1 to land" } };
+  assert.equal(passHeld({ held }), "2 steps held: waits for step 1 to land");
+  assert.equal(passHeld({ held: null }), "");
+  assert.equal(passEndLine({ ...done, held: { a: held.a } }, ended), "moves pass done 9:35 AM CT · 13 would claim · 7 skipped · 1 step held: waits for step 1 to land");
   assert.equal(passEndLine(done, ended + 10 * 60_000 + 1), "");
   assert.equal(passEndLine(null, ended), "");
   assert.equal(passEndLine(moves, ended), "");
@@ -2155,3 +2179,18 @@ test("the Matchup view's Cats and Matchup headers carry their units and one expl
   assert.ok([...cats, ...pts].every((p) => !/optimal/i.test(p.lead + p.text)));
 });
 
+
+test("a week plan's head, its roster changes and the plans shown (#221 part 2)", () => {
+  const name = (id: number) => `P${id}`;
+  const step = { add: 11, drop: 3, from: "2026-10-23", held: null, held_drop: null, basis: "drop" as const, gain: { week: 0.3, three: 0.05 }, ros: null, after: [] };
+  const w: WeekPlan = { source: "set", steps: [step], backs: [], total: { week: 0.3, three: 0.05 }, ros: null };
+  assert.equal(weekPlanHead(w, 0, false), "Plan 1 · the week's set · +0.30 this week, +0.05 over three weeks");
+  assert.equal(weekPlanHead({ ...w, source: "search" }, 1, true), "Plan 2 · +0.30 this week, +0.05 over three weeks · queued in place of the three weeks' set");
+  const back: WeekPlanBack = { player: 7, slot: "IL+", day: "2026-10-23", drop: 3, returning: true, gain: { week: 0.2, three: 0.4 } };
+  assert.equal(weekBackLine(back, name), `${stepDay("2026-10-23")}: P7 returns from IL+, sends P3 (+0.20 this week, not in the total)`);
+  assert.equal(weekBackLine({ ...back, slot: "IL", returning: false, gain: null }, name), `${stepDay("2026-10-23")}: P7 comes back from IL, sends P3`);
+  // A plan with neither a step nor a change is not shown; none with no day left.
+  const plans: WeekPlans = { plans: [w, { ...w, steps: [] }], queue: null, floor: 0.1, limits: { plans: 5, steps: 4, beam: 8, exact: 8 }, seconds: 0.4 };
+  assert.deepEqual(shownWeekPlans(plans), [w]);
+  assert.deepEqual(shownWeekPlans(null), []);
+});

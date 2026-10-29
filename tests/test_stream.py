@@ -196,14 +196,14 @@ def test_without_the_guard_the_plan_takes_the_best_week_whatever_it_costs_after(
 def test_the_payload_says_the_guard_refused_a_plan_and_what_it_would_buy():
     """The best week streams the spot but leaves it empty after: the plan is not recommended,
     and the payload gives the refused plan's steps, games and gain for the user to weigh."""
-    from pickandroll.api.season_moves import Built, plan_payload
+    from pickandroll.api.season_moves import Built, plan_payload, stream_of
 
     problem, rule = stream_league(later=())
     ev = mv.Evaluator(problem)
     built = Built(problem, {"key": "bbm"}, {}, {}, 0, rule=rule, scorer={"points": {"pts": 1.0}})
     with pytest.MonkeyPatch.context() as mp:
         mp.setattr(st, "PLAN_FLOOR_CATS", 0.0)
-        out = plan_payload(built, ev, [], [])
+        out = plan_payload(built, ev, [], [], stream_of(built, ev, []))
     assert out is not None
     assert (out["recommended"], out["reason"], out["steps"]) == (False, "guard", [])
     guard = out["guard"]
@@ -217,7 +217,7 @@ def test_the_payload_says_the_guard_refused_a_plan_and_what_it_would_buy():
     problem, rule = stream_league()
     ev = mv.Evaluator(problem)
     built = Built(problem, {"key": "bbm"}, {}, {}, 0, rule=rule, scorer={"points": {"pts": 1.0}})
-    out = plan_payload(built, ev, [], [])
+    out = plan_payload(built, ev, [], [], stream_of(built, ev, []))
     assert out["recommended"] and (out["reason"], out["guard"]) == (None, None)
 
 
