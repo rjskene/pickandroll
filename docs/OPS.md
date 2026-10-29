@@ -49,7 +49,7 @@ the user rules another) and leaves the timers as they are. The same command upda
 after a merge: run it again (it pulls `main` and restarts the API, under the room guard).
 
 What stays the user's, printed at the end: `gh auth login` as `pickandroll` (the alert's issue
-comments), the ntfy topic in `~/.config/pickandroll/ntfy_topic` with the app subscribed to
+comments; gh itself is already installed), the ntfy topic in `~/.config/pickandroll/ntfy_topic` with the app subscribed to
 it (a long random name: anyone who knows a topic's name can read it), the sign-in below, and
 on the Mac the two agents of `ops/mac/README.md` at cut-over.
 

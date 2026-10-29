@@ -131,6 +131,9 @@ def test_the_display_the_alert_and_the_watchdog_units() -> None:
     assert one(xvfb, "Service", "Restart") == "always"
     alert = unit(VM / "pickandroll-alert@.service")
     assert one(alert, "Service", "ExecStart") == "%h/pickandroll/ops/vm/alert.sh %i"
+    # gh takes the issue's repository from the working directory: without it every comment
+    # fails with "could not determine base repo".
+    assert one(alert, "Service", "WorkingDirectory") == "%h/pickandroll"
     watchdog = unit(VM / "pickandroll-watchdog.service")
     assert one(watchdog, "Unit", "OnFailure") == "pickandroll-alert@%n.service"
     assert one(watchdog, "Service", "ExecStart") == "%h/pickandroll/ops/vm/watchdog.sh"

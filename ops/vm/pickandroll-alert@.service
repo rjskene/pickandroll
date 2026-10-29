@@ -1,10 +1,12 @@
 # Started by OnFailure= of a routine instance or the watchdog, with that unit's name as the
 # instance: ops/vm/alert.sh posts the failure to the user's ntfy topic and as a comment on the
-# ops issue (both set in ~/.config/pickandroll, never in the repo).
+# ops issue (both set in ~/.config/pickandroll, never in the repo). The working directory is
+# the checkout: gh takes the issue's repository from it.
 [Unit]
 Description=pickandroll alert for %i
 
 [Service]
 Type=oneshot
+WorkingDirectory=%h/pickandroll
 Environment=TZ=America/Chicago
 ExecStart=%h/pickandroll/ops/vm/alert.sh %i
