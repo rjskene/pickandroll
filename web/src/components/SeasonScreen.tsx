@@ -19,6 +19,7 @@ import {
   type SeasonMatchup,
   type SeasonPlayer,
   type SeasonView,
+  type WeekPlan,
   type WeekProjection,
 } from "../api";
 import {
@@ -81,6 +82,7 @@ import {
   seasonGuardLine,
   seasonGuardMoves,
   shownPlan,
+  shownWeekPlans,
   sortAvailable,
   stashText,
   statusTitle,
@@ -88,8 +90,10 @@ import {
   stepDay,
   TEXT_KEYS,
   waiversNote,
+  weekBackLine,
   weekDates,
   weekLabel,
+  weekPlanHead,
   weekResult,
   weekTone,
   writeWatch,
@@ -923,6 +927,7 @@ function Moves({ q, s, onPick }: { q: UseQueryResult<MovesPayload>; s: SeasonVie
         <Recommended key={h} h={h} m={m} s={s} name={name} onPick={onPick} />
       ))}
       <PlanBlock m={m} s={s} name={name} />
+      <WeekPlansBlock m={m} s={s} name={name} />
       <KeepRuleBlock m={m} name={name} />
       {(m.stash ?? []).length > 0 && (
         <div className="block">
@@ -1131,6 +1136,97 @@ function PlanBlock({ m, s, name }: { m: MovesPayload; s: SeasonView; name: Namer
       </table>
       <p className="muted small">{planNote(plan, name)}</p>
     </div>
+  );
+}
+
+/** The week plans (#221 part 2): a few dated sequences of moves over the rest of the week, each
+ * step with what it adds to the plan before it, the roster's own changes on their day, and each
+ * plan's total; the plan the queue takes is marked. Plan 1 opens; the others fold. */
+function WeekPlansBlock({ m, s, name }: { m: MovesPayload; s: SeasonView; name: Namer }) {
+  const wp = m.week_plans;
+  const plans = shownWeekPlans(wp);
+  if (!wp || !plans.length) return null;
+  const units = s.scoring === "points" ? "of the matchup's win odds" : "expected categories";
+  return (
+    <div className="block">
+      <span
+        className="k"
+        title={`up to ${wp.limits.plans} dated plans of at most ${wp.limits.steps} steps over the rest of the week, searched ${wp.limits.beam} wide and the best ${wp.limits.exact} valued exactly in ${wp.seconds.toFixed(1)} s; plan 1 is the week's set unless a plan beats its week by the floor, ${wp.floor} ${units}; recommended, a heuristic`}
+      >
+        Week plans for {horizonName(m, "week")}
+      </span>
+      {plans.map((w, i) => {
+        const body = <WeekPlanTable w={w} m={m} s={s} name={name} />;
+        const head = weekPlanHead(w, wp.plans.indexOf(w), wp.queue === wp.plans.indexOf(w));
+        const ros = w.ros ? ` · ${rosLabel(w.ros, s.scoring)} to the season's end` : "";
+        return i === 0 ? (
+          <Fragment key={i}>
+            <p className="small">
+              {head}
+              {ros}
+            </p>
+            {body}
+          </Fragment>
+        ) : (
+          <details key={i} className="small">
+            <summary>
+              {head}
+              {ros}
+            </summary>
+            {body}
+          </details>
+        );
+      })}
+    </div>
+  );
+}
+
+function WeekPlanTable({ w, m, s, name }: { w: WeekPlan; m: MovesPayload; s: SeasonView; name: Namer }) {
+  return (
+    <>
+      {w.steps.length > 0 && (
+        <table className="season-table">
+          <thead>
+            <tr>
+              <th>Day</th>
+              <th>Add</th>
+              <th title="the drop, or the held-slot move that makes room; a churn drops a held player">For</th>
+              <th className="num" title={`what the step adds to the plan before it over ${horizonName(m, "week")}`}>
+                {GAIN_SHORT.week}
+              </th>
+              <th className="num" title={`what the step adds to the plan before it over ${horizonName(m, "three")}`}>
+                {GAIN_SHORT.three}
+              </th>
+              <th className="num" title={rosHeadTitle(s.scoring, "the step")}>
+                ROS
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            {w.steps.map((x) => {
+              const basis = addBasis(x, name);
+              return (
+                <tr key={`${x.from}-${x.add}`}>
+                  <td className="dim">{stepDay(x.from)}</td>
+                  <td className="strong">
+                    {name(x.add)} <FlagTag f={flagOf(s, x.add)} cfg={s.flag_config} />
+                  </td>
+                  <td title={basis.title}>{basis.cell}</td>
+                  <td className={`num ${gainTone(x.gain.week, m.search.min_gain)}`}>{gainLabel(x.gain.week)}</td>
+                  <td className="num dim">{gainLabel(x.gain.three)}</td>
+                  <td className={`num ${rosTone(x.ros, s.scoring) || "dim"}`}>{rosLabel(x.ros, s.scoring)}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      )}
+      {w.backs.map((b) => (
+        <p key={`${b.day}-${b.player}`} className="muted small" title="the roster's own change that day: no choice in it">
+          {weekBackLine(b, name)}
+        </p>
+      ))}
+    </>
   );
 }
 

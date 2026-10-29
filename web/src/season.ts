@@ -72,6 +72,9 @@ import type {
   TradePlayer,
   TradeSide,
   UnscoredReason,
+  WeekPlan,
+  WeekPlanBack,
+  WeekPlans,
   WeekResult,
   WeekStat,
 } from "./api";
@@ -719,7 +722,20 @@ export function ilText(e: Pick<QueueEntry, "date" | "held_move" | "il" | "il_pas
 /** An entry's state with its IL move after it (#214): "skipped 9:14 AM CT: … · moved P5 to IL 9:13
  * AM CT". */
 export function queueStateLine(e: QueueEntry, now: number, name: (id: number) => string): string {
-  return [queueStateText(e, now), e.queued && !e.struck ? ilText(e, name) : ""].filter(Boolean).join(" · ");
+  const waits = e.queued && !e.struck && !e.outcome ? waitText(e.waits, name) : "";
+  return [waits || queueStateText(e, now), e.queued && !e.struck ? ilText(e, name) : ""].filter(Boolean).join(" · ");
+}
+
+/** What a week plan's step waits for (#221 part 2): "waits for step 1 to land (Brooks)"; blank for
+ * nothing. */
+export function waitText(w: Pick<NonNullable<QueueEntry["waits"]>, "text" | "add"> | null | undefined, name: (id: number) => string): string {
+  if (!w) return "";
+  return w.add != null ? `${w.text} (${name(w.add)})` : w.text;
+}
+
+/** A week plan's step on the queue (#221 part 2): "step 2 of 3"; blank for a move of the set. */
+export function planStepTag(e: Pick<QueueEntry, "plan">): string {
+  return e.plan ? `step ${e.plan.step} of ${e.plan.steps}` : "";
 }
 
 /** The state's tone: good for a claim (a pass that would claim, or one placed), bad for a failure. */
@@ -761,9 +777,11 @@ export function bidLabel(e: Pick<QueueEntry, "availability" | "bid" | "bid_struc
 
 /** "Brooks for Reed", "Brooks after Hurt to IL", "Brooks (free: open spot)": the move in words,
  * by its basis (#187). An entry logged before the basis with no drop says only that. */
-export function queueMoveText(e: Pick<QueueEntry, "add" | "drop" | "basis" | "held_move" | "held_drop">, name: (id: number) => string): string {
-  if (e.drop == null && e.basis == null) return `${name(e.add)} with no drop`;
-  return `${name(e.add)} ${basisPhrase(addBasis({ drop: e.drop, held: e.held_move, held_drop: e.held_drop }, name))}`;
+export function queueMoveText(e: Pick<QueueEntry, "add" | "drop" | "basis" | "held_move" | "held_drop" | "plan">, name: (id: number) => string): string {
+  const step = planStepTag(e);
+  const tail = step ? ` (${step} of the week plan)` : "";
+  if (e.drop == null && e.basis == null) return `${name(e.add)} with no drop${tail}`;
+  return `${name(e.add)} ${basisPhrase(addBasis({ drop: e.drop, held: e.held_move, held_drop: e.held_drop }, name))}${tail}`;
 }
 
 /** The floor and the typical gain the league's entries were judged with, in a line. */
@@ -942,7 +960,16 @@ export function passEndLine(p: RoutinePass | null | undefined, now: number): str
   if (!p || !p.ended || !p.end) return "";
   const ended = Date.parse(p.ended);
   if (Number.isNaN(ended) || now - ended > PASS_END_SHOWN_MS) return "";
-  return [`${p.kind} pass ${p.end} ${centralClock(p.ended)}`, passResults(p, " · ") || null, passIL(p, " · ") || null, p.summary].filter(Boolean).join(" · ");
+  return [`${p.kind} pass ${p.end} ${centralClock(p.ended)}`, passResults(p, " · ") || null, passIL(p, " · ") || null, passHeld(p) || null, p.summary].filter(Boolean).join(" · ");
+}
+
+/** The week plan's steps a pass left held on an earlier step (#221 part 2): "1 step held: waits for
+ * step 1 to land"; blank for none. */
+export function passHeld(p: Pick<RoutinePass, "held">): string {
+  const held = Object.values(p.held ?? {});
+  if (!held.length) return "";
+  const texts = [...new Set(held.map((h) => h.text))];
+  return `${held.length} ${held.length === 1 ? "step" : "steps"} held: ${texts.join("; ")}`;
 }
 
 /** Whether a running pass is checking ``e`` now: it is the entry being opened, and no post about it
@@ -1234,6 +1261,28 @@ export function seasonGuardMoves(
 /** The week's streaming plan to show (#136): only a recommended one. */
 export function shownPlan(plan: StreamPlan | null | undefined): StreamPlan | null {
   return plan?.recommended && plan.steps.length ? plan : null;
+}
+
+/** The week plans to show (#221 part 2): none with no day left or no plan with a step. */
+export function shownWeekPlans(wp: WeekPlans | null | undefined): WeekPlan[] {
+  return (wp?.plans ?? []).filter((w) => w.steps.length || w.backs.length);
+}
+
+/** A week plan's head: "Plan 1 · the week's set · +0.42 this week, +0.10 over three weeks", the
+ * queue's plan marked "queued in place of the three weeks' set". */
+export function weekPlanHead(w: WeekPlan, i: number, queued: boolean): string {
+  const parts = [`Plan ${i + 1}`, w.source === "set" ? "the week's set" : null, `${gainLabel(w.total.week)} this week, ${gainLabel(w.total.three)} over three weeks`];
+  if (queued) parts.push("queued in place of the three weeks' set");
+  return parts.filter(Boolean).join(" · ");
+}
+
+/** A roster change of the week, no choice in it (#221 part 2): "Thu Oct 23: P7 returns from IL+,
+ * sends P3 (+0.20 this week, not in the total)"; a cleared player or a held move's comeback
+ * "comes back from IL". */
+export function weekBackLine(b: WeekPlanBack, name: (id: number) => string): string {
+  const what = `${b.returning ? "returns" : "comes back"} from ${b.slot}`;
+  const gain = b.gain ? ` (${gainLabel(b.gain.week)} this week, not in the total)` : "";
+  return `${stepDay(b.day)}: ${name(b.player)} ${what}, sends ${name(b.drop)}${gain}`;
 }
 
 /** "Thu Oct 23" for a plan step's day. */
