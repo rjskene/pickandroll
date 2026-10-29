@@ -56,9 +56,11 @@ player out three weeks at about nothing. A player of mine is **protected** when 
 available add's value does not beat his by the floor or more (``value + floor > best``, #164: a
 higher floor protects more), and he returns this season (:func:`back_from`). A
 player who passes the last two but not the first and is back within :data:`SHORT_ABSENCE_DAYS`
-is kept on the bench for the solve. Neither is ever a drop on any horizon (``kept``,
-:func:`drop_options`); a protected player out still goes to a held slot when one is open. His
-value net of return (:func:`net_of_return`) only ranks the IL and is shown, never protects.
+is kept on the bench for the solve. A player on Yahoo's can't-cut list (``cantcut``, #220: Yahoo
+refuses his drop on the add page) is protected whatever the three tests say. Neither is ever a
+drop on any horizon (``kept``, :func:`drop_options`); a protected player out still goes to a held
+slot when one is open (Yahoo blocks drops, not IL moves). His value net of return
+(:func:`net_of_return`) only ranks the IL and is shown, never protects.
 """
 
 from __future__ import annotations
@@ -183,6 +185,9 @@ class MoveProblem:
     season_end: date | None = None
     #: By how much the best add's per-game value must beat a player's to unprotect him (a knob).
     floor: float = PROTECTION_FLOOR
+    #: My players on Yahoo's can't-cut list, as the moves executor last read it on an add page
+    #: (#220): the keep rule protects them.
+    cantcut: frozenset[int] = frozenset()
     #: My players no move may drop: those the keep rule keeps (:func:`keep_rule`).
     kept: frozenset[int] = frozenset()
     #: The streaming plan's floor and its moves a day (knobs, #152); None for the stream's own
@@ -512,9 +517,12 @@ class Kept:
     net_positive: bool
     beats_best: bool
     returns: bool
-    #: All three; or the last two and back within :data:`SHORT_ABSENCE_DAYS` (on the bench).
+    #: All three, or on Yahoo's can't-cut list; or the last two and back within
+    #: :data:`SHORT_ABSENCE_DAYS` (on the bench).
     protected: bool
     bench: bool
+    #: On Yahoo's can't-cut list (#220).
+    cantcut: bool = False
 
 
 @dataclass(frozen=True)
@@ -535,15 +543,18 @@ class KeepRule:
 def kept_of(
     problem: MoveProblem, key: int, player: Player, best_value: float | None, floor: float
 ) -> Kept:
-    """The keep rule's three tests on ``player`` against the best add's value."""
+    """The keep rule's three tests on ``player`` against the best add's value; a player on
+    Yahoo's can't-cut list is protected whatever they say."""
     value = problem.season_value.get(key)
     back = back_from(problem, key, player)
     net = value is not None and value > problem.average
     beats = value is not None and (best_value is None or value + floor > best_value)
     returns = back is not None
-    protected = net and beats and returns
+    cut = key in problem.cantcut
+    protected = (net and beats and returns) or cut
     away = back is not None and 0 < (back - problem.first_day).days < SHORT_ABSENCE_DAYS
-    return Kept(key, value, back, net, beats, returns, protected, not protected and beats and away)
+    bench = not protected and beats and away
+    return Kept(key, value, back, net, beats, returns, protected, bench, cut)
 
 
 def keep_rule(problem: MoveProblem) -> KeepRule:

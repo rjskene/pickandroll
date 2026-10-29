@@ -1703,6 +1703,9 @@ export interface KeptPlayer {
   returns: boolean;
   protected: boolean;
   bench: boolean;
+  /** On Yahoo's can't-cut list as the moves executor last read it (#220): protected whatever the
+   * three tests say. */
+  cantcut?: boolean;
 }
 
 export interface KeepRule {

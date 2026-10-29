@@ -334,7 +334,12 @@ page, from PR 2:
     is the entry's clear date. Any other heading skips with the heading's text, never `gone`.
   - **The drop:** exactly one `dpid` checkbox for it in my roster's table and no can't-cut or
     locked icon on its row; the reason names the marker found (`cantcut`, `locked` or `none`)
-    and the id. Never a fallback drop.
+    and the id. Never a fallback drop. The engine knows the list too (#220): every logged pass
+    row's `cantcut` ids go to `data/leagues/<league>/cantcut.json` (the newest read wins, an
+    empty list replaces it, an open-spot page with no drop table leaves it), the next solve reads
+    it and protects those players like the keep rule's (a held slot still allowed), and
+    `due.protected` names them "on Yahoo's can't-cut list", so the queue never carries such a
+    drop and this check is the backstop.
   - **No drop (#199, extension 0.8.1):** the page's drop section decides. None shown (no
     `table.statTable-drop` row and no `dpid` box) is an open spot: `would_claim` with reason
     "open spot". One shown means the roster is full, and the entry skips with the count: "the
