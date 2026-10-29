@@ -1,7 +1,8 @@
 import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api, CAT_LABEL, type Cat, type MatchupPayload, type MatchupPlayer, type ProjectionSystem, type SeasonView } from "../api";
-import { ageLabel, catValue, dayLabel, daysLeftLabel, gainLabel, leanTone, matchupRecord, oddsGainLabel, oddsLabel, playersById, recordLabel } from "../season";
+import { ageLabel, catValue, dayLabel, daysLeftLabel, gainLabel, leanTone, matchupColumns, matchupExplainer, matchupRecord, oddsGainLabel, oddsLabel, playersById, recordLabel } from "../season";
+import Info from "./Info";
 
 /** The per-game columns of the players' tables, in the league's order. */
 const NINE: Cat[] = ["fg_pct", "ft_pct", "threes", "pts", "reb", "ast", "stl", "blk", "tov"];
@@ -179,14 +180,12 @@ function Players({
                   {CAT_LABEL[c]}
                 </th>
               ))}
-              {!points && (
-                <th className="num" title={`expected categories he adds: the week with him less the week without him${m.from ? ` from ${dayLabel(m.from)}` : ""}`}>
-                  Cats
+              {matchupColumns(points, m.from).map((c) => (
+                <th key={c.key} className="num" title={c.title}>
+                  {c.label}
+                  <MatchupInfo points={points} column={c.label} />
                 </th>
-              )}
-              <th className="num" title="the matchup odds he adds, the same way">
-                Matchup
-              </th>
+              ))}
             </tr>
           </thead>
           <tbody>
@@ -216,5 +215,19 @@ function Players({
         </table>
       </div>
     </div>
+  );
+}
+
+/** The "i" on the Cats and Matchup headers (#226): what both columns mean, in the Flag column's
+ * explainer portal. */
+function MatchupInfo({ points, column }: { points: boolean; column: string }) {
+  return (
+    <Info title={`the ${column} column`} align="right" name={`what ${column} means`} wide>
+      {matchupExplainer(points).map((p) => (
+        <span key={p.lead}>
+          <b>{p.lead}</b> {p.text}
+        </span>
+      ))}
+    </Info>
   );
 }
