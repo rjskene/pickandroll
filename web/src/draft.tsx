@@ -30,6 +30,7 @@ import {
   type SolverStatus,
   type SurvivalEvent,
 } from "./api";
+import { recommendationPoll } from "./solvePoll";
 import { DRAFT_CARDS, DRAWER_WIDTH, draftKeys, type DraftCardId, type DrawerState as Drawer, type Half } from "./keys";
 import { clampWidth, useDrawer, useHotkeys } from "./useKeys";
 
@@ -219,10 +220,12 @@ export function DraftProvider({ session, solveEvents, survival, live, room, room
   );
   const paramsRef = useRef(params);
   paramsRef.current = params;
+  const havePicks = session.my_next_pick !== null && !session.complete;
+  const serverSolves = session.solver.enabled;
   const latest = useQuery({
     queryKey: ["recommendation", session.id],
     queryFn: () => api.recommendation(session.id),
-    refetchInterval: (q) => (q.state.data?.solver.running || q.state.data?.solver.pending ? 2000 : false),
+    refetchInterval: (q) => recommendationPoll(q.state.data, session.version, serverSolves, havePicks),
   });
   const result = latest.data?.recommendation ?? undefined;
   const stale = !!result && (latest.data!.stale || (latest.data!.solved_version ?? -1) < session.version);
@@ -231,13 +234,11 @@ export function DraftProvider({ session, solveEvents, survival, live, room, room
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["recommendation", session.id] }),
   });
   const { mutate: runSolve } = solveMutation;
-  const havePicks = session.my_next_pick !== null && !session.complete;
   // Nothing is solved past my last pick: there is no board left to plan for.
   const solve = useCallback(() => {
     if (havePicks) runSolve();
   }, [havePicks, runSolve]);
   const solvedFor = useRef("");
-  const serverSolves = session.solver.enabled;
   useEffect(() => {
     const key = `${session.id}:${session.version}`;
     if (!serverSolves && settings.refreshOnPick && havePicks && solvedFor.current !== key) {
