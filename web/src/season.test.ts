@@ -108,6 +108,7 @@ import {
   waitText,
   weekBackLine,
   weekPlanHead,
+  weekPlansTitle,
   shownWeekPlans,
   gainLabel,
   keepLine,
@@ -2193,4 +2194,9 @@ test("a week plan's head, its roster changes and the plans shown (#221 part 2)",
   const plans: WeekPlans = { plans: [w, { ...w, steps: [] }], queue: null, floor: 0.1, limits: { plans: 5, steps: 4, beam: 8, exact: 8 }, seconds: 0.4 };
   assert.deepEqual(shownWeekPlans(plans), [w]);
   assert.deepEqual(shownWeekPlans(null), []);
+  // The tooltip says plan 1 is the set and only the searched plans keep the step limit.
+  assert.equal(
+    weekPlansTitle(plans, "expected categories"),
+    "plan 1 is the week's recommended set; the searched plans are at most 4 steps, up to 5 plans over the rest of the week, searched 8 wide and the best 8 valued exactly in 0.4 s; a searched plan is plan 1 only when it beats the set's week by the floor, 0.1 expected categories; plans with the same adds on the same days are one, the best week kept; recommended, a heuristic",
+  );
 });

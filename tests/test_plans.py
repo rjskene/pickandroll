@@ -183,3 +183,34 @@ def test_the_payload_lists_each_plans_steps_their_waits_the_queue_and_the_second
         for w in wp["plans"]
     )
     assert wp["queue"] is None or 0 <= wp["queue"] < len(wp["plans"])
+
+
+# --------------------------------------------------------------------------- the master's nits
+def test_a_plan_the_rules_refuse_never_takes_the_queue_even_plan_one():
+    # The week's set may take more moves a day than the cap: shown as plan 1, never queued.
+    p = replace(full_league(), plan_floor=-1.0)
+    moves = [mv.Move(10, 7), mv.Move(11, 3)]
+    capped = replace(p, daily_cap=1)
+    for problem, queued in ((p, True), (capped, False)):
+        ev = mv.Evaluator(problem)
+        w = pl.valued(ev, moves, pl.SET)
+        assert pl.valid(problem, w.moves) is queued
+        assert (pl.for_queue(ev, [w], []) is w) is queued
+
+
+def test_plans_with_the_same_adds_and_days_are_one_the_best_week_kept():
+    p = full_league()
+    ev, swaps, week_set = solved(p)
+    plans = pl.week_plans(ev, week_set, swaps)
+    keys = [pl.key_of(p, w.moves) for w in plans]
+    assert len(keys) == len(set(keys))
+    # The search finds plans that differ by a drop only; each kept one is the best week of its kind.
+    raw = [pl.valued(ev, m, pl.SEARCH) for m in pl.search(ev, pl.blocks(p, swaps))]
+    best: dict = {}
+    for w in raw:
+        k = pl.key_of(p, w.moves)
+        best[k] = max(best.get(k, -99.0), w.total["week"])
+    assert len(best) < len(raw)
+    for w in plans:
+        if w.source == pl.SEARCH:
+            assert w.total["week"] == pytest.approx(best[pl.key_of(p, w.moves)])

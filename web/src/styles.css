@@ -528,6 +528,9 @@ tr.tie td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
 .season-foot > span { white-space: nowrap; }
 .season-table { width: 100%; font-size: 12px; }
 .season-table th, .season-table td { padding: 3px 5px; position: static; }
+/* A plan step's Day, Add and For cells wrap at word breaks in the narrow panel (#221): the week
+ * plans and the streaming plan; the For column alone leaves the table half again too wide. */
+.season-table td.wrap { white-space: normal; overflow-wrap: break-word; }
 .season-table tr.mine td { background: var(--mine); }
 .season-table tr.bench td { color: var(--muted); }
 /* The breakout flag's breakdown under a row (#113): four 0-to-1 bars with their evidence, then the sum against the levels. */
