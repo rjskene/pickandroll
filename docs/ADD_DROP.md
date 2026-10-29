@@ -58,18 +58,18 @@ leagues, and Yahoo serves everything the engine needs without a sign-in:
 | free agents and waivers with clear dates, percent rostered and its change | the public players page `/nba/<id>/players?status=A&pos=P&stat1=R_O&sort=R_PO&sdir=1&count=<offset>` | checked in #92 on 258901: the rows are server-rendered, 25 a page; the Research view `R_O` carries roster status with the waiver date, percent rostered and started with the day's change, and Yahoo-wide adds, drops and trades. The same public page serves the stat views too, so a public league needs no sign-in for them: `S_PS7` and `S_PS14` (Yahoo's projections for the next 7 and 14 days), `S_PSR` (the remaining games), `S_L7`, `S_L14`, `S_L30` (last 7, 14 and 30 days, totals and averages) and the standard deviations (`S_SDL14` and the like) |
 | the league's own adds and drops | the public `/nba/<id>/transactions` page | each move with its team, its time (`Oct 20, 3:57 am`, printed without a zone and read in US Eastern) and Yahoo's words for it (`$5 Waiver`, `Free Agent`, `To Waivers`); an add and the drop that came with it share a row group. Read on every public refresh; the private league's page is listed by the weekly recorder until read that day (#125, see "Decision log") |
 | Yahoo-wide adds, drops and trades per player | the public buzz index `/nba/buzzindex` | the "surge in adds" signal for the breakout flag |
-| this week's and next week's per-game projections with games, back-to-backs, minutes, injury, Yahoo ownership | Basketball Monster weekly export (imported with `scripts/draft_day.py week --this \| --next`, or `sources/bbm/fetch.py::weekly`, `this_week=True` for the rest of this week; `parse.py` already normalises it: `games`, `quality_games`, `back_to_backs`, `minutes`, `yahoo_owned_pct`, `bbm_adv_pct`, `injury`) | exported from the user's signed-in Chrome as the season export is, never with typed credentials |
+| this week's and next week's per-game projections with games, back-to-backs, minutes, injury, Yahoo ownership | Basketball Monster weekly export (imported with `scripts/draft_day.py week --this \| --next`, or `sources/bbm/fetch.py::weekly`, `this_week=True` for the rest of this week; `parse.py` already normalises it: `games`, `quality_games`, `back_to_backs`, `minutes`, `yahoo_owned_pct`, `bbm_adv_pct`, `injury`) | exported by the daily routine from the routine host's signed-in browser profile, as the season export is, never with typed credentials |
 | rest-of-season per-game projections | Basketball Monster season export, per-game | refreshed daily in season |
 | recent production (minutes and rates over the last 7 or 14 days) | Basketball Monster past-days rankings (`fetch.py::rankings_past_days`) | the "minutes trend" signal |
 | final box scores, every player's line in every game | ESPN's public scoreboard JSON for the date, then each final game's summary (`site.api.espn.com/.../nba/summary?event=<id>`, about 0.5 MB, its `boxscore.players` and `injuries`) | read on refresh for the Monday scorecard's realized values (#126): a date cached under `data/boxscores/` once every game on it is over, never read again; about 15 to 60 KB a date kept |
 | NBA schedule by team and date | ESPN's public scoreboard JSON (`site.api.espn.com/.../nba/scoreboard?dates=YYYYMMDD`), one call per date, cached under `data/schedule/` | NBA's own cdn file answers 403. Read to the season's end for the Season view (#116): a date within the Moves card's four weeks is read again after 12 hours, a later one after a week |
-| signed-in extras for every league (the user's Chrome, read-only): Yahoo's own projections per player for the next 7 and 14 days and the remaining games, last 7, 14 and 30 day totals, averages and standard deviations, percent rostered, roster status with the availability date, player notes; the home page's live matchup scores for every league | the players page and the home page in the user's signed-in Chrome, read with Claude in Chrome or the extension | checked 2026-10-21 on league 31822; a second weekly projection system for the blend the draft edge audit recommends, and the recent-production signal for the breakout flag. For a public league the players page serves the same views without a sign-in (row above); only the private league and the home page need the user's Chrome |
+| signed-in extras for every league (a signed-in browser, read-only): Yahoo's own projections per player for the next 7 and 14 days and the remaining games, last 7, 14 and 30 day totals, averages and standard deviations, percent rostered, roster status with the availability date, player notes; the home page's live matchup scores for every league | the players page and the home page in a signed-in browser: the routine host's profile through the extension, or the user's own Chrome (read with the extension or Claude in Chrome) | checked 2026-10-21 on league 31822; a second weekly projection system for the blend the draft edge audit recommends, and the recent-production signal for the breakout flag. For a public league the players page serves the same views without a sign-in (row above); only the private league and the home page need a signed-in browser |
 | news | ESPN injuries and Rotowire headlines (`scripts/draft_prep/news.py`, already built) | teammate injuries are the "opportunity" signal |
 
-The home league 31822 is private: the same pages are read through the extension in the user's
-signed-in Chrome (a content script on the team, players and matchup pages posting a snapshot to
-the API), exactly as the draft room was read. Nothing in this module handles credentials; the
-API path replaces the page readers the day Yahoo binds the app.
+The home league 31822 is private: the same pages are read through the extension in a signed-in
+browser, the routine host's profile or the user's own Chrome (a content script on the team, players
+and matchup pages posting a snapshot to the API), exactly as the draft room was read. Nothing in
+this module handles credentials; the API path replaces the page readers the day Yahoo binds the app.
 
 ## The weekly projection, as built (#93)
 
@@ -500,8 +500,8 @@ out, any of the Moves card's four weeks.
   team page read today. A public refresh reads today and the days after it every time, and
   each day before today of this week or the last until it was read after the day (#149): a
   lineup read on its own day may change later that day. Lineup parts older than fourteen days
-  are dropped when the season is saved. The private league's pages come from the user's Chrome
-  (extension 0.5.3): the route's `needs` lists the settings page until read and each day ahead
+  are dropped when the season is saved. The private league's pages come from the routine host's
+  browser, or the user's Chrome (extension 0.5.3): the route's `needs` lists the settings page until read and each day ahead
   not read today, and the weekly recorder's response lists them as `lineup_pages`, after the
   schedule pages, with each day of the week recorded not read after it.
 - **Comparison.** Per day, the players each lineup starts who play that day; the games lost are
@@ -659,8 +659,8 @@ when left out.
   the entry it was matched to; the count per kind and of the near ones; when the transactions
   page was read; and the names of the players in both. The private league answers the same from
   its posted page. The Monday scorecard (#126) reads it.
-- **Pages.** A public league's refresh reads its transactions page. The private league's is the
-  user's Chrome's: the weekly recorder's response lists it as `transactions_page` until a page
+- **Pages.** A public league's refresh reads its transactions page. The private league's is read in
+  the routine host's browser, or the user's Chrome: the weekly recorder's response lists it as `transactions_page` until a page
   read that day is posted, and `scripts/season.py record` prints it after the lineup pages.
 - **Script.** `scripts/season.py decisions <league ...> [--from] [--to] [--json]` prints each
   solve with its sets, then each move with its match ("near a solve" when flagged), one per
@@ -1104,7 +1104,7 @@ then UI to evaluate available waiver options"). The flow:
    games each lineup starts and those Yahoo's loses. A day whose Yahoo lineup was not read is
    marked in its head. Above the grid: the week (this one and the moves' three after it), the
    rule and its source, the week's summary, the alerts (a cleared held occupant first, in red),
-   and for the private league the pages its Chrome still needs. Under the grid, the held slots
+   and for the private league the pages a signed-in browser still needs to open. Under the grid, the held slots
    one by one with their occupants (a cleared one flagged: he blocks every add), the bound when
    the settings page is not read, and each active player eligible for a held slot with "eligible,
    1 open" or "eligible, IL full", so the user knows whether a swap is needed (#124). Nothing
@@ -1114,8 +1114,8 @@ then UI to evaluate available waiver options"). The flow:
    after this one once (and again only while it lists no pairs), and the NBA schedule to the
    season's end. For the private league, `POST /seasons/{id}/record` answers with `ahead`, the
    league page of each week whose pairs are missing, and `scripts/season.py record` prints them
-   as "schedule pages" after the record's own: for the user's signed-in Chrome to open once,
-   read only, as the record's pages are.
+   as "schedule pages" after the record's own: for the routine host's browser, or the user's
+   signed-in Chrome, to open once, read only, as the record's pages are.
 
 The league page shown for another week (`?matchup_week=N`, the week select) used to land as
 the league part and move the current week with it. It is stored as its own part,
@@ -1133,7 +1133,7 @@ by its newest read, the private league's matchup, lineup, schedule and transacti
 each league's recommendations (the moves set and the streaming plan from the decision log's
 latest solve, against the newest projection export and Yahoo read; the strategy run and the
 trade evaluation are made on request and carry no state). The states are decided in
-`season/status.py`, on the Mac's clock, where the routine runs: **red** when something failed,
+`season/status.py`, on the routine host's Central clock, where the daily runs: **red** when something failed,
 or is missing once the run is due at 06:30 (`ROUTINE_DUE`); **amber** when something is stale
 or not due yet (a solve older than an input is amber, "re-solved on open"); **green**
 otherwise. A league is its worst section with the exports; the whole is its worst league with
@@ -1251,13 +1251,14 @@ phase 2 on.
    small history view in the season rail. Built in #97: `POST /seasons/{league}/record?week=`
    writes one file per week, and recording it again writes only on a change (`revised_at`).
    A private league answers 409 with the pages it needs, for the extension to read in the
-   user's Chrome. `GET /seasons/{league}/weeks` serves the Weeks block on the league card.
+   routine host's browser, or the user's Chrome. `GET /seasons/{league}/weeks` serves the Weeks block on the league card.
    `scripts/season.py record --all` prints one line per league and exits non-zero only when
    the API is unreachable. Since #126 a record also keeps the week's transactions, merged
    across the transactions pages read through it, for the Monday scorecard's moves, and since
-   #149 my player-games lost to the lineup ("Lineups", games lost). The scheduled task `weekly-recorder-monday` runs it every Monday at
-   06:00 on the Mac's clock and opens the private league's needed pages read-only in the
-   user's Chrome (set up 2026-10-21).
+   #149 my player-games lost to the lineup ("Lineups", games lost). The `monday` routine (`pickandroll-routine@monday`, 06:00 Central on
+   the routine host) runs it and opens the private league's needed pages read-only in the host's
+   own signed-in browser profile (a Desktop task on the Mac from 2026-10-21 until the VM move,
+   #225).
 
 Automation (queueing a claim through the extension with the draft's arming rule) is a later,
 opt-in phase and is not in this batch.
@@ -1276,11 +1277,12 @@ the prize leagues is week 1 (`current_week` 1 on 2026-10-21, season end 2027-04-
   league.
 - **Alert channel for the breakout digest:** a daily comment on the programme's tracker issue,
   posted by a scheduled session the way the draft scorecards were; a desktop notification can
-  be added once the digest has run for a week. Set up 2026-10-21 as the scheduled task `breakout-digest-daily`: every day at 05:00
-  on the Mac's clock it makes the day's Basketball Monster exports through the user's signed-in
-  Chrome and imports them (rest of season with `draft_day.py projections`, this week and next
+  be added once the digest has run for a week. The `daily` routine (`pickandroll-routine@daily`, 05:00 Central on the routine
+  host; a Desktop task on the Mac from 2026-10-21 until the VM move, #225) makes the day's
+  Basketball Monster exports through the host's own signed-in browser profile and imports them
+  (rest of season with `draft_day.py projections`, this week and next
   week with `week --this` and `week --next`, past 7 and 14 days with `past-days`), refreshes the public leagues on the running API, reads `GET /flags/digest`
   and posts the markdown field on #99. The export buttons are clicked as real clicks, never from
-  JavaScript: Chrome silently blocks script-triggered downloads after the first one of a session,
+  JavaScript: Chromium silently blocks script-triggered downloads after the first one of a session,
   and an import then re-saves an older download under the wrong name (seen 2026-10-22).
 - **Default view on the Moves card:** the three-week gain, with the one-week gain beside it.
