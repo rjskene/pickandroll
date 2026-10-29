@@ -733,6 +733,8 @@ def test_the_due_route_holds_a_later_step_and_the_pass_record_says_what_it_waits
     by = {e["id"]: e for e in client.get("/autopilot/queue").json()["entries"]}
     assert by[on[1]["id"]]["waits"]["text"] == "waits for step 1 to land"
     assert by[on[0]["id"]]["waits"] is None
+    card = {e["id"]: e for e in client.get(f"/seasons/{LEAGUE}/autopilot/moves").json()["entries"]}
+    assert card[on[1]["id"]]["waits"] == by[on[1]["id"]]["waits"]
     # The pass that leaves it held records it at its end.
     p = client.post(
         "/autopilot/passes", json={"kind": "moves", "trigger": "routine", "leagues": [LEAGUE]}

@@ -1308,7 +1308,10 @@ class SeasonService:
             body = season_queue.read(self.data_dir, today) or {}
         except season_queue.QueueError:
             body = {}
-        entries = [e for e in body.get("entries") or [] if e.get("league") == league]
+        mine = [e for e in body.get("entries") or [] if e.get("league") == league]
+        # A week plan's step with what it waits for (#221 part 2), as the Queue route reads it.
+        by_id = {e["id"]: e for e in mine}
+        entries = [{**e, "waits": qa.waits(e, by_id)} for e in mine]
         row = next((r for r in body.get("leagues") or [] if r["league"] == league), None)
         return {
             **season_autopilot.moves_view(self.data_dir, league, mode, today, entries),
