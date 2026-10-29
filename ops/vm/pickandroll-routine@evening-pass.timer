@@ -1,0 +1,14 @@
+# The evening-pass routine's timer: 22:40 every day, on the Central clock whatever the host's zone. Persistent: a run
+# missed while the host was down starts at boot, and the routine itself refuses when its window
+# has passed.
+[Unit]
+Description=pickandroll evening-pass routine (22:40 every day Central)
+
+[Timer]
+OnCalendar=*-*-* 22:40:00 America/Chicago
+AccuracySec=15s
+Persistent=true
+Unit=pickandroll-routine@evening-pass.service
+
+[Install]
+WantedBy=timers.target

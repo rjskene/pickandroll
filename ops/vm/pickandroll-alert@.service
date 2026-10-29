@@ -1,0 +1,10 @@
+# Started by OnFailure= of a routine instance or the watchdog, with that unit's name as the
+# instance: ops/vm/alert.sh posts the failure to the user's ntfy topic and as a comment on the
+# ops issue (both set in ~/.config/pickandroll, never in the repo).
+[Unit]
+Description=pickandroll alert for %i
+
+[Service]
+Type=oneshot
+Environment=TZ=America/Chicago
+ExecStart=%h/pickandroll/ops/vm/alert.sh %i

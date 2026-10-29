@@ -1,0 +1,11 @@
+# The morning check after the daily's window: today's daily marker finished clean, the API
+# answers, the Mac's copy is fresh. Exit 1 starts the alert.
+[Unit]
+Description=pickandroll watchdog (the daily marker, the API, the Mac copy)
+OnFailure=pickandroll-alert@%n.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/pickandroll
+Environment=TZ=America/Chicago
+ExecStart=%h/pickandroll/ops/vm/watchdog.sh

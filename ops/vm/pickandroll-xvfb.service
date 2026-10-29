@@ -1,0 +1,13 @@
+# The virtual display the routine browser runs on (Playwright's Chromium is headed so the
+# extension has a window to act in). Nothing listens on the network.
+[Unit]
+Description=Xvfb :99 for the routine browser (1440x900)
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/Xvfb :99 -screen 0 1440x900x24 -nolisten tcp
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=default.target
