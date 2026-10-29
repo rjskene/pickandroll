@@ -99,8 +99,14 @@ beside it (or the strategy route's weighted set when the arm executes `weighted`
 the same evaluator on the thirty best candidates by value times games this week, the greedy search
 alone, on Mondays and Thursdays only. **Ranking** swaps the pool's best for the roster's worst the
 keep rule does not keep, when it gains, with no evaluator. The executor lands yesterday's queue
-team by team in a rotating order: a drop goes to the pool, the add takes his slot, an add another
-team took first is gone and counted. Every add is a free agent landing the next day
+team by team in a rotating order. First its return rule: a held player whose status no longer
+fits his slot comes back to the bench that morning and, while the active roster is then over the
+league's spots, the least valuable active player by the day's value goes to the pool, the returning
+player included (counted as a forced drop; the keep rule stays out of the executor). Then a
+churn's held drop goes first, on his own, the held-slot moves a set needs are made, and the adds
+land: a drop goes to the pool and the add takes his slot, an add that needs an active spot takes
+a bench slot or is gone when none is open, an add another team took first is gone and counted.
+Every add is a free agent landing the next day
 (`EXECUTIONS = "free_agents_next_day"`): no waiver clear dates, no bids, the caps the autopilot's.
 An add is charged to the week of the day it is made, as Yahoo charges a free agent, never the
 week it lands in: one made on Sunday spends the ending week's adds and plays from Monday, and
@@ -128,12 +134,15 @@ has the recorded lines as the truth of every game (no game noise, no hazard: the
 game day without a line an absence, and beliefs refreshing toward the season's realized rates. The
 truth's makes never exceed its attempts (the errors are drawn a stat at a time).
 
-`simulate` advances variants of one league through one world a day at a time: Monday resets the
-adds, yesterday's queue lands, each seat decides (a decision cached by team and state, so arms in
-lockstep solve once), the day is played and scored; the season is then scored by the league. `paired`
-runs arm A and arm B in my seat and returns each outcome (playoff odds, rank, category wins, matchup
-wins, title) and their difference; `room` seats the arms given around the table, seat `i` taking
-arm `(i + path) mod n` so every arm sits in every seat across paths. The process pool is the
+`simulate` advances variants of one league through one world a day at a time: yesterday's queue
+lands (a held player whose status has cleared comes back to the bench first and the roster is
+trimmed to the league's spots, then a churn's held drop, the held-slot moves and the adds, an add
+with no active spot gone), Monday resets the adds, each seat decides (a decision cached by team
+and state, so arms in lockstep solve once), the day is played and scored; the season is then
+scored by the league. `paired` runs arm A and arm B in my seat and returns each outcome (playoff
+odds, rank, category wins, matchup wins, title) and their difference; `room` seats the arms given
+around the table, seat `i` taking arm `(i + path) mod n` so every arm sits in every seat across
+paths. The process pool is the
 simulator's own (cores less two workers at `nice 10`; the API's pools are untouched).
 
 ## The readers (`api/season_sim.py`) and the runs (`scripts/season_sim.py`)

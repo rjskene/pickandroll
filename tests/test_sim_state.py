@@ -32,6 +32,9 @@ def test_day_one_and_the_key_two_arms_share_a_solve_on():
     assert same.key() == state.key()
     moved = SimState(state.day, state.rosters, state.pool - {setup.pool[0]}, {})
     assert moved.key() != state.key()
+    # The held-slot moves landing tomorrow are part of what tomorrow's decision depends on.
+    stash = SimState(state.day, state.rosters, state.pool, {}, pending_held={1: ((1, "IL"),)})
+    assert stash.key() != state.key()
     assert state.active(1) == tuple(k for k, _ in setup.rosters[1])
     assert state.held(1) == ()
     assert state.owner_of(setup.rosters[2][0][0]) == 2
