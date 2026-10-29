@@ -1,0 +1,25 @@
+# One routine run: pickandroll-routine@daily, @morning, @late, @evening-build, @evening-pass,
+# @monday and @signin, each started by its timer. scripts/routine.py exits 0 when every step
+# is ok, 1 when a step failed, 2 when the API never answered, 3 when refused outside the
+# routine's window (a timer catching up after a reboot) and 4 when STOP is set; 3 and 4 are
+# not failures. A failure starts pickandroll-alert@<this unit>. ROUTINE_FLAGS comes from the
+# user's ~/.config/pickandroll/routine.env (--no-post through the soak, empty after cut-over).
+[Unit]
+Description=pickandroll routine %i
+After=pickandroll-api.service pickandroll-xvfb.service
+Wants=pickandroll-api.service pickandroll-xvfb.service
+OnFailure=pickandroll-alert@%n.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/pickandroll
+Environment=TZ=America/Chicago
+Environment=DISPLAY=:99
+Environment=PICKANDROLL_API=http://127.0.0.1:8000
+Environment=PYTHONUNBUFFERED=1
+EnvironmentFile=-%h/.config/pickandroll/routine.env
+ExecStart=%h/pickandroll/.venv/bin/python %h/pickandroll/scripts/routine.py %i $ROUTINE_FLAGS
+SuccessExitStatus=3 4
+TimeoutStartSec=2h
+TimeoutStopSec=30
+KillMode=control-group

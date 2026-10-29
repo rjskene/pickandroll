@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- The Mac's tunnel to the routine host's API: localhost:8000 on the Mac is the droplet's
+     uvicorn, so the dashboard and the extension keep their address after cut-over. Kept
+     alive by launchd; the Mac's own API must be off (the port). ops/mac/README.md installs it. -->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.pickandroll.tunnel</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/bin/ssh</string>
+    <string>-N</string>
+    <string>-o</string>
+    <string>BatchMode=yes</string>
+    <string>-o</string>
+    <string>ServerAliveInterval=30</string>
+    <string>-o</string>
+    <string>ServerAliveCountMax=3</string>
+    <string>-o</string>
+    <string>ExitOnForwardFailure=yes</string>
+    <string>-L</string>
+    <string>8000:127.0.0.1:8000</string>
+    <string>pickandroll@hts-digital-ocean</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>ThrottleInterval</key>
+  <integer>10</integer>
+  <key>StandardErrorPath</key>
+  <string>/tmp/com.pickandroll.tunnel.log</string>
+</dict>
+</plist>
