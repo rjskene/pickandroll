@@ -62,7 +62,7 @@ def main(argv: list[str] | None = None) -> int:
     else:
         clock = now
 
-    report = Report(args.routine, clock())
+    report = Report(args.routine, clock(), clock=clock)
     ctx = Context(
         call=http(args.api),
         now=clock,
