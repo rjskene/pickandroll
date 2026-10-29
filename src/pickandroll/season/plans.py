@@ -213,8 +213,10 @@ def valued(
 
 
 def key_of(problem: mv.MoveProblem, moves: Sequence[mv.Move]) -> frozenset[tuple]:
-    """A plan's identity: its moves with their days, so the set and a searched plan dedupe."""
-    return frozenset((m.add, m.drop, mv.day_of(problem, m)) for m in moves)
+    """A plan's identity: its adds with their days, never its drops (the master's ruling of
+    2026-10-29): two plans that add the same players on the same days are one idea with another
+    drop, and the candidates table already shows the drops."""
+    return frozenset((m.add, mv.day_of(problem, m)) for m in moves)
 
 
 def week_plans(
@@ -225,19 +227,26 @@ def week_plans(
     allowed: mv.Allowed | None = None,
     out: HeldOut | None = None,
 ) -> list[WeekPlan]:
-    """The week's plans, at most :data:`WEEK_PLANS`, distinct by move set: plan 1 the recommended
-    ``week_set`` unless a searched plan beats its week by the plan floor, the others by their week
-    gain, best first; none without a day left in the week."""
+    """The week's plans, at most :data:`WEEK_PLANS`, distinct by adds and days (:func:`key_of`;
+    of the searched plans with the same adds and days only the one worth most on the week is kept,
+    and none with the set's: the set is plan 1's idea): plan 1 the recommended ``week_set`` unless
+    a searched plan beats its week by the plan floor, the others by their week gain, best first;
+    none without a day left in the week."""
     p = ev.problem
     if not p.horizons["week"][0].days:
         return []
     base = valued(ev, week_set, SET, out)
-    found = [
+    ranked = [
         valued(ev, moves, SEARCH, out)
         for moves in search(ev, blocks(p, swaps, stream_plan), allowed)
-        if key_of(p, moves) != key_of(p, week_set)
     ]
-    found.sort(key=lambda w: (-w.total["week"], -w.total.get("three", 0.0), len(w.steps)))
+    ranked.sort(key=lambda w: (-w.total["week"], -w.total.get("three", 0.0), len(w.steps)))
+    seen = {key_of(p, week_set)}
+    found = []
+    for w in ranked:
+        if (k := key_of(p, w.moves)) not in seen:
+            seen.add(k)
+            found.append(w)
     floor = st.floor_of(p)
     if found and found[0].total["week"] > base.total["week"] + floor:
         plans = [found[0], *sorted([base, *found[1:]], key=lambda w: -w.total["week"])]
@@ -251,8 +260,16 @@ def for_queue(
 ) -> WeekPlan | None:
     """The plan the queue takes instead of the three weeks' set (the ruling's second answer): the
     one worth most on ``key`` (the queue's judging horizon) among those that beat the set there
-    by the plan floor; None when none does or a plan has no step."""
-    floor = st.floor_of(ev.problem)
+    by the plan floor; None when none does or a plan has no step. Only a plan that keeps the
+    rules (:func:`valid`) is weighed: plan 1, the week's recommended set, may take more steps than
+    :data:`PLAN_STEPS` or more moves a day than the cap, and then never takes the queue (the
+    master's ruling of 2026-10-29)."""
+    p = ev.problem
+    floor = st.floor_of(p)
     against = ev.value(key, three_set)
-    better = [w for w in plans if w.steps and ev.value(key, w.moves) > against + floor]
+    better = [
+        w
+        for w in plans
+        if w.steps and valid(p, w.moves) and ev.value(key, w.moves) > against + floor
+    ]
     return max(better, key=lambda w: ev.value(key, w.moves), default=None)

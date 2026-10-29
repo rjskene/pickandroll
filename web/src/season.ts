@@ -1268,6 +1268,18 @@ export function shownWeekPlans(wp: WeekPlans | null | undefined): WeekPlan[] {
   return (wp?.plans ?? []).filter((w) => w.steps.length || w.backs.length);
 }
 
+/** The Week plans section's tooltip (#221 part 2): the limits, plan 1's rule and the floor. Plan 1
+ * is the week's recommended set, whatever its steps; the searched plans keep the limit (the
+ * master's ruling of 2026-10-29). */
+export function weekPlansTitle(wp: Pick<WeekPlans, "limits" | "seconds" | "floor">, units: string): string {
+  const l = wp.limits;
+  return (
+    `plan 1 is the week's recommended set; the searched plans are at most ${l.steps} steps, up to ${l.plans} plans over the rest of the week, ` +
+    `searched ${l.beam} wide and the best ${l.exact} valued exactly in ${wp.seconds.toFixed(1)} s; a searched plan is plan 1 only when it beats the set's week by the floor, ${wp.floor} ${units}; ` +
+    "plans with the same adds on the same days are one, the best week kept; recommended, a heuristic"
+  );
+}
+
 /** A week plan's head: "Plan 1 · the week's set · +0.42 this week, +0.10 over three weeks", the
  * queue's plan marked "queued in place of the three weeks' set". */
 export function weekPlanHead(w: WeekPlan, i: number, queued: boolean): string {

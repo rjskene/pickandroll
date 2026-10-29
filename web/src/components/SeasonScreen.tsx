@@ -83,6 +83,7 @@ import {
   seasonGuardMoves,
   shownPlan,
   shownWeekPlans,
+  weekPlansTitle,
   sortAvailable,
   stashText,
   statusTitle,
@@ -1120,11 +1121,11 @@ function PlanBlock({ m, s, name }: { m: MovesPayload; s: SeasonView; name: Namer
         <tbody>
           {plan.steps.map((x) => (
             <tr key={`${x.from}-${x.add}`}>
-              <td className="dim">{stepDay(x.from)}</td>
-              <td className="strong">
+              <td className="dim wrap">{stepDay(x.from)}</td>
+              <td className="strong wrap">
                 {name(x.add)} <FlagTag f={flagOf(s, x.add)} cfg={s.flag_config} />
               </td>
-              <td>{name(x.drop)}</td>
+              <td className="wrap">{name(x.drop)}</td>
               <td className={`num ${gainTone(x.marginal.week, m.search.min_gain)}`}>{gainLabel(x.marginal.week)}</td>
               <td className="num dim">{gainLabel(x.marginal.three)}</td>
               <td className={`num ${rosTone(x.ros, s.scoring) || "dim"}`} title={planStepRosTitle(x, name, s.scoring)}>
@@ -1151,7 +1152,7 @@ function WeekPlansBlock({ m, s, name }: { m: MovesPayload; s: SeasonView; name: 
     <div className="block">
       <span
         className="k"
-        title={`up to ${wp.limits.plans} dated plans of at most ${wp.limits.steps} steps over the rest of the week, searched ${wp.limits.beam} wide and the best ${wp.limits.exact} valued exactly in ${wp.seconds.toFixed(1)} s; plan 1 is the week's set unless a plan beats its week by the floor, ${wp.floor} ${units}; recommended, a heuristic`}
+        title={weekPlansTitle(wp, units)}
       >
         Week plans for {horizonName(m, "week")}
       </span>
@@ -1207,11 +1208,13 @@ function WeekPlanTable({ w, m, s, name }: { w: WeekPlan; m: MovesPayload; s: Sea
               const basis = addBasis(x, name);
               return (
                 <tr key={`${x.from}-${x.add}`}>
-                  <td className="dim">{stepDay(x.from)}</td>
-                  <td className="strong">
+                  <td className="dim wrap">{stepDay(x.from)}</td>
+                  <td className="strong wrap">
                     {name(x.add)} <FlagTag f={flagOf(s, x.add)} cfg={s.flag_config} />
                   </td>
-                  <td title={basis.title}>{basis.cell}</td>
+                  <td className="wrap" title={basis.title}>
+                    {basis.cell}
+                  </td>
                   <td className={`num ${gainTone(x.gain.week, m.search.min_gain)}`}>{gainLabel(x.gain.week)}</td>
                   <td className="num dim">{gainLabel(x.gain.three)}</td>
                   <td className={`num ${rosTone(x.ros, s.scoring) || "dim"}`}>{rosLabel(x.ros, s.scoring)}</td>

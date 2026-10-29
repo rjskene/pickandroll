@@ -960,9 +960,12 @@ The streaming plan turns over a weak spot; a week plan orders the week's moves o
   with the drop it forces. A held return's `gain` is the plan with him back less the plan with
   him held past the horizons; shown, never summed in the total (null for the others).
 - **Plan 1** is the recommended week set unless a searched plan beats its week by the plan floor
-  (`stream.floor_of`); the others by their week, five at most (`WEEK_PLANS`), distinct by moves
-  and days.
-- **The queue's plan.** The plan worth most on the three weeks after among those that beat the
+  (`stream.floor_of`); the others by their week, five at most (`WEEK_PLANS`), distinct by adds
+  and days (`plans.key_of`, never the drops: of the searched plans with the same adds on the same
+  days only the best week is kept, and none with the set's). Plan 1, the week's recommended set,
+  may take more steps than four or more moves a day than the cap; the searched plans may not.
+- **The queue's plan.** The plan worth most on the three weeks after among those that keep the
+  rules (`plans.valid`, so plan 1 over the step limit or the daily cap never does) and beat the
   three weeks' set there by the plan floor (`plans.for_queue`; the queue's judging horizon, so a
   plan never takes the queue on its week alone); none when none does. The decision log keeps it as
   one more set, `week_plan`, its steps by day, each with its increment as `gain`, its `after` (the
