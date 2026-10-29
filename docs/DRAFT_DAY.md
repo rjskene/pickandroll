@@ -560,14 +560,6 @@ tailnet.
 
 ## What a cloud VM would take (not this weekend)
 
-The sync side cannot leave the Mac: the draft room has to run in the user's own signed-in Chrome, where the
-extension reads the seat. A VM could host only the API and the dashboard. That needs:
-
-- The extension's `host_permissions` and API base pointed at the VM, over HTTPS on the tailnet.
-- An API with authentication. Today anyone who reaches it can arm a room.
-- `data/` on the VM: projections, league folders and survival tables. That is subscriber data, which must stay
-  private and off git.
-- Enough CPU for the solver's process pool.
-- The round trip inside the sync budget: G2 lag p95 under 2 s, measured today on localhost at under 100 ms.
-
-The Mac and its browser stay in the loop either way.
+Done in #225: the routines run as systemd timers on the droplet, `scripts/routine.py` with Playwright's Chromium and
+the extension loaded unpacked, and `docs/OPS.md` is the runbook (bootstrap, sign-in, the soak, the cut-over, the
+rollback). The draft room itself still runs in the user's own signed-in Chrome, where the extension reads the seat.
