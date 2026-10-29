@@ -8,11 +8,14 @@
     python scripts/routine.py monday               # Mon 06:00: record, scorecard, hill-climb, queue
     python scripts/routine.py daily --dry-run      # the plan from the live API; writes nothing
     python scripts/routine.py daily --force        # outside the window (a test, a re-run)
+    python scripts/routine.py daily --skip-solve 31822   # that league's solve left out
 
 The API is ``PICKANDROLL_API`` (http://127.0.0.1:8000). ``--no-post`` keeps the GitHub comments
 off (the soak); ``--no-marker`` keeps the daily from writing data/routine/daily.json; ``--json``
-prints the report as JSON after the summary. Every run writes data/routine/runs/<day>-<name>.json
-unless it was a dry run.
+prints the report as JSON after the summary. ``--skip-solve LEAGUE`` (repeatable) leaves that
+league's solve out and says so: the private league's search outruns the daily's window on a
+slow host, and a solve the client gives up on keeps computing in the API. Every run writes
+data/routine/runs/<day>-<name>.json unless it was a dry run.
 
 Exit codes: 0 every step ok or skipped by its rule; 1 a step failed; 2 the API is unreachable;
 3 outside the routine's window (nothing ran); 4 STOP is set (nothing ran).
@@ -58,6 +61,13 @@ def main(argv: list[str] | None = None) -> int:
         "--no-marker", action="store_true", help="the daily writes no data/routine/daily.json"
     )
     p.add_argument("--force", action="store_true", help="run outside the routine's window")
+    p.add_argument(
+        "--skip-solve",
+        action="append",
+        default=[],
+        metavar="LEAGUE",
+        help="leave this league's solve out, reported as such (repeatable)",
+    )
     p.add_argument("--json", action="store_true", help="print the report as JSON too")
     p.add_argument("--now", help="pretend it is this time (ISO, Central if naive); for tests")
     args = p.parse_args(argv)
@@ -82,6 +92,7 @@ def main(argv: list[str] | None = None) -> int:
         browser=None,
         dry_run=args.dry_run,
         posting=not args.no_post,
+        skip_solve=frozenset(args.skip_solve),
     )
     try:
         run(args.routine, ctx, args.api, force=args.force)
