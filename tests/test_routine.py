@@ -147,7 +147,7 @@ def test_daily_refreshes_public_leagues_paced_and_solves_every_league(tmp_path):
     assert by_name["post"].status == "ok" and ctx.notes["_posts"][0][0] == 99
     assert ctx.notes["_posts"][0][1] == "## Breakout flags\n\nnothing of note\n"  # verbatim
     for name in ("exports", "private_pages", "lineup_pages", "lineup"):
-        assert by_name[name].status == "skipped" and "PR 2" in by_name[name].detail
+        assert by_name[name].status == "skipped" and "no browser" in by_name[name].detail
     assert "4 pages would open" in by_name["lineup"].detail  # today and tomorrow, two leagues
     assert by_name["start_active"].detail == "nothing to open"  # no league needs it today
     assert not report.refused and report.finished is not None
@@ -316,6 +316,8 @@ def test_morning_without_a_browser_reports_the_plan_and_opens_no_pass_record(tmp
 
 
 class FakeBrowser:
+    reason = ""
+
     def __init__(self, signed=True, clock=None, land=None):
         self.signed, self.opened, self.closed, self.clock, self.land = signed, [], False, clock, land
 
@@ -333,6 +335,9 @@ class FakeBrowser:
         if self.clock:
             self.clock.advance(wait_s)
         return self.land(url) if self.land else url
+
+    def count(self, selector):
+        return 1
 
     def close(self):
         self.closed = True
@@ -500,6 +505,6 @@ def test_the_script_reports_an_unreachable_api(tmp_path, capsys):
 
 
 def test_windows_cover_every_routine():
-    assert set(WINDOWS) == {"daily", "morning", "late", "evening-build", "evening-pass", "monday"}
+    assert set(WINDOWS) == {"daily", "morning", "late", "evening-build", "evening-pass", "monday", "signin"}
     o = Opening("252098", "moves", "u", 12.0)
     assert o.entry is None

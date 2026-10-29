@@ -1,6 +1,7 @@
-"""The six routines as step sequences, with their windows on the Central clock. ``run`` is the
-entry: it refuses a start outside the routine's window (a timer that fires late after a reboot
-must not run a morning pass at night), runs the sequence, and always finishes the report."""
+"""The six routines as step sequences, with their windows on the Central clock, and the
+sign-in check. ``run`` is the entry: it refuses a start outside the routine's window (a timer
+that fires late after a reboot must not run a morning pass at night), runs the sequence, and
+always finishes the report."""
 
 from __future__ import annotations
 
@@ -18,19 +19,26 @@ from .steps import (
     MovesPlan,
     Opening,
     Stopped,
+    alert_once,
     all_leagues,
     api_check,
     digest,
+    export_all,
+    lineup_pages,
     lineup_plan,
+    monday_pages,
     monday_step,
     moves_plan,
+    open_page,
     pass_done,
     pass_open,
     pass_opening,
     plan_lines,
     post_digest,
+    private_pages,
     public_leagues,
     queue_build,
+    ready_browser,
     record_all,
     record_retry,
     refresh_all,
@@ -52,6 +60,7 @@ WINDOWS: dict[str, tuple[str, str]] = {
     "evening-build": ("21:00", "21:30"),
     "evening-pass": ("22:40", "22:58"),
     "monday": ("06:00", "12:00"),
+    "signin": ("00:00", "23:59"),
 }
 #: The daily's refresh retry pass runs only before this (the Monday recorder reads Yahoo at 06:00).
 DAILY_RETRY_BEFORE = "05:45"
@@ -60,6 +69,10 @@ EVENING_EXPORTS_BY = "21:15"
 EVENING_RETRY_BEFORE = "21:40"
 #: The evening pass opens nothing from this minute: the queue's day ends at 23:00 Central.
 EVENING_HARD_STOP = "22:58"
+#: The this-week export is not due on these weekdays (the week's last day, or its last two for
+#: the evening): Basketball Monster's Remaining Week then lists only the players with a game.
+DAILY_WEEK_THIS_NOT_DUE = (6,)
+EVENING_WEEK_THIS_NOT_DUE = (5, 6)
 MONDAY = 0
 
 
@@ -93,44 +106,45 @@ def browser_pass(
 ) -> list[str]:
     """Open each page in the routine's own tab and wait for the extension; with a pass record
     (kind, trigger, entries) the record is opened, told each opening and closed. Gives the
-    leagues whose pages were opened. Without a browser, or signed out, the plan is reported
-    and nothing opens."""
+    leagues whose pages were opened. In a dry run, without a browser, or signed out, the plan
+    is reported and nothing opens."""
     if not openings:
         ctx.report.skipped(name, "nothing to open")
         return []
     plan = plan_lines(openings)
-    browser = ctx.browser
-    if browser is None or not browser.available():
-        ctx.report.skipped(name, f"{NO_BROWSER}; {len(openings)} pages would open", plan=plan)
-        return []
-    if not browser.signed_in(site):
-        ctx.report.failed(name, f"Chrome is not signed in to {site}: nothing opened", plan=plan)
-        ctx.report.alert(f"the browser profile is signed out of {site}")
+    browser = ready_browser(ctx, name, site, f"{len(openings)} pages would open", plan=plan)
+    if browser is None:
         return []
     pass_id = pass_open(ctx, record[0], record[1], [o.league for o in _dedupe(openings)], record[2]) if record else None
     opened: list[str] = []
     unopened: list[str] = []
+    failed: list[str] = []
     for o in openings:
         if hard_stop and not before(ctx.now(), hard_stop):
             unopened.append(o.entry or o.league)
             continue
         pass_opening(ctx, pass_id, o.league, o.entry)
-        landed = browser.open(o.url, o.wait_s)
+        landed = open_page(ctx, browser, o.url, o.wait_s)
+        if landed is None:
+            failed.append(o.entry or o.league)
+            continue
         if o.kind == "il" and o.entry and landed.split("#")[0].startswith(o.url.split("#")[0].split("?")[0]):
             # Still on the team page (a build before 0.9.1, or STOP): the add page is opened as
             # for any other entry by the plan's next item carrying the same entry, if any.
             ctx.notes.setdefault("il_stayed", []).append(o.entry)
         if o.league not in opened:
             opened.append(o.league)
-    summary = f"{len(openings) - len(unopened)} pages opened in {len(opened)} leagues"
+    summary = f"{len(openings) - len(unopened) - len(failed)} pages opened in {len(opened)} leagues"
+    if failed:
+        summary += f", {len(failed)} failed to open: " + ", ".join(failed[:15])
     if unopened:
         shown = ", ".join(unopened[:15]) + (f" and {len(unopened) - 15} more" if len(unopened) > 15 else "")
         summary += f", stopped at {hard_stop} with {len(unopened)} entries unopened: {shown}"
     pass_done(ctx, pass_id, summary)
     detail = summary + ("" if pass_id else "; no pass record" if record else "")
-    ctx.report.ok(name, detail, plan=plan, pass_id=pass_id, unopened=unopened)
+    status = ctx.report.failed if failed else ctx.report.ok
+    status(name, detail, plan=plan, pass_id=pass_id, unopened=unopened, failed=failed)
     return opened
-
 
 def _dedupe(openings: Sequence[Opening]) -> list[Opening]:
     seen: set[str] = set()
@@ -178,10 +192,9 @@ def pass_check(ctx: Context, leagues: Sequence[str], kinds: Sequence[str], trigg
 # --------------------------------------------------------------------------- the six
 def daily(ctx: Context, api: str) -> None:
     api_check(ctx, start=True)
-    # The browser steps of the daily (the five exports, the private league's pages and its
-    # lineup pages) land in PR 2; until then they are skipped and the marker says so.
-    for name in ("exports", "private_pages", "lineup_pages"):
-        ctx.report.skipped(name, NO_BROWSER)
+    export_all(ctx, DAILY_WEEK_THIS_NOT_DUE, None)
+    private_pages(ctx)
+    lineup_pages(ctx)
     rows = seasons(ctx)
     pub = public_leagues(rows)
     refresh_all(ctx, pub, DAILY_RETRY_BEFORE)
@@ -228,7 +241,7 @@ def late(ctx: Context, api: str) -> None:
 def evening_build(ctx: Context, api: str) -> None:
     api_check(ctx)
     stop_check(ctx)
-    ctx.report.skipped("exports", NO_BROWSER)
+    export_all(ctx, EVENING_WEEK_THIS_NOT_DUE, EVENING_EXPORTS_BY)
     pub = public_leagues(seasons(ctx))
     refresh_all(ctx, pub, EVENING_RETRY_BEFORE)
     solve_all(ctx, pub)
@@ -254,13 +267,34 @@ def evening_pass(ctx: Context, api: str) -> None:
 def monday(ctx: Context, api: str) -> None:
     api_check(ctx, start=True)
     lines = record_all(ctx, api)
-    ctx.report.skipped("private_pages", NO_BROWSER)
+    monday_pages(ctx, api, lines)
     record_retry(ctx, api, lines)
     scorecard(ctx)
     monday_step(ctx, api)
     pub = public_leagues(seasons(ctx))
     solve_all(ctx, pub)
     queue_build(ctx)
+
+
+def signin(ctx: Context, api: str) -> None:
+    """The sign-in check (the 04:50 timer of the operations PR): the browser up with the
+    extension's worker, then each site's state in the profile. A site signed out is a failed
+    step and an alert; the routines still run their API steps that day. No API needed."""
+    if ctx.dry_run or ctx.browser is None:
+        ctx.report.skipped("browser", "dry run: nothing launched" if ctx.dry_run else NO_BROWSER)
+        return
+    browser = ctx.browser
+    if not browser.available():
+        ctx.report.failed("browser", f"unavailable ({browser.reason})")
+        alert_once(ctx, f"the browser could not start at the signin routine: {browser.reason}")
+        return
+    ctx.report.ok("browser", "launched, the extension's worker up")
+    for site in ("bbm", "yahoo"):
+        if browser.signed_in(site):
+            ctx.report.ok(site, "signed in")
+        else:
+            ctx.report.failed(site, "signed out: the profile needs the user's sign-in (docs/OPS.md)")
+            alert_once(ctx, f"the browser profile is signed out of {site}")
 
 
 def _report_plan(ctx: Context, plan: MovesPlan) -> None:
@@ -303,6 +337,7 @@ ROUTINES: dict[str, Callable[[Context, str], None]] = {
     "evening-build": evening_build,
     "evening-pass": evening_pass,
     "monday": monday,
+    "signin": signin,
 }
 
 

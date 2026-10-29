@@ -6,13 +6,21 @@
     python scripts/routine.py evening-build        # 21:00: refresh, re-solve, rebuild the queue
     python scripts/routine.py evening-pass         # 22:40: the evening's pages, hard stop 22:58
     python scripts/routine.py monday               # Mon 06:00: record, scorecard, hill-climb, queue
-    python scripts/routine.py daily --dry-run      # the plan from the live API; writes nothing
+    python scripts/routine.py signin               # the browser up, both sites' sign-in state
+    python scripts/routine.py daily --dry-run      # the plan from the live API; opens nothing
     python scripts/routine.py daily --force        # outside the window (a test, a re-run)
+    python scripts/routine.py daily --no-browser   # the API steps only (the Mac, side by side)
 
 The API is ``PICKANDROLL_API`` (http://127.0.0.1:8000). ``--no-post`` keeps the GitHub comments
 off (the soak); ``--no-marker`` keeps the daily from writing data/routine/daily.json; ``--json``
 prints the report as JSON after the summary. Every run writes data/routine/runs/<day>-<name>.json
 unless it was a dry run.
+
+The browser (``routine/chromium.py``) is Playwright's Chromium with the extension from
+``PICKANDROLL_EXTENSION`` (the checkout's ``extension/``) and the profile at
+``PICKANDROLL_PROFILE`` (``data/routine/profile``, signed in once by the user); it is launched
+by the first step that opens a page and its downloads land in ``data/routine/downloads``, where
+the importers read them (``PICKANDROLL_DOWNLOADS``). Headed: it needs a display (Xvfb).
 
 Exit codes: 0 every step ok or skipped by its rule; 1 a step failed; 2 the API is unreachable;
 3 outside the routine's window (nothing ran); 4 STOP is set (nothing ran).
@@ -50,6 +58,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--no-post", action="store_true", help="no GitHub comments")
     p.add_argument("--no-marker", action="store_true", help="the daily writes no data/routine/daily.json")
     p.add_argument("--force", action="store_true", help="run outside the routine's window")
+    p.add_argument("--no-browser", action="store_true", help="skip the browser steps (no profile, nothing opened)")
     p.add_argument("--json", action="store_true", help="print the report as JSON too")
     p.add_argument("--now", help="pretend it is this time (ISO, Central if naive); for tests")
     args = p.parse_args(argv)
@@ -63,15 +72,25 @@ def main(argv: list[str] | None = None) -> int:
         clock = now
 
     report = Report(args.routine, clock())
+    downloads = args.data / "routine" / "downloads"
+    browser = None
+    if not args.no_browser:
+        from pickandroll.routine.chromium import ChromiumBrowser
+
+        browser = ChromiumBrowser(
+            profile=Path(os.environ.get("PICKANDROLL_PROFILE", args.data / "routine" / "profile")),
+            extension=Path(os.environ.get("PICKANDROLL_EXTENSION", ROOT / "extension")),
+            downloads=downloads,
+        )
     ctx = Context(
         call=http(args.api),
         now=clock,
         sleep=time.sleep,
         report=report,
         data_dir=args.data,
-        run_script=script_runner(ROOT, sys.executable),
+        run_script=script_runner(ROOT, sys.executable, {"PICKANDROLL_DOWNLOADS": str(downloads)}),
         post=gh_comment,
-        browser=None,
+        browser=browser,
         dry_run=args.dry_run,
         posting=not args.no_post,
     )
