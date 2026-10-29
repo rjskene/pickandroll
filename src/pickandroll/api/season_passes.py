@@ -103,7 +103,7 @@ def read(data_dir: Path, day: date, now: datetime) -> list[dict[str, Any]]:
     return [closed(p, now) for p in _read(data_dir, day)]
 
 
-def _day_of(pass_id: str) -> date:
+def day_of(pass_id: str) -> date:
     try:
         return date.fromisoformat(pass_id.split(":", 1)[0])
     except ValueError as exc:
@@ -150,7 +150,7 @@ def open_pass(
 def _change(data_dir: Path, pass_id: str, now: datetime, change: Any) -> dict[str, Any]:
     """Apply ``change`` to the open pass ``pass_id`` under the lock; refused (404) for no such
     pass and (409) once it is done or stale. The day's stale passes are written closed too."""
-    day = _day_of(pass_id)
+    day = day_of(pass_id)
     with _lock:
         passes = read(data_dir, day, now)
         p = next((x for x in passes if x["id"] == pass_id), None)
@@ -184,11 +184,20 @@ def opening(
     return _change(data_dir, pass_id, now, change)
 
 
-def done(data_dir: Path, pass_id: str, now: datetime, summary: str | None) -> dict[str, Any]:
-    """The routine's end of the pass."""
+def done(
+    data_dir: Path,
+    pass_id: str,
+    now: datetime,
+    summary: str | None,
+    held: Mapping[str, Mapping[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """The routine's end of the pass, with the week plan's steps it left held on an earlier step
+    (#221 part 2), each with what it waits for, by entry (a moves pass's only)."""
 
     def change(p: dict[str, Any]) -> None:
         p.update(end="done", ended=now.isoformat(timespec="seconds"), current=None, summary=summary)
+        if p["kind"] == "moves":
+            p["held"] = dict(held or {})
 
     return _change(data_dir, pass_id, now, change)
 
@@ -258,7 +267,8 @@ def _side(p: Mapping[str, Any], key: str, keys: tuple[str, ...]) -> dict[str, in
 def view(p: Mapping[str, Any]) -> dict[str, Any]:
     """A pass for the API: its progress (the leagues done of those named, in the order named; a
     moves pass's entries checked of those named, the total null without a list; a lineup pass's
-    none), its results and a moves pass's IL runs (#214) and Start Active runs (#215)."""
+    none), its results and a moves pass's IL runs (#214) and Start Active runs (#215), and the
+    week plan's steps it left held (#221 part 2; None before it is done, or for a lineup pass)."""
     entries = p.get("entries")
     checked = [k for k in p.get("outcomes") or {} if entries is None or k in entries]
     return {
@@ -279,6 +289,7 @@ def view(p: Mapping[str, Any]) -> dict[str, Any]:
         "results": results(p),
         "il": il_results(p),
         "start_active": start_active_results(p),
+        "held": p.get("held"),
         "summary": p.get("summary"),
     }
 

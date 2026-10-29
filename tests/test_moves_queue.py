@@ -15,7 +15,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from pickandroll.api import leagues, season_cantcut, season_queue
+from pickandroll.api import leagues, season_cantcut, season_queue, season_scorecard
 from pickandroll.api import season_autopilot as ap
 from pickandroll.season import autopilot as qa
 from pickandroll.season.state import Player, Transaction
@@ -109,6 +109,35 @@ def test_the_spread_pools_the_public_leagues_scored_moves_by_scoring():
         "categories": [-6.0, 4.0],
         "points": [-1.0],
     }
+
+
+def test_a_week_plans_steps_are_one_scored_decision_for_the_floor_and_the_summary():
+    plan = {"id": "20261021T120000000000-moves-bbm:week_plan", "day": "2026-10-21"}
+
+    def stepped(projected, realized, n):
+        row = scored_row(projected, realized)
+        row["projected"] = {**row["projected"], "set": "week_plan", "plan": {**plan, "step": n}}
+        return row
+
+    rows = [stepped(3.0, 1.0, 1), scored_row(5.0, 9.0), stepped(2.0, 2.5, 2)]
+    assert season_scorecard.compared_units(rows) == [("three", 5.0, 3.5), ("three", 5.0, 9.0)]
+    payloads = [{"league": "900001", "public": True, "weeks": [{"moves": rows}]}]
+    assert season_queue.scored_differences(payloads, {"900001": "categories"}) == {
+        "categories": [-1.5, 4.0]
+    }
+    compared = season_scorecard.moves_summary(
+        [{**r, "match": {"kind": "as_recommended"}} for r in rows]
+    )["compared"]
+    assert (compared["moves"], compared["projected"], compared["realized"]) == (2, 10.0, 12.5)
+    # A move in both sets reads as the plan's step: the queue executed the plan.
+    value = {"horizons": {"three": {"value": 1.0}}}
+    sets = [
+        {"key": "three", "moves": [{"add": 1, "drop": 2, "value": value}]},
+        {"key": "week_plan", "moves": [{"add": 1, "drop": 2, "value": value, "plan": plan}]},
+    ]
+    match = {"kind": "as_recommended", "entry": "e", "move": {"add": 1, "drop": 2}}
+    got = season_scorecard.logged_move([{"id": "e", "sets": sets}], match)
+    assert (got["set"], got["plan"]) == ("week_plan", plan)
 
 
 # --------------------------------------------------------------------------- the entries
@@ -344,6 +373,93 @@ def test_the_entries_due_are_the_queued_ones_past_their_window_with_the_bid_to_p
     assert qa.due(out, datetime(2026, 10, 21, 17, 0, tzinfo=UTC)) == []
 
 
+# --------------------------------------------------------------------------- the week plan
+def step(add, drop, gain, frm, after, n, basis="drop", costly=False):
+    plan = {"id": "20261021T120000000000-moves-bbm:week_plan", "day": "2026-10-21"}
+    return {
+        **move(add, drop, gain, frm=frm, costly=costly),
+        "basis": basis,
+        "after": list(range(after)),
+        "plan": {**plan, "step": after + 1, "steps": n},
+    }
+
+
+def planned(*steps):
+    e = entry(move(101, 201, 0.9))
+    e["sets"].append({"key": qa.WEEK_PLAN, "moves": list(steps), "held": []})
+    return e
+
+
+def test_the_queue_takes_the_week_plan_in_its_order_and_only_todays_steps():
+    # A step below the floor and one flagged on its own are queued: the plan is the unit
+    # (the ruling's first condition); a step dated later is shown, never queued (the second).
+    e = planned(
+        step(111, 211, 0.05, "2026-10-21", 0, 4, costly=True),
+        step(112, 212, 0.3, "2026-10-21", 1, 4),
+        step(113, 111, 0.2, "2026-10-23", 2, 4),
+        step(114, 214, 0.4, "2026-10-21", 3, 4),
+    )
+    out = qa.queue_of(league_day(e, cap=3), DAY, PLAN, TYPICAL, None)
+    assert reasons(out) == [
+        (111, None, 1),
+        (112, None, 2),
+        (113, qa.LATER_STEP, None),
+        (114, qa.EARLIER_HELD, None),
+    ]
+    first = out[0]
+    assert first["set"] == qa.WEEK_PLAN and first["floor"]["below"] is None
+    assert first["plan"]["step"] == 1 and first["after"] == []
+    assert out[1]["after"] == ["2026-10-21:900001:111:211"]
+    assert out[3]["after"] == [x["id"] for x in out[:3]]
+    # A claim is today's when it is dated at the day it clears placed today.
+    claims = {111: ("W", date(2026, 10, 23)), 112: ("W", date(2026, 10, 23))}
+    e = planned(step(111, 211, 0.5, "2026-10-23", 0, 2), step(112, 212, 0.5, "2026-10-24", 1, 2))
+    out = qa.queue_of(league_day(e, availability=claims), DAY, PLAN, TYPICAL, None)
+    assert reasons(out) == [(111, None, 1), (112, qa.LATER_STEP, None)]
+    # A churn step stays read-only; the cap and the protected drop hold as for any move.
+    e = planned(
+        step(111, 211, 0.5, "2026-10-21", 0, 3, basis="churn"),
+        step(112, 212, 0.5, "2026-10-21", 1, 3),
+    )
+    out = qa.queue_of(league_day(e), DAY, PLAN, TYPICAL, None)
+    assert reasons(out) == [(111, qa.CHURN_HELD, None), (112, qa.EARLIER_HELD, None)]
+    e = planned(step(111, 211, 0.5, "2026-10-21", 0, 2), step(112, 212, 0.5, "2026-10-21", 1, 2))
+    out = qa.queue_of(league_day(e, cap=1), DAY, PLAN, TYPICAL, None)
+    assert reasons(out) == [(111, None, 1), (112, qa.OVER_CAP, None)]
+    # No plan logged: the three weeks' set, as before.
+    assert reasons(
+        qa.queue_of(league_day(entry(move(101, 201, 0.9))), DAY, PLAN, TYPICAL, None)
+    ) == [(101, None, 1)]
+
+
+def test_a_step_waits_for_the_steps_before_it_to_land_and_never_runs_out_of_order():
+    e = planned(step(111, 211, 0.5, "2026-10-21", 0, 2), step(112, 212, 0.5, "2026-10-21", 1, 2))
+    now = datetime(2026, 10, 21, 10, 0, tzinfo=UTC)
+    out = qa.merge([], qa.queue_of(league_day(e), DAY, PLAN, TYPICAL, None), DAY, "07:00", now)
+    later = now + timedelta(hours=2)
+    assert [x["add"] for x in qa.due(out, later)] == [111]
+    [h] = qa.held(out, later)
+    assert h["id"] == out[1]["id"] and h["waits"]["text"] == "waits for step 1 to land"
+    assert (h["waits"]["step"], h["waits"]["add"]) == (1, 111)
+    # A claim placed is not landed until it is won; a dry run's free-agent claim stands in.
+    for outcome, resolved, availability, runs in (
+        ("claimed", None, "W", False),
+        ("claimed", "won", "W", True),
+        ("claimed", "lost", "W", False),
+        ("failed", None, "FA", False),
+        ("skipped", None, "FA", False),
+        ("would_claim", None, "W", False),
+        ("would_claim", None, "FA", True),
+        ("added", None, "FA", True),
+    ):
+        first = {**out[0], "outcome": outcome, "resolved": resolved, "availability": availability}
+        due = qa.due([first, out[1]], later)
+        assert [x["add"] for x in due] == ([112] if runs else []), outcome
+        assert (qa.held([first, out[1]], later) == []) is runs
+    # Struck, the first step never lands: the second is held all day.
+    assert qa.due([{**out[0], "struck": True}, out[1]], later) == []
+
+
 # --------------------------------------------------------------------------- what a build reads
 def transaction(kind, player, team, when, group=0):
     return Transaction(
@@ -475,9 +591,11 @@ def test_the_build_reads_the_days_solve_and_never_solves(client):
         "reason": qa.PRIVATE,
     }
     # The store holds what the route answered, less each entry's pass and IL run read from the
-    # logs (#200, #214).
+    # logs (#200, #214) and what a week plan's step waits for (#221 part 2).
     stored = json.loads((client.data_dir / "autopilot" / "queue" / "2026-10-21.json").read_text())
-    answered = [{k: v for k, v in e.items() if k not in ("pass", "il_pass")} for e in q["entries"]]
+    answered = [
+        {k: v for k, v in e.items() if k not in ("pass", "il_pass", "waits")} for e in q["entries"]
+    ]
     assert stored["entries"] == answered and client.get("/autopilot/queue").json() == q
 
 
@@ -577,6 +695,55 @@ def test_the_due_entries_wait_for_the_window_and_the_mode(client):
     client.put(f"/leagues/{LEAGUE}/moves", json={"mode": "off"})
     assert client.get(url).json()["reason"] == qa.OFF
     assert client.get(f"/seasons/{PRIVATE}/autopilot/moves/due").json()["reason"] == qa.PRIVATE
+
+
+def test_the_due_route_holds_a_later_step_and_the_pass_record_says_what_it_waits_for(client):
+    # The day's solve logged a week plan for the queue: two of its steps, the second after the
+    # first (#221 part 2).
+    strategy_league(client)
+    assert client.get(f"/seasons/{LEAGUE}/moves").status_code == 200
+    path = client.data_dir / "leagues" / LEAGUE / "season" / "decisions" / "2026-10-21.json"
+    [logged] = json.loads(path.read_text())
+    three = next(s for s in logged["sets"] if s["key"] == "three")
+    steps = [
+        {
+            **m,
+            "from": "2026-10-21",
+            "after": list(range(i)),
+            "plan": {"id": f"{logged['id']}:week_plan", "day": "2026-10-21", "step": i + 1},
+        }
+        for i, m in enumerate(three["moves"][:2])
+    ]
+    logged["sets"].append({"key": "week_plan", "moves": steps, "held": []})
+    path.write_text(json.dumps([logged]))
+    q = client.post("/autopilot/queue/build").json()
+    on = [e for e in q["entries"] if e["queued"]]
+    assert [e["set"] for e in on] == ["week_plan", "week_plan"] and on[1]["after"] == [on[0]["id"]]
+    client.app.state.seasons.clock = lambda: NOW + timedelta(hours=1)
+    url = f"/seasons/{LEAGUE}/autopilot/moves/due"
+    d = client.get(url).json()
+    assert [e["id"] for e in d["entries"]] == [on[0]["id"]]
+    [h] = d["held"]
+    assert (h["id"], h["waits"]["text"], h["waits"]["add"]) == (
+        on[1]["id"],
+        "waits for step 1 to land",
+        on[0]["add"],
+    )
+    # The Queue screen reads the same line on the entry.
+    by = {e["id"]: e for e in client.get("/autopilot/queue").json()["entries"]}
+    assert by[on[1]["id"]]["waits"]["text"] == "waits for step 1 to land"
+    assert by[on[0]["id"]]["waits"] is None
+    # The pass that leaves it held records it at its end.
+    p = client.post(
+        "/autopilot/passes", json={"kind": "moves", "trigger": "routine", "leagues": [LEAGUE]}
+    )
+    assert p.status_code == 200, p.text
+    done = client.post(f"/autopilot/passes/{p.json()['id']}/done", json={"summary": "ok"}).json()
+    assert done["held"] == {on[1]["id"]: {"add": on[1]["add"], **h["waits"]}}
+    # Once the first step lands, the second is due.
+    placed(client, on[0]["id"], "added")
+    d = client.get(url).json()
+    assert [e["id"] for e in d["entries"]] == [on[1]["id"]] and d["held"] == []
 
 
 def test_the_due_route_counts_the_days_executed_entries_and_their_adds(client):

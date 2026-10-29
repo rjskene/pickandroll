@@ -43,6 +43,7 @@ from typing import Any
 
 from ..season import Season
 from ..season import decisions as dl
+from ..season import plans as pl
 from ..season import realized as rz
 from ..season import scorecard as sc
 from ..season.calendar import Calendar, Week
@@ -97,12 +98,15 @@ def logged_move(entries: Sequence[Mapping[str, Any]], match: Mapping[str, Any]) 
     each horizon as the solve priced it, its projection in value units, the week's odds of
     winning the matchup and expected categories before and after the set (``odds``, #129), and
     whether it was flagged as costing the season (``season_costly``, #144, None for an entry
-    logged before the flag); None for any other match, or an entry logged before it kept them."""
+    logged before the flag), and the week plan it is a step of (``plan``, #221 part 2: its id,
+    day, step and steps, None for any other set); the plan the queue took is read first, as the
+    queue executed it. None for any other match, or an entry logged before it kept them."""
     if match.get("kind") != dl.AS_RECOMMENDED or match.get("move") is None:
         return None
     entry = next((e for e in entries if e["id"] == match["entry"]), None)
     want = (match["move"]["add"], match["move"]["drop"])
-    for s in (entry or {}).get("sets") or []:
+    sets = sorted((entry or {}).get("sets") or [], key=lambda s: s.get("key") != pl.QUEUE_PLAN)
+    for s in sets:
         for m in s.get("moves") or []:
             if (m.get("add"), m.get("drop")) == want and m.get("value") is not None:
                 week = s.get("week") or {}
@@ -118,6 +122,7 @@ def logged_move(entries: Sequence[Mapping[str, Any]], match: Mapping[str, Any]) 
                     "value": m["value"],
                     "odds": odds,
                     "season_costly": m.get("season_costly"),
+                    "plan": m.get("plan"),
                 }
     return None
 
@@ -333,13 +338,36 @@ def compared_move(row: Mapping[str, Any]) -> tuple[str, float, float] | None:
     return judged, p["value"], h["value"]
 
 
+def compared_units(rows: Iterable[Mapping[str, Any]]) -> list[tuple[str, float, float]]:
+    """The scored moves of :func:`compared_move` as decisions (#221 part 2): a move alone, and
+    the steps of one week plan made together as one, their projected and realized values summed
+    on the plan's judging horizon (the ruling's first condition: the plan is judged whole, not
+    its steps apart)."""
+    out: list[tuple[str, float, float]] = []
+    plans: dict[str, int] = {}
+    for r in rows:
+        pair = compared_move(r)
+        if pair is None:
+            continue
+        plan = ((r.get("projected") or {}).get("plan") or {}).get("id")
+        if plan is None:
+            out.append(pair)
+        elif plan in plans:
+            judged, projected, realized = out[plans[plan]]
+            out[plans[plan]] = (judged, projected + pair[1], realized + pair[2])
+        else:
+            plans[plan] = len(out)
+            out.append(pair)
+    return out
+
+
 def moves_summary(rows: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
     """The moves of some weeks: how many, by match and by group, how many the log projected
     and their projected value summed on each horizon; the realized value of every move
     realized summed on each horizon (through the days read) and the spans complete; the
     unscored by reason and the games of players not matched; and over the scored moves whose
-    judging horizon is over (``compared``, None without one), each on the horizon its set was
-    recommended for (#143): their projected and realized values summed, the realized share of
+    judging horizon is over (``compared``, None without one; a week plan's steps one decision,
+    :func:`compared_units`), each on the horizon its set was recommended for (#143): their projected and realized values summed, the realized share of
     the projected, how many realized in the projected direction and how many were judged on
     each horizon. The season (#144) is summed like the others, realized through the days read;
     ``season_negative`` counts the moves projected below zero over it and ``season_costly`` the
@@ -382,10 +410,7 @@ def moves_summary(rows: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
         if r.get("season_costly"):
             costly["moves"] += 1
             costly["below_so_far"] += below
-        pair = compared_move(r)
-        if pair is None:
-            continue
-        judged, projected_value, realized_value = pair
+    for judged, projected_value, realized_value in compared_units(rows):
         if compared is None:
             compared = {
                 "moves": 0,

@@ -522,7 +522,15 @@ def test_a_recommended_plan_is_logged_as_one_more_set_its_steps_by_day(client):
     keys = [s["key"] for s in entry["sets"]]
     assert keys[:3] == ["week", "three", "plan"]
     # The same floor lets a week plan replace the three weeks' set in the queue (#221 part 2).
-    assert keys[3:] == ([] if entry["week_plans"]["queue"] is None else ["week_plan"])
+    assert entry["week_plans"]["queue"] is not None and keys[3:] == ["week_plan"]
+    for s in entry["sets"][3:]:
+        # Each step carries the plan's id and day and the steps it waits on (the first condition).
+        n = len(s["moves"])
+        assert [m["plan"] for m in s["moves"]] == [
+            {"id": f"{entry['id']}:week_plan", "day": entry["first_day"], "step": i + 1, "steps": n}
+            for i in range(n)
+        ]
+        assert [m["after"] for m in s["moves"]] == [list(range(i)) for i in range(n)]
     logged_plan = entry["sets"][2]
     rows = [*plan["base"], *plan["steps"]]
     assert [{k: x[k] for k in ("add", "drop", "from")} for x in logged_plan["moves"]] == [

@@ -252,8 +252,15 @@ def moves_entry(built: Built, payload: Mapping[str, Any], at: datetime) -> dict[
         w = wp["plans"][wp["queue"]]
         moves = [_logged({**s, "marginal": s["gain"]}, built) for s in w["steps"]]
         moves = _flagged(_based(moves, built), "moves", pl.QUEUE_PLAN)
-        for m, s in zip(moves, w["steps"], strict=True):
+        # The plan is one decision (the ruling's first condition): every step carries its id and
+        # day, so the scorecard judges the plan whole and not its steps apart.
+        unit = {
+            "id": plan_id(_id(at, "moves", built.system["key"])),
+            "day": built.problem.first_day.isoformat(),
+        }
+        for i, (m, s) in enumerate(zip(moves, w["steps"], strict=True)):
             m["after"] = s["after"]
+            m["plan"] = {**unit, "step": i + 1, "steps": len(moves)}
         model = _moves_of(moves)
         sets.append(
             {
@@ -283,6 +290,11 @@ def moves_entry(built: Built, payload: Mapping[str, Any], at: datetime) -> dict[
         },
         "sets": sets,
     }
+
+
+def plan_id(entry: str) -> str:
+    """The id of the week plan a moves entry queued (#221 part 2): the entry's own, with the set."""
+    return f"{entry}:{pl.QUEUE_PLAN}"
 
 
 def week_plans_record(wp: Mapping[str, Any] | None) -> dict[str, Any] | None:
