@@ -401,4 +401,5 @@ def test_the_copy_script_excludes_the_profile_and_guards_both_hosts() -> None:
     text = (MAC / "rsync-from-droplet.sh").read_text()
     for excluded in ("/routine/profile/", "/routine/downloads/", "/routine/screens/"):
         assert f"--exclude={excluded}" in text
+    assert "--delete" not in text  # the Mac's data/ holds folders that exist nowhere else
     assert text.count("/rooms") >= 2 and ".copied-at" in text

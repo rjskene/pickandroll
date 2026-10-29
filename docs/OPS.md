@@ -49,7 +49,12 @@ after a merge: run it again (it pulls `main` and restarts the API, under the roo
 
 What stays the user's, printed at the end: `gh auth login` as `pickandroll` (the alert's issue
 comments), the ntfy topic in `~/.config/pickandroll/ntfy_topic` with the app subscribed to
-it, the sign-in below, and on the Mac the two agents of `ops/mac/README.md` at cut-over.
+it (a long random name: anyone who knows a topic's name can read it), the sign-in below, and
+on the Mac the two agents of `ops/mac/README.md` at cut-over.
+
+The runner's own fallback for a silent API (`scripts/draft_day.py servers --start`, the Mac's
+launch entries) is a harmless no-op here: `~/code/.claude/launch.json` does not exist on the
+host, and the API is the systemd service every routine instance `Wants=`.
 
 ## 3. The sign-in (the user, once, and again when the 04:50 check fails)
 
@@ -122,10 +127,15 @@ Only with `GET http://127.0.0.1:8000/rooms` answering `[]` on both hosts, in thi
 5. Mac: stop the Mac's API (the port), load the tunnel agent (`ops/mac/README.md`), check
    `curl http://127.0.0.1:8000/seasons` answers from the droplet; the dashboard (`npm run
    dev` in `web/`, unchanged) and the Mac's Chrome extension now read the droplet's API.
+   From here the Mac's launch entries `pickandroll-api` and `pickandroll-api-draft` must not
+   be started while the tunnel holds :8000 (they would fail on the port, or take it from the
+   tunnel after a drop), and `GET http://127.0.0.1:8000/rooms` on the Mac answers from the
+   droplet, so the room guard reads the same answer on both hosts.
 6. Mac: write `rsync.env` and load the nightly copy agent (`ops/mac/README.md`): from the
    next 03:30 the droplet's `data/` is copied into the Mac checkout's `data/` (the browser
-   profile, downloads and screens excluded), and each copy stamps `data/routine/.copied-at`
-   on the droplet, which its watchdog checks.
+   profile, downloads and screens excluded; the copy adds and updates, never deletes, so the
+   Mac's own folders stay), and each copy stamps `data/routine/.copied-at` on the droplet,
+   which its watchdog checks.
 7. The user checks the leagues' switches on the dashboard; the first live pass is the 07:45
    morning pass of the next day.
 
@@ -134,11 +144,13 @@ is a follow-up for the user, not part of the move.
 
 ## 6. Rollback
 
-Any time, in this order: droplet `install.sh --stop` (the timers off, nothing else touched); Mac `launchctl unload` of both agents
-and `rsync.env` deleted (`ops/mac/README.md`); one last copy droplet to Mac by hand (`bash
-ops/mac/rsync-from-droplet.sh` before the env file goes, or the rsync line of §5 step 3 with
-the two hosts swapped); the Mac's API started again through `launch.json`; the master
-re-enables the six Desktop routines. The Mac's Chrome is still signed in to both sites; the
+Any time, in this order: droplet `install.sh --stop` (the timers off, nothing else touched); Mac
+`launchctl unload` of both agents and `rsync.env` deleted (`ops/mac/README.md`), which frees
+:8000; one last copy droplet to Mac by hand (`bash ops/mac/rsync-from-droplet.sh` before the env
+file goes, or the rsync line of §5 step 3 with the two hosts swapped and without `--delete`; the
+copy adds and updates, never deletes, so the Mac's own folders stay); only then the Mac's API
+started again through `launch.json` (`pickandroll-api`, never while the tunnel is loaded); the
+master re-enables the six Desktop routines. The Mac's Chrome is still signed in to both sites; the
 droplet keeps its profile for the next attempt.
 
 ## 7. Alerts and the watchdog

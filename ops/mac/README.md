@@ -13,8 +13,9 @@ API first (the port).
 cp ops/mac/com.pickandroll.tunnel.plist ~/Library/LaunchAgents/ && launchctl load ~/Library/LaunchAgents/com.pickandroll.tunnel.plist && sleep 2 && curl -s http://127.0.0.1:8000/seasons | head -c 200
 ```
 
-**The nightly copy** (03:30, droplet to Mac, the rollback copy): write the settings, then load
-the agent. Nothing is copied until `rsync.env` exists.
+**The nightly copy** (03:30, droplet to Mac, the rollback copy; it adds and updates, never
+deletes, so the Mac's own folders stay): write the settings, then load the agent. Nothing is
+copied until `rsync.env` exists.
 
 ```bash
 mkdir -p ~/.config/pickandroll && printf 'DROPLET=pickandroll@hts-digital-ocean\nREMOTE_DATA=pickandroll/data\nLOCAL_DATA=%s/code/pickandroll/data\n' "$HOME" > ~/.config/pickandroll/rsync.env && sed "s|__HOME__|$HOME|g" ops/mac/com.pickandroll.rsync.plist > ~/Library/LaunchAgents/com.pickandroll.rsync.plist && launchctl load ~/Library/LaunchAgents/com.pickandroll.rsync.plist

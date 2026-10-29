@@ -8,8 +8,11 @@
 # Without that file nothing is copied: it is the switch, written at cut-over (docs/OPS.md),
 # because before it the Mac's data/ is the live one. The copy skips, with a line, while a draft
 # room is live on either host (GET /rooms not []); the browser profile, downloads and screens
-# are never copied. On success it stamps data/routine/.copied-at on the droplet, which the
-# droplet's watchdog checks (an alert once it is older than 72 h).
+# are never copied. It never deletes: the Mac's data/ holds folders that exist nowhere else
+# (studies, the external and fidelity archives, draft day, Yahoo history), so a rollback copy
+# may carry stale extra files, which is harmless, and erases nothing. On success it stamps
+# data/routine/.copied-at on the droplet, which the droplet's watchdog checks (an alert once it
+# is older than 72 h).
 set -u
 conf=${PICKANDROLL_CONF:-$HOME/.config/pickandroll}
 env_file=$conf/rsync.env
@@ -47,7 +50,7 @@ if [ -n "$local_rooms" ] && [ "$local_rooms" != "[]" ]; then
   exit 0
 fi
 
-if rsync -az --delete \
+if rsync -az \
     --exclude=/routine/profile/ --exclude=/routine/downloads/ --exclude=/routine/screens/ \
     -e "ssh $ssh_opts" "$DROPLET:$REMOTE_DATA/" "$LOCAL_DATA/" >>"$log" 2>&1; then
   # shellcheck disable=SC2086
