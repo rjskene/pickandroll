@@ -106,14 +106,20 @@ def base_answers(over=None):
         ("GET", "/seasons"): (200, SEASONS),
         ("POST", "/autopilot/queue/build"): (
             200,
-            {"leagues": [{"league": k, "status": "queued"} for k in PUBLIC]
-             + [{"league": "31822", "status": "private"}],
-             "entries": [{"id": "a", "queued": True}, {"id": "b", "queued": False}]},
+            {
+                "leagues": [{"league": k, "status": "queued"} for k in PUBLIC]
+                + [{"league": "31822", "status": "private"}],
+                "entries": [{"id": "a", "queued": True}, {"id": "b", "queued": False}],
+            },
         ),
         ("GET", "/flags/digest"): (
             200,
-            {"leagues": [{"league": "252098", "players": [1, 2]}], "skipped": [], "notes": [],
-             "markdown": "## Breakout flags\n\nnothing of note\n"},
+            {
+                "leagues": [{"league": "252098", "players": [1, 2]}],
+                "skipped": [],
+                "notes": [],
+                "markdown": "## Breakout flags\n\nnothing of note\n",
+            },
         ),
         ("GET", "/autopilot/start-active/due"): (200, {"stop": False, "leagues": []}),
     }
@@ -122,7 +128,12 @@ def base_answers(over=None):
         answers[("GET", f"/seasons/{k}/moves")] = (200, {"sets": []})
         answers[("GET", f"/seasons/{k}/lineup/steps")] = (
             200,
-            {"mode": "dry_run", "open": True, "date": "2026-10-29", "page": f"{YAHOO}/nba/{k}/2?date=2026-10-29"},
+            {
+                "mode": "dry_run",
+                "open": True,
+                "date": "2026-10-29",
+                "page": f"{YAHOO}/nba/{k}/2?date=2026-10-29",
+            },
         )
     answers.update(over or {})
     return answers
@@ -136,10 +147,14 @@ def test_daily_refreshes_public_leagues_paced_and_solves_every_league(tmp_path):
     report = run("daily", ctx, "http://api")
 
     refreshed = [p for p in api.paths("POST") if "/refresh" in p]
-    assert refreshed == [f"/seasons/{k}/refresh?wait=true" for k in PUBLIC]  # 31822 and 227293 never
+    assert refreshed == [
+        f"/seasons/{k}/refresh?wait=true" for k in PUBLIC
+    ]  # 31822 and 227293 never
     assert ctx.notes["_sleeps"].calls.count(60.0) == 1  # one pause between two leagues
     solved = [p for p in api.paths("GET") if p.endswith("/moves")]
-    assert solved == [f"/seasons/{k}/moves" for k in PUBLIC + ["31822"]]  # the private league solves
+    assert solved == [
+        f"/seasons/{k}/moves" for k in PUBLIC + ["31822"]
+    ]  # the private league solves
     assert api.paths("POST")[-1] == "/autopilot/queue/build"
     by_name = {s.name: s for s in report.steps}
     assert by_name["refresh"].status == "ok" and by_name["solve"].status == "ok"
@@ -159,10 +174,14 @@ def test_steps_are_timed_from_the_previous_step_and_the_summary_says_how_long(tm
     ctx = make_ctx(api, clock, tmp_path)
     report = run("daily", ctx, "http://api")
     refresh = report.find("refresh")
-    assert refresh.started == report.find("lineup_pages").finished  # a step starts where the last ended
+    assert (
+        refresh.started == report.find("lineup_pages").finished
+    )  # a step starts where the last ended
     assert refresh.finished == "2026-10-29T05:02:00-05:00"  # the one 60 s pause between two leagues
     assert "- refresh: ok, 2 leagues refreshed (60 s)" in report.summary()
-    assert "- api: ok, 200 on first check, not restarted\n" in report.summary()  # untimed-looking: under 2 s
+    assert (
+        "- api: ok, 200 on first check, not restarted\n" in report.summary()
+    )  # untimed-looking: under 2 s
     logged = report.to_dict()["steps"][0]
     assert logged["started"] == "2026-10-29T05:01:00-05:00" and "finished" in logged
 
@@ -190,7 +209,9 @@ def test_daily_posts_nothing_with_posting_off_and_a_dry_run_writes_nothing(tmp_p
     report = run("daily", ctx, "http://api")
     assert not api.paths("POST")  # no refresh, no build
     assert all(p == "/seasons" or "/moves" not in p for p in api.paths("GET"))
-    assert {s.status for s in report.steps if s.name in ("refresh", "solve", "queue_build", "post")} == {"skipped"}
+    assert {
+        s.status for s in report.steps if s.name in ("refresh", "solve", "queue_build", "post")
+    } == {"skipped"}
     assert report.find("digest").status == "ok"  # reads still run
 
 
@@ -207,10 +228,14 @@ def test_refresh_retries_a_503_after_the_cool_off_and_a_502_at_once(tmp_path):
         seen["230585"] += 1
         return (502, {"detail": "yahoo"}) if seen["230585"] == 1 else (202, {})
 
-    api = FakeAPI(base_answers({
-        ("POST", "/seasons/252098/refresh"): limited,
-        ("POST", "/seasons/230585/refresh"): flaky,
-    }))
+    api = FakeAPI(
+        base_answers(
+            {
+                ("POST", "/seasons/252098/refresh"): limited,
+                ("POST", "/seasons/230585/refresh"): flaky,
+            }
+        )
+    )
     clock = Clock("2026-10-29 05:05")
     ctx = make_ctx(api, clock, tmp_path)
     refresh_all(ctx, PUBLIC, "05:45")
@@ -221,9 +246,17 @@ def test_refresh_retries_a_503_after_the_cool_off_and_a_502_at_once(tmp_path):
 
 
 def test_refresh_skips_the_retry_pass_past_the_cutoff_and_reports_the_league_failed(tmp_path):
-    api = FakeAPI(base_answers({
-        ("POST", "/seasons/252098/refresh"): (503, {"detail": "999"}, {"retry-after": "300"}),
-    }))
+    api = FakeAPI(
+        base_answers(
+            {
+                ("POST", "/seasons/252098/refresh"): (
+                    503,
+                    {"detail": "999"},
+                    {"retry-after": "300"},
+                ),
+            }
+        )
+    )
     ctx = make_ctx(api, Clock("2026-10-29 05:40"), tmp_path)
     refresh_all(ctx, PUBLIC, "05:45")
     step = ctx.report.find("refresh")
@@ -233,12 +266,15 @@ def test_refresh_skips_the_retry_pass_past_the_cutoff_and_reports_the_league_fai
 
 
 # --------------------------------------------------------------------------- windows, STOP, API
-@pytest.mark.parametrize("name,when", [
-    ("daily", "2026-10-29 06:30"),
-    ("morning", "2026-10-29 07:30"),
-    ("evening-pass", "2026-10-29 22:58"),
-    ("monday", "2026-10-26 13:00"),
-])
+@pytest.mark.parametrize(
+    "name,when",
+    [
+        ("daily", "2026-10-29 06:30"),
+        ("morning", "2026-10-29 07:30"),
+        ("evening-pass", "2026-10-29 22:58"),
+        ("monday", "2026-10-26 13:00"),
+    ],
+)
 def test_a_routine_outside_its_window_is_refused_and_calls_nothing(tmp_path, name, when):
     api = FakeAPI(base_answers())
     ctx = make_ctx(api, Clock(when), tmp_path, routine=name)
@@ -290,19 +326,35 @@ def test_an_unreachable_api_is_reported_as_such(tmp_path):
 
 # --------------------------------------------------------------------------- the passes' plans
 def due_answers():
-    return base_answers({
-        ("GET", "/seasons/252098/autopilot/moves/due"): (200, {
-            "mode": "live", "stop": False,
-            "entries": [
-                {"id": "e1", "page": "/nba/252098/addplayer?apid=111"},
-                {"id": "e2", "page": "/nba/252098/addplayer?apid=222"},
-                {"id": "bad", "page": "/nba/999999/addplayer?apid=333"},
-            ],
-            "il_first": [{"entry": "e2", "player": 5, "slot": "IL", "date": "2026-10-29",
-                          "page": f"{YAHOO}/nba/252098/2?date=2026-10-29"}],
-        }),
-        ("GET", "/seasons/230585/autopilot/moves/due"): (200, {"mode": "off", "entries": [], "reason": "mode off"}),
-    })
+    return base_answers(
+        {
+            ("GET", "/seasons/252098/autopilot/moves/due"): (
+                200,
+                {
+                    "mode": "live",
+                    "stop": False,
+                    "entries": [
+                        {"id": "e1", "page": "/nba/252098/addplayer?apid=111"},
+                        {"id": "e2", "page": "/nba/252098/addplayer?apid=222"},
+                        {"id": "bad", "page": "/nba/999999/addplayer?apid=333"},
+                    ],
+                    "il_first": [
+                        {
+                            "entry": "e2",
+                            "player": 5,
+                            "slot": "IL",
+                            "date": "2026-10-29",
+                            "page": f"{YAHOO}/nba/252098/2?date=2026-10-29",
+                        }
+                    ],
+                },
+            ),
+            ("GET", "/seasons/230585/autopilot/moves/due"): (
+                200,
+                {"mode": "off", "entries": [], "reason": "mode off"},
+            ),
+        }
+    )
 
 
 def test_moves_plan_puts_il_moves_first_and_checks_every_page(tmp_path):
@@ -331,7 +383,13 @@ def test_morning_without_a_browser_reports_the_plan_and_opens_no_pass_record(tmp
 
 class FakeBrowser:
     def __init__(self, signed=True, clock=None, land=None):
-        self.signed, self.opened, self.closed, self.clock, self.land = signed, [], False, clock, land
+        self.signed, self.opened, self.closed, self.clock, self.land = (
+            signed,
+            [],
+            False,
+            clock,
+            land,
+        )
 
     def available(self):
         return True
@@ -359,78 +417,139 @@ def test_morning_with_a_browser_opens_the_pages_and_keeps_the_pass_record(tmp_pa
         passes.append(("open", body))
         return 200, {"id": "2026-10-29:moves:1"}
 
-    api = FakeAPI(due_answers() | {
-        ("POST", "/autopilot/passes"): open_pass,
-        ("POST", "/autopilot/passes/2026-10-29:moves:1/opening"): lambda b: (passes.append(("opening", b)), (200, {}))[1],
-        ("POST", "/autopilot/passes/2026-10-29:moves:1/done"): lambda b: (passes.append(("done", b)), (200, {}))[1],
-        ("GET", "/seasons/252098/autopilot/moves"): (200, {
-            "today": [{"trigger": "routine", "outcome": "would_claim", "reason": None}],
-            "il_today": [{"outcome": "would_move"}], "start_active_today": [],
-        }),
-    })
+    api = FakeAPI(
+        due_answers()
+        | {
+            ("POST", "/autopilot/passes"): open_pass,
+            ("POST", "/autopilot/passes/2026-10-29:moves:1/opening"): lambda b: (
+                passes.append(("opening", b)),
+                (200, {}),
+            )[1],
+            ("POST", "/autopilot/passes/2026-10-29:moves:1/done"): lambda b: (
+                passes.append(("done", b)),
+                (200, {}),
+            )[1],
+            ("GET", "/seasons/252098/autopilot/moves"): (
+                200,
+                {
+                    "today": [{"trigger": "routine", "outcome": "would_claim", "reason": None}],
+                    "il_today": [{"outcome": "would_move"}],
+                    "start_active_today": [],
+                },
+            ),
+        }
+    )
     clock = Clock("2026-10-29 07:50")
     browser = FakeBrowser(clock=clock)
     ctx = make_ctx(api, clock, tmp_path, routine="morning", browser=browser)
     report = run("morning", ctx, "http://api")
     assert [u.split("#")[1] for u, _ in browser.opened] == ["pickandroll-il", "pickandroll-moves"]
-    assert passes[0] == ("open", {"kind": "moves", "trigger": "routine", "leagues": ["252098"], "entries": ["e2", "e1"]})
-    assert [p[1] for p in passes if p[0] == "opening"] == [{"league": "252098", "entry": "e2"}, {"league": "252098", "entry": "e1"}]
+    assert passes[0] == (
+        "open",
+        {"kind": "moves", "trigger": "routine", "leagues": ["252098"], "entries": ["e2", "e1"]},
+    )
+    assert [p[1] for p in passes if p[0] == "opening"] == [
+        {"league": "252098", "entry": "e2"},
+        {"league": "252098", "entry": "e1"},
+    ]
     assert passes[-1] == ("done", {"summary": "2 pages opened in 1 leagues"})
     assert report.find("moves").status == "ok"
-    assert report.find("check").status == "ok" and "would_claim" in report.find("check").data["lines"][0]
+    assert (
+        report.find("check").status == "ok"
+        and "would_claim" in report.find("check").data["lines"][0]
+    )
     assert browser.closed
 
 
 def test_a_signed_out_browser_opens_nothing_and_alerts(tmp_path):
     api = FakeAPI(due_answers())
-    ctx = make_ctx(api, Clock("2026-10-29 07:50"), tmp_path, routine="morning", browser=FakeBrowser(signed=False))
+    ctx = make_ctx(
+        api,
+        Clock("2026-10-29 07:50"),
+        tmp_path,
+        routine="morning",
+        browser=FakeBrowser(signed=False),
+    )
     report = run("morning", ctx, "http://api")
-    assert report.find("moves").status == "failed" and "not signed in" in report.find("moves").detail
+    assert (
+        report.find("moves").status == "failed" and "not signed in" in report.find("moves").detail
+    )
     assert report.alerts == ["the browser profile is signed out of yahoo"]
     assert "/autopilot/passes" not in " ".join(api.paths("POST"))
 
 
 def test_evening_pass_stops_opening_at_22_58_and_names_the_unopened(tmp_path):
     many = [{"id": f"e{i}", "page": f"/nba/252098/addplayer?apid={i}"} for i in range(1, 6)]
-    api = FakeAPI(due_answers() | {
-        ("GET", "/seasons/252098/autopilot/moves/due"): (200, {"mode": "live", "stop": False, "entries": many, "il_first": []}),
-        ("POST", "/autopilot/passes"): (200, {"id": "p"}),
-        ("POST", "/autopilot/passes/p/opening"): (200, {}),
-        ("POST", "/autopilot/passes/p/done"): (200, {}),
-        ("GET", "/seasons/252098/autopilot/moves"): (200, {"today": [{"trigger": "routine_evening", "outcome": "claimed"}]}),
-    })
+    api = FakeAPI(
+        due_answers()
+        | {
+            ("GET", "/seasons/252098/autopilot/moves/due"): (
+                200,
+                {"mode": "live", "stop": False, "entries": many, "il_first": []},
+            ),
+            ("POST", "/autopilot/passes"): (200, {"id": "p"}),
+            ("POST", "/autopilot/passes/p/opening"): (200, {}),
+            ("POST", "/autopilot/passes/p/done"): (200, {}),
+            ("GET", "/seasons/252098/autopilot/moves"): (
+                200,
+                {"today": [{"trigger": "routine_evening", "outcome": "claimed"}]},
+            ),
+        }
+    )
     clock = Clock("2026-10-29 22:57:40")  # 12 s a page: the second opening crosses 22:58
     browser = FakeBrowser(clock=clock)
     ctx = make_ctx(api, clock, tmp_path, routine="evening-pass", browser=browser)
     report = run("evening-pass", ctx, "http://api")
     assert len(browser.opened) == 2
     moves = report.find("moves")
-    assert moves.status == "ok" and "stopped at 22:58 with 3 entries unopened: e3, e4, e5" in moves.detail
+    assert (
+        moves.status == "ok"
+        and "stopped at 22:58 with 3 entries unopened: e3, e4, e5" in moves.detail
+    )
     assert moves.data["unopened"] == ["e3", "e4", "e5"]
 
 
 def test_late_pass_resolves_only_the_leagues_it_opened_and_checks_the_light(tmp_path):
-    status = {"leagues": [
-        {"league": "252098",
-         "yahoo": {"rows": [{"read_at": "2026-10-29T15:05:00-05:00"}]},
-         "recommendations": {"rows": [{"kind": "moves", "built_at": "2026-10-29T15:06:00-05:00"}]}},
-        {"league": "230585",
-         "yahoo": {"rows": [{"read_at": "2026-10-29T15:05:00-05:00"}]},
-         "recommendations": {"rows": [{"kind": "moves", "built_at": "2026-10-29T05:30:00-05:00"}]}},
-    ]}
+    status = {
+        "leagues": [
+            {
+                "league": "252098",
+                "yahoo": {"rows": [{"read_at": "2026-10-29T15:05:00-05:00"}]},
+                "recommendations": {
+                    "rows": [{"kind": "moves", "built_at": "2026-10-29T15:06:00-05:00"}]
+                },
+            },
+            {
+                "league": "230585",
+                "yahoo": {"rows": [{"read_at": "2026-10-29T15:05:00-05:00"}]},
+                "recommendations": {
+                    "rows": [{"kind": "moves", "built_at": "2026-10-29T05:30:00-05:00"}]
+                },
+            },
+        ]
+    }
     assert behind_the_read(status, PUBLIC) == ["230585"]
     assert behind_the_read(status, ["999"]) == ["999 (no status row)"]
 
-    api = FakeAPI(due_answers() | {
-        ("GET", "/seasons/status"): (200, status),
-        ("POST", "/autopilot/passes"): (200, {"id": "p"}),
-        ("POST", "/autopilot/passes/p/opening"): (200, {}),
-        ("POST", "/autopilot/passes/p/done"): (200, {}),
-        ("GET", "/seasons/252098/autopilot"): (200, {"today": [{"trigger": "routine_late", "outcome": "would_set"}]}),
-        ("GET", "/seasons/230585/autopilot"): (200, {"today": [{"trigger": "routine_late", "outcome": "would_set"}]}),
-        ("GET", "/seasons/252098/autopilot/moves"): (200, {"today": []}),
-        ("GET", "/seasons/230585/autopilot/moves"): (200, {"today": []}),
-    })
+    api = FakeAPI(
+        due_answers()
+        | {
+            ("GET", "/seasons/status"): (200, status),
+            ("POST", "/autopilot/passes"): (200, {"id": "p"}),
+            ("POST", "/autopilot/passes/p/opening"): (200, {}),
+            ("POST", "/autopilot/passes/p/done"): (200, {}),
+            ("GET", "/seasons/252098/autopilot"): (
+                200,
+                {"today": [{"trigger": "routine_late", "outcome": "would_set"}]},
+            ),
+            ("GET", "/seasons/230585/autopilot"): (
+                200,
+                {"today": [{"trigger": "routine_late", "outcome": "would_set"}]},
+            ),
+            ("GET", "/seasons/252098/autopilot/moves"): (200, {"today": []}),
+            ("GET", "/seasons/230585/autopilot/moves"): (200, {"today": []}),
+        }
+    )
     clock = Clock("2026-10-29 15:02")
     ctx = make_ctx(api, clock, tmp_path, routine="late", browser=FakeBrowser(clock=clock))
     report = run("late", ctx, "http://api")
@@ -444,9 +563,17 @@ def test_late_pass_resolves_only_the_leagues_it_opened_and_checks_the_light(tmp_
 # --------------------------------------------------------------------------- the Monday
 def test_monday_runs_the_scripts_in_order_and_posts_only_real_output(tmp_path):
     answers = {
-        ("season.py", "record"): (0, "252098 week 2: recorded (pages: taken 7)\n230585 week 2: failed (502): yahoo\n", ""),
+        ("season.py", "record"): (
+            0,
+            "252098 week 2: recorded (pages: taken 7)\n230585 week 2: failed (502): yahoo\n",
+            "",
+        ),
         ("season.py", "scorecard"): (0, "## Scorecard, week 2\n\n| league |\n", ""),
-        ("season.py", "monday"): (0, "## Monday 2026-10-26\n\nno change\n", "2026-10-26: K1 kept\n"),
+        ("season.py", "monday"): (
+            0,
+            "## Monday 2026-10-26\n\nno change\n",
+            "2026-10-26: K1 kept\n",
+        ),
     }
 
     def run_script(args):
@@ -495,7 +622,17 @@ def test_the_script_refuses_outside_the_window_and_writes_nothing(tmp_path, caps
     spec = importlib.util.spec_from_file_location("routine_script", SCRIPT)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    code = module.main(["morning", "--api", "http://127.0.0.1:9", "--data", str(tmp_path), "--now", "2026-10-29 03:00"])
+    code = module.main(
+        [
+            "morning",
+            "--api",
+            "http://127.0.0.1:9",
+            "--data",
+            str(tmp_path),
+            "--now",
+            "2026-10-29 03:00",
+        ]
+    )
     assert code == module.REFUSED
     assert "outside the morning window 07:45-14:30" in capsys.readouterr().out
     assert not (tmp_path / "routine").exists()
@@ -505,11 +642,26 @@ def test_the_script_reports_an_unreachable_api(tmp_path, capsys):
     spec = importlib.util.spec_from_file_location("routine_script", SCRIPT)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    code = module.main(["evening-build", "--api", "http://127.0.0.1:9", "--data", str(tmp_path), "--now", "2026-10-29 21:05", "--no-post"])
+    code = module.main(
+        [
+            "evening-build",
+            "--api",
+            "http://127.0.0.1:9",
+            "--data",
+            str(tmp_path),
+            "--now",
+            "2026-10-29 21:05",
+            "--no-post",
+        ]
+    )
     assert code == module.UNREACHABLE
     out = capsys.readouterr().out
     assert "api: failed" in out and "unreachable" in out
-    log = json.loads((tmp_path / "routine" / "runs" / "2026-10-29-evening-build.json").read_text()) if (tmp_path / "routine" / "runs").exists() else None
+    log = (
+        json.loads((tmp_path / "routine" / "runs" / "2026-10-29-evening-build.json").read_text())
+        if (tmp_path / "routine" / "runs").exists()
+        else None
+    )
     assert log is None  # an unreachable API writes no run log
 
 

@@ -147,13 +147,17 @@ def all_leagues(rows: Iterable[dict[str, Any]]) -> list[str]:
 
 
 # --------------------------------------------------------------------------- refresh and solve
-def refresh_all(ctx: Context, leagues: Sequence[str], retry_before: str, name: str = "refresh") -> None:
+def refresh_all(
+    ctx: Context, leagues: Sequence[str], retry_before: str, name: str = "refresh"
+) -> None:
     """One paced refresh per public league, then one retry pass for the leagues Yahoo's limit
     stopped (503, after the longest ``Retry-After`` and at least ten minutes) while the clock is
     before ``retry_before``; a 502 is retried once in the same pass. A league that fails twice is
     reported failed with its data a day old."""
     if ctx.dry_run:
-        ctx.report.skipped(name, f"dry run: would refresh {len(leagues)} leagues, {REFRESH_PACE_S:.0f} s apart")
+        ctx.report.skipped(
+            name, f"dry run: would refresh {len(leagues)} leagues, {REFRESH_PACE_S:.0f} s apart"
+        )
         return
     codes: dict[str, int] = {}
     limited: dict[str, float] = {}
@@ -366,7 +370,9 @@ def lineup_plan(
     return out
 
 
-def start_active_plan(ctx: Context, fragment: str, only: Sequence[str] | None = None) -> list[Opening]:
+def start_active_plan(
+    ctx: Context, fragment: str, only: Sequence[str] | None = None
+) -> list[Opening]:
     """``GET /autopilot/start-active/due``: the leagues that need Yahoo's Start Active Players
     (``need`` true, no error), their own team page with the pass's fragment, thirty seconds each.
     ``only`` limits it to the leagues a pass opened."""
@@ -424,10 +430,19 @@ def moves_plan(ctx: Context, leagues: Sequence[str], fragment: str, il_fragment:
         for item in il_first:
             page = item.get("page")
             if not league_page_ok(league, page):
-                reasons[f"{league}:{item.get('entry')}"] = f"IL page not the league's own ({page!r})"
+                reasons[f"{league}:{item.get('entry')}"] = (
+                    f"IL page not the league's own ({page!r})"
+                )
                 continue
             league_openings.append(
-                Opening(league, "il", f"{page}#{il_fragment}", 30.0, str(item.get("entry")), item.get("date"))
+                Opening(
+                    league,
+                    "il",
+                    f"{page}#{il_fragment}",
+                    30.0,
+                    str(item.get("entry")),
+                    item.get("date"),
+                )
             )
         for e in body["entries"]:
             if not isinstance(e, dict):
@@ -454,7 +469,9 @@ def plan_lines(openings: Sequence[Opening]) -> list[str]:
 
 
 # --------------------------------------------------------------------------- the pass record
-def pass_open(ctx: Context, kind: str, trigger: str, leagues: Sequence[str], entries: Sequence[str] | None) -> str | None:
+def pass_open(
+    ctx: Context, kind: str, trigger: str, leagues: Sequence[str], entries: Sequence[str] | None
+) -> str | None:
     """Open the pass (#201); None when refused (an older API, or one still open: 409), the pages
     are opened all the same."""
     if ctx.dry_run or not leagues:
@@ -521,7 +538,9 @@ def digest(ctx: Context) -> dict[str, Any] | None:
     return body
 
 
-def post_markdown(ctx: Context, name: str, issue: int, markdown: str, retry_after_s: float = 30.0) -> str | None:
+def post_markdown(
+    ctx: Context, name: str, issue: int, markdown: str, retry_after_s: float = 30.0
+) -> str | None:
     """Post ``markdown`` verbatim as one comment on ``issue``; retried once; nothing added."""
     if not ctx.posting or ctx.dry_run:
         ctx.report.skipped(name, "posting off" if not ctx.posting else "dry run: nothing posted")
@@ -569,7 +588,9 @@ def record_all(ctx: Context, api: str) -> list[str]:
     lines = [l for l in out.splitlines() if l.strip()]
     if rc != 0:
         ctx.report.failed("record", f"season.py record exit {rc}: {(err or out).strip()[:200]}")
-        ctx.report.alert(f"the Monday recorder could not reach the API: {(err or out).strip()[:200]}")
+        ctx.report.alert(
+            f"the Monday recorder could not reach the API: {(err or out).strip()[:200]}"
+        )
         raise Abort("record: API unreachable")
     failed = [l for l in lines if ": failed (" in l]
     needs = [l for l in lines if "needs pages" in l]
@@ -617,7 +638,9 @@ def monday_step(ctx: Context, api: str) -> None:
     rc, out, err = ctx.run_script(["season.py", "monday", "--api", api, "--comment"])
     line = err.strip().splitlines()[-1] if err.strip() else ""
     if rc != 0 or not out.strip():
-        why = {1: "the API refused the step", 2: "the API is unreachable"}.get(rc, "no comment written")
+        why = {1: "the API refused the step", 2: "the API is unreachable"}.get(
+            rc, "no comment written"
+        )
         ctx.report.skipped("monday", f"{why}: {line or out.strip()[:200]}")
         return
     url = post_markdown(ctx, "monday", AUTOPILOT_ISSUE, out)

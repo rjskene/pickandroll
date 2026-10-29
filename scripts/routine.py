@@ -42,13 +42,21 @@ OK, FAILED, UNREACHABLE, REFUSED, STOPPED = 0, 1, 2, 3, 4
 
 
 def main(argv: list[str] | None = None) -> int:
-    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    p = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     p.add_argument("routine", choices=sorted(ROUTINES))
     p.add_argument("--api", default=API)
-    p.add_argument("--data", type=Path, default=DATA, help="the API's data folder (the marker, STOP)")
-    p.add_argument("--dry-run", action="store_true", help="reads only; the plan from the live answers")
+    p.add_argument(
+        "--data", type=Path, default=DATA, help="the API's data folder (the marker, STOP)"
+    )
+    p.add_argument(
+        "--dry-run", action="store_true", help="reads only; the plan from the live answers"
+    )
     p.add_argument("--no-post", action="store_true", help="no GitHub comments")
-    p.add_argument("--no-marker", action="store_true", help="the daily writes no data/routine/daily.json")
+    p.add_argument(
+        "--no-marker", action="store_true", help="the daily writes no data/routine/daily.json"
+    )
     p.add_argument("--force", action="store_true", help="run outside the routine's window")
     p.add_argument("--json", action="store_true", help="print the report as JSON too")
     p.add_argument("--now", help="pretend it is this time (ISO, Central if naive); for tests")

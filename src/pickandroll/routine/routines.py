@@ -107,7 +107,11 @@ def browser_pass(
         ctx.report.failed(name, f"Chrome is not signed in to {site}: nothing opened", plan=plan)
         ctx.report.alert(f"the browser profile is signed out of {site}")
         return []
-    pass_id = pass_open(ctx, record[0], record[1], [o.league for o in _dedupe(openings)], record[2]) if record else None
+    pass_id = (
+        pass_open(ctx, record[0], record[1], [o.league for o in _dedupe(openings)], record[2])
+        if record
+        else None
+    )
     opened: list[str] = []
     unopened: list[str] = []
     for o in openings:
@@ -116,7 +120,11 @@ def browser_pass(
             continue
         pass_opening(ctx, pass_id, o.league, o.entry)
         landed = browser.open(o.url, o.wait_s)
-        if o.kind == "il" and o.entry and landed.split("#")[0].startswith(o.url.split("#")[0].split("?")[0]):
+        if (
+            o.kind == "il"
+            and o.entry
+            and landed.split("#")[0].startswith(o.url.split("#")[0].split("?")[0])
+        ):
             # Still on the team page (a build before 0.9.1, or STOP): the add page is opened as
             # for any other entry by the plan's next item carrying the same entry, if any.
             ctx.notes.setdefault("il_stayed", []).append(o.entry)
@@ -124,7 +132,9 @@ def browser_pass(
             opened.append(o.league)
     summary = f"{len(openings) - len(unopened)} pages opened in {len(opened)} leagues"
     if unopened:
-        shown = ", ".join(unopened[:15]) + (f" and {len(unopened) - 15} more" if len(unopened) > 15 else "")
+        shown = ", ".join(unopened[:15]) + (
+            f" and {len(unopened) - 15} more" if len(unopened) > 15 else ""
+        )
         summary += f", stopped at {hard_stop} with {len(unopened)} entries unopened: {shown}"
     pass_done(ctx, pass_id, summary)
     detail = summary + ("" if pass_id else "; no pass record" if record else "")
@@ -158,8 +168,17 @@ def pass_check(ctx: Context, leagues: Sequence[str], kinds: Sequence[str], trigg
             if code != 200 or not isinstance(body, dict):
                 parts.append(f"{kind} route {code}")
                 continue
-            runs = [r for r in body.get("today") or [] if isinstance(r, dict) and r.get("trigger") == trigger]
-            outcomes = ", ".join(f"{r.get('outcome')} ({r.get('reason')})" if r.get("reason") else str(r.get("outcome")) for r in runs)
+            runs = [
+                r
+                for r in body.get("today") or []
+                if isinstance(r, dict) and r.get("trigger") == trigger
+            ]
+            outcomes = ", ".join(
+                f"{r.get('outcome')} ({r.get('reason')})"
+                if r.get("reason")
+                else str(r.get("outcome"))
+                for r in runs
+            )
             parts.append(f"{kind}: {len(runs)} run(s)" + (f": {outcomes}" if outcomes else ""))
             logged_any = logged_any or bool(runs)
             if kind == "moves":
@@ -216,7 +235,9 @@ def late(ctx: Context, api: str) -> None:
     opened = browser_pass(ctx, "lineup", lineups, ("lineup", "routine_late", None))
     plan = moves_plan(ctx, pub, "pickandroll-moves-late", "pickandroll-il-late")
     _report_plan(ctx, plan)
-    opened_moves = browser_pass(ctx, "moves", plan.openings, ("moves", "routine_late", plan.entries))
+    opened_moves = browser_pass(
+        ctx, "moves", plan.openings, ("moves", "routine_late", plan.entries)
+    )
     sa = start_active_plan(ctx, "pickandroll-start-active-late", only=opened_moves)
     browser_pass(ctx, "start_active", sa)
     touched = [k for k in pub if k in opened or k in opened_moves]
@@ -268,7 +289,9 @@ def _report_plan(ctx: Context, plan: MovesPlan) -> None:
     detail = f"{len(plan.entries)} entries due in {len(plan.leagues)} leagues"
     if reasons:
         detail += f"; skipped: {reasons}"
-    ctx.report.ok("due", detail[:600], entries=plan.entries, leagues=plan.leagues, reasons=plan.reasons)
+    ctx.report.ok(
+        "due", detail[:600], entries=plan.entries, leagues=plan.leagues, reasons=plan.reasons
+    )
 
 
 def _sunday_adds(ctx: Context) -> None:
@@ -283,9 +306,19 @@ def _sunday_adds(ctx: Context) -> None:
         if not isinstance(row, dict):
             continue
         weeks = [w for w in row.get("adds_left") or [] if isinstance(w, dict)]
-        nxt = next((w for w in weeks if _weekday(w.get("start")) == MONDAY and str(w.get("start")) > str(ctx.now().date())), None)
+        nxt = next(
+            (
+                w
+                for w in weeks
+                if _weekday(w.get("start")) == MONDAY
+                and str(w.get("start")) > str(ctx.now().date())
+            ),
+            None,
+        )
         if nxt:
-            lines.append(f"{row.get('league')}: {nxt.get('adds')} adds in the week of {nxt.get('start')}")
+            lines.append(
+                f"{row.get('league')}: {nxt.get('adds')} adds in the week of {nxt.get('start')}"
+            )
     ctx.report.ok("sunday", f"{len(lines)} leagues' new-week adds read", lines=lines)
 
 
