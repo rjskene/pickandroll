@@ -186,6 +186,19 @@ def test_steps_are_timed_from_the_previous_step_and_the_summary_says_how_long(tm
     assert logged["started"] == "2026-10-29T05:01:00-05:00" and "finished" in logged
 
 
+def test_skip_solve_leaves_a_league_out_and_says_so(tmp_path):
+    api = FakeAPI(base_answers())
+    ctx = make_ctx(api, Clock("2026-10-29 05:01"), tmp_path, skip_solve=frozenset({"31822"}))
+    report = run("daily", ctx, "http://api")
+    solved = [p for p in api.paths("GET") if p.endswith("/moves")]
+    assert solved == [f"/seasons/{k}/moves" for k in PUBLIC]  # the private league never asked
+    solve = report.find("solve")
+    assert solve.status == "ok"
+    assert solve.detail == "2 leagues solved, all 200; left out by --skip-solve: 31822"
+    assert solve.data["left_out"] == ["31822"]
+    assert marker(report)["steps"]["solve"]["status"] == "ok"
+
+
 def test_daily_marker_has_the_eight_step_keys_and_no_exports(tmp_path):
     api = FakeAPI(base_answers())
     ctx = make_ctx(api, Clock("2026-10-29 05:01"), tmp_path)
@@ -680,6 +693,8 @@ def test_the_script_refuses_outside_the_window_and_writes_nothing(tmp_path, caps
     code = module.main(
         [
             "morning",
+            "--skip-solve",
+            "31822",
             "--api",
             "http://127.0.0.1:9",
             "--data",
