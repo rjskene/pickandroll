@@ -14,7 +14,7 @@ ultimately decide and manually make the inputs." Nothing ever clicks there.
 
 | league | the engine | who acts |
 |---|---|---|
-| a public prize league the user has armed | every view, the daily moves solve, the lineup, the scorecard | the extension, in the user's own Chrome, inside the guardrails below |
+| a public prize league the user has armed | every view, the daily moves solve, the lineup, the scorecard | the extension, in the routine host's browser (the user's own Chrome before the VM move, #225), inside the guardrails below |
 | a public league the user has not armed | the same | nobody; the dashboard shows the recommendations |
 | the private league | the same | the user, by hand, from the Waivers, Strategy and Lineup views and the daily digest |
 
@@ -517,15 +517,20 @@ page, from PR 2:
 
 ## 3. The weekly loop
 
-Times are the Mac's clock, in whatever zone it is set to (Central at the time of writing). The routines are the master's to edit; sessions never edit
-them.
+Times are Central, the routine host's clock for every timer (`docs/OPS.md`; the host itself runs on
+UTC). The routines are `scripts/routine.py`'s, run by systemd timers on the host from the VM move
+(#225; until the cut-over the host runs them in dry run while the Mac stays live, and the private
+league's solve is left out there with `--skip-solve 31822`, `docs/OPS.md` §1 and §4); their steps
+are the master's to change through pull requests, never edited on the host.
 
 | when | what | exists |
 |---|---|---|
-| daily 05:00 | Basketball Monster exports, public refresh, breakout digest on #99 | yes (`breakout-digest-daily`) |
+| daily 05:00 | Basketball Monster exports, public refresh, breakout digest on #99 | yes (`pickandroll-routine@daily`, window 05:00-06:20) |
 | daily, after the refresh | the moves solve per league writes its decision-log entry (#125); the queue is built from the armed leagues' recommended sets; the lineup for today and tomorrow is set | phase 1, 2 |
-| daily 09:00 | the moves pass opens the due entries' add pages, less what the user struck (the day's execute time, 07:00 Central unless the user set another, has passed; the pass runs at 09:00 so a later setting still gets a morning pass); the late pass at 15:00 catches the rest | yes (`moves-morning-daily`; a league places its claims once the user switches it live, #171 PR 3; the routine opens, names each opening and closes its pass record, #201) |
-| Monday 06:00 | the recorder writes last week (#97) | yes (`weekly-recorder-monday`) |
+| daily 07:45 | the moves pass opens the due entries' add pages, less what the user struck (the day's execute time, 07:00 Central unless the user set another, has passed; the pass fires at 07:45 so a later setting still gets a morning pass); the late pass at 15:00 catches the rest | yes (`pickandroll-routine@morning`, fires 07:45 Central, window to 14:30, and `pickandroll-routine@late` at 15:00, window to 20:30; a league places its claims once the user switches it live, #171 PR 3; the routine opens, names each opening and closes its pass record, #201) |
+| daily 21:00 | the evening build (#209): refresh, re-solve, the queue rebuilt | yes (`pickandroll-routine@evening-build`, window 21:00-21:30) |
+| daily 22:40 | the evening pass opens the evening's pages, hard stop 22:58 | yes (`pickandroll-routine@evening-pass`, window 22:40-22:58) |
+| Monday 06:00 | the recorder writes last week (#97) | yes (`pickandroll-routine@monday`, window 06:00-12:00) |
 | Monday, after the recorder | the scorecard (#126): last week and YTD, projected against actual, posted on #127 | phase 0 |
 | Monday, after the scorecard | the hill-climb step (section 6): the verdicts due and at most one change applied, the comment posted on #127 | yes (#152, `scripts/season.py monday`); the Monday routine runs it from 2026-10-26 |
 | Monday, then | the week's first queue is built under the new setting, before the first claims | phase 2 |
@@ -953,7 +958,9 @@ comes back to it.
 Everything under `data/` stays local: the decision logs, the autopilot logs, the knob file, the
 armed files, the transactions parts. Public text (issues, PR bodies, the scorecard's markdown on
 #127, docs) carries player names, league ids and aggregates, never a Yahoo team or league name and
-never a Basketball Monster number.
+never a Basketball Monster number. The routine host's browser profile, downloads and screenshots
+(`data/routine/`) and the user's settings in `~/.config/pickandroll` on the host are never committed
+either (`docs/OPS.md`).
 
 ## 9. Decisions taken with the user
 
@@ -1004,3 +1011,6 @@ never a Basketball Monster number.
 - 2026-10-23, evening: the two executors are filed together (#170 lineups, #171 moves) and built in
   that order ("file both"); each starts in dry run, and only the user's own click on the dashboard
   switches a league to live, after its dry-run week is reviewed on #127.
+- 2026-10-29 (#225): the routines move to the droplet: systemd timers running `scripts/routine.py`,
+  Playwright's Chromium with the extension loaded from the checkout, the soak in dry run with the
+  Mac live, cut-over planned for Monday 2026-11-09 after the soak (`docs/OPS.md`).
