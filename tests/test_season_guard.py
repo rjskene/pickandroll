@@ -142,14 +142,14 @@ def test_the_plan_keeps_to_the_season_guard_and_says_when_the_guard_refused_one(
     assert not allowed(wild.moves)
     guarded = st_.plan(ev, rule, (), per_game(problem), allowed=allowed)
     assert guarded is not None and allowed(guarded.moves) and guarded.steps == ()
-    out = sm.plan_payload(built, ev, [], [], allowed)
+    out = sm.plan_payload(built, ev, [], [], sm.stream_of(built, ev, [], allowed), allowed)
     assert (out["recommended"], out["reason"], out["steps"]) == (False, "season", [])
     refused = out["guard"]
     assert [(x["add"], x["drop"], x["spot"]) for x in refused["steps"]] == [(10, 3, 3), (11, 10, 3)]
     assert refused["gain"]["week"] > st_.floor_of(problem) and refused["gain"]["three"] > 0
     assert refused["ros"]["value"] < 0
     # Without the guard the same plan is recommended.
-    assert sm.plan_payload(built, ev, [], [])["recommended"]
+    assert sm.plan_payload(built, ev, [], [], sm.stream_of(built, ev, []))["recommended"]
 
 
 # --------------------------------------------------------------------------- the strategy

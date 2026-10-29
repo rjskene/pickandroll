@@ -782,7 +782,7 @@ they were, and no rollout reaches it.
   | rule | knob | sample | clears when | step |
   |---|---|---|---|---|
   | the season check, per scoring | `protection_floor` | the scoring's season-costly moves (#144) | 3 or more, more than half below zero over the season so far | +0.05 z a game (categories), +0.5 fantasy points a game (points) |
-  | the streaming plans, per scoring | `plan_floor_cats`, `plan_floor_points` | the scoring's plan moves (#136) | 5 or more, realized under half their projection | half its value up, never above four times the default |
+  | the streaming and week plans, per scoring | `plan_floor_cats`, `plan_floor_points` | the scoring's plan moves: the streaming plan's (#136) and the queue's week plan's steps (#221) | 5 or more, realized under half their projection | half its value up, never above four times the default |
   | the projection system | `system`, `blend` | the moves under the system in force, pooled across the scorings by realized share | 20 or more, realized under half their projection season to date | Basketball Monster's (or Yahoo's) to the blend at 0.5, never a flip; a kept blend 0.25 toward Yahoo's, never past 0.75 |
 
   Nothing reads the odds' calibration: that is the model's, not a knob's. A rule that clears is
