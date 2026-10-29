@@ -267,7 +267,9 @@ class SessionCreate(BaseModel):
    spread) and the E[cats] trajectory is a consistency check. No seed: the web has no seed control, the
    API re-seeds per Sim call, and my own picks differ between runs anyway, so runs are compared on
    their trajectories, not their boards. The `z` strategy (the default for runs 1-5) ignores ADP, so
-   its trajectory says nothing about the league's spread.
+   its trajectory says nothing about the league's spread. Since #45 the API's `POST /autopick`
+   defaults to `adp` too, so a bare call or a script simulates as the web does; `z` and `lp` stay
+   options.
 
 Results (2026-10-06, main 0f69468 for slot 6, 28b940b for slots 1 and 12, then bb20d2a with #32; all with the practice
 file, `survival: simulate`, the top candidate drafted every turn):

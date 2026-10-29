@@ -453,6 +453,24 @@ def test_autopick_simulates_other_teams(client):
     assert board["players"][0]["adp"] is not None
 
 
+def test_a_bare_autopick_simulates_by_adp_as_the_web_does(client):
+    """#45: the API's default strategy is the web Sim bar's (#35), so a bare call, a script or
+    the CLI simulates as the web does; ``z`` stays an option."""
+    from pickandroll.api.app import AutoPickIn
+
+    assert AutoPickIn().strategy == "adp"
+
+    def first_pick(body: dict) -> str:
+        sid = create(client)["id"]
+        r = client.post(f"/sessions/{sid}/autopick", json=body)
+        assert r.status_code == 200, r.text
+        return r.json()["added"][0]["player_id"]
+
+    bare = first_pick({"noise": 0.0})
+    assert bare == first_pick({"noise": 0.0, "strategy": "adp"})
+    assert first_pick({"noise": 0.0, "strategy": "z"}) is not None
+
+
 def test_the_score_history_follows_the_recommendation_shown():
     """Keeper practice run 2, pick 72: the Team card read 5.36 while the Plan and Pick cards
     showed 5.53. Every solve of a board wrote the history, including one that did not displace
