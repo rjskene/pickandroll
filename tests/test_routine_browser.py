@@ -512,8 +512,10 @@ def test_the_evening_exports_stop_at_21_15_and_name_the_kinds_left(tmp_path):
     export_all(ctx, (5, 6), "21:15")
     assert browser.exports == ["ros", "week_this"]
     step = ctx.report.find("exports")
+    # Said, not failed: nothing failed, the kinds skipped are named (the SKILL's rule), and a
+    # failed step would wake the alert unit every evening the exports run long.
     assert (
-        step.status == "failed"
+        step.status == "ok"
         and "skipped past 21:15: week_next, actual_7d, actual_14d" in step.detail
     )
     assert step.data["late"] == ["week_next", "actual_7d", "actual_14d"]
@@ -894,10 +896,13 @@ def test_a_pass_with_a_browser_names_a_page_that_failed_twice(tmp_path):
     ctx = make_ctx(api, Clock("2026-10-29 07:50"), tmp_path, routine="morning", browser=browser)
     report = run("morning", ctx, "http://api")
     moves = report.find("moves")
+    # The scripted browser lands where it is sent, so the IL tab stays and the pass opens e2's
+    # add page itself; e1's add page fails twice.
     assert moves.status == "failed" and moves.detail.startswith(
-        "1 pages opened in 1 leagues, 1 failed to open: e1"
+        "2 pages opened in 1 leagues, add pages opened by the pass after an IL stay: e2, "
+        "1 failed to open: e1"
     )
-    assert moves.data["failed"] == ["e1"]
+    assert moves.data["failed"] == ["e1"] and moves.data["stayed"] == ["e2"]
     assert [u for u, _ in browser.opened].count(add_page) == 2
 
 

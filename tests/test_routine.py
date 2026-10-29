@@ -445,10 +445,13 @@ def test_morning_with_a_browser_opens_the_pages_and_keeps_the_pass_record(tmp_pa
         }
     )
     clock = Clock("2026-10-29 07:50")
-    browser = FakeBrowser(clock=clock)
+    # The IL chain happened: after the IL wait the tab is on the entry's add page.
+    chained = f"{YAHOO}/nba/252098/addplayer?apid=222#pickandroll-moves"
+    browser = FakeBrowser(clock=clock, land=lambda u: chained if "#pickandroll-il" in u else u)
     ctx = make_ctx(api, clock, tmp_path, routine="morning", browser=browser)
     report = run("morning", ctx, "http://api")
     assert [u.split("#")[1] for u, _ in browser.opened] == ["pickandroll-il", "pickandroll-moves"]
+    assert "il_stayed" not in ctx.notes
     assert passes[0] == (
         "open",
         {"kind": "moves", "trigger": "routine", "leagues": ["252098"], "entries": ["e2", "e1"]},
@@ -464,6 +467,53 @@ def test_morning_with_a_browser_opens_the_pages_and_keeps_the_pass_record(tmp_pa
         and "would_claim" in report.find("check").data["lines"][0]
     )
     assert browser.closed
+
+
+def test_an_il_opening_that_stays_on_the_team_page_gets_its_add_page_opened_by_the_pass(tmp_path):
+    passes = []
+    api = FakeAPI(
+        due_answers()
+        | {
+            ("POST", "/autopilot/passes"): lambda b: (200, {"id": "2026-10-29:moves:1"}),
+            ("POST", "/autopilot/passes/2026-10-29:moves:1/opening"): lambda b: (
+                passes.append(b),
+                (200, {}),
+            )[1],
+            ("POST", "/autopilot/passes/2026-10-29:moves:1/done"): lambda b: (
+                passes.append(b),
+                (200, {}),
+            )[1],
+            ("GET", "/seasons/252098/autopilot/moves"): (
+                200,
+                {"today": [{"trigger": "routine", "outcome": "would_claim", "reason": None}]},
+            ),
+        }
+    )
+    clock = Clock("2026-10-29 07:50")
+    browser = FakeBrowser(clock=clock)  # lands where it is sent: the IL tab stays on the team page
+    ctx = make_ctx(api, clock, tmp_path, routine="morning", browser=browser)
+    report = run("morning", ctx, "http://api")
+    # The IL page, then the entry's own add page opened by the pass (the moves fragment, twelve
+    # seconds), then the other due entry.
+    assert browser.opened == [
+        (f"{YAHOO}/nba/252098/2?date=2026-10-29#pickandroll-il", 30.0),
+        (f"{YAHOO}/nba/252098/addplayer?apid=222#pickandroll-moves", 12.0),
+        (f"{YAHOO}/nba/252098/addplayer?apid=111#pickandroll-moves", 12.0),
+    ]
+    assert passes[:3] == [
+        {"league": "252098", "entry": "e2"},
+        {"league": "252098", "entry": "e2"},
+        {"league": "252098", "entry": "e1"},
+    ]
+    assert passes[-1] == {
+        "summary": "3 pages opened in 1 leagues, add pages opened by the pass after an IL stay: e2"
+    }
+    assert ctx.notes["il_stayed"] == ["e2"]
+    step = report.find("moves")
+    assert step.status == "ok" and step.data["stayed"] == ["e2"]
+    assert step.data["plan"][0].endswith(
+        "(30 s), then " + browser.opened[1][0] + " (12 s) if the tab stays"
+    )
 
 
 def test_a_signed_out_browser_opens_nothing_and_alerts(tmp_path):

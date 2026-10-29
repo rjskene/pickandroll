@@ -22,6 +22,11 @@ The browser (``routine/chromium.py``) is Playwright's Chromium with the extensio
 by the first step that opens a page and its downloads land in ``data/routine/downloads``, where
 the importers read them (``PICKANDROLL_DOWNLOADS``). Headed: it needs a display (Xvfb).
 
+On the Mac, before the cut-over, run with ``--dry-run``, ``--no-marker`` or ``--no-browser``
+only: a real daily would overwrite the Desktop task's data/routine/daily.json (the status light
+turns amber) and the browser profile is the host's own. The droplet's data copy is its own;
+every routine may run there in full (docs/OPS.md).
+
 Exit codes: 0 every step ok or skipped by its rule; 1 a step failed; 2 the API is unreachable;
 3 outside the routine's window (nothing ran); 4 STOP is set (nothing ran).
 """

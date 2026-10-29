@@ -322,9 +322,18 @@ def _when(x: Any) -> datetime | None:
 
 
 # --------------------------------------------------------------------------- the plans
+#: An IL opening's wait: the extension posts the page, makes (or logs) the move and goes on to
+#: the entry's add page itself; a moves opening's wait: it reads the rendered claim form.
+IL_WAIT_S = 30.0
+MOVES_WAIT_S = 12.0
+
+
 @dataclass
 class Opening:
-    """One page a pass opens: the league, the fragment's kind, the URL and the wait after it."""
+    """One page a pass opens: the league, the fragment's kind, the URL and the wait after it.
+    An IL opening also carries ``then``, the entry's add page with the moves fragment, which the
+    pass opens itself when the tab is still on the team page after the wait (a build before
+    0.9.1, or STOP), as the Desktop routine did."""
 
     league: str
     kind: str
@@ -332,6 +341,7 @@ class Opening:
     wait_s: float
     entry: str | None = None
     date: str | None = None
+    then: str | None = None
 
 
 def league_page_ok(league: str, page: Any) -> bool:
@@ -412,8 +422,9 @@ class MovesPlan:
 
 def moves_plan(ctx: Context, leagues: Sequence[str], fragment: str, il_fragment: str) -> MovesPlan:
     """``GET /seasons/<id>/autopilot/moves/due`` per league: the IL moves first (each item's
-    team page, thirty seconds), then the other due entries' add pages (twelve seconds), the
-    page paths checked against the league. Off, STOP or nothing due is a reason, not a page."""
+    team page, thirty seconds, the entry's own add page as its follow-up), then the other due
+    entries' add pages (twelve seconds), the page paths checked against the league. Off, STOP
+    or nothing due is a reason, not a page."""
     openings: list[Opening] = []
     entries: list[str] = []
     opened: list[str] = []
@@ -428,22 +439,25 @@ def moves_plan(ctx: Context, leagues: Sequence[str], fragment: str, il_fragment:
             continue
         il_first = [i for i in body.get("il_first") or [] if isinstance(i, dict)]
         il_entries = {str(i.get("entry")) for i in il_first}
+        add_pages = {
+            str(e.get("id")): e.get("page") for e in body["entries"] if isinstance(e, dict)
+        }
         league_openings: list[Opening] = []
         for item in il_first:
             page = item.get("page")
+            entry = str(item.get("entry"))
             if not league_page_ok(league, page):
-                reasons[f"{league}:{item.get('entry')}"] = (
-                    f"IL page not the league's own ({page!r})"
-                )
+                reasons[f"{league}:{entry}"] = f"IL page not the league's own ({page!r})"
                 continue
+            add = add_pages.get(entry)
+            then = f"{YAHOO}{add}#{fragment}" if add_page_ok(league, add) else None
+            if then is None:
+                reasons[f"{league}:{entry}"] = (
+                    f"IL entry without an add page of the league's ({add!r}): no follow-up"
+                )
             league_openings.append(
                 Opening(
-                    league,
-                    "il",
-                    f"{page}#{il_fragment}",
-                    30.0,
-                    str(item.get("entry")),
-                    item.get("date"),
+                    league, "il", f"{page}#{il_fragment}", IL_WAIT_S, entry, item.get("date"), then
                 )
             )
         for e in body["entries"]:
@@ -456,7 +470,9 @@ def moves_plan(ctx: Context, leagues: Sequence[str], fragment: str, il_fragment:
             if not add_page_ok(league, page):
                 reasons[f"{league}:{eid}"] = f"add page not the league's ({page!r})"
                 continue
-            league_openings.append(Opening(league, "moves", f"{YAHOO}{page}#{fragment}", 12.0, eid))
+            league_openings.append(
+                Opening(league, "moves", f"{YAHOO}{page}#{fragment}", MOVES_WAIT_S, eid)
+            )
         if league_openings:
             opened.append(league)
             openings.extend(league_openings)
@@ -467,7 +483,11 @@ def moves_plan(ctx: Context, leagues: Sequence[str], fragment: str, il_fragment:
 
 
 def plan_lines(openings: Sequence[Opening]) -> list[str]:
-    return [f"{o.league} {o.kind} {o.url} ({o.wait_s:.0f} s)" for o in openings]
+    return [
+        f"{o.league} {o.kind} {o.url} ({o.wait_s:.0f} s)"
+        + (f", then {o.then} ({MOVES_WAIT_S:.0f} s) if the tab stays" if o.then else "")
+        for o in openings
+    ]
 
 
 # --------------------------------------------------------------------------- the pass record
@@ -838,7 +858,9 @@ def export_all(
         detail += "; failed: " + ", ".join(f"{k} ({lines[k]})" for k in failed)
     if late:
         detail += f"; skipped past {by}: " + ", ".join(late)
-    status = ctx.report.failed if failed or late else ctx.report.ok
+    # A kind skipped past ``by`` is said, not failed: the SKILL's rule is "say which were
+    # skipped", and a failed step would wake the alert every evening the exports run long.
+    status = ctx.report.failed if failed else ctx.report.ok
     status(name, detail[:600], lines=lines, seconds=seconds, late=late)
 
 
