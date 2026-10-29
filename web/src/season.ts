@@ -391,6 +391,62 @@ export function oddsGainLabel(x: number | null | undefined): string {
   return x == null || Number.isNaN(x) ? "" : `${gainLabel(x * 100, 1)}%`;
 }
 
+/** One paragraph of an explainer: a bold lead and its text. */
+export interface Explained {
+  lead: string;
+  text: string;
+}
+
+/** What the Matchup view's Cats and Matchup columns mean (#226), behind the "i" on both headers:
+ * with him minus without him for the rest of the week, each column's unit, why they disagree, the
+ * signs and the opponent's side. A points league has no Cats column, so its explainer leaves the
+ * Cats paragraphs out and its Matchup is the fantasy-points matchup's odds. */
+export function matchupExplainer(points: boolean): Explained[] {
+  const both: Explained = {
+    lead: points ? "Matchup is \"with him minus without him\" for the rest of this week." : "Both columns are \"with him minus without him\" for the rest of this week.",
+    text: "The model replays the week from today with the player gone, his starts going to the next starter by the daily lineup rules, and takes the difference. The week so far is already banked in both projections.",
+  };
+  const signs: Explained = {
+    lead: "Signs and the other side.",
+    text: "Green helps my team, red helps theirs. The opponent's rows are the same calculation from my side: what each of their players takes from me. A player with no start left shows nothing and is not re-projected; the opponent is projected for the current week only.",
+  };
+  if (points)
+    return [
+      both,
+      {
+        lead: "Matchup is the matchup win odds he adds, in percentage points.",
+        text: "The odds are those of my projected fantasy points beating the opponent's this week. A player at +4.0% lifts those odds by four points.",
+      },
+      signs,
+    ];
+  return [
+    both,
+    {
+      lead: "Cats is the expected categories won he adds.",
+      text: "Each category's odds is the probability my projected final beats the opponent's, turnovers reversed; expected categories is the sum over the nine. A player at +0.40 is worth about four tenths of a category this week against this opponent.",
+    },
+    {
+      lead: "Matchup is the matchup win odds he adds, in percentage points.",
+      text: "The nine category odds are taken as independent, the number of categories won follows from them (a Poisson binomial), and the matchup is won with more categories won than lost, a tie counting half.",
+    },
+    {
+      lead: "Why they disagree.",
+      text: "Padding a category already won or lost by a wide margin adds Cats and little Matchup; swinging a close category adds Matchup. Matchup is this week's headline; Cats is what the moves and the strategy engine are judged on.",
+    },
+    signs,
+  ];
+}
+
+/** The Matchup view's derived columns (#226): Cats (none in a points league) and Matchup, each
+ * with its short tooltip in its unit; ``from`` is the first day the week is replayed from. Both
+ * carry the explainer. */
+export function matchupColumns(points: boolean, from: string | null | undefined): { key: "cats" | "matchup"; label: string; title: string }[] {
+  const since = from ? ` from ${dayLabel(from)}` : "";
+  const cats = { key: "cats" as const, label: "Cats", title: `expected categories he adds, in categories: the week with him less the week without him${since}` };
+  const matchup = { key: "matchup" as const, label: "Matchup", title: `the matchup odds he adds, in percentage points of the matchup odds: the week with him less the week without him${since}` };
+  return points ? [matchup] : [cats, matchup];
+}
+
 /** "5-3-1", the matchup so far as Yahoo counts it (won, lost, tied), or a points league's
  * "93.2–101.9"; mine first. */
 export function matchupRecord(m: { score: [number, number] | null; tied: number | null }, scoring: SeasonSummary["scoring"]): string {
