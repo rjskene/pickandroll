@@ -101,7 +101,9 @@ class Report:
         for s in self.steps:
             lines.append(f"- {s.name}: {s.status}, {s.detail}{_took(s)}")
         if self.exports:
-            lines.append("- exports saved: " + ", ".join(f"{k} {v}" for k, v in self.exports.items()))
+            lines.append(
+                "- exports saved: " + ", ".join(f"{k} {v}" for k, v in self.exports.items())
+            )
         for a in self.alerts:
             lines.append(f"! {a}")
         if self.finished:
@@ -153,5 +155,7 @@ def _took(step: Step) -> str:
     """`` (NN s)`` for a timed step that took two seconds or more; nothing otherwise."""
     if not step.started or not step.finished:
         return ""
-    secs = (datetime.fromisoformat(step.finished) - datetime.fromisoformat(step.started)).total_seconds()
+    secs = (
+        datetime.fromisoformat(step.finished) - datetime.fromisoformat(step.started)
+    ).total_seconds()
     return f" ({secs:.0f} s)" if secs >= 2 else ""

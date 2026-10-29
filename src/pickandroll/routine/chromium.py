@@ -93,7 +93,10 @@ RECIPES: dict[str, Recipe] = {
     "ros": Recipe(
         f"{BBM}/projections.aspx",
         "Export to CSV",
-        (("select", "PlayerFilterControl", "All Players"), ("select", "StatDisplayType", "Total Stats")),
+        (
+            ("select", "PlayerFilterControl", "All Players"),
+            ("select", "StatDisplayType", "Total Stats"),
+        ),
     ),
     "week_this": Recipe(
         f"{BBM}/weeklyprojections.aspx",
