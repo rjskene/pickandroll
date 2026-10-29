@@ -102,16 +102,22 @@ def main(argv: list[str] | None = None) -> int:
         print(report.summary())
         return UNREACHABLE
 
+    payload = report.to_dict()
+    loaded = list(getattr(browser, "opened", []) or [])
+    if loaded:
+        payload["opened"] = loaded  # every page the browser loaded, the check pages included
     print(report.summary())
+    if loaded:
+        print(f"- pages loaded: {len(loaded)} ({loaded[0]}" + (f" .. {loaded[-1]}" if len(loaded) > 1 else "") + ")")
     if args.json:
-        print(json.dumps(report.to_dict(), indent=1))
+        print(json.dumps(payload, indent=1))
     if report.refused:
         return REFUSED  # nothing ran, nothing written
     if report.unreachable:
         return UNREACHABLE  # likewise: a run log of a silent API would hide the real one
     if not args.dry_run:
         day = report.started.date().isoformat()
-        write_json(args.data / "routine" / "runs" / f"{day}-{args.routine}.json", report.to_dict())
+        write_json(args.data / "routine" / "runs" / f"{day}-{args.routine}.json", payload)
         if args.routine == "daily" and not args.no_marker:
             write_json(args.data / "routine" / "daily.json", marker(report))
     if report.stopped:
