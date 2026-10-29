@@ -10,9 +10,8 @@ from datetime import UTC, date, datetime, timedelta
 
 import pytest
 
-from pickandroll.api import season_decisions
+from pickandroll.api import season_decisions, season_queue
 from pickandroll.api import season_moves as sm
-from pickandroll.api import season_queue
 from pickandroll.season import autopilot as qa
 from pickandroll.season import decisions as dl
 from pickandroll.season import moves as mv

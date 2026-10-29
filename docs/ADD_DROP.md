@@ -332,6 +332,13 @@ keep rule").
   the add's; the knob file's `protection_floor`, #152; `season_moves.PROTECTION_FLOOR`, zero,
   without one; a higher floor protects more, #164), and back this season. Out for the season, or INJ, SUSP or
   NA with no return date, is never protected; an O without a date is back next Monday.
+- **Can't cut (#220).** A player on Yahoo's can't-cut list, as the moves executor last read it on
+  an add page, is protected whatever the three tests say: Yahoo refuses his drop. Every logged
+  pass row carries the page's can't-cut ids; the API keeps the newest read in
+  `data/leagues/<league>/cantcut.json` (an empty list replaces it; a page with no drop table, an
+  open spot, leaves it), and the solve reads it as it reads the knob file. Out, he still goes to
+  an open held slot: Yahoo blocks drops, not IL moves. The queue names him protected "on Yahoo's
+  can't-cut list"; a league with no file (the private league) has none.
 - **Benched**: not beaten by the best add by the floor, not net positive, and back within seven
   days (`SHORT_ABSENCE_DAYS`). A replacement-level player out a few days is streamed like any
   other.

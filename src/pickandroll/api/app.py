@@ -499,9 +499,12 @@ class AutoPickIn(BaseModel):
     until_my_pick: bool = Field(default=True, description="stop when my team is on the clock")
     noise: float = Field(default=1.0, ge=0.0, le=3.0, description="0 = no randomness")
     seed: int | None = None
+    # The web's Sim bar default since #35 (#45): the other teams draft as the availability
+    # model assumes. ``z`` stays an option.
     strategy: Strategy = Field(
-        default="z",
-        description="z = best total z, adp = noisy ADP slot, lp = each team's own roster model",
+        default="adp",
+        description="adp = noisy ADP slot (the default), z = best total z, lp = each team's own "
+        "roster model",
     )
 
 

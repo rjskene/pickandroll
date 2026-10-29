@@ -15,7 +15,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from pickandroll.api import leagues, season_queue
+from pickandroll.api import leagues, season_cantcut, season_queue
 from pickandroll.api import season_autopilot as ap
 from pickandroll.season import autopilot as qa
 from pickandroll.season.state import Player, Transaction
@@ -693,6 +693,65 @@ def test_a_pass_is_logged_under_moves_and_sets_the_entries_outcomes(client):
     again = {e["id"]: e for e in client.post("/autopilot/queue/build").json()["entries"]}
     assert again[on[0]["id"]]["outcome"] == "claimed"
     assert strike(client, on[0]["id"]).status_code == 409
+
+
+def cantcut_controls(ids, at, drops=10) -> dict:
+    """A pass row's controls with the add page's can't-cut ids and when the page was read."""
+    return {"form": "addplayer", "fields": ["date"], "cantcut": ids, "drops": drops, "read_at": at}
+
+
+def test_the_newest_cant_cut_read_is_kept_and_an_empty_one_replaces_it(tmp_path):
+    """#220: the league's file keeps the newest row's ids; a row without the list, or from a page
+    with no drop table (an open spot), leaves it alone."""
+    assert season_cantcut.load(tmp_path, LEAGUE) == frozenset()
+    rows = [
+        {"controls": cantcut_controls([6512, 4612], "2026-10-21T14:00:00.000Z")},
+        {"controls": cantcut_controls([4612, 6016], "2026-10-21T14:05:00.000Z")},
+        {"controls": {"landed": {"path": "/nba"}}},
+        {"controls": None},
+    ]
+    assert season_cantcut.record(tmp_path, LEAGUE, rows) == {
+        "ids": [4612, 6016],
+        "read_at": "2026-10-21T14:05:00.000Z",
+    }
+    assert season_cantcut.load(tmp_path, LEAGUE) == {4612, 6016}
+    # An older read, a page with no drop table, a row without the list: nothing written.
+    older = [{"controls": cantcut_controls([1], "2026-10-21T13:00:00.000Z")}]
+    assert season_cantcut.record(tmp_path, LEAGUE, older) is None
+    open_spot = [{"controls": cantcut_controls([], "2026-10-21T15:00:00.000Z", drops=0)}]
+    assert season_cantcut.record(tmp_path, LEAGUE, open_spot) is None
+    assert season_cantcut.record(tmp_path, LEAGUE, [{"controls": {"fields": []}}]) is None
+    assert season_cantcut.load(tmp_path, LEAGUE) == {4612, 6016}
+    # A newer page with its drop table and none of mine on the list: the list is empty now.
+    empty = [{"controls": cantcut_controls([], "2026-10-21T16:00:00.000Z")}]
+    assert season_cantcut.record(tmp_path, LEAGUE, empty)["ids"] == []
+    assert season_cantcut.load(tmp_path, LEAGUE) == frozenset()
+    # A file that does not read is none.
+    season_cantcut.path_of(tmp_path, LEAGUE).write_text("{")
+    assert season_cantcut.load(tmp_path, LEAGUE) == frozenset()
+
+
+def test_a_logged_cant_cut_player_is_protected_at_the_next_solve_and_in_the_queue(client):
+    q = queued(client)
+    on = [e for e in q["entries"] if e["queued"]]
+    drop = next(e["drop"] for e in on if e["drop"] is not None)
+    url = f"/seasons/{LEAGUE}/autopilot/moves"
+    row = check(on[0], controls=cantcut_controls([drop], "2026-10-21T17:00:00.000Z"))
+    assert client.post(url, json=pass_body([row])).status_code == 200
+    path = client.data_dir / "leagues" / LEAGUE / "cantcut.json"
+    assert json.loads(path.read_text()) == {"ids": [drop], "read_at": "2026-10-21T17:00:00.000Z"}
+    # The next solve reads the file: the player is kept, the keep panel says why, and no set
+    # drops him.
+    moves = client.get(f"/seasons/{LEAGUE}/moves").json()
+    kept = next(k for k in moves["keep_rule"]["players"] if k["player"] == drop)
+    assert kept["protected"] and kept["cantcut"]
+    assert all(m.get("drop") != drop for r in moves["recommended"].values() for m in r["moves"])
+    # The rebuilt queue names him with his reason, and the due route carries it.
+    q = client.post("/autopilot/queue/build").json()
+    assert row_of(q)["protected"][str(drop)] == qa.CANTCUT_REASON
+    assert all(e["drop"] != drop for e in q["entries"] if e["queued"])
+    due = client.get(f"{url}/due").json()
+    assert due["protected"][str(drop)] == qa.CANTCUT_REASON
 
 
 def test_the_queue_reads_each_entrys_latest_pass_and_the_days_tally_from_the_logs(client):
