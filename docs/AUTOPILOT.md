@@ -421,12 +421,18 @@ page, from PR 2:
      once the API has the pass.
 
   Held back in live: free-agent adds (the "Add Player" page; a follow-up builds that form once the
-  dry run has logged one) and open-spot claims. Since #199 (extension 0.8.1) an open spot is read
-  in live as in a dry run but never submitted: it is skipped with "open spot, read only: an
-  open-spot claim is not submitted until Yahoo's open-spot page has been seen", nothing on the page
-  touched, and the skip stays due (Yahoo's `button-no-drop` branch, its open-spot submit, is read in
-  its script but not yet on a page). The side panel's links say "claim: …" where
-  opening one places the claim, and "open spot" with no "claim" for an entry with no drop. Nothing in the build or its tests reaches Yahoo; the first live
+  dry run has logged one) and an open spot whose page does not say "You currently have N empty
+  spot(s) on your roster": it is skipped with "open spot, read only: the page does not say it has
+  an empty spot", nothing on the page touched, and the skip stays due. Since #214 PR 4 (extension
+  0.9.2) an open spot whose page says so is submitted, as step 0b read Yahoo's page (2026-10-27):
+  no drop box ticked, the one bid field typed and read back with the stage (2) and the add's
+  `apid`, then Yahoo's one visible "Add … now, don't drop anyone" button (`input.button-no-drop`,
+  `submit_add_drop`) clicked once. The click is the submit; Yahoo lands on my team page with the
+  claim pending and no confirm page. The landed reader finds the claim by its id
+  (`<team>_<add>_0`) and its bid on the pending line ("Bid $N for …", none at $0): at step 0b a
+  bid typed as $2 landed at $0, so a claim placed at another bid than the queue's is logged
+  `claimed` with "placed at $N, the queue's $M: edit the bid in Yahoo's pending claims", and never
+  submitted again. The side panel's links say "claim: …" where opening one places the claim. Nothing in the build or its tests reaches Yahoo; the first live
   claim is the user's own switch, after the Chrome reload to 0.8.0.
 - **The IL move first (#214; PR 1 the API and the web, the extension's move in PR 3 after step
   0, the user's own move by hand read on the page).** A `held` add with no drop waits on its held player's
@@ -482,7 +488,7 @@ page, from PR 2:
   of the run's trigger (the ruling on #214: the routine opens one link per `il_first` item and
   the add pages of the due entries without one). There the claim reads the page again: an open
   spot (no drop section, or Yahoo's "You currently have N empty spot(s) on your roster" with the
-  drop table beside it) is the open-spot claim, held read-only until its submit ships (PR 4); a
+  drop table beside it) is the open-spot claim, submitted since PR 4 (ext 0.9.2); a
   full roster after a move this browser made on a later day's page logs `skipped` "move dated
   <day>, claim waits", and the morning pass retries.
 - **The mode, the log and the live guard.** `armed.json`'s `moves` key and `moves_cap`, like the

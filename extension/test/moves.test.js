@@ -226,7 +226,11 @@ test("the mode a pass runs in: live only where the league is live and its guard 
   assert.equal(X.submitProblem(entry(), page), null);
   assert.equal(X.submitProblem(entry({ availability: "FA" }), page), "a free-agent add: this build places waiver claims only");
   assert.equal(X.submitProblem(entry(), X.readAddPage(rawPage({ heading: "Add Player" }), CLEARS)), "a free-agent add: this build places waiver claims only");
-  assert.equal(X.submitProblem(entry({ drop: null }), page), "open spot, read only: an open-spot claim is not submitted until Yahoo's open-spot page has been seen");
+  // An open spot is submitted only where the page says, in Yahoo's words, it has an empty spot (0.9.2).
+  assert.equal(X.submitProblem(entry({ drop: null }), page), "open spot, read only: the page does not say it has an empty spot");
+  const words = X.readAddPage({ ...rawPage(), empty: "You currently have 1 empty spot on your roster" }, CLEARS);
+  assert.equal(X.submitProblem(entry({ drop: null }), words), null);
+  assert.equal(X.submitProblem(entry({ drop: null, availability: "FA" }), words), "a free-agent add: this build places waiver claims only");
 });
 
 test("the strip, the panel's line and the panel's links", () => {
@@ -247,9 +251,9 @@ test("the strip, the panel's line and the panel's links", () => {
   // In a live league whose guard holds, the panel's link places the claim and says so.
   const live = due({ mode: "live", live: { ok: true, reason: null } });
   assert.equal(X.dueLinks(live)[0].text, "claim: add 3001, drop 2005, $3");
-  // An open spot is only read in live (#199): its link places nothing and says no "claim".
+  // An open spot is submitted in live since 0.9.2 (#214): its link says "claim" too.
   const open = { ...e, drop: null };
-  assert.equal(X.dueLinks({ ...live, entries: [open] })[0].text, "add 3001, open spot, $3");
+  assert.equal(X.dueLinks({ ...live, entries: [open] })[0].text, "claim: add 3001, open spot, $3");
   assert.equal(X.dueLinks({ ...due(), entries: [open] })[0].text, "add 3001, open spot, $3");
   const refused = due({ mode: "live", live: { ok: false, reason: "a dry run on 7 days first: 3 so far" } });
   const dry = X.movesPass({ due: refused, trigger: "routine", checks: [X.moveCheck(e, X.pageCheck(e, page, refused), page, refused, READ_AT)] });
@@ -257,7 +261,7 @@ test("the strip, the panel's line and the panel's links", () => {
   assert.equal(X.movesStripText({ due: live }), "live · nothing due now");
 });
 
-test("only the live claim touches a page: the drop's button, its bid and the final button, nothing fetched", () => {
+test("only the live claim touches a page: the drop's button, its bid and the final button, or an open spot's bid and its no-drop button, nothing fetched", () => {
   const claim = X.fillClaim.toString();
   for (const f of ["lib/moves.js", "league.js", "addpage.js"]) {
     const src = fs.readFileSync(path.join(DIR, f), "utf8").replace(claim, "");
@@ -265,8 +269,8 @@ test("only the live claim touches a page: the drop's button, its bid and the fin
     assert.ok(!/\.(value|selectedIndex|checked)\s*=[^=]/.test(src), `${f} sets a field outside fillClaim`);
     assert.ok(!/\bfetch\(|XMLHttpRequest|DOMParser/.test(src), `${f} fetches a page`);
   }
-  assert.equal(claim.match(/\.click\(\)/g).length, 2, "the drop's button and the final button");
-  assert.deepEqual(claim.match(/\w+\.(value|checked|selectedIndex)\s*=[^=]/g), ["bid.value = "]);
+  assert.equal(claim.match(/\.click\(\)/g).length, 3, "the drop's button and the final button; an open spot's no-drop button");
+  assert.deepEqual(claim.match(/\w+\.(value|checked|selectedIndex)\s*=[^=]/g), ["bid.value = ", "bid.value = "]);
   assert.ok(!/submit\(|requestSubmit|crumb|TOKEN|fetch\(/.test(claim));
 });
 
@@ -787,10 +791,11 @@ test("a submit on record is never made again: a stale one is logged first with i
 
 /** The page Yahoo lands on after a submit: any page of the league, here the claim form's own
  * address. ``notes`` and ``errors`` are its messages, ``form`` whether the claim form is back. */
-function landedDom({ notes = [], errors = [], form = false, heading = "Team page", claimId = null } = {}) {
+function landedDom({ notes = [], errors = [], form = false, heading = "Team page", claimId = null, line = "" } = {}) {
   const text = (t) => el({ textContent: t });
   const nav = el({ textContent: "News", closest: (sel) => (sel.includes("nav") ? el() : null) });
-  const link = (id) => el({ attrs: { href: `/nba/${LEAGUE}/${TEAM}/viewwaiver?claim_id=${id}&activity=transaction` } });
+  // The pending line is the View Details link's own text (``line``), as Yahoo's team page draws it.
+  const link = (id) => el({ textContent: line, attrs: { href: `/nba/${LEAGUE}/${TEAM}/viewwaiver?claim_id=${id}&activity=transaction` } });
   return {
     querySelector: (sel) => (sel === `form#${X.FORM_ID}` && form ? el() : null),
     querySelectorAll: (sel) =>
@@ -816,7 +821,7 @@ test("the page Yahoo lands on logs the claim's live pass: placed, refused, or it
   assert.deepEqual(ops(v), ["moves_landed", "moves_log"]);
   let run = sentOf(v, "moves_log")[0].run;
   assert.deepEqual([run.day, run.mode, run.trigger, run.outcome], [DAY, "live", "routine_late", "claimed"]);
-  assert.deepEqual([run.entries[0].message, run.entries[0].controls.landed], ["Your waiver claim has been submitted.", { path: `/nba/${LEAGUE}/${TEAM}/addplayer`, heading: "Team page" }]);
+  assert.deepEqual([run.entries[0].message, run.entries[0].controls.landed], ["Your waiver claim has been submitted.", { path: `/nba/${LEAGUE}/${TEAM}/addplayer`, heading: "Team page", bid: null }]);
   assert.match(v.strip.textContent, /^pickandroll moves: live · claimed for \$3, dropping 2005: Yahoo: Your waiver claim has been submitted\.; logged \d\d:\d\d$/);
   v = await landedAt(landedDom({ form: true, errors: ["You have reached the maximum number of adds."] }));
   run = sentOf(v, "moves_log")[0].run;
@@ -961,7 +966,7 @@ test("an entry with no drop: an open spot when the page shows no drop section, n
   assert.deepEqual(check, { outcome: "would_claim", reason: "open spot" });
   const line = X.moveCheck(open, check, page, due(), READ_AT);
   assert.deepEqual([line.drop, line.reason, line.controls.drops], [null, "open spot", 0]);
-  assert.deepEqual(line.controls.would_fill, { action: `/nba/${LEAGUE}/${TEAM}/addplayer`, apid: ADD, dpid: null, faab: 3, submit: X.FINAL_SUBMIT });
+  assert.deepEqual(line.controls.would_fill, { action: `/nba/${LEAGUE}/${TEAM}/addplayer`, apid: ADD, dpid: null, faab: 3, submit: X.NO_DROP_NAME });
   const run = X.movesPass({ due: due(), trigger: "routine", checks: [line] });
   assert.deepEqual([run.outcome, run.reason, run.entries[0].reason], ["would_claim", null, "open spot"]);
   assert.equal(X.movesStripText({ due: due(), run, at: new Date(2026, 9, 24, 9, 2).getTime() }), "dry run · would claim for $3, into an open spot; logged 09:02");
@@ -999,11 +1004,169 @@ test("in a live league an open spot is read, never submitted: the page is left u
   assert.deepEqual([line.outcome, line.reason, line.controls.would_fill.dpid, dry.touched], ["would_claim", "open spot", null, []]);
 });
 
-/** The add page with no drop section: ``addDom``'s, less my roster's rows and drop boxes. */
-function openSpotDom() {
+test("the landed page reads the claim's bid on its pending line; a claim placed at another bid says to edit it (#214 step 0b)", async () => {
+  const landedAt = async (open, dom) => {
+    const e = open ? entry({ drop: null, basis: "open" }) : entry();
+    const page = open ? X.readAddPage({ ...rawPage(), empty: "You currently have 1 empty spot on your roster" }, CLEARS) : X.readAddPage(rawPage(), CLEARS);
+    const line = X.moveCheck(e, X.pageCheck(e, page, due(LIVE)), page, due(LIVE), READ_AT);
+    const landing = { day: DAY, trigger: "routine_evening", line, league: LEAGUE, tab: 9, at: Date.now() };
+    const v = await visitAdd({ answer: worker(LIVE, {}, { landing }), dom, url: `${SITE}/nba/${LEAGUE}/${TEAM}/addplayer` });
+    return sentOf(v, "moves_log")[0].run.entries[0];
+  };
+  const placed = "You have successfully created a waiver claim for A";
+  // Step 0b: the open-spot claim's id ends in _0, and a $0 claim's line says no "Bid $".
+  let e = await landedAt(true, landedDom({ notes: [placed], claimId: `${TEAM}_${ADD}_0`, line: "Waiver 1 (Oct 28): Add A View Details" }));
+  assert.deepEqual([e.outcome, e.controls.landed.bid, e.reason], ["claimed", 0, "placed at $0, the queue's $3: edit the bid in Yahoo's pending claims"]);
+  e = await landedAt(true, landedDom({ notes: [placed], claimId: `${TEAM}_${ADD}_0`, line: "Waiver 1 (Oct 28): Bid $3 for A" }));
+  assert.deepEqual([e.outcome, e.controls.landed.bid, e.reason], ["claimed", 3, null]);
+  // The drop path's line names its bid the same way; another claim's line is not this one's.
+  e = await landedAt(false, landedDom({ notes: [placed], claimId: `${TEAM}_${ADD}_2005`, line: "Waiver 2 (Oct 29): Bid $1 for A, B" }));
+  assert.deepEqual([e.controls.landed.bid, e.reason], [1, "placed at $1, the queue's $3: edit the bid in Yahoo's pending claims"]);
+  e = await landedAt(false, landedDom({ notes: [placed], claimId: `${TEAM}_${ADD}_2006`, line: "Waiver 2 (Oct 29): Bid $1 for A, C" }));
+  assert.deepEqual([e.outcome, e.controls.landed.bid, e.reason], ["claimed", null, null]);
+  // An open spot's id is _0 only: a claim of the same add with a drop is not it.
+  e = await landedAt(true, landedDom({ notes: [placed], claimId: `${TEAM}_${ADD}_2005`, line: "Waiver 1 (Oct 28): Add A, Drop B" }));
+  assert.equal(e.controls.landed.bid, null);
+  // A link whose text is not a pending line (no "Waiver N (") reads no bid: nothing is flagged.
+  e = await landedAt(true, landedDom({ notes: [placed], claimId: `${TEAM}_${ADD}_0`, line: "View Details" }));
+  assert.deepEqual([e.controls.landed.bid, e.reason], [null, null]);
+});
+
+/** The add page with no drop section: ``addDom``'s, less my roster's rows and drop boxes. With
+ * ``words`` it says, as Yahoo's page did at step 0b (#214, 2026-10-27), "You currently have 1
+ * empty spot on your roster", and draws its visible "Add … now, don't drop anyone" button
+ * (``noDrop``'s options), which is the submit. */
+function openSpotDom({ words = false, ...opts } = {}) {
   const dom = addDom();
   const form = dom.querySelector("form#add-drop-players-form");
   const all = Object.getOwnPropertyDescriptor(form, "elements").get;
   Object.defineProperty(form, "elements", { get: () => all().filter((x) => x.name !== "dpid") });
-  return { ...dom, querySelectorAll: (sel) => (sel === "table.statTable-drop tbody tr" ? [] : dom.querySelectorAll(sel)) };
+  const buttons = words ? noDrop(dom.touched, opts) : [];
+  const select = form.querySelectorAll;
+  form.querySelectorAll = (sel) => (sel === X.NO_DROP ? buttons : select(sel));
+  return {
+    ...dom,
+    body: el({ textContent: words ? " You currently have 1 empty spot on your roster " : "" }),
+    querySelectorAll: (sel) => (sel === "table.statTable-drop tbody tr" ? [] : dom.querySelectorAll(sel)),
+  };
 }
+
+/** Yahoo's no-drop submit as step 0b read it: ``input.Btn.button-no-drop.add-drop-trigger-btn``,
+ * named ``submit_add_drop``, its value "Add <player> now, don't drop anyone". ``count`` such
+ * inputs (0, 1 or 2), ``shown`` false a hidden one, ``name``/``value`` another, ``onClick`` what
+ * Yahoo's script does on the click. */
+function noDrop(touched, { count = 1, shown = true, name = X.NO_DROP_NAME, value = "Add Player A now, don\u2019t drop anyone", onClick = () => {} } = {}) {
+  return Array.from({ length: count }, () => ({
+    tagName: "INPUT",
+    type: "submit",
+    value,
+    getAttribute: (a) => (a === "name" ? name : null),
+    getClientRects: () => (shown ? [{ width: 200, height: 30 }] : []),
+    click: () => {
+      touched.push("click no drop");
+      onClick();
+    },
+  }));
+}
+
+/** The open-spot add page as ``fillClaim`` reads it: the form's fixed fields (stage 2, the add),
+ * the bid field (``claimStep``'s: ``sticky``, ``balance``), ``ticked`` drop boxes when the page
+ * still draws them (step 0b's page did), ``noDrop``'s buttons and Yahoo's alerts (``alertOnType``
+ * one on the bid's typing, ``alertOnClick`` one on the click). */
+function openStep({ ticked = false, drawn = false, stage = "2", add = ADD, sticky = false, balance = 100, alertOnType = null, alertOnClick = null, swap = false, ...opts } = {}) {
+  const touched = [];
+  const alerts = [];
+  const field = (name, type, value) => ({ name, tagName: "INPUT", type, value, checked: false, dispatchEvent: (ev) => touched.push(`event ${ev.type}`) });
+  const boxes = drawn ? [2001, 2005].map((k) => ({ ...field("dpid", "checkbox", String(k)), checked: ticked && k === 2005 })) : [];
+  let bidValue = "0";
+  const bid = {
+    name: "faab",
+    tagName: "INPUT",
+    type: "text",
+    checked: false,
+    get value() {
+      return bidValue;
+    },
+    set value(v) {
+      touched.push(`set faab ${v}`);
+      if (!sticky) bidValue = v;
+      if (alertOnType) alerts.push(alertOnType);
+    },
+    getAttribute: (a) => (a === X.BALANCE_ATTR && balance != null ? String(balance) : null),
+    dispatchEvent: (ev) => touched.push(`event ${ev.type}`),
+  };
+  const fixed = [field("stage", "hidden", stage), field(X.TOKEN_FIELD, "hidden", "SECRET-VALUE"), field("apid", "hidden", String(add))];
+  let buttons = noDrop(touched, { ...opts, onClick: () => alertOnClick && alerts.push(alertOnClick) });
+  const form = {
+    elements: [...fixed, ...boxes, bid],
+    querySelectorAll: (sel) => {
+      if (sel !== X.NO_DROP) return [];
+      const now = buttons;
+      // Yahoo redrawing its button between two reads: the second read sees another element.
+      if (swap) buttons = noDrop(touched, opts);
+      return now;
+    },
+  };
+  const root = { getAttribute: (a) => (a === X.ALERTS_ATTR && alerts.length ? JSON.stringify(alerts) : null) };
+  const doc = { querySelector: (sel) => (sel === `form#${X.FORM_ID}` ? form : null), getElementById: () => null, documentElement: root };
+  return { doc, touched };
+}
+
+test("an open spot's live claim types the bid, reads it back and clicks Yahoo's no-drop button once (0.9.2)", async () => {
+  const open = entry({ drop: null, basis: "open" });
+  let v = openStep();
+  assert.equal(await X.fillClaim(v.doc, open), null);
+  assert.deepEqual(v.touched, ["set faab 3", "event input", "event change", "click no drop"]);
+  // Step 0b's page still draws its drop buttons and boxes beside the words: none is touched.
+  v = openStep({ drawn: true });
+  assert.equal(await X.fillClaim(v.doc, open), null);
+  assert.deepEqual(v.touched, ["set faab 3", "event input", "event change", "click no drop"]);
+  // A $0 claim types 0.
+  v = openStep();
+  assert.equal(await X.fillClaim(v.doc, entry({ drop: null, bid_placed: 0 })), null);
+  assert.deepEqual(v.touched, ["set faab 0", "event input", "event change", "click no drop"]);
+});
+
+test("an open spot's live claim clicks nothing unless the page is as step 0b read it", async () => {
+  const open = entry({ drop: null, basis: "open" });
+  const run = async (opts, e = open) => {
+    const v = openStep(opts);
+    return [await X.fillClaim(v.doc, e), v.touched];
+  };
+  const skip = (reason) => ({ outcome: "skipped", reason });
+  const typed = ["set faab 3", "event input", "event change"];
+  // Before anything is typed: the button, the bid field and the boxes.
+  assert.deepEqual(await run({ count: 0 }), [skip('no single "don\'t drop anyone" button (0 on the page)'), []]);
+  assert.deepEqual(await run({ count: 2 }), [skip('no single "don\'t drop anyone" button (2 on the page)'), []]);
+  assert.deepEqual(await run({ shown: false }), [skip('no single "don\'t drop anyone" button (0 on the page)'), []]);
+  assert.deepEqual(await run({ name: "submit_drop_player" }), [skip('no single "don\'t drop anyone" button (0 on the page)'), []]);
+  assert.deepEqual(await run({ value: "Add Player A now, drop Player B" }), [skip('no single "don\'t drop anyone" button (0 on the page)'), []]);
+  assert.deepEqual(await run({ drawn: true, ticked: true }), [skip("a drop box was ticked before the pass"), []]);
+  assert.deepEqual(await run({ balance: 2 }), [skip("the bid ($3) is outside Yahoo's $0 to $2"), []]);
+  assert.deepEqual(await run({ balance: null }), [skip("the bid field shows no balance"), []]);
+  // Typed, then read back: a bid that does not take, another stage, another add, a redrawn button.
+  assert.deepEqual(await run({ sticky: true }), [skip("the form did not take the claim: its bid reads 0"), typed]);
+  assert.deepEqual(await run({ stage: "3" }), [skip("the form did not take the claim: its stage reads 3"), typed]);
+  assert.deepEqual(await run({ add: 3999 }), [skip("the form did not take the claim: its apid is not the add"), typed]);
+  assert.deepEqual(await run({ swap: true }), [skip('the form did not take the claim: its "don\'t drop anyone" button is not the one read'), typed]);
+  // Yahoo's alerts: one on the bid's typing stops the click; one on the click is its refusal.
+  assert.deepEqual(await run({ alertOnType: "Bid must be a whole number." }), [skip('Yahoo alerted before the click: "Bid must be a whole number."'), typed]);
+  assert.deepEqual(await run({ alertOnClick: "Your roster is full." }), [skip('Yahoo refused the click: "Your roster is full."'), [...typed, "click no drop"]]);
+});
+
+test("in a live league an open spot on a page with Yahoo's words is put on record, then submitted with its no-drop button", async () => {
+  const open = entry({ id: `${DAY}:${LEAGUE}:${ADD}:0`, drop: null, basis: "open", held_move: null });
+  const v = await visitAdd({ answer: worker({ ...LIVE, entries: [open] }), dom: openSpotDom({ words: true }) });
+  assert.deepEqual(ops(v), [...PASS, "moves_submitting"]);
+  assert.deepEqual(v.touched, ["set faab 3", "event input", "event change", "click no drop"]);
+  const { record } = sentOf(v, "moves_submitting")[0];
+  assert.deepEqual([record.line.drop, record.line.bid, record.line.reason, record.line.controls.would_fill.submit], [null, 3, "open spot", X.NO_DROP_NAME]);
+  assert.equal(v.strip.textContent, "pickandroll moves: live · claim submitted for $3, into an open spot: reading Yahoo's answer…");
+  // A dry run on the same page logs the claim it would place and touches nothing.
+  const dry = await visitAdd({ answer: worker({ entries: [open] }), dom: openSpotDom({ words: true }) });
+  assert.deepEqual([sentOf(dry, "moves_log")[0].run.entries[0].outcome, dry.touched], ["would_claim", []]);
+  // No button where the words are: skipped, logged, nothing clicked.
+  const none = await visitAdd({ answer: worker({ ...LIVE, entries: [open] }), dom: openSpotDom({ words: true, count: 0 }) });
+  const line = sentOf(none, "moves_log")[0].run.entries[0];
+  assert.deepEqual([line.outcome, line.reason, none.touched], ["skipped", 'no single "don\'t drop anyone" button (0 on the page)', []]);
+});

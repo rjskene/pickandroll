@@ -36,9 +36,18 @@
   const DROP_FIELD = "dpid";
   const BID_FIELD = "faab";
   const SUBMIT = "submit_drop_player";
-  /** An entry with no drop whose page shows no drop section (#199), and why live still holds it. */
+  /** An entry with no drop whose page shows no drop section (#199), and why live holds one whose
+   * page does not say it has an empty spot (0.9.2: the submit needs Yahoo's no-drop button). */
   const OPEN_SPOT = "open spot";
-  const OPEN_SPOT_HELD = "open spot, read only: an open-spot claim is not submitted until Yahoo's open-spot page has been seen";
+  const OPEN_SPOT_HELD = "open spot, read only: the page does not say it has an empty spot";
+  /** Yahoo's open-spot submit (step 0b on #214, 2026-10-27): beside the words "You currently have N
+   * empty spot(s)" a visible submit input, "Add … now, don't drop anyone". It is the submit itself:
+   * Yahoo's script sets the stage and submits the form, and the page lands on my team page with
+   * the claim (no confirm page). The bid is typed before it, then read back. */
+  const NO_DROP = "input.button-no-drop.add-drop-trigger-btn";
+  const NO_DROP_NAME = "submit_add_drop";
+  const NO_DROP_WORDS = /^Add .+ now, don.t drop anyone$/;
+  const OPEN_STAGE = "2";
   /** Yahoo's claim step (its add page's script, read 2026-10-26, #171 0.8.2). The button beside
    * each drop box is what a user clicks: Yahoo's script, delegated on that class, then ticks the
    * box, posts the form's first stage and swaps its reply into the page, the final button with it.
@@ -265,13 +274,13 @@
   }
 
   /** The claim the form would carry for ``entry``: its action and the fields this pass would
-   * fill, one drop only. Every other field would post as the page has it; the anti-forgery
+   * fill, one drop only (an open spot's submit is Yahoo's no-drop button). Every other field would post as the page has it; the anti-forgery
    * field is no part of this. */
   function wouldFill(entry, page) {
-    return { action: page.action, [ADD_FIELD]: entry.add, [DROP_FIELD]: entry.drop ?? null, [BID_FIELD]: entry.bid_placed ?? 0, submit: FINAL_SUBMIT };
+    return { action: page.action, [ADD_FIELD]: entry.add, [DROP_FIELD]: entry.drop ?? null, [BID_FIELD]: entry.bid_placed ?? 0, submit: entry.drop == null ? NO_DROP_NAME : FINAL_SUBMIT };
   }
 
-  const FILLED = new Set([ADD_FIELD, DROP_FIELD, BID_FIELD, SUBMIT, FINAL_SUBMIT]);
+  const FILLED = new Set([ADD_FIELD, DROP_FIELD, BID_FIELD, SUBMIT, FINAL_SUBMIT, NO_DROP_NAME]);
 
   /** The log's line for ``entry`` (the API's ``MoveCheck``) from its check and its page: ids,
    * dollars, dates and the page's own words for its heading only. The waiver-order table is
@@ -355,11 +364,11 @@
   }
 
   /** Why a claim that passed every check is still not submitted live, null when it may be: a
-   * free-agent add (this build places waiver claims only) or an open-spot claim, read (#199) but
-   * not submitted until Yahoo's open-spot page has been seen on a real page. */
+   * free-agent add (this build places waiver claims only), or an open-spot claim whose page does
+   * not say, in Yahoo's words, that it has an empty spot (the no-drop button stands beside them). */
   function submitProblem(entry, page) {
     if (entry.availability === "FA" || page.heading !== CLAIM_HEADING) return "a free-agent add: this build places waiver claims only";
-    if (entry.drop == null) return OPEN_SPOT_HELD;
+    if (entry.drop == null && !page.open_spots) return OPEN_SPOT_HELD;
     return null;
   }
 
@@ -387,7 +396,8 @@
   }
 
   /** The live claim on the rendered add page ``doc`` (#171 PR 3; Yahoo's claim step, 0.8.2),
-   * every check passed, with a user's two clicks and nothing else: the entry's one drop button,
+   * every check passed, with a user's clicks and nothing else. An open spot (0.9.2, no drop):
+   * the bid typed and read back, then Yahoo's "don't drop anyone" button once. Else the entry's one drop button,
    * then, once Yahoo's reply is in (its final button shown and the drop picked, within ``cap``
    * ms), the bid typed and checked as Yahoo checks it and the form read back, the final button
    * once. Answers null once that is clicked, else the entry's ``{outcome, reason}``: ``failed``
@@ -401,6 +411,41 @@
     if (!form) return skip("the claim form is gone");
     const named = (n) => [...form.elements].filter((el) => el.name === n);
     const boxes = () => named(DROP_FIELD).filter((el) => String(el.type).toLowerCase() === "checkbox");
+    if (entry.drop == null) {
+      // The open-spot claim (0.9.2): the bid typed and read back, then Yahoo's visible no-drop
+      // button once, which submits; its answer is the landed page's, as the drop path's is.
+      if (boxes().some((el) => el.checked)) return skip("a drop box was ticked before the pass");
+      const bids = named(BID_FIELD);
+      if (bids.length !== 1) return skip(bids.length ? "the page has more than one bid field" : "the page has no bid field");
+      const shown = (el) => typeof el.getClientRects === "function" && el.getClientRects().length > 0;
+      const noDrop = () =>
+        [...form.querySelectorAll(NO_DROP)].filter((b) => shown(b) && b.getAttribute("name") === NO_DROP_NAME && NO_DROP_WORDS.test(String(b.value || "").replace(/\s+/g, " ").trim()));
+      const button = noDrop();
+      if (button.length !== 1) return skip(`no single "don't drop anyone" button (${button.length} on the page)`);
+      const [bid] = bids;
+      const amount = entry.bid_placed ?? 0;
+      const refused = bidProblem(bid, amount);
+      if (refused) return skip(refused);
+      const before = alertsOf(doc).length;
+      const yahoo = () => alertsOf(doc).slice(before);
+      bid.value = String(amount);
+      bid.dispatchEvent(new Event("input", { bubbles: true }));
+      bid.dispatchEvent(new Event("change", { bubbles: true }));
+      const add = named(ADD_FIELD);
+      const stage = named("stage");
+      const wrong = [];
+      if (named(BID_FIELD).length !== 1 || named(BID_FIELD)[0].value !== String(amount)) wrong.push(`its bid reads ${named(BID_FIELD).map((el) => el.value).join(", ") || "none"}`);
+      if (stage.length !== 1 || String(stage[0].value) !== OPEN_STAGE) wrong.push(`its stage reads ${stage.map((el) => el.value).join(", ") || "none"}`);
+      if (add.length !== 1 || Number(add[0].value) !== entry.add) wrong.push("its apid is not the add");
+      if (boxes().some((el) => el.checked)) wrong.push("a drop box is ticked");
+      // The button by its identity: still the one Yahoo drew, shown and worded.
+      if (noDrop()[0] !== button[0] || noDrop().length !== 1) wrong.push(`its "don't drop anyone" button is not the one read`);
+      if (wrong.length) return skip(`the form did not take the claim: ${wrong.join("; ")}`);
+      if (yahoo().length) return skip(`Yahoo alerted before the click: "${yahoo()[0]}"`);
+      button[0].click();
+      if (yahoo().length) return skip(`Yahoo refused the click: "${yahoo()[0]}"`);
+      return null;
+    }
     const drop = String(entry.drop);
     if (boxes().filter((el) => String(el.value) === drop).length !== 1) return skip(`no single drop box for ${entry.drop}`);
     if (boxes().some((el) => el.checked)) return skip("a drop box was ticked before the pass");
@@ -494,10 +539,14 @@
 
   /** The live pass for a submitted claim (``record``, kept by the worker from the add page's
    * read) once its answer is known: ``landed`` is ``readLanded``'s answer, null when it was not
-   * recognised or never read; ``seen`` the landed page's path and heading. */
+   * recognised or never read; ``seen`` the landed page's path, heading and the claim's bid. */
   function landedPass(record, landed, seen = null, extension = null) {
     const outcome = landed ? landed.outcome : "claimed";
-    const reason = !landed ? unreadReason(record.at) : outcome === "failed" ? landed.message : null;
+    // The bid Yahoo's pending claim shows (``seen.bid``: "Bid $N", none when $0; null when the
+    // claim's line was not found). A placed claim at another bid than the queue's still counts:
+    // it is never submitted again, and the reason says to edit it in Yahoo (step 0b, #214).
+    const off = landed && outcome === "claimed" && seen && seen.bid != null && record.line.bid != null && seen.bid !== record.line.bid;
+    const reason = !landed ? unreadReason(record.at) : outcome === "failed" ? landed.message : off ? `placed at $${seen.bid}, the queue's $${record.line.bid}: edit the bid in Yahoo's pending claims` : null;
     const line = {
       ...record.line,
       outcome,
@@ -579,7 +628,7 @@
     return (due.entries || []).map((e) => ({
       id: e.id,
       href: `${site}${e.page}#${PANEL_FRAGMENT}`,
-      text: `${live && e.drop != null ? "claim: " : ""}add ${e.add}, ${e.drop == null ? "open spot" : `drop ${e.drop}`}, $${e.bid_placed ?? 0}`,
+      text: `${live ? "claim: " : ""}add ${e.add}, ${e.drop == null ? "open spot" : `drop ${e.drop}`}, $${e.bid_placed ?? 0}`,
     }));
   }
 
@@ -604,6 +653,9 @@
     SUBMIT,
     OPEN_SPOT,
     OPEN_SPOT_HELD,
+    NO_DROP,
+    NO_DROP_NAME,
+    dropWords,
     DROP_TRIGGER,
     DROP_TRIGGER_VALUE,
     SUBMIT_CONTAINER,
