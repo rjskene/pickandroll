@@ -5,17 +5,19 @@ raises ``Stopped`` (STOP is set) or ``Abort`` (the API is down)."""
 from __future__ import annotations
 
 import math
+import os
+import re
 import tempfile
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 from .api import Call, Unreachable
-from .browser import Browser
+from .browser import NO_BROWSER, Browser
 from .clock import before, seconds_until
-from .report import Report
+from .report import EXPORT_KINDS, Report
 
 REPO = "rjskene/pickandroll"
 #: The tracker issues the routines post on: the breakout digest (#99) and AUTOPILOT (#127).
@@ -327,9 +329,18 @@ def _when(x: Any) -> datetime | None:
 
 
 # --------------------------------------------------------------------------- the plans
+#: An IL opening's wait: the extension posts the page, makes (or logs) the move and goes on to
+#: the entry's add page itself; a moves opening's wait: it reads the rendered claim form.
+IL_WAIT_S = 30.0
+MOVES_WAIT_S = 12.0
+
+
 @dataclass
 class Opening:
-    """One page a pass opens: the league, the fragment's kind, the URL and the wait after it."""
+    """One page a pass opens: the league, the fragment's kind, the URL and the wait after it.
+    An IL opening also carries ``then``, the entry's add page with the moves fragment, which the
+    pass opens itself when the tab is still on the team page after the wait (a build before
+    0.9.1, or STOP), as the Desktop routine did."""
 
     league: str
     kind: str
@@ -337,6 +348,7 @@ class Opening:
     wait_s: float
     entry: str | None = None
     date: str | None = None
+    then: str | None = None
 
 
 def league_page_ok(league: str, page: Any) -> bool:
@@ -417,8 +429,9 @@ class MovesPlan:
 
 def moves_plan(ctx: Context, leagues: Sequence[str], fragment: str, il_fragment: str) -> MovesPlan:
     """``GET /seasons/<id>/autopilot/moves/due`` per league: the IL moves first (each item's
-    team page, thirty seconds), then the other due entries' add pages (twelve seconds), the
-    page paths checked against the league. Off, STOP or nothing due is a reason, not a page."""
+    team page, thirty seconds, the entry's own add page as its follow-up), then the other due
+    entries' add pages (twelve seconds), the page paths checked against the league. Off, STOP
+    or nothing due is a reason, not a page."""
     openings: list[Opening] = []
     entries: list[str] = []
     opened: list[str] = []
@@ -433,22 +446,25 @@ def moves_plan(ctx: Context, leagues: Sequence[str], fragment: str, il_fragment:
             continue
         il_first = [i for i in body.get("il_first") or [] if isinstance(i, dict)]
         il_entries = {str(i.get("entry")) for i in il_first}
+        add_pages = {
+            str(e.get("id")): e.get("page") for e in body["entries"] if isinstance(e, dict)
+        }
         league_openings: list[Opening] = []
         for item in il_first:
             page = item.get("page")
+            entry = str(item.get("entry"))
             if not league_page_ok(league, page):
-                reasons[f"{league}:{item.get('entry')}"] = (
-                    f"IL page not the league's own ({page!r})"
-                )
+                reasons[f"{league}:{entry}"] = f"IL page not the league's own ({page!r})"
                 continue
+            add = add_pages.get(entry)
+            then = f"{YAHOO}{add}#{fragment}" if add_page_ok(league, add) else None
+            if then is None:
+                reasons[f"{league}:{entry}"] = (
+                    f"IL entry without an add page of the league's ({add!r}): no follow-up"
+                )
             league_openings.append(
                 Opening(
-                    league,
-                    "il",
-                    f"{page}#{il_fragment}",
-                    30.0,
-                    str(item.get("entry")),
-                    item.get("date"),
+                    league, "il", f"{page}#{il_fragment}", IL_WAIT_S, entry, item.get("date"), then
                 )
             )
         for e in body["entries"]:
@@ -461,7 +477,9 @@ def moves_plan(ctx: Context, leagues: Sequence[str], fragment: str, il_fragment:
             if not add_page_ok(league, page):
                 reasons[f"{league}:{eid}"] = f"add page not the league's ({page!r})"
                 continue
-            league_openings.append(Opening(league, "moves", f"{YAHOO}{page}#{fragment}", 12.0, eid))
+            league_openings.append(
+                Opening(league, "moves", f"{YAHOO}{page}#{fragment}", MOVES_WAIT_S, eid)
+            )
         if league_openings:
             opened.append(league)
             openings.extend(league_openings)
@@ -472,7 +490,11 @@ def moves_plan(ctx: Context, leagues: Sequence[str], fragment: str, il_fragment:
 
 
 def plan_lines(openings: Sequence[Opening]) -> list[str]:
-    return [f"{o.league} {o.kind} {o.url} ({o.wait_s:.0f} s)" for o in openings]
+    return [
+        f"{o.league} {o.kind} {o.url} ({o.wait_s:.0f} s)"
+        + (f", then {o.then} ({MOVES_WAIT_S:.0f} s) if the tab stays" if o.then else "")
+        for o in openings
+    ]
 
 
 # --------------------------------------------------------------------------- the pass record
@@ -668,9 +690,12 @@ def gh_comment(issue: int, path: Path) -> tuple[int, str]:
     return r.returncode, (r.stdout or "") + (r.stderr or "")
 
 
-def script_runner(repo: Path, python: str) -> RunScript:
-    """Run ``scripts/<name>.py`` with the checkout's interpreter, from the checkout."""
+def script_runner(repo: Path, python: str, env: Mapping[str, str] | None = None) -> RunScript:
+    """Run ``scripts/<name>.py`` with the checkout's interpreter, from the checkout, with
+    ``env`` added to the environment (the importers' ``PICKANDROLL_DOWNLOADS``)."""
     import subprocess
+
+    environment = {**os.environ, **(env or {})}
 
     def run(args: Sequence[str]) -> tuple[int, str, str]:
         name, *rest = args
@@ -680,6 +705,7 @@ def script_runner(repo: Path, python: str) -> RunScript:
             capture_output=True,
             text=True,
             check=False,
+            env=environment,
         )
         return r.returncode, r.stdout, r.stderr
 
@@ -688,3 +714,380 @@ def script_runner(repo: Path, python: str) -> RunScript:
 
 def ceil_minutes(seconds: float) -> int:
     return math.ceil(seconds / 60)
+
+
+# --------------------------------------------------------------------------- the browser
+#: The import each export's download goes through (``scripts/draft_day.py``), by kind.
+IMPORTS: dict[str, tuple[str, ...]] = {
+    "ros": ("draft_day.py", "projections"),
+    "week_this": ("draft_day.py", "week", "--this"),
+    "week_next": ("draft_day.py", "week", "--next"),
+    "actual_7d": ("draft_day.py", "past-days", "--days", "7"),
+    "actual_14d": ("draft_day.py", "past-days", "--days", "14"),
+}
+#: The private league's players views the daily opens (12 pages of 25 each): rest-of-season
+#: ranks and the next seven days' projections.
+PLAYER_VIEWS = ("R_O", "S_PS7")
+PLAYER_PAGES = 12
+#: A player's link on a players page: none means the page lists no player.
+PLAYER_LINK = 'a[href*="/nba/players/"]'
+PAGE_WAIT_S = 5.0
+#: The daily's lineup pages (2f) and the Monday recorder's lineup + schedule pages, at most.
+LINEUP_PAGE_CAP = 10
+MONDAY_PAGE_CAP = 30
+_SAVED = re.compile(r"\bsaved data/(\S+)")
+_IDENTICAL = re.compile(r"not saved: \S+ is identical to ([^\s,]+)")
+
+
+def alert_once(ctx: Context, line: str) -> None:
+    if line not in ctx.report.alerts:
+        ctx.report.alert(line)
+
+
+def ready_browser(ctx: Context, name: str, site: str, would: str, **data: Any) -> Browser | None:
+    """The browser for a step that opens pages, or None with the step recorded: a dry run and
+    ``--no-browser`` skip it, a browser that cannot start skips it with the reason (alerted
+    once), a profile signed out of ``site`` fails it (alerted once). Nothing opens but the
+    sign-in check."""
+    if ctx.dry_run:
+        ctx.report.skipped(name, f"dry run: {would}", **data)
+        return None
+    browser = ctx.browser
+    if browser is None:
+        ctx.report.skipped(name, f"{NO_BROWSER}; {would}", **data)
+        return None
+    if not browser.available():
+        ctx.report.skipped(name, f"browser unavailable ({browser.reason}); {would}", **data)
+        alert_once(
+            ctx,
+            f"the browser could not start at the {ctx.report.routine} routine: {browser.reason}",
+        )
+        return None
+    if not browser.signed_in(site):
+        ctx.report.failed(
+            name, f"the browser profile is not signed in to {site}: nothing opened; {would}", **data
+        )
+        alert_once(ctx, f"the browser profile is signed out of {site}")
+        return None
+    return browser
+
+
+def one_line(exc: BaseException) -> str:
+    text = " ".join(str(exc).split())
+    return (f"{type(exc).__name__}: {text}" if text else type(exc).__name__)[:300]
+
+
+def open_page(ctx: Context, browser: Browser, url: str, wait_s: float) -> str | None:
+    """The page opened in the routine's tab and the URL it landed on; a page that fails to load
+    is tried once more after ten seconds, then noted and given up (None)."""
+    last: BaseException | None = None
+    for attempt in (1, 2):
+        try:
+            return browser.open(url, wait_s)
+        except ValueError as exc:  # refused: never retried
+            last = exc
+            break
+        except Exception as exc:  # noqa: BLE001 - a load that failed
+            last = exc
+            if attempt == 1:
+                ctx.sleep(10)
+    ctx.notes.setdefault("open_failed", []).append(f"{url}: {one_line(last) if last else '?'}")
+    return None
+
+
+def saved_name(line: str) -> str | None:
+    """The file an import's line says stands under data/: the one saved, or the identical one
+    already there."""
+    m = _IDENTICAL.search(line) or _SAVED.search(line)
+    return m.group(1) if m else None
+
+
+def _first_line(out: str, err: str) -> str:
+    for text in (out, err):
+        for line in text.splitlines():
+            if line.strip():
+                return line.strip()
+    return ""
+
+
+def export_all(
+    ctx: Context, not_due_on: Sequence[int] = (), by: str | None = None, name: str = "exports"
+) -> None:
+    """The five Basketball Monster exports (the SKILL's 3a-3d), each imported as soon as it
+    lands: ``report.exports[kind]`` is the file that stands under data/. The this-week export is
+    not due on the ``not_due_on`` weekdays (the daily's Sunday, the evening's Saturday and
+    Sunday); from ``by`` on (the evening's 21:15) the kinds still to make are skipped and
+    named. A refused import is reported with its line and never retried."""
+    today = ctx.now()
+    lines: dict[str, str] = {}
+    if today.weekday() in not_due_on:
+        lines["week_this"] = f"not due on a {today:%A}"
+    due = [k for k in EXPORT_KINDS if k not in lines]
+    browser = ready_browser(ctx, name, "bbm", f"would export {len(due)} kinds: {', '.join(due)}")
+    if browser is None:
+        return
+    failed: list[str] = []
+    late: list[str] = []
+    seconds: dict[str, int] = {}
+    for kind in EXPORT_KINDS:
+        if kind in lines:
+            continue
+        if by and not before(ctx.now(), by):
+            late.append(kind)
+            continue
+        started = ctx.now()
+        try:
+            path = browser.export(kind)
+        except Exception as exc:  # noqa: BLE001 - reported, the next export still runs
+            lines[kind] = f"export failed: {one_line(exc)}"
+            failed.append(kind)
+            seconds[kind] = ceil_seconds(ctx.now() - started)
+            continue
+        if not path.is_file() or path.stat().st_size == 0:
+            lines[kind] = f"no file landed at {path.name}: import skipped"
+            failed.append(kind)
+            seconds[kind] = ceil_seconds(ctx.now() - started)
+            continue
+        rc, out, err = ctx.run_script(IMPORTS[kind])
+        line = _first_line(out, err) or f"import exit {rc} with no output"
+        lines[kind] = line
+        seconds[kind] = ceil_seconds(ctx.now() - started)
+        saved = saved_name(line) if rc == 0 else None
+        if saved:
+            ctx.report.exports[kind] = saved
+        else:
+            failed.append(kind)
+    made = [k for k in EXPORT_KINDS if k in ctx.report.exports]
+    detail = f"{len(made)} of {len(due)} due saved"
+    if "week_this" not in due:
+        detail += f"; this week {lines['week_this']}"
+    if failed:
+        detail += "; failed: " + ", ".join(f"{k} ({lines[k]})" for k in failed)
+    if late:
+        detail += f"; skipped past {by}: " + ", ".join(late)
+    # A kind skipped past ``by`` is said, not failed: the SKILL's rule is "say which were
+    # skipped", and a failed step would wake the alert every evening the exports run long.
+    status = ctx.report.failed if failed else ctx.report.ok
+    status(name, detail[:600], lines=lines, seconds=seconds, late=late)
+
+
+def ceil_seconds(delta: timedelta) -> int:
+    return math.ceil(delta.total_seconds())
+
+
+def private_page_urls(body: Mapping[str, Any]) -> list[tuple[str, str | None]]:
+    """The private league's pages the daily opens for the extension (the SKILL's 2e), in
+    order, each with the players view it belongs to (None otherwise): the league page, every
+    team's page, my matchup (left out without an opponent), the transactions, the two players
+    views."""
+    base = f"{YAHOO}/nba/{PRIVATE_LEAGUE}"
+    out: list[tuple[str, str | None]] = [(base, None)]
+    teams = int(body.get("num_teams") or 12)
+    out += [(f"{base}/{t}", None) for t in range(1, teams + 1)]
+    week = body.get("week")
+    me = (body.get("my_team") or {}).get("team_id")
+    opponent = (body.get("opponent") or {}).get("team_id")
+    if week and me is not None and opponent is not None:
+        out.append((f"{base}/matchup?date=totals&week={week}&mid1={me}&mid2={opponent}", None))
+    out.append((f"{base}/transactions", None))
+    for view in PLAYER_VIEWS:
+        for offset in range(0, PLAYER_PAGES * 25, 25):
+            out.append(
+                (
+                    f"{base}/players?status=A&pos=P&stat1={view}&sort=R_PO&sdir=1&count={offset}",
+                    view,
+                )
+            )
+    return out
+
+
+def private_pages(ctx: Context, name: str = "private_pages") -> None:
+    """The daily's 2e: the private league's pages opened read-only, five seconds each, so the
+    extension posts them; a players view stops at a page that lists no player; afterwards the
+    league is read back (its ``updated_at`` and the parts fetched)."""
+    browser = ready_browser(ctx, name, "yahoo", f"would open the pages of {PRIVATE_LEAGUE}")
+    if browser is None:
+        return
+    code, body, _ = ctx.get(f"/seasons/{PRIVATE_LEAGUE}", 60)
+    if code != 200 or not isinstance(body, dict):
+        ctx.report.failed(name, f"GET /seasons/{PRIVATE_LEAGUE} answered {code}: nothing opened")
+        return
+    urls = private_page_urls(body)
+    stopped: set[str] = set()
+    opened = 0
+    for url, view in urls:
+        if view in stopped:
+            continue
+        if open_page(ctx, browser, url, PAGE_WAIT_S) is None:
+            continue
+        opened += 1
+        if view and browser.count(PLAYER_LINK) == 0:
+            stopped.add(view)
+    code, body, _ = ctx.get(f"/seasons/{PRIVATE_LEAGUE}", 60)
+    fetched = len(body.get("fetched") or {}) if isinstance(body, dict) else 0
+    updated = body.get("updated_at") if isinstance(body, dict) else None
+    failed = [f for f in ctx.notes.get("open_failed", []) if f"/nba/{PRIVATE_LEAGUE}" in f]
+    detail = f"{opened} pages opened; updated_at {updated}, {fetched} fetched keys"
+    if stopped:
+        detail += f"; views stopped early: {', '.join(sorted(stopped))}"
+    if failed:
+        detail += f"; {len(failed)} failed to open: " + "; ".join(failed[:3])
+    status = ctx.report.failed if failed or not opened else ctx.report.ok
+    status(name, detail[:600], opened=opened, fetched=fetched, failed=failed)
+
+
+def lineup_pages(ctx: Context, name: str = "lineup_pages") -> None:
+    """The daily's 2f: the private league's lineup pages it still needs (``GET
+    /seasons/31822/lineup``, ``needs``), at most ten, read-only; the route read again says
+    whether they landed."""
+    browser = ready_browser(
+        ctx, name, "yahoo", f"would open the lineup pages {PRIVATE_LEAGUE} needs"
+    )
+    if browser is None:
+        return
+    code, body, _ = ctx.get(f"/seasons/{PRIVATE_LEAGUE}/lineup", 120)
+    if code != 200 or not isinstance(body, dict):
+        ctx.report.skipped(name, f"lineup route answered {code}")
+        return
+    needs = [u for u in body.get("needs") or [] if isinstance(u, str)]
+    if not needs:
+        ctx.report.ok(name, "nothing needed")
+        return
+    prefix = f"{YAHOO}/nba/{PRIVATE_LEAGUE}"
+    good = [u for u in needs if u.startswith(prefix)]
+    foreign = [u for u in needs if not u.startswith(prefix)]
+    plan = good[:LINEUP_PAGE_CAP]
+    opened = [u for u in plan if open_page(ctx, browser, u, PAGE_WAIT_S) is not None]
+    code, body, _ = ctx.get(f"/seasons/{PRIVATE_LEAGUE}/lineup", 120)
+    still = [u for u in body.get("needs") or []] if code == 200 and isinstance(body, dict) else []
+    not_landed = [u for u in opened if u in still]
+    detail = f"{len(opened)} of {len(plan)} pages opened"
+    if len(good) > len(plan):
+        detail += f", {len(good) - len(plan)} left for the next run"
+    if foreign:
+        detail += f"; skipped, not the league's: {len(foreign)}"
+    if not_landed:
+        detail += f"; lineup pages did not land: {len(not_landed)} still needed"
+        alert_once(
+            ctx, f"the private league's lineup pages did not land ({len(not_landed)} still needed)"
+        )
+        ctx.report.failed(name, detail, opened=opened, still=still)
+    elif len(opened) < len(plan):
+        ctx.report.failed(name, detail + "; some pages failed to open", opened=opened, still=still)
+    else:
+        ctx.report.ok(
+            name, detail + ("; needs now empty" if not still else ""), opened=opened, still=still
+        )
+
+
+@dataclass
+class PrivatePages:
+    """What the recorder's line for the private league lists: the pages it needs before it
+    can record, its lineup pages and its schedule pages."""
+
+    line: str
+    needs: list[str]
+    lineup: list[str]
+    schedule: list[str]
+
+
+def parse_private_line(lines: Iterable[str], league: str = PRIVATE_LEAGUE) -> PrivatePages | None:
+    """The private league's line among ``season.py record``'s, parsed; None without one."""
+    line = next((ln for ln in lines if re.match(rf"{league}\b", ln)), None)
+    if line is None:
+        return None
+    return PrivatePages(
+        line,
+        _urls_after(line, "needs pages"),
+        _urls_after(line, "lineup pages"),
+        _urls_after(line, "schedule pages"),
+    )
+
+
+def _urls_after(line: str, label: str) -> list[str]:
+    m = re.search(rf"{label} \((\d+)\): ([^;]*)", line)
+    return m.group(2).split() if m else []
+
+
+def monday_pages(ctx: Context, api: str, lines: Sequence[str], name: str = "private_pages") -> None:
+    """The Monday recorder's 3, 3b and 3c: the private league's needed pages opened and the
+    league recorded again (one more round if it still needs pages, then stop), then its
+    lineup pages and then its schedule pages, at most thirty together, the league recorded
+    once more after the lineup pages."""
+    pages = parse_private_line(lines)
+    if pages is None:
+        ctx.report.skipped(name, f"no record line for {PRIVATE_LEAGUE}")
+        return
+    if not (pages.needs or pages.lineup or pages.schedule):
+        ctx.report.ok(name, f"{PRIVATE_LEAGUE} needs no page")
+        return
+    would = (
+        f"would open {len(pages.needs)} needed, {len(pages.lineup)} lineup and "
+        f"{len(pages.schedule)} schedule pages of {PRIVATE_LEAGUE}"
+    )
+    browser = ready_browser(ctx, name, "yahoo", would)
+    if browser is None:
+        return
+    problems: list[str] = []
+    counts = {"needs": 0, "lineup": 0, "schedule": 0}
+    needs = pages.needs
+    rounds = 0
+    while needs and rounds < 2:
+        rounds += 1
+        counts["needs"] += _open_each(ctx, browser, needs, problems)
+        ctx.sleep(10)
+        again = _record_private(ctx, api)
+        if again is not None:
+            pages = again
+        needs = again.needs if again else []
+    lineup = pages.lineup[:MONDAY_PAGE_CAP]
+    schedule = pages.schedule[: MONDAY_PAGE_CAP - len(lineup)]
+    left = len(pages.lineup) + len(pages.schedule) - len(lineup) - len(schedule)
+    not_landed = False
+    if lineup:
+        counts["lineup"] += _open_each(ctx, browser, lineup, problems)
+        ctx.sleep(10)
+        again = _record_private(ctx, api)
+        not_landed = bool(again and again.lineup)
+        if again is not None:
+            pages = again
+    if schedule:
+        counts["schedule"] += _open_each(ctx, browser, schedule, problems)
+    detail = (
+        f"{counts['needs']} needed pages opened in {rounds} round(s), {counts['lineup']} lineup, "
+        f"{counts['schedule']} schedule; {left} left"
+    )
+    if needs:
+        detail += f"; still needs {len(needs)} pages after {rounds} rounds"
+    if not_landed:
+        detail += "; lineup pages did not land"
+        alert_once(ctx, "the private league's lineup pages did not land at the Monday recorder")
+    if problems:
+        detail += "; " + "; ".join(problems[:5])
+    status = ctx.report.failed if needs or not_landed or problems else ctx.report.ok
+    status(name, detail[:600], counts=counts, left=left, line=pages.line[:300], problems=problems)
+
+
+def _open_each(ctx: Context, browser: Browser, urls: Sequence[str], problems: list[str]) -> int:
+    prefix = f"{YAHOO}/nba/{PRIVATE_LEAGUE}"
+    opened = 0
+    for url in urls:
+        if not url.startswith(prefix):
+            problems.append(f"skipped, not the league's: {url}")
+            continue
+        if open_page(ctx, browser, url, PAGE_WAIT_S) is None:
+            problems.append(f"failed to open: {url}")
+            continue
+        opened += 1
+    return opened
+
+
+def _record_private(ctx: Context, api: str) -> PrivatePages | None:
+    rc, out, err = ctx.run_script(["season.py", "record", PRIVATE_LEAGUE, "--api", api])
+    last = (
+        out.strip().splitlines()[-1]
+        if out.strip()
+        else f"{PRIVATE_LEAGUE}: exit {rc}: {err.strip()[:100]}"
+    )
+    ctx.notes.setdefault("record_private", []).append(last)
+    return parse_private_line([last])
