@@ -153,6 +153,7 @@ from ..sources.yahoo import pages, public
 from . import (
     leagues,
     season_autopilot,
+    season_cantcut,
     season_decisions,
     season_flags,
     season_hillclimb,
@@ -732,12 +733,14 @@ class SeasonService:
     # ------------------------------------------------------------------ moves
     def _moves_stamp(self, league: str) -> tuple[Any, ...]:
         """What the moves of a league depend on beyond the day: the state file, the projection
-        exports, the injury report (an O's return date) and the knob file (#152)."""
+        exports, the injury report (an O's return date), the knob file (#152) and Yahoo's
+        can't-cut list (#220)."""
         files = [
             season_dir(self.data_dir, league) / STATE,
             self.data_dir / "aliases.json",
             season_flags.injuries_path(self.data_dir),
             season_knobs.autopilot_dir(self.data_dir) / season_knobs.KNOBS_FILE,
+            season_cantcut.path_of(self.data_dir, league),
         ]
         for pattern in (*BBM_ROS, BBM_THIS_WEEK, BBM_NEXT_WEEK):
             files += sorted(self.data_dir.glob(pattern))
@@ -1501,6 +1504,8 @@ class SeasonService:
             )
         except season_autopilot.LogError as exc:
             raise HTTPException(409, str(exc)) from exc
+        # The page's can't-cut ids, for the next solve (#220): the newest read wins.
+        season_cantcut.record(self.data_dir, league, record.get("entries") or [])
         checks = {c.id: c for c in run.entries if c.outcome in season_autopilot.STICKS}
         if checks and run.mode == "live":
 

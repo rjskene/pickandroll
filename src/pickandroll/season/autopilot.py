@@ -448,8 +448,16 @@ def resolve(e: Mapping[str, Any], added: frozenset[int], elsewhere: frozenset[in
     return None
 
 
-def keep_reason(net_positive: bool, beats_best: bool, returns: bool, bench: bool) -> str:
-    """Why the keep rule protects a player, in words (#124)."""
+#: Why a player on Yahoo's can't-cut list is protected (#220).
+CANTCUT_REASON = "on Yahoo's can't-cut list"
+
+
+def keep_reason(
+    net_positive: bool, beats_best: bool, returns: bool, bench: bool, cantcut: bool = False
+) -> str:
+    """Why the keep rule protects a player, in words (#124): Yahoo's can't-cut list first (#220)."""
+    if cantcut:
+        return CANTCUT_REASON
     if bench and not (net_positive and beats_best and returns):
         return (
             "better than the best add over the season and back within a week: he stays on the bench"

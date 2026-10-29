@@ -49,7 +49,7 @@ from ..season import stream as st
 from ..season import weekly as wk
 from ..sources.injuries import Listed
 from ..sources.matching import match_players
-from . import season_flags
+from . import season_cantcut, season_flags
 from . import season_week as sw
 
 #: The weeks the moves look at: this week and the three after it.
@@ -216,7 +216,8 @@ def build(
 ) -> Built | None:
     """The move problem for my team, or None when the season lacks my team or its weeks; the
     solve runs on ``system`` with ``knobs``, the league's knobs as ``api.season_knobs`` reads
-    them (the code's defaults when None)."""
+    them (the code's defaults when None), and Yahoo's can't-cut list as the executor last read
+    it (``api.season_cantcut``, #220)."""
     s = season.settings
     mine = s.my_team_id
     if mine is None or not season.calendar or mine not in season.rosters:
@@ -360,6 +361,7 @@ def build(
         floor=float(knobs["protection_floor"]),
         plan_floor=float(knobs["plan_floor_points" if points else "plan_floor_cats"]),
         daily_cap=int(knobs["daily_cap"]),
+        cantcut=season_cantcut.load(data_dir, s.league),
     )
     rule = mv.keep_rule(problem)
     problem = replace(problem, kept=rule.kept)
@@ -628,6 +630,7 @@ def keep_payload(built: Built) -> dict[str, Any]:
                 "returns": k.returns,
                 "protected": k.protected,
                 "bench": k.bench,
+                "cantcut": k.cantcut,
             }
         )
     best = None

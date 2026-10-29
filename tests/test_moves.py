@@ -625,6 +625,39 @@ def test_the_keep_rule_protects_a_net_positive_player_better_than_the_best_add_w
     assert mv.keep_rule(replace(p, season_value={1: 2.0, 2: 0.3})).kept == {1, 2}
 
 
+def test_yahoos_cant_cut_list_protects_a_player_whatever_the_three_tests_say():
+    """#220: a player Yahoo refuses to drop is protected like the keep rule's players; out, he
+    still goes to an open held slot (Yahoo blocks drops, not IL moves)."""
+    p = keep_league()
+    # Player 3, below the pool's average and the add, is the weakest: the rule leaves him.
+    base = mv.keep_rule(p)
+    assert 3 not in base.kept and 3 in mv.drop_options(replace(p, kept=base.kept))
+    cut = replace(p, cantcut=frozenset({3}))
+    rule = mv.keep_rule(cut)
+    three = rule.players[3]
+    assert (three.net_positive, three.beats_best, three.protected, three.cantcut) == (
+        False,
+        False,
+        True,
+        True,
+    )
+    assert not three.bench and rule.kept == {1, 3, 5}
+    kept = replace(cut, kept=rule.kept)
+    assert 3 not in mv.drop_options(kept)
+    ev = mv.Evaluator(kept)
+    for key in ("week", "three"):
+        assert all(g.drop != 3 for gs in mv.single_swaps(ev, key).values() for g in gs)
+        assert all(m.drop != 3 for m in mv.search(ev, key, [10, 11]))
+    # Out and below the best add: droppable by the three tests, stashed when he is can't-cut.
+    worse = replace(p, season_value=p.season_value | {5: 0.5})
+    assert mv.stash_advice(worse, mv.keep_rule(worse))[0].advice == mv.DROPPABLE
+    out = replace(worse, cantcut=frozenset({5}))
+    (a,) = mv.stash_advice(out, mv.keep_rule(out))
+    assert (a.player, a.advice, a.slot, a.protected) == (5, mv.STASH, "IL", True)
+    # A can't-cut id not on my roster changes nothing.
+    assert mv.keep_rule(replace(p, cantcut=frozenset({99}))).kept == mv.keep_rule(p).kept
+
+
 def test_a_short_absence_keeps_a_player_better_than_the_best_add_on_the_bench():
     """Above the best add but not net positive (a points league's average above both), back in
     three days: kept for the solve and benched, not protected."""
