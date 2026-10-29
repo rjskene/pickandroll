@@ -59,7 +59,7 @@ say "checkout: $branch at ${after:0:7}$([ "$before" = "$after" ] && echo ' (unch
 [ -x "$py" ] || python3 -m venv "$repo/.venv"
 "$repo/.venv/bin/pip" install -q -e "$repo[api,bbm,dev]"
 "$repo/.venv/bin/playwright" install chromium >/dev/null
-say "venv: $("$py" --version 2>&1), playwright $("$py" -c 'import playwright; print(playwright.__version__)')"
+say "venv: $("$py" --version 2>&1), $("$repo/.venv/bin/pip" show playwright 2>/dev/null | sed -n 's/^Version: /playwright /p')"
 
 # 4. the units, the display and the API
 mkdir -p "$units" "$conf"
