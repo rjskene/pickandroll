@@ -167,3 +167,8 @@ systemctl --user status pickandroll-api pickandroll-xvfb; systemctl --user list-
 
 A routine outside its window, for a check: `ROUTINE_FLAGS` aside,
 `cd ~/pickandroll && TZ=America/Chicago DISPLAY=:99 .venv/bin/python scripts/routine.py daily --dry-run --no-post --no-marker --force`.
+
+**On the Mac, before cut-over, a run is `--dry-run`, `--no-marker` or `--no-browser` only.** A
+real daily there would overwrite the Desktop task's `data/routine/daily.json` and turn the
+status light amber, and its browser profile is the host's own. The droplet's `data/` copy is its
+own until the final copy at cut-over, so every routine may run there in full.
