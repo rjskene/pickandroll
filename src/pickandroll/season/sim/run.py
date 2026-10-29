@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import math
 import os
+from collections import Counter
 from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass, replace
@@ -403,6 +404,8 @@ class VariantResult:
     executed: int
     gone: int
     bracket_unread: str | None = None
+    #: Active players the executor dropped when a cleared held player came back over the spots.
+    forced_drops: int = 0
 
 
 def _rotation(teams: Sequence[int], i: int) -> list[int]:
@@ -430,21 +433,25 @@ def simulate(
     shared = [0] * n
     plans = list(execute_plan or [False] * n)
     points = dict(setup.points) if setup.scoring == "points" and setup.points else None
+    spots, slot_counts = setup.spots(), Counter(setup.roster_slots)
     week_index = 0
     for di, day in enumerate(setup.days):
         week = setup.week_of(day)
         if week is None:
             continue
-        # Yesterday's moves land first: on a Monday they were made on Sunday and spend the
-        # ending week's adds, so the week's count starts over only once they are in.
-        order = _rotation(setup.teams, di)
-        states = [policy.land(s, order) for s in states]
-        if day.weekday() == 0 and day != setup.start:
+        monday = day.weekday() == 0 and day != setup.start
+        if monday:
             week_index += 1
-            states = [policy.new_week(s) for s in states]
         beliefs = w.beliefs(week_index)
         status, returns = w.status_on(day)
         value = wk.per_game_values(beliefs, setup.cats, points)
+        # Yesterday's moves land first, cleared held players back and the held-slot moves made
+        # before them: on a Monday they were made on Sunday and spend the ending week's adds, so
+        # the week's count starts over only once they are in.
+        order = _rotation(setup.teams, di)
+        states = [policy.land(s, order, spots, slot_counts, status, value) for s in states]
+        if monday:
+            states = [policy.new_week(s) for s in states]
         cache: dict[tuple[Any, ...], policy.Decision] = {}
         for vi, state in enumerate(states):
             state = replace(state, day=day)
@@ -462,7 +469,7 @@ def simulate(
                     cache[key] = decision
                     solves[vi] += decision.solves
                 state = policy.queue(
-                    state, team, decision, _cap(strat), setup.max_weekly_adds, plans[vi]
+                    state, team, decision, _cap(strat), setup.max_weekly_adds, plans[vi], spots
                 )
             states[vi] = state
         states = [policy.score_day(setup, s, day, status, value, w.line) for s in states]
@@ -487,6 +494,7 @@ def simulate(
                 state.executed,
                 state.gone,
                 setup.bracket_unread,
+                forced_drops=state.forced_drops,
             )
         )
     return out
@@ -524,6 +532,7 @@ def paired(setup: Setup, w: World, a: Arm, b: Arm, me: int) -> dict[str, Any]:
         "shared": rb.shared,
         "executed": [ra.executed, rb.executed],
         "gone": [ra.gone, rb.gone],
+        "forced_drops": [ra.forced_drops, rb.forced_drops],
         "bracket_unread": setup.bracket_unread,
     }
 
@@ -554,6 +563,7 @@ def room(
         "shared": r.shared,
         "executed": r.executed,
         "gone": r.gone,
+        "forced_drops": r.forced_drops,
         "bracket_unread": setup.bracket_unread,
     }
 

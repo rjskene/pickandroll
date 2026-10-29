@@ -3,6 +3,8 @@ tiers, the executor and the day's lineup."""
 
 from __future__ import annotations
 
+from collections import Counter
+from dataclasses import replace
 from datetime import timedelta
 
 import numpy as np
@@ -161,6 +163,108 @@ def test_landing_moves_in_order_a_contested_add_is_gone():
     other = policy.land(state, [1, 2])
     assert pool[0] in other.active(1) and dict(other.rosters[1])[pool[0]] == slot_a
     assert policy.new_week(landed).adds_used == {}
+
+
+def il_league():
+    """A league with one IL slot. Team 1 has its five drafted players, one more active player
+    (``hurt``, out) and one in IL (``held``, out long); ``add`` is the pool's best."""
+    setup = make_setup(held_slots=("IL",))
+    pool = sorted(initial(setup).pool)
+    held, hurt, add = pool[0], pool[1], pool[2]
+    rosters = dict(setup.rosters)
+    rosters[1] = (*setup.rosters[1], (hurt, "BN"), (held, "IL"))
+    projection = dict(setup.projection)
+    projection[add] = {s: v * 2 for s, v in projection[add].items()}
+    setup = replace(setup, rosters=rosters, projection=projection)
+    return setup, initial(setup), held, hurt, add
+
+
+def test_a_held_slot_move_lands_first_and_the_active_roster_never_exceeds_the_spots():
+    """An add through a held-slot move (an injured active player to an open IL slot): the queue
+    carries the move with the add, the landing makes it first and the add takes the bench spot
+    it frees. Without the held-slot move the add has no spot and is gone, nothing made."""
+    setup, state, held, hurt, add = il_league()
+    rosters = {**state.rosters, 1: tuple(x for x in state.rosters[1] if x[0] != held)}
+    state = replace(state, rosters=rosters, pool=state.pool | {held})
+    spots, counts = setup.spots(), Counter(setup.roster_slots)
+    assert len(state.active(1)) == spots and state.held(1) == ()
+    swap = mv.Move(max(state.pool), state.active(1)[0])
+    decision = policy.Decision((swap, mv.Move(add)), ((hurt, "IL"),), (), 1, "x")
+    queued = policy.queue(state, 1, decision, 2, 4, spots=spots)
+    # One held-slot move for the one add that needs a spot; the plain swap needs none.
+    assert queued.pending_held[1] == ((hurt, "IL"),)
+    landed = policy.land(queued, [1], spots, counts)
+    assert dict(landed.rosters[1])[hurt] == "IL" and dict(landed.rosters[1])[add] == "BN"
+    assert add in landed.active(1) and len(landed.active(1)) == spots
+    assert landed.executed == 2 and landed.gone == 0 and landed.pending_held == {}
+    # The held-slot move trimmed away (or none decided): the add is gone, the roster untouched.
+    alone = replace(queued, pending_held={})
+    gone = policy.land(alone, [1], spots, counts)
+    assert add not in gone.active(1) and len(gone.active(1)) == spots
+    assert gone.executed == 1 and gone.gone == 1 and hurt in gone.active(1)
+    # A full IL slot has no room: the player stays active and the add is gone the same way.
+    full = replace(queued, rosters={**queued.rosters, 1: (*queued.rosters[1], (held, "IL"))})
+    full = replace(full, pool=full.pool - {held})
+    blocked = policy.land(full, [1], spots, counts)
+    assert dict(blocked.rosters[1])[hurt] == "BN" and add not in blocked.active(1)
+    assert len(blocked.active(1)) == spots and blocked.gone == 1
+
+
+def test_a_churns_add_takes_a_bench_slot_and_starts():
+    """A churn (#221) drops the held player, moves the injured active player into his slot and
+    adds into the freed spot: the add is active and starts when his team plays, never parked in
+    the vacated IL slot. The sim's problem offers it: every add is a free agent (no claims)."""
+    setup, state, held, hurt, add = il_league()
+    status = {held: "O", hurt: "O"}
+    returns = {held: setup.start + timedelta(40), hurt: setup.start + timedelta(4)}
+    built = policy.problem_of(setup, state, 1, KNOBS, setup.projection, status, returns)
+    p = built.problem
+    churn = mv.Move(add, held)
+    assert p.claims == frozenset() and p.cantcut == frozenset()
+    assert mv.is_churn(p, churn) and mv.feasible(p, (churn,))
+    assert mv.held_used(p, (churn,)) == [(hurt, "IL")]
+    spots, counts = setup.spots(), Counter(setup.roster_slots)
+    decision = policy.Decision((churn,), tuple(mv.held_used(p, (churn,))), (), 1, "x")
+    queued = policy.queue(state, 1, decision, 2, 4, spots=spots)
+    assert queued.pending_held[1] == ((hurt, "IL"),)
+    landed = policy.land(queued, [1], spots, counts)
+    slots = dict(landed.rosters[1])
+    assert held not in slots and held in landed.pool
+    assert slots[hurt] == "IL" and slots[add] == "BN" and add in landed.active(1)
+    assert len(landed.active(1)) == spots and landed.executed == 1
+    value = wk.per_game_values(setup.projection, setup.cats, None)
+    day = next(d for d in setup.days if setup.players[add].nba_team in setup.schedule[d])
+    assert add in policy.starters_of(setup, landed, 1, day, {hurt: "O"}, value)
+
+
+def test_a_cleared_held_player_comes_back_and_the_roster_is_trimmed_to_the_spots():
+    """The morning a held player's status no longer fits his slot he is back on the bench, and
+    the active roster over the spots loses its least valuable active player, as the engine
+    charges a cleared player; given the day's statuses and values, before anything lands."""
+    setup, state, held, hurt, _add = il_league()
+    spots, counts = setup.spots(), Counter(setup.roster_slots)
+    value = wk.per_game_values(setup.projection, setup.cats, None)
+    # Still out: nothing moves.
+    same = policy.land(state, [1], spots, counts, {held: "O", hurt: "O"}, value)
+    assert same.rosters == state.rosters and same.pool == state.pool
+    # Back (no status): to the bench, and the weakest of the seven active players goes; the
+    # returned player, the best here, starts the same day his team plays.
+    value = {**value, held: max(value.values()) + 1.0}
+    back = policy.land(state, [1], spots, counts, {hurt: "O"}, value)
+    slots = dict(back.rosters[1])
+    weakest = min(state.active(1), key=lambda k: (value.get(k, 0.0), k))
+    assert slots[held] == "BN" and held in back.active(1)
+    assert weakest not in slots and weakest in back.pool
+    assert len(back.active(1)) == spots
+    assert back.forced_drops == 1 and back.executed == 0 and back.gone == 0
+    assert back.adds_used == state.adds_used
+    day = next(d for d in setup.days if setup.players[held].nba_team in setup.schedule[d])
+    assert held in policy.starters_of(setup, back, 1, day, {hurt: "O"}, value)
+    # The returning player is weighed with the rest: the weakest himself, he is the one who goes.
+    lowest = min(value.values()) - 1.0
+    himself = policy.land(state, [1], spots, counts, {hurt: "O"}, {**value, held: lowest})
+    assert held not in dict(himself.rosters[1]) and held in himself.pool
+    assert himself.forced_drops == 1 and len(himself.active(1)) == spots
 
 
 def test_the_days_starters_and_score():

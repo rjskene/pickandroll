@@ -20,8 +20,12 @@ times games for the roster's worst the keep rule does not keep, no evaluator.
 
 Executions are the autopilot's (``season.autopilot``): a decided move lands the next day, at
 most ``daily_cap`` a day and the league's adds a week, free agents only, never a kept player
-dropped. Phase 1 models no waiver clear dates and no bids: ``EXECUTIONS`` names that in every
-run's payload.
+dropped. The executor keeps the roster as Yahoo would: a held player whose status has cleared
+comes back to the bench the next morning and, over the league's spots, the least valuable active
+player leaves (the engine's rule for a cleared player); the held-slot moves a set needs are made
+before its adds land; an add that needs an active spot (no drop, or a churn's held drop, #221)
+takes a bench slot and is gone when none is open. Phase 1 models no waiver clear dates and no
+bids: ``EXECUTIONS`` names that in every run's payload.
 """
 
 from __future__ import annotations
@@ -39,7 +43,7 @@ from .. import stream as st
 from .. import weekly as wk
 from ..calendar import Week
 from ..progress import KNOBS
-from .state import Setup, SimState, add_totals
+from .state import BENCH, Setup, SimState, add_totals
 
 #: The execution model every run's payload names (#172, the master's ruling on PR 2's plan).
 EXECUTIONS = "free_agents_next_day"
@@ -196,6 +200,11 @@ def problem_of(
     )
     spots = setup.spots()
     pool_n = max(1, len(setup.teams) * spots)
+    # Two of ``build``'s fields stay at their defaults here, on purpose. ``cantcut`` (#222) is
+    # Yahoo's can't-cut list as read off an add page: a simulated world has none. ``claims``
+    # (#221) is the candidates on waivers, whose churns the engine offers only when the held
+    # player is worth nothing: every add is a free agent under ``free_agents_next_day``, so none;
+    # the waiver execution model sets it to every candidate, as the live route does for "W".
     problem = mv.MoveProblem(
         roster=roster,
         held=held,
@@ -382,9 +391,13 @@ def queue(
     daily_cap: int,
     limit: int | None,
     execute_plan: bool = False,
+    spots: int | None = None,
 ) -> SimState:
     """The moves of ``decision`` that may land tomorrow, within the day's cap and the week's
-    adds: the set's in order, then the plan's steps due tomorrow when the arm executes plans."""
+    adds: the set's in order, then the plan's steps due tomorrow when the arm executes plans.
+    With them the held-slot moves those moves need: the decision's, in order, one for each kept
+    add that needs an active spot (no drop, or a churn's held drop) beyond the spots open today
+    (``spots`` less the active roster; none when ``spots`` is None), as the engine pairs them."""
     moves = list(decision.moves)
     if execute_plan:
         tomorrow = state.day + timedelta(1)
@@ -403,40 +416,114 @@ def queue(
         kept.append(mv.Move(m.add, m.drop))
     pending = dict(state.pending)
     pending[team] = tuple(kept)
-    return replace(state, pending=pending)
+    held_keys = {k for k, _ in state.held(team)}
+    need = sum(1 for m in kept if m.drop is None or m.drop in held_keys)
+    if spots is not None:
+        need -= max(0, spots - len(state.active(team)))
+    pending_held = dict(state.pending_held)
+    pending_held[team] = tuple(decision.held[: max(0, need)])
+    return replace(state, pending=pending, pending_held=pending_held)
+
+
+def _active_count(roster: Sequence[tuple[int, str]]) -> int:
+    return sum(1 for _, slot in roster if slot not in mv.HELD)
+
+
+def _activate(
+    roster: list[tuple[int, str]],
+    spots: int | None,
+    status: Mapping[int, str | None],
+    value: Mapping[int, float],
+) -> list[int]:
+    """A team's held players whose status no longer fits their slot (``moves.is_cleared``) come
+    back to the bench; then, while the active roster is over ``spots``, its least valuable active
+    player by ``value`` leaves, as the engine charges a cleared player (``moves.comebacks``), the
+    keep rule apart (the executor does not see it). The players who left."""
+    for i, (k, slot) in enumerate(roster):
+        if slot in mv.HELD and mv.is_cleared(status.get(k), slot):
+            roster[i] = (k, BENCH)
+    out: list[int] = []
+    # The keep rule stays out of the executor: the engine's ``comebacks`` never sends a kept
+    # player while another can go, but the executor sees no problem and no rule, only the day's
+    # values. The whole active roster is weighed, the returning player included.
+    while spots is not None and _active_count(roster) > spots:
+        weakest = min(
+            (k for k, slot in roster if slot not in mv.HELD),
+            key=lambda k: (value.get(k, 0.0), k),
+        )
+        roster.remove(next(x for x in roster if x[0] == weakest))
+        out.append(weakest)
+    return out
 
 
 def land(
     state: SimState,
     order: Sequence[int],
-    held: Mapping[int, Sequence[tuple[int, str]]] | None = None,
+    spots: int | None = None,
+    slot_counts: Mapping[str, int] | None = None,
+    status: Mapping[int, str | None] | None = None,
+    value: Mapping[int, float] | None = None,
 ) -> SimState:
-    """Yesterday's queued moves land, team by team in ``order``: a drop goes to the pool and the
-    add takes his slot (or an open bench slot); an add another team took first is gone."""
+    """Yesterday's queued moves land, team by team in ``order``. First, given the day's ``status``
+    and ``value``, each team's cleared held players come back and the active roster is trimmed
+    to ``spots`` (:func:`_activate`; each player it sends counts in ``forced_drops``, never in
+    ``executed`` or ``gone``). Then a churn's held drop goes to the pool on his own, as the
+    engine times it (#221), freeing his slot; then the held-slot moves it queued, each player to
+    his held slot while the slot has room (``slot_counts``, the league's slots by kind); then the
+    adds: one with a drop of an active player takes his slot; one that needs an active spot (no
+    drop, or the churn's) takes a bench slot while the active roster is under ``spots`` and is
+    otherwise gone, like an add another team took first (a churn's drop stands either way, made
+    before the add; a plain swap's is never made). Without ``spots`` nothing is counted."""
     rosters = {t: list(r) for t, r in state.rosters.items()}
     pool = set(state.pool)
     adds_used = dict(state.adds_used)
-    executed, gone = state.executed, state.gone
+    executed, gone, forced = state.executed, state.gone, state.forced_drops
     for team in order:
-        for k, slot in (held or {}).get(team, ()):
-            roster = rosters.get(team, [])
-            for i, (pk, _) in enumerate(roster):
-                if pk == k:
-                    roster[i] = (pk, slot)
-        for m in state.pending.get(team, ()):
+        roster = rosters.setdefault(team, [])
+        if status is not None and value is not None:
+            left = _activate(roster, spots, status, value)
+            pool.update(left)
+            forced += len(left)
+        moves = state.pending.get(team, ())
+        churned: set[int] = set()
+        for m in moves:
+            if m.drop is None:
+                continue
+            idx = next(
+                (i for i, (pk, s) in enumerate(roster) if pk == m.drop and s in mv.HELD), None
+            )
+            if idx is not None:
+                del roster[idx]
+                pool.add(m.drop)
+                churned.add(m.drop)
+        for k, slot in state.pending_held.get(team, ()):
+            room = slot_counts is None or sum(1 for _, s in roster if s == slot) < slot_counts.get(
+                slot, 0
+            )
+            idx = next(
+                (i for i, (pk, s) in enumerate(roster) if pk == k and s not in mv.HELD), None
+            )
+            if idx is not None and room:
+                roster[idx] = (k, slot)
+        for m in moves:
             if m.add not in pool:
                 gone += 1
                 continue
-            roster = rosters.setdefault(team, [])
-            slot = "BN"
-            if m.drop is not None:
+            idx = None
+            if m.drop is not None and m.drop not in churned:
                 idx = next((i for i, (pk, _) in enumerate(roster) if pk == m.drop), None)
                 if idx is None:
                     gone += 1
                     continue
+            if idx is None:
+                if spots is not None and _active_count(roster) >= spots:
+                    gone += 1
+                    continue
+                slot = BENCH
+            else:
                 slot = roster[idx][1]
+                pool.add(roster[idx][0])
                 del roster[idx]
-                pool.add(m.drop)
             roster.append((m.add, slot))
             pool.discard(m.add)
             adds_used[team] = adds_used.get(team, 0) + 1
@@ -447,8 +534,10 @@ def land(
         pool=frozenset(pool),
         adds_used=adds_used,
         pending={},
+        pending_held={},
         executed=executed,
         gone=gone,
+        forced_drops=forced,
     )
 
 

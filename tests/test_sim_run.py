@@ -3,7 +3,7 @@ paired difference, the room's rotation, a replay's league, the payload's verdict
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import date, timedelta
 
 import numpy as np
@@ -161,6 +161,57 @@ def test_an_add_made_on_sunday_spends_the_ending_week_not_mondays():
     assert both.executed == 2 and both.gone == 0
     (mondays,) = rn.simulate(setup, w, [{**static, 1: OnDays((0,))}])
     assert mondays.executed == 1
+
+
+@dataclass(frozen=True)
+class Stasher:
+    """A seat that adds the pool's best through a held-slot move whenever one of its active
+    players is out and the IL slot is open, and records the active roster it sees each day."""
+
+    seen: list = field(default_factory=list, repr=False)
+    kind: str = "stasher"
+
+    def decide(self, setup, state, team, beliefs, status, returns, g):
+        self.seen.append((state.day, state.active(team), state.held(team), dict(status)))
+        out = [k for k in state.active(team) if status.get(k) == "O"]
+        pool = sorted(state.pool)
+        if not out or state.held(team) or not pool or state.adds_used.get(team, 0) >= 4:
+            return policy.NONE
+        return policy.Decision((mv.Move(pool[0]),), ((out[0], "IL"),), (), 0, self.kind)
+
+
+def test_held_slot_moves_land_and_a_returned_player_is_activated_in_a_run():
+    """Through the runner: a day-one IL occupant is back on the active roster the morning of his
+    return and plays again, the held-slot move is made and its add is active, the roster never
+    exceeds the league's spots, and the stashed player comes back the same way, never parked in
+    IL for the season; each return over the spots is a forced drop."""
+    setup = make_setup(weeks=2, playoff_weeks=1, held_slots=("IL",), bracket=False)
+    base = initial(setup)
+    hurt, occupant = base.active(1)[0], min(base.pool)
+    back, back_occ = setup.start + timedelta(4), setup.start + timedelta(2)
+    projection = dict(setup.projection)
+    projection[occupant] = {s: v * 2 for s, v in projection[occupant].items()}
+    setup = replace(
+        setup,
+        rosters={**setup.rosters, 1: (*setup.rosters[1], (occupant, "IL"))},
+        projection=projection,
+        statuses={hurt: "O", occupant: "O"},
+        returns={hurt: back, occupant: back_occ},
+    )
+    w = rn.forward_world(setup, inputs(), 11, 0, 0.0)
+    seat = Stasher()
+    static = {t: op.Static() for t in setup.teams}
+    (res,) = rn.simulate(setup, w, [{**static, 1: seat}])
+    assert res.executed >= 1 and res.forced_drops >= 1
+    assert max(len(active) for _, active, _, _ in seat.seen) <= setup.spots()
+    stashed = [day for day, _, held, _ in seat.seen if (hurt, "IL") in held]
+    assert stashed and min(stashed) < back
+    # No held player whose status has cleared is ever seen still in his slot (he may be stashed
+    # again later, when the hazard puts him out again).
+    assert all(status.get(k) == "O" for _, _, held, status in seat.seen for k, _ in held)
+    # The occupant, the best player here, is active from the morning of his return.
+    assert all(occupant in active for day, active, _, _ in seat.seen if day == back_occ)
+    assert all(occupant not in active for day, active, _, _ in seat.seen if day < back_occ)
 
 
 def test_the_room_rotates_arms_across_paths_and_pools_by_arm():

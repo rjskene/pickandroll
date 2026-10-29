@@ -101,10 +101,11 @@ def make_setup(
     statuses: dict[int, str] | None = None,
     max_weekly_adds: int | None = 4,
     bracket: bool = True,
+    held_slots: tuple[str, ...] = (),
 ) -> sst.Setup:
     """``teams`` seats, ``spots`` players each (snake-drafted on the projection), ``pool`` free
     agents, a Monday-to-Sunday calendar of ``weeks`` weeks with the last ``playoff_weeks`` the
-    bracket's, every team playing every other day."""
+    bracket's, every team playing every other day; ``held_slots`` (IL, IL+, NA) after the bench."""
     rng = np.random.default_rng(seed)
     n = teams * spots + pool
     players = {}
@@ -143,7 +144,7 @@ def make_setup(
         pool=tuple(k for k in keys if k not in taken),
         projection=projection,
         schedule=schedule,
-        roster_slots=("PG", "SG", "G", "C", "Util", "BN"),
+        roster_slots=("PG", "SG", "G", "C", "Util", "BN", *held_slots),
         cats=NINE,
         max_weekly_adds=max_weekly_adds,
         statuses=statuses or {},

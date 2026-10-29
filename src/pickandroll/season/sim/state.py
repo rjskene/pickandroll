@@ -4,9 +4,10 @@ A :class:`Setup` is a league as read once for a run: its calendar, pairings, tea
 rosters, free-agent pool, the policy's projection on day one, the schedule, the roster slots and
 the rules; the readers (``api.season_sim``) build one from a season's parts or a replay's logs.
 A :class:`SimState` is what one arm holds on one day: rosters, the pool, the adds used this week,
-the moves landing tomorrow and every week's totals so far. The world (``run.World``) is apart:
-truth, lines, availability and the shared beliefs belong to the path, never to an arm, so two
-arms of a comparison see one world. Pure: frozen dataclasses, advanced by ``replace``.
+the moves landing tomorrow with the held-slot moves they need, and every week's totals so far.
+The world (``run.World``) is apart: truth, lines, availability and the shared beliefs belong to
+the path, never to an arm, so two arms of a comparison see one world. Pure: frozen dataclasses,
+advanced by ``replace``.
 """
 
 from __future__ import annotations
@@ -119,10 +120,15 @@ class SimState:
     adds_used: Mapping[int, int]
     #: Moves decided today that land tomorrow, by team.
     pending: Mapping[int, tuple[Move, ...]] = field(default_factory=dict)
+    #: The held-slot moves those moves need (player, slot), by team: made first when they land.
+    pending_held: Mapping[int, tuple[tuple[int, str], ...]] = field(default_factory=dict)
     #: Every week's totals so far: week number to team to stat totals.
     totals: Mapping[int, Mapping[int, Mapping[str, float]]] = field(default_factory=dict)
     executed: int = 0
     gone: int = 0
+    #: Active players the executor had to drop when a cleared held player came back over the
+    #: league's spots (``policy.land``): never an add, so neither executed nor gone.
+    forced_drops: int = 0
 
     def key(self) -> tuple[Any, ...]:
         """What a decision depends on: two arms with the same key share one solve."""
@@ -132,6 +138,7 @@ class SimState:
             tuple(sorted(self.pool)),
             tuple(sorted(self.adds_used.items())),
             tuple(sorted((t, m) for t, m in self.pending.items() if m)),
+            tuple(sorted((t, h) for t, h in self.pending_held.items() if h)),
         )
 
     def active(self, team: int) -> tuple[int, ...]:
