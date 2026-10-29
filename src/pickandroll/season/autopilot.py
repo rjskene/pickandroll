@@ -19,7 +19,19 @@ A move is left out, in this order, when:
 6. the week of its clear date has no add left, the claims placed counted;
 7. the day's cap is reached.
 
-The rest are queued by their gain on the judging horizon, highest first. Every claim's bid is
+The rest are queued by their gain on the judging horizon, highest first.
+
+When the day's solve logged a week plan for the queue (#221 part 2, the set ``week_plan``: a plan
+that beats the three weeks' set there by the plan floor and passed the season guard on its
+total), the queue takes its steps instead, in the plan's order. The plan is the unit for the floor
+and the guard, so no step is held below the floor or as season-costly on its own (rules 3 and 5);
+a step not executable today (:data:`LATER_STEP`) is shown, never queued, and is re-derived by the
+day's build that reaches it; a step after one that is not queued is held too
+(:data:`EARLIER_HELD`). Each step's entry carries the plan (its id, day, step and steps) and the
+ids of the steps before it (``after``): :func:`due` holds it until every one of them has landed
+(:func:`waits`), so no step executes out of order, and the day's cap counts only what executed.
+
+Every claim's bid is
 :func:`bid_of`'s. A second build of a day keeps the entries struck or executed by id, leaves
 their moves out of the new build, and gives any entry new to the queue its full veto window
 (:func:`merge`).
@@ -69,6 +81,14 @@ NO_ADDS = "no adds left this week"
 OVER_CAP = "over the day's cap"
 #: A churn (#221) waits for the executor's standalone drop (its part 3): never queued until then.
 CHURN_HELD = "churn, read only: the executor has no standalone drop yet"
+#: The week plan's set (``season.plans.QUEUE_PLAN``), taken instead of the three weeks' set when
+#: the day's solve logged one (#221 part 2).
+WEEK_PLAN = "week_plan"
+#: A week plan's step dated after today (a claim, after its clear day): shown, never queued, and
+#: re-derived by the build of its day (the ruling's second condition).
+LATER_STEP = "a later step of the week plan: queued at its day's build"
+#: A week plan's step after one that is not queued: it waits on that step, which will not land.
+EARLIER_HELD = "an earlier step of the week plan is not queued"
 #: A queued entry a rebuild's solve no longer recommends (#209): kept in the day's file, not
 #: queued and holding no place, so the Queue screen shows what changed.
 SUPERSEDED = "superseded by a later solve"
@@ -233,6 +253,11 @@ def three_set(entry: Mapping[str, Any]) -> Mapping[str, Any] | None:
     return next((s for s in entry.get("sets") or () if s.get("key") == QUEUE_SET), None)
 
 
+def week_plan(entry: Mapping[str, Any]) -> Mapping[str, Any] | None:
+    """The week plan the day's solve logged for the queue (#221 part 2), None for none."""
+    return next((s for s in entry.get("sets") or () if s.get("key") == WEEK_PLAN), None)
+
+
 def _week_of(adds: Mapping[tuple[date, date], int | None], day: date) -> tuple[date, date] | None:
     return next((w for w in adds if w[0] <= day <= w[1]), None)
 
@@ -246,28 +271,35 @@ def queue_of(
     lg: LeagueDay, day: date, floor: Floor, typical: tuple[float, str], sizing: float | None
 ) -> list[dict[str, Any]]:
     """The league's entries of the day: every move of its three weeks' set, queued or with the
-    reason it is not, the queued ones ranked by gain on the judging horizon."""
-    s = three_set(lg.entry)
+    reason it is not, the queued ones ranked by gain on the judging horizon; the steps of the
+    day's week plan instead when its solve logged one (#221 part 2), in the plan's order."""
+    plan = week_plan(lg.entry)
+    s = plan if plan is not None else three_set(lg.entry)
     if s is None:
         return []
-    moves = sorted(
-        s.get("moves") or [],
-        key=lambda m: (-((m.get("gain") or {}).get(JUDGED) or 0.0), m["add"]),
-    )
+    moves = list(s.get("moves") or [])
+    if plan is None:
+        moves.sort(key=lambda m: (-((m.get("gain") or {}).get(JUDGED) or 0.0), m["add"]))
     drops = {m["drop"] for m in moves if m.get("drop") is not None}
+    ids = [entry_id(day, lg.league, int(m["add"]), m.get("drop")) for m in moves]
     left = dict(lg.adds_left)
     queued = 0
     out = []
-    for m in moves:
+    #: A plan's steps queued (or executed and kept) so far, by index: a later step waits on them.
+    ready: set[int] = set()
+    for i, m in enumerate(moves):
         add, drop = int(m["add"]), m.get("drop")
-        if entry_id(day, lg.league, add, drop) in lg.kept:
+        if ids[i] in lg.kept:
+            ready.add(i)
             continue
         gain = (m.get("gain") or {}).get(JUDGED)
         value = _horizon(m, JUDGED)
         kind, clears = lg.availability.get(add, (None, None))
         clear = date.fromisoformat(m["from"]) if m.get("from") else clears
         week = _week_of(left, clear) if clear is not None else None
-        below = floor.below(gain, value)
+        after = [int(j) for j in m.get("after") or []]
+        # The plan is the unit for the floor and the guard (the ruling's first condition).
+        below = floor.below(gain, value) if plan is None else None
         reason = None
         if lg.private:
             reason = PRIVATE
@@ -277,28 +309,33 @@ def queue_of(
             reason = PROTECTED
         elif m.get("basis") == "churn":
             reason = CHURN_HELD
-        elif m.get("season_costly"):
+        elif plan is None and m.get("season_costly"):
             reason = SEASON_COSTLY
-        elif add in lg.dropped or add in drops:
+        elif add in lg.dropped or (add in drops if plan is None else _dropped_before(moves, i)):
             reason = READD
         elif below is not None:
             reason = BELOW_FLOOR
+        elif plan is not None and not _today(day, clear, kind, clears):
+            reason = LATER_STEP
+        elif any(j not in ready for j in after):
+            reason = EARLIER_HELD
         elif week is not None and left[week] is not None and left[week] <= 0:
             reason = NO_ADDS
         elif lg.done + queued >= lg.cap:
             reason = OVER_CAP
         if reason is None:
             queued += 1
+            ready.add(i)
             if week is not None and left[week] is not None:
                 left[week] -= 1
         bid = bid_of(gain or 0.0, typical, lg.budget, lg.flags.get(add), sizing, kind)
         out.append(
             {
-                "id": entry_id(day, lg.league, add, drop),
+                "id": ids[i],
                 "date": day.isoformat(),
                 "league": lg.league,
                 "scoring": lg.scoring,
-                "set": QUEUE_SET,
+                "set": WEEK_PLAN if plan is not None else QUEUE_SET,
                 "decision": lg.entry.get("id"),
                 "knobs": lg.entry.get("knobs"),
                 "add": add,
@@ -316,6 +353,9 @@ def queue_of(
                 "held_move": m.get("held"),
                 # A churn's held drop and his slot (#221): None for any other move.
                 "held_drop": m.get("held_drop"),
+                # The week plan's step (#221 part 2): its plan and the entries it waits on.
+                "plan": m.get("plan"),
+                "after": [ids[j] for j in after],
                 "flag": lg.flags.get(add),
                 "floor": {**floor.to_dict(), "below": below},
                 "bid": {**bid.to_dict(), "typical": typical[0], "typical_from": typical[1]},
@@ -333,6 +373,19 @@ def queue_of(
             }
         )
     return out
+
+
+def _dropped_before(moves: Sequence[Mapping[str, Any]], i: int) -> bool:
+    """Whether a week plan's step ``i`` adds a player an earlier step drops."""
+    return any(m.get("drop") == moves[i]["add"] for m in moves[:i])
+
+
+def _today(day: date, clear: date | None, kind: str | None, clears: date | None) -> bool:
+    """Whether a week plan's step executes today: a free agent's dated today or before, a claim's
+    dated at or before the day it would clear when placed today."""
+    if clear is None:
+        return True
+    return clear <= (clears if kind == "W" and clears is not None else day)
 
 
 def kept(e: Mapping[str, Any]) -> bool:
@@ -424,8 +477,38 @@ def retime(
     return out
 
 
+def landed(e: Mapping[str, Any]) -> bool:
+    """Whether an entry's add is on my roster: added, a claim won, or (a dry run's stand-in for an
+    add) a free agent it would claim."""
+    if e.get("outcome") == "added" or e.get("resolved") == "won":
+        return True
+    return e.get("outcome") == "would_claim" and e.get("availability") == FREE_AGENT
+
+
+def waits(e: Mapping[str, Any], by_id: Mapping[str, Mapping[str, Any]]) -> dict[str, Any] | None:
+    """What a week plan's step waits for (#221 part 2, the ruling's third condition): the first
+    of its earlier steps (``after``) not landed, with its step and add, and the line the Queue
+    screen and the pass record read; None when it waits for nothing. A step whose earlier step
+    failed, was lost or was struck waits on it all day: never executed out of order."""
+    for k in e.get("after") or ():
+        o = by_id.get(k)
+        if o is not None and landed(o):
+            continue
+        step = ((o or {}).get("plan") or {}).get("step")
+        return {
+            "entry": k,
+            "step": step,
+            "add": (o or {}).get("add"),
+            "text": f"waits for step {step if step is not None else '?'} to land",
+        }
+    return None
+
+
 def due(entries: Iterable[Mapping[str, Any]], now: datetime) -> list[dict[str, Any]]:
-    """The entries to execute now: queued, not struck, not executed, their window over."""
+    """The entries to execute now: queued, not struck, not executed, their window over, and (a
+    week plan's step) every earlier step landed (:func:`waits`)."""
+    entries = list(entries)
+    by_id = {e["id"]: e for e in entries}
     return [
         dict(e)
         for e in entries
@@ -434,7 +517,25 @@ def due(entries: Iterable[Mapping[str, Any]], now: datetime) -> list[dict[str, A
         and not e.get("outcome")
         and e.get("executes_at")
         and datetime.fromisoformat(e["executes_at"]) <= now
+        and waits(e, by_id) is None
     ]
+
+
+def held(entries: Iterable[Mapping[str, Any]], now: datetime) -> list[dict[str, Any]]:
+    """The entries :func:`due` holds on an earlier step now: their window over and nothing else
+    stopping them, each with what it waits for."""
+    entries = list(entries)
+    by_id = {e["id"]: e for e in entries}
+    out = []
+    for e in entries:
+        if not (e.get("queued") and not e.get("struck") and not e.get("outcome")):
+            continue
+        if not e.get("executes_at") or datetime.fromisoformat(e["executes_at"]) > now:
+            continue
+        w = waits(e, by_id)
+        if w is not None:
+            out.append({"id": e["id"], "add": e["add"], "waits": w})
+    return out
 
 
 def effective_bid(e: Mapping[str, Any]) -> int:

@@ -28,6 +28,7 @@ from typing import Any
 from ..season import Season
 from ..season import decisions as dl
 from ..season import moves as mv
+from ..season import plans as pl
 from ..season import progress as pg
 from ..season import weekly as wk
 from . import season_moves
@@ -244,16 +245,77 @@ def moves_entry(built: Built, payload: Mapping[str, Any], at: datetime) -> dict[
                 "week": _week(ev, _moves_of(moves)),
             }
         )
+    wp = payload.get("week_plans")
+    if wp is not None and wp.get("queue") is not None:
+        # The week plan the queue takes instead of the three weeks' set (#221 part 2): its steps
+        # by day, each counting from its day with its own increment and the steps it waits on.
+        w = wp["plans"][wp["queue"]]
+        moves = [_logged({**s, "marginal": s["gain"]}, built) for s in w["steps"]]
+        moves = _flagged(_based(moves, built), "moves", pl.QUEUE_PLAN)
+        # The plan is one decision (the ruling's first condition): every step carries its id and
+        # day, so the scorecard judges the plan whole and not its steps apart.
+        unit = {
+            "id": plan_id(_id(at, "moves", built.system["key"])),
+            "day": built.problem.first_day.isoformat(),
+        }
+        for i, (m, s) in enumerate(zip(moves, w["steps"], strict=True)):
+            m["after"] = s["after"]
+            m["plan"] = {**unit, "step": i + 1, "steps": len(moves)}
+        model = _moves_of(moves)
+        sets.append(
+            {
+                "key": pl.QUEUE_PLAN,
+                "weight": None,
+                "moves": moves,
+                "held": [
+                    {"player": k, "slot": slot} for k, slot in mv.held_used(built.problem, model)
+                ],
+                "comebacks": {
+                    h: season_moves.comebacks_rows(mv.comebacks(built.problem, h, model))
+                    for h in built.problem.horizons
+                },
+                "gain": w["total"],
+                "week": _week(ev, model),
+            }
+        )
     search = payload.get("search") or {}
     return {
         **_common(built, at, "moves"),
         "plan": plan_verdict(plan),
+        "week_plans": week_plans_record(wp),
         "pool": {
             "size": search.get("pool"),
             "candidates": len(payload.get("candidates") or {}),
             "min_gain": search.get("min_gain"),
         },
         "sets": sets,
+    }
+
+
+def plan_id(entry: str) -> str:
+    """The id of the week plan a moves entry queued (#221 part 2): the entry's own, with the set."""
+    return f"{entry}:{pl.QUEUE_PLAN}"
+
+
+def week_plans_record(wp: Mapping[str, Any] | None) -> dict[str, Any] | None:
+    """The week plans as every moves entry logs them (#221 part 2): each plan's source, its moves
+    (add, drop, day), its total on both horizons and its rest of the season, the plan the queue
+    took (an index, None for none), the floor and the search's seconds; None with no day left."""
+    if wp is None:
+        return None
+    return {
+        "plans": [
+            {
+                "source": w["source"],
+                "moves": [{k: s[k] for k in ("add", "drop", "from")} for s in w["steps"]],
+                "total": w["total"],
+                "ros": w["ros"],
+            }
+            for w in wp["plans"]
+        ],
+        "queue": wp["queue"],
+        "floor": wp["floor"],
+        "seconds": wp["seconds"],
     }
 
 
