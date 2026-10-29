@@ -160,6 +160,14 @@ active player by per-game value, the returning player included, and the drawer n
 ("From Nov 4, X goes when Y returns"). This uses the starters' own ranking; it does not re-value
 every choice.
 
+A player already in a held slot is charged the same way (#221, the ruling's fifth condition):
+when he comes back inside a horizon (next Monday for an O, or his later return date), the set
+drops its least valuable active player that day, him included, unless the set leaves an active
+spot open for him; in the base and in every set (`moves.comebacks`, marked `returning`). Before,
+the base counted his games after his return and never the drop they force, so it was optimistic
+in every league with a short-term IL occupant. A set that drops him (a churn, below) has no
+charge for him.
+
 Solver (resolved 2026-10-21 by fantasyMASTER on fantasyEMISSARY's prototypes): exact search on
 the #93 evaluator, not an LP. This spec first called for one LP per horizon as on the draft
 board. The prototype on a prize league (13 rostered, 213 priced candidates) showed why not. The
@@ -199,8 +207,9 @@ player with two, which is right for that week and wrong for the next, and the us
 
 IL: an active player whose status the slot accepts moves into an open IL, IL+ or NA slot for
 free, which opens a spot without a drop; players already in a held slot whose status still fits
-it stay put and are not drop candidates. Which statuses fit which slot, how many held slots the
-league has, and a held player whose status cleared are in "Held slots" below.
+it stay put and are dropped only as a churn (#221, "IL churn" below). Which statuses fit which
+slot, how many held slots the league has, and a held player whose status cleared are in "Held
+slots" below.
 
 ### Held slots (#107, #124)
 
@@ -245,21 +254,54 @@ lineup route lists a player as eligible for every held kind the league has that 
 a full one included, so the Lineup view can tell "eligible, IL full" from "eligible, 1 open" by
 the slot's `open` count: when the IL is full the user decides whom to swap.
 
-**An add's basis (#187).** Every recommended add has one of three bases, and the dashboard names
+**An add's basis (#187).** Every recommended add has one of four bases, and the dashboard names
 it with the rule that applied as its title:
 
 - an open active spot, "free: open spot": no drop;
 - a held move, "after Hurt to IL": an active player whose status fits an open held slot moves
   there to make room, and his return sends the weakest active player then;
-- a drop, "for Reed".
+- a drop, "for Reed";
+- a churn (#221), "for Stash from IL, Hurt to IL": a held player dropped for the add (below).
 
 The For columns (the Waivers table's, the Moves card's and the move drawer's drop list) show a
 drop's name alone, since the header says For, and the other two bases in their words. The
 drawer's line and the Queue card put the basis after the add: "Brooks for Reed", "Brooks after
 Hurt to IL", "Brooks (free: open spot)".
 
+**IL churn (#221).** A churn is an add whose drop H is a held player: `Move(add, H)`, nothing
+new on the move. Dropping H opens his held slot, not an active spot, so the add still needs one:
+an open active spot, or an eligible injured active player Y who moves into the freed slot and
+gives the add his spot (`moves.held_moves`' `freed`, the stash order picking Y). "Drop H, Y to
+IL, add Z" is so one move, one add against the weekly limit, priced against plain swaps, open
+spots and stashes in the same search; with no open spot and no Y it does not fit. Its value needs
+no new term: H is gone from the first day (he is dropped first, on his own), which costs the
+games he would have played after his return inside the horizon and removes his return's charge;
+Y's comeback is any held move's. Its rest of the season (#151) values H net of his return (none
+for one out for the season), so the season guard sees the whole cost.
+
+- **When it is offered** (the ruling's first answer): only for a free agent's add, which lands at
+  once, or when H is worth nothing net of his return (out for the season, no return, or a line at
+  or below a dead spot). A churn cannot be one Yahoo transaction (the roster is illegal between the
+  drop and the add), so a lost claim would leave H dropped for nothing. `moves.churn_ok`; the
+  problem's `claims` are the candidates on waivers.
+- **Never H**: a held player the keep rule keeps (it runs its three tests on held players apart,
+  `KeepRule.held`, listed as `keep_rule.held` in the payload) or whose status cleared (his
+  activation is the cleared path above).
+- **Shown**: basis `churn`; each row carries `held_drop` (H and his slot) beside `held` (Y's move,
+  or null when an open spot takes the add), in the Waivers table, the Moves card, the drawer's drop
+  list (held players are listed as drops there too) and the decision log. An `il_full` advice whose
+  occupant a recommended set churns names it (`churn`: the add, what it adds to its set and the
+  horizon, the three weeks' set first): "the churn adding Z below is the better use of the slot".
+- **Ties go to the season** (the sixth condition). A churn and the plain swap that drops Y instead
+  tie on a horizon when both are out past it. The search then takes the set worth more over the
+  season, by the guard's own figure (`moves.search`'s `season`, the moves route only), so the one
+  worth less net of his return goes. Each recommended move says which horizon decided it
+  (`decided_by`): `season` when keeping its drop re-solves to a set worth the same on its horizon.
+- **The queue** holds a churn, read only, until the executor can drop on its own (#221 part 3).
+
 There is no stash threshold. The search prices the held move against every drop on each horizon
-and takes the better, and a tie goes to the move with no drop. So the held move wins when the
+and takes the better, and a tie goes to the move with no drop (on the moves route, unless the
+drop is worth more over the season: ties go to the season, #221). So the held move wins when the
 freed spot plays more than the deferred drop costs. A plain drop wins when the drop the return
 would force costs more than dropping now. `stash_threshold` stays an unhooked knob, recorded in
 the decision log as docs/AUTOPILOT.md section 6 says.
@@ -308,8 +350,9 @@ keep rule").
   add for the spot it frees on each horizon; `il_full` when he is protected and eligible but the
   slots are taken, naming who should leave: a cleared occupant first, activated with the
   weakest active player dropped, else the occupant with the least value net of return, dropped
-  and marked when the rule would protect him. That is advice only, no new move kind: the search
-  never drops a held player. Then `bench` (protected with no slot for him, or the short absence)
+  and marked when the rule would protect him. The search drops a held player only as a churn
+  (#221), named on the advice when a recommended set holds one. Then `bench` (protected with no
+  slot for him, or the short absence)
   and `droppable` (the moves may take him).
 - **The words.** The Waivers table says under its note whom the rule keeps and benches, and the
   Moves card lists them with their value a game against the best add's and why, then the out

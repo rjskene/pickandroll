@@ -241,12 +241,13 @@ def day_entry(entries: Iterable[Mapping[str, Any]], day: date) -> Mapping[str, A
 
 
 def protected_of(rule: mv.KeepRule | None) -> dict[int, str]:
-    """My players the keep rule protects (#124), each with why, as the engine has them."""
+    """My players the keep rule protects (#124), held ones too (#221), each with why, as the
+    engine has them."""
     if rule is None:
         return {}
     return {
         k: qa.keep_reason(x.net_positive, x.beats_best, x.returns, x.bench)
-        for k, x in rule.players.items()
+        for k, x in (*rule.players.items(), *rule.held.items())
         if x.protected or x.bench
     }
 

@@ -130,13 +130,17 @@ def _logged(move: Mapping[str, Any], built: Built | None = None) -> dict[str, An
 
 
 def _based(moves: list[dict[str, Any]], built: Built) -> list[dict[str, Any]]:
-    """``moves`` of one set, each with its basis (#187, ``decisions.basis_of``) and the held-slot
-    move that makes room for it (``held``, None but for a ``held`` basis), read from the set as
-    a whole as the payload reads it (``season_moves.held_by_add``): one rule for every set."""
-    held = season_moves.held_by_add(built.problem, _moves_of(moves))
+    """``moves`` of one set, each with its basis (#187, ``decisions.basis_of``), the held-slot
+    move that makes room for it (``held``, None but for a ``held`` or a ``churn`` basis) and a
+    churn's held drop (``held_drop``, #221), read from the set as a whole as the payload reads
+    it (``season_moves.held_by_add``): one rule for every set."""
+    p = built.problem
+    held = season_moves.held_by_add(p, _moves_of(moves))
     for m in moves:
-        m["held"] = None if m.get("drop") is not None else held.get(int(m["add"]))
-        m["basis"] = dl.basis_of(m.get("drop"), m["held"])
+        move = mv.Move(int(m["add"]), None if m.get("drop") is None else int(m["drop"]))
+        m["held"] = held.get(move.add) if mv.needs_spot(p, move) else None
+        m["held_drop"] = season_moves.held_drop(p, move)
+        m["basis"] = season_moves.basis(p, move, m["held"])
     return moves
 
 

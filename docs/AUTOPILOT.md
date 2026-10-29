@@ -181,13 +181,16 @@ page, from PR 2:
   and its three weeks' set (`three`, season first); it never solves, and a league not solved that
   day says so. Every move of the set is an entry with the set, the decision and the knobs in
   force, queued or with the first reason it is not: the private league or the mode off; a drop
-  the keep rule protects (read from the engine, never re-solved); a move flagged season-costly; an
-  add the league dropped within the waiver days (or one the set drops); below the noise floor; no
-  adds left in the week of its clear date; over the day's cap. The rest are queued by their gain
+  the keep rule protects (read from the engine, never re-solved, held players included, #221); a
+  churn (#221: "churn, read only: the executor has no standalone drop yet", until #221 part 3); a
+  move flagged season-costly; an add the league dropped within the waiver days (or one the set
+  drops); below the noise floor; no adds left in the week of its clear date; over the day's cap.
+  The rest are queued by their gain
   on the three weeks after, highest first. The streaming plan stays a dashboard suggestion.
   `data/autopilot/queue/<date>.json` holds the day; nothing else writes it. Each entry carries its
-  move's `basis` (`open`, `held` or `drop`) and `held_move`, the held-slot move a `held` add needs
-  (#187; null when the decision log entry was written before #187). The live claim (PR 3) reads
+  move's `basis` (`open`, `held`, `drop` or `churn`) and `held_move`, the held-slot move a `held`
+  add or a churn needs (#187; null when the decision log entry was written before #187), and a
+  churn's `held_drop`, the held player it drops and his slot (#221). The live claim (PR 3) reads
   them: a `held` add executes after its held move (its page then shows an open spot, #199), never
   before it as an open-spot claim.
 - **The noise floor.** The plan floor of the knobs against the move's gain; once 20 moves are

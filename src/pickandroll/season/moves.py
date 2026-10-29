@@ -26,8 +26,8 @@ its day as the decision log values it, sum to zero or more (:func:`season_guard`
 its re-solves and the streaming plan never offer a set below it; nothing inside the allowed sets
 ranks on it.
 
-Players in held slots (IL, IL+, NA) stay on the roster, are never dropped and count as the
-season view counts them. :data:`HELD_ACCEPTS` says which statuses each held slot takes (#124,
+Players in held slots (IL, IL+, NA) stay on the roster, count as the season view counts them and
+are dropped only as a churn (#221, below). :data:`HELD_ACCEPTS` says which statuses each held slot takes (#124,
 docs/ADD_DROP.md, "Held slots"). IL is Yahoo's own rule for basketball, from its help page
 (https://help.yahoo.com/kb/SLN6863.html): Out (O) and Out For Season (OFS) go there; Probable,
 Questionable and Doubtful do not. IL+ and NA are unverified: the help page names neither for
@@ -48,6 +48,23 @@ valuable active player by per-game value, him included, never one the keep rule 
 (:func:`comebacks`). That is an approximation: the starters' own ranking, not each choice
 re-valued. Several eligible players for fewer open slots: the latest to return goes first, roster
 order breaking ties (:func:`held_moves`).
+
+A player already in a held slot who comes back inside a horizon is charged the same way (#221,
+the ruling's fifth condition): from his day back the set drops its least valuable active player,
+him included, unless the set leaves an active spot open for him, in the base and in every set
+(:func:`comebacks`). Without it the base counts his games and never the drop they force.
+
+A **churn** (#221) is an add whose drop is a held player H: dropping H opens H's held slot,
+an add still needs an active spot, so either one is open or an eligible injured active player
+Y moves into the freed slot (:func:`held_moves`' ``freed``) and gives the add his spot. A churn
+is offered only when its add is a free agent, or H is worth nothing net of his return
+(:func:`churn_ok`): H goes first, on his own, and a lost claim must not leave him dropped for
+something. A held player the keep rule keeps, or whose status cleared, is never H.
+
+Ties go to the season (#221, the sixth condition): given ``season``, a set's rest of the
+season, the searches take of two sets equal on their horizon the one worth more over the
+season (:func:`search`), as a churn and the plain swap that drops Y instead tie when both are out
+past the horizon.
 
 The keep rule (#124, the user's of 2026-10-22, docs/AUTOPILOT.md section 4) is a forced keep, not
 a value term: the three-week horizon, and the season the strategy engine reads from it, value a
@@ -189,6 +206,8 @@ class MoveProblem:
     #: defaults (``season.stream``).
     plan_floor: float | None = None
     daily_cap: int | None = None
+    #: The candidates on waivers: an add of one is a claim, which may be lost (#221).
+    claims: frozenset[int] = frozenset()
 
 
 def day_of(problem: MoveProblem, move: Move) -> date:
@@ -206,7 +225,8 @@ def timeline(
         day = day_of(problem, m)
         available[m.add] = day
         if m.drop is not None:
-            gone[m.drop] = day
+            # A churn's held drop goes first, on its own (#221).
+            gone[m.drop] = problem.first_day if is_churn(problem, m) else day
     return available, gone
 
 
@@ -251,12 +271,16 @@ def open_spots(problem: MoveProblem) -> int:
     return max(0, problem.spots - len(problem.roster))
 
 
-def held_moves(problem: MoveProblem, dropped: Iterable[int] = ()) -> list[tuple[int, str]]:
+def held_moves(
+    problem: MoveProblem, dropped: Iterable[int] = (), freed: Mapping[str, int] | None = None
+) -> list[tuple[int, str]]:
     """The active players (not in ``dropped``) that could move to an open held slot, each with
     the slot, placed most restrictive slot first: the latest to return first, roster order
-    breaking ties (:func:`stash_order`)."""
+    breaking ties (:func:`stash_order`). ``freed`` are the held slots a set's churns open."""
     out_ = set(dropped)
     open_ = dict(problem.held_open)
+    for slot, n in (freed or {}).items():
+        open_[slot] = open_.get(slot, 0) + n
     out: list[tuple[int, str]] = []
     for key, player in stash_order(problem):
         if key in out_:
@@ -327,15 +351,51 @@ def limit_of(problem: MoveProblem, day: date) -> AddLimit | None:
     return next((lim for lim in problem.limits if lim.start <= day <= lim.end), None)
 
 
+def is_churn(problem: MoveProblem, move: Move) -> bool:
+    """Whether ``move`` drops a held player (#221)."""
+    return move.drop is not None and move.drop in problem.held_slots
+
+
+def needs_spot(problem: MoveProblem, move: Move) -> bool:
+    """Whether ``move``'s add needs an active spot of its own: no drop, or a held player's (a
+    churn frees a held slot, not an active one)."""
+    return move.drop is None or is_churn(problem, move)
+
+
+def freed_by(problem: MoveProblem, moves: Iterable[Move]) -> dict[str, int]:
+    """The held slots a set's churns open, by kind."""
+    out: dict[str, int] = {}
+    for m in moves:
+        slot = problem.held_slots.get(m.drop) if m.drop is not None else None
+        if slot is not None:
+            out[slot] = out.get(slot, 0) + 1
+    return out
+
+
+def churn_ok(problem: MoveProblem, move: Move) -> bool:
+    """Whether a churn may be offered (#221, the ruling's first answer): its add lands at once
+    (a free agent), or the held player is worth nothing net of his return, so a lost claim
+    costs nothing."""
+    if move.add not in problem.claims or move.drop is None:
+        return True
+    player = dict(problem.held).get(move.drop)
+    net = None if player is None else net_of_return(problem, move.drop, player)
+    return net is not None and net <= EPS
+
+
 def feasible(problem: MoveProblem, moves: Sequence[Move]) -> bool:
-    """Whether the moves fit: distinct adds and drops, each add with a drop, an open spot or a
-    held-slot move of a player not dropped, and each week's adds within its limit."""
+    """Whether the moves fit: distinct adds and drops, each add with a drop of an active player,
+    or an active spot (an open one, or one a held-slot move of a player not dropped frees,
+    churns' freed slots included), each churn allowed (:func:`churn_ok`), and each week's adds
+    within its limit."""
     adds = [m.add for m in moves]
     drops = [m.drop for m in moves if m.drop is not None]
     if len(set(adds)) < len(adds) or len(set(drops)) < len(drops):
         return False
-    free = sum(1 for m in moves if m.drop is None)
-    if free > open_spots(problem) + len(held_moves(problem, drops)):
+    if any(is_churn(problem, m) and not churn_ok(problem, m) for m in moves):
+        return False
+    need = sum(1 for m in moves if needs_spot(problem, m))
+    if need > open_spots(problem) + len(held_moves(problem, drops, freed_by(problem, moves))):
         return False
     counts: dict[AddLimit, int] = {}
     for m in moves:
@@ -350,6 +410,8 @@ def feasible(problem: MoveProblem, moves: Sequence[Move]) -> bool:
 #: A test every set searched must pass beside :func:`feasible` (the season guard's,
 #: :func:`season_guard`).
 Allowed = Callable[[Sequence[Move]], bool]
+#: A set's rest of the season, the searches' tie-break (#221): :func:`season_total`'s.
+Season = Callable[[Sequence[Move]], float]
 
 
 def admitted(problem: MoveProblem, moves: Sequence[Move], allowed: Allowed | None) -> bool:
@@ -376,11 +438,13 @@ def season_guard(ros: Callable[[Move], float | None]) -> Allowed:
 
 
 def held_used(problem: MoveProblem, moves: Sequence[Move]) -> list[tuple[int, str]]:
-    """The held-slot moves a set of moves needs: its adds without a drop beyond the open spots."""
-    need = sum(1 for m in moves if m.drop is None) - open_spots(problem)
+    """The held-slot moves a set of moves needs: its adds that need an active spot
+    (:func:`needs_spot`) beyond the open spots."""
+    need = sum(1 for m in moves if needs_spot(problem, m)) - open_spots(problem)
     if need <= 0:
         return []
-    return held_moves(problem, [m.drop for m in moves if m.drop is not None])[:need]
+    drops = [m.drop for m in moves if m.drop is not None]
+    return held_moves(problem, drops, freed_by(problem, moves))[:need]
 
 
 @dataclass(frozen=True)
@@ -392,6 +456,8 @@ class Comeback:
     day: date
     #: The least valuable active player on that day, by per-game value (maybe himself).
     drop: int
+    #: A player already in a held slot whose return is charged (#221), not a set's held move.
+    returning: bool = False
 
 
 def comes_back(
@@ -412,33 +478,61 @@ def comes_back(
     return None
 
 
+def returning(
+    problem: MoveProblem, key: str, dropped: Iterable[int] = ()
+) -> list[tuple[date, int, str]]:
+    """My held players (not cleared, not in ``dropped``) who come back inside horizon ``key``,
+    each with his day back and his slot (#221)."""
+    out_ = set(dropped) | {k for k, _ in cleared(problem)}
+    out = []
+    for k, player in problem.held:
+        slot = problem.held_slots.get(k)
+        if k in out_ or slot is None:
+            continue
+        day = comes_back(problem, k, player, problem.horizons[key])
+        if day is not None:
+            out.append((day, k, slot))
+    return out
+
+
 def comebacks(problem: MoveProblem, key: str, moves: Iterable[Move]) -> list[Comeback]:
     """The deferred drops of ``moves`` over horizon ``key``: each held-slot move whose player
-    comes back inside it sends the least valuable active player then, him included; and each
-    held player whose status cleared (:func:`cleared`) does so on the first day, moves or none."""
+    comes back inside it sends the least valuable active player then, him included; each held
+    player whose status cleared (:func:`cleared`) does so on the first day, moves or none; and
+    each held player not dropped who comes back inside it (:func:`returning`) does so on his
+    day back, unless the set leaves an active spot open for him (#221)."""
     moves = list(moves)
     held = held_used(problem, moves)
     back_now = cleared(problem)
-    if not held and not back_now:
+    dropped = {m.drop for m in moves if m.drop is not None}
+    back_later = returning(problem, key, dropped)
+    if not held and not back_now and not back_later:
         return []
     players = dict(problem.roster)
-    dropped = {m.drop for m in moves if m.drop is not None}
     # A streaming plan's add that a later step drops is not there to send.
     active = [k for k, _ in problem.roster if k not in dropped]
     active += [m.add for m in moves if m.add not in dropped]
+    # The active spots the set leaves open: a returning player takes one before he sends anyone.
+    spare = problem.spots - (len(active) - len(held))
     active += [k for k, _ in back_now]
-    backs = [(problem.first_day, k, slot) for k, slot in back_now]
+    backs = [(problem.first_day, k, slot, False) for k, slot in back_now]
     for k, slot in held:
         day = comes_back(problem, k, players[k], problem.horizons[key])
         if day is not None:
-            backs.append((day, k, slot))
+            backs.append((day, k, slot, False))
+    backs += [(day, k, slot, True) for day, k, slot in back_later]
     out: list[Comeback] = []
-    for day, k, slot in sorted(backs):
+    for day, k, slot, back in sorted(backs):
+        if back:
+            active.append(k)
+            if spare > 0:
+                spare -= 1
+                continue
         # Never a player the keep rule keeps, while another can go.
         pool = [x for x in active if x not in problem.kept] or active
         weakest = min(pool, key=lambda x: (problem.value.get(x, 0.0), str(x)))
         active.remove(weakest)
-        out.append(Comeback(k, slot, day, weakest))
+        out.append(Comeback(k, slot, day, weakest, back))
     return out
 
 
@@ -525,11 +619,14 @@ class KeepRule:
     floor: float
     #: The rule on each of my active players.
     players: Mapping[int, Kept]
+    #: The rule on each of my held players (#221): one it keeps is never a churn's drop.
+    held: Mapping[int, Kept] = field(default_factory=dict)
 
     @property
     def kept(self) -> frozenset[int]:
-        """The players no move may drop."""
-        return frozenset(k for k, x in self.players.items() if x.protected or x.bench)
+        """The players no move may drop, active and held."""
+        rows = [*self.players.items(), *self.held.items()]
+        return frozenset(k for k, x in rows if x.protected or x.bench)
 
 
 def kept_of(
@@ -547,8 +644,8 @@ def kept_of(
 
 
 def keep_rule(problem: MoveProblem) -> KeepRule:
-    """The keep rule on my active players against the best available add (by rest-of-season
-    per-game value, among the candidates with a line)."""
+    """The keep rule on my active players, and apart on my held ones (#221), against the best
+    available add (by rest-of-season per-game value, among the candidates with a line)."""
     priced = [
         (c, problem.season_value[c]) for c, _ in problem.candidates if c in problem.season_value
     ]
@@ -559,6 +656,7 @@ def keep_rule(problem: MoveProblem) -> KeepRule:
         best_value,
         problem.floor,
         {k: kept_of(problem, k, pl, best_value, problem.floor) for k, pl in problem.roster},
+        {k: kept_of(problem, k, pl, best_value, problem.floor) for k, pl in problem.held},
     )
 
 
@@ -793,11 +891,14 @@ def project_mine(
 def drop_options(
     problem: MoveProblem, taken: Sequence[Move] = (), keep: Iterable[int] = ()
 ) -> list[int | None]:
-    """Whom one more add can replace given the moves ``taken``: every active player not dropped,
-    kept (``keep``) or kept by the keep rule (``problem.kept``), and nobody (an open spot or a
-    held-slot move)."""
+    """Whom one more add can replace given the moves ``taken``: nobody (an open spot or a
+    held-slot move), every active player not dropped, kept (``keep``) or kept by the keep rule
+    (``problem.kept``), and after them every such held player whose status has not cleared, a
+    churn's drop (#221; :func:`feasible` says whether the churn is allowed)."""
     dropped = {m.drop for m in taken} | set(keep) | problem.kept
-    return [None, *(key for key, _ in problem.roster if key not in dropped)]
+    back_now = {k for k, _ in cleared(problem)}
+    held = [k for k, _ in problem.held if k not in dropped and k not in back_now]
+    return [None, *(key for key, _ in problem.roster if key not in dropped), *held]
 
 
 @dataclass(frozen=True)
@@ -836,17 +937,28 @@ def search(
     keep: Iterable[int] = (),
     min_gain: float = 0.0,
     allowed: Allowed | None = None,
+    season: Season | None = None,
 ) -> tuple[Move, ...]:
     """The recommended moves over horizon ``key`` among the candidates of ``pool``: greedy, one
     best move at a time while it gains more than ``min_gain``, then each add and each drop
     replaced by its best alternative, or the move undone, until no change gains. ``exclude``
     are adds and ``keep`` drops the search may not use (a re-solve's forced choice); every set
-    tried must pass ``allowed`` (the season guard) beside :func:`feasible`."""
+    tried must pass ``allowed`` (the season guard) beside :func:`feasible`. Of two sets equal on
+    ``key`` the one ``season`` values more is taken (#221: ties go to the season)."""
     p = ev.problem
     banned, kept = set(exclude), set(keep)
     adds_ok = [c for c in pool if c not in banned]
     moves: list[Move] = []
     current = ev.value(key, ())
+
+    def tied_better(v: float, trial: Sequence[Move], than: float, other: Sequence[Move]) -> bool:
+        return season is not None and abs(v - than) <= EPS and season(trial) > season(other) + EPS
+
+    def better(v: float, trial: Sequence[Move], than: float, other: Sequence[Move]) -> bool:
+        if season is None:
+            return v > than
+        return v > than + EPS or tied_better(v, trial, than, other)
+
     while True:
         used = {m.add for m in moves}
         best: tuple[float, Move] | None = None
@@ -858,7 +970,7 @@ def search(
                 if not admitted(p, trial, allowed):
                     continue
                 v = ev.value(key, trial)
-                if best is None or v > best[0]:
+                if best is None or better(v, trial, best[0], [*moves, best[1]]):
                     best = (v, Move(cand, drop))
         if best is None or best[0] - current <= max(min_gain, EPS):
             break
@@ -882,7 +994,9 @@ def search(
                 v = ev.value(key, trial)
                 # Undoing a move needs it to have been worth less than min_gain.
                 bar = best_v - (min_gain if trial is rest else 0.0)
-                if v > bar + EPS:
+                now = moves if best_set is None else best_set
+                tie = trial is not rest and tied_better(v, trial, bar, now)
+                if v > bar + EPS or tie:
                     best_v, best_set = v, trial
         if best_set is None:
             break
@@ -924,19 +1038,21 @@ def recommend(
     start: Sequence[Move] | None = None,
     keep: Iterable[int] = (),
     allowed: Allowed | None = None,
+    season: Season | None = None,
 ) -> Recommendation:
     """The recommended set over horizon ``key`` with every move priced by a re-solve. A re-solve
     that beats the set replaces it (the search is a heuristic), at most ``rounds`` times. The set
     is the search's, or ``start`` (another solver's, which the caller has allowed); ``keep`` are
-    drops nothing may use; the search and every re-solve keep to ``allowed``."""
+    drops nothing may use; the search and every re-solve keep to ``allowed`` and break ties on
+    ``season``."""
     kept = frozenset(keep)
     moves = (
         tuple(start)
         if start is not None
-        else search(ev, key, pool, keep=kept, min_gain=min_gain, allowed=allowed)
+        else search(ev, key, pool, keep=kept, min_gain=min_gain, allowed=allowed, season=season)
     )
     for attempt in range(rounds + 1):
-        priced, better = _priced(ev, key, pool, moves, min_gain, kept, allowed)
+        priced, better = _priced(ev, key, pool, moves, min_gain, kept, allowed, season)
         if better is None or attempt == rounds:
             gain = {h: ev.gain(h, moves) for h in ev.base}
             back = {h: tuple(comebacks(ev.problem, h, moves)) for h in ev.problem.horizons}
@@ -953,20 +1069,27 @@ def _priced(
     min_gain: float,
     kept: frozenset[int] = frozenset(),
     allowed: Allowed | None = None,
+    season: Season | None = None,
 ) -> tuple[tuple[PricedMove, ...], tuple[Move, ...] | None]:
-    """Each move of ``moves`` priced by its two re-solves (each kept to ``allowed``), and the
-    best re-solve that beats the set, if one does."""
+    """Each move of ``moves`` priced by its two re-solves (each kept to ``allowed``, ties broken
+    on ``season``), and the best re-solve that beats the set, if one does."""
     value = ev.value(key, moves)
     priced: list[PricedMove] = []
     better: tuple[Move, ...] | None = None
     for move in moves:
         without = search(
-            ev, key, pool, exclude={move.add}, keep=kept, min_gain=min_gain, allowed=allowed
+            ev, key, pool, {move.add}, kept, min_gain=min_gain, allowed=allowed, season=season
         )
         keep = None
         if move.drop is not None:
             keep = search(
-                ev, key, pool, keep=kept | {move.drop}, min_gain=min_gain, allowed=allowed
+                ev,
+                key,
+                pool,
+                keep=kept | {move.drop},
+                min_gain=min_gain,
+                allowed=allowed,
+                season=season,
             )
         for alt in (without, keep):
             if alt is None or ev.value(key, alt) <= value + EPS:
