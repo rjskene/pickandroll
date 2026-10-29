@@ -88,7 +88,9 @@ class FakePage:
     """A page whose DOM is a few dicts: the selects by id, where a URL lands, counts by
     selector, the sign-in markers, the download each export page serves."""
 
-    def __init__(self, *, landed=None, selects=None, counts=None, signed_out=False, downloads=None, refuse=()):
+    def __init__(
+        self, *, landed=None, selects=None, counts=None, signed_out=False, downloads=None, refuse=()
+    ):
         self.calls: list[tuple] = []
         self.url = "about:blank"
         self.expecting = None
@@ -179,14 +181,21 @@ def browser_at(tmp_path, page, workers=("worker.js",), **kw):
     (ext / "manifest.json").write_text("{}")
     sleeps: list[float] = []
     b = ChromiumBrowser(
-        tmp_path / "profile", ext, tmp_path / "downloads", sleep=sleeps.append, launch=launcher(page, workers), **kw
+        tmp_path / "profile",
+        ext,
+        tmp_path / "downloads",
+        sleep=sleeps.append,
+        launch=launcher(page, workers),
+        **kw,
     )
     b.sleeps = sleeps
     return b
 
 
 # --------------------------------------------------------------------------- the driver
-def test_launch_makes_the_profile_private_empties_downloads_prunes_screens_and_needs_the_worker(tmp_path):
+def test_launch_makes_the_profile_private_empties_downloads_prunes_screens_and_needs_the_worker(
+    tmp_path,
+):
     downloads = tmp_path / "downloads"
     downloads.mkdir()
     (downloads / "Projections-stale.csv").write_text("old")
@@ -231,7 +240,9 @@ def test_signed_in_checks_each_site_once_and_opens_only_its_check_page(tmp_path)
         (PRIVATE, True),  # the page shows a Sign in link or form
     ],
 )
-def test_yahoo_signed_out_by_the_redirect_the_consent_page_or_a_sign_in_link(tmp_path, landed, signed_out):
+def test_yahoo_signed_out_by_the_redirect_the_consent_page_or_a_sign_in_link(
+    tmp_path, landed, signed_out
+):
     page = FakePage(landed={YAHOO_CHECK: landed}, signed_out=signed_out)
     b = browser_at(tmp_path, page)
     assert b.signed_in("yahoo") is False
@@ -242,7 +253,13 @@ def test_yahoo_signed_out_by_the_redirect_the_consent_page_or_a_sign_in_link(tmp
 
 
 def test_export_sets_the_selects_reads_them_back_refreshes_and_clicks_the_button_for_real(tmp_path):
-    page = FakePage(selects={"PlayerFilterControl": "Top 150", "StatDisplayType": "Per Game", "DateFilterControl": "Season"})
+    page = FakePage(
+        selects={
+            "PlayerFilterControl": "Top 150",
+            "StatDisplayType": "Per Game",
+            "DateFilterControl": "Season",
+        }
+    )
     b = browser_at(tmp_path, page)
     paths = {}
     for kind in EXPORT_KINDS:
@@ -254,7 +271,11 @@ def test_export_sets_the_selects_reads_them_back_refreshes_and_clicks_the_button
     assert re.fullmatch(r"WeeklyProjections-\d{6}\.xls", paths["week_next"].name)
     assert re.fullmatch(r"BBM_PlayerRankings-\d{6}\.xls", paths["actual_14d"].name)
 
-    page.selects = {"PlayerFilterControl": "Top 150", "StatDisplayType": "Per Game", "DateFilterControl": "Season"}
+    page.selects = {
+        "PlayerFilterControl": "Top 150",
+        "StatDisplayType": "Per Game",
+        "DateFilterControl": "Season",
+    }
     page.calls.clear()
     b.sleeps.clear()
     b.export("ros")
@@ -285,7 +306,9 @@ def test_export_sets_the_selects_reads_them_back_refreshes_and_clicks_the_button
     assert page.calls[-2:] == [("js_click", "#RefreshButton"), ("real_click", "Export to Excel")]
 
 
-def test_export_fails_with_a_screenshot_when_a_select_is_missing_the_download_never_lands_or_the_page_is_signed_out(tmp_path):
+def test_export_fails_with_a_screenshot_when_a_select_is_missing_the_download_never_lands_or_the_page_is_signed_out(
+    tmp_path,
+):
     page = FakePage(selects={"PlayerFilterControl": "Top 150", "StatDisplayType": "Per Game"})
     b = browser_at(tmp_path, page)
     with pytest.raises(RuntimeError, match="no select#DateFilterControl"):
@@ -297,7 +320,9 @@ def test_export_fails_with_a_screenshot_when_a_select_is_missing_the_download_ne
     with pytest.raises(RuntimeError, match="download"):
         browser_at(tmp_path, page).export("ros")
 
-    page = FakePage(selects={"PlayerFilterControl": "x", "StatDisplayType": "y"}, counts={LOGOUT: 0})
+    page = FakePage(
+        selects={"PlayerFilterControl": "x", "StatDisplayType": "y"}, counts={LOGOUT: 0}
+    )
     with pytest.raises(RuntimeError, match="signed out"):
         browser_at(tmp_path, page).export("ros")
 
@@ -376,11 +401,31 @@ class ScriptedBrowser:
 
 
 IMPORT_LINES = {
-    ("draft_day.py", "projections"): (0, "saved data/bbm_projections_2026-10-29.csv from Projections-050301.csv: 523 players, exported Thu\nmovers against bbm_projections_2026-10-28.csv, top 150 by value:\n  none\n", ""),
-    ("draft_day.py", "week", "--this"): (0, "not saved: WeeklyProjections-050512.xls is identical to bbm_week_this_20261029-0201.xls, saved for Thu 2026-10-29 to Sun 2026-11-01\n", ""),
-    ("draft_day.py", "week", "--next"): (0, "saved data/bbm_week_next_20261029-0506.xls from WeeklyProjections-050601.xls: next week, Mon 2026-11-02 to Sun 2026-11-08\n", ""),
-    ("draft_day.py", "past-days", "--days", "7"): (1, "", "BBM_PlayerRankings-050701.xls has a player with 12 games, more than a team plays in 7 days: a season or longer export? Nothing saved\n"),
-    ("draft_day.py", "past-days", "--days", "14"): (0, "saved data/bbm_actual_14d_totals_20261029-0508.xls from BBM_PlayerRankings-050801.xls: 400 players with games over 14 days\n", ""),
+    ("draft_day.py", "projections"): (
+        0,
+        "saved data/bbm_projections_2026-10-29.csv from Projections-050301.csv: 523 players, exported Thu\nmovers against bbm_projections_2026-10-28.csv, top 150 by value:\n  none\n",
+        "",
+    ),
+    ("draft_day.py", "week", "--this"): (
+        0,
+        "not saved: WeeklyProjections-050512.xls is identical to bbm_week_this_20261029-0201.xls, saved for Thu 2026-10-29 to Sun 2026-11-01\n",
+        "",
+    ),
+    ("draft_day.py", "week", "--next"): (
+        0,
+        "saved data/bbm_week_next_20261029-0506.xls from WeeklyProjections-050601.xls: next week, Mon 2026-11-02 to Sun 2026-11-08\n",
+        "",
+    ),
+    ("draft_day.py", "past-days", "--days", "7"): (
+        1,
+        "",
+        "BBM_PlayerRankings-050701.xls has a player with 12 games, more than a team plays in 7 days: a season or longer export? Nothing saved\n",
+    ),
+    ("draft_day.py", "past-days", "--days", "14"): (
+        0,
+        "saved data/bbm_actual_14d_totals_20261029-0508.xls from BBM_PlayerRankings-050801.xls: 400 players with games over 14 days\n",
+        "",
+    ),
 }
 
 
@@ -412,7 +457,9 @@ def test_export_all_imports_each_export_as_it_lands_and_records_the_file_that_st
         "actual_14d": "bbm_actual_14d_totals_20261029-0508.xls",
     }
     step = ctx.report.find("exports")
-    assert step.status == "failed" and step.detail.startswith("4 of 5 due saved; failed: actual_7d (BBM_PlayerRankings")
+    assert step.status == "failed" and step.detail.startswith(
+        "4 of 5 due saved; failed: actual_7d (BBM_PlayerRankings"
+    )
     assert step.data["lines"]["ros"].startswith("saved data/bbm_projections")
     assert set(step.data["seconds"]) == set(EXPORT_KINDS)
 
@@ -429,10 +476,15 @@ def test_an_export_that_fails_or_does_not_land_is_reported_and_never_imported(tm
     export_all(ctx, (6,), None)
     assert IMPORTS["week_next"] not in calls and len(calls) == 4
     step = ctx.report.find("exports")
-    assert "week_next (export failed: RuntimeError: week_next: TimeoutError: no download)" in step.detail
+    assert (
+        "week_next (export failed: RuntimeError: week_next: TimeoutError: no download)"
+        in step.detail
+    )
 
 
-def test_this_week_is_not_due_on_sunday_in_the_daily_and_on_saturday_or_sunday_in_the_evening(tmp_path):
+def test_this_week_is_not_due_on_sunday_in_the_daily_and_on_saturday_or_sunday_in_the_evening(
+    tmp_path,
+):
     for when, not_due, made in [
         ("2026-11-01 05:01", (6,), False),  # Sunday, the daily
         ("2026-10-31 21:02", (5, 6), False),  # Saturday, the evening build
@@ -446,7 +498,9 @@ def test_this_week_is_not_due_on_sunday_in_the_daily_and_on_saturday_or_sunday_i
         assert ("week_this" in browser.exports) is made, when
         step = ctx.report.find("exports")
         if not made:
-            assert step.status == "failed" and "this week not due on a" in step.detail  # actual_7d refused
+            assert (
+                step.status == "failed" and "this week not due on a" in step.detail
+            )  # actual_7d refused
             assert "week_this" not in ctx.report.exports
 
 
@@ -458,7 +512,10 @@ def test_the_evening_exports_stop_at_21_15_and_name_the_kinds_left(tmp_path):
     export_all(ctx, (5, 6), "21:15")
     assert browser.exports == ["ros", "week_this"]
     step = ctx.report.find("exports")
-    assert step.status == "failed" and "skipped past 21:15: week_next, actual_7d, actual_14d" in step.detail
+    assert (
+        step.status == "failed"
+        and "skipped past 21:15: week_next, actual_7d, actual_14d" in step.detail
+    )
     assert step.data["late"] == ["week_next", "actual_7d", "actual_14d"]
 
 
@@ -473,15 +530,22 @@ def test_exports_with_bbm_signed_out_open_nothing_and_alert_once(tmp_path):
     assert ctx.report.alerts == ["the browser profile is signed out of bbm"]
 
 
-def test_a_browser_that_cannot_start_skips_every_browser_step_with_its_reason_and_one_alert(tmp_path):
+def test_a_browser_that_cannot_start_skips_every_browser_step_with_its_reason_and_one_alert(
+    tmp_path,
+):
     browser = ScriptedBrowser(tmp_path, available=False, reason="RuntimeError: no DISPLAY")
     api = FakeAPI(base_answers() | {("GET", "/seasons/31822"): (200, {"week": 2, "fetched": {}})})
     ctx = make_ctx(api, Clock("2026-10-29 05:01"), tmp_path, browser=browser)
     report = run("daily", ctx, "http://api")
     for name in ("exports", "private_pages", "lineup_pages", "lineup"):
         step = report.find(name)
-        assert step.status == "skipped" and "browser unavailable (RuntimeError: no DISPLAY)" in step.detail, name
-    assert report.alerts == ["the browser could not start at the daily routine: RuntimeError: no DISPLAY"]
+        assert (
+            step.status == "skipped"
+            and "browser unavailable (RuntimeError: no DISPLAY)" in step.detail
+        ), name
+    assert report.alerts == [
+        "the browser could not start at the daily routine: RuntimeError: no DISPLAY"
+    ]
     assert "/seasons/31822" not in api.paths()  # nothing read for pages that would not open
     assert report.find("refresh").status == "ok"  # the API steps still ran
 
@@ -492,11 +556,19 @@ def test_private_page_urls_follow_the_daily_skill_order(tmp_path):
     assert [u for u, _ in urls[:3]] == [PRIVATE, f"{PRIVATE}/1", f"{PRIVATE}/2"]
     assert urls[13] == (f"{PRIVATE}/matchup?date=totals&week=2&mid1=3&mid2=7", None)
     assert urls[14] == (f"{PRIVATE}/transactions", None)
-    assert urls[15] == (f"{PRIVATE}/players?status=A&pos=P&stat1=R_O&sort=R_PO&sdir=1&count=0", "R_O")
-    assert urls[-1] == (f"{PRIVATE}/players?status=A&pos=P&stat1=S_PS7&sort=R_PO&sdir=1&count=275", "S_PS7")
+    assert urls[15] == (
+        f"{PRIVATE}/players?status=A&pos=P&stat1=R_O&sort=R_PO&sdir=1&count=0",
+        "R_O",
+    )
+    assert urls[-1] == (
+        f"{PRIVATE}/players?status=A&pos=P&stat1=S_PS7&sort=R_PO&sdir=1&count=275",
+        "S_PS7",
+    )
     assert len(urls) == 1 + 12 + 1 + 1 + 24
     assert all(u.startswith(PRIVATE) for u, _ in urls)
-    without = private_page_urls({"week": 2, "num_teams": 10, "my_team": {"team_id": 3}, "opponent": None})
+    without = private_page_urls(
+        {"week": 2, "num_teams": 10, "my_team": {"team_id": 3}, "opponent": None}
+    )
     assert len(without) == 1 + 10 + 1 + 24 and not any("matchup" in u for u, _ in without)
 
 
@@ -506,11 +578,19 @@ def test_private_pages_open_the_pages_stop_an_empty_view_and_read_the_league_bac
     def league(_body):
         reads.append(1)
         fetched = {"league": {}, "roster/3": {}} if len(reads) > 1 else {}
-        return 200, {"week": 2, "num_teams": 12, "my_team": {"team_id": 3}, "opponent": {"team_id": 7},
-                     "updated_at": "2026-10-29T10:13:00+00:00", "fetched": fetched}
+        return 200, {
+            "week": 2,
+            "num_teams": 12,
+            "my_team": {"team_id": 3},
+            "opponent": {"team_id": 7},
+            "updated_at": "2026-10-29T10:13:00+00:00",
+            "fetched": fetched,
+        }
 
     api = FakeAPI(base_answers() | {("GET", "/seasons/31822"): league})
-    browser = ScriptedBrowser(tmp_path, counts=lambda url: 0 if "stat1=R_O" in url and "count=50" in url else 1)
+    browser = ScriptedBrowser(
+        tmp_path, counts=lambda url: 0 if "stat1=R_O" in url and "count=50" in url else 1
+    )
     ctx = make_ctx(api, Clock("2026-10-29 05:03"), tmp_path, browser=browser)
     private_pages(ctx)
     opened = [u for u, _ in browser.opened]
@@ -519,7 +599,10 @@ def test_private_pages_open_the_pages_stop_an_empty_view_and_read_the_league_bac
     assert opened[-1].endswith("stat1=S_PS7&sort=R_PO&sdir=1&count=275")
     step = ctx.report.find("private_pages")
     assert step.status == "ok"
-    assert step.detail == "30 pages opened; updated_at 2026-10-29T10:13:00+00:00, 2 fetched keys; views stopped early: R_O"
+    assert (
+        step.detail
+        == "30 pages opened; updated_at 2026-10-29T10:13:00+00:00, 2 fetched keys; views stopped early: R_O"
+    )
     assert len(reads) == 2
 
     browser = ScriptedBrowser(tmp_path, signed={"bbm": True, "yahoo": False})
@@ -528,13 +611,29 @@ def test_private_pages_open_the_pages_stop_an_empty_view_and_read_the_league_bac
     assert ctx.report.find("private_pages").status == "failed" and browser.opened == []
     assert ctx.report.alerts == ["the browser profile is signed out of yahoo"]
 
-    ctx = make_ctx(api, Clock("2026-10-29 05:03"), tmp_path, browser=ScriptedBrowser(tmp_path), dry_run=True)
+    ctx = make_ctx(
+        api, Clock("2026-10-29 05:03"), tmp_path, browser=ScriptedBrowser(tmp_path), dry_run=True
+    )
     private_pages(ctx)
     assert ctx.report.find("private_pages").detail.startswith("dry run: would open")
 
 
 def test_a_page_that_fails_to_load_is_tried_once_more_then_counted_failed(tmp_path):
-    api = FakeAPI(base_answers() | {("GET", "/seasons/31822"): (200, {"week": 2, "num_teams": 2, "my_team": {"team_id": 1}, "opponent": {"team_id": 2}, "fetched": {}})})
+    api = FakeAPI(
+        base_answers()
+        | {
+            ("GET", "/seasons/31822"): (
+                200,
+                {
+                    "week": 2,
+                    "num_teams": 2,
+                    "my_team": {"team_id": 1},
+                    "opponent": {"team_id": 2},
+                    "fetched": {},
+                },
+            )
+        }
+    )
     browser = ScriptedBrowser(tmp_path)
     browser.fail_opens = {f"{PRIVATE}/1": 1, f"{PRIVATE}/2": 2}
     clock = Clock("2026-10-29 05:03")
@@ -544,7 +643,11 @@ def test_a_page_that_fails_to_load_is_tried_once_more_then_counted_failed(tmp_pa
     assert opened.count(f"{PRIVATE}/1") == 2 and opened.count(f"{PRIVATE}/2") == 2
     assert ctx.notes["_sleeps"].calls == [10, 10]  # one wait before each retry, none after the last
     step = ctx.report.find("private_pages")
-    assert step.status == "failed" and "1 failed to open" in step.detail and f"{PRIVATE}/2: TimeoutError" in step.detail
+    assert (
+        step.status == "failed"
+        and "1 failed to open" in step.detail
+        and f"{PRIVATE}/2: TimeoutError" in step.detail
+    )
 
 
 def test_lineup_pages_open_at_most_ten_and_say_when_they_did_not_land(tmp_path):
@@ -552,14 +655,20 @@ def test_lineup_pages_open_at_most_ten_and_say_when_they_did_not_land(tmp_path):
     needs.append("https://example.com/nba/31822/3")
     answers = iter([needs, needs[:2]])
 
-    api = FakeAPI(base_answers() | {("GET", "/seasons/31822/lineup"): lambda _b: (200, {"needs": next(answers)})})
+    api = FakeAPI(
+        base_answers()
+        | {("GET", "/seasons/31822/lineup"): lambda _b: (200, {"needs": next(answers)})}
+    )
     browser = ScriptedBrowser(tmp_path)
     ctx = make_ctx(api, Clock("2026-10-29 05:08"), tmp_path, browser=browser)
     lineup_pages(ctx)
     assert [u for u, _ in browser.opened] == needs[:10]
     step = ctx.report.find("lineup_pages")
     assert step.status == "failed"
-    assert step.detail == "10 of 10 pages opened, 2 left for the next run; skipped, not the league's: 1; lineup pages did not land: 2 still needed"
+    assert (
+        step.detail
+        == "10 of 10 pages opened, 2 left for the next run; skipped, not the league's: 1; lineup pages did not land: 2 still needed"
+    )
     assert ctx.report.alerts == ["the private league's lineup pages did not land (2 still needed)"]
 
     answers = iter([needs[:3], []])
@@ -583,8 +692,14 @@ def test_parse_private_line_reads_needs_lineup_and_schedule_pages():
     assert pages.needs == [PRIVATE, f"{PRIVATE}/transactions"]
     assert pages.schedule == [f"{PRIVATE}?matchup_week=5", f"{PRIVATE}?matchup_week=6"]
     assert pages.lineup == [f"{PRIVATE}/settings"]
-    recorded = parse_private_line([f"31822 week 2: recorded (pages: taken 2); schedule pages (1): {PRIVATE}?matchup_week=7"])
-    assert recorded.needs == [] and recorded.lineup == [] and recorded.schedule == [f"{PRIVATE}?matchup_week=7"]
+    recorded = parse_private_line(
+        [f"31822 week 2: recorded (pages: taken 2); schedule pages (1): {PRIVATE}?matchup_week=7"]
+    )
+    assert (
+        recorded.needs == []
+        and recorded.lineup == []
+        and recorded.schedule == [f"{PRIVATE}?matchup_week=7"]
+    )
     assert parse_private_line(["252098 week 2: unchanged"]) is None
     assert parse_private_line(["31822: failed (502): yahoo"]).needs == []
 
@@ -604,7 +719,13 @@ def test_monday_pages_open_needs_then_lineup_then_schedule_with_the_record_runs_
         return 0, next(records) + "\n", ""
 
     browser = ScriptedBrowser(tmp_path)
-    ctx = make_ctx(FakeAPI(base_answers()), Clock("2026-10-26 06:04"), tmp_path, routine="monday", browser=browser)
+    ctx = make_ctx(
+        FakeAPI(base_answers()),
+        Clock("2026-10-26 06:04"),
+        tmp_path,
+        routine="monday",
+        browser=browser,
+    )
     ctx.run_script = run_script
     monday_pages(ctx, "http://api", ["252098 week 2: recorded", first])
     opened = [u for u, _ in browser.opened]
@@ -619,19 +740,46 @@ def test_monday_pages_open_needs_then_lineup_then_schedule_with_the_record_runs_
 
 def test_monday_pages_try_the_needs_once_more_and_say_when_lineup_pages_did_not_land(tmp_path):
     still = f"31822 week 2: needs pages (1): {PRIVATE}/transactions; lineup pages (1): {PRIVATE}/settings"
-    records = iter([still, f"31822 week 2: recorded; lineup pages (1): {PRIVATE}/settings", f"31822 week 2: recorded; lineup pages (1): {PRIVATE}/settings"])
+    records = iter(
+        [
+            still,
+            f"31822 week 2: recorded; lineup pages (1): {PRIVATE}/settings",
+            f"31822 week 2: recorded; lineup pages (1): {PRIVATE}/settings",
+        ]
+    )
     browser = ScriptedBrowser(tmp_path)
-    ctx = make_ctx(FakeAPI(base_answers()), Clock("2026-10-26 06:04"), tmp_path, routine="monday", browser=browser)
+    ctx = make_ctx(
+        FakeAPI(base_answers()),
+        Clock("2026-10-26 06:04"),
+        tmp_path,
+        routine="monday",
+        browser=browser,
+    )
     ctx.run_script = lambda args: (0, next(records) + "\n", "")
-    monday_pages(ctx, "http://api", [f"31822 week 2: needs pages (2): {PRIVATE} {PRIVATE}/transactions"])
+    monday_pages(
+        ctx, "http://api", [f"31822 week 2: needs pages (2): {PRIVATE} {PRIVATE}/transactions"]
+    )
     opened = [u for u, _ in browser.opened]
-    assert opened == [PRIVATE, f"{PRIVATE}/transactions", f"{PRIVATE}/transactions", f"{PRIVATE}/settings"]
+    assert opened == [
+        PRIVATE,
+        f"{PRIVATE}/transactions",
+        f"{PRIVATE}/transactions",
+        f"{PRIVATE}/settings",
+    ]
     step = ctx.report.find("private_pages")
     assert step.status == "failed" and "lineup pages did not land" in step.detail
     assert "2 needed pages" not in step.detail and step.data["counts"]["needs"] == 3
-    assert ctx.report.alerts == ["the private league's lineup pages did not land at the Monday recorder"]
+    assert ctx.report.alerts == [
+        "the private league's lineup pages did not land at the Monday recorder"
+    ]
 
-    ctx = make_ctx(FakeAPI(base_answers()), Clock("2026-10-26 06:04"), tmp_path, routine="monday", browser=ScriptedBrowser(tmp_path))
+    ctx = make_ctx(
+        FakeAPI(base_answers()),
+        Clock("2026-10-26 06:04"),
+        tmp_path,
+        routine="monday",
+        browser=ScriptedBrowser(tmp_path),
+    )
     monday_pages(ctx, "http://api", ["31822 week 2: unchanged"])
     assert ctx.report.find("private_pages").detail == "31822 needs no page"
     monday_pages(ctx, "http://api", ["252098 week 2: unchanged"], name="again")
@@ -640,7 +788,9 @@ def test_monday_pages_try_the_needs_once_more_and_say_when_lineup_pages_did_not_
 
 def test_the_monday_routine_runs_the_pages_between_the_record_and_its_retry(tmp_path):
     lines = {
-        ("season.py", "record", "--all"): "252098 week 2: recorded\n31822 week 2: needs pages (1): " + PRIVATE + "\n",
+        ("season.py", "record", "--all"): "252098 week 2: recorded\n31822 week 2: needs pages (1): "
+        + PRIVATE
+        + "\n",
         ("season.py", "record", "31822"): "31822 week 2: recorded (pages: taken 1)\n",
         ("season.py", "scorecard"): "## Scorecard\n\nNo week is recorded yet.\n",
         ("season.py", "monday"): "",
@@ -652,7 +802,13 @@ def test_the_monday_routine_runs_the_pages_between_the_record_and_its_retry(tmp_
         return (1 if args[1] == "monday" else 0), lines.get(tuple(args[:3]), ""), ""
 
     browser = ScriptedBrowser(tmp_path)
-    ctx = make_ctx(FakeAPI(base_answers()), Clock("2026-10-26 06:04"), tmp_path, routine="monday", browser=browser)
+    ctx = make_ctx(
+        FakeAPI(base_answers()),
+        Clock("2026-10-26 06:04"),
+        tmp_path,
+        routine="monday",
+        browser=browser,
+    )
     ctx.run_script = run_script
     report = run("monday", ctx, "http://api")
     assert [u for u, _ in browser.opened] == [PRIVATE]
@@ -668,11 +824,23 @@ def test_a_dry_run_launches_no_browser_and_opens_nothing(tmp_path):
     report = run("daily", ctx, "http://api")
     assert b.launch.calls == [] and page.calls == []
     for name in ("exports", "private_pages", "lineup_pages", "lineup"):
-        assert report.find(name).status == "skipped" and report.find(name).detail.startswith("dry run:"), name
-    assert report.find("exports").detail == "dry run: would export 5 kinds: ros, week_this, week_next, actual_7d, actual_14d"
+        assert report.find(name).status == "skipped" and report.find(name).detail.startswith(
+            "dry run:"
+        ), name
+    assert (
+        report.find("exports").detail
+        == "dry run: would export 5 kinds: ros, week_this, week_next, actual_7d, actual_14d"
+    )
 
     b = browser_at(tmp_path, page)
-    ctx = make_ctx(FakeAPI(due_answers()), Clock("2026-10-29 07:50"), tmp_path, routine="morning", browser=b, dry_run=True)
+    ctx = make_ctx(
+        FakeAPI(due_answers()),
+        Clock("2026-10-29 07:50"),
+        tmp_path,
+        routine="morning",
+        browser=b,
+        dry_run=True,
+    )
     report = run("morning", ctx, "http://api")
     assert b.launch.calls == []
     assert report.find("moves").detail == "dry run: 2 pages would open"
@@ -685,42 +853,62 @@ def test_the_signin_routine_reports_both_sites_and_fails_when_one_is_out(tmp_pat
     ctx = make_ctx(api, Clock("2026-10-29 04:50"), tmp_path, routine="signin", browser=browser)
     report = run("signin", ctx, "http://api")
     assert api.calls == []  # no API needed
-    assert [(s.name, s.status) for s in report.steps] == [("browser", "ok"), ("bbm", "ok"), ("yahoo", "failed")]
+    assert [(s.name, s.status) for s in report.steps] == [
+        ("browser", "ok"),
+        ("bbm", "ok"),
+        ("yahoo", "failed"),
+    ]
     assert report.alerts == ["the browser profile is signed out of yahoo"] and report.any_failed
     assert browser.closed
 
     browser = ScriptedBrowser(tmp_path, available=False, reason="RuntimeError: no DISPLAY")
     ctx = make_ctx(api, Clock("2026-10-29 04:50"), tmp_path, routine="signin", browser=browser)
     report = run("signin", ctx, "http://api")
-    assert report.find("browser").status == "failed" and "no DISPLAY" in report.find("browser").detail
+    assert (
+        report.find("browser").status == "failed" and "no DISPLAY" in report.find("browser").detail
+    )
 
     ctx = make_ctx(api, Clock("2026-10-29 04:50"), tmp_path, routine="signin")
     report = run("signin", ctx, "http://api")
-    assert report.find("browser").status == "skipped" and NO_BROWSER in report.find("browser").detail
+    assert (
+        report.find("browser").status == "skipped" and NO_BROWSER in report.find("browser").detail
+    )
 
 
 def test_a_pass_with_a_browser_names_a_page_that_failed_twice(tmp_path):
-    api = FakeAPI(due_answers() | {
-        ("POST", "/autopilot/passes"): (200, {"id": "p"}),
-        ("POST", "/autopilot/passes/p/opening"): (200, {}),
-        ("POST", "/autopilot/passes/p/done"): (200, {}),
-        ("GET", "/seasons/252098/autopilot/moves"): (200, {"today": [{"trigger": "routine", "outcome": "would_claim"}]}),
-    })
+    api = FakeAPI(
+        due_answers()
+        | {
+            ("POST", "/autopilot/passes"): (200, {"id": "p"}),
+            ("POST", "/autopilot/passes/p/opening"): (200, {}),
+            ("POST", "/autopilot/passes/p/done"): (200, {}),
+            ("GET", "/seasons/252098/autopilot/moves"): (
+                200,
+                {"today": [{"trigger": "routine", "outcome": "would_claim"}]},
+            ),
+        }
+    )
     browser = ScriptedBrowser(tmp_path)
     add_page = f"{YAHOO}/nba/252098/addplayer?apid=111#pickandroll-moves"
     browser.fail_opens = {add_page: 2}
     ctx = make_ctx(api, Clock("2026-10-29 07:50"), tmp_path, routine="morning", browser=browser)
     report = run("morning", ctx, "http://api")
     moves = report.find("moves")
-    assert moves.status == "failed" and moves.detail.startswith("1 pages opened in 1 leagues, 1 failed to open: e1")
+    assert moves.status == "failed" and moves.detail.startswith(
+        "1 pages opened in 1 leagues, 1 failed to open: e1"
+    )
     assert moves.data["failed"] == ["e1"]
     assert [u for u, _ in browser.opened].count(add_page) == 2
 
 
 def test_the_script_runner_passes_the_downloads_folder_to_the_importers(tmp_path):
     (tmp_path / "scripts").mkdir()
-    (tmp_path / "scripts" / "echo.py").write_text("import os, sys; print(os.environ.get('PICKANDROLL_DOWNLOADS', 'unset')); print(' '.join(sys.argv[1:]))")
-    run_script = script_runner(tmp_path, sys.executable, {"PICKANDROLL_DOWNLOADS": str(tmp_path / "dl")})
+    (tmp_path / "scripts" / "echo.py").write_text(
+        "import os, sys; print(os.environ.get('PICKANDROLL_DOWNLOADS', 'unset')); print(' '.join(sys.argv[1:]))"
+    )
+    run_script = script_runner(
+        tmp_path, sys.executable, {"PICKANDROLL_DOWNLOADS": str(tmp_path / "dl")}
+    )
     code, out, _ = run_script(["echo.py", "week", "--this"])
     assert code == 0 and out.splitlines() == [str(tmp_path / "dl"), "week --this"]
     code, out, _ = script_runner(tmp_path, sys.executable)(["echo.py"])
