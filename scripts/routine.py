@@ -10,11 +10,14 @@
     python scripts/routine.py daily --dry-run      # the plan from the live API; opens nothing
     python scripts/routine.py daily --force        # outside the window (a test, a re-run)
     python scripts/routine.py daily --no-browser   # the API steps only (the Mac, side by side)
+    python scripts/routine.py daily --skip-solve 31822   # that league's solve left out
 
 The API is ``PICKANDROLL_API`` (http://127.0.0.1:8000). ``--no-post`` keeps the GitHub comments
 off (the soak); ``--no-marker`` keeps the daily from writing data/routine/daily.json; ``--json``
-prints the report as JSON after the summary. Every run writes data/routine/runs/<day>-<name>.json
-unless it was a dry run.
+prints the report as JSON after the summary. ``--skip-solve LEAGUE`` (repeatable) leaves that
+league's solve out and says so: the private league's search outruns the daily's window on a
+slow host, and a solve the client gives up on keeps computing in the API. Every run writes
+data/routine/runs/<day>-<name>.json unless it was a dry run.
 
 The browser (``routine/chromium.py``) is Playwright's Chromium with the extension from
 ``PICKANDROLL_EXTENSION`` (the checkout's ``extension/``) and the profile at
@@ -76,6 +79,13 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="skip the browser steps (no profile, nothing opened)",
     )
+    p.add_argument(
+        "--skip-solve",
+        action="append",
+        default=[],
+        metavar="LEAGUE",
+        help="leave this league's solve out, reported as such (repeatable)",
+    )
     p.add_argument("--json", action="store_true", help="print the report as JSON too")
     p.add_argument("--now", help="pretend it is this time (ISO, Central if naive); for tests")
     args = p.parse_args(argv)
@@ -110,6 +120,7 @@ def main(argv: list[str] | None = None) -> int:
         browser=browser,
         dry_run=args.dry_run,
         posting=not args.no_post,
+        skip_solve=frozenset(args.skip_solve),
     )
     try:
         run(args.routine, ctx, args.api, force=args.force)
