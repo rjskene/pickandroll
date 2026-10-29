@@ -83,7 +83,8 @@ nothing is lost, but the seat is away for a few seconds.
 ## League pages: the season view (0.5.0, #98)
 
 A league whose pages answer only when you are signed in (31822 is private) cannot be refreshed by the API. Its
-season view is fed from the pages you open in Chrome instead:
+season view is fed instead from the pages a signed-in browser with the extension opens, the routine host's Chromium
+(the daily and Monday routines, `docs/OPS.md`) or your own Chrome:
 
 1. pickandroll needs the league's folder, `data/leagues/<id>/settings.json` with `"public": false` and your
    team id.
@@ -102,6 +103,9 @@ season view is fed from the pages you open in Chrome instead:
    click the reader never navigates.
 5. Yahoo's projections reach pickandroll only from that view: open Next 7 Days (proj) on the players page too,
    or let the read walk it. Its pages keep their own lines in the panel ("players 1-25 (next 7 days)").
+
+On the routine host the same extension is loaded unpacked into Playwright's Chromium from the checkout's
+`extension/` folder; its API address is the host's own `http://localhost:8000`.
 
 After the first post of a private league the API also brings in the week calendar (from the cache any public
 league's refresh writes) and the NBA schedule, so games left show on the roster. A team's page for a day

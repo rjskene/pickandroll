@@ -8,8 +8,9 @@ once the routine's run is due (:data:`ROUTINE_DUE`); amber when something is sta
 yet; green otherwise. A section is its worst row, a league its worst section with the exports,
 the whole its worst league with the exports and the run.
 
-"Today" and the due time are the Mac's local clock, where the routine runs: every function takes
-``now`` in that zone (``api.seasons.SeasonService.status`` converts the service's clock).
+"Today" and the due time are the routine host's Central clock, where the daily runs: every
+function takes ``now`` in that zone (``api.seasons.SeasonService.status`` converts the
+service's clock).
 
 The run marker the routine writes as its last step, ``data/routine/daily.json``::
 
@@ -35,7 +36,7 @@ from typing import Any
 
 GREEN, AMBER, RED = "green", "amber", "red"
 STATES = (GREEN, AMBER, RED)
-#: The daily routine starts at 05:00 on the Mac's clock and has landed everything by then.
+#: The daily routine starts at 05:00 Central on the routine host and has landed everything by then.
 ROUTINE_DUE = time(6, 30)
 EXPECTED = f"expected by {ROUTINE_DUE:%H:%M}"
 STEP_STATUSES = ("ok", "failed", "skipped")
