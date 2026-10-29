@@ -41,6 +41,8 @@ import type {
   TradeSide,
 } from "./api";
 import {
+  matchupColumns,
+  matchupExplainer,
   axisRange,
   axisTicks,
   defaultWeight,
@@ -2087,3 +2089,40 @@ test("Yahoo's Start Active Players reads in the card's lines, the queue's fold l
   assert.equal(passIL({ il: null, start_active: { would_start: 0, started: 2, already: 1, skipped: 0, failed: 0 } }), "2 started active, 1 already optimized");
   assert.equal(passIL({ il: { would_move: 1, moved: 0, skipped: 0, failed: 0 }, start_active: { would_start: 1, started: 0, already: 0, skipped: 0, failed: 0 } }), "1 would move to IL, 1 would start active");
 });
+
+test("the Matchup view's Cats and Matchup headers carry their units and one explainer (#226)", () => {
+  const cols = matchupColumns(false, "2026-10-29");
+  assert.deepEqual(
+    cols.map((c) => c.label),
+    ["Cats", "Matchup"],
+  );
+  assert.match(cols[0].title, /^expected categories he adds, in categories: the week with him less the week without him from /);
+  assert.match(cols[1].title, /^the matchup odds he adds, in percentage points of the matchup odds: /);
+  // The week over: no day to replay from.
+  assert.ok(!/ from /.test(matchupColumns(false, null)[0].title.split(":")[1]));
+  const cats = matchupExplainer(false);
+  assert.deepEqual(
+    cats.map((p) => p.lead),
+    [
+      'Both columns are "with him minus without him" for the rest of this week.',
+      "Cats is the expected categories won he adds.",
+      "Matchup is the matchup win odds he adds, in percentage points.",
+      "Why they disagree.",
+      "Signs and the other side.",
+    ],
+  );
+  assert.match(cats[1].text, /turnovers reversed/);
+  assert.match(cats[2].text, /Poisson binomial/);
+  // A points league: no Cats column, and its explainer leaves the Cats paragraphs out.
+  assert.deepEqual(
+    matchupColumns(true, "2026-10-29").map((c) => c.label),
+    ["Matchup"],
+  );
+  const pts = matchupExplainer(true);
+  assert.equal(pts.length, 3);
+  assert.ok(pts.every((p) => !/Cats|categor/.test(p.lead + p.text)));
+  assert.match(pts[1].text, /fantasy points/);
+  // The app's words: expected, odds, adds; never "optimal".
+  assert.ok([...cats, ...pts].every((p) => !/optimal/i.test(p.lead + p.text)));
+});
+

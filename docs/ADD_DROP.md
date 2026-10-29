@@ -1064,7 +1064,10 @@ then UI to evaluate available waiver options"). The flow:
    (the move model's drop path), and Matchup the same for the matchup odds; a player with no
    start left adds nothing. Theirs are what each adds for them. Sorted by Matchup, the players
    with no game left last. A team whose page was never read projects as an empty roster, and
-   the view says so above the categories.
+   the view says so above the categories. An "i" on the Cats and Matchup headers (#226) opens the explainer:
+   both are with him minus without him for the rest of the week, Cats in categories and Matchup
+   in percentage points of the matchup odds, why the two disagree, the signs and the points-league
+   variant.
 6. **The Season view** (#116, `s`), `GET /seasons/{league}/outlook?system=bbm|yahoo`. Every
    week left of my season. A summary line: the wins expected in the regular weeks left (their
    matchup odds summed), my record today, and how many of the named weeks are favoured (60% or
