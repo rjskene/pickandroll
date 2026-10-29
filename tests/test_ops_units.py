@@ -99,7 +99,11 @@ def test_the_routine_template() -> None:
     assert one(u, "Service", "TimeoutStartSec") == "2h"
     assert one(u, "Unit", "OnFailure") == "pickandroll-alert@%n.service"
     env = values(u, "Service", "Environment")
-    assert f"TZ={ZONE}" in env and "DISPLAY=:99" in env and "PICKANDROLL_API=http://127.0.0.1:8000" in env
+    assert (
+        f"TZ={ZONE}" in env
+        and "DISPLAY=:99" in env
+        and "PICKANDROLL_API=http://127.0.0.1:8000" in env
+    )
     assert one(u, "Service", "EnvironmentFile") == "-%h/.config/pickandroll/routine.env"
     assert one(u, "Service", "ExecStart").endswith("scripts/routine.py %i $ROUTINE_FLAGS")
     assert "Install" not in u  # instances are started by their timers, never enabled themselves
@@ -111,7 +115,9 @@ def test_the_api_unit() -> None:
     u = unit(VM / "pickandroll-api.service")
     assert one(u, "Service", "Restart") == "always"
     assert one(u, "Service", "OOMScoreAdjust") == "-500"
-    assert one(u, "Service", "KillMode") == "control-group"  # the pool's workers die with the listener
+    assert (
+        one(u, "Service", "KillMode") == "control-group"
+    )  # the pool's workers die with the listener
     assert f"TZ={ZONE}" in values(u, "Service", "Environment")
     exec_start = one(u, "Service", "ExecStart")
     assert "pickandroll.api:app" in exec_start and "--host 127.0.0.1 --port 8000" in exec_start
@@ -154,7 +160,11 @@ def test_install_refuses_a_bad_flag_before_doing_anything(tmp_path: Path) -> Non
         check=False,
         capture_output=True,
         text=True,
-        env={**os.environ, "PICKANDROLL_REPO": str(tmp_path), "PICKANDROLL_CONF": str(tmp_path / "conf")},
+        env={
+            **os.environ,
+            "PICKANDROLL_REPO": str(tmp_path),
+            "PICKANDROLL_CONF": str(tmp_path / "conf"),
+        },
     )
     assert done.returncode == 2 and "usage:" in done.stderr
     assert not (tmp_path / "conf").exists()
@@ -177,24 +187,37 @@ def env_with(bin_dir: Path, **extra: str) -> dict[str, str]:
 
 
 def run(script: Path, env: dict[str, str], *args: str) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(["bash", str(script), *args], check=False, capture_output=True, text=True, env=env)
+    return subprocess.run(
+        ["bash", str(script), *args], check=False, capture_output=True, text=True, env=env
+    )
 
 
 # ---------------------------------------------------------------------------------- watchdog
 
 
 def marker(data: Path, finished: str, failed: str | None = None) -> None:
-    steps = {k: {"status": "ok", "detail": "fine"} for k in ("api", "exports", "refresh", "solve", "digest")}
+    steps = {
+        k: {"status": "ok", "detail": "fine"}
+        for k in ("api", "exports", "refresh", "solve", "digest")
+    }
     if failed:
         steps[failed] = {"status": "failed", "detail": "the step's own line"}
     (data / "routine").mkdir(parents=True, exist_ok=True)
     (data / "routine" / "daily.json").write_text(
-        json.dumps({"started_at": f"{finished}T05:00:00-05:00", "finished_at": f"{finished}T05:40:00-05:00", "steps": steps})
+        json.dumps(
+            {
+                "started_at": f"{finished}T05:00:00-05:00",
+                "finished_at": f"{finished}T05:40:00-05:00",
+                "steps": steps,
+            }
+        )
     )
 
 
 def today_central() -> str:
-    done = subprocess.run(["date", "+%F"], check=True, capture_output=True, text=True, env={**os.environ, "TZ": ZONE})
+    done = subprocess.run(
+        ["date", "+%F"], check=True, capture_output=True, text=True, env={**os.environ, "TZ": ZONE}
+    )
     return done.stdout.strip()
 
 
@@ -205,7 +228,11 @@ def watchdog(tmp_path: Path) -> tuple[Path, Path, dict[str, str]]:
     fake(bin_dir, "curl", 'printf "%s" "${FAKE_HTTP_CODE:-200}"\n')
     data = tmp_path / "data"
     data.mkdir()
-    return VM / "watchdog.sh", data, env_with(bin_dir, PICKANDROLL_DATA=str(data), PICKANDROLL_API="http://api.test")
+    return (
+        VM / "watchdog.sh",
+        data,
+        env_with(bin_dir, PICKANDROLL_DATA=str(data), PICKANDROLL_API="http://api.test"),
+    )
 
 
 def test_watchdog_passes_on_todays_clean_marker_and_a_live_api(watchdog) -> None:
@@ -234,7 +261,10 @@ def test_watchdog_fails_on_a_failed_step_a_stale_marker_or_none(watchdog) -> Non
 def test_watchdog_fails_when_the_api_is_down(watchdog) -> None:
     script, data, env = watchdog
     marker(data, today_central())
-    done = run(script, {**env, "FAKE_HTTP_CODE": "000"}, )
+    done = run(
+        script,
+        {**env, "FAKE_HTTP_CODE": "000"},
+    )
     assert done.returncode == 1 and "api: 000 on GET" in done.stdout
 
 
@@ -276,7 +306,11 @@ def alert(tmp_path: Path) -> tuple[Path, Path, Path, dict[str, str]]:
                 "failed": True,
                 "steps": [
                     {"name": "api", "status": "ok", "detail": "200 on first check"},
-                    {"name": "exports", "status": "failed", "detail": "2 of 5 failed: ros (timed out), week_this (no file)"},
+                    {
+                        "name": "exports",
+                        "status": "failed",
+                        "detail": "2 of 5 failed: ros (timed out), week_this (no file)",
+                    },
                 ],
                 "alerts": ["the browser profile is signed out of bbm"],
             }
@@ -295,17 +329,25 @@ def test_alert_posts_the_failed_unit_to_ntfy_and_the_issue(alert) -> None:
     done = run(script, env, "pickandroll-routine@daily.service")
     assert done.returncode == 0, done.stdout + done.stderr
     assert done.stdout.startswith("pickandroll-routine@daily.service failed on ")
-    assert "newest run log 2026-10-29-daily.json: daily failed, started 05:00:00, finished 05:41:10" in done.stdout
+    assert (
+        "newest run log 2026-10-29-daily.json: daily failed, started 05:00:00, finished 05:41:10"
+        in done.stdout
+    )
     assert "- exports: failed, 2 of 5 failed: ros (timed out), week_this (no file)" in done.stdout
     assert "! the browser profile is signed out of bbm" in done.stdout
     assert "ntfy: posted to the topic" in done.stdout and "gh: commented on #225" in done.stdout
     calls = log.read_text()
-    assert "https://ntfy.sh/the-users-topic" in calls and "Title: pickandroll: pickandroll-routine@daily.service failed" in calls
+    assert (
+        "https://ntfy.sh/the-users-topic" in calls
+        and "Title: pickandroll: pickandroll-routine@daily.service failed" in calls
+    )
     assert "journal line two" in calls  # the journal goes to ntfy
     assert "gh issue comment 225 --body-file -" in calls
     comment = calls.split("gh issue comment 225")[1]
     assert "**pickandroll-routine@daily.service** failed on" in comment
-    assert "exports: failed" in comment and "journal line" not in comment  # never the journal in public
+    assert (
+        "exports: failed" in comment and "journal line" not in comment
+    )  # never the journal in public
     assert "journalctl --user -u pickandroll-routine@daily.service -n 40" in comment
 
 
