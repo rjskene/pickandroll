@@ -1,0 +1,14 @@
+# The monday routine's timer: 06:00 on Mondays, on the Central clock whatever the host's zone. Persistent: a run
+# missed while the host was down starts at boot, and the routine itself refuses when its window
+# has passed.
+[Unit]
+Description=pickandroll monday routine (06:00 on Mondays Central)
+
+[Timer]
+OnCalendar=Mon *-*-* 06:00:00 America/Chicago
+AccuracySec=15s
+Persistent=true
+Unit=pickandroll-routine@monday.service
+
+[Install]
+WantedBy=timers.target
