@@ -761,9 +761,9 @@ export function bidLabel(e: Pick<QueueEntry, "availability" | "bid" | "bid_struc
 
 /** "Brooks for Reed", "Brooks after Hurt to IL", "Brooks (free: open spot)": the move in words,
  * by its basis (#187). An entry logged before the basis with no drop says only that. */
-export function queueMoveText(e: Pick<QueueEntry, "add" | "drop" | "basis" | "held_move">, name: (id: number) => string): string {
+export function queueMoveText(e: Pick<QueueEntry, "add" | "drop" | "basis" | "held_move" | "held_drop">, name: (id: number) => string): string {
   if (e.drop == null && e.basis == null) return `${name(e.add)} with no drop`;
-  return `${name(e.add)} ${basisPhrase(addBasis({ drop: e.drop, held: e.held_move }, name))}`;
+  return `${name(e.add)} ${basisPhrase(addBasis({ drop: e.drop, held: e.held_move, held_drop: e.held_drop }, name))}`;
 }
 
 /** The floor and the typical gain the league's entries were judged with, in a line. */
@@ -1154,7 +1154,17 @@ export interface Basis {
   title: string;
 }
 
-export function addBasis(x: { drop: number | null; held?: HeldMove | null }, name: (id: number) => string): Basis {
+export function addBasis(x: { drop: number | null; held?: HeldMove | null; held_drop?: HeldMove | null }, name: (id: number) => string): Basis {
+  if (x.drop != null && x.held_drop) {
+    const who = name(x.drop);
+    const slot = x.held_drop.slot;
+    const moved = x.held ? `, ${name(x.held.player)} to ${x.held.slot}` : "";
+    const room = x.held
+      ? `${name(x.held.player)} moves into the freed slot and gives the add his active spot`
+      : "an active spot is open for the add";
+    const title = `a churn (#221): ${who} leaves ${slot}, dropped first on his own; ${room}. Offered only for a free agent, or when ${who} is worth nothing net of his return`;
+    return { kind: "churn", text: `for ${who} from ${slot}${moved}`, cell: `${who} (${slot})${moved}`, title };
+  }
   if (x.drop != null) {
     const who = name(x.drop);
     const title = "a drop: no active spot is open, and no held move makes room or it is worth less than this drop (the held move is priced against every drop)";
@@ -1396,7 +1406,8 @@ export function stashText(a: Stash, name: (id: number | null) => string, scoring
           ? `${name(lv.player)} (cleared) should leave ${lv.slot}, dropped`
           : `activate ${name(lv.player)} (cleared) from ${lv.slot}, dropping ${name(lv.drop)}`
         : `${name(lv.player)} should leave ${lv.slot}, the least value net of return${lv.net != null ? ` (${lv.net.toFixed(1)})` : ""}${lv.protected ? ", though protected: advice only" : ""}`;
-    return `${who}: ${full}; ${leave}${net}.`;
+    const churn = a.churn ? `; the churn adding ${name(a.churn.add)} below is the better use of the slot` : "";
+    return `${who}: ${full}; ${leave}${churn}${net}.`;
   }
   if (a.advice === "bench") return `${who}: bench${a.back ? `, back ${dayLabel(a.back)}` : ""}${net}.`;
   return `${who}: droppable, the moves may take him.`;
@@ -1998,7 +2009,8 @@ export function bestNamer(b: Extract<BestMove, { status: "solved" }>): (id: numb
  * spot)" (#187's words), and the kind for its last column: "drop", "IL move" or "open spot". */
 export function setLine(m: BestSetLine, name: (id: number) => string): { text: string; kind: string; basis: Basis } {
   const basis = addBasis(m, name);
-  const kind = basis.kind === "drop" ? "drop" : basis.kind === "held" && m.held ? `${m.held.slot} move` : "open spot";
+  const kind =
+    basis.kind === "drop" ? "drop" : basis.kind === "churn" ? "churn" : basis.kind === "held" && m.held ? `${m.held.slot} move` : "open spot";
   return { text: `Add ${name(m.add)} ${basisPhrase(basis)}`, kind, basis };
 }
 

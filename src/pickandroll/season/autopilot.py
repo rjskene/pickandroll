@@ -67,6 +67,8 @@ READD = "the add is a player this queue drops today or dropped within the waiver
 BELOW_FLOOR = "below the noise floor"
 NO_ADDS = "no adds left this week"
 OVER_CAP = "over the day's cap"
+#: A churn (#221) waits for the executor's standalone drop (its part 3): never queued until then.
+CHURN_HELD = "churn, read only: the executor has no standalone drop yet"
 #: A queued entry a rebuild's solve no longer recommends (#209): kept in the day's file, not
 #: queued and holding no place, so the Queue screen shows what changed.
 SUPERSEDED = "superseded by a later solve"
@@ -273,6 +275,8 @@ def queue_of(
             reason = OFF
         elif drop is not None and drop in lg.protected:
             reason = PROTECTED
+        elif m.get("basis") == "churn":
+            reason = CHURN_HELD
         elif m.get("season_costly"):
             reason = SEASON_COSTLY
         elif add in lg.dropped or add in drops:
@@ -310,6 +314,8 @@ def queue_of(
                 # The move's basis and its held-slot move (#187): None in an entry logged before.
                 "basis": m.get("basis"),
                 "held_move": m.get("held"),
+                # A churn's held drop and his slot (#221): None for any other move.
+                "held_drop": m.get("held_drop"),
                 "flag": lg.flags.get(add),
                 "floor": {**floor.to_dict(), "below": below},
                 "bid": {**bid.to_dict(), "typical": typical[0], "typical_from": typical[1]},

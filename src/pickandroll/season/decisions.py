@@ -57,8 +57,9 @@ THREE_SETS = ("three",)
 #: The strategy's sets solved under the week weight (λ = 1, this week alone) and under the season
 #: weight (λ = 0, the rest of the season alone).
 WEEK_SET, SEASON_SET = "week", "season"
-#: An add's basis (#187): an open active spot, a held-slot move that makes room, or a drop.
-OPEN, HELD, DROP = "open", "held", "drop"
+#: An add's basis (#187): an open active spot, a held-slot move that makes room, or a drop; a
+#: drop of a held player is a churn (#221).
+OPEN, HELD, DROP, CHURN = "open", "held", "drop", "churn"
 
 _CLOCK = re.compile(r",\s*(\d{1,2}):(\d{2})\s*([ap])\.?m", re.IGNORECASE)
 _BID = re.compile(r"\$\s*(\d+(?:\.\d+)?)")
@@ -149,11 +150,12 @@ def recommended(entry: Mapping[str, Any]) -> list[tuple[int, int | None]]:
     ]
 
 
-def basis_of(drop: int | None, held: Mapping[str, Any] | None) -> str:
-    """A recommended add's basis (#187): :data:`DROP` when it drops a player, :data:`HELD` when a
-    held-slot move (``held``, who goes to which slot) makes room for him, else :data:`OPEN`."""
+def basis_of(drop: int | None, held: Mapping[str, Any] | None, churn: bool = False) -> str:
+    """A recommended add's basis (#187): :data:`CHURN` when it drops a held player (``churn``,
+    #221), :data:`DROP` when it drops an active one, :data:`HELD` when a held-slot move
+    (``held``, who goes to which slot) makes room for him, else :data:`OPEN`."""
     if drop is not None:
-        return DROP
+        return CHURN if churn else DROP
     return HELD if held else OPEN
 
 

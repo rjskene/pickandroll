@@ -815,6 +815,8 @@ export interface BestSetLine {
   gain: number;
   basis: AddBasis;
   held: HeldMove | null;
+  /** A churn's held drop and the slot he leaves (#221); absent before the API serves it. */
+  held_drop?: HeldMove | null;
 }
 
 export interface BestMoveLine {
@@ -1216,7 +1218,8 @@ export type QueueReason =
   | "the add is a player this queue drops today or dropped within the waiver days"
   | "below the noise floor"
   | "no adds left this week"
-  | "over the day's cap";
+  | "over the day's cap"
+  | "churn, read only: the executor has no standalone drop yet";
 
 /** An execute pass's outcome for one entry: ``gone`` when another team had the add first. */
 export type MoveOutcome = "would_claim" | "claimed" | "added" | "skipped" | "failed" | "gone";
@@ -1254,6 +1257,8 @@ export interface QueueEntry {
    * before. */
   basis?: AddBasis | null;
   held_move?: HeldMove | null;
+  /** A churn's held drop and the slot he leaves (#221). */
+  held_drop?: HeldMove | null;
   flag: FlagLevel | null;
   floor: QueueFloor & { below: "plan" | "scored" | null };
   bid: { amount: number; reason: string; base: number; factor: number; sizing: number; typical: number; typical_from: string };
@@ -1513,6 +1518,8 @@ export interface CandidateGain {
   drop: number | null;
   /** With no drop and no open spot: the held-slot move that makes room for him (#124). */
   held?: HeldMove | null;
+  /** A churn's held drop and the slot he leaves (#221). */
+  held_drop?: HeldMove | null;
   next_drop: number | null;
   next_price: number | null;
   /** This move to the season's end (#151). */
@@ -1531,6 +1538,11 @@ export interface MoveCandidate {
 export interface RecommendedMove extends MoveRef {
   /** With no drop and no open spot: the held-slot move that makes room for him (#124). */
   held?: HeldMove | null;
+  /** A churn's held drop and the slot he leaves (#221). */
+  held_drop?: HeldMove | null;
+  /** The horizon that decided the move (#221): "season" when keeping its drop ties on the set's
+   * horizon and the season broke the tie. */
+  decided_by?: MoveHorizon | "season";
   /** What the move adds to its set on each horizon. */
   marginal: Record<MoveHorizon, number>;
   ros?: MoveRos | null;
@@ -1544,6 +1556,7 @@ export interface RecommendedMove extends MoveRef {
 /** A move of a re-solve's set, naming the held-slot move an add without a drop needs (#124). */
 export interface HeldRef extends MoveRef {
   held?: HeldMove | null;
+  held_drop?: HeldMove | null;
 }
 
 export interface HeldMove {
@@ -1551,8 +1564,9 @@ export interface HeldMove {
   slot: string;
 }
 
-/** An add's basis (#187): an open active spot, a held-slot move that makes room, or a drop. */
-export type AddBasis = "open" | "held" | "drop";
+/** An add's basis (#187): an open active spot, a held-slot move that makes room, a drop, or a
+ * churn: a held player dropped for the add (#221). */
+export type AddBasis = "open" | "held" | "drop" | "churn";
 
 /** The room an add without a drop has (#187): the open active spots, each held kind's open
  * slots (a full one at 0) and my active players whose status fits one, open or full. */
@@ -1715,6 +1729,8 @@ export interface KeepRule {
   average?: number;
   best: { player: number; value: number } | null;
   players: KeptPlayer[];
+  /** My held players under the same three tests (#221): one kept is never a churn's drop. */
+  held?: KeptPlayer[];
 }
 
 /** What to do with one of my players who is out (#124): stash him in an open held slot, say who
@@ -1737,6 +1753,9 @@ export interface Stash {
   leave: { player: number; slot: string; how: "activate" | "drop"; drop: number | null; net: number | null; protected: boolean } | null;
   /** A stash: the best add for the spot it frees, by horizon. */
   add: Record<MoveHorizon, { player: number; gain: number; ros?: MoveRos | null } | null> | null;
+  /** A full slot whose occupant a recommended set drops as a churn (#221): its add, what it adds
+   * to its set and the horizon. */
+  churn?: { add: number; gain: number; horizon: MoveHorizon } | null;
 }
 
 export interface MovesPayload {

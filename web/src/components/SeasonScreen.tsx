@@ -883,7 +883,7 @@ function movesNote(m: MovesPayload | undefined, s: SeasonView): string | undefin
 
 /** A For cell (#187): the drop's name, "after Hurt to IL" or "free: open spot", with the rule
  * that applied as its title. */
-function BasisCell({ x, name, className, children }: { x: { drop: number | null; held?: HeldMove | null }; name: Namer; className?: string; children?: ReactNode }) {
+function BasisCell({ x, name, className, children }: { x: { drop: number | null; held?: HeldMove | null; held_drop?: HeldMove | null }; name: Namer; className?: string; children?: ReactNode }) {
   const b = addBasis(x, name);
   return (
     <td className={className} title={b.title}>
@@ -1032,7 +1032,14 @@ function Recommended({ h, m, s, name, onPick }: { h: MoveHorizon; m: MovesPayloa
                 <td className="num" title={`without ${name(x.add)} the search ${insteadText(x.instead_without, name)}`}>
                   {x.price_without.toFixed(2)}
                 </td>
-                <td className="num" title={x.instead_keep ? `keeping ${name(x.drop)} the search ${insteadText(x.instead_keep, name)}` : "no drop to keep"}>
+                <td
+                  className="num"
+                  title={
+                    x.instead_keep
+                      ? `keeping ${name(x.drop)} the search ${insteadText(x.instead_keep, name)}${x.decided_by === "season" ? ": a tie on this horizon, which the season decided" : ""}`
+                      : "no drop to keep"
+                  }
+                >
                   {x.price_keep == null ? "" : x.price_keep.toFixed(2)}
                 </td>
               </tr>

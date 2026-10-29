@@ -27,6 +27,12 @@ and the plan to a rest of the season of zero or more, on the log's own figure fo
 (:func:`ros_of`). When the search without it finds a set that beats the guarded one on the
 horizon and costs the season, the horizon names that set (``season_guard``): shown flagged, never
 recommended.
+
+A churn (#221, ``season.moves``) drops a held player for an add: its rows name the held drop and
+his slot (``held_drop``) beside the held-slot move that gives the add an active spot (``held``),
+and its basis is ``churn``. Ties on a horizon go to the season (the guard's own figure); each
+recommended move says which horizon decided it (``decided_by``): the season when keeping its
+drop re-solves to a set worth the same on the horizon.
 """
 
 from __future__ import annotations
@@ -300,6 +306,9 @@ def build(
     # The adds are counted from the first week a move can take effect in: the next one when
     # this week is over (a claim placed on Sunday clears on Monday, #209).
     used, limits = add_limits(season, mine, ahead[1:] if over else ahead, today)
+    claims = frozenset(
+        a.player.yahoo_id for a in pool if a.player.yahoo_id in rates and a.availability == "W"
+    )
     problem = mv.MoveProblem(
         roster=roster,
         held=held,
@@ -319,6 +328,7 @@ def build(
         limits=limits,
         returns=espn_returns(data_dir, [*roster, *held]),
         held_slots=held_slots,
+        claims=claims,
     )
     names = {t.team_id: t.name for t in season.teams}
     horizons = {
@@ -472,6 +482,21 @@ def guard_ros(built: Built) -> Callable[[mv.Move], float | None] | None:
     return ros
 
 
+def season_of(ros: Callable[[mv.Move], float | None] | None) -> mv.Season | None:
+    """The searches' tie-break (#221: ties go to the season): a set's rest of the season by the
+    guard's own figure (``moves.season_total``); None without it."""
+    if ros is None:
+        return None
+    return lambda moves: mv.season_total(ros, moves)[0]
+
+
+def decided_by(pm: mv.PricedMove, key: str, season: mv.Season | None) -> str:
+    """The horizon that decided a recommended move (#221): the season when keeping its drop
+    re-solves to a set worth the same on ``key`` (the tie the season broke), else ``key``."""
+    tied = pm.price_keep is not None and abs(pm.price_keep) <= mv.EPS
+    return dl.SEASON if season is not None and tied else key
+
+
 class Watched:
     """A guard that counts the sets it refused: a solve it never refused is the unguarded
     one's."""
@@ -581,27 +606,44 @@ NO_DROP = "no drop: every rostered player is protected or held"
 
 
 def _held_for(problem: mv.MoveProblem, move: mv.Move) -> dict[str, Any] | None:
-    """The held-slot move an add without a drop needs (None: an open spot, or a drop)."""
+    """The held-slot move an add that needs an active spot takes (None: an open spot, or a drop
+    of an active player)."""
     return held_by_add(problem, [move]).get(move.add)
 
 
 def held_by_add(
     problem: mv.MoveProblem, moves: list[mv.Move] | tuple[mv.Move, ...]
 ) -> dict[int, Any]:
-    """The held-slot move each add without a drop takes, in the set's order once the open spots
-    are taken (``moves.held_used``): who goes to which slot to make room for him."""
-    free = [m.add for m in moves if m.drop is None][mv.open_spots(problem) :]
+    """The held-slot move each add that needs an active spot (``moves.needs_spot``: no drop, or
+    a churn's held one) takes, in the set's order once the open spots are taken
+    (``moves.held_used``): who goes to which slot to make room for him."""
+    free = [m.add for m in moves if mv.needs_spot(problem, m)][mv.open_spots(problem) :]
     used = mv.held_used(problem, moves)
     return {a: {"player": k, "slot": slot} for a, (k, slot) in zip(free, used, strict=False)}
+
+
+def held_drop(problem: mv.MoveProblem, move: mv.Move) -> dict[str, Any] | None:
+    """A churn's held drop and the slot he leaves (#221); None for any other move."""
+    if not mv.is_churn(problem, move):
+        return None
+    return {"player": move.drop, "slot": problem.held_slots[move.drop]}
+
+
+def basis(problem: mv.MoveProblem, move: mv.Move, held: Mapping[str, Any] | None) -> str:
+    """A move's basis (#187, #221): ``decisions.basis_of`` with whether its drop is held."""
+    return dl.basis_of(move.drop, held, mv.is_churn(problem, move))
 
 
 def moves_with_held(
     problem: mv.MoveProblem, moves: list[mv.Move] | tuple[mv.Move, ...]
 ) -> list[dict[str, Any]]:
-    """A set's moves, each add without a drop naming the held-slot move that makes room for him
-    (None: an open spot, or a drop)."""
+    """A set's moves, each add that needs an active spot naming the held-slot move that makes
+    room for him (None: an open spot, or a drop of an active player), a churn its held drop."""
     held = held_by_add(problem, moves)
-    return [{**_move(m, problem), "held": held.get(m.add)} for m in moves]
+    return [
+        {**_move(m, problem), "held": held.get(m.add), "held_drop": held_drop(problem, m)}
+        for m in moves
+    ]
 
 
 def no_move(problem: mv.MoveProblem, cand: int) -> str:
@@ -612,31 +654,43 @@ def no_move(problem: mv.MoveProblem, cand: int) -> str:
     return NO_DROP
 
 
+def _kept_row(key: int, k: mv.Kept) -> dict[str, Any]:
+    return {
+        "player": key,
+        "value": None if k.value is None else _r(k.value),
+        "back": k.back.isoformat() if k.back else None,
+        "net_positive": k.net_positive,
+        "beats_best": k.beats_best,
+        "returns": k.returns,
+        "protected": k.protected,
+        "bench": k.bench,
+        "cantcut": k.cantcut,
+    }
+
+
 def keep_payload(built: Built) -> dict[str, Any]:
     """The keep rule (#124): the best add's rest-of-season per-game value, the floor, and each of
-    my active players with his own value, when he is back and the three tests."""
+    my active players with his own value, when he is back and the three tests; my held players
+    apart (``held``, #221), the churns' drops."""
     p, rule = built.problem, built.rule
     if rule is None:
-        return {"floor": p.floor, "average": _r(p.average), "best": None, "players": []}
-    players = []
-    for key, k in rule.players.items():
-        players.append(
-            {
-                "player": key,
-                "value": None if k.value is None else _r(k.value),
-                "back": k.back.isoformat() if k.back else None,
-                "net_positive": k.net_positive,
-                "beats_best": k.beats_best,
-                "returns": k.returns,
-                "protected": k.protected,
-                "bench": k.bench,
-                "cantcut": k.cantcut,
-            }
-        )
+        return {
+            "floor": p.floor,
+            "average": _r(p.average),
+            "best": None,
+            "players": [],
+            "held": [],
+        }
     best = None
     if rule.best is not None and rule.best_value is not None:
         best = {"player": rule.best, "value": _r(rule.best_value)}
-    return {"floor": rule.floor, "average": _r(p.average), "best": best, "players": players}
+    return {
+        "floor": rule.floor,
+        "average": _r(p.average),
+        "best": best,
+        "players": [_kept_row(key, k) for key, k in rule.players.items()],
+        "held": [_kept_row(key, k) for key, k in rule.held.items()],
+    }
 
 
 def _freed(built: Built, swaps: dict[str, dict[int, list[mv.SwapGain]]]) -> dict[str, Any]:
@@ -659,11 +713,15 @@ def _freed(built: Built, swaps: dict[str, dict[int, list[mv.SwapGain]]]) -> dict
 
 
 def stash_payload(
-    built: Built, swaps: dict[str, dict[int, list[mv.SwapGain]]] | None = None
+    built: Built,
+    swaps: dict[str, dict[int, list[mv.SwapGain]]] | None = None,
+    recommended: Mapping[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     """The IL advice (#124, "can and should"): each of my players with an absence, the held slots
     his status allows and the one open for him, his value net of return, and what to do; a
-    stash names the best add for the freed spot, a full slot who should leave it."""
+    stash names the best add for the freed spot, a full slot who should leave it, and the churn
+    of that player a recommended set holds (``churn``, #221: its add, what it adds to the set and
+    the horizon, the three weeks' set first)."""
     p, rule = built.problem, built.rule
     if rule is None:
         return []
@@ -683,6 +741,7 @@ def stash_payload(
             "leave": None,
             "add": freed if a.advice == mv.STASH else None,
         }
+        row["churn"] = None
         if a.leave is not None:
             lv = a.leave
             row["leave"] = {
@@ -693,8 +752,19 @@ def stash_payload(
                 "net": None if lv.net is None else _r(lv.net),
                 "protected": lv.protected,
             }
+            row["churn"] = churn_of(recommended, lv.player) if lv.how == "drop" else None
         out.append(row)
     return out
+
+
+def churn_of(recommended: Mapping[str, Any] | None, player: int) -> dict[str, Any] | None:
+    """The recommended churn that drops held ``player`` (#221), the three weeks' set first: its
+    add, what it adds to its set on that horizon and the horizon; None when no set holds one."""
+    for key in ("three", "week"):
+        for m in ((recommended or {}).get(key) or {}).get("moves") or []:
+            if (m.get("held_drop") or {}).get("player") == player:
+                return {"add": m["add"], "gain": m["marginal"][key], "horizon": key}
+    return None
 
 
 def moves_payload(built: Built) -> dict[str, Any]:
@@ -714,10 +784,12 @@ def moves_payload(built: Built) -> dict[str, Any]:
                 continue
             best = gains[0]
             nxt = gains[1] if len(gains) > 1 else None
+            move = mv.Move(cand, best.drop)
             row[key] = {
                 "gain": _r(best.gain),
                 "drop": best.drop,
-                "held": _held_for(p, mv.Move(cand)) if best.drop is None else None,
+                "held": _held_for(p, move) if mv.needs_spot(p, move) else None,
+                "held_drop": held_drop(p, move),
                 "next_drop": nxt.drop if nxt else None,
                 "next_price": _r(best.gain - nxt.gain) if nxt else None,
                 # This horizon's move to the season's end: the move the row's For shows.
@@ -730,26 +802,31 @@ def moves_payload(built: Built) -> dict[str, Any]:
     sets: dict[str, list[mv.Move]] = {}
     ros = guard_ros(built)
     guard = None if ros is None else mv.season_guard(ros)
+    season = season_of(ros)
     for key in HORIZONS:
         ranked = sorted(
             (c for c, g in swaps[key].items() if g and g[0].gain > MIN_GAIN),
             key=lambda c: -swaps[key][c][0].gain,
         )
         watched = None if guard is None else Watched(guard)
-        rec = mv.recommend(ev, key, ranked[:POOL], min_gain=MIN_GAIN, allowed=watched)
+        rec = mv.recommend(
+            ev, key, ranked[:POOL], min_gain=MIN_GAIN, allowed=watched, season=season
+        )
         sets[key] = [pm.move for pm in rec.moves]
         # The set the engine recommends without the guard, re-solves and all (a re-solve can
         # find the costly set the plain search misses), solved only when the guard refused a set:
         # else the guarded solve was the unguarded one.
         free = None
         if watched is not None and watched.refused:
-            unguarded = mv.recommend(ev, key, ranked[:POOL], min_gain=MIN_GAIN)
+            unguarded = mv.recommend(ev, key, ranked[:POOL], min_gain=MIN_GAIN, season=season)
             free = [pm.move for pm in unguarded.moves]
         held = held_by_add(p, sets[key])
         rows = [
             {
                 **_move(pm.move, p),
                 "held": held.get(pm.move.add),
+                "held_drop": held_drop(p, pm.move),
+                "decided_by": decided_by(pm, key, season),
                 "marginal": {h: _r(v) for h, v in pm.marginal.items()},
                 "ros": ros_move(built, pm.move),
                 "price_without": _r(pm.price_without),
@@ -773,7 +850,7 @@ def moves_payload(built: Built) -> dict[str, Any]:
         "cleared": cleared_payload(p),
         "room": room_payload(p),
         "keep_rule": keep_payload(built),
-        "stash": stash_payload(built, swaps),
+        "stash": stash_payload(built, swaps, recommended),
         "system": built.system,
         "horizons": {key: {**built.horizons[key], "base": _r(ev.base[key])} for key in HORIZONS},
         "adds": built.adds,
@@ -932,8 +1009,9 @@ def best_payload(built: Built, payload: dict[str, Any]) -> dict[str, Any]:
             "drop": m["drop"],
             "from": m["from"],
             "gain": m["marginal"][key],
-            "basis": dl.basis_of(m["drop"], m["held"]),
+            "basis": dl.basis_of(m["drop"], m["held"], m.get("held_drop") is not None),
             "held": m["held"],
+            "held_drop": m.get("held_drop"),
         }
         for m in rec["moves"]
     ]
@@ -1012,11 +1090,12 @@ def detail_payload(built: Built, add: int, drop: int | None) -> dict[str, Any] |
         {
             "drop": d,
             "kept": d in p.kept,
-            "held": _held_for(p, mv.Move(add)) if d is None else None,
+            "held": _held_for(p, mv.Move(add, d)) if mv.needs_spot(p, mv.Move(add, d)) else None,
+            "held_drop": held_drop(p, mv.Move(add, d)),
             **{key: _r(ev.gain(key, [mv.Move(add, d)])) for key in HORIZONS},
             "ros": ros_move(built, mv.Move(add, d)),
         }
-        for d in [None, *(k for k, _ in p.roster)]
+        for d in [None, *(k for k, _ in p.roster), *(k for k, _ in p.held)]
         if mv.feasible(p, [mv.Move(add, d)])
     ]
     drops.sort(key=lambda r: -r["three"])

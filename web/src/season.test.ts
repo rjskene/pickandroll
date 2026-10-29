@@ -884,6 +884,23 @@ test("an add's basis reads as an open spot, a held move or a drop, the For cell 
   assert.equal(addBasis({ drop: null }, name).kind, "open");
 });
 
+test("a churn reads as its held drop leaving his slot, with the player who moves into it (#221)", () => {
+  const name = (id: number) => `P${id}`;
+  const churn = addBasis({ drop: 7, held: { player: 5, slot: "IL" }, held_drop: { player: 7, slot: "IL" } }, name);
+  assert.deepEqual([churn.kind, churn.text, churn.cell], ["churn", "for P7 from IL, P5 to IL", "P7 (IL), P5 to IL"]);
+  assert.match(churn.title, /P7 leaves IL, dropped first on his own; P5 moves into the freed slot/);
+  assert.match(churn.title, /only for a free agent, or when P7 is worth nothing net of his return/);
+  // With an active spot open nobody moves.
+  const roomy = addBasis({ drop: 7, held: null, held_drop: { player: 7, slot: "IL" } }, name);
+  assert.equal(roomy.text, "for P7 from IL");
+  assert.match(roomy.title, /an active spot is open for the add/);
+  // The queue's line and the landing panel's kind say the same.
+  const e = { add: 11, drop: 7, basis: "churn" as const, held_move: { player: 5, slot: "IL" }, held_drop: { player: 7, slot: "IL" } };
+  assert.equal(queueMoveText(e, name), "P11 for P7 from IL, P5 to IL");
+  const line: BestSetLine = { add: 11, drop: 7, from: "2026-10-26", gain: 0.3, basis: "churn", held: { player: 5, slot: "IL" }, held_drop: { player: 7, slot: "IL" } };
+  assert.equal(setLine(line, name).kind, "churn");
+});
+
 test("the Moves card names the room: what is open, else what is full and who waits", () => {
   const name = (id: number) => `P${id}`;
   assert.equal(roomNote({ open_spots: 1, held_open: { IL: 1 }, eligible: [5] }, name), "1 open spot · IL open: 1");
@@ -1132,6 +1149,11 @@ test("a player who is out reads as a stash, a full slot's leaver, bench or dropp
     "P1 (O, back Nov 2): eligible, IL or IL+ full; P7 should leave IL+, the least value net of return (3.2), though protected: advice only.",
   );
   assert.equal(stashText(stash({ advice: "il_full", slots: ["IL"], net: null }), name), "P1 (O, back Nov 2): eligible, IL full.");
+  // A recommended churn of the occupant is named as the better use of the slot (#221).
+  assert.equal(
+    stashText(stash({ advice: "il_full", slots: ["IL"], net: null, leave: { player: 7, slot: "IL", how: "drop", drop: 7, net: 0, protected: false }, churn: { add: 11, gain: 0.3, horizon: "three" } }), name),
+    "P1 (O, back Nov 2): eligible, IL full; P7 should leave IL, the least value net of return (0.0); the churn adding P11 below is the better use of the slot.",
+  );
   assert.equal(stashText(stash({ status: "GTD", back: "2026-10-24", protected: false, bench: true }), name), "P1 (GTD, back Oct 24): bench, back Oct 24.");
   assert.equal(stashText(stash({ status: "OFS", back: null, protected: false, advice: "droppable" }), name), "P1 (OFS, no return date): droppable, the moves may take him.");
 });

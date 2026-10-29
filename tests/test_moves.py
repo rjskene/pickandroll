@@ -410,12 +410,14 @@ def test_a_held_player_whose_status_cleared_is_activated_on_the_first_day():
     ev = mv.Evaluator(p)
     alone = build([roster[0], roster[1], back], cands, rate, sched, opponent, field, value=value)
     assert ev.base["three"] == pytest.approx(mv.Evaluator(alone).base["three"])
-    # Still out (O), or a healthy player in a bench spot: nothing to activate.
+    # Still out (O): nothing to activate now; his return next Monday is charged (#221).
     out = (5, Player(5, "Back", "MIN", ("C",), status="O"))
     p = build(
         roster, cands, rate, sched, opponent, field, held=[out], held_slots={5: "IL"}, value=value
     )
-    assert mv.cleared(p) == [] and mv.comebacks(p, "three", []) == []
+    assert mv.cleared(p) == [] and mv.comebacks(p, "week", []) == []
+    monday = WEEKS[1][0]
+    assert mv.comebacks(p, "three", []) == [mv.Comeback(5, "IL", monday, 3, returning=True)]
 
 
 def il_league(status="O"):

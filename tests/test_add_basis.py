@@ -128,20 +128,23 @@ def test_a_full_roster_with_the_il_full_gets_drops_only_and_the_same_sets():
     # The full IL is stated at zero, with the out player who would take it.
     assert out["room"] == {"open_spots": 0, "held_open": {"IL": 0}, "eligible": [5]}
     ev = mv.Evaluator(p)
-    allowed = mv.season_guard(sm.guard_ros(built_of(p)))
+    ros = sm.guard_ros(built_of(p))
+    allowed, season = mv.season_guard(ros), sm.season_of(ros)
     for key in sm.HORIZONS:
         rec = out["recommended"][key]
         assert rec["moves"] and all(
             m["drop"] is not None and m["held"] is None for m in rec["moves"]
         )
         assert all(basis == dl.DROP for _, _, basis, _ in logged(entry, key))
-        # No behaviour change: the sets are the guarded search's own.
+        # No behaviour change: the sets are the guarded search's own, ties to the season (#221).
         swapped = mv.single_swaps(ev, key)
         ranked = sorted(
             (c for c, g in swapped.items() if g and g[0].gain > sm.MIN_GAIN),
             key=lambda c: -swapped[c][0].gain,
         )
-        direct = mv.recommend(ev, key, ranked[: sm.POOL], min_gain=sm.MIN_GAIN, allowed=allowed)
+        direct = mv.recommend(
+            ev, key, ranked[: sm.POOL], min_gain=sm.MIN_GAIN, allowed=allowed, season=season
+        )
         assert pairs(rec) == [(pm.move.add, pm.move.drop) for pm in direct.moves]
     for row in out["candidates"].values():
         assert all(row[k] is None or row[k]["drop"] is not None for k in sm.HORIZONS)
@@ -213,7 +216,9 @@ def test_the_queue_entry_copies_the_moves_basis_and_held_move():
     [
         ("held", (11, None, dl.HELD, IL5), {"11": "P11", "5": "Hurt"}),
         ("open", (11, None, dl.OPEN, None), {"11": "P11"}),
-        ("drop", (11, 2, dl.DROP, None), {"11": "P11", "2": "P2", "5": "Hurt"}),
+        # 2, 5 and the held 7 tie for the holder on the three weeks; the season takes 5, out
+        # until Monday, before 2 (#221), and the active drop before the equal churn.
+        ("drop", (11, 5, dl.DROP, None), {"11": "P11", "5": "Hurt"}),
     ],
 )
 def test_the_landing_line_carries_the_set_with_each_basis_the_room_and_their_names(
