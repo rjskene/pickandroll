@@ -14,6 +14,7 @@ from .browser import NO_BROWSER
 from .clock import before
 from .report import Report
 from .steps import (
+    MOVES_WAIT_S,
     Abort,
     Context,
     MovesPlan,
@@ -123,6 +124,8 @@ def browser_pass(
     opened: list[str] = []
     unopened: list[str] = []
     failed: list[str] = []
+    stayed: list[str] = []
+    pages = 0
     for o in openings:
         if hard_stop and not before(ctx.now(), hard_stop):
             unopened.append(o.entry or o.league)
@@ -132,17 +135,28 @@ def browser_pass(
         if landed is None:
             failed.append(o.entry or o.league)
             continue
-        if (
-            o.kind == "il"
-            and o.entry
-            and landed.split("#")[0].startswith(o.url.split("#")[0].split("?")[0])
-        ):
-            # Still on the team page (a build before 0.9.1, or STOP): the add page is opened as
-            # for any other entry by the plan's next item carrying the same entry, if any.
-            ctx.notes.setdefault("il_stayed", []).append(o.entry)
+        pages += 1
         if o.league not in opened:
             opened.append(o.league)
-    summary = f"{len(openings) - len(unopened) - len(failed)} pages opened in {len(opened)} leagues"
+        if o.kind == "il" and o.entry and on_team_page(landed, o.url):
+            # Still on the team page (a build before 0.9.1, or STOP): the extension did not go on
+            # to the entry's add page, so the pass opens it itself, as the Desktop routine did
+            # ("open that entry's add page yourself as for any other entry").
+            ctx.notes.setdefault("il_stayed", []).append(o.entry)
+            if not o.then:
+                continue
+            if hard_stop and not before(ctx.now(), hard_stop):
+                unopened.append(o.entry)
+                continue
+            pass_opening(ctx, pass_id, o.league, o.entry)
+            if open_page(ctx, browser, o.then, MOVES_WAIT_S) is None:
+                failed.append(o.entry)
+                continue
+            pages += 1
+            stayed.append(o.entry)
+    summary = f"{pages} pages opened in {len(opened)} leagues"
+    if stayed:
+        summary += ", add pages opened by the pass after an IL stay: " + ", ".join(stayed[:15])
     if failed:
         summary += f", {len(failed)} failed to open: " + ", ".join(failed[:15])
     if unopened:
@@ -153,8 +167,15 @@ def browser_pass(
     pass_done(ctx, pass_id, summary)
     detail = summary + ("" if pass_id else "; no pass record" if record else "")
     status = ctx.report.failed if failed else ctx.report.ok
-    status(name, detail, plan=plan, pass_id=pass_id, unopened=unopened, failed=failed)
+    status(
+        name, detail, plan=plan, pass_id=pass_id, unopened=unopened, failed=failed, stayed=stayed
+    )
     return opened
+
+
+def on_team_page(landed: str, url: str) -> bool:
+    """The tab is still on the team page it was sent to (the path, any query, any fragment)."""
+    return landed.split("#")[0].startswith(url.split("#")[0].split("?")[0])
 
 
 def _dedupe(openings: Sequence[Opening]) -> list[Opening]:
