@@ -22,6 +22,7 @@ copied to the Mac; the routines open pages and the extension acts, no session cl
 | API | `uvicorn pickandroll.api:app` on 127.0.0.1:8000, a user service, `Restart=always`, `OOMScoreAdjust=-500` |
 | data | `~/pickandroll/data/`, the only copy that counts after cut-over; `data/routine/` holds the runner's marker, run logs, profile, downloads and screens |
 | settings | `~/.config/pickandroll/`: `ntfy_topic`, `ops_issue`, `routine.env` (the user's files; `install.sh` writes a README there) |
+| the private league's solve | left out on this host: `--skip-solve 31822` in `ROUTINE_FLAGS` (the runner's flag), because it ran thirty minutes here without finishing where the public leagues take seconds, and a solve the client abandons keeps computing in the API; the flag stays until the API gives that league's search a budget |
 
 `systemctl --user` over ssh needs the user manager's environment:
 
@@ -88,8 +89,9 @@ the Mac stays live. Start it:
 
 which sets every league's lineup mode and every public league's moves mode to `dry_run`
 through the local API (the private league is refused by the API, as always: suggestions only),
-prints the modes read back, writes `ROUTINE_FLAGS=--no-post` to `routine.env` unless the
-user's own exists, and enables the seven routine timers and the watchdog.
+prints the modes read back, writes `ROUTINE_FLAGS=--no-post --skip-solve 31822` to
+`routine.env` unless the user's own exists (no posts; the private league's solve left out, see
+§1), and enables the seven routine timers and the watchdog.
 
 During the soak both extensions act on Yahoo, the Mac's live and the droplet's in dry run,
 from two addresses, and Basketball Monster is signed in from two places; the morning compare
@@ -106,8 +108,8 @@ kinds, each saved or identical), the private league's pages opened and read back
 summaries (entries due, pages opened), the run times against the windows (`docs/AUTOPILOT.md`
 §3: daily 05:00 to 06:20, morning 07:45 to 14:30, late 15:00 to 20:30, evening-build 21:00 to
 21:30, evening-pass 22:40 to 22:58, monday 06:00 to 12:00), and the `signin` result. A
-difference is a finding on #225. The private league's solve outruns 300 s on this host (the
-public ones take seconds); its ceiling is the runner's own follow-up, not a unit setting.
+difference is a finding on #225. The private league's solve is left out on this host
+(`--skip-solve 31822`, §1): the solve step reports it as left out and stays ok.
 
 ## 5. Cut-over: Monday 2026-11-09, after the 06:00 recorder
 
@@ -121,9 +123,10 @@ Only with `GET http://127.0.0.1:8000/rooms` answering `[]` on both hosts, in thi
    rsync -az --delete --exclude=/routine/ ~/code/pickandroll/data/ pickandroll@hts-digital-ocean:pickandroll/data/
    ```
 
-4. Droplet: `~/pickandroll/ops/vm/install.sh --cutover` (`ROUTINE_FLAGS=` so the digests and
-   recorder comments post again, the timers on). It sets no mode: the copy carries the Mac's
-   switches, and any change is the user's own click on the dashboard.
+4. Droplet: `~/pickandroll/ops/vm/install.sh --cutover` (`ROUTINE_FLAGS=--skip-solve 31822`:
+   the digests and recorder comments post again, the private league's solve stays left out,
+   the timers on). It sets no mode: the copy carries the Mac's switches, and any change is the
+   user's own click on the dashboard.
 5. Mac: stop the Mac's API (the port), load the tunnel agent (`ops/mac/README.md`), check
    `curl http://127.0.0.1:8000/seasons` answers from the droplet; the dashboard (`npm run
    dev` in `web/`, unchanged) and the Mac's Chrome extension now read the droplet's API.

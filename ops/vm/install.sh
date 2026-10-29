@@ -7,11 +7,15 @@
 # new code (never under a live draft room: GET /rooms must be [] or the API down). The timers
 # are left as they are unless asked:
 #   --soak     every league's lineup mode and every public league's moves mode set to dry_run
-#              through the local API and read back, ROUTINE_FLAGS=--no-post (unless the user's
-#              routine.env exists), the seven routine timers and the watchdog enabled: the
-#              soak, the Mac still live
-#   --cutover  ROUTINE_FLAGS= (posts on), the timers enabled; the modes are the user's own
-#              clicks on the dashboard
+#              through the local API and read back, ROUTINE_FLAGS=--no-post --skip-solve 31822
+#              (unless the user's routine.env exists), the seven routine timers and the
+#              watchdog enabled: the soak, the Mac still live
+#   --cutover  ROUTINE_FLAGS=--skip-solve 31822 (posts on), the timers enabled; the modes are
+#              the user's own clicks on the dashboard
+# The private league's solve is left out on this host (--skip-solve, the runner's flag): it ran
+# thirty minutes here without finishing where the public leagues take seconds, and a solve the
+# client abandons keeps computing in the API. The flag stays until the API gives that league's
+# search a budget.
 #   --stop     the timers disabled and nothing else touched (the rollback's first step: no
 #              pull, no restart); the API and Xvfb stay up
 # What stays the user's is printed at the end. The runbook is docs/OPS.md.
@@ -102,7 +106,8 @@ cat > "$conf/README" <<'TXT'
 pickandroll routine host: the user's settings (never in the repo; the runbook is docs/OPS.md)
   ntfy_topic   one line, the ntfy.sh topic the alerts post to; absent, alerts go to the journal and the issue only
   ops_issue    one line, the GitHub issue the alerts comment on (225, the VM tracker, until the user rules another)
-  routine.env  ROUTINE_FLAGS=... for every routine run: --no-post through the soak, empty after cut-over
+  routine.env  ROUTINE_FLAGS=... for every routine run: "--no-post --skip-solve 31822" through the soak,
+               "--skip-solve 31822" after cut-over (the private league's solve is left out on this host)
 TXT
 [ -s "$conf/ntfy_topic" ] && say "alerts: ntfy topic set, issue #$(cat "$conf/ops_issue")" \
   || say "alerts: no ntfy topic yet ($conf/ntfy_topic), issue #$(cat "$conf/ops_issue")"
@@ -119,7 +124,7 @@ print(m.get("mode") if isinstance(m, dict) else m if m is not None else r.get("d
 }
 case $mode in
   soak)
-    [ -s "$conf/routine.env" ] || echo "ROUTINE_FLAGS=--no-post" > "$conf/routine.env"
+    [ -s "$conf/routine.env" ] || echo "ROUTINE_FLAGS=--no-post --skip-solve 31822" > "$conf/routine.env"
     say "routine.env: $(cat "$conf/routine.env")"
     say "modes set to dry_run through the API:"
     leagues=$(curl -s --max-time 10 "$api/seasons" | "$py" -c 'import json, sys
@@ -138,8 +143,8 @@ print(" ".join(str(s["league"]) for s in json.load(sys.stdin) if "league" in s))
     say "timers: enabled (the soak)"
     ;;
   cutover)
-    echo "ROUTINE_FLAGS=" > "$conf/routine.env"
-    say "routine.env: ROUTINE_FLAGS= (posts on)"
+    echo "ROUTINE_FLAGS=--skip-solve 31822" > "$conf/routine.env"
+    say "routine.env: $(cat "$conf/routine.env") (posts on, the private league's solve left out)"
     # shellcheck disable=SC2086
     systemctl --user enable -q --now $timers
     say "timers: enabled (cut-over); the leagues' switches are the user's own clicks on the dashboard"
