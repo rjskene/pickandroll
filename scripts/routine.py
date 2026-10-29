@@ -71,7 +71,7 @@ def main(argv: list[str] | None = None) -> int:
     else:
         clock = now
 
-    report = Report(args.routine, clock())
+    report = Report(args.routine, clock(), clock=clock)
     downloads = args.data / "routine" / "downloads"
     browser = None
     if not args.no_browser:

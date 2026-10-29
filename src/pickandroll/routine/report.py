@@ -4,6 +4,7 @@ JSON run log and the daily marker the freshness light reads (``season/status.py`
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -59,9 +60,15 @@ class Report:
     stopped: bool = False
     #: The API never answered (connection refused, DNS, timeout): exit code 2.
     unreachable: bool = False
+    #: Stamps each step's start (the previous step's end) and end; None leaves steps untimed.
+    clock: Callable[[], datetime] | None = None
 
     def add(self, name: str, status: str, detail: str, **data: Any) -> Step:
         step = Step(name, status, detail, data=data)
+        if self.clock is not None:
+            last = self.steps[-1].finished if self.steps and self.steps[-1].finished else None
+            step.started = last or self.started.isoformat()
+            step.finished = self.clock().isoformat()
         self.steps.append(step)
         return step
 
@@ -92,7 +99,7 @@ class Report:
         if self.stopped:
             lines.append("STOP is set: nothing done")
         for s in self.steps:
-            lines.append(f"- {s.name}: {s.status}, {s.detail}")
+            lines.append(f"- {s.name}: {s.status}, {s.detail}{_took(s)}")
         if self.exports:
             lines.append("- exports saved: " + ", ".join(f"{k} {v}" for k, v in self.exports.items()))
         for a in self.alerts:
@@ -140,3 +147,11 @@ def write_json(path: Path, payload: Any) -> Path:
     tmp.write_text(json.dumps(payload, indent=1, ensure_ascii=False) + "\n")
     tmp.replace(path)
     return path
+
+
+def _took(step: Step) -> str:
+    """`` (NN s)`` for a timed step that took two seconds or more; nothing otherwise."""
+    if not step.started or not step.finished:
+        return ""
+    secs = (datetime.fromisoformat(step.finished) - datetime.fromisoformat(step.started)).total_seconds()
+    return f" ({secs:.0f} s)" if secs >= 2 else ""

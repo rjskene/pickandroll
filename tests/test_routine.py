@@ -72,7 +72,7 @@ class Sleeps:
 
 def make_ctx(api, clock, tmp_path, **kw):
     sleeps = Sleeps(clock)
-    report = Report(kw.pop("routine", "daily"), clock())
+    report = Report(kw.pop("routine", "daily"), clock(), clock=clock)
     scripts: list[list[str]] = []
 
     def run_script(args):
@@ -151,6 +151,20 @@ def test_daily_refreshes_public_leagues_paced_and_solves_every_league(tmp_path):
     assert "4 pages would open" in by_name["lineup"].detail  # today and tomorrow, two leagues
     assert by_name["start_active"].detail == "nothing to open"  # no league needs it today
     assert not report.refused and report.finished is not None
+
+
+def test_steps_are_timed_from_the_previous_step_and_the_summary_says_how_long(tmp_path):
+    api = FakeAPI(base_answers())
+    clock = Clock("2026-10-29 05:01")
+    ctx = make_ctx(api, clock, tmp_path)
+    report = run("daily", ctx, "http://api")
+    refresh = report.find("refresh")
+    assert refresh.started == report.find("lineup_pages").finished  # a step starts where the last ended
+    assert refresh.finished == "2026-10-29T05:02:00-05:00"  # the one 60 s pause between two leagues
+    assert "- refresh: ok, 2 leagues refreshed (60 s)" in report.summary()
+    assert "- api: ok, 200 on first check, not restarted\n" in report.summary()  # untimed-looking: under 2 s
+    logged = report.to_dict()["steps"][0]
+    assert logged["started"] == "2026-10-29T05:01:00-05:00" and "finished" in logged
 
 
 def test_daily_marker_has_the_eight_step_keys_and_no_exports(tmp_path):
