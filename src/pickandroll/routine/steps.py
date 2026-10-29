@@ -64,6 +64,10 @@ class Context:
     dry_run: bool = False
     #: GitHub posts allowed (the soak runs with them off).
     posting: bool = True
+    #: Leagues whose solve is left out (``--skip-solve``): the private league's search outruns
+    #: the daily's window on a slow host, and a solve the client gives up on keeps computing in
+    #: the API; the step reports them skipped.
+    skip_solve: frozenset[str] = frozenset()
     notes: dict[str, Any] = field(default_factory=dict)
 
     def get(self, path: str, timeout: float = 60.0) -> tuple[int, Any, dict[str, str]]:
@@ -215,8 +219,11 @@ def solve_all(
 ) -> dict[str, int]:
     """``GET /seasons/<id>/moves`` per league, one at a time: each writes the day's decision-log
     entry (#125); nothing is posted or changed by it."""
+    left_out = [k for k in leagues if k in ctx.skip_solve]
+    leagues = [k for k in leagues if k not in ctx.skip_solve]
+    note = f"; left out by --skip-solve: {', '.join(left_out)}" if left_out else ""
     if ctx.dry_run:
-        ctx.report.skipped(name, f"dry run: would solve {len(leagues)} leagues")
+        ctx.report.skipped(name, f"dry run: would solve {len(leagues)} leagues{note}")
         return {}
     codes: dict[str, int] = {}
     for league in leagues:
@@ -229,9 +236,9 @@ def solve_all(
     detail = f"{len(leagues) - len(failed)} leagues solved"
     if failed:
         detail += f"; failed: {', '.join(f'{k} ({codes[k]})' for k in failed)}"
-        ctx.report.failed(name, detail, codes=codes)
+        ctx.report.failed(name, detail + note, codes=codes, left_out=left_out)
     else:
-        ctx.report.ok(name, detail + ", all 200", codes=codes)
+        ctx.report.ok(name, detail + ", all 200" + note, codes=codes, left_out=left_out)
     return codes
 
 
