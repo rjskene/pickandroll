@@ -440,17 +440,22 @@ def test_each_solve_of_the_moves_route_appends_an_entry_to_its_days_log(client):
     # The season guard's record on each set (#164): held back or not, never missing.
     for logged_set in first["sets"]:
         assert logged_set["season_guard"]["held_back"] in (True, False)
-    # The same answer again is the cached one: nothing new to log.
+    # The same answer again is the cached one: the routine's call still writes its entry, from
+    # it, with the time it was built (#240 (i)).
+    again = NOW + timedelta(minutes=1)
+    client.app.state.seasons.clock = lambda: again
     client.get(f"/seasons/{LEAGUE}/moves")
-    assert len(logged(client)) == 1
-    # New inputs the same day solve again, and the entry goes after the first one.
+    first_again = logged(client)[1]
+    assert (first_again["at"], first_again["built_at"]) == (again.isoformat(), NOW.isoformat())
+    assert first_again["sets"] == first["sets"] and "built_at" not in first
+    # New inputs the same day solve again, and the entry goes after the first ones.
     later = NOW + timedelta(minutes=5)
     client.app.state.seasons.clock = lambda: later
     snapshot(client, LEAGUE, f"{SITE}/{LEAGUE}/transactions", fixture("transactions.html"))
     client.get(f"/seasons/{LEAGUE}/moves")
     entries = logged(client)
-    assert [e["at"] for e in entries] == [NOW.isoformat(), later.isoformat()]
-    assert entries[0] == first
+    assert [e["at"] for e in entries] == [NOW.isoformat(), again.isoformat(), later.isoformat()]
+    assert entries[0] == first and "built_at" not in entries[2]
 
 
 def test_the_moves_route_carries_the_weeks_streaming_plan(client):

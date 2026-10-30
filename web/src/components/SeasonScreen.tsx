@@ -98,6 +98,10 @@ import {
   weekResult,
   weekTone,
   writeWatch,
+  centralClock,
+  movesPoll,
+  STALE_CAP_MS,
+  staleLine,
   type AvailableFilter,
   type AvailableSort,
   type AvailableSortKey,
@@ -224,6 +228,8 @@ export default function SeasonScreen({
     boardRef.current?.scrollIntoView({ block: "nearest" });
   };
   const system = chosen ?? s?.week_projection.default ?? "bbm";
+  // When the Moves card's answer first came back stale (#240), null while it is fresh.
+  const [staleSince, setStaleSince] = useState<number | null>(null);
   const moves = useQuery({
     queryKey: ["moves", league, system, s?.updated_at],
     queryFn: () => api.moves(league, system),
@@ -231,9 +237,18 @@ export default function SeasonScreen({
     // A new snapshot keeps the last gains up while its own are valued; another system's never
     // stand in for this one's.
     placeholderData: (prev, prevQuery) => (prevQuery?.queryKey[2] === system ? prev : undefined),
-    refetchInterval: 60_000,
+    // A stale answer asks again every 3 s while the API solves, for 120 s at most (#240).
+    refetchInterval: (q) => movesPoll(Boolean(q.state.data?.stale), staleSince, Date.now()),
     retry: false,
   });
+  const stale = moves.isPlaceholderData ? undefined : moves.data?.stale;
+  useEffect(() => {
+    if (!stale) setStaleSince(null);
+    else setStaleSince((at) => at ?? Date.now());
+  }, [stale]);
+  // A new snapshot (a refresh) or another system starts the 120 s again.
+  useEffect(() => setStaleSince(null), [league, system, s?.updated_at]);
+  const staleText = stale ? staleLine(stale, staleSince != null && now - staleSince >= STALE_CAP_MS, centralClock) : null;
   const mh = MOVE_HORIZON[horizon];
   const openMove = (id: number) => pick({ add: id, drop: openingDrop(moves.data?.candidates[String(id)], mh) });
   // A new read or a new solve moves the light.
@@ -295,7 +310,7 @@ export default function SeasonScreen({
               trade
             </button>
           ),
-          body: picked ? <MoveDrawer league={league} s={s} system={system} m={moves.data} picked={picked} onPick={pick} /> : <Moves q={moves} s={s} onPick={pick} />,
+          body: picked ? <MoveDrawer league={league} s={s} system={system} m={moves.data} picked={picked} onPick={pick} /> : <Moves q={moves} s={s} onPick={pick} staleText={staleText} />,
         };
       case "trade":
         return {
@@ -899,7 +914,7 @@ function BasisCell({ x, name, className, children }: { x: { drop: number | null;
 }
 
 /** The recommended sets, the three weeks first, then the rest of this week. */
-function Moves({ q, s, onPick }: { q: UseQueryResult<MovesPayload>; s: SeasonView; onPick: (m: MoveKey) => void }) {
+function Moves({ q, s, onPick, staleText }: { q: UseQueryResult<MovesPayload>; s: SeasonView; onPick: (m: MoveKey) => void; staleText: string | null }) {
   const name = useNamer(s);
   if (!s.my_team) return <p className="muted">The moves need my team: none is set for this league.</p>;
   if (q.error) return <p className="error">{q.error.message}</p>;
@@ -909,6 +924,11 @@ function Moves({ q, s, onPick }: { q: UseQueryResult<MovesPayload>; s: SeasonVie
   const reasons = [...new Set(Object.values(m.candidates).flatMap((c) => (c.reason ? [c.reason] : [])))];
   return (
     <>
+      {staleText && (
+        <p className="accent small" title={m.stale?.inputs_at ? `the inputs being solved: ${centralClock(m.stale.inputs_at)}` : undefined}>
+          {staleText}
+        </p>
+      )}
       <p className="muted small" title={m.adds.complete ? "my adds this week from the transactions page" : "the transactions page does not reach back to the week's start: more adds may have been used"}>
         {addsNote(m.adds)}
         {m.system.fallback ? ` · ${m.system.fallback}` : ""}

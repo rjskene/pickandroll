@@ -44,6 +44,9 @@ import type {
   WeekPlans,
 } from "./api";
 import {
+  movesPoll,
+  STALE_CAP_MS,
+  staleLine,
   matchupColumns,
   matchupExplainer,
   axisRange,
@@ -2199,4 +2202,16 @@ test("a week plan's head, its roster changes and the plans shown (#221 part 2)",
     weekPlansTitle(plans, "expected categories"),
     "plan 1 is the week's recommended set; the searched plans are at most 4 steps, up to 5 plans over the rest of the week, searched 8 wide and the best 8 valued exactly in 0.4 s; a searched plan is plan 1 only when it beats the set's week by the floor, 0.1 expected categories; plans with the same adds on the same days are one, the best week kept; recommended, a heuristic",
   );
+});
+
+test("a stale moves answer asks again every 3 s for 120 s, then waits for a refresh (#240)", () => {
+  assert.equal(movesPoll(false, null, 0), 60_000);
+  assert.equal(movesPoll(true, null, 0), 3_000);
+  assert.equal(movesPoll(true, 1_000, 1_000 + STALE_CAP_MS - 1), 3_000);
+  assert.equal(movesPoll(true, 1_000, 1_000 + STALE_CAP_MS), false);
+  const stale = { built_at: "2026-10-30T12:05:00+00:00", inputs_at: "2026-10-30T12:20:00+00:00", reason: "inputs newer than this answer; solving" };
+  const clock = (iso: string | null) => (iso ? "7:05 AM CT" : "");
+  assert.equal(staleLine(stale, false, clock), "solving: inputs newer than this answer (this answer built 7:05 AM CT)");
+  assert.equal(staleLine(stale, true, clock), "still solving (this answer built 7:05 AM CT): refresh to look again");
+  assert.equal(staleLine({ ...stale, built_at: null }, false, clock), "solving: inputs newer than this answer");
 });

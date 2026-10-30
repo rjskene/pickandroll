@@ -115,6 +115,7 @@ import threading
 import time
 from collections import Counter
 from collections.abc import Callable, Iterable, Mapping
+from concurrent.futures import Executor, ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta, tzinfo
 from pathlib import Path
@@ -274,8 +275,20 @@ def save(
     )
 
 
+#: A page's look at the moves (#240): ``source=page`` on the route, the web's flag only.
+PAGE = "page"
+#: Why a page's answer is an older one while the moves of newer inputs are solved (#240).
+STALE_REASON = "inputs newer than this answer; solving"
+#: The page's solves run here, one at a time, never on the process pool from the route (#240).
+_PAGE_SOLVES = ThreadPoolExecutor(max_workers=1, thread_name_prefix="moves-page")
+
+
 def nba_today(now: datetime) -> date:
     return now.astimezone(NBA_TZ).date()
+
+
+def _iso(at: datetime | None) -> str | None:
+    return None if at is None else at.isoformat(timespec="seconds")
 
 
 # --------------------------------------------------------------------------- refresh jobs
@@ -517,6 +530,13 @@ class SeasonService:
         #: One writer of the ESPN ids the scorecards match.
         self._ids_lock = threading.Lock()
         self.moves_cache = season_moves.MovesCache()
+        #: When each kept moves answer was made, by its cache key (#240).
+        self._moves_at: dict[tuple[Any, ...], datetime] = {}
+        #: The page solves started and not done, by key: at most one a key (#240).
+        self._page_solving: set[tuple[Any, ...]] = set()
+        self._page_lock = threading.Lock()
+        #: Where a page's solve runs (tests run it at once).
+        self.page_solves: Executor = _PAGE_SOLVES
         self.flags_cache = season_moves.MovesCache()
         self.strategy_runs = season_strategy.Runs()
         #: The strategy engine's programs run in the background process pool; 1: in process.
@@ -768,18 +788,92 @@ class SeasonService:
             raise HTTPException(409, f"league {league} has no season of my team to move in yet")
         return built
 
-    def moves(self, league: str, system: str | None) -> dict[str, Any]:
+    def moves(
+        self, league: str, system: str | None, source: str | None = None, entry: bool = False
+    ) -> dict[str, Any]:
+        """Today's moves on the league's current inputs, solved once a key. A solve without
+        ``source`` writes its decision entry; ``entry`` (the route's call without a source, the
+        routine's) writes one every call, from the answer kept when there was no solve to write
+        it, with that answer's build time (#240 (i)). ``source="page"`` (#240): never logged and
+        never waits on a solve when an answer of today is kept: that one comes back at once with
+        ``stale`` while the solve of the newer inputs runs on the page's thread."""
         system = self._system(league, system)
-        built = self._built(league, system)
         today = nba_today(self.clock())
-        key = (league, system, "moves", today, self._moves_stamp(league))
+        stamp = self._moves_stamp(league)
+        key = (league, system, "moves", today, stamp)
+        if source == PAGE:
+            kept = self.moves_cache.peek(key)
+            if kept is not None:
+                return kept
+            older = self.moves_cache.latest(key[:3])
+            if older is None or older[0][3] != today:
+                return self._solve_moves(league, system, key, log=False)
+            self._solve_later(league, system, key)
+            inputs = max((ns for _, ns in stamp), default=None)
+            stale = {
+                "built_at": _iso(self._moves_at.get(older[0])),
+                "inputs_at": None
+                if inputs is None
+                else _iso(datetime.fromtimestamp(inputs / 1e9, UTC)),
+                "reason": STALE_REASON,
+            }
+            return {**older[1], "stale": stale}
+        made: list[bool] = []
+        out = self._solve_moves(league, system, key, log=True, made=made)
+        if entry and not made:
+            built = self._built(league, system)
+            built_at = _iso(self._moves_at.get(key))
+            self._log(
+                league,
+                lambda at: {**season_decisions.moves_entry(built, out, at), "built_at": built_at},
+            )
+        return out
+
+    def _solve_moves(
+        self,
+        league: str,
+        system: str,
+        key: tuple[Any, ...],
+        log: bool,
+        made: list[bool] | None = None,
+    ) -> dict[str, Any]:
+        """The moves of ``key``, solved once under the cache's gate for it; ``made`` gets True
+        when this call solved them, and ``log`` writes the decision entry of that solve."""
+        built = self._built(league, system)
 
         def make() -> dict[str, Any]:
             out = season_moves.moves_payload(built)
-            self._log(league, lambda at: season_decisions.moves_entry(built, out, at))
+            at = self.clock()
+            with self._page_lock:
+                for old in [k for k in self._moves_at if k[:3] == key[:3]]:
+                    del self._moves_at[old]
+                self._moves_at[key] = at
+            if made is not None:
+                made.append(True)
+            if log:
+                self._log(league, lambda at: season_decisions.moves_entry(built, out, at))
             return out
 
         return self.moves_cache.get(key, make)
+
+    def _solve_later(self, league: str, system: str, key: tuple[Any, ...]) -> None:
+        """Solve ``key``'s moves on the page's thread, unless a page solve of it is on already;
+        a failure leaves the next look to try again."""
+        with self._page_lock:
+            if key in self._page_solving:
+                return
+            self._page_solving.add(key)
+
+        def run() -> None:
+            try:
+                self._solve_moves(league, system, key, log=False)
+            except Exception:  # noqa: BLE001, S110 - the next look solves again
+                pass
+            finally:
+                with self._page_lock:
+                    self._page_solving.discard(key)
+
+        self.page_solves.submit(run)
 
     def _log(self, league: str, entry: Callable[[datetime], dict[str, Any]]) -> None:
         """Keep a finished solve in the decision log (#125); a failure to log loses the entry,
@@ -3076,9 +3170,18 @@ def register(
     to_q = Query(None, alias="to", description="the last day; today")
 
     @app.get("/seasons/{league}/moves")
-    async def get_moves(league: str = league_id, system: str | None = system_q) -> dict[str, Any]:
-        """Every available player's best move on both horizons and the recommended moves."""
-        return await asyncio.to_thread(service.moves, league, system)
+    async def get_moves(
+        league: str = league_id,
+        system: str | None = system_q,
+        source: str | None = Query(
+            None,
+            pattern="^page$",
+            description="page: the web's look, answered at once and never logged (#240)",
+        ),
+    ) -> dict[str, Any]:
+        """Every available player's best move on both horizons and the recommended moves. A call
+        without ``source`` (the routine's) waits for the solve and writes one decision entry."""
+        return await asyncio.to_thread(service.moves, league, system, source, source is None)
 
     @app.get("/seasons/{league}/best")
     async def get_best(league: str = league_id, system: str | None = system_q) -> dict[str, Any]:
