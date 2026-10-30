@@ -204,11 +204,14 @@ def test_a_change_to_the_file_solves_again(client):
     put_knobs(client, {"in_force": {"protection_floor": 0.0}})
     client.get(f"/seasons/{LEAGUE}/moves")
     client.get(f"/seasons/{LEAGUE}/moves")
-    assert len(logged(client)) == 1
+    # The same file: no new solve; the second call's entry is the kept answer's (#240 (i)).
+    assert ["built_at" in e for e in logged(client)] == [False, True]
     put_knobs(client, {"in_force": {"protection_floor": 0.4}})
     m = client.get(f"/seasons/{LEAGUE}/moves").json()
     assert m["keep_rule"]["floor"] == 0.4
-    assert [e["knobs"]["protection_floor"] for e in logged(client)] == [0.0, 0.4]
+    entries = logged(client)
+    assert [e["knobs"]["protection_floor"] for e in entries] == [0.0, 0.0, 0.4]
+    assert "built_at" not in entries[2]
 
 
 @pytest.mark.parametrize("body", [None, "{not json", json.dumps([1, 2])])
