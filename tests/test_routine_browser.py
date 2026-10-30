@@ -124,8 +124,8 @@ class FakePage:
             return True
         if js is chromium.COUNT_JS:
             return self.counts.get(arg, 0)
-        if js is chromium.YAHOO_SIGNED_OUT_JS:
-            return self.signed_out
+        if js is chromium.YAHOO_SIGNED_IN_JS:
+            return not self.signed_out
         raise AssertionError(f"unexpected script {js[:40]}")
 
     def get_by_role(self, role, name=None, exact=False):
@@ -237,10 +237,10 @@ def test_signed_in_checks_each_site_once_and_opens_only_its_check_page(tmp_path)
     [
         ("https://login.yahoo.com/?.src=fantasy&.done=" + PRIVATE, False),  # the sign-in redirect
         ("https://guce.yahoo.com/consent?brandType=nonEu", False),  # the consent interstitial
-        (PRIVATE, True),  # the page shows a Sign in link or form
+        (PRIVATE, True),  # a sign-in form, or a page without the My Team link
     ],
 )
-def test_yahoo_signed_out_by_the_redirect_the_consent_page_or_a_sign_in_link(
+def test_yahoo_signed_out_by_the_redirect_the_consent_page_or_a_page_without_my_team(
     tmp_path, landed, signed_out
 ):
     page = FakePage(landed={YAHOO_CHECK: landed}, signed_out=signed_out)
