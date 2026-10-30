@@ -81,18 +81,26 @@ public, and nothing typed passes through a session, a routine or a log. `--port`
 Mac's end of the tunnel when 9222 is taken, `--no-open` prints the DevTools URLs instead of
 opening them.
 
-`--keychain` spares the Console line. The user makes two Keychain items once, by hand,
+`--keychain` spares the typing. The user makes two Keychain items once, by hand,
 `security add-generic-password -s pickandroll-bbm -a <account> -w` and the same with
 `pickandroll-yahoo` (`<account>` is the sign-in name on the site; the command asks for the
-password twice). Then, at each site's prompt, with its password field on screen in the DevTools
-window, Enter on the Mac has `ops/mac/keychain_fill.py` read that item in its own process and
-put the password into the field over the tunnel's DevTools websocket (a click on the field, then
-one `Input.insertText`); the user clicks Sign in. The value goes to the websocket only, never
-into a shell argument, an environment variable, a line of output or a log; a missing item stops
-the script before it touches the droplet and prints the add line; `s` and Enter at a prompt
-skips that site (the Console line still works there). Keychain may ask once whether `security`
-may read an item: allow it. Only the user runs this command, by hand, from the Mac; no routine,
-timer or Claude session calls it.
+password twice). Then, at each site's prompt, with the site's page on screen in the DevTools
+window (its front page or its sign-in page), one Enter on the Mac has `ops/mac/keychain_fill.py`
+walk to the password field and fill it: the item's account name goes into the username field; on
+Yahoo it clicks Next and, when Yahoo answers with its passkey page, "Try signing in another way"
+and the option that names the password (any visible option whose text contains "password",
+never a forgot or reset link); on Basketball Monster's front page it clicks Login (its sign-in
+page shows both fields at once). Every click is a mouse event on an element found by its visible
+text, never a form submit, and Sign in is never clicked: the user clicks it. The password is read
+from the item in the helper's own process only once the field is on the page, and goes to the
+websocket as one `Input.insertText`, never into a shell argument, an environment variable, a
+line of output or a log; the account name is not printed either. A page the helper does not
+know (a verification code, a captcha) stops it with the page's path and nothing more typed; the
+user continues by hand in the window and presses Enter again, which also fills a password field
+that is already on screen. A missing item stops the script before it touches the droplet and
+prints the add line; `s` and Enter at a prompt skips that site (the Console line still works
+there). Keychain may ask once whether `security` may read an item: allow it. Only the user runs
+this command, by hand, from the Mac; no routine, timer or Claude session calls it.
 
 VNC stays possible with a real VNC client on a free local port (TigerVNC at `127.0.0.1:5901`
 over `ssh -L 5901:127.0.0.1:5900`), never macOS Screen Sharing: it refuses every address of the
