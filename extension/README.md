@@ -265,6 +265,26 @@ no IL control. The routine (or the side panel's due list) opens the player's tea
 
 Every run goes to `POST /seasons/{league}/autopilot/il` (docs/AUTOPILOT.md §2).
 
+## The held drop before a churn's claim (0.10.0, #221 part 3)
+
+A churn drops a held player (IL, IL+) for its add. Yahoo cannot do that as one transaction, so the held player
+is dropped on his own first. The routine (or the side panel's due list) opens my team's drop page
+(`/nba/<league>/<team>/dropplayer`) with a drop fragment (`#pickandroll-drop`, `-drop-late`, `-drop-evening`,
+`-drop-panel`), once per item `GET …/moves/due` names in `drop_first`.
+
+- **Dry run** (and a live league whose guard refuses): logs `would_drop` and clicks nothing.
+- **Live:** the player's row button (its `data-check-box-value`, trimmed, equal to his id) is clicked once.
+  Yahoo draws its confirm in place, and its one submit is clicked only when the confirm reads stage 2, the
+  hidden `dpid` is his id and the submit says "Drop <his name>". Anything else stops with Yahoo's words and
+  nothing is submitted. The drop goes on record in this browser before the submit. It is never submitted twice
+  for an entry, and never retried after a failure or an unconfirmed answer that day. The hidden box is never
+  touched.
+- The page Yahoo lands on logs the run. It is `dropped` on errno 933 or the "You have successfully dropped"
+  notice, else `unconfirmed`. Once dropped, the tab goes on to the entry's IL move, or to its add page with the
+  moves fragment.
+
+Every run goes to `POST /seasons/{league}/autopilot/drop` (docs/AUTOPILOT.md §2).
+
 ## What it reads and sends
 
 - **Reads:** the text frames of the draft room's own WebSocket. The page script adds a listener to the socket
@@ -276,7 +296,7 @@ Every run goes to `POST /seasons/{league}/autopilot/il` (docs/AUTOPILOT.md §2).
   `localhost`/`127.0.0.1`, and only from the service worker; the Yahoo page itself never calls localhost.
 - **League pages (0.5.0):** the page as Chrome rendered it, less its scripts, styles, frames and form fields, with its URL
   and the time it was read, to the same API through the service worker. Only the league's own pages under
-  `/nba/<id>/` (above); never the draft client, and nothing on them is clicked but the live claim below.
+  `/nba/<id>/` (above); never the draft client, and nothing on them is clicked but the executors' live steps below.
 - **Lineup executor (0.6.0):** on your team page, the lineup form's action, field names, players' slots and
   options, and the run's outcome, to the same API. The form's crumb is never read; no field is set and the form
   is never submitted.
@@ -295,6 +315,10 @@ Every run goes to `POST /seasons/{league}/autopilot/il` (docs/AUTOPILOT.md §2).
   id, whether it is editable or empty, its slot labels), Yahoo's save notice and the run's outcome, to the same
   API. Nothing is fetched and no field is set; a live move clicks two slot labels, once each. On the add page
   it also reads Yahoo's "You currently have N empty spot(s)" words.
+- **Held drop (0.10.0):** on the drop page opened with a drop fragment, the form's stage, each row button's player
+  id, whether it shows and whether its row has his name link, and Yahoo's confirm (its stage, hidden id and
+  submit's words). The page Yahoo lands on sends its alert codes and notice. Nothing is fetched and no field is
+  set; a live drop clicks the row's button and the confirm's submit, once each.
 - **Never:** cookies, the `?auth=` part of the room URL, anything you type, or any page other than the draft
   client and the league pages above.
 
@@ -309,12 +333,13 @@ Every run goes to `POST /seasons/{league}/autopilot/il` (docs/AUTOPILOT.md §2).
 | `lib/room.js` | `RoomTracker`: picks, the pick on the clock, the sync cursor, how my picks landed (pure) |
 | `lib/drafter.js` | armed mode: one turn at a time, a newer turn supersedes an older one, the queue backstop and the probe (pure, through a page adapter) |
 | `lib/yahoo.js` | Yahoo's player table: row matching by headshot id and name, label checks, the plan's candidates (pure) |
-| `addpage.js` | page world, `document_start`, league pages: on an add page opened with a moves fragment, or my team page opened with a start-active one (0.9.0) or an IL one (0.9.1), and nowhere else, keeps Yahoo's alerts as text on the root element (0.8.2) |
-| `league.js` | isolated world, league pages: posts the page to the worker, follows Next 25 only during an armed read; on my team page, the lineup executor's dry run; on an add page opened with the fragment, the moves executor's pass (dry run, or the live claim); on my team page opened with a start-active fragment, Start Active Players, or with an IL fragment, the IL move and on to its claim; their strips |
+| `addpage.js` | page world, `document_start`, league pages: on an add page opened with a moves fragment, my team page opened with a start-active one (0.9.0) or an IL one (0.9.1), or the drop page opened with a drop one (0.10.0), and nowhere else, keeps Yahoo's alerts as text on the root element (0.8.2) |
+| `league.js` | isolated world, league pages: posts the page to the worker, follows Next 25 only during an armed read; on my team page, the lineup executor's dry run; on an add page opened with the fragment, the moves executor's pass (dry run, or the live claim); on my team page opened with a start-active fragment, Start Active Players, or with an IL fragment, the IL move and on to its claim; on the drop page opened with a drop fragment, a churn's held drop, and on the page Yahoo lands on, its answer and the way on; their strips |
 | `lib/league.js` | which league pages are read, the snapshot body, the multi-page read (pure) |
 | `lib/lineup.js` | the lineup executor's page side: the form read, the steps' checks, the run for the log, the strip (pure) |
 | `lib/moves.js` | the moves executor's page side: the add page read, the entries' checks, the pass for the log, the strip (pure) |
 | `lib/ilmove.js` | the IL move: the item for the page, the swap controls read, the checks, the two clicks (`moveToIL`, the one step that clicks), the run for the log, the way on to the claim, the claim's wait (#214) |
+| `lib/drop.js` | a churn's held drop: the item for the page, the page read, the checks, the two clicks (`dropPlayer`, the one step that clicks), the landed page's answer, the run for the log, the way on (#221 part 3) |
 | `lib/startactive.js` | Start Active Players: the control read, the checks, the same-day rule, the two presses (`pressStartActive`, the one step that clicks), the run for the log, the strip (#215) |
 | `worker.js` | service worker: the only caller of the API; per-tab state for the panel in `chrome.storage.session` |
 | `sidepanel/` | side panel: room state, attach a session, mode, plan, detach; on a league page, its posts and the read; on my team page, the lineup executor's last run and **Set lineup now**, the moves executor's last pass and **Check moves now** (the due entries' add pages as links), Start Active's last run and **Start active players now** |

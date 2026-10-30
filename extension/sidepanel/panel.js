@@ -379,9 +379,11 @@ $("moves-run").addEventListener("click", async () => {
   $("moves-due").replaceChildren();
   try {
     const due = await call("moves_due", { league: league.league });
-    // An entry behind an IL move is opened from its team page, which goes on to the claim (#214).
-    const behind = new Set((due.il_first || []).map((x) => x.entry));
-    const links = [...L.ilLinks(due, L.passMode(due).mode === "live"), ...L.dueLinks(due).filter((x) => !behind.has(x.id))];
+    // An entry behind an IL move is opened from its team page, which goes on to the claim (#214);
+    // a churn from the drop page, which goes on to its IL move or claim (#221 part 3).
+    const behind = new Set([...(due.il_first || []), ...(due.drop_first || [])].map((x) => x.entry));
+    const live = L.passMode(due).mode === "live";
+    const links = [...L.dropLinks(due, live), ...L.ilLinks(due, live), ...L.dueLinks(due).filter((x) => !behind.has(x.id))];
     $("moves-due").replaceChildren(
       ...(links.length
         ? links.map((x) => {

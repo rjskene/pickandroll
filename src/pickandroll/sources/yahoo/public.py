@@ -350,6 +350,12 @@ def team_url(league: str, team_id: int, day: date | None = None) -> str:
     return f"{SITE}/{league}/{team_id}" + (f"?date={day.isoformat()}" if day else "")
 
 
+def drop_url(league: str, team_id: int) -> str:
+    """My team's drop page (#221 part 3): Yahoo's own "Drop Player" link, a GET that drops nobody
+    (step 0c's read, 2026-10-30)."""
+    return f"{SITE}/{league}/{team_id}/dropplayer"
+
+
 def available_url(league: str, offset: int, view: str = OWNERSHIP_VIEW) -> str:
     """The players page: available players (free agents and waivers), most rostered first."""
     return f"{SITE}/{league}/players?status=A&pos=P&stat1={view}&sort=R_PO&sdir=1&count={offset}"
