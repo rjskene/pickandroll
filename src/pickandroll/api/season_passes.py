@@ -46,6 +46,8 @@ JOINS = {"added": "claimed"}
 #: A moves pass's IL runs (#214), each entry by its latest run, apart from its claims' outcomes;
 #: its Start Active runs (#215), each league by its latest run.
 IL_RESULTS = ("would_move", "moved", "skipped", "failed")
+#: A moves pass's held drops of its churns (#221 part 3), counted apart like the IL runs.
+DROP_RESULTS = ("would_drop", "dropped", "skipped", "failed", "unconfirmed")
 SA_RESULTS = ("would_start", "started", "already", "skipped", "failed")
 
 _lock = threading.Lock()
@@ -214,7 +216,8 @@ def attribute(
     """A post the league's log took, given to the open pass of its kind (the caller leaves out a
     panel's): the league done, each entry's (or the team page's) latest outcome, the pass's last
     word now. An IL run (``key`` ``il``, #214) keeps its entry's outcome apart from the claim's
-    and leaves the league as it was: its add pages come after; so does a Start Active run
+    and leaves the league as it was: its add pages come after; so does a churn's held drop
+    (``drop``, #221 part 3), and a Start Active run
     (``start_active``, #215), by league. None, and nothing written, when
     no such pass is open or it does not name the league; ``current`` stays until the next
     opening."""
@@ -245,6 +248,12 @@ def results(p: Mapping[str, Any]) -> dict[str, int]:
 def il_results(p: Mapping[str, Any]) -> dict[str, int] | None:
     """A moves pass's IL runs by outcome, each entry by its latest run (#214); None before one."""
     return _side(p, "il", IL_RESULTS)
+
+
+def drop_results(p: Mapping[str, Any]) -> dict[str, int] | None:
+    """A moves pass's held drops by outcome, each entry by its latest run (#221 part 3); None
+    before one."""
+    return _side(p, "drop", DROP_RESULTS)
 
 
 def start_active_results(p: Mapping[str, Any]) -> dict[str, int] | None:
@@ -288,6 +297,7 @@ def view(p: Mapping[str, Any]) -> dict[str, Any]:
         "current": p.get("current"),
         "results": results(p),
         "il": il_results(p),
+        "drop": drop_results(p),
         "start_active": start_active_results(p),
         "held": p.get("held"),
         "summary": p.get("summary"),

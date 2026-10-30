@@ -236,7 +236,7 @@ test("the league reader runs on league pages only, never on the draft client", (
   const manifest = JSON.parse(fs.readFileSync(path.join(DIR, "manifest.json"), "utf8"));
   const reader = manifest.content_scripts.find((c) => c.js.includes("league.js"));
   assert.deepEqual(reader.matches, ["https://basketball.fantasysports.yahoo.com/nba/*"]);
-  assert.deepEqual(reader.js, ["lib/league.js", "lib/lineup.js", "lib/moves.js", "lib/startactive.js", "lib/ilmove.js", "league.js"]);
+  assert.deepEqual(reader.js, ["lib/league.js", "lib/lineup.js", "lib/moves.js", "lib/startactive.js", "lib/ilmove.js", "lib/drop.js", "league.js"]);
   for (const c of manifest.content_scripts) {
     if (c === reader) continue;
     assert.ok(!c.js.includes("league.js"), "the draft client's scripts do not include the reader");

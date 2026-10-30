@@ -218,7 +218,7 @@ test("the presses stop where the page does not answer as step 0 read it", async 
 test("only pressStartActive touches a page: two clicks, no field set, nothing fetched", () => {
   const pressed = S.pressStartActive.toString();
   for (const f of ["lib/startactive.js", "league.js", "addpage.js", "worker.js"]) {
-    const src = fs.readFileSync(path.join(DIR, f), "utf8").replace(pressed, "").replace(require("../lib/moves.js").fillClaim.toString(), "").replace(require("../lib/ilmove.js").moveToIL.toString(), "");
+    const src = fs.readFileSync(path.join(DIR, f), "utf8").replace(pressed, "").replace(require("../lib/moves.js").fillClaim.toString(), "").replace(require("../lib/ilmove.js").moveToIL.toString(), "").replace(require("../lib/drop.js").dropPlayer.toString(), "");
     assert.ok(!/\.click\(|dispatchEvent|submit\(|requestSubmit/.test(src), `${f} clicks or submits outside the two presses`);
     assert.ok(!/\.(value|selectedIndex|checked)\s*=[^=]/.test(src), `${f} sets a field`);
   }
@@ -297,7 +297,7 @@ async function visitTeam({ hash = "#pickandroll-start-active", answer, dom = saD
   });
   ctx.window = ctx;
   ctx.globalThis = ctx;
-  for (const file of ["lib/league.js", "lib/lineup.js", "lib/moves.js", "lib/startactive.js", "lib/ilmove.js", "league.js"]) vm.runInContext(fs.readFileSync(path.join(DIR, file), "utf8"), ctx);
+  for (const file of ["lib/league.js", "lib/lineup.js", "lib/moves.js", "lib/startactive.js", "lib/ilmove.js", "lib/drop.js", "league.js"]) vm.runInContext(fs.readFileSync(path.join(DIR, file), "utf8"), ctx);
   ctx.started = true;
   for (const fn of timers.splice(0)) await fn();
   return { sent, replaced, strip: nodes["pickandroll-strip"], touched: dom.touched };
@@ -319,7 +319,7 @@ const worker =
   };
 const ops = (v) => v.sent.map((m) => m.op);
 const logOf = (v) => v.sent.filter((m) => m.op === "start_active_log");
-const RUN = ["moves_landed", "settings", "season_page", "start_active_record", "start_active_due"];
+const RUN = ["moves_landed", "drop_landed", "settings", "season_page", "start_active_record", "start_active_due"];
 
 test("a dry run: the fragment dropped, the page posted, the due read and would_start logged; nothing pressed", async () => {
   const v = await visitTeam({ answer: worker() });
@@ -381,7 +381,7 @@ test("a live run presses nothing when it may not: not due, STOP, the same day, t
   assert.deepEqual([logOf(v)[0].run.outcome, logOf(v)[0].run.controls.outside, v.touched], ["started", 1, ["click main", "click start"]]);
   // Off in this browser: nothing read, nothing logged.
   v = await visitTeam({ answer: worker(due(LIVE), { settings: { moves_executor: "off" } }) });
-  assert.deepEqual([ops(v), v.touched], [["moves_landed", "settings"], []]);
+  assert.deepEqual([ops(v), v.touched], [["moves_landed", "drop_landed", "settings"], []]);
 });
 
 test("a press whose run never reached the log is logged first, as read or with its answer not read", async () => {

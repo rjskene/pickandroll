@@ -416,13 +416,13 @@ def test_the_queue_takes_the_week_plan_in_its_order_and_only_todays_steps():
     e = planned(step(111, 211, 0.5, "2026-10-23", 0, 2), step(112, 212, 0.5, "2026-10-24", 1, 2))
     out = qa.queue_of(league_day(e, availability=claims), DAY, PLAN, TYPICAL, None)
     assert reasons(out) == [(111, None, 1), (112, qa.LATER_STEP, None)]
-    # A churn step stays read-only; the cap and the protected drop hold as for any move.
+    # A churn step is queued as any step (#221 part 3); the cap and the protected drop hold.
     e = planned(
         step(111, 211, 0.5, "2026-10-21", 0, 3, basis="churn"),
         step(112, 212, 0.5, "2026-10-21", 1, 3),
     )
     out = qa.queue_of(league_day(e), DAY, PLAN, TYPICAL, None)
-    assert reasons(out) == [(111, qa.CHURN_HELD, None), (112, qa.EARLIER_HELD, None)]
+    assert reasons(out) == [(111, None, 1), (112, None, 2)]
     e = planned(step(111, 211, 0.5, "2026-10-21", 0, 2), step(112, 212, 0.5, "2026-10-21", 1, 2))
     out = qa.queue_of(league_day(e, cap=1), DAY, PLAN, TYPICAL, None)
     assert reasons(out) == [(111, None, 1), (112, qa.OVER_CAP, None)]
@@ -590,12 +590,11 @@ def test_the_build_reads_the_days_solve_and_never_solves(client):
         "status": "private",
         "reason": qa.PRIVATE,
     }
-    # The store holds what the route answered, less each entry's pass and IL run read from the
-    # logs (#200, #214) and what a week plan's step waits for (#221 part 2).
+    # The store holds what the route answered, less each entry's pass, IL run and held drop read
+    # from the logs (#200, #214, #221 part 3) and what a week plan's step waits for (part 2).
     stored = json.loads((client.data_dir / "autopilot" / "queue" / "2026-10-21.json").read_text())
-    answered = [
-        {k: v for k, v in e.items() if k not in ("pass", "il_pass", "waits")} for e in q["entries"]
-    ]
+    read = ("pass", "il_pass", "drop_pass", "waits")
+    answered = [{k: v for k, v in e.items() if k not in read} for e in q["entries"]]
     assert stored["entries"] == answered and client.get("/autopilot/queue").json() == q
 
 
