@@ -344,17 +344,18 @@ test("a refused run is not kept as the last one", async () => {
 
 test("the dry run sets no field and submits nothing; the reader loads the executor's library", () => {
   const manifest = JSON.parse(fs.readFileSync(path.join(DIR, "manifest.json"), "utf8"));
-  assert.equal(manifest.version, "0.9.2");
+  assert.equal(manifest.version, "0.10.0");
   const reader = manifest.content_scripts.find((c) => c.js.includes("league.js"));
-  assert.deepEqual(reader.js, ["lib/league.js", "lib/lineup.js", "lib/moves.js", "lib/startactive.js", "lib/ilmove.js", "league.js"]);
+  assert.deepEqual(reader.js, ["lib/league.js", "lib/lineup.js", "lib/moves.js", "lib/startactive.js", "lib/ilmove.js", "lib/drop.js", "league.js"]);
   // The moves executor's live claim (``fillClaim``, #171 PR 3) and Start Active's presses
   // (``pressStartActive``, #215) are the places that touch a page; moves.test.js and
   // startactive.test.js hold each to its controls.
   const claim = require("../lib/moves.js").fillClaim.toString();
   const press = require("../lib/startactive.js").pressStartActive.toString();
   const move = require("../lib/ilmove.js").moveToIL.toString();
-  for (const f of ["league.js", "lib/lineup.js", "lib/moves.js", "lib/startactive.js", "lib/ilmove.js"]) {
-    const src = fs.readFileSync(path.join(DIR, f), "utf8").replace(claim, "").replace(press, "").replace(move, "");
+  const drop = require("../lib/drop.js").dropPlayer.toString();
+  for (const f of ["league.js", "lib/lineup.js", "lib/moves.js", "lib/startactive.js", "lib/ilmove.js", "lib/drop.js"]) {
+    const src = fs.readFileSync(path.join(DIR, f), "utf8").replace(claim, "").replace(press, "").replace(move, "").replace(drop, "");
     assert.ok(!/\.click\(|dispatchEvent|submit\(|requestSubmit/.test(src), `${f} clicks or submits`);
     assert.ok(!/\.(value|selectedIndex|checked)\s*=[^=]/.test(src), `${f} sets a field`);
     assert.ok(!/\.selected\s*=[^=]/.test(src), `${f} selects an option`);
@@ -402,7 +403,7 @@ async function visitPage({ hash = "", answer, lock = [] }) {
       onMessage: { addListener: (fn) => listeners.push(fn) },
       // Messages cross a boundary, as in Chrome: serialized (and out of the vm's realm).
       sendMessage: async (msg) => {
-        if (msg.op === "moves_landed") {
+        if (msg.op === "moves_landed" || msg.op === "drop_landed") {
           landed.push(JSON.parse(JSON.stringify(msg)));
           return { ok: true, data: null };
         }
@@ -424,7 +425,7 @@ async function visitPage({ hash = "", answer, lock = [] }) {
   });
   ctx.window = ctx;
   ctx.globalThis = ctx;
-  for (const file of ["lib/league.js", "lib/lineup.js", "lib/moves.js", "lib/startactive.js", "lib/ilmove.js", "league.js"]) vm.runInContext(fs.readFileSync(path.join(DIR, file), "utf8"), ctx);
+  for (const file of ["lib/league.js", "lib/lineup.js", "lib/moves.js", "lib/startactive.js", "lib/ilmove.js", "lib/drop.js", "league.js"]) vm.runInContext(fs.readFileSync(path.join(DIR, file), "utf8"), ctx);
   for (const fn of timers.splice(0)) await fn();
   return { sent, strip: nodes["pickandroll-strip"], replaced, listeners, landed };
 }
@@ -447,7 +448,7 @@ const worker =
 
 test("the routine's link posts the page, checks the steps built from that post and logs a dry run", async () => {
   const v = await visitPage({ hash: "#pickandroll-lineup", answer: worker() });
-  assert.deepEqual(v.landed, [{ op: "moves_landed", league: LEAGUE }]);
+  assert.deepEqual(v.landed, [{ op: "moves_landed", league: LEAGUE }, { op: "drop_landed", league: LEAGUE }]);
   assert.deepEqual(
     v.sent.map((m) => m.op),
     ["season_page", "settings", "lineup_steps", "lineup_log"],

@@ -297,7 +297,8 @@ for one out for the season), so the season guard sees the whole cost.
   season, by the guard's own figure (`moves.search`'s `season`, the moves route only), so the one
   worth less net of his return goes. Each recommended move says which horizon decided it
   (`decided_by`): `season` when keeping its drop re-solves to a set worth the same on its horizon.
-- **The queue** holds a churn, read only, until the executor can drop on its own (#221 part 3).
+- **The queue** holds a churn as one entry: its held drop is made on its own first, then Y's IL
+  move and the add as an open-spot claim (#221 part 3, docs/AUTOPILOT.md §2 "The held drop first").
 
 There is no stash threshold. The search prices the held move against every drop on each horizon
 and takes the better, and a tie goes to the move with no drop (on the moves route, unless the

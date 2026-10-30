@@ -79,8 +79,15 @@ READD = "the add is a player this queue drops today or dropped within the waiver
 BELOW_FLOOR = "below the noise floor"
 NO_ADDS = "no adds left this week"
 OVER_CAP = "over the day's cap"
-#: A churn (#221) waits for the executor's standalone drop (its part 3): never queued until then.
-CHURN_HELD = "churn, read only: the executor has no standalone drop yet"
+#: A churn (#221) is queued as one entry and executed in three steps (part 3): its held drop H on
+#: his own (the drop page, ``drop`` runs), then the IL move that frees an active spot when one is
+#: needed (``held_move``, #214), then the add as an open-spot claim. Its add waits on the drop.
+CHURN = "churn"
+#: A churn's drop run outcome that lets its add go on (``drop_run`` on the entry).
+DROPPED = "dropped"
+#: A live drop run's outcomes that stick on the entry: H is never dropped twice, and a failed or
+#: unconfirmed drop is never retried that day (its add waits all day).
+DROP_STICKS = ("dropped", "failed", "unconfirmed")
 #: The week plan's set (``season.plans.QUEUE_PLAN``), taken instead of the three weeks' set when
 #: the day's solve logged one (#221 part 2).
 WEEK_PLAN = "week_plan"
@@ -307,8 +314,6 @@ def queue_of(
             reason = OFF
         elif drop is not None and drop in lg.protected:
             reason = PROTECTED
-        elif m.get("basis") == "churn":
-            reason = CHURN_HELD
         elif plan is None and m.get("season_costly"):
             reason = SEASON_COSTLY
         elif add in lg.dropped or (add in drops if plan is None else _dropped_before(moves, i)):
@@ -389,8 +394,9 @@ def _today(day: date, clear: date | None, kind: str | None, clears: date | None)
 
 
 def kept(e: Mapping[str, Any]) -> bool:
-    """An entry a rebuild keeps as it is: struck, its bid struck, or executed."""
-    return bool(e.get("struck") or e.get("bid_struck") or e.get("outcome"))
+    """An entry a rebuild keeps as it is: struck, its bid struck, executed, or a churn whose held
+    drop is on record (#221 part 3: H is never dropped twice)."""
+    return bool(e.get("struck") or e.get("bid_struck") or e.get("outcome") or e.get("drop_run"))
 
 
 def holds_place(e: Mapping[str, Any]) -> bool:
@@ -485,11 +491,30 @@ def landed(e: Mapping[str, Any]) -> bool:
     return e.get("outcome") == "would_claim" and e.get("availability") == FREE_AGENT
 
 
+def churn_drop(e: Mapping[str, Any]) -> int | None:
+    """A churn's held drop H (#221), None for any other entry."""
+    if e.get("basis") != CHURN:
+        return None
+    return (e.get("held_drop") or {}).get("player") or e.get("drop")
+
+
+def drop_outcome(e: Mapping[str, Any]) -> str | None:
+    """The outcome of a churn's live drop run on record (``drop_run``), None before one."""
+    return (e.get("drop_run") or {}).get("outcome")
+
+
 def waits(e: Mapping[str, Any], by_id: Mapping[str, Mapping[str, Any]]) -> dict[str, Any] | None:
     """What a week plan's step waits for (#221 part 2, the ruling's third condition): the first
     of its earlier steps (``after``) not landed, with its step and add, and the line the Queue
     screen and the pass record read; None when it waits for nothing. A step whose earlier step
-    failed, was lost or was struck waits on it all day: never executed out of order."""
+    failed, was lost or was struck waits on it all day: never executed out of order. A churn's
+    add waits on its held drop (part 3), ``add`` then naming H; a drop that failed or was not
+    confirmed holds it all day."""
+    h = churn_drop(e)
+    if h is not None and drop_outcome(e) != DROPPED:
+        o = drop_outcome(e)
+        text = "waits for its held drop" if o is None else f"its held drop {o}: not claimed today"
+        return {"entry": e["id"], "step": None, "add": h, "text": text}
     for k in e.get("after") or ():
         o = by_id.get(k)
         if o is not None and landed(o):
@@ -522,8 +547,8 @@ def due(entries: Iterable[Mapping[str, Any]], now: datetime) -> list[dict[str, A
 
 
 def held(entries: Iterable[Mapping[str, Any]], now: datetime) -> list[dict[str, Any]]:
-    """The entries :func:`due` holds on an earlier step now: their window over and nothing else
-    stopping them, each with what it waits for."""
+    """The entries :func:`due` holds on an earlier step (or a churn on its held drop) now: their
+    window over and nothing else stopping them, each with what it waits for."""
     entries = list(entries)
     by_id = {e["id"]: e for e in entries}
     out = []

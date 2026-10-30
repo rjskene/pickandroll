@@ -31,13 +31,22 @@
 // item's move (``moveToIL``: the player's slot label, then the empty IL row's, once each), logs
 // it, then goes to the entry's add page with the moves fragment; a dry run clicks nothing.
 //
-// Outside ``pressStartActive`` and ``moveToIL`` it clicks and sets only on a page opened with a
-// moves fragment: the entry's one drop
+// On my team's drop page (/nba/<league>/<team>/dropplayer) opened with a drop fragment
+// (#pickandroll-drop, -drop-late, -drop-evening, -drop-panel) it is a churn's held drop (#221 part
+// 3, lib/drop.js): it reads the moves executor's due fresh, takes the next ``drop_first`` item, and
+// in a live league whose guard holds drops the held player (``dropPlayer``: the row's button, then
+// Yahoo's confirm "Drop <name>" once it reads as planned), put on record before the submit; the
+// page Yahoo lands on in the same tab logs what Yahoo answered and goes on to the entry's IL move
+// or add page. A dry run clicks nothing.
+//
+// Outside ``pressStartActive``, ``moveToIL`` and ``dropPlayer`` it clicks and sets only on a page
+// opened with a moves fragment: the entry's one drop
 // button, the bid and Yahoo's final button, once each (addpage.js keeps Yahoo's alerts on such a
 // page as text, so an alert is logged and never blocks the tab). It never reads a form's crumb,
 // never fetches a Yahoo page (the tick's post is Yahoo's own script's) and never runs on the draft
 // client. It navigates only to follow the players page's Next 25 link during a multi-page read the
-// user armed from the side panel, and from an IL move's team page to its claim's add page.
+// user armed from the side panel, from an IL move's team page to its claim's add page, and from
+// a held drop's landed page to the entry's IL move or add page.
 (() => {
   "use strict";
   const PR = globalThis.PickAndRoll;
@@ -45,6 +54,7 @@
   const STRIP = "pickandroll-strip";
   const page = PR.leaguePage(location.href);
   const addPage = page ? null : PR.addPageOf(location.href);
+  const dropPage = page || addPage ? null : PR.dropPageOf(location.href);
   // Any page of a league may be the one a claim's submit lands on (#171 PR 3).
   const league = PR.leagueOfPage(location.href);
   if (!league || window[KEY]) return;
@@ -670,15 +680,170 @@
     }
   }
 
+  // ---------------------------------------------------------------- the held drop (#221 part 3)
+  const dropStrip = (line) => strip(line, "held drop");
+
+  /** Yahoo's drop page as a plain object for ``readDropPage``: whether the form is there, its
+   * stage, each row button's player (its attribute trimmed), whether it shows and whether the row
+   * carries his name link, and how many drop boxes are ticked. No token is read. */
+  function dropControls() {
+    const form = document.querySelector(PR.DROP_FORM);
+    const visible = (el) => typeof el.getClientRects === "function" && el.getClientRects().length > 0;
+    const elements = form ? [...form.elements] : [];
+    return {
+      path: location.pathname,
+      form: Boolean(form),
+      stage: elements.filter((el) => el.name === "stage").map((el) => String(el.value)).join(", ") || null,
+      rows: form
+        ? [...form.querySelectorAll(PR.DROP_ROW_BUTTON)].map((b) => {
+            const player = String(b.getAttribute(PR.DROP_VALUE_ATTR) ?? "").trim();
+            const tr = b.closest("tr");
+            const name = tr ? [...tr.querySelectorAll(PR.DROP_NAME)].some((a) => a.getAttribute("data-ys-playerid") === player && textOf(a)) : false;
+            return { player, name, visible: visible(b) };
+          })
+        : [],
+      ticked: elements.filter((el) => el.name === "dpid" && el.checked).length,
+    };
+  }
+
+  /** The held drops on record in this browser for ``items``, by entry; a submitted one whose run
+   * never reached the log is logged first, unconfirmed, and never submitted again. */
+  async function dropRecords(items, extension) {
+    const read = async (entry) => {
+      const r = await send({ op: "drop_record", entry });
+      return (r && r.ok && r.data) || null;
+    };
+    const out = {};
+    for (const x of items) {
+      let record = await read(x.entry);
+      if (record && !record.logged && Date.now() - record.at >= PR.DROP_LANDING_MS) {
+        await send({ op: "drop_log", league: dropPage.league, run: PR.landedDrop(record, null, extension) });
+        record = await read(x.entry);
+      }
+      out[x.entry] = record;
+    }
+    return out;
+  }
+
+  /** The held drop on the drop page opened with ``trigger``'s fragment: the moves executor's due
+   * read fresh and the next ``drop_first`` item taken. Under STOP the run says it stopped; no item
+   * logs nothing; a dry run, or a live league whose guard refuses, logs ``would_drop`` and clicks
+   * nothing; a live league makes the drop once, put on record before the submit (``dropPlayer``),
+   * and the page Yahoo lands on logs it. Answers the run logged, or null. */
+  async function heldDrop(trigger) {
+    // A routine's run happens once: a reload of the page is a plain visit.
+    if (location.hash) history.replaceState(null, "", location.pathname + location.search);
+    if (running) return null;
+    running = true;
+    try {
+      const settings = await send({ op: "settings" });
+      if (settings && settings.ok && settings.data.moves_executor === "off") {
+        dropStrip(PR.dropStripText({ browserOff: true }));
+        return null;
+      }
+      const extension = extensionVersion();
+      const r = await send({ op: "moves_due", league: dropPage.league });
+      if (!r || !r.ok) {
+        dropStrip(PR.dropStripText({ error: (r && r.error) || "no answer from the extension" }));
+        return null;
+      }
+      const due = r.data;
+      if (due.mode === "off") {
+        dropStrip(PR.dropStripText({ none: "the moves executor is off in this league" }));
+        return null;
+      }
+      const where = location.pathname;
+      const mode = PR.passMode(due);
+      let run;
+      if (due.stop) run = PR.dropRun({ day: due.date, trigger, mode: mode.mode, outcome: "stopped", reason: due.reason, page: where, extension });
+      else {
+        const records = await dropRecords(due.drop_first || [], extension);
+        const item = PR.dropItemFor(due, where, (x) => PR.ranToday(records[x.entry], due.date, mode.mode, trigger));
+        if (!item) {
+          dropStrip(PR.dropStripText({ none: "no held drop due on this page" }));
+          return null;
+        }
+        const controls = PR.readDropPage(dropControls(), item);
+        const base = { item, day: due.date, trigger, page: where, controls, extension };
+        const problem = PR.dropProblem(controls);
+        if (problem) run = PR.dropRun({ ...base, mode: mode.mode, outcome: "skipped", reason: problem });
+        else if (mode.mode !== "live") run = PR.dropRun({ ...base, mode: "dry_run", outcome: "would_drop", reason: mode.refused });
+        else {
+          let refused = null;
+          // On record before the submit: the drop is never submitted twice.
+          const onConfirm = async (confirm) => {
+            const put = await send({
+              op: "drop_dropping",
+              league: dropPage.league,
+              record: { day: due.date, entry: item.entry, player: item.player, trigger, page: where, controls: { ...controls, confirm } },
+            });
+            refused = put && put.ok ? null : (put && put.error) || "no answer from the extension";
+            return !refused;
+          };
+          const got = await PR.dropPlayer(document, item, { onConfirm });
+          if (got === null) {
+            dropStrip(`live · drop of ${item.player} submitted: reading Yahoo's answer…`);
+            return null;
+          }
+          const reason = refused ? `${got.reason}: ${refused}` : got.reason;
+          run = PR.dropRun({ ...base, controls: { ...controls, confirm: got.confirm }, mode: "live", outcome: got.outcome, reason, message: got.message });
+        }
+      }
+      const logged = await send({ op: "drop_log", league: dropPage.league, run });
+      if (!logged || !logged.ok) {
+        dropStrip(`not logged: ${(logged && logged.error) || "no answer from the extension"}`);
+        return null;
+      }
+      dropStrip(PR.dropStripText({ run }));
+      return run;
+    } finally {
+      running = false;
+    }
+  }
+
+  /** On any page of the league: a held drop this tab submitted and whose run is not logged yet
+   * (the worker keeps it) is read from this page (Yahoo's alert codes in the URL, its notice) and
+   * logged; once he is dropped, the tab goes on to the entry's IL move or add page from the due
+   * read again. Answers whether the tab is going on. */
+  async function dropLanded() {
+    const r = await send({ op: "drop_landed", league });
+    if (!r || !r.ok || !r.data) return false;
+    const record = r.data;
+    const notices = [...document.querySelectorAll(".Alert, [role=alert]")].map(textOf).filter((x) => x && x.length < 300);
+    const raw = {
+      path: location.pathname,
+      alerts: new URLSearchParams(location.search).get("_global_alerts"),
+      notices,
+      shown: Boolean(document.querySelector(`[data-ys-playerid="${record.player}"]`)),
+    };
+    const run = PR.landedDrop(record, PR.readDropLanded(raw), extensionVersion());
+    const logged = await send({ op: "drop_log", league, run });
+    if (!logged || !logged.ok) {
+      dropStrip(`drop submitted, not logged: ${(logged && logged.error) || "no answer from the extension"}`);
+      return false;
+    }
+    let next = null;
+    if (run.outcome === "dropped") {
+      const due = await send({ op: "moves_due", league });
+      next = due && due.ok ? PR.dropNext(due.data, record.entry, record.trigger, location.origin) : null;
+    }
+    dropStrip(PR.dropStripText({ run, next }));
+    if (next) location.assign(next);
+    return Boolean(next);
+  }
+
   // A live pass submits only on a page opened with a moves fragment; any other page of the league
   // reads a claim this tab submitted, first.
   const trigger = addPage ? PR.movesTriggerOf(location.hash) : null;
   const lineupTrigger = page ? PR.triggerOf(location.hash) : null;
   const saTrigger = page && page.kind === "team" ? PR.startActiveTriggerOf(location.hash) : null;
   const ilTrigger = page && page.kind === "team" ? PR.ilTriggerOf(location.hash) : null;
+  const dropTrigger = dropPage ? PR.dropTriggerOf(location.hash) : null;
   setTimeout(async () => {
     await landed();
-    if (trigger) await claim(trigger);
+    if (await dropLanded()) return;
+    if (dropTrigger) await heldDrop(dropTrigger);
+    else if (trigger) await claim(trigger);
     else if (saTrigger) await startActive(saTrigger);
     else if (ilTrigger) await ilMove(ilTrigger);
     else if (page) await visit(lineupTrigger);
