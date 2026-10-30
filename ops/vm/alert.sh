@@ -48,6 +48,10 @@ PY
     summary="no run log for $routine yet (a run that never reached the API writes none)"
   fi
 fi
+if [ "$routine" = "signin" ]; then
+  summary="${summary:+$summary
+}re-sign-in from the Mac: bash ops/mac/signin.sh (docs/OPS.md §3)"
+fi
 journal=$(journalctl --user -u "$unit" -n 40 --no-pager -o cat 2>/dev/null | tail -n 40)
 [ -n "$journal" ] || journal="(no journal lines for $unit)"
 

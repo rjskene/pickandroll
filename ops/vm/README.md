@@ -13,4 +13,4 @@ is the runbook (bootstrap, the sign-in, the soak, cut-over, rollback).
 | `pickandroll-alert@.service`, `alert.sh` | a failed unit posted to ntfy and the ops issue |
 | `pickandroll-watchdog.service/.timer`, `watchdog.sh` | 06:45: the daily marker, the API, the Mac copy's age |
 | `install.sh` | the setup; `--soak`, `--cutover`, `--stop` for the timers |
-| `signin.sh`, `signin_browser.py` | the user's one-time sign-in into the browser profile |
+| `signin.sh`, `signin_browser.py` | the user's sign-in into the browser profile, driven from the Mac by `ops/mac/signin.sh` |

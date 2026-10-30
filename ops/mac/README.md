@@ -24,6 +24,11 @@ mkdir -p ~/.config/pickandroll && printf 'DROPLET=pickandroll@hts-digital-ocean\
 A copy by hand, any time: `bash ops/mac/rsync-from-droplet.sh` (the log is
 `~/.config/pickandroll/rsync.log`).
 
+**The re-sign-in** (`docs/OPS.md` §3): once, `mkdir -p ~/.config/pickandroll && echo
+pickandroll@hts-digital-ocean > ~/.config/pickandroll/droplet`; then, whenever the 04:50
+`signin` check fails, `bash ops/mac/signin.sh` runs the droplet's sign-in browser in a tmux
+session, opens its two DevTools windows in Chrome and prints the routine's result.
+
 **Remove** (rollback): `launchctl unload ~/Library/LaunchAgents/com.pickandroll.tunnel.plist`
 frees the port for the Mac's API; the same for the rsync agent, and delete `rsync.env` so a
 stray run copies nothing.

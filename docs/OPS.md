@@ -60,23 +60,37 @@ host, and the API is the systemd service every routine instance `Wants=`.
 ## 3. The sign-in (the user, once, and again when the 04:50 check fails)
 
 The routines' browser profile (`data/routine/profile`, mode 700) must hold the user's Yahoo
-and Basketball Monster sessions. `ops/vm/signin.sh` brings the routine's own Chromium up on
-the display with a tab on each site, waits for Enter, closes it and runs the `signin`
-routine to confirm. The user drives the window from the Mac:
+and Basketball Monster sessions. One command on the Mac does the whole re-sign-in (#238):
 
-- **VNC, the primary path.** Once: `sudo apt install -y x11vnc` (the user's one sudo line)
-  and `x11vnc -storepasswd` as `pickandroll` (they type the VNC password; it lives in
-  `~/.vnc/passwd` on the droplet). `signin.sh` then starts x11vnc on localhost only. On the
-  Mac: `ssh -L 5900:127.0.0.1:5900 pickandroll@hts-digital-ocean`, then Screen Sharing at
-  `vnc://127.0.0.1:5900`.
-- **DevTools, the fallback, nothing installed.** On the Mac:
-  `ssh -L 9222:127.0.0.1:9222 pickandroll@hts-digital-ocean`, then `chrome://inspect/#devices`
-  in Chrome, "Configure…" with `localhost:9222`, "inspect" on the tab: the screencast takes
-  clicks and keys.
+```bash
+bash ~/code/pickandroll/ops/mac/signin.sh
+```
 
-Either way no port is public and nothing of what is typed passes through a session or a log.
+It needs the droplet's address once, in `~/.config/pickandroll/droplet` on the Mac (one line,
+`pickandroll@hts-digital-ocean`; `--host` overrides it), and a key that logs in without a
+prompt. The script starts `ops/vm/signin.sh` on the droplet inside a tmux session named
+`signin` (a dropped connection leaves it running; running the command again reattaches), holds
+an ssh tunnel from the Mac's localhost to the browser's DevTools port while it runs, opens one
+DevTools window per site in Chrome from the browser's own `/json/list`, and prints the steps:
+in each window, type the username into the screencast's field, put the password in with one
+Console line, `document.querySelector('input[type=password]').value = '…'` with the password
+pasted between the quotes (Yahoo asks for it on its second page), and click Sign in. Enter on
+the Mac closes the droplet's browser and runs the `signin` routine there; the script prints its
+two result lines and exits 0 only when both say signed in. A few minutes in all; no port is
+public, and nothing typed passes through a session, a routine or a log. `--port` moves the
+Mac's end of the tunnel when 9222 is taken, `--no-open` prints the DevTools URLs instead of
+opening them.
+
+VNC stays possible with a real VNC client on a free local port (TigerVNC at `127.0.0.1:5901`
+over `ssh -L 5901:127.0.0.1:5900`), never macOS Screen Sharing: it refuses every address of the
+Mac itself, its own service holds port 5900 on every local address, and on 2026-10-29 that path
+cost two hours while the clipboard and right-click never reached x11vnc and the keys typed into
+the VNC window drifted in case, which locked the Basketball Monster account for a while. The
+DevTools route above is the one this runbook keeps.
+
 The `signin` routine exits 0 with both sites signed in; its timer runs it at 04:50 every day
-and a failure alerts (a session expired, a password changed) before the daily at 05:00.
+and a failure alerts (a session expired, a password changed) before the daily at 05:00, naming
+the Mac command.
 
 ## 4. The soak (from the first sign-in to the cut-over)
 
