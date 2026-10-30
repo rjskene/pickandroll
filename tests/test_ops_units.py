@@ -645,7 +645,9 @@ SPOTS = {
     "login": (100.0, 600.0),
     "signin": (100.0, 700.0),  # on every sign-in page, never to be clicked
 }
-#: Each page's states: path → what it shows; a click on a shown element moves to the next state.
+#: Each page's states: path → what it shows and where a click on a shown element moves; a state
+#: with a third and fourth member is a page still drawing itself, which turns into the page at
+#: that path after that many looks.
 YAHOO_STATES = {
     "/": ({"username", "next", "signin"}, {"next": "/account/challenge/web-authn"}),
     "/account/challenge/web-authn": (
@@ -660,11 +662,15 @@ YAHOO_STATES = {
     "/account/challenge/verify-code": (set(), {}),  # a page the helper does not know
 }
 BBM_STATES = {
-    "/": ({"login"}, {"login": "/login.aspx"}),
+    "/": ({"login"}, {"login": "/login.aspx-loading"}),
+    # The login page right after the click: its nav Login link is drawn before the form (the
+    # master's run of 2026-10-30 saw the helper click Login twice); two looks later the form.
+    "/login.aspx-loading": ({"login"}, {}, "/login.aspx", 2),
     # Both fields at once, a Sign in button and a Retrieve Password button that the helper's
     # own script already leaves out; the fake shows it as the option to prove it stays unclicked.
     "/login.aspx": ({"username", "password", "option", "signin"}, {}),
 }
+REPORTED = {"/login.aspx-loading": "/login.aspx"}  # what location.pathname says meanwhile
 
 
 @pytest.fixture(scope="module")
@@ -689,6 +695,7 @@ class FakeDevTools:
         self.kf = kf
         self.states = {"Y1": YAHOO_STATES, "B1": BBM_STATES, "X1": {"/": (set(), {})}}
         self.path = {pid: starts.get(pid, "/") for pid in SITE_URLS}
+        self.turning: dict[str, list[Any]] = {}  # pid → [path it becomes, looks left]
         self.focused: dict[str, str | None] = {pid: None for pid in SITE_URLS}
         self.values: dict[str, dict[str, str]] = {pid: {} for pid in SITE_URLS}
         self.calls: dict[str, list[tuple[str, dict[str, Any]]]] = {pid: [] for pid in SITE_URLS}
@@ -782,7 +789,12 @@ class FakeDevTools:
             expression = params["expression"]
             if expression == self.kf.page_expression(None):
                 shows = {kind: kind in self.shows(pid) for kind in SPOTS if kind != "signin"}
-                return value({"path": self.path[pid], "shows": shows})
+                path = REPORTED.get(self.path[pid], self.path[pid])
+                if pid in self.turning:
+                    self.turning[pid][1] -= 1
+                    if self.turning[pid][1] == 0:
+                        self.path[pid] = self.turning.pop(pid)[0]
+                return value({"path": path, "shows": shows})
             for kind, spot in SPOTS.items():
                 if expression == self.kf.page_expression(kind):
                     if kind not in self.shows(pid):
@@ -805,6 +817,9 @@ class FakeDevTools:
             if kind in moves:
                 self.path[pid] = moves[kind]
                 self.focused[pid] = None
+                state = self.states[pid][self.path[pid]]
+                if len(state) == 4:
+                    self.turning[pid] = [state[2], state[3]]
         if method == "Input.insertText":
             focused = self.focused[pid]
             assert focused in ("username", "password"), "text with no field focused"
@@ -888,7 +903,7 @@ def test_the_keychain_mode_walks_each_site_from_its_front_page_to_the_filled_pas
     assert out.rstrip().endswith("signed in on the droplet: both sites")
     # The pages walked, the clicks and the texts: Sign in never, the retrieve button never.
     assert browser.path == {"Y1": "/account/challenge/password", "B1": "/login.aspx", "X1": "/"}
-    assert browser.clicked["B1"] == ["login", "username", "password"]
+    assert browser.clicked["B1"] == ["login", "username", "password"]  # Login once
     assert browser.clicked["Y1"] == ["username", "next", "another", "option", "password"]
     assert browser.inserted["B1"] == [("username", "bbm-user"), ("password", "bbm-test-value")]
     assert browser.inserted["Y1"] == [("username", "yahoo-user"), ("password", "yahoo-test-value")]

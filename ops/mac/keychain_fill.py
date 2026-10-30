@@ -451,7 +451,8 @@ def approach(devtools: DevTools, site: str, service: str, said: list[str]) -> in
             step = "next"
         else:
             # Yahoo's passkey page first, then the option that names the password; a page
-            # that still shows the link just clicked gets the other one.
+            # that still shows the link just clicked gets the other one, and when that link
+            # is the only known thing on it the page is still drawing itself: wait for more.
             choices = []
             if site == "yahoo":
                 choices += ["another"] * shows["another"] + ["option"] * shows["option"]
@@ -464,7 +465,17 @@ def approach(devtools: DevTools, site: str, service: str, said: list[str]) -> in
                     file=sys.stderr,
                 )
                 return 3
-            step = next((c for c in choices if c != last), choices[0])
+            step = next((c for c in choices if c != last), "")
+            if not step:
+                if wait_for_change(devtools, page):
+                    continue
+                print(
+                    f"{site}: the page shows only the {SAID[last].split()[0]} link {TIMEOUT:.0f} s"
+                    f" after {SAID[last]} ({page['path']}); nothing more typed: continue by"
+                    " hand, then Enter again",
+                    file=sys.stderr,
+                )
+                return 3
         click(devtools, locate(devtools, step))
         last = step
         said.append(SAID[step])
