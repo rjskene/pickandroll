@@ -893,8 +893,18 @@ def test_the_keychain_mode_walks_each_site_from_its_front_page_to_the_filled_pas
     assert browser.inserted["B1"] == [("username", "bbm-user"), ("password", "bbm-test-value")]
     assert browser.inserted["Y1"] == [("username", "yahoo-user"), ("password", "yahoo-test-value")]
     assert browser.calls["X1"] == []  # a URL that only names the site is not the site
-    # Each click lands on the element's spot after a locate that scrolled it into view.
+    # The page is brought to the front and made to count as focused before the first look and
+    # click (a synthesized click does not focus an input on a page the OS has not focused);
+    # each click lands on the element's spot after a locate that scrolled it into view.
     for pid in ("B1", "Y1"):
+        methods = [m for m, _ in browser.calls[pid]]
+        assert methods[:3] == [
+            "Page.bringToFront",
+            "Emulation.setFocusEmulationEnabled",
+            "Runtime.evaluate",
+        ]
+        assert browser.calls[pid][1][1] == {"enabled": True}
+        assert methods.index("Input.dispatchMouseEvent") > 2
         scripts = [p["expression"] for m, p in browser.calls[pid] if m == "Runtime.evaluate"]
         assert scripts[0] == kf.page_expression(None)
         assert kf.page_expression("password") in scripts and kf.FOCUS_JS["password"] in scripts

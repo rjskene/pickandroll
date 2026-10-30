@@ -388,10 +388,13 @@ def click(devtools: DevTools, centre: dict[str, Any]) -> None:
 
 def insert(devtools: DevTools, kind: str, value: str) -> None:
     """Click the field of that kind and insert the text; an OSError when the field did not end
-    up focused or did not take the whole text."""
-    click(devtools, locate(devtools, kind))
-    if not devtools.evaluate(FOCUS_JS[kind]):
-        raise OSError(f"the click did not land on the {kind} field")
+    up focused (after a second click) or did not take the whole text."""
+    for attempt in (1, 2):
+        click(devtools, locate(devtools, kind))
+        if devtools.evaluate(FOCUS_JS[kind]):
+            break
+        if attempt == 2:
+            raise OSError(f"the click did not land on the {kind} field")
     devtools.call("Input.insertText", {"text": value})
     if devtools.evaluate(LENGTH_JS) != len(value.encode("utf-16-le")) // 2:
         raise OSError(f"the {kind} field did not take the whole text")
@@ -499,10 +502,18 @@ def fill(port: int, site: str, service: str) -> int:
         return 5
     said: list[str] = []
     try:
-        try:
-            devtools.call("Page.bringToFront")  # a tab behind another is drawn late or not at all
-        except OSError:
-            pass
+        # A tab behind another is drawn late or not at all, and a page whose window is not the
+        # one the OS has focused does not move focus into an input on a synthesized click (the
+        # Mac test of 2026-10-30: activeElement stayed BODY); the protocol's remedy is to have
+        # the session simulate a focused, active page.
+        for method, params in (
+            ("Page.bringToFront", {}),
+            ("Emulation.setFocusEmulationEnabled", {"enabled": True}),
+        ):
+            try:
+                devtools.call(method, params)
+            except OSError:
+                pass
         code = approach(devtools, site, service, said)
     except (OSError, ValueError, KeyError, TypeError) as exc:
         done = f" after {', '.join(said)}" if said else ""
