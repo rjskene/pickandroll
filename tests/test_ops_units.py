@@ -627,13 +627,44 @@ def test_the_alert_for_the_signin_unit_names_the_mac_command(alert) -> None:
     assert "bash ops/mac/signin.sh" in log.read_text().split("gh issue comment 225")[1]
 
 
-# ------------------------------------------------------- the --keychain mode (#238, item 5)
+# ------------------------------------------------- the --keychain mode (#238 item 5, #249)
 SITE_URLS = {
     "Y1": "https://login.yahoo.com/?done=https%3A%2F%2Fbasketball.fantasysports.yahoo.com",
-    "B1": "https://basketballmonster.com/login.aspx",
+    "B1": "https://basketballmonster.com/",
     "X1": "https://example.com/?q=yahoo.com",  # another host that only names the site
 }
 VALUES = {"pickandroll-bbm": "bbm-test-value", "pickandroll-yahoo": "yahoo-test-value"}
+ACCOUNTS = {"pickandroll-bbm": "bbm-user", "pickandroll-yahoo": "yahoo-user"}
+#: Where the fake browser draws each element; a click there is a click on it.
+SPOTS = {
+    "username": (100.0, 100.0),
+    "password": (100.0, 200.0),
+    "next": (100.0, 300.0),
+    "another": (100.0, 400.0),
+    "option": (100.0, 500.0),
+    "login": (100.0, 600.0),
+    "signin": (100.0, 700.0),  # on every sign-in page, never to be clicked
+}
+#: Each page's states: path → what it shows; a click on a shown element moves to the next state.
+YAHOO_STATES = {
+    "/": ({"username", "next", "signin"}, {"next": "/account/challenge/web-authn"}),
+    "/account/challenge/web-authn": (
+        {"another"},
+        {"another": "/account/challenge/challenge-selector"},
+    ),
+    "/account/challenge/challenge-selector": (
+        {"another", "option"},  # the page keeps the link; the option is the way on
+        {"option": "/account/challenge/password", "another": "/account/challenge/web-authn"},
+    ),
+    "/account/challenge/password": ({"password", "signin"}, {}),
+    "/account/challenge/verify-code": (set(), {}),  # a page the helper does not know
+}
+BBM_STATES = {
+    "/": ({"login"}, {"login": "/login.aspx"}),
+    # Both fields at once, a Sign in button and a Retrieve Password button that the helper's
+    # own script already leaves out; the fake shows it as the option to prove it stays unclicked.
+    "/login.aspx": ({"username", "password", "option", "signin"}, {}),
+}
 
 
 @pytest.fixture(scope="module")
@@ -649,14 +680,20 @@ def kf():
 class FakeDevTools:
     """Chrome's DevTools endpoint on a free local port: ``/json/list`` over HTTP (its websocket
     URLs name the browser's own port 9222, as the real one's do) and one websocket per page that
-    answers the helper's calls. A page's password field appears once ``missing`` looks are
-    spent; every call and every inserted text is kept per page."""
+    answers the helper's calls from the page's state. A look reports the path and what the page
+    shows, a locate gives the element's spot, a click on a spot moves the page to the next
+    state, a click on a field focuses it, the inserted text is kept per field. Every call is
+    kept per page."""
 
-    def __init__(self, kf: Any, missing: dict[str, int]) -> None:
+    def __init__(self, kf: Any, starts: dict[str, str]) -> None:
         self.kf = kf
-        self.missing = dict(missing)
+        self.states = {"Y1": YAHOO_STATES, "B1": BBM_STATES, "X1": {"/": (set(), {})}}
+        self.path = {pid: starts.get(pid, "/") for pid in SITE_URLS}
+        self.focused: dict[str, str | None] = {pid: None for pid in SITE_URLS}
+        self.values: dict[str, dict[str, str]] = {pid: {} for pid in SITE_URLS}
         self.calls: dict[str, list[tuple[str, dict[str, Any]]]] = {pid: [] for pid in SITE_URLS}
-        self.inserted: dict[str, list[str]] = {pid: [] for pid in SITE_URLS}
+        self.clicked: dict[str, list[str]] = {pid: [] for pid in SITE_URLS}
+        self.inserted: dict[str, list[tuple[str, str]]] = {pid: [] for pid in SITE_URLS}
         fake = self
 
         class Handler(socketserver.BaseRequestHandler):
@@ -734,29 +771,63 @@ class FakeDevTools:
             reply = {"id": request["id"], "result": self.answer(pid, request["method"], params)}
             self.kf.send_frame(sock, 0x1, json.dumps(reply).encode(), mask=False)
 
+    def shows(self, pid: str) -> set[str]:
+        return self.states[pid][self.path[pid]][0]
+
     def answer(self, pid: str, method: str, params: dict[str, Any]) -> dict[str, Any]:
+        def value(v: Any) -> dict[str, Any]:
+            return {"result": {"type": "object", "value": v}}
+
         if method == "Runtime.evaluate":
             expression = params["expression"]
-            if expression == self.kf.FIND_JS:
-                if self.missing.get(pid, 0) > 0:
-                    self.missing[pid] -= 1
-                    return {"result": {"type": "object", "subtype": "null", "value": None}}
-                return {"result": {"type": "object", "value": {"x": 320.5, "y": 240}}}
-            if expression == self.kf.FOCUS_JS:
-                return {"result": {"type": "boolean", "value": True}}
+            if expression == self.kf.page_expression(None):
+                shows = {kind: kind in self.shows(pid) for kind in SPOTS if kind != "signin"}
+                return value({"path": self.path[pid], "shows": shows})
+            for kind, spot in SPOTS.items():
+                if expression == self.kf.page_expression(kind):
+                    if kind not in self.shows(pid):
+                        return {"result": {"type": "object", "subtype": "null", "value": None}}
+                    return value({"x": spot[0], "y": spot[1]})
+            for kind, script in self.kf.FOCUS_JS.items():
+                if expression == script:
+                    return value(self.focused[pid] == kind)
             if expression == self.kf.LENGTH_JS:
-                text = self.inserted[pid][-1] if self.inserted[pid] else ""
-                return {"result": {"type": "number", "value": len(text)}}
+                focused = self.focused[pid]
+                return value(len(self.values[pid].get(focused or "", "")))
             raise AssertionError(expression)
+        if method == "Input.dispatchMouseEvent" and params.get("type") == "mousePressed":
+            spot = (params["x"], params["y"])
+            kind = next(k for k, s in SPOTS.items() if s == spot)
+            assert kind in self.shows(pid), f"a click on {kind}, which {self.path[pid]} hides"
+            self.clicked[pid].append(kind)
+            self.focused[pid] = kind if kind in ("username", "password") else None
+            moves = self.states[pid][self.path[pid]][1]
+            if kind in moves:
+                self.path[pid] = moves[kind]
+                self.focused[pid] = None
         if method == "Input.insertText":
-            self.inserted[pid].append(params["text"])
+            focused = self.focused[pid]
+            assert focused in ("username", "password"), "text with no field focused"
+            self.values[pid][focused] = params["text"]
+            self.inserted[pid].append((focused, params["text"]))
         return {}
+
+
+def attributes(service: str) -> str:
+    """What ``security find-generic-password -s <service>`` prints (the account name among the
+    attributes), as a printf format for the fake."""
+    acct = ACCOUNTS[service]
+    return (
+        f'keychain: \\"login.keychain-db\\"\\nattributes:\\n    \\"acct\\"<blob>=\\"{acct}\\"\\n'
+        f'    \\"svce\\"<blob>=\\"{service}\\"\\n'
+    )
 
 
 @pytest.fixture
 def keychain(mac_signin, tmp_path: Path) -> tuple[Path, Path, Path, dict[str, str], Path]:
-    """The Mac script's fakes plus a fake ``security``: the two items exist (FAKE_MISSING names
-    one that does not), ``-w`` prints a test value, every call's arguments go to a log."""
+    """The Mac script's fakes plus a fake ``security``: the two items exist with an account
+    name (FAKE_MISSING names one that does not), ``-w`` prints a test value, every call's
+    arguments go to a log."""
     script, state, log, env = mac_signin
     calls = tmp_path / "security.calls"
     fake(
@@ -767,11 +838,17 @@ case "$*" in
   *"-s ${{FAKE_MISSING:-no-such-item}}"*) exit 44 ;;
   *"-s pickandroll-bbm -w") echo "{VALUES["pickandroll-bbm"]}" ;;
   *"-s pickandroll-yahoo -w") echo "{VALUES["pickandroll-yahoo"]}" ;;
+  *"-s pickandroll-bbm") printf "{attributes("pickandroll-bbm")}" ;;
+  *"-s pickandroll-yahoo") printf "{attributes("pickandroll-yahoo")}" ;;
   *) echo 'keychain: "login.keychain-db"' ;;
 esac
 ''',
     )
     return script, state, log, env, calls
+
+
+def security_reads(calls: Path) -> list[str]:
+    return [line.removeprefix("security ") for line in calls.read_text().splitlines()]
 
 
 def test_the_keychain_mode_refuses_a_missing_item_before_touching_the_droplet(keychain) -> None:
@@ -786,50 +863,86 @@ def test_the_keychain_mode_refuses_a_missing_item_before_touching_the_droplet(ke
     assert " -w" not in calls.read_text()  # and no password read
 
 
-def test_the_keychain_mode_fills_each_password_field_over_devtools_and_shows_no_value(
+def test_the_keychain_mode_walks_each_site_from_its_front_page_to_the_filled_password_field(
     keychain, kf
 ) -> None:
     script, _state, log, env, calls = keychain
-    browser = FakeDevTools(kf, missing={"Y1": 1})
+    browser = FakeDevTools(kf, starts={})
     try:
-        # Enter for Basketball Monster; Enter for Yahoo (no field yet); Enter again; the final Enter.
-        done = signin_run(script, env, "--keychain", "--port", str(browser.port), stdin="\n\n\n\n")
+        # Enter for Basketball Monster, Enter for Yahoo, the final Enter.
+        done = signin_run(script, env, "--keychain", "--port", str(browser.port), stdin="\n\n\n")
     finally:
         browser.close()
     assert done.returncode == 0, done.stdout + done.stderr
     out = done.stdout
-    assert "press Enter here: the password goes from this Mac's Keychain into that field" in out
-    assert "Basketball Monster: with its password field on screen, press Enter" in out
-    assert "bbm: the password field holds the Keychain item 'pickandroll-bbm'; click Sign in" in out
-    assert "yahoo: the password field holds the Keychain item 'pickandroll-yahoo'" in out
-    assert "yahoo: no password field on the yahoo.com page yet (Yahoo shows it" in done.stderr
+    assert "press Enter here: the username and the password go in from this Mac's Keychain" in out
+    assert "Basketball Monster: with its page on screen, press Enter" in out
+    assert (
+        "bbm: Login clicked, username in, the password field holds the Keychain item"
+        " 'pickandroll-bbm'; click Sign in" in out
+    )
+    assert (
+        "yahoo: username in, Next clicked, passkey page passed, password option taken,"
+        " the password field holds the Keychain item 'pickandroll-yahoo'; click Sign in" in out
+    )
     assert out.rstrip().endswith("signed in on the droplet: both sites")
-    # The text went to the websocket of the right page, after a click on the field.
-    assert browser.inserted == {"B1": ["bbm-test-value"], "Y1": ["yahoo-test-value"], "X1": []}
-    for pid in ("B1", "Y1"):
-        methods = [method for method, _ in browser.calls[pid] if method != "Runtime.evaluate"]
-        assert methods[-4:] == ["Input.dispatchMouseEvent"] * 3 + ["Input.insertText"]
-        pressed = [p for m, p in browser.calls[pid] if p.get("type") == "mousePressed"]
-        assert pressed == [
-            {"type": "mousePressed", "x": 320.5, "y": 240, "button": "left", "clickCount": 1}
-        ]
-        scripts = [p["expression"] for m, p in browser.calls[pid] if m == "Runtime.evaluate"]
-        assert scripts[-3:] == [kf.FIND_JS, kf.FOCUS_JS, kf.LENGTH_JS]
+    # The pages walked, the clicks and the texts: Sign in never, the retrieve button never.
+    assert browser.path == {"Y1": "/account/challenge/password", "B1": "/login.aspx", "X1": "/"}
+    assert browser.clicked["B1"] == ["login", "username", "password"]
+    assert browser.clicked["Y1"] == ["username", "next", "another", "option", "password"]
+    assert browser.inserted["B1"] == [("username", "bbm-user"), ("password", "bbm-test-value")]
+    assert browser.inserted["Y1"] == [("username", "yahoo-user"), ("password", "yahoo-test-value")]
     assert browser.calls["X1"] == []  # a URL that only names the site is not the site
-    # The value appears nowhere: not in the output, not in a call to ssh or open, and the
-    # Keychain is read only once a field is there (the first Yahoo look read nothing).
-    for value in VALUES.values():
-        assert value not in out + done.stderr and value not in log.read_text()
-    reads = [line for line in calls.read_text().splitlines() if line.endswith(" -w")]
+    # Each click lands on the element's spot after a locate that scrolled it into view.
+    for pid in ("B1", "Y1"):
+        scripts = [p["expression"] for m, p in browser.calls[pid] if m == "Runtime.evaluate"]
+        assert scripts[0] == kf.page_expression(None)
+        assert kf.page_expression("password") in scripts and kf.FOCUS_JS["password"] in scripts
+        pressed = [p for m, p in browser.calls[pid] if p.get("type") == "mousePressed"]
+        assert all(p["button"] == "left" and p["clickCount"] == 1 for p in pressed)
+    # No value and no account name appears anywhere: not in the output, not in a call to ssh
+    # or open; the Keychain's password is read once per site, after the account name.
+    for secret in list(VALUES.values()) + list(ACCOUNTS.values()):
+        assert secret not in out + done.stderr and secret not in log.read_text()
+    reads = security_reads(calls)
     assert reads == [
-        "security find-generic-password -s pickandroll-bbm -w",
-        "security find-generic-password -s pickandroll-yahoo -w",
+        "find-generic-password -s pickandroll-bbm",  # the script's two existence checks
+        "find-generic-password -s pickandroll-yahoo",
+        "find-generic-password -s pickandroll-bbm",  # the account name, then the password
+        "find-generic-password -s pickandroll-bbm -w",
+        "find-generic-password -s pickandroll-yahoo",
+        "find-generic-password -s pickandroll-yahoo -w",
     ]
+
+
+def test_the_keychain_mode_stops_on_a_page_it_does_not_know_and_fills_a_field_already_there(
+    keychain, kf
+) -> None:
+    script, _state, _log, env, calls = keychain
+    # Yahoo sits on a verification-code page; Basketball Monster already on its sign-in page.
+    browser = FakeDevTools(kf, starts={"Y1": "/account/challenge/verify-code", "B1": "/login.aspx"})
+    try:
+        # Enter for Basketball Monster; Enter for Yahoo (unknown page), then s to skip it; Enter.
+        done = signin_run(script, env, "--keychain", "--port", str(browser.port), stdin="\n\ns\n\n")
+    finally:
+        browser.close()
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert (
+        "yahoo: a page this does not know, /account/challenge/verify-code; nothing more typed:"
+        " continue by hand in the DevTools window, then Enter here again" in done.stderr
+    )
+    assert "skipped Yahoo: use the Console line there" in done.stdout
+    assert browser.clicked["Y1"] == [] and browser.inserted["Y1"] == []
+    assert browser.clicked["B1"] == ["username", "password"]  # no Login click on the sign-in page
+    assert browser.inserted["B1"] == [("username", "bbm-user"), ("password", "bbm-test-value")]
+    reads = security_reads(calls)
+    assert "find-generic-password -s pickandroll-yahoo -w" not in reads  # unknown page: no read
+    assert reads.count("find-generic-password -s pickandroll-bbm -w") == 1
 
 
 def test_the_keychain_mode_skips_a_site_on_s(keychain, kf) -> None:
     script, _state, _log, env, calls = keychain
-    browser = FakeDevTools(kf, missing={})
+    browser = FakeDevTools(kf, starts={})
     try:
         done = signin_run(script, env, "--keychain", "--port", str(browser.port), stdin="s\ns\n\n")
     finally:
@@ -839,6 +952,7 @@ def test_the_keychain_mode_skips_a_site_on_s(keychain, kf) -> None:
     assert "skipped Yahoo: use the Console line there" in done.stdout
     assert "document.querySelector('input[type=password]').value = '...'" in done.stdout
     assert all(not texts for texts in browser.inserted.values())
+    assert all(not clicks for clicks in browser.clicked.values())
     assert " -w" not in calls.read_text()
 
 
@@ -853,7 +967,12 @@ def test_the_helper_reads_the_keychain_in_its_own_process_and_names_the_add_line
         "security",
         f'''echo "security $*" >> "{calls}"
 case "${{FAKE_SECURITY:-ok}}" in
-  ok) printf "a value with spaces\\n" ;;
+  ok) case "$*" in
+        *" -w") printf "a value with spaces\\\\n" ;;
+        *) printf 'attributes:\\n    0x00000007 <blob>="svc"\\n    "acct"<blob>="the user"\\n    "svce"<blob>="svc"\\n' ;;
+      esac ;;
+  hex) printf 'attributes:\\n    "acct"<blob>=0x7573C3A972  "us\\\\303\\\\251r"\\n' ;;
+  noacct) printf 'attributes:\\n    "acct"<blob>=<NULL>\\n' ;;
   empty) printf "" ;;
   missing) exit 44 ;;
   denied) echo "security: SecKeychainItemCopyContent: User canceled the operation." >&2; exit 128 ;;
@@ -862,11 +981,21 @@ esac
     )
     monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
     assert kf.keychain_password("pickandroll-bbm") == ("a value with spaces", "")
-    assert calls.read_text() == "security find-generic-password -s pickandroll-bbm -w\n"
+    assert kf.keychain_account("pickandroll-bbm") == ("the user", "")
+    assert calls.read_text().splitlines() == [
+        "security find-generic-password -s pickandroll-bbm -w",
+        "security find-generic-password -s pickandroll-bbm",
+    ]
+    monkeypatch.setenv("FAKE_SECURITY", "hex")
+    assert kf.keychain_account("pickandroll-bbm") == ("usér", "")
+    monkeypatch.setenv("FAKE_SECURITY", "noacct")
+    value, line = kf.keychain_account("pickandroll-bbm")
+    assert value is None and "has no account name" in line and "-a <account> -w -U" in line
     monkeypatch.setenv("FAKE_SECURITY", "missing")
-    value, line = kf.keychain_password("pickandroll-yahoo")
-    assert value is None
-    assert "security add-generic-password -s pickandroll-yahoo -a <account> -w" in line
+    for read in (kf.keychain_password, kf.keychain_account):
+        value, line = read("pickandroll-yahoo")
+        assert value is None
+        assert "security add-generic-password -s pickandroll-yahoo -a <account> -w" in line
     monkeypatch.setenv("FAKE_SECURITY", "denied")
     value, line = kf.keychain_password("pickandroll-yahoo")
     assert value is None and "security exit 128" in line and "canceled" not in line

@@ -10,10 +10,11 @@
 # on the Mac (DROPLET= in rsync.env also serves; --host overrides), never written here.
 # Nothing in this script reads, types or logs a credential: the password goes in through the
 # DevTools Console line printed below, pasted by the user. With --keychain, keychain_fill.py
-# beside this script reads each site's password from a Keychain item the user made by hand
-# (pickandroll-bbm, pickandroll-yahoo) and puts it into the password field over the tunnel's
-# DevTools websocket when the user presses Enter; the value is never an argument, a variable or a
-# line of output of this script. Only the user runs this, by hand, from the Mac.
+# beside this script takes each site from the page on screen to a filled password field over the
+# tunnel's DevTools websocket when the user presses Enter: the account name and the password of a
+# Keychain item the user made by hand (pickandroll-bbm, pickandroll-yahoo) go into the fields,
+# Yahoo's Next and its passkey page are passed, Sign in is left to the user; no value is ever an
+# argument, a variable or a line of output of this script. Only the user runs this, by hand.
 #   usage: ops/mac/signin.sh [--host USER@ALIAS] [--port 9222] [--no-open] [--remote-repo pickandroll] [--keychain]
 set -u
 conf=${PICKANDROLL_CONF:-$HOME/.config/pickandroll}
@@ -154,10 +155,11 @@ if [ "$keychain" = 1 ]; then
   cat <<TEXT
 
 In each DevTools window (the screencast is the droplet's browser; it takes clicks and keys):
-  1. click the site's sign-in, type the username into the screencast's field and get to the
-     password field (Yahoo asks for it on its second page);
-  2. press Enter here: the password goes from this Mac's Keychain into that field over the tunnel
-     (s + Enter skips the site: put it in with the Console line  $console_line  there instead);
+  1. have the site's page on screen (its front page or its sign-in page);
+  2. press Enter here: the username and the password go in from this Mac's Keychain over the
+     tunnel, Yahoo's Next and its passkey page are passed, Sign in is not clicked
+     (a page this does not know stops with its path: continue by hand there, then Enter again;
+     s + Enter skips the site: use the Console line  $console_line  there instead);
   3. click Sign in and check the page shows you signed in.
 TEXT
   for site in bbm yahoo; do
@@ -166,7 +168,7 @@ TEXT
       yahoo) item=$item_yahoo; name="Yahoo" ;;
     esac
     while :; do
-      printf '%s: with its password field on screen, press Enter to fill it from Keychain item %s (s + Enter skips): ' "$name" "$item"
+      printf '%s: with its page on screen, press Enter to sign in up to Sign in from Keychain item %s (s + Enter skips): ' "$name" "$item"
       read -r answer || answer=s  # the end of input skips the site
       case "$answer" in s|S) echo "skipped $name: use the Console line there"; break ;; esac
       if "$py" "$here/keychain_fill.py" "$port" "$site" "$item"; then break; fi

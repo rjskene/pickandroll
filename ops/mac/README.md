@@ -28,9 +28,10 @@ A copy by hand, any time: `bash ops/mac/rsync-from-droplet.sh` (the log is
 pickandroll@hts-digital-ocean > ~/.config/pickandroll/droplet`; then, whenever the 04:50
 `signin` check fails, `bash ops/mac/signin.sh` runs the droplet's sign-in browser in a tmux
 session, opens its two DevTools windows in Chrome and prints the routine's result. With
-`--keychain` it fills each site's password field from the Keychain items `pickandroll-bbm` and
-`pickandroll-yahoo` (the user's, made by hand) over the DevTools websocket instead of the Console
-line; the user alone runs it, by hand.
+`--keychain` one Enter per site takes the page on screen to a filled password field from the
+Keychain items `pickandroll-bbm` and `pickandroll-yahoo` (the user's, made by hand) over the
+DevTools websocket: account name, Next and Yahoo's passkey page, then the password; Sign in stays
+the user's click. The user alone runs it, by hand.
 
 **Remove** (rollback): `launchctl unload ~/Library/LaunchAgents/com.pickandroll.tunnel.plist`
 frees the port for the Mac's API; the same for the rsync agent, and delete `rsync.env` so a
