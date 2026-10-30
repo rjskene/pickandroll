@@ -658,8 +658,10 @@ when left out.
   a refresh starts it again. A call without `source` (the routine's) is as before: it waits for
   its solve and writes that solve's entry. When the answer was already kept (a page's solve, or
   its own earlier call), it writes one entry from that answer with `built_at`, the time it was
-  built, beside its own `at`. That is one entry per routine call, never two. No search deadline:
-  the page's set and the routine's are the same solve.
+  built, beside its own `at`. That is one entry per routine call, never two. So every call
+  without `source=page` writes an entry, a look by hand (a curl, a script) included: a look by
+  hand carries `?source=page`. No search deadline: the page's set and the routine's are the same
+  solve.
 - **Entries.** Each solve of the moves route without a source (once per day and inputs), each
   routine call that found its answer kept (with `built_at`, above) and each strategy run that
   solved appends one entry to
