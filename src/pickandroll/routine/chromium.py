@@ -34,7 +34,7 @@ from .steps import PRIVATE_LEAGUE, YAHOO
 
 BBM = f"https://{BBM_HOST}"
 #: The sign-in check pages: Basketball Monster's front page (its Logout link), the private
-#: league's page (Yahoo sends it to the sign-in when signed out).
+#: league's page (its My Team link; Yahoo sends it to the sign-in when signed out).
 BBM_CHECK = f"{BBM}/"
 YAHOO_CHECK = f"{YAHOO}/nba/{PRIVATE_LEAGUE}"
 #: The extension's background worker must be up before anything opens.
@@ -67,12 +67,15 @@ CLICK_JS = (
     " el.click(); return true; }"
 )
 COUNT_JS = "(sel) => document.querySelectorAll(sel).length"
-#: A sign-in form, or a Sign in link, where the league should be.
-YAHOO_SIGNED_OUT_JS = (
-    "() => Boolean(document.querySelector('input#login-username')"
-    " || document.querySelector('form[action*=\"login.yahoo.com\"]')"
-    " || Array.from(document.querySelectorAll('a'))"
-    ".some(a => /^sign in$/i.test((a.textContent || '').trim())))"
+#: Signed in: the league navigation's My Team link, to the user's team page. Signed out: a
+#: sign-in form, or no such link (the redirect to login.yahoo.com is caught by the host). The
+#: header's own Sign in link is never consulted: Yahoo shows one to signed-in users too.
+YAHOO_SIGNED_IN_JS = (
+    "() => !document.querySelector('input#login-username')"
+    " && !document.querySelector('form[action*=\"login.yahoo.com\"]')"
+    " && Array.from(document.querySelectorAll('a')).some(a =>"
+    " /^my team$/i.test((a.textContent || '').trim())"
+    " && /\\/nba\\/\\d+\\/\\d+(?:[/?#]|$)/.test(a.getAttribute('href') || ''))"
 )
 BBM_LOGOUT = 'a[href*="logout" i]'
 
@@ -243,8 +246,8 @@ class ChromiumBrowser:
                 else:
                     landed = self._goto(YAHOO_CHECK)
                     host = (urlsplit(landed).hostname or "").lower()
-                    signed_out = bool(self._page.evaluate(YAHOO_SIGNED_OUT_JS))
-                    self._signed[site] = host == YAHOO_HOST and not signed_out
+                    signed_in = bool(self._page.evaluate(YAHOO_SIGNED_IN_JS))
+                    self._signed[site] = host == YAHOO_HOST and signed_in
             except Exception as exc:  # noqa: BLE001 - a check page that did not load
                 self.reason = one_line(exc)
                 self._signed[site] = False
