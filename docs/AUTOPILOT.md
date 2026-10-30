@@ -552,7 +552,7 @@ are the master's to change through pull requests, never edited on the host.
 | when | what | exists |
 |---|---|---|
 | daily 05:00 | Basketball Monster exports, public refresh, breakout digest on #99 | yes (`pickandroll-routine@daily`, window 05:00-06:20) |
-| daily, after the refresh | the moves solve per league writes its decision-log entry (#125); the queue is built from the armed leagues' recommended sets; the lineup for today and tomorrow is set | phase 1, 2 |
+| daily, after the refresh | the moves solve per league writes its decision-log entry (#125; one entry per routine call, from the kept answer with its `built_at` when a page look solved it first, #240; a page look is never logged); the queue is built from the armed leagues' recommended sets; the lineup for today and tomorrow is set | phase 1, 2 |
 | daily 07:45 | the moves pass opens the due entries' add pages, less what the user struck (the day's execute time, 07:00 Central unless the user set another, has passed; the pass fires at 07:45 so a later setting still gets a morning pass); the late pass at 15:00 catches the rest | yes (`pickandroll-routine@morning`, fires 07:45 Central, window to 14:30, and `pickandroll-routine@late` at 15:00, window to 20:30; a league places its claims once the user switches it live, #171 PR 3; the routine opens, names each opening and closes its pass record, #201) |
 | daily 21:00 | the evening build (#209): refresh, re-solve, the queue rebuilt | yes (`pickandroll-routine@evening-build`, window 21:00-21:30) |
 | daily 22:40 | the evening pass opens the evening's pages, hard stop 22:58 | yes (`pickandroll-routine@evening-pass`, window 22:40-22:58) |

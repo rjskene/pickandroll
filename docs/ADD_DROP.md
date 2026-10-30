@@ -644,8 +644,24 @@ docs/AUTOPILOT.md section 2, the bid in section 5.
 `GET /seasons/{league}/decisions?from=YYYY-MM-DD&to=YYYY-MM-DD`, the last seven days to today
 when left out.
 
-- **Entries.** Each solve of the moves route (once per day and inputs: a cached answer writes
-  nothing) and each strategy run that solved appends one entry to
+- **Page looks and the routine's call (#240, ruled 2026-10-30: A and (i)).** The dashboard asks
+  `GET /seasons/{league}/moves?source=page` (the web's flag only). A page look is never logged
+  and never waits on a solve while an answer of today is kept for the league and system. That
+  answer comes back at once with `stale: {built_at, inputs_at, reason}`: when it was built, the
+  newest of the inputs being solved, and "inputs newer than this answer; solving". The solve of
+  the newer inputs then runs on the page's one thread (never on the process pool from the route),
+  at most one a key, under the cache's gate for that key. A second look while it runs gets the same stale
+  answer. With no answer of today kept (the first look after a restart or of a new day), the
+  page waits for the solve, still unlogged. The Moves card says "solving: …", asks again every
+  3 s, and after 120 s stops with "still solving (this answer built …): refresh to look again";
+  a refresh starts it again. A call without `source` (the routine's) is as before: it waits for
+  its solve and writes that solve's entry. When the answer was already kept (a page's solve, or
+  its own earlier call), it writes one entry from that answer with `built_at`, the time it was
+  built, beside its own `at`. That is one entry per routine call, never two. No search deadline:
+  the page's set and the routine's are the same solve.
+- **Entries.** Each solve of the moves route without a source (once per day and inputs), each
+  routine call that found its answer kept (with `built_at`, above) and each strategy run that
+  solved appends one entry to
   `data/leagues/<id>/season/decisions/<date>.json`, the date in US Eastern, for every system
   solved. An entry holds its time, the route, the projection system with its export file, the
   knobs the solve ran with (`knobs`, #152: every knob of docs/AUTOPILOT.md section 6, the

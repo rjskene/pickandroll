@@ -1806,6 +1806,17 @@ export interface MovesPayload {
   unprojected: number;
   /** ``seconds``: the whole solve's (#221 part 2), absent before. */
   search: { pool: number; min_gain: number; seconds?: number };
+  /** A page's look while the moves of newer inputs are solved (#240): this answer is the kept
+   * one; absent on a fresh answer. */
+  stale?: MovesStale;
+}
+
+/** Why a page's moves answer is an older one (#240): when it was built, the time of the newer
+ * inputs being solved and the API's words. */
+export interface MovesStale {
+  built_at: string | null;
+  inputs_at: string | null;
+  reason: string;
 }
 
 /** A week plan's step (#221 part 2): a dated move, its basis and held moves, what it adds to the
@@ -2671,9 +2682,10 @@ export const api = {
   /** Every league folder's season (#92), for the landing page. */
   seasons: () => request<SeasonSummary[]>("/seasons"),
   season: (league: string) => request<SeasonView>(`/seasons/${encodeURIComponent(league)}`),
-  /** Every available player's best move on both horizons and the recommended sets (#94). */
+  /** Every available player's best move on both horizons and the recommended sets (#94): a
+   * page's look, answered at once and never logged (#240). */
   moves: (league: string, system: ProjectionSystem) =>
-    request<MovesPayload>(`/seasons/${encodeURIComponent(league)}/moves?system=${system}`),
+    request<MovesPayload>(`/seasons/${encodeURIComponent(league)}/moves?system=${system}&source=page`),
   /** My matchup this week as a scoreboard, and what each player adds to it (#116). */
   matchup: (league: string, system: ProjectionSystem) =>
     request<MatchupPayload>(`/seasons/${encodeURIComponent(league)}/matchup?system=${system}`),

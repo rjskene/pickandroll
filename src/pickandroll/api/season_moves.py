@@ -1237,6 +1237,16 @@ class MovesCache:
         with self._lock:
             return self._payloads.get(key)
 
+    def latest(self, prefix: tuple[Any, ...]) -> tuple[tuple[Any, ...], Any] | None:
+        """The key and value kept for ``prefix`` (``(league, system, kind)``), the one made last,
+        else None; nothing is made. A value being made for a newer key leaves it kept until
+        then (#240)."""
+        with self._lock:
+            for key, payload in self._payloads.items():
+                if key[: len(prefix)] == prefix:
+                    return key, payload
+        return None
+
     def get(self, key: tuple[Any, ...], make: Callable[[], Any]) -> Any:
         """The value for ``key`` (``(league, system, kind, ...)``), made once; a newer key of
         the same league, system and kind replaces the older."""

@@ -35,6 +35,7 @@ import type {
   MoveRoom,
   MoveRos,
   MovesPassLog,
+  MovesStale,
   MovesSummary,
   MovesView,
   StartActiveRunLog,
@@ -1107,6 +1108,26 @@ export function keptLines(a: AllModesAnswer, title: (league: string) => string):
  * week it did not read. */
 export function addsThisWeek(row: Pick<QueueLeague, "adds_left">, today: string): number | null {
   return row.adds_left?.find((w) => w.start <= today && today <= w.end)?.adds ?? null;
+}
+
+/** How often the Moves card asks again (#240): every 3 s while its answer is stale, for at most
+ * 120 s from the first stale one (then not until the next refresh); otherwise every minute. */
+export const MOVES_POLL_MS = 60_000;
+export const STALE_POLL_MS = 3_000;
+export const STALE_CAP_MS = 120_000;
+
+/** The Moves card's refetch interval (#240): ``since`` is when its answer first came back stale,
+ * null while it is fresh. */
+export function movesPoll(stale: boolean, since: number | null, now: number): number | false {
+  if (!stale) return MOVES_POLL_MS;
+  return since != null && now - since >= STALE_CAP_MS ? false : STALE_POLL_MS;
+}
+
+/** The Moves card's line while its answer is stale (#240): solving, or, once the card stopped
+ * asking, still solving with the answer's build time. */
+export function staleLine(stale: MovesStale, capped: boolean, clock: (iso: string | null) => string): string {
+  const built = stale.built_at ? ` (this answer built ${clock(stale.built_at)})` : "";
+  return capped ? `still solving${built}: refresh to look again` : `solving: ${stale.reason.replace(/; solving$/, "")}${built}`;
 }
 
 /** "7:00 AM CT": an instant on the Central clock the execute time is set on (#193); blank for
