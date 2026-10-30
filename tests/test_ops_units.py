@@ -5,13 +5,20 @@ against a marker, a run log and fakes of curl, gh and journalctl on PATH."""
 
 from __future__ import annotations
 
+import base64
+import hashlib
+import importlib.util
 import json
 import os
 import plistlib
+import socket
+import socketserver
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -475,14 +482,16 @@ esac
     return MAC / "signin.sh", state, log, env_with(bin_dir, PICKANDROLL_CONF=str(conf))
 
 
-def signin_run(script: Path, env: dict[str, str], *args: str) -> subprocess.CompletedProcess[str]:
+def signin_run(
+    script: Path, env: dict[str, str], *args: str, stdin: str = "\n"
+) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         ["bash", str(script), *args],
         check=False,
         capture_output=True,
         text=True,
         env=env,
-        input="\n",
+        input=stdin,
         timeout=60,
     )
 
@@ -603,7 +612,7 @@ def test_the_mac_signin_needs_the_droplet_address_and_refuses_a_bad_flag(
     done = signin_run(script, {**env, "PICKANDROLL_CONF": str(empty)})
     assert done.returncode == 0 and "pickandroll@fromenv true" in log.read_text()
     done = signin_run(script, env, "--bogus")
-    assert done.returncode == 2 and "usage:" in done.stderr
+    assert done.returncode == 2 and "usage:" in done.stderr and "[--keychain]" in done.stderr
     done = signin_run(script, env, "--port")
     assert done.returncode == 2 and "usage:" in done.stderr
 
@@ -616,3 +625,253 @@ def test_the_alert_for_the_signin_unit_names_the_mac_command(alert) -> None:
     assert "no run log for signin yet" in done.stdout
     assert "re-sign-in from the Mac: bash ops/mac/signin.sh (docs/OPS.md §3)" in done.stdout
     assert "bash ops/mac/signin.sh" in log.read_text().split("gh issue comment 225")[1]
+
+
+# ------------------------------------------------------- the --keychain mode (#238, item 5)
+SITE_URLS = {
+    "Y1": "https://login.yahoo.com/?done=https%3A%2F%2Fbasketball.fantasysports.yahoo.com",
+    "B1": "https://basketballmonster.com/login.aspx",
+    "X1": "https://example.com/?q=yahoo.com",  # another host that only names the site
+}
+VALUES = {"pickandroll-bbm": "bbm-test-value", "pickandroll-yahoo": "yahoo-test-value"}
+
+
+@pytest.fixture(scope="module")
+def kf():
+    """The helper as a module: the fake browser below speaks its websocket frames back."""
+    spec = importlib.util.spec_from_file_location("keychain_fill", MAC / "keychain_fill.py")
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+    return module
+
+
+class FakeDevTools:
+    """Chrome's DevTools endpoint on a free local port: ``/json/list`` over HTTP (its websocket
+    URLs name the browser's own port 9222, as the real one's do) and one websocket per page that
+    answers the helper's calls. A page's password field appears once ``missing`` looks are
+    spent; every call and every inserted text is kept per page."""
+
+    def __init__(self, kf: Any, missing: dict[str, int]) -> None:
+        self.kf = kf
+        self.missing = dict(missing)
+        self.calls: dict[str, list[tuple[str, dict[str, Any]]]] = {pid: [] for pid in SITE_URLS}
+        self.inserted: dict[str, list[str]] = {pid: [] for pid in SITE_URLS}
+        fake = self
+
+        class Handler(socketserver.BaseRequestHandler):
+            def handle(self) -> None:
+                fake.serve(self.request)
+
+        socketserver.ThreadingTCPServer.allow_reuse_address = True
+        self.server = socketserver.ThreadingTCPServer(("127.0.0.1", 0), Handler)
+        self.server.daemon_threads = True
+        self.port = self.server.server_address[1]
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+
+    def close(self) -> None:
+        self.server.shutdown()
+        self.server.server_close()
+
+    def listing(self) -> bytes:
+        targets: list[dict[str, str]] = [
+            {
+                "type": "page",
+                "url": url,
+                "webSocketDebuggerUrl": f"ws://127.0.0.1:9222/devtools/page/{pid}",
+            }
+            for pid, url in SITE_URLS.items()
+        ]
+        targets.append(
+            {
+                "type": "service_worker",
+                "url": "chrome-extension://abc/background.js",
+                "webSocketDebuggerUrl": "ws://127.0.0.1:9222/devtools/page/SW",
+            }
+        )
+        return json.dumps(targets).encode()
+
+    def serve(self, sock: socket.socket) -> None:
+        head = b""
+        while b"\r\n\r\n" not in head:
+            chunk = sock.recv(4096)
+            if not chunk:
+                return
+            head += chunk
+        head, _, leftover = head.partition(b"\r\n\r\n")
+        lines = head.decode().split("\r\n")
+        path = lines[0].split(" ")[1]
+        headers = {
+            k.lower(): v.strip()
+            for k, v in (line.split(":", 1) for line in lines[1:] if ":" in line)
+        }
+        if path == "/json/list":
+            body = self.listing()
+            sock.sendall(
+                b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: "
+                + str(len(body)).encode()
+                + b"\r\nConnection: close\r\n\r\n"
+                + body
+            )
+            sock.close()
+            return
+        pid = path.rsplit("/", 1)[1]
+        digest = hashlib.sha1((headers["sec-websocket-key"] + self.kf.GUID).encode()).digest()
+        accept = base64.b64encode(digest).decode()
+        sock.sendall(
+            b"HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"
+            b"Sec-WebSocket-Accept: " + accept.encode() + b"\r\n\r\n"
+        )
+        reader = self.kf.Reader(sock, leftover, mask=False)
+        while True:
+            try:
+                request = json.loads(reader.message())
+            except OSError:
+                sock.close()
+                return
+            params = request.get("params") or {}
+            self.calls[pid].append((request["method"], params))
+            reply = {"id": request["id"], "result": self.answer(pid, request["method"], params)}
+            self.kf.send_frame(sock, 0x1, json.dumps(reply).encode(), mask=False)
+
+    def answer(self, pid: str, method: str, params: dict[str, Any]) -> dict[str, Any]:
+        if method == "Runtime.evaluate":
+            expression = params["expression"]
+            if expression == self.kf.FIND_JS:
+                if self.missing.get(pid, 0) > 0:
+                    self.missing[pid] -= 1
+                    return {"result": {"type": "object", "subtype": "null", "value": None}}
+                return {"result": {"type": "object", "value": {"x": 320.5, "y": 240}}}
+            if expression == self.kf.FOCUS_JS:
+                return {"result": {"type": "boolean", "value": True}}
+            if expression == self.kf.LENGTH_JS:
+                text = self.inserted[pid][-1] if self.inserted[pid] else ""
+                return {"result": {"type": "number", "value": len(text)}}
+            raise AssertionError(expression)
+        if method == "Input.insertText":
+            self.inserted[pid].append(params["text"])
+        return {}
+
+
+@pytest.fixture
+def keychain(mac_signin, tmp_path: Path) -> tuple[Path, Path, Path, dict[str, str], Path]:
+    """The Mac script's fakes plus a fake ``security``: the two items exist (FAKE_MISSING names
+    one that does not), ``-w`` prints a test value, every call's arguments go to a log."""
+    script, state, log, env = mac_signin
+    calls = tmp_path / "security.calls"
+    fake(
+        tmp_path / "bin",
+        "security",
+        f'''echo "security $*" >> "{calls}"
+case "$*" in
+  *"-s ${{FAKE_MISSING:-no-such-item}}"*) exit 44 ;;
+  *"-s pickandroll-bbm -w") echo "{VALUES["pickandroll-bbm"]}" ;;
+  *"-s pickandroll-yahoo -w") echo "{VALUES["pickandroll-yahoo"]}" ;;
+  *) echo 'keychain: "login.keychain-db"' ;;
+esac
+''',
+    )
+    return script, state, log, env, calls
+
+
+def test_the_keychain_mode_refuses_a_missing_item_before_touching_the_droplet(keychain) -> None:
+    script, _state, log, env, calls = keychain
+    done = signin_run(script, {**env, "FAKE_MISSING": "pickandroll-yahoo"}, "--keychain")
+    assert done.returncode == 2
+    assert (
+        "no Keychain item 'pickandroll-yahoo': create it with"
+        "  security add-generic-password -s pickandroll-yahoo -a <account> -w" in done.stderr
+    )
+    assert not log.exists()  # no ssh, no tunnel, no window
+    assert " -w" not in calls.read_text()  # and no password read
+
+
+def test_the_keychain_mode_fills_each_password_field_over_devtools_and_shows_no_value(
+    keychain, kf
+) -> None:
+    script, _state, log, env, calls = keychain
+    browser = FakeDevTools(kf, missing={"Y1": 1})
+    try:
+        # Enter for Basketball Monster; Enter for Yahoo (no field yet); Enter again; the final Enter.
+        done = signin_run(script, env, "--keychain", "--port", str(browser.port), stdin="\n\n\n\n")
+    finally:
+        browser.close()
+    assert done.returncode == 0, done.stdout + done.stderr
+    out = done.stdout
+    assert "press Enter here: the password goes from this Mac's Keychain into that field" in out
+    assert "Basketball Monster: with its password field on screen, press Enter" in out
+    assert "bbm: the password field holds the Keychain item 'pickandroll-bbm'; click Sign in" in out
+    assert "yahoo: the password field holds the Keychain item 'pickandroll-yahoo'" in out
+    assert "yahoo: no password field on the yahoo.com page yet (Yahoo shows it" in done.stderr
+    assert out.rstrip().endswith("signed in on the droplet: both sites")
+    # The text went to the websocket of the right page, after a click on the field.
+    assert browser.inserted == {"B1": ["bbm-test-value"], "Y1": ["yahoo-test-value"], "X1": []}
+    for pid in ("B1", "Y1"):
+        methods = [method for method, _ in browser.calls[pid] if method != "Runtime.evaluate"]
+        assert methods[-4:] == ["Input.dispatchMouseEvent"] * 3 + ["Input.insertText"]
+        pressed = [p for m, p in browser.calls[pid] if p.get("type") == "mousePressed"]
+        assert pressed == [
+            {"type": "mousePressed", "x": 320.5, "y": 240, "button": "left", "clickCount": 1}
+        ]
+        scripts = [p["expression"] for m, p in browser.calls[pid] if m == "Runtime.evaluate"]
+        assert scripts[-3:] == [kf.FIND_JS, kf.FOCUS_JS, kf.LENGTH_JS]
+    assert browser.calls["X1"] == []  # a URL that only names the site is not the site
+    # The value appears nowhere: not in the output, not in a call to ssh or open, and the
+    # Keychain is read only once a field is there (the first Yahoo look read nothing).
+    for value in VALUES.values():
+        assert value not in out + done.stderr and value not in log.read_text()
+    reads = [line for line in calls.read_text().splitlines() if line.endswith(" -w")]
+    assert reads == [
+        "security find-generic-password -s pickandroll-bbm -w",
+        "security find-generic-password -s pickandroll-yahoo -w",
+    ]
+
+
+def test_the_keychain_mode_skips_a_site_on_s(keychain, kf) -> None:
+    script, _state, _log, env, calls = keychain
+    browser = FakeDevTools(kf, missing={})
+    try:
+        done = signin_run(script, env, "--keychain", "--port", str(browser.port), stdin="s\ns\n\n")
+    finally:
+        browser.close()
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert "skipped Basketball Monster: use the Console line there" in done.stdout
+    assert "skipped Yahoo: use the Console line there" in done.stdout
+    assert "document.querySelector('input[type=password]').value = '...'" in done.stdout
+    assert all(not texts for texts in browser.inserted.values())
+    assert " -w" not in calls.read_text()
+
+
+def test_the_helper_reads_the_keychain_in_its_own_process_and_names_the_add_line(
+    kf, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    calls = tmp_path / "calls"
+    fake(
+        bin_dir,
+        "security",
+        f'''echo "security $*" >> "{calls}"
+case "${{FAKE_SECURITY:-ok}}" in
+  ok) printf "a value with spaces\\n" ;;
+  empty) printf "" ;;
+  missing) exit 44 ;;
+  denied) echo "security: SecKeychainItemCopyContent: User canceled the operation." >&2; exit 128 ;;
+esac
+''',
+    )
+    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
+    assert kf.keychain_password("pickandroll-bbm") == ("a value with spaces", "")
+    assert calls.read_text() == "security find-generic-password -s pickandroll-bbm -w\n"
+    monkeypatch.setenv("FAKE_SECURITY", "missing")
+    value, line = kf.keychain_password("pickandroll-yahoo")
+    assert value is None
+    assert "security add-generic-password -s pickandroll-yahoo -a <account> -w" in line
+    monkeypatch.setenv("FAKE_SECURITY", "denied")
+    value, line = kf.keychain_password("pickandroll-yahoo")
+    assert value is None and "security exit 128" in line and "canceled" not in line
+    monkeypatch.setenv("FAKE_SECURITY", "empty")
+    value, line = kf.keychain_password("pickandroll-yahoo")
+    assert value is None and "empty" in line
+    assert kf.main(["9222", "elsewhere", "pickandroll-bbm"]) == 2
+    assert kf.main(["port", "bbm", "pickandroll-bbm"]) == 2

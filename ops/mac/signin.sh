@@ -9,8 +9,12 @@
 # sites report signed in. The droplet's address is the one line of ~/.config/pickandroll/droplet
 # on the Mac (DROPLET= in rsync.env also serves; --host overrides), never written here.
 # Nothing in this script reads, types or logs a credential: the password goes in through the
-# DevTools Console line printed below, pasted by the user.
-#   usage: ops/mac/signin.sh [--host USER@ALIAS] [--port 9222] [--no-open] [--remote-repo pickandroll]
+# DevTools Console line printed below, pasted by the user. With --keychain, keychain_fill.py
+# beside this script reads each site's password from a Keychain item the user made by hand
+# (pickandroll-bbm, pickandroll-yahoo) and puts it into the password field over the tunnel's
+# DevTools websocket when the user presses Enter; the value is never an argument, a variable or a
+# line of output of this script. Only the user runs this, by hand, from the Mac.
+#   usage: ops/mac/signin.sh [--host USER@ALIAS] [--port 9222] [--no-open] [--remote-repo pickandroll] [--keychain]
 set -u
 conf=${PICKANDROLL_CONF:-$HOME/.config/pickandroll}
 host=""
@@ -18,7 +22,10 @@ port=9222
 open_windows=1
 remote_repo=pickandroll
 browser=${PICKANDROLL_BROWSER:-Google Chrome}
-usage() { echo "usage: $0 [--host USER@ALIAS] [--port LOCAL_PORT] [--no-open] [--remote-repo DIR]" >&2; }
+keychain=0
+item_bbm=pickandroll-bbm
+item_yahoo=pickandroll-yahoo
+usage() { echo "usage: $0 [--host USER@ALIAS] [--port LOCAL_PORT] [--no-open] [--remote-repo DIR] [--keychain]" >&2; }
 while [ $# -gt 0 ]; do
   case "$1" in
     --host|--port|--remote-repo)
@@ -30,6 +37,7 @@ while [ $# -gt 0 ]; do
       esac
       shift 2 ;;
     --no-open) open_windows=0; shift ;;
+    --keychain) keychain=1; shift ;;
     -h|--help) usage; exit 0 ;;
     *) usage; exit 2 ;;
   esac
@@ -49,6 +57,19 @@ fi
 py=${PICKANDROLL_PYTHON:-}
 if [ -z "$py" ]; then
   if command -v python3 >/dev/null 2>&1; then py=python3; else py=$(cd "$(dirname "$0")/../.." && pwd)/.venv/bin/python; fi
+fi
+here=$(cd "$(dirname "$0")" && pwd)
+if [ "$keychain" = 1 ]; then
+  command -v security >/dev/null 2>&1 || { echo "--keychain needs the Mac's security command" >&2; exit 2; }
+  for item in "$item_bbm" "$item_yahoo"; do
+    # The item's existence only (no -w): the password itself is read by keychain_fill.py, in its
+    # own process, when the field is on screen.
+    if ! security find-generic-password -s "$item" >/dev/null 2>&1; then
+      echo "no Keychain item '$item': create it with  security add-generic-password -s $item -a <account> -w  (<account> is your sign-in name on the site; it asks for the password twice)" >&2
+      exit 2
+    fi
+  done
+  [ -f "$here/keychain_fill.py" ] || { echo "$here/keychain_fill.py is missing" >&2; exit 2; }
 fi
 case "$remote_repo" in /*) rrepo=$remote_repo ;; *) rrepo="~/$remote_repo" ;; esac
 rlog='~/.config/pickandroll/signin.log'
@@ -128,16 +149,42 @@ while IFS= read -r url; do
   fi
 done <<< "$urls"
 
-cat <<TEXT
+console_line="document.querySelector('input[type=password]').value = '...'"
+if [ "$keychain" = 1 ]; then
+  cat <<TEXT
+
+In each DevTools window (the screencast is the droplet's browser; it takes clicks and keys):
+  1. click the site's sign-in, type the username into the screencast's field and get to the
+     password field (Yahoo asks for it on its second page);
+  2. press Enter here: the password goes from this Mac's Keychain into that field over the tunnel
+     (s + Enter skips the site: put it in with the Console line  $console_line  there instead);
+  3. click Sign in and check the page shows you signed in.
+TEXT
+  for site in bbm yahoo; do
+    case "$site" in
+      bbm) item=$item_bbm; name="Basketball Monster" ;;
+      yahoo) item=$item_yahoo; name="Yahoo" ;;
+    esac
+    while :; do
+      printf '%s: with its password field on screen, press Enter to fill it from Keychain item %s (s + Enter skips): ' "$name" "$item"
+      read -r answer || answer=s  # the end of input skips the site
+      case "$answer" in s|S) echo "skipped $name: use the Console line there"; break ;; esac
+      if "$py" "$here/keychain_fill.py" "$port" "$site" "$item"; then break; fi
+    done
+  done
+  echo "When both sites are signed in, press Enter here: the droplet closes its browser and the signin routine confirms."
+else
+  cat <<TEXT
 
 In each DevTools window (the screencast is the droplet's browser; it takes clicks and keys):
   1. click the site's sign-in, type the username into the screencast's field;
   2. click the password field, open the Console tab and run, with your password pasted between the quotes:
-       document.querySelector('input[type=password]').value = '...'
+       $console_line
      (Yahoo asks for the password on its second page: do this there);
   3. click Sign in and check the page shows you signed in.
 When both sites are signed in, press Enter here: the droplet closes its browser and the signin routine confirms.
 TEXT
+fi
 read -r _
 remote "tmux send-keys -t signin Enter" || echo "could not send Enter to the tmux session (press it there: ssh -t $host tmux attach -t signin)" >&2
 result=""
