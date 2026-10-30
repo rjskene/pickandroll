@@ -215,7 +215,7 @@ def test_the_payload_logs_and_queues_a_churn_with_its_held_drop_and_holds_it_rea
     assert dl.basis_of(7, None, churn=True) == dl.CHURN and dl.basis_of(7, None) == dl.DROP
 
 
-def test_the_queue_never_queues_a_churn_until_the_executor_drops_on_its_own():
+def test_the_queue_queues_a_churn_as_one_entry_whose_add_waits_on_its_held_drop():
     p = churn_league()
     rule = mv.keep_rule(p)
     p = replace(p, kept=rule.kept)
@@ -226,8 +226,22 @@ def test_the_queue_never_queues_a_churn_until_the_executor_drops_on_its_own():
         {**m, "basis": dl.CHURN, "held_drop": {"player": 7, "slot": "IL"}} for m in three["moves"]
     ][:1]
     (e,) = qa.queue_of(day_of(entry), date(2026, 10, 26), qa.noise_floor([], 0.1), (0.1, "x"), None)
-    assert (e["queued"], e["reason"]) == (False, qa.CHURN_HELD)
-    assert e["held_drop"] == {"player": 7, "slot": "IL"}
+    assert (e["queued"], e["reason"]) == (True, None)
+    assert e["held_drop"] == {"player": 7, "slot": "IL"} and qa.churn_drop(e) == 7
+    # Part 3: the add is not due until H's drop landed; a drop that failed holds it all day.
+    e["executes_at"] = AT.isoformat()
+    later = AT + timedelta(hours=2)
+    assert qa.due([e], later) == []
+    assert qa.waits(e, {})["text"] == "waits for its held drop"
+    assert [x["id"] for x in qa.held([e], later)] == [e["id"]]
+    failed = {**e, "drop_run": {"outcome": "failed"}}
+    assert qa.waits(failed, {})["text"] == "its held drop failed: not claimed today"
+    assert qa.due([failed], later) == [] and qa.kept(failed)
+    dropped = {**e, "drop_run": {"outcome": qa.DROPPED}}
+    assert [x["id"] for x in qa.due([dropped], later)] == [e["id"]]
+    assert qa.waits(dropped, {}) is None and qa.held([dropped], later) == []
+    # Any other entry has no held drop.
+    assert qa.churn_drop({**e, "basis": "drop"}) is None
 
 
 def test_a_protected_held_player_is_named_protected_for_the_queue():

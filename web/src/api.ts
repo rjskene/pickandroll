@@ -1219,7 +1219,6 @@ export type QueueReason =
   | "below the noise floor"
   | "no adds left this week"
   | "over the day's cap"
-  | "churn, read only: the executor has no standalone drop yet"
   | "a later step of the week plan: queued at its day's build"
   | "an earlier step of the week plan is not queued";
 

@@ -3,7 +3,7 @@
 // ``alert``, which would block the tab, and the routine's pass with it, until someone dismissed
 // it. On an add page opened with a moves fragment (the routine's link, its late or evening pass,
 // or the side panel's), and on a team page opened with a start-active fragment (#215, 0.9.0) or an
-// IL one (#214, 0.9.1), and nowhere else, ``alert`` keeps its text on the root element instead, where the executor
+// IL one (#214, 0.9.1), and on my team's drop page opened with a drop fragment (#221, 0.10.0), and nowhere else, ``alert`` keeps its text on the root element instead, where the executor
 // (lib/moves.js ``alertsOf``, lib/startactive.js) reads it and logs the run with Yahoo's words. A
 // page the user opens by hand keeps Yahoo's alerts. It reads nothing on the page and sends
 // nothing.
@@ -32,20 +32,30 @@
     "pickandroll-il-evening",
     "pickandroll-il-panel",
   ];
+  /** The held drop's (lib/drop.js ``DROP_TRIGGERS``, #221 part 3, 0.10.0). */
+  const DROP_FRAGMENTS = [
+    "pickandroll-drop",
+    "pickandroll-drop-late",
+    "pickandroll-drop-evening",
+    "pickandroll-drop-panel",
+  ];
   const ATTR = "data-pickandroll-alerts";
   const ADD_PAGE = /^\/nba\/\d+\/addplayer\/?$/;
   const TEAM_PAGE = /^\/nba\/\d+\/\d+\/?$/;
+  const DROP_PAGE = /^\/nba\/\d+\/\d+\/dropplayer\/?$/;
   /** The longest text kept of one alert. */
   const LONGEST = 300;
 
-  /** On the add page of ``win`` opened with a moves fragment, or the team page opened with a
-   * start-active one, ``alert`` keeps its text instead of showing it. Answers whether it does. */
+  /** On the add page of ``win`` opened with a moves fragment, the team page opened with a
+   * start-active or IL one, or the drop page opened with a drop one, ``alert`` keeps its text
+   * instead of showing it. Answers whether it does. */
   function install(win) {
     const loc = win.location;
     const hash = String(loc.hash || "").replace(/^#/, "");
     const add = ADD_PAGE.test(loc.pathname) && FRAGMENTS.includes(hash);
     const team = TEAM_PAGE.test(loc.pathname) && (START_ACTIVE_FRAGMENTS.includes(hash) || IL_FRAGMENTS.includes(hash));
-    if (!add && !team) return false;
+    const drop = DROP_PAGE.test(loc.pathname) && DROP_FRAGMENTS.includes(hash);
+    if (!add && !team && !drop) return false;
     const root = win.document.documentElement;
     win.alert = function alert(message) {
       let kept;
@@ -61,6 +71,6 @@
     return true;
   }
 
-  if (typeof window === "undefined") module.exports = { install, FRAGMENTS, START_ACTIVE_FRAGMENTS, IL_FRAGMENTS, ATTR };
+  if (typeof window === "undefined") module.exports = { install, FRAGMENTS, START_ACTIVE_FRAGMENTS, IL_FRAGMENTS, DROP_FRAGMENTS, ATTR };
   else install(window);
 })();

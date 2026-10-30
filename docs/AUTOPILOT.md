@@ -182,7 +182,6 @@ page, from PR 2:
   day says so. Every move of the set is an entry with the set, the decision and the knobs in
   force, queued or with the first reason it is not: the private league or the mode off; a drop
   the keep rule protects (read from the engine, never re-solved, held players included, #221); a
-  churn (#221: "churn, read only: the executor has no standalone drop yet", until #221 part 3); a
   move flagged season-costly; an add the league dropped within the waiver days (or one the set
   drops); below the noise floor; no adds left in the week of its clear date; over the day's cap.
   The rest are queued by their gain
@@ -193,7 +192,8 @@ page, from PR 2:
   add or a churn needs (#187; null when the decision log entry was written before #187), and a
   churn's `held_drop`, the held player it drops and his slot (#221). The live claim (PR 3) reads
   them: a `held` add executes after its held move (its page then shows an open spot, #199), never
-  before it as an open-spot claim.
+  before it as an open-spot claim. A churn is queued as one entry since #221 part 3: its held drop
+  first, on its own (below), and its add only once that drop landed.
 - **The week plan (#221 part 2, ruled 2026-10-29).** When the day's solve logged a week plan for
   the queue (the set `week_plan`, docs/ADD_DROP.md "Week plans": a plan that beats the three weeks'
   set on the three weeks after by the plan floor and passed the season guard on its total), the
@@ -210,7 +210,8 @@ page, from PR 2:
   to land", that step's entry and add), the Queue route's entries carry the same `waits`, and a
   moves pass's done writes the steps it left held in the pass record (`held`, by entry). A step
   whose earlier step failed or was lost is held all day, never executed out of order, and the
-  day's cap counts only what executed. A churn step stays read-only (`CHURN_HELD`).
+  day's cap counts only what executed. A churn step is queued like any other: its add also waits
+  on its held drop (below).
 - **The noise floor.** The plan floor of the knobs against the move's gain; once 20 moves are
   scored, also the scorecard's spread (the standard deviation of realized less projected value of
   the public leagues' scored moves, by scoring) against the move's value on its judging horizon,
@@ -517,6 +518,61 @@ page, from PR 2:
   drop table beside it) is the open-spot claim, submitted since PR 4 (ext 0.9.2); a
   full roster after a move this browser made on a later day's page logs `skipped` "move dated
   <day>, claim waits", and the morning pass retries.
+- **The held drop first (#221 part 3, ext 0.10.0; step 0c read 2026-10-30, amendments on #221).**
+  A churn (`basis: churn`: the add Z, the held player H it drops, `held_drop {player: H, slot}`,
+  and `held_move`, the active player Y moved into H's slot, null when an active spot is open) is
+  one Yahoo chain: H dropped on his own on the drop page, then Y's IL move (above), then Z as an
+  open-spot claim. Its add waits for H's drop: until a live run says `dropped`, the due route
+  holds the entry (`held`, `waits` "waits for its held drop", or "its held drop failed: not
+  claimed today" / "… unconfirmed: …"), lists it in neither `entries` nor `il_first`, and lists H
+  in `drop_first`: `{entry, player, slot, add, page}`, `page` my team's drop page
+  (`/nba/<league>/<team>/dropplayer`), for each due churn (queued, not struck, no outcome, its
+  week plan's earlier steps landed, its add not claimed, an add left in its week), H once, never a
+  player the keep rule protects, none in a closed answer. Once H is dropped the entry is due with
+  `drop: null`, behind Y's IL move when it has one, and its claim and IL run are taken as an
+  open-spot claim's; a claim naming H as its drop is "another move" then. The run is `POST
+  /seasons/{league}/autopilot/drop` (`DropRun`: `day`, `mode`, `trigger`, `outcome` of
+  `would_drop`, `dropped`, `skipped`, `failed`, `unconfirmed` or `stopped`, `reason`, `entry`,
+  `player`, `page`, `controls`, `landed`, `message`, `extension`), logged under `drop`. Refused,
+  beside the moves pass's own rules (private, STOP, off, live outside live or under a guard that
+  refuses now, a crumb with 422): a live `would_drop`, a dry `dropped` or `unconfirmed`, a run
+  that does not name its entry and player, an entry not in the day's queue or not a churn, a
+  player other than its held drop, a protected player, a `would_drop` or `dropped` for a struck
+  or unqueued entry, a player dropped already that day, and a retry after `failed` or
+  `unconfirmed` that day. A live `dropped`, `failed` or `unconfirmed` goes on the entry as
+  `drop_run` (`{outcome, at, reason, message}`), never its outcome or place; `failed` and
+  `unconfirmed` hold the add all day. The run goes to the open moves pass under `drop`, apart
+  from its claims; the queue's payload carries each entry's latest drop run (`drop_pass`) and the
+  Queue card today's (`drop_today`).
+
+  The extension's drop (`extension/lib/drop.js`) runs on the drop page opened with a drop
+  fragment: `#pickandroll-drop` (`routine`), `-drop-late`, `-drop-evening` or `-drop-panel` (the
+  side panel's due list links each `drop_first` item, "drop: …" in live). A run drops the
+  fragment, reads `moves/due` fresh and takes the first item this browser has not run that day
+  (one drop page serves every churn of the league; a live drop submitted or sticky that day, or a
+  run of the same mode by the same pass, rules an item out); none logs nothing:
+  - under STOP it logs `stopped`;
+  - the page checks: the form (`form#add-drop-players-form`) at stage 1, exactly one visible row
+    button `button.add-drop-trigger-btn` whose `data-check-box-value`, trimmed (Yahoo appends a
+    space), is H's id exactly (never a prefix), his row's name link, no drop box ticked; a failed
+    check logs `skipped`. The hidden `dpid` box is never ticked by us;
+  - a dry run, or a live league whose guard refuses now, logs `would_drop` and clicks nothing;
+  - live: the run clicks H's row button once; Yahoo's script posts the first stage and draws the
+    form again in place. Within 15 s the confirm must read `stage=2`, one hidden `dpid` equal to
+    H and one visible submit `input#submit-add-drop-button[name=submit_drop_player]` whose value
+    is "Drop <his name>" (the name read from his row). Anything else, or an alert (kept as text),
+    is `failed` "stopped before the submit: …" with the page's words, and nothing is submitted.
+    Otherwise the drop goes on record in this browser (`held_drop:<entry>`), the confirm is read
+    again and its submit is clicked once;
+  - the page Yahoo lands on (my team page) logs the run: `dropped` when its `_global_alerts`
+    carries errno 933 saying he was dropped, or the notice "You have successfully dropped …";
+    otherwise `unconfirmed`, never `dropped`. A submit on record whose run never reached the log
+    is logged by the next visit as `unconfirmed` "submitted; Yahoo's answer was not read".
+
+  After a logged `dropped` the tab reads `moves/due` again and goes on with the run's trigger:
+  to the entry's IL move (its `il_first` page and IL fragment) or, with no IL move behind it, to
+  its add page with the moves fragment. The routine opens the drop page once per `drop_first`
+  item, before the league's IL and add pages.
 - **The mode, the log and the live guard.** `armed.json`'s `moves` key and `moves_cap`, like the
   lineups'. A pass is `POST /seasons/{league}/autopilot/moves`, logged under `moves` beside
   `lineup` in the league's day file. A live pass sets its placed, failed and gone outcomes on the

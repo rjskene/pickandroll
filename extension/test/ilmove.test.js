@@ -311,7 +311,7 @@ async function visitTeam({ hash = "#pickandroll-il", answer, dom = ilDom(), date
   });
   ctx.window = ctx;
   ctx.globalThis = ctx;
-  for (const file of ["lib/league.js", "lib/lineup.js", "lib/moves.js", "lib/startactive.js", "lib/ilmove.js", "league.js"]) vm.runInContext(fs.readFileSync(path.join(DIR, file), "utf8"), ctx);
+  for (const file of ["lib/league.js", "lib/lineup.js", "lib/moves.js", "lib/startactive.js", "lib/ilmove.js", "lib/drop.js", "league.js"]) vm.runInContext(fs.readFileSync(path.join(DIR, file), "utf8"), ctx);
   ctx.started = true;
   for (const fn of timers.splice(0)) await fn();
   return { sent, replaced, assigned, strip: nodes["pickandroll-strip"], touched: dom.touched };
@@ -331,7 +331,7 @@ const worker =
   };
 const ops = (v) => v.sent.map((m) => m.op);
 const logOf = (v) => v.sent.filter((m) => m.op === "il_log");
-const RUN = ["moves_landed", "settings", "season_page", "moves_due", "il_record"];
+const RUN = ["moves_landed", "drop_landed", "settings", "season_page", "moves_due", "il_record"];
 const CLAIM = `${SITE}/nba/${LEAGUE}/addplayer?apid=${ADD}#pickandroll-moves`;
 
 test("a dry run: would_move logged, nothing clicked, then the claim's add page", async () => {
@@ -366,7 +366,7 @@ test("a live move: on record before any click, the two clicks, moved logged, the
 test("a live move clicks nothing when it may not, and a stop or an unlogged run opens no claim", async () => {
   // No item for this page: nothing logged, nowhere to go.
   let v = await visitTeam({ answer: worker(due(LIVE, [])) });
-  assert.deepEqual([ops(v), v.touched, v.assigned], [RUN.slice(0, 4), [], []]);
+  assert.deepEqual([ops(v), v.touched, v.assigned], [RUN.slice(0, 5), [], []]);
   assert.equal(v.strip.textContent, "pickandroll IL move: no IL move due on this page");
   // Another date's page: not the item's.
   v = await visitTeam({ answer: worker(due(LIVE)), date: "2026-10-28" });
@@ -378,7 +378,7 @@ test("a live move clicks nothing when it may not, and a stop or an unlogged run 
   v = await visitTeam({ answer: worker(due({ mode: "off" })) });
   assert.deepEqual([logOf(v).length, v.assigned], [0, []]);
   v = await visitTeam({ answer: worker(due(LIVE), { settings: { moves_executor: "off" } }) });
-  assert.deepEqual([ops(v), v.touched], [["moves_landed", "settings"], []]);
+  assert.deepEqual([ops(v), v.touched], [["moves_landed", "drop_landed", "settings"], []]);
   // The page fails a check: skipped, no record asked for, the claim still opens.
   v = await visitTeam({ answer: worker(due(LIVE)), dom: ilDom({ editable: false }) });
   assert.deepEqual([logOf(v)[0].run.outcome, logOf(v)[0].run.reason, v.touched, ops(v).includes("il_moving"), v.assigned], ["skipped", "the player's slot is locked on this page", [], false, [CLAIM]]);

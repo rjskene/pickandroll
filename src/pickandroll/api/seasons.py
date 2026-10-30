@@ -45,8 +45,9 @@ Routes:
     decision log, never solved; the user's veto and execute time. ``GET`` and ``POST
     /seasons/{league}/autopilot/moves``, ``GET …/moves/due``: the league's Queue card, its pass
     log under ``moves`` and the entries due for the extension, with the IL moves their open-spot
-    claims need first (``il_first``, #214); ``POST /seasons/{league}/autopilot/il`` logs those
-    under ``il``; ``PUT /leagues/{league}/moves`` sets the mode and the user's cap. ``GET
+    claims need first (``il_first``, #214) and the held drops its churns need first
+    (``drop_first``, #221 part 3); ``POST /seasons/{league}/autopilot/il`` and ``…/drop`` log
+    those under ``il`` and ``drop``; ``PUT /leagues/{league}/moves`` sets the mode and the user's cap. ``GET
     /autopilot/start-active/due`` and ``POST /seasons/{league}/autopilot/start-active``: the
     leagues that want Yahoo's Start Active Players for the rest of the week and the runs' log
     under ``start_active`` (#215).
@@ -1101,6 +1102,13 @@ class SeasonService:
                 season_autopilot.il_lines(self.data_dir, league, day)
             ).items()
         }
+        dropped = {
+            k: v
+            for league in lines
+            for k, v in season_autopilot.latest_drop(
+                season_autopilot.drop_lines(self.data_dir, league, day)
+            ).items()
+        }
         passes = self._passes(day)
         by_id = {e["id"]: e for e in out["entries"]}
         return {
@@ -1117,6 +1125,7 @@ class SeasonService:
                     **e,
                     "pass": latest.get(str(e["id"])),
                     "il_pass": il.get(str(e["id"])),
+                    "drop_pass": dropped.get(str(e["id"])),
                     "waits": qa.waits(e, by_id),
                 }
                 for e in out["entries"]
@@ -1445,6 +1454,7 @@ class SeasonService:
             "adds_left": [],
             "budget": None,
             "il_first": [],
+            "drop_first": [],
             "held": [],
             "live": season_autopilot.moves_live_check(self.data_dir, league, mode),
             "at": now.isoformat(),
@@ -1474,8 +1484,15 @@ class SeasonService:
         except Exception:  # noqa: BLE001, S110 - the build's keep rule still holds
             pass
         mine = [e for e in body.get("entries") or [] if e.get("league") == league]
+        # A churn is due on its add page only once its held drop landed, and its claim then goes
+        # in with no drop (#221 part 3).
         due = [
-            {**e, "bid_placed": qa.effective_bid(e), "page": qa.add_page(league, e["add"])}
+            {
+                **e,
+                "bid_placed": qa.effective_bid(e),
+                "page": qa.add_page(league, e["add"]),
+                **({"drop": None} if qa.churn_drop(e) is not None else {}),
+            }
             for e in qa.due(mine, now)
         ]
         done = [e for e in mine if e.get("outcome") in qa.EXECUTED]
@@ -1520,7 +1537,60 @@ class SeasonService:
             "il_first": []
             if blocked
             else self._il_first(league, base, mine, due, pending, adds_left),
+            "drop_first": []
+            if blocked
+            else self._drop_first(league, base, mine, now, pending, adds_left, protected),
         }
+
+    def _drop_first(
+        self,
+        league: str,
+        base: Any,
+        mine: list[dict[str, Any]],
+        now: datetime,
+        pending: list[dict[str, Any]],
+        adds_left: list[dict[str, Any]],
+        protected: Mapping[str, Any],
+    ) -> list[dict[str, Any]]:
+        """The held drops the due churns need first (#221 part 3), for the routine to open the
+        drop page before anything else of the league: each churn whose window is over, queued,
+        not struck, its drop not on record today, its earlier plan steps landed, whose claim
+        nothing else stops (no claim on the add open, an add left in its week) and whose H the
+        keep rule does not protect; each H once, in the queue's order. After a logged drop the
+        extension reads the due answer again and goes on to the IL move or the add page."""
+        if base.my_team_id is None:
+            return []
+        by_id = {e["id"]: e for e in mine}
+        claimed = {c.get("add") for c in pending}
+        out: list[dict[str, Any]] = []
+        for e in mine:
+            h = qa.churn_drop(e)
+            if h is None or not e.get("queued") or e.get("struck") or e.get("outcome"):
+                continue
+            if not e.get("executes_at") or datetime.fromisoformat(e["executes_at"]) > now:
+                continue
+            if qa.drop_outcome(e) is not None or str(h) in protected:
+                continue
+            if any(not qa.landed(by_id.get(k) or {}) for k in e.get("after") or ()):
+                continue
+            if e.get("add") in claimed or any(x["player"] == h for x in out):
+                continue
+            week = next(
+                (w for w in adds_left if e.get("from") and w["start"] <= e["from"] <= w["end"]),
+                None,
+            )
+            if week is not None and week.get("adds") is not None and week["adds"] < 1:
+                continue
+            out.append(
+                {
+                    "entry": e["id"],
+                    "player": h,
+                    "slot": (e.get("held_drop") or {}).get("slot"),
+                    "add": e["add"],
+                    "page": public.drop_url(league, base.my_team_id),
+                }
+            )
+        return out
 
     def _il_first(
         self,
@@ -1547,7 +1617,8 @@ class SeasonService:
         for e in due:
             held = e.get("held_move") or {}
             player, slot = held.get("player"), held.get("slot")
-            if e.get("basis") != "held" or e.get("drop") is not None:
+            # A churn is due only once its held drop landed, its drop then None (#221 part 3).
+            if e.get("basis") not in ("held", qa.CHURN) or e.get("drop") is not None:
                 continue
             if player is None or slot not in season_autopilot.IL_SLOTS:
                 continue
@@ -1680,6 +1751,62 @@ class SeasonService:
             season_queue.update(self.data_dir, run.day, change)
         if run.entry is not None:
             self._attribute("moves", league, run.trigger, {run.entry: run.outcome}, key="il")
+        return record
+
+    def log_drop_run(self, league: str, run: season_autopilot.DropRun) -> dict[str, Any]:
+        """Log a churn's held drop the extension made (or would make) on the drop page (#221 part
+        3), under ``drop`` in the league's day file. A live ``dropped``, ``failed`` or
+        ``unconfirmed`` goes on the queue's entry as its ``drop_run`` (never its outcome or
+        place): H is not dropped again that day, and the churn's add goes on only after
+        ``dropped``. Refused (409) when the mode, STOP, the live guard, the keep rule or the queue
+        says it should not have run, or names another drop than the churn's. The run goes to the
+        open moves pass, apart from its claims."""
+        self._base(league)
+        mode = leagues.executor_mode(self.data_dir, league, leagues.MOVES)
+        body = self._read_queue(run.day) or {}
+        mine = {e["id"]: e for e in body.get("entries") or [] if e.get("league") == league}
+        row = next((r for r in body.get("leagues") or [] if r.get("league") == league), None)
+        protected = {int(k) for k in ((row or {}).get("protected") or {})}
+        try:
+            built = self._built(league, (row or {}).get("system"))
+            protected |= {int(k) for k in season_queue.protected_of(built.rule)}
+        except Exception:  # noqa: BLE001, S110 - the build's keep rule still holds
+            pass
+        live = (
+            season_autopilot.moves_live_check(self.data_dir, league, mode)
+            if run.mode == "live"
+            else None
+        )
+        why = season_autopilot.check_drop_run(
+            run, mode, season_autopilot.stopped(self.data_dir), mine, live, protected
+        )
+        if why is not None:
+            raise HTTPException(409, why)
+        now = self.clock()
+        record = {"at": now.isoformat(timespec="seconds"), **run.model_dump(mode="json")}
+        try:
+            season_autopilot.append_run(
+                self.data_dir, league, record, nba_today(now), season_autopilot.DROP
+            )
+        except season_autopilot.LogError as exc:
+            raise HTTPException(409, str(exc)) from exc
+        if run.mode == "live" and run.outcome in season_autopilot.DROP_STICKS:
+
+            def change(q: dict[str, Any] | None) -> dict[str, Any]:
+                q = q or {}
+                for e in q.get("entries") or []:
+                    if e.get("id") == run.entry and e.get("league") == league:
+                        e["drop_run"] = {
+                            "outcome": run.outcome,
+                            "at": now.isoformat(),
+                            "reason": run.reason,
+                            "message": run.message,
+                        }
+                return q
+
+            season_queue.update(self.data_dir, run.day, change)
+        if run.entry is not None:
+            self._attribute("moves", league, run.trigger, {run.entry: run.outcome}, key="drop")
         return record
 
     # ------------------------------------------------------------------ Start Active (#215)
@@ -3159,6 +3286,18 @@ def register(
         except ValidationError as exc:
             raise HTTPException(422, exc.errors(include_url=False, include_context=False)) from exc
         return service.log_moves_run(league, run)
+
+    @app.post("/seasons/{league}/autopilot/drop")
+    def post_drop_run(body: dict[str, Any], league: str = league_id) -> dict[str, Any]:
+        """A churn's held drop on the drop page (#221 part 3), for the league's log. The page's
+        crumb is never posted here: a run carrying one is refused."""
+        if season_autopilot.has_crumb(body):
+            raise HTTPException(422, "a run never carries the page's crumb")
+        try:
+            run = season_autopilot.DropRun.model_validate(body)
+        except ValidationError as exc:
+            raise HTTPException(422, exc.errors(include_url=False, include_context=False)) from exc
+        return service.log_drop_run(league, run)
 
     @app.post("/seasons/{league}/autopilot/il")
     def post_il_run(body: dict[str, Any], league: str = league_id) -> dict[str, Any]:
