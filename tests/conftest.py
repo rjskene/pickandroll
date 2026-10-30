@@ -63,6 +63,14 @@ def synthetic_pool(n: int = 60, seed: int = 7) -> pd.DataFrame:
     return df
 
 
+def pytest_sessionfinish(session, exitstatus) -> None:
+    """Stop the process pools' workers at the end of the run, an interrupted one too (#241). A
+    run killed outright leaves them to their orphan guard."""
+    from pickandroll.optim.pool import shutdown_pool
+
+    shutdown_pool(terminate=True)
+
+
 @pytest.fixture
 def pool() -> pd.DataFrame:
     return synthetic_pool()

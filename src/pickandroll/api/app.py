@@ -55,6 +55,7 @@ from ..draft.league_sim import simulate_league
 from ..fidelity import FidelityLog, analyze, last_attach, markdown, read_events
 from ..fidelity import status as fidelity_status
 from ..optim.objective import CategoryCurve
+from ..optim.pool import shutdown_pool
 from ..optim.roster import Slot, yahoo_default_slots
 from ..projections.adp import adp_for_projections, load_adp
 from ..projections.positions import apply_positions, load_positions
@@ -678,6 +679,7 @@ def create_app(
                 session.yahoo.task.cancel()
             if session.solver is not None:
                 session.solver.enabled = False
+        shutdown_pool(terminate=True)  # a stopped server leaves no pool workers behind (#241)
 
     app = FastAPI(title="pickandroll", version="0.2.0", lifespan=lifespan)
     app.state.store = store
