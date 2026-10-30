@@ -406,3 +406,213 @@ def test_the_copy_script_excludes_the_profile_and_guards_both_hosts() -> None:
         assert f"--exclude={excluded}" in text
     assert "--delete" not in text  # the Mac's data/ holds folders that exist nowhere else
     assert text.count("/rooms") >= 2 and ".copied-at" in text
+
+
+# ------------------------------------------------------------------- the Mac's re-sign-in (#238)
+DEVTOOLS_LIST = json.dumps(
+    [
+        {
+            "type": "page",
+            "url": "https://basketball.fantasysports.yahoo.com/nba/31822",
+            "devtoolsFrontendUrl": "https://chrome-devtools-frontend.appspot.com/serve_rev/@abc/inspector.html?ws=127.0.0.1:9222/devtools/page/Y1",
+        },
+        {
+            "type": "service_worker",
+            "url": "chrome-extension://abc/background.js",
+            "devtoolsFrontendUrl": "/devtools/inspector.html?ws=127.0.0.1:9222/devtools/page/SW",
+        },
+        {
+            "type": "page",
+            "url": "https://basketballmonster.com/",
+            "devtoolsFrontendUrl": "/devtools/inspector.html?ws=localhost:9222/devtools/page/B1",
+        },
+    ]
+)
+
+
+@pytest.fixture
+def mac_signin(tmp_path: Path) -> tuple[Path, Path, Path, dict[str, str]]:
+    """The Mac script against fakes of ssh (tmux, pgrep, the log and the tunnel on the droplet),
+    curl (the DevTools list) and open; the state of the droplet is a few files."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    state = tmp_path / "state"
+    state.mkdir()
+    log = tmp_path / "calls.log"
+    fake(
+        bin_dir,
+        "ssh",
+        f'''cmd="${{@: -1}}"
+echo "ssh $*" >> "{log}"
+for a in "$@"; do [ "$a" = "-N" ] && exec sleep 30; done
+case "$cmd" in
+  *"tmux has-session"*) [ -f "{state}/session" ] ;;
+  *"tmux new-session"*) touch "{state}/session"; exit 0 ;;
+  *"tmux kill-session"*) rm -f "{state}/session"; exit 0 ;;
+  *"tmux send-keys"*) touch "{state}/enter"; exit 0 ;;
+  *pgrep*) [ -f "{state}/browser" ] ;;
+  *"list-units"*) printf '%s' "${{FAKE_ACTIVE:-}}"; exit 0 ;;
+  *"sed -n"*)
+    if [ -f "{state}/enter" ]; then
+      printf '%s\\n' "browser closed" "the signin routine confirms:" "- bbm: ${{FAKE_BBM:-ok, signed in}}" "- yahoo: ${{FAKE_YAHOO:-ok, signed in}}" "finished 07:17:00"
+    else
+      echo "browser up"
+    fi
+    exit 0 ;;
+  *) exit 0 ;;
+esac
+''',
+    )
+    fake(
+        bin_dir,
+        "curl",
+        f"""case "$*" in *json/list*) printf '%s' '{DEVTOOLS_LIST}' ;; *) echo '{{}}' ;; esac\n""",
+    )
+    fake(bin_dir, "open", f'echo "open $*" >> "{log}"\n')
+    conf = tmp_path / "conf"
+    conf.mkdir()
+    (conf / "droplet").write_text("pickandroll@box\n")
+    return MAC / "signin.sh", state, log, env_with(bin_dir, PICKANDROLL_CONF=str(conf))
+
+
+def signin_run(script: Path, env: dict[str, str], *args: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["bash", str(script), *args],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=env,
+        input="\n",
+        timeout=60,
+    )
+
+
+def test_the_mac_signin_starts_the_droplet_in_tmux_opens_devtools_relays_enter_and_reads_the_result(
+    mac_signin,
+) -> None:
+    script, _state, log, env = mac_signin
+    done = signin_run(script, env)
+    assert done.returncode == 0, done.stdout + done.stderr
+    out = done.stdout
+    assert "started ops/vm/signin.sh on the droplet in tmux session 'signin'" in out
+    assert "tunnel: 127.0.0.1:9222 on this Mac is the droplet browser's DevTools port" in out
+    assert (
+        "opened DevTools: https://chrome-devtools-frontend.appspot.com/serve_rev/@abc/inspector.html?ws=127.0.0.1:9222/devtools/page/Y1"
+        in out
+    )
+    assert (
+        "opened DevTools: http://127.0.0.1:9222/devtools/inspector.html?ws=127.0.0.1:9222/devtools/page/B1"
+        in out
+    )
+    assert "page/SW" not in out  # the extension's worker is not a sign-in page
+    assert "document.querySelector('input[type=password]').value" in out
+    assert "- bbm: ok, signed in" in out and "- yahoo: ok, signed in" in out
+    assert out.rstrip().endswith("signed in on the droplet: both sites")
+    calls = log.read_text()
+    assert "-o BatchMode=yes -o ConnectTimeout=10 pickandroll@box true" in calls
+    assert "pickandroll@box command -v tmux" in calls
+    assert (
+        "tmux new-session -d -s signin 'cd ~/pickandroll && bash ops/vm/signin.sh 2>&1 | tee -a ~/.config/pickandroll/signin.log'"
+        in calls
+    )
+    assert "=== mac signin" in calls and ">> ~/.config/pickandroll/signin.log" in calls
+    assert "-o ExitOnForwardFailure=yes -L 127.0.0.1:9222:127.0.0.1:9222 pickandroll@box" in calls
+    assert "tmux send-keys -t signin Enter" in calls
+    assert "open -a Google Chrome https://chrome-devtools-frontend.appspot.com" in calls
+    assert (
+        calls.index("tmux new-session")
+        < calls.index("-L 127.0.0.1:9222")
+        < calls.index("send-keys")
+    )
+    assert "sed -n '/=== mac signin " in calls
+
+
+def test_the_mac_signin_waits_for_a_routine_that_holds_the_profile(mac_signin) -> None:
+    script, _state, log, env = mac_signin
+    done = signin_run(script, {**env, "FAKE_ACTIVE": "pickandroll-routine@morning.service\n"})
+    assert done.returncode == 1
+    assert (
+        "a routine holds the browser profile on the droplet right now (pickandroll-routine@morning.service )"
+        in done.stderr
+    )
+    assert "tmux new-session" not in log.read_text() and "-L 127.0.0.1" not in log.read_text()
+
+
+def test_the_mac_signin_fails_when_a_site_stays_signed_out(mac_signin) -> None:
+    script, _state, _log, env = mac_signin
+    done = signin_run(script, {**env, "FAKE_YAHOO": "failed, signed out"})
+    assert done.returncode == 1
+    assert "- yahoo: failed, signed out" in done.stdout
+    assert "not signed in on both sites yet: run this again" in done.stderr
+
+
+def test_the_mac_signin_reattaches_a_running_session_and_replaces_a_stale_one(mac_signin) -> None:
+    script, state, log, env = mac_signin
+    (state / "session").touch()
+    (state / "browser").touch()
+    done = signin_run(script, env)
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert "reattaching: the droplet's signin.sh is already running" in done.stdout
+    assert (
+        "pgrep -u $(id -u) -f 'ops/vm/signin_browser[.]py'" in log.read_text()
+    )  # never its own shell
+    assert "tmux new-session" not in log.read_text() and "kill-session" not in log.read_text()
+
+    log.unlink()
+    (state / "browser").unlink()
+    (state / "enter").unlink()
+    done = signin_run(script, env)
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert "a stale tmux session 'signin' with no sign-in browser in it: removing it" in done.stdout
+    calls = log.read_text()
+    assert calls.index("tmux kill-session -t signin") < calls.index("tmux new-session -d -s signin")
+
+
+def test_the_mac_signin_moves_the_local_port_and_can_print_instead_of_opening(mac_signin) -> None:
+    script, _state, log, env = mac_signin
+    done = signin_run(script, env, "--port", "9333", "--no-open", "--host", "me@elsewhere")
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert (
+        "DevTools: https://chrome-devtools-frontend.appspot.com/serve_rev/@abc/inspector.html?ws=127.0.0.1:9333/devtools/page/Y1"
+        in done.stdout
+    )
+    assert (
+        "DevTools: http://127.0.0.1:9333/devtools/inspector.html?ws=127.0.0.1:9333/devtools/page/B1"
+        in done.stdout
+    )
+    calls = log.read_text()
+    assert (
+        "-L 127.0.0.1:9333:127.0.0.1:9222 me@elsewhere" in calls and "pickandroll@box" not in calls
+    )
+    assert "open " not in calls
+
+
+def test_the_mac_signin_needs_the_droplet_address_and_refuses_a_bad_flag(
+    mac_signin, tmp_path: Path
+) -> None:
+    script, _state, log, env = mac_signin
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    done = signin_run(script, {**env, "PICKANDROLL_CONF": str(empty)})
+    assert (
+        done.returncode == 2
+        and "no droplet address" in done.stderr
+        and str(empty / "droplet") in done.stderr
+    )
+    (empty / "rsync.env").write_text("DROPLET=pickandroll@fromenv\nREMOTE_DATA=pickandroll/data\n")
+    done = signin_run(script, {**env, "PICKANDROLL_CONF": str(empty)})
+    assert done.returncode == 0 and "pickandroll@fromenv true" in log.read_text()
+    done = signin_run(script, env, "--bogus")
+    assert done.returncode == 2 and "usage:" in done.stderr
+    done = signin_run(script, env, "--port")
+    assert done.returncode == 2 and "usage:" in done.stderr
+
+
+def test_the_alert_for_the_signin_unit_names_the_mac_command(alert) -> None:
+    script, conf, log, env = alert
+    (conf / "ops_issue").write_text("225\n")
+    done = run(script, env, "pickandroll-routine@signin.service")
+    assert done.returncode == 0
+    assert "no run log for signin yet" in done.stdout
+    assert "re-sign-in from the Mac: bash ops/mac/signin.sh (docs/OPS.md §3)" in done.stdout
+    assert "bash ops/mac/signin.sh" in log.read_text().split("gh issue comment 225")[1]
