@@ -111,6 +111,27 @@ summaries (entries due, pages opened), the run times against the windows (`docs/
 difference is a finding on #225. The private league's solve is left out on this host
 (`--skip-solve 31822`, §1): the solve step reports it as left out and stays ok.
 
+The comparison of the two hosts is one command on the Mac, read-only on both:
+
+```bash
+~/code/pickandroll/scripts/soak_compare.py --date 2026-10-31
+```
+
+It bundles the Mac's `data/` and the droplet's (its `bundle` form over ssh, with the system
+python) and prints markdown: the daily marker step by step, the droplet's run logs, the five
+exports' names and sizes, the refresh and solve codes, the queue by league and by entry id, the
+decision log's last moves solve of each league (its sets by player id), the executors' log and
+the pass records. Flagged: a marker step whose status differs, a failed step or an alert in a
+droplet run log, a daily finished after 06:20, an export missing or more than 5% smaller on the
+droplet, a refresh or solve code that is not a success, a queue entry on one side only or
+differing in set, judged horizon, start day, availability, bid, rank or struck state, a league
+row differing in status, decision, cap, budget or adds left, a recommended set that differs, and
+a lineup the droplet would set other than the Mac set it. Not flagged: the private league's
+solve absent on the droplet, the droplet's post step skipped, the pass records' and the
+executors' wording (live against dry run), timestamps and export file names. Exit 0 when
+nothing is flagged, 1 otherwise, 2 when a side could not be read; `--post` puts the markdown on
+#225 as one comment. Player and league ids only, never a name.
+
 ## 5. Cut-over: Monday 2026-11-09, after the 06:00 recorder
 
 Only with `GET http://127.0.0.1:8000/rooms` answering `[]` on both hosts, in this order:
