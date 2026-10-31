@@ -6,8 +6,9 @@ from __future__ import annotations
 
 import json
 import sys
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -20,6 +21,19 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
 import season_sim as ss
+
+
+@pytest.fixture(scope="module", autouse=True)
+def pinned_clock():
+    """The script's clock reads a weekday morning outside the routines' window, whatever the hour
+    the suite runs at (see ``test_season_sim_script.BUSINESS_HOURS``)."""
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(
+            ss,
+            "now_local",
+            lambda: datetime(2026, 10, 27, 9, 0, tzinfo=ZoneInfo("America/Toronto")),
+        )
+        yield
 
 
 @pytest.fixture(scope="module")
