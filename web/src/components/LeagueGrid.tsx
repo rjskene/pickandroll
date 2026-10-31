@@ -95,7 +95,9 @@ export default function LeagueGrid({ landing, onOpen }: { landing: LandingOrder;
                 <h2>LEAGUES</h2>
                 <small className="muted">{label}</small>
               </span>
-              <span className="lt-hrest">
+              {/* The sort and the expand button in one group held at the section's right edge, so
+                  they stay in view at any width (the table itself scrolls sideways under 1180 px). */}
+              <span className="lt-hctl">
                 <label className="inline muted">
                   sorted by
                   <select value={order} onChange={(e) => setOrder(e.target.value as GridOrder)} aria-label="Sort the leagues">
@@ -103,8 +105,6 @@ export default function LeagueGrid({ landing, onOpen }: { landing: LandingOrder;
                     <option value="name">name</option>
                   </select>
                 </label>
-              </span>
-              <span className="lt-acts">
                 <button
                   className="icon"
                   aria-pressed={table === "full"}
