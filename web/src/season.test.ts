@@ -232,6 +232,7 @@ import {
   recordLabel,
   refreshNote,
   stepLeague,
+  leagueTitle,
   parseTableState,
   toggleCollapsed,
   toggleFull,
@@ -2276,4 +2277,11 @@ test("the landing table collapses, scrolls in its section or expands fully, expa
   assert.equal(toggleFull("expanded"), "full");
   assert.equal(toggleFull("collapsed"), "full");
   assert.equal(toggleFull("full"), "expanded");
+});
+
+test("a league's title is its name with the id beside it, or League <id> before a name is read (#74)", () => {
+  assert.equal(leagueTitle("Test league", "100"), "Test league · 100");
+  assert.equal(leagueTitle("Test league 100", "100"), "Test league 100", "a name that carries the id keeps it once");
+  assert.equal(leagueTitle(null, "100"), "League 100");
+  assert.equal(leagueTitle("", "100"), "League 100");
 });

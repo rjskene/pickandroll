@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, type LeagueSummary, type RoomSummary, type SessionSummary } from "../api";
 import { armLabel, draftDay, draftsAhead, draftState, untilLabel } from "../format";
+import { leagueTitle } from "../season";
 
 /** The drafts the user can still arm (#67, #108): one card per league whose draft is ahead,
  * started with no room, or not scheduled yet, with Arm (confirmed in a second click), Open when
@@ -13,6 +14,9 @@ export default function DraftsAhead({ now, onOpen, onSetUp }: { now: number; onO
   const leagues = useQuery({ queryKey: ["leagues"], queryFn: api.leagues, refetchInterval: 30_000 });
   const rooms = useQuery({ queryKey: ["rooms"], queryFn: api.rooms, refetchInterval: 5000 });
   const sessions = useQuery({ queryKey: ["sessions"], queryFn: api.sessions });
+  // The leagues' names as read from Yahoo (the live-draft cards' query); one not read goes by its id.
+  const seasons = useQuery({ queryKey: ["seasons"], queryFn: api.seasons, refetchInterval: 60_000 });
+  const names = new Map((seasons.data ?? []).map((s) => [s.league, s.name]));
   // The league whose arm is waiting on its confirming click.
   const [confirming, setConfirming] = useState<string | null>(null);
   const arm = useMutation({
@@ -31,6 +35,7 @@ export default function DraftsAhead({ now, onOpen, onSetUp }: { now: number; onO
         <DraftCard
           key={l.league}
           l={l}
+          name={names.get(l.league) ?? null}
           now={now}
           open={openId(l, rooms.data ?? [], sessions.data ?? [])}
           confirming={confirming === l.league}
@@ -58,6 +63,7 @@ function openId(l: LeagueSummary, rooms: RoomSummary[], sessions: SessionSummary
 
 function DraftCard({
   l,
+  name,
   now,
   open,
   confirming,
@@ -70,6 +76,7 @@ function DraftCard({
   onSetUp,
 }: {
   l: LeagueSummary;
+  name: string | null;
   now: number;
   open: string | null;
   confirming: boolean;
@@ -88,7 +95,7 @@ function DraftCard({
     <div className={`dcard${soon ? " soon" : ""}`}>
       <div>
         <span className="k">
-          League {l.league} · {format}
+          {leagueTitle(name, l.league)} · {format}
           {l.num_teams ? ` · ${l.num_teams} teams` : ""}
         </span>
         <div className="when" title={l.draft_time ?? undefined}>
