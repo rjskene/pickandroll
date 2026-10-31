@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { BuiltRow, StatusLeague, StatusPayload, YahooRow } from "./api";
-import { jobText, lightOf, recsReason, sheetSections, statusLine, when, worstOf } from "./seasonStatus.ts";
+import { jobText, lightOf, overviewLine, recsReason, sharedSections, sheetSections, STATE_TONE, STATE_WORD, STATES, statusLine, when, worstOf } from "./seasonStatus.ts";
 
 // The viewer's clock is the Mac's: every time below reads on it.
 process.env.TZ = "America/Chicago";
@@ -165,4 +165,40 @@ test("a refresh job says how far it got, and when it is read from the log", () =
   const lost = refresh({ status: "running", step: "pairs", done: 47, finished_at: null, logged: true });
   assert.equal(jobText(lost, NOW), "last job running at pairs 47/47, since 05:39 (from its log)");
   assert.equal(jobText({ kind: "refresh", read_at: null, state: "red", reason: "not refreshed today" }, NOW), null);
+});
+
+test("the three states each have a word and a tone: the icon is never colour alone (#253)", () => {
+  assert.deepEqual(STATES, ["green", "amber", "red"]);
+  assert.deepEqual(
+    STATES.map((x) => [STATE_WORD[x], STATE_TONE[x]]),
+    [
+      ["up to date", "good"],
+      ["pending", "accent"],
+      ["failed", "bad"],
+    ],
+  );
+});
+
+test("the overview's sections are the run and the exports every league shares", () => {
+  const p = payload();
+  assert.deepEqual(
+    sharedSections(p, NOW).map((x) => x.title),
+    ["Daily run", "Basketball Monster"],
+  );
+  assert.deepEqual(sheetSections(p, "100001", NOW).slice(0, 2), sharedSections(p, NOW));
+});
+
+test("the landing icon's hover line names the leagues to look at, worst first, in the table's order", () => {
+  const league = (id: string, state: StatusLeague["state"]): StatusLeague => ({ ...payload().leagues[0], league: id, name: `League ${id}`, state });
+  const named = (ids: string[]) => ids.map((id) => ({ league: id, name: `L${id}` }));
+  const green = payload({ leagues: [league("1", "green"), league("2", "green")] });
+  assert.equal(overviewLine(green, named(["1", "2"]), NOW), "every league up to date; the daily run due 06:30");
+  const mixed = payload({ leagues: [league("1", "amber"), league("2", "green"), league("3", "red")] });
+  assert.equal(overviewLine(mixed, named(["1", "2", "3"]), NOW), "2 of 3 leagues to look at: L3, L1");
+  // A league the status does not list yet is pending; past three the rest are counted.
+  const many = payload({ leagues: ["1", "2", "3", "4"].map((id) => league(id, "amber")) });
+  assert.equal(overviewLine(many, named(["1", "2", "3", "4", "5"]), NOW), "5 of 5 leagues to look at: L1, L2, L3 and 2 more");
+  // A late daily run comes first, and every league's light carries it.
+  const late = payload({ routine: { state: "amber", reason: "refresh skipped" }, leagues: [league("1", "green")] });
+  assert.equal(overviewLine(late, named(["1"]), NOW), "daily run pending; 1 of 1 leagues to look at: L1");
 });

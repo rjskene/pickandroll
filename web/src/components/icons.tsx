@@ -253,3 +253,54 @@ export function Swap() {
     </svg>
   );
 }
+
+/** The freshness light's three states as shapes (#253), so the state reads without its colour: a
+ * check in a circle (up to date), a clock face (pending), an exclamation mark in a triangle
+ * (failed). The colour is the caller's tone class. */
+export function StatusGlyph({ state, size = 18 }: { state: "green" | "amber" | "red"; size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" {...stroke} aria-hidden="true">
+      {state === "green" && (
+        <>
+          <circle cx="12" cy="12" r="9" />
+          <path d="m8 12.5 2.7 2.7L16 9.5" />
+        </>
+      )}
+      {state === "amber" && (
+        <>
+          <circle cx="12" cy="12" r="9" />
+          <path d="M12 7v5l3.2 2" />
+        </>
+      )}
+      {state === "red" && (
+        <>
+          <path d="M10.3 4.2 2.6 17.6A2 2 0 0 0 4.3 20.6h15.4a2 2 0 0 0 1.7-3L13.7 4.2a2 2 0 0 0-3.4 0Z" />
+          <path d="M12 9.5v4.5M12 17.2h.01" />
+        </>
+      )}
+    </svg>
+  );
+}
+
+/** The Progress screen (#253): a rising line over a baseline. */
+export function ProgressIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" {...stroke} aria-hidden="true">
+      <path d="M3 20h18" />
+      <path d="m4 16 5-5 4 3 7-8" />
+      <path d="M16 6h4v4" />
+    </svg>
+  );
+}
+
+/** All leagues, the landing page (#253): four tiles in a 2×2 grid. */
+export function LeaguesIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" {...stroke} aria-hidden="true">
+      <rect x="4" y="4" width="6.5" height="6.5" rx="1.5" />
+      <rect x="13.5" y="4" width="6.5" height="6.5" rx="1.5" />
+      <rect x="4" y="13.5" width="6.5" height="6.5" rx="1.5" />
+      <rect x="13.5" y="13.5" width="6.5" height="6.5" rx="1.5" />
+    </svg>
+  );
+}

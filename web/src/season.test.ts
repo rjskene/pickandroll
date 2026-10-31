@@ -231,6 +231,7 @@ import {
   playsPosition,
   recordLabel,
   refreshNote,
+  stepLeague,
   sortAvailable,
   statusTitle,
   statusTone,
@@ -2245,4 +2246,18 @@ test("a stale moves answer asks again every 3 s for 120 s, then waits for a refr
   assert.equal(staleLine(stale, false, clock), "solving: inputs newer than this answer (this answer built 7:05 AM CT)");
   assert.equal(staleLine(stale, true, clock), "still solving (this answer built 7:05 AM CT): refresh to look again");
   assert.equal(staleLine({ ...stale, built_at: null }, false, clock), "solving: inputs newer than this answer");
+});
+
+test("the league page steps to the previous or next league in the table's order, wrapping at the ends (#253)", () => {
+  const order = ["31822", "100", "200", "300"];
+  assert.equal(stepLeague(order, "100", 1), "200");
+  assert.equal(stepLeague(order, "100", -1), "31822");
+  assert.equal(stepLeague(order, "300", 1), "31822", "the last wraps to the first");
+  assert.equal(stepLeague(order, "31822", -1), "300", "the first wraps to the last");
+  // A league the table does not show (a hidden points league) steps to the first or the last.
+  assert.equal(stepLeague(order, "999", 1), "31822");
+  assert.equal(stepLeague(order, "999", -1), "300");
+  // With no other league there is nowhere to go.
+  assert.equal(stepLeague(["100"], "100", 1), null);
+  assert.equal(stepLeague([], "100", -1), null);
 });

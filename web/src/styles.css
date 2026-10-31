@@ -73,7 +73,7 @@ button.primary kbd { background: rgba(0, 0, 0, 0.18); border-color: rgba(0, 0, 0
 /* shell: header, a viewport-high middle row (board, drawer, rail), footer */
 .shell { height: 100vh; display: flex; flex-direction: column; }
 .topbar { display: flex; align-items: center; gap: 22px; padding: 12px 24px; border-bottom: 1px solid var(--line); background: var(--panel); flex-shrink: 0; }
-.wordmark { font-family: var(--display); font-weight: 700; font-size: 26px; letter-spacing: 0.04em; color: #ffffff; }
+.wordmark { font-family: var(--display); font-weight: 700; font-size: 26px; letter-spacing: 0.04em; color: #ffffff; text-decoration: none; }
 .wordmark span { color: var(--accent); }
 .clock { display: inline-flex; align-items: center; gap: 6px; font-family: var(--display); font-size: 28px; font-weight: 700; color: #ffffff; }
 .main { display: flex; flex: 1; min-height: 0; }
@@ -807,9 +807,17 @@ td select.out.bad { border-color: var(--bad); }
 .pg-sheet h2 { text-transform: uppercase; font-size: 18px; }
 .pg-sheet p { margin: 0; line-height: 1.45; }
 .pg-sheet .pg-ab { width: auto; min-width: 380px; }
-/* The freshness light (#153): a dot and its word, never colour alone; its sheet of rows. */
-.light { display: inline-flex; align-items: center; gap: 6px; padding: 0; border: 0; background: none; color: inherit; font: inherit; font-size: 12px; cursor: pointer; }
-.light:hover > :last-child { text-decoration: underline; }
+/* The freshness light (#153, an icon since #253): a check, a clock or a warning in its tone, never
+ * colour alone (the sheet's legend names each); its sheet of rows. */
+button.icon.light { width: 26px; height: 26px; }
+button.icon.light.good { color: var(--good); }
+button.icon.light.accent { color: var(--accent); }
+button.icon.light.bad { color: var(--bad); }
+.status-mark { display: inline-flex; align-items: center; gap: 4px; }
+.status-legend { display: flex; gap: 16px; font-size: 12px; }
+.status-note { color: var(--text); }
+/* The league page's previous league, all leagues and next league, one group (#253). */
+.league-step { display: inline-flex; align-items: center; gap: 2px; }
 .help { display: inline-flex; align-items: center; justify-content: center; width: 14px; height: 14px; border: 1px solid var(--line-2); border-radius: 50%; font-size: 10px; line-height: 1; cursor: help; vertical-align: 1px; }
 .status-sheet { width: min(880px, calc(100vw - 32px)); }
 .status-section .k { display: flex; align-items: center; gap: 6px; margin: 6px 0 4px; }

@@ -419,6 +419,8 @@ export interface SeasonKeys {
   refresh: (() => void) | null;
   /** Open the Progress screen (#129). */
   progress: () => void;
+  /** The previous (-1) or next (1) league in the landing table's order (#253); null with one league. */
+  step: ((dir: 1 | -1) => void) | null;
   sheetOpen: boolean;
   setSheetOpen: (open: boolean) => void;
 }
@@ -458,6 +460,14 @@ export function seasonKeys(s: SeasonKeys): KeyMap {
         s.refresh();
       },
       p: () => s.progress(),
+      ",": () => {
+        if (!s.step) return false;
+        s.step(-1);
+      },
+      ".": () => {
+        if (!s.step) return false;
+        s.step(1);
+      },
     },
   };
 }
@@ -502,6 +512,8 @@ export const SEASON_SHEET: Sheet = {
         [["m"], "the panel shows Moves"],
         [["r"], "refresh the league (public leagues)"],
         [["p"], "the Progress screen: the hill-climb over the season, every league (read-only)"],
+        [[","], "the previous league, in the landing table's order (wraps at the start)"],
+        [["."], "the next league, in the landing table's order (wraps at the end)"],
         [["?"], "this sheet"],
       ],
     },

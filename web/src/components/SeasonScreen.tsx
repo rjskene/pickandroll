@@ -51,7 +51,6 @@ import {
   HORIZON_LABEL,
   horizonGames,
   isRefreshing,
-  isStale,
   keepLine,
   keepPhrase,
   keepRuleNote,
@@ -75,6 +74,7 @@ import {
   recordLabel,
   refreshNote,
   rosHeadTitle,
+  stepLeague,
   rosLabel,
   rosTitle,
   rosTone,
@@ -111,7 +111,8 @@ import {
 import { DRAWER_WIDTH, isShown, SEASON_CARDS, SEASON_SHEET, SEASON_VIEWS, seasonKeys, stepHighlight, type DrawerState, type Half, type SeasonCardId, type SeasonViewId } from "../keys";
 import { useDrawer, useHotkeys, useViews } from "../useKeys";
 import { FlagBreakdown, FlagInfo, FlagTag } from "./FlagExplain";
-import { StatusDot, StatusSheet, useSeasonStatus } from "./StatusLight";
+import { useLandingOrder } from "./landingOrder";
+import { LeagueStatus, StatusSheet, useSeasonStatus } from "./StatusLight";
 import Halves, { type Face } from "./Halves";
 import KeySheet from "./KeySheet";
 import LineupView from "./LineupView";
@@ -120,10 +121,11 @@ import OutlookView from "./OutlookView";
 import Rail from "./Rail";
 import QueueCard from "./QueueCard";
 import Scorecard from "./Scorecard";
-import { SEASON_ICONS, VIEW_ICONS } from "./icons";
+import { Chevron, LeaguesIcon, ProgressIcon, SEASON_ICONS, VIEW_ICONS } from "./icons";
 import Strategy from "./Strategy";
 import Trade from "./Trade";
 import ViewDrawer from "./ViewDrawer";
+import Wordmark from "./Wordmark";
 import { useNow } from "./YahooSync";
 
 const PANEL_KEY = "pickandroll.season.drawer";
@@ -151,12 +153,17 @@ export default function SeasonScreen({
   league,
   view,
   onBack,
+  onHome,
+  onLeague,
   onProgress,
 }: {
   league: string;
   /** The view to open on (the landing table's Lineup, #191), set once on mount; else the saved one. */
   view?: SeasonViewId;
   onBack: () => void;
+  onHome: () => void;
+  /** Another league's page, in this view (the previous and next buttons, #253). */
+  onLeague: (league: string, view: SeasonViewId) => void;
   onProgress: () => void;
 }) {
   const queryClient = useQueryClient();
@@ -173,6 +180,16 @@ export default function SeasonScreen({
     },
   });
   const now = useNow(30_000);
+  // The previous and next leagues (#253), in the landing table's order: its sort, its points
+  // setting, the private league first; each wraps at the ends.
+  const landing = useLandingOrder();
+  const order = [...landing.rows.pinned, ...landing.rows.rest];
+  const nameOf = (id: string | null) => {
+    const x = id ? order.find((o) => o.league === id) : undefined;
+    return x ? { league: x.league, name: x.name ?? `League ${x.league}` } : null;
+  };
+  const prev = nameOf(stepLeague(order.map((o) => o.league), league, -1));
+  const next = nameOf(stepLeague(order.map((o) => o.league), league, 1));
   const [watch, setWatch] = useShowWatch();
   const s = season.data;
   const running = isRefreshing(s) || refresh.isPending;
@@ -290,6 +307,7 @@ export default function SeasonScreen({
       openMove,
       refresh: s?.public && !running ? () => refresh.mutate() : null,
       progress: onProgress,
+      step: prev && next ? (dir) => onLeague(dir === 1 ? next.league : prev.league, views.view) : null,
       sheetOpen,
       setSheetOpen,
     }),
@@ -369,9 +387,7 @@ export default function SeasonScreen({
   return (
     <main className="shell">
       <header className="topbar season-top">
-        <div className="wordmark">
-          PICK<span>&amp;</span>ROLL
-        </div>
+        <Wordmark onHome={onHome} />
         <span className="muted title">
           {s?.name ?? `League ${league}`}
           {s?.name && !s.name.includes(league) ? ` · ${league}` : ""}
@@ -388,23 +404,30 @@ export default function SeasonScreen({
             {s.opponent && <span>vs {s.opponent.name}</span>}
           </>
         )}
-        <StatusDot p={status.data} league={league} onOpen={() => setStatusOpen(true)} />
-        {s && (
-          <span className={running ? "accent" : isStale(s.updated_at, now) ? "bad" : "muted"} title={s.updated_at ?? undefined}>
-            {refreshNote(s.refresh) || (s.has_snapshot ? `read ${ageLabel(s.updated_at, now)}` : "not read yet")}
-          </span>
-        )}
+        <LeagueStatus p={status.data} league={league} onOpen={() => setStatusOpen(true)} />
         {s?.public && (
           <button className="small" disabled={running} onClick={() => refresh.mutate()} title={REFRESH_TITLE}>
             {running ? "Refreshing…" : "Refresh"}
           </button>
         )}
-        <button className="link" onClick={onProgress} title="the hill-climb over the season, every league (p)">
-          progress
+        <button className="icon" onClick={onProgress} aria-label="Progress" title="Progress: the hill-climb over the season (p)">
+          <ProgressIcon />
         </button>
-        <button className="link" onClick={onBack}>
-          all leagues
-        </button>
+        <span className="league-step">
+          {prev && (
+            <button className="icon" onClick={() => onLeague(prev.league, views.view)} aria-label={`Previous: ${prev.name}`} title={`Previous: ${prev.name} (,)`}>
+              <Chevron dir="left" />
+            </button>
+          )}
+          <button className="icon" onClick={onBack} aria-label="All leagues" title="All leagues">
+            <LeaguesIcon />
+          </button>
+          {next && (
+            <button className="icon" onClick={() => onLeague(next.league, views.view)} aria-label={`Next: ${next.name}`} title={`Next: ${next.name} (.)`}>
+              <Chevron dir="right" />
+            </button>
+          )}
+        </span>
       </header>
       {season.error && <p className="error" style={{ padding: "0 24px" }}>{season.error.message}</p>}
       {refresh.isError && <p className="error" style={{ padding: "0 24px" }}>{refresh.error.message}</p>}
@@ -478,6 +501,7 @@ export default function SeasonScreen({
           p={status.data}
           league={league}
           onClose={closeStatus}
+          note={s ? refreshNote(s.refresh) || (s.has_snapshot ? `Yahoo read ${ageLabel(s.updated_at, now)}` : "not read yet") : undefined}
           refresh={s?.public ? { run: () => refresh.mutate(), running, title: REFRESH_TITLE } : undefined}
         />
       )}

@@ -48,6 +48,8 @@ import ExecuteTime from "./ExecuteTime";
 import ModeSwitch from "./ModeSwitch";
 import { LIVE_CONFIRM, Veto, type Strike } from "./QueueCard";
 import { useNow } from "./YahooSync";
+import { LeaguesIcon } from "./icons";
+import Wordmark from "./Wordmark";
 
 const SYSTEM: ProjectionSystem = "bbm";
 const GAIN_TITLE = "the gain over the three weeks, on the judging horizon: expected categories, or points in a points league";
@@ -80,14 +82,12 @@ export default function QueueScreen({ onBack, onOpenLeague }: { onBack: () => vo
   return (
     <main className="shell">
       <header className="topbar season-top">
-        <div className="wordmark">
-          PICK<span>&amp;</span>ROLL
-        </div>
+        <Wordmark onHome={onBack} />
         <span className="muted title">Queue · {p ? dayLabel(p.date) : "today"}</span>
         <span className="grow" />
         <ExecuteTime q={p} />
-        <button className="link" onClick={onBack} title="back (Esc)">
-          all leagues
+        <button className="icon" onClick={onBack} aria-label="All leagues" title="All leagues (Esc)">
+          <LeaguesIcon />
         </button>
       </header>
       {q.error && <p className="error" style={{ padding: "0 24px" }}>{q.error.message}</p>}

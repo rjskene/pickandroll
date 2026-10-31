@@ -57,7 +57,8 @@ import { knobMarkers, NothingScored, ScopeHead, Sentences, signed1, Tile, viewRa
 import { TableView } from "./ProgressTable";
 import Rail from "./Rail";
 import ViewDrawer from "./ViewDrawer";
-import { Close, PROGRESS_ICONS, PROGRESS_MOVE_ICON, PROGRESS_VIEW_ICONS } from "./icons";
+import { Close, LeaguesIcon, PROGRESS_ICONS, PROGRESS_MOVE_ICON, PROGRESS_VIEW_ICONS } from "./icons";
+import Wordmark from "./Wordmark";
 
 const PANEL_KEY = "pickandroll.progress.drawer";
 const VIEW_KEY = "pickandroll.progress.view";
@@ -147,14 +148,12 @@ export default function ProgressScreen({ onBack, onOpenLeague }: { onBack: () =>
   return (
     <main className="shell">
       <header className="topbar season-top">
-        <div className="wordmark">
-          PICK<span>&amp;</span>ROLL
-        </div>
+        <Wordmark onHome={onBack} />
         <span className="muted title">Progress · the hill-climb</span>
         <span className="grow" />
         {p && <TopLine p={p} />}
-        <button className="link" onClick={onBack}>
-          all leagues
+        <button className="icon" onClick={onBack} aria-label="All leagues" title="All leagues">
+          <LeaguesIcon />
         </button>
       </header>
       {q.error && <p className="error" style={{ padding: "0 24px" }}>{q.error.message}</p>}

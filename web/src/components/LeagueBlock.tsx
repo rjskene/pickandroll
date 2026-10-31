@@ -20,7 +20,7 @@ import {
 } from "../season";
 import { recsReason, when } from "../seasonStatus";
 import { Chevron } from "./icons";
-import { StatusDot } from "./StatusLight";
+import { LeagueStatus } from "./StatusLight";
 
 /** What a league's block does: open its page (on a view), solve today's moves, read Yahoo again,
  * open its freshness sheet, and open or close its panel. */
@@ -99,7 +99,7 @@ export function LeagueBlock(props: BlockProps) {
         </span>
         <BestCells {...props} />
         <span className="lt-read">
-          <StatusDot p={status} league={s.league} onOpen={onStatus} word={false} />
+          <LeagueStatus p={status} league={s.league} onOpen={onStatus} />
           <span className={failed ? "bad" : running ? "accent" : isStale(s.updated_at, now) ? "dim" : "muted"} title={s.refresh?.error ?? s.updated_at ?? undefined}>
             {readNote}
           </span>
@@ -283,7 +283,7 @@ export function UnreadBlock({
           )}
         </span>
         <span className="lt-read">
-          <StatusDot p={status} league={s.league} onOpen={onStatus} word={false} />
+          <LeagueStatus p={status} league={s.league} onOpen={onStatus} />
         </span>
         <span className="lt-acts">
           {s.public && !s.error && (

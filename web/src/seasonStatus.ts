@@ -4,8 +4,11 @@ import type { BuiltRow, ExportRow, RoutineRow, StatusLeague, StatusPayload, Stat
 
 const RANK: StatusState[] = ["green", "amber", "red"];
 
-/** The word beside the dot: its state is never told by colour alone. */
+/** Each state's word: the icon's label and the sheet's legend, so a state is never told by colour
+ * alone. */
 export const STATE_WORD: Record<StatusState, string> = { green: "up to date", amber: "pending", red: "failed" };
+/** The states in the sheet's legend, best first. */
+export const STATES: StatusState[] = ["green", "amber", "red"];
 /** The dot's class, on the shared tokens: good, accent (warning), bad. */
 export const STATE_TONE: Record<StatusState, string> = { green: "good", amber: "accent", red: "bad" };
 
@@ -93,14 +96,20 @@ function builtRow(r: BuiltRow, now: Date): SheetRow {
   return row(r, r.built_at, on || null, now);
 }
 
+/** The sections every league shares: the daily run and the Basketball Monster exports (the
+ * landing's overview sheet shows these alone, #253). */
+export function sharedSections(p: StatusPayload, now: Date): SheetSection[] {
+  return [
+    { title: "Daily run", state: p.routine.state ?? "green", rows: [routineRow(p.routine, now)] },
+    { title: "Basketball Monster", state: p.exports.state, rows: p.exports.rows.map((r: ExportRow) => row(r, r.as_of, r.file, now, r.label)) },
+  ];
+}
+
 /** The sheet's sections for a league: the daily run and the exports every league shares, then
  * its Yahoo reads and its recommendations. */
 export function sheetSections(p: StatusPayload, league: string, now: Date): SheetSection[] {
   const l = leagueOf(p, league);
-  const out: SheetSection[] = [
-    { title: "Daily run", state: p.routine.state ?? "green", rows: [routineRow(p.routine, now)] },
-    { title: "Basketball Monster", state: p.exports.state, rows: p.exports.rows.map((r: ExportRow) => row(r, r.as_of, r.file, now, r.label)) },
-  ];
+  const out: SheetSection[] = sharedSections(p, now);
   if (l?.yahoo) out.push({ title: l.public ? "Yahoo" : "Yahoo, read by the extension", state: l.yahoo.state, rows: l.yahoo.rows.map((r) => yahooRow(r, now)) });
   if (l?.recommendations) out.push({ title: "Recommendations", state: l.recommendations.state, rows: l.recommendations.rows.map((r) => builtRow(r, now)) });
   return out;
@@ -129,6 +138,21 @@ export function statusLine(p: StatusPayload, league: string, now: Date): string 
   const landed = latest([p.routine.finished_at, ...p.exports.rows.map((r) => r.as_of), ...(l.yahoo?.rows ?? []).map((r) => r.read_at)]);
   const moves = l.recommendations?.rows.find((r) => r.kind === "moves")?.built_at ?? null;
   return `all updates landed ${when(landed, now)}; recommendations ${when(moves, now)}`;
+}
+
+/** The landing icon's hover line (#253): "every league up to date; the daily run due 05:00", or
+ * how many of ``leagues`` (the landing table's, in its order) and which to look at, worst first,
+ * with the daily run or the exports when they are late. */
+export function overviewLine(p: StatusPayload, leagues: { league: string; name: string }[], now: Date): string {
+  const shared = sharedSections(p, now).filter((x) => x.state !== "green");
+  const late = leagues.map((l) => ({ ...l, state: lightOf(p, l.league) ?? "amber" })).filter((l) => l.state !== "green");
+  late.sort((a, b) => RANK.indexOf(b.state) - RANK.indexOf(a.state));
+  const parts = shared.map((x) => `${x.title.toLowerCase()} ${STATE_WORD[x.state]}`);
+  if (late.length) {
+    const named = late.slice(0, 3).map((l) => l.name);
+    parts.push(`${late.length} of ${leagues.length} leagues to look at: ${named.join(", ")}${late.length > 3 ? ` and ${late.length - 3} more` : ""}`);
+  }
+  return parts.length ? parts.join("; ") : `every league up to date; the daily run due ${when(p.due_at, now)}`;
 }
 
 /** The reasons of a league's amber or red recommendations rows, each once ("Yahoo read newer;
