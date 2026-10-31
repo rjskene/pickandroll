@@ -791,6 +791,18 @@ class SeasonService:
     def moves(
         self, league: str, system: str | None, source: str | None = None, entry: bool = False
     ) -> dict[str, Any]:
+        """``_moves``, with a standard-waivers league's claim at the rival claim rate the settings
+        file holds now (#261): read at request time, past the kept solve."""
+        out = self._moves(league, system, source, entry)
+        claim = out.get("claim")
+        if claim is None:
+            return out
+        rate = season_queue.rival_claim_rate(self.data_dir)
+        return {**out, "claim": mv.priority_claim(claim["priority"], claim["teams"], rate)}
+
+    def _moves(
+        self, league: str, system: str | None, source: str | None = None, entry: bool = False
+    ) -> dict[str, Any]:
         """Today's moves on the league's current inputs, solved once a key. A solve without
         ``source`` writes its decision entry; ``entry`` (the route's call without a source, the
         routine's) writes one every call, from the answer kept when there was no solve to write
@@ -1280,6 +1292,7 @@ class SeasonService:
                 budget=budget,
                 cap=cap,
                 adds_left=left,
+                uses_faab=season.settings.uses_faab,
                 kept=frozenset(e["id"] for e in keep),
                 done=len(holding),
             )

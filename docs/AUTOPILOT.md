@@ -742,6 +742,15 @@ to the budget left and nothing else; a struck bid is a $0 claim. `typical` is th
 median gain on the three weeks after of the armed leagues' recommended moves, per scoring, or
 the plan floor until ten such moves exist.
 
+A standard-waivers league (#261: no FAAB, claims decided by waiver priority) bids nothing: its
+queue entries carry `bid: null`, and a waiver add carries `claim: "priority"`. The odds of the
+claim are shown beside the move (docs/ADD_DROP.md, "The two kinds of league") and stay outside
+the objective. Their rival claim rate is a league-model assumption, not a knob the hill-climb
+tunes: the settings file's `rival_claim_rate` (`data/autopilot/executor.json`, beside
+`live_after`), a number from 0 to 1, 0.3 when unset or unreadable, read at request time so a
+change needs no restart. The `claim` block carries the rate it used and `assumed: true`, which is
+its provenance; the decision log's knobs do not record it.
+
 
 ## 6. The hill-climb
 

@@ -293,7 +293,7 @@ function Today({ p, now, title, strike, onOpenLeague }: { p: QueuePayload; now: 
                   <td className="num good">{gainLabel(e.gain)}</td>
                   <td className={`num ${rosTone({ value: e.season }, e.scoring)}`}>{rosLabel({ value: e.season }, e.scoring)}</td>
                   <td>{queueFlagWord(e.flag)}</td>
-                  <td title={e.bid.reason}>{bidLabel(e)}</td>
+                  <td title={e.bid?.reason}>{bidLabel(e)}</td>
                   <td>{centralClock(e.executes_at)}</td>
                   {checkingNow(e, p.active) ? (
                     <td className="accent">checking…</td>
