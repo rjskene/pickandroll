@@ -164,6 +164,8 @@ def test_every_hooked_knob_reaches_the_solve_and_the_log(client):
         "stash_threshold": 0.2,
         "faab_sizing": None,
         "daily_cap": 1,
+        # The standard-waivers claim rate (#261), the default: this league bids.
+        "rival_claim_rate": 0.3,
         # The system the file had in force, beside the one the solve ran on.
         "file_system": "blend",
     }

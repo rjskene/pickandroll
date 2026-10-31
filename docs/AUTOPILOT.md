@@ -742,6 +742,11 @@ to the budget left and nothing else; a struck bid is a $0 claim. `typical` is th
 median gain on the three weeks after of the armed leagues' recommended moves, per scoring, or
 the plan floor until ten such moves exist.
 
+A standard-waivers league (#261: no FAAB, claims decided by waiver priority) bids nothing: its
+queue entries carry `bid: null`, and a waiver add carries `claim: "priority"`. The odds of the
+claim are shown beside the move (docs/ADD_DROP.md, "The two kinds of league") and stay outside
+the objective.
+
 
 ## 6. The hill-climb
 
@@ -940,7 +945,8 @@ they were, and no rollout reaches it.
 - `in_force`: the value in force of each knob, by the names the decision log records them under
   (#125, `knobs` in an entry) and no other: `system` and `blend` (the projection system or blend
   weight), `horizon_weight`, `protection_floor`, `plan_floor_cats` and `plan_floor_points` (the
-  streaming floors), `stash_threshold`, `faab_sizing` and `daily_cap`.
+  streaming floors), `stash_threshold`, `faab_sizing`, `daily_cap` and `rival_claim_rate` (the
+  assumed rate a rival claims a waiver player in a standard-waivers league, #261; 0.3, from 0 to 1).
 - `leagues`: by league id, the knobs whose value there differs from `in_force`: the half of a
   change that kept the setting, or the user's own value.
 - `frozen`: by league id, the knobs the user set and has not freed.

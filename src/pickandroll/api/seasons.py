@@ -1280,6 +1280,7 @@ class SeasonService:
                 budget=budget,
                 cap=cap,
                 adds_left=left,
+                uses_faab=season.settings.uses_faab,
                 kept=frozenset(e["id"] for e in keep),
                 done=len(holding),
             )

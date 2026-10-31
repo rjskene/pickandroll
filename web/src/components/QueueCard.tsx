@@ -96,7 +96,7 @@ export function Veto({ e, strike }: { e: QueueEntry; strike: Strike }) {
       <button className="small" disabled={strike.isPending} onClick={() => strike.mutate({ id: e.id, bid_only: false, undo: e.struck })} title={e.struck ? "queue it again" : "veto this move: it is not executed"}>
         {e.struck ? "undo" : "strike"}
       </button>
-      {!e.struck && e.availability !== "FA" && (
+      {!e.struck && e.availability !== "FA" && e.bid != null && (
         <>
           {" "}
           <button className="small" disabled={strike.isPending} onClick={() => strike.mutate({ id: e.id, bid_only: true, undo: e.bid_struck })} title={e.bid_struck ? "bid the queue's amount again" : "keep the claim, for $0"}>
@@ -125,8 +125,9 @@ function Today({ v, queued, left, now, name, strike }: { v: MovesView; queued: Q
       {queued.length === 0 && <p className="dim lv-note">Nothing queued today.</p>}
       {queued.map((e) => (
         <div key={e.id} className="row small">
-          <span title={e.bid.reason}>
-            {e.rank}. {queueMoveText(e, name)} · {gainLabel(e.gain)} · {bidLabel(e)}
+          <span title={e.bid?.reason}>
+            {e.rank}. {queueMoveText(e, name)} · {gainLabel(e.gain)}
+            {bidLabel(e) ? ` · ${bidLabel(e)}` : e.claim === "priority" ? " · priority claim" : ""}
             {queueFlagWord(e.flag) ? ` · ${queueFlagWord(e.flag)}` : ""}
           </span>
           <span>

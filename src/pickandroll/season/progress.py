@@ -16,7 +16,7 @@ from collections.abc import Iterable, Mapping, Sequence
 from datetime import date
 from typing import Any
 
-from .moves import PROTECTION_FLOOR
+from .moves import PROTECTION_FLOOR, RIVAL_CLAIM_RATE
 from .stream import DAILY_CAP, PLAN_FLOOR_CATS, PLAN_FLOOR_POINTS
 
 #: The knobs of docs/AUTOPILOT.md section 6, by the names the decision log records them under
@@ -31,6 +31,7 @@ KNOBS = (
     "stash_threshold",
     "faab_sizing",
     "daily_cap",
+    "rival_claim_rate",
 )
 #: The lowest value a knob may take, from section 6's table (#150): the protection floor never
 #: below its default, so no setting lets the engine drop a player worth more than the best add
@@ -41,10 +42,11 @@ KNOB_MINIMUMS: Mapping[str, float] = {
     "protection_floor": PROTECTION_FLOOR,
     "blend": 0.25,
     "daily_cap": 1,
+    "rival_claim_rate": 0.0,
 }
 #: The highest value a knob may take, the bounds' high end (#152): the blend weight and the
 #: daily move cap.
-KNOB_MAXIMUMS: Mapping[str, float] = {"blend": 0.75, "daily_cap": 3}
+KNOB_MAXIMUMS: Mapping[str, float] = {"blend": 0.75, "daily_cap": 3, "rival_claim_rate": 1.0}
 #: The values a named knob may take: the projection systems, and the strategy weights the bounds
 #: allow (the week weight never: the season is what counts).
 CHOICES: Mapping[str, tuple[str, ...]] = {
@@ -53,7 +55,14 @@ CHOICES: Mapping[str, tuple[str, ...]] = {
 }
 #: The knobs that are numbers, and those of them a count of whole moves.
 NUMBERS = frozenset(
-    {"blend", "protection_floor", "plan_floor_cats", "plan_floor_points", "daily_cap"}
+    {
+        "blend",
+        "protection_floor",
+        "plan_floor_cats",
+        "plan_floor_points",
+        "daily_cap",
+        "rival_claim_rate",
+    }
 )
 WHOLE = frozenset({"daily_cap"})
 #: The knobs the engine reads at solve time (#152); the others are recorded and nothing reads
@@ -68,6 +77,7 @@ HOOKED = frozenset(
         "plan_floor_cats",
         "plan_floor_points",
         "daily_cap",
+        "rival_claim_rate",
     }
 )
 #: Each knob's value when the knob file sets none: the code's own.
@@ -81,6 +91,9 @@ DEFAULTS: Mapping[str, Any] = {
     "stash_threshold": None,
     "faab_sizing": None,
     "daily_cap": DAILY_CAP,
+    #: The chance a team ahead of me in a standard-waivers league claims the player I claim
+    #: (#261): assumed, until a rate is learned from the league's logged claims.
+    "rival_claim_rate": RIVAL_CLAIM_RATE,
 }
 #: Yahoo's share in the blend when the file names the blend system and no weight.
 BLEND = 0.5

@@ -250,6 +250,9 @@ class LeagueDay:
     #: The adds each week allows still, from the league's own page and transactions, the claims
     #: placed and not yet processed already taken out; None for no limit.
     adds_left: Mapping[tuple[date, date], int | None]
+    #: Whether the league bids for its claims (FAAB): false for standard waivers, where a claim
+    #: carries no bid and is decided by waiver priority (#261); None when not read (a bid).
+    uses_faab: bool | None = None
     #: The day's entries a rebuild keeps (:func:`kept`), by id: their moves are left out of the
     #: build, and those that hold a place (:func:`holds_place`) count toward the cap (``done``).
     kept: frozenset[str] = frozenset()
@@ -333,7 +336,13 @@ def queue_of(
             ready.add(i)
             if week is not None and left[week] is not None:
                 left[week] -= 1
-        bid = bid_of(gain or 0.0, typical, lg.budget, lg.flags.get(add), sizing, kind)
+        # A standard-waivers league places no bid: its claims go by waiver priority (#261).
+        standard = lg.uses_faab is False
+        bid = (
+            None
+            if standard
+            else bid_of(gain or 0.0, typical, lg.budget, lg.flags.get(add), sizing, kind)
+        )
         out.append(
             {
                 "id": ids[i],
@@ -363,7 +372,10 @@ def queue_of(
                 "after": [ids[j] for j in after],
                 "flag": lg.flags.get(add),
                 "floor": {**floor.to_dict(), "below": below},
-                "bid": {**bid.to_dict(), "typical": typical[0], "typical_from": typical[1]},
+                "bid": None
+                if bid is None
+                else {**bid.to_dict(), "typical": typical[0], "typical_from": typical[1]},
+                "claim": "priority" if standard and kind == "W" else None,
                 "queued": reason is None,
                 "reason": reason,
                 "rank": queued if reason is None else None,

@@ -45,6 +45,7 @@ import type {
   PlayerFlag,
   PlayerRos,
   PassTally,
+  PriorityClaim,
   QueueEntry,
   QueueLeague,
   QueuePass,
@@ -117,6 +118,16 @@ export function availabilityLabel(row: Pick<AvailableRow, "availability" | "clea
   if (!row.clears) return "W";
   const d = new Date(`${row.clears}T12:00:00`);
   return `W · ${d.toLocaleDateString("en-US", { month: "short", day: "numeric" })}`;
+}
+
+/** "claim: odds 70% (assumed) at priority #3; a win sends you to 12th" (#261). */
+export function claimLine(c: PriorityClaim): string {
+  return `claim: odds ${Math.round(c.odds * 100)}% (${c.rate_source}) at priority #${c.priority}; a win sends you to ${ordinal(c.after)}`;
+}
+
+/** The odds' terms, for a title: the claim rate is a knob, not a read of the league. */
+export function claimTitle(c: PriorityClaim): string {
+  return `the odds that none of the ${c.ahead} team${c.ahead === 1 ? "" : "s"} ahead claims the player first, each assumed to claim at ${Math.round(c.rate * 100)}% (the rival_claim_rate knob); a won claim moves you to the back of the order`;
 }
 
 /** Yahoo's codes that keep a player off the floor, as `season/state.py`'s OUT_CODES. */
@@ -792,6 +803,8 @@ export function passTally(t: PassTally | null | undefined): string {
 
 /** "$2 claim", "$0 claim (the $2 bid struck)", "free agent, $0". */
 export function bidLabel(e: Pick<QueueEntry, "availability" | "bid" | "bid_struck">): string {
+  // A standard-waivers league bids nothing (#261): a claim goes by waiver priority.
+  if (e.bid == null) return e.availability === "FA" ? "free agent" : "";
   if (e.availability === "FA") return "free agent, $0";
   if (e.bid_struck) return `$0 claim (the $${e.bid.amount} bid struck)`;
   return `$${e.bid.amount} claim`;

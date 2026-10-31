@@ -104,6 +104,9 @@ class Built:
     #: The system the knob file had in force for the league, which a route naming another
     #: overrode for this solve (#152); the scorecard scores each week on it.
     file_system: str = pg.DEFAULTS["system"]
+    #: A claim's terms in a standard-waivers league (#261, ``moves.priority_claim``): my waiver
+    #: priority and the odds no team ahead claims the player first; None in a FAAB league.
+    claim: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -385,6 +388,15 @@ def build(
     problem = replace(problem, kept=rule.kept)
     pool = max(1, s.num_teams * problem.spots)
     scorer = wk.scorer_of(rated.bbm.rates, cats, points, pool) if rated.bbm.rates else None
+    # A standard-waivers league's claims go by waiver priority, not a bid (#261).
+    me = next((t for t in season.teams if t.team_id == mine), None)
+    claim = (
+        mv.priority_claim(
+            me.waiver_priority if me else None, s.num_teams, float(knobs["rival_claim_rate"])
+        )
+        if s.uses_faab is False
+        else None
+    )
     return Built(
         problem,
         {"key": system, **info},
@@ -396,6 +408,7 @@ def build(
         scorer,
         knobs,
         file_system,
+        claim,
     )
 
 
@@ -864,6 +877,7 @@ def moves_payload(built: Built) -> dict[str, Any]:
         "system": built.system,
         "horizons": {key: {**built.horizons[key], "base": _r(ev.base[key])} for key in HORIZONS},
         "adds": built.adds,
+        "claim": built.claim,
         "candidates": candidates,
         "recommended": recommended,
         "plan": plan_payload(built, ev, sets["week"], recommended["week"]["moves"], stream, guard),

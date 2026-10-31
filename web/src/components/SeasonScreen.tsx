@@ -26,6 +26,8 @@ import {
   addsNote,
   ageLabel,
   availabilityLabel,
+  claimLine,
+  claimTitle,
   bestMove,
   catValue,
   changeLabel,
@@ -781,6 +783,7 @@ function Waivers({
           ?
         </span>
         {moves.error ? <span className="bad">{` · no moves: ${moves.error.message}`}</span> : !m && s.my_team ? " · valuing the moves…" : ""}
+        {m?.claim && <span title={claimTitle(m.claim)}>{` · ${claimLine(m.claim)}`}</span>}
         {kept && keep && (
           <>
             {" · "}
@@ -834,7 +837,9 @@ function Waivers({
                     </td>
                     <td>{r.player.nba_team}</td>
                     <td>{r.player.positions.join(", ")}</td>
-                    <td className={r.availability === "W" ? "accent" : undefined}>{availabilityLabel(r)}</td>
+                    <td className={r.availability === "W" ? "accent" : undefined} title={r.availability === "W" && m?.claim ? claimLine(m.claim) : undefined}>
+                      {availabilityLabel(r)}
+                    </td>
                     <td className="num">{games(r, "week") ?? ""}</td>
                     <td className="num dim">{games(r, "next3") ?? ""}</td>
                     <td>
@@ -1415,6 +1420,11 @@ function MoveDrawer({
           {row ? availabilityLabel(row) : "not in the pool"}
           {d && ` · plays from ${dayLabel(d.from)}${picked.drop != null && row?.availability === "W" ? `, when ${name(picked.drop)} leaves` : ""}`}
         </p>
+        {row?.availability === "W" && m?.claim && (
+          <p className="muted small" title={claimTitle(m.claim)}>
+            {claimLine(m.claim)}
+          </p>
+        )}
         {returns && (
           <p className="muted small" title="the least valuable active player by per-game value on the return day">
             {returns}

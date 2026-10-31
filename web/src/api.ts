@@ -1274,7 +1274,10 @@ export interface QueueEntry {
   waits?: QueueWait | null;
   flag: FlagLevel | null;
   floor: QueueFloor & { below: "plan" | "scored" | null };
-  bid: { amount: number; reason: string; base: number; factor: number; sizing: number; typical: number; typical_from: string };
+  /** Null in a standard-waivers league (#261): a claim goes by waiver priority, no bid. */
+  bid: { amount: number; reason: string; base: number; factor: number; sizing: number; typical: number; typical_from: string } | null;
+  /** "priority" for a standard league's waiver claim; absent from a server before #261. */
+  claim?: "priority" | null;
   queued: boolean;
   reason: QueueReason | null;
   rank: number | null;
@@ -1793,6 +1796,19 @@ export interface Stash {
   churn?: { add: number; gain: number; horizon: MoveHorizon } | null;
 }
 
+/** A standard-waivers league's claim (#261): the odds no team ahead claims the player first, at
+ * an assumed rate each rival claims, and where a win sends me in the order. */
+export interface PriorityClaim {
+  kind: "priority";
+  priority: number;
+  ahead: number;
+  teams: number;
+  rate: number;
+  rate_source: "assumed";
+  odds: number;
+  after: number;
+}
+
 export interface MovesPayload {
   system: ProjectionSystemInfo & { key: ProjectionSystem; fallback?: string };
   cleared?: ClearedPlayer[];
@@ -1802,6 +1818,8 @@ export interface MovesPayload {
   stash?: Stash[];
   horizons: Record<MoveHorizon, MoveHorizonInfo>;
   adds: MoveAdds;
+  /** A standard-waivers league's claim terms (#261); null in a FAAB league, absent before. */
+  claim?: PriorityClaim | null;
   /** By Yahoo player id. */
   candidates: Record<string, MoveCandidate>;
   recommended: Record<MoveHorizon, RecommendedSet>;
@@ -2346,7 +2364,8 @@ export type KnobName =
   | "plan_floor_points"
   | "stash_threshold"
   | "faab_sizing"
-  | "daily_cap";
+  | "daily_cap"
+  | "rival_claim_rate";
 export type Scoring = "categories" | "points";
 
 /** Wins and categories summed over some weeks: the wins and the matchup odds over the projected

@@ -122,6 +122,8 @@ import {
   benchPlaying,
   executorText,
   bidLabel,
+  claimLine,
+  claimTitle,
   countdownLabel,
   movesExecutorText,
   movesLiveText,
@@ -1816,6 +1818,9 @@ test("the Queue card says what the moves executor does, each entry's state and b
   assert.equal(bidLabel(e), "$4 claim");
   assert.equal(bidLabel({ ...e, bid_struck: true }), "$0 claim (the $4 bid struck)");
   assert.equal(bidLabel({ ...e, availability: "FA" }), "free agent, $0");
+  // A standard-waivers league's entry carries no bid (#261): the bid column is empty.
+  assert.equal(bidLabel({ ...e, bid: null }), "");
+  assert.equal(bidLabel({ ...e, bid: null, availability: "FA" }), "free agent");
   assert.equal(
     queueFloorLine({ scoring: "categories", floor, typical: { value: 0.1, from: "the plan floor until 10 moves" } }),
     "Floor: a gain of 0.1 expected categories over the three weeks; the scorecard's spread joins it once 20 moves are scored (3 so far). Bids scale by a typical gain of 0.1 (the plan floor until 10 moves).",
@@ -2284,4 +2289,12 @@ test("a league's title is its name with the id beside it, or League <id> before 
   assert.equal(leagueTitle("Test league 100", "100"), "Test league 100", "a name that carries the id keeps it once");
   assert.equal(leagueTitle(null, "100"), "League 100");
   assert.equal(leagueTitle("", "100"), "League 100");
+});
+
+test("a standard league's claim reads its odds, priority and where a win sends me (#261)", () => {
+  const c = { kind: "priority" as const, priority: 3, ahead: 2, teams: 12, rate: 0.3, rate_source: "assumed" as const, odds: 0.49, after: 12 };
+  assert.equal(claimLine(c), "claim: odds 49% (assumed) at priority #3; a win sends you to 12th");
+  assert.equal(claimLine({ ...c, priority: 1, ahead: 0, odds: 1 }), "claim: odds 100% (assumed) at priority #1; a win sends you to 12th");
+  assert.match(claimTitle(c), /none of the 2 teams ahead .* 30% \(the rival_claim_rate knob\)/);
+  assert.match(claimTitle({ ...c, ahead: 1 }), /none of the 1 team ahead/);
 });
