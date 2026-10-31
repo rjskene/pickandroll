@@ -14,8 +14,9 @@ Part keys and their data:
     :class:`SeasonSettings` fields read from Yahoo (name, weeks, waiver and add rules).
 ``league_settings``
     The league's settings page (#107): the roster positions with the held slots (IL, IL+, NA,
-    which Yahoo's v3 settings leave out), the lineup deadline, the playoff weeks and the
-    bracket's rules (the playoff tie-breaker, reseeding, divisions; #172). The source of the
+    which Yahoo's v3 settings leave out), the lineup deadline, the playoff weeks, the
+    bracket's rules (the playoff tie-breaker, reseeding, divisions; #172) and the waiver,
+    acquisition and trade rules (#261), which fill what the ``settings`` read leaves None. The source of the
     held slots; without it they are the most any read roster fills, a lower bound.
 ``players``
     Yahoo's player pool for the league: a list of :class:`Player`.
@@ -84,6 +85,20 @@ def _opt_date(v: Any) -> date | None:
     return date.fromisoformat(v) if v else None
 
 
+#: The settings page's waiver, acquisition and trade fields (#261), each filling what the v3
+#: settings read left None (:meth:`SeasonSettings.with_slots`).
+PAGE_RULES = (
+    "waiver_days",
+    "waiver_rule",
+    "uses_faab",
+    "max_weekly_adds",
+    "max_season_adds",
+    "post_draft_players",
+    "trade_ratify",
+    "trade_review_days",
+)
+
+
 @dataclass(frozen=True)
 class SeasonSettings:
     league: str
@@ -103,6 +118,11 @@ class SeasonSettings:
     waiver_days: int | None = None
     uses_faab: bool | None = None
     max_weekly_adds: int | None = None
+    #: The season's acquisition cap, None for no maximum or not read (the settings page, #261).
+    max_season_adds: int | None = None
+    #: Whether players after the draft are ``free_agents`` or on ``waivers`` (the settings page,
+    #: #261): why a public league's pages list every available player on waivers.
+    post_draft_players: str | None = None
     trade_end_date: date | None = None
     #: Who reviews an accepted trade (``yahoo``, ``commish``, ``vote`` or ``none``).
     trade_ratify: str | None = None
@@ -174,6 +194,8 @@ class SeasonSettings:
             waiver_days=_opt_int(d.get("waiver_days")),
             uses_faab=None if d.get("uses_faab") is None else bool(d["uses_faab"]),
             max_weekly_adds=_opt_int(d.get("max_weekly_adds")),
+            max_season_adds=_opt_int(d.get("max_season_adds")),
+            post_draft_players=d.get("post_draft_players") or None,
             trade_end_date=_opt_date(d.get("trade_end_date")),
             trade_ratify=d.get("trade_ratify"),
             trade_review_days=_opt_int(d.get("trade_review_days")),
@@ -202,12 +224,22 @@ class SeasonSettings:
         """These settings with the held slots and the lineup rule read: the settings page's
         positions and rule when it was read; else the folder's active slots with, for each held
         kind, the most any read roster (``rosters``, each its slots) fills, and the rule from
-        v3's ``weekly_deadline``. The folder's own held slots (the draft's) are never used."""
+        v3's ``weekly_deadline``. The folder's own held slots (the draft's) are never used.
+
+        The page's waiver, acquisition and trade rules (#261) fill what Yahoo's v3 settings read
+        left None: a public league keeps the v3 values, a private league (no v3 read) takes the
+        page's, so its weekly cap and its waiver days are its own."""
         changes, effective = _lineup_rule(self.weekly_deadline)
         if page is not None:
             read = page.get("lineup_changes") is not None
+            rules = {
+                k: page[k]
+                for k in PAGE_RULES
+                if getattr(self, k) is None and page.get(k) is not None
+            }
             return replace(
                 self,
+                **rules,
                 roster=tuple(str(x) for x in page.get("roster") or self.roster),
                 playoff_weeks=tuple(int(w) for w in page.get("playoff_weeks") or ()),
                 lineup_deadline=page.get("lineup_deadline"),

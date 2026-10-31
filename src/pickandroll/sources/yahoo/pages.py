@@ -30,7 +30,7 @@ page shows (season totals, Yahoo's next-7-days projection, ...) does not matter 
 from __future__ import annotations
 
 import re
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from datetime import date
 from typing import Any
 from urllib.parse import parse_qs, urlparse
@@ -270,9 +270,10 @@ def parse_settings_page(html: str) -> dict[str, Any]:
     """The settings page: the roster positions in order, held slots included (``IL``, ``IL+``,
     ``NA``: Yahoo's v3 settings leave them out), the lineup deadline as printed with what it
     means (:func:`lineup_rule`), the playoff weeks, whether an injured player can be added
-    straight to an injury slot, and the bracket's rules (#172): the playoff tie-breaker as
-    printed, whether the bracket reseeds each round, and whether the league has divisions.
-    A row the page does not print is None."""
+    straight to an injury slot, the bracket's rules (#172): the playoff tie-breaker as
+    printed, whether the bracket reseeds each round, and whether the league has divisions; and
+    the waiver, acquisition and trade rules (#261), in the words of Yahoo's v3 settings where
+    those have a field (:func:`waiver_rules`). A row the page does not print is None."""
     root = parse(html)
     _require(root, "settings")
     rows: dict[str, str] = {}
@@ -305,7 +306,68 @@ def parse_settings_page(html: str) -> dict[str, Any]:
         "playoff_tiebreak": tiebreak.strip() if tiebreak else None,
         "playoff_reseeding": _yes_no(rows.get("playoff reseeding")),
         "divisions": _yes_no(rows.get("divisions")),
+        **waiver_rules(rows),
     }
+
+
+def waiver_rules(rows: Mapping[str, str]) -> dict[str, Any]:
+    """The settings page's waiver, acquisition and trade rows (#261), by lower-cased label: the
+    waiver days ("Waiver Time", ``1 day``), the waiver type as printed ("Waiver Type"), FAAB or
+    standard ("Waiver Mode"), the weekly and the season's acquisition caps (None for "No
+    maximum"), whether players after the draft are free agents or on waivers ("Post Draft
+    Players"), and the trade review in v3's words (``vote``, ``commish``, ``yahoo``, ``none``)
+    with its days ("Trade Reject Time"). A row not printed, or printed in words not known, is
+    None."""
+    kind = rows.get("waiver type")
+    return {
+        "waiver_days": _days(rows.get("waiver time")),
+        "waiver_rule": kind.strip() if kind and kind.strip() else None,
+        "uses_faab": _waiver_mode(rows.get("waiver mode")),
+        "max_weekly_adds": _cap(rows.get("max acquisitions per week")),
+        "max_season_adds": _cap(rows.get("max acquisitions for entire season")),
+        "post_draft_players": _post_draft(rows.get("post draft players")),
+        "trade_ratify": _trade_review(rows.get("trade review")),
+        "trade_review_days": _days(rows.get("trade reject time")),
+    }
+
+
+def _days(text: str | None) -> int | None:
+    """``1 day``, ``2 days``: the number; None when not printed or without one."""
+    m = re.search(r"\d+", text or "")
+    return int(m.group()) if m else None
+
+
+def _cap(text: str | None) -> int | None:
+    """An acquisition cap: its number; None for "No maximum" or a row not printed."""
+    m = re.fullmatch(r"\s*(\d+)\s*", text or "")
+    return int(m.group(1)) if m else None
+
+
+def _waiver_mode(text: str | None) -> bool | None:
+    t = (text or "").lower()
+    if "faab" in t:
+        return True
+    return False if "standard" in t else None
+
+
+def _post_draft(text: str | None) -> str | None:
+    t = (text or "").lower()
+    if "free agent" in t:
+        return "free_agents"
+    return "waivers" if "waiver" in t else None
+
+
+def _trade_review(text: str | None) -> str | None:
+    t = (text or "").lower()
+    for word, v3 in (
+        ("vote", "vote"),
+        ("commish", "commish"),
+        ("commissioner", "commish"),
+        ("yahoo", "yahoo"),
+    ):
+        if word in t:
+            return v3
+    return "none" if t.strip() in ("none", "no review") else None
 
 
 def _yes_no(text: str | None) -> bool | None:

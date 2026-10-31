@@ -376,6 +376,27 @@ Waiver claims (resolved 2026-10-21): the first version prices free agents and li
 players with their clear dates without pricing the claim. Priority cost and FAAB bids come
 later, keyed by the league's waiver setting.
 
+The two kinds of league (#261) run under different rules, and each league's own are read:
+
+- **The public leagues** come from Yahoo's v3 settings read: continuous waivers of 2 days, FAAB,
+  4 adds a week. Their settings page says post-draft players go to waivers
+  (`post_draft_players: waivers`). That is why their players pages list every available player
+  as `W` with a clear date, and why no public add plays the same day: each lands at Yahoo's
+  overnight run.
+- **The pinned private league (31822)** has no v3 read. Its rules come from its settings page,
+  which the extension posts with the daily:
+  - post-draft players are free agents (`free_agents`), so an add before a player's game plays
+    that night;
+  - waivers of 1 day, a continual rolling list decided by waiver priority, with no FAAB;
+  - 5 adds a week, no season cap;
+  - trades reviewed by league vote within 1 day.
+
+`pages.parse_settings_page` reads the waiver, acquisition and trade rows, and
+`SeasonSettings.with_slots` merges them: a field the v3 read set wins, and a field it left None
+takes the page's. So the weekly cap (`adds.limit`, the solve's add limits) and the re-add span
+(`season_queue.dropped_recently`) follow each league's own numbers. The claim odds for a
+standard-waivers league come with #261's second PR.
+
 ### The rest of the season beside the horizons (#151)
 
 Every move and trade the dashboard recommends or compares also carries its rest of the season
