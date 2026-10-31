@@ -8,9 +8,11 @@ league's own team page; nothing here clicks or submits anything.
 ``PUT /leagues/{league}/lineups``
     The mode, ``off``, ``dry_run`` or ``live`` (``leagues.lineup_mode``), the dashboard's own
     click. ``live`` is refused until :func:`live_check` passes; the private league is refused.
+    In a live league the steps carry the check again (``live``, every request: #170 PR 3), its
+    counts the code's defaults unless the settings file's ``lineup_live_after`` sets them.
 ``POST /seasons/{league}/autopilot/lineup``
     A run of the executor, appended to ``data/leagues/<id>/autopilot/<date>.json``
-    (:func:`append_run`), the only writer there.
+    (:func:`append_run`), the only writer there. A live run needs the check to hold.
 ``GET /seasons/{league}/autopilot``
     The mode, STOP, the live check, the last run and today's runs, for the Lineup view.
 
@@ -54,7 +56,7 @@ from ..season import weekly as wk
 from ..sources.yahoo import public
 from . import leagues
 from .season_knobs import autopilot_dir
-from .season_queue import live_after
+from .season_queue import LINEUP_LIVE_AFTER, live_after
 
 STOP = "STOP"
 #: The executors' log under the league folder: one file per NBA date.
@@ -75,10 +77,13 @@ TRIGGERS = ("routine", "routine_late", "panel", "routine_evening")
 RUN_OUTCOMES = ("would_set", "nothing_to_do", "skipped", "set", "failed", "stopped")
 STEP_OUTCOMES = ("would_set", "skipped", "set", "failed")
 #: The dry run ``live`` waits for (the 2026-10-23 ruling on #170): dry-run lineup runs on this many
-#: distinct days, and on this many of them a run whose steps all passed every check. The moves
-#: executor's are the defaults of ``data/autopilot/executor.json``'s ``live_after`` (#171 PR 3).
+#: distinct days, and on this many of them a run whose steps all passed every check; the defaults
+#: of ``data/autopilot/executor.json``'s ``lineup_live_after`` (#170 PR 3). The moves executor's
+#: are the defaults of its ``live_after`` (#171 PR 3).
 DRY_RUN_DAYS = 7
 CHECKED_DAYS = 2
+#: A held player whose status cleared and whose comeback needs a drop: the moves queue's (#124).
+NEEDS_DROP = "needs a drop: the comeback is the moves queue's"
 #: The digest counts the runs of the last day.
 DIGEST_SPAN = timedelta(hours=24)
 
@@ -121,6 +126,7 @@ def steps_payload(
     tips: Mapping[str, str] | None,
     mode: Mapping[str, Any],
     stop: bool,
+    live: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """The executor's steps for ``day``: the Lineup view's ``lineup`` for the day's week, Yahoo's
     lineup as read turned into one that starts the recommended players
@@ -135,7 +141,13 @@ def steps_payload(
     starting slots and ``yahoo`` each player's slot as read, for the page's own check that it is
     the lineup the steps were built from and that an empty target slot is open. No steps when the mode is
     off, STOP is on, or the day is closed (``open`` false: past, before the rule's first day, a
-    weekly league's day after the week opened) or not read; ``reason`` says which."""
+    weekly league's day after the week opened) or not read; ``reason`` says which.
+
+    ``live`` is :func:`live_check`'s answer now in a live league (None otherwise): a live run
+    needs it to hold, else the page runs dry (#170 PR 3). ``returns`` are today's held players
+    whose status cleared and whose comeback has an open active spot (the lineup's ``cleared``
+    alerts with no drop), each ``{player, slot, status, tip}``: a live run moves each to the bench
+    first. One whose comeback needs a drop is the moves queue's, under ``skipped``."""
     out: dict[str, Any] = {
         "league": league,
         "team": team,
@@ -153,6 +165,8 @@ def steps_payload(
         "tips": tips is not None,
         "slots": [],
         "yahoo": {},
+        "live": dict(live) if live is not None and mode["mode"] == "live" else None,
+        "returns": [],
     }
 
     def closed(reason: str) -> dict[str, Any]:
@@ -185,6 +199,26 @@ def steps_payload(
         return closed("STOP is on (data/autopilot/STOP)")
 
     players = lineup["players"]
+
+    def tip(k: int | None) -> datetime | None:
+        return None if k is None else tip_at(tips, players.get(str(k), {}).get("nba_team"))
+
+    if day == today:
+        for a in lineup.get("alerts", []):
+            if a.get("kind") != "cleared":
+                continue
+            if a.get("drop") is not None:
+                out["skipped"].append({"reason": NEEDS_DROP, "players": [a["player"]], "steps": []})
+                continue
+            t = tip(a["player"])
+            out["returns"].append(
+                {
+                    "player": a["player"],
+                    "slot": a["slot"],
+                    "status": a.get("status"),
+                    "tip": t.isoformat() if t is not None else None,
+                }
+            )
     spots = [
         (x["slot"], x["player"], players.get(str(x["player"]), {}).get("positions", ()))
         for x in d["yahoo"]["slots"]
@@ -193,9 +227,6 @@ def steps_payload(
     groups = lu.lineup_steps(spots, target, lineup["slots"]) if target is not None else None
     if groups is None:
         return closed("the recommended starters do not fit Yahoo's lineup as read")
-
-    def tip(k: int | None) -> datetime | None:
-        return None if k is None else tip_at(tips, players.get(str(k), {}).get("nba_team"))
 
     kept: list[tuple[datetime | None, list[lu.Step[int]]]] = []
     for group in groups:
@@ -258,8 +289,12 @@ class StepRun(BaseModel):
     with_: int | None = Field(None, alias="with")
     tip: str | None = None
     group: int | None = None
+    #: A swap of the steps, or a cleared held player's return to the bench (#170 PR 3).
+    kind: Literal["swap", "return"] = "swap"
     outcome: Literal["would_set", "skipped", "set", "failed"]
     reason: str | None = None
+    #: Yahoo's words on a live step's save, as the page printed them.
+    message: str | None = None
     #: What the page showed for the step's players: the control (``select`` or ``locked``), the
     #: slot and the options.
     control: dict[str, Any] | None = None
@@ -284,12 +319,17 @@ class LineupRun(BaseModel):
     #: value), the swap labels counted.
     controls: dict[str, Any] | None = None
     #: The page's lineup before the run and after it (a dry run: the lineup the steps would
-    #: leave), each player's slot by Yahoo id; the players whose games began.
+    #: leave; a live run: the swap labels read after it), each player's slot by Yahoo id; the
+    #: players whose games began.
     before: dict[str, str] | None = None
-    after: dict[str, str] | None = None
+    after: dict[str, str | None] | None = None
     locked: list[int] = []
-    #: Yahoo's save message, as the page printed it.
+    #: A live run's moved players not in their target slot after it, with the slot they show.
+    diff: dict[str, str | None] | None = None
+    #: Yahoo's save messages, as the page printed them.
     message: str | None = None
+    #: A live run: whether the league's Start Active press of the day came before the page's read.
+    after_start_active: bool | None = None
     extension: str | None = None
 
 
@@ -365,14 +405,25 @@ def checks_passed(run: Mapping[str, Any]) -> bool:
 
 def live_check(data_dir: Path, league: str, mode: Mapping[str, Any]) -> dict[str, Any]:
     """Whether the league may be switched to ``live`` (the 2026-10-23 ruling on #170): dry-run
-    lineup runs on :data:`DRY_RUN_DAYS` distinct days, on :data:`CHECKED_DAYS` of them a run
-    whose steps all passed every check, and STOP absent. The review on #127 and the user's
-    click are the other two gates."""
+    lineup runs on the days :func:`lineup_needs` asks, on that many of them a run whose steps all
+    passed every check, and STOP absent. It gates the switch and, in a live league, every steps
+    request and every live run logged (#170 PR 3). The review on #127 and the user's click are the
+    other two gates."""
     dry = [(d, r) for d, r in lineup_runs(data_dir, league) if r.get("mode") == "dry_run"]
     days = {d for d, _ in dry}
     checked = {d for d, r in dry if checks_passed(r)}
-    needs = {"dry_run_days": DRY_RUN_DAYS, "checked_days": CHECKED_DAYS}
+    needs = lineup_needs(data_dir)
     return _gate(data_dir, mode, days, checked, "with steps that passed every check", needs)
+
+
+def lineup_needs(data_dir: Path) -> dict[str, int]:
+    """The lineup executor's live-guard counts in force: :data:`DRY_RUN_DAYS` and
+    :data:`CHECKED_DAYS` unless the settings file's ``lineup_live_after`` sets them (#170 PR 3)."""
+    return {
+        "dry_run_days": DRY_RUN_DAYS,
+        "checked_days": CHECKED_DAYS,
+        **live_after(data_dir, LINEUP_LIVE_AFTER),
+    }
 
 
 def _gate(
@@ -406,8 +457,13 @@ def _days(n: int) -> str:
     return f"{n} day" if n == 1 else f"{n} days"
 
 
-def check_run(run: LineupRun, mode: Mapping[str, Any], stop: bool) -> str | None:
-    """Why the log refuses ``run``, None when it takes it."""
+def check_run(
+    run: LineupRun, mode: Mapping[str, Any], stop: bool, live: Mapping[str, Any] | None = None
+) -> str | None:
+    """Why the log refuses ``run``, None when it takes it. ``live`` is :func:`live_check`'s answer
+    now: a live run that clicked (a step set or failed) needs it to hold, one that clicked nothing
+    may say why it did not (the guard read before its first click refused), and a live run never
+    says it would (#170 PR 3)."""
     if mode.get("private"):
         return "the private league is never touched"
     if stop and run.outcome != "stopped":
@@ -416,6 +472,15 @@ def check_run(run: LineupRun, mode: Mapping[str, Any], stop: bool) -> str | None
         return "the lineup executor is off in this league"
     if run.mode == "live" and mode["mode"] != "live":
         return "a live run in a league that is not live"
+    clicked = run.outcome in ("set", "failed") or any(
+        s.outcome in ("set", "failed") for s in run.steps
+    )
+    if run.mode == "live" and clicked and live is not None and not live.get("ok"):
+        return f"live refused: {live.get('reason')}"
+    if run.mode == "live" and (
+        run.outcome == "would_set" or any(s.outcome == "would_set" for s in run.steps)
+    ):
+        return "a live run sets a step or says why not; it never says would"
     sets = run.outcome == "set" or any(s.outcome == "set" for s in run.steps)
     if run.mode == "dry_run" and sets:
         return "a dry run sets nothing"

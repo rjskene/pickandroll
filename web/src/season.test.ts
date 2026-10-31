@@ -1729,6 +1729,9 @@ test("the lineup executor's panel says what it does, why live waits, and each ru
     runLine({ ...run, trigger: "panel", outcome: "nothing_to_do", reason: "Yahoo's lineup already starts the recommended players", steps: [], skipped: [{ reason: "tip-off passed", players: [4] }] }, clock),
     `05:02 · ${weekdayLabel("2026-10-24")} · side panel: nothing to do (Yahoo's lineup already starts the recommended players); 1 left out, a game began`,
   );
+  // A live run counts the steps it set (#170 PR 3).
+  const live: LineupRunLog = { ...run, mode: "live", outcome: "set", reason: "1 of 2 changes set; a game began", steps: [{ ...step, outcome: "set" }, { ...step, player: 3, outcome: "skipped" }] };
+  assert.equal(runLine(live, clock), `05:02 · ${weekdayLabel("2026-10-24")} · routine: set 1 move (1 of 2 changes set; a game began)`);
   const name = (id: number) => `P${id}`;
   assert.equal(stepText(step, name), "P1 BN → SF, P2 to BN: would set");
   assert.equal(stepText({ ...step, with: null, outcome: "skipped", reason: "the page did not match" }, name), "P1 BN → SF: skipped (the page did not match)");

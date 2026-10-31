@@ -614,9 +614,10 @@ const TRIGGER: Record<LineupRunLog["trigger"] | StartActiveRunLog["trigger"], st
   panel: "side panel",
 };
 
-/** A run in a line: "05:02 · Sat 24 · routine: would set 2 moves". ``clock`` writes its time. */
+/** A run in a line: "05:02 · Sat 24 · routine: would set 2 moves", a live run's count the steps
+ * it set. ``clock`` writes its time. */
 export function runLine(r: LineupRunLog, clock: (iso: string) => string): string {
-  const n = r.steps.length;
+  const n = r.outcome === "set" ? r.steps.filter((s) => s.outcome === "set").length : r.steps.length;
   const moves = r.outcome === "would_set" || r.outcome === "set" ? ` ${n} move${n === 1 ? "" : "s"}` : "";
   const why = r.reason ? ` (${r.reason})` : "";
   const left = r.skipped.length ? `; ${r.skipped.length} left out, a game began` : "";

@@ -5,10 +5,12 @@
 // API parses it (sources/yahoo/pages.py). This is how the private league, whose pages answer only
 // when signed in, reaches the season view; a public league's pages post the same way.
 //
-// On my own team page it is also the lineup executor's dry run (#170, lib/lineup.js): opened from
-// the routine's link (#pickandroll-lineup) or the side panel's button, it posts the page, takes
-// the API's steps built from that post, checks each on the page's form and logs what it would
-// set. Any other visit only shows the strip, a line saying what a run would do.
+// On my own team page it is also the lineup executor (#170, lib/lineup.js): opened from the
+// routine's link (#pickandroll-lineup, -lineup-late) or the side panel's button, it posts the page,
+// takes the API's steps built from that post, checks each on the page's form and logs what it
+// would set; in a live league whose guard holds (PR 3) it sets them instead (``setLineup``: per
+// step the player's slot label, then his target row's, once each), once per pass, and logs what
+// Yahoo saved. Any other visit only shows the strip, a line saying what a run would do.
 //
 // On an add page (/nba/<league>/addplayer?apid=<player>) it is the moves executor (#171,
 // lib/moves.js), and only when the page was opened with the routine's fragment
@@ -39,7 +41,7 @@
 // page Yahoo lands on in the same tab logs what Yahoo answered and goes on to the entry's IL move
 // or add page. A dry run clicks nothing.
 //
-// Outside ``pressStartActive``, ``moveToIL`` and ``dropPlayer`` it clicks and sets only on a page
+// Outside ``setLineup``, ``pressStartActive``, ``moveToIL`` and ``dropPlayer`` it clicks and sets only on a page
 // opened with a moves fragment: the entry's one drop
 // button, the bid and Yahoo's final button, once each (addpage.js keeps Yahoo's alerts on such a
 // page as text, so an alert is logged and never blocks the tab). It never reads a form's crumb,
@@ -165,8 +167,58 @@
 
   let running = false;
 
-  /** A visit to my team page: the strip, and a dry run when ``trigger`` says one was asked for.
-   * ``posted`` is the page's own post. Answers the run logged, or null. */
+  /** The live lineup run on record in this browser for the league, logging first one whose log
+   * never came (the tab closed mid-run, a log that failed): its run as read, else clicked with its
+   * answer not read. The same pass never runs it again. */
+  async function lineupRecord(extension) {
+    const read = async () => {
+      const r = await send({ op: "lineup_record", league: page.league });
+      return (r && r.ok && r.data) || null;
+    };
+    const record = await read();
+    if (!record || record.logged || Date.now() - record.at < PR.LINEUP_UNREAD_MS) return record;
+    await send({ op: "lineup_log", league: page.league, run: record.run || PR.unreadLineup(record, extension), clicked: true });
+    return read();
+  }
+
+  /** The live run of ``steps`` on this page (PR 3): the day's tip-offs read, the league's Start
+   * Active press of the day before this page's read (``startActiveWait``), the run put on record
+   * before the page is touched (once per pass), then ``setLineup`` with STOP, the browser's brake
+   * and the league's live guard read again from the API before every change, the first included:
+   * no click rests on the steps this visit started from. Answers ``{run, clicked, release}``. */
+  async function setRun({ steps, trigger, where, posted, controls, checked, extension }) {
+    const runOf = (result, afterStartActive = null) => PR.liveRun({ steps, trigger, page: where, controls, checked, result, afterStartActive, extension });
+    const skip = (reason, afterStartActive = null) => ({ run: runOf({ steps: [], outcome: "skipped", reason, after: null }, afterStartActive), clicked: false, release: false });
+    if (!steps.tips) return skip("the day's tip-offs are not read: a live run sets nothing without them");
+    const sa = await send({ op: "start_active_due" });
+    if (!sa || !sa.ok) return skip(`Start Active's due did not answer: ${(sa && sa.error) || "no answer from the extension"}`);
+    const row = (sa.data.leagues || []).find((x) => String(x.league) === String(page.league)) || null;
+    const pressed = await send({ op: "start_active_record", league: page.league });
+    const press = (pressed && pressed.ok && pressed.data) || null;
+    const after = Boolean(press && press.day === sa.data.date && press.logged);
+    const waits = PR.startActiveWait(row, press, sa.data.date, posted.at);
+    if (waits) return skip(waits, after);
+    await lineupRecord(extension);
+    // On record before the page is touched: the same pass never sets this league again.
+    const put = await send({ op: "lineup_setting", league: page.league, record: { day: steps.date, mode: "live", trigger, page: where, read_at: steps.read.at, extension } });
+    if (!put || !put.ok) return skip(`the run could not be put on record: ${(put && put.error) || "no answer from the extension"}`, after);
+    const stopNow = async () => {
+      const brake = await send({ op: "settings" });
+      if (brake && brake.ok && brake.data.lineup_executor === "off") return "the browser's brake came on";
+      const r = await send({ op: "lineup_steps", league: page.league, date: steps.date });
+      if (!r || !r.ok) return "the steps did not answer before a change";
+      if (r.data.stop) return "STOP came on";
+      const m = PR.lineupMode(r.data);
+      return m.mode === "live" ? null : m.refused || "the league is no longer live";
+    };
+    const result = await PR.setLineup(document, { controls, steps: steps.steps, returns: steps.returns || [], slots: steps.slots || [] }, { stopNow });
+    const clicked = result.steps.some((x) => x.outcome === "set" || x.outcome === "failed");
+    return { run: runOf(result, after), clicked, release: !clicked };
+  }
+
+  /** A visit to my team page: the strip, and a run when ``trigger`` says one was asked for: live
+   * where the league is live and its guard holds, else a dry run. ``posted`` is the page's own
+   * post. Answers the run logged, or null. */
   async function lineup(trigger, posted) {
     const raw = formControls();
     if (!raw || page.kind !== "team") return null;
@@ -194,19 +246,19 @@
     const checked = problem ? null : PR.checkSteps(controls, steps.steps, steps.slots || []);
     const where = location.pathname + location.search;
     const extension = extensionVersion();
-    const run = PR.dryRun({
-      steps,
-      trigger,
-      page: where,
-      postedAt: posted.accepted ? posted.at : NaN,
-      controls,
-      problem,
-      checked,
-      extension,
-    });
-    const logged = await send({ op: "lineup_log", league: page.league, run });
+    const postedAt = posted.accepted ? posted.at : NaN;
+    const mode = PR.lineupMode(steps);
+    // Live, a run that ends before any step logs as live; one that goes on sets the steps.
+    const end = mode.mode === "live" ? PR.runEnd({ steps, postedAt, controls, problem }) : null;
+    let run;
+    let clicked = false;
+    let release = false;
+    if (mode.mode !== "live" || end) {
+      run = PR.dryRun({ steps, trigger, page: where, postedAt, controls, problem, checked, extension, refused: mode.refused, mode: end ? "live" : "dry_run" });
+    } else ({ run, clicked, release } = await setRun({ steps, trigger, where, posted, controls, checked, extension }));
+    const logged = await send({ op: "lineup_log", league: page.league, run, clicked, release });
     if (!logged || !logged.ok) {
-      strip(`not logged: ${(logged && logged.error) || "no answer from the extension"}`);
+      strip(`${clicked ? "clicked, " : ""}not logged: ${(logged && logged.error) || "no answer from the extension"}`);
       return null;
     }
     strip(PR.stripText({ steps, run }));

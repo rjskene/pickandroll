@@ -65,7 +65,12 @@ side (PR 1) is in `api/season_autopilot.py`; the click is the extension's, on th
 - **The live guard.** `live` is refused until the league's log holds dry-run lineup runs on seven
   distinct days, on two of them a run whose steps all passed every check of the page, and STOP is
   absent. The review on #127 and the user's own click are the other two gates; no code sets it.
-  Live itself (the submit) is PR 3, after the dry-run week; nothing in PR 1 or PR 2 clicks.
+  The seven and the two are defaults: `data/autopilot/executor.json`'s
+  `lineup_live_after: {dry_run_days, checked_days}`, read at request time, sets either (a whole
+  number of at least 0, the master's on the user's word), beside the moves executor's
+  `live_after`. In a live league the steps carry the guard again on every request (`live`), and
+  the log checks it on every live run: where it fails, the page runs dry and says why
+  ("live refused: …"). Live itself is PR 3 (ext 0.11.0, below).
 - **STOP.** The file `data/autopilot/STOP` stops every executor: the steps answer `stop: true`
   with none, the log takes only a run that says it stopped, the view and the digest say so.
   Nothing in the code writes it; the user creates or removes it by hand.
@@ -85,12 +90,49 @@ side (PR 1) is in `api/season_autopilot.py`; the click is the extension's, on th
   the form's action and field names (never a value, never the crumb's), each moved player's
   control and the select values it would set; it sets nothing. The settings page's "Lineup
   executor in this browser" is the browser's own brake beside STOP.
+- **The live run (PR 3, ext 0.11.0; the user's go 2026-10-31).** In a live league whose guard
+  holds, the same page check runs, and then the steps are set with Yahoo's swap labels, the way
+  the IL move does (#214): per step a click on the player's slot label (Yahoo marks the rows he
+  may go to, `tr.swaptarget`), then a click on the target row's label (the player swapped back,
+  or an empty row of the slot), which saves at once ("All changes saved"). Nothing else is
+  clicked: no select is set, no hidden field touched, the form is never submitted, Start Active
+  Players is never pressed, nothing is fetched from Yahoo. In order:
+  - The day's tip-offs must be read (`tips`); the league's Start Active press of the day, when
+    one is due and live (#215), must be logged before the page's read, else the run is skipped
+    ("the lineup waits for its press"; a press after the read: "the next pass reads it again").
+    `after_start_active` says whether the day's press came first.
+  - The run is put on record in the browser before the page is touched: one live run per league
+    per pass (day and trigger), never a second; a run whose log never came is logged by the next
+    visit as clicked, its answer not read.
+  - The units go in order: first each `returns` player, a held player whose status cleared and
+    whose comeback has an open active spot (the lineup's `cleared` alerts with no drop, today's
+    page only), to an empty bench row; one whose comeback needs a drop is the moves queue's
+    (`skipped`, "needs a drop"), as is a return with no empty bench row on the page. Then the
+    steps' groups. Before every unit, the first included, STOP, the browser's brake and the live
+    guard are read again from the API: no click rests on the steps the visit started from.
+  - Before each unit every step of it passes `checkSteps` on the lineup as the swap labels show it
+    now (a swap saves through Yahoo's script, so the labels, not the form's selects, are the page's
+    state); a unit that fails a check is skipped whole and the run goes on. Before each click the
+    step is checked again, and no swap may be open on the page.
+  - A step whose target does not show within 5 s, or whose first click Yahoo answers with an
+    alert, is cancelled with a click on the player's own label (Yahoo leaves the swap, nothing
+    saved). A step that fails after a click (an error notice, no save read within 10 s, the
+    players not landed) stops the run: the rest is skipped.
+  - The run's outcome is `set` (something set; the reason names any unit skipped), `failed` (a
+    step failed after a click; how many units were set first), `stopped` (STOP, the brake or the
+    mode between units), `skipped` (nothing clicked) or `nothing_to_do`. Each step has its
+    outcome, its kind (`swap` or `return`) and Yahoo's words; the run has the lineup the labels
+    show after it (`after`), the moved players off their target (`diff`) and Yahoo's save words.
+    A live run never says it would; a dry run never says it set.
+  - The private league is never touched: the API refuses its steps and its log as before.
 - **The log.** `POST /seasons/{league}/autopilot/lineup` appends one run to
   `data/leagues/<id>/autopilot/<date>.json` as `{"lineup": [...]}`, the only writer there; phase 2
   adds `moves` beside it, and a run never rewrites another. A run carries the page it read, the
   form's field names (never a value), the lineup before and after and each step's outcome. A run
   carrying the page's crumb is refused (422), as are a dry run that says it set something, a live
-  run outside live, and any run but a stopped one under STOP or with the mode off (409). A log
+  run outside live, a live run that clicked while its guard fails now, a live run that says it
+  would, and any run but a
+  stopped one under STOP or with the mode off (409). A log
   file that does not read is refused, never overwritten.
 - **The digest.** One line for the executor in the Lineups section (the leagues in dry run, how
   many had steps, how many none, how many did not run, the day-runs that would set, were
@@ -602,7 +644,7 @@ page, from PR 2:
   defaults: `data/autopilot/executor.json`'s `live_after: {dry_run_days, checked_days}`, read at
   request time, sets either (a whole number of at least 0; the master sets it on the user's word,
   and the dashboard's execute-time Set keeps it). The guard's reasons name the counts in force; the
-  lineup executor's keeps seven and two. The
+  lineup executor's has its own key, `lineup_live_after` (#170 PR 3, above). The
   queue's payload and the Queue card read each entry's latest line of the day and the day's tally
   from this log (#200, above), as the digest does.
 - **The digest.** A Moves section: the latest queue's entries queued and struck, the last day's
@@ -662,7 +704,10 @@ In the model's terms, carried by #124:
 - When the IL is full, the engine says who leaves it, only while an active player is eligible for
   the slot: a cleared occupant first (activated, the weakest active player dropped), else the
   occupant with the least value net of return, dropped. The ranking governs on the IL even for a
-  protected occupant, who is marked as such there; the executor still never drops him.
+  protected occupant, who is marked as such there; the executor still never drops him. A cleared
+  occupant whose comeback has an open active spot is moved to the bench by the lineup executor's
+  live run, before the day's steps (#170 PR 3); one whose comeback needs a drop is the moves
+  queue's.
 - An absence shorter than a week keeps a player on the bench, not on waivers: a player who is
   better than the best available add over the rest of the season and returns within seven days is
   not a drop candidate for that solve, protected or not. A replacement-level player out for a few
@@ -1037,7 +1082,8 @@ comes back to it.
   from the lineup route's per-day slots: the first executor, reversible until tip-off. The
   executor is filed 2026-10-23 as #170 (user: "file both"), dry run first, `live` the user's click.
   Three PRs: the API's steps, mode, STOP, log, digest line and the Lineup view's switch (section 2);
-  the extension's dry run; the live submit once the dry run has logged its week.
+  the extension's dry run; the live run once the dry run has logged its week (ext 0.11.0, Yahoo's
+  swap labels, not the form's submit).
 - **Phase 2, moves.** The queue, the veto window, the dry-run week, the caps, the FAAB rule, the
   executor for Add and Drop with the idempotence check, the autopilot log and the digest line.
   Filed 2026-10-23 as #171, behind #170, before phase 1 was in, at the user's direction

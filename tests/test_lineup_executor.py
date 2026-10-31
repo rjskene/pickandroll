@@ -404,6 +404,128 @@ def test_live_waits_for_seven_dry_run_days_two_of_them_with_steps_that_passed(cl
     assert r.status_code == 200 and r.json()["mode"]["mode"] == "live"
 
 
+def lineup_knob(client, **counts) -> None:
+    """The settings file's ``lineup_live_after``, beside the moves executor's ``live_after``."""
+    path = client.data_dir / "autopilot" / "executor.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    body = {"live_after": {"dry_run_days": 0, "checked_days": 0}, "lineup_live_after": counts}
+    path.write_text(json.dumps(body))
+
+
+def test_the_lineup_knob_sets_the_guards_counts_at_request_time(client):
+    def put(mode: str):
+        return client.put(f"/leagues/{LEAGUE}/lineups", json={"mode": mode})
+
+    # The moves executor's counts never open the lineup's guard.
+    lineup_knob(client)
+    lineup_knob(client, dry_run_days=3, checked_days=1)
+    dry_runs(client, days=2, checked=1)
+    r = put("live")
+    assert r.status_code == 409 and r.json()["detail"] == "a dry run on 3 days first: 2 so far"
+    dry_runs(client, days=3, checked=1)
+    assert put("live").status_code == 200
+    view = client.get(f"/seasons/{LEAGUE}/autopilot").json()
+    assert view["live"]["needs"] == {"dry_run_days": 3, "checked_days": 1}
+    # A count that is not a whole number of at least 0 keeps the default.
+    lineup_knob(client, dry_run_days=-1, checked_days="2")
+    assert ap.lineup_needs(client.data_dir) == {"dry_run_days": 7, "checked_days": 2}
+    (client.data_dir / "autopilot" / "executor.json").unlink()
+    assert ap.lineup_needs(client.data_dir) == {"dry_run_days": 7, "checked_days": 2}
+
+
+def test_in_a_live_league_the_steps_and_the_log_check_the_guard_on_every_request(client):
+    benched_thursday(client)
+    url = f"/seasons/{LEAGUE}/lineup/steps"
+    s = client.get(url, params={"date": "2026-10-22"}).json()
+    assert s["live"] is None
+    dry_runs(client, days=7, checked=2)
+    assert client.put(f"/leagues/{LEAGUE}/lineups", json={"mode": "live"}).status_code == 200
+    s = client.get(url, params={"date": "2026-10-22"}).json()
+    assert (s["mode"], s["live"]["ok"], s["live"]["reason"]) == ("live", True, None)
+    log = f"/seasons/{LEAGUE}/autopilot/lineup"
+    set_step = {**run_body()["steps"][0], "outcome": "set", "message": "All changes saved"}
+    live = run_body(mode="live", outcome="set", steps=[set_step], diff={}, after_start_active=True)
+    r = client.post(log, json=live)
+    assert r.status_code == 200, r.text
+    assert r.json()["steps"][0]["message"] == "All changes saved"
+    assert r.json()["steps"][0]["kind"] == "swap"
+    # A live run never says it would.
+    r = client.post(log, json=run_body(mode="live"))
+    assert r.status_code == 409 and r.json()["detail"].endswith("it never says would")
+    # A dry run in a live league is taken: the page ran dry where the guard refused.
+    assert client.post(log, json=run_body()).status_code == 200
+    # The counts raised by hand: the guard refuses now, on the steps and on the log.
+    lineup_knob(client, dry_run_days=30)
+    s = client.get(url, params={"date": "2026-10-22"}).json()
+    assert s["live"]["ok"] is False and s["live"]["reason"].startswith("a dry run on 30 days first")
+    r = client.post(log, json=live)
+    assert r.status_code == 409 and r.json()["detail"].startswith("live refused: a dry run on 30")
+    # A live run the guard stopped before its first click says so, and is taken.
+    skipped = {**run_body()["steps"][0], "outcome": "skipped", "reason": "live refused"}
+    stopped = run_body(mode="live", outcome="stopped", steps=[skipped], reason="live refused")
+    assert client.post(log, json=stopped).status_code == 200
+
+
+def test_todays_cleared_held_players_with_an_open_spot_return_first_and_the_rest_wait_for_a_drop():
+    lineup = {
+        "rule": {"changes": "daily"},
+        "start": "2026-10-26",
+        "slots": ["PG", "C"],
+        "players": {
+            "1": {"positions": ["PG"], "nba_team": "BOS"},
+            "2": {"positions": ["C"], "nba_team": "GSW"},
+            "3": {"positions": ["PG"], "nba_team": "BOS"},
+            "4": {"positions": ["C"], "nba_team": "GSW"},
+            "5": {"positions": ["PG"], "nba_team": "BOS"},
+        },
+        "alerts": [
+            {"kind": "cleared", "player": 4, "slot": "IL", "status": None, "drop": None},
+            {"kind": "cleared", "player": 5, "slot": "IL+", "status": "GTD", "drop": 3},
+            {"kind": "unknown_status", "player": 2, "status": "X"},
+        ],
+        "days": [
+            {
+                "date": "2026-10-26",
+                "past": False,
+                "recommended": [{"slot": "PG", "player": 1}, {"slot": "C", "player": 2}],
+                "yahoo": {
+                    "read_at": "2026-10-26T12:00:00+00:00",
+                    "page": "dated page",
+                    "slots": [
+                        {"slot": "PG", "player": 1},
+                        {"slot": "C", "player": 2},
+                        {"slot": "BN", "player": 3},
+                        {"slot": "IL", "player": 4},
+                        {"slot": "IL+", "player": 5},
+                    ],
+                },
+                "start": [],
+                "sit": [],
+                "games": {"recommended": 2, "yahoo": 2},
+                "playing": [1, 2, 4],
+            }
+        ],
+    }
+    now = datetime(2026, 10, 26, 13, tzinfo=UTC)
+    tips = {"GSW": "2026-10-26T23:00:00+00:00"}
+    mode = {"mode": "live"}
+    live = {"ok": True, "reason": None}
+    day = date(2026, 10, 26)
+    s = ap.steps_payload(LEAGUE, 4, day, day, now, lineup, tips, mode, False, live)
+    assert s["returns"] == [
+        {"player": 4, "slot": "IL", "status": None, "tip": "2026-10-26T23:00:00+00:00"}
+    ]
+    assert s["skipped"] == [{"reason": ap.NEEDS_DROP, "players": [5], "steps": []}]
+    assert (s["steps"], s["live"]) == ([], live)
+    # Another day's page returns no one: the alerts are today's.
+    later = {**lineup, "days": [{**lineup["days"][0], "date": "2026-10-27"}]}
+    s = ap.steps_payload(LEAGUE, 4, date(2026, 10, 27), day, now, later, tips, mode, False, live)
+    assert (s["returns"], s["skipped"]) == ([], [])
+    # The guard is only a live league's.
+    s = ap.steps_payload(LEAGUE, 4, day, day, now, lineup, tips, {"mode": "dry_run"}, False, live)
+    assert s["live"] is None
+
+
 # --------------------------------------------------------------------------- the log
 def run_body(**over) -> dict:
     body = {

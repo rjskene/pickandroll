@@ -114,6 +114,10 @@ async function attachedOr(fn) {
 const postsKey = (league) => `league:${league}`;
 const readKey = (league) => `season_read:${league}`;
 const lineupKey = (league) => `lineup:${league}`;
+/** The lineup executor's live run on record for a league (local), one after another (#170 PR 3):
+ * its day, trigger and page, put on record before the page is touched. */
+const lineupRanKey = (league) => `lineup_ran:${league}`;
+let setting = Promise.resolve();
 const movesKey = (league) => `moves:${league}`;
 const submitKey = (id) => `moves_submit:${id}`;
 /** The submits put on record one after another, so two pages never pass the cap together. */
@@ -260,10 +264,48 @@ const ops = {
     const q = `date=${encodeURIComponent(date)}`;
     return api(`/seasons/${encodeURIComponent(league)}/lineup/steps?${q}`, { timeout: 30000 });
   },
-  /** A run of the lineup executor, for the league's log; the last one is kept for the panel. */
-  async lineup_log({ league, run }) {
-    const logged = await api(`/seasons/${encodeURIComponent(league)}/autopilot/lineup`, { method: "POST", body: run, timeout: 15000 });
-    const moves = (run.steps || []).filter((x) => x.outcome === "would_set").length;
+  /** The live lineup run on record in this browser for ``league``, null when none. */
+  async lineup_record({ league }) {
+    const key = lineupRanKey(league);
+    return (await chrome.storage.local.get(key))[key] || null;
+  },
+  /** A live lineup run about to set the team page in ``sender``'s tab (#170 PR 3): ``record`` is
+   * its day, trigger, page and read. One at a time, and refused while the league's last live run
+   * awaits its log or when the same pass ran it that day already. */
+  lineup_setting({ league, record }, sender) {
+    const run = setting.then(async () => {
+      const key = lineupRanKey(league);
+      const prev = (await chrome.storage.local.get(key))[key] || null;
+      if (prev && !prev.logged) throw new Error("a live run in this league awaits its log");
+      if (prev && prev.day === record.day && prev.trigger === record.trigger) throw new Error("this pass set the lineup already today");
+      const kept = { ...record, league: String(league), prev: prev ? { ...prev, prev: null } : null, logged: false, tab: sender && sender.tab ? sender.tab.id : null, at: Date.now() };
+      await chrome.storage.local.set({ [key]: kept });
+      return { kept: true };
+    });
+    setting = run.catch(() => {});
+    return run;
+  },
+  /** A run of the lineup executor, for the league's log; the last one is kept for the panel.
+   * ``clicked``: the run of the live run on record, kept on it until the API has it (a refusal
+   * also ends it: it is never sent or run again). ``release``: the run on record clicked nothing,
+   * so the record before it comes back. */
+  async lineup_log({ league, run, clicked = false, release = false }) {
+    const key = lineupRanKey(league);
+    const record = run.mode === "live" ? (await chrome.storage.local.get(key))[key] || null : null;
+    const open = record && !record.logged ? record : null;
+    if (open && release) {
+      if (open.prev) await chrome.storage.local.set({ [key]: open.prev });
+      else await chrome.storage.local.remove(key);
+    } else if (open && clicked) await chrome.storage.local.set({ [key]: { ...open, run } });
+    let logged;
+    try {
+      logged = await api(`/seasons/${encodeURIComponent(league)}/autopilot/lineup`, { method: "POST", body: run, timeout: 15000 });
+    } catch (e) {
+      if (open && clicked && e.status >= 400 && e.status < 500) await chrome.storage.local.set({ [key]: { ...open, run, logged: true, refused: e.message } });
+      throw e;
+    }
+    if (open && clicked) await chrome.storage.local.set({ [key]: { ...open, run, logged: true } });
+    const moves = (run.steps || []).filter((x) => x.outcome === (run.mode === "live" ? "set" : "would_set")).length;
     const last = { at: Date.now(), day: run.day, trigger: run.trigger, outcome: run.outcome, reason: run.reason, moves };
     await chrome.storage.session.set({ [lineupKey(league)]: last });
     return logged;

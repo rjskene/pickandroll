@@ -262,7 +262,11 @@ test("the strip says the brake, the mode and STOP, a run's outcome, or what a ru
   assert.equal(X.stripText({ steps: { ...steps, steps: [], reason: "Yahoo's lineup already starts the recommended players" } }), "dry run · Yahoo's lineup already starts the recommended players");
   const run = X.dryRun({ steps, trigger: "panel", page: "/p", postedAt: POSTED, controls: c, checked: X.checkSteps(c, steps.steps, SLOTS) });
   assert.equal(X.stripText({ steps, run, at }), "dry run · 2 moves logged 05:02");
-  assert.equal(X.stripText({ steps: { ...steps, mode: "live" }, run, at }), "live (this build logs only) · 2 moves logged 05:02");
+  // A live league whose guard refused runs dry, and the strip says so.
+  const refused = { ...steps, mode: "live", live: { ok: false, reason: "STOP is on" } };
+  const dry = X.dryRun({ steps: refused, trigger: "panel", page: "/p", postedAt: POSTED, controls: c, checked: X.checkSteps(c, steps.steps, SLOTS), refused: X.lineupMode(refused).refused });
+  assert.equal(X.stripText({ steps: refused, run: dry, at }), "dry run · 2 moves logged 05:02 (live refused: STOP is on)");
+  assert.equal(X.stripText({ steps: { ...steps, mode: "live", live: { ok: true, reason: null } } }), "live · a run would set 2 moves (the routine's link or the side panel runs it)");
   assert.equal(X.stripText({ error: "API down" }), "not reached: API down");
   assert.equal(
     X.lastRunText({ at, day: DAY, trigger: "panel", outcome: "would_set", reason: null, moves: 2 }, "3 min ago"),
@@ -271,8 +275,9 @@ test("the strip says the brake, the mode and STOP, a run's outcome, or what a ru
   assert.equal(X.lastRunText(null, ""), "no run from this browser yet");
 });
 
-/** worker.js in a context with a fake chrome; ``reply`` answers each fetch. */
-function loadWorker(reply) {
+/** worker.js in a context with a fake chrome; ``reply`` answers each fetch, ``local`` holds the
+ * records the worker keeps (the settings are fixed). */
+function loadWorker(reply, local = new Map()) {
   const listeners = [];
   const fetches = [];
   const store = new Map();
@@ -288,7 +293,19 @@ function loadWorker(reply) {
   };
   const chrome = {
     runtime: { onMessage: evt(listeners), onConnect: evt([]), onInstalled: evt([]), onStartup: evt([]) },
-    storage: { local: { get: async () => ({ api: "http://api.test", lineup_executor: "off" }) }, session },
+    storage: {
+      local: {
+        get: async (key) =>
+          typeof key === "string" ? (local.has(key) ? { [key]: structuredClone(local.get(key)) } : {}) : { api: "http://api.test", lineup_executor: "off" },
+        set: async (obj) => {
+          for (const [k, v] of Object.entries(obj)) local.set(k, structuredClone(v));
+        },
+        remove: async (key) => {
+          local.delete(key);
+        },
+      },
+      session,
+    },
     sidePanel: { setPanelBehavior: async () => {} },
   };
   async function fetch(url, { method, body } = {}) {
@@ -342,9 +359,9 @@ test("a refused run is not kept as the last one", async () => {
   assert.equal(w.store.has(`lineup:${LEAGUE}`), false);
 });
 
-test("the dry run sets no field and submits nothing; the reader loads the executor's library", () => {
+test("only the live run clicks; no field is set and nothing submitted; the reader loads the executor's library", () => {
   const manifest = JSON.parse(fs.readFileSync(path.join(DIR, "manifest.json"), "utf8"));
-  assert.equal(manifest.version, "0.10.1");
+  assert.equal(manifest.version, "0.11.0");
   const reader = manifest.content_scripts.find((c) => c.js.includes("league.js"));
   assert.deepEqual(reader.js, ["lib/league.js", "lib/lineup.js", "lib/moves.js", "lib/startactive.js", "lib/ilmove.js", "lib/drop.js", "league.js"]);
   // The moves executor's live claim (``fillClaim``, #171 PR 3) and Start Active's presses
@@ -354,8 +371,10 @@ test("the dry run sets no field and submits nothing; the reader loads the execut
   const press = require("../lib/startactive.js").pressStartActive.toString();
   const move = require("../lib/ilmove.js").moveToIL.toString();
   const drop = require("../lib/drop.js").dropPlayer.toString();
+  // The lineup's live run (``swapStep``, #170 PR 3): the two clicks of a swap and its cancel.
+  const swapped = X.swapStep.toString();
   for (const f of ["league.js", "lib/lineup.js", "lib/moves.js", "lib/startactive.js", "lib/ilmove.js", "lib/drop.js"]) {
-    const src = fs.readFileSync(path.join(DIR, f), "utf8").replace(claim, "").replace(press, "").replace(move, "").replace(drop, "");
+    const src = fs.readFileSync(path.join(DIR, f), "utf8").replace(claim, "").replace(press, "").replace(move, "").replace(drop, "").replace(swapped, "");
     assert.ok(!/\.click\(|dispatchEvent|submit\(|requestSubmit/.test(src), `${f} clicks or submits`);
     assert.ok(!/\.(value|selectedIndex|checked)\s*=[^=]/.test(src), `${f} sets a field`);
     assert.ok(!/\.selected\s*=[^=]/.test(src), `${f} selects an option`);
@@ -364,7 +383,7 @@ test("the dry run sets no field and submits nothing; the reader loads the execut
 
 /** league.js on a fake team page: the form from ``form()`` as DOM-like elements, a chrome whose
  * worker answers each op with ``answer``. Returns the messages sent, the strip and the URL. */
-async function visitPage({ hash = "", answer, lock = [] }) {
+async function visitPage({ hash = "", answer, lock = [], swap: roster = null }) {
   const f = form({ lock });
   const elements = f.fields.map((x) => ({
     name: x.name,
@@ -378,10 +397,12 @@ async function visitPage({ hash = "", answer, lock = [] }) {
   const nodes = {};
   const doc = {
     querySelector: (sel) => (sel === "form#roster-edit-form" ? formEl : sel === "section.ysf-rosterswap-manager" ? manager : null),
-    querySelectorAll: (sel) => (sel === "span.pos-label[role=button]" ? new Array(13).fill({}) : []),
+    querySelectorAll: (sel) =>
+      sel === "span.pos-label[role=button]" ? new Array(13).fill({}) : roster && [X.LINEUP_ROWS, X.LINEUP_SAVED].includes(sel) ? roster.querySelectorAll(sel) : [],
     getElementById: (id) => nodes[id] || null,
     createElement: () => ({ style: {}, setAttribute() {}, textContent: "" }),
     documentElement: {
+      getAttribute: (a) => (roster ? roster.documentElement.getAttribute(a) : null),
       cloneNode: () => ({ querySelectorAll: () => [], outerHTML: "<html></html>" }),
       append: (el) => {
         nodes[el.id] = el;
@@ -418,7 +439,8 @@ async function visitPage({ hash = "", answer, lock = [] }) {
     location,
     document: doc,
     history: { replaceState: (_s, _t, u) => replaced.push(u) },
-    setTimeout: (fn) => timers.push(fn),
+    // The page's settle runs when the test says; a live step's short waits go on at once.
+    setTimeout: (fn, ms) => (ms >= 1000 ? timers.push(fn) : Promise.resolve().then(fn)),
     URL,
     Date,
     console,
@@ -508,4 +530,341 @@ test("the side panel's button runs from a fresh post of the page", async () => {
     v.sent.map((m) => m.op),
     ["season_page", "settings", "lineup_steps", "season_page", "settings", "lineup_steps", "lineup_log"],
   );
+});
+
+// ---------------------------------------------------------------- the live run (#170 PR 3)
+const SAVED_WORDS = "All changes saved";
+
+/** My team page's roster as Yahoo's swap manager draws it (``ysf-rosterswapper``, swapmethod
+ * "target"), from ``form()``'s players: a row per slot, ``tr.editable``, one visible
+ * ``span.pos-label[role=button][data-pos]`` in an occupied row, an empty row's label hidden until
+ * targeted. A click on an occupied row's label starts a swap (``swapactive`` on it, ``swaptarget``
+ * on each row the two players may trade, an empty row's label shown); a click on a target's label
+ * swaps the two and saves: the notice reads ``answer`` after ``after`` looks (a look is one
+ * ``wait``; 0: at the click). A click on any other label while swapping leaves the swap, nothing
+ * saved. ``empty`` adds empty rows of those slots; ``lockAfter`` fixes the rows of those players
+ * after the first save; ``alert`` is raised on the first click; ``untargeted`` players never show
+ * as a target. Clicks go in ``touched``. */
+function swapDom({ drop = [], empty = [], answer = "saved", after = 1, alert = null, untargeted = [], lockAfter = [], lock = [] } = {}) {
+  const f = form({ drop });
+  const eligible = {};
+  const rows = [];
+  for (const x of f.fields.filter((y) => /^\d+$/.test(y.name))) {
+    eligible[x.name] = x.options.map((o) => o.value);
+    rows.push({ slot: x.value, player: Number(x.name), editable: !lock.includes(x.name) });
+  }
+  for (const slot of empty) rows.push({ slot, player: null, editable: true });
+  const touched = [];
+  const attrs = {};
+  const notices = [];
+  let active = null;
+  let targets = [];
+  let looks = null;
+  let saves = 0;
+  const may = (k, slot) => k == null || (eligible[String(k)] || []).includes(slot);
+  const done = () => {
+    active = null;
+    targets = [];
+  };
+  const click = (r) => {
+    touched.push(`click ${r.player ?? "empty"} ${r.slot}`);
+    if (active === null) {
+      if (r.player == null || !r.editable) return;
+      if (alert) attrs["data-pickandroll-alerts"] = JSON.stringify([alert]);
+      active = r;
+      targets = rows.filter((q) => q !== r && q.editable && !untargeted.includes(q.player) && may(r.player, q.slot) && may(q.player, r.slot));
+      return;
+    }
+    if (!targets.includes(r)) return done();
+    [active.player, r.player] = [r.player, active.player];
+    done();
+    saves += 1;
+    looks = 0;
+    if (after === 0) look();
+  };
+  const look = () => {
+    if (looks === null) return;
+    if (looks++ !== after || !answer) return;
+    notices.splice(0, notices.length, answer === "saved" ? { className: "rostersave-msg saved", textContent: ` ${SAVED_WORDS} ` } : { className: "rostersave-msg error", textContent: "There was an error saving your changes." });
+    if (saves === 1) for (const q of rows) if (lockAfter.includes(q.player)) q.editable = false;
+  };
+  const classes = (r) => [r.editable && "editable", r.player == null && "empty-bench", active === r && "swapactive", targets.includes(r) && "swaptarget"].filter(Boolean);
+  const labelOf = (r) => {
+    const l = {
+      getAttribute: (a) => ({ "data-pos": r.slot, role: "button" })[a] ?? null,
+      getClientRects: () => (r.player != null || targets.includes(r) ? [{}] : []),
+      click: () => click(r),
+    };
+    return l;
+  };
+  const els = rows.map((r) => {
+    const label = labelOf(r);
+    return {
+      classList: { contains: (c) => classes(r).includes(c) },
+      querySelector: (sel) => (sel === "[data-ys-playerid]" && r.player != null ? { getAttribute: () => String(r.player) } : null),
+      querySelectorAll: (sel) => (sel === X.LINEUP_LABEL ? [label] : []),
+    };
+  });
+  return {
+    touched,
+    look,
+    rows,
+    lineup: () => Object.fromEntries(rows.filter((r) => r.player != null).map((r) => [String(r.player), r.slot])),
+    querySelectorAll: (sel) =>
+      sel === X.LINEUP_ROWS ? els : sel === X.LINEUP_SAVED ? notices.map((n) => ({ ...n, getClientRects: () => [{}], classList: { contains: (c) => n.className.split(" ").includes(c) } })) : [],
+    documentElement: { getAttribute: (a) => attrs[a] ?? null },
+  };
+}
+
+const live = (dom, steps, { returns = [], stopNow, lock = [] } = {}) =>
+  X.setLineup(dom, { controls: X.readControls(form({ lock })), steps, returns, slots: SLOTS }, { wait: async () => dom.look(), every: 200, showCap: 1000, saveCap: 1000, stopNow });
+
+test("the labels read as the form does; one swap is the player's label, then his target's, then Yahoo's save", async () => {
+  const dom = swapDom();
+  const labels = X.readLabels(dom);
+  assert.deepEqual(labels.lineup, X.readControls(form()).lineup);
+  assert.deepEqual([labels.fixed, labels.twice, labels.swapping, labels.bench], [[], false, false, false]);
+  const got = await live(dom, [swap(1011, "BN", "SF", 1004, 0)]);
+  assert.deepEqual(dom.touched, ["click 1011 BN", "click 1004 SF"]);
+  assert.deepEqual([got.outcome, got.reason], ["set", null]);
+  assert.deepEqual(got.steps.map((s) => [s.player, s.kind, s.outcome, s.message]), [[1011, "swap", "set", SAVED_WORDS]]);
+  assert.equal(got.after["1011"], "SF");
+  assert.equal(got.after["1004"], "BN");
+});
+
+test("a group of three swaps runs in order, each checked on the page as it then reads", async () => {
+  const dom = swapDom();
+  const group = [swap(1011, "BN", "SF", 1004, 0), swap(1004, "BN", "Util", 1009, 0), swap(1009, "BN", "F", 1006, 0)];
+  const got = await live(dom, group);
+  assert.equal(got.outcome, "set");
+  assert.deepEqual(dom.touched, ["click 1011 BN", "click 1004 SF", "click 1004 BN", "click 1009 Util", "click 1009 BN", "click 1006 F"]);
+  assert.deepEqual([got.after["1011"], got.after["1004"], got.after["1009"], got.after["1006"]], ["SF", "Util", "F", "BN"]);
+});
+
+test("a swap that never saves, Yahoo's error or its alert fails and stops the run", async () => {
+  const steps = [swap(1011, "BN", "SF", 1004, 0), swap(1012, "BN", "Util", 1010, 1)];
+  let dom = swapDom({ answer: null });
+  let got = await live(dom, steps);
+  assert.deepEqual([got.outcome, got.reason], ["failed", "clicked; the save was not read in 1 s (0 of 2 changes set first)"]);
+  assert.deepEqual(got.steps.map((s) => [s.outcome, s.reason]), [["failed", "clicked; the save was not read in 1 s"], ["skipped", "the run stopped at a failed step"]]);
+  assert.deepEqual(dom.touched, ["click 1011 BN", "click 1004 SF"]);
+  dom = swapDom({ answer: "error" });
+  got = await live(dom, steps);
+  assert.deepEqual([got.steps[0].outcome, got.steps[0].reason, got.steps[0].message], ["failed", "Yahoo did not save the swap", "There was an error saving your changes."]);
+  // An alert on the first click: the swap is left by a click on the player's own label.
+  dom = swapDom({ alert: "This player cannot be moved." });
+  got = await live(dom, steps);
+  assert.deepEqual(got.steps[0].reason, `Yahoo answered the first click: "This player cannot be moved."; the swap was cancelled`);
+  assert.deepEqual(dom.touched, ["click 1011 BN", "click 1011 BN"]);
+  assert.equal(X.readLabels(dom).swapping, false);
+});
+
+test("a target that never shows is cancelled with nothing saved, and the run stops", async () => {
+  const dom = swapDom({ untargeted: [1004] });
+  const got = await live(dom, [swap(1011, "BN", "SF", 1004, 0), swap(1012, "BN", "Util", 1010, 1)]);
+  assert.equal(got.outcome, "failed");
+  assert.equal(got.steps[0].reason, "player 1004's SF did not show as a target within 1 s (nothing saved; the swap was cancelled)");
+  assert.deepEqual(dom.touched, ["click 1011 BN", "click 1011 BN"]);
+  assert.deepEqual(dom.lineup(), X.readControls(form()).lineup);
+});
+
+test("a lock found mid-run skips its group whole; stale steps click nothing; the others still set", async () => {
+  // 1012's game begins after the first save: the second group is skipped, nothing clicked for it.
+  let dom = swapDom({ lockAfter: [1012] });
+  let got = await live(dom, [swap(1011, "BN", "SF", 1004, 0), swap(1012, "BN", "Util", 1010, 1)]);
+  assert.equal(got.outcome, "set");
+  assert.equal(got.reason, "1 of 2 changes set; player 1012's game began (his slot is fixed)");
+  assert.deepEqual(got.steps.map((s) => s.outcome), ["set", "skipped"]);
+  assert.deepEqual(dom.touched, ["click 1011 BN", "click 1004 SF"]);
+  // Steps from another read of the page: nothing clicked.
+  dom = swapDom();
+  got = await live(dom, [swap(1011, "SF", "BN", 1004, 0)]);
+  assert.deepEqual([got.outcome, got.reason, dom.touched], ["skipped", "player 1011 is in BN on the page, not SF", []]);
+  // A swap open on the page (the user's own): nothing clicked.
+  dom = swapDom();
+  dom.querySelectorAll(X.LINEUP_ROWS)[10].querySelectorAll(X.LINEUP_LABEL)[0].click();
+  dom.touched.length = 0;
+  got = await live(dom, [swap(1011, "BN", "SF", 1004, 0)]);
+  assert.deepEqual([got.outcome, got.reason, dom.touched], ["skipped", "a swap is open on the page", []]);
+});
+
+test("STOP, the brake or the guard read before each change stops the run before it", async () => {
+  const dom = swapDom();
+  let calls = 0;
+  let got = await live(dom, [swap(1011, "BN", "SF", 1004, 0), swap(1012, "BN", "Util", 1010, 1)], { stopNow: async () => (++calls === 2 ? "STOP came on" : null) });
+  assert.deepEqual([got.outcome, got.reason], ["stopped", "STOP came on (1 of 2 changes set first)"]);
+  assert.deepEqual(got.steps.map((s) => [s.outcome, s.reason]), [["set", null], ["skipped", "STOP came on"]]);
+  assert.equal(calls, 2);
+  // Read before the first change too: nothing clicked.
+  const fresh = swapDom();
+  got = await live(fresh, [swap(1011, "BN", "SF", 1004, 0)], { stopNow: async () => "live refused: STOP is on (data/autopilot/STOP)" });
+  assert.deepEqual([got.outcome, fresh.touched], ["stopped", []]);
+});
+
+test("a cleared held player goes to an empty bench row first; with none open he is the moves queue's", async () => {
+  let dom = swapDom({ drop: ["1012"], empty: ["BN"] });
+  let got = await live(dom, [swap(1011, "BN", "SF", 1004, 0)], { returns: [{ player: 1013, slot: "IL", status: null, tip: null }] });
+  assert.equal(got.outcome, "set");
+  assert.deepEqual(got.steps.map((s) => [s.player, s.kind, s.from_slot, s.to_slot, s.outcome]), [[1013, "return", "IL", "BN", "set"], [1011, "swap", "BN", "SF", "set"]]);
+  assert.deepEqual(dom.touched.slice(0, 2), ["click 1013 IL", "click empty BN"]);
+  assert.equal(got.after["1013"], "BN");
+  dom = swapDom();
+  got = await live(dom, [], { returns: [{ player: 1013, slot: "IL", status: null, tip: null }] });
+  assert.deepEqual([got.outcome, got.reason, dom.touched], ["skipped", X.NEEDS_DROP, []]);
+});
+
+test("the live run's log: what it set, the lineup after, the moved players off their target and Yahoo's words", async () => {
+  const c = X.readControls(form());
+  const steps = stepsFor(c, [swap(1011, "BN", "SF", 1004, 0), swap(1012, "BN", "Util", 1010, 1)], {
+    mode: "live",
+    live: { ok: true, reason: null },
+    target: { 1011: "SF", 1004: "BN", 1012: "Util", 1010: "BN" },
+  });
+  const dom = swapDom({ lockAfter: [1012] });
+  const result = await live(dom, steps.steps);
+  const run = X.liveRun({ steps, trigger: "routine_late", page: "/p", controls: c, checked: X.checkSteps(c, steps.steps, SLOTS), result, afterStartActive: true, extension: "0.11.0" });
+  assert.deepEqual([run.mode, run.trigger, run.outcome, run.after_start_active], ["live", "routine_late", "set", true]);
+  assert.deepEqual(run.diff, { 1012: "BN", 1010: "Util" });
+  assert.equal(run.message, SAVED_WORDS);
+  assert.deepEqual(run.before, c.lineup);
+  assert.ok(!run.steps.some((s) => s.outcome === "would_set"));
+  assert.ok(!keys(run).some((k) => /crumb/i.test(k)));
+  assert.match(X.stripText({ steps, run, at: Date.now() }), /^live · 1 swap set \d\d:\d\d \(1 of 2 changes set; player 1012's game began \(his slot is fixed\)\)$/);
+  // The mode: live only where the league is live and its guard holds now.
+  assert.deepEqual(X.lineupMode(steps), { mode: "live", refused: null });
+  assert.deepEqual(X.lineupMode({ ...steps, live: { ok: false, reason: "STOP is on (data/autopilot/STOP)" } }), { mode: "dry_run", refused: "live refused: STOP is on (data/autopilot/STOP)" });
+  assert.deepEqual(X.lineupMode({ ...steps, live: null }), { mode: "dry_run", refused: "live refused: the guard did not answer" });
+  assert.deepEqual(X.lineupMode({ ...steps, mode: "dry_run" }), { mode: "dry_run", refused: null });
+  const late = X.unreadLineup({ day: DAY, trigger: "routine", page: "/p", read_at: "x" }, "0.11.0");
+  assert.deepEqual([late.mode, late.outcome, late.reason], ["live", "failed", "clicked; Yahoo's answer was not read"]);
+});
+
+test("the lineup waits for a Start Active press due today, and never runs on a page read before one", () => {
+  const row = { league: LEAGUE, need: true, mode: "live", live: { ok: true, reason: null } };
+  const at = POSTED;
+  assert.equal(X.startActiveWait(row, null, DAY, at), "Start Active Players is due in this league first: the lineup waits for its press");
+  assert.equal(X.startActiveWait(row, { day: DAY, logged: false, at: at - 1 }, DAY, at), "Start Active Players is due in this league first: the lineup waits for its press");
+  assert.equal(X.startActiveWait(row, { day: DAY, logged: true, at: at - 1 }, DAY, at), null);
+  assert.equal(X.startActiveWait(row, { day: DAY, logged: true, at: at + 1 }, DAY, at), "Start Active Players pressed after this page was read: the next pass reads it again");
+  assert.equal(X.startActiveWait({ ...row, need: false }, null, DAY, at), null);
+  assert.equal(X.startActiveWait({ ...row, mode: "dry_run" }, null, DAY, at), null);
+  assert.equal(X.startActiveWait({ ...row, live: { ok: false } }, null, DAY, at), null);
+  assert.equal(X.startActiveWait(null, null, DAY, at), null);
+});
+
+test("swapStep's clicks: the player's label, the target's, and the cancel; no field, no submit, no fetch", () => {
+  const src = X.swapStep.toString();
+  assert.equal(src.match(/\.click\(\)/g).length, 3, "the player's label, the target's label and the cancel");
+  assert.ok(!/\.(value|checked|selectedIndex|selected)\s*=[^=]|dispatchEvent|submit\(|fetch\(|XMLHttpRequest|crumb|roster-edit-form|select/.test(src));
+  assert.ok(!/\.click\(/.test(X.setLineup.toString()));
+  assert.ok(!/\bfetch\(|XMLHttpRequest|DOMParser/.test(fs.readFileSync(path.join(DIR, "lib/lineup.js"), "utf8")));
+});
+
+test("the worker puts a live run on record once per pass, keeps its run until the API has it and releases one that clicked nothing", async () => {
+  const local = new Map();
+  const w = loadWorker((f) => (f.method === "POST" ? [200, { at: "x" }] : [200, {}]), local);
+  const record = { day: DAY, trigger: "routine", page: "/p", read_at: "x" };
+  assert.equal((await w.send({ op: "lineup_setting", league: LEAGUE, record })).ok, true);
+  let again = await w.send({ op: "lineup_setting", league: LEAGUE, record });
+  assert.deepEqual([again.ok, again.error], [false, "a live run in this league awaits its log"]);
+  const run = { day: DAY, mode: "live", trigger: "routine", outcome: "set", steps: [{ outcome: "set" }] };
+  assert.equal((await w.send({ op: "lineup_log", league: LEAGUE, run, clicked: true })).ok, true);
+  const kept = (await w.send({ op: "lineup_record", league: LEAGUE })).data;
+  assert.deepEqual([kept.logged, kept.run.outcome, kept.trigger], [true, "set", "routine"]);
+  assert.equal(w.store.get(`lineup:${LEAGUE}`).moves, 1);
+  again = await w.send({ op: "lineup_setting", league: LEAGUE, record });
+  assert.deepEqual([again.ok, again.error], [false, "this pass set the lineup already today"]);
+  // The late pass runs; one that clicked nothing gives the record back.
+  const lateRecord = { ...record, trigger: "routine_late" };
+  assert.equal((await w.send({ op: "lineup_setting", league: LEAGUE, record: lateRecord })).ok, true);
+  await w.send({ op: "lineup_log", league: LEAGUE, run: { ...run, trigger: "routine_late", outcome: "skipped", steps: [] }, release: true });
+  assert.equal((await w.send({ op: "lineup_record", league: LEAGUE })).data.trigger, "routine");
+});
+
+/** The worker's answers in a live league whose guard holds: no Start Active due, no run on record. */
+const liveWorker =
+  ({ steps = {}, sa = [], press = null, put = { ok: true, data: { kept: true } } } = {}) =>
+  (msg, sent) => {
+    if (msg.op === "lineup_steps") {
+      const r = worker({ mode: "live", live: { ok: true, reason: null }, target: { 1011: "SF", 1004: "BN" }, ...steps })(msg, sent);
+      return r;
+    }
+    if (msg.op === "start_active_due") return { ok: true, data: { date: DAY, leagues: sa } };
+    if (msg.op === "start_active_record") return { ok: true, data: press };
+    if (msg.op === "lineup_record") return { ok: true, data: null };
+    if (msg.op === "lineup_setting") return put;
+    return worker()(msg, sent);
+  };
+
+test("in a live league whose guard holds, the routine's link sets the steps once on record and logs a live run", async () => {
+  const roster = swapDom({ after: 0 });
+  const v = await visitPage({ hash: "#pickandroll-lineup", answer: liveWorker(), swap: roster });
+  assert.deepEqual(
+    v.sent.map((m) => m.op),
+    ["season_page", "settings", "lineup_steps", "start_active_due", "start_active_record", "lineup_record", "lineup_setting", "settings", "lineup_steps", "lineup_log"],
+  );
+  assert.deepEqual(roster.touched, ["click 1011 BN", "click 1004 SF"]);
+  const setting = v.sent[6].record;
+  assert.deepEqual([setting.day, setting.mode, setting.trigger, setting.page, setting.extension], [DAY, "live", "routine", `/nba/${LEAGUE}/${TEAM}?date=${DAY}`, "0.6.0"]);
+  // The guard read again from the API before the first click.
+  assert.deepEqual(v.sent.slice(7, 9).map((m) => m.op), ["settings", "lineup_steps"]);
+  const log = v.sent[9];
+  assert.deepEqual([log.run.mode, log.run.outcome, log.run.after_start_active, log.clicked, log.release], ["live", "set", false, true, false]);
+  assert.deepEqual(log.run.diff, {});
+  assert.equal(log.run.message, SAVED_WORDS);
+  assert.match(v.strip.textContent, /^pickandroll lineup: live · 1 swap set \d\d:\d\d$/);
+});
+
+test("live, a run waits for the day's Start Active press, refuses a pass already on record and runs dry where the guard refuses", async () => {
+  const row = { league: LEAGUE, need: true, mode: "live", live: { ok: true, reason: null } };
+  let roster = swapDom({ after: 0 });
+  let v = await visitPage({ hash: "#pickandroll-lineup", answer: liveWorker({ sa: [row] }), swap: roster });
+  let log = v.sent.find((m) => m.op === "lineup_log");
+  assert.deepEqual([log.run.mode, log.run.outcome, log.run.reason, log.clicked], ["live", "skipped", "Start Active Players is due in this league first: the lineup waits for its press", false]);
+  assert.ok(!v.sent.some((m) => m.op === "lineup_setting"));
+  assert.deepEqual(roster.touched, []);
+  // Pressed and logged before the page's read: the run goes on and says so.
+  roster = swapDom({ after: 0 });
+  v = await visitPage({ hash: "#pickandroll-lineup", answer: liveWorker({ sa: [row], press: { day: DAY, logged: true, at: 0 } }), swap: roster });
+  log = v.sent.find((m) => m.op === "lineup_log");
+  assert.deepEqual([log.run.outcome, log.run.after_start_active], ["set", true]);
+  // The same pass again: nothing clicked.
+  roster = swapDom({ after: 0 });
+  v = await visitPage({ hash: "#pickandroll-lineup", answer: liveWorker({ put: { ok: false, error: "this pass set the lineup already today" } }), swap: roster });
+  log = v.sent.find((m) => m.op === "lineup_log");
+  assert.deepEqual([log.run.outcome, log.run.reason], ["skipped", "the run could not be put on record: this pass set the lineup already today"]);
+  assert.deepEqual(roster.touched, []);
+  // The guard refuses now: a dry run, nothing clicked.
+  roster = swapDom({ after: 0 });
+  v = await visitPage({ hash: "#pickandroll-lineup", answer: liveWorker({ steps: { live: { ok: false, reason: "STOP is on (data/autopilot/STOP)" } } }), swap: roster });
+  log = v.sent.find((m) => m.op === "lineup_log");
+  assert.deepEqual([log.run.mode, log.run.outcome, log.run.reason], ["dry_run", "would_set", "live refused: STOP is on (data/autopilot/STOP)"]);
+  assert.deepEqual(roster.touched, []);
+  // No tip-offs read for the day: nothing set.
+  roster = swapDom({ after: 0 });
+  v = await visitPage({ hash: "#pickandroll-lineup", answer: liveWorker({ steps: { tips: false } }), swap: roster });
+  log = v.sent.find((m) => m.op === "lineup_log");
+  assert.deepEqual([log.run.mode, log.run.outcome], ["live", "skipped"]);
+  assert.deepEqual(roster.touched, []);
+  // A plain visit in a live league clicks nothing.
+  roster = swapDom({ after: 0 });
+  v = await visitPage({ answer: liveWorker(), swap: roster });
+  assert.ok(!v.sent.some((m) => m.op === "lineup_log"));
+  assert.deepEqual(roster.touched, []);
+});
+
+test("the guard flips to refused between the visit's steps and its first click: nothing is clicked", async () => {
+  const roster = swapDom({ after: 0 });
+  const flips = (msg, sent) => {
+    if (msg.op === "lineup_steps" && sent.filter((m) => m.op === "lineup_steps").length > 1) {
+      return liveWorker({ steps: { live: { ok: false, reason: "a dry run on 30 days first: 9 so far" } } })(msg, sent);
+    }
+    return liveWorker()(msg, sent);
+  };
+  const v = await visitPage({ hash: "#pickandroll-lineup", answer: flips, swap: roster });
+  assert.deepEqual(roster.touched, []);
+  const log = v.sent.find((m) => m.op === "lineup_log");
+  assert.deepEqual([log.run.mode, log.run.outcome, log.clicked, log.release], ["live", "stopped", false, true]);
+  assert.equal(log.run.reason, "live refused: a dry run on 30 days first: 9 so far (0 of 1 change set first)");
+  assert.deepEqual(log.run.steps.map((s) => s.outcome), ["skipped"]);
 });

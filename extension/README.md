@@ -114,10 +114,11 @@ with the recommended lineup. The settings page gives the held slots (IL, IL+, NA
 count; until it is posted the held slots are the most any roster read holds. The weekly recorder's response
 and the season script list the pages still to open (`lineup pages`).
 
-## The lineup executor's dry run (0.6.0, #170)
+## The lineup executor (0.6.0 dry run, 0.11.0 live, #170)
 
-On your own team page the extension is also the lineup executor (docs/AUTOPILOT.md section 2). This build is its
-dry run: it reads the page's lineup form and logs what it would set, and it sets nothing and submits nothing.
+On your own team page the extension is also the lineup executor (docs/AUTOPILOT.md section 2). In a dry run it
+reads the page's lineup form and logs what it would set, and it sets nothing and submits nothing. In a league you
+switched live whose guard holds, it sets the same steps with Yahoo's swap labels (below).
 
 1. A run starts only when the page was opened from the routine's link, with the fragment `#pickandroll-lineup`
    (or `#pickandroll-lineup-late`, the pass before the day's first tip-off), or from the side panel's
@@ -138,7 +139,23 @@ dry run: it reads the page's lineup form and logs what it would set, and it sets
    (a run logs that it stopped), or with **Lineup executor in this browser** off in the settings, this browser's
    brake.
 
-The live click, the form's submit, is a later build after the dry-run week (#170, PR 3).
+In a live league whose guard holds (the steps' `live`, checked on every request; 0.11.0, #170 PR 3):
+
+6. The day's tip-offs must be read, and the league's Start Active press of the day, when one is due, must be
+   logged before the page was read; otherwise the run is skipped and says why.
+7. The run is put on record in this browser before the page is touched: once per league per pass (the day and
+   the trigger). A run whose log never came is logged by the next visit as clicked, its answer not read.
+8. A held player whose status cleared and whose comeback has an open active spot (the steps' `returns`) goes to
+   an empty bench row first; one that needs a drop is left to the moves queue.
+9. Each step is two clicks, once each: the player's slot label, then, once Yahoo marks it as a target, the label
+   of the row he swaps with (or an empty row of the slot), which saves at once ("All changes saved"). Before each
+   unit the steps are checked again on the lineup the labels show, and STOP, the brake and the live guard are
+   read again from the API, the first unit included. A target that does not show is cancelled with a click on the player's own label; a step
+   that fails after a click stops the run. No select is set, the form is never submitted and the crumb is never
+   read.
+10. The run logs each step's outcome (set, skipped, failed) with Yahoo's words, the lineup after the run, the
+    moved players not in their target slot, and whether Start Active came first. The strip reads "live · N swaps
+    set HH:MM".
 
 ## The moves executor (0.7.0 dry run, 0.8.0 live claim, #171; 0.8.1 open spots, #199; 0.8.2 Yahoo's claim step; 0.9.2 the open-spot submit, #214)
 
