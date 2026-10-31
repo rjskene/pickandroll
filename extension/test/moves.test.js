@@ -11,6 +11,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const vm = require("node:vm");
 const X = require("../lib/moves.js");
+const F = require("./fixtures/dom.js");
 
 const DIR = path.join(__dirname, "..");
 const SITE = "https://basketball.fantasysports.yahoo.com";
@@ -791,10 +792,11 @@ test("a submit on record is never made again: a stale one is logged first with i
 
 /** The page Yahoo lands on after a submit: any page of the league, here the claim form's own
  * address. ``notes`` and ``errors`` are its messages, ``form`` whether the claim form is back. */
-function landedDom({ notes = [], errors = [], form = false, heading = "Team page", claimId = null, line = "" } = {}) {
+function landedDom({ notes = [], errors = [], form = false, heading = "Team page", claimId = null, line = "", box = null } = {}) {
   const text = (t) => el({ textContent: t });
   const nav = el({ textContent: "News", closest: (sel) => (sel.includes("nav") ? el() : null) });
-  // The pending line is the View Details link's own text (``line``), as Yahoo's team page draws it.
+  // The pending line is the View Details link's own text (``line``); ``box`` a parsed fixture of
+  // the "Pending Transactions" box (#239), its links among the page's.
   const link = (id) => el({ textContent: line, attrs: { href: `/nba/${LEAGUE}/${TEAM}/viewwaiver?claim_id=${id}&activity=transaction` } });
   return {
     querySelector: (sel) => (sel === `form#${X.FORM_ID}` && form ? el() : null),
@@ -805,9 +807,11 @@ function landedDom({ notes = [], errors = [], form = false, heading = "Team page
           ? errors.map(text)
           : sel.startsWith(".Alert")
             ? [...notes, ...errors].map(text)
-            : sel === 'a[href*="viewwaiver"]' && claimId
-              ? [link(claimId)]
-              : [],
+            : sel === 'a[href*="viewwaiver"]'
+              ? [...(claimId ? [link(claimId)] : []), ...(box ? box.querySelectorAll(sel) : [])]
+              : sel === "span, h2, h3, h4" && box
+                ? box.querySelectorAll(sel)
+                : [],
     getElementById: () => null,
     body: text([...notes, ...errors].join(" ")),
   };
@@ -1030,6 +1034,82 @@ test("the landed page reads the claim's bid on its pending line; a claim placed 
   // A link whose text is not a pending line (no "Waiver N (") reads no bid: nothing is flagged.
   e = await landedAt(true, landedDom({ notes: [placed], claimId: `${TEAM}_${ADD}_0`, line: "View Details" }));
   assert.deepEqual([e.controls.landed.bid, e.reason], [null, null]);
+});
+
+/** The "Pending Transactions" box as a team page drew it on 2026-10-31 (#239), read only: two
+ * open-spot claims and Yahoo's "Edit Waiver Priority" line, or one drop claim. Every name is the
+ * player's id; the league and team ids are made up; the link's page id is 0. */
+const BOX = fs.readFileSync(path.join(__dirname, "fixtures", "pending-box.html"), "utf8");
+const BOX_DROP = fs.readFileSync(path.join(__dirname, "fixtures", "pending-box-drop.html"), "utf8");
+
+test("the pending box fixtures carry ids, markup and Yahoo's own words only", () => {
+  const yahoo = /^(Pending Transactions|\d+|Collapse|Expand|Waiver \d+ \([A-Z][a-z]{2} \d+\):|Bid \$\d+|for \d+(, Drop \d+)?|View Details|Edit Waiver Priority|Edit|[-])$/;
+  for (const html of [BOX, BOX_DROP]) {
+    const words = F.texts(F.parse(html));
+    assert.deepEqual(words.filter((w) => !yahoo.test(w)), []);
+    assert.ok(words.includes("Pending Transactions"));
+  }
+});
+
+test("a claim's bid is read off the pending box's line: its add and drop by the claim id, $0 with no Bid, null when not read (#239)", () => {
+  const lines = (html) => F.parse(html).querySelectorAll('a[href*="viewwaiver"]').map((a) => ({ href: a.getAttribute("href"), text: a.textContent }));
+  // Yahoo's icon glyph opens each line: the link's own text never starts "Waiver N (".
+  assert.equal(lines(BOX)[0].text.trim()[0], "");
+  assert.equal(X.pendingBid(lines(BOX), { add: 10279, drop: null }), 1);
+  assert.equal(X.pendingBid(lines(BOX), { add: 6411, drop: null }), 1);
+  assert.equal(X.pendingBid(lines(BOX_DROP), { add: 6038, drop: 6733 }), 1);
+  // The line must name the entry's drop too: an open spot is the line with no drop, and the
+  // other way round.
+  assert.equal(X.pendingBid(lines(BOX_DROP), { add: 6038, drop: null }), null);
+  assert.equal(X.pendingBid(lines(BOX), { add: 10279, drop: 6733 }), null);
+  // Two claims for the same add: each entry reads its own line, both ways round.
+  const both = BOX_DROP.replace(/( *<a href="[^"]*claim_id=7_6038_6733[\s\S]*?<\/a>\n)/, (a) => a + a.replace("7_6038_6733", "7_6038_0").replace("Waiver 1", "Waiver 2").replace("Bid $1", "Bid $4").replace(" for 6038, Drop 6733 ", " for 6038 "));
+  assert.equal(lines(both).length, 2);
+  assert.equal(X.pendingBid(lines(both), { add: 6038, drop: 6733 }), 1);
+  assert.equal(X.pendingBid(lines(both), { add: 6038, drop: null }), 4);
+  // A matched line with no "Bid $" is a $0 claim.
+  assert.equal(X.pendingBid(lines(BOX.replace('<span class="Fw-b">Bid $1</span>', "")), { add: 10279, drop: null }), 0);
+  // Not read, never $0: no box, no line of the claim, a line in other words, two lines at two bids.
+  assert.equal(X.pendingBid(null, { add: 10279, drop: null }), null);
+  assert.equal(X.pendingBid([], { add: 10279, drop: null }), null);
+  assert.equal(X.pendingBid(lines(BOX), { add: 5471, drop: null }), null);
+  assert.equal(X.pendingBid(lines(BOX.replace("Waiver 1 (Nov 2):", "Trade pending:")), { add: 10279, drop: null }), null);
+  const twice = BOX.replace("claim_id=7_6411_0", "claim_id=7_10279_0");
+  assert.equal(X.pendingBid(lines(twice), { add: 10279, drop: null }), 1);
+  assert.equal(X.pendingBid(lines(twice.replace(/Bid \$1(?![\s\S]*Bid \$1)/, "Bid $2")), { add: 10279, drop: null }), null);
+  // The box wins; the link's reading is kept only where the two differ.
+  assert.deepEqual(X.landedBid(1, 1), { bid: 1 });
+  assert.deepEqual(X.landedBid(null, null), { bid: null });
+  assert.deepEqual(X.landedBid(1, null), { bid: 1, bid_link: null });
+  assert.deepEqual(X.landedBid(1, 3), { bid: 1, bid_link: 3 });
+  assert.deepEqual(X.landedBid(null, 3), { bid: 3, bid_link: 3 });
+});
+
+test("the landed page reads the claim's bid off the pending box first, the link's text second, and the run keeps a disagreement (#239)", async () => {
+  const landedOn = async (dom, over) => {
+    const e = entry({ drop: null, basis: "open" });
+    const page = X.readAddPage({ ...rawPage(), empty: "You currently have 1 empty spot on your roster" }, CLEARS);
+    const line = { ...X.moveCheck(e, X.pageCheck(e, page, due(LIVE)), page, due(LIVE), READ_AT), ...over };
+    const landing = { day: DAY, trigger: "routine_late", line, league: LEAGUE, tab: 9, at: Date.now() };
+    const v = await visitAdd({ answer: worker(LIVE, {}, { landing }), dom, url: `${SITE}/nba/${LEAGUE}/${TEAM}/addplayer` });
+    return sentOf(v, "moves_log")[0].run.entries[0];
+  };
+  const box = F.parse(BOX);
+  const placed = "You have successfully created a waiver claim for A";
+  // Yahoo's real box: the link reader misses the line (the icon glyph), the box reads it.
+  let e = await landedOn(landedDom({ notes: [placed], box }), { add: 10279, drop: null, bid: 1 });
+  assert.deepEqual([e.outcome, e.reason, e.controls.landed], ["claimed", null, { path: `/nba/${LEAGUE}/${TEAM}/addplayer`, heading: "Team page", bid: 1, bid_link: null }]);
+  // A bid other than the queue's stays claimed, with the reason to edit it in Yahoo (ruling (a)).
+  e = await landedOn(landedDom({ notes: [placed], box }), { add: 6411, drop: null, bid: 3 });
+  assert.deepEqual([e.outcome, e.controls.landed.bid, e.reason], ["claimed", 1, "placed at $1, the queue's $3: edit the bid in Yahoo's pending claims"]);
+  // The drop claim's line, and the open spot of the same add that is not on the page.
+  e = await landedOn(landedDom({ notes: [placed], box: F.parse(BOX_DROP) }), { add: 6038, drop: 6733, bid: 1 });
+  assert.deepEqual([e.controls.landed.bid, e.reason], [1, null]);
+  e = await landedOn(landedDom({ notes: [placed], box: F.parse(BOX_DROP) }), { add: 6038, drop: null, bid: 1 });
+  assert.deepEqual([e.outcome, e.controls.landed.bid, e.controls.landed.bid_link, e.reason], ["claimed", null, undefined, null]);
+  // Where the link's text reads another bid, the box's wins and the link's is kept beside it.
+  e = await landedOn(landedDom({ notes: [placed], box, claimId: `${TEAM}_10279_0`, line: "Waiver 1 (Nov 2): Bid $3 for A" }), { add: 10279, drop: null, bid: 1 });
+  assert.deepEqual([e.controls.landed.bid, e.controls.landed.bid_link, e.reason], [1, 3, null]);
 });
 
 /** The add page with no drop section: ``addDom``'s, less my roster's rows and drop boxes. With

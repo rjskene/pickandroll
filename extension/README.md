@@ -222,7 +222,10 @@ empty spot"; nothing on the page touched). Since 0.9.2 (#214) an open spot whose
 add's `apid` read back, then Yahoo's one visible "Add … now, don't drop anyone" button (`input.button-no-drop`,
 named `submit_add_drop`) clicked once. That click is the submit: Yahoo's script submits the form and the page
 lands on my team page with the claim among the pending transactions; there is no confirm page. The landed page
-reads the claim by its id (`<team>_<add>_0`) and its bid from the pending line ("Bid $N for …", no "Bid $" at $0);
+reads the claim by its id (`<team>_<add>_0`) and, since 0.10.1 (#239), its bid from the line of the "Pending
+Transactions" box whose `claim_id` names the add and the drop ("Bid $N for …", no "Bid $" at $0; Yahoo's icon glyph
+opens each line, which is why the 0.9.2 reader of the link's own text never read one; that reader stays second, and a
+disagreement is kept as `landed.bid_link`; a bid not read is null, never $0);
 a claim placed at another bid than the queue's is logged `claimed` with "placed at $N, the queue's $M: edit the
 bid in Yahoo's pending claims" and never submitted again. A live skip stays due, so the late pass reads the page
 again. The panel's links read "claim: …" in a live league whose guard holds: opening one places the claim. The

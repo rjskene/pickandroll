@@ -461,6 +461,20 @@ page, from PR 2:
   `claimed` with "placed at $N, the queue's $M: edit the bid in Yahoo's pending claims", and never
   submitted again. The side panel's links say "claim: …" where opening one places the claim. Nothing in the build or its tests reaches Yahoo; the first live
   claim is the user's own switch, after the Chrome reload to 0.8.0.
+
+  **The landed bid (#239, extension 0.10.1).** The 0.9.2 reader never read a bid: Yahoo starts each
+  pending line with an icon glyph (a private-use character), so the link's text never began
+  "Waiver N (" and every live claim logged `landed.bid` null. The landed page now reads the bid
+  off the team page's "Pending Transactions" box, found by its heading. The claim's line is the
+  View Details link whose `claim_id` (`<team>_<add>_<drop>`) names the entry's add and its drop, 0
+  for an open spot, so two claims for the same add read apart. Its words, less the glyphs, read
+  "Waiver N (date): Bid $N for …, Drop …"; a matched line with no "Bid $" is $0. No box, no
+  matching line, other words or two matching lines at two bids is null, which means "not read":
+  never $0 and never a mismatch, and the Queue card says "bid not read". The link's own text
+  stays the second reader: when the two differ, the box's bid wins and `controls.landed.bid_link`
+  keeps the link's, so the runs show whether that reader is ever right. A bid other than the
+  queue's stays `claimed` (the #171 ruling: a placed claim never frees its place and is never
+  submitted again), with the reason to edit it in Yahoo and the Queue card's bad tone.
 - **The IL move first (#214; PR 1 the API and the web, the extension's move in PR 3 after step
   0, the user's own move by hand read on the page).** A `held` add with no drop waits on its held player's
   move to his held slot: Yahoo's add page has no IL control, so the full roster shows a drop list

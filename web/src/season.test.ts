@@ -141,6 +141,8 @@ import {
   queueNamer,
   queueOrder,
   queueStateLine,
+  passText,
+  placedBidText,
   queueStateText,
   queueStateTone,
   ilLine,
@@ -2033,6 +2035,32 @@ test("the Queue screen's one switch covers every public league, the points ones 
     ],
   };
   assert.deepEqual(keptLines(answer, title), ["Bravo stays dry run: a dry run on 1 day first: 0 so far", "Charlie stays dry run: STOP is on (data/autopilot/STOP)"]);
+});
+
+test("a placed claim reads its bid as the landed page read it; another bid than the queue's is the bad tone, a bid not read says so (#239)", () => {
+  const now = Date.parse("2026-10-24T11:00:00Z");
+  const at = "2026-10-24T20:01:00Z"; // 3:01 PM CDT
+  const pass = (over: Partial<QueuePass> = {}): QueuePass => ({ at, trigger: "routine_late", outcome: "claimed", reason: null, extension: "0.10.1", bid: 4, bid_queued: 4, ...over });
+  const placed = (p: QueuePass, over: Partial<QueueEntry> = {}) => queueEntry("a", { outcome: "claimed", pass: p, ...over });
+  assert.equal(passText(pass()), "claimed 3:01 PM CT: placed at $4");
+  assert.equal(passText(pass({ bid: null })), "claimed 3:01 PM CT: bid not read");
+  assert.equal(queueStateText(placed(pass()), now), "claimed (placed at $4)");
+  assert.equal(queueStateText(placed(pass({ bid: null }), { resolved: "won" }), now), "claimed (bid not read), won");
+  assert.equal(queueStateTone(placed(pass())), "good");
+  assert.equal(queueStateTone(placed(pass({ bid: null }))), "good");
+  // Placed at another bid: still claimed, with the reason the log gave, in the bad tone.
+  const reason = "placed at $1, the queue's $4: edit the bid in Yahoo's pending claims";
+  const off = pass({ bid: 1, reason });
+  assert.equal(placedBidText(off), "");
+  assert.equal(passText(off), `claimed 3:01 PM CT: ${reason}`);
+  assert.equal(queueStateText(placed(off, { outcome_reason: reason }), now), `claimed (${reason})`);
+  assert.equal(queueStateTone(placed(off, { outcome_reason: reason })), "bad");
+  // The reason of an answer not read stays; another outcome reads no bid; a pass before #239 none.
+  const unread = "submitted 15:01; Yahoo's answer was not read: check the pending claims";
+  assert.equal(passText(pass({ bid: null, reason: unread })), `claimed 3:01 PM CT: ${unread}`);
+  assert.equal(placedBidText(pass({ outcome: "would_claim" })), "");
+  const { bid: _b, bid_queued: _q, ...old } = pass();
+  assert.equal(passText({ ...old, outcome: "claimed" }), "claimed 3:01 PM CT: bid not read");
 });
 
 test("an entry reads its latest pass after its outcome, why it is not queued and a strike; the day's tally joins the line (#200)", () => {

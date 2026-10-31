@@ -1360,13 +1360,16 @@ export interface StartActiveRunLog {
 }
 
 /** An entry as a pass last read it (#200): the entry's own outcome and reason, the pass's time,
- * trigger and extension. */
+ * trigger and extension; a live claim's bid as its landed page read it (#239, null: not read)
+ * beside the bid it was placed for. */
 export interface QueuePass {
   at: string | null;
   trigger: MovesPassLog["trigger"] | null;
   outcome: MoveOutcome;
   reason: string | null;
   extension: string | null;
+  bid?: number | null;
+  bid_queued?: number | null;
 }
 
 /** The day's pass results over every league (#200): each entry once, by its latest line; ``pages``

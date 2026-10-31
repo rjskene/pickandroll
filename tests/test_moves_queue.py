@@ -829,6 +829,37 @@ def check(e: dict, **over) -> dict:
     return {**out, **over}
 
 
+def test_an_entrys_pass_carries_the_bid_its_landed_page_read_beside_the_queues():
+    # #239: the landed page's bid (None: not read) and the bid the claim was placed for.
+    landed = {"path": "/nba/1/2", "heading": None, "bid": 1, "bid_link": None}
+    lines = [
+        {
+            "at": "t1",
+            "trigger": "routine",
+            "extension": "0.10.1",
+            "entries": [
+                {
+                    "id": "a",
+                    "outcome": "claimed",
+                    "reason": None,
+                    "bid": 3,
+                    "controls": {"landed": landed},
+                },
+                {
+                    "id": "b",
+                    "outcome": "claimed",
+                    "reason": None,
+                    "bid": 2,
+                    "controls": {"landed": {"path": "/nba/1/2", "heading": None, "bid": None}},
+                },
+                {"id": "c", "outcome": "would_claim", "reason": None, "bid": 4, "controls": {}},
+            ],
+        },
+    ]
+    got = ap.latest_passes(lines)
+    assert [(got[k]["bid"], got[k]["bid_queued"]) for k in "abc"] == [(1, 3), (None, 2), (None, 4)]
+
+
 def test_a_pass_is_logged_under_moves_and_sets_the_entries_outcomes(client):
     q = queued(client)
     on = [e for e in q["entries"] if e["queued"]]
@@ -950,6 +981,8 @@ def test_the_queue_reads_each_entrys_latest_pass_and_the_days_tally_from_the_log
         "outcome": "skipped",
         "reason": "page not read",
         "extension": "0.7.1",
+        "bid": None,
+        "bid_queued": on[0]["bid"]["amount"],
     }
     assert by[on[1]["id"]]["pass"]["reason"] == "the drop 9 cannot be picked (cantcut)"
     assert by[out["id"]]["pass"] is None
