@@ -9,11 +9,11 @@ import DraftsDrawer, { type DrawerView } from "./DraftsDrawer";
 import ExecuteTime from "./ExecuteTime";
 import LeagueGrid from "./LeagueGrid";
 import { useLandingOrder } from "./landingOrder";
-import { OverviewSheet, StatusIcon, useSeasonStatus } from "./StatusLight";
+import AppBarLead from "./AppBarLead";
+import { OverviewStatus } from "./StatusLight";
 import Wordmark from "./Wordmark";
 import { POOLED, rangeSum, recordLabel, scopeWeeks } from "../progress";
 import { queueFoldLine, queuePoll } from "../season";
-import { overviewLine } from "../seasonStatus";
 import { useNow } from "./YahooSync";
 
 const LAYOUT_KEY = "pickandroll.layout";
@@ -56,9 +56,6 @@ export default function Landing({
   const rooms = useQuery({ queryKey: ["rooms"], queryFn: api.rooms, refetchInterval: 5000 });
   // The table's leagues in its order (#191), shared with the overview sheet's rows (#253).
   const landing = useLandingOrder();
-  const seasons = landing.seasons;
-  const light = useSeasonStatus();
-  const [overview, setOverview] = useState(false);
   const shown = [...landing.rows.pinned, ...landing.rows.rest];
   const now = useNow(30_000);
   const [drawer, setDrawer] = useState<DrawerView | null>(null);
@@ -69,28 +66,22 @@ export default function Landing({
     setDrawer("new");
   };
   const closeDrawer = useCallback(() => setDrawer(null), []);
-  const closeOverview = useCallback(() => setOverview(false), []);
   useHotkeys(landingKeys(drawer ? null : onQueue));
   const ready = leagues.data !== undefined || leagues.isError;
   const page = pageFor(layout, leagues.data ?? [], rooms.data ?? [], now);
   const soon = draftsAhead(leagues.data ?? [], rooms.data ?? [], now).filter((l) => l.draft_time && Date.parse(l.draft_time) < now + DRAFT_SEASON_DAYS * 86_400_000);
-  const read = (seasons.data ?? []).filter((s) => s.has_snapshot && !s.error);
-  const week = read.find((s) => s.week != null);
-  const status =
-    page === "draft"
-      ? `draft season · ${soon.length || "no"} draft${soon.length === 1 ? "" : "s"} in the next ${DRAFT_SEASON_DAYS} days`
-      : `${read.length} league${read.length === 1 ? "" : "s"} in season${week ? ` · week ${week.week}${week.end_week ? ` of ${week.end_week}` : ""}` : ""}`;
+  // The draft-season page's bar is as it was; in season the table carries the week (#270).
+  const status = `draft season · ${soon.length || "no"} draft${soon.length === 1 ? "" : "s"} in the next ${DRAFT_SEASON_DAYS} days`;
   return (
     <main className="shell">
       <header className="topbar">
-        <Wordmark onHome={closeDrawer} />
-        {ready && <span className="muted">{status}</span>}
-        {light.data && page === "season" && (
-          <StatusIcon
-            state={light.data.state}
-            title={overviewLine(light.data, shown.map((s) => ({ league: s.league, name: s.name ?? `League ${s.league}` })), new Date(now))}
-            onOpen={() => setOverview(true)}
-          />
+        {page === "draft" ? (
+          <>
+            <Wordmark onHome={closeDrawer} />
+            {ready && <span className="muted">{status}</span>}
+          </>
+        ) : (
+          <AppBarLead onHome={closeDrawer} status={<OverviewStatus leagues={shown} now={now} />} onProgress={onProgress} />
         )}
         <span className="grow" />
         <span className="modeswitch">
@@ -119,7 +110,6 @@ export default function Landing({
           <DraftsFold leagues={leagues.data ?? []} rooms={rooms.data ?? []} now={now} onDrafts={() => setDrawer("drafts")} onNew={() => setDrawer("new")} />
         </div>
       )}
-      {overview && light.data && <OverviewSheet p={light.data} leagues={shown} now={now} onClose={closeOverview} />}
       {drawer && page === "season" && (
         <DraftsDrawer view={drawer} setView={setDrawer} setup={setup} onSetUp={onSetUp} onClose={closeDrawer} onOpenSession={onOpenSession} now={now} />
       )}

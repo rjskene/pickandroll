@@ -75,6 +75,11 @@ button.primary kbd { background: rgba(0, 0, 0, 0.18); border-color: rgba(0, 0, 0
 .topbar { display: flex; align-items: center; gap: 22px; padding: 12px 24px; border-bottom: 1px solid var(--line); background: var(--panel); flex-shrink: 0; }
 .wordmark { font-family: var(--display); font-weight: 700; font-size: 26px; letter-spacing: 0.04em; color: #ffffff; text-decoration: none; }
 .wordmark span { color: var(--accent); }
+/* The app bar's lead (#270): the wordmark, the update indicator, the Progress button, kept
+ * together when the bar wraps; on Progress the button marks the page. */
+.bar-lead { display: inline-flex; align-items: center; gap: 8px; flex-shrink: 0; }
+.bar-lead .wordmark { margin-right: 4px; }
+.bar-lead button.icon.on { color: var(--accent); border-color: var(--line-2); cursor: default; }
 .clock { display: inline-flex; align-items: center; gap: 6px; font-family: var(--display); font-size: 28px; font-weight: 700; color: #ffffff; }
 .main { display: flex; flex: 1; min-height: 0; }
 .board-col { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; padding: 12px 12px 12px 24px; }
