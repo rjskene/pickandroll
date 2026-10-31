@@ -160,7 +160,8 @@ In each DevTools window (the screencast is the droplet's browser; it takes click
      tunnel, Yahoo's Next and its passkey page are passed, Sign in is not clicked
      (a page this does not know stops with its path: continue by hand there, then Enter again;
      s + Enter skips the site: use the Console line  $console_line  there instead);
-  3. click Sign in and check the page shows you signed in.
+  3. click Sign in; Yahoo may ask for a verification code first: type it into the screencast;
+     check the page shows you signed in.
 TEXT
   for site in bbm yahoo; do
     case "$site" in
@@ -183,7 +184,8 @@ In each DevTools window (the screencast is the droplet's browser; it takes click
   2. click the password field, open the Console tab and run, with your password pasted between the quotes:
        $console_line
      (Yahoo asks for the password on its second page: do this there);
-  3. click Sign in and check the page shows you signed in.
+  3. click Sign in; Yahoo may ask for a verification code first: type it into the screencast;
+     check the page shows you signed in.
 When both sites are signed in, press Enter here: the droplet closes its browser and the signin routine confirms.
 TEXT
 fi

@@ -6,8 +6,10 @@ routine, timer or Claude session does.
 From whatever page of the site is on screen it walks to the password field and fills it, then
 stops: the user clicks Sign in. The item's account name (its ``acct`` attribute) goes into the
 visible username field; on Yahoo it clicks Next, and when Yahoo answers with its passkey page it
-clicks "Try signing in another way" and the option that names the password; on Basketball
-Monster's front page it clicks the Login link. Every click is a mouse event on the centre of an
+clicks "Try signing in another way" and the option that names the password; on Yahoo's account
+chooser (``/manage_account`` after a sign-out) it clicks the signed-out account's tile, never
+Remove or "Use a different account"; on Basketball Monster's front page it clicks the Login
+link. Every click is a mouse event on the centre of an
 element found by its visible text, never a form submit, and nothing named Sign in is ever
 clicked. The password is read in this process (``security find-generic-password -s <item> -w``)
 only once the password field is on the page, sent to the browser as the text of one
@@ -50,7 +52,9 @@ NOT_FOUND = 44  # security's exit code for a missing item (errSecItemNotFound)
 #: field; the username field (a text or email input whose name, id, placeholder or autocomplete
 #: names the user, login, email or account, not a search box, in the password field's form when
 #: there is one); Yahoo's Next button, its "Try signing in another way" link and the option
-#: that names the password (never a forgot/reset link); Basketball Monster's Login link. Called
+#: that names the password (never a forgot/reset link); the signed-out account's tile on Yahoo's
+#: account chooser (the first visible list item saying "Signed out", or its own link or button
+#: that carries the account, never its Remove button); Basketball Monster's Login link. Called
 #: with null it reports the path and which of them the page shows; called with a kind it scrolls
 #: that element into view and returns the centre of its box in CSS pixels of the viewport, where
 #: the click lands, or null.
@@ -71,6 +75,11 @@ PAGE_JS = (
     "   .join(' ');"
     " const usernames = inputs.filter(el => (el.type === 'text' || el.type === 'email')"
     "   && /user|login|email|acct|account/i.test(names(el)) && !/search/i.test(names(el)));"
+    " const tile = Array.from(document.querySelectorAll('li')).filter(visible)"
+    "   .find(li => /signed out/i.test(text(li))) || null;"
+    " const account = tile && (Array.from(tile.querySelectorAll('a, button, [role=button]'))"
+    "   .filter(visible).find(el => !/^remove$/i.test(text(el))"
+    "     && (/signed out/i.test(text(el)) || /@/.test(text(el)))) || tile);"
     " const found = {"
     "   password,"
     "   username: (password && usernames.find(el => el.form && el.form === password.form))"
@@ -79,6 +88,7 @@ PAGE_JS = (
     "   another: byText(t => /another way/i.test(t)),"
     "   option: byText(t => /password/i.test(t) && !/forgot|reset|recover|retriev/i.test(t)),"
     "   login: byText(t => /^log ?in$/i.test(t)),"
+    "   account,"
     " };"
     " if (kind === null) {"
     "   const shows = {};"
@@ -116,6 +126,7 @@ FOCUS_JS = {
 #: What the approach says it did, by element, in the one line printed at the end.
 SAID = {
     "login": "Login clicked",
+    "account": "account chosen",
     "username": "username in",
     "next": "Next clicked",
     "another": "passkey page passed",
@@ -450,12 +461,17 @@ def approach(devtools: DevTools, site: str, service: str, said: list[str]) -> in
                 continue  # without Next, look again (Basketball Monster shows both fields)
             step = "next"
         else:
-            # Yahoo's passkey page first, then the option that names the password; a page
-            # that still shows the link just clicked gets the other one, and when that link
-            # is the only known thing on it the page is still drawing itself: wait for more.
+            # Yahoo's account chooser first, then its passkey page, then the option that
+            # names the password; a page that still shows the link just clicked gets the other
+            # one, and when that link is the only known thing on it the page is still drawing
+            # itself: wait for more.
             choices = []
             if site == "yahoo":
-                choices += ["another"] * shows["another"] + ["option"] * shows["option"]
+                choices += (
+                    ["account"] * shows["account"]
+                    + ["another"] * shows["another"]
+                    + ["option"] * shows["option"]
+                )
             elif site == "bbm" and shows["login"] and not shows["username"]:
                 choices.append("login")
             if not choices:
