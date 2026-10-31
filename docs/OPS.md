@@ -92,8 +92,10 @@ walk to the password field and fill it: the item's account name goes into the us
 Yahoo it clicks Next and, when Yahoo answers with its passkey page, "Try signing in another way"
 and the option that names the password (any visible option whose text contains "password",
 never a forgot or reset link); on Yahoo's account chooser (`/manage_account`, where a sign-out
-lands, with the account's tile saying "Signed out") it clicks that tile, never Remove or "Use a
-different account", and the username step is skipped since the chooser carries it; on Basketball
+lands, with the account's tile saying "Signed out") it clicks that tile at the account's e-mail
+(its link or button, else the innermost element showing the e-mail), never Remove, nothing that
+holds the Remove button and never "Use a different account", and the username step is skipped
+since the chooser carries it; on Basketball
 Monster's front page it clicks Login (its sign-in page shows both fields at once). Every click is
 a mouse event on an element found by its visible text, never a form submit, and Sign in is never
 clicked: the user clicks it, and Yahoo may then ask for a verification code, typed into the

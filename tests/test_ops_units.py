@@ -1078,3 +1078,85 @@ esac
     assert value is None and "empty" in line
     assert kf.main(["9222", "elsewhere", "pickandroll-bbm"]) == 2
     assert kf.main(["port", "bbm", "pickandroll-bbm"]) == 2
+
+
+#: Yahoo's account chooser tiles as the page JS meets them, with where the account click must
+#: land. The fake browser answers by kind, so the rule that picks the element inside the tile is
+#: checked in a real DOM: the venv's Playwright Chromium evaluates the helper's own PAGE_JS.
+#: Each tile is 600 px wide and 80 px tall with its Remove button drawn across the centre, so a
+#: click at the tile's centre would remove the account.
+TILE = (
+    "<li style='position:relative;width:600px;height:80px;list-style:none'>{inner}"
+    "<button id='rm' style='position:absolute;left:260px;top:20px;width:80px;height:40px'>"
+    "Remove</button></li>"
+)
+CHOOSER_TILES = {
+    # The tile's own link carries the account: the link is clicked.
+    "link": (
+        (
+            "<a id='go' href='#go' style='position:absolute;left:10px;top:10px'>"
+            "<span>Test Person</span> <span>test@example.com</span> <span>Signed out</span></a>"
+        ),
+        "go",
+    ),
+    # No link or button but the e-mail in a span of its own: the span is clicked.
+    "span": (
+        (
+            "<img alt='' style='position:absolute;left:10px;top:10px;width:40px;height:40px'>"
+            "<div style='position:absolute;left:60px;top:10px'><div>Test Person</div>"
+            "<span id='mail'>test@example.com</span><div>Signed out</div></div>"
+        ),
+        "mail",
+    ),
+    # A link wrapping the whole row holds the Remove button: not the link, the e-mail span.
+    "wrapping": (
+        (
+            "<a href='#go' style='position:absolute;left:0;top:0;width:600px;height:80px'>"
+            "<span id='mail' style='position:absolute;left:10px;top:30px'>test@example.com</span>"
+            "<span style='position:absolute;left:180px;top:30px'>Signed out</span>"
+            "<button style='position:absolute;left:400px;top:20px'>Remove</button></a>"
+        ),
+        "mail",
+    ),
+    # Only bare text beside the Remove button: nothing safe to click, the page stays unknown.
+    "bare": ("Test Person test@example.com Signed out", None),
+}
+
+
+def test_the_chooser_click_lands_on_the_account_never_on_remove(kf) -> None:
+    sync_api = pytest.importorskip("playwright.sync_api")
+    with sync_api.sync_playwright() as playwright:
+        try:
+            browser = playwright.chromium.launch()
+        except sync_api.Error as exc:  # the browser is not installed here
+            pytest.skip(f"no Playwright Chromium: {exc}")
+        page = browser.new_page()
+        centre = (
+            "sel => { const r = document.querySelector(sel).getBoundingClientRect();"
+            " return {x: r.left + r.width / 2, y: r.top + r.height / 2}; }"
+        )
+        for name, (inner, target) in CHOOSER_TILES.items():
+            page.set_content(
+                "<h1>Welcome back!</h1><ul style='padding:0;margin:0'>"
+                + TILE.format(inner=inner)
+                + "</ul><a href='#other'>Use a different account</a>"
+            )
+            # The tile's centre is the Remove button: the layout the rule protects against.
+            assert page.evaluate(centre, "li") == pytest.approx(page.evaluate(centre, "#rm")), name
+            look = page.evaluate(kf.page_expression(None))
+            assert look["shows"]["account"] is (target is not None), name
+            spot = page.evaluate(kf.page_expression("account"))
+            if target is None:
+                assert spot is None, name
+                continue
+            assert spot == pytest.approx(page.evaluate(centre, f"#{target}")), name
+            hit = page.evaluate(
+                "([x, y]) => document.elementFromPoint(x, y).outerHTML.slice(0, 80)",
+                [spot["x"], spot["y"]],
+            )
+            assert page.evaluate(
+                "([x, y, id]) => document.elementFromPoint(x, y).closest('#' + id) !== null",
+                [spot["x"], spot["y"], target],
+            ), (name, hit)
+            assert "Remove" not in hit, (name, hit)
+        browser.close()
