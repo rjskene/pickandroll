@@ -2081,6 +2081,13 @@ export function landingRows(
   return { pinned: gridOrder(pinned, best, by), rest: gridOrder(shown, best, by), hidden: others.length - shown.length };
 }
 
+/** A league's title: its name as read from Yahoo with the id beside it when the name does not
+ * carry it, else "League <id>" (the league page's title, and the live-draft cards, #74). */
+export function leagueTitle(name: string | null | undefined, league: string): string {
+  if (!name) return `League ${league}`;
+  return name.includes(league) ? name : `${name} · ${league}`;
+}
+
 /** The landing table's section (#253): collapsed to its header and the pinned private league,
  * expanded in a scrolling section (the default), or fully expanded with the page scrolling. */
 export type TableState = "collapsed" | "expanded" | "full";

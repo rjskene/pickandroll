@@ -72,6 +72,7 @@ import {
   POSITIONS,
   readWatch,
   recordLabel,
+  leagueTitle,
   refreshNote,
   rosHeadTitle,
   stepLeague,
@@ -389,8 +390,7 @@ export default function SeasonScreen({
       <header className="topbar season-top">
         <Wordmark onHome={onHome} />
         <span className="muted title">
-          {s?.name ?? `League ${league}`}
-          {s?.name && !s.name.includes(league) ? ` · ${league}` : ""}
+          {leagueTitle(s?.name, league)}
           {s && ` · ${s.scoring === "points" ? "H2H points" : "H2H categories"} · ${s.num_teams} teams`}
         </span>
         <span className="grow" />
