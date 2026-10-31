@@ -400,9 +400,9 @@ A standard-waivers league's claim (#261, ruled on the issue) is priced in words,
 objective: the solve values a `W` add from its clear date in both kinds of league. The moves
 view carries `claim` (null in a FAAB league): my waiver priority p from the league page, the
 teams ahead (p − 1), the odds `(1 − q)^(p − 1)` that none of them claims the player first, and
-where a win sends me (the back of the order, the league's team count). q is the
-`rival_claim_rate` knob (docs/AUTOPILOT.md section 6, default 0.3), a flat assumption and not a
-read of the players page's Adds column, so the odds say "assumed". The Waivers table's note,
+where a win sends me (the back of the order, the league's team count). q is
+`rival_claim_rate` in the autopilot settings file (docs/AUTOPILOT.md section 5, default 0.3),
+a flat assumption and not a read of the players page's Adds column, so the odds say "assumed". The Waivers table's note,
 its `W` cells' titles and the Moves card show "claim: odds 70% (assumed) at priority #2; a win
 sends you to 12th"; a queue entry there carries no bid.
 

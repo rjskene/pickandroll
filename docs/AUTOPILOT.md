@@ -745,7 +745,11 @@ the plan floor until ten such moves exist.
 A standard-waivers league (#261: no FAAB, claims decided by waiver priority) bids nothing: its
 queue entries carry `bid: null`, and a waiver add carries `claim: "priority"`. The odds of the
 claim are shown beside the move (docs/ADD_DROP.md, "The two kinds of league") and stay outside
-the objective.
+the objective. Their rival claim rate is a league-model assumption, not a knob the hill-climb
+tunes: the settings file's `rival_claim_rate` (`data/autopilot/executor.json`, beside
+`live_after`), a number from 0 to 1, 0.3 when unset or unreadable, read at request time so a
+change needs no restart. The `claim` block carries the rate it used and `assumed: true`, which is
+its provenance; the decision log's knobs do not record it.
 
 
 ## 6. The hill-climb
@@ -945,8 +949,7 @@ they were, and no rollout reaches it.
 - `in_force`: the value in force of each knob, by the names the decision log records them under
   (#125, `knobs` in an entry) and no other: `system` and `blend` (the projection system or blend
   weight), `horizon_weight`, `protection_floor`, `plan_floor_cats` and `plan_floor_points` (the
-  streaming floors), `stash_threshold`, `faab_sizing`, `daily_cap` and `rival_claim_rate` (the
-  assumed rate a rival claims a waiver player in a standard-waivers league, #261; 0.3, from 0 to 1).
+  streaming floors), `stash_threshold`, `faab_sizing` and `daily_cap`.
 - `leagues`: by league id, the knobs whose value there differs from `in_force`: the half of a
   change that kept the setting, or the user's own value.
 - `frozen`: by league id, the knobs the user set and has not freed.

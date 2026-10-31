@@ -1803,8 +1803,9 @@ export interface PriorityClaim {
   priority: number;
   ahead: number;
   teams: number;
+  /** The rival claim rate the odds used: the autopilot settings file's, an assumption. */
   rate: number;
-  rate_source: "assumed";
+  assumed: boolean;
   odds: number;
   after: number;
 }
@@ -2364,8 +2365,7 @@ export type KnobName =
   | "plan_floor_points"
   | "stash_threshold"
   | "faab_sizing"
-  | "daily_cap"
-  | "rival_claim_rate";
+  | "daily_cap";
 export type Scoring = "categories" | "points";
 
 /** Wins and categories summed over some weeks: the wins and the matchup odds over the projected

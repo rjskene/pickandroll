@@ -122,12 +122,12 @@ export function availabilityLabel(row: Pick<AvailableRow, "availability" | "clea
 
 /** "claim: odds 70% (assumed) at priority #3; a win sends you to 12th" (#261). */
 export function claimLine(c: PriorityClaim): string {
-  return `claim: odds ${Math.round(c.odds * 100)}% (${c.rate_source}) at priority #${c.priority}; a win sends you to ${ordinal(c.after)}`;
+  return `claim: odds ${Math.round(c.odds * 100)}%${c.assumed ? " (assumed)" : ""} at priority #${c.priority}; a win sends you to ${ordinal(c.after)}`;
 }
 
 /** The odds' terms, for a title: the claim rate is a knob, not a read of the league. */
 export function claimTitle(c: PriorityClaim): string {
-  return `the odds that none of the ${c.ahead} team${c.ahead === 1 ? "" : "s"} ahead claims the player first, each assumed to claim at ${Math.round(c.rate * 100)}% (the rival_claim_rate knob); a won claim moves you to the back of the order`;
+  return `the odds that none of the ${c.ahead} team${c.ahead === 1 ? "" : "s"} ahead claims the player first, each assumed to claim at ${Math.round(c.rate * 100)}% (rival_claim_rate in the autopilot settings file); a won claim moves you to the back of the order`;
 }
 
 /** Yahoo's codes that keep a player off the floor, as `season/state.py`'s OUT_CODES. */

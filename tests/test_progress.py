@@ -177,15 +177,8 @@ def test_a_knob_under_its_minimum_is_named_and_left_out_so_the_default_stays():
 
 def test_every_knob_with_a_lower_bound_has_its_minimum_and_the_floor_is_the_default():
     assert set(pg.KNOB_MINIMUMS) <= set(pg.KNOBS)
-    # The bounds of docs/AUTOPILOT.md section 6 with a low end: the floor, the blend, the cap,
-    # and the standard-waivers claim rate, a chance (#261).
-    assert pg.KNOB_MINIMUMS == {
-        "protection_floor": 0.0,
-        "blend": 0.25,
-        "daily_cap": 1,
-        "rival_claim_rate": 0.0,
-    }
-    assert pg.KNOB_MAXIMUMS["rival_claim_rate"] == 1.0
+    # The bounds of docs/AUTOPILOT.md section 6 with a low end: the floor, the blend, the cap.
+    assert pg.KNOB_MINIMUMS == {"protection_floor": 0.0, "blend": 0.25, "daily_cap": 1}
     assert pg.KNOB_MINIMUMS["protection_floor"] == season_moves.PROTECTION_FLOOR
     assert mv.MoveProblem.__dataclass_fields__["floor"].default == season_moves.PROTECTION_FLOOR
 

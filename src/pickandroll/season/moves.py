@@ -1173,15 +1173,15 @@ def adds_used(
 
 # --------------------------------------------------------------------------- standard waivers
 #: The assumed chance a team ahead of me in waiver priority claims the player I claim (#261):
-#: the ``rival_claim_rate`` knob's default.
+#: the default of the autopilot settings file's ``rival_claim_rate``.
 RIVAL_CLAIM_RATE = 0.3
 
 
 def priority_claim(priority: int | None, teams: int, rate: float) -> dict[str, object] | None:
     """A claim in a standard-waivers league (#261): no bid, the team with the best priority among
     those claiming gets the player, and the winner goes to the back of the list. My odds are that
-    none of the ``priority - 1`` teams ahead of me claims him, each at ``rate`` (assumed); None
-    when my priority is not read."""
+    none of the ``priority - 1`` teams ahead of me claims the player, each at ``rate`` (an
+    assumption, not a read of the league); None when my priority is not read."""
     if priority is None or priority < 1:
         return None
     ahead = min(priority, teams) - 1
@@ -1192,7 +1192,7 @@ def priority_claim(priority: int | None, teams: int, rate: float) -> dict[str, o
         "ahead": ahead,
         "teams": teams,
         "rate": rate,
-        "rate_source": "assumed",
+        "assumed": True,
         "odds": round((1.0 - rate) ** ahead, 4),
         "after": teams,
     }

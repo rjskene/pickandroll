@@ -25,7 +25,6 @@ export const KNOB_SHORT: Record<KnobName, string> = {
   stash_threshold: "stash",
   faab_sizing: "FAAB",
   daily_cap: "cap",
-  rival_claim_rate: "claim rate",
 };
 export const KNOB_TITLE: Record<KnobName, string> = {
   system: "projection system",
@@ -37,7 +36,6 @@ export const KNOB_TITLE: Record<KnobName, string> = {
   stash_threshold: "stash threshold",
   faab_sizing: "FAAB sizing",
   daily_cap: "daily move cap",
-  rival_claim_rate: "rival claim rate",
 };
 
 /** docs/AUTOPILOT.md section 6: how a change is judged. The view never decides a verdict. */

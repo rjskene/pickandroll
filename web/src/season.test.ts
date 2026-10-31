@@ -2292,9 +2292,9 @@ test("a league's title is its name with the id beside it, or League <id> before 
 });
 
 test("a standard league's claim reads its odds, priority and where a win sends me (#261)", () => {
-  const c = { kind: "priority" as const, priority: 3, ahead: 2, teams: 12, rate: 0.3, rate_source: "assumed" as const, odds: 0.49, after: 12 };
+  const c = { kind: "priority" as const, priority: 3, ahead: 2, teams: 12, rate: 0.3, assumed: true, odds: 0.49, after: 12 };
   assert.equal(claimLine(c), "claim: odds 49% (assumed) at priority #3; a win sends you to 12th");
   assert.equal(claimLine({ ...c, priority: 1, ahead: 0, odds: 1 }), "claim: odds 100% (assumed) at priority #1; a win sends you to 12th");
-  assert.match(claimTitle(c), /none of the 2 teams ahead .* 30% \(the rival_claim_rate knob\)/);
+  assert.match(claimTitle(c), /none of the 2 teams ahead .* 30% \(rival_claim_rate in the autopilot settings file\)/);
   assert.match(claimTitle({ ...c, ahead: 1 }), /none of the 1 team ahead/);
 });
