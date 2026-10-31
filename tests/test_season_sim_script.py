@@ -20,6 +20,17 @@ from tests.sim_fixtures import synthetic_lines
 from tests.test_gamelogs import body, entry, line
 
 MAC = ZoneInfo("America/Toronto")
+#: What the script's clock reads in every test here: a weekday morning outside the routines'
+#: window. Without it a suite run between 04:45 and 06:45 Mac clock has the guard refuse every
+#: command (one failed test and twelve errors on 2026-10-31).
+BUSINESS_HOURS = datetime(2026, 10, 27, 9, 0, tzinfo=MAC)
+
+
+@pytest.fixture(scope="module", autouse=True)
+def pinned_clock():
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(ss, "now_local", lambda: BUSINESS_HOURS)
+        yield
 
 
 def test_guard_refuses_the_quiet_window_rooms_and_unannounced_long_runs():
@@ -37,6 +48,15 @@ def test_guard_refuses_the_quiet_window_rooms_and_unannounced_long_runs():
     assert lowered == [ss.NICE]
     assert ss.in_quiet_window(datetime(2026, 10, 27, 4, 45, tzinfo=MAC))
     assert not ss.in_quiet_window(datetime(2026, 10, 27, 6, 45, tzinfo=MAC))
+
+
+def test_main_reads_the_guards_clock_through_the_seam(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(ss, "now_local", lambda: datetime(2026, 10, 27, 5, 30, tzinfo=MAC))
+    assert ss.main(["--data", str(tmp_path), "--rooms", "0", "fit"]) == 2
+    assert "refused: inside the routines' window" in capsys.readouterr().out
+    monkeypatch.setattr(ss, "now_local", lambda: BUSINESS_HOURS)
+    assert ss.main(["--data", str(tmp_path), "--rooms", "0", "fit"]) == 2  # no cache: refused later
+    assert "routines' window" not in capsys.readouterr().out
 
 
 def test_parse_seasons():
