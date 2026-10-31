@@ -113,8 +113,10 @@ button.primary kbd { background: rgba(0, 0, 0, 0.18); border-color: rgba(0, 0, 0
 .lt-header, .lt-header:hover { position: sticky; top: 0; z-index: 3; background: var(--bg); border-bottom-color: var(--line-2); }
 .lt-header .lt-main { height: var(--lt-h1); box-sizing: border-box; align-items: center; padding-top: 0; padding-bottom: 0; }
 .lt-header h2 { font-size: 22px; line-height: 1; }
-.lt-hrest { grid-column: 3 / -2; display: flex; justify-content: flex-end; }
-.lt-hrest label.inline { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; }
+/* Sticky at the right across the header's columns: on a window narrower than the table it moves
+ * in from the far end and stays at the edge of the view while the table scrolls sideways. */
+.lt-hctl { grid-column: 3 / -1; justify-self: end; position: sticky; right: 12px; display: flex; align-items: center; gap: 14px; background: var(--bg); }
+.lt-hctl label.inline { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; }
 .lt-block.pinned { position: sticky; top: calc(var(--lt-h1) + var(--lt-h2)); z-index: 1; margin: 8px 0 10px; border: 1.5px solid var(--accent); border-radius: 8px; background: linear-gradient(var(--mine), var(--mine)), var(--bg); }
 .lt-block.pinned:hover { background: linear-gradient(rgba(245, 185, 66, 0.16), rgba(245, 185, 66, 0.16)), var(--bg); }
 /* Open, its rows and its panel (a sibling, which scrolls) read as one box. */
