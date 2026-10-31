@@ -3,7 +3,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { AdjustmentRow, AvailabilityBias, BoardPlayer, CurveFit, LeagueResolved, LeagueSummary, RoomSummary, SessionSummary } from "./api";
-import { adpCell, adpTitle, armLabel, biasDetail, blendDetail, blendLabel, clockNote, clockText, curveFitNote, draftDay, draftsAhead, draftState, draftWhen, finishedDrafts, haircutLabel, leagueSurvivalText, haircutTitle, haircutWeeks, nextDraft, oddsSource, pageFor, rankLabel, roomOrder, survivalDetail, turnFlag, untilLabel, weeksToGames } from "./format.ts";
+import { adpCell, adpTitle, armLabel, biasDetail, blendDetail, blendLabel, clockNote, clockText, curveFitNote, draftDay, draftsAhead, draftState, draftWhen, finishedDrafts, haircutLabel, leagueSurvivalText, haircutTitle, haircutWeeks, nextDraft, oddsSource, pageFor, rankLabel, roomOrder, ROW_CONTROLS, rowClickOpens, survivalDetail, turnFlag, untilLabel, weeksToGames } from "./format.ts";
 
 const row = (adp_from: BoardPlayer["adp_from"], adp: number | null, keepers_ahead = 0): BoardPlayer =>
   ({ adp, adp_eff: adp == null ? null : adp - keepers_ahead, adp_from, keepers_ahead }) as BoardPlayer;
@@ -277,4 +277,11 @@ test("a draft card says when, on this clock, and how long until it starts", () =
   assert.equal(untilLabel(hours(0.75), at), "in 45 min");
   assert.equal(untilLabel(hours(-1 / 3), at), "started 20 min ago");
   assert.equal(untilLabel(null, at), "no draft time yet");
+});
+
+test("a clickable row opens on a plain click, never from its controls or a text selection (#274)", () => {
+  assert.equal(rowClickOpens(false, ""), true);
+  assert.equal(rowClickOpens(true, ""), false);
+  assert.equal(rowClickOpens(false, "4 weeks scored"), false);
+  for (const tag of ["button", "input", "select", "label", "a"]) assert.ok(ROW_CONTROLS.split(", ").includes(tag));
 });

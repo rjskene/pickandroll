@@ -1,7 +1,7 @@
-import { useCallback, useState } from "react";
+import { useCallback, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api, type LeagueSummary, type ProgressPayload, type RoomSummary } from "../api";
-import { DRAFT_SEASON_DAYS, draftDay, draftsAhead, finishedDrafts, LAYOUTS, pageFor, type Layout } from "../format";
+import { DRAFT_SEASON_DAYS, draftDay, draftsAhead, finishedDrafts, LAYOUTS, pageFor, ROW_CONTROLS, rowClickOpens, type Layout } from "../format";
 import { landingKeys, type SeasonViewId } from "../keys";
 import { useHotkeys } from "../useKeys";
 import DraftSeason from "./DraftSeason";
@@ -117,19 +117,36 @@ export default function Landing({
   );
 }
 
+/** A fold the whole of which opens its screen (#274): a click anywhere on it, except in one of
+ * its controls or at the end of a text selection. Its button stays the keyboard's way in, so
+ * the row itself is no tab stop. */
+function OpenRow({ onOpen, children }: { onOpen: () => void; children: ReactNode }) {
+  return (
+    <div
+      className="fold open-row"
+      onClick={(e) => {
+        const inControl = e.target instanceof Element && e.target.closest(ROW_CONTROLS) != null;
+        if (rowClickOpens(inControl, window.getSelection()?.toString() ?? "")) onOpen();
+      }}
+    >
+      {children}
+    </div>
+  );
+}
+
 /** The Progress screen (#129) in one line: the weeks scored, the public leagues' record
  * against expected, and the knob change pending. */
 function ProgressFold({ onOpen }: { onOpen: () => void }) {
   const q = useQuery({ queryKey: ["progress"], queryFn: api.progress, refetchInterval: 600_000 });
   return (
-    <div className="fold">
+    <OpenRow onOpen={onOpen}>
       <span className="k">Progress</span>
       <span className="muted">{q.data ? progressLine(q.data) : q.isError ? "not read" : "reading…"}</span>
       <span className="grow" />
       <button className="small" onClick={onOpen} title="the hill-climb over the season: every league against its expectation, the knob changes and the Monday notes">
         Progress
       </button>
-    </div>
+    </OpenRow>
   );
 }
 
@@ -151,7 +168,7 @@ function progressLine(p: ProgressPayload): string {
 function QueueFold({ onOpen }: { onOpen: () => void }) {
   const q = useQuery({ queryKey: ["queue"], queryFn: () => api.queue(), refetchInterval: (query) => queuePoll(query.state.data) });
   return (
-    <div className="fold">
+    <OpenRow onOpen={onOpen}>
       <span className="k">Queue</span>
       <span className="muted">{q.data ? queueFoldLine(q.data) : q.isError ? "not read" : "reading…"}</span>
       <span className="grow" />
@@ -159,7 +176,7 @@ function QueueFold({ onOpen }: { onOpen: () => void }) {
       <button className="small" onClick={onOpen} title="every league's proposed moves today in one view, with the veto (q)">
         Queue
       </button>
-    </div>
+    </OpenRow>
   );
 }
 

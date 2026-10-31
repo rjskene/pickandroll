@@ -157,6 +157,9 @@ button.primary kbd { background: rgba(0, 0, 0, 0.18); border-color: rgba(0, 0, 0
 /* In season the drafts fold into one line, and open in a drawer over the grid. */
 .fold { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 14px; padding: 10px 14px; border: 1px solid var(--line-2); border-radius: 10px; background: var(--panel-2); }
 .fold .k { color: var(--text); }
+/* A fold the whole of which opens its screen (#274). */
+.fold.open-row { cursor: pointer; transition: border-color 120ms, background 120ms; }
+.fold.open-row:hover { border-color: var(--muted); }
 /* The Queue screen (#194): the head, a chip per league (the private league's on the --mine tint),
  * the day's queue across the leagues, the moves left out, and the private league's suggestions. */
 .qs-head { display: grid; gap: 4px; font-size: 13px; }
