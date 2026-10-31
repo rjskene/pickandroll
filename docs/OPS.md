@@ -91,9 +91,16 @@ window (its front page or its sign-in page), one Enter on the Mac has `ops/mac/k
 walk to the password field and fill it: the item's account name goes into the username field; on
 Yahoo it clicks Next and, when Yahoo answers with its passkey page, "Try signing in another way"
 and the option that names the password (any visible option whose text contains "password",
-never a forgot or reset link); on Basketball Monster's front page it clicks Login (its sign-in
-page shows both fields at once). Every click is a mouse event on an element found by its visible
-text, never a form submit, and Sign in is never clicked: the user clicks it. The password is read
+never a forgot or reset link); on Yahoo's account chooser (`/manage_account`, where a sign-out
+lands, with the account's tile saying "Signed out") it clicks that tile at the account's e-mail
+(its link or button, else the innermost element showing the e-mail), never Remove, nothing that
+holds the Remove button and never "Use a different account", and the username step is skipped
+since the chooser carries it; on Basketball
+Monster's front page it clicks Login (its sign-in page shows both fields at once). Every click is
+a mouse event on an element found by its visible text, never a form submit, and Sign in is never
+clicked: the user clicks it, and Yahoo may then ask for a verification code, typed into the
+screencast by hand (seen on the first real run, 2026-10-31; whether the browser's persistent
+profile spares it next time is open). The password is read
 from the item in the helper's own process only once the field is on the page, and goes to the
 websocket as one `Input.insertText`, never into a shell argument, an environment variable, a
 line of output or a log; the account name is not printed either. A page the helper does not
