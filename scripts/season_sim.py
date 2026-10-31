@@ -115,6 +115,12 @@ def touches_quiet_window(start: datetime, hours: float) -> bool:
     return opening < end
 
 
+def now_local() -> datetime:
+    """The guard's clock, the Mac's local time. A seam the tests pin: a suite run inside the
+    routines' window must not have every command refused for the hour it runs at."""
+    return datetime.now().astimezone()
+
+
 def guard(
     expected_hours: float = 0.0,
     now: datetime | None = None,
@@ -124,7 +130,7 @@ def guard(
 ) -> tuple[bool, str]:
     """Whether a run may start now, and why not: its span touching the quiet window, a draft
     room open, or long and not yet announced. Lowers the process priority on the way."""
-    now = now or datetime.now().astimezone()
+    now = now or now_local()
     if touches_quiet_window(now, expected_hours):
         return False, (
             f"a run of about {expected_hours:g} h from now touches the routines' window "
