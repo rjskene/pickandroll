@@ -24,7 +24,7 @@ export default function LiveDrafts({ onOpen }: { onOpen: (sessionId: string) => 
       {list.length === 0 && !rooms.isPending && (
         <p className="muted">
           No live draft.
-          {next ? ` Next: ${next.league}, ${draftWhen(next.draft_time, now)}.` : " No league draft is scheduled."}
+          {next ? ` Next: ${leagueTitle(names.get(next.league), next.league)}, ${draftWhen(next.draft_time, now)}.` : " No league draft is scheduled."}
         </p>
       )}
       {list.map((room) => (
