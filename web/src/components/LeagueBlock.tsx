@@ -111,7 +111,6 @@ export function LeagueBlock(props: BlockProps) {
             {title}
           </button>
           {pinned && <span className="tag accent">private</span>}
-          <YahooLink league={s.league} title={title} />
         </span>
         <span className="lt-score">
           <span className="big" title={s.scoring === "points" ? "this week's points so far, mine first" : "categories won so far this week, mine first"}>
@@ -140,6 +139,7 @@ export function LeagueBlock(props: BlockProps) {
             </button>
           )}
           <SolveButton {...props} />
+          <YahooLink league={s.league} title={title} />
         </span>
         <div className="lt-sub">
           {sub.map((x) => (
@@ -314,7 +314,6 @@ export function UnreadBlock({
         <span className="lt-name">
           <span className="name">{title}</span>
           {s.public === false && <span className="tag accent">private</span>}
-          <YahooLink league={s.league} title={title} />
         </span>
         <span className="lt-wide">
           {s.error ? (
@@ -332,6 +331,7 @@ export function UnreadBlock({
               {isRefreshing(s) ? refreshNote(s.refresh) : "read it now"}
             </button>
           )}
+          <YahooLink league={s.league} title={title} />
         </span>
         <div className="lt-sub">
           <span>

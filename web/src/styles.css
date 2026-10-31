@@ -113,7 +113,7 @@ button.primary kbd { background: rgba(0, 0, 0, 0.18); border-color: rgba(0, 0, 0
 .lt-scroll { overflow-x: auto; }
 .lt-scroll.expanded { max-height: 60vh; overflow: auto; }
 .lt-scroll.full { overflow: visible; }
-.lt { --lt-cols: 22px minmax(190px, 232px) 150px 78px 116px 122px minmax(220px, 1fr) 60px 120px 92px; --lt-h1: 46px; --lt-h2: 28px; display: flex; flex-direction: column; min-width: 1180px; }
+.lt { --lt-cols: 22px minmax(190px, 232px) 150px 78px 116px 122px minmax(220px, 1fr) 60px 120px 140px; --lt-h1: 46px; --lt-h2: 28px; display: flex; flex-direction: column; min-width: 1228px; }
 .lt-head, .lt-main { display: grid; grid-template-columns: var(--lt-cols); column-gap: 14px; align-items: baseline; padding: 0 12px; }
 .lt-head { position: sticky; top: var(--lt-h1); z-index: 2; height: var(--lt-h2); box-sizing: border-box; align-items: end; padding-bottom: 6px; border-bottom: 1px solid var(--line-2); background: var(--bg); }
 .lt-block { border-bottom: 1px solid var(--line); }
