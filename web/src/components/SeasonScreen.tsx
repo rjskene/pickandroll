@@ -129,6 +129,7 @@ import Strategy from "./Strategy";
 import Trade from "./Trade";
 import ViewDrawer from "./ViewDrawer";
 import AppBarLead from "./AppBarLead";
+import YahooLink from "./YahooLink";
 import { useNow } from "./YahooSync";
 
 const PANEL_KEY = "pickandroll.season.drawer";
@@ -395,6 +396,7 @@ export default function SeasonScreen({
           {leagueTitle(s?.name, league)}
           {s && ` · ${s.scoring === "points" ? "H2H points" : "H2H categories"} · ${s.num_teams} teams`}
         </span>
+        <YahooLink league={league} title={leagueTitle(s?.name, league)} />
         <span className="grow" />
         {s?.has_snapshot && (
           <>

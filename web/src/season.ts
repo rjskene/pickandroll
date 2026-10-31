@@ -2101,6 +2101,11 @@ export function leagueTitle(name: string | null | undefined, league: string): st
   return name.includes(league) ? name : `${name} · ${league}`;
 }
 
+/** A league's main page on Yahoo (#278), for the user signed in there: built from the id alone. */
+export function yahooLeagueUrl(league: string): string {
+  return `https://basketball.fantasysports.yahoo.com/nba/${encodeURIComponent(league)}`;
+}
+
 /** The landing table's section (#253): collapsed to its header and the pinned private league,
  * expanded in a scrolling section (the default), or fully expanded with the page scrolling. */
 export type TableState = "collapsed" | "expanded" | "full";

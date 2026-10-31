@@ -235,6 +235,7 @@ import {
   refreshNote,
   stepLeague,
   leagueTitle,
+  yahooLeagueUrl,
   parseTableState,
   toggleCollapsed,
   toggleFull,
@@ -2297,4 +2298,9 @@ test("a standard league's claim reads its odds, priority and where a win sends m
   assert.equal(claimLine({ ...c, priority: 1, ahead: 0, odds: 1 }), "claim: odds 100% (assumed) at priority #1; a win sends you to 12th");
   assert.match(claimTitle(c), /none of the 2 teams ahead .* 30% \(rival_claim_rate in the autopilot settings file\)/);
   assert.match(claimTitle({ ...c, ahead: 1 }), /none of the 1 team ahead/);
+});
+
+test("a league's Yahoo link is its main page, from the id alone (#278)", () => {
+  assert.equal(yahooLeagueUrl("31822"), "https://basketball.fantasysports.yahoo.com/nba/31822");
+  assert.equal(yahooLeagueUrl("100001"), "https://basketball.fantasysports.yahoo.com/nba/100001");
 });

@@ -51,6 +51,9 @@ button.link { border: none; background: none; color: var(--accent); padding: 0; 
 button.link:hover { text-decoration: underline; }
 button.icon { width: 30px; height: 30px; padding: 0; display: inline-flex; align-items: center; justify-content: center; background: transparent; border-color: transparent; color: var(--muted); }
 button.icon:hover { color: var(--text); border-color: var(--line-2); }
+/* A league's Yahoo page (#278): an icon link sized like the icon buttons, its hover theirs. */
+a.icon.yahoo-link { width: 24px; height: 24px; display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; border: 1px solid transparent; border-radius: 6px; color: var(--muted); text-decoration: none; align-self: center; }
+a.icon.yahoo-link:hover { color: var(--text); border-color: var(--line-2); }
 kbd { display: inline-block; min-width: 18px; padding: 0 5px; border: 1px solid #3a4756; border-bottom-width: 2px; border-radius: 4px; background: var(--panel-2); color: var(--muted); font-family: var(--body); font-size: 11px; line-height: 16px; text-align: center; vertical-align: middle; }
 button.primary kbd { background: rgba(0, 0, 0, 0.18); border-color: rgba(0, 0, 0, 0.3); color: var(--accent-ink); }
 .pill { display: inline-block; padding: 3px 10px; border-radius: 999px; font-size: 12px; font-weight: 600; letter-spacing: 0.02em; border: 1px solid var(--line-2); background: var(--panel-2); color: var(--text); }
