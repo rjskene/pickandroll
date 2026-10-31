@@ -561,10 +561,7 @@ def check_moves_run(
         return "the moves executor is off in this league"
     if run.mode == "live" and mode["mode"] != "live":
         return "a live pass in a league that is not live"
-    clicked = run.outcome in ("set", "failed") or any(
-        s.outcome in ("set", "failed") for s in run.steps
-    )
-    if run.mode == "live" and clicked and live is not None and not live.get("ok"):
+    if run.mode == "live" and live is not None and not live.get("ok"):
         return f"live refused: {live.get('reason')}"
     if run.mode == "live" and (
         run.outcome == "would_claim" or any(e.outcome == "would_claim" for e in run.entries)
