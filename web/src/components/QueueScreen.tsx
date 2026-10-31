@@ -49,7 +49,9 @@ import ModeSwitch from "./ModeSwitch";
 import { LIVE_CONFIRM, Veto, type Strike } from "./QueueCard";
 import { useNow } from "./YahooSync";
 import { LeaguesIcon } from "./icons";
-import Wordmark from "./Wordmark";
+import AppBarLead from "./AppBarLead";
+import { useLandingOrder } from "./landingOrder";
+import { OverviewStatus } from "./StatusLight";
 
 const SYSTEM: ProjectionSystem = "bbm";
 const GAIN_TITLE = "the gain over the three weeks, on the judging horizon: expected categories, or points in a points league";
@@ -60,11 +62,14 @@ const SEASON_TITLE = "the move to the season's end in the scorer's units (fantas
  * card and the landing: the veto on an entry, the day's execute time and the moves executor's mode,
  * for every public league at once from the head or for one from its chip (#205). The private
  * league's recommended set is listed as suggestions to make by hand, from its best route. */
-export default function QueueScreen({ onBack, onOpenLeague }: { onBack: () => void; onOpenLeague: (league: string) => void }) {
+export default function QueueScreen({ onBack, onOpenLeague, onProgress }: { onBack: () => void; onOpenLeague: (league: string) => void; onProgress: () => void }) {
   const queryClient = useQueryClient();
   const q = useQuery({ queryKey: ["queue"], queryFn: () => api.queue(), refetchInterval: (query) => queuePoll(query.state.data) });
   const seasons = useQuery({ queryKey: ["seasons"], queryFn: api.seasons, refetchInterval: 60_000 });
   const now = useNow(30_000);
+  // The update indicator's leagues in the landing table's order (#270).
+  const landing = useLandingOrder();
+  const leagues = [...landing.rows.pinned, ...landing.rows.rest];
   const strike = useMutation({
     mutationFn: ({ id, bid_only, undo }: { id: string; bid_only: boolean; undo: boolean }) => api.strike(id, { bid_only, undo }),
     onSuccess: (v) => {
@@ -82,7 +87,7 @@ export default function QueueScreen({ onBack, onOpenLeague }: { onBack: () => vo
   return (
     <main className="shell">
       <header className="topbar season-top">
-        <Wordmark onHome={onBack} />
+        <AppBarLead onHome={onBack} status={<OverviewStatus leagues={leagues} now={now} />} onProgress={onProgress} />
         <span className="muted title">Queue · {p ? dayLabel(p.date) : "today"}</span>
         <span className="grow" />
         <ExecuteTime q={p} />

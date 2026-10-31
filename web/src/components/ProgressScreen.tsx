@@ -58,7 +58,10 @@ import { TableView } from "./ProgressTable";
 import Rail from "./Rail";
 import ViewDrawer from "./ViewDrawer";
 import { Close, LeaguesIcon, PROGRESS_ICONS, PROGRESS_MOVE_ICON, PROGRESS_VIEW_ICONS } from "./icons";
-import Wordmark from "./Wordmark";
+import AppBarLead from "./AppBarLead";
+import { useLandingOrder } from "./landingOrder";
+import { OverviewStatus } from "./StatusLight";
+import { useNow } from "./YahooSync";
 
 const PANEL_KEY = "pickandroll.progress.drawer";
 const VIEW_KEY = "pickandroll.progress.view";
@@ -83,6 +86,10 @@ const MOVES_ICONS = { ...PROGRESS_ICONS, league: PROGRESS_MOVE_ICON };
  * anything. */
 export default function ProgressScreen({ onBack, onOpenLeague }: { onBack: () => void; onOpenLeague: (league: string) => void }) {
   const q = useQuery({ queryKey: ["progress"], queryFn: api.progress, refetchInterval: 600_000 });
+  // The update indicator's leagues in the landing table's order (#270).
+  const landing = useLandingOrder();
+  const leagues = [...landing.rows.pinned, ...landing.rows.rest];
+  const now = useNow(30_000);
   const p = q.data;
   const panel = useDrawer(PANEL_KEY, isPanelCard, DEFAULT_PANEL, DEFAULT_PANEL.last);
   const views = useViewsOf(VIEW_KEY, parseViews);
@@ -148,7 +155,7 @@ export default function ProgressScreen({ onBack, onOpenLeague }: { onBack: () =>
   return (
     <main className="shell">
       <header className="topbar season-top">
-        <Wordmark onHome={onBack} />
+        <AppBarLead onHome={onBack} status={<OverviewStatus leagues={leagues} now={now} />} here />
         <span className="muted title">Progress · the hill-climb</span>
         <span className="grow" />
         {p && <TopLine p={p} />}
