@@ -1,7 +1,7 @@
 """The routines, from the terminal or a timer (#225, docs/AUTOPILOT.md §3):
 
     python scripts/routine.py daily                # 05:00: refresh, solve, queue, digest on #99
-    python scripts/routine.py morning              # 07:45: the due entries' pages (the extension acts)
+    python scripts/routine.py morning              # 09:15: the due entries' pages (the extension acts)
     python scripts/routine.py late                 # 15:00: lineups late, moves late, re-solve
     python scripts/routine.py evening-build        # 21:00: refresh, re-solve, rebuild the queue
     python scripts/routine.py evening-pass         # 22:40: the evening's pages, hard stop 22:58

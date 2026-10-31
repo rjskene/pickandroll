@@ -181,8 +181,9 @@ ls -t ~/pickandroll/data/routine/runs/ | head; cat ~/pickandroll/data/routine/da
 against the Mac's own marker and run logs: the refresh codes, the export lines (the five
 kinds, each saved or identical), the private league's pages opened and read back, the pass
 summaries (entries due, pages opened), the run times against the windows (`docs/AUTOPILOT.md`
-§3: daily 05:00 to 06:20, morning 07:45 to 14:30, late 15:00 to 20:30, evening-build 21:00 to
-21:30, evening-pass 22:40 to 22:58, monday 06:00 to 12:00), and the `signin` result. A
+§3: daily 05:00 to 06:20, morning 07:45 to 14:30 with its timer at 09:15, after the user's
+09:00 execute time, late 15:00 to 20:30, evening-build 21:00 to 21:30, evening-pass 22:40 to
+22:58, monday 06:00 to 12:00), and the `signin` result. A
 difference is a finding on #225. The private league's solve is left out on this host
 (`--skip-solve 31822`, §1): the solve step reports it as left out and stays ok.
 
@@ -244,8 +245,11 @@ Only with `GET http://127.0.0.1:8000/rooms` answering `[]` on both hosts, in thi
    profile, downloads and screens excluded; the copy adds and updates, never deletes, so the
    Mac's own folders stay), and each copy stamps `data/routine/.copied-at` on the droplet,
    which its watchdog checks.
-7. The user checks the leagues' switches on the dashboard; the first live pass is the 07:45
-   morning pass of the next day.
+7. The user checks the leagues' switches on the dashboard: the copy carries the Mac's own (on
+   2026-10-31: moves and lineups live in the nine public leagues, the private league off), so
+   both executors run live from the droplet at once; the live guard passes on the copied
+   dry-run days. The first live pass from the droplet is the 09:15 morning pass, the same
+   Monday when the cut-over ends before it, else the 15:00 late pass.
 
 The dashboard needs no move: the droplet's API serves it under `/app` on the tailnet already
 (§2a), and a Mac-side `npm run dev` keeps working through the tunnel.
