@@ -4,6 +4,7 @@ Nothing here touches ssh, GitHub or the real data folder."""
 
 from __future__ import annotations
 
+import copy
 import importlib.util
 import json
 from pathlib import Path
@@ -25,6 +26,8 @@ EXPORTS = {
 LEAGUES = ("223259", "251146")
 ENTRY_A = f"{DAY}:251146:6406:6751"
 ENTRY_B = f"{DAY}:223259:10279:0"
+#: Each host's own solve id: the same solve, named by its own clock on each side.
+DECISION_ID = {"mac": "20261031T115753-moves-bbm", "droplet": "20261031T102340-moves-bbm"}
 
 
 @pytest.fixture(scope="module")
@@ -105,7 +108,7 @@ def queue(side: str) -> dict:
         {
             "league": league,
             "status": "queued",
-            "decision": "go",
+            "decision": DECISION_ID[side],
             "cap": 1,
             "budget": 93.0,
             "adds": {"limit": 4, "used": 3, "left": 1},
@@ -116,6 +119,8 @@ def queue(side: str) -> dict:
         {
             "id": ENTRY_A,
             "league": "251146",
+            "add": 6406,
+            "drop": 6751,
             "set": "three",
             "judged": "three",
             "from": "2026-11-02",
@@ -130,6 +135,8 @@ def queue(side: str) -> dict:
         {
             "id": ENTRY_B,
             "league": "223259",
+            "add": 10279,
+            "drop": None,
             "set": "three",
             "judged": "three",
             "from": "2026-11-02",
@@ -151,9 +158,9 @@ def queue(side: str) -> dict:
     }
 
 
-def decisions() -> list:
+def decisions(side: str = "mac") -> list:
     moves = {
-        "id": "20261031T112753-moves-bbm",
+        "id": DECISION_ID[side],
         "at": f"{DAY}T11:27:53+00:00",
         "source": "moves",
         "system": {"key": "bbm", "file": "bbm_projections_2026-10-31.csv"},
@@ -239,7 +246,7 @@ def side(root: Path, name: str) -> Path:
     mode = "live" if name == "mac" else "dry_run"
     for league in LEAGUES:
         write(data, f"leagues/{league}/armed.json", {"moves": mode, "lineups": mode})
-        write(data, f"leagues/{league}/season/decisions/{DAY}.json", decisions())
+        write(data, f"leagues/{league}/season/decisions/{DAY}.json", decisions(name))
     write(data, f"leagues/251146/autopilot/{DAY}.json", executor(name))
     if name == "mac":
         write(data, f"leagues/31822/season/decisions/{DAY}.json", decisions())
@@ -284,7 +291,11 @@ def test_the_baseline_pair_has_nothing_flagged_and_names_the_expected_difference
     assert "251146: same sets" in text and "223259: same sets" in text
     assert "lineup /nba/251146/7?date=2026-10-31: the droplet's 2 would-set slots match" in text
     assert "| post | ok | skipped |" in text and "posting off" in text
-    assert "entries: 2 on the mac, 2 on the droplet, 2 shared by id" in text
+    assert "entries: 2 on the mac, 2 on the droplet, 2 shared by league, add and drop" in text
+    assert c.notes == [] and "noted" not in text
+    # each host names the same solve by its own id: shown in the table, never a finding
+    assert f"| 223259 | queued/{DECISION_ID['mac']}, " in text
+    assert f" | queued/{DECISION_ID['droplet']}, cap 1, left 1, budget 93.0 |" in text
     assert "outcomes (shown, not counted): mac claimed x1, skipped x1; droplet None x2" in text
     assert "would open 2 add pages" in text and "would_claim x1" in text
     assert "no run log yet: morning, late, evening-build, evening-pass, monday" in text
@@ -295,7 +306,9 @@ def test_a_queue_entry_that_differs_or_exists_on_one_side_is_flagged_by_id(tmp_p
     mac, vm = pair(tmp_path, sc)
     vm["queue"]["entries"][0]["bid"]["amount"] = 3
     vm["queue"]["entries"][0]["from"] = "2026-11-03"
-    vm["queue"]["entries"].append({**vm["queue"]["entries"][1], "id": f"{DAY}:223259:5555:0"})
+    vm["queue"]["entries"].append(
+        {**vm["queue"]["entries"][1], "id": f"{DAY}:223259:5555:0", "add": 5555}
+    )
     vm["queue"]["leagues"][0]["adds"]["left"] = 0
     vm["queue"]["execute_time"] = "09:30"
     c = compare(sc, mac, vm)
@@ -308,6 +321,102 @@ def test_a_queue_entry_that_differs_or_exists_on_one_side_is_flagged_by_id(tmp_p
     del vm["queue"]
     c = compare(sc, mac, {**vm, "queue": None})
     assert c.flags == [f"queue file for {DAY} only on the mac"]
+
+
+def test_a_decision_is_compared_by_content_never_by_its_id(tmp_path, sc):
+    base = pair(tmp_path, sc)
+    mac, vm = copy.deepcopy(base)
+    # the ids differ on every row and in the log already (DECISION_ID): nothing flagged or noted
+    assert compare(sc, mac, vm).flags == [] and compare(sc, mac, vm).notes == []
+    # a row built from an earlier solve than the day's last: a note on that host, no flag
+    vm["queue"]["leagues"][0]["decision"] = "20261031T100000-moves-bbm"
+    c = compare(sc, mac, vm)
+    assert c.flags == [] and c.notes == [
+        (
+            "queue league 223259 on the droplet: the row's decision 20261031T100000-moves-bbm"
+            f" is not the day's last moves solve ({DECISION_ID['droplet']})"
+        )
+    ]
+    assert "- 1 noted (not counted): queue league 223259 on the droplet" in c.render()
+    # the private league's row has no decision: nothing said
+    assert not any("31822" in n for n in c.notes)
+    # an entry named differently (another day in its id) is the same entry by league, add, drop
+    mac, vm = copy.deepcopy(base)
+    vm["queue"]["entries"][0]["id"] = "2026-10-30:251146:6406:6751"
+    c = compare(sc, mac, vm)
+    assert c.flags == [] and "2 shared by league, add and drop" in c.render()
+    vm["queue"]["entries"][0]["bid"]["amount"] = 2
+    assert compare(sc, mac, vm).flags == [
+        f"queue entry {ENTRY_A} / 2026-10-30:251146:6406:6751 differs in bid: bid mac 1 / droplet 2"
+    ]
+    # the content behind the ids: a different recommended move is the flag it always was
+    mac, vm = copy.deepcopy(base)
+    vm["decisions"]["251146"][0]["sets"][0]["moves"] = [
+        {"add": 6999, "drop": None, "gain": {"week": 0.31}}
+    ]
+    assert compare(sc, mac, vm).flags == [
+        "251146 set week: mac +6406/-6751 (0.27); droplet +6999/open (0.31)"
+    ]
+    # an entry's reason is content: the Mac's builder leaving one unqueued is named by it
+    mac, vm = copy.deepcopy(base)
+    mac["queue"]["entries"][1].update(queued=False, rank=None, reason="no adds left this week")
+    assert compare(sc, mac, vm).flags == [
+        (
+            f"queue entry {ENTRY_B} differs in queued, reason, rank: queued mac False /"
+            " droplet True; reason mac no adds left this week / droplet None;"
+            " rank mac None / droplet 1"
+        )
+    ]
+
+
+def test_odds_within_the_tolerance_are_a_note_and_beyond_it_a_flag(tmp_path, sc):
+    mac, vm = pair(tmp_path, sc)
+    move = vm["decisions"]["251146"][0]["sets"][0]["moves"][0]
+    move["gain"]["week"] = 0.275
+    c = compare(sc, mac, vm)
+    assert c.flags == []
+    assert c.notes == ["251146 set week odds within 0.01: +6406/-6751 0.27 against 0.275"]
+    text = c.render()
+    assert "**nothing flagged**" in text and "- 1 noted (not counted): 251146 set week odds" in text
+    assert "251146: same sets" in text
+    move["gain"]["week"] = 0.29
+    c = compare(sc, mac, vm)
+    assert c.flags == ["251146 set week odds: mac against droplet: +6406/-6751 0.27 against 0.29"]
+    assert c.notes == [] and "251146: sets differ" in c.render()
+    # the knob widens it
+    c = sc.Comparison(mac, vm, DAY, "31822", tolerance=0.05).run()
+    assert c.flags == [] and len(c.notes) == 1 and "within 0.05" in c.notes[0]
+    # odds that are not numbers on one side are beyond any tolerance
+    move["gain"]["week"] = None
+    assert compare(sc, mac, vm).flags == [
+        "251146 set week odds: mac against droplet: +6406/-6751 0.27 against None"
+    ]
+
+
+def test_the_command_exits_0_on_different_ids_alone_and_1_on_different_content(
+    tmp_path, sc, capsys
+):
+    mac_data, vm_data = side(tmp_path, "mac"), side(tmp_path, "droplet")
+    remote = tmp_path / "vm.json"
+    vm = sc.bundle(vm_data, DAY)
+    assert (
+        vm["queue"]["leagues"][0]["decision"]
+        != sc.bundle(mac_data, DAY)["queue"]["leagues"][0]["decision"]
+    )
+    remote.write_text(json.dumps(vm))
+    args = ["--date", DAY, "--data", str(mac_data), "--remote-bundle", str(remote)]
+    assert sc.main(args) == sc.OK
+    assert "**nothing flagged**" in capsys.readouterr().out
+    vm["decisions"]["251146"][0]["sets"][0]["moves"][0]["gain"]["week"] = 0.275
+    remote.write_text(json.dumps(vm))
+    assert sc.main(args) == sc.OK
+    assert "1 noted (not counted)" in capsys.readouterr().out
+    assert sc.main([*args, "--tolerance", "0.001"]) == sc.FLAGGED
+    assert "set week odds: mac against droplet" in capsys.readouterr().out
+    vm["decisions"]["251146"][0]["sets"][0]["moves"][0]["add"] = 6999
+    remote.write_text(json.dumps(vm))
+    assert sc.main(args) == sc.FLAGGED
+    assert "**1 flagged**: 251146 set week:" in capsys.readouterr().out
 
 
 def test_exports_missing_smaller_or_unsaved_on_the_droplet_are_flagged(tmp_path, sc):
