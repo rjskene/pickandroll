@@ -2,7 +2,7 @@
 schedule anywhere, with no language model in the path.
 
 Six routines, the ones the Desktop scheduled tasks ran from the Mac (``docs/AUTOPILOT.md`` §3):
-``daily`` (05:00), ``morning`` (07:45), ``late`` (15:00), ``evening-build`` (21:00),
+``daily`` (05:00), ``morning`` (09:15), ``late`` (15:00), ``evening-build`` (21:00),
 ``evening-pass`` (22:40) and ``monday`` (06:00 Mondays), on the Central clock. Each is a fixed
 sequence of steps over the API, the browser (PR 2) and two scripts; every step reports ``ok``,
 ``failed`` or ``skipped`` with one line of detail, and the run ends in a written summary, a JSON

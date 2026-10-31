@@ -31,7 +31,7 @@ MAC = ROOT / "ops" / "mac"
 ZONE = "America/Chicago"
 TIMERS = {
     "daily": "*-*-* 05:00:00",
-    "morning": "*-*-* 07:45:00",
+    "morning": "*-*-* 09:15:00",
     "late": "*-*-* 15:00:00",
     "evening-build": "*-*-* 21:00:00",
     "evening-pass": "*-*-* 22:40:00",
@@ -91,9 +91,13 @@ def test_the_timers_are_the_runners_routines_on_the_central_clock() -> None:
         assert one(u, "Timer", "OnCalendar") == f"{calendar} {ZONE}"
         assert one(u, "Timer", "Persistent") == "true"
         assert one(u, "Timer", "Unit") == f"pickandroll-routine@{name}.service"
-        # The timer fires at the routine's window start (routines.WINDOWS); the sign-in check's
-        # window is the whole day, its timer 04:50, before the daily.
-        if name != "signin":
+        # The timer fires at the routine's window start (routines.WINDOWS), except the morning's,
+        # which fires inside its window at 09:15, after the user's 09:00 execute time (the window
+        # opens 07:45 for a run by hand); the sign-in check's window is the whole day, its timer
+        # 04:50, before the daily.
+        if name == "morning":
+            assert WINDOWS[name][0] < calendar.split()[-1][:5] < WINDOWS[name][1]
+        elif name != "signin":
             assert calendar.split()[-1][:5] == WINDOWS[name][0]
         else:
             assert calendar.split()[-1][:5] < WINDOWS["daily"][0]

@@ -1,11 +1,12 @@
-# The morning routine's timer: 07:45 every day, on the Central clock whatever the host's zone. Persistent: a run
+# The morning routine's timer: 09:15 every day (after the user's 09:00 execute time, the Mac's own
+# 09:14 mirrored; the routine's window opens 07:45), on the Central clock whatever the host's zone. Persistent: a run
 # missed while the host was down starts at boot, and the routine itself refuses when its window
 # has passed.
 [Unit]
-Description=pickandroll morning routine (07:45 every day Central)
+Description=pickandroll morning routine (09:15 every day Central)
 
 [Timer]
-OnCalendar=*-*-* 07:45:00 America/Chicago
+OnCalendar=*-*-* 09:15:00 America/Chicago
 AccuracySec=15s
 Persistent=true
 Unit=pickandroll-routine@morning.service
