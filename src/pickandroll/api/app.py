@@ -34,7 +34,7 @@ import pandas as pd
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi import Path as FastPath
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, PlainTextResponse, StreamingResponse
+from fastapi.responses import FileResponse, PlainTextResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -1978,7 +1978,8 @@ def serve_dashboard(app: FastAPI, dist: Path) -> bool:
     its files under ``/app/assets``, and its page for ``/app``, ``/app/`` and every path below
     without a suffix (``/app/progress``, ``/app/queue``: the views the app keeps in the path,
     with ``?league=`` and ``?session=`` as queries). A path with a suffix the build lacks is a
-    404. The API's own routes are untouched. Returns whether the dashboard is served."""
+    404. The root redirects to ``/app/`` (#271), so the bare address finds the dashboard. The
+    API's own routes are untouched. Returns whether the dashboard is served."""
     index = dist / "index.html"
     if not index.is_file():
         return False
@@ -1994,6 +1995,10 @@ def serve_dashboard(app: FastAPI, dist: Path) -> bool:
         if Path(path).suffix:
             raise HTTPException(status_code=404, detail="Not Found")
         return FileResponse(index, media_type="text/html")
+
+    @app.get("/", include_in_schema=False)
+    def root() -> RedirectResponse:
+        return RedirectResponse(f"{DASHBOARD_PATH}/", status_code=307)
 
     return True
 

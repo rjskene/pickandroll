@@ -1,5 +1,6 @@
 """The API serves the dashboard's build under /app when it exists (#262): the routine host's
-API, which the tailnet reaches, is then the dashboard too. Without a build nothing changes."""
+API, which the tailnet reaches, is then the dashboard too, its root redirecting there (#271).
+Without a build nothing changes."""
 
 from __future__ import annotations
 
@@ -41,6 +42,16 @@ def test_the_api_serves_the_dashboard_build_under_app(tmp_path):
         assert c.get("/nope", headers=HTML).status_code == 404
 
 
+def test_with_a_build_the_root_redirects_to_the_dashboard(tmp_path):
+    data = tmp_path / "data"
+    data.mkdir()
+    with TestClient(create_app(SessionStore(), data_dir=data, web_dist=build(tmp_path))) as c:
+        r = c.get("/", headers=HTML, follow_redirects=False)
+        assert r.status_code == 307 and r.headers["location"] == "/app/"
+        followed = c.get("/", headers=HTML)
+        assert followed.status_code == 200 and followed.text.startswith("<!doctype html>")
+
+
 def test_without_a_build_the_api_serves_no_page(tmp_path):
     data = tmp_path / "data"
     data.mkdir()
@@ -48,3 +59,6 @@ def test_without_a_build_the_api_serves_no_page(tmp_path):
         assert c.get("/app", headers=HTML).status_code == 404
         assert c.get("/app/progress", headers=HTML).status_code == 404
         assert c.get("/health").json()["status"] == "ok"
+        # The root keeps its answer (#271): no redirect to a page that is not there.
+        root = c.get("/", headers=HTML, follow_redirects=False)
+        assert root.status_code == 404 and root.json() == {"detail": "Not Found"}
