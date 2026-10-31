@@ -167,14 +167,18 @@ exports' names and sizes, the refresh and solve codes, the queue by league and b
 decision log's last moves solve of each league (its sets by player id), the executors' log and
 the pass records. Flagged: a marker step whose status differs, a failed step or an alert in a
 droplet run log, a daily finished after 06:20, an export missing or more than 5% smaller on the
-droplet, a refresh or solve code that is not a success, a queue entry on one side only or
-differing in set, judged horizon, start day, availability, bid, rank or struck state, a league
-row differing in status, decision, cap, budget or adds left, a recommended set that differs, and
-a lineup the droplet would set other than the Mac set it. Not flagged: the private league's
-solve absent on the droplet, the droplet's post step skipped, the pass records' and the
-executors' wording (live against dry run), timestamps and export file names. Exit 0 when
-nothing is flagged, 1 otherwise, 2 when a side could not be read; `--post` puts the markdown on
-#225 as one comment. Player and league ids only, never a name.
+droplet, a refresh or solve code that is not a success, a queue entry (matched by league, add
+and drop) on one side only or differing in set, judged horizon, start day, availability, queued
+state, reason, bid, rank or struck state, a league row differing in status, cap, budget or adds
+left, a recommended set whose moves differ or whose odds are apart by the tolerance or more
+(`--tolerance`, default 0.01), and a lineup the droplet would set other than the Mac set it. Not
+flagged: the private league's solve absent on the droplet, the droplet's post step skipped, the
+pass records' and the executors' wording (live against dry run), timestamps, export file names
+and each host's own decision ids (the solve a queue row names is compared by content under
+Solves; a row built from an earlier solve than the day's last is a note). Odds apart by less
+than the tolerance are notes: in the head, not in the exit code. Exit 0 when nothing is
+flagged, 1 otherwise, 2 when a side could not be read; `--post` puts the markdown on #225 as
+one comment. Player and league ids only, never a name.
 
 ## 5. Cut-over: Monday 2026-11-09, after the 06:00 recorder
 

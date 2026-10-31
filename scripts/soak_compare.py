@@ -14,7 +14,9 @@ flagged, 1 when something is, 2 when a side could not be read.
 
 Expected and not flagged: the private league's solve absent on the droplet (``--skip-solve``),
 the droplet's post step skipped (``--no-post``), the pass records' and the executors' wording
-(live against dry run), the two hosts' own timestamps and export file names.
+(live against dry run), the two hosts' own timestamps, decision ids and export file names. Odds
+apart by less than ``--tolerance`` (0.01) are notes, not flags: the hosts read Yahoo and the
+exports up to an hour apart.
 
 Standard library only, so the droplet's system python runs the bundle; player and league ids
 only, never a name, so the markdown can go on the public issue.
@@ -24,6 +26,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import shlex
 import socket
 import subprocess
@@ -53,8 +56,13 @@ MARKER_STEPS = (
 EXPORT_KINDS = ("ros", "week_this", "week_next", "actual_7d", "actual_14d")
 ROUTINES = ("daily", "morning", "late", "evening-build", "evening-pass", "monday", "signin")
 EXECUTOR_KINDS = ("lineup", "start_active", "moves", "il")
-#: The queue entry fields compared; the solve id, the times and the outcomes are not.
-QUEUE_FIELDS = ("set", "judged", "from", "availability", "queued", "struck", "rank")
+#: The queue entry fields compared, with the bid; entries are matched by league, add and drop.
+#: The decision id (each host's own solve timestamp), the times and the outcomes (live against
+#: dry run) are not compared.
+QUEUE_FIELDS = ("set", "judged", "from", "availability", "queued", "reason", "struck", "rank")
+#: Odds (a move's gain) apart by less than this are a note, not a flag: the two hosts read
+#: Yahoo and the exports up to an hour apart.
+TOLERANCE = 0.01
 #: The daily must be done by the window's end (``docs/AUTOPILOT.md`` §3).
 DAILY_WINDOW_END = "06:20"
 REFRESH_OK = (200, 202)
@@ -150,10 +158,19 @@ def remote_bundle(host: str, repo: str, day: str, run: Callable[..., Any] | None
 class Comparison:
     """The two bundles side by side: markdown lines and the flagged findings among them."""
 
-    def __init__(self, mac: Mapping[str, Any], vm: Mapping[str, Any], day: str, private: str):
+    def __init__(
+        self,
+        mac: Mapping[str, Any],
+        vm: Mapping[str, Any],
+        day: str,
+        private: str,
+        tolerance: float = TOLERANCE,
+    ):
         self.mac, self.vm, self.day, self.private = mac, vm, day, private
+        self.tolerance = tolerance
         self.lines: list[str] = []
         self.flags: list[str] = []
+        self.notes: list[str] = []
 
     # ----------------------------------------------------------------- output
     def line(self, text: str = "") -> None:
@@ -162,6 +179,11 @@ class Comparison:
     def flag(self, text: str) -> None:
         self.flags.append(text)
         self.lines.append(f"- **flag:** {text}")
+
+    def note(self, text: str) -> None:
+        """Shown in the head and the body, never in the exit code."""
+        self.notes.append(text)
+        self.lines.append(f"- note: {text}")
 
     def table(self, head: Sequence[str], rows: Iterable[Sequence[Any]]) -> None:
         self.line("| " + " | ".join(head) + " |")
@@ -181,6 +203,8 @@ class Comparison:
             head.append(f"- **{len(self.flags)} flagged**: " + "; ".join(self.flags))
         else:
             head.append("- **nothing flagged**")
+        if self.notes:
+            head.append(f"- {len(self.notes)} noted (not counted): " + "; ".join(self.notes))
         return "\n".join([*head, "", *self.lines]).rstrip() + "\n"
 
     @staticmethod
@@ -365,23 +389,30 @@ class Comparison:
             if x is None or y is None:
                 self.flag(f"queue league row {league} only on the {MAC if x else VM}")
                 continue
-            for field in ("status", "decision", "cap", "budget"):
+            for field in ("status", "cap", "budget"):
                 if x.get(field) != y.get(field):
                     self.flag(
                         f"queue league {league} {field}: {MAC} {x.get(field)}, {VM} {y.get(field)}"
                     )
+            self.row_decision(league, x, y)
             if (x.get("adds") or {}).get("left") != (y.get("adds") or {}).get("left"):
                 self.flag(
                     f"queue league {league} adds left: {MAC} {(x.get('adds') or {}).get('left')},"
                     f" {VM} {(y.get('adds') or {}).get('left')}"
                 )
         self.table(("league", MAC, VM), rows)
-        ea = {str(e.get("id")): e for e in a.get("entries") or []}
-        eb = {str(e.get("id")): e for e in b.get("entries") or []}
-        for entry_id in sorted(set(ea) ^ set(eb)):
-            self.flag(f"queue entry {entry_id} only on the {MAC if entry_id in ea else VM}")
-        for entry_id in sorted(set(ea) & set(eb)):
-            x, y = ea[entry_id], eb[entry_id]
+        # Entries by content (league, add, drop): the id carries the same with the day, but a
+        # host's own naming must never be the difference.
+        ea = {_entry_key(e): e for e in a.get("entries") or []}
+        eb = {_entry_key(e): e for e in b.get("entries") or []}
+        for key in sorted(set(ea) ^ set(eb)):
+            only = ea.get(key) or eb[key]
+            self.flag(f"queue entry {only.get('id')} only on the {MAC if key in ea else VM}")
+        for key in sorted(set(ea) & set(eb)):
+            x, y = ea[key], eb[key]
+            entry_id = (
+                x.get("id") if x.get("id") == y.get("id") else f"{x.get('id')} / {y.get('id')}"
+            )
             diffs = [f for f in QUEUE_FIELDS if x.get(f) != y.get(f)]
             if _bid(x) != _bid(y):
                 diffs.append("bid")
@@ -390,12 +421,27 @@ class Comparison:
                 self.flag(f"queue entry {entry_id} differs in {', '.join(diffs)}: {shown}")
         shared = len(set(ea) & set(eb))
         self.line(
-            f"- entries: {len(ea)} on the {MAC}, {len(eb)} on the {VM}, {shared} shared by id"
+            f"- entries: {len(ea)} on the {MAC}, {len(eb)} on the {VM},"
+            f" {shared} shared by league, add and drop"
         )
         oa = Counter(str(e.get("outcome")) for e in ea.values())
         ob = Counter(str(e.get("outcome")) for e in eb.values())
         self.line(f"- outcomes (shown, not counted): {MAC} {_counter(oa)}; {VM} {_counter(ob)}")
         self.line()
+
+    def row_decision(self, league: str, x: Mapping[str, Any], y: Mapping[str, Any]) -> None:
+        """A queue row's decision id is its host's own solve timestamp: never compared with the
+        other host's, never a flag. The solve it names is compared by content under Solves when
+        it is the host's last moves solve of the day; a row built from an earlier one is a note."""
+        for name, side, row in ((MAC, self.mac, x), (VM, self.vm, y)):
+            wanted = row.get("decision")
+            last = _last_moves((side.get("decisions") or {}).get(league), self.day)
+            if wanted is None or last is None or last.get("id") == wanted:
+                continue
+            self.note(
+                f"queue league {league} on the {name}: the row's decision {wanted} is not the"
+                f" day's last moves solve ({last.get('id')})"
+            )
 
     def solves(self) -> None:
         self.line("## Solves (the decision log's last moves solve of the day)")
@@ -422,9 +468,23 @@ class Comparison:
             same = True
             for key in sorted(set(sa) | set(sb), key=str):
                 ma, mb = _moves_of(sa.get(key), key), _moves_of(sb.get(key), key)
-                if set(ma) != set(mb):
+                if _pairs(ma) != _pairs(mb):
                     same = False
                     self.flag(f"{league} set {key}: {MAC} {_fmt_moves(ma)}; {VM} {_fmt_moves(mb)}")
+                    continue
+                # The same moves: their odds, apart by the tolerance or more, are a flag;
+                # by less, a note (the hosts' inputs are read up to an hour apart).
+                apart = _odds_apart(ma, mb)
+                if not apart:
+                    continue
+                shown = ", ".join(
+                    f"+{a}/{f'-{d}' if d else 'open'} {ga} against {gb}" for a, d, ga, gb in apart
+                )
+                if max(_gap(ga, gb) for *_, ga, gb in apart) >= self.tolerance:
+                    same = False
+                    self.flag(f"{league} set {key} odds: {MAC} against {VM}: {shown}")
+                else:
+                    self.note(f"{league} set {key} odds within {self.tolerance}: {shown}")
             pa, pb = (
                 (x.get("plan") or {}).get("recommended"),
                 (y.get("plan") or {}).get("recommended"),
@@ -596,6 +656,37 @@ def _moves_of(a_set: Any, key: Any) -> list[tuple[Any, Any, Any]]:
     return out
 
 
+def _pairs(moves: Sequence[tuple[Any, Any, Any]]) -> set[tuple[Any, Any]]:
+    """A set's moves without their odds."""
+    return {(a, d) for a, d, _ in moves}
+
+
+def _odds_apart(
+    ma: Sequence[tuple[Any, Any, Any]], mb: Sequence[tuple[Any, Any, Any]]
+) -> list[tuple[Any, Any, Any, Any]]:
+    """The moves both sides recommend whose odds differ: (add, drop, odds here, odds there)."""
+    there = {(a, d): g for a, d, g in mb}
+    return [(a, d, g, there[(a, d)]) for a, d, g in ma if (a, d) in there and g != there[(a, d)]]
+
+
+def _gap(ga: Any, gb: Any) -> float:
+    """How far two odds are apart; not a number on either side counts as beyond any tolerance."""
+    try:
+        return abs(float(ga) - float(gb))
+    except (TypeError, ValueError):
+        return math.inf
+
+
+def _entry_key(entry: Mapping[str, Any]) -> tuple[str, str, str]:
+    """A queue entry by its content, league, add and drop; the id (day:league:add:drop) serves
+    when the fields are missing."""
+    if entry.get("league") is not None and entry.get("add") is not None:
+        return (str(entry.get("league")), str(entry.get("add")), str(entry.get("drop") or 0))
+    parts = str(entry.get("id") or "").split(":")
+    pad = parts[1:4] + ["", "", ""]
+    return (pad[0], pad[1], pad[2])
+
+
 def _fmt_moves(moves: Sequence[tuple[Any, Any, Any]]) -> str:
     return ", ".join(f"+{a}/{f'-{d}' if d else 'open'} ({g})" for a, d, g in moves) or "no moves"
 
@@ -649,6 +740,12 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--private", default=PRIVATE_LEAGUE, help="the league never solved on the droplet"
     )
+    p.add_argument(
+        "--tolerance",
+        type=float,
+        default=TOLERANCE,
+        help="odds apart by less than this are a note, not a flag (default 0.01)",
+    )
     p.add_argument("--post", action="store_true", help="comment the markdown on the ops issue")
     p.add_argument("--issue", type=int, default=DEFAULT_ISSUE)
     sub = p.add_subparsers(dest="command")
@@ -685,7 +782,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     if not isinstance(vm, dict):
         print("the droplet's bundle is not a JSON object", file=sys.stderr)
         return UNREAD
-    comparison = Comparison(mac, vm, day, args.private).run()
+    comparison = Comparison(mac, vm, day, args.private, tolerance=args.tolerance).run()
     markdown = comparison.render()
     print(markdown, end="")
     if args.post:
