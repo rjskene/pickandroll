@@ -88,8 +88,9 @@ export function LeagueBlock(props: BlockProps) {
     s.week != null ? weekLabel(s).toLowerCase() : null,
     best?.status === "solved" ? setSummary(best) : null,
   ].filter(Boolean);
-  return (
-    <article className={`lt-block${pinned ? " pinned" : ""}`} aria-label={title}>
+  const detail = open && <LeagueDetail {...props} id={panel} readNote={readNote} reason={reason} />;
+  const rows = (
+    <article className={`lt-block${pinned ? ` pinned${open ? " open" : ""}` : ""}`} aria-label={title}>
       {/* The whole of both rows opens the league; the panel under them is not the row. */}
       <div className="lt-main lt-go" role="link" tabIndex={0} aria-label={`${title}: open its league page`} onClick={rowClick(onOpen)} onKeyDown={rowKey(onOpen)}>
         <button
@@ -142,8 +143,18 @@ export function LeagueBlock(props: BlockProps) {
           {reason && <span className="accent">{reason}</span>}
         </div>
       </div>
-      {open && <LeagueDetail {...props} id={panel} readNote={readNote} reason={reason} />}
+      {!pinned && detail}
     </article>
+  );
+  // The pinned league's rows stay in place while the rest scrolls; its panel is their sibling,
+  // so it scrolls away like any other league's instead of holding the section (#253).
+  return pinned ? (
+    <>
+      {rows}
+      {detail && <div className="lt-pinned-panel">{detail}</div>}
+    </>
+  ) : (
+    rows
   );
 }
 
