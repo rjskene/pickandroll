@@ -232,6 +232,9 @@ import {
   recordLabel,
   refreshNote,
   stepLeague,
+  parseTableState,
+  toggleCollapsed,
+  toggleFull,
   sortAvailable,
   statusTitle,
   statusTone,
@@ -2260,4 +2263,17 @@ test("the league page steps to the previous or next league in the table's order,
   // With no other league there is nowhere to go.
   assert.equal(stepLeague(["100"], "100", 1), null);
   assert.equal(stepLeague([], "100", -1), null);
+});
+
+test("the landing table collapses, scrolls in its section or expands fully, expanded by default (#253)", () => {
+  assert.equal(parseTableState(null), "expanded");
+  assert.equal(parseTableState("bogus"), "expanded");
+  assert.equal(parseTableState("collapsed"), "collapsed");
+  assert.equal(parseTableState("full"), "full");
+  assert.equal(toggleCollapsed("expanded"), "collapsed");
+  assert.equal(toggleCollapsed("full"), "collapsed");
+  assert.equal(toggleCollapsed("collapsed"), "expanded");
+  assert.equal(toggleFull("expanded"), "full");
+  assert.equal(toggleFull("collapsed"), "full");
+  assert.equal(toggleFull("full"), "expanded");
 });

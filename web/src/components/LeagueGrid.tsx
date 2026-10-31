@@ -2,7 +2,8 @@ import { useEffect, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { api, type SeasonSummary } from "../api";
 import type { SeasonViewId } from "../keys";
-import { isExpanded, isRefreshing, leaguesLabel, toggleExpanded, type GridOrder } from "../season";
+import { isExpanded, isRefreshing, leaguesLabel, toggleCollapsed, toggleExpanded, toggleFull, type GridOrder } from "../season";
+import { Chevron, ExpandIcon } from "./icons";
 import { LeagueBlock, UnreadBlock } from "./LeagueBlock";
 import { SYSTEM, type LandingOrder } from "./landingOrder";
 import { StatusSheet, useSeasonStatus } from "./StatusLight";
@@ -16,7 +17,7 @@ import { StatusSheet, useSeasonStatus } from "./StatusLight";
  * without an answer says so, and its button solves it. */
 export default function LeagueGrid({ landing, onOpen }: { landing: LandingOrder; onOpen: (league: string, view?: SeasonViewId) => void }) {
   const queryClient = useQueryClient();
-  const { seasons, list, best, lookError, rows, order, setOrder, showPoints, setShowPoints } = landing;
+  const { seasons, list, best, lookError, rows, order, setOrder, showPoints, setShowPoints, table, setTable } = landing;
   // The panels opened or closed by hand; the private league's starts open.
   const [toggled, setToggled] = useState<ReadonlyMap<string, boolean>>(new Map());
   const [solving, setSolving] = useState<Set<string>>(new Set());
@@ -45,6 +46,8 @@ export default function LeagueGrid({ landing, onOpen }: { landing: LandingOrder;
   const open = list.find((s) => s.league === sheetFor);
   const now = Date.now();
   if (!list.length && !seasons.error) return seasons.isPending ? <p className="muted">Reading the leagues…</p> : null;
+  const label = leaguesLabel([...rows.pinned, ...rows.rest]);
+  const narrative = `${label} · the private league first, then the rest by ${order === "gain" ? "most to gain" : "name"} · a click on a league's row opens its league page, its chevron the recommended set`;
   const block = (s: SeasonSummary) => {
     const common = {
       s,
@@ -73,38 +76,63 @@ export default function LeagueGrid({ landing, onOpen }: { landing: LandingOrder;
   };
   return (
     <section className="league-grid" aria-label="Leagues">
-      <div className="lg-head">
-        <h2>LEAGUES</h2>
-        <span className="muted">
-          {leaguesLabel([...rows.pinned, ...rows.rest])} · the private league first, then the rest by {order === "gain" ? "most to gain" : "name"} · a
-          chevron opens the league's recommended set, its name the league page
-        </span>
-        <span className="grow" />
-        <label className="inline muted">
-          sorted by
-          <select value={order} onChange={(e) => setOrder(e.target.value as GridOrder)} aria-label="Sort the leagues">
-            <option value="gain">most to gain</option>
-            <option value="name">name</option>
-          </select>
-        </label>
-      </div>
       {seasons.error && <p className="error">{seasons.error.message}</p>}
-      <div className="lt-scroll">
+      {/* One section (#253): the header row, the column labels and the pinned private league stay
+          in place while the rest scrolls, inside it when expanded, with the page when full. */}
+      <div className={`lt-scroll ${table}`}>
         <div className="lt">
-          <div className="lt-head">
-            <span />
-            <span className="k">League</span>
-            <span className="k">This week</span>
-            <span className="k">Place</span>
-            <span className="k">Adds</span>
-            <span className="k">Flags</span>
-            <span className="k">Best move</span>
-            <span className="k lt-gain">Gain</span>
-            <span className="k">Read</span>
-            <span />
+          <div className="lt-block lt-header" title={narrative}>
+            <div className="lt-main">
+              <button
+                className="icon lt-chev"
+                aria-expanded={table !== "collapsed"}
+                aria-label={table === "collapsed" ? "Show every league" : "Collapse the table to the private league"}
+                onClick={() => setTable(toggleCollapsed(table))}
+              >
+                <Chevron dir={table === "collapsed" ? "right" : "down"} />
+              </button>
+              <span className="lt-name">
+                <h2>LEAGUES</h2>
+                <small className="muted">{label}</small>
+              </span>
+              <span className="lt-hrest">
+                <label className="inline muted">
+                  sorted by
+                  <select value={order} onChange={(e) => setOrder(e.target.value as GridOrder)} aria-label="Sort the leagues">
+                    <option value="gain">most to gain</option>
+                    <option value="name">name</option>
+                  </select>
+                </label>
+              </span>
+              <span className="lt-acts">
+                <button
+                  className="icon"
+                  aria-pressed={table === "full"}
+                  aria-label={table === "full" ? "Fit the table back in its section" : "Expand the table fully"}
+                  title={table === "full" ? "Fit the table back in its section" : "Expand the table fully: no inner scroll"}
+                  onClick={() => setTable(toggleFull(table))}
+                >
+                  <ExpandIcon out={table !== "full"} />
+                </button>
+              </span>
+            </div>
           </div>
+          {table !== "collapsed" && (
+            <div className="lt-head">
+              <span />
+              <span className="k">League</span>
+              <span className="k">This week</span>
+              <span className="k">Place</span>
+              <span className="k">Adds</span>
+              <span className="k">Flags</span>
+              <span className="k">Best move</span>
+              <span className="k lt-gain">Gain</span>
+              <span className="k">Read</span>
+              <span />
+            </div>
+          )}
           {rows.pinned.map(block)}
-          {rows.rest.map(block)}
+          {table !== "collapsed" && rows.rest.map(block)}
         </div>
       </div>
       {list.some((s) => s.public !== false && s.scoring === "points") && (

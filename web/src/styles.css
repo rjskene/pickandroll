@@ -97,15 +97,31 @@ button.primary kbd { background: rgba(0, 0, 0, 0.18); border-color: rgba(0, 0, 0
 .lg-head h2 { font-size: 22px; }
 .lg-head label.inline { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; }
 /* The landing table (#191): two rows per league in the header's columns, a chevron's panel under
- * them; the private league pinned first on the --mine tint. A narrow screen scrolls it sideways. */
+ * them; the private league pinned first on the --mine tint. A narrow screen scrolls it sideways.
+ * Since #253 one section: a header row in the rows' grid, then the column labels and the pinned
+ * private league held in place (sticky, on solid backgrounds) while the rest scrolls, inside
+ * the section when expanded (60vh), with the page when full; collapsed, the header and the
+ * pinned league alone. */
 .lt-scroll { overflow-x: auto; }
-.lt { --lt-cols: 22px minmax(190px, 232px) 150px 78px 116px 122px minmax(220px, 1fr) 60px 120px 92px; display: flex; flex-direction: column; min-width: 1180px; }
+.lt-scroll.expanded { max-height: 60vh; overflow: auto; }
+.lt-scroll.full { overflow: visible; }
+.lt { --lt-cols: 22px minmax(190px, 232px) 150px 78px 116px 122px minmax(220px, 1fr) 60px 120px 92px; --lt-h1: 46px; --lt-h2: 28px; display: flex; flex-direction: column; min-width: 1180px; }
 .lt-head, .lt-main { display: grid; grid-template-columns: var(--lt-cols); column-gap: 14px; align-items: baseline; padding: 0 12px; }
-.lt-head { padding-bottom: 6px; border-bottom: 1px solid var(--line-2); }
+.lt-head { position: sticky; top: var(--lt-h1); z-index: 2; height: var(--lt-h2); box-sizing: border-box; align-items: end; padding-bottom: 6px; border-bottom: 1px solid var(--line-2); background: var(--bg); }
 .lt-block { border-bottom: 1px solid var(--line); }
 .lt-block:hover { background: var(--panel-2); }
-.lt-block.pinned { margin: 8px 0 10px; border: 1.5px solid var(--accent); border-radius: 8px; background: var(--mine); }
-.lt-block.pinned:hover { background: rgba(245, 185, 66, 0.16); }
+.lt-header, .lt-header:hover { position: sticky; top: 0; z-index: 3; background: var(--bg); border-bottom-color: var(--line-2); }
+.lt-header .lt-main { height: var(--lt-h1); box-sizing: border-box; align-items: center; padding-top: 0; padding-bottom: 0; }
+.lt-header h2 { font-size: 22px; line-height: 1; }
+.lt-hrest { grid-column: 3 / -2; display: flex; justify-content: flex-end; }
+.lt-hrest label.inline { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; }
+.lt-block.pinned { position: sticky; top: calc(var(--lt-h1) + var(--lt-h2)); z-index: 1; margin: 8px 0 10px; border: 1.5px solid var(--accent); border-radius: 8px; background: linear-gradient(var(--mine), var(--mine)), var(--bg); }
+.lt-block.pinned:hover { background: linear-gradient(rgba(245, 185, 66, 0.16), rgba(245, 185, 66, 0.16)), var(--bg); }
+/* Open, its rows and its panel (a sibling, which scrolls) read as one box. */
+.lt-block.pinned.open { margin-bottom: 0; border-radius: 8px 8px 0 0; }
+.lt-pinned-panel { margin-bottom: 10px; border: 1.5px solid var(--accent); border-top: 0; border-radius: 0 0 8px 8px; background: var(--mine); }
+.lt-go { cursor: pointer; }
+.lt-go:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
 .lt-block.unread { opacity: 0.75; }
 .lt-main { row-gap: 3px; padding-top: 9px; padding-bottom: 9px; font-size: 12px; }
 .lt-chev { width: 20px; height: 20px; align-self: center; }
@@ -122,7 +138,7 @@ button.primary kbd { background: rgba(0, 0, 0, 0.18); border-color: rgba(0, 0, 0
 .lt-wide { grid-column: span 6; }
 .lt-sub { grid-column: 2 / -1; display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 11px; color: var(--muted); }
 .lt-detail { display: grid; grid-template-columns: minmax(0, 1fr) 380px; gap: 10px 28px; padding: 10px 12px 14px 48px; border-top: 1px solid var(--line); background: rgba(0, 0, 0, 0.18); font-size: 12px; }
-.lt-block.pinned .lt-detail { border-top-color: rgba(245, 185, 66, 0.35); border-radius: 0 0 8px 8px; }
+.lt-pinned-panel .lt-detail { border-top-color: rgba(245, 185, 66, 0.35); border-radius: 0 0 8px 8px; }
 .lt-set, .lt-facts { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
 .lt-lines { display: grid; gap: 5px; }
 .lt-line { display: grid; grid-template-columns: minmax(0, 1fr) 60px 90px; column-gap: 14px; }

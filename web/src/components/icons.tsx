@@ -304,3 +304,12 @@ export function LeaguesIcon() {
     </svg>
   );
 }
+
+/** The landing table's fully-expand button (#253): arrows out, and arrows in to fit it back. */
+export function ExpandIcon({ out }: { out: boolean }) {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" {...stroke} aria-hidden="true">
+      {out ? <path d="M14 4h6v6M20 4l-7 7M10 20H4v-6M4 20l7-7" /> : <path d="M20 10h-6V4M14 10l7-7M4 14h6v6M10 14l-7 7" />}
+    </svg>
+  );
+}
