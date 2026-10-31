@@ -124,11 +124,11 @@ import OutlookView from "./OutlookView";
 import Rail from "./Rail";
 import QueueCard from "./QueueCard";
 import Scorecard from "./Scorecard";
-import { Chevron, LeaguesIcon, ProgressIcon, SEASON_ICONS, VIEW_ICONS } from "./icons";
+import { Chevron, LeaguesIcon, SEASON_ICONS, VIEW_ICONS } from "./icons";
 import Strategy from "./Strategy";
 import Trade from "./Trade";
 import ViewDrawer from "./ViewDrawer";
-import Wordmark from "./Wordmark";
+import AppBarLead from "./AppBarLead";
 import { useNow } from "./YahooSync";
 
 const PANEL_KEY = "pickandroll.season.drawer";
@@ -390,7 +390,7 @@ export default function SeasonScreen({
   return (
     <main className="shell">
       <header className="topbar season-top">
-        <Wordmark onHome={onHome} />
+        <AppBarLead onHome={onHome} status={<LeagueStatus p={status.data} league={league} onOpen={() => setStatusOpen(true)} />} onProgress={onProgress} />
         <span className="muted title">
           {leagueTitle(s?.name, league)}
           {s && ` · ${s.scoring === "points" ? "H2H points" : "H2H categories"} · ${s.num_teams} teams`}
@@ -406,15 +406,11 @@ export default function SeasonScreen({
             {s.opponent && <span>vs {s.opponent.name}</span>}
           </>
         )}
-        <LeagueStatus p={status.data} league={league} onOpen={() => setStatusOpen(true)} />
         {s?.public && (
           <button className="small" disabled={running} onClick={() => refresh.mutate()} title={REFRESH_TITLE}>
             {running ? "Refreshing…" : "Refresh"}
           </button>
         )}
-        <button className="icon" onClick={onProgress} aria-label="Progress" title="Progress: the hill-climb over the season (p)">
-          <ProgressIcon />
-        </button>
         <span className="league-step">
           {prev && (
             <button className="icon" onClick={() => onLeague(prev.league, views.view)} aria-label={`Previous: ${prev.name}`} title={`Previous: ${prev.name} (,)`}>

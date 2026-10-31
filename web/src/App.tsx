@@ -349,7 +349,7 @@ export default function App() {
   if (!sessionId && leagueId)
     return <SeasonScreen key={leagueId} league={leagueId} view={leagueView ?? undefined} onBack={leaveLeague} onHome={goHome} onLeague={openLeague} onProgress={openProgress} />;
   if (!sessionId && progress) return <ProgressScreen onBack={() => setProgress(false)} onOpenLeague={setLeagueId} />;
-  if (!sessionId && queue) return <QueueScreen onBack={() => setQueue(false)} onOpenLeague={(league) => openLeague(league)} />;
+  if (!sessionId && queue) return <QueueScreen onBack={() => setQueue(false)} onOpenLeague={(league) => openLeague(league)} onProgress={openProgress} />;
   if (!sessionId || !session.data) return <Landing onOpenLeague={openLeague} onOpenSession={setSessionId} onProgress={openProgress} onQueue={openQueue} error={session.error} />;
   return (
     <DraftProvider

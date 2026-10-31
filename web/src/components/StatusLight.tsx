@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api, type SeasonSummary, type StatusPayload, type StatusState } from "../api";
 import { ageLabel, refreshNote } from "../season";
@@ -25,6 +25,22 @@ export function StatusIcon({ state, title, onOpen }: { state: StatusState; title
     >
       <StatusGlyph state={state} />
     </button>
+  );
+}
+
+/** The all-leagues icon (#253) with its overview sheet, the leagues in the landing table's order
+ * (#270: on the landing, Progress and the Queue); nothing before the status reads. */
+export function OverviewStatus({ leagues, now }: { leagues: SeasonSummary[]; now: number }) {
+  const light = useSeasonStatus();
+  const [open, setOpen] = useState(false);
+  const close = useCallback(() => setOpen(false), []);
+  if (!light.data) return null;
+  const named = leagues.map((s) => ({ league: s.league, name: s.name ?? `League ${s.league}` }));
+  return (
+    <>
+      <StatusIcon state={light.data.state} title={overviewLine(light.data, named, new Date(now))} onOpen={() => setOpen(true)} />
+      {open && <OverviewSheet p={light.data} leagues={leagues} now={now} onClose={close} />}
+    </>
   );
 }
 
