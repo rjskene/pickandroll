@@ -271,6 +271,7 @@ function fakeSeason(over: Partial<SeasonKeys> = {}) {
     openMove: rec("move"),
     refresh: rec("refresh"),
     progress: rec("progress"),
+    step: rec("step"),
     sheetOpen: false,
     setSheetOpen: rec("sheet"),
     ...over,
@@ -299,7 +300,7 @@ test("season: digits 1 to 9 open the nine cards, shifted in the bottom half", ()
   }
 });
 
-test("season: ] / j k arrows Enter t m r x", () => {
+test("season: ] / j k arrows Enter t m r x , .", () => {
   const cases: [KeyLike, unknown[][], Partial<SeasonKeys>?][] = [
     [key("]"), [["toggle"]]],
     [key("x"), [["swap"]]],
@@ -313,6 +314,8 @@ test("season: ] / j k arrows Enter t m r x", () => {
     [key("m"), [["show", "moves"]]],
     [key("r"), [["refresh"]]],
     [key("p"), [["progress"]]],
+    [key(","), [["step", -1]]],
+    [key("."), [["step", 1]]],
   ];
   for (const [e, want, over] of cases) {
     const { map, calls } = fakeSeason(over);
@@ -372,6 +375,7 @@ test("season: keys that must not act", () => {
     [key("Enter")], // nothing highlighted
     [key("Enter", { target: { tagName: "BUTTON" } }), { highlight: 42 }],
     [key("r"), { refresh: null }], // a private league, or a refresh running
+    [key("."), { step: null }], // the only league
     [key("t", { target: field })],
     [key("m", { target: select })],
     [key("t", { ctrlKey: true })],
@@ -433,7 +437,7 @@ test("each sheet names its screen's cards and lists its keys", () => {
   assert.ok(DRAFT_SHEET.cards.startsWith(`Cards are ${DRAFT_CARDS.map((c, i) => `${i + 1} ${c.title}`).join(" · ")},`));
   assert.ok(SEASON_SHEET.cards.startsWith(`Cards are ${SEASON_CARDS.map((c, i) => `${i + 1} ${c.title}`).join(" · ")},`));
   const listed = SEASON_SHEET.groups.flatMap((g) => g.rows.flatMap(([keys]) => keys));
-  for (const k of ["1", "9", "⇧ 2", "]", "[", "w", "h", "s", "l", "x", "Esc", "/", "j", "k", "↓", "↑", "Enter", "t", "m", "r", "p", "?"]) assert.ok(listed.includes(k), k);
+  for (const k of ["1", "9", "⇧ 2", "]", "[", "w", "h", "s", "l", "x", "Esc", "/", "j", "k", "↓", "↑", "Enter", "t", "m", "r", "p", ",", ".", "?"]) assert.ok(listed.includes(k), k);
   assert.ok(PROGRESS_SHEET.cards.startsWith(`Cards are ${PROGRESS_CARDS.map((c, i) => `${i + 1} ${c.title}`).join(" · ")},`));
   const progress = PROGRESS_SHEET.groups.flatMap((g) => g.rows.flatMap(([keys]) => keys));
   for (const k of ["1", "4", "⇧ 4", "]", "[", "t", "m", "o", "b", "x", "←", "→", "Esc", "?"]) assert.ok(progress.includes(k), k);

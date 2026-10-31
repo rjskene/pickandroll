@@ -8,8 +8,12 @@ import DraftSeason from "./DraftSeason";
 import DraftsDrawer, { type DrawerView } from "./DraftsDrawer";
 import ExecuteTime from "./ExecuteTime";
 import LeagueGrid from "./LeagueGrid";
+import { useLandingOrder } from "./landingOrder";
+import { OverviewSheet, StatusIcon, useSeasonStatus } from "./StatusLight";
+import Wordmark from "./Wordmark";
 import { POOLED, rangeSum, recordLabel, scopeWeeks } from "../progress";
 import { queueFoldLine, queuePoll } from "../season";
+import { overviewLine } from "../seasonStatus";
 import { useNow } from "./YahooSync";
 
 const LAYOUT_KEY = "pickandroll.layout";
@@ -50,7 +54,12 @@ export default function Landing({
   };
   const leagues = useQuery({ queryKey: ["leagues"], queryFn: api.leagues, refetchInterval: 30_000 });
   const rooms = useQuery({ queryKey: ["rooms"], queryFn: api.rooms, refetchInterval: 5000 });
-  const seasons = useQuery({ queryKey: ["seasons"], queryFn: api.seasons });
+  // The table's leagues in its order (#191), shared with the overview sheet's rows (#253).
+  const landing = useLandingOrder();
+  const seasons = landing.seasons;
+  const light = useSeasonStatus();
+  const [overview, setOverview] = useState(false);
+  const shown = [...landing.rows.pinned, ...landing.rows.rest];
   const now = useNow(30_000);
   const [drawer, setDrawer] = useState<DrawerView | null>(null);
   // The New draft form's league from a draft card's Set up; the key starts the form over.
@@ -60,6 +69,7 @@ export default function Landing({
     setDrawer("new");
   };
   const closeDrawer = useCallback(() => setDrawer(null), []);
+  const closeOverview = useCallback(() => setOverview(false), []);
   useHotkeys(landingKeys(drawer ? null : onQueue));
   const ready = leagues.data !== undefined || leagues.isError;
   const page = pageFor(layout, leagues.data ?? [], rooms.data ?? [], now);
@@ -73,10 +83,15 @@ export default function Landing({
   return (
     <main className="shell">
       <header className="topbar">
-        <div className="wordmark">
-          PICK<span>&amp;</span>ROLL
-        </div>
+        <Wordmark onHome={closeDrawer} />
         {ready && <span className="muted">{status}</span>}
+        {light.data && page === "season" && (
+          <StatusIcon
+            state={light.data.state}
+            title={overviewLine(light.data, shown.map((s) => ({ league: s.league, name: s.name ?? `League ${s.league}` })), new Date(now))}
+            onOpen={() => setOverview(true)}
+          />
+        )}
         <span className="grow" />
         <span className="modeswitch">
           <span className="k">Layout</span>
@@ -98,12 +113,13 @@ export default function Landing({
         <DraftSeason now={now} setup={setup} onSetUp={(league) => setSetupState((x) => ({ key: x.key + 1, league }))} onOpenSession={onOpenSession} onOpenLeague={onOpenLeague} />
       ) : (
         <div className="landing-grid">
-          <LeagueGrid onOpen={onOpenLeague} />
+          <LeagueGrid landing={landing} onOpen={onOpenLeague} />
           <ProgressFold onOpen={onProgress} />
           <QueueFold onOpen={onQueue} />
           <DraftsFold leagues={leagues.data ?? []} rooms={rooms.data ?? []} now={now} onDrafts={() => setDrawer("drafts")} onNew={() => setDrawer("new")} />
         </div>
       )}
+      {overview && light.data && <OverviewSheet p={light.data} leagues={shown} now={now} onClose={closeOverview} />}
       {drawer && page === "season" && (
         <DraftsDrawer view={drawer} setView={setDrawer} setup={setup} onSetUp={onSetUp} onClose={closeDrawer} onOpenSession={onOpenSession} now={now} />
       )}

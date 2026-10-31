@@ -1,31 +1,11 @@
 import { useEffect, useState } from "react";
-import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
-import { api, type BestMove, type ProjectionSystem, type SeasonSummary } from "../api";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { api, type SeasonSummary } from "../api";
 import type { SeasonViewId } from "../keys";
-import { isExpanded, isRefreshing, landingRows, leaguesLabel, onLanding, toggleExpanded, type GridOrder } from "../season";
+import { isExpanded, isRefreshing, leaguesLabel, toggleExpanded, type GridOrder } from "../season";
 import { LeagueBlock, UnreadBlock } from "./LeagueBlock";
+import { SYSTEM, type LandingOrder } from "./landingOrder";
 import { StatusSheet, useSeasonStatus } from "./StatusLight";
-
-/** The table's moves come from the league page's default projection, so a solve there shows here. */
-const SYSTEM: ProjectionSystem = "bbm";
-const ORDER_KEY = "pickandroll.landing.order";
-const POINTS_KEY = "pickandroll.landing.points";
-
-function savedOrder(): GridOrder {
-  try {
-    return localStorage.getItem(ORDER_KEY) === "name" ? "name" : "gain";
-  } catch {
-    return "gain";
-  }
-}
-
-function savedPoints(): boolean {
-  try {
-    return localStorage.getItem(POINTS_KEY) === "shown";
-  } catch {
-    return false;
-  }
-}
 
 /** The leagues in season as a table (#191, after the #108 grid): two rows per league, this week's
  * score, the opponent, my place, the adds left, the flags, the best recommended move with its
@@ -34,48 +14,11 @@ function savedPoints(): boolean {
  * first and opens expanded; the points leagues are hidden until shown. The best move is only
  * ever read from the moves already solved today: loading the table solves nothing, a league
  * without an answer says so, and its button solves it. */
-export default function LeagueGrid({ onOpen }: { onOpen: (league: string, view?: SeasonViewId) => void }) {
+export default function LeagueGrid({ landing, onOpen }: { landing: LandingOrder; onOpen: (league: string, view?: SeasonViewId) => void }) {
   const queryClient = useQueryClient();
-  const seasons = useQuery({
-    queryKey: ["seasons"],
-    queryFn: api.seasons,
-    // Every second while a refresh runs, so its step shows; else once a minute for the ages.
-    refetchInterval: (q) => (q.state.data?.some(isRefreshing) ? 1000 : 60_000),
-  });
-  const [order, setOrderState] = useState<GridOrder>(savedOrder);
-  const setOrder = (o: GridOrder) => {
-    setOrderState(o);
-    try {
-      localStorage.setItem(ORDER_KEY, o);
-    } catch {
-      // The order is a convenience: it resets without storage.
-    }
-  };
-  const [showPoints, setShowPointsState] = useState(savedPoints);
-  const setShowPoints = (shown: boolean) => {
-    setShowPointsState(shown);
-    try {
-      localStorage.setItem(POINTS_KEY, shown ? "shown" : "hidden");
-    } catch {
-      // Like the order: hidden again without storage.
-    }
-  };
+  const { seasons, list, best, lookError, rows, order, setOrder, showPoints, setShowPoints } = landing;
   // The panels opened or closed by hand; the private league's starts open.
   const [toggled, setToggled] = useState<ReadonlyMap<string, boolean>>(new Map());
-  const list = seasons.data ?? [];
-  // Only the leagues shown look for their best move: a hidden points league costs no request.
-  const shown = list.filter((s) => onLanding(s, showPoints));
-  const movable = shown.filter((s) => s.has_snapshot && !s.error && s.my_team);
-  // One look per league, each row filling in as its answer lands; a new snapshot looks again.
-  const looks = useQueries({
-    queries: movable.map((s) => ({
-      queryKey: ["best", s.league, SYSTEM, s.updated_at],
-      queryFn: () => api.best(s.league, SYSTEM),
-      refetchInterval: 60_000,
-    })),
-  });
-  const best = new Map<string, BestMove | undefined>(movable.map((s, i) => [s.league, looks[i].data]));
-  const lookError = new Map(movable.map((s, i) => [s.league, looks[i].error]));
   const [solving, setSolving] = useState<Set<string>>(new Set());
   const solve = useMutation({
     mutationFn: (s: SeasonSummary) => api.solveBest(s.league, SYSTEM),
@@ -102,7 +45,6 @@ export default function LeagueGrid({ onOpen }: { onOpen: (league: string, view?:
   const open = list.find((s) => s.league === sheetFor);
   const now = Date.now();
   if (!list.length && !seasons.error) return seasons.isPending ? <p className="muted">Reading the leagues…</p> : null;
-  const rows = landingRows(list, best, order, showPoints);
   const block = (s: SeasonSummary) => {
     const common = {
       s,

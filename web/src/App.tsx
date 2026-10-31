@@ -12,6 +12,7 @@ import Landing from "./components/Landing";
 import ProgressScreen from "./components/ProgressScreen";
 import QueueScreen from "./components/QueueScreen";
 import SeasonScreen from "./components/SeasonScreen";
+import Wordmark from "./components/Wordmark";
 import { RoomFeed, SyncButton } from "./components/YahooSync";
 import { CARD_ICONS, Close } from "./components/icons";
 import { adpIsStandIn, adpLabel, blendLabel, rankLabel, survivalDetail, turnFlag } from "./format";
@@ -92,9 +93,7 @@ function DraftScreen({ yahoo, room, onSwitch, announce, onShown }: ScreenProps) 
   return (
     <main className="shell">
       <header className="topbar">
-        <div className="wordmark">
-          PICK<span>&amp;</span>ROLL
-        </div>
+        <Wordmark onHome={onSwitch} />
         <span className="muted">
           {s.projection} · {s.num_teams} teams · you pick {s.my_position}
           {s.traded_picks.length > 0 && (
@@ -332,7 +331,16 @@ export default function App() {
     setLeagueId(null);
     setLeagueView(null);
   };
-  if (!sessionId && leagueId) return <SeasonScreen league={leagueId} view={leagueView ?? undefined} onBack={leaveLeague} onProgress={openProgress} />;
+  // The wordmark (#253): the landing page from any screen, without a reload.
+  const goHome = () => {
+    setSessionId(null);
+    setLeagueId(null);
+    setLeagueView(null);
+    setProgress(false);
+    setQueue(false);
+  };
+  if (!sessionId && leagueId)
+    return <SeasonScreen key={leagueId} league={leagueId} view={leagueView ?? undefined} onBack={leaveLeague} onHome={goHome} onLeague={openLeague} onProgress={openProgress} />;
   if (!sessionId && progress) return <ProgressScreen onBack={() => setProgress(false)} onOpenLeague={setLeagueId} />;
   if (!sessionId && queue) return <QueueScreen onBack={() => setQueue(false)} onOpenLeague={(league) => openLeague(league)} />;
   if (!sessionId || !session.data) return <Landing onOpenLeague={openLeague} onOpenSession={setSessionId} onProgress={openProgress} onQueue={openQueue} error={session.error} />;

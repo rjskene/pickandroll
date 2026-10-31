@@ -2081,6 +2081,17 @@ export function landingRows(
   return { pinned: gridOrder(pinned, best, by), rest: gridOrder(shown, best, by), hidden: others.length - shown.length };
 }
 
+/** The league the league page's previous or next button goes to (#253): the one before or after
+ * ``league`` in ``order`` (the landing table's leagues, pinned first), wrapping at the ends; a league
+ * the table does not show steps to the first or the last. Null when there is no other league. */
+export function stepLeague(order: string[], league: string, dir: 1 | -1): string | null {
+  const others = order.filter((x) => x !== league);
+  if (!others.length) return null;
+  const i = order.indexOf(league);
+  if (i < 0) return dir === 1 ? order[0] : order[order.length - 1];
+  return order[(i + dir + order.length) % order.length];
+}
+
 /** The table's head: "9 categories leagues", or with the points leagues shown "12 leagues: 9
  * categories, 3 points". */
 export function leaguesLabel(shown: Pick<SeasonSummary, "scoring">[]): string {
