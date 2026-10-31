@@ -318,6 +318,15 @@ export function finishedDrafts(leagues: LeagueSummary[], rooms: RoomSummary[], n
   return leagues.filter((l) => draftState(l, rooms, now) === "finished").sort((a, b) => when(b) - when(a));
 }
 
+/** The controls a clickable row (#274) leaves its clicks to. */
+export const ROW_CONTROLS = "button, input, select, textarea, label, a";
+
+/** Whether a click on a clickable row opens its screen (#274): not when it lands in one of the
+ * row's controls, nor when it ends a drag that selected text. */
+export function rowClickOpens(inControl: boolean, selected: string): boolean {
+  return !inControl && selected === "";
+}
+
 /** The page the Layout control shows: auto is the draft-season page while a room is live or a
  * league's draft runs or is less than fourteen days away, else the in-season page. */
 export function pageFor(layout: Layout, leagues: LeagueSummary[], rooms: RoomSummary[], now: number): "season" | "draft" {
