@@ -34,7 +34,8 @@ import pandas as pd
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi import Path as FastPath
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import PlainTextResponse, StreamingResponse
+from fastapi.responses import FileResponse, PlainTextResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from ..availability.adp import SPREAD_BASE, SPREAD_GROWTH
@@ -90,6 +91,17 @@ from .yahoo_room import YahooRoom
 
 LOG = logging.getLogger(__name__)
 DATA_DIR = Path(__file__).resolve().parents[3] / "data"
+#: The dashboard's build (``web/dist``, gitignored), served by this API under
+#: :data:`DASHBOARD_PATH` when it exists: on the routine host, whose API the tailnet reaches and
+#: nothing else (docs/OPS.md §2a, #262). The Mac's checkout holds no build, so its API serves
+#: none and the dev server with its ``/api`` proxy is unchanged. ``PICKANDROLL_WEB_DIST`` names
+#: another folder.
+WEB_DIST = Path(
+    os.environ.get("PICKANDROLL_WEB_DIST") or Path(__file__).resolve().parents[3] / "web" / "dist"
+)
+#: Where the build is served: its own prefix, so the API's routes (``/progress`` among them)
+#: stay what they are; the build is made with ``vite build --base=/app/`` to match.
+DASHBOARD_PATH = "/app"
 KEEPALIVE_SECONDS = 15.0
 # Streams end on their own after this long; EventSource reconnects, the stream replays the
 # board changes it missed and the UI refreshes on the next hello. Bounded streams let uvicorn
@@ -653,9 +665,11 @@ def create_app(
     league_factory: LeagueFactory | None = None,
     fidelity_dir: Path | None = None,
     season_fetch: seasons.FetchFactory | None = None,
+    web_dist: Path | None = None,
 ) -> FastAPI:
     """The API. ``season_fetch`` makes the fetcher the in-season refresh reads Yahoo's and
-    ESPN's public sources with (tests pass saved pages)."""
+    ESPN's public sources with (tests pass saved pages); ``web_dist`` is the dashboard build
+    served under ``/app`` when it exists (:data:`WEB_DIST`, :func:`serve_dashboard`)."""
     store = store or SessionStore()
     data_dir = data_dir or DATA_DIR
     fidelity_dir = fidelity_dir or data_dir / "fidelity"
@@ -1955,7 +1969,33 @@ def create_app(
         room, session = await open_room(body.model_copy(update={"session_id": session_id}))
         return room_view(room, session)
 
+    serve_dashboard(app, WEB_DIST if web_dist is None else web_dist)
     return app
+
+
+def serve_dashboard(app: FastAPI, dist: Path) -> bool:
+    """The built dashboard under :data:`DASHBOARD_PATH` when ``dist/index.html`` exists (#262):
+    its files under ``/app/assets``, and its page for ``/app``, ``/app/`` and every path below
+    without a suffix (``/app/progress``, ``/app/queue``: the views the app keeps in the path,
+    with ``?league=`` and ``?session=`` as queries). A path with a suffix the build lacks is a
+    404. The API's own routes are untouched. Returns whether the dashboard is served."""
+    index = dist / "index.html"
+    if not index.is_file():
+        return False
+    assets = dist / "assets"
+    if assets.is_dir():
+        app.mount(
+            f"{DASHBOARD_PATH}/assets", StaticFiles(directory=assets), name="dashboard-assets"
+        )
+
+    @app.get(DASHBOARD_PATH, include_in_schema=False)
+    @app.get(DASHBOARD_PATH + "/{path:path}", include_in_schema=False)
+    def dashboard(path: str = "") -> FileResponse:
+        if Path(path).suffix:
+            raise HTTPException(status_code=404, detail="Not Found")
+        return FileResponse(index, media_type="text/html")
+
+    return True
 
 
 # --------------------------------------------------------------------------- session setup

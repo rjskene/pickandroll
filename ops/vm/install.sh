@@ -12,6 +12,7 @@
 #              watchdog enabled: the soak, the Mac still live
 #   --cutover  ROUTINE_FLAGS=--skip-solve 31822 (posts on), the timers enabled; the modes are
 #              the user's own clicks on the dashboard
+# The dashboard (web/) is built here and served by the API under /app, for the tailnet (§2a).
 # The private league's solve is left out on this host (--skip-solve, the runner's flag): it ran
 # thirty minutes here without finishing where the public leagues take seconds, and a solve the
 # client abandons keeps computing in the API. The flag stays until the API gives that league's
@@ -79,6 +80,22 @@ fi
 "$repo/.venv/bin/pip" install -q -e "$repo[api,bbm,dev]"
 "$repo/.venv/bin/playwright" install chromium >/dev/null
 say "venv: $("$py" --version 2>&1), $("$repo/.venv/bin/pip" show playwright 2>/dev/null | sed -n 's/^Version: /playwright /p')"
+
+# 3b. the dashboard: the API serves web/dist under /app (docs/OPS.md §2a, tailnet only), built
+#     here when the build is missing or web/ changed in this pull; the API is the page's own origin
+if ! command -v npm >/dev/null 2>&1; then
+  say "dashboard: npm is missing, not built (the API serves none)"
+else
+  build=0
+  [ -f "$repo/web/dist/index.html" ] || build=1
+  if [ "$before" != "$after" ] && ! git -C "$repo" diff --quiet "$before" "$after" -- web; then build=1; fi
+  if [ "$build" = 1 ]; then
+    (cd "$repo/web" && npm ci --no-audit --no-fund --silent && VITE_PICKANDROLL_API_BASE= npm run build --silent -- --base=/app/)
+    say "dashboard: built from web/ at ${after:0:7}, served by the API under /app"
+  else
+    say "dashboard: build unchanged"
+  fi
+fi
 
 # 4. the units, the display and the API
 mkdir -p "$units" "$conf"

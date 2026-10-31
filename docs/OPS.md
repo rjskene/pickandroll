@@ -20,6 +20,7 @@ copied to the Mac; the routines open pages and the extension acts, no session cl
 | clock | the host is on UTC; every unit and timer carries `TZ=America/Chicago` and `OnCalendar=… America/Chicago`, so the routines keep their Central times |
 | display | `Xvfb :99` (1440x900), a user service; the browser is headed on it |
 | API | `uvicorn pickandroll.api:app` on 127.0.0.1:8000, a user service, `Restart=always`, `OOMScoreAdjust=-500` |
+| dashboard | the API serves the web app's build (`web/dist`, made by `install.sh` and `update.sh`) under `/app`; reached over the tailnet only, through the host's `tailscale serve` entry to the API (§2a) |
 | data | `~/pickandroll/data/`, the only copy that counts after cut-over; `data/routine/` holds the runner's marker, run logs, profile, downloads and screens |
 | settings | `~/.config/pickandroll/`: `ntfy_topic`, `ops_issue`, `routine.env` (the user's files; `install.sh` writes a README there) |
 | the private league's solve | left out on this host: `--skip-solve 31822` in `ROUTINE_FLAGS` (the runner's flag), because it ran thirty minutes here without finishing where the public leagues take seconds, and a solve the client abandons keeps computing in the API; the flag stays until the API gives that league's search a budget |
@@ -45,8 +46,11 @@ git clone https://github.com/rjskene/pickandroll.git ~/pickandroll && ~/pickandr
 checkout to `main` (`--branch NAME` for a verification run), makes the venv
 (`pip install -e '.[api,bbm,dev]'`) and Playwright's Chromium, copies the units into
 `~/.config/systemd/user`, enables and restarts Xvfb and the API, writes `ops_issue` (225 until
-the user rules another) and leaves the timers as they are. The same command updates the host
-after a merge: run it again (it pulls `main` and restarts the API, under the room guard).
+the user rules another), builds the dashboard (§2a) and leaves the timers as they are. The same
+command updates the host after a merge: run it again (it pulls `main` and restarts the API,
+under the room guard). The lighter update after a merge is `ops/vm/update.sh` (§2a): the
+fast-forward of `main` under the room and routine guards, the dashboard rebuilt when `web/`
+changed, the API restarted when `src/` or `pyproject.toml` changed, nothing else touched.
 
 What stays the user's, printed at the end: `gh auth login` as `pickandroll` (the alert's issue
 comments; gh itself is already installed), the ntfy topic in `~/.config/pickandroll/ntfy_topic` with the app subscribed to
@@ -56,6 +60,33 @@ on the Mac the two agents of `ops/mac/README.md` at cut-over.
 The runner's own fallback for a silent API (`scripts/draft_day.py servers --start`, the Mac's
 launch entries) is a harmless no-op here: `~/code/.claude/launch.json` does not exist on the
 host, and the API is the systemd service every routine instance `Wants=`.
+
+## 2a. The dashboard on the tailnet (#262)
+
+The host's API serves the web app's build when `web/dist/index.html` exists: the page under
+`/app` (`/app/`, `/app/progress`, `/app/queue`, with `?league=` and `?session=` as on the Mac),
+its files under `/app/assets`. The API's own routes are what they were, so `/progress` is
+still the Progress screen's JSON. The build is made on the host by `install.sh` and by
+`update.sh` (Node is on the host) with `vite build --base=/app/` and `VITE_PICKANDROLL_API_BASE`
+set empty, which makes the page call the API at its own origin: no CORS, no second address.
+The Mac's checkout holds no build (`web/dist` is gitignored), so the Mac's API serves none and
+its dashboard stays the dev server with its `/api` proxy, unchanged.
+
+The address is the host's `tailscale serve` entry to the API, tailnet only: `tailscale serve
+status` on the host lists it (an HTTPS port of the host's MagicDNS name proxied to
+`http://127.0.0.1:8000`), and the dashboard is that address with `/app/` appended. The API
+itself binds 127.0.0.1 and nothing opens a port on the public interface; a device off the
+tailnet reaches neither. Recreating the entry, should it be lost, is the user's command on the
+host (`tailscale serve --bg --https=<port> http://127.0.0.1:8000`, as the Tailscale operator).
+
+After a web PR merges, `update.sh` (or `install.sh`) rebuilds; the API serves the new files
+without a restart. During the soak the host's dashboard shows the host's own copy of `data/`
+(the dry run), and a switch clicked there is the host's, not the Mac's; after cut-over it is
+the live one, and the Mac's tunnel of §5 is a second way in rather than the only one.
+
+```bash
+curl -s -o /dev/null -w '%{http_code}\n' -H 'Accept: text/html' http://127.0.0.1:8000/app/   # 200 on the host once built
+```
 
 ## 3. The sign-in (the user, once, and again when the 04:50 check fails)
 

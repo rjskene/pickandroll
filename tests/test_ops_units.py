@@ -202,6 +202,158 @@ def run(script: Path, env: dict[str, str], *args: str) -> subprocess.CompletedPr
     )
 
 
+# ----------------------------------------------------------------------------------- update
+def git(repo: Path, *args: str) -> str:
+    done = subprocess.run(
+        ["git", "-c", "user.name=t", "-c", "user.email=t@example.com", "-C", str(repo), *args],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return done.stdout.strip()
+
+
+@pytest.fixture
+def update(tmp_path: Path) -> tuple[Path, Path, Path, dict[str, str]]:
+    """The host's checkout as a clone of a bare origin, with a seed clone to move the origin
+    from; fake curl (the rooms and /seasons), systemctl (the units) and npm (the build) on the
+    PATH, every call logged. Returns the checkout, the seed, the log and the environment."""
+    seed, origin, repo = tmp_path / "seed", tmp_path / "origin.git", tmp_path / "repo"
+    seed.mkdir()
+    git(seed, "init", "-q", "-b", "main")
+    for rel, text in (
+        ("web/index.html", "<html>"),
+        ("src/x.py", "x = 1\n"),
+        ("pyproject.toml", "[p]\n"),
+    ):
+        (seed / rel).parent.mkdir(parents=True, exist_ok=True)
+        (seed / rel).write_text(text)
+    git(seed, "add", ".")
+    git(seed, "commit", "-q", "-m", "seed")
+    subprocess.run(["git", "clone", "-q", "--bare", str(seed), str(origin)], check=True)
+    git(seed, "remote", "add", "origin", str(origin))
+    subprocess.run(["git", "clone", "-q", str(origin), str(repo)], check=True)
+    log = tmp_path / "calls.log"
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    fake(
+        bin_dir,
+        "curl",
+        f"""echo "curl $*" >> "{log}"
+case "$*" in
+  *"/rooms"*) printf '%s' "${{FAKE_ROOMS-[]}}" ;;
+  *"-w"*"/seasons"*) printf '%s' "${{FAKE_SEASONS_CODE:-200}}" ;;
+  *"/seasons"*) echo "[]" ;;
+esac
+""",
+    )
+    fake(
+        bin_dir,
+        "systemctl",
+        f"""echo "systemctl $*" >> "{log}"
+case "$*" in *list-units*) printf '%s\\n' "${{FAKE_ACTIVE:-}}" ;; esac
+""",
+    )
+    fake(
+        bin_dir,
+        "npm",
+        f"""echo "npm $* VITE_PICKANDROLL_API_BASE=${{VITE_PICKANDROLL_API_BASE-unset}}" >> "{log}"
+case "$*" in *build*) mkdir -p dist && echo built > dist/index.html ;; esac
+""",
+    )
+    env = env_with(
+        bin_dir,
+        PICKANDROLL_REPO=str(repo),
+        PICKANDROLL_API="http://127.0.0.1:8000",
+        XDG_RUNTIME_DIR="/tmp",
+    )
+    return repo, seed, log, env
+
+
+def move_origin(seed: Path, rel: str, text: str) -> str:
+    (seed / rel).write_text(text)
+    git(seed, "add", rel)
+    git(seed, "commit", "-q", "-m", f"change {rel}")
+    git(seed, "push", "-q", "origin", "main")
+    return git(seed, "rev-parse", "HEAD")
+
+
+def test_update_refuses_under_a_live_room_or_a_running_routine(update) -> None:
+    repo, _seed, log, env = update
+    done = run(VM / "update.sh", {**env, "FAKE_ROOMS": '[{"id": "r1"}]'})
+    assert done.returncode == 3 and "refused: http://127.0.0.1:8000/rooms answers" in done.stdout
+    done = run(VM / "update.sh", {**env, "FAKE_ACTIVE": "pickandroll-routine@morning.service"})
+    assert done.returncode == 3
+    assert "refused: a routine runs (pickandroll-routine@morning.service)" in done.stdout
+    assert "npm" not in log.read_text() and "restart" not in log.read_text()
+    assert not (repo / "web" / "dist").exists()
+    assert run(VM / "update.sh", env, "--bogus").returncode == 2
+
+
+def test_update_builds_a_missing_dashboard_and_leaves_the_api_when_nothing_changed(update) -> None:
+    repo, _seed, log, env = update
+    head = git(repo, "rev-parse", "HEAD")
+    done = run(VM / "update.sh", env)
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert f"main: {head[:7]} (unchanged)" in done.stdout
+    assert f"dashboard: built from web/ at {head[:7]}, served under /app" in done.stdout
+    assert "api: not restarted (no src/ or pyproject.toml change)" in done.stdout
+    calls = log.read_text()
+    assert "npm ci --no-audit --no-fund --silent VITE_PICKANDROLL_API_BASE=unset" in calls
+    assert (
+        "npm run build --silent -- --base=/app/ VITE_PICKANDROLL_API_BASE=\n" in calls
+    )  # set, empty
+    assert "restart" not in calls and (repo / "web" / "dist" / "index.html").is_file()
+    # built already and nothing moved: nothing done
+    done = run(VM / "update.sh", env)
+    assert done.returncode == 0 and "dashboard: unchanged" in done.stdout
+    assert log.read_text().count("npm run build") == 1
+
+
+def test_update_fast_forwards_rebuilds_on_a_web_change_and_restarts_on_a_src_change(update) -> None:
+    repo, seed, log, env = update
+    old = git(repo, "rev-parse", "HEAD")
+    assert run(VM / "update.sh", env).returncode == 0  # the first build
+    new = move_origin(seed, "web/index.html", "<html>v2")
+    done = run(VM / "update.sh", env)
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert f"main: {new[:7]} (was {old[:7]})" in done.stdout
+    assert git(repo, "rev-parse", "HEAD") == new
+    assert (
+        f"dashboard: built from web/ at {new[:7]}" in done.stdout
+        and "api: not restarted" in done.stdout
+    )
+    assert "restart" not in log.read_text()
+    newer = move_origin(seed, "src/x.py", "x = 2\n")
+    done = run(VM / "update.sh", env)
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert "dashboard: unchanged" in done.stdout
+    assert "api: restarted, GET /seasons 200" in done.stdout
+    assert "systemctl --user restart pickandroll-api.service" in log.read_text()
+    assert git(repo, "rev-parse", "HEAD") == newer
+    assert log.read_text().count("npm run build") == 2
+
+
+def test_update_restarts_on_request_and_fails_when_the_api_does_not_answer(update) -> None:
+    _repo, _seed, log, env = update
+    done = run(VM / "update.sh", env, "--restart")
+    assert done.returncode == 0 and "api: restarted, GET /seasons 200" in done.stdout
+    assert "systemctl --user restart pickandroll-api.service" in log.read_text()
+    done = run(VM / "update.sh", {**env, "FAKE_SEASONS_CODE": "503"}, "--restart")
+    assert done.returncode == 1 and "api: restarted, GET /seasons 503" in done.stdout
+
+
+def test_update_says_when_npm_is_missing(update) -> None:
+    repo, _seed, _log, env = update
+    bin_dir = Path(env["PATH"].split(os.pathsep)[0])
+    (bin_dir / "npm").unlink()  # and the real one is off this PATH
+    env = {**env, "PATH": f"{bin_dir}{os.pathsep}/usr/bin:/bin"}
+    done = run(VM / "update.sh", env)
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert "dashboard: npm is missing, not built (the API serves none)" in done.stdout
+    assert not (repo / "web" / "dist").exists()
+
+
 # ---------------------------------------------------------------------------------- watchdog
 
 
