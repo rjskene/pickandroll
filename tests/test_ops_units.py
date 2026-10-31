@@ -652,7 +652,8 @@ SITE_URLS = {
 }
 VALUES = {"pickandroll-bbm": "bbm-test-value", "pickandroll-yahoo": "yahoo-test-value"}
 ACCOUNTS = {"pickandroll-bbm": "bbm-user", "pickandroll-yahoo": "yahoo-user"}
-#: Where the fake browser draws each element; a click there is a click on it.
+#: Where the fake browser draws each element; a click there is a click on it. The helper knows
+#: the first seven; Sign in and Remove are drawn to prove they are never clicked.
 SPOTS = {
     "username": (100.0, 100.0),
     "password": (100.0, 200.0),
@@ -660,8 +661,11 @@ SPOTS = {
     "another": (100.0, 400.0),
     "option": (100.0, 500.0),
     "login": (100.0, 600.0),
-    "signin": (100.0, 700.0),  # on every sign-in page, never to be clicked
+    "account": (100.0, 650.0),
+    "signin": (100.0, 700.0),
+    "remove": (100.0, 750.0),
 }
+KNOWN = ("username", "password", "next", "another", "option", "login", "account")
 #: Each page's states: path → what it shows and where a click on a shown element moves; a state
 #: with a third and fourth member is a page still drawing itself, which turns into the page at
 #: that path after that many looks.
@@ -677,6 +681,9 @@ YAHOO_STATES = {
     ),
     "/account/challenge/password": ({"password", "signin"}, {}),
     "/account/challenge/verify-code": (set(), {}),  # a page the helper does not know
+    # The account chooser after a sign-out: the signed-out account's tile, its Remove button
+    # and a "Use a different account" link; the tile leads on with the username already known.
+    "/manage_account": ({"account", "remove"}, {"account": "/account/challenge/web-authn"}),
 }
 BBM_STATES = {
     "/": ({"login"}, {"login": "/login.aspx-loading"}),
@@ -805,7 +812,7 @@ class FakeDevTools:
         if method == "Runtime.evaluate":
             expression = params["expression"]
             if expression == self.kf.page_expression(None):
-                shows = {kind: kind in self.shows(pid) for kind in SPOTS if kind != "signin"}
+                shows = {kind: kind in self.shows(pid) for kind in KNOWN}
                 path = REPORTED.get(self.path[pid], self.path[pid])
                 if pid in self.turning:
                     self.turning[pid][1] -= 1
@@ -917,6 +924,7 @@ def test_the_keychain_mode_walks_each_site_from_its_front_page_to_the_filled_pas
         "yahoo: username in, Next clicked, passkey page passed, password option taken,"
         " the password field holds the Keychain item 'pickandroll-yahoo'; click Sign in" in out
     )
+    assert "Yahoo may ask for a verification code first: type it into the screencast" in out
     assert out.rstrip().endswith("signed in on the droplet: both sites")
     # The pages walked, the clicks and the texts: Sign in never, the retrieve button never.
     assert browser.path == {"Y1": "/account/challenge/password", "B1": "/login.aspx", "X1": "/"}
@@ -980,6 +988,30 @@ def test_the_keychain_mode_stops_on_a_page_it_does_not_know_and_fills_a_field_al
     reads = security_reads(calls)
     assert "find-generic-password -s pickandroll-yahoo -w" not in reads  # unknown page: no read
     assert reads.count("find-generic-password -s pickandroll-bbm -w") == 1
+
+
+def test_the_keychain_mode_takes_yahoos_account_chooser_and_never_its_remove_button(
+    keychain, kf
+) -> None:
+    script, _state, _log, env, calls = keychain
+    # Yahoo lands on its account chooser after a sign-out; Basketball Monster on its front page.
+    browser = FakeDevTools(kf, starts={"Y1": "/manage_account"})
+    try:
+        done = signin_run(script, env, "--keychain", "--port", str(browser.port), stdin="\n\n\n")
+    finally:
+        browser.close()
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert (
+        "yahoo: account chosen, passkey page passed, password option taken,"
+        " the password field holds the Keychain item 'pickandroll-yahoo'; click Sign in"
+        in done.stdout
+    )
+    assert browser.clicked["Y1"] == ["account", "another", "option", "password"]
+    assert browser.inserted["Y1"] == [("password", "yahoo-test-value")]  # no username step
+    assert browser.path["Y1"] == "/account/challenge/password"
+    reads = security_reads(calls)
+    assert "find-generic-password -s pickandroll-yahoo -w" in reads
+    assert reads.count("find-generic-password -s pickandroll-yahoo") == 1  # the script's check only
 
 
 def test_the_keychain_mode_skips_a_site_on_s(keychain, kf) -> None:
@@ -1046,3 +1078,85 @@ esac
     assert value is None and "empty" in line
     assert kf.main(["9222", "elsewhere", "pickandroll-bbm"]) == 2
     assert kf.main(["port", "bbm", "pickandroll-bbm"]) == 2
+
+
+#: Yahoo's account chooser tiles as the page JS meets them, with where the account click must
+#: land. The fake browser answers by kind, so the rule that picks the element inside the tile is
+#: checked in a real DOM: the venv's Playwright Chromium evaluates the helper's own PAGE_JS.
+#: Each tile is 600 px wide and 80 px tall with its Remove button drawn across the centre, so a
+#: click at the tile's centre would remove the account.
+TILE = (
+    "<li style='position:relative;width:600px;height:80px;list-style:none'>{inner}"
+    "<button id='rm' style='position:absolute;left:260px;top:20px;width:80px;height:40px'>"
+    "Remove</button></li>"
+)
+CHOOSER_TILES = {
+    # The tile's own link carries the account: the link is clicked.
+    "link": (
+        (
+            "<a id='go' href='#go' style='position:absolute;left:10px;top:10px'>"
+            "<span>Test Person</span> <span>test@example.com</span> <span>Signed out</span></a>"
+        ),
+        "go",
+    ),
+    # No link or button but the e-mail in a span of its own: the span is clicked.
+    "span": (
+        (
+            "<img alt='' style='position:absolute;left:10px;top:10px;width:40px;height:40px'>"
+            "<div style='position:absolute;left:60px;top:10px'><div>Test Person</div>"
+            "<span id='mail'>test@example.com</span><div>Signed out</div></div>"
+        ),
+        "mail",
+    ),
+    # A link wrapping the whole row holds the Remove button: not the link, the e-mail span.
+    "wrapping": (
+        (
+            "<a href='#go' style='position:absolute;left:0;top:0;width:600px;height:80px'>"
+            "<span id='mail' style='position:absolute;left:10px;top:30px'>test@example.com</span>"
+            "<span style='position:absolute;left:180px;top:30px'>Signed out</span>"
+            "<button style='position:absolute;left:400px;top:20px'>Remove</button></a>"
+        ),
+        "mail",
+    ),
+    # Only bare text beside the Remove button: nothing safe to click, the page stays unknown.
+    "bare": ("Test Person test@example.com Signed out", None),
+}
+
+
+def test_the_chooser_click_lands_on_the_account_never_on_remove(kf) -> None:
+    sync_api = pytest.importorskip("playwright.sync_api")
+    with sync_api.sync_playwright() as playwright:
+        try:
+            browser = playwright.chromium.launch()
+        except sync_api.Error as exc:  # the browser is not installed here
+            pytest.skip(f"no Playwright Chromium: {exc}")
+        page = browser.new_page()
+        centre = (
+            "sel => { const r = document.querySelector(sel).getBoundingClientRect();"
+            " return {x: r.left + r.width / 2, y: r.top + r.height / 2}; }"
+        )
+        for name, (inner, target) in CHOOSER_TILES.items():
+            page.set_content(
+                "<h1>Welcome back!</h1><ul style='padding:0;margin:0'>"
+                + TILE.format(inner=inner)
+                + "</ul><a href='#other'>Use a different account</a>"
+            )
+            # The tile's centre is the Remove button: the layout the rule protects against.
+            assert page.evaluate(centre, "li") == pytest.approx(page.evaluate(centre, "#rm")), name
+            look = page.evaluate(kf.page_expression(None))
+            assert look["shows"]["account"] is (target is not None), name
+            spot = page.evaluate(kf.page_expression("account"))
+            if target is None:
+                assert spot is None, name
+                continue
+            assert spot == pytest.approx(page.evaluate(centre, f"#{target}")), name
+            hit = page.evaluate(
+                "([x, y]) => document.elementFromPoint(x, y).outerHTML.slice(0, 80)",
+                [spot["x"], spot["y"]],
+            )
+            assert page.evaluate(
+                "([x, y, id]) => document.elementFromPoint(x, y).closest('#' + id) !== null",
+                [spot["x"], spot["y"], target],
+            ), (name, hit)
+            assert "Remove" not in hit, (name, hit)
+        browser.close()

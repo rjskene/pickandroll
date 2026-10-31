@@ -6,10 +6,13 @@ routine, timer or Claude session does.
 From whatever page of the site is on screen it walks to the password field and fills it, then
 stops: the user clicks Sign in. The item's account name (its ``acct`` attribute) goes into the
 visible username field; on Yahoo it clicks Next, and when Yahoo answers with its passkey page it
-clicks "Try signing in another way" and the option that names the password; on Basketball
-Monster's front page it clicks the Login link. Every click is a mouse event on the centre of an
-element found by its visible text, never a form submit, and nothing named Sign in is ever
-clicked. The password is read in this process (``security find-generic-password -s <item> -w``)
+clicks "Try signing in another way" and the option that names the password; on Yahoo's account
+chooser (``/manage_account`` after a sign-out) it clicks the signed-out account's tile at its
+e-mail (the tile's own link or button carrying the account, else the innermost element showing
+the e-mail, else the one saying "Signed out", else the tile itself), never Remove, nothing that
+holds the Remove button and never "Use a different account"; on Basketball Monster's front page
+it clicks the Login link. Every click is a mouse event on the centre of an element found by its
+visible text, never a form submit, and nothing named Sign in is ever clicked. The password is read in this process (``security find-generic-password -s <item> -w``)
 only once the password field is on the page, sent to the browser as the text of one
 ``Input.insertText`` call after a click on the field, and goes nowhere else: not a shell
 argument, not an environment variable, not a line of output; the account name is not printed
@@ -50,7 +53,12 @@ NOT_FOUND = 44  # security's exit code for a missing item (errSecItemNotFound)
 #: field; the username field (a text or email input whose name, id, placeholder or autocomplete
 #: names the user, login, email or account, not a search box, in the password field's form when
 #: there is one); Yahoo's Next button, its "Try signing in another way" link and the option
-#: that names the password (never a forgot/reset link); Basketball Monster's Login link. Called
+#: that names the password (never a forgot/reset link); the signed-out account on Yahoo's account
+#: chooser (in the first visible list item saying "Signed out": its link or button carrying the
+#: account, else the innermost element showing the e-mail, else the one saying "Signed out",
+#: else the item itself; never Remove nor anything that holds the Remove button, so a tile laid
+#: out as avatar | text | Remove is clicked at its e-mail, not at its centre); Basketball
+#: Monster's Login link. Called
 #: with null it reports the path and which of them the page shows; called with a kind it scrolls
 #: that element into view and returns the centre of its box in CSS pixels of the viewport, where
 #: the click lands, or null.
@@ -71,6 +79,21 @@ PAGE_JS = (
     "   .join(' ');"
     " const usernames = inputs.filter(el => (el.type === 'text' || el.type === 'email')"
     "   && /user|login|email|acct|account/i.test(names(el)) && !/search/i.test(names(el)));"
+    " const tile = Array.from(document.querySelectorAll('li')).filter(visible)"
+    "   .find(li => /signed out/i.test(text(li))) || null;"
+    " const removes = tile ? Array.from(tile.querySelectorAll('a, button, [role=button]'))"
+    "   .filter(el => /^remove$/i.test(text(el))) : [];"
+    " const safe = el => !/^remove$/i.test(text(el)) && !removes.some(r => el.contains(r));"
+    " const carries = t => /@/.test(t) || /signed out/i.test(t);"
+    " const innermost = test => {"
+    "   const cands = Array.from(tile.querySelectorAll('*'))"
+    "     .filter(el => visible(el) && safe(el) && test(text(el)));"
+    "   return cands.find(el => !cands.some(o => o !== el && el.contains(o))) || null;"
+    " };"
+    " const account = tile && (Array.from(tile.querySelectorAll('a, button, [role=button]'))"
+    "   .filter(visible).find(el => safe(el) && carries(text(el)))"
+    "   || innermost(t => /@/.test(t)) || innermost(t => /signed out/i.test(t))"
+    "   || (safe(tile) ? tile : null));"
     " const found = {"
     "   password,"
     "   username: (password && usernames.find(el => el.form && el.form === password.form))"
@@ -79,6 +102,7 @@ PAGE_JS = (
     "   another: byText(t => /another way/i.test(t)),"
     "   option: byText(t => /password/i.test(t) && !/forgot|reset|recover|retriev/i.test(t)),"
     "   login: byText(t => /^log ?in$/i.test(t)),"
+    "   account,"
     " };"
     " if (kind === null) {"
     "   const shows = {};"
@@ -116,6 +140,7 @@ FOCUS_JS = {
 #: What the approach says it did, by element, in the one line printed at the end.
 SAID = {
     "login": "Login clicked",
+    "account": "account chosen",
     "username": "username in",
     "next": "Next clicked",
     "another": "passkey page passed",
@@ -450,12 +475,17 @@ def approach(devtools: DevTools, site: str, service: str, said: list[str]) -> in
                 continue  # without Next, look again (Basketball Monster shows both fields)
             step = "next"
         else:
-            # Yahoo's passkey page first, then the option that names the password; a page
-            # that still shows the link just clicked gets the other one, and when that link
-            # is the only known thing on it the page is still drawing itself: wait for more.
+            # Yahoo's account chooser first, then its passkey page, then the option that
+            # names the password; a page that still shows the link just clicked gets the other
+            # one, and when that link is the only known thing on it the page is still drawing
+            # itself: wait for more.
             choices = []
             if site == "yahoo":
-                choices += ["another"] * shows["another"] + ["option"] * shows["option"]
+                choices += (
+                    ["account"] * shows["account"]
+                    + ["another"] * shows["another"]
+                    + ["option"] * shows["option"]
+                )
             elif site == "bbm" and shows["login"] and not shows["username"]:
                 choices.append("login")
             if not choices:
