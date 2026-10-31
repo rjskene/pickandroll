@@ -22,6 +22,7 @@ import {
 import { recsReason, when } from "../seasonStatus";
 import { Chevron } from "./icons";
 import { LeagueStatus } from "./StatusLight";
+import YahooLink from "./YahooLink";
 
 /** What a league's block does: open its page (on a view), solve today's moves, read Yahoo again,
  * open its freshness sheet, and open or close its panel. */
@@ -107,6 +108,7 @@ export function LeagueBlock(props: BlockProps) {
             {title}
           </button>
           {pinned && <span className="tag accent">private</span>}
+          <YahooLink league={s.league} title={title} />
         </span>
         <span className="lt-score">
           <span className="big" title={s.scoring === "points" ? "this week's points so far, mine first" : "categories won so far this week, mine first"}>
@@ -237,6 +239,7 @@ function LeagueDetail(props: BlockProps & { id: string; readNote: string; reason
           <button className="small" onClick={onLineup} title="Open the league page on its Lineup view">
             Lineup
           </button>
+          <YahooLink league={s.league} title={s.name ?? `League ${s.league}`} />
           <SolveButton {...props} />
           {s.public && (
             <button className="link" disabled={running} onClick={onRefresh} title="Read the league's public Yahoo pages again (about 20 s)">
@@ -308,6 +311,7 @@ export function UnreadBlock({
         <span className="lt-name">
           <span className="name">{title}</span>
           {s.public === false && <span className="tag accent">private</span>}
+          <YahooLink league={s.league} title={title} />
         </span>
         <span className="lt-wide">
           {s.error ? (
