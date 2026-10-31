@@ -2096,14 +2096,14 @@ export function landingRows(
 
 /** A league's title: its name as read from Yahoo with the id beside it when the name does not
  * carry it, else "League <id>" (the league page's title, and the live-draft cards, #74). */
-/** A league's main page on Yahoo (#278), for the user signed in there: built from the id alone. */
-export function yahooLeagueUrl(league: string): string {
-  return `https://basketball.fantasysports.yahoo.com/nba/${encodeURIComponent(league)}`;
-}
-
 export function leagueTitle(name: string | null | undefined, league: string): string {
   if (!name) return `League ${league}`;
   return name.includes(league) ? name : `${name} · ${league}`;
+}
+
+/** A league's main page on Yahoo (#278), for the user signed in there: built from the id alone. */
+export function yahooLeagueUrl(league: string): string {
+  return `https://basketball.fantasysports.yahoo.com/nba/${encodeURIComponent(league)}`;
 }
 
 /** The landing table's section (#253): collapsed to its header and the pinned private league,

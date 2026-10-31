@@ -294,6 +294,17 @@ export function ProgressIcon() {
 }
 
 /** All leagues, the landing page (#253): four tiles in a 2×2 grid. */
+export function LeaguesIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" {...stroke} aria-hidden="true">
+      <rect x="4" y="4" width="6.5" height="6.5" rx="1.5" />
+      <rect x="13.5" y="4" width="6.5" height="6.5" rx="1.5" />
+      <rect x="4" y="13.5" width="6.5" height="6.5" rx="1.5" />
+      <rect x="13.5" y="13.5" width="6.5" height="6.5" rx="1.5" />
+    </svg>
+  );
+}
+
 /** A league's page on Yahoo (#278): a "Y!" in the app's stroke, no brand asset. */
 export function YahooIcon() {
   return (
@@ -302,17 +313,6 @@ export function YahooIcon() {
       <path d="M14 5l-5 7" />
       <path d="M19 5v9" />
       <path d="M19 19v.01" />
-    </svg>
-  );
-}
-
-export function LeaguesIcon() {
-  return (
-    <svg width="18" height="18" viewBox="0 0 24 24" {...stroke} aria-hidden="true">
-      <rect x="4" y="4" width="6.5" height="6.5" rx="1.5" />
-      <rect x="13.5" y="4" width="6.5" height="6.5" rx="1.5" />
-      <rect x="4" y="13.5" width="6.5" height="6.5" rx="1.5" />
-      <rect x="13.5" y="13.5" width="6.5" height="6.5" rx="1.5" />
     </svg>
   );
 }

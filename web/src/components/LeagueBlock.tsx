@@ -47,6 +47,9 @@ export interface BlockProps extends BlockActions {
   open: boolean;
 }
 
+/** A league's title in the table: its row, its panel and its Yahoo link's label (#278). */
+const titleOf = (s: SeasonSummary) => s.name ?? `League ${s.league}`;
+
 const formatOf = (s: SeasonSummary) => (s.scoring === "points" ? "H2H points" : "H2H categories");
 
 /** A click on a league's rows opens its page (#253), unless it lands on one of their controls
@@ -76,7 +79,7 @@ function rowKey(open: () => void) {
  * tint, held under the column labels while the rest scrolls. */
 export function LeagueBlock(props: BlockProps) {
   const { s, now, best, status, open, onOpen, onRefresh, onStatus, onToggle, refreshing } = props;
-  const title = s.name ?? `League ${s.league}`;
+  const title = titleOf(s);
   const pinned = s.public === false;
   const running = isRefreshing(s) || refreshing;
   const failed = s.refresh?.status === "failed";
@@ -239,7 +242,7 @@ function LeagueDetail(props: BlockProps & { id: string; readNote: string; reason
           <button className="small" onClick={onLineup} title="Open the league page on its Lineup view">
             Lineup
           </button>
-          <YahooLink league={s.league} title={s.name ?? `League ${s.league}`} />
+          <YahooLink league={s.league} title={titleOf(s)} />
           <SolveButton {...props} />
           {s.public && (
             <button className="link" disabled={running} onClick={onRefresh} title="Read the league's public Yahoo pages again (about 20 s)">
@@ -303,7 +306,7 @@ export function UnreadBlock({
   onRefresh,
   onStatus,
 }: Pick<BlockProps, "s" | "status" | "refreshing" | "onRefresh" | "onStatus">) {
-  const title = s.name ?? `League ${s.league}`;
+  const title = titleOf(s);
   return (
     <article className={`lt-block unread${s.public === false ? " pinned" : ""}`} aria-label={title}>
       <div className="lt-main">
