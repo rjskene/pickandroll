@@ -1,18 +1,27 @@
 import { useState } from "react";
 import { useQueries, useQuery } from "@tanstack/react-query";
 import { api, type BestMove, type ProjectionSystem } from "../api";
-import { isRefreshing, landingRows, onLanding, type GridOrder } from "../season";
+import { isRefreshing, landingRows, onLanding, parseTableState, type GridOrder, type TableState } from "../season";
 
 /** The table's moves come from the league page's default projection, so a solve there shows here. */
 export const SYSTEM: ProjectionSystem = "bbm";
 const ORDER_KEY = "pickandroll.landing.order";
 const POINTS_KEY = "pickandroll.landing.points";
+const TABLE_KEY = "pickandroll.landing.table";
 
 function savedOrder(): GridOrder {
   try {
     return localStorage.getItem(ORDER_KEY) === "name" ? "name" : "gain";
   } catch {
     return "gain";
+  }
+}
+
+function savedTable(): TableState {
+  try {
+    return parseTableState(localStorage.getItem(TABLE_KEY));
+  } catch {
+    return "expanded";
   }
 }
 
@@ -54,6 +63,16 @@ export function useLandingOrder() {
       // Like the order: hidden again without storage.
     }
   };
+  // The table's section, collapsed, scrolling or full (#253), beside the order it shows.
+  const [table, setTableState] = useState<TableState>(savedTable);
+  const setTable = (t: TableState) => {
+    setTableState(t);
+    try {
+      localStorage.setItem(TABLE_KEY, t);
+    } catch {
+      // Like the order: expanded again without storage.
+    }
+  };
   const list = seasons.data ?? [];
   // Only the leagues shown look for their best move: a hidden points league costs no request.
   const movable = list.filter((s) => onLanding(s, showPoints) && s.has_snapshot && !s.error && s.my_team);
@@ -68,7 +87,7 @@ export function useLandingOrder() {
   const best = new Map<string, BestMove | undefined>(movable.map((s, i) => [s.league, looks[i].data]));
   const lookError = new Map(movable.map((s, i) => [s.league, looks[i].error]));
   const rows = landingRows(list, best, order, showPoints);
-  return { seasons, list, best, lookError, rows, order, setOrder, showPoints, setShowPoints };
+  return { seasons, list, best, lookError, rows, order, setOrder, showPoints, setShowPoints, table, setTable };
 }
 
 export type LandingOrder = ReturnType<typeof useLandingOrder>;

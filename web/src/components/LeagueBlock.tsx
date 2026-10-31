@@ -1,3 +1,4 @@
+import type { KeyboardEvent, MouseEvent } from "react";
 import type { BestMove, SeasonSummary, StatusPayload } from "../api";
 import {
   addsLeft,
@@ -47,10 +48,31 @@ export interface BlockProps extends BlockActions {
 
 const formatOf = (s: SeasonSummary) => (s.scoring === "points" ? "H2H points" : "H2H categories");
 
+/** A click on a league's rows opens its page (#253), unless it lands on one of their controls
+ * (the chevron, the name, the status icon, refresh, Solve) or ends a text selection. */
+function rowClick(open: () => void) {
+  return (e: MouseEvent<HTMLElement>) => {
+    if ((e.target as Element).closest("button, a, select, input, label, textarea")) return;
+    const selection = window.getSelection();
+    if (selection && !selection.isCollapsed) return;
+    open();
+  };
+}
+
+/** Enter on the focused row opens it; Enter on one of its controls is the control's. */
+function rowKey(open: () => void) {
+  return (e: KeyboardEvent<HTMLElement>) => {
+    if (e.key !== "Enter" || e.target !== e.currentTarget) return;
+    e.preventDefault();
+    open();
+  };
+}
+
 /** A league in the landing table (#191): row 1 the facts in the header's columns, row 2 the
  * format, my team, the week, the recommended set in a line and why the recommendations are not
- * up to date; the chevron opens the panel under them. The private league is pinned: an accent
- * border on the `--mine` tint. */
+ * up to date; the chevron opens the panel under them and a click anywhere else on the two rows
+ * opens the league page (#253). The private league is pinned: an accent border on the `--mine`
+ * tint, held under the column labels while the rest scrolls. */
 export function LeagueBlock(props: BlockProps) {
   const { s, now, best, status, open, onOpen, onRefresh, onStatus, onToggle, refreshing } = props;
   const title = s.name ?? `League ${s.league}`;
@@ -68,7 +90,8 @@ export function LeagueBlock(props: BlockProps) {
   ].filter(Boolean);
   return (
     <article className={`lt-block${pinned ? " pinned" : ""}`} aria-label={title}>
-      <div className="lt-main">
+      {/* The whole of both rows opens the league; the panel under them is not the row. */}
+      <div className="lt-main lt-go" role="link" tabIndex={0} aria-label={`${title}: open its league page`} onClick={rowClick(onOpen)} onKeyDown={rowKey(onOpen)}>
         <button
           className="icon lt-chev"
           aria-expanded={open}

@@ -2081,6 +2081,24 @@ export function landingRows(
   return { pinned: gridOrder(pinned, best, by), rest: gridOrder(shown, best, by), hidden: others.length - shown.length };
 }
 
+/** The landing table's section (#253): collapsed to its header and the pinned private league,
+ * expanded in a scrolling section (the default), or fully expanded with the page scrolling. */
+export type TableState = "collapsed" | "expanded" | "full";
+
+export function parseTableState(v: string | null | undefined): TableState {
+  return v === "collapsed" || v === "full" ? v : "expanded";
+}
+
+/** The header's chevron: a collapsed table opens to the scrolling section, any other closes. */
+export function toggleCollapsed(t: TableState): TableState {
+  return t === "collapsed" ? "expanded" : "collapsed";
+}
+
+/** The header's fully-expand button: in to the full table, out again to the scrolling section. */
+export function toggleFull(t: TableState): TableState {
+  return t === "full" ? "expanded" : "full";
+}
+
 /** The league the league page's previous or next button goes to (#253): the one before or after
  * ``league`` in ``order`` (the landing table's leagues, pinned first), wrapping at the ends; a league
  * the table does not show steps to the first or the last. Null when there is no other league. */
