@@ -675,10 +675,13 @@ const PASS_OUTCOME_WORD: Record<MoveOutcome, string> = {
   gone: "gone",
 };
 
-/** An entry's state: its outcome (and a placed claim's result), why it is not queued, struck, the
- * latest pass's result (#200), or when it executes. */
+/** An entry's state: its outcome (and a placed claim's result, or its bid as the landed page read
+ * it, #239), why it is not queued, struck, the latest pass's result (#200), or when it executes. */
 export function queueStateText(e: QueueEntry, now: number): string {
-  if (e.outcome) return `${MOVE_OUTCOME[e.outcome]}${e.outcome_reason ? ` (${e.outcome_reason})` : ""}${e.resolved ? `, ${e.resolved}` : ""}`;
+  if (e.outcome) {
+    const why = e.outcome_reason ?? (e.outcome === "claimed" && e.pass ? placedBidText(e.pass) || null : null);
+    return `${MOVE_OUTCOME[e.outcome]}${why ? ` (${why})` : ""}${e.resolved ? `, ${e.resolved}` : ""}`;
+  }
   if (!e.queued) return e.reason === "below the noise floor" && e.floor.below ? `below the ${e.floor.below} floor` : (e.reason ?? "not queued");
   if (e.struck) return "struck";
   if (e.pass) return passText(e.pass);
@@ -692,7 +695,21 @@ export function passText(p: QueuePass): string {
   const clock = centralClock(p.at);
   const word = PASS_OUTCOME_WORD[p.outcome] ?? p.outcome;
   const head = p.outcome === "would_claim" ? `${word}${clock ? ` · ${clock}` : ""}` : `${word}${clock ? ` ${clock}` : ""}`;
-  return p.reason ? `${head}: ${p.reason}` : head;
+  const why = p.reason ?? (placedBidText(p) || null);
+  return why ? `${head}: ${why}` : head;
+}
+
+/** Whether a live claim's landed bid (#239) is another than the one it was placed for. */
+function bidOff(p: Pick<QueuePass, "bid" | "bid_queued">): boolean {
+  return p.bid != null && p.bid_queued != null && p.bid !== p.bid_queued;
+}
+
+/** A live claim's bid as its landed page read it (#239): "placed at $4", "bid not read" (null
+ * means not read, never $0); blank for any other outcome, and for a bid other than the queue's,
+ * whose reason says so. */
+export function placedBidText(p: Pick<QueuePass, "outcome" | "bid" | "bid_queued">): string {
+  if (p.outcome !== "claimed" || bidOff(p)) return "";
+  return p.bid == null ? "bid not read" : `placed at $${p.bid}`;
 }
 
 const IL_WORDS: Record<ILRunLog["outcome"], string> = {
@@ -739,9 +756,12 @@ export function planStepTag(e: Pick<QueueEntry, "plan">): string {
   return e.plan ? `step ${e.plan.step} of ${e.plan.steps}` : "";
 }
 
-/** The state's tone: good for a claim (a pass that would claim, or one placed), bad for a failure. */
+/** The state's tone: good for a claim (a pass that would claim, or one placed), bad for a failure
+ * or a claim placed at another bid than the queue's. */
 export function queueStateTone(e: QueueEntry): "good" | "bad" | "" {
   const o = e.outcome ?? (e.queued && !e.struck ? e.pass?.outcome : null);
+  // A claim placed at another bid than the queue's stays claimed, in the bad tone (#239).
+  if (o === "claimed" && e.pass?.outcome === "claimed" && bidOff(e.pass)) return "bad";
   if (o === "would_claim" || o === "claimed" || o === "added") return "good";
   return o === "failed" ? "bad" : "";
 }

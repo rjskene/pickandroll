@@ -537,6 +537,41 @@
     return `submitted ${clockOf(at)}; Yahoo's answer was not read: check the pending claims`;
   }
 
+  /** The team page's box of pending claims (#239), found by this heading. */
+  const PENDING_HEADING = "Pending Transactions";
+
+  /** The bid of ``line``'s claim as the team page's "Pending Transactions" box shows it (#239):
+   * ``lines`` are the box's View Details links, each its href and words (null: the page has no
+   * box). The claim's line is the one whose ``claim_id`` (``<team>_<add>_<drop>``) names the
+   * entry's add and its drop, 0 for an open spot. Its words, less Yahoo's icon glyphs (the private
+   * use area), read "Waiver N (date): Bid $N for …", with no "Bid $" at $0. Null means not read:
+   * no box, no such line, other words, or two such lines at different bids; never $0. */
+  function pendingBid(lines, line) {
+    if (!Array.isArray(lines)) return null;
+    const want = `${line.add}_${line.drop == null ? 0 : line.drop}`;
+    const bids = lines
+      .filter((l) => {
+        const m = /[?&]claim_id=\d+_(\d+_\d+)(?:&|$)/.exec((l && l.href) || "");
+        return m && m[1] === want;
+      })
+      .map((l) => {
+        const text = String(l.text || "").replace(/[\uE000-\uF8FF]/g, "").trim().replace(/\s+/g, " ");
+        if (!/^Waiver \d+ \(/.test(text)) return null;
+        const m = /\bBid \$(\d+)\b/.exec(text);
+        return m ? Number(m[1]) : 0;
+      });
+    if (!bids.length || bids.includes(null)) return null;
+    return bids.every((b) => b === bids[0]) ? bids[0] : null;
+  }
+
+  /** The landed claim's bid for its run record (#239): the box's line (``box``, ``pendingBid``)
+   * wins, the View Details link's own text (``link``, #214) is second. When the two differ the
+   * record keeps the link's as ``bid_link``, so the run shows whether that reader is ever right. */
+  function landedBid(box, link) {
+    const bid = box != null ? box : link;
+    return box === link ? { bid } : { bid, bid_link: link };
+  }
+
   /** The live pass for a submitted claim (``record``, kept by the worker from the add page's
    * read) once its answer is known: ``landed`` is ``readLanded``'s answer, null when it was not
    * recognised or never read; ``seen`` the landed page's path, heading and the claim's bid. */
@@ -688,6 +723,9 @@
     fillClaim,
     readLanded,
     unreadReason,
+    PENDING_HEADING,
+    pendingBid,
+    landedBid,
     landedPass,
     leagueOfPage,
     movesStripText,

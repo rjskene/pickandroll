@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "pickandroll draft room",
-  "version": "0.10.0",
+  "version": "0.10.1",
   "description": "Mirrors your Yahoo fantasy basketball draft room into a pickandroll session running on this computer, reads your league's pages for its season view, dry-runs the lineup executor on your team page, and places the waiver claims of the queue, makes their held drops and starts active players in the leagues you switched live.",
   "minimum_chrome_version": "116",
   "permissions": [

@@ -939,17 +939,21 @@ def day_lines(data_dir: Path, league: str, day: date) -> list[dict[str, Any]]:
 
 def latest_passes(lines: Iterable[Mapping[str, Any]]) -> dict[str, dict[str, Any]]:
     """Each entry's latest line among ``lines`` (oldest first), by entry id (#200): the entry's own
-    outcome and reason, with its pass's time, trigger and extension."""
+    outcome and reason, with its pass's time, trigger and extension, and the bid a live claim's
+    landed page read (#239; None when not read) beside the bid it was placed for."""
     out: dict[str, dict[str, Any]] = {}
     for run in lines:
         for e in run.get("entries") or []:
             if isinstance(e, Mapping) and e.get("id"):
+                landed = (e.get("controls") or {}).get("landed")
                 out[str(e["id"])] = {
                     "at": run.get("at"),
                     "trigger": run.get("trigger"),
                     "outcome": e.get("outcome"),
                     "reason": e.get("reason"),
                     "extension": run.get("extension"),
+                    "bid": landed.get("bid") if isinstance(landed, Mapping) else None,
+                    "bid_queued": e.get("bid"),
                 }
     return out
 

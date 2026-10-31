@@ -293,11 +293,23 @@
     };
   }
 
+  /** The team page's "Pending Transactions" box (#239), found by its heading: each View Details
+   * link's href and words, for ``PR.pendingBid``; null when the page has no such box. */
+  function pendingLines() {
+    const LINK = 'a[href*="viewwaiver"]';
+    let box = [...document.querySelectorAll("span, h2, h3, h4")].find((h) => textOf(h) === PR.PENDING_HEADING) || null;
+    for (let up = 0; box && up < 5 && !box.querySelector(LINK); up++) box = box.parentElement;
+    if (!box || !box.querySelector(LINK)) return null;
+    return [...box.querySelectorAll(LINK)].map((a) => ({ href: a.getAttribute("href") || "", text: textOf(a) }));
+  }
+
   /** The page Yahoo landed on after a claim's submit, for ``readLanded``: its path, heading (not
    * one of Yahoo's header or navigation), whether the claim form is back, its notices and errors,
    * whether it shows the add with the word "pending", and whether it links the claim (``line``'s
    * add and drop) among the pending transactions: Yahoo's View Waiver link carries the claim's id,
-   * ``<team>_<add>_<drop>``. Ids and Yahoo's own short messages only. */
+   * ``<team>_<add>_<drop>``. The claim's bid is read twice: off the "Pending Transactions" box
+   * (``bid_box``, #239) and off the link's own text (``bid_link``, #214). Ids and Yahoo's own short
+   * messages only. */
   function landedControls(line) {
     const texts = (sel) => [...document.querySelectorAll(sel)].map(textOf).filter((x) => x && x.length < 300);
     const errors = texts(".error, .Error, .F-negative, [class*='Alert-error'], [class*='alert-error']");
@@ -312,9 +324,11 @@
       errors,
       pending: shown && /pending/i.test(textOf(document.body)),
       claim: [...document.querySelectorAll('a[href*="viewwaiver"]')].some((a) => id.test(a.getAttribute("href") || "")),
+      // The claim's bid on the "Pending Transactions" box's line (#239), by ``PR.pendingBid``.
+      bid_box: PR.pendingBid(pendingLines(), line),
       // The claim's bid on its pending line, the link's own text (#214): "Waiver 1 (Oct 29): Bid $1
       // for …", no "Bid $" when it is $0; null when the link is not there or not in those words.
-      bid: (() => {
+      bid_link: (() => {
         const link = [...document.querySelectorAll('a[href*="viewwaiver"]')].find((a) => id.test(a.getAttribute("href") || ""));
         const text = link ? textOf(link) : "";
         if (!/^Waiver \d+ \(/.test(text)) return null;
@@ -332,7 +346,8 @@
     if (!r || !r.ok || !r.data) return null;
     const record = r.data;
     const raw = landedControls(record.line);
-    const run = PR.landedPass(record, PR.readLanded(raw), { path: raw.path, heading: raw.heading, bid: raw.bid }, extensionVersion());
+    const seen = { path: raw.path, heading: raw.heading, ...PR.landedBid(raw.bid_box, raw.bid_link) };
+    const run = PR.landedPass(record, PR.readLanded(raw), seen, extensionVersion());
     const logged = await send({ op: "moves_log", league, run });
     if (!logged || !logged.ok) {
       movesStrip(`claim submitted, not logged: ${(logged && logged.error) || "no answer from the extension"}`);
