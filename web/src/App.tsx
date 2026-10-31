@@ -192,6 +192,12 @@ function DraftScreen({ yahoo, room, onSwitch, announce, onShown }: ScreenProps) 
   );
 }
 
+// The path the page is served under: "/" from the dev server, "/app/" when the routine host's
+// API serves the build (vite build --base=/app/, ops/vm/install.sh). The views the app keeps in
+// the path live below it.
+const BASE_PATH: string = import.meta.env.BASE_URL ?? "/";
+const view = (name: string) => BASE_PATH + name;
+
 export default function App() {
   const queryClient = useQueryClient();
   const [sessionId, setSessionId] = useState<string | null>(() => new URLSearchParams(location.search).get("session"));
@@ -200,9 +206,9 @@ export default function App() {
   // The view the league page opens on when asked for (the landing table's Lineup, #191).
   const [leagueView, setLeagueView] = useState<SeasonViewId | null>(null);
   // The Progress screen (#129) at /progress; a league opened from it comes back to it.
-  const [progress, setProgress] = useState(() => location.pathname === "/progress");
+  const [progress, setProgress] = useState(() => location.pathname === view("progress"));
   // The Queue screen (#194) at /queue, wired like Progress; opening one closes the other.
-  const [queue, setQueue] = useState(() => location.pathname === "/queue");
+  const [queue, setQueue] = useState(() => location.pathname === view("queue"));
   const [solveEvents, setSolveEvents] = useState<SolveEvent[]>([]);
   const [survival, setSurvival] = useState<SurvivalEvent | null>(null);
   // The extension's latest events from the room, oldest first, since this page opened.
@@ -248,7 +254,8 @@ export default function App() {
     else url.searchParams.delete("session");
     if (leagueId && !sessionId) url.searchParams.set("league", leagueId);
     else url.searchParams.delete("league");
-    url.pathname = sessionId || leagueId ? "/" : progress ? "/progress" : queue ? "/queue" : "/";
+    url.pathname =
+      sessionId || leagueId ? BASE_PATH : progress ? view("progress") : queue ? view("queue") : BASE_PATH;
     history.replaceState(null, "", url);
   }, [sessionId, leagueId, progress, queue]);
 

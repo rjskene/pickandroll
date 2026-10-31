@@ -680,8 +680,10 @@ export interface Fidelity {
 
 // The page's own origin by default: Vite proxies /api to the API, so a phone on the tailnet
 // that opens the dashboard reaches the API through it. VITE_PICKANDROLL_API_BASE (a full URL)
-// points the app at an API elsewhere, which must then allow this page's origin (CORS).
-const BASE: string = (import.meta.env?.VITE_PICKANDROLL_API_BASE as string | undefined) || "/api";
+// points the app at an API elsewhere, which must then allow this page's origin (CORS); set but
+// empty, it means the API at this page's own origin root, the build the routine host's API
+// serves itself (ops/vm/install.sh, docs/OPS.md §2a).
+const BASE: string = (import.meta.env?.VITE_PICKANDROLL_API_BASE as string | undefined) ?? "/api";
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(BASE + path, {
