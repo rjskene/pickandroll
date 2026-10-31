@@ -1161,7 +1161,8 @@ export interface LineupPayload {
 
 // ---------------------------------------------------------------- the lineup executor (#170)
 /** The lineup executor's mode in a league: off, a dry run (the extension logs what it would set
- * and clicks nothing), or live (the user's own click, once the dry run has passed). */
+ * and clicks nothing), or live (the user's own click, once the dry run has passed: the extension
+ * sets the steps with Yahoo's swap labels, #170 PR 3). */
 export type LineupMode = "off" | "dry_run" | "live";
 
 /** One step of a run, as the executor saw it on the team page. */
@@ -1173,8 +1174,12 @@ export interface LineupStepLog {
   with: number | null;
   tip: string | null;
   group: number | null;
+  /** A swap of the steps, or a cleared held player's return to the bench (live, #170 PR 3). */
+  kind?: "swap" | "return";
   outcome: "would_set" | "skipped" | "set" | "failed";
   reason: string | null;
+  /** Yahoo's words on a live step's save. */
+  message?: string | null;
 }
 
 /** A run of the executor on one team page, as the league's log keeps it. */

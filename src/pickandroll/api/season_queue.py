@@ -28,7 +28,8 @@ time, and the reads a build makes of each league; the entries themselves are
     The moves executor's mode and the user's own cap on the day's moves.
 
 ``data/autopilot/queue/<date>.json`` holds a day's queue, ``data/autopilot/executor.json`` the
-execute times and the live guard's counts (``live_after``, set by hand on the user's word); each
+execute times and the live guards' counts (``live_after`` for the moves executor,
+``lineup_live_after`` for the lineup executor's, set by hand on the user's word); each
 is written whole to a temporary file and moved into place, and a file that does not read is
 refused, never overwritten. Nothing else writes under either.
 """
@@ -56,6 +57,10 @@ QUEUE_DIR = "queue"
 SETTINGS = "executor.json"
 #: The live guard's counts the settings file may set (``live_after``).
 LIVE_AFTER = ("dry_run_days", "checked_days")
+#: The settings file's keys for each executor's counts: the moves executor's (#171 PR 3) and the
+#: lineup executor's (#170 PR 3).
+MOVES_LIVE_AFTER = "live_after"
+LINEUP_LIVE_AFTER = "lineup_live_after"
 EXECUTE_TIME = re.compile(r"^([01][0-9]|2[0-3]):[0-5][0-9]$")
 #: The waiver days when a league's settings do not say: the public leagues' (read 2026-10-23).
 WAIVER_DAYS = 2
@@ -184,8 +189,9 @@ def in_force(s: Mapping[str, Any], day: date) -> str:
     return qa.day_time(day, s["execute_time"], s.get("sunday_execute_time"))
 
 
-def live_after(data_dir: Path) -> dict[str, int]:
-    """The moves executor's live-guard counts set in the settings file (``live_after``, #171 PR 3):
+def live_after(data_dir: Path, key: str = MOVES_LIVE_AFTER) -> dict[str, int]:
+    """An executor's live-guard counts set in the settings file under ``key`` (the moves
+    executor's ``live_after``, #171 PR 3; the lineup executor's ``lineup_live_after``, #170 PR 3):
     ``dry_run_days`` and ``checked_days``, each a whole number of at least 0. A count missing or
     not such a number is left out, so the guard keeps its default; a file that does not read sets
     none. Read at request time: a change needs no restart."""
@@ -193,7 +199,7 @@ def live_after(data_dir: Path) -> dict[str, int]:
         body = _read(autopilot_dir(data_dir) / SETTINGS, dict) or {}
     except QueueError:
         body = {}
-    raw = body.get("live_after")
+    raw = body.get(key)
     if not isinstance(raw, dict):
         return {}
     return {

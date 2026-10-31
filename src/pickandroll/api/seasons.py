@@ -995,7 +995,8 @@ class SeasonService:
     # ------------------------------------------------------------------ the lineup executor
     def lineup_steps(self, league: str, day: date | None) -> dict[str, Any]:
         """The lineup executor's steps for ``day``, today by default (#170): the Lineup view's
-        day of its week, never solved again."""
+        day of its week, never solved again; in a live league with the live guard now
+        (``live``, #170 PR 3)."""
         base, _ = self._base(league)
         now = self.clock()
         today = nba_today(now)
@@ -1013,8 +1014,13 @@ class SeasonService:
                     raise
         tips = nba_schedule.load_tips(day, self.data_dir / SCHEDULE_DIR)
         stop = season_autopilot.stopped(self.data_dir)
+        live = (
+            season_autopilot.live_check(self.data_dir, league, mode)
+            if mode["mode"] == "live"
+            else None
+        )
         return season_autopilot.steps_payload(
-            league, base.my_team_id, day, today, now, lineup, tips, mode, stop
+            league, base.my_team_id, day, today, now, lineup, tips, mode, stop, live
         )
 
     def autopilot(self, league: str) -> dict[str, Any]:
@@ -1025,10 +1031,14 @@ class SeasonService:
 
     def log_lineup_run(self, league: str, run: season_autopilot.LineupRun) -> dict[str, Any]:
         """Append a run of the lineup executor to the league's log (#170), refused (409) when
-        the mode, STOP or the run's own outcome says it should not have run."""
+        the mode, STOP, the live guard (a live run, #170 PR 3) or the run's own outcome says it
+        should not have run."""
         self._base(league)
         mode = leagues.lineup_mode(self.data_dir, league)
-        why = season_autopilot.check_run(run, mode, season_autopilot.stopped(self.data_dir))
+        live = (
+            season_autopilot.live_check(self.data_dir, league, mode) if run.mode == "live" else None
+        )
+        why = season_autopilot.check_run(run, mode, season_autopilot.stopped(self.data_dir), live)
         if why is not None:
             raise HTTPException(409, why)
         record = {
