@@ -391,12 +391,13 @@ export default function SeasonScreen({
   return (
     <main className="shell">
       <header className="topbar season-top">
-        <AppBarLead onHome={onHome} status={<LeagueStatus p={status.data} league={league} onOpen={() => setStatusOpen(true)} />} onProgress={onProgress} />
+        <AppBarLead onHome={onHome} status={<LeagueStatus p={status.data} league={league} onOpen={() => setStatusOpen(true)} />} onProgress={onProgress}>
+          <YahooLink league={league} title={leagueTitle(s?.name, league)} />
+        </AppBarLead>
         <span className="muted title">
           {leagueTitle(s?.name, league)}
           {s && ` · ${s.scoring === "points" ? "H2H points" : "H2H categories"} · ${s.num_teams} teams`}
         </span>
-        <YahooLink league={league} title={leagueTitle(s?.name, league)} />
         <span className="grow" />
         {s?.has_snapshot && (
           <>
