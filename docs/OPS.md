@@ -71,7 +71,9 @@ It needs the droplet's address once, in `~/.config/pickandroll/droplet` on the M
 prompt. The script starts `ops/vm/signin.sh` on the droplet inside a tmux session named
 `signin` (a dropped connection leaves it running; running the command again reattaches), holds
 an ssh tunnel from the Mac's localhost to the browser's DevTools port while it runs, opens one
-DevTools window per site in Chrome from the browser's own `/json/list`, and prints the steps:
+DevTools window per site in Chrome from the browser's own `/json/list` (the sign-in browser
+allows that frontend's origin on its port with `--remote-allow-origins`; Chrome refuses every
+other origin's websocket, which is what the first run on 2026-10-31 hit), and prints the steps:
 in each window, type the username into the screencast's field, put the password in with one
 Console line, `document.querySelector('input[type=password]').value = '…'` with the password
 pasted between the quotes (Yahoo asks for it on its second page), and click Sign in. Enter on

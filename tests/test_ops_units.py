@@ -627,6 +627,23 @@ def test_the_alert_for_the_signin_unit_names_the_mac_command(alert) -> None:
     assert "bash ops/mac/signin.sh" in log.read_text().split("gh issue comment 225")[1]
 
 
+# --------------------------------------------------------------- the sign-in browser (#238)
+
+
+def test_the_sign_in_browser_opens_its_devtools_port_to_the_frontend_the_mac_opens() -> None:
+    """Chrome 111+ refuses a DevTools websocket from an origin not in --remote-allow-origins;
+    the Mac command opens the frontend that /json/list names, so its origin is allowed."""
+    spec = importlib.util.spec_from_file_location("signin_browser", VM / "signin_browser.py")
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+    args = module.launch_args(Path("/srv/extension"))
+    assert "--remote-debugging-port=9222" in args
+    assert "--remote-allow-origins=https://chrome-devtools-frontend.appspot.com" in args
+    assert "--load-extension=/srv/extension" in args and "--no-first-run" in args
+    assert not any(a.startswith("--headless") for a in args)
+
+
 # ------------------------------------------------- the --keychain mode (#238 item 5, #249)
 SITE_URLS = {
     "Y1": "https://login.yahoo.com/?done=https%3A%2F%2Fbasketball.fantasysports.yahoo.com",

@@ -1,7 +1,8 @@
 """The sign-in browser (``ops/vm/signin.sh``): the routine's Chromium on its own profile with
-the extension loaded, the same launch the routines make plus the DevTools port on localhost
-for the fallback path, a tab on each site. The user signs in from the Mac over VNC or DevTools
-and presses Enter in the terminal; nothing here reads, types or logs a credential."""
+the extension loaded, the same launch the routines make plus the DevTools port on localhost,
+with the DevTools frontend's origin allowed on it, a tab on each site. The user signs in from
+the Mac over DevTools (``ops/mac/signin.sh``) and presses Enter in the terminal; nothing here
+reads, types or logs a credential."""
 
 from __future__ import annotations
 
@@ -12,6 +13,25 @@ BBM = "https://basketballmonster.com/"
 YAHOO = "https://basketball.fantasysports.yahoo.com/nba/31822"
 WINDOW = "1440,900"
 DEVTOOLS_PORT = 9222
+#: The DevTools frontend that the browser's own /json/list points the Mac to. Chrome 111+
+#: refuses a websocket on the debugging port from any other origin (the first sign-ins went
+#: through chrome://inspect, whose bundled devtools:// frontend is allowed by default; the
+#: Mac command's windows were refused on 2026-10-31 until this). The helper's own websocket
+#: sends no Origin and is not affected.
+DEVTOOLS_FRONTEND = "https://chrome-devtools-frontend.appspot.com"
+
+
+def launch_args(extension: Path) -> list[str]:
+    """Chromium's command line for the sign-in browser: the extension, the window, the DevTools
+    port on localhost and the frontend origin allowed on it."""
+    return [
+        f"--disable-extensions-except={extension}",
+        f"--load-extension={extension}",
+        "--no-first-run",
+        f"--window-size={WINDOW}",
+        f"--remote-debugging-port={DEVTOOLS_PORT}",
+        f"--remote-allow-origins={DEVTOOLS_FRONTEND}",
+    ]
 
 
 def main(profile: Path, extension: Path) -> int:
@@ -27,13 +47,7 @@ def main(profile: Path, extension: Path) -> int:
             str(profile),
             headless=False,
             accept_downloads=True,
-            args=[
-                f"--disable-extensions-except={extension}",
-                f"--load-extension={extension}",
-                "--no-first-run",
-                f"--window-size={WINDOW}",
-                f"--remote-debugging-port={DEVTOOLS_PORT}",
-            ],
+            args=launch_args(extension),
         )
         page = context.pages[0] if context.pages else context.new_page()
         page.goto(BBM, wait_until="domcontentloaded")
