@@ -1164,4 +1164,4 @@ either (`docs/OPS.md`).
   switches a league to live, after its dry-run week is reviewed on #127.
 - 2026-10-29 (#225): the routines move to the droplet: systemd timers running `scripts/routine.py`,
   Playwright's Chromium with the extension loaded from the checkout, the soak in dry run with the
-  Mac live, cut-over planned for Monday 2026-11-09 after the soak (`docs/OPS.md`).
+  Mac live, cut-over Monday 2026-11-02 after the soak, moved up from 11-09 on 2026-10-31 (`docs/OPS.md` §5).

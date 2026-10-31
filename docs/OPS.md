@@ -211,7 +211,12 @@ than the tolerance are notes: in the head, not in the exit code. Exit 0 when not
 flagged, 1 otherwise, 2 when a side could not be read; `--post` puts the markdown on #225 as
 one comment. Player and league ids only, never a name.
 
-## 5. Cut-over: Monday 2026-11-09, after the 06:00 recorder
+## 5. Cut-over: Monday 2026-11-02, after the 06:00 recorder
+
+Moved up from 2026-11-09 on 2026-10-31, on the condition that Saturday evening's and Sunday's
+comparisons (§4) are clean: every substantive flag explained, none the droplet's. The Mac's 05:00
+daily and 06:00 recorder of that Monday are the last live runs on the Mac and the data the copy
+below carries; the step-by-step timetable is on #225.
 
 Only with `GET http://127.0.0.1:8000/rooms` answering `[]` on both hosts, in this order:
 
@@ -242,8 +247,8 @@ Only with `GET http://127.0.0.1:8000/rooms` answering `[]` on both hosts, in thi
 7. The user checks the leagues' switches on the dashboard; the first live pass is the 07:45
    morning pass of the next day.
 
-The dashboard stays on the Mac: a droplet-hosted one over Tailscale (`tailscale serve`, sudo)
-is a follow-up for the user, not part of the move.
+The dashboard needs no move: the droplet's API serves it under `/app` on the tailnet already
+(§2a), and a Mac-side `npm run dev` keeps working through the tunnel.
 
 ## 6. Rollback
 
