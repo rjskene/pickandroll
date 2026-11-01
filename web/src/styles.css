@@ -910,7 +910,7 @@ button.icon.light.bad { color: var(--bad); }
 .ex-pager { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .ex-count { color: var(--muted); font-size: 12px; margin-left: auto; }
 .ex-stage.all .ex-text { padding-top: 14px; }
-/* the glossary: a term in the text, the sheet that slides in, the table at the end */
+/* the glossary: a term in the text, the sheet that slides in */
 dfn.ex-term { font-style: normal; border-bottom: 1px dotted var(--accent); cursor: help; }
 dfn.ex-term:focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; border-radius: 2px; }
 .ex-backdrop { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.45); opacity: 0; pointer-events: none; transition: opacity 0.2s; z-index: 30; }
@@ -926,12 +926,6 @@ dfn.ex-term:focus-visible { outline: 1px solid var(--accent); outline-offset: 1p
 .ex-sheet dt { font-family: var(--display); font-size: 16px; letter-spacing: 0.03em; color: #fff; padding: 10px 6px 2px; margin: 0 -6px; border-radius: 6px; }
 .ex-sheet dd { margin: 0 0 4px; padding: 0 0 8px; font-size: 12px; color: var(--muted); line-height: 1.5; border-bottom: 1px solid var(--line); }
 .ex-sheet dt.flash { background: var(--mine); }
-.ex-gloss { max-width: 1100px; margin: 0 auto; padding: 8px 24px 60px; }
-.ex-gloss h3 { margin: 0 0 4px; font-family: var(--display); font-weight: 600; letter-spacing: 0.04em; font-size: 20px; }
-.ex-gloss p { margin: 0 0 10px; font-size: 12px; }
-.ex-gloss table { border-collapse: collapse; width: 100%; font-size: 12.5px; }
-.ex-gloss th { text-align: left; font-family: var(--display); font-size: 15px; letter-spacing: 0.03em; font-weight: 600; color: #fff; padding: 7px 12px 7px 0; vertical-align: top; white-space: nowrap; border-bottom: 1px solid var(--line); }
-.ex-gloss td { padding: 7px 0; color: var(--muted); line-height: 1.5; border-bottom: 1px solid var(--line); }
 /* svg tokens inside a figure */
 .ex-fig svg text { font-family: var(--body); font-size: 11px; fill: var(--muted); }
 .ex-fig svg text.lbl { font-family: var(--display); font-size: 14px; letter-spacing: 0.03em; fill: var(--text); font-weight: 600; }
@@ -1010,8 +1004,6 @@ button.ex-play.on { background: var(--accent); color: var(--accent-ink); border-
   .ex-step { grid-template-columns: minmax(0, 1fr); }
   .ex-fig { border-right: 0; border-bottom: 1px solid var(--line); padding: 12px; }
   .ex-text { padding: 12px 14px 14px; }
-  .ex-gloss { padding: 8px 16px 40px; }
-  .ex-gloss th { white-space: normal; width: 34%; }
   .ex-sheet { top: auto; width: 100vw; max-height: 72vh; border-left: 0; border-top: 1px solid var(--line-2); border-radius: 12px 12px 0 0; transform: translateY(100%); }
   .ex-sheet.on { transform: none; }
 }

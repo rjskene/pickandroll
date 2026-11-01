@@ -1,5 +1,5 @@
 // The glossary (#283): a term in a card opens the sheet on its definition; the sheet slides in
-// from the right (up from the bottom on a phone); the full table ends the screen.
+// from the right (up from the bottom on a phone). The sheet is the only list of the terms.
 import { Fragment, createContext, useContext, useEffect, useRef } from "react";
 import type { KeyboardEvent, ReactNode } from "react";
 import { Close } from "../components/icons";
@@ -40,7 +40,7 @@ export function GlossarySheet({ open, term, onClose }: { open: boolean; term: st
       <aside className={`ex-sheet${open ? " on" : ""}`} role="dialog" aria-label="Glossary" aria-hidden={!open}>
         <header>
           <h3>GLOSSARY</h3>
-          <span className="muted">one line each; the full table ends the page</span>
+          <span className="muted">every term the cards underline, one line each</span>
           <button className="icon" aria-label="Close" title="Close (Esc)" onClick={onClose}>
             <Close />
           </button>
@@ -59,25 +59,5 @@ export function GlossarySheet({ open, term, onClose }: { open: boolean; term: st
         </div>
       </aside>
     </>
-  );
-}
-
-/** The definitions table at the end of the screen. */
-export function GlossaryTable() {
-  return (
-    <section className="ex-gloss" aria-label="Definitions">
-      <h3>Definitions</h3>
-      <p className="muted">Every term the cards underline, one line each.</p>
-      <table>
-        <tbody>
-          {GLOSSARY.map((g) => (
-            <tr key={g.id} id={`ex-term-${g.id}`}>
-              <th scope="row">{g.term}</th>
-              <td>{g.def}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </section>
   );
 }

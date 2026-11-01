@@ -10,7 +10,7 @@ import { LeaguesIcon } from "../components/icons";
 import { useLandingOrder } from "../components/landingOrder";
 import { OverviewStatus } from "../components/StatusLight";
 import { useNow } from "../components/YahooSync";
-import { GlossaryProvider, GlossarySheet, GlossaryTable } from "./Glossary";
+import { GlossaryProvider, GlossarySheet } from "./Glossary";
 import { formatHash, move, nextLabel, parseHash } from "./nav";
 import type { Place } from "./nav";
 import StepCard from "./StepCard";
@@ -123,7 +123,6 @@ export default function ExplainScreen({ onBack, onProgress }: Props) {
               <StepCard key={s.id} track={track} step={s} index={all ? k : place.step} all={all} onPrev={prev} onNext={onNext} nextLabel={label} first={place.track === TRACKS[0].id && place.step === 0} />
             ))}
           </div>
-          <GlossaryTable />
         </div>
       </GlossaryProvider>
       <GlossarySheet open={gloss.open} term={gloss.term} onClose={closeGlossary} />
