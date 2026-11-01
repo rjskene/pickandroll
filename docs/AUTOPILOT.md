@@ -113,7 +113,15 @@ side (PR 1) is in `api/season_autopilot.py`; the click is the extension's, on th
   - Before each unit every step of it passes `checkSteps` on the lineup as the swap labels show it
     now (a swap saves through Yahoo's script, so the labels, not the form's selects, are the page's
     state); a unit that fails a check is skipped whole and the run goes on. Before each click the
-    step is checked again, and no swap may be open on the page.
+    step is checked again, and no swap may be open on the page. Yahoo keeps the saved row marked
+    open (`swapactive`) for a while past its notice, so an open swap is waited out first, up to
+    3 s, and again after each save; one still open then skips the unit, or fails the step after
+    a click in its group ("a swap is open on the page (still after 3 s)"), nothing more clicked
+    (0.11.1, #288).
+  - A step's save is a notice that came or changed after its click: an earlier step's "All
+    changes saved", still showing, is not it. When none comes, the step is set only once its
+    players landed and no error came in the whole save window, and its reason says so ("the save
+    notice did not change; no error in 10 s"; 0.11.1, #288).
   - A step whose target does not show within 5 s, or whose first click Yahoo answers with an
     alert, is cancelled with a click on the player's own label (Yahoo leaves the swap, nothing
     saved). A step that fails after a click (an error notice, no save read within 10 s, the

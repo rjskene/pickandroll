@@ -544,8 +544,11 @@ const SAVED_WORDS = "All changes saved";
  * ``wait``; 0: at the click). A click on any other label while swapping leaves the swap, nothing
  * saved. ``empty`` adds empty rows of those slots; ``lockAfter`` fixes the rows of those players
  * after the first save; ``alert`` is raised on the first click; ``untargeted`` players never show
- * as a target. Clicks go in ``touched``. */
-function swapDom({ drop = [], empty = [], answer = "saved", after = 1, alert = null, untargeted = [], lockAfter = [], lock = [] } = {}) {
+ * as a target. ``answer`` may be a list, one per save. As Yahoo's real page does (#288),
+ * ``linger`` keeps ``swapactive`` on the first-clicked row for that many looks after the save
+ * (Infinity: it never clears). A notice is one element; each save puts up a new one, or with
+ * ``sameNotice`` rewrites the one showing in place. Clicks go in ``touched``. */
+function swapDom({ drop = [], empty = [], answer = "saved", after = 1, alert = null, untargeted = [], lockAfter = [], lock = [], linger = 0, sameNotice = false } = {}) {
   const f = form({ drop });
   const eligible = {};
   const rows = [];
@@ -561,6 +564,22 @@ function swapDom({ drop = [], empty = [], answer = "saved", after = 1, alert = n
   let targets = [];
   let looks = null;
   let saves = 0;
+  let lingering = 0;
+  const shown = new Map();
+  const shownOf = (n) => {
+    if (!shown.has(n))
+      shown.set(n, {
+        get className() {
+          return n.className;
+        },
+        get textContent() {
+          return n.textContent;
+        },
+        getClientRects: () => [{}],
+        classList: { contains: (c) => n.className.split(" ").includes(c) },
+      });
+    return shown.get(n);
+  };
   const may = (k, slot) => k == null || (eligible[String(k)] || []).includes(slot);
   const done = () => {
     active = null;
@@ -577,15 +596,21 @@ function swapDom({ drop = [], empty = [], answer = "saved", after = 1, alert = n
     }
     if (!targets.includes(r)) return done();
     [active.player, r.player] = [r.player, active.player];
-    done();
+    targets = [];
+    lingering = linger;
+    if (!lingering) done();
     saves += 1;
     looks = 0;
     if (after === 0) look();
   };
   const look = () => {
+    if (lingering && --lingering === 0) done();
     if (looks === null) return;
-    if (looks++ !== after || !answer) return;
-    notices.splice(0, notices.length, answer === "saved" ? { className: "rostersave-msg saved", textContent: ` ${SAVED_WORDS} ` } : { className: "rostersave-msg error", textContent: "There was an error saving your changes." });
+    const said = Array.isArray(answer) ? answer[saves - 1] : answer;
+    if (looks++ !== after || !said) return;
+    const n = said === "saved" ? { className: "rostersave-msg saved", textContent: ` ${SAVED_WORDS} ` } : { className: "rostersave-msg error", textContent: "There was an error saving your changes." };
+    if (sameNotice && notices.length) Object.assign(notices[0], n);
+    else notices.splice(0, notices.length, n);
     if (saves === 1) for (const q of rows) if (lockAfter.includes(q.player)) q.editable = false;
   };
   const classes = (r) => [r.editable && "editable", r.player == null && "empty-bench", active === r && "swapactive", targets.includes(r) && "swaptarget"].filter(Boolean);
@@ -611,7 +636,7 @@ function swapDom({ drop = [], empty = [], answer = "saved", after = 1, alert = n
     rows,
     lineup: () => Object.fromEntries(rows.filter((r) => r.player != null).map((r) => [String(r.player), r.slot])),
     querySelectorAll: (sel) =>
-      sel === X.LINEUP_ROWS ? els : sel === X.LINEUP_SAVED ? notices.map((n) => ({ ...n, getClientRects: () => [{}], classList: { contains: (c) => n.className.split(" ").includes(c) } })) : [],
+      sel === X.LINEUP_ROWS ? els : sel === X.LINEUP_SAVED ? notices.map(shownOf) : [],
     documentElement: { getAttribute: (a) => attrs[a] ?? null },
   };
 }
@@ -685,7 +710,59 @@ test("a lock found mid-run skips its group whole; stale steps click nothing; the
   dom.querySelectorAll(X.LINEUP_ROWS)[10].querySelectorAll(X.LINEUP_LABEL)[0].click();
   dom.touched.length = 0;
   got = await live(dom, [swap(1011, "BN", "SF", 1004, 0)]);
-  assert.deepEqual([got.outcome, got.reason, dom.touched], ["skipped", "a swap is open on the page", []]);
+  assert.deepEqual([got.outcome, got.reason, dom.touched], ["skipped", "a swap is open on the page (still after 3 s)", []]);
+});
+
+test("a swap Yahoo keeps open past its save is waited out: a group of three and the groups after it all set (#288)", async () => {
+  let dom = swapDom({ linger: 2 });
+  const group = [swap(1011, "BN", "SF", 1004, 0), swap(1004, "BN", "Util", 1009, 0), swap(1009, "BN", "F", 1006, 0)];
+  let got = await live(dom, group);
+  assert.deepEqual([got.outcome, got.reason], ["set", null]);
+  assert.deepEqual(got.steps.map((s) => s.outcome), ["set", "set", "set"]);
+  assert.deepEqual(dom.touched, ["click 1011 BN", "click 1004 SF", "click 1004 BN", "click 1009 Util", "click 1009 BN", "click 1006 F"]);
+  assert.equal(X.readLabels(dom).swapping, false);
+  // Between groups: each next group waits too, none skipped.
+  dom = swapDom({ linger: 3 });
+  got = await live(dom, [swap(1011, "BN", "SF", 1004, 0), swap(1012, "BN", "Util", 1010, 1)]);
+  assert.deepEqual([got.outcome, got.reason], ["set", null]);
+  assert.deepEqual(got.steps.map((s) => s.outcome), ["set", "set"]);
+  assert.deepEqual([got.after["1011"], got.after["1012"]], ["SF", "Util"]);
+});
+
+test("a swap that stays open past the bound clicks nothing more: inside a group it fails, between groups it skips (#288)", async () => {
+  let dom = swapDom({ linger: Infinity });
+  let got = await live(dom, [swap(1011, "BN", "SF", 1004, 0), swap(1004, "BN", "Util", 1009, 0)]);
+  assert.deepEqual([got.outcome, got.reason], ["failed", "a swap is open on the page (still after 3 s) (0 of 1 change set first)"]);
+  assert.deepEqual(got.steps.map((s) => s.outcome), ["set", "failed"]);
+  assert.deepEqual(dom.touched, ["click 1011 BN", "click 1004 SF"]);
+  dom = swapDom({ linger: Infinity });
+  got = await live(dom, [swap(1011, "BN", "SF", 1004, 0), swap(1012, "BN", "Util", 1010, 1)]);
+  assert.deepEqual([got.outcome, got.reason], ["set", "1 of 2 changes set; a swap is open on the page (still after 3 s)"]);
+  assert.deepEqual(dom.touched, ["click 1011 BN", "click 1004 SF"]);
+});
+
+test("an earlier step's save notice is not the next step's: its error fails it, never a set (#288)", async () => {
+  // The second save errors two looks after its click, the first step's notice showing until then.
+  let dom = swapDom({ answer: ["saved", "error"], after: 2 });
+  let got = await live(dom, [swap(1011, "BN", "SF", 1004, 0), swap(1004, "BN", "Util", 1009, 0)]);
+  assert.equal(got.outcome, "failed");
+  assert.deepEqual(got.steps.map((s) => [s.outcome, s.reason, s.message]), [
+    ["set", null, SAVED_WORDS],
+    ["failed", "Yahoo did not save the swap", "There was an error saving your changes."],
+  ]);
+  // The same notice rewritten in place: the error still reads as the second step's.
+  dom = swapDom({ answer: ["saved", "error"], after: 2, sameNotice: true });
+  got = await live(dom, [swap(1011, "BN", "SF", 1004, 0), swap(1004, "BN", "Util", 1009, 0)]);
+  assert.deepEqual(got.steps.map((s) => s.outcome), ["set", "failed"]);
+  // Rewritten in place with the same words: set only after the whole save window with no error,
+  // and the reason says so.
+  dom = swapDom({ sameNotice: true });
+  got = await live(dom, [swap(1011, "BN", "SF", 1004, 0), swap(1004, "BN", "Util", 1009, 0)]);
+  assert.deepEqual(got.steps.map((s) => [s.outcome, s.reason]), [
+    ["set", null],
+    ["set", "the save notice did not change; no error in 1 s"],
+  ]);
+  assert.equal(got.outcome, "set");
 });
 
 test("STOP, the brake or the guard read before each change stops the run before it", async () => {

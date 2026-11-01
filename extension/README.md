@@ -152,7 +152,9 @@ In a live league whose guard holds (the steps' `live`, checked on every request;
    unit the steps are checked again on the lineup the labels show, and STOP, the brake and the live guard are
    read again from the API, the first unit included. A target that does not show is cancelled with a click on the player's own label; a step
    that fails after a click stops the run. No select is set, the form is never submitted and the crumb is never
-   read.
+   read. Yahoo keeps the saved row marked open (`swapactive`) past its notice, so each step first waits, up to
+   3 s, for no swap to be open, and waits again after its save; only a notice that came or changed after its
+   click is its save (0.11.1, #288).
 10. The run logs each step's outcome (set, skipped, failed) with Yahoo's words, the lineup after the run, the
     moved players not in their target slot, and whether Start Active came first. The strip reads "live · N swaps
     set HH:MM".
