@@ -1035,3 +1035,6 @@ button.ex-play.on { background: var(--accent); color: var(--accent-ink); border-
 .ex-strip svg .ex-arrowhead { fill: var(--accent); }
 .ex-strip-loop-lbl { font-family: var(--body); font-size: 10px; fill: var(--accent); }
 .ex-strip-lbl.knock { paint-order: stroke; stroke: var(--bg); stroke-width: 4px; stroke-linejoin: round; }
+/* Explain (#285): the moves track's figures */
+.ex-fig svg .win.g { fill: rgba(61, 220, 132, 0.14); stroke: var(--good); }
+.ex-fig svg text.sm.ink { fill: var(--accent-ink); }

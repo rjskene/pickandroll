@@ -21,6 +21,9 @@ export type FigureId =
   | "keeper-snake"
   | "yahoo-room"
   | "weekly-odds"
+  | "horizons"
+  | "keep-rule"
+  | "bids-trades"
   | "day-line";
 
 export interface Step {
