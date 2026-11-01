@@ -827,6 +827,12 @@ class StartActiveRun(BaseModel):
     #: The dialog's two rows as the page printed them: each its label, range and Yahoo's words.
     today: dict[str, Any] | None = None
     rest_of_week: dict[str, Any] | None = None
+    #: An ``after_lineup`` press's reads (#289): ``set_day`` (``day``, ``diff``: each player the
+    #: lineup run moved whose slot on the set day's page, once settled, is not his target) and
+    #: ``today`` (``day``, ``changed``: each player whose slot on today's page the press changed,
+    #: ``before`` and ``after``). Widened to every set once a week of these shows Yahoo never
+    #: undoes a swap of two players who both play.
+    diffs: dict[str, Any] | None = None
     #: Yahoo's words after the press ("6 lineups updated", "Already optimized", the error).
     message: str | None = None
     #: The roster the page showed, ``{players, held}`` by id; the API's own read when absent.

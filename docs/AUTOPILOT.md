@@ -169,8 +169,18 @@ side (PR 1) is in `api/season_autopilot.py`; the click is the extension's, on th
     last run recorded, with the ids `added`, `dropped`, `held` and `returned` (a won claim, a
     drop, a trade, an IL move);
   - `il_moved`: a live IL move (#214) landed since the last run;
-  - `lineup_set`: a live lineup run set a swap since the last run (#289, the user's rule of
-    2026-11-01): a swap sets one day, and the press carries it to the rest of the week.
+  - `lineup_set`: a live lineup run set a swap since the last run on a day later than today
+    (#289, the user's rule of 2026-11-01): a swap sets one day, and the press carries it to the
+    rest of the week. Only a later day's (the master's ruling): Yahoo's main button runs Today
+    Only at once, which could undo the swaps of a day set today with no pass left to fix them; a
+    set of today after the 05:00 daily is checked again by the 15:00 late pass anyway. It is
+    widened to every set once a week of the presses' `diffs` shows Yahoo never undoes a swap of
+    two players who both play.
+
+  No press follows an add (#289): in the live public leagues every add the extension submits is
+  a pending claim until Yahoo's overnight waiver run, so the press would find nothing new; a
+  claim that clears is `roster_changed` at the next pass, and every pass presses for every live
+  league whose need is true. The trigger `after_add` is kept for a same-day free-agent add.
 
   Each row also carries the team page of today, my roster as last read, the last run and the
   live guard. Under STOP no league needs a run. A run is `POST
@@ -211,8 +221,9 @@ side (PR 1) is in `api/season_autopilot.py`; the click is the extension's, on th
     page the API took). A second press in the league the same day is refused unless the page's
     roster differs from the one the day's press ran on (players or held); the need rule's reasons
     never lift it alone, and an unknown roster never does (ruled on #214, ext 0.9.1). It also
-    lifts once a live lineup run on record in this browser set a swap and was logged after the
-    day's press (#289, ext 0.11.2): one press per lineup set. The run then presses the main button, waits up to 10 s
+    lifts once a live lineup run on record in this browser set a swap on a later day than the
+    press's and was logged after it (#289, ext 0.11.2): one press per lineup set, then it holds
+    again. The run then presses the main button, waits up to 10 s
     for the dialog's Rest of Week row with its Start enabled, reads it again, presses it once,
     and waits up to 15 s for Yahoo's words in the dialog (open or closed): "N lineups updated"
     or "We optimized …" log `started`, "Already optimized" `already`, the error `failed`; no
@@ -224,11 +235,21 @@ side (PR 1) is in `api/season_autopilot.py`; the click is the extension's, on th
     "pressed; Yahoo's answer was not read", with the press's roster as `roster`. A log the API
     refuses closes the press as it is.
 
-  - after a live lineup run that set a swap is logged (any trigger, the panel's included), the
-    same team page runs Start Active at once, trigger `after_lineup` (#289, ext 0.11.2): the
-    page posted again, the due read fresh, the need rule (`lineup_set`), STOP, the mode, the page
-    checks and the same-day guard as above. A run that set nothing, a dry run and a log that
-    failed ask for none; when nothing is pressed the strip keeps the lineup's line.
+  - after a live lineup run that set a swap on a later day than today is logged (any trigger,
+    the panel's included), and the due says the league is live, due and not under STOP, the
+    extension presses from today's page (#289, ext 0.11.2): it reads the set day's labels once
+    settled (no swap open, up to 5 s) and keeps each moved player whose slot is not his target
+    (the set day's diff) in the worker, then navigates the same tab to today's team page (the
+    due row's `page`) with `#pickandroll-start-active-after-lineup`, trigger `after_lineup`.
+    There the run is a start-active run as above: the page posted, the due, the need rule
+    (`lineup_set`), STOP, the mode, the page checks and the lifted guard. Pressing from today's
+    page keeps Today Only off the day just set; Rest of Week covers it either way. After Yahoo's
+    answer it reads today's labels once Yahoo's refresh shows (up to 5 s) and logs `diffs`:
+    `set_day` (`day`, `diff`) and `today` (`day`, `changed`: each player the press moved,
+    `before` and `after`). The dialog's Today Only range is logged as `today.range`; when it is
+    not today, `reason` says so. Nothing is set again. A set of today, a run that set nothing, a
+    dry run and a log that failed navigate nowhere. The routines' rule never to open a page the
+    extension already reached covers this navigation.
 
   The side panel shows the last run from this browser on my team page and has **Start active
   players now** (the same run, trigger `panel`). Which team pages the routines open is the

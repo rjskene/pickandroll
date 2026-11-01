@@ -256,8 +256,12 @@ On my team page opened with a start-active fragment (`#pickandroll-start-active`
 or from the side panel's **Start active players now**, the extension runs Yahoo's own Start Active Players for the
 rest of the week, when the API's need rule says the league wants it (`GET /autopilot/start-active/due`: no run
 yet, a new week, a roster change, an IL move, a live lineup set). The page is posted first and the due route read
-fresh. A live lineup run that set a swap runs it too, at once on the same page (trigger `after_lineup`, 0.11.2,
-#289): a swap sets one day, and the press carries it to the rest of the week.
+fresh. A live lineup run that set a swap on a later day than today runs it too, from today's page (trigger
+`after_lineup`, 0.11.2, #289): it reads the set day's labels once settled (up to 5 s), keeps the moved players off
+their target in the worker, and goes in the same tab to today's team page with
+`#pickandroll-start-active-after-lineup`, where the press runs as below, so Today Only never touches the day just
+set; Rest of Week covers it. The run logs `diffs` (the set day's, and what the press changed on today's labels)
+and says in `reason` when the dialog's Today Only range is not today. A set of today navigates nowhere.
 
 - **Dry run** (and a live league whose guard refuses): logs `would_start` and presses nothing, not even the main
   button, which runs Today Only by itself.

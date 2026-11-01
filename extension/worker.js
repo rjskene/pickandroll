@@ -125,6 +125,8 @@ let submitting = Promise.resolve();
 /** Start Active (#215): the last run for the panel (session) and the press on record (local). */
 const startActiveKey = (league) => `start_active:${league}`;
 const pressKey = (league) => `start_active_press:${league}`;
+/** A later day's lineup set handing its set day's diff to the press on today's page (#289). */
+const afterLineupKey = (league) => `after_lineup:${league}`;
 /** The presses put on record one after another, so two tabs never press one league together. */
 let pressing = Promise.resolve();
 /** The IL move on record for a queue entry (local), one after another (#214). */
@@ -361,6 +363,18 @@ const ops = {
     return api("/autopilot/start-active/due", { timeout: 30000 });
   },
   /** The Start Active press on record in this browser for ``league``, null when none. */
+  /** The set day's diff a later day's lineup set hands to the press on today's page (#289),
+   * kept for the session; taken once. */
+  async after_lineup_put({ league, handoff }) {
+    await chrome.storage.session.set({ [afterLineupKey(league)]: { ...handoff, at: Date.now() } });
+    return { kept: true };
+  },
+  async after_lineup_take({ league }) {
+    const key = afterLineupKey(league);
+    const kept = (await chrome.storage.session.get(key))[key] || null;
+    await chrome.storage.session.remove(key);
+    return kept;
+  },
   async start_active_record({ league }) {
     const key = pressKey(league);
     return (await chrome.storage.local.get(key))[key] || null;

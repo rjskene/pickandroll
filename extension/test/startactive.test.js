@@ -46,6 +46,7 @@ test("the triggers, the dialog's rows and Yahoo's words", () => {
   assert.equal(S.startActiveTriggerOf("#pickandroll-start-active-evening"), "routine_evening");
   assert.equal(S.startActiveTriggerOf("#pickandroll-start-active-daily"), "routine_daily");
   assert.equal(S.startActiveTriggerOf("#pickandroll-start-active-panel"), "panel");
+  assert.equal(S.startActiveTriggerOf("#pickandroll-start-active-after-lineup"), "after_lineup");
   for (const h of ["", "#pickandroll-lineup", "#pickandroll-moves", "#other"]) assert.equal(S.startActiveTriggerOf(h), null);
   assert.deepEqual(S.dialogRows(HEAD + ROWS), {
     today: { label: "Today Only", range: "Tue, Oct 27" },
@@ -117,12 +118,22 @@ test("a live lineup run that set a swap after the day's press lifts the same-day
   assert.equal(S.pressAfterLineup({ mode: "dry_run", steps: [{ outcome: "would_set" }] }), false);
   assert.equal(S.pressAfterLineup(null), false);
   assert.deepEqual([S.laterDay(LATER, DAY), S.laterDay(DAY, DAY), S.laterDay("2026-10-26", DAY), S.laterDay(null, DAY)], [true, false, false, false]);
+
+  // The press goes from today's page; the reads it logs.
+  assert.equal(S.afterLineupUrl(`${SITE}/nba/${LEAGUE}/${TEAM}?date=${DAY}`), `${SITE}/nba/${LEAGUE}/${TEAM}?date=${DAY}#pickandroll-start-active-after-lineup`);
+  assert.equal(S.afterLineupUrl(null), null);
+  const steps = [{ player: 1, to_slot: "SF", outcome: "set" }, { player: 2, to_slot: "BN", outcome: "set" }, { player: 3, to_slot: "C", outcome: "skipped" }];
+  assert.deepEqual(S.setDayDiff(steps, { 1: "SF", 2: "PG", 3: "BN" }), { 2: "PG" });
+  assert.deepEqual(S.setDayDiff(steps, { 2: "BN" }), { 1: null });
+  assert.deepEqual(S.pressChanged({ 1: "BN", 2: "PG" }, { 1: "PG", 2: "BN" }), { 1: { before: "BN", after: "PG" }, 2: { before: "PG", after: "BN" } });
+  assert.deepEqual(S.pressChanged({ 1: "BN" }, { 1: "BN" }), {});
+  assert.deepEqual([S.rangeIsDay("Tue, Oct 27", DAY), S.rangeIsDay("Wed, Oct 28", DAY), S.rangeIsDay("Nov 1", "2026-11-01"), S.rangeIsDay("", DAY)], [true, false, true, null]);
   assert.equal(S.startActiveLastText({ day: DAY, trigger: "after_lineup", mode: "live", outcome: "started", message: UPDATED }, "now"), `${DAY} · after the lineup set, live: started active players · ${UPDATED}, now`);
 });
 
 test("the run the log takes, the strip and the panel's line", () => {
   const run = S.startActiveRun({ row: row(LIVE), day: DAY, trigger: "routine", mode: "live", outcome: "started", message: UPDATED, rest_of_week: { label: "Rest of Week 2", range: "Tue, Oct 27 - Sun, Nov 01" }, page: `/nba/${LEAGUE}/${TEAM}`, extension: "0.9.0" });
-  assert.deepEqual(Object.keys(run).sort(), ["controls", "day", "extension", "message", "mode", "outcome", "page", "reason", "reasons", "rest_of_week", "roster", "today", "trigger"]);
+  assert.deepEqual(Object.keys(run).sort(), ["controls", "day", "diffs", "extension", "message", "mode", "outcome", "page", "reason", "reasons", "rest_of_week", "roster", "today", "trigger"].filter((k, i, a) => a.indexOf(k) === i).sort());
   assert.deepEqual(run.reasons, ["week_start"]);
   assert.equal(S.startActiveStripText({ run }), `live · started active players, Rest of Week 2 · ${UPDATED}`);
   const dry = S.startActiveRun({ row: row(), day: DAY, trigger: "routine_daily", mode: "dry_run", outcome: "would_start" });
@@ -414,6 +425,23 @@ test("a live run presses nothing when it may not: not due, STOP, the same day, t
   // Off in this browser: nothing read, nothing logged.
   v = await visitTeam({ answer: worker(due(LIVE), { settings: { moves_executor: "off" } }) });
   assert.deepEqual([ops(v), v.touched], [["moves_landed", "drop_landed", "settings"], []]);
+});
+
+test("today's page opened after a later day's lineup set: the press, both reads logged on its run (#289)", async () => {
+  const set = { logged: true, at: Date.now() - 60e3, run: { mode: "live", day: "2026-10-28", steps: [{ outcome: "set" }] } };
+  const today = { day: DAY, trigger: "routine", reasons: ["no_run"], roster: ROSTER, logged: true, at: Date.now() - 3600e3 };
+  const handoff = { set_day: "2026-10-28", diff: { 2001: "BN" } };
+  const answer = (msg, sent) => (msg.op === "after_lineup_take" ? { ok: true, data: handoff } : worker(due({ ...LIVE, reasons: ["lineup_set"] }), { record: today, lineup: set })(msg, sent));
+  const v = await visitTeam({ hash: "#pickandroll-start-active-after-lineup", answer });
+  assert.deepEqual(v.touched, ["click main", "click start"]);
+  const { run, pressed } = logOf(v)[0];
+  assert.deepEqual([run.trigger, run.outcome, run.reason, pressed], ["after_lineup", "started", null, true]);
+  assert.deepEqual(run.today, { label: "Today Only", range: "Tue, Oct 27" });
+  assert.deepEqual(run.diffs, { set_day: { day: "2026-10-28", diff: { 2001: "BN" } }, today: { day: DAY, changed: {} } });
+  // Today Only reading another day says so.
+  const off = (msg, sent) => (msg.op === "start_active_due" ? { ok: true, data: { ...due({ ...LIVE, reasons: ["lineup_set"] }), date: "2026-10-26" } } : answer(msg, sent));
+  const w = await visitTeam({ hash: "#pickandroll-start-active-after-lineup", answer: off });
+  assert.equal(logOf(w)[0].run.reason, "Today Only read Tue, Oct 27, not today (2026-10-26)");
 });
 
 test("a press whose run never reached the log is logged first, as read or with its answer not read", async () => {

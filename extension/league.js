@@ -278,8 +278,28 @@
       running = false;
     }
     // A live run that set a swap: Start Active carries it to the rest of the week (#289).
-    if (PR.pressAfterLineup(run)) await startActive("after_lineup", { setDay: run.day });
+    if (PR.pressAfterLineup(run)) await afterLineup(run);
     return run;
+  }
+
+  /** After a live lineup run that set a swap on a later day than today (#289, the master's
+   * ruling): this page's labels read once settled for the set day's diff, kept in the worker for
+   * the press, and the tab goes to today's team page with the after-lineup fragment, where Start
+   * Active runs as on any start-active page. A set of today, a league not due or live, or STOP:
+   * the tab stays. Pressing from today's page keeps Today Only off the day just set; Rest of
+   * Week covers it either way. */
+  async function afterLineup(run) {
+    const r = await send({ op: "start_active_due" });
+    if (!r || !r.ok) return;
+    const row = (r.data.leagues || []).find((x) => String(x.league) === String(page.league));
+    if (r.data.stop || !row || row.error || !row.need || row.mode !== "live" || !PR.laterDay(run.day, r.data.date)) return;
+    const next = PR.afterLineupUrl(row.page);
+    if (!next) return;
+    const labels = await PR.settledLabels(document, { cap: AFTER_LINEUP_SETTLE_MS });
+    const kept = await send({ op: "after_lineup_put", league: page.league, handoff: { set_day: run.day, diff: PR.setDayDiff(run.steps, labels.lineup) } });
+    if (!kept || !kept.ok) return;
+    strip(`${PR.stripText({ run })} · Start Active from today's page`);
+    location.assign(next);
   }
 
   // The side panel's "Set lineup now": post the page again and run from that post.
@@ -506,6 +526,8 @@
 
   // ---------------------------------------------------------------- Start Active (#215)
   const saStrip = (line) => strip(line, "start active");
+  /** How long the after-lineup reads wait for the page to settle (#289). */
+  const AFTER_LINEUP_SETTLE_MS = 5 * 1000;
 
   /** Yahoo's Start Active control on my team page as a plain object for ``readStartActive``:
    * the buttons in its root (visible, disabled), any outside it, the dialog (there, open) and its
@@ -543,17 +565,15 @@
    * ``would_start`` and presses nothing; a live league presses once a day, the press put on
    * record before the page is touched (``pressStartActive``), unless the roster changed since.
    * Answers the run logged, or null. */
-  async function startActive(trigger, { setDay = null } = {}) {
+  async function startActive(trigger) {
     // A routine's run happens once: a reload of the page is a plain visit.
     if (location.hash) history.replaceState(null, "", location.pathname + location.search);
     if (running) return null;
     running = true;
-    // After a lineup run (#289) the strip keeps the lineup's line unless a press is logged.
-    const note = trigger === "after_lineup" ? () => {} : saStrip;
     try {
       const settings = await send({ op: "settings" });
       if (settings && settings.ok && settings.data.moves_executor === "off") {
-        note(PR.startActiveStripText({ browserOff: true }));
+        saStrip(PR.startActiveStripText({ browserOff: true }));
         return null;
       }
       const posted = await post();
@@ -561,21 +581,22 @@
       const record = await pressRecord(extension);
       const r = await send({ op: "start_active_due" });
       if (!r || !r.ok) {
-        note(PR.startActiveStripText({ error: (r && r.error) || "no answer from the extension" }));
+        saStrip(PR.startActiveStripText({ error: (r && r.error) || "no answer from the extension" }));
         return null;
       }
       const due = r.data;
       const row = (due.leagues || []).find((x) => String(x.league) === String(page.league));
       if (!row) {
-        note(PR.startActiveStripText({ none: "not armed here: the moves executor is off or the league is private" }));
+        saStrip(PR.startActiveStripText({ none: "not armed here: the moves executor is off or the league is private" }));
         return null;
       }
       if (row.error) {
-        note(PR.startActiveStripText({ error: row.error }));
+        saStrip(PR.startActiveStripText({ error: row.error }));
         return null;
       }
-      // After a lineup run, only a later day's set (#289): Today Only never touches a day set today.
-      if (trigger === "after_lineup" && !PR.laterDay(setDay, due.date)) return null;
+      // Opened from a later day's lineup set (#289): the set day's diff its page read.
+      const handoff = trigger === "after_lineup" ? await send({ op: "after_lineup_take", league: page.league }) : null;
+      const setDay = (handoff && handoff.ok && handoff.data) || null;
       const where = location.pathname + location.search;
       const base = { row, day: due.date, trigger, page: where, extension };
       const mode = PR.startActiveMode(row);
@@ -584,7 +605,7 @@
       let release = false;
       if (due.stop) run = PR.startActiveRun({ ...base, mode: row.mode === "live" ? "live" : "dry_run", outcome: "stopped", reason: due.reason });
       else if (!row.need) {
-        note(PR.startActiveStripText({ row }));
+        saStrip(PR.startActiveStripText({ row }));
         return null;
       } else {
         const controls = PR.readStartActive(startActiveControls());
@@ -609,10 +630,20 @@
             const why = (put && put.error) || "no answer from the extension";
             run = PR.startActiveRun({ ...base, ...rows, mode: "live", outcome: "skipped", reason: `the press could not be put on record: ${why}`, controls });
           } else {
+            const before = trigger === "after_lineup" ? PR.readLabels(document).lineup : null;
             const got = await PR.pressStartActive(document);
             pressed = got.outcome !== "skipped";
             release = !pressed;
-            run = PR.startActiveRun({ ...base, mode: "live", outcome: got.outcome, reason: got.reason, message: got.message, today: got.today, rest_of_week: got.rest_of_week, controls });
+            let diffs = null;
+            let reason = got.reason;
+            if (trigger === "after_lineup") {
+              // Today's labels after Yahoo's answer, once its refresh shows (or 5 s): what the press changed today.
+              const after = pressed ? (await PR.settledLabels(document, { cap: AFTER_LINEUP_SETTLE_MS, until: (l) => Object.keys(PR.pressChanged(before, l.lineup)).length > 0 })).lineup : before;
+              diffs = { set_day: setDay ? { day: setDay.set_day, diff: setDay.diff } : null, today: { day: due.date, changed: PR.pressChanged(before, after) } };
+              const range = got.today && got.today.range;
+              if (pressed && range && PR.rangeIsDay(range, due.date) === false) reason = [reason, `Today Only read ${range}, not today (${due.date})`].filter(Boolean).join("; ");
+            }
+            run = PR.startActiveRun({ ...base, mode: "live", outcome: got.outcome, reason, message: got.message, today: got.today, rest_of_week: got.rest_of_week, diffs, controls });
           }
         }
       }
