@@ -7,6 +7,9 @@
 export interface Bullet {
   text: string;
   sub?: string[];
+  /** The formula this idea rests on (#282): the bullet says it in words, and a Formula chip
+   * opens the formal definition, every variable and a worked sample. */
+  formula?: FormulaId;
 }
 
 /** The figure beside a step's bullets, by name; the screen maps each name to its component. */
@@ -46,6 +49,29 @@ export interface Step {
   wide?: boolean;
   /** Where the rules shown come from: files in the repo, in the reader's words. */
   source: string[];
+  /** The worked example the card's Example button opens. */
+  example?: Example;
+}
+
+/** A small table in an example: the column heads, the rows as shown, the number columns. */
+export interface ExampleTable {
+  head: string[];
+  rows: string[][];
+  /** The columns set right-aligned (the numbers), by index. */
+  num?: number[];
+}
+
+/** A step's worked example (#282): fictional players (Player A, Player B, ...) and made-up
+ * numbers, never a real name, league or projection. Bullets like a card's: key ideas with their
+ * sub-ideas, under the same text rule. */
+export interface Example {
+  /** The drawer's heading. */
+  title: string;
+  /** What the example sets up. */
+  lead: Bullet[];
+  table?: ExampleTable;
+  /** What to read from it. */
+  read?: Bullet[];
 }
 
 export type TrackId = "draft" | "moves" | "daily";
@@ -54,17 +80,19 @@ export interface Track {
   id: TrackId;
   /** The track control's label. */
   title: string;
-  /** The line over the strip, with the track's name in bold. */
+  /** The track control's label on a phone. */
+  short: string;
+  /** The short muted sentence at the top of the step rail. */
   lede: string;
-  /** The strip's short label per step, in step order: the whole planned track, so a dot past
+  /** The rail's short label per step, in step order: the whole planned track, so a row past
    * the written steps shows as still to come. */
   labels: string[];
-  /** A loop drawn under the strip, from one dot back to an earlier one (0-based), with its
-   * caption on a desktop: the draft's re-solve after every pick. */
+  /** A bracket beside the rail, from one row back to an earlier one (0-based), with its short
+   * caption: the draft's re-solve after every pick. */
   loop?: { from: number; to: number; label: string };
-  /** The strip as an hour line (#286): each step's hour of the day, one per label, so the dots
-   * sit on a 24-hour axis with the current routine lit. */
-  hours?: number[];
+  /** Each step's hour of the day (#286), one per label, shown as the row's time; null for a row
+   * without one (the day's overview). */
+  hours?: (number | null)[];
   steps: Step[];
 }
 
@@ -73,4 +101,64 @@ export interface Term {
   id: string;
   term: string;
   def: string;
+}
+
+/** Display math as a tree (#282), drawn with HTML and CSS: a string is upright text (a number,
+ * an operator, Φ, max); `v` an italic variable; the rest stack or stretch. */
+export type MathNode =
+  | string
+  | MathNode[]
+  | { v: string }
+  | { frac: [MathNode, MathNode] }
+  | { sub: [MathNode, MathNode] }
+  | { sup: [MathNode, MathNode] }
+  | { sqrt: MathNode }
+  | { paren: MathNode }
+  | { big: string; under?: MathNode }
+  | { cases: [MathNode, MathNode][] };
+
+export type FormulaId =
+  | "zscore"
+  | "impact"
+  | "league-blend"
+  | "adp-survival"
+  | "ecw"
+  | "piecewise-phi"
+  | "plan-value"
+  | "price"
+  | "snake"
+  | "category-odds"
+  | "bid"
+  | "claim-odds"
+  | "executes-at";
+
+/** How a sample's number is printed: decimals, a time of day from minutes, or dollars. */
+export type Shown = { dp: number } | "hhmm" | "usd";
+
+/** One line of a worked sample: what it works out, the expression with the sample's numbers,
+ * and the result shown. The result is typed; the test recomputes it from the inputs. */
+export interface SampleStep {
+  say: string;
+  math: MathNode;
+  value: number;
+  shown: Shown;
+}
+
+/** A formula's popout (#282): in words, formally, every variable, and a sample worked step by
+ * step from typed inputs. */
+export interface Formula {
+  id: FormulaId;
+  name: string;
+  /** What it does, in words: one line. */
+  what: string;
+  /** The formal definition, one display line each. */
+  lines: MathNode[];
+  vars: { sym: MathNode; meaning: string }[];
+  /** The sample's inputs as shown. */
+  given: { sym: MathNode; value: string; say: string }[];
+  steps: SampleStep[];
+  /** Every step's result recomputed from the sample's inputs, in step order. */
+  check: () => number[];
+  /** Where the rule lives, in the reader's words. */
+  source: string;
 }

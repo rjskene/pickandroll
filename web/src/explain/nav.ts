@@ -46,7 +46,7 @@ export function move(p: Place, delta: number, tracks: Track[]): Place {
   return { track: p.track, step: to };
 }
 
-/** The Next button's words on a step: the last step of a track leads to the next track. */
+/** The → arrow's words on a step (its title): the last step of a track leads to the next track. */
 export function nextLabel(p: Place, tracks: Track[]): string {
   const n = tracks.find((t) => t.id === p.track)?.steps.length ?? 0;
   if (p.step < n - 1) return "Next →";

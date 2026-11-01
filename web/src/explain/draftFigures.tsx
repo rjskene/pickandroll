@@ -10,7 +10,7 @@ import { Arrow } from "./svg";
 export function PoolBars() {
   const bars = Array.from({ length: 44 }, (_, i) => ({ x: 24 + i * 8.4, h: 120 * Math.exp(-i / 16) + 6, inPool: i < 25 }));
   return (
-    <svg viewBox="0 0 420 200" role="img" aria-label="The pool is the top teams × roster by z total, chosen iteratively">
+    <svg viewBox="0 0 420 200" role="img" aria-label="The pool is every roster's worth of players by z total, chosen iteratively">
       <Arrow id="ex-ah-pool" accent />
       {bars.map((b, i) => (
         <rect key={i} className={`bar${b.inPool ? " in" : ""}`} x={b.x} y={150 - b.h} width="6" height={b.h} rx="1" />
@@ -18,7 +18,7 @@ export function PoolBars() {
       <line className="axis" x1="20" y1="150" x2="400" y2="150" />
       <line className="ref" x1="232" y1="20" x2="232" y2="150" style={{ stroke: "var(--accent)" }} />
       <text className="ac sm" x="236" y="30">
-        cut at teams × roster = 156
+        cut at 156: every roster's worth
       </text>
       <text className="sm" x="250" y="166">
         players sorted by z total
@@ -80,7 +80,7 @@ export function Survival() {
         ADP 110
       </text>
       <text className="sm" x="40" y="240">
-        read from "now": S(k) / S(now); the league's own table carries the
+        read from now: given he is here, does he last; the league's own table carries the
       </text>
       <text className="sm" x="40" y="252">
         never-drafted share the normal model lacks
@@ -141,13 +141,13 @@ export function Objective() {
         slope = marginal value
       </text>
       <text className="sm" x="40" y="238">
-        x = (T − μ) / σ, the roster's lead in spreads; the dashed line is the
+        across: the roster's lead over the league's mean, in spreads; dashed: the
       </text>
       <text className="sm" x="40" y="250">
         piecewise version the solver sees
       </text>
       <text className="t" x="40" y="276">
-        max Σ Φ((T − μ) / σ) over the categories: the odds of each, summed
+        the odds in each category, read off the curve, summed
       </text>
       {CATS.map(([c, p], i) => {
         const x = 40 + i * 40;
@@ -166,17 +166,17 @@ export function Objective() {
       })}
       <line className="axis" x1="40" y1="318" x2="400" y2="318" />
       <text className="ac" x="400" y="348" textAnchor="end">
-        Σ = {sum.toFixed(2)} expected categories won
+        summed: {sum.toFixed(2)} expected categories won
       </text>
     </svg>
   );
 }
 
 const SLOTS: [string, number, number][] = [
-  ["j = 1", 1, 1],
-  ["j = 2", 0.81, 0.92],
-  ["j = 3", 0.62, 0.8],
-  ["j = 4", 0.47, 0.66],
+  ["pick 1", 1, 1],
+  ["pick 2", 0.81, 0.92],
+  ["pick 3", 0.62, 0.8],
+  ["pick 4", 0.47, 0.66],
 ];
 
 /** A plan: one player per remaining pick, each weighted by his chance of lasting to it. */
@@ -193,23 +193,23 @@ export function Plan() {
             {l}
           </text>
           <text className="t" x={48 + i * 68} y="76" textAnchor="middle">
-            A = {a === 1 ? "1.00" : a.toFixed(2).replace(/^0/, "")}
+            {a === 1 ? "1.00" : a.toFixed(2).replace(/^0/, "")}
           </text>
         </g>
       ))}
-      <rect className="win" x="292" y="32" width="56" height="60" rx="6" style={{ opacity: 0.5 }} />
-      <text className="lbl" x="320" y="56" textAnchor="middle">
+      <rect className="win" x="292" y="32" width="44" height="60" rx="6" style={{ opacity: 0.5 }} />
+      <text className="lbl" x="314" y="56" textAnchor="middle">
         …
       </text>
-      <rect className="win" x="360" y="32" width="40" height="60" rx="6" style={{ opacity: 0.4 }} />
-      <text className="lbl" x="380" y="56" textAnchor="middle">
-        13
+      <rect className="win" x="344" y="32" width="56" height="60" rx="6" style={{ opacity: 0.4 }} />
+      <text className="lbl" x="372" y="56" textAnchor="middle">
+        pick 13
       </text>
       <text className="sm" x="20" y="114">
-        value = z × A[player, pick] · every slot filled once · every player at most once
+        each box: the chance he lasts to it; value is z times that · every slot once, every player once
       </text>
       <text className="ac sm" x="20" y="148">
-        only j = 1 is acted on; after the next real pick the whole plan is solved again
+        only pick 1 is acted on; after the next real pick the whole plan is solved again
       </text>
     </svg>
   );

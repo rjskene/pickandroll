@@ -651,15 +651,21 @@ export interface ExplainApi {
   glossaryOpen: boolean;
   closeGlossary: () => void;
   toggleGlossary: () => void;
+  /** An example (or a formula) is open in its sheet. */
+  popOpen: boolean;
+  closePop: () => void;
+  /** e: the current step's worked example, open or closed. */
+  toggleExample: () => void;
   /** Read it all, on or off. */
   toggleAll: () => void;
   sheetOpen: boolean;
   setSheetOpen: (open: boolean) => void;
 }
 
-/** The Explain screen's keys (#283): the arrows walk the steps, g the glossary, a read it all;
- * from a field (the animations' range and toggles) the keys keep their native meaning. Esc
- * closes the key sheet, then the glossary, then goes back. */
+/** The Explain screen's keys (#283): the arrows walk the steps, g the glossary, e the step's
+ * example (#282), a read it all; from a field (the animations' range and toggles) the keys keep
+ * their native meaning. Esc closes the key sheet, then an example, then the glossary, then goes
+ * back. */
 export function explainKeys(x: ExplainApi): KeyMap {
   const unlessField = (act: () => void) => ({ field }: { field: boolean }) => {
     if (field) return false;
@@ -671,33 +677,36 @@ export function explainKeys(x: ExplainApi): KeyMap {
     sheetOpen: x.sheetOpen,
     setSheetOpen: x.setSheetOpen,
     escape: () => {
-      if (x.glossaryOpen) x.closeGlossary();
+      if (x.popOpen) x.closePop();
+      else if (x.glossaryOpen) x.closeGlossary();
       else x.back();
     },
     keys: {
       ArrowLeft: unlessField(x.prev),
       ArrowRight: unlessField(x.next),
       g: unlessField(x.toggleGlossary),
+      e: unlessField(x.toggleExample),
       a: unlessField(x.toggleAll),
     },
   };
 }
 
 export const EXPLAIN_SHEET: Sheet = {
-  cards: "Three tracks: the draft, moves and trades, daily play. One step a screen; the strip above is the track's diagram, and a click on a dot opens its step. Nothing on this screen writes anything.",
+  cards: "Three tracks: the draft, moves and trades, daily play. One step a screen; the rail beside the card is the track's diagram, and a click on a row opens its step. A card's Example button opens a worked example; a Formula chip opens the formula, every variable and a sample worked step by step. Nothing on this screen writes anything.",
   groups: [
     {
       title: "Steps",
       rows: [
         [["←", "→"], "the step before or after; past a track's last step, the next track"],
-        [["a"], "read it all: every step of the track on one page, the strip following the scroll"],
+        [["a"], "read it all: every step of the track on one page, the rail following the scroll"],
       ],
     },
     {
-      title: "Glossary",
+      title: "Glossary and examples",
       rows: [
         [["g"], "open or close the glossary sheet; an underlined term in a card opens it on its definition"],
-        [["Esc"], "close the glossary"],
+        [["e"], "the step's worked example, as the card's Example button: fictional players, made-up numbers"],
+        [["Esc"], "close the example or the formula, then the glossary"],
       ],
     },
     {
