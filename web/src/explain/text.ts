@@ -139,7 +139,7 @@ export function allViolations(tracks: Track[], terms: Term[], formulas?: Partial
     if (eq) out.push(`glossary ${term.id}: the definition holds an equation ("${eq}"): say it in words`);
   }
   for (const t of tracks) {
-    if (t.labels.length < t.steps.length) out.push(`${t.id}: ${t.labels.length} strip labels for ${t.steps.length} steps`);
+    if (t.labels.length < t.steps.length) out.push(`${t.id}: ${t.labels.length} rail labels for ${t.steps.length} steps`);
     const ids = new Set<string>();
     for (const s of t.steps) {
       if (ids.has(s.id)) out.push(`${t.id}: two steps named "${s.id}"`);

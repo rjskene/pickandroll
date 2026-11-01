@@ -6,6 +6,7 @@ import type { Track } from "./types";
 const t = (id: Track["id"], title: string, n: number): Track => ({
   id,
   title,
+  short: title,
   lede: "",
   labels: Array.from({ length: n }, (_, i) => String(i)),
   steps: Array.from({ length: n }, (_, i) => ({ id: `s${i}`, title: "T", kicker: "k", figure: "export-row" as const, bullets: [{ text: "x" }], source: [] })),

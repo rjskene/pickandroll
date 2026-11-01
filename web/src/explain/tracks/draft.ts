@@ -6,9 +6,10 @@ import type { Track } from "../types";
 export const draft: Track = {
   id: "draft",
   title: "Draft",
-  lede: "every pick is the first move of a plan for all my remaining picks, re-solved after each pick. The strip is the pipeline.",
+  short: "Draft",
+  lede: "Every pick is the first move of a plan for all my remaining picks.",
   labels: ["Projections", "Pool & z", "Survival", "Objective", "Plan", "Price → pick", "Solve ahead", "Keepers", "Yahoo room"],
-  loop: { from: 8, to: 2, label: "after every pick in the room, back to the board: the plan is re-solved" },
+  loop: { from: 8, to: 2, label: "re-solved after every pick" },
   steps: [
     {
       id: "projections",

@@ -7,7 +7,8 @@ import type { Track } from "../types";
 export const moves: Track = {
   id: "moves",
   title: "Moves & trades",
-  lede: "which add and drop raises the categories I am expected to win, this week and over three, without costing the season.",
+  short: "Moves",
+  lede: "Which add and drop raises my expected categories, this week and over three, without costing the season.",
   labels: ["Weekly odds", "Horizons", "Keep rule", "Bids & trades"],
   steps: [
     {

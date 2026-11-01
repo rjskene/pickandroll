@@ -7,9 +7,10 @@ import type { Track } from "../types";
 export const daily: Track = {
   id: "daily",
   title: "Daily play",
-  lede: "Central time: the armed public leagues run themselves from a VM; the pinned private league (31822) gets suggestions only. The strip is the day.",
-  labels: ["the day", "04:50 sign-in", "05:00 daily", "06:45 watchdog", "09:00 execute", "09:15 morning", "15:00 late", "21:00 build", "22:40 pass"],
-  hours: [0, 4.83, 5, 6.75, 9, 9.25, 15, 21, 22.67],
+  short: "Daily",
+  lede: "Central time. The armed public leagues run from a VM; the pinned private league (31822) gets suggestions only.",
+  labels: ["The day", "Sign-in", "Daily", "Watchdog", "Execute", "Morning pass", "Late pass", "Evening build", "Evening pass"],
+  hours: [null, 4.83, 5, 6.75, 9, 9.25, 15, 21, 22.67],
   steps: [
     {
       id: "the-day",

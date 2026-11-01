@@ -6,7 +6,7 @@ import { BULLET_MAX, SUB_MAX, allViolations, equation, pieces, termIds, violatio
 import { TRACKS } from "./tracks/index.ts";
 import type { Step, Track } from "./types";
 
-const track: Track = { id: "draft", title: "t", lede: "l", labels: ["a"], steps: [] };
+const track: Track = { id: "draft", title: "t", short: "t", lede: "l", labels: ["a"], steps: [] };
 const step = (over: Partial<Step>): Step => ({ id: "s", title: "T", kicker: "k", figure: "export-row", bullets: [{ text: "ok" }], source: [], ...over });
 
 test("every registered track keeps the text rule, its formulas included", () => {
@@ -32,7 +32,7 @@ test("a glossary definition is held to the same rule: words, not an equation (#2
   assert.deepEqual(v, ['glossary odds: the definition holds an equation ("^"): say it in words']);
 });
 
-test("every track has at least one step and a strip label for each", () => {
+test("every track has at least one step and a rail label for each", () => {
   for (const t of TRACKS) {
     assert.ok(t.steps.length >= 1, t.id);
     assert.ok(t.labels.length >= t.steps.length, t.id);
@@ -86,7 +86,7 @@ test("the limit counts the words shown, not the markup", () => {
 test("a track with no steps, no title or two steps of one name is reported", () => {
   assert.deepEqual(violations(track, step({ title: " ", bullets: [] }), GLOSSARY), ["draft/s: no title", "draft/s: no bullets"]);
   const twice: Track = { ...track, labels: ["a"], steps: [step({}), step({})] };
-  assert.deepEqual(allViolations([twice], GLOSSARY), ["draft: 1 strip labels for 2 steps", 'draft: two steps named "s"']);
+  assert.deepEqual(allViolations([twice], GLOSSARY), ["draft: 1 rail labels for 2 steps", 'draft: two steps named "s"']);
 });
 
 test("every step has a worked example, fictional players only (#282)", () => {

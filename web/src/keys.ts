@@ -692,13 +692,13 @@ export function explainKeys(x: ExplainApi): KeyMap {
 }
 
 export const EXPLAIN_SHEET: Sheet = {
-  cards: "Three tracks: the draft, moves and trades, daily play. One step a screen; the strip above is the track's diagram, and a click on a dot opens its step. A card's Example button opens a worked example; a Formula chip opens the formula, every variable and a sample worked step by step. Nothing on this screen writes anything.",
+  cards: "Three tracks: the draft, moves and trades, daily play. One step a screen; the rail beside the card is the track's diagram, and a click on a row opens its step. A card's Example button opens a worked example; a Formula chip opens the formula, every variable and a sample worked step by step. Nothing on this screen writes anything.",
   groups: [
     {
       title: "Steps",
       rows: [
         [["←", "→"], "the step before or after; past a track's last step, the next track"],
-        [["a"], "read it all: every step of the track on one page, the strip following the scroll"],
+        [["a"], "read it all: every step of the track on one page, the rail following the scroll"],
       ],
     },
     {
