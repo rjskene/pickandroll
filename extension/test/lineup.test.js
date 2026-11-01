@@ -361,7 +361,7 @@ test("a refused run is not kept as the last one", async () => {
 
 test("only the live run clicks; no field is set and nothing submitted; the reader loads the executor's library", () => {
   const manifest = JSON.parse(fs.readFileSync(path.join(DIR, "manifest.json"), "utf8"));
-  assert.equal(manifest.version, "0.11.1");
+  assert.equal(manifest.version, "0.11.2");
   const reader = manifest.content_scripts.find((c) => c.js.includes("league.js"));
   assert.deepEqual(reader.js, ["lib/league.js", "lib/lineup.js", "lib/moves.js", "lib/startactive.js", "lib/ilmove.js", "lib/drop.js", "league.js"]);
   // The moves executor's live claim (``fillClaim``, #171 PR 3) and Start Active's presses
@@ -410,7 +410,8 @@ async function visitPage({ hash = "", answer, lock = [], swap: roster = null }) 
     },
   };
   const url = new URL(`https://basketball.fantasysports.yahoo.com/nba/${LEAGUE}/${TEAM}?date=${DAY}${hash}`);
-  const location = { href: url.href, hash: url.hash, pathname: url.pathname, search: url.search, assign() {} };
+  const assigned = [];
+  const location = { href: url.href, hash: url.hash, pathname: url.pathname, search: url.search, assign: (u) => assigned.push(u) };
   const sent = [];
   const replaced = [];
   const listeners = [];
@@ -449,7 +450,7 @@ async function visitPage({ hash = "", answer, lock = [], swap: roster = null }) 
   ctx.globalThis = ctx;
   for (const file of ["lib/league.js", "lib/lineup.js", "lib/moves.js", "lib/startactive.js", "lib/ilmove.js", "lib/drop.js", "league.js"]) vm.runInContext(fs.readFileSync(path.join(DIR, file), "utf8"), ctx);
   for (const fn of timers.splice(0)) await fn();
-  return { sent, strip: nodes["pickandroll-strip"], replaced, listeners, landed };
+  return { sent, strip: nodes["pickandroll-strip"], replaced, listeners, landed, assigned };
 }
 
 /** The worker's answers: the post accepted, the steps built from it, the log taking the run. */
@@ -878,7 +879,11 @@ test("in a live league whose guard holds, the routine's link sets the steps once
   const v = await visitPage({ hash: "#pickandroll-lineup", answer: liveWorker(), swap: roster });
   assert.deepEqual(
     v.sent.map((m) => m.op),
-    ["season_page", "settings", "lineup_steps", "start_active_due", "start_active_record", "lineup_record", "lineup_setting", "settings", "lineup_steps", "lineup_log"],
+    [
+      ...["season_page", "settings", "lineup_steps", "start_active_due", "start_active_record", "lineup_record", "lineup_setting", "settings", "lineup_steps", "lineup_log"],
+      // A swap set: Start Active's due read (#289); no league of it is this one, so the tab stays.
+      "start_active_due",
+    ],
   );
   assert.deepEqual(roster.touched, ["click 1011 BN", "click 1004 SF"]);
   const setting = v.sent[6].record;
@@ -890,6 +895,40 @@ test("in a live league whose guard holds, the routine's link sets the steps once
   assert.deepEqual(log.run.diff, {});
   assert.equal(log.run.message, SAVED_WORDS);
   assert.match(v.strip.textContent, /^pickandroll lineup: live · 1 swap set \d\d:\d\d$/);
+});
+
+test("a live run that set a later day's swap reads the set day settled and goes to today's page for the press (#289)", async () => {
+  // The page sets tomorrow's lineup: the due's day is the one before, its row today's page.
+  const today = "2026-10-23";
+  const todayPage = `https://basketball.fantasysports.yahoo.com/nba/${LEAGUE}/${TEAM}?date=${today}`;
+  const row = { league: LEAGUE, team: TEAM, need: true, reasons: ["lineup_set"], mode: "live", live: { ok: true, reason: null }, page: todayPage };
+  const press = { day: today, logged: true, at: 0 };
+  const answer =
+    ({ date = today, sa = row, stop = false } = {}) =>
+    (msg, sent) => {
+      if (msg.op === "after_lineup_put") return { ok: true, data: { kept: true } };
+      if (msg.op === "start_active_due") return { ok: true, data: { date, stop, leagues: [sa] } };
+      return liveWorker({ sa: [row], press: { ...press, day: date } })(msg, sent);
+    };
+  // A swap Yahoo keeps open past its save: the set day's read waits it out.
+  const roster = swapDom({ after: 0, linger: 3 });
+  const v = await visitPage({ hash: "#pickandroll-lineup", answer: answer(), swap: roster });
+  const put = v.sent.find((m) => m.op === "after_lineup_put");
+  assert.deepEqual(put.handoff, { set_day: DAY, diff: {} });
+  assert.deepEqual(v.assigned, [`${todayPage}#pickandroll-start-active-after-lineup`]);
+  assert.ok(!v.sent.some((m) => m.op === "start_active_pressing"), "nothing pressed on the set day's page");
+  assert.match(v.strip.textContent, /Start Active from today's page$/);
+  assert.deepEqual(roster.touched, ["click 1011 BN", "click 1004 SF"]);
+  // A run that set nothing, a set of today, a league not due, STOP: the tab stays.
+  for (const [over, swap] of [
+    [{}, swapDom({ answer: null })],
+    [{ date: DAY }, swapDom({ after: 0 })],
+    [{ sa: { ...row, need: false } }, swapDom({ after: 0 })],
+    [{ stop: true }, swapDom({ after: 0 })],
+  ]) {
+    const w = await visitPage({ hash: "#pickandroll-lineup", answer: answer(over), swap });
+    assert.deepEqual([w.assigned, w.sent.some((m) => m.op === "after_lineup_put")], [[], false]);
+  }
 });
 
 test("live, a run waits for the day's Start Active press, refuses a pass already on record and runs dry where the guard refuses", async () => {

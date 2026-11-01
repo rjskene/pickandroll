@@ -43,7 +43,7 @@ import json
 import os
 import threading
 from collections import Counter
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any, Literal
@@ -809,7 +809,17 @@ class StartActiveRun(BaseModel):
 
     day: date
     mode: Literal["dry_run", "live"]
-    trigger: Literal["routine", "routine_late", "routine_evening", "routine_daily", "panel"]
+    #: ``after_lineup``: pressed on the team page right after a live lineup run set a swap (#289);
+    #: ``after_add``: kept for an add that lands at once (none does in a live league today).
+    trigger: Literal[
+        "routine",
+        "routine_late",
+        "routine_evening",
+        "routine_daily",
+        "panel",
+        "after_lineup",
+        "after_add",
+    ]
     outcome: Literal["would_start", "started", "already", "skipped", "failed", "stopped"]
     reason: str | None = None
     #: Why the run was due (``start_active_need``'s reasons, as the routine read them).
@@ -817,6 +827,12 @@ class StartActiveRun(BaseModel):
     #: The dialog's two rows as the page printed them: each its label, range and Yahoo's words.
     today: dict[str, Any] | None = None
     rest_of_week: dict[str, Any] | None = None
+    #: An ``after_lineup`` press's reads (#289): ``set_day`` (``day``, ``diff``: each player the
+    #: lineup run moved whose slot on the set day's page, once settled, is not his target) and
+    #: ``today`` (``day``, ``changed``: each player whose slot on today's page the press changed,
+    #: ``before`` and ``after``). Widened to every set once a week of these shows Yahoo never
+    #: undoes a swap of two players who both play.
+    diffs: dict[str, Any] | None = None
     #: Yahoo's words after the press ("6 lineups updated", "Already optimized", the error).
     message: str | None = None
     #: The roster the page showed, ``{players, held}`` by id; the API's own read when absent.
@@ -868,13 +884,21 @@ def start_active_need(
     mode: Mapping[str, Any],
     week_start: date,
     roster: Mapping[str, list[int]] | None,
+    today: date | None = None,
 ) -> dict[str, Any]:
     """Whether the league wants a Start Active run (#215): ``no_run`` before any run in its
     mode, ``week_start`` when its last run is before the week's first day, ``roster_changed``
     when my players or who is held differ from the roster its last run recorded (a won claim, a
     drop, a trade, an IL move), with the ids in and out; ``il_moved`` beside it when an IL move
-    of #214 landed since. A run in the other mode does not count: a league switched live runs
-    again. No need while the mode is off or the league is private."""
+    of #214 landed since; ``lineup_set`` when a live lineup run set a swap since on a day later
+    than ``today`` (#289): a swap sets one day, and the press carries it to the rest of the week.
+    Only a later day's: Yahoo's main button runs Today Only at once, which could undo the swaps of
+    a day set today with no pass left to fix them (the 15:00 late pass sets today and nothing
+    follows it); a set of today after the 05:00 daily is checked again by the late pass anyway
+    (the master's ruling on #289). Widened to every set once a week of the presses' ``diff``
+    shows Yahoo never undoes a swap of two players who both play. A run in the other mode does
+    not count: a league switched live runs again. No need while the mode is off or the league is
+    private."""
     out: dict[str, Any] = {"need": False, "reasons": [], "changes": None, "last": None}
     if mode.get("private") or mode["mode"] == "off":
         return out
@@ -903,14 +927,26 @@ def start_active_need(
                 "returned": sorted(was_h - now_h),
             }
     since = _at(last.get("at"))
-    if since is not None and any(
-        r.get("mode") == "live"
-        and r.get("outcome") == "moved"
-        and (at := _at(r.get("at"))) is not None
-        and at > since
-        for _, r in runs(data_dir, league, IL)
-    ):
+
+    def landed_since(key: str, landed: Callable[[Mapping[str, Any]], bool]) -> bool:
+        return since is not None and any(
+            r.get("mode") == "live"
+            and landed(r)
+            and (at := _at(r.get("at"))) is not None
+            and at > since
+            for _, r in runs(data_dir, league, key)
+        )
+
+    if landed_since(IL, lambda r: r.get("outcome") == "moved"):
         reasons.append("il_moved")
+
+    def later_set(r: Mapping[str, Any]) -> bool:
+        day = r.get("day")
+        later = today is None or (isinstance(day, str) and date.fromisoformat(day) > today)
+        return later and any(x.get("outcome") == "set" for x in r.get("steps") or [])
+
+    if landed_since(LINEUP, later_set):
+        reasons.append("lineup_set")
     last_view = {k: last.get(k) for k in ("at", "day", "trigger", "outcome", "message")}
     return {"need": bool(reasons), "reasons": reasons, "changes": changes, "last": last_view}
 

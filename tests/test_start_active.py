@@ -1,5 +1,5 @@
 """Yahoo's Start Active Players for the rest of the week (#215): the due route's need rule
-(``no_run``, ``week_start``, ``roster_changed``, ``il_moved``), the league's log under
+(``no_run``, ``week_start``, ``roster_changed``, ``il_moved``, ``lineup_set``), the league's log under
 ``start_active`` with the roster each run ran on, its checks, the pass record's counts, the
 Queue's lines and the digest's words. Nothing here opens a page: the runs are the extension's,
 faked.
@@ -86,6 +86,42 @@ def test_the_due_route_says_which_armed_leagues_want_a_run_and_why(client):
         client.data_dir, LEAGUE, {"at": later, "mode": "live", "outcome": "moved"}, DAY, ap.IL
     )
     assert row(client)["reasons"] == ["il_moved"]
+
+
+def test_a_live_lineup_set_since_the_press_wants_one_more(client):
+    """A swap sets one day: the press after it carries it to the rest of the week (#289)."""
+    strategy_league(client)
+    live_league(client)
+    started = sa_body(mode="live", outcome="started", message="6 lineups updated")
+    assert client.post(URL, json=started).status_code == 200
+    assert row(client)["need"] is False
+
+    tomorrow = (DAY + timedelta(days=1)).isoformat()
+
+    def lineup(minutes: int, outcomes: list[str], mode: str = "live", day: str = tomorrow) -> None:
+        at = (NOW + timedelta(minutes=minutes)).isoformat()
+        steps = [{"outcome": o} for o in outcomes]
+        run = {"at": at, "day": day, "mode": mode, "steps": steps}
+        ap.append_run(client.data_dir, LEAGUE, run, DAY)
+
+    # Nothing set (a skip, a failure, a dry run's would-set), set before the press, or a set of
+    # today, which Today Only could undo with no pass left to fix it: no need.
+    lineup(-5, ["set"])
+    lineup(5, ["skipped", "failed"])
+    lineup(5, ["would_set"], mode="dry_run")
+    lineup(5, ["set"], day=DAY.isoformat())
+    assert row(client)["need"] is False
+    lineup(6, ["set", "skipped"])
+    r = row(client)
+    assert (r["need"], r["reasons"]) == (True, ["lineup_set"])
+    # The press that follows it, its trigger the lineup's, is the run: nothing is due after it.
+    client.app.state.seasons.clock = lambda: NOW + timedelta(minutes=7)
+    later = sa_body(
+        mode="live", outcome="started", trigger="after_lineup", message="6 lineups updated"
+    )
+    assert client.post(URL, json=later).status_code == 200
+    assert row(client)["need"] is False
+    assert row(client)["last"]["trigger"] == "after_lineup"
 
 
 def test_a_league_switched_live_runs_again_and_stop_or_off_wants_none(client):

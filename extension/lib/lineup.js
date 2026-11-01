@@ -432,6 +432,17 @@
     return { outcome: "failed", reason: `clicked; the save was not read in ${Math.round(saveCap / 1000)} s`, message: null };
   }
 
+  /** The labels once the page settled (#289): no swap open, and ``until`` (when given) holds on
+   * them, polled every ``every`` ms up to ``cap``; the last read either way. */
+  async function settledLabels(doc, { wait = (ms) => new Promise((r) => setTimeout(r, ms)), every = 200, cap = SETTLE_MS, until = null } = {}) {
+    let labels = readLabels(doc);
+    for (let waited = 0; waited < cap && (labels.swapping || (until && !until(labels))); waited += every) {
+      await wait(every);
+      labels = readLabels(doc);
+    }
+    return labels;
+  }
+
   /** The page's controls with the lineup and the fixed players as the swap labels show them now:
    * a swap saves through Yahoo's script, and the form's selects need not follow it. */
   function liveControls(controls, labels) {
@@ -673,6 +684,7 @@
     NEEDS_DROP,
     readLabels,
     swapStep,
+    settledLabels,
     setLineup,
     liveRun,
     unreadLineup,

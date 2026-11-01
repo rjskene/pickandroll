@@ -24,7 +24,10 @@
     "pickandroll-start-active-evening": "routine_evening",
     "pickandroll-start-active-daily": "routine_daily",
     "pickandroll-start-active-panel": "panel",
+    // Today's page, opened from a later day's lineup set (#289).
+    "pickandroll-start-active-after-lineup": "after_lineup",
   };
+  const AFTER_LINEUP_FRAGMENT = "pickandroll-start-active-after-lineup";
   /** Yahoo's control (step 0): the button in its React root, the dialog it opens and the Rest of
    * Week row's Start. */
   const SA_OVERLAY = "#fantasy_start_active_overlay";
@@ -123,15 +126,81 @@
     return ids(a.players) !== ids(b.players) || ids(a.held) !== ids(b.held);
   }
 
+  /** Whether ``lineup`` (the live lineup run on record in this browser, lib/lineup.js) set a swap
+   * and was logged after ``record``'s press: a swap sets one day, and one press after it carries
+   * it to the rest of the week (#289). */
+  function lineupSince(lineup, record) {
+    if (!lineup || !lineup.logged || !lineup.run || lineup.run.mode !== "live") return false;
+    if (!(lineup.run.steps || []).some((x) => x.outcome === "set")) return false;
+    return laterDay(lineup.run.day, record.day) && Number(lineup.at) > Number(record.at);
+  }
+
+  /** Whether ``day`` (an ISO date) is later than ``today``: the press after a lineup set is only
+   * for a later day's set (the master's ruling on #289), since the main button runs Today Only at
+   * once and could undo the swaps of a day set today with no pass left to fix them. */
+  function laterDay(day, today) {
+    return /^\d{4}-\d{2}-\d{2}$/.test(String(day)) && /^\d{4}-\d{2}-\d{2}$/.test(String(today)) && String(day) > String(today);
+  }
+
+  /** Whether the lineup run just logged (``run``, null when its log failed) wants the press after
+   * it (``after_lineup``, #289): a live run with a swap set. The press is made from today's page
+   * (``afterLineupUrl``), only after a later day's set, and still goes through the due's need
+   * rule, STOP, the mode and the same-day guard there. */
+  function pressAfterLineup(run) {
+    return Boolean(run && run.mode === "live" && (run.steps || []).some((x) => x.outcome === "set"));
+  }
+
+  /** Today's team page with the after-lineup fragment, from the due row's ``page`` (today's). */
+  function afterLineupUrl(page) {
+    return page ? `${String(page).split("#")[0]}#${AFTER_LINEUP_FRAGMENT}` : null;
+  }
+
+  /** The set day's diff (#289): each player a set step moved whose slot on ``lineup`` (the
+   * labels once settled, by id) is not the step's target, with the slot shown (null: none). */
+  function setDayDiff(steps, lineup) {
+    const out = {};
+    for (const s of steps || []) {
+      if (s.outcome !== "set") continue;
+      const now = lineup[String(s.player)] ?? null;
+      if (now !== s.to_slot) out[String(s.player)] = now;
+    }
+    return out;
+  }
+
+  /** Today's diff (#289): each player whose slot on today's labels Yahoo's press changed,
+   * ``{before, after}`` (null: none shown). */
+  function pressChanged(before, after) {
+    const out = {};
+    for (const k of new Set([...Object.keys(before || {}), ...Object.keys(after || {})])) {
+      const b = (before || {})[k] ?? null;
+      const a = (after || {})[k] ?? null;
+      if (a !== b) out[k] = { before: b, after: a };
+    }
+    return out;
+  }
+
+  const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+  /** Whether the dialog's Today Only range ("Tue, Oct 27") is ``day`` (ISO); null when either
+   * does not read. */
+  function rangeIsDay(range, day) {
+    const m = /([A-Z][a-z]{2}) (\d{1,2})\b/.exec(String(range || "").replace(/^[A-Z][a-z]{2}, /, ""));
+    const d = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(day || ""));
+    if (!m || !d) return null;
+    return MONTHS[Number(d[2]) - 1] === m[1] && Number(d[3]) === Number(m[2]);
+  }
+
   /** Why a second live run in the league today is refused (the master's rulings on #215 and
    * #214), null when it may run: ``record`` is the press on record in this browser, ``row`` the
-   * due route's row read after the page was posted. One per day; the guard lifts only when the
-   * page's roster differs from the one the day's press ran on (players or held). The need rule's
-   * reasons never lift it alone, and an unknown roster never lifts it. */
-  function sameDayProblem(record, row, day) {
+   * due route's row read after the page was posted, ``lineup`` the live lineup run on record. One
+   * per day; the guard lifts when the page's roster differs from the one the day's press ran on
+   * (players or held), or when a live lineup run set a swap after it (``lineupSince``, #289). The
+   * need rule's reasons never lift it alone, and an unknown roster never lifts it. */
+  function sameDayProblem(record, row, day, lineup = null) {
     if (!record || record.day !== day) return null;
     if (rosterDiffers(record.roster, row.roster)) return null;
-    return "Start Active ran in this league today; the roster has not changed since";
+    if (lineupSince(lineup, record)) return null;
+    return "Start Active ran in this league today; the roster has not changed and no lineup was set since";
   }
 
   function alertsOf(doc) {
@@ -150,7 +219,12 @@
    * rest_of_week}``: ``skipped`` when nothing was pressed, ``failed`` after a press that did not
    * come back. Nothing else on the page is touched, no field is set and nothing is fetched. */
   async function pressStartActive(doc, { wait = (ms) => new Promise((r) => setTimeout(r, ms)), every = 200, rowsCap = SA_ROWS_MS, answerCap = SA_ANSWER_MS } = {}) {
-    const rows = () => dialogRows(dialog() ? dialog().textContent : "");
+    // The rows as the open dialog showed them, kept for a dialog that closes with Yahoo's answer.
+    let shown = { today: null, rest_of_week: null };
+    const rows = () => {
+      const now = dialogRows(dialog() ? dialog().textContent : "");
+      return { today: now.today || shown.today, rest_of_week: now.rest_of_week || shown.rest_of_week };
+    };
     const out = (outcome, reason, message = null) => ({ outcome, reason, message, ...rows() });
     const buttons = [...doc.querySelectorAll(`${SA_OVERLAY} ${SA_BUTTON}`)];
     const dialog = () => doc.querySelector(SA_DIALOG);
@@ -175,6 +249,7 @@
     const early = yahooAnswer(dialog() ? dialog().textContent : "");
     if (!start && early && early.outcome === "failed") return out("failed", "Yahoo's Today Only failed", early.message);
     if (!start) return out("failed", `the Rest of Week row did not show within ${Math.round(rowsCap / 1000)} s (Today Only ran)`);
+    shown = rows();
     // Read again: the same Start, still enabled, in the dialog still open.
     if (interval() !== start) return out("failed", "the Rest of Week Start changed before its press (Today Only ran)");
     start.click();
@@ -190,7 +265,7 @@
 
   /** The run the log takes (``POST /seasons/{league}/autopilot/start-active``), with the roster
    * it ran on: the row's, read from the page just posted. */
-  function startActiveRun({ row, day, trigger, mode, outcome, reason = null, message = null, today = null, rest_of_week = null, controls = null, page = null, extension = null }) {
+  function startActiveRun({ row, day, trigger, mode, outcome, reason = null, message = null, today = null, rest_of_week = null, diffs = null, controls = null, page = null, extension = null }) {
     return {
       day,
       mode,
@@ -200,6 +275,7 @@
       reasons: row ? [...(row.reasons || [])] : [],
       today,
       rest_of_week,
+      diffs,
       message,
       roster: row && row.roster ? row.roster : null,
       page,
@@ -252,6 +328,8 @@
     routine_evening: "evening routine",
     routine_daily: "daily routine",
     panel: "side panel",
+    after_lineup: "after the lineup set",
+    after_add: "after an add",
   };
 
   /** The panel's line for the last run from this browser in the league. */
@@ -279,6 +357,14 @@
     startActiveProblem,
     startActiveMode,
     rosterDiffers,
+    lineupSince,
+    laterDay,
+    pressAfterLineup,
+    AFTER_LINEUP_FRAGMENT,
+    afterLineupUrl,
+    setDayDiff,
+    pressChanged,
+    rangeIsDay,
     sameDayProblem,
     pressStartActive,
     startActiveRun,
