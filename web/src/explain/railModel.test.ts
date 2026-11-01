@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { railItems, railLoop, railTime, railTimed } from "./railModel.ts";
+import { railItems, railLoop, railOpen, railTime, railTimed } from "./railModel.ts";
 import { TRACKS } from "./tracks/index.ts";
 import { daily } from "./tracks/daily.ts";
 import { draft } from "./tracks/draft.ts";
@@ -70,4 +70,12 @@ test("every track's rail has a short lede and a short title for the phone", () =
     assert.ok(t.short && t.short.length <= 8, `${t.id}: short title`);
     for (const l of t.labels) assert.ok(l.length <= 16, `${t.id}: label "${l}" fits the rail`);
   }
+});
+
+test("the rail opens unless this browser kept it folded", () => {
+  assert.equal(railOpen(null), true);
+  assert.equal(railOpen("open"), true);
+  assert.equal(railOpen("folded"), false);
+  assert.equal(railOpen("FOLDED"), true);
+  assert.equal(railOpen(""), true);
 });

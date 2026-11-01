@@ -882,7 +882,9 @@ button.icon.light.bad { color: var(--bad); }
 .ex-body { flex: 1; min-height: 0; display: flex; }
 .ex-rail { flex: none; width: 224px; box-sizing: border-box; overflow: auto; padding: 20px 14px 24px 20px; border-right: 1px solid var(--line); display: flex; flex-direction: column; gap: 16px; }
 .ex-scroll { flex: 1; min-width: 0; overflow: auto; }
-.ex-rail-lede { margin: 0; font-size: 12.5px; line-height: 1.45; color: var(--muted); }
+.ex-rail-top { display: flex; align-items: flex-start; gap: 8px; }
+.ex-rail-lede { flex: 1; min-width: 0; margin: 0; font-size: 12.5px; line-height: 1.45; color: var(--muted); }
+button.ex-rail-fold { flex: none; margin: -5px -8px 0 0; }
 .ex-rail-list { --row: 42px; --dot: 26px; list-style: none; margin: 0; padding: 0; position: relative; }
 .ex-rail.looped .ex-rail-list { padding-right: 24px; }
 .ex-rail-item { height: var(--row); position: relative; }
@@ -899,11 +901,27 @@ button.icon.light.bad { color: var(--bad); }
 .ex-rail-item.soon button { color: var(--dim); }
 .ex-rail-time { flex: none; width: 40px; font-size: 12.5px; font-weight: 400; color: var(--dim); font-variant-numeric: tabular-nums; }
 .ex-rail-item.cur .ex-rail-time { color: var(--accent); }
+.ex-rail-txt { flex: 1; min-width: 0; display: flex; align-items: center; gap: 10px; }
 .ex-rail-lbl { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* the draft's loop: a dashed bracket from the room back up to survival */
 .ex-rail-loop { position: absolute; right: 4px; width: 14px; top: calc(var(--to) * var(--row) + var(--row) / 2); height: calc((var(--from) - var(--to)) * var(--row)); box-sizing: border-box; border: 1.5px dashed var(--accent); border-left: 0; border-radius: 0 8px 8px 0; pointer-events: none; }
 .ex-rail-loop::before { content: ""; position: absolute; top: -5.5px; left: -6px; border-style: solid; border-width: 4.5px 7px 4.5px 0; border-color: transparent var(--accent) transparent transparent; }
 .ex-rail-loop-lbl { margin: -8px 0 0; font-size: 11.5px; color: var(--accent); text-align: right; }
+/* the rail folded to its numbers ([): the dots, the line and the loop stay, a row's name and time
+   float beside its dot on hover or focus, and the card takes the room; a phone keeps its chips */
+@media (min-width: 768px) {
+  .ex-rail.folded { width: 68px; padding: 14px 0 24px 16px; align-items: flex-start; overflow: visible; position: relative; z-index: 5; }
+  .ex-rail.folded .ex-rail-lede, .ex-rail.folded .ex-rail-loop-lbl { display: none; }
+  .ex-rail.folded button.ex-rail-fold { margin: 0; }
+  .ex-rail.folded .ex-rail-list { width: max-content; margin-left: 2px; }
+  .ex-rail.folded .ex-rail-item button { width: var(--dot); padding: 0; }
+  .ex-rail.folded .ex-rail-item.cur button { background: none; }
+  .ex-rail.folded .ex-rail-txt { position: absolute; left: calc(100% + 10px); top: 50%; transform: translateY(-50%); flex: none; gap: 8px; padding: 5px 10px; white-space: nowrap; background: var(--panel-2); border: 1px solid var(--line-2); border-radius: 6px; box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45); color: var(--text); font-size: 13px; font-weight: 600; opacity: 0; pointer-events: none; transition: opacity 0.12s; z-index: 2; }
+  .ex-rail.folded .ex-rail-item button:hover .ex-rail-txt, .ex-rail.folded .ex-rail-item button:focus-visible .ex-rail-txt { opacity: 1; }
+  .ex-rail.folded .ex-rail-time { width: auto; }
+  .ex-rail.folded .ex-rail-time:empty { display: none; }
+  .ex-rail.folded .ex-rail-lbl { overflow: visible; }
+}
 /* the stage: one step, or all of them; one step fills the screen under the bar */
 .ex-stage { box-sizing: border-box; width: 100%; max-width: 1520px; margin: 0 auto; padding: 20px 28px 28px; display: grid; gap: 18px; }
 .ex-step { display: grid; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); }
@@ -1112,7 +1130,7 @@ button.ex-play.on { background: var(--accent); color: var(--accent-ink); border-
   .ex-body { flex-direction: column; }
   .ex-rail { width: auto; overflow: visible; padding: 0; border-right: 0; border-bottom: 1px solid var(--line); }
   .ex-scroll { min-height: 0; }
-  .ex-rail-lede, .ex-rail-loop, .ex-rail-loop-lbl { display: none; }
+  .ex-rail-top, .ex-rail-loop, .ex-rail-loop-lbl { display: none; }
   .ex-rail.looped .ex-rail-list, .ex-rail-list { --dot: 22px; display: flex; gap: 6px; overflow-x: auto; padding: 8px 16px; scrollbar-width: none; }
   .ex-rail-list::-webkit-scrollbar { display: none; }
   .ex-rail-item { flex: none; height: auto; }
@@ -1120,6 +1138,7 @@ button.ex-play.on { background: var(--accent); color: var(--accent-ink); border-
   .ex-rail-item button { gap: 6px; padding: 3px 12px 3px 3px; border: 1px solid var(--line-2); font-size: 13px; }
   .ex-rail-item.cur button { border-color: var(--accent); }
   .ex-rail-dot { font-size: 12px; }
+  .ex-rail-txt { gap: 6px; }
   .ex-rail-time { width: auto; font-size: 12px; }
   .ex-rail-lbl { overflow: visible; }
 }

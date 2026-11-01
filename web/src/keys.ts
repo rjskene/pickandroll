@@ -658,12 +658,14 @@ export interface ExplainApi {
   toggleExample: () => void;
   /** Read it all, on or off. */
   toggleAll: () => void;
+  /** [: the step rail folded to its numbers, or open (#282). */
+  toggleRail: () => void;
   sheetOpen: boolean;
   setSheetOpen: (open: boolean) => void;
 }
 
 /** The Explain screen's keys (#283): the arrows walk the steps, g the glossary, e the step's
- * example (#282), a read it all; from a field (the animations' range and toggles) the keys keep
+ * example (#282), a read it all, [ the rail folded or open; from a field (the animations' range and toggles) the keys keep
  * their native meaning. Esc closes the key sheet, then an example, then the glossary, then goes
  * back. */
 export function explainKeys(x: ExplainApi): KeyMap {
@@ -687,6 +689,7 @@ export function explainKeys(x: ExplainApi): KeyMap {
       g: unlessField(x.toggleGlossary),
       e: unlessField(x.toggleExample),
       a: unlessField(x.toggleAll),
+      "[": unlessField(x.toggleRail),
     },
   };
 }
@@ -699,6 +702,7 @@ export const EXPLAIN_SHEET: Sheet = {
       rows: [
         [["←", "→"], "the step before or after; past a track's last step, the next track"],
         [["a"], "read it all: every step of the track on one page, the rail following the scroll"],
+        [["["], "fold the rail to its numbers, or open it; a number shows its step's name on hover, and this browser keeps the choice"],
       ],
     },
     {

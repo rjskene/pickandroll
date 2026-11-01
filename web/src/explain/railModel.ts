@@ -45,3 +45,11 @@ export function railLoop(track: Track): Track["loop"] {
   const n = track.labels.length;
   return l && l.from < n && l.to >= 0 && l.to < l.from ? l : undefined;
 }
+
+/** Where this browser keeps the rail folded to its dots or open (#282). */
+export const RAIL_KEY = "pickandroll.explain.rail";
+
+/** The rail is open unless this browser kept it folded; a value it does not know reads as open. */
+export function railOpen(saved: string | null): boolean {
+  return saved !== "folded";
+}

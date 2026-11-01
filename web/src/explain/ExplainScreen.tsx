@@ -1,8 +1,8 @@
 // The Explain screen (#282, #283): a walkthrough of the draft, the moves and the day, one step
 // a screen. One bar on top holds the app's lead, the track control, "Read it all", the glossary,
 // the keys and the ← / → arrows; the step rail beside the card doubles as the diagram of the
-// whole (a chip row on a phone). The popouts (a step's worked example, a bullet's formula), and
-// the place kept in the URL hash (#draft/3).
+// whole (a chip row on a phone), and folds to its numbers with `[`, kept per browser. The popouts
+// (a step's worked example, a bullet's formula), and the place kept in the URL hash (#draft/3).
 import { useCallback, useEffect, useRef, useState } from "react";
 import { EXPLAIN_SHEET, explainKeys } from "../keys";
 import { useHotkeys } from "../useKeys";
@@ -21,11 +21,20 @@ import type { Pop } from "./PopContext";
 import { Drawer, ExampleBody, FormulaBody } from "./Popout";
 import StepCard from "./StepCard";
 import Rail from "./Rail";
+import { RAIL_KEY, railOpen } from "./railModel";
 import { TRACKS, trackById } from "./tracks/index.ts";
 
 interface Props {
   onBack: () => void;
   onProgress: () => void;
+}
+
+function savedRail(): boolean {
+  try {
+    return railOpen(localStorage.getItem(RAIL_KEY));
+  } catch {
+    return true;
+  }
 }
 
 export default function ExplainScreen({ onBack, onProgress }: Props) {
@@ -39,6 +48,7 @@ export default function ExplainScreen({ onBack, onProgress }: Props) {
   const [pop, setPop] = useState<Pop | null>(null);
   // The last popout opened, so its sheet keeps its content while it slides out.
   const [shownPop, setShownPop] = useState<Pop | null>(null);
+  const [railShown, setRailShown] = useState(savedRail);
   const body = useRef<HTMLDivElement>(null);
   const track = trackById(place.track) ?? TRACKS[0];
   const step = track.steps[Math.min(place.step, track.steps.length - 1)];
@@ -119,8 +129,16 @@ export default function ExplainScreen({ onBack, onProgress }: Props) {
     else openPop({ kind: "example", track: track.id, step: step.id });
   }, [openPop, pop, step, track.id]);
   const toggleAll = useCallback(() => setAll((a) => !a), []);
+  const toggleRail = useCallback(() => setRailShown((o) => !o), []);
+  useEffect(() => {
+    try {
+      localStorage.setItem(RAIL_KEY, railShown ? "open" : "folded");
+    } catch {
+      // The fold is a convenience: the rail opens again without storage.
+    }
+  }, [railShown]);
   useHotkeys(
-    explainKeys({ prev, next, back: onBack, glossaryOpen: gloss.open, closeGlossary, toggleGlossary, popOpen: pop !== null, closePop, toggleExample, toggleAll, sheetOpen, setSheetOpen }),
+    explainKeys({ prev, next, back: onBack, glossaryOpen: gloss.open, closeGlossary, toggleGlossary, popOpen: pop !== null, closePop, toggleExample, toggleAll, toggleRail, sheetOpen, setSheetOpen }),
   );
   const popStep = shownPop?.kind === "example" ? trackById(shownPop.track)?.steps.find((s) => s.id === shownPop.step) : undefined;
   const popFormula = shownPop?.kind === "formula" ? FORMULAS[shownPop.id] : undefined;
@@ -169,7 +187,7 @@ export default function ExplainScreen({ onBack, onProgress }: Props) {
       <GlossaryProvider onOpen={openTerm}>
         <PopProvider onOpen={openPop}>
           <div className="ex-body">
-            <Rail track={track} step={place.step} onGo={(i) => go({ track: track.id, step: i })} />
+            <Rail track={track} step={place.step} open={railShown} onGo={(i) => go({ track: track.id, step: i })} onToggle={toggleRail} />
             <div className="ex-scroll" ref={body}>
               <div className={`ex-stage${all ? " all" : ""}`}>
                 {shown.map((s, k) => (
