@@ -7,7 +7,7 @@ import AnimFrame from "./AnimFrame";
 import { DailyFlow, EntryDay, EveningBuild, EveningPass, ExecutorModes, HostWatchdog, LatePass, SigninCheck } from "./dailyFigures";
 import { DAY_END, DAY_SECONDS, dayLanes, dayNow, dayTicks } from "./dayline";
 import type { Day } from "./dayline";
-import { KeeperSnake, Objective, Plan, PoolBars, Price, SolveAhead, Survival, YahooRoom } from "./draftFigures";
+import { KeeperSnake, Objective, Plan, PoolPasses, Price, SolveAhead, Survival, YahooRoom } from "./draftFigures";
 import { BidsTrades, Horizons, KeepRule } from "./movesFigures";
 import { Arrow } from "./svg";
 import type { FigureId } from "./types";
@@ -124,7 +124,7 @@ function DayLine() {
 
 export const FIGURES: Record<FigureId, () => ReactElement> = {
   "export-row": ExportRow,
-  "pool-bars": PoolBars,
+  "pool-passes": PoolPasses,
   survival: Survival,
   objective: Objective,
   plan: Plan,

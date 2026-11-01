@@ -6,28 +6,109 @@ import { RC_END, rcLanes, rcLeft, rcTicks } from "./roomclock";
 import type { Act, Board, Row } from "./roomclock";
 import { Arrow } from "./svg";
 
-/** The pool's sorted bars: z totals, the top teams × roster kept, the rest rescored out. */
-export function PoolBars() {
-  const bars = Array.from({ length: 44 }, (_, i) => ({ x: 24 + i * 8.4, h: 120 * Math.exp(-i / 16) + 6, inPool: i < 25 }));
+/** The pool in three passes (#282): each pass measures a category against the pool the pass
+ * before kept, its mean and spread marked on the category's axis; then the cut at 156 and who
+ * crossed it. Points shown; the numbers are made up. */
+const PASSES = [
+  { on: ["all 480", "with games"], mean: 760, sd: 450, crossed: 0 },
+  { on: ["the 156", "pass 1 kept"], mean: 1150, sd: 380, crossed: 11 },
+  { on: ["the 156", "pass 2 kept"], mean: 1160, sd: 376, crossed: 0 },
+];
+
+export function PoolPasses() {
+  const X0 = 104;
+  const X1 = 292;
+  const MAX = 2200;
+  const H = 26;
+  const px = (v: number) => X0 + (v / MAX) * (X1 - X0);
+  const bell = (m: number, s: number, base: number) => {
+    const a = Math.max(0, m - 3 * s);
+    const b = Math.min(MAX, m + 3 * s);
+    const pts = Array.from({ length: 49 }, (_, i) => {
+      const v = a + ((b - a) * i) / 48;
+      return `${px(v).toFixed(1)} ${(base - H * Math.exp(-0.5 * ((v - m) / s) ** 2)).toFixed(1)}`;
+    });
+    return `M${px(a).toFixed(1)} ${base}L${pts.join("L")}L${px(b).toFixed(1)} ${base}Z`;
+  };
+  const CELL = 9;
+  const SX = 306;
   return (
-    <svg viewBox="0 0 420 200" role="img" aria-label="The pool is every roster's worth of players by z total, chosen iteratively">
-      <Arrow id="ex-ah-pool" accent />
-      {bars.map((b, i) => (
-        <rect key={i} className={`bar${b.inPool ? " in" : ""}`} x={b.x} y={150 - b.h} width="6" height={b.h} rx="1" />
-      ))}
-      <line className="axis" x1="20" y1="150" x2="400" y2="150" />
-      <line className="ref" x1="232" y1="20" x2="232" y2="150" style={{ stroke: "var(--accent)" }} />
-      <text className="ac sm" x="236" y="30">
-        cut at 156: every roster's worth
-      </text>
-      <text className="sm" x="250" y="166">
-        players sorted by z total
-      </text>
-      <path className="arrow loop" d="M380 160C380 185 60 185 60 160" markerEnd="url(#ex-ah-pool)" />
-      <text className="sm" x="220" y="196" textAnchor="middle">
-        recompute mean and spread, score again, repeat until the pool settles
-      </text>
-    </svg>
+    <>
+      <svg viewBox="0 0 420 262" role="img" aria-label="The pool in three passes: each measures a category against the 156 the pass before kept; the mean rises, the spread tightens, and by pass 3 the cut holds">
+        <text className="sm dim" x="8" y="14">
+          measured against
+        </text>
+        <text className="sm dim" x={X0} y="14">
+          points: the pool's mean and spread
+        </text>
+        <text className="sm dim" x={SX} y="14">
+          the cut at 156
+        </text>
+        {PASSES.map((p, k) => {
+          const y0 = 26 + k * 70;
+          const base = y0 + 44;
+          const prev = k ? PASSES[k - 1] : null;
+          const kept = (i: number) => i < 6;
+          const cell = (i: number) => (p.crossed && (i === 4 || i === 5) ? "cell in" : p.crossed && (i === 6 || i === 7) ? "cell out" : kept(i) ? "cell keeper" : "cell");
+          return (
+            <g key={k}>
+              <text className="lbl xs" x="8" y={y0 + 20}>
+                pass {k + 1}
+              </text>
+              <text className="sm" x="8" y={y0 + 34}>
+                {p.on[0]}
+              </text>
+              <text className="sm" x="8" y={y0 + 45}>
+                {p.on[1]}
+              </text>
+              <line className="axis" x1={X0} y1={base} x2={X1} y2={base} />
+              <path className={k ? "fill a" : "fill m"} d={bell(p.mean, p.sd, base)} />
+              {prev && <line className="ref" x1={px(prev.mean)} y1={base} x2={px(prev.mean)} y2={base - H - 2} />}
+              <line className="marker" x1={px(p.mean)} y1={base} x2={px(p.mean)} y2={base - H - 2} />
+              <text className="sm ac" x={px(p.mean)} y={base - H - 6} textAnchor="middle">
+                mean {p.mean.toLocaleString("en-US")}
+              </text>
+              <path className="arrow" d={`M${px(p.mean - p.sd)} ${base + 3}v5H${px(p.mean + p.sd)}v-5`} />
+              <text className="sm" x={px(p.mean)} y={base + 18} textAnchor="middle">
+                spread {p.sd}, either side
+              </text>
+              {Array.from({ length: 12 }, (_, i) => (
+                <rect key={i} className={cell(i)} x={SX + i * CELL} y={y0 + 16} width={CELL - 2} height="12" rx="1.5" />
+              ))}
+              <line className="ref ac" x1={SX + 6 * CELL - 1} y1={y0 + 11} x2={SX + 6 * CELL - 1} y2={y0 + 33} />
+              {k === 0 && (
+                <text className="sm t" x={SX} y={y0 + 46}>
+                  the first 156 kept
+                </text>
+              )}
+              {k === 1 && (
+                <text className="sm" x={SX} y={y0 + 46}>
+                  <tspan className="good">{p.crossed} in</tspan>, <tspan className="bad">{p.crossed} out</tspan>
+                </text>
+              )}
+              {k === 2 && (
+                <>
+                  <text className="sm" x={SX} y={y0 + 46}>
+                    0 in, 0 out
+                  </text>
+                  <text className="sm good" x={SX} y={y0 + 57}>
+                    the cut holds: settled
+                  </text>
+                </>
+              )}
+            </g>
+          );
+        })}
+        {[0, 500, 1000, 1500, 2000].map((v) => (
+          <text key={v} className="sm dim" x={px(v)} y="250" textAnchor="middle">
+            {v.toLocaleString("en-US")}
+          </text>
+        ))}
+      </svg>
+      <p className="ex-cap">
+        Pass 1 measures each category against every player with games, so the mean is low and the spread wide. Pass 2 measures against the 156 that pass 1 kept: the mean rises, the spread tightens, every score moves, and a few players cross the cut. Pass 3 measures against pass 2's 156 and keeps the same 156, or nearly: that is what settled means. The code always runs exactly three passes; it does not test for it. Points shown, with made-up numbers; every category has its own mean and spread.
+      </p>
+    </>
   );
 }
 
