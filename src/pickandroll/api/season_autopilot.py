@@ -878,13 +878,19 @@ def start_active_need(
     mode: Mapping[str, Any],
     week_start: date,
     roster: Mapping[str, list[int]] | None,
+    today: date | None = None,
 ) -> dict[str, Any]:
     """Whether the league wants a Start Active run (#215): ``no_run`` before any run in its
     mode, ``week_start`` when its last run is before the week's first day, ``roster_changed``
     when my players or who is held differ from the roster its last run recorded (a won claim, a
     drop, a trade, an IL move), with the ids in and out; ``il_moved`` beside it when an IL move
-    of #214 landed since; ``lineup_set`` when a live lineup run set a swap since (#289): a swap
-    sets one day, and the press carries it to the rest of the week. A run in the other mode does
+    of #214 landed since; ``lineup_set`` when a live lineup run set a swap since on a day later
+    than ``today`` (#289): a swap sets one day, and the press carries it to the rest of the week.
+    Only a later day's: Yahoo's main button runs Today Only at once, which could undo the swaps of
+    a day set today with no pass left to fix them (the 15:00 late pass sets today and nothing
+    follows it); a set of today after the 05:00 daily is checked again by the late pass anyway
+    (the master's ruling on #289). Widened to every set once a week of the presses' ``diff``
+    shows Yahoo never undoes a swap of two players who both play. A run in the other mode does
     not count: a league switched live runs again. No need while the mode is off or the league is
     private."""
     out: dict[str, Any] = {"need": False, "reasons": [], "changes": None, "last": None}
@@ -927,7 +933,12 @@ def start_active_need(
 
     if landed_since(IL, lambda r: r.get("outcome") == "moved"):
         reasons.append("il_moved")
-    if landed_since(LINEUP, lambda r: any(x.get("outcome") == "set" for x in r.get("steps") or [])):
+    def later_set(r: Mapping[str, Any]) -> bool:
+        day = r.get("day")
+        later = today is None or (isinstance(day, str) and date.fromisoformat(day) > today)
+        return later and any(x.get("outcome") == "set" for x in r.get("steps") or [])
+
+    if landed_since(LINEUP, later_set):
         reasons.append("lineup_set")
     last_view = {k: last.get(k) for k in ("at", "day", "trigger", "outcome", "message")}
     return {"need": bool(reasons), "reasons": reasons, "changes": changes, "last": last_view}

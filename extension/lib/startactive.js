@@ -129,7 +129,14 @@
   function lineupSince(lineup, record) {
     if (!lineup || !lineup.logged || !lineup.run || lineup.run.mode !== "live") return false;
     if (!(lineup.run.steps || []).some((x) => x.outcome === "set")) return false;
-    return Number(lineup.at) > Number(record.at);
+    return laterDay(lineup.run.day, record.day) && Number(lineup.at) > Number(record.at);
+  }
+
+  /** Whether ``day`` (an ISO date) is later than ``today``: the press after a lineup set is only
+   * for a later day's set (the master's ruling on #289), since the main button runs Today Only at
+   * once and could undo the swaps of a day set today with no pass left to fix them. */
+  function laterDay(day, today) {
+    return /^\d{4}-\d{2}-\d{2}$/.test(String(day)) && /^\d{4}-\d{2}-\d{2}$/.test(String(today)) && String(day) > String(today);
   }
 
   /** Whether the lineup run just logged (``run``, null when its log failed) wants the press after
@@ -300,6 +307,7 @@
     startActiveMode,
     rosterDiffers,
     lineupSince,
+    laterDay,
     pressAfterLineup,
     sameDayProblem,
     pressStartActive,

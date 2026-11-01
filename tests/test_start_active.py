@@ -96,15 +96,20 @@ def test_a_live_lineup_set_since_the_press_wants_one_more(client):
     assert client.post(URL, json=started).status_code == 200
     assert row(client)["need"] is False
 
-    def lineup(minutes: int, outcomes: list[str], mode: str = "live") -> None:
+    tomorrow = (DAY + timedelta(days=1)).isoformat()
+
+    def lineup(minutes: int, outcomes: list[str], mode: str = "live", day: str = tomorrow) -> None:
         at = (NOW + timedelta(minutes=minutes)).isoformat()
         steps = [{"outcome": o} for o in outcomes]
-        ap.append_run(client.data_dir, LEAGUE, {"at": at, "mode": mode, "steps": steps}, DAY)
+        run = {"at": at, "day": day, "mode": mode, "steps": steps}
+        ap.append_run(client.data_dir, LEAGUE, run, DAY)
 
-    # Nothing set (a skip, a failure, a dry run's would-set), or set before the press: no need.
+    # Nothing set (a skip, a failure, a dry run's would-set), set before the press, or a set of
+    # today, which Today Only could undo with no pass left to fix it: no need.
     lineup(-5, ["set"])
     lineup(5, ["skipped", "failed"])
     lineup(5, ["would_set"], mode="dry_run")
+    lineup(5, ["set"], day=DAY.isoformat())
     assert row(client)["need"] is False
     lineup(6, ["set", "skipped"])
     r = row(client)

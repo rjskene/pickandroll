@@ -99,10 +99,13 @@ test("the page checks, the mode and the same-day rule", () => {
 
 test("a live lineup run that set a swap after the day's press lifts the same-day guard once (#289)", () => {
   const record = { day: DAY, roster: ROSTER, logged: true, at: 1000 };
-  const set = (over = {}) => ({ logged: true, at: 2000, run: { mode: "live", steps: [{ outcome: "set" }, { outcome: "skipped" }] }, ...over });
+  const LATER = "2026-10-28";
+  const set = (over = {}) => ({ logged: true, at: 2000, run: { mode: "live", day: LATER, steps: [{ outcome: "set" }, { outcome: "skipped" }] }, ...over });
   assert.equal(S.sameDayProblem(record, row({ reasons: ["lineup_set"] }), DAY, set()), null);
-  // Set before the press, not logged, a dry run's or one that set nothing: the guard holds.
-  for (const lineup of [set({ at: 500 }), set({ logged: false }), set({ run: { mode: "dry_run", steps: [{ outcome: "would_set" }] } }), set({ run: { mode: "live", steps: [{ outcome: "failed" }] } }), null]) {
+  // Set before the press, not logged, a dry run's, one that set nothing, or a set of today (Today
+  // Only could undo it): the guard holds.
+  const today = set({ run: { mode: "live", day: DAY, steps: [{ outcome: "set" }] } });
+  for (const lineup of [set({ at: 500 }), set({ logged: false }), set({ run: { mode: "dry_run", day: LATER, steps: [{ outcome: "would_set" }] } }), set({ run: { mode: "live", day: LATER, steps: [{ outcome: "failed" }] } }), today, null]) {
     assert.match(S.sameDayProblem(record, row({ reasons: ["lineup_set"] }), DAY, lineup), /no lineup was set since/);
   }
   // The press after it is the day's press now: the same lineup run never lifts it again.
@@ -113,6 +116,7 @@ test("a live lineup run that set a swap after the day's press lifts the same-day
   assert.equal(S.pressAfterLineup({ mode: "live", steps: [{ outcome: "skipped" }, { outcome: "failed" }] }), false);
   assert.equal(S.pressAfterLineup({ mode: "dry_run", steps: [{ outcome: "would_set" }] }), false);
   assert.equal(S.pressAfterLineup(null), false);
+  assert.deepEqual([S.laterDay(LATER, DAY), S.laterDay(DAY, DAY), S.laterDay("2026-10-26", DAY), S.laterDay(null, DAY)], [true, false, false, false]);
   assert.equal(S.startActiveLastText({ day: DAY, trigger: "after_lineup", mode: "live", outcome: "started", message: UPDATED }, "now"), `${DAY} · after the lineup set, live: started active players · ${UPDATED}, now`);
 });
 
@@ -383,7 +387,7 @@ test("a live run presses nothing when it may not: not due, STOP, the same day, t
   assert.deepEqual([ops(v), v.touched], [[...RUN, "lineup_record", "start_active_log"], []]);
   assert.match(logOf(v)[0].run.reason, /ran in this league today/);
   // A live lineup run that set a swap after that press (#289): one press more, its trigger the lineup's.
-  const set = { logged: true, at: Date.now() - 60e3, run: { mode: "live", steps: [{ outcome: "set" }] } };
+  const set = { logged: true, at: Date.now() - 60e3, run: { mode: "live", day: "2026-10-28", steps: [{ outcome: "set" }] } };
   v = await visitTeam({ hash: "#pickandroll-start-active", answer: worker(due({ ...LIVE, reasons: ["lineup_set"] }), { record: today, lineup: set }) });
   assert.deepEqual([ops(v), v.touched], [[...RUN, "lineup_record", "start_active_pressing", "start_active_log"], ["click main", "click start"]]);
   // One that set nothing lifts nothing.

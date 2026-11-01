@@ -898,26 +898,35 @@ test("in a live league whose guard holds, the routine's link sets the steps once
 
 test("a live run that set a swap goes on to Start Active on the same page, its trigger after_lineup (#289)", async () => {
   const row = { league: LEAGUE, team: TEAM, need: true, reasons: ["lineup_set"], mode: "live", live: { ok: true, reason: null }, roster: { players: [1011], held: [] } };
-  const press = { day: DAY, logged: true, at: 0 };
+  // The page sets tomorrow's lineup: the due's day is the one before.
+  const today = "2026-10-23";
+  const press = { day: today, logged: true, at: 0 };
   let kept = null;
-  const answer = (msg, sent) => {
+  const answer = (sameDay = false) => (msg, sent) => {
     if (msg.op === "lineup_setting") kept = { ...msg.record, at: 1, logged: false };
     if (msg.op === "lineup_log" && kept) kept = { ...kept, run: msg.run, logged: true };
     if (msg.op === "lineup_record") return { ok: true, data: kept };
     if (msg.op === "start_active_log") return { ok: true, data: { at: "x" } };
-    return liveWorker({ sa: [row], press })(msg, sent);
+    if (msg.op === "start_active_due") return { ok: true, data: { date: sameDay ? DAY : today, leagues: [row] } };
+    return liveWorker({ sa: [row], press: sameDay ? { ...press, day: DAY } : press })(msg, sent);
   };
   const roster = swapDom({ after: 0 });
-  const v = await visitPage({ hash: "#pickandroll-lineup", answer, swap: roster });
+  const v = await visitPage({ hash: "#pickandroll-lineup", answer: answer(), swap: roster });
   const sa = v.sent.find((m) => m.op === "start_active_log");
   // The page has no Start Active button in this harness: the run is the lineup's, skipped on the page check.
   assert.deepEqual([sa.run.trigger, sa.run.mode, sa.run.reasons, sa.pressed], ["after_lineup", "live", ["lineup_set"], false]);
   assert.match(sa.run.reason, /no single Start Active Players button/);
   assert.deepEqual(roster.touched, ["click 1011 BN", "click 1004 SF"]);
   // A run that set nothing asks for no press.
+  kept = null;
   const none = swapDom({ answer: null });
-  const w = await visitPage({ hash: "#pickandroll-lineup", answer, swap: none });
+  const w = await visitPage({ hash: "#pickandroll-lineup", answer: answer(), swap: none });
   assert.ok(!w.sent.slice(w.sent.findIndex((m) => m.op === "lineup_log")).some((m) => m.op === "start_active_due"));
+  // A set of today: Today Only could undo it, so nothing is pressed or logged after it.
+  kept = null;
+  const same = await visitPage({ hash: "#pickandroll-lineup", answer: answer(true), swap: swapDom({ after: 0 }) });
+  assert.equal(same.sent.find((m) => m.op === "lineup_log").run.outcome, "set");
+  assert.ok(!same.sent.some((m) => m.op === "start_active_log"));
 });
 
 test("live, a run waits for the day's Start Active press, refuses a pass already on record and runs dry where the guard refuses", async () => {

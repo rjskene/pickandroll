@@ -278,7 +278,7 @@
       running = false;
     }
     // A live run that set a swap: Start Active carries it to the rest of the week (#289).
-    if (PR.pressAfterLineup(run)) await startActive("after_lineup");
+    if (PR.pressAfterLineup(run)) await startActive("after_lineup", { setDay: run.day });
     return run;
   }
 
@@ -543,7 +543,7 @@
    * ``would_start`` and presses nothing; a live league presses once a day, the press put on
    * record before the page is touched (``pressStartActive``), unless the roster changed since.
    * Answers the run logged, or null. */
-  async function startActive(trigger) {
+  async function startActive(trigger, { setDay = null } = {}) {
     // A routine's run happens once: a reload of the page is a plain visit.
     if (location.hash) history.replaceState(null, "", location.pathname + location.search);
     if (running) return null;
@@ -574,6 +574,8 @@
         note(PR.startActiveStripText({ error: row.error }));
         return null;
       }
+      // After a lineup run, only a later day's set (#289): Today Only never touches a day set today.
+      if (trigger === "after_lineup" && !PR.laterDay(setDay, due.date)) return null;
       const where = location.pathname + location.search;
       const base = { row, day: due.date, trigger, page: where, extension };
       const mode = PR.startActiveMode(row);

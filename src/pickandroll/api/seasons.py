@@ -1866,7 +1866,9 @@ class SeasonService:
                 continue
             week = season.calendar.week_of(today) if season and season.calendar else None
             start = week.start if week is not None else today - timedelta(days=today.weekday())
-            need = season_autopilot.start_active_need(self.data_dir, league, mode, start, roster)
+            need = season_autopilot.start_active_need(
+                self.data_dir, league, mode, start, roster, today
+            )
             if stop:
                 need = {**need, "need": False}
             team = base.my_team_id
