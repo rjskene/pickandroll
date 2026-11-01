@@ -10,7 +10,18 @@ export interface Bullet {
 }
 
 /** The figure beside a step's bullets, by name; the screen maps each name to its component. */
-export type FigureId = "export-row" | "weekly-odds" | "day-line";
+export type FigureId =
+  | "export-row"
+  | "pool-bars"
+  | "survival"
+  | "objective"
+  | "plan"
+  | "price"
+  | "solve-ahead"
+  | "keeper-snake"
+  | "yahoo-room"
+  | "weekly-odds"
+  | "day-line";
 
 export interface Step {
   /** The hash's name for the step (`#draft/projections`). */
@@ -37,6 +48,9 @@ export interface Track {
   /** The strip's short label per step, in step order: the whole planned track, so a dot past
    * the written steps shows as still to come. */
   labels: string[];
+  /** A loop drawn under the strip, from one dot back to an earlier one (0-based), with its
+   * caption on a desktop: the draft's re-solve after every pick. */
+  loop?: { from: number; to: number; label: string };
   steps: Step[];
 }
 

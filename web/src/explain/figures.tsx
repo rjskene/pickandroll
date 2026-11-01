@@ -1,20 +1,13 @@
 // The figures (#283): React SVG, one per name in the data; the day line is the shared clock.
+// The draft track's figures (#284) live in draftFigures.tsx.
 import { useMemo, useState } from "react";
 import type { ReactElement } from "react";
 import AnimFrame from "./AnimFrame";
 import { DAY_END, DAY_SECONDS, dayLanes, dayNow, dayTicks } from "./dayline";
 import type { Day } from "./dayline";
+import { KeeperSnake, Objective, Plan, PoolBars, Price, SolveAhead, Survival, YahooRoom } from "./draftFigures";
+import { Arrow } from "./svg";
 import type { FigureId } from "./types";
-
-function Arrow({ id }: { id: string }) {
-  return (
-    <defs>
-      <marker id={id} viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
-        <path d="M0 0L10 5L0 10z" className="ex-arrowhead" />
-      </marker>
-    </defs>
-  );
-}
 
 /** An export row parsed into fields (the draft's first step). */
 function ExportRow() {
@@ -128,6 +121,14 @@ function DayLine() {
 
 export const FIGURES: Record<FigureId, () => ReactElement> = {
   "export-row": ExportRow,
+  "pool-bars": PoolBars,
+  survival: Survival,
+  objective: Objective,
+  plan: Plan,
+  price: Price,
+  "solve-ahead": SolveAhead,
+  "keeper-snake": KeeperSnake,
+  "yahoo-room": YahooRoom,
   "weekly-odds": WeeklyOdds,
   "day-line": DayLine,
 };
