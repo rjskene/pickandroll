@@ -24,7 +24,15 @@ export type FigureId =
   | "horizons"
   | "keep-rule"
   | "bids-trades"
-  | "day-line";
+  | "day-line"
+  | "signin-check"
+  | "daily-flow"
+  | "host-watchdog"
+  | "entry-day"
+  | "executor-modes"
+  | "late-pass"
+  | "evening-build"
+  | "evening-pass";
 
 export interface Step {
   /** The hash's name for the step (`#draft/projections`). */
@@ -54,6 +62,9 @@ export interface Track {
   /** A loop drawn under the strip, from one dot back to an earlier one (0-based), with its
    * caption on a desktop: the draft's re-solve after every pick. */
   loop?: { from: number; to: number; label: string };
+  /** The strip as an hour line (#286): each step's hour of the day, one per label, so the dots
+   * sit on a 24-hour axis with the current routine lit. */
+  hours?: number[];
   steps: Step[];
 }
 
