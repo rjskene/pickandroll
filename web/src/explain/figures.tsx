@@ -1,9 +1,10 @@
 // The figures (#283): React SVG, one per name in the data; the day line is the shared clock.
 // The draft track's figures (#284) live in draftFigures.tsx, the moves track's (#285) in
-// movesFigures.tsx.
+// movesFigures.tsx, the daily track's (#286) in dailyFigures.tsx.
 import { useMemo, useState } from "react";
 import type { ReactElement } from "react";
 import AnimFrame from "./AnimFrame";
+import { DailyFlow, EntryDay, EveningBuild, EveningPass, ExecutorModes, HostWatchdog, LatePass, SigninCheck } from "./dailyFigures";
 import { DAY_END, DAY_SECONDS, dayLanes, dayNow, dayTicks } from "./dayline";
 import type { Day } from "./dayline";
 import { KeeperSnake, Objective, Plan, PoolBars, Price, SolveAhead, Survival, YahooRoom } from "./draftFigures";
@@ -136,4 +137,12 @@ export const FIGURES: Record<FigureId, () => ReactElement> = {
   "keep-rule": KeepRule,
   "bids-trades": BidsTrades,
   "day-line": DayLine,
+  "signin-check": SigninCheck,
+  "daily-flow": DailyFlow,
+  "host-watchdog": HostWatchdog,
+  "entry-day": EntryDay,
+  "executor-modes": ExecutorModes,
+  "late-pass": LatePass,
+  "evening-build": EveningBuild,
+  "evening-pass": EveningPass,
 };

@@ -1038,3 +1038,30 @@ button.ex-play.on { background: var(--accent); color: var(--accent-ink); border-
 /* Explain (#285): the moves track's figures */
 .ex-fig svg .win.g { fill: rgba(61, 220, 132, 0.14); stroke: var(--good); }
 .ex-fig svg text.sm.ink { fill: var(--accent-ink); }
+/* Explain (#286): the daily track's figures, the entry's day and the strip's hour line */
+.ex-fig svg text.lbl.xs { font-size: 12px; letter-spacing: 0.02em; }
+.ex-fig svg text.sm.xs { font-size: 9px; }
+.ex-fig svg text.bad { fill: var(--bad); }
+.ex-fig svg text.dim { fill: var(--dim); }
+.ex-fig svg .arrow.bad { stroke: var(--bad); }
+.ex-fig svg .ex-arrowhead.bad { fill: var(--bad); }
+.ex-fig svg .stop { fill: rgba(239, 107, 107, 0.14); stroke: var(--bad); }
+.ex-fig svg .stopline { stroke: var(--bad); stroke-dasharray: 3 3; }
+.ex-fig svg .ref.ac { stroke: var(--accent); }
+.ex-fig svg .ref.bad { stroke: var(--bad); }
+.ex-fig svg .marker { stroke: var(--accent); stroke-width: 2; }
+.ex-fig svg .marker-head { fill: var(--accent); }
+.ex-fig svg .gate { fill: var(--muted); }
+.ex-fig svg .gate.ok { fill: var(--good); }
+.ex-fig svg .gate.no { fill: var(--bad); }
+.ex-fig svg .gate.off { fill: var(--dim); }
+.ex-fig svg .node.done { fill: rgba(61, 220, 132, 0.14); stroke: var(--good); }
+.ex-fig svg .node.bad { fill: rgba(239, 107, 107, 0.14); stroke: var(--bad); }
+.ex-fig svg .dot.m { fill: var(--muted); }
+.ex-fig svg .dot.g { fill: var(--good); }
+.ex-fig svg .band.a { fill: var(--accent); opacity: 0.22; }
+.ex-fig > .ex-entry > svg { display: block; width: 100%; height: auto; max-width: none; margin: 0; overflow: visible; }
+.ex-strip-tick { stroke: var(--line-2); stroke-width: 1; }
+.ex-strip-tick.mon { stroke: var(--accent); stroke-dasharray: 2 2; }
+.ex-strip-hour { font-family: var(--body); font-size: 10px; fill: var(--dim); }
+.ex-strip-lbl.hour { font-size: 10px; }
