@@ -641,3 +641,74 @@ export function landingKeys(openQueue: (() => void) | null): KeyMap {
 export function queueKeys(back: () => void): KeyMap {
   return { cards: 0, openCard: () => {}, sheetOpen: false, setSheetOpen: () => {}, escape: back, keys: {} };
 }
+
+// ------------------------------------------------------- the Explain screen
+export interface ExplainApi {
+  prev: () => void;
+  next: () => void;
+  /** Esc with nothing open: the landing page. */
+  back: () => void;
+  glossaryOpen: boolean;
+  closeGlossary: () => void;
+  toggleGlossary: () => void;
+  /** Read it all, on or off. */
+  toggleAll: () => void;
+  sheetOpen: boolean;
+  setSheetOpen: (open: boolean) => void;
+}
+
+/** The Explain screen's keys (#283): the arrows walk the steps, g the glossary, a read it all;
+ * from a field (the animations' range and toggles) the keys keep their native meaning. Esc
+ * closes the key sheet, then the glossary, then goes back. */
+export function explainKeys(x: ExplainApi): KeyMap {
+  const unlessField = (act: () => void) => ({ field }: { field: boolean }) => {
+    if (field) return false;
+    act();
+  };
+  return {
+    cards: 0,
+    openCard: () => {},
+    sheetOpen: x.sheetOpen,
+    setSheetOpen: x.setSheetOpen,
+    escape: () => {
+      if (x.glossaryOpen) x.closeGlossary();
+      else x.back();
+    },
+    keys: {
+      ArrowLeft: unlessField(x.prev),
+      ArrowRight: unlessField(x.next),
+      g: unlessField(x.toggleGlossary),
+      a: unlessField(x.toggleAll),
+    },
+  };
+}
+
+export const EXPLAIN_SHEET: Sheet = {
+  cards: "Three tracks: the draft, moves and trades, daily play. One step a screen; the strip above is the track's diagram, and a click on a dot opens its step. Nothing on this screen writes anything.",
+  groups: [
+    {
+      title: "Steps",
+      rows: [
+        [["←", "→"], "the step before or after; past a track's last step, the next track"],
+        [["a"], "read it all: every step of the track on one page, the strip following the scroll"],
+      ],
+    },
+    {
+      title: "Glossary",
+      rows: [
+        [["g"], "open or close the glossary sheet; an underlined term in a card opens it on its definition"],
+        [["Esc"], "close the glossary"],
+      ],
+    },
+    {
+      title: "Animations",
+      rows: [
+        [["Tab"], "to the play button, the event steps, the slider and the toggles"],
+        [["←", "→"], "on the slider, the clock back or forward; Space on play starts or pauses"],
+        [["Esc"], "with nothing open, back to all leagues"],
+        [["?"], "this sheet"],
+      ],
+    },
+  ],
+  footer: "Every key mirrors a visible control. The place (track and step) is in the address, so a reload lands on the same step.",
+};

@@ -62,7 +62,17 @@ const SEASON_TITLE = "the move to the season's end in the scorer's units (fantas
  * card and the landing: the veto on an entry, the day's execute time and the moves executor's mode,
  * for every public league at once from the head or for one from its chip (#205). The private
  * league's recommended set is listed as suggestions to make by hand, from its best route. */
-export default function QueueScreen({ onBack, onOpenLeague, onProgress }: { onBack: () => void; onOpenLeague: (league: string) => void; onProgress: () => void }) {
+export default function QueueScreen({
+  onBack,
+  onOpenLeague,
+  onProgress,
+  onExplain,
+}: {
+  onBack: () => void;
+  onOpenLeague: (league: string) => void;
+  onProgress: () => void;
+  onExplain: () => void;
+}) {
   const queryClient = useQueryClient();
   const q = useQuery({ queryKey: ["queue"], queryFn: () => api.queue(), refetchInterval: (query) => queuePoll(query.state.data) });
   const seasons = useQuery({ queryKey: ["seasons"], queryFn: api.seasons, refetchInterval: 60_000 });
@@ -87,7 +97,7 @@ export default function QueueScreen({ onBack, onOpenLeague, onProgress }: { onBa
   return (
     <main className="shell">
       <header className="topbar season-top">
-        <AppBarLead onHome={onBack} status={<OverviewStatus leagues={leagues} now={now} />} onProgress={onProgress} />
+        <AppBarLead onHome={onBack} status={<OverviewStatus leagues={leagues} now={now} />} onProgress={onProgress} onExplain={onExplain} />
         <span className="muted title">Queue · {p ? dayLabel(p.date) : "today"}</span>
         <span className="grow" />
         <ExecuteTime q={p} />

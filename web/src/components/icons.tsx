@@ -293,6 +293,16 @@ export function ProgressIcon() {
   );
 }
 
+/** Explain, the walkthrough (#283): an open book. */
+export function ExplainIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" {...stroke} aria-hidden="true">
+      <path d="M12 6.5c-1.6-1.4-3.8-2-6.5-2H4v13h1.5c2.7 0 4.9.6 6.5 2 1.6-1.4 3.8-2 6.5-2H20v-13h-1.5c-2.7 0-4.9.6-6.5 2z" />
+      <path d="M12 6.5v13" />
+    </svg>
+  );
+}
+
 /** All leagues, the landing page (#253): four tiles in a 2×2 grid. */
 export function LeaguesIcon() {
   return (

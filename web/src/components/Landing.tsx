@@ -10,6 +10,7 @@ import ExecuteTime from "./ExecuteTime";
 import LeagueGrid from "./LeagueGrid";
 import { useLandingOrder } from "./landingOrder";
 import AppBarLead from "./AppBarLead";
+import { ExplainIcon } from "./icons";
 import { OverviewStatus } from "./StatusLight";
 import Wordmark from "./Wordmark";
 import { POOLED, rangeSum, recordLabel, scopeWeeks } from "../progress";
@@ -35,12 +36,14 @@ export default function Landing({
   onOpenSession,
   onProgress,
   onQueue,
+  onExplain,
   error,
 }: {
   onOpenLeague: (league: string, view?: SeasonViewId) => void;
   onOpenSession: (id: string) => void;
   onProgress: () => void;
   onQueue: () => void;
+  onExplain: () => void;
   error: Error | null;
 }) {
   const [layout, setLayoutState] = useState<Layout>(savedLayout);
@@ -79,9 +82,12 @@ export default function Landing({
           <>
             <Wordmark onHome={closeDrawer} />
             {ready && <span className="muted">{status}</span>}
+            <button className="icon" onClick={onExplain} aria-label="Explain" title="Explain: how the draft, the moves and the day work">
+              <ExplainIcon />
+            </button>
           </>
         ) : (
-          <AppBarLead onHome={closeDrawer} status={<OverviewStatus leagues={shown} now={now} />} onProgress={onProgress} />
+          <AppBarLead onHome={closeDrawer} status={<OverviewStatus leagues={shown} now={now} />} onProgress={onProgress} onExplain={onExplain} />
         )}
         <span className="grow" />
         <span className="modeswitch">
