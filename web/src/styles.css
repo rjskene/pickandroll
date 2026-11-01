@@ -1015,3 +1015,26 @@ button.ex-play.on { background: var(--accent); color: var(--accent-ink); border-
   .ex-sheet { top: auto; width: 100vw; max-height: 72vh; border-left: 0; border-top: 1px solid var(--line-2); border-radius: 12px 12px 0 0; transform: translateY(100%); }
   .ex-sheet.on { transform: none; }
 }
+/* Explain (#284): the draft track's figures and the strip's loop */
+.ex-fig svg text.lbl.ink { fill: var(--accent-ink); }
+.ex-fig svg .ex-arrowhead.ac { fill: var(--accent); }
+.ex-fig svg .arrow.loop { stroke: var(--accent); stroke-dasharray: 4 3; }
+.ex-fig svg .grid { stroke: var(--line); }
+.ex-fig svg .line.c { stroke: var(--good); }
+.ex-fig svg .line.pw { stroke: var(--text); stroke-dasharray: 5 4; stroke-width: 1.5; }
+.ex-fig svg .band.g { fill: var(--good); opacity: 0.18; }
+.ex-fig svg .band.r { fill: var(--bad); opacity: 0.18; }
+.ex-fig svg .dot { fill: var(--accent); stroke: var(--panel); stroke-width: 2; }
+.ex-fig svg .win.a { fill: rgba(245, 185, 66, 0.18); stroke: var(--accent); }
+.ex-fig svg .bar { fill: var(--line-2); }
+.ex-fig svg .bar.in { fill: var(--accent); opacity: 0.8; }
+.ex-fig svg .cell { fill: var(--panel-2); stroke: var(--line); }
+.ex-fig svg .cell.mine { fill: var(--mine); }
+.ex-fig svg .cell.keeper { fill: var(--accent); stroke: var(--accent); }
+.ex-strip-loop { stroke: var(--accent); stroke-dasharray: 4 3; stroke-width: 1.5; fill: none; }
+.ex-strip svg .ex-arrowhead { fill: var(--accent); }
+.ex-strip-loop-lbl { font-family: var(--body); font-size: 10px; fill: var(--accent); }
+.ex-strip-lbl.knock { paint-order: stroke; stroke: var(--bg); stroke-width: 4px; stroke-linejoin: round; }
+/* Explain (#285): the moves track's figures */
+.ex-fig svg .win.g { fill: rgba(61, 220, 132, 0.14); stroke: var(--good); }
+.ex-fig svg text.sm.ink { fill: var(--accent-ink); }
