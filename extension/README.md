@@ -255,7 +255,13 @@ first live claim is the user's own switch on the dashboard.
 On my team page opened with a start-active fragment (`#pickandroll-start-active`, `-late`, `-evening`, `-daily`)
 or from the side panel's **Start active players now**, the extension runs Yahoo's own Start Active Players for the
 rest of the week, when the API's need rule says the league wants it (`GET /autopilot/start-active/due`: no run
-yet, a new week, a roster change, an IL move). The page is posted first and the due route read fresh.
+yet, a new week, a roster change, an IL move, a live lineup set). The page is posted first and the due route read
+fresh. A live lineup run that set a swap on a later day than today runs it too, from today's page (trigger
+`after_lineup`, 0.11.2, #289): it reads the set day's labels once settled (up to 5 s), keeps the moved players off
+their target in the worker, and goes in the same tab to today's team page with
+`#pickandroll-start-active-after-lineup`, where the press runs as below, so Today Only never touches the day just
+set; Rest of Week covers it. The run logs `diffs` (the set day's, and what the press changed on today's labels)
+and says in `reason` when the dialog's Today Only range is not today. A set of today navigates nowhere.
 
 - **Dry run** (and a live league whose guard refuses): logs `would_start` and presses nothing, not even the main
   button, which runs Today Only by itself.
@@ -263,7 +269,8 @@ yet, a new week, a roster change, an IL move). The page is posted first and the 
   (`button.start-active-players` in `#fantasy_start_active_overlay`) is pressed once, and the dialog's Rest of
   Week Start (`button.start-players-interval`) once, after it is read again. Yahoo's words ("6 lineups updated",
   "Already optimized", the error) are logged as words. One press a day per league, unless the page's roster
-  differs from the day's press's (players or held; 0.9.1: the need rule's reasons alone never lift it). A press whose answer was never read is logged by the next run as `failed` and is not
+  differs from the day's press's (players or held; 0.9.1: the need rule's reasons alone never lift it), or a live
+  lineup run set a swap after it (0.11.2: one press per lineup set). A press whose answer was never read is logged by the next run as `failed` and is not
   pressed again for it.
 - Under STOP the run logs `stopped`; a league not due, or a plain visit, logs nothing. The options page's moves
   brake also stops it.

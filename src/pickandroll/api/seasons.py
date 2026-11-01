@@ -1866,7 +1866,9 @@ class SeasonService:
                 continue
             week = season.calendar.week_of(today) if season and season.calendar else None
             start = week.start if week is not None else today - timedelta(days=today.weekday())
-            need = season_autopilot.start_active_need(self.data_dir, league, mode, start, roster)
+            need = season_autopilot.start_active_need(
+                self.data_dir, league, mode, start, roster, today
+            )
             if stop:
                 need = {**need, "need": False}
             team = base.my_team_id
@@ -1923,8 +1925,9 @@ class SeasonService:
             )
         except season_autopilot.LogError as exc:
             raise HTTPException(409, str(exc)) from exc
-        # The 05:00 daily opens no moves pass: its runs are logged and go to none.
-        if run.trigger != "routine_daily":
+        # The 05:00 daily opens no moves pass: its runs are logged and go to none. Nor does a
+        # press that follows a lineup run or an add (#289): it is that run's, not the pass's.
+        if run.trigger not in ("routine_daily", "after_lineup", "after_add"):
             self._attribute("moves", league, run.trigger, {league: run.outcome}, key="start_active")
         return record
 

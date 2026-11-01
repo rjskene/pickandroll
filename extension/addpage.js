@@ -24,6 +24,7 @@
     "pickandroll-start-active-evening",
     "pickandroll-start-active-daily",
     "pickandroll-start-active-panel",
+    "pickandroll-start-active-after-lineup",
   ];
   /** The IL move's (lib/ilmove.js ``IL_TRIGGERS``, #214, 0.9.1). */
   const IL_FRAGMENTS = [

@@ -268,15 +268,38 @@
   async function visit(trigger) {
     if (running) return null;
     running = true;
+    let run;
     try {
       const posted = await post();
-      const run = await lineup(trigger, posted);
+      run = await lineup(trigger, posted);
       // A routine's run happens once: a reload of the page is a plain visit.
       if (trigger && location.hash) history.replaceState(null, "", location.pathname + location.search);
-      return run;
     } finally {
       running = false;
     }
+    // A live run that set a swap: Start Active carries it to the rest of the week (#289).
+    if (PR.pressAfterLineup(run)) await afterLineup(run);
+    return run;
+  }
+
+  /** After a live lineup run that set a swap on a later day than today (#289, the master's
+   * ruling): this page's labels read once settled for the set day's diff, kept in the worker for
+   * the press, and the tab goes to today's team page with the after-lineup fragment, where Start
+   * Active runs as on any start-active page. A set of today, a league not due or live, or STOP:
+   * the tab stays. Pressing from today's page keeps Today Only off the day just set; Rest of
+   * Week covers it either way. */
+  async function afterLineup(run) {
+    const r = await send({ op: "start_active_due" });
+    if (!r || !r.ok) return;
+    const row = (r.data.leagues || []).find((x) => String(x.league) === String(page.league));
+    if (r.data.stop || !row || row.error || !row.need || row.mode !== "live" || !PR.laterDay(run.day, r.data.date)) return;
+    const next = PR.afterLineupUrl(row.page);
+    if (!next) return;
+    const labels = await PR.settledLabels(document, { cap: AFTER_LINEUP_SETTLE_MS });
+    const kept = await send({ op: "after_lineup_put", league: page.league, handoff: { set_day: run.day, diff: PR.setDayDiff(run.steps, labels.lineup) } });
+    if (!kept || !kept.ok) return;
+    strip(`${PR.stripText({ run })} · Start Active from today's page`);
+    location.assign(next);
   }
 
   // The side panel's "Set lineup now": post the page again and run from that post.
@@ -503,6 +526,8 @@
 
   // ---------------------------------------------------------------- Start Active (#215)
   const saStrip = (line) => strip(line, "start active");
+  /** How long the after-lineup reads wait for the page to settle (#289). */
+  const AFTER_LINEUP_SETTLE_MS = 5 * 1000;
 
   /** Yahoo's Start Active control on my team page as a plain object for ``readStartActive``:
    * the buttons in its root (visible, disabled), any outside it, the dialog (there, open) and its
@@ -569,6 +594,9 @@
         saStrip(PR.startActiveStripText({ error: row.error }));
         return null;
       }
+      // Opened from a later day's lineup set (#289): the set day's diff its page read.
+      const handoff = trigger === "after_lineup" ? await send({ op: "after_lineup_take", league: page.league }) : null;
+      const setDay = (handoff && handoff.ok && handoff.data) || null;
       const where = location.pathname + location.search;
       const base = { row, day: due.date, trigger, page: where, extension };
       const mode = PR.startActiveMode(row);
@@ -585,7 +613,10 @@
         const rows = PR.dialogRows(dialog ? dialog.textContent : "");
         // Live, the row's roster must be this page's (the same-day guard compares it): the post taken.
         const unposted = mode.mode === "live" && !posted.accepted ? "the page was not posted, so its roster is not known" : null;
-        const problem = PR.startActiveProblem(row, page, controls) || unposted || (mode.mode === "live" ? PR.sameDayProblem(record, row, due.date) : null);
+        // The live lineup run on record lifts the same-day guard once it set a swap (#289).
+        const ran = mode.mode === "live" && record && record.day === due.date ? await send({ op: "lineup_record", league: page.league }) : null;
+        const lineupRan = (ran && ran.ok && ran.data) || null;
+        const problem = PR.startActiveProblem(row, page, controls) || unposted || (mode.mode === "live" ? PR.sameDayProblem(record, row, due.date, lineupRan) : null);
         if (problem) run = PR.startActiveRun({ ...base, ...rows, mode: mode.mode, outcome: "skipped", reason: problem, controls });
         else if (mode.mode !== "live") run = PR.startActiveRun({ ...base, ...rows, mode: "dry_run", outcome: "would_start", reason: mode.reason, controls });
         else {
@@ -599,10 +630,20 @@
             const why = (put && put.error) || "no answer from the extension";
             run = PR.startActiveRun({ ...base, ...rows, mode: "live", outcome: "skipped", reason: `the press could not be put on record: ${why}`, controls });
           } else {
+            const before = trigger === "after_lineup" ? PR.readLabels(document).lineup : null;
             const got = await PR.pressStartActive(document);
             pressed = got.outcome !== "skipped";
             release = !pressed;
-            run = PR.startActiveRun({ ...base, mode: "live", outcome: got.outcome, reason: got.reason, message: got.message, today: got.today, rest_of_week: got.rest_of_week, controls });
+            let diffs = null;
+            let reason = got.reason;
+            if (trigger === "after_lineup") {
+              // Today's labels after Yahoo's answer, once its refresh shows (or 5 s): what the press changed today.
+              const after = pressed ? (await PR.settledLabels(document, { cap: AFTER_LINEUP_SETTLE_MS, until: (l) => Object.keys(PR.pressChanged(before, l.lineup)).length > 0 })).lineup : before;
+              diffs = { set_day: setDay ? { day: setDay.set_day, diff: setDay.diff } : null, today: { day: due.date, changed: PR.pressChanged(before, after) } };
+              const range = got.today && got.today.range;
+              if (pressed && range && PR.rangeIsDay(range, due.date) === false) reason = [reason, `Today Only read ${range}, not today (${due.date})`].filter(Boolean).join("; ");
+            }
+            run = PR.startActiveRun({ ...base, mode: "live", outcome: got.outcome, reason, message: got.message, today: got.today, rest_of_week: got.rest_of_week, diffs, controls });
           }
         }
       }
