@@ -933,6 +933,7 @@ def start_active_need(
 
     if landed_since(IL, lambda r: r.get("outcome") == "moved"):
         reasons.append("il_moved")
+
     def later_set(r: Mapping[str, Any]) -> bool:
         day = r.get("day")
         later = today is None or (isinstance(day, str) and date.fromisoformat(day) > today)
