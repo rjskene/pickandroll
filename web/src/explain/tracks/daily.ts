@@ -186,12 +186,16 @@ export const daily: Track = {
           ],
         },
         {
-          text: "Start Active Players is Yahoo's own baseline",
-          sub: ["pressed at the week's start and after every roster move; the lineup executor sets its days on top"],
+          text: "Start Active Players is Yahoo's own baseline; the lineup executor sets its days on top",
+          sub: [
+            "pressed at the week's start, after a roster change or IL move, after a lineup set for a later day",
+            "a later day's only: Yahoo's button runs today at once and could undo a swap set for today",
+            "no press after an add: in the live leagues an add is a claim until Yahoo's overnight run",
+          ],
         },
         { text: "A player whose game has begun is never touched: his group is skipped whole; held slots never" },
       ],
-      source: ["routine/routines.py · late", "docs/AUTOPILOT.md · the steps, the live run"],
+      source: ["routine/routines.py · late", "docs/AUTOPILOT.md · the steps, the live run, §2 the reasons (lineup_set)"],
     },
     {
       id: "build",
