@@ -268,13 +268,15 @@
 
   // ---------------------------------------------------------------- the live run (PR 3)
   /** Yahoo's swap controls, the IL move's (#214): the roster rows, a row's slot label, the save
-   * notice; how long a step waits for its target to show after the first click and for the save
-   * after the second; a live run on record whose log never came is logged by the next visit. */
+   * notice; how long a step waits for its target to show after the first click, for the save after
+   * the second, and for an open swap to close (Yahoo keeps the saved row marked past its notice,
+   * #288); a live run on record whose log never came is logged by the next visit. */
   const ROWS = "table[id^=statTable] tbody tr";
   const LABEL = "span.pos-label";
   const SAVED = ".rostersave-msg";
   const SHOW_MS = 5 * 1000;
   const SAVE_MS = 10 * 1000;
+  const SETTLE_MS = 3 * 1000;
   const UNREAD_MS = 60 * 1000;
   const ALERTS_ATTR = "data-pickandroll-alerts";
   /** A cleared held player whose comeback needs a drop is the moves queue's (#124). */
@@ -328,9 +330,13 @@
    * label of the row he goes to (``with``'s row, or an empty row of ``to_slot``); then Yahoo's save
    * with both players landed. Every check is read again before each click. A first click whose
    * target never shows is cancelled by a click on the player's own label (no row's target: Yahoo
-   * leaves the swap, nothing saved). Answers ``{outcome, reason, message}``: ``skipped`` when
+   * leaves the swap, nothing saved). A swap open on the page is waited out first, up to
+   * ``settleCap``, and again after the save. Only a notice that came or changed after the click is
+   * this step's save: one that showed before it, unchanged, is an earlier step's (#288); when no
+   * other comes, the swap is set only once the labels landed and no error came in the whole save
+   * window, and the reason says so. Answers ``{outcome, reason, message}``: ``skipped`` when
    * nothing was clicked, ``set`` once saved, ``failed`` after a click. */
-  async function swapStep(doc, step, { wait = (ms) => new Promise((r) => setTimeout(r, ms)), every = 200, showCap = SHOW_MS, saveCap = SAVE_MS } = {}) {
+  async function swapStep(doc, step, { wait = (ms) => new Promise((r) => setTimeout(r, ms)), every = 200, showCap = SHOW_MS, saveCap = SAVE_MS, settleCap = SETTLE_MS } = {}) {
     const rows = () => [...doc.querySelectorAll(ROWS)];
     const rowOf = (k) => {
       const m = rows().filter((tr) => idOf(tr) === k);
@@ -364,7 +370,7 @@
     const notice = () =>
       [...doc.querySelectorAll(SAVED)]
         .filter(visible)
-        .map((el) => ({ saved: el.classList.contains("saved"), error: /error|fail/i.test(el.className), text: squash(el.textContent) }))
+        .map((el) => ({ el, saved: el.classList.contains("saved"), error: /error|fail/i.test(el.className), text: squash(el.textContent), sig: `${el.className}|${squash(el.textContent)}` }))
         .filter((n) => n.text);
     const landed = () => posOf(step.player) === step.to_slot && (step.with == null || posOf(step.with) === step.from_slot);
     const swapping = () => rows().some((tr) => tr.classList.contains("swapactive"));
@@ -375,12 +381,25 @@
       l.click();
       return "; the swap was cancelled";
     };
-    if (swapping()) return { outcome: "skipped", reason: "a swap is open on the page", message: null };
+    const settle = async () => {
+      for (let waited = 0; waited < settleCap && swapping(); waited += every) await wait(every);
+    };
+    await settle();
+    if (swapping()) return { outcome: "skipped", reason: `a swap is open on the page (still after ${Math.round(settleCap / 1000)} s)`, message: null };
     const label = start();
     if (!label) return { outcome: "skipped", reason: `player ${step.player}'s label is not one visible button reading ${step.from_slot} in an editable row`, message: null };
     const before = alertsOf(doc).length;
     const yahoo = () => alertsOf(doc).slice(before);
-    const earlier = new Set(notice().map((n) => n.text));
+    // The notices showing before the click, by element: one counts again only once it went away or
+    // changed.
+    const earlier = new Map(notice().map((n) => [n.el, n.sig]));
+    const changed = new Set();
+    const fresh = () => {
+      const now = notice();
+      const shown = new Map(now.map((n) => [n.el, n.sig]));
+      for (const [el, sig] of earlier) if (shown.get(el) !== sig) changed.add(el);
+      return now.filter((n) => !earlier.has(n.el) || changed.has(n.el));
+    };
     label.click();
     let to = target();
     for (let waited = 0; waited < showCap && !to && !yahoo().length; waited += every) {
@@ -396,11 +415,19 @@
     for (let waited = 0; waited < saveCap; waited += every) {
       await wait(every);
       if (yahoo().length) return { outcome: "failed", reason: `Yahoo answered the swap: "${yahoo()[0]}"`, message: null };
-      const fresh = notice().filter((n) => !earlier.has(n.text) || n.saved);
-      const error = fresh.find((n) => n.error);
+      const got = fresh();
+      const error = got.find((n) => n.error);
       if (error) return { outcome: "failed", reason: "Yahoo did not save the swap", message: error.text };
-      const saved = fresh.find((n) => n.saved);
-      if (saved && landed()) return { outcome: "set", reason: null, message: saved.text };
+      const saved = got.find((n) => n.saved);
+      if (saved && landed()) {
+        await settle();
+        return { outcome: "set", reason: null, message: saved.text };
+      }
+    }
+    const kept = notice().find((n) => n.saved && earlier.get(n.el) === n.sig && !changed.has(n.el));
+    if (kept && landed()) {
+      await settle();
+      return { outcome: "set", reason: `the save notice did not change; no error in ${Math.round(saveCap / 1000)} s`, message: kept.text };
     }
     return { outcome: "failed", reason: `clicked; the save was not read in ${Math.round(saveCap / 1000)} s`, message: null };
   }
@@ -486,7 +513,7 @@
         const why = stepProblem(s, page.lineup, page, slots, now());
         const got = why ? { outcome: "skipped", reason: why, message: null } : await swapStep(doc, s, opts);
         if (got.outcome === "set") {
-          record(s, "set", null, got.message);
+          record(s, "set", got.reason, got.message);
           clicked = true;
         } else if (got.outcome === "skipped" && !clicked) {
           // Nothing of the unit was clicked: skipped whole, the run goes on.
