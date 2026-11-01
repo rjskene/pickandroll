@@ -30,6 +30,34 @@ export const draft: Track = {
         { text: "The model never sees a rank or a dollar value: only the stat line" },
       ],
       source: ["docs/DESIGN.md · projections", "the export reader under src/"],
+      example: {
+        title: "Five rows of a rest-of-season export",
+        lead: [
+          {
+            text: "Five players, A to E, with 58 to 70 games left; every number is made up",
+            sub: ["one row per player: totals over the games left, never per game"],
+          },
+        ],
+        table: {
+          head: ["Player", "G", "PTS", "3PM", "REB", "AST", "STL", "BLK", "TO", "FGM", "FGA", "FTM", "FTA"],
+          num: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12],
+          rows: [
+            ["Player A", "68", "1,750", "190", "340", "420", "85", "25", "210", "610", "1,290", "340", "390"],
+            ["Player B", "70", "1,330", "60", "760", "210", "70", "120", "150", "520", "1,000", "230", "330"],
+            ["Player C", "62", "1,280", "150", "410", "300", "95", "40", "140", "460", "1,030", "210", "250"],
+            ["Player D", "66", "980", "210", "280", "330", "60", "20", "120", "350", "810", "70", "90"],
+            ["Player E", "58", "720", "30", "520", "90", "45", "95", "80", "300", "560", "90", "160"],
+          ],
+        },
+        read: [
+          { text: "Player A's 1,750 points over 68 games is 25.7 a game; the model keeps the 1,750" },
+          {
+            text: "Percentages come as makes and attempts: Player B makes 520 of 1,000, a .520 shooter",
+            sub: ["the next step turns them into impact, so they add up across a roster"],
+          },
+          { text: "A player whose name differs on Yahoo is matched through the alias table" },
+        ],
+      },
     },
     {
       id: "pool",
@@ -51,6 +79,31 @@ export const draft: Track = {
         { text: "Example: 12 teams × 13 roster spots is a pool of 156" },
       ],
       source: ["docs/DESIGN.md · the pool and z-scores", "projections/zscores.py and optim/pool.py under src/"],
+      example: {
+        title: "The five, scored in points and field goals",
+        lead: [
+          {
+            text: "A pool of 12 teams with 13 roster spots: 156 players",
+            sub: ["its points: a mean of 1,150 and a spread of 380", "its field goals: 47.0%, with an impact spread of 40 makes"],
+          },
+        ],
+        table: {
+          head: ["Player", "PTS", "z PTS", "FGM", "FGA", "FG impact", "z FG%"],
+          num: [1, 2, 3, 4, 5, 6],
+          rows: [
+            ["Player A", "1,750", "1.58", "610", "1,290", "3.7", "0.09"],
+            ["Player B", "1,330", "0.47", "520", "1,000", "50.0", "1.25"],
+            ["Player C", "1,280", "0.34", "460", "1,030", "−24.1", "−0.60"],
+            ["Player D", "980", "−0.45", "350", "810", "−30.7", "−0.77"],
+            ["Player E", "720", "−1.13", "300", "560", "36.8", "0.92"],
+          ],
+        },
+        read: [
+          { text: "Player A leads in points but shoots like the pool: about zero in field goals" },
+          { text: "Player E scores least but adds 36.8 makes above a pool shooter: a plus in FG%" },
+          { text: "Every z is in the pool's spreads, so the nine categories add on one scale" },
+        ],
+      },
     },
     {
       id: "survival",
@@ -73,6 +126,31 @@ export const draft: Track = {
         { text: "The record carries what the formula cannot: the players who are never drafted at all" },
       ],
       source: ["docs/DESIGN.md · survival", "availability/survival.py and availability/league.py under src/"],
+      example: {
+        title: "Five players, my pick now at 21 and the next at 28",
+        lead: [
+          {
+            text: "I draft 4th of 12, so my picks are 4, 21, 28, 45 and so on; I am on the clock at 21",
+            sub: ["the ADP formula alone here, with no league record and no ADP bias"],
+          },
+        ],
+        table: {
+          head: ["Player", "ADP", "spread", "lasts to 21", "lasts to 28", "from 21 to 28"],
+          num: [1, 2, 3, 4, 5],
+          rows: [
+            ["Player A", "18", "4.2", "0.24", "0.01", "0.04"],
+            ["Player B", "24", "5.1", "0.72", "0.22", "0.30"],
+            ["Player C", "30", "6.0", "0.93", "0.63", "0.68"],
+            ["Player D", "36", "6.9", "0.99", "0.88", "0.89"],
+            ["Player E", "50", "9.0", "1.00", "0.99", "0.99"],
+          ],
+        },
+        read: [
+          { text: "Player A is still here at 21, past his ADP; he will not last to 28", sub: ["take him now, or plan without him"] },
+          { text: "Player C lasts to 28 about two times in three, read from now" },
+          { text: "The last column is the one the plan uses: each player is known to be here at 21" },
+        ],
+      },
     },
     {
       id: "objective",
@@ -94,6 +172,38 @@ export const draft: Track = {
         { text: "The solver carries Φ piecewise, with breakpoints at ±0.5σ, ±1.5σ and ±2.5σ" },
       ],
       source: ["docs/DESIGN.md · the objective", "optim/objective.py under src/"],
+      example: {
+        title: "One roster's nine categories against the league",
+        lead: [
+          {
+            text: "The roster's projected total z in each category, against the league's curve",
+            sub: ["the curve: the mean and spread of team totals, made up for this example"],
+          },
+        ],
+        table: {
+          head: ["Cat", "total", "mean", "spread", "in spreads", "P(win)", "per extra z"],
+          num: [1, 2, 3, 4, 5, 6],
+          rows: [
+            ["PTS", "6.2", "4.0", "3.0", "0.73", "0.768", "0.10"],
+            ["3PM", "2.0", "3.5", "3.1", "−0.48", "0.314", "0.11"],
+            ["REB", "1.0", "4.0", "3.2", "−0.94", "0.174", "0.08"],
+            ["AST", "4.5", "4.0", "2.8", "0.18", "0.571", "0.14"],
+            ["STL", "5.0", "3.0", "2.5", "0.80", "0.788", "0.12"],
+            ["BLK", "−3.5", "3.5", "3.0", "−2.33", "0.010", "0.01"],
+            ["TO", "−1.5", "0.0", "2.6", "−0.58", "0.282", "0.13"],
+            ["FG%", "2.2", "1.5", "2.4", "0.29", "0.615", "0.16"],
+            ["FT%", "3.0", "1.5", "2.5", "0.60", "0.726", "0.13"],
+          ],
+        },
+        read: [
+          { text: "The nine chances sum to 4.25 expected categories won" },
+          {
+            text: "Blocks sit 2.3 spreads below the mean: one more z there buys 0.01 of a category",
+            sub: ["the same z in field goals buys 0.16, so the plan stops paying for blocks"],
+          },
+          { text: "Nobody chose to give up blocks: the board made them unwinnable" },
+        ],
+      },
     },
     {
       id: "plan",
@@ -117,6 +227,29 @@ export const draft: Track = {
         { text: "My [keeper|keepers] are locked in and their rounds are not planned" },
       ],
       source: ["docs/DESIGN.md · the rolling-horizon plan", "optim/horizon.py under src/"],
+      example: {
+        title: "The plan at my pick 21: who goes where",
+        lead: [
+          {
+            text: "Total z over the nine categories, for brevity; the solver keeps each category apart",
+            sub: ["lasts: the chance he is on the board at that pick, read from now"],
+          },
+        ],
+        table: {
+          head: ["My pick", "player", "total z", "lasts", "z × lasts", "in the plan"],
+          num: [0, 2, 3, 4],
+          rows: [
+            ["21", "Player A", "5.2", "1.00", "5.20", "yes: the pick now"],
+            ["28", "Player C", "4.0", "0.68", "2.72", "no"],
+            ["28", "Player D", "3.2", "0.97", "3.10", "yes"],
+            ["45", "Player E", "2.6", "0.90", "2.34", "yes"],
+          ],
+        },
+        read: [
+          { text: "At 28 the plan takes Player D: less z than Player C, but he will be there" },
+          { text: "Only pick 21 is made; after the next real pick the whole plan is solved again" },
+        ],
+      },
     },
     {
       id: "price",
@@ -136,6 +269,29 @@ export const draft: Track = {
         { text: "The pick shown is recommended; the user drafts" },
       ],
       source: ["docs/DESIGN.md · prices and ties", "api/solver.py under src/"],
+      example: {
+        title: "Four candidates priced at pick 21",
+        lead: [
+          {
+            text: "Each candidate is forced to be my pick now and the plan solved again",
+            sub: ["the best plan, nothing forced, is worth 7.42 expected categories won"],
+          },
+        ],
+        table: {
+          head: ["Candidate", "forced first", "price", "reading"],
+          num: [1, 2],
+          rows: [
+            ["Player A", "7.42", "0.00", "recommended"],
+            ["Player B", "7.39", "0.03", "a tie: within 0.05"],
+            ["Player C", "7.21", "0.21", "a fifth of a category"],
+            ["Player D", "6.98", "0.44", "almost half a category"],
+          ],
+        },
+        read: [
+          { text: "Players A and B are a tie: listed in ADP order, and the choice is the user's" },
+          { text: "A price already counts the risk of waiting: the plan carries each pick's survival" },
+        ],
+      },
     },
     {
       id: "solve-ahead",
@@ -162,6 +318,23 @@ export const draft: Track = {
         { text: "In a room: three candidates, no scenarios, 5 s, inside Yahoo's 30 s pick clock" },
       ],
       source: ["docs/DESIGN.md · the background solver", "docs/YAHOO_SYNC.md · the plan budget", "api/solver.py under src/"],
+      example: {
+        title: "One round while the room keeps picking",
+        lead: [{ text: "Pick 17 lands; my turn is pick 21; the seconds count from the landing" }],
+        table: {
+          head: ["Second", "what happens"],
+          num: [0],
+          rows: [
+            ["0", "pick 17 lands; the board is snapshotted under the session lock"],
+            ["0–9", "the plan is solved on the snapshot"],
+            ["6", "pick 18 lands mid-solve: the result is marked stale, one more round queued"],
+            ["9–15", "every candidate priced: first order at once, then exactly"],
+            ["15–20", "the \"if he is gone\" scenarios; the recommendation is published"],
+            ["20", "the queued round starts on the board with pick 18 and any picks since"],
+          ],
+        },
+        read: [{ text: "Picks 19 and 20 fold into that one round: by my turn the answer is at most one pick old" }],
+      },
     },
     {
       id: "keepers",
@@ -186,6 +359,25 @@ export const draft: Track = {
         },
       ],
       source: ["docs/KEEPERS.md", "draft/state.py and availability/adp.py under src/"],
+      example: {
+        title: "Two keepers from draft position 9 in a 12-team snake",
+        lead: [{ text: "Odd rounds run from position 1 to 12, even rounds from 12 back to 1" }],
+        table: {
+          head: ["Keeper's round", "the round runs", "overall pick"],
+          num: [0, 2],
+          rows: [
+            ["5", "1 to 12", "57"],
+            ["10", "12 to 1", "112"],
+          ],
+        },
+        read: [
+          { text: "Each keeper's pick is appended to the log when the clock reaches 57 and 112" },
+          {
+            text: "A player with ADP 40 and six keepers ranked ahead of him moves to 34",
+            sub: ["keeper-adjusted ADP: in that space the league drafts to ADP"],
+          },
+        ],
+      },
     },
     {
       id: "room",
@@ -217,6 +409,24 @@ export const draft: Track = {
         },
       ],
       source: ["docs/YAHOO_SYNC.md", "extension/lib/drafter.js · the clock's constants", "api/yahoo_room.py under src/"],
+      example: {
+        title: "A rival's pick, then my armed turn",
+        lead: [{ text: "A 30 s pick clock; the seat is armed, with the act-at set to 15 s" }],
+        table: {
+          head: ["Moment", "what happens"],
+          rows: [
+            ["pick 39, in Yahoo", "page.js reads the frame; content.js turns it into a room event"],
+            ["a moment later", "worker.js posts the pick; the session plans again"],
+            ["pick 40, 30 s left", "the tab asks the plan route for a fresh solve of this board"],
+            ["15 s left", "the act-at releases the click: the candidate's row, then a quick re-click"],
+            ["the pick frame", "the room confirms; the session logs pick 40 as mine"],
+          ],
+        },
+        read: [
+          { text: "Not armed, the mirror still lands every pick, and nothing is clicked" },
+          { text: "If the user picks first, by hand, no click is made" },
+        ],
+      },
     },
   ],
 };

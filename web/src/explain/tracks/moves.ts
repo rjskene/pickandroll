@@ -28,6 +28,29 @@ export const moves: Track = {
         { text: "[ecw|Expected categories won] is the sum of the nine" },
       ],
       source: ["docs/ADD_DROP.md · the weekly projection", "api/season_week.py"],
+      example: {
+        title: "One matchup week: four of the nine",
+        lead: [
+          {
+            text: "My finals and the opponent's: the week so far plus the projected rest",
+            sub: ["the spread from each category's fitted dispersion: points 3.17, rebounds 1.34"],
+          },
+        ],
+        table: {
+          head: ["Cat", "mine", "theirs", "my lead", "spread", "P(win)"],
+          num: [1, 2, 3, 4, 5],
+          rows: [
+            ["PTS", "610", "570", "40", "61.2", "0.74"],
+            ["REB", "260", "285", "−25", "27.0", "0.18"],
+            ["AST", "150", "140", "10", "19.2", "0.70"],
+            ["STL", "40", "42", "−2", "9.4", "0.42"],
+          ],
+        },
+        read: [
+          { text: "A 40-point lead is 0.65 of the combined spread: 0.74 to win points" },
+          { text: "These four add to 2.04 expected wins; the nine add up the same way" },
+        ],
+      },
     },
     {
       id: "horizons",
@@ -57,6 +80,28 @@ export const moves: Track = {
         },
       ],
       source: ["docs/ADD_DROP.md · horizons, the search", "api/season_week.py · first_day", "api/season_queue.py · dropped_recently"],
+      example: {
+        title: "Three candidate moves on both horizons",
+        lead: [
+          {
+            text: "Gains in expected categories won; the season in value units",
+            sub: ["this week: against the named opponent; three weeks: against the field"],
+          },
+        ],
+        table: {
+          head: ["Move", "this week", "three weeks", "season"],
+          num: [1, 2, 3],
+          rows: [
+            ["add Player A, drop Player B", "+0.31", "+0.12", "+4.0"],
+            ["add Player C, drop Player D", "+0.05", "+0.40", "+9.5"],
+            ["add Player E, drop Player B", "+0.42", "−0.10", "−6.0"],
+          ],
+        },
+        read: [
+          { text: "On this week alone Player E for Player B wins; on three weeks, Player C for Player D" },
+          { text: "Player E for Player B costs the season: the guard holds that set back and says so" },
+        ],
+      },
     },
     {
       id: "keep-rule",
@@ -84,6 +129,30 @@ export const moves: Track = {
         },
       ],
       source: ["docs/ADD_DROP.md · the keep rule, the season guard", "season/moves.py · the keep rule"],
+      example: {
+        title: "Five players on my roster, one add on offer",
+        lead: [
+          {
+            text: "The best available add is worth 0.3 a game; the floor is 0.5 here, zero by default",
+            sub: ["values: rest-of-season z per game, where zero is the pool's average"],
+          },
+        ],
+        table: {
+          head: ["Player", "value", "status", "verdict"],
+          num: [1],
+          rows: [
+            ["Player A", "2.4", "out 12 days", "protected: to an open IL slot"],
+            ["Player B", "0.1", "healthy", "protected: 0.1 plus the floor beats 0.3"],
+            ["Player C", "−0.1", "out 4 days", "benched: kept, back within a week"],
+            ["Player D", "−0.4", "healthy", "can go: −0.4 plus the floor is under 0.3"],
+            ["Player E", "1.0", "out for the season", "can go: never protected"],
+          ],
+        },
+        read: [
+          { text: "Player A stays though out twelve days: a three-week horizon alone would drop him" },
+          { text: "With the floor at zero, neither Player B nor Player C would be kept" },
+        ],
+      },
     },
     {
       id: "bids-trades",
@@ -114,6 +183,29 @@ export const moves: Track = {
         { text: "The hill-climb may tune the bid sizing within bounds" },
       ],
       source: ["docs/ADD_DROP.md · the two kinds of league, trades", "docs/AUTOPILOT.md · the bid rule", "api/season_queue.py"],
+      example: {
+        title: "A claim in a public league, and one in the private league",
+        lead: [
+          {
+            text: "Public: a move worth 0.42 when the typical gain is 0.15, with a breakout flag",
+            sub: ["$40 of budget left; the pinned private league (31822): 4th in waiver priority"],
+          },
+        ],
+        table: {
+          head: ["Line", "public league", "private league"],
+          rows: [
+            ["the gain in typicals", "0.42 over 0.15 is 2.8: rounds to 3", "no bid"],
+            ["the flag", "a breakout: doubled to $6", "—"],
+            ["the budget", "$40 left: $6 stands", "—"],
+            ["the queue's reason", "$6: gain 3x the typical, x2 for a breakout flag", "—"],
+            ["the claim's odds", "the highest bid wins", "three teams ahead at 0.3 each: 0.34, assumed"],
+          ],
+        },
+        read: [
+          { text: "A struck bid stands as a $0 claim; a cleared free agent is added at once for $0" },
+          { text: "A trade is scored the same way, both horizons and the season beside; nothing sends it" },
+        ],
+      },
     },
   ],
 };

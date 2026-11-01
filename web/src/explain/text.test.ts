@@ -68,3 +68,28 @@ test("a track with no steps, no title or two steps of one name is reported", () 
   const twice: Track = { ...track, labels: ["a"], steps: [step({}), step({})] };
   assert.deepEqual(allViolations([twice], GLOSSARY), ["draft: 1 strip labels for 2 steps", 'draft: two steps named "s"']);
 });
+
+test("every step has a worked example, fictional players only (#282)", () => {
+  for (const t of TRACKS)
+    for (const s of t.steps) {
+      assert.ok(s.example, `${t.id}/${s.id} has no example`);
+      const all = JSON.stringify(s.example);
+      for (const m of all.matchAll(/Player ([A-Z])\b/g)) assert.ok(m[1] <= "H", `${t.id}/${s.id}: Player ${m[1]}`);
+      assert.doesNotMatch(all, /basketball monster|\bbbm\b|optimal/i, `${t.id}/${s.id}`);
+    }
+});
+
+test("an example's long title, empty lead, short row and stray number column are reported", () => {
+  const example = {
+    title: "t".repeat(71),
+    lead: [],
+    table: { head: ["a", "b"], rows: [["1"], ["", "2"]], num: [2] },
+  };
+  const v = violations(track, step({ example }), GLOSSARY);
+  assert.equal(v.length, 5, v.join("\n"));
+  assert.match(v[0], /title is 71 characters/);
+  assert.match(v[1], /sets nothing up/);
+  assert.match(v[2], /row 1 has 1 cells for 2 heads/);
+  assert.match(v[3], /row 2, cell 1 is empty/);
+  assert.match(v[4], /number column 2/);
+});

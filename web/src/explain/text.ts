@@ -4,6 +4,9 @@ import type { Bullet, Step, Term, Track } from "./types";
 /** A bullet is at most this many visible characters; a sub-bullet, SUB_MAX. */
 export const BULLET_MAX = 120;
 export const SUB_MAX = 100;
+/** An example's title, and its table's rows: a popout stays concise too (#282). */
+export const EXAMPLE_TITLE_MAX = 70;
+export const TABLE_ROWS_MAX = 10;
 
 export type Piece = { kind: "text"; text: string } | { kind: "term"; id: string; text: string };
 
@@ -37,7 +40,8 @@ export function termIds(text: string): string[] {
 
 /** Every way a step breaks the rule, in words; empty when it keeps it: a bullet at most
  * BULLET_MAX visible characters and a sub-bullet at most SUB_MAX, no empty entries, every
- * term in the glossary, and two levels only (the shape allows no third). */
+ * term in the glossary, and two levels only (the shape allows no third). An example keeps the
+ * same rule for its bullets, a short title, and a table whose rows fill its heads. */
 export function violations(track: Track, step: Step, terms: Term[]): string[] {
   const known = new Set(terms.map((t) => t.id));
   const out: string[] = [];
@@ -50,11 +54,34 @@ export function violations(track: Track, step: Step, terms: Term[]): string[] {
     else if (shown.length > max) out.push(`${where}: ${what} is ${shown.length} characters, over ${max}: "${shown}"`);
     for (const id of termIds(text)) if (!known.has(id)) out.push(`${where}: ${what} names the term "${id}", not in the glossary`);
   };
-  step.bullets.forEach((b: Bullet, i) => {
-    check(`bullet ${i + 1}`, b.text, BULLET_MAX);
-    (b.sub ?? []).forEach((s, j) => check(`bullet ${i + 1}, sub-bullet ${j + 1}`, s, SUB_MAX));
-    if (b.sub && !b.sub.length) out.push(`${where}: bullet ${i + 1} has an empty sub list`);
-  });
+  const bullets = (list: Bullet[], what: string) =>
+    list.forEach((b: Bullet, i) => {
+      check(`${what} ${i + 1}`, b.text, BULLET_MAX);
+      (b.sub ?? []).forEach((s, j) => check(`${what} ${i + 1}, sub-bullet ${j + 1}`, s, SUB_MAX));
+      if (b.sub && !b.sub.length) out.push(`${where}: ${what} ${i + 1} has an empty sub list`);
+    });
+  bullets(step.bullets, "bullet");
+  const ex = step.example;
+  if (ex) {
+    if (!ex.title.trim()) out.push(`${where}: the example has no title`);
+    else if (ex.title.length > EXAMPLE_TITLE_MAX) out.push(`${where}: the example's title is ${ex.title.length} characters, over ${EXAMPLE_TITLE_MAX}`);
+    if (!ex.lead.length) out.push(`${where}: the example sets nothing up`);
+    bullets(ex.lead, "example lead");
+    bullets(ex.read ?? [], "example reading");
+    const tb = ex.table;
+    if (tb) {
+      if (!tb.head.length || !tb.rows.length) out.push(`${where}: the example's table is empty`);
+      if (tb.rows.length > TABLE_ROWS_MAX) out.push(`${where}: the example's table has ${tb.rows.length} rows, over ${TABLE_ROWS_MAX}`);
+      tb.rows.forEach((r, i) => {
+        if (r.length !== tb.head.length) out.push(`${where}: the example's row ${i + 1} has ${r.length} cells for ${tb.head.length} heads`);
+        r.forEach((c, j) => {
+          if (!c.trim()) out.push(`${where}: the example's row ${i + 1}, cell ${j + 1} is empty`);
+          else if (c.length > SUB_MAX) out.push(`${where}: the example's row ${i + 1}, cell ${j + 1} is ${c.length} characters, over ${SUB_MAX}`);
+        });
+      });
+      for (const k of tb.num ?? []) if (k < 0 || k >= tb.head.length) out.push(`${where}: the example names number column ${k}, not a column`);
+    }
+  }
   return out;
 }
 

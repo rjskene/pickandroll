@@ -651,15 +651,21 @@ export interface ExplainApi {
   glossaryOpen: boolean;
   closeGlossary: () => void;
   toggleGlossary: () => void;
+  /** An example (or a formula) is open in its sheet. */
+  popOpen: boolean;
+  closePop: () => void;
+  /** e: the current step's worked example, open or closed. */
+  toggleExample: () => void;
   /** Read it all, on or off. */
   toggleAll: () => void;
   sheetOpen: boolean;
   setSheetOpen: (open: boolean) => void;
 }
 
-/** The Explain screen's keys (#283): the arrows walk the steps, g the glossary, a read it all;
- * from a field (the animations' range and toggles) the keys keep their native meaning. Esc
- * closes the key sheet, then the glossary, then goes back. */
+/** The Explain screen's keys (#283): the arrows walk the steps, g the glossary, e the step's
+ * example (#282), a read it all; from a field (the animations' range and toggles) the keys keep
+ * their native meaning. Esc closes the key sheet, then an example, then the glossary, then goes
+ * back. */
 export function explainKeys(x: ExplainApi): KeyMap {
   const unlessField = (act: () => void) => ({ field }: { field: boolean }) => {
     if (field) return false;
@@ -671,13 +677,15 @@ export function explainKeys(x: ExplainApi): KeyMap {
     sheetOpen: x.sheetOpen,
     setSheetOpen: x.setSheetOpen,
     escape: () => {
-      if (x.glossaryOpen) x.closeGlossary();
+      if (x.popOpen) x.closePop();
+      else if (x.glossaryOpen) x.closeGlossary();
       else x.back();
     },
     keys: {
       ArrowLeft: unlessField(x.prev),
       ArrowRight: unlessField(x.next),
       g: unlessField(x.toggleGlossary),
+      e: unlessField(x.toggleExample),
       a: unlessField(x.toggleAll),
     },
   };
@@ -694,10 +702,11 @@ export const EXPLAIN_SHEET: Sheet = {
       ],
     },
     {
-      title: "Glossary",
+      title: "Glossary and examples",
       rows: [
         [["g"], "open or close the glossary sheet; an underlined term in a card opens it on its definition"],
-        [["Esc"], "close the glossary"],
+        [["e"], "the step's worked example, as the card's Example button: fictional players, made-up numbers"],
+        [["Esc"], "close the example, then the glossary"],
       ],
     },
     {

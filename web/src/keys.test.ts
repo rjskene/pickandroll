@@ -557,6 +557,9 @@ test("the Explain screen's arrows walk the steps, g and a toggle, and fields kee
       glossaryOpen,
       closeGlossary: () => n.closed++,
       toggleGlossary: () => n.gloss++,
+      popOpen: false,
+      closePop: () => {},
+      toggleExample: () => {},
       toggleAll: () => n.all++,
       sheetOpen: false,
       setSheetOpen: () => {},
@@ -578,4 +581,30 @@ test("the Explain screen's arrows walk the steps, g and a toggle, and fields kee
   assert.deepEqual([n.closed, n.back], [1, 0]);
   assert.equal(handleKey(key("Escape"), api(false)), true);
   assert.deepEqual([n.closed, n.back], [1, 1]);
+});
+
+test("e opens the step's example and Esc closes it before the glossary (#282)", () => {
+  const n = { example: 0, closePop: 0, closeGloss: 0, back: 0 };
+  const api = (popOpen: boolean, glossaryOpen: boolean) =>
+    explainKeys({
+      prev: () => {},
+      next: () => {},
+      back: () => n.back++,
+      glossaryOpen,
+      closeGlossary: () => n.closeGloss++,
+      toggleGlossary: () => {},
+      popOpen,
+      closePop: () => n.closePop++,
+      toggleExample: () => n.example++,
+      toggleAll: () => {},
+      sheetOpen: false,
+      setSheetOpen: () => {},
+    });
+  assert.equal(handleKey(key("e"), api(false, false)), true);
+  assert.equal(n.example, 1);
+  assert.equal(handleKey(key("e", { target: field }), api(false, false)), false, "a field keeps its e");
+  assert.equal(handleKey(key("Escape"), api(true, true)), true);
+  assert.deepEqual([n.closePop, n.closeGloss, n.back], [1, 0, 0]);
+  assert.equal(handleKey(key("Escape"), api(false, true)), true);
+  assert.deepEqual([n.closePop, n.closeGloss, n.back], [1, 1, 0]);
 });

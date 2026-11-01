@@ -46,6 +46,29 @@ export interface Step {
   wide?: boolean;
   /** Where the rules shown come from: files in the repo, in the reader's words. */
   source: string[];
+  /** The worked example the card's Example button opens. */
+  example?: Example;
+}
+
+/** A small table in an example: the column heads, the rows as shown, the number columns. */
+export interface ExampleTable {
+  head: string[];
+  rows: string[][];
+  /** The columns set right-aligned (the numbers), by index. */
+  num?: number[];
+}
+
+/** A step's worked example (#282): fictional players (Player A, Player B, ...) and made-up
+ * numbers, never a real name, league or projection. Bullets like a card's: key ideas with their
+ * sub-ideas, under the same text rule. */
+export interface Example {
+  /** The drawer's heading. */
+  title: string;
+  /** What the example sets up. */
+  lead: Bullet[];
+  table?: ExampleTable;
+  /** What to read from it. */
+  read?: Bullet[];
 }
 
 export type TrackId = "draft" | "moves" | "daily";

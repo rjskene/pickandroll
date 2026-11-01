@@ -14,6 +14,8 @@ import { useNow } from "../components/YahooSync";
 import { GlossaryProvider, GlossarySheet } from "./Glossary";
 import { formatHash, move, nextLabel, parseHash } from "./nav";
 import type { Place } from "./nav";
+import { Drawer, ExampleBody, PopProvider } from "./Popout";
+import type { Pop } from "./Popout";
 import StepCard from "./StepCard";
 import Strip from "./Strip";
 import { TRACKS, trackById } from "./tracks/index.ts";
@@ -31,6 +33,9 @@ export default function ExplainScreen({ onBack, onProgress }: Props) {
   const [all, setAll] = useState(false);
   const [gloss, setGloss] = useState<{ open: boolean; term: string | null }>({ open: false, term: null });
   const [sheetOpen, setSheetOpen] = useState(false);
+  const [pop, setPop] = useState<Pop | null>(null);
+  // The last popout opened, so its sheet keeps its content while it slides out.
+  const [shownPop, setShownPop] = useState<Pop | null>(null);
   const body = useRef<HTMLDivElement>(null);
   const track = trackById(place.track) ?? TRACKS[0];
   const step = track.steps[Math.min(place.step, track.steps.length - 1)];
@@ -41,13 +46,19 @@ export default function ExplainScreen({ onBack, onProgress }: Props) {
     if (location.hash !== formatHash(place)) history.replaceState(null, "", formatHash(place));
   }, [place]);
   useEffect(() => {
-    const on = () => setPlace(parseHash(location.hash, TRACKS));
+    const on = () => {
+      setPop(null);
+      setPlace(parseHash(location.hash, TRACKS));
+    };
     window.addEventListener("hashchange", on);
     return () => window.removeEventListener("hashchange", on);
   }, []);
 
+  // A move to another step closes a popout: it belongs to the step it was opened on. Scrolling in
+  // Read it all moves the strip, not this, so a popout stays open while the page scrolls.
   const go = useCallback(
     (p: Place) => {
+      setPop(null);
       setPlace(p);
       const t = trackById(p.track);
       const s = t?.steps[p.step];
@@ -81,11 +92,35 @@ export default function ExplainScreen({ onBack, onProgress }: Props) {
     return () => io.disconnect();
   }, [all, track]);
 
-  const openTerm = useCallback((id: string) => setGloss({ open: true, term: id }), []);
+  // One sheet at a time: a popout closes the glossary, the glossary closes a popout.
+  const openTerm = useCallback((id: string) => {
+    setPop(null);
+    setGloss({ open: true, term: id });
+  }, []);
   const closeGlossary = useCallback(() => setGloss((g) => ({ ...g, open: false })), []);
-  const toggleGlossary = useCallback(() => setGloss((g) => ({ ...g, open: !g.open })), []);
+  const toggleGlossary = useCallback(() => {
+    setPop(null);
+    setGloss((g) => ({ ...g, open: !g.open }));
+  }, []);
+  const openPop = useCallback((p: Pop) => {
+    setGloss((g) => ({ ...g, open: false }));
+    setPop(p);
+    setShownPop(p);
+  }, []);
+  const closePop = useCallback(() => setPop(null), []);
+  // e: the current step's example, or closed when it is the one open.
+  const toggleExample = useCallback(() => {
+    if (!step?.example) return;
+    const mine = pop?.kind === "example" && pop.track === track.id && pop.step === step.id;
+    if (mine) setPop(null);
+    else openPop({ kind: "example", track: track.id, step: step.id });
+  }, [openPop, pop, step, track.id]);
   const toggleAll = useCallback(() => setAll((a) => !a), []);
-  useHotkeys(explainKeys({ prev, next, back: onBack, glossaryOpen: gloss.open, closeGlossary, toggleGlossary, toggleAll, sheetOpen, setSheetOpen }));
+  useHotkeys(
+    explainKeys({ prev, next, back: onBack, glossaryOpen: gloss.open, closeGlossary, toggleGlossary, popOpen: pop !== null, closePop, toggleExample, toggleAll, sheetOpen, setSheetOpen }),
+  );
+  const popStep = shownPop?.kind === "example" ? trackById(shownPop.track)?.steps.find((s) => s.id === shownPop.step) : undefined;
+  const popView = shownPop ? `example:${shownPop.track}:${shownPop.step}` : "";
 
   const shown = all ? track.steps : step ? [step] : [];
   return (
@@ -99,45 +134,50 @@ export default function ExplainScreen({ onBack, onProgress }: Props) {
         </button>
       </header>
       <GlossaryProvider onOpen={openTerm}>
-        <div className="ex-body" ref={body}>
-          <div className="ex-controls">
-            <span className="seg" role="group" aria-label="Track">
-              {TRACKS.map((t) => (
-                <button key={t.id} className={t.id === track.id ? "on" : ""} aria-pressed={t.id === track.id} onClick={() => go({ track: t.id, step: 0 })}>
-                  {t.title}
-                </button>
-              ))}
-            </span>
-            <span className="ex-right">
-              <label className={`switch${all ? " on" : ""}`} title="Every step of the track on one page (a)">
-                <input type="checkbox" checked={all} onChange={(e) => setAll(e.target.checked)} /> Read it all <kbd>a</kbd>
-              </label>
-              <button onClick={toggleGlossary} title="The glossary (g)">
-                Glossary <kbd>g</kbd>
-              </button>
-              <button onClick={() => setSheetOpen(true)} title="Keyboard shortcuts (?)">
-                Keys <kbd>?</kbd>
-              </button>
-              <span className="ex-nav" role="group" aria-label="Steps">
-                <button onClick={prev} disabled={first} aria-label="The step before" title="The step before (←)">
-                  ←
-                </button>
-                <span className="ex-count" aria-live="polite">
-                  {place.step + 1} of {track.labels.length}
-                </span>
-                <button className="primary" onClick={onNext} aria-label={done ? "Done: back to all leagues" : label.replace(/ →$/, "")} title={done ? "Done: back to all leagues" : `${label.replace(/ →$/, "")} (→)`}>
-                  {done ? "Done" : "→"}
-                </button>
+        <PopProvider onOpen={openPop}>
+          <div className="ex-body" ref={body}>
+            <div className="ex-controls">
+              <span className="seg" role="group" aria-label="Track">
+                {TRACKS.map((t) => (
+                  <button key={t.id} className={t.id === track.id ? "on" : ""} aria-pressed={t.id === track.id} onClick={() => go({ track: t.id, step: 0 })}>
+                    {t.title}
+                  </button>
+                ))}
               </span>
-            </span>
+              <span className="ex-right">
+                <label className={`switch${all ? " on" : ""}`} title="Every step of the track on one page (a)">
+                  <input type="checkbox" checked={all} onChange={(e) => setAll(e.target.checked)} /> Read it all <kbd>a</kbd>
+                </label>
+                <button onClick={toggleGlossary} title="The glossary (g)">
+                  Glossary <kbd>g</kbd>
+                </button>
+                <button onClick={() => setSheetOpen(true)} title="Keyboard shortcuts (?)">
+                  Keys <kbd>?</kbd>
+                </button>
+                <span className="ex-nav" role="group" aria-label="Steps">
+                  <button onClick={prev} disabled={first} aria-label="The step before" title="The step before (←)">
+                    ←
+                  </button>
+                  <span className="ex-count" aria-live="polite">
+                    {place.step + 1} of {track.labels.length}
+                  </span>
+                  <button className="primary" onClick={onNext} aria-label={done ? "Done: back to all leagues" : label.replace(/ →$/, "")} title={done ? "Done: back to all leagues" : `${label.replace(/ →$/, "")} (→)`}>
+                    {done ? "Done" : "→"}
+                  </button>
+                </span>
+              </span>
+            </div>
+            <Strip track={track} step={place.step} onGo={(i) => go({ track: track.id, step: i })} />
+            <div className={`ex-stage${all ? " all" : ""}`}>
+              {shown.map((s, k) => (
+                <StepCard key={s.id} track={track} step={s} index={all ? k : place.step} />
+              ))}
+            </div>
           </div>
-          <Strip track={track} step={place.step} onGo={(i) => go({ track: track.id, step: i })} />
-          <div className={`ex-stage${all ? " all" : ""}`}>
-            {shown.map((s, k) => (
-              <StepCard key={s.id} track={track} step={s} index={all ? k : place.step} />
-            ))}
-          </div>
-        </div>
+          <Drawer open={pop?.kind === "example"} view={popView} label="Example" title="EXAMPLE" sub={popStep?.title} onClose={closePop}>
+            {popStep?.example && <ExampleBody example={popStep.example} />}
+          </Drawer>
+        </PopProvider>
       </GlossaryProvider>
       <GlossarySheet open={gloss.open} term={gloss.term} onClose={closeGlossary} />
       <KeySheet sheet={EXPLAIN_SHEET} open={sheetOpen} onClose={() => setSheetOpen(false)} />
