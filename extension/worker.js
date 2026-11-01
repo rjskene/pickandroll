@@ -368,13 +368,15 @@ const ops = {
   /** A live Start Active press about to be made on the team page in ``sender``'s tab:
    * ``record`` is its day, trigger, the need rule's reasons and the roster it runs on. One at a
    * time, and refused while another press in the league awaits its log, or when the league was
-   * pressed that day and the roster has not changed since (``sameDayProblem``). */
+   * pressed that day and neither the roster changed nor a live lineup run set a swap since
+   * (``sameDayProblem``, #289). */
   start_active_pressing({ league, record }, sender) {
     const run = pressing.then(async () => {
       const key = pressKey(league);
       const prev = (await chrome.storage.local.get(key))[key] || null;
       if (prev && !prev.logged) throw new Error("a press in this league awaits its log");
-      const why = self.PickAndRoll.sameDayProblem(prev, record, record.day);
+      const lineup = (await chrome.storage.local.get(lineupRanKey(league)))[lineupRanKey(league)] || null;
+      const why = self.PickAndRoll.sameDayProblem(prev, record, record.day, lineup);
       if (why) throw new Error(why);
       const kept = {
         ...record,

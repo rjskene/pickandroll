@@ -268,15 +268,18 @@
   async function visit(trigger) {
     if (running) return null;
     running = true;
+    let run;
     try {
       const posted = await post();
-      const run = await lineup(trigger, posted);
+      run = await lineup(trigger, posted);
       // A routine's run happens once: a reload of the page is a plain visit.
       if (trigger && location.hash) history.replaceState(null, "", location.pathname + location.search);
-      return run;
     } finally {
       running = false;
     }
+    // A live run that set a swap: Start Active carries it to the rest of the week (#289).
+    if (PR.pressAfterLineup(run)) await startActive("after_lineup");
+    return run;
   }
 
   // The side panel's "Set lineup now": post the page again and run from that post.
@@ -545,10 +548,12 @@
     if (location.hash) history.replaceState(null, "", location.pathname + location.search);
     if (running) return null;
     running = true;
+    // After a lineup run (#289) the strip keeps the lineup's line unless a press is logged.
+    const note = trigger === "after_lineup" ? () => {} : saStrip;
     try {
       const settings = await send({ op: "settings" });
       if (settings && settings.ok && settings.data.moves_executor === "off") {
-        saStrip(PR.startActiveStripText({ browserOff: true }));
+        note(PR.startActiveStripText({ browserOff: true }));
         return null;
       }
       const posted = await post();
@@ -556,17 +561,17 @@
       const record = await pressRecord(extension);
       const r = await send({ op: "start_active_due" });
       if (!r || !r.ok) {
-        saStrip(PR.startActiveStripText({ error: (r && r.error) || "no answer from the extension" }));
+        note(PR.startActiveStripText({ error: (r && r.error) || "no answer from the extension" }));
         return null;
       }
       const due = r.data;
       const row = (due.leagues || []).find((x) => String(x.league) === String(page.league));
       if (!row) {
-        saStrip(PR.startActiveStripText({ none: "not armed here: the moves executor is off or the league is private" }));
+        note(PR.startActiveStripText({ none: "not armed here: the moves executor is off or the league is private" }));
         return null;
       }
       if (row.error) {
-        saStrip(PR.startActiveStripText({ error: row.error }));
+        note(PR.startActiveStripText({ error: row.error }));
         return null;
       }
       const where = location.pathname + location.search;
@@ -577,7 +582,7 @@
       let release = false;
       if (due.stop) run = PR.startActiveRun({ ...base, mode: row.mode === "live" ? "live" : "dry_run", outcome: "stopped", reason: due.reason });
       else if (!row.need) {
-        saStrip(PR.startActiveStripText({ row }));
+        note(PR.startActiveStripText({ row }));
         return null;
       } else {
         const controls = PR.readStartActive(startActiveControls());
@@ -585,7 +590,10 @@
         const rows = PR.dialogRows(dialog ? dialog.textContent : "");
         // Live, the row's roster must be this page's (the same-day guard compares it): the post taken.
         const unposted = mode.mode === "live" && !posted.accepted ? "the page was not posted, so its roster is not known" : null;
-        const problem = PR.startActiveProblem(row, page, controls) || unposted || (mode.mode === "live" ? PR.sameDayProblem(record, row, due.date) : null);
+        // The live lineup run on record lifts the same-day guard once it set a swap (#289).
+        const ran = mode.mode === "live" && record && record.day === due.date ? await send({ op: "lineup_record", league: page.league }) : null;
+        const lineupRan = (ran && ran.ok && ran.data) || null;
+        const problem = PR.startActiveProblem(row, page, controls) || unposted || (mode.mode === "live" ? PR.sameDayProblem(record, row, due.date, lineupRan) : null);
         if (problem) run = PR.startActiveRun({ ...base, ...rows, mode: mode.mode, outcome: "skipped", reason: problem, controls });
         else if (mode.mode !== "live") run = PR.startActiveRun({ ...base, ...rows, mode: "dry_run", outcome: "would_start", reason: mode.reason, controls });
         else {

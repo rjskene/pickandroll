@@ -123,15 +123,33 @@
     return ids(a.players) !== ids(b.players) || ids(a.held) !== ids(b.held);
   }
 
+  /** Whether ``lineup`` (the live lineup run on record in this browser, lib/lineup.js) set a swap
+   * and was logged after ``record``'s press: a swap sets one day, and one press after it carries
+   * it to the rest of the week (#289). */
+  function lineupSince(lineup, record) {
+    if (!lineup || !lineup.logged || !lineup.run || lineup.run.mode !== "live") return false;
+    if (!(lineup.run.steps || []).some((x) => x.outcome === "set")) return false;
+    return Number(lineup.at) > Number(record.at);
+  }
+
+  /** Whether the lineup run just logged (``run``, null when its log failed) wants the press after
+   * it on the same page (``after_lineup``, #289): a live run with a swap set. The press itself
+   * still goes through the due's need rule, STOP, the mode and the same-day guard. */
+  function pressAfterLineup(run) {
+    return Boolean(run && run.mode === "live" && (run.steps || []).some((x) => x.outcome === "set"));
+  }
+
   /** Why a second live run in the league today is refused (the master's rulings on #215 and
    * #214), null when it may run: ``record`` is the press on record in this browser, ``row`` the
-   * due route's row read after the page was posted. One per day; the guard lifts only when the
-   * page's roster differs from the one the day's press ran on (players or held). The need rule's
-   * reasons never lift it alone, and an unknown roster never lifts it. */
-  function sameDayProblem(record, row, day) {
+   * due route's row read after the page was posted, ``lineup`` the live lineup run on record. One
+   * per day; the guard lifts when the page's roster differs from the one the day's press ran on
+   * (players or held), or when a live lineup run set a swap after it (``lineupSince``, #289). The
+   * need rule's reasons never lift it alone, and an unknown roster never lifts it. */
+  function sameDayProblem(record, row, day, lineup = null) {
     if (!record || record.day !== day) return null;
     if (rosterDiffers(record.roster, row.roster)) return null;
-    return "Start Active ran in this league today; the roster has not changed since";
+    if (lineupSince(lineup, record)) return null;
+    return "Start Active ran in this league today; the roster has not changed and no lineup was set since";
   }
 
   function alertsOf(doc) {
@@ -252,6 +270,8 @@
     routine_evening: "evening routine",
     routine_daily: "daily routine",
     panel: "side panel",
+    after_lineup: "after the lineup set",
+    after_add: "after an add",
   };
 
   /** The panel's line for the last run from this browser in the league. */
@@ -279,6 +299,8 @@
     startActiveProblem,
     startActiveMode,
     rosterDiffers,
+    lineupSince,
+    pressAfterLineup,
     sameDayProblem,
     pressStartActive,
     startActiveRun,

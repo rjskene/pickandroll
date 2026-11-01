@@ -160,12 +160,15 @@ side (PR 1) is in `api/season_autopilot.py`; the click is the extension's, on th
   - `roster_changed`: my players, or who is held (IL, IL+, NA), differ from the roster the
     last run recorded, with the ids `added`, `dropped`, `held` and `returned` (a won claim, a
     drop, a trade, an IL move);
-  - `il_moved`: a live IL move (#214) landed since the last run.
+  - `il_moved`: a live IL move (#214) landed since the last run;
+  - `lineup_set`: a live lineup run set a swap since the last run (#289, the user's rule of
+    2026-11-01): a swap sets one day, and the press carries it to the rest of the week.
 
   Each row also carries the team page of today, my roster as last read, the last run and the
   live guard. Under STOP no league needs a run. A run is `POST
   /seasons/{league}/autopilot/start-active` (`StartActiveRun`: `day`, `mode`, `trigger`, which
-  includes `routine_daily` for the 05:00 daily, `outcome` of `would_start`, `started`,
+  includes `routine_daily` for the 05:00 daily, `after_lineup` for the press right after a live
+  lineup run and `after_add`, kept for an add that lands at once (#289), `outcome` of `would_start`, `started`,
   `already`, `skipped`, `failed` or `stopped`, `reason`, `reasons`, `today` and `rest_of_week`
   as the dialog printed them, `message`, `roster`, `page`, `controls`, `extension`). It is
   logged under `start_active` in the league's day file with the roster it ran on: the page's
@@ -178,7 +181,8 @@ side (PR 1) is in `api/season_autopilot.py`; the click is the extension's, on th
   main button, since that runs Today Only.
 
   A moves pass's run goes to the open moves pass under `start_active`, by league, apart from
-  its claims and leaving the league not done; the 05:00 daily's goes to none. The Queue card
+  its claims and leaving the league not done; the 05:00 daily's, an `after_lineup` press's and
+  an `after_add` one's go to none. The Queue card
   lists today's runs (`start_active_today`), the queue's payload carries each league's latest
   (`start_active`) and its fold line says "Start Active: N started, …". The digest counts the
   leagues it ran in and names a skip or a failure on its league's line.
@@ -198,7 +202,9 @@ side (PR 1) is in `api/season_autopilot.py`; the click is the extension's, on th
     touched (`start_active_press:<league>`), with the page's roster (the run presses only from a
     page the API took). A second press in the league the same day is refused unless the page's
     roster differs from the one the day's press ran on (players or held); the need rule's reasons
-    never lift it alone, and an unknown roster never does (ruled on #214, ext 0.9.1). The run then presses the main button, waits up to 10 s
+    never lift it alone, and an unknown roster never does (ruled on #214, ext 0.9.1). It also
+    lifts once a live lineup run on record in this browser set a swap and was logged after the
+    day's press (#289, ext 0.11.2): one press per lineup set. The run then presses the main button, waits up to 10 s
     for the dialog's Rest of Week row with its Start enabled, reads it again, presses it once,
     and waits up to 15 s for Yahoo's words in the dialog (open or closed): "N lineups updated"
     or "We optimized …" log `started`, "Already optimized" `already`, the error `failed`; no
@@ -209,6 +215,12 @@ side (PR 1) is in `api/season_autopilot.py`; the click is the extension's, on th
     logged by the next run in the league after a minute: its run as read, else `failed`
     "pressed; Yahoo's answer was not read", with the press's roster as `roster`. A log the API
     refuses closes the press as it is.
+
+  - after a live lineup run that set a swap is logged (any trigger, the panel's included), the
+    same team page runs Start Active at once, trigger `after_lineup` (#289, ext 0.11.2): the
+    page posted again, the due read fresh, the need rule (`lineup_set`), STOP, the mode, the page
+    checks and the same-day guard as above. A run that set nothing, a dry run and a log that
+    failed ask for none; when nothing is pressed the strip keeps the lineup's line.
 
   The side panel shows the last run from this browser on my team page and has **Start active
   players now** (the same run, trigger `panel`). Which team pages the routines open is the

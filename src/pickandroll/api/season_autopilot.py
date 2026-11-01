@@ -43,7 +43,7 @@ import json
 import os
 import threading
 from collections import Counter
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any, Literal
@@ -809,7 +809,17 @@ class StartActiveRun(BaseModel):
 
     day: date
     mode: Literal["dry_run", "live"]
-    trigger: Literal["routine", "routine_late", "routine_evening", "routine_daily", "panel"]
+    #: ``after_lineup``: pressed on the team page right after a live lineup run set a swap (#289);
+    #: ``after_add``: kept for an add that lands at once (none does in a live league today).
+    trigger: Literal[
+        "routine",
+        "routine_late",
+        "routine_evening",
+        "routine_daily",
+        "panel",
+        "after_lineup",
+        "after_add",
+    ]
     outcome: Literal["would_start", "started", "already", "skipped", "failed", "stopped"]
     reason: str | None = None
     #: Why the run was due (``start_active_need``'s reasons, as the routine read them).
@@ -873,8 +883,10 @@ def start_active_need(
     mode, ``week_start`` when its last run is before the week's first day, ``roster_changed``
     when my players or who is held differ from the roster its last run recorded (a won claim, a
     drop, a trade, an IL move), with the ids in and out; ``il_moved`` beside it when an IL move
-    of #214 landed since. A run in the other mode does not count: a league switched live runs
-    again. No need while the mode is off or the league is private."""
+    of #214 landed since; ``lineup_set`` when a live lineup run set a swap since (#289): a swap
+    sets one day, and the press carries it to the rest of the week. A run in the other mode does
+    not count: a league switched live runs again. No need while the mode is off or the league is
+    private."""
     out: dict[str, Any] = {"need": False, "reasons": [], "changes": None, "last": None}
     if mode.get("private") or mode["mode"] == "off":
         return out
@@ -903,14 +915,20 @@ def start_active_need(
                 "returned": sorted(was_h - now_h),
             }
     since = _at(last.get("at"))
-    if since is not None and any(
-        r.get("mode") == "live"
-        and r.get("outcome") == "moved"
-        and (at := _at(r.get("at"))) is not None
-        and at > since
-        for _, r in runs(data_dir, league, IL)
-    ):
+
+    def landed_since(key: str, landed: Callable[[Mapping[str, Any]], bool]) -> bool:
+        return since is not None and any(
+            r.get("mode") == "live"
+            and landed(r)
+            and (at := _at(r.get("at"))) is not None
+            and at > since
+            for _, r in runs(data_dir, league, key)
+        )
+
+    if landed_since(IL, lambda r: r.get("outcome") == "moved"):
         reasons.append("il_moved")
+    if landed_since(LINEUP, lambda r: any(x.get("outcome") == "set" for x in r.get("steps") or [])):
+        reasons.append("lineup_set")
     last_view = {k: last.get(k) for k in ("at", "day", "trigger", "outcome", "message")}
     return {"need": bool(reasons), "reasons": reasons, "changes": changes, "last": last_view}
 
