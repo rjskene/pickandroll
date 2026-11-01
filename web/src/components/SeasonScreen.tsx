@@ -160,6 +160,7 @@ export default function SeasonScreen({
   onHome,
   onLeague,
   onProgress,
+  onExplain,
 }: {
   league: string;
   /** The view to open on (the landing table's Lineup, #191), set once on mount; else the saved one. */
@@ -169,6 +170,7 @@ export default function SeasonScreen({
   /** Another league's page, in this view (the previous and next buttons, #253). */
   onLeague: (league: string, view: SeasonViewId) => void;
   onProgress: () => void;
+  onExplain: () => void;
 }) {
   const queryClient = useQueryClient();
   const season = useQuery({
@@ -391,7 +393,7 @@ export default function SeasonScreen({
   return (
     <main className="shell">
       <header className="topbar season-top">
-        <AppBarLead onHome={onHome} status={<LeagueStatus p={status.data} league={league} onOpen={() => setStatusOpen(true)} />} onProgress={onProgress}>
+        <AppBarLead onHome={onHome} status={<LeagueStatus p={status.data} league={league} onOpen={() => setStatusOpen(true)} />} onProgress={onProgress} onExplain={onExplain}>
           <YahooLink league={league} title={leagueTitle(s?.name, league)} />
         </AppBarLead>
         <span className="muted title">

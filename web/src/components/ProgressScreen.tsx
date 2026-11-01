@@ -84,7 +84,7 @@ const MOVES_ICONS = { ...PROGRESS_ICONS, league: PROGRESS_MOVE_ICON };
  * Table), the cards at the right (the Monday note, the knobs, the league or the move chosen,
  * the odds) and their rail and keys; a knob change's sheet over the view. Nothing on it writes
  * anything. */
-export default function ProgressScreen({ onBack, onOpenLeague }: { onBack: () => void; onOpenLeague: (league: string) => void }) {
+export default function ProgressScreen({ onBack, onOpenLeague, onExplain }: { onBack: () => void; onOpenLeague: (league: string) => void; onExplain: () => void }) {
   const q = useQuery({ queryKey: ["progress"], queryFn: api.progress, refetchInterval: 600_000 });
   // The update indicator's leagues in the landing table's order (#270).
   const landing = useLandingOrder();
@@ -155,7 +155,7 @@ export default function ProgressScreen({ onBack, onOpenLeague }: { onBack: () =>
   return (
     <main className="shell">
       <header className="topbar season-top">
-        <AppBarLead onHome={onBack} status={<OverviewStatus leagues={leagues} now={now} />} here />
+        <AppBarLead onHome={onBack} status={<OverviewStatus leagues={leagues} now={now} />} here onExplain={onExplain} />
         <span className="muted title">Progress · the hill-climb</span>
         <span className="grow" />
         {p && <TopLine p={p} />}

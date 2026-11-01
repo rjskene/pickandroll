@@ -12,6 +12,7 @@ import {
   handleKey,
   landingKeys,
   queueKeys,
+  explainKeys,
   DEFAULT_VIEWS,
   openCard,
   parseDrawer,
@@ -544,4 +545,37 @@ test("the landing's q opens the Queue screen, but not from a field, a select or 
   assert.equal(handleKey(key("Escape"), queueKeys(() => back++)), true);
   assert.equal(back, 1);
   assert.equal(handleKey(key("q"), queueKeys(() => back++)), false);
+});
+
+test("the Explain screen's arrows walk the steps, g and a toggle, and fields keep their keys; Esc closes the glossary before going back (#283)", () => {
+  const n = { prev: 0, next: 0, back: 0, gloss: 0, all: 0, closed: 0 };
+  const api = (glossaryOpen: boolean) =>
+    explainKeys({
+      prev: () => n.prev++,
+      next: () => n.next++,
+      back: () => n.back++,
+      glossaryOpen,
+      closeGlossary: () => n.closed++,
+      toggleGlossary: () => n.gloss++,
+      toggleAll: () => n.all++,
+      sheetOpen: false,
+      setSheetOpen: () => {},
+    });
+  assert.equal(handleKey(key("ArrowRight"), api(false)), true);
+  assert.equal(handleKey(key("ArrowLeft"), api(false)), true);
+  assert.equal(handleKey(key("g"), api(false)), true);
+  assert.equal(handleKey(key("a"), api(false)), true);
+  assert.deepEqual([n.prev, n.next, n.gloss, n.all], [1, 1, 1, 1]);
+  // The animations' range and checkbox keep the arrows and the letters.
+  for (const target of [field, checkbox]) {
+    assert.equal(handleKey(key("ArrowRight", { target }), api(false)), false, target.type);
+    assert.equal(handleKey(key("a", { target }), api(false)), false, target.type);
+  }
+  assert.equal(handleKey(key("ArrowRight", { target: select }), api(false)), false);
+  assert.equal(handleKey(key("ArrowRight", { metaKey: true }), api(false)), false);
+  assert.deepEqual([n.prev, n.next, n.gloss, n.all], [1, 1, 1, 1]);
+  assert.equal(handleKey(key("Escape"), api(true)), true);
+  assert.deepEqual([n.closed, n.back], [1, 0]);
+  assert.equal(handleKey(key("Escape"), api(false)), true);
+  assert.deepEqual([n.closed, n.back], [1, 1]);
 });
