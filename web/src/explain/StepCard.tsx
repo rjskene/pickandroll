@@ -1,5 +1,5 @@
-// One step's card (#283): the figure beside the bullets (two levels, terms underlined), the
-// step's sources, and the pager.
+// One step's card (#283): the figure beside the bullets (two levels, terms underlined) and the
+// step's sources. The arrows that walk the steps sit in the screen's control bar.
 import { Fragment } from "react";
 import { FIGURES } from "./figures";
 import { Term } from "./Glossary";
@@ -47,18 +47,11 @@ interface Props {
   track: Track;
   step: Step;
   index: number;
-  /** Read-it-all: no pager. */
-  all: boolean;
-  onPrev: () => void;
-  onNext: () => void;
-  nextLabel: string;
-  first: boolean;
 }
 
-export default function StepCard({ track, step, index, all, onPrev, onNext, nextLabel, first }: Props) {
+export default function StepCard({ track, step, index }: Props) {
   const Figure = FIGURES[step.figure];
   const planned = track.labels.length;
-  const written = track.steps.length;
   return (
     <section className={`ex-step${step.wide ? " wide" : ""}`} id={`ex-${track.id}-${step.id}`} aria-label={step.title}>
       <div className="ex-fig">
@@ -71,20 +64,6 @@ export default function StepCard({ track, step, index, all, onPrev, onNext, next
         <h3>{step.title}</h3>
         <Bullets bullets={step.bullets} />
         <p className="ex-src">from {step.source.join(" · ")}</p>
-        {!all && (
-          <div className="ex-pager">
-            <button onClick={onPrev} disabled={first}>
-              ← Prev
-            </button>
-            <button className="primary" onClick={onNext}>
-              {nextLabel}
-            </button>
-            <span className="ex-count">
-              {index + 1} of {planned}
-              {written < planned ? ` · ${planned - written} to come` : ""}
-            </span>
-          </div>
-        )}
       </div>
     </section>
   );

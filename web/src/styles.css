@@ -907,8 +907,9 @@ button.icon.light.bad { color: var(--bad); }
 .ex-bullets ul { margin: 4px 0 0; padding-left: 18px; display: grid; gap: 3px; font-size: 12.5px; color: var(--muted); }
 .ex-bullets ul li::marker { color: var(--dim); }
 .ex-src { margin: 0; font-size: 11px; color: var(--dim); }
-.ex-pager { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-.ex-count { color: var(--muted); font-size: 12px; margin-left: auto; }
+.ex-nav { display: inline-flex; align-items: center; gap: 6px; }
+.ex-nav button { min-width: 40px; font-size: 16px; line-height: 1; padding: 6px 10px; }
+.ex-count { color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums; white-space: nowrap; min-width: 52px; text-align: center; }
 .ex-stage.all .ex-text { padding-top: 14px; }
 /* the glossary: a term in the text, the sheet that slides in */
 dfn.ex-term { font-style: normal; border-bottom: 1px dotted var(--accent); cursor: help; }
