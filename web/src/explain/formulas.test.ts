@@ -33,6 +33,20 @@ test("every formula's sample recomputes, step by step, from its inputs (#282)", 
   }
 });
 
+test("the spread samples divide by N, not N − 1, and the pool's impacts sum to zero", () => {
+  const pts = [1750, 1330, 1280, 980, 720];
+  const mean = pts.reduce((a, b) => a + b, 0) / pts.length;
+  const sumSq = pts.reduce((a, x) => a + (x - mean) ** 2, 0);
+  const spread = FORMULAS["pool-spread"].check();
+  assert.equal(fmt(spread[4], 1), fmt(Math.sqrt(sumSq / pts.length), 1));
+  assert.notEqual(fmt(spread[4], 1), fmt(Math.sqrt(sumSq / (pts.length - 1)), 1), "a sample SD would show another number");
+  assert.equal(FORMULAS["pool-spread"].given[0].value, "1,750, 1,330, 1,280, 980, 720", "step 1's five players");
+  const [p, , sumI, why] = FORMULAS["impact-spread"].check();
+  assert.equal(p, 0.5);
+  assert.equal(sumI, 0);
+  assert.equal(why, 0);
+});
+
 test("each formula is keyed by its own id", () => {
   for (const [id, f] of Object.entries(FORMULAS)) assert.equal(f.id, id);
 });

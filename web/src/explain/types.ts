@@ -120,6 +120,8 @@ export type MathNode =
 export type FormulaId =
   | "zscore"
   | "impact"
+  | "pool-spread"
+  | "impact-spread"
   | "league-blend"
   | "adp-survival"
   | "ecw"

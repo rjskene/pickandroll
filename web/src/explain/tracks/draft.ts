@@ -75,9 +75,22 @@ export const draft: Track = {
           ],
         },
         {
+          text: "Each counting category's mean and spread come from the pool alone; the spread is its standard deviation",
+          formula: "pool-spread",
+          sub: [
+            "the population one: divided by the pool's size, not one less, since the pool is the whole group",
+            "a category the whole pool ties in has no spread; 1 is used, so no score divides by zero",
+          ],
+        },
+        {
           text: "Percentages are scored as impact: the makes above a pool-average shooter on the same attempts",
           formula: "impact",
           sub: ["impact adds linearly over a roster: a team's percentage is exact, never a mean of percentages"],
+        },
+        {
+          text: "The pool's impacts average exactly zero, so the spread of impact alone sets the scale",
+          formula: "impact-spread",
+          sub: ["the pool's percentage times its attempts is its makes: that is what the percentage is"],
         },
       ],
       source: ["docs/DESIGN.md · the pool and z-scores", "projections/zscores.py and optim/pool.py under src/"],
