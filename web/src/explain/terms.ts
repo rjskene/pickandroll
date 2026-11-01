@@ -4,7 +4,7 @@ import type { Term } from "./types";
 
 export const GLOSSARY: Term[] = [
   { id: "projection-set", term: "Projection set", def: "One source's table, a player per row: games, minutes, counting totals, makes and attempts; totals over the horizon." },
-  { id: "pool", term: "Draft pool", def: "The players z-scores are taken against: every roster's worth of players by total, chosen iteratively." },
+  { id: "pool", term: "Draft pool", def: "The players z-scores are taken against: every roster's worth of players by total z, found in three passes." },
   { id: "z-score", term: "Z-score", def: "A category total in pool spreads above the pool mean; turnovers negated; percentages as impact." },
   { id: "adp", term: "ADP", def: "Average draft position, from Yahoo's player list or a file; the centre of the availability formula, shifted by the league's bias." },
   { id: "survival", term: "Survival", def: "The chance a player is still on the board at pick k, read from now; the formula, a simulated table, or the league's own record." },

@@ -1054,6 +1054,11 @@ button.ex-fx:hover { border-color: var(--accent); }
 .ex-fig svg .line.b { stroke: var(--them); }
 .ex-fig svg .fill.a { fill: var(--accent); opacity: 0.25; }
 .ex-fig svg .fill.b { fill: var(--them); opacity: 0.25; }
+.ex-fig svg .fill.m { fill: var(--muted); opacity: 0.2; }
+.ex-fig svg .cell.in { fill: rgba(61, 220, 132, 0.5); stroke: var(--good); }
+.ex-fig svg .cell.out { fill: none; stroke: var(--bad); stroke-dasharray: 2 1.5; }
+.ex-fig svg text .good, .ex-fig svg text.good { fill: var(--good); }
+.ex-fig svg text .bad { fill: var(--bad); }
 .ex-fig svg .win { fill: var(--panel-2); stroke: var(--line-2); }
 .ex-fig svg .win.b { fill: rgba(78, 161, 255, 0.16); stroke: var(--them); }
 /* the animated frames: the toolbar, the lane chart, the range, the legend, the readout */

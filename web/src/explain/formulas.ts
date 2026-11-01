@@ -64,7 +64,7 @@ const zscore: Formula = (() => {
       { sym: sub(v("x"), [v("p"), ",", v("c")]), meaning: "his projected total in c over the horizon" },
       { sym: sub(v("x̄"), v("c")), meaning: "the pool's mean total in c" },
       { sym: sub(v("s"), v("c")), meaning: "the pool's spread in c: its standard deviation over the pool" },
-      { sym: "pool", meaning: "as many players as the league's rosters hold, by total z, rescored until it settles" },
+      { sym: "pool", meaning: "as many players as the league's rosters hold, by total z, found in three passes" },
       { sym: "TO", meaning: "turnovers: the sign flips, so higher is better in every category" },
     ],
     given: [

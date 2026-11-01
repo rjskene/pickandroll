@@ -64,23 +64,21 @@ export const draft: Track = {
       id: "pool",
       title: "Score every stat against the players who will be drafted",
       kicker: "the pool and z-scores",
-      figure: "pool-bars",
+      figure: "pool-passes",
       bullets: [
         {
           text: "[z-score|Z-scores] are taken against the [pool|draft pool]: the players who will actually be drafted",
           formula: "zscore",
-          sub: [
-            "found iteratively: score all, keep as many as the rosters hold, rescore until it settles",
-            "a counting total: how many of the pool's spreads it sits above the pool's mean; turnovers negated",
-          ],
+          sub: ["a counting total: how many of the pool's spreads it sits above the pool's mean; turnovers negated"],
+        },
+        {
+          text: "The pool takes three passes: score everyone, keep as many as the rosters hold, measure again on those",
+          sub: ["by pass 3 it keeps the players it measured against, or nearly: settled; always three, never a test"],
         },
         {
           text: "Each counting category's mean and spread come from the pool alone; the spread is its standard deviation",
           formula: "pool-spread",
-          sub: [
-            "the population one: divided by the pool's size, not one less, since the pool is the whole group",
-            "a category the whole pool ties in has no spread; 1 is used, so no score divides by zero",
-          ],
+          sub: ["the population one: divided by the pool's size, not one less, since the pool is the whole group"],
         },
         {
           text: "Percentages are scored as impact: the makes above a pool-average shooter on the same attempts",
