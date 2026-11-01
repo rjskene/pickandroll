@@ -193,6 +193,7 @@ export const daily: Track = {
         },
         {
           text: "An entry executes at the later of two times",
+          formula: "executes-at",
           sub: [
             "an hour after it was queued: the [veto-window|veto window]",
             "the day's [execute-time|execute time]: 07:00 Central by default; the user's own is 09:00",

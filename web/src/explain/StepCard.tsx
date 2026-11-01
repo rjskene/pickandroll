@@ -3,7 +3,7 @@
 // button opens the step's worked example (#282).
 import { Bullets } from "./Bullets";
 import { FIGURES } from "./figures";
-import { useOpenPop } from "./Popout";
+import { useOpenPop } from "./PopContext";
 import type { Step, Track } from "./types";
 
 interface Props {

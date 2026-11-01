@@ -692,7 +692,7 @@ export function explainKeys(x: ExplainApi): KeyMap {
 }
 
 export const EXPLAIN_SHEET: Sheet = {
-  cards: "Three tracks: the draft, moves and trades, daily play. One step a screen; the strip above is the track's diagram, and a click on a dot opens its step. Nothing on this screen writes anything.",
+  cards: "Three tracks: the draft, moves and trades, daily play. One step a screen; the strip above is the track's diagram, and a click on a dot opens its step. A card's Example button opens a worked example; a Formula chip opens the formula, every variable and a sample worked step by step. Nothing on this screen writes anything.",
   groups: [
     {
       title: "Steps",
@@ -706,7 +706,7 @@ export const EXPLAIN_SHEET: Sheet = {
       rows: [
         [["g"], "open or close the glossary sheet; an underlined term in a card opens it on its definition"],
         [["e"], "the step's worked example, as the card's Example button: fictional players, made-up numbers"],
-        [["Esc"], "close the example, then the glossary"],
+        [["Esc"], "close the example or the formula, then the glossary"],
       ],
     },
     {

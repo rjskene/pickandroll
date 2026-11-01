@@ -1,7 +1,7 @@
 // The Explain screen (#282, #283): a walkthrough of the draft, the moves and the day, one step
 // a screen, the strip above doubling as the diagram of the whole, the ← / → arrows in the
-// control bar and on the keyboard, "Read it all", the glossary, and the place kept in the URL
-// hash (#draft/3).
+// control bar and on the keyboard, "Read it all", the glossary, the popouts (a step's worked
+// example, a bullet's formula), and the place kept in the URL hash (#draft/3).
 import { useCallback, useEffect, useRef, useState } from "react";
 import { EXPLAIN_SHEET, explainKeys } from "../keys";
 import { useHotkeys } from "../useKeys";
@@ -14,8 +14,10 @@ import { useNow } from "../components/YahooSync";
 import { GlossaryProvider, GlossarySheet } from "./Glossary";
 import { formatHash, move, nextLabel, parseHash } from "./nav";
 import type { Place } from "./nav";
-import { Drawer, ExampleBody, PopProvider } from "./Popout";
-import type { Pop } from "./Popout";
+import { FORMULAS } from "./formulas";
+import { PopProvider } from "./PopContext";
+import type { Pop } from "./PopContext";
+import { Drawer, ExampleBody, FormulaBody } from "./Popout";
 import StepCard from "./StepCard";
 import Strip from "./Strip";
 import { TRACKS, trackById } from "./tracks/index.ts";
@@ -120,7 +122,8 @@ export default function ExplainScreen({ onBack, onProgress }: Props) {
     explainKeys({ prev, next, back: onBack, glossaryOpen: gloss.open, closeGlossary, toggleGlossary, popOpen: pop !== null, closePop, toggleExample, toggleAll, sheetOpen, setSheetOpen }),
   );
   const popStep = shownPop?.kind === "example" ? trackById(shownPop.track)?.steps.find((s) => s.id === shownPop.step) : undefined;
-  const popView = shownPop ? `example:${shownPop.track}:${shownPop.step}` : "";
+  const popFormula = shownPop?.kind === "formula" ? FORMULAS[shownPop.id] : undefined;
+  const popView = shownPop ? (shownPop.kind === "formula" ? `formula:${shownPop.id}` : `example:${shownPop.track}:${shownPop.step}`) : "";
 
   const shown = all ? track.steps : step ? [step] : [];
   return (
@@ -174,8 +177,8 @@ export default function ExplainScreen({ onBack, onProgress }: Props) {
               ))}
             </div>
           </div>
-          <Drawer open={pop?.kind === "example"} view={popView} label="Example" title="EXAMPLE" sub={popStep?.title} onClose={closePop}>
-            {popStep?.example && <ExampleBody example={popStep.example} />}
+          <Drawer open={pop !== null} view={popView} label={popFormula ? "Formula" : "Example"} title={popFormula ? "FORMULA" : "EXAMPLE"} sub={popFormula ? popFormula.name : popStep?.title} onClose={closePop}>
+            {popFormula ? <FormulaBody formula={popFormula} /> : popStep?.example && <ExampleBody example={popStep.example} />}
           </Drawer>
         </PopProvider>
       </GlossaryProvider>

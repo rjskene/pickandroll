@@ -67,16 +67,17 @@ export const draft: Track = {
       bullets: [
         {
           text: "[z-score|Z-scores] are taken against the [pool|draft pool]: the players who will actually be drafted",
+          formula: "zscore",
           sub: [
-            "found iteratively: score all, keep the top teams × roster by total, rescore; repeat until it settles",
-            "counting categories: (x − mean) / spread, turnovers negated",
+            "found iteratively: score all, keep as many as the rosters hold, rescore until it settles",
+            "a counting total: how many of the pool's spreads it sits above the pool's mean; turnovers negated",
           ],
         },
         {
-          text: "Percentages are scored as impact: makes − pool% × attempts",
+          text: "Percentages are scored as impact: the makes above a pool-average shooter on the same attempts",
+          formula: "impact",
           sub: ["impact adds linearly over a roster: a team's percentage is exact, never a mean of percentages"],
         },
-        { text: "Example: 12 teams × 13 roster spots is a pool of 156" },
       ],
       source: ["docs/DESIGN.md · the pool and z-scores", "projections/zscores.py and optim/pool.py under src/"],
       example: {
@@ -113,15 +114,18 @@ export const draft: Track = {
       bullets: [
         {
           text: "A value becomes a plan only through [survival], always read conditionally from the current pick",
-          sub: ["S(k) / S(now): what counts is the chance he lasts from here, not from pick one"],
+          sub: ["what counts is the chance he lasts from here to my pick, not from pick one"],
         },
         {
-          text: "Three sources, best first",
-          sub: [
-            "the league's own record: [keeper-adp|keeper-adjusted ADP] and the share never drafted, blended at D/(D+1)",
-            "a simulated table of 300 drafts when the league has no archive",
-            "the [adp|ADP] formula 1 − Φ((k − ADP) / sd), with the league's ADP-bias shift, where a table has no row",
-          ],
+          text: "First the league's own record, shrunk toward the ADP formula by how many drafts it holds",
+          formula: "league-blend",
+          sub: ["rows by [keeper-adp|keeper-adjusted ADP], with the share never drafted"],
+        },
+        { text: "Then a simulated table of 300 drafts, when the league has no archive" },
+        {
+          text: "Then the [adp|ADP] formula, with the league's ADP-bias shift, where a table has no row",
+          formula: "adp-survival",
+          sub: ["a normal draft slot around his ADP, wider for later picks"],
         },
         { text: "The record carries what the formula cannot: the players who are never drafted at all" },
       ],
@@ -159,9 +163,10 @@ export const draft: Track = {
       figure: "objective",
       bullets: [
         {
-          text: "The roster is scored as [ecw|expected categories won]: max Σ Φ((T − μ) / σ) over the categories",
+          text: "The roster is scored as [ecw|expected categories won]: per category, the chance it beats a league team, summed",
+          formula: "ecw",
           sub: [
-            "T is the roster's projected total; μ and σ the league's mean and spread of team totals, the [curve]",
+            "against the league's mean and spread of team totals in that category: the [curve]",
             "fitted on 36,000 simulated teams, or on the league's own rosters blended toward that prior",
           ],
         },
@@ -169,7 +174,11 @@ export const draft: Track = {
           text: "A category the board has made unwinnable has near-zero [marginal|marginal value], so the plan stops paying for it",
           sub: ["a punt can emerge; nobody chooses one"],
         },
-        { text: "The solver carries Φ piecewise, with breakpoints at ±0.5σ, ±1.5σ and ±2.5σ" },
+        {
+          text: "The solver carries the S-curve as straight pieces, joined at fixed points",
+          formula: "piecewise-phi",
+          sub: ["a half, one and a half and two and a half spreads either side of the mean"],
+        },
       ],
       source: ["docs/DESIGN.md · the objective", "optim/objective.py under src/"],
       example: {
@@ -213,8 +222,9 @@ export const draft: Track = {
       bullets: [
         {
           text: "The [horizon-plan|rolling-horizon model] plans one player for each of my remaining picks",
+          formula: "plan-value",
           sub: [
-            "each discounted by the chance he lasts to that pick: value = z × A[player, pick]",
+            "each player's value discounted by the chance he lasts to that pick",
             "every slot filled once, every player at most once, the final roster placed in Yahoo's slots",
             "stars go early; late picks lean on players who will actually be there",
           ],
@@ -259,6 +269,7 @@ export const draft: Track = {
       bullets: [
         {
           text: "Each candidate is forced to be the first pick in turn; the objective lost is his [price] now",
+          formula: "price",
           sub: ["waiting risk included: the chance he is gone by my next pick is already in the plan"],
         },
         { text: "Candidates within 0.05 categories of the best are a [tie], listed in ADP order, not a decree" },
@@ -344,7 +355,8 @@ export const draft: Track = {
       bullets: [
         {
           text: "A [keeper] is (team position, round, player); his overall pick follows from the draw",
-          sub: ["example: rounds 7 and 13 from position 4 are overall 76 and 148"],
+          formula: "snake",
+          sub: ["a snake draft: odd rounds run forward, even rounds back"],
         },
         {
           text: "The pick log stays contiguous",

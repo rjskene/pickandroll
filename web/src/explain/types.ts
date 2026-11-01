@@ -7,6 +7,9 @@
 export interface Bullet {
   text: string;
   sub?: string[];
+  /** The formula this idea rests on (#282): the bullet says it in words, and a Formula chip
+   * opens the formal definition, every variable and a worked sample. */
+  formula?: FormulaId;
 }
 
 /** The figure beside a step's bullets, by name; the screen maps each name to its component. */
@@ -96,4 +99,64 @@ export interface Term {
   id: string;
   term: string;
   def: string;
+}
+
+/** Display math as a tree (#282), drawn with HTML and CSS: a string is upright text (a number,
+ * an operator, Φ, max); `v` an italic variable; the rest stack or stretch. */
+export type MathNode =
+  | string
+  | MathNode[]
+  | { v: string }
+  | { frac: [MathNode, MathNode] }
+  | { sub: [MathNode, MathNode] }
+  | { sup: [MathNode, MathNode] }
+  | { sqrt: MathNode }
+  | { paren: MathNode }
+  | { big: string; under?: MathNode }
+  | { cases: [MathNode, MathNode][] };
+
+export type FormulaId =
+  | "zscore"
+  | "impact"
+  | "league-blend"
+  | "adp-survival"
+  | "ecw"
+  | "piecewise-phi"
+  | "plan-value"
+  | "price"
+  | "snake"
+  | "category-odds"
+  | "bid"
+  | "claim-odds"
+  | "executes-at";
+
+/** How a sample's number is printed: decimals, a time of day from minutes, or dollars. */
+export type Shown = { dp: number } | "hhmm" | "usd";
+
+/** One line of a worked sample: what it works out, the expression with the sample's numbers,
+ * and the result shown. The result is typed; the test recomputes it from the inputs. */
+export interface SampleStep {
+  say: string;
+  math: MathNode;
+  value: number;
+  shown: Shown;
+}
+
+/** A formula's popout (#282): in words, formally, every variable, and a sample worked step by
+ * step from typed inputs. */
+export interface Formula {
+  id: FormulaId;
+  name: string;
+  /** What it does, in words: one line. */
+  what: string;
+  /** The formal definition, one display line each. */
+  lines: MathNode[];
+  vars: { sym: MathNode; meaning: string }[];
+  /** The sample's inputs as shown. */
+  given: { sym: MathNode; value: string; say: string }[];
+  steps: SampleStep[];
+  /** Every step's result recomputed from the sample's inputs, in step order. */
+  check: () => number[];
+  /** Where the rule lives, in the reader's words. */
+  source: string;
 }

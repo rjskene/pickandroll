@@ -1,15 +1,35 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { GLOSSARY } from "./terms.ts";
-import { BULLET_MAX, SUB_MAX, allViolations, pieces, termIds, violations, visible } from "./text.ts";
+import { FORMULAS } from "./formulas.ts";
+import { BULLET_MAX, SUB_MAX, allViolations, equation, pieces, termIds, violations, visible } from "./text.ts";
 import { TRACKS } from "./tracks/index.ts";
 import type { Step, Track } from "./types";
 
 const track: Track = { id: "draft", title: "t", lede: "l", labels: ["a"], steps: [] };
 const step = (over: Partial<Step>): Step => ({ id: "s", title: "T", kicker: "k", figure: "export-row", bullets: [{ text: "ok" }], source: [], ...over });
 
-test("every registered track keeps the text rule", () => {
-  assert.deepEqual(allViolations(TRACKS, GLOSSARY), []);
+test("every registered track keeps the text rule, its formulas included", () => {
+  assert.deepEqual(allViolations(TRACKS, GLOSSARY, FORMULAS), []);
+});
+
+test("an equation in a card's words is reported; arithmetic words and times of day are not (#282)", () => {
+  assert.equal(equation("the odds: Φ(Δ / √(σ₁² + σ₂²))"), "Φ");
+  assert.equal(equation("counting: (x − mean) / spread"), ") /");
+  assert.equal(equation("a per b / c"), " / ");
+  assert.equal(equation("blended at D/(D+1)"), "D/(");
+  assert.equal(equation("12 teams × 13 spots"), "×");
+  assert.equal(equation("Window 05:00 to 06:20; IL, IL+ and NA slots"), null);
+  assert.equal(equation("my lead over the opponent, measured in our combined spread"), null);
+  const v = violations(track, step({ bullets: [{ text: "ok", sub: ["value = z"] }, { text: "see", formula: "nope" as never }] }), GLOSSARY, FORMULAS);
+  assert.equal(v.length, 2, v.join("\n"));
+  assert.match(v[0], /holds an equation/);
+  assert.match(v[1], /"nope", not defined/);
+});
+
+test("a glossary definition is held to the same rule: words, not an equation (#282)", () => {
+  const v = allViolations([], [{ id: "odds", term: "Odds", def: "odds (1 − q)^(p − 1) at an assumed rate" }, { id: "fine", term: "Fine", def: "the slope of the normal curve" }]);
+  assert.deepEqual(v, ['glossary odds: the definition holds an equation ("^"): say it in words']);
 });
 
 test("every track has at least one step and a strip label for each", () => {

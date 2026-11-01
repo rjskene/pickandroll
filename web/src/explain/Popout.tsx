@@ -1,21 +1,12 @@
-// The popouts (#282): a step's worked example, in a sheet that slides in like the glossary's
-// (up from the bottom on a phone). One popout is open at a time; the screen holds which.
-import { createContext, useContext } from "react";
+// The popouts (#282): a step's worked example, or a formula in words, formally, with every
+// variable and a sample worked step by step; in a sheet that slides in like the glossary's (up
+// from the bottom on a phone). One popout is open at a time; the screen holds which.
 import type { ReactNode } from "react";
 import { Close } from "../components/icons";
 import { Bullets } from "./Bullets";
-import type { Example, ExampleTable, TrackId } from "./types";
-
-export type Pop = { kind: "example"; track: TrackId; step: string };
-
-const OpenPop = createContext<(p: Pop) => void>(() => {});
-
-export function PopProvider({ onOpen, children }: { onOpen: (p: Pop) => void; children: ReactNode }) {
-  return <OpenPop.Provider value={onOpen}>{children}</OpenPop.Provider>;
-}
-
-/** Opens a popout from anywhere under the provider: a card's Example button. */
-export const useOpenPop = () => useContext(OpenPop);
+import { shown } from "./formulas";
+import MathView from "./MathView";
+import type { Example, ExampleTable, Formula } from "./types";
 
 interface DrawerProps {
   open: boolean;
@@ -95,6 +86,68 @@ export function ExampleBody({ example }: { example: Example }) {
         </>
       )}
       <p className="ex-pop-note">Fictional players and made-up numbers; the rules are the code's.</p>
+    </>
+  );
+}
+
+/** A formula: what it does, the definition, every variable, a sample worked step by step. */
+export function FormulaBody({ formula: f }: { formula: Formula }) {
+  const last = f.steps.length - 1;
+  return (
+    <>
+      <h4 className="ex-pop-title">{f.name}</h4>
+      <p className="ex-pop-what">{f.what}</p>
+      <div className="ex-math-lines">
+        {f.lines.map((l, i) => (
+          <div key={i} className="ex-math-line">
+            <MathView node={l} block />
+          </div>
+        ))}
+      </div>
+      <h5 className="ex-pop-sec">Every variable</h5>
+      <div className="ex-xwrap">
+        <table className="ex-xtable ex-vars">
+          <tbody>
+            {f.vars.map((x, i) => (
+              <tr key={i}>
+                <th scope="row">
+                  <MathView node={x.sym} />
+                </th>
+                <td>{x.meaning}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <h5 className="ex-pop-sec">A sample, step by step</h5>
+      <div className="ex-xwrap">
+        <table className="ex-xtable ex-vars">
+          <tbody>
+            {f.given.map((g, i) => (
+              <tr key={i}>
+                <th scope="row">
+                  <MathView node={g.sym} />
+                </th>
+                <td className="num">{g.value}</td>
+                <td>{g.say}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <ol className="ex-work">
+        {f.steps.map((s, i) => (
+          <li key={i} className={i === last ? "last" : undefined}>
+            <span className="ex-say">{s.say}</span>
+            <span className="ex-calc">
+              <MathView node={s.math} />
+              <span className="ex-eq">=</span>
+              <b>{shown(s.value, s.shown)}</b>
+            </span>
+          </li>
+        ))}
+      </ol>
+      <p className="ex-pop-note">From {f.source}. A fictional sample; the rule is the code's.</p>
     </>
   );
 }

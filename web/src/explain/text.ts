@@ -1,5 +1,5 @@
 // The text rule (#282) and the inline term markup, with no React, so the test runs under Node.
-import type { Bullet, Step, Term, Track } from "./types";
+import type { Bullet, Formula, FormulaId, Step, Term, Track } from "./types";
 
 /** A bullet is at most this many visible characters; a sub-bullet, SUB_MAX. */
 export const BULLET_MAX = 120;
@@ -7,6 +7,16 @@ export const SUB_MAX = 100;
 /** An example's title, and its table's rows: a popout stays concise too (#282). */
 export const EXAMPLE_TITLE_MAX = 70;
 export const TABLE_ROWS_MAX = 10;
+
+/** An equation in a card's words (#282): a math symbol, a spaced or bracketed division. The
+ * bullet says what the formula does; its Formula chip holds the formula. */
+const EQUATION = /[ΦΣ√σμΔφ²³^=≤≥×]|\s\/\s|\w\/\(|\)\s*\//;
+
+/** Where a card's text holds an equation: the characters that give it away, or null. */
+export function equation(text: string): string | null {
+  const m = EQUATION.exec(visible(text));
+  return m ? m[0] : null;
+}
 
 export type Piece = { kind: "text"; text: string } | { kind: "term"; id: string; text: string };
 
@@ -42,7 +52,7 @@ export function termIds(text: string): string[] {
  * BULLET_MAX visible characters and a sub-bullet at most SUB_MAX, no empty entries, every
  * term in the glossary, and two levels only (the shape allows no third). An example keeps the
  * same rule for its bullets, a short title, and a table whose rows fill its heads. */
-export function violations(track: Track, step: Step, terms: Term[]): string[] {
+export function violations(track: Track, step: Step, terms: Term[], formulas?: Partial<Record<FormulaId, Formula>>): string[] {
   const known = new Set(terms.map((t) => t.id));
   const out: string[] = [];
   const where = `${track.id}/${step.id}`;
@@ -61,6 +71,13 @@ export function violations(track: Track, step: Step, terms: Term[]): string[] {
       if (b.sub && !b.sub.length) out.push(`${where}: ${what} ${i + 1} has an empty sub list`);
     });
   bullets(step.bullets, "bullet");
+  step.bullets.forEach((b, i) => {
+    for (const [what, text] of [[`bullet ${i + 1}`, b.text], ...(b.sub ?? []).map((s, j) => [`bullet ${i + 1}, sub-bullet ${j + 1}`, s])]) {
+      const eq = equation(text);
+      if (eq) out.push(`${where}: ${what} holds an equation ("${eq}"): say it in words, the formula goes behind a chip`);
+    }
+    if (b.formula && formulas && !formulas[b.formula]) out.push(`${where}: bullet ${i + 1} names the formula "${b.formula}", not defined`);
+  });
   const ex = step.example;
   if (ex) {
     if (!ex.title.trim()) out.push(`${where}: the example has no title`);
@@ -85,9 +102,42 @@ export function violations(track: Track, step: Step, terms: Term[]): string[] {
   return out;
 }
 
-/** The rule over every step of every track. */
-export function allViolations(tracks: Track[], terms: Term[]): string[] {
-  const out = tracks.flatMap((t) => t.steps.flatMap((s) => violations(t, s, terms)));
+/** A formula's popout under the same rule (#282): its words concise, every variable explained,
+ * a sample of at least one step. */
+export function formulaViolations(f: Formula): string[] {
+  const out: string[] = [];
+  const at = `formula ${f.id}`;
+  const len = (what: string, text: string, max: number) => {
+    if (!text.trim()) out.push(`${at}: ${what} is empty`);
+    else if (text.length > max) out.push(`${at}: ${what} is ${text.length} characters, over ${max}`);
+  };
+  len("its name", f.name, EXAMPLE_TITLE_MAX);
+  len("what it does", f.what, BULLET_MAX);
+  if (!f.lines.length) out.push(`${at}: no definition`);
+  if (!f.vars.length) out.push(`${at}: no variables`);
+  f.vars.forEach((x, i) => len(`variable ${i + 1}`, x.meaning, SUB_MAX));
+  f.given.forEach((g, i) => len(`input ${i + 1}`, g.say, SUB_MAX));
+  if (!f.steps.length) out.push(`${at}: no sample`);
+  f.steps.forEach((s, i) => len(`step ${i + 1}`, s.say, SUB_MAX));
+  return out;
+}
+
+/** The rule over every step of every track; with the formulas, every chip names one, every
+ * formula is named by a chip, and each keeps its own rule. */
+export function allViolations(tracks: Track[], terms: Term[], formulas?: Partial<Record<FormulaId, Formula>>): string[] {
+  const out = tracks.flatMap((t) => t.steps.flatMap((s) => violations(t, s, terms, formulas)));
+  if (formulas) {
+    const named = new Set(tracks.flatMap((t) => t.steps.flatMap((s) => s.bullets.flatMap((b) => (b.formula ? [b.formula] : [])))));
+    for (const f of Object.values(formulas)) {
+      if (!f) continue;
+      if (!named.has(f.id)) out.push(`formula ${f.id}: no bullet names it`);
+      out.push(...formulaViolations(f));
+    }
+  }
+  for (const term of terms) {
+    const eq = equation(term.def);
+    if (eq) out.push(`glossary ${term.id}: the definition holds an equation ("${eq}"): say it in words`);
+  }
   for (const t of tracks) {
     if (t.labels.length < t.steps.length) out.push(`${t.id}: ${t.labels.length} strip labels for ${t.steps.length} steps`);
     const ids = new Set<string>();

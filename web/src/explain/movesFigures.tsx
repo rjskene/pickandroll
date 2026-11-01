@@ -108,7 +108,7 @@ export function KeepRule() {
 }
 
 const PUBLIC = ["continuous waivers, 2 days", "every available player is W", "claims land at the overnight run", "cleared free agent: $0, at once", "4 adds a week", "bid queued with its reason", "struck bid: a $0 claim", "an armed league claims it live"];
-const PRIVATE = ["free agents, not waivers", "an add plays the same night", "1-day waivers by priority", "no FAAB, so no bid", "odds (1 − q)^(p − 1), assumed", "5 adds a week", "suggestions only", "every move is the user's own"];
+const PRIVATE = ["free agents, not waivers", "an add plays the same night", "1-day waivers by priority", "no FAAB, so no bid", "odds at an assumed rival rate", "5 adds a week", "suggestions only", "every move is the user's own"];
 
 /** How a bid is sized, the two kinds of league apart, and what a trade score reports. */
 export function BidsTrades() {
@@ -118,17 +118,17 @@ export function BidsTrades() {
       <Arrow id="ex-ah-bid" />
       <rect className="node" x="20" y="20" width="110" height="40" rx="7" />
       <text className="lbl" x="75" y="38" textAnchor="middle">
-        gain / typical
+        gain in typicals
       </text>
       <text className="sm" x="75" y="53" textAnchor="middle">
         rounded, at least 1
       </text>
       <rect className="node" x="155" y="20" width="110" height="40" rx="7" />
       <text className="lbl" x="210" y="38" textAnchor="middle">
-        × flag
+        times the flag
       </text>
       <text className="sm" x="210" y="53" textAnchor="middle">
-        breakout ×2, strong ×3
+        doubled or tripled
       </text>
       <rect className="node hot" x="290" y="20" width="110" height="40" rx="7" />
       <text className="lbl ink" x="345" y="38" textAnchor="middle">

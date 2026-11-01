@@ -950,6 +950,57 @@ button.ex-xbtn kbd { margin-left: 4px; }
 .ex-xtable td:first-child { white-space: nowrap; }
 .ex-xtable tr:last-child td { border-bottom: 0; }
 .ex-xtable .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+/* a bullet's Formula chip, and the formula popout (#282) */
+button.ex-fx { margin-left: 8px; padding: 1px 9px; font-family: var(--display); font-size: 12px; letter-spacing: 0.05em; border-radius: 999px; border-color: var(--line-2); color: var(--accent); vertical-align: 2px; }
+button.ex-fx:hover { border-color: var(--accent); }
+.ex-pop-what { margin: 0; font-size: 14.5px; line-height: 1.5; color: var(--text); }
+.ex-math-lines { display: grid; gap: 10px; padding: 14px 16px; background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px; overflow-x: auto; }
+.ex-math-line { min-width: max-content; }
+.ex-xtable.ex-vars th { text-transform: none; letter-spacing: 0; font-family: inherit; font-weight: 400; color: #fff; background: none; border-bottom: 1px solid var(--line); white-space: nowrap; vertical-align: top; width: 1%; }
+.ex-xtable.ex-vars td { color: var(--muted); }
+.ex-xtable.ex-vars td.num { color: #fff; width: 1%; }
+.ex-work { margin: 0; padding-left: 22px; display: grid; gap: 8px; }
+.ex-work li { display: grid; gap: 2px; }
+.ex-work li::marker { color: var(--dim); }
+.ex-work .ex-say { font-size: 12.5px; color: var(--muted); }
+.ex-work .ex-calc { display: flex; align-items: center; flex-wrap: wrap; gap: 0 4px; }
+.ex-work .ex-eq { font-family: "Cambria Math", "STIX Two Math", "Times New Roman", serif; font-size: 17px; margin: 0 6px; color: var(--muted); }
+.ex-work b { font-size: 16px; font-variant-numeric: tabular-nums; }
+.ex-work li.last b { color: var(--accent); }
+.ex-work li.last::marker { color: var(--accent); }
+/* display math: HTML and CSS, no dependency */
+.ex-math { font-family: "Cambria Math", "STIX Two Math", "Latin Modern Math", "Times New Roman", serif; font-size: 17px; color: #fff; display: inline-flex; align-items: center; line-height: 1.25; white-space: nowrap; }
+.ex-math.block { font-size: 21px; }
+.ex-math .m-row { display: inline-flex; align-items: center; }
+.ex-math .m-v { font-style: italic; padding: 0 0.04em; }
+.ex-math .m-t { white-space: pre; }
+.ex-math .m-op { margin: 0 0.3em; }
+.ex-math .m-comma { margin-right: 0.35em; }
+.ex-math .m-frac { display: inline-flex; flex-direction: column; align-items: center; margin: 0 0.18em; font-size: 0.9em; }
+.ex-math .m-num { display: inline-flex; align-items: center; padding: 0 0.25em 0.14em; border-bottom: 1.5px solid currentColor; }
+.ex-math .m-den { display: inline-flex; align-items: center; padding: 0.14em 0.25em 0; }
+.ex-math .m-script { display: inline-flex; align-items: center; }
+.ex-math .m-script sub, .ex-math .m-script sup { font-size: 0.66em; line-height: 1; display: inline-flex; align-items: center; }
+.ex-math .m-script sub { align-self: flex-end; margin-bottom: -0.22em; }
+.ex-math .m-script sup { align-self: flex-start; margin-top: -0.3em; }
+.ex-math .m-stack { display: inline-flex; flex-direction: column; justify-content: center; font-size: 0.66em; line-height: 1.05; margin-left: 0.04em; }
+.ex-math .m-stack sub, .ex-math .m-stack sup { font-size: 1em; margin: 0; align-self: flex-start; }
+.ex-math .m-sqrt { display: inline-flex; align-items: stretch; margin: 0 0.1em; }
+.ex-math .m-rad { font-size: 1.15em; align-self: center; margin-right: -0.06em; }
+.ex-math .m-under { display: inline-flex; align-items: center; border-top: 1.5px solid currentColor; padding: 0.12em 0.15em 0 0.1em; }
+.ex-math .m-paren { display: inline-flex; align-items: center; position: relative; padding: 0.05em 0.42em; margin: 0 0.06em; }
+.ex-math .m-paren::before, .ex-math .m-paren::after { content: ""; position: absolute; top: 0.02em; bottom: 0.02em; width: 0.32em; }
+.ex-math .m-paren::before { left: 0; border-left: 1.5px solid currentColor; border-radius: 100% 0 0 100% / 50% 0 0 50%; }
+.ex-math .m-paren::after { right: 0; border-right: 1.5px solid currentColor; border-radius: 0 100% 100% 0 / 0 50% 50% 0; }
+.ex-math .m-big { display: inline-flex; flex-direction: column; align-items: center; margin: 0 0.12em; line-height: 1; }
+.ex-math .m-bop { font-size: 1.45em; }
+.ex-math .m-lim { font-size: 0.6em; margin-top: 0.08em; }
+.ex-math .m-cases { display: inline-flex; align-items: center; }
+.ex-math .m-brace { font-size: 2.7em; font-weight: 300; line-height: 1; margin-right: 0.12em; transform: scaleX(0.6); }
+.ex-math .m-rows { display: grid; grid-template-columns: auto auto; column-gap: 1.1em; row-gap: 0.3em; }
+.ex-math .m-case { display: contents; }
+.ex-math .m-case > span { display: inline-flex; align-items: center; }
+.ex-math .m-cond { color: var(--muted); font-size: 0.85em; }
 /* svg tokens inside a figure */
 .ex-fig svg text { font-family: var(--body); font-size: 11px; fill: var(--muted); }
 .ex-fig svg text.lbl { font-family: var(--display); font-size: 14px; letter-spacing: 0.03em; fill: var(--text); font-weight: 600; }
@@ -1038,6 +1089,11 @@ button.ex-play.on { background: var(--accent); color: var(--accent-ink); border-
   .ex-sheet.on { transform: none; }
   .ex-sheet.wide { width: 100vw; max-height: 86vh; }
   .ex-pop { padding: 12px 16px 24px; }
+  .ex-math.block { font-size: 16px; }
+  .ex-math-lines { padding: 10px 12px; }
+  .ex-work .ex-calc { overflow-x: auto; flex-wrap: nowrap; }
+  .ex-work .ex-math, .ex-work .ex-eq { font-size: 15px; }
+  .ex-work b { font-size: 15px; }
 }
 /* Explain (#284): the draft track's figures and the strip's loop */
 .ex-fig svg text.lbl.ink { fill: var(--accent-ink); }

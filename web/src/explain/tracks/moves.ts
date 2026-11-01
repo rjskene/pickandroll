@@ -23,8 +23,12 @@ export const moves: Track = {
             "each day the players with a game fill the slots exactly, best first",
           ],
         },
-        { text: "A category's spread is a fitted per-game dispersion times its total" },
-        { text: "The odds of winning a category: Φ(Δ / √(σ₁² + σ₂²)), the matchup's week so far added" },
+        { text: "A category's variance is a fitted dispersion times its weekly total" },
+        {
+          text: "The odds of winning a category: my lead over the opponent, measured in our combined spread",
+          formula: "category-odds",
+          sub: ["the matchup's week so far is added to both totals first"],
+        },
         { text: "[ecw|Expected categories won] is the sum of the nine" },
       ],
       source: ["docs/ADD_DROP.md · the weekly projection", "api/season_week.py"],
@@ -162,17 +166,19 @@ export const moves: Track = {
       bullets: [
         {
           text: "Public leagues: [faab|FAAB], continuous waivers of two days, four adds a week",
+          formula: "bid",
           sub: [
             "a cleared free agent is added at once for $0; a claim lands at Yahoo's overnight run",
-            "the bid: max(1, round(gain / typical)), doubled for a breakout flag, tripled for a strong one",
+            "the bid: the gain in multiples of the typical gain, at least $1; doubled or tripled for a flag",
             "clamped to the budget left; [queue|queued] with its reason, and a [strike|struck] bid is a $0 claim",
           ],
         },
         {
           text: "The pinned private league (31822): free agents, one-day [priority] waivers, five adds a week",
+          formula: "claim-odds",
           sub: [
             "an add before a player's game plays that night",
-            "no bid: the claim's odds (1 − q)^(p − 1) with an assumed rival rate, shown as assumed",
+            "no bid: the odds that no team ahead in priority claims him, at an assumed rate, shown as assumed",
             "suggestions only: every move there is the user's own",
           ],
         },

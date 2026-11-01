@@ -53,7 +53,7 @@ function ExportRow() {
 /** Two distributions of a weekly total (the moves track's first step). */
 function WeeklyOdds() {
   return (
-    <svg viewBox="0 0 420 200" role="img" aria-label="Two distributions of a weekly total, mine and theirs, and the odds of the lead">
+    <svg viewBox="0 0 420 236" role="img" aria-label="Two distributions of a weekly total, mine and theirs, and the odds of the lead">
       <Arrow id="ex-ah-odds" />
       <path className="fill b" d="M50 170C110 170 125 50 170 50S230 170 290 170Z" />
       <path className="line b" d="M50 170C110 170 125 50 170 50S230 170 290 170" />
@@ -71,11 +71,11 @@ function WeeklyOdds() {
       <text className="ac sm" x="250" y="186" textAnchor="middle">
         my total
       </text>
-      <text className="t" x="400" y="60" textAnchor="end">
-        P(win) = Φ(Δ / √(σ₁² + σ₂²))
+      <text className="t" x="30" y="212">
+        the odds: my lead Δ, measured in our combined spread
       </text>
-      <text className="sm" x="400" y="78" textAnchor="end">
-        σ from per-game spread × games
+      <text className="sm" x="30" y="228">
+        each spread: a fitted dispersion times the weekly total
       </text>
       <line className="axis" x1="30" y1="170" x2="400" y2="170" />
     </svg>
