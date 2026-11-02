@@ -8,7 +8,7 @@ import { DailyFlow, EntryDay, EveningBuild, EveningPass, ExecutorModes, HostWatc
 import { DAY_END, DAY_SECONDS, dayLanes, dayNow, dayTicks } from "./dayline";
 import type { Day } from "./dayline";
 import { DraftIntro, KeeperSnake, Objective, Plan, PoolPasses, Price, SolveAhead, Survival, YahooRoom } from "./draftFigures";
-import { BidsTrades, Horizons, KeepRule } from "./movesFigures";
+import { BidsTrades, Horizons, KeepRule, MovesIntro } from "./movesFigures";
 import { Arrow } from "./svg";
 import type { FigureId } from "./types";
 
@@ -133,6 +133,7 @@ export const FIGURES: Record<FigureId, () => ReactElement> = {
   "solve-ahead": SolveAhead,
   "keeper-snake": KeeperSnake,
   "yahoo-room": YahooRoom,
+  "moves-intro": MovesIntro,
   "weekly-odds": WeeklyOdds,
   horizons: Horizons,
   "keep-rule": KeepRule,

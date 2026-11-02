@@ -1,7 +1,8 @@
-// The moves and trades track (#285): four steps, from the weekly odds to bids, claims and
-// trades. Every card is bullets: key ideas with their sub-ideas, two levels, no paragraphs
-// (the user's rule, #282). Sources are docs/ADD_DROP.md, docs/AUTOPILOT.md, api/season_week.py,
-// api/season_queue.py and the keep rule in season/moves.py.
+// The moves and trades track (#285): the overview (#282), then four steps, from the weekly odds
+// to bids, claims and trades. Every card is bullets: key ideas with their sub-ideas, two levels,
+// no paragraphs (the user's rule, #282). Sources are docs/ADD_DROP.md, docs/AUTOPILOT.md,
+// api/season_week.py, api/season_queue.py and the keep rule in season/moves.py; the overview's
+// times are the routines' (the daily track's day line).
 import type { Track } from "../types";
 
 export const moves: Track = {
@@ -9,8 +10,64 @@ export const moves: Track = {
   title: "Moves & trades",
   short: "Moves",
   lede: "Which add and drop raises my expected categories, this week and over three, without costing the season.",
-  labels: ["Weekly odds", "Horizons", "Keep rule", "Bids & trades"],
+  labels: ["Overview", "Weekly odds", "Horizons", "Keep rule", "Bids & trades"],
   steps: [
+    {
+      id: "overview",
+      title: "Win the week, never at the season's cost",
+      kicker: "the whole season",
+      intro: true,
+      figure: "moves-intro",
+      bullets: [
+        { text: "The goal: the most [ecw|expected categories won] each week, [season-first|never trading the season] for one week" },
+        { text: "Every add and drop is ranked on weekly odds: this week, and weeks 2 to 4, the season beside" },
+        {
+          text: "The [protected|keep rule] and the [guard|season guard] stand outside the horizons",
+          sub: ["a protected player is never dropped; every set keeps the rest of the season at zero or more"],
+        },
+        {
+          text: "Claims: a sized [faab|FAAB] bid in the public leagues; claim odds in the private league",
+          sub: ["a trade is scored the same way; nothing ever sends one"],
+        },
+        {
+          text: "Automated on the VM: the day's [queue] is built at 05:00 and again at 21:00",
+          sub: [
+            "passes at 09:15, 15:00 and 22:40 place the claims; the 15:00 pass sets the lineups",
+            "no claim goes before the [execute-time|execute time]; until then the user can [strike] it",
+          ],
+        },
+        {
+          text: "The user's switch decides each league: off, [dry-run|dry run] or live",
+          sub: ["the pinned private league (31822): suggestions only, made by hand"],
+        },
+      ],
+      source: ["docs/ADD_DROP.md · the odds, the horizons, the keep rule", "docs/AUTOPILOT.md · the queue, the modes", "routine/routines.py · the times"],
+      example: {
+        title: "One day of one move in a public league, from build to claim",
+        lead: [
+          {
+            text: "An armed public league set to live, the execute time at 09:00",
+            sub: ["the players, the gains and the bid are made up"],
+          },
+        ],
+        table: {
+          head: ["Time", "what happens"],
+          rows: [
+            ["05:00", "the daily exports, reads Yahoo and solves: the week projected on my slots"],
+            ["05:20", "add Player A, drop Player B: +0.30 this week, +0.12 on weeks 2 to 4, the season +0.4"],
+            ["05:24", "the move is queued with a $5 bid; it executes at 09:00, at least an hour after queueing"],
+            ["07:40", "the user reads the Queue screen and lets it stand; a strike would stop it"],
+            ["09:15", "the morning pass opens the add page, checks it and places the $5 claim"],
+            ["15:00", "the late pass sets the lineup before the first tip-off"],
+            ["21:00", "the evening build solves again; the placed claim is kept by its id"],
+          ],
+        },
+        read: [
+          { text: "Set to dry run, the 09:15 pass logs the same claim and submits nothing" },
+          { text: "In the pinned private league (31822) the same move is listed for the user to make by hand" },
+        ],
+      },
+    },
     {
       id: "weekly-odds",
       title: "Project the week on the slots I can start",

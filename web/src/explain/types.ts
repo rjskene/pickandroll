@@ -24,6 +24,7 @@ export type FigureId =
   | "solve-ahead"
   | "keeper-snake"
   | "yahoo-room"
+  | "moves-intro"
   | "weekly-odds"
   | "horizons"
   | "keep-rule"

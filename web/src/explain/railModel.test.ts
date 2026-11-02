@@ -26,8 +26,8 @@ test("the rows before the current one are done, the current one lit, the rest to
   assert.equal(items[4].label, "Objective");
 });
 
-test("the overview heads the draft rail unnumbered; the steps keep theirs from one", () => {
-  for (const t of [draft]) {
+test("the overview heads the draft and moves rails unnumbered; the steps keep theirs from one", () => {
+  for (const t of [draft, moves]) {
     const items = railItems(t, 0);
     assert.deepEqual([items[0].label, items[0].num], ["Overview", null], t.id);
     assert.deepEqual(
@@ -57,6 +57,7 @@ test("a row past the written steps is still to come and opens nothing", () => {
     [
       ["done", true],
       ["cur", true],
+      ["soon", false],
       ["soon", false],
       ["soon", false],
     ],
