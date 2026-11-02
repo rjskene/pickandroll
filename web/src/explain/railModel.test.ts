@@ -16,14 +16,37 @@ test("an hour reads as hh:mm, to the nearest minute", () => {
 });
 
 test("the rows before the current one are done, the current one lit, the rest to do", () => {
-  const items = railItems(draft, 3);
+  const items = railItems(draft, 4);
   assert.equal(items.length, draft.labels.length);
   assert.deepEqual(
     items.map((it) => it.state),
-    ["done", "done", "done", "cur", "todo", "todo", "todo", "todo", "todo"],
+    ["done", "done", "done", "done", "cur", "todo", "todo", "todo", "todo", "todo"],
   );
   assert.ok(items.every((it) => it.can));
-  assert.equal(items[3].label, "Objective");
+  assert.equal(items[4].label, "Objective");
+});
+
+test("the overview heads the draft rail unnumbered; the steps keep theirs from one", () => {
+  for (const t of [draft]) {
+    const items = railItems(t, 0);
+    assert.deepEqual([items[0].label, items[0].num], ["Overview", null], t.id);
+    assert.deepEqual(
+      items.slice(1).map((it) => it.num),
+      items.slice(1).map((_, k) => k + 1),
+      t.id,
+    );
+  }
+  assert.deepEqual(
+    railItems(draft, 0)
+      .slice(1)
+      .map((it) => it.label),
+    ["Projections", "Pool & z", "Survival", "Objective", "Plan", "Price → pick", "Solve ahead", "Keepers", "Yahoo room"],
+  );
+  assert.deepEqual(
+    railItems(daily, 0).map((it) => it.num),
+    [1, 2, 3, 4, 5, 6, 7, 8, 9],
+    "the day's overview is its step 1",
+  );
 });
 
 test("a row past the written steps is still to come and opens nothing", () => {

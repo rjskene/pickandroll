@@ -14,6 +14,7 @@ export interface Bullet {
 
 /** The figure beside a step's bullets, by name; the screen maps each name to its component. */
 export type FigureId =
+  | "draft-intro"
   | "export-row"
   | "pool-passes"
   | "survival"
