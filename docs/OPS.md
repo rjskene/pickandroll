@@ -232,7 +232,10 @@ Only with `GET http://127.0.0.1:8000/rooms` answering `[]` on both hosts, in thi
 4. Droplet: `~/pickandroll/ops/vm/install.sh --cutover` (`ROUTINE_FLAGS=--skip-solve 31822`:
    the digests and recorder comments post again, the private league's solve stays left out,
    the timers on). It sets no mode: the copy carries the Mac's switches, and any change is the
-   user's own click on the dashboard.
+   user's own click on the dashboard. A timer whose time the pull changed runs once as soon as
+   it is enabled (`Persistent=true` counts the new time's last occurrence as missed): on
+   2026-11-02 the morning unit, 07:45 to 09:15, ran at 08:15 and found nothing due before the
+   09:00 execute time, as the routines' own gates make such a run harmless.
 5. Mac: stop the Mac's API (the port), load the tunnel agent (`ops/mac/README.md`), check
    `curl http://127.0.0.1:8000/seasons` answers from the droplet; the dashboard (`npm run
    dev` in `web/`, unchanged) and the Mac's Chrome extension now read the droplet's API.

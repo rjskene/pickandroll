@@ -10,7 +10,7 @@ import re
 import tempfile
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -1043,13 +1043,14 @@ def monday_pages(ctx: Context, api: str, lines: Sequence[str], name: str = "priv
     lineup = pages.lineup[:MONDAY_PAGE_CAP]
     schedule = pages.schedule[: MONDAY_PAGE_CAP - len(lineup)]
     left = len(pages.lineup) + len(pages.schedule) - len(lineup) - len(schedule)
-    not_landed = False
+    not_landed: list[str] = []
     if lineup:
         counts["lineup"] += _open_each(ctx, browser, lineup, problems)
         ctx.sleep(10)
         again = _record_private(ctx, api)
-        not_landed = bool(again and again.lineup)
         if again is not None:
+            today = ctx.now().date()
+            not_landed = [u for u in again.lineup if u in lineup and drops_off(u, today)]
             pages = again
     if schedule:
         counts["schedule"] += _open_each(ctx, browser, schedule, problems)
@@ -1060,12 +1061,34 @@ def monday_pages(ctx: Context, api: str, lines: Sequence[str], name: str = "priv
     if needs:
         detail += f"; still needs {len(needs)} pages after {rounds} rounds"
     if not_landed:
-        detail += "; lineup pages did not land"
+        detail += f"; lineup pages did not land: {len(not_landed)} still needed"
         alert_once(ctx, "the private league's lineup pages did not land at the Monday recorder")
     if problems:
         detail += "; " + "; ".join(problems[:5])
     status = ctx.report.failed if needs or not_landed or problems else ctx.report.ok
-    status(name, detail[:600], counts=counts, left=left, line=pages.line[:300], problems=problems)
+    status(
+        name,
+        detail[:600],
+        counts=counts,
+        left=left,
+        line=pages.line[:300],
+        problems=problems,
+        not_landed=not_landed,
+    )
+
+
+def drops_off(url: str, today: date) -> bool:
+    """Whether a private-league lineup page leaves the record's list once it has landed: the
+    settings page, and my team page for a day before today (the recorded week's, #149). My team
+    page for today and each later day of this week stays listed on every record call, read or
+    not (#107), so the Monday recorder never counts it as not landed (#298)."""
+    m = re.search(r"[?&]date=(\d{4}-\d{2}-\d{2})", url)
+    if m is None:
+        return True
+    try:
+        return date.fromisoformat(m.group(1)) < today
+    except ValueError:
+        return True
 
 
 def _open_each(ctx: Context, browser: Browser, urls: Sequence[str], problems: list[str]) -> int:
