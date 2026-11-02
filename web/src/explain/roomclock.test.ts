@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { laneEvents, laneState, laneWord } from "./lane.ts";
 import type { Lane } from "./lane.ts";
-import { RC_END, rcLanes, rcLeft, rcTicks } from "./roomclock.ts";
+import { RC_BACKSTOP_BY_S, RC_DUE_S, RC_END, RC_HIT_DUE_S, RC_HIT_S, RC_PLAN_S, RC_PRICE_LIMIT_S, RC_START_BY_S, rcLanes, rcLeft, rcTicks } from "./roomclock.ts";
+import { draft } from "./tracks/draft.ts";
 import type { Act, Board, Row } from "./roomclock.ts";
 
 const BOARDS: Board[] = ["hit", "cold"];
@@ -109,4 +110,26 @@ test("the clock reads seconds left and ticks every 5 s, 10 s on a phone", () => 
     rcTicks(true).map((t) => t.v),
     [0, 10, 20, 30],
   );
+});
+
+test("the draft overview's budgets are draft/clock.py's on the 30 s clock", () => {
+  // clock.py: the plan gets the clock less 13 s of margin and 12 s of pricing, 5 to 20 s; the
+  // exact prices the plan budget, 10 s at most; the D1 gate the two plus 1 s, 1 s on a hit.
+  const plan = Math.min(20, Math.max(5, RC_END - 13 - 12));
+  assert.equal(RC_PLAN_S, plan);
+  assert.equal(RC_PRICE_LIMIT_S, Math.min(10, plan));
+  assert.equal(RC_DUE_S, 11);
+  assert.ok(RC_HIT_S <= RC_HIT_DUE_S);
+  const words = JSON.stringify(draft.steps[0]);
+  assert.ok(draft.steps[0].intro);
+  for (const said of [
+    `${RC_END} s a pick`,
+    `${RC_PLAN_S} s to plan and ${RC_PRICE_LIMIT_S} s for exact prices`,
+    `due by ${RC_DUE_S} s`,
+    `within ${RC_HIT_DUE_S} s`,
+    `${RC_START_BY_S} to 30 s are left`,
+    `the plan by ${RC_PLAN_S}, exact prices by ${RC_PLAN_S + RC_PRICE_LIMIT_S}, the recommendation due by ${RC_DUE_S}`,
+    `${RC_BACKSTOP_BY_S} s left, only if no pick has landed`,
+  ])
+    assert.ok(words.includes(said), said);
 });

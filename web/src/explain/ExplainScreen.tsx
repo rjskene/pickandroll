@@ -1,8 +1,9 @@
 // The Explain screen (#282, #283): a walkthrough of the draft, the moves and the day, one step
 // a screen. One bar on top holds the app's lead, the track control, "Read it all", the glossary,
 // the keys and the ← / → arrows; the step rail beside the card doubles as the diagram of the
-// whole (a chip row on a phone), and folds to its numbers with `[`, kept per browser. The popouts
-// (a step's worked example, a bullet's formula), and the place kept in the URL hash (#draft/3).
+// whole (a chip row on a phone), and folds to its numbers with `[` or ⌘B (Ctrl+B off a Mac),
+// kept per browser. The popouts (a step's worked example, a bullet's formula), and the place
+// kept in the URL hash (#draft/3).
 import { useCallback, useEffect, useRef, useState } from "react";
 import { EXPLAIN_SHEET, explainKeys } from "../keys";
 import { useHotkeys } from "../useKeys";
@@ -13,7 +14,7 @@ import { useLandingOrder } from "../components/landingOrder";
 import { OverviewStatus } from "../components/StatusLight";
 import { useNow } from "../components/YahooSync";
 import { GlossaryProvider, GlossarySheet } from "./Glossary";
-import { formatHash, move, nextLabel, parseHash } from "./nav";
+import { formatHash, move, nextLabel, parseHash, stepCount } from "./nav";
 import type { Place } from "./nav";
 import { FORMULAS } from "./formulas";
 import { PopProvider } from "./PopContext";
@@ -56,7 +57,8 @@ export default function ExplainScreen({ onBack, onProgress }: Props) {
   // The place lives in the hash, so a reload lands on the same step and the browser's back
   // button walks the steps.
   useEffect(() => {
-    if (location.hash !== formatHash(place)) history.replaceState(null, "", formatHash(place));
+    const hash = formatHash(place, TRACKS);
+    if (location.hash !== hash) history.replaceState(null, "", hash);
   }, [place]);
   useEffect(() => {
     const on = () => {
@@ -174,7 +176,7 @@ export default function ExplainScreen({ onBack, onProgress }: Props) {
             ←
           </button>
           <span className="ex-count" aria-live="polite">
-            {place.step + 1} of {track.labels.length}
+            {stepCount(track, place.step)}
           </span>
           <button className="primary" onClick={onNext} aria-label={done ? "Done: back to all leagues" : label.replace(/ →$/, "")} title={done ? "Done: back to all leagues" : `${label.replace(/ →$/, "")} (→)`}>
             {done ? "Done" : "→"}

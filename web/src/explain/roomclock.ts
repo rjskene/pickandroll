@@ -21,6 +21,12 @@ export const RC_HIT_S = 0.5;
 /** The cold board's plan budget, then its pricing, on a 30 s clock. */
 export const RC_PLAN_S = 5;
 export const RC_PRICE_S = 12;
+/** The exact prices' time limit on the 30 s clock (draft/clock.py: the plan budget, 10 s at
+ * most), and the D1 gate it sets: a cold board's recommendation is due by the plan budget plus
+ * the price limit plus one second; a hit's within RC_HIT_DUE_S. */
+export const RC_PRICE_LIMIT_S = 5;
+export const RC_DUE_S = RC_PLAN_S + RC_PRICE_LIMIT_S + 1;
+export const RC_HIT_DUE_S = 1;
 /** The wait stops with this much clock left (the extension's START_BY_S). */
 export const RC_START_BY_S = 12;
 /** The queue backstop fires with this much clock left; the last look is at 2 s left. */

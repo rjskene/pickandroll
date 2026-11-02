@@ -14,6 +14,7 @@ export interface Bullet {
 
 /** The figure beside a step's bullets, by name; the screen maps each name to its component. */
 export type FigureId =
+  | "draft-intro"
   | "export-row"
   | "pool-passes"
   | "survival"
@@ -23,6 +24,7 @@ export type FigureId =
   | "solve-ahead"
   | "keeper-snake"
   | "yahoo-room"
+  | "moves-intro"
   | "weekly-odds"
   | "horizons"
   | "keep-rule"
@@ -43,6 +45,9 @@ export interface Step {
   title: string;
   /** The words after the step count in the kicker ("step 1 of 9 · projections"). */
   kicker: string;
+  /** The track's overview (#282): its first step only, unnumbered, the rail's "Overview" row;
+   * the steps after it keep their numbers from one. */
+  intro?: boolean;
   bullets: Bullet[];
   figure: FigureId;
   /** The figure takes the card's full width (the day line). */

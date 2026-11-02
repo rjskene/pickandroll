@@ -1,13 +1,16 @@
 // The step rail (#282, the side-rail header): one row per step down the left of the card, the
-// current one lit, the past ones filled, a row past the written steps still to come. A daily
-// track gives each row its time of day; the draft's loop is a bracket from the room back to
-// survival. No React, so the test runs under Node.
+// current one lit, the past ones filled, a row past the written steps still to come. A track's
+// overview heads it unnumbered. A daily track gives each row its time of day; the draft's loop
+// is a bracket from the room back to survival. No React, so the test runs under Node.
+import { hasIntro, stepNumber } from "./nav.ts";
 import type { Track } from "./types";
 
 export type RailState = "cur" | "done" | "todo" | "soon";
 
 export interface RailItem {
   i: number;
+  /** The number on the row's dot, the hash's; null on the overview, which shows an icon. */
+  num: number | null;
   label: string;
   /** The row's time of day, "hh:mm", on a track with hours; null for a row without one. */
   time: string | null;
@@ -31,11 +34,13 @@ export function railTimed(track: Track): boolean {
 export function railItems(track: Track, step: number): RailItem[] {
   const hours = railTimed(track) ? track.hours : undefined;
   const written = track.steps.length;
+  const intro = hasIntro(track);
   return track.labels.map((label, i) => {
     const can = i < written;
     const state: RailState = i === step ? "cur" : i < step ? "done" : can ? "todo" : "soon";
     const h = hours?.[i];
-    return { i, label, time: h === undefined || h === null ? null : railTime(h), state, can };
+    const num = intro && i === 0 ? null : stepNumber(track, i);
+    return { i, num, label, time: h === undefined || h === null ? null : railTime(h), state, can };
   });
 }
 

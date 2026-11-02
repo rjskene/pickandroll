@@ -1,10 +1,88 @@
-// The draft track's figures (#284): React SVG, one per step after the export row; the last
-// is the extension's three hops with one armed turn on the 30 s pick clock.
+// The draft track's figures (#284): React SVG, one per step after the export row, and the
+// overview's loop and clock (#282); the last is the extension's three hops with one armed turn on
+// the 30 s pick clock.
 import { useMemo, useState } from "react";
 import AnimFrame from "./AnimFrame";
-import { RC_END, rcLanes, rcLeft, rcTicks } from "./roomclock";
+import { RC_BACKSTOP_BY_S, RC_DUE_S, RC_END, RC_HIT_DUE_S, RC_PLAN_S, RC_PRICE_LIMIT_S, RC_START_BY_S, rcLanes, rcLeft, rcTicks } from "./roomclock";
 import type { Act, Board, Row } from "./roomclock";
 import { Arrow } from "./svg";
+
+/** The whole draft at once (#282): the loop every pick goes round (the board, survival, the
+ * solve, the pick), and one of my turns on Yahoo's 30 s clock with draft/clock.py's budgets and
+ * the extension's lines marked; before it, the boards solved ahead. */
+export function DraftIntro() {
+  const x = (s: number) => 60 + (s * 340) / RC_END;
+  const steps: [string, string][] = [
+    ["board", "every pick so far"],
+    ["survival", "who lasts to mine"],
+    ["solve", "plan all my picks"],
+    ["pick", "the first, made"],
+  ];
+  const tick = (s: number, tone: string) => <line className={`ref${tone}`} x1={x(s)} y1="121" x2={x(s)} y2="147" />;
+  return (
+    <svg viewBox="0 0 420 218" role="img" aria-label="The draft loop, board to survival to solve to pick, and one turn of the 30 s clock: plan 5 s, prices 5 s, due by 11 s, the click by 12 s left">
+      <Arrow id="ex-ah-intro" />
+      <Arrow id="ex-ah-intro-loop" accent />
+      <text className="ac sm" x="211" y="10" textAnchor="middle">
+        the next pick lands: round again
+      </text>
+      <path className="arrow loop" d="M364 26V15H58V23" markerEnd="url(#ex-ah-intro-loop)" />
+      {steps.map(([label, sub], k) => (
+        <g key={label}>
+          <rect className={`node${k === 2 ? " hot" : ""}`} x={16 + k * 102} y="26" width="84" height="36" rx="7" />
+          <text className={`lbl${k === 2 ? " ink" : ""}`} x={58 + k * 102} y="49" textAnchor="middle">
+            {label}
+          </text>
+          <text className="sm" x={58 + k * 102} y="78" textAnchor="middle">
+            {sub}
+          </text>
+          {k < 3 && <path className="arrow" d={`M${100 + k * 102} 44h15`} markerEnd="url(#ex-ah-intro)" />}
+        </g>
+      ))}
+      <text className="lbl xs" x="16" y="104">
+        my turn on Yahoo's {RC_END} s clock
+      </text>
+      <rect className="fill m" x="16" y="126" width="38" height="16" rx="3" />
+      <text className="sm" x="35" y="119" textAnchor="middle">
+        ahead
+      </text>
+      <rect className="bar" x={x(0)} y="126" width={x(RC_END) - x(0)} height="16" rx="3" />
+      <rect className="bar in" x={x(0)} y="126" width={x(RC_PLAN_S) - x(0)} height="16" rx="3" />
+      <rect className="fill a" x={x(RC_PLAN_S)} y="126" width={x(RC_PLAN_S + RC_PRICE_LIMIT_S) - x(RC_PLAN_S)} height="16" />
+      <text className="sm" x={x(RC_PLAN_S / 2)} y="119" textAnchor="middle">
+        plan {RC_PLAN_S} s
+      </text>
+      <text className="sm" x={x(RC_PLAN_S + RC_PRICE_LIMIT_S / 2)} y="119" textAnchor="middle">
+        prices {RC_PRICE_LIMIT_S} s
+      </text>
+      {tick(RC_DUE_S, " ac")}
+      {tick(RC_END - RC_START_BY_S, "")}
+      {tick(RC_END - RC_BACKSTOP_BY_S, " bad")}
+      {tick(RC_END, " bad")}
+      <text className="sm" x={x(0)} y="160" textAnchor="middle">
+        0 s
+      </text>
+      <text className="ac sm" x={x(RC_DUE_S)} y="160" textAnchor="middle">
+        due {RC_DUE_S} s
+      </text>
+      <text className="sm" x={x(RC_END - RC_BACKSTOP_BY_S)} y="160" textAnchor="middle">
+        backstop, {RC_BACKSTOP_BY_S} s left
+      </text>
+      <text className="sm" x={x(RC_END - RC_START_BY_S)} y="174" textAnchor="middle">
+        clicks by {RC_START_BY_S} s left
+      </text>
+      <text className="bad sm" x={x(RC_END)} y="174" textAnchor="end">
+        Yahoo autopicks
+      </text>
+      <text className="ac sm" x="16" y="196">
+        solved ahead: the plan ready within {RC_HIT_DUE_S} s; solved cold: due by {RC_DUE_S} s
+      </text>
+      <text className="sm" x="16" y="210">
+        the curve and the survival table are made before the draft, never on the clock
+      </text>
+    </svg>
+  );
+}
 
 /** The pool in three passes (#282): each pass measures a category against the pool the pass
  * before kept, its mean and spread marked on the category's axis; then the cut at 156 and who

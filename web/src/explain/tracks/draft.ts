@@ -1,4 +1,5 @@
-// The draft track (#284): nine steps, from the stat line to the room. Every card is bullets:
+// The draft track (#284): the overview (#282), then nine steps, from the stat line to the room.
+// The overview's budgets are draft/clock.py's on the 30 s design clock. Every card is bullets:
 // key ideas with their sub-ideas, two levels, no paragraphs (the user's rule, #282). Sources
 // are docs/DESIGN.md, docs/KEEPERS.md, docs/YAHOO_SYNC.md and the extension's constants.
 import type { Track } from "../types";
@@ -8,9 +9,66 @@ export const draft: Track = {
   title: "Draft",
   short: "Draft",
   lede: "Every pick is the first move of a plan for all my remaining picks.",
-  labels: ["Projections", "Pool & z", "Survival", "Objective", "Plan", "Price → pick", "Solve ahead", "Keepers", "Yahoo room"],
-  loop: { from: 8, to: 2, label: "re-solved after every pick" },
+  labels: ["Overview", "Projections", "Pool & z", "Survival", "Objective", "Plan", "Price → pick", "Solve ahead", "Keepers", "Yahoo room"],
+  loop: { from: 9, to: 3, label: "re-solved after every pick" },
   steps: [
+    {
+      id: "overview",
+      title: "Every pick chosen by a solver that plans my whole remaining draft",
+      kicker: "the whole draft",
+      intro: true,
+      figure: "draft-intro",
+      bullets: [
+        { text: "The goal: the roster with the most [ecw|expected categories won], not the best player at each pick" },
+        {
+          text: "The solver: a mixed-integer program, solved with HiGHS through PuLP",
+          sub: ["it plans every pick I have left, makes the first, and solves again after each real pick"],
+        },
+        {
+          text: "[survival|Survival]: who is still there at each of my picks",
+          sub: ["the league's own drafts first, then 300 simulated drafts, then the ADP formula"],
+        },
+        { text: "Live in the Yahoo room: every pick mirrored; it clicks only once the user arms the seat" },
+        {
+          text: "Yahoo's clock: 30 s a pick; a board solved cold gets 5 s to plan and 5 s for exact prices",
+          sub: ["due by 11 s; a board solved ahead, within 1 s", "an [act-at] can hold the click until 12 to 30 s are left"],
+        },
+        {
+          text: "Fast because the heavy work is done before the turn",
+          sub: [
+            "the [curve], fit over 36,000 simulated teams, and the survival table: made before the draft",
+            "boards solved ahead while the picks before mine land; up to 120 for my first turn",
+          ],
+        },
+      ],
+      source: ["draft/clock.py · the budgets on the 30 s clock", "api/presolve.py · solving ahead", "docs/DESIGN.md · the objective, survival", "docs/YAHOO_SYNC.md"],
+      example: {
+        title: "One armed pick on the 30 s clock, second by second",
+        lead: [
+          {
+            text: "Pick 40 is mine; the seat is armed with the act-at at 15 s",
+            sub: ["the seconds are made up; the budgets are the code's"],
+          },
+        ],
+        table: {
+          head: ["Second", "what happens"],
+          rows: [
+            ["picks 37–39", "each pick starts a fresh plan; the likely boards for my turn are solved ahead"],
+            ["0", "pick 39 lands on a board solved ahead: a hit, its plan the recommendation at once"],
+            ["0.5", "the tab's wait returns that plan"],
+            ["15", "15 s left: the act-at releases the click on the recommended player's row"],
+            ["16.5", "the pick lands; the session logs pick 40 as mine and plans again"],
+            ["a cold board", "not solved ahead: the plan by 5, exact prices by 10, the recommendation due by 11"],
+            ["24", "6 s left, only if no pick has landed: the queue backstop"],
+            ["30", "only if still nothing: Yahoo autopicks"],
+          ],
+        },
+        read: [
+          { text: "On a hit the answer is there as the clock starts; the act-at, not the solver, sets the click" },
+          { text: "Not armed, the solves still run and the recommendation shows; nothing is clicked" },
+        ],
+      },
+    },
     {
       id: "projections",
       title: "Start with a stat line, not a rank",

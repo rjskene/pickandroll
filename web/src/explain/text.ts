@@ -140,6 +140,10 @@ export function allViolations(tracks: Track[], terms: Term[], formulas?: Partial
   }
   for (const t of tracks) {
     if (t.labels.length < t.steps.length) out.push(`${t.id}: ${t.labels.length} rail labels for ${t.steps.length} steps`);
+    t.steps.forEach((s, i) => {
+      if (s.intro && i > 0) out.push(`${t.id}: "${s.id}" is an overview but not the first step`);
+    });
+    if (t.steps[0]?.intro && t.labels[0] !== "Overview") out.push(`${t.id}: the overview's rail label is "${t.labels[0]}"`);
     const ids = new Set<string>();
     for (const s of t.steps) {
       if (ids.has(s.id)) out.push(`${t.id}: two steps named "${s.id}"`);

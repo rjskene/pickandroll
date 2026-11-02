@@ -7,8 +7,8 @@ import AnimFrame from "./AnimFrame";
 import { DailyFlow, EntryDay, EveningBuild, EveningPass, ExecutorModes, HostWatchdog, LatePass, SigninCheck } from "./dailyFigures";
 import { DAY_END, DAY_SECONDS, dayLanes, dayNow, dayTicks } from "./dayline";
 import type { Day } from "./dayline";
-import { KeeperSnake, Objective, Plan, PoolPasses, Price, SolveAhead, Survival, YahooRoom } from "./draftFigures";
-import { BidsTrades, Horizons, KeepRule } from "./movesFigures";
+import { DraftIntro, KeeperSnake, Objective, Plan, PoolPasses, Price, SolveAhead, Survival, YahooRoom } from "./draftFigures";
+import { BidsTrades, Horizons, KeepRule, MovesIntro } from "./movesFigures";
 import { Arrow } from "./svg";
 import type { FigureId } from "./types";
 
@@ -123,6 +123,7 @@ function DayLine() {
 }
 
 export const FIGURES: Record<FigureId, () => ReactElement> = {
+  "draft-intro": DraftIntro,
   "export-row": ExportRow,
   "pool-passes": PoolPasses,
   survival: Survival,
@@ -132,6 +133,7 @@ export const FIGURES: Record<FigureId, () => ReactElement> = {
   "solve-ahead": SolveAhead,
   "keeper-snake": KeeperSnake,
   "yahoo-room": YahooRoom,
+  "moves-intro": MovesIntro,
   "weekly-odds": WeeklyOdds,
   horizons: Horizons,
   "keep-rule": KeepRule,
