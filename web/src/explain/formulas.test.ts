@@ -33,17 +33,59 @@ test("every formula's sample recomputes, step by step, from its inputs (#282)", 
   }
 });
 
+test("the spread samples divide by N, not N − 1, and the pool's impacts sum to zero", () => {
+  const pts = [1750, 1330, 1280, 980, 720];
+  const mean = pts.reduce((a, b) => a + b, 0) / pts.length;
+  const sumSq = pts.reduce((a, x) => a + (x - mean) ** 2, 0);
+  const spread = FORMULAS["pool-spread"].check();
+  assert.equal(fmt(spread[4], 1), fmt(Math.sqrt(sumSq / pts.length), 1));
+  assert.notEqual(fmt(spread[4], 1), fmt(Math.sqrt(sumSq / (pts.length - 1)), 1), "a sample SD would show another number");
+  assert.equal(FORMULAS["pool-spread"].given[0].value, "1,750, 1,330, 1,280, 980, 720", "step 1's five players");
+  const [p, , sumI, why] = FORMULAS["impact-spread"].check();
+  assert.equal(p, 0.5);
+  assert.equal(sumI, 0);
+  assert.equal(why, 0);
+});
+
 test("each formula is keyed by its own id", () => {
   for (const [id, f] of Object.entries(FORMULAS)) assert.equal(f.id, id);
 });
 
-test("the pool example agrees with the z-score and impact formulas", () => {
-  for (const r of exampleRows("draft", "pool")) {
-    const [pts, z, m, a, imp, zfg] = r.slice(1).map(num);
-    assert.equal(fmt((pts - 1150) / 380, 2), fmt(z, 2), r[0]);
-    assert.equal(fmt(m - 0.47 * a, 1), fmt(imp, 1), r[0]);
-    assert.equal(fmt((m - 0.47 * a) / 40, 2), fmt(zfg, 2), r[0]);
+test("the pool example's passes recompute: one player crosses at pass 2, pass 3 holds (#282)", () => {
+  const rows = exampleRows("draft", "pool");
+  const players = rows.map((r) => ({ name: r[0], x: [num(r[1]), num(r[2])] }));
+  // As projections/zscores.py: each pass takes every category's mean and population spread over
+  // the pool, rescores everyone, and keeps the top pool-size by total.
+  const stats = (pool: number[], c: number) => {
+    const xs = pool.map((i) => players[i].x[c]);
+    const mean = xs.reduce((a, b) => a + b, 0) / xs.length;
+    return { mean, sd: Math.sqrt(xs.reduce((a, x) => a + (x - mean) ** 2, 0) / xs.length) };
+  };
+  let pool = players.map((_, i) => i);
+  let before: Set<number> | null = null;
+  const seen: { mean: number; sd: number }[] = [];
+  const ptsZ: number[] = [];
+  const totals: number[][] = [];
+  for (let k = 0; k < 3; k++) {
+    const st = [stats(pool, 0), stats(pool, 1)];
+    seen.push(st[0]);
+    const total = players.map((p) => st.reduce((a, s, c) => a + (p.x[c] - s.mean) / s.sd, 0));
+    totals.push(total);
+    ptsZ.push((players[4].x[0] - st[0].mean) / st[0].sd);
+    const kept = new Set([...total.keys()].sort((a, b) => total[b] - total[a]).slice(0, 4));
+    rows.forEach((r, i) => {
+      const mark = kept.has(i) ? (before && !before.has(i) ? "in" : "kept") : before?.has(i) ? "out" : "";
+      assert.equal(r[3 + k], mark ? `${fmt(total[i], 2)} ${mark}` : fmt(total[i], 2), `${r[0]}, pass ${k + 1}`);
+    });
+    before = kept;
+    pool = [...kept];
   }
+  const marks = rows.map((r) => r.slice(3).join(" "));
+  assert.equal(marks.filter((m) => / in$| in /.test(m)).length, 1, "one player crosses in");
+  assert.equal(marks.filter((m) => / out/.test(m)).length, 1, "and one out, at pass 2");
+  const text = JSON.stringify(TRACKS.find((t) => t.id === "draft")?.steps.find((s) => s.id === "pool")?.example?.read);
+  for (const said of [fmt(seen[1].mean), fmt(seen[1].sd), fmt(ptsZ[0], 2), fmt(ptsZ[1], 2), fmt(totals[1][4], 2), fmt(totals[1][3], 2)])
+    assert.ok(text.includes(said), `the reading says ${said}`);
 });
 
 test("the survival example agrees with the ADP formula", () => {

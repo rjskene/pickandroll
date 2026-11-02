@@ -64,7 +64,7 @@ const zscore: Formula = (() => {
       { sym: sub(v("x"), [v("p"), ",", v("c")]), meaning: "his projected total in c over the horizon" },
       { sym: sub(v("x̄"), v("c")), meaning: "the pool's mean total in c" },
       { sym: sub(v("s"), v("c")), meaning: "the pool's spread in c: its standard deviation over the pool" },
-      { sym: "pool", meaning: "as many players as the league's rosters hold, by total z, rescored until it settles" },
+      { sym: "pool", meaning: "as many players as the league's rosters hold, by total z, found in three passes" },
       { sym: "TO", meaning: "turnovers: the sign flips, so higher is better in every category" },
     ],
     given: [
@@ -112,6 +112,102 @@ const impact: Formula = (() => {
     ],
     check: () => [I.p * I.a, I.m - I.p * I.a, (I.m - I.p * I.a) / I.s],
     source: "projections/zscores.py under src/",
+  };
+})();
+
+const poolSpread: Formula = (() => {
+  // Step 1's five players, taken as a toy pool of five.
+  const X = [1750, 1330, 1280, 980, 720];
+  const N = X.length;
+  const total = X.reduce((a, b) => a + b, 0);
+  const mean = total / N;
+  const gaps = X.map((x) => x - mean);
+  const ss = gaps.reduce((a, g) => a + g * g, 0);
+  const xpc = sub(v("x"), [v("p"), ",", v("c")]);
+  const xbar = sub(v("x̄"), v("c"));
+  // A square drops the sign, so the gaps print as sizes: the line fits a phone.
+  const sq = (g: number): MathNode => sup(fmt(Math.abs(g)), "2");
+  const plus = (xs: MathNode[]): MathNode => xs.flatMap((x, i) => (i ? ["+", x] : [x]));
+  return {
+    id: "pool-spread",
+    name: "The pool's mean and spread of a count",
+    what: "Per counting category, the pool's average total and its population standard deviation: divided by N",
+    lines: [
+      [xbar, "=", frac("1", v("N")), big("Σ", v("p")), xpc],
+      [sub(v("s"), v("c")), "=", sqrt([frac("1", v("N")), big("Σ", v("p")), sup(par([xpc, "−", xbar]), "2")])],
+    ],
+    vars: [
+      { sym: xpc, meaning: "player p's projected total in category c" },
+      { sym: big("Σ", v("p")), meaning: "over the pool's players only; everyone else is scored against them, not counted" },
+      { sym: v("N"), meaning: "the pool's size: every roster's worth, 156 for 12 teams of 13" },
+      { sym: xbar, meaning: "the pool's mean total in c" },
+      { sym: sub(v("s"), v("c")), meaning: "the population standard deviation: divided by N, not N − 1; the pool is all of it" },
+      { sym: [sub(v("s"), v("c")), " = 0"], meaning: "a category the whole pool ties in: 1 is used, so a score never divides by zero" },
+    ],
+    given: [
+      { sym: v("x"), value: X.map((x) => fmt(x)).join(", "), say: "points for Players A to E: a toy pool of five" },
+      { sym: v("N"), value: fmt(N), say: "the pool's size" },
+    ],
+    steps: [
+      step("the pool's points, summed", plus(X.map((x) => fmt(x))), 6060, dp(0)),
+      step("the mean: divided by N", frac(fmt(total), fmt(N)), 1212, dp(0)),
+      step("each gap to the mean, squared (a square drops the sign), summed", plus(gaps.map(sq)), 603880, dp(0)),
+      step("the mean square: divided by N, not N − 1", frac(fmt(ss), fmt(N)), 120776, dp(0)),
+      step("the spread: its square root", sqrt(fmt(ss / N)), 347.5, dp(1)),
+    ],
+    check: () => [total, mean, ss, ss / N, Math.sqrt(ss / N)],
+    source: "projections/zscores.py · zscores, _safe_std under src/",
+  };
+})();
+
+const impactSpread: Formula = (() => {
+  // Made-up shooting for a toy pool of five, A to E: 2,240 makes on 4,480 attempts.
+  const M = [610, 520, 460, 350, 300];
+  const A = [1240, 980, 990, 760, 510];
+  const N = M.length;
+  const sm = M.reduce((a, b) => a + b, 0);
+  const sa = A.reduce((a, b) => a + b, 0);
+  const p = sm / sa;
+  const I = M.map((m, i) => m - p * A[i]);
+  const ss = I.reduce((a, x) => a + x * x, 0);
+  const Ip = sub(v("I"), v("p"));
+  const sum = (x: MathNode): MathNode => [big("Σ", v("p")), x];
+  const sq = (x: number): MathNode => sup(fmt(Math.abs(x)), "2");
+  const signed = (xs: number[]): MathNode => xs.flatMap((x, i) => (i === 0 ? [fmt(x)] : [x < 0 ? "−" : "+", fmt(Math.abs(x))]));
+  return {
+    id: "impact-spread",
+    name: "The spread of impact, for a percentage",
+    what: "The pool's percentage sets each impact; the impacts average to zero, so the spread is their root mean square",
+    lines: [
+      [v("p̄"), "=", frac(sum(sub(v("m"), v("p"))), sum(sub(v("a"), v("p")))), "    ", Ip, "=", sub(v("m"), v("p")), "−", v("p̄"), "·", sub(v("a"), v("p"))],
+      [sum(Ip), "=", sum(sub(v("m"), v("p"))), "−", v("p̄"), "·", sum(sub(v("a"), v("p"))), "=", "0"],
+      [sub(v("s"), v("I")), "=", sqrt([frac("1", v("N")), big("Σ", v("p")), sup(Ip, "2")])],
+    ],
+    vars: [
+      { sym: Ip, meaning: "player p's impact: his makes above a pool-average shooter on his own attempts" },
+      { sym: [sub(v("m"), v("p")), ", ", sub(v("a"), v("p"))], meaning: "his makes and his attempts over the horizon" },
+      { sym: v("p̄"), meaning: "the pool's percentage: all its makes over all its attempts" },
+      { sym: [sum(Ip), " = 0"], meaning: "the percentage times the pool's attempts is the pool's makes, so the mean impact is zero" },
+      { sym: v("N"), meaning: "the pool's size, as for a count" },
+      { sym: sub(v("s"), v("I")), meaning: "the spread of impact: the population standard deviation, its mean being zero" },
+      { sym: [sub(v("s"), v("I")), " = 0"], meaning: "no spread at all: 1 is used, as for a count" },
+    ],
+    given: [
+      { sym: v("m"), value: M.map((x) => fmt(x)).join(", "), say: "field goals made by Players A to E: a toy pool of five" },
+      { sym: v("a"), value: A.map((x) => fmt(x)).join(", "), say: "their field goals attempted" },
+      { sym: v("N"), value: fmt(N), say: "the pool's size" },
+    ],
+    steps: [
+      step(`the pool's percentage: its ${fmt(sm)} makes over its ${fmt(sa)} attempts`, frac(fmt(sm), fmt(sa)), 0.5, dp(3)),
+      step(`Player E's impact; A to D the same way: ${I.slice(0, 4).map((x) => fmt(x)).join(", ")}`, [fmt(M[4]), "−", fmt(p, 3), "·", fmt(A[4])], 45, dp(0)),
+      step("the five impacts, summed", signed(I), 0, dp(0)),
+      step("why zero: the pool's makes less its percentage times its attempts", [fmt(sm), "−", fmt(p, 3), "·", fmt(sa)], 0, dp(0)),
+      step("the impacts squared (a square drops the sign), summed", I.flatMap((x, i) => (i ? ["+", sq(x)] : [sq(x)])), 5150, dp(0)),
+      step("the mean square: divided by N, not N − 1", frac(fmt(ss), fmt(N)), 1030, dp(0)),
+      step("the spread of impact: its square root", sqrt(fmt(ss / N)), 32.1, dp(1)),
+    ],
+    check: () => [p, I[4], I.reduce((a, b) => a + b, 0), sm - p * sa, ss, ss / N, Math.sqrt(ss / N)],
+    source: "projections/zscores.py · zscores, _safe_std under src/",
   };
 })();
 
@@ -504,6 +600,8 @@ const executesAt: Formula = (() => {
 export const FORMULAS: Record<FormulaId, Formula> = {
   zscore,
   impact,
+  "pool-spread": poolSpread,
+  "impact-spread": impactSpread,
   "league-blend": leagueBlend,
   "adp-survival": adpSurvival,
   ecw,

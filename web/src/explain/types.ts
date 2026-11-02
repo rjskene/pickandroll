@@ -15,7 +15,7 @@ export interface Bullet {
 /** The figure beside a step's bullets, by name; the screen maps each name to its component. */
 export type FigureId =
   | "export-row"
-  | "pool-bars"
+  | "pool-passes"
   | "survival"
   | "objective"
   | "plan"
@@ -120,6 +120,8 @@ export type MathNode =
 export type FormulaId =
   | "zscore"
   | "impact"
+  | "pool-spread"
+  | "impact-spread"
   | "league-blend"
   | "adp-survival"
   | "ecw"
