@@ -20,6 +20,8 @@ or read beyond a count of elements.
 from __future__ import annotations
 
 import contextlib
+import hashlib
+import shutil
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -48,6 +50,11 @@ SELECT_WAIT_S = 4.0
 REFRESH_WAIT_S = 5.0
 SCREENS_KEPT = 20
 WINDOW = "1440,900"
+#: The profile keeps the extension's background worker compiled in this folder and runs that
+#: copy on every launch: ``--load-extension`` reads the manifest and the content scripts from
+#: the checkout again, never the worker. Dropped when the extension's files changed (the stamp).
+WORKER_CACHE = Path("Default") / "Service Worker"
+EXTENSION_STAMP = ".pickandroll-extension"
 
 #: One select per call, no sleep inside: the option by its trimmed text, a bubbling change.
 SET_SELECT_JS = (
@@ -213,6 +220,7 @@ class ChromiumBrowser:
         self.profile.chmod(0o700)
         empty(self.downloads)
         prune(self.screens, SCREENS_KEPT)
+        fresh_worker(self.profile, self.extension)
         self._pw, self._context = self.launch(self.profile, self.extension, self.headless)
         pages = list(self._context.pages)
         self._page = pages[0] if pages else self._context.new_page()
@@ -342,6 +350,36 @@ def empty(folder: Path) -> None:
     for p in folder.iterdir():
         if p.is_file():
             p.unlink()
+
+
+def extension_stamp(extension: Path) -> str:
+    """A hash of every file of the extension folder, its tests left out: what it changes with."""
+    h = hashlib.sha256()
+    for p in sorted(extension.rglob("*")):
+        rel = p.relative_to(extension)
+        if p.is_file() and rel.parts[0] != "test":
+            h.update(rel.as_posix().encode() + b"\0" + p.read_bytes() + b"\0")
+    return h.hexdigest()
+
+
+def fresh_worker(profile: Path, extension: Path) -> bool:
+    """The profile's compiled copy of the extension's worker dropped when the extension changed
+    since the stamp (or there is no stamp): the launch then registers the worker from the
+    checkout. The sign-ins and the extension's own records live elsewhere in the profile and are
+    kept. On 2026-11-02 the droplet ran the worker of 2026-10-29 under extension 0.11.2, without
+    the live lineup run's messages, and every live lineup run was skipped. Answers whether it
+    dropped the copy."""
+    stamp = profile / EXTENSION_STAMP
+    now_ = extension_stamp(extension)
+    try:
+        was = stamp.read_text().strip()
+    except OSError:
+        was = ""
+    if was == now_:
+        return False
+    shutil.rmtree(profile / WORKER_CACHE, ignore_errors=True)
+    stamp.write_text(now_ + "\n")
+    return True
 
 
 def prune(folder: Path, keep: int) -> None:
