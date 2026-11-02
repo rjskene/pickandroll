@@ -13,6 +13,8 @@ import {
   landingKeys,
   queueKeys,
   explainKeys,
+  EXPLAIN_SHEET,
+  modChord,
   DEFAULT_VIEWS,
   openCard,
   parseDrawer,
@@ -584,6 +586,43 @@ test("the Explain screen's arrows walk the steps, g, a and [ toggle, and fields 
   assert.deepEqual([n.closed, n.back], [1, 0]);
   assert.equal(handleKey(key("Escape"), api(false)), true);
   assert.deepEqual([n.closed, n.back], [1, 1]);
+});
+
+test("⌘B (Ctrl+B off a Mac) toggles the rail as [ does, but not while typing (#282)", () => {
+  let rail = 0;
+  let sheet = true;
+  const api = explainKeys({
+    prev: () => {},
+    next: () => {},
+    back: () => {},
+    glossaryOpen: false,
+    closeGlossary: () => {},
+    toggleGlossary: () => {},
+    popOpen: false,
+    closePop: () => {},
+    toggleExample: () => {},
+    toggleAll: () => {},
+    toggleRail: () => rail++,
+    sheetOpen: true,
+    setSheetOpen: (open) => (sheet = open),
+  });
+  assert.equal(handleKey(key("b", { metaKey: true }), api, true), true);
+  assert.equal(sheet, false, "a chord used from the key sheet closes it");
+  assert.equal(handleKey(key("b", { ctrlKey: true }), api, false), true);
+  assert.equal(handleKey(key("B", { metaKey: true }), api, true), true, "caps lock");
+  assert.equal(handleKey(key("b", { metaKey: true, target: checkbox }), api, true), true, "a focused checkbox has no chord of its own");
+  assert.equal(rail, 4);
+  assert.equal(handleKey(key("b", { ctrlKey: true }), api, true), false, "Ctrl+B on a Mac is not the chord");
+  assert.equal(handleKey(key("b", { metaKey: true }), api, false), false, "nor the Windows key elsewhere");
+  assert.equal(handleKey(key("b", { metaKey: true, target: field }), api, true), false, "a text field keeps its ⌘B");
+  assert.equal(handleKey(key("b", { metaKey: true, shiftKey: true }), api, true), false, "⌘⇧B stays the browser's");
+  assert.equal(handleKey(key("b", { metaKey: true, altKey: true }), api, true), false);
+  assert.equal(handleKey(key("c", { metaKey: true }), api, true), false, "a chord the screen does not use stays the browser's");
+  assert.equal(handleKey(key("b"), api, true), false, "a plain b is not a key here");
+  assert.equal(rail, 4);
+  assert.deepEqual([modChord("B", true), modChord("B", false)], ["⌘B", "Ctrl+B"]);
+  const row = EXPLAIN_SHEET.groups.flatMap((g) => g.rows).find(([keys]) => keys.includes("["));
+  assert.ok(row && row[0].includes(modChord("B")), "the Keys sheet lists the chord beside [");
 });
 
 test("e opens the step's example and Esc closes it before the glossary (#282)", () => {

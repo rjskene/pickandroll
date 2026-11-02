@@ -1,8 +1,9 @@
 // The Explain screen (#282, #283): a walkthrough of the draft, the moves and the day, one step
 // a screen. One bar on top holds the app's lead, the track control, "Read it all", the glossary,
 // the keys and the ← / → arrows; the step rail beside the card doubles as the diagram of the
-// whole (a chip row on a phone), and folds to its numbers with `[`, kept per browser. The popouts
-// (a step's worked example, a bullet's formula), and the place kept in the URL hash (#draft/3).
+// whole (a chip row on a phone), and folds to its numbers with `[` or ⌘B (Ctrl+B off a Mac),
+// kept per browser. The popouts (a step's worked example, a bullet's formula), and the place
+// kept in the URL hash (#draft/3).
 import { useCallback, useEffect, useRef, useState } from "react";
 import { EXPLAIN_SHEET, explainKeys } from "../keys";
 import { useHotkeys } from "../useKeys";

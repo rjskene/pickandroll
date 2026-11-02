@@ -163,6 +163,15 @@ function focus(target: unknown): { tag: string; typing: boolean; control: boolea
   };
 }
 
+/** Whether this browser runs on a Mac, where ⌘ is the command key; Ctrl is elsewhere. */
+export const MAC = typeof navigator !== "undefined" && /Mac|iPhone|iPad|iPod/.test(navigator.platform || navigator.userAgent || "");
+
+/** A chord with the command key as a key chip or a tooltip shows it: "⌘B" on a Mac, "Ctrl+B"
+ * elsewhere. */
+export function modChord(k: string, mac: boolean = MAC): string {
+  return mac ? `⌘${k}` : `Ctrl+${k}`;
+}
+
 /** A screen's keys: its card count, its sheet, what its digits and Esc do and its letters. */
 export interface KeyMap {
   /** The digits 1 to ``cards`` open a card (shifted: in the bottom half). */
@@ -175,12 +184,17 @@ export interface KeyMap {
   /** The other keys by ``KeyboardEvent.key``; a handler returning false leaves the key alone.
    * ``field`` is a form field with focus that letters reach (a time input, a checkbox). */
   keys: Record<string, (ctx: { control: boolean; field: boolean }) => boolean | void>;
+  /** Chords with the command key (⌘ on a Mac, Ctrl elsewhere) by the lower-case key, no Shift
+   * or Alt: taken while a button or a checkbox has focus, never while typing. */
+  mod?: Record<string, () => void>;
 }
 
 /** One keydown: true when a shortcut took it (the caller prevents the browser's default).
- * Letters are ignored while a field has focus; Esc leaves the field first. Any shortcut used
- * while the key sheet is open also closes the sheet, so keys can be tried from it. */
-export function handleKey(e: KeyLike, map: KeyMap): boolean {
+ * Letters are ignored while a field has focus; Esc leaves the field first. A command-key chord
+ * runs the map's `mod` entry unless text entry has focus; any other modified key is left to the
+ * browser. Any shortcut used while the key sheet is open also closes the sheet, so keys can be
+ * tried from it. */
+export function handleKey(e: KeyLike, map: KeyMap, mac: boolean = MAC): boolean {
   const f = focus(e.target);
   if (e.key === "Escape") {
     if (map.sheetOpen) map.setSheetOpen(false);
@@ -189,6 +203,14 @@ export function handleKey(e: KeyLike, map: KeyMap): boolean {
       if (f.control) f.blur();
       map.escape();
     }
+    return true;
+  }
+  const command = mac ? e.metaKey && !e.ctrlKey : e.ctrlKey && !e.metaKey;
+  if (command && !e.altKey && !e.shiftKey) {
+    const chord = f.typing ? undefined : map.mod?.[e.key.toLowerCase()];
+    if (!chord) return false;
+    chord();
+    if (map.sheetOpen) map.setSheetOpen(false);
     return true;
   }
   if (f.typing || e.metaKey || e.ctrlKey || e.altKey) return false;
@@ -691,6 +713,7 @@ export function explainKeys(x: ExplainApi): KeyMap {
       a: unlessField(x.toggleAll),
       "[": unlessField(x.toggleRail),
     },
+    mod: { b: x.toggleRail },
   };
 }
 
@@ -702,7 +725,7 @@ export const EXPLAIN_SHEET: Sheet = {
       rows: [
         [["←", "→"], "the step before or after; past a track's last step, the next track"],
         [["a"], "read it all: every step of the track on one page, the rail following the scroll"],
-        [["["], "fold the rail to its numbers, or open it; a number shows its step's name on hover, and this browser keeps the choice"],
+        [["[", modChord("B")], "fold the rail to its numbers, or open it; a number shows its step's name on hover, and this browser keeps the choice"],
       ],
     },
     {

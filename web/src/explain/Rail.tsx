@@ -3,12 +3,13 @@
 // filled, a row still to come dimmed; a click opens the step. A track's overview heads it with
 // an icon on its dot, so the steps keep their numbers from one. The daily rows carry their time of
 // day; the draft's loop is a dashed bracket from the room back to survival. The chevron at the top
-// (or `[`) folds it to a column of the dots, a row's label and time showing on hover or focus, and
-// the card takes the room. On a phone the rail is one row of chips under the app bar, scrolling
-// sideways inside itself, and the fold does not apply.
+// (or `[`, or ⌘B) folds it to a column of the dots, a row's label and time showing on hover or
+// focus, and the card takes the room. On a phone the rail is one row of chips under the app bar,
+// scrolling sideways inside itself, and the fold does not apply.
 import { useEffect, useRef } from "react";
 import type { CSSProperties } from "react";
 import { Chevron, OverviewIcon } from "../components/icons";
+import { modChord } from "../keys";
 import { railItems, railLoop, railTimed } from "./railModel";
 import type { Track } from "./types";
 
@@ -45,7 +46,7 @@ export default function Rail({ track, step, open, onGo, onToggle }: Props) {
           onClick={onToggle}
           aria-expanded={open}
           aria-label={open ? "Fold the step rail to its numbers" : "Open the step rail"}
-          title={open ? "Fold the rail to its numbers ([)" : "Open the rail ([)"}
+          title={`${open ? "Fold the rail to its numbers" : "Open the rail"} ([ or ${modChord("B")})`}
         >
           <Chevron dir={open ? "left" : "right"} />
         </button>
