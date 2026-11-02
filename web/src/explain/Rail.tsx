@@ -1,13 +1,14 @@
 // The step rail (#282, the side-rail header the user picked): the track's lede, then one row per
 // step down the left of the card, a number dot and a label, the current row lit, the past ones
-// filled, a row still to come dimmed; a click opens the step. The daily rows carry their time of
+// filled, a row still to come dimmed; a click opens the step. A track's overview heads it with
+// an icon on its dot, so the steps keep their numbers from one. The daily rows carry their time of
 // day; the draft's loop is a dashed bracket from the room back to survival. The chevron at the top
 // (or `[`) folds it to a column of the dots, a row's label and time showing on hover or focus, and
 // the card takes the room. On a phone the rail is one row of chips under the app bar, scrolling
 // sideways inside itself, and the fold does not apply.
 import { useEffect, useRef } from "react";
 import type { CSSProperties } from "react";
-import { Chevron } from "../components/icons";
+import { Chevron, OverviewIcon } from "../components/icons";
 import { railItems, railLoop, railTimed } from "./railModel";
 import type { Track } from "./types";
 
@@ -56,9 +57,9 @@ export default function Rail({ track, step, open, onGo, onToggle }: Props) {
               onClick={it.can ? () => onGo(it.i) : undefined}
               disabled={!it.can}
               aria-current={it.state === "cur" ? "step" : undefined}
-              title={open ? (it.can ? `${it.label}: step ${it.i + 1}` : `${it.label}: step ${it.i + 1}, still to come`) : undefined}
+              title={open ? `${it.label}${it.num === null ? "" : `: step ${it.num}`}${it.can ? "" : ", still to come"}` : undefined}
             >
-              <span className="ex-rail-dot">{it.i + 1}</span>
+              <span className="ex-rail-dot">{it.num ?? <OverviewIcon />}</span>
               <span className="ex-rail-txt">
                 {timed && <span className="ex-rail-time">{it.time ?? ""}</span>}
                 <span className="ex-rail-lbl">{it.label}</span>

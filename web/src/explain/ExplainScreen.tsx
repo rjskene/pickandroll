@@ -13,7 +13,7 @@ import { useLandingOrder } from "../components/landingOrder";
 import { OverviewStatus } from "../components/StatusLight";
 import { useNow } from "../components/YahooSync";
 import { GlossaryProvider, GlossarySheet } from "./Glossary";
-import { formatHash, move, nextLabel, parseHash } from "./nav";
+import { formatHash, move, nextLabel, parseHash, stepCount } from "./nav";
 import type { Place } from "./nav";
 import { FORMULAS } from "./formulas";
 import { PopProvider } from "./PopContext";
@@ -56,7 +56,8 @@ export default function ExplainScreen({ onBack, onProgress }: Props) {
   // The place lives in the hash, so a reload lands on the same step and the browser's back
   // button walks the steps.
   useEffect(() => {
-    if (location.hash !== formatHash(place)) history.replaceState(null, "", formatHash(place));
+    const hash = formatHash(place, TRACKS);
+    if (location.hash !== hash) history.replaceState(null, "", hash);
   }, [place]);
   useEffect(() => {
     const on = () => {
@@ -174,7 +175,7 @@ export default function ExplainScreen({ onBack, onProgress }: Props) {
             ←
           </button>
           <span className="ex-count" aria-live="polite">
-            {place.step + 1} of {track.labels.length}
+            {stepCount(track, place.step)}
           </span>
           <button className="primary" onClick={onNext} aria-label={done ? "Done: back to all leagues" : label.replace(/ →$/, "")} title={done ? "Done: back to all leagues" : `${label.replace(/ →$/, "")} (→)`}>
             {done ? "Done" : "→"}

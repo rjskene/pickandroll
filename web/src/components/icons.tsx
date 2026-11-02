@@ -303,6 +303,16 @@ export function ExplainIcon() {
   );
 }
 
+/** A track's overview on the explainer's step rail (#282): a folded map, the whole at a glance. */
+export function OverviewIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" {...stroke} aria-hidden="true">
+      <path d="M3 6.5l6-2.5 6 2.5 6-2.5v13.5l-6 2.5-6-2.5-6 2.5z" />
+      <path d="M9 4v13.5M15 6.5V20" />
+    </svg>
+  );
+}
+
 /** All leagues, the landing page (#253): four tiles in a 2×2 grid. */
 export function LeaguesIcon() {
   return (

@@ -1,9 +1,10 @@
 // One step's card (#283): the figure beside the bullets (two levels, terms underlined) and the
-// step's sources. The "step n of N" kicker heads the figure panel, the title and the Example
+// step's sources. The "step n of N" kicker ("overview" on a track's overview) heads the figure panel, the title and the Example
 // button (the step's worked example, #282) the text. The arrows that walk the steps sit in the
 // screen's control bar.
 import { Bullets } from "./Bullets";
 import { FIGURES } from "./figures";
+import { stepCount } from "./nav";
 import { useOpenPop } from "./PopContext";
 import type { Step, Track } from "./types";
 
@@ -15,13 +16,12 @@ interface Props {
 
 export default function StepCard({ track, step, index }: Props) {
   const Figure = FIGURES[step.figure];
-  const planned = track.labels.length;
   const openPop = useOpenPop();
   return (
     <section className={`ex-step${step.wide ? " wide" : ""}`} id={`ex-${track.id}-${step.id}`} aria-label={step.title}>
       <div className="ex-fig">
         <span className="ex-n">
-          step {index + 1} of {planned} · {step.kicker}
+          {step.intro ? "overview" : `step ${stepCount(track, index)}`} · {step.kicker}
         </span>
         <Figure />
       </div>

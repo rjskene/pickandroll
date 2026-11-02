@@ -89,6 +89,13 @@ test("a track with no steps, no title or two steps of one name is reported", () 
   assert.deepEqual(allViolations([twice], GLOSSARY), ["draft: 1 rail labels for 2 steps", 'draft: two steps named "s"']);
 });
 
+test("an overview comes first, labelled Overview on the rail", () => {
+  const late: Track = { ...track, labels: ["Overview", "b"], steps: [step({ id: "a" }), step({ id: "b", intro: true })] };
+  assert.deepEqual(allViolations([late], GLOSSARY), ['draft: "b" is an overview but not the first step']);
+  const named: Track = { ...track, labels: ["Start", "b"], steps: [step({ id: "a", intro: true }), step({ id: "b" })] };
+  assert.deepEqual(allViolations([named], GLOSSARY), ['draft: the overview\'s rail label is "Start"']);
+});
+
 test("every step has a worked example, fictional players only (#282)", () => {
   for (const t of TRACKS)
     for (const s of t.steps) {
