@@ -19,6 +19,7 @@ from pickandroll.routine.report import EXPORT_KINDS
 from pickandroll.routine.routines import WINDOWS, run
 from pickandroll.routine.steps import (
     IMPORTS,
+    drops_off,
     export_all,
     lineup_pages,
     monday_pages,
@@ -786,6 +787,66 @@ def test_monday_pages_try_the_needs_once_more_and_say_when_lineup_pages_did_not_
     assert ctx.report.find("private_pages").detail == "31822 needs no page"
     monday_pages(ctx, "http://api", ["252098 week 2: unchanged"], name="again")
     assert ctx.report.find("again").status == "skipped"
+
+
+def test_monday_pages_leave_this_weeks_lineup_pages_listed_without_calling_them_not_landed(
+    tmp_path,
+):
+    # #298, the droplet's first Monday (2026-11-02): every page landed, but the record lists my
+    # team page for each day of this week from today on every call (#107), so those stay listed
+    this_week = [f"{PRIVATE}/3?date=2026-11-0{d}" for d in range(2, 9)]
+    last_week = [f"{PRIVATE}/3?date=2026-10-{d}" for d in range(26, 32)] + [
+        f"{PRIVATE}/3?date=2026-11-01"
+    ]
+    lineup = this_week + last_week
+    first = f"31822 week 2: recorded; lineup pages (14): {' '.join(lineup)}"
+    landed = f"31822 week 2: revised; lineup pages (7): {' '.join(this_week)}"
+    browser = ScriptedBrowser(tmp_path)
+    ctx = make_ctx(
+        FakeAPI(base_answers()),
+        Clock("2026-11-02 06:04"),
+        tmp_path,
+        routine="monday",
+        browser=browser,
+    )
+    ctx.run_script = lambda args: (0, landed + "\n", "")
+    monday_pages(ctx, "http://api", [first])
+    assert [u for u, _ in browser.opened] == lineup
+    step = ctx.report.find("private_pages")
+    assert step.status == "ok", step.detail
+    assert step.detail == "0 needed pages opened in 0 round(s), 14 lineup, 0 schedule; 0 left"
+    assert step.data["not_landed"] == [] and ctx.report.alerts == []
+
+    # a day of the recorded week still listed after its page was opened did not land
+    stale = f"31822 week 2: revised; lineup pages (8): {' '.join(this_week)} {PRIVATE}/3?date=2026-10-31"
+    browser = ScriptedBrowser(tmp_path)
+    ctx = make_ctx(
+        FakeAPI(base_answers()),
+        Clock("2026-11-02 06:04"),
+        tmp_path,
+        routine="monday",
+        browser=browser,
+    )
+    ctx.run_script = lambda args: (0, stale + "\n", "")
+    monday_pages(ctx, "http://api", [first])
+    step = ctx.report.find("private_pages")
+    assert step.status == "failed"
+    assert step.detail.endswith("; lineup pages did not land: 1 still needed")
+    assert step.data["not_landed"] == [f"{PRIVATE}/3?date=2026-10-31"]
+    assert ctx.report.alerts == [
+        "the private league's lineup pages did not land at the Monday recorder"
+    ]
+
+
+def test_a_lineup_page_drops_off_when_it_is_the_settings_page_or_a_day_before_today():
+    from datetime import date
+
+    today = date(2026, 11, 2)
+    assert drops_off(f"{PRIVATE}/settings", today)
+    assert drops_off(f"{PRIVATE}/3?date=2026-11-01", today)
+    assert not drops_off(f"{PRIVATE}/3?date=2026-11-02", today)
+    assert not drops_off(f"{PRIVATE}/3?date=2026-11-08", today)
+    assert drops_off(f"{PRIVATE}/3?date=2026-13-40", today)  # unreadable: counted, never hidden
 
 
 def test_the_monday_routine_runs_the_pages_between_the_record_and_its_retry(tmp_path):
