@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type {
   AutopilotView,
+  MatchupPlayer,
+  MatchupTeamLines,
   AvailableRow,
   BestMove,
   BestSetLine,
@@ -93,6 +95,12 @@ import {
   placeLabel,
   scoreLabel,
   matchupOddsCell,
+  lineValue,
+  matchupLineView,
+  pctTitle,
+  playerGames,
+  playerLine,
+  teamRows,
   daysLeftLabel,
   chipTone,
   defaultWeek,
@@ -2320,4 +2328,52 @@ test("the landing's matchup odds are the Matchup view's hero, or a dash with why
   assert.deepEqual(matchupOddsCell(s, undefined, new Error("league 1 has no matchup of my team this week")), { text: "—", tone: "", title: "league 1 has no matchup of my team this week" });
   // A roster not read: the Matchup view's warning, never a number that overstates a side.
   assert.deepEqual(matchupOddsCell(s, { ...m, rosters_read: [true, false] }, null), { text: "—", tone: "", title: "Theirs: roster not read, so it projects as empty and the odds overstate the other side." });
+});
+
+test("the players' line switch: Week total by default, each line's games, percentages from makes and attempts (#304)", () => {
+  assert.equal(matchupLineView(null), "total");
+  assert.equal(matchupLineView("so_far"), "so_far");
+  assert.equal(matchupLineView("average"), "total");
+  const r: MatchupPlayer = {
+    player: 1,
+    slot: "PG",
+    games: 3,
+    started: 2,
+    per_game: { pts: 20, fg_pct: 0.5 },
+    cats: 0.2,
+    matchup: 0.03,
+    so_far: { pts: 12, fgm: 5, fga: 9, fg_pct: 5 / 9, games: 1, why: null },
+    rest: { pts: 40, fgm: 15, fga: 30, fg_pct: 0.5, games: 3, started: 2 },
+    total: { pts: 52, fgm: 20, fga: 39, fg_pct: 20 / 39, games: 4 },
+  };
+  assert.deepEqual(
+    (["so_far", "rest", "total", "per_game"] as const).map((v) => playerGames(r, v)),
+    [1, 3, 4, 3],
+  );
+  assert.equal(playerLine(r, "per_game")?.pts, 20);
+  assert.equal(lineValue("pts", 12, "so_far"), "12");
+  assert.equal(lineValue("pts", 52, "total"), "52.0");
+  assert.equal(lineValue("fg_pct", 20 / 39, "total"), ".513");
+  assert.equal(lineValue("fg_pct", null, "total"), "—");
+  assert.equal(pctTitle("fg_pct", r.so_far, "so_far", null), "5/9");
+  assert.equal(pctTitle("fg_pct", r.total, "total", null), "20.0/39.0");
+  assert.equal(pctTitle("pts", r.total, "total", null), undefined);
+  // Not placed from the box scores: Yahoo's rounded figure, and the week total not known.
+  const why = "no box scores for him this week";
+  const so = { pts: 8, fg_pct: 0.5, fgm: null, fga: null, games: null, why };
+  assert.equal(pctTitle("fg_pct", so, "so_far", why), `Yahoo's rounded percentage, no attempts behind it: ${why}`);
+  assert.equal(pctTitle("fg_pct", { fg_pct: null, fgm: null, fga: null, games: null }, "total", why), `not known: the attempts so far are not (${why})`);
+});
+
+test("the team lines: Yahoo's count with the gap row so far, the rest, the projected final, none per game (#304)", () => {
+  const line = (pts: number) => ({ pts, games: 3 });
+  const t: MatchupTeamLines = { so_far: line(42), gap: line(10), rest: line(80), total: line(122) };
+  assert.deepEqual(teamRows(t, "so_far").map((x) => [x.label, x.line.pts]), [
+    ["Not on a player's row", 10],
+    ["Team, as Yahoo counts it", 42],
+  ]);
+  assert.equal(teamRows({ ...t, gap: null }, "so_far").length, 1);
+  assert.equal(teamRows(t, "rest")[0].line.pts, 80);
+  assert.equal(teamRows(t, "total")[0].label, "Team, projected final");
+  assert.deepEqual(teamRows(t, "per_game"), []);
 });

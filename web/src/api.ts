@@ -994,6 +994,27 @@ export interface MatchupPlayer {
   cats: number;
   /** The matchup odds he adds for his team. */
   matchup: number;
+  /** His week on this team so far, as Yahoo counts it (#304): makes, attempts and games from
+   * his box scores, or Yahoo's row as printed with ``why`` they could not be placed. */
+  so_far: MatchupSoFar;
+  /** The projection of his starts left (``games`` left, ``started`` of them); null: no rates. */
+  rest: MatchupLine | null;
+  /** The two added: a stat unknown in either half is null. */
+  total: MatchupLine;
+}
+
+/** A week line (#304): the stats, the percentages made over attempted and in a points league the
+ * fantasy points, with the games it counts; null where it is not known. */
+export type MatchupLine = Partial<Record<WeekStat | Cat, number | null>> & { games: number | null; started?: number };
+export type MatchupSoFar = MatchupLine & { why: string | null };
+
+/** A team's lines (#304): Yahoo's count so far, what of it is on no player's row (null when
+ * nothing), the projection of the rest and the projected final. */
+export interface MatchupTeamLines {
+  so_far: MatchupLine;
+  gap: MatchupLine | null;
+  rest: MatchupLine;
+  total: MatchupLine;
 }
 
 export interface MatchupPayload {
@@ -1021,6 +1042,10 @@ export interface MatchupPayload {
   /** The odds of winning the matchup (independent categories, a tie half). */
   win: number;
   players: { mine: MatchupPlayer[]; theirs: MatchupPlayer[] };
+  team_lines: { mine: MatchupTeamLines; theirs: MatchupTeamLines };
+  /** Finished days the matchup page was read before: in neither half, each side's games that
+   * day (mine first). */
+  unread: { day: string; games: [number, number] }[];
 }
 
 // ---------------------------------------------------------------- season view (#116)

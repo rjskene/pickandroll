@@ -982,11 +982,15 @@ class SeasonService:
         built = self._built(league, system)
         base, _ = self._base(league)
         today = nba_today(self.clock())
-        key = (league, system, "matchup", today, self._moves_stamp(league))
+        cache = self.data_dir / season_scorecard.BOXSCORES_DIR
+        # The box-score days cached so far (#304): a day landing re-places the week so far.
+        box = tuple(sorted(p.name for p in cache.glob("????-??-??.json")))
+        key = (league, system, "matchup", today, self._moves_stamp(league), box)
 
         def make() -> dict[str, Any] | None:
             season = Season.from_parts(base, load_parts(self.data_dir, league))
-            return season_matchup.payload(built, season)
+            lines = season_matchup.box_lines(cache, season, today)
+            return season_matchup.payload(built, season, lines)
 
         out = self.moves_cache.get(key, make)
         if out is None:
