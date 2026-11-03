@@ -764,6 +764,11 @@ def test_the_leagues_list_shows_each_folders_week_record_and_opponent(client):
         "Team 10",
     )
     assert mine["has_snapshot"] and mine["updated_at"] and mine["refresh"]["status"] == "done"
+    # The landing asks the Matchup view's odds in the system the views open on (#303).
+    assert (
+        mine["default_system"]
+        == client.get(f"/seasons/{LEAGUE}").json()["week_projection"]["default"]
+    )
     private = rows["100002"]
     assert (
         private["public"] is False and private["has_snapshot"] is False and private["name"] is None

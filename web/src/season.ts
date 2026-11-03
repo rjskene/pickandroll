@@ -26,6 +26,7 @@ import type {
   LineupRunLog,
   LineupStepLog,
   MatchKind,
+  MatchupPayload,
   MilpBlock,
   MoveAdds,
   MoveCandidate,
@@ -2013,6 +2014,28 @@ export function scoreLabel(s: Pick<SeasonSummary, "score" | "scoring">): string 
   if (!s.score) return "no score yet";
   const [mine, theirs] = s.score;
   return s.scoring === "points" ? `${round1(mine)}–${round1(theirs)}` : `${mine}-${theirs}`;
+}
+
+/** The landing's matchup odds in the "This week" cell (#303): the Matchup view's own hero number
+ * (its route, its system), "62% to win" toned as its pill; "—" with why when it cannot be
+ * projected, a roster not read in the view's own words; null while it loads, and for a points
+ * league (the landing hides those). */
+export function matchupOddsCell(
+  s: Pick<SeasonSummary, "scoring" | "my_team" | "opponent">,
+  m: Pick<MatchupPayload, "win" | "teams" | "rosters_read" | "system"> | undefined,
+  error: Error | null,
+): { text: string; tone: "good" | "bad" | ""; title: string } | null {
+  if (s.scoring === "points") return null;
+  const none = (title: string) => ({ text: "—", tone: "" as const, title });
+  if (!s.my_team) return none("No team of mine in this league: the Matchup view needs my team id in its settings.");
+  if (error) return none(error.message);
+  if (!m) return null;
+  if (m.rosters_read.includes(false)) {
+    const name = (id: number) => (id === s.my_team?.team_id ? s.my_team.name : id === s.opponent?.team_id ? s.opponent.name : `Team ${id}`);
+    const unread = m.teams.filter((_, i) => !m.rosters_read[i]).map(name);
+    return none(`${unread.join(" and ")}: roster not read, so it projects as empty and the odds overstate the other side.`);
+  }
+  return { text: `${oddsLabel(m.win)} to win`, tone: leanTone(m.win), title: `the odds of winning this week's matchup, as the Matchup view shows them (${m.system.label})` };
 }
 
 /** "4th of 12", my place in the standings. */

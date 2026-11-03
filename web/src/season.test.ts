@@ -92,6 +92,7 @@ import {
   toggleExpanded,
   placeLabel,
   scoreLabel,
+  matchupOddsCell,
   daysLeftLabel,
   chipTone,
   defaultWeek,
@@ -2303,4 +2304,20 @@ test("a standard league's claim reads its odds, priority and where a win sends m
 test("a league's Yahoo link is its main page, from the id alone (#278)", () => {
   assert.equal(yahooLeagueUrl("31822"), "https://basketball.fantasysports.yahoo.com/nba/31822");
   assert.equal(yahooLeagueUrl("100001"), "https://basketball.fantasysports.yahoo.com/nba/100001");
+});
+
+test("the landing's matchup odds are the Matchup view's hero, or a dash with why (#303)", () => {
+  const s = { scoring: "categories" as const, my_team: { team_id: 4, name: "Mine", record: null, rank: null }, opponent: { team_id: 9, name: "Theirs", record: null, rank: null } };
+  const m = { win: 0.624, teams: [4, 9] as [number, number], rosters_read: [true, true] as [boolean, boolean], system: { key: "bbm" as const, label: "Basketball Monster", as_of: null } };
+  // Projected: the hero's number, toned as its pill.
+  assert.deepEqual(matchupOddsCell(s, m, null), { text: "62% to win", tone: "good", title: "the odds of winning this week's matchup, as the Matchup view shows them (Basketball Monster)" });
+  assert.equal(matchupOddsCell(s, { ...m, win: 0.31 }, null)?.tone, "bad");
+  // Loading: nothing yet; a points league: no cell.
+  assert.equal(matchupOddsCell(s, undefined, null), null);
+  assert.equal(matchupOddsCell({ ...s, scoring: "points" }, m, null), null);
+  // Not projectable: no team of mine, or the route's refusal, with why in the title.
+  assert.deepEqual(matchupOddsCell({ ...s, my_team: null }, undefined, null), { text: "—", tone: "", title: "No team of mine in this league: the Matchup view needs my team id in its settings." });
+  assert.deepEqual(matchupOddsCell(s, undefined, new Error("league 1 has no matchup of my team this week")), { text: "—", tone: "", title: "league 1 has no matchup of my team this week" });
+  // A roster not read: the Matchup view's warning, never a number that overstates a side.
+  assert.deepEqual(matchupOddsCell(s, { ...m, rosters_read: [true, false] }, null), { text: "—", tone: "", title: "Theirs: roster not read, so it projects as empty and the odds overstate the other side." });
 });

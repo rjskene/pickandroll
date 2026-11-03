@@ -173,7 +173,14 @@ from . import (
     season_strategy,
     season_trades,
 )
-from .season_week import BBM_NEXT_WEEK, BBM_ROS, BBM_THIS_WEEK, NBA_TZ, week_projection
+from .season_week import (
+    BBM_NEXT_WEEK,
+    BBM_ROS,
+    BBM_THIS_WEEK,
+    DEFAULT_SYSTEM,
+    NBA_TZ,
+    week_projection,
+)
 
 SEASON_DIR = "season"
 STATE = "state.json"
@@ -2924,6 +2931,9 @@ def _summary(
         "updated_at": updated.isoformat() if updated else None,
         "sources": sources,
         "refresh": job.to_dict() if job else None,
+        # The system the season views open on: the landing asks the Matchup view's own odds in it
+        # (#303).
+        "default_system": DEFAULT_SYSTEM,
     }
 
 
