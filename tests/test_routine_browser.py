@@ -14,7 +14,14 @@ import pytest
 
 from pickandroll.routine import chromium
 from pickandroll.routine.browser import NO_BROWSER, refused
-from pickandroll.routine.chromium import BBM_CHECK, YAHOO_CHECK, ChromiumBrowser
+from pickandroll.routine.chromium import (
+    BBM_CHECK,
+    EXTENSION_STAMP,
+    WORKER_CACHE,
+    YAHOO_CHECK,
+    ChromiumBrowser,
+    fresh_worker,
+)
 from pickandroll.routine.report import EXPORT_KINDS
 from pickandroll.routine.routines import WINDOWS, run
 from pickandroll.routine.steps import (
@@ -220,6 +227,53 @@ def test_launch_makes_the_profile_private_empties_downloads_prunes_screens_and_n
     assert b.available() is False
     assert "serviceworker" in b.reason
     assert b.launch.made[0][1].closed and b.launch.made[0][0].stopped
+
+
+def test_the_worker_copy_in_the_profile_goes_when_the_extension_changed_and_only_then(tmp_path):
+    profile, ext = tmp_path / "profile", tmp_path / "ext"
+    (profile / WORKER_CACHE / "ScriptCache").mkdir(parents=True)
+    (profile / WORKER_CACHE / "ScriptCache" / "old").write_text("worker of 10-29")
+    (profile / "Default" / "Cookies").write_text("sign-ins")
+    (profile / "Default" / "Local Extension Settings").mkdir()
+    (ext / "test").mkdir(parents=True)
+    (ext / "manifest.json").write_text('{"version": "0.11.2"}')
+    (ext / "worker.js").write_text("const ops = {lineup_setting() {}};")
+    # No stamp yet (the droplet on 2026-11-02): the copy goes, the rest of the profile stays.
+    assert fresh_worker(profile, ext) is True
+    assert not (profile / WORKER_CACHE).exists()
+    assert (profile / "Default" / "Cookies").read_text() == "sign-ins"
+    assert (profile / "Default" / "Local Extension Settings").is_dir()
+    assert len((profile / EXTENSION_STAMP).read_text().strip()) == 64
+    # The browser compiles the worker again; the same extension keeps that copy.
+    (profile / WORKER_CACHE).mkdir(parents=True)
+    assert fresh_worker(profile, ext) is False and (profile / WORKER_CACHE).is_dir()
+    # A test of the extension is not the extension.
+    (ext / "test" / "lineup.test.js").write_text("test")
+    assert fresh_worker(profile, ext) is False and (profile / WORKER_CACHE).is_dir()
+    # A pull that changes any shipped file, the worker or a lib the worker imports: it goes.
+    (ext / "lib").mkdir()
+    (ext / "lib" / "startactive.js").write_text("self.PickAndRoll = {};")
+    assert fresh_worker(profile, ext) is True and not (profile / WORKER_CACHE).exists()
+    (profile / WORKER_CACHE).mkdir(parents=True)
+    (ext / "worker.js").write_text("const ops = {lineup_setting() {}, after_lineup_put() {}};")
+    assert fresh_worker(profile, ext) is True and not (profile / WORKER_CACHE).exists()
+
+
+def test_the_launch_drops_a_stale_worker_copy_before_the_browser_starts(tmp_path):
+    cache = tmp_path / "profile" / WORKER_CACHE
+    cache.mkdir(parents=True)
+    seen = []
+    b = browser_at(tmp_path, FakePage())
+    real = b.launch
+
+    def launch(profile, extension, headless):
+        seen.append(cache.exists())
+        return real(profile, extension, headless)
+
+    b.launch = launch
+    assert b.available()
+    assert seen == [False]  # gone before the launch
+    assert (tmp_path / "profile" / EXTENSION_STAMP).is_file()
 
 
 def test_signed_in_checks_each_site_once_and_opens_only_its_check_page(tmp_path):

@@ -13,7 +13,13 @@ import pytest
 from pickandroll.routine import CENTRAL, Context, Report, Unreachable, run
 from pickandroll.routine.report import MARKER_STEPS, marker
 from pickandroll.routine.routines import WINDOWS
-from pickandroll.routine.steps import Opening, behind_the_read, moves_plan, refresh_all
+from pickandroll.routine.steps import (
+    LINEUP_WAIT_S,
+    Opening,
+    behind_the_read,
+    moves_plan,
+    refresh_all,
+)
 
 YAHOO = "https://basketball.fantasysports.yahoo.com"
 PUBLIC = ["252098", "230585"]
@@ -626,6 +632,26 @@ def test_late_pass_resolves_only_the_leagues_it_opened_and_checks_the_light(tmp_
     assert resolved == ["/seasons/252098/moves", "/seasons/230585/moves"]
     assert report.find("resolve").status == "ok"
     assert report.find("status").status == "failed" and "230585" in report.find("status").detail
+
+
+def test_a_lineup_page_gets_thirty_seconds_so_a_live_set_is_never_cut_off(tmp_path):
+    # 2026-11-02 (#301): eight seconds left the extension four or five after its post, and five
+    # of nine live late runs were cut off mid-set when the tab went on to the next league.
+    assert LINEUP_WAIT_S == 30.0
+    api = FakeAPI(
+        base_answers()
+        | {
+            ("POST", "/autopilot/passes"): (200, {"id": "p"}),
+            ("POST", "/autopilot/passes/p/opening"): (200, {}),
+            ("POST", "/autopilot/passes/p/done"): (200, {}),
+        }
+    )
+    clock = Clock("2026-10-29 15:02")
+    browser = FakeBrowser(clock=clock)
+    ctx = make_ctx(api, clock, tmp_path, routine="late", browser=browser)
+    run("late", ctx, "http://api")
+    lineup = [(u, w) for u, w in browser.opened if "#pickandroll-lineup-late" in u]
+    assert len(lineup) == len(PUBLIC) and {w for _, w in lineup} == {30.0}
 
 
 # --------------------------------------------------------------------------- the Monday
