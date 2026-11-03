@@ -1,5 +1,6 @@
+import { useQuery } from "@tanstack/react-query";
 import type { KeyboardEvent, MouseEvent } from "react";
-import type { BestMove, SeasonSummary, StatusPayload } from "../api";
+import { api, type BestMove, type SeasonSummary, type StatusPayload } from "../api";
 import {
   addsLeft,
   addsNote,
@@ -10,6 +11,7 @@ import {
   gainLabel,
   isRefreshing,
   isStale,
+  matchupOddsCell,
   placeLabel,
   placeTone,
   refreshNote,
@@ -86,6 +88,17 @@ export function LeagueBlock(props: BlockProps) {
   const readNote = refreshNote(s.refresh) || `read ${ageLabel(s.updated_at, now)}`;
   const reason = recsReason(status, s.league);
   const panel = `lt-panel-${s.league}`;
+  // The Matchup view's own query (#303): its key, so the league page reuses the answer; after
+  // the first paint, never blocking it.
+  const system = s.default_system ?? "bbm";
+  const odds = useQuery({
+    queryKey: ["matchup", s.league, system, s.updated_at],
+    queryFn: () => api.matchup(s.league, system),
+    enabled: s.scoring !== "points" && Boolean(s.my_team) && s.has_snapshot,
+    retry: false,
+    staleTime: 60_000,
+  });
+  const cell = matchupOddsCell(s, odds.data, odds.error);
   const sub = [
     `${formatOf(s)}${pinned ? " · private" : ""}`,
     s.my_team?.name,
@@ -116,7 +129,17 @@ export function LeagueBlock(props: BlockProps) {
           <span className="big" title={s.scoring === "points" ? "this week's points so far, mine first" : "categories won so far this week, mine first"}>
             {scoreLabel(s)}
           </span>
-          <small>{s.opponent ? `vs ${s.opponent.name}` : "no opponent read"}</small>
+          <small>
+            {s.opponent ? `vs ${s.opponent.name}` : "no opponent read"}
+            {cell && (
+              <>
+                {" · "}
+                <span className={cell.text === "—" ? "muted" : `mu-pill ${cell.tone}`} title={cell.title}>
+                  {cell.text}
+                </span>
+              </>
+            )}
+          </small>
         </span>
         <span className={placeTone(s)}>{placeLabel(s)}</span>
         <span className={s.adds?.limit == null ? "muted" : ""} title={s.adds ? addsNote(s.adds) : undefined}>

@@ -773,6 +773,8 @@ export interface SeasonSummary {
   updated_at: string | null;
   sources: ("public" | "extension")[];
   refresh: SeasonRefresh | null;
+  /** The system the season views open on: the landing asks the Matchup view's odds in it (#303). */
+  default_system?: ProjectionSystem;
   error?: string;
   /** The landing grid's card (#108), once the league is read: this week's score so far, mine
    * first (categories won, or points); null before the matchup is read. */

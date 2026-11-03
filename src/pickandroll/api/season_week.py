@@ -288,6 +288,11 @@ def spans(
 
 
 # --------------------------------------------------------------------------- the view
+#: The projection system the season views open on (the Matchup view's hero, the landing's
+#: matchup odds, #303).
+DEFAULT_SYSTEM = "bbm"
+
+
 def week_projection(
     season: Season, today: date, data_dir: Path, weeks_ahead: int
 ) -> dict[str, Any]:
@@ -300,7 +305,7 @@ def week_projection(
     yahoo = yahoo_system(season)
     out: dict[str, Any] = {
         "systems": {"bbm": dict(bbm.info), "yahoo": dict(yahoo.info)},
-        "default": "bbm",
+        "default": DEFAULT_SYSTEM,
         "phi_source": wk.PHI_SOURCE,
         "weeks": [],
         "players": {},
