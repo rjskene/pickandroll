@@ -13,5 +13,5 @@ is the runbook (bootstrap, the sign-in, the soak, cut-over, rollback).
 | `pickandroll-alert@.service`, `alert.sh` | a failed unit posted to ntfy and the ops issue |
 | `pickandroll-watchdog.service/.timer`, `watchdog.sh` | 06:45: the daily marker, the API, the Mac copy's age |
 | `install.sh` | the setup, the dashboard's build (`web/dist`, served by the API under `/app` for the tailnet); `--soak`, `--cutover`, `--stop` for the timers |
-| `update.sh` | the guarded fast-forward after a merge: `main`, the dashboard rebuilt when `web/` changed, the API restarted when `src/` changed, the cut-over's old `--skip-solve 31822` dropped from `routine.env` (#306) |
+| `update.sh` | the guarded fast-forward after a merge: `main`, the dashboard rebuilt when `web/` changed, the API restarted when `src/` changed |
 | `signin.sh`, `signin_browser.py` | the user's sign-in into the browser profile, driven from the Mac by `ops/mac/signin.sh` |

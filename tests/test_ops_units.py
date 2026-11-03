@@ -269,7 +269,6 @@ case "$*" in *build*) mkdir -p dist && echo built > dist/index.html ;; esac
         bin_dir,
         PICKANDROLL_REPO=str(repo),
         PICKANDROLL_API="http://127.0.0.1:8000",
-        PICKANDROLL_CONF=str(tmp_path / "conf"),
         XDG_RUNTIME_DIR="/tmp",
     )
     return repo, seed, log, env
@@ -346,30 +345,6 @@ def test_update_restarts_on_request_and_fails_when_the_api_does_not_answer(updat
     assert "systemctl --user restart pickandroll-api.service" in log.read_text()
     done = run(VM / "update.sh", {**env, "FAKE_SEASONS_CODE": "503"}, "--restart")
     assert done.returncode == 1 and "api: restarted, GET /seasons 503" in done.stdout
-
-
-def test_update_drops_the_cutovers_skip_solve_once_and_leaves_any_other_routine_env(
-    update,
-) -> None:
-    # #306: the API keeps every solve to its budget, so the cut-over's line is emptied.
-    _repo, _seed, _log, env = update
-    conf = Path(env["PICKANDROLL_CONF"])
-    conf.mkdir()
-    flags = conf / "routine.env"
-    flags.write_text("ROUTINE_FLAGS=--skip-solve 31822\n")
-    done = run(VM / "update.sh", env)
-    assert done.returncode == 0, done.stdout + done.stderr
-    assert "routine.env: --skip-solve 31822 dropped" in done.stdout
-    assert flags.read_text() == "ROUTINE_FLAGS=\n"
-    done = run(VM / "update.sh", env)
-    assert "routine.env" not in done.stdout and flags.read_text() == "ROUTINE_FLAGS=\n"
-    # A routine.env written otherwise is the user's: left as it is.
-    for own in ("ROUTINE_FLAGS=--no-post --skip-solve 31822\n", "ROUTINE_FLAGS=--no-post\n"):
-        flags.write_text(own)
-        done = run(VM / "update.sh", env)
-        assert "routine.env" not in done.stdout and flags.read_text() == own
-    flags.unlink()
-    assert run(VM / "update.sh", env).returncode == 0 and not flags.exists()
 
 
 def test_update_says_when_npm_is_missing(update) -> None:

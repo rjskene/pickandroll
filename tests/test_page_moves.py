@@ -138,9 +138,7 @@ def test_a_routine_call_on_newer_inputs_waits_for_its_solve_and_logs_it(client, 
     assert len(made) == 2 and "built_at" not in e
 
 
-def test_a_page_look_with_no_answer_of_today_answers_solving_and_never_waits(
-    client, monkeypatch
-):
+def test_a_page_look_with_no_answer_of_today_answers_solving_and_never_waits(client, monkeypatch):
     made = solves(monkeypatch)
     later = Later()
     client.app.state.seasons.page_solves = later

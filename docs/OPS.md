@@ -25,7 +25,7 @@ copied to the Mac; the routines open pages and the extension acts, no session cl
 | the extension's worker | the profile keeps a compiled copy of the extension's background worker (`Default/Service Worker`) and runs it on every launch: `--load-extension` reads the manifest and the content scripts from the checkout again, never the worker. The runner drops that folder before a launch whenever the extension's files changed since the stamp in the profile (`.pickandroll-extension`); the sign-ins and the extension's own records are kept. Until that guard, the droplet ran the worker of 2026-10-29 under extension 0.11.2, and the first live late pass (2026-11-02) skipped every lineup set with "no answer from the extension" (#301) |
 | a lineup page | open thirty seconds (`LINEUP_WAIT_S`, as for Start Active): the extension posts the page about four seconds in, then sets each change and reads Yahoo's answer before the next. Eight seconds cut five of nine live late runs off mid-set on 2026-11-02 (#301); a run cut off leaves its record unlogged, the next visit logs it as failed a minute later, and the same pass does not set that league again that day |
 | settings | `~/.config/pickandroll/`: `ntfy_topic`, `ops_issue`, `routine.env` (the user's files; `install.sh` writes a README there) |
-| the moves solve | every league's, the private one's included, keeps to the moves budget (`moves_budget_s` in the autopilot settings file, 90 s by default, read at each solve: no restart) and answers the best sets found by then, its `search.note` saying how many searches finished; a solve whose client went stops and is never kept, and the Moves view never waits on one (#306). Measured 2026-11-03: the private league's solve takes 13.6 s here against 3.7 s on the Mac (each evaluation about four times slower on this host), the largest public league's 6.1 s. Before the budget, `--skip-solve 31822` in `ROUTINE_FLAGS` left that league's solve out here, after a run of 2026-10-29 went thirty minutes without finishing; `update.sh` drops the cut-over's line from `routine.env` |
+| the moves solve | every league's, the private one's included, keeps to the moves budget (`moves_budget_s` in the autopilot settings file, 90 s by default, read at each solve: no restart) and answers the best sets found by then, its `search.note` saying how many searches finished; a solve whose client went stops and is never kept, and the Moves view never waits on one (#306). Measured 2026-11-03: the private league's solve takes 13.6 s here against 3.7 s on the Mac (each evaluation about four times slower on this host), the largest public league's 6.1 s. Before the budget, `--skip-solve 31822` in `ROUTINE_FLAGS` left that league's solve out here, after a run of 2026-10-29 went thirty minutes without finishing; once #306 merged, the cut-over's `ROUTINE_FLAGS=--skip-solve 31822` in `routine.env` was emptied by hand on this host, the file before kept beside it as `routine.env.pre-306` |
 
 `systemctl --user` over ssh needs the user manager's environment:
 
@@ -233,8 +233,8 @@ Only with `GET http://127.0.0.1:8000/rooms` answering `[]` on both hosts, in thi
 
 4. Droplet: `~/pickandroll/ops/vm/install.sh --cutover` (`ROUTINE_FLAGS` empty: the digests
    and recorder comments post again, every league solved within the moves budget (§1; on
-   2026-11-02 it still wrote `--skip-solve 31822`, which `update.sh` drops since #306), the
-   timers on). It sets no mode: the copy carries the Mac's switches, and any change is the
+   2026-11-02 it still wrote `--skip-solve 31822`, emptied by hand after #306, §1), the timers
+   on). It sets no mode: the copy carries the Mac's switches, and any change is the
    user's own click on the dashboard. A timer whose time the pull changed runs once as soon as
    it is enabled (`Persistent=true` counts the new time's last occurrence as missed): on
    2026-11-02 the morning unit, 07:45 to 09:15, ran at 08:15 and found nothing due before the
