@@ -181,3 +181,44 @@ def test_two_callers_of_one_key_wait_on_one_solve_and_log_one_entry(client, monk
         t.join(10)
     assert len(made) == 1 and len(out) == 2 and out[0] is out[1]
     assert len(logged(client)) == 1
+
+
+def moves_row(client) -> dict:
+    """The light's moves row of the season tests' league (#153)."""
+    leagues = client.get("/seasons/status").json()["leagues"]
+    [league] = [lg for lg in leagues if lg["league"] == LEAGUE]
+    return league["recommendations"]["rows"][0]
+
+
+def test_the_light_counts_a_page_solve_on_the_current_inputs_and_logs_nothing(client):
+    """#305: the routine's logged solve is green; a page post after it turns the row amber; a
+    page look on the newer inputs keeps it amber while its solve is pending (the kept answer is
+    of the older inputs), then green from that solve's time, and the decision log is as before;
+    the next day, with no solve of that day, red once the run is due."""
+    later = Later()
+    client.app.state.seasons.page_solves = later
+    client.get(MOVES)
+    row = moves_row(client)
+    assert (row["state"], row["built_at"]) == ("green", NOW.isoformat())
+    [entry] = logged(client)
+    at = NOW + timedelta(minutes=5)
+    new_inputs(client, at)
+    row = moves_row(client)
+    # The fixture's exports are newer than the test clock, so the projection is named first.
+    assert row["state"] == "amber" and row["reason"].endswith("; solves when the Moves view opens")
+    assert client.get(MOVES, params=PAGE).json()["stale"] and len(later.jobs) == 1
+    assert moves_row(client)["state"] == "amber"
+    look = NOW + timedelta(minutes=9)
+    client.app.state.seasons.clock = lambda: look
+    later.run()
+    row = moves_row(client)
+    assert (row["state"], row["built_at"], row["reason"]) == (
+        "green",
+        look.isoformat(),
+        "on today's inputs",
+    )
+    assert row["system"] == entry["system"]["key"]
+    assert logged(client) == [entry]
+    tomorrow = NOW + timedelta(days=1)
+    client.app.state.seasons.clock = lambda: tomorrow
+    assert (moves_row(client)["state"], moves_row(client)["reason"]) == ("red", "not solved today")

@@ -25,7 +25,7 @@ with the step names the routine's own and the export kinds :data:`EXPORTS`'. A m
 or one from another day, reads as no run recorded today.
 
 Pure: ``api.season_status`` reads the files, the refresh jobs and the decision logs these work
-on.
+on, and the service hands over its own solve on a league's current inputs (#305).
 """
 
 from __future__ import annotations
@@ -53,6 +53,8 @@ EXPORTS = {
 PAGES = ("matchup", "lineup", "schedule", "transactions")
 #: The exports a recommendation rests on (``api.seasons.SeasonService._moves_stamp``).
 RESTS_ON = ("ros", "week_this", "week_next")
+#: What happens to moves older than an input: the Moves view solves the current ones (#305).
+AGAIN = "solves when the Moves view opens"
 
 
 def worst(states: Iterable[str | None]) -> str:
@@ -241,16 +243,18 @@ def _built_row(
     entry: Mapping[str, Any] | None,
     inputs: Mapping[str, datetime | None],
     now: datetime,
+    again: str = "re-solved on open",
 ) -> dict[str, Any]:
-    """A logged recommendation: amber when an input it rests on is newer (the view solves again
-    when it opens), or before the due time with no solve today; red with no solve today once
-    the run is due."""
+    """A recommendation's solve: amber when an input it rests on is newer (``again`` says what
+    happens then), or before the due time with no solve today; red with no solve today once
+    the run is due. An entry marked ``current`` is a solve on the league's current inputs:
+    green from today, whatever the inputs' times."""
     built = _when(entry["at"]) if entry else None
     newer = [k for k, at in inputs.items() if at is not None and built is not None and at > built]
     if built is None or day_of(built, now) != now.date():
         state, reason = _today(None, now, "not solved today")
-    elif newer:
-        state, reason = AMBER, f"{newer[0]} newer; re-solved on open"
+    elif newer and not (entry or {}).get("current"):
+        state, reason = AMBER, f"{newer[0]} newer; {again}"
     else:
         state, reason = GREEN, "on today's inputs"
     system = (entry or {}).get("system") or {}
@@ -270,15 +274,22 @@ def recommendations(
     yahoo_at: datetime | None,
     now: datetime,
     yahoo: str = "Yahoo",
+    solved: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """The moves set and the streaming plan (in the moves entry), the daily routine's solve,
-    from its latest decision-log entry against the newest projection export and Yahoo read
-    (named ``yahoo``: the private league's newest page, "lineup read newer"). The strategy run
-    and the trade evaluation are made on request, so they carry no state: the strategy shows
-    when it last ran and whether an input is newer since, the trades the inputs' own times."""
+    """The moves set and the streaming plan (in the moves entry), from the latest solve against
+    the newest projection export and Yahoo read (named ``yahoo``: the private league's newest
+    page, "lineup read newer"): ``solved``, the service's solve on the league's current inputs
+    (``at``, ``system``, ``plan``; #305), green from today, else the decision log's latest
+    entry. The solve may be the Moves view's own, never logged (#240): the routine's page posts
+    after its solve leave the logged entry older than the Yahoo read all day.
+    The strategy run and the trade evaluation are made on request, so they carry no state: the
+    strategy shows when it last ran and whether an input is newer since, the trades the inputs'
+    own times."""
     inputs = {"projection": projection_at, f"{yahoo} read": yahoo_at}
     moves = _latest(entries, "moves")
-    plan = _built_row("plan", moves, inputs, now)
+    if solved is not None:
+        moves = {**solved, "current": True}
+    plan = _built_row("plan", moves, inputs, now, AGAIN)
     if moves is not None and not moves.get("plan"):
         plan = {**plan, "state": None, "reason": "no plan for this league"}
     strategy = _built_row("strategy", _latest(entries, "strategy"), inputs, now)
@@ -289,7 +300,7 @@ def recommendations(
         "reason": strategy["reason"] if ran else "run on request",
     }
     rows = [
-        _built_row("moves", moves, inputs, now),
+        _built_row("moves", moves, inputs, now, AGAIN),
         plan,
         strategy,
         {
