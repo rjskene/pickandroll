@@ -1,5 +1,5 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
-import { useMutation, useQuery, useQueryClient, type UseQueryResult } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { flushSync } from "react-dom";
 import {
   api,
@@ -102,7 +102,10 @@ import {
   weekTone,
   writeWatch,
   centralClock,
+  movesOf,
+  movesPending,
   movesPoll,
+  solvingLine,
   STALE_CAP_MS,
   staleLine,
   type AvailableFilter,
@@ -251,7 +254,8 @@ export default function SeasonScreen({
     boardRef.current?.scrollIntoView({ block: "nearest" });
   };
   const system = chosen ?? s?.week_projection.default ?? "bbm";
-  // When the Moves card's answer first came back stale (#240), null while it is fresh.
+  // When the Moves card's answer first came back stale (#240) or solving (#306), null while it
+  // is fresh.
   const [staleSince, setStaleSince] = useState<number | null>(null);
   const moves = useQuery({
     queryKey: ["moves", league, system, s?.updated_at],
@@ -260,20 +264,26 @@ export default function SeasonScreen({
     // A new snapshot keeps the last gains up while its own are valued; another system's never
     // stand in for this one's.
     placeholderData: (prev, prevQuery) => (prevQuery?.queryKey[2] === system ? prev : undefined),
-    // A stale answer asks again every 3 s while the API solves, for 120 s at most (#240).
-    refetchInterval: (q) => movesPoll(Boolean(q.state.data?.stale), staleSince, Date.now()),
+    // A stale or solving answer asks again every 3 s while the API solves, for 120 s at most
+    // (#240, #306).
+    refetchInterval: (q) => movesPoll(movesPending(q.state.data), staleSince, Date.now()),
     retry: false,
   });
-  const stale = moves.isPlaceholderData ? undefined : moves.data?.stale;
+  // The answer; none while the API solves with none of today kept (#306).
+  const m = movesOf(moves.data);
+  const solving = moves.data && "solving" in moves.data ? moves.data.solving : undefined;
+  const stale = moves.isPlaceholderData ? undefined : m?.stale;
+  const pending = Boolean(stale || solving);
   useEffect(() => {
-    if (!stale) setStaleSince(null);
+    if (!pending) setStaleSince(null);
     else setStaleSince((at) => at ?? Date.now());
-  }, [stale]);
+  }, [pending]);
   // A new snapshot (a refresh) or another system starts the 120 s again.
   useEffect(() => setStaleSince(null), [league, system, s?.updated_at]);
-  const staleText = stale ? staleLine(stale, staleSince != null && now - staleSince >= STALE_CAP_MS, centralClock) : null;
+  const capped = staleSince != null && now - staleSince >= STALE_CAP_MS;
+  const staleText = solving ? solvingLine(solving, capped) : stale ? staleLine(stale, capped, centralClock) : null;
   const mh = MOVE_HORIZON[horizon];
-  const openMove = (id: number) => pick({ add: id, drop: openingDrop(moves.data?.candidates[String(id)], mh) });
+  const openMove = (id: number) => pick({ add: id, drop: openingDrop(m?.candidates[String(id)], mh) });
   // A new read or a new solve moves the light.
   useEffect(() => {
     void queryClient.invalidateQueries({ queryKey: ["status"] });
@@ -324,7 +334,7 @@ export default function SeasonScreen({
       case "moves":
         return {
           title: picked ? "MOVE" : "MOVES",
-          note: movesNote(moves.data, s),
+          note: movesNote(m, s),
           action: picked ? (
             <button className="link" onClick={() => setPicked(null)} title="Back to the recommended moves (Esc)">
               recommended
@@ -334,11 +344,11 @@ export default function SeasonScreen({
               trade
             </button>
           ),
-          body: picked ? <MoveDrawer league={league} s={s} system={system} m={moves.data} picked={picked} onPick={pick} /> : <Moves q={moves} s={s} onPick={pick} staleText={staleText} />,
+          body: picked ? <MoveDrawer league={league} s={s} system={system} m={m} picked={picked} onPick={pick} /> : <Moves m={m} error={moves.error} s={s} onPick={pick} staleText={staleText} />,
         };
       case "trade":
         return {
-          note: moves.data?.system.label,
+          note: m?.system.label,
           action: (
             <button className="link" onClick={() => show("moves")} title="Back to the recommended moves (m)">
               moves
@@ -354,7 +364,7 @@ export default function SeasonScreen({
           body: (
             <Flags
               s={s}
-              m={moves.data}
+              m={m}
               mh={mh}
               now={now}
               onPick={pick}
@@ -381,7 +391,7 @@ export default function SeasonScreen({
           body: leagueTab === "matchups" ? <Pairings s={s} now={now} /> : <League s={s} />,
         };
       case "strategy":
-        return { note: moves.data?.system.label, body: <Strategy league={league} s={s} system={system} onPick={pick} /> };
+        return { note: m?.system.label, body: <Strategy league={league} s={s} system={system} onPick={pick} /> };
       case "scorecard":
         return { note: s.public ? undefined : "suggestions only", body: <Scorecard league={league} /> };
       case "queue":
@@ -469,7 +479,8 @@ export default function SeasonScreen({
                   setSystem={setSystem}
                   horizon={horizon}
                   setHorizon={setHorizon}
-                  moves={moves}
+                  m={m}
+                  movesError={moves.error}
                   picked={picked}
                   onPick={pick}
                   highlight={highlight}
@@ -598,7 +609,8 @@ function Waivers({
   setSystem,
   horizon,
   setHorizon,
-  moves,
+  m,
+  movesError,
   picked,
   onPick,
   highlight,
@@ -615,7 +627,9 @@ function Waivers({
   setSystem: (x: ProjectionSystem) => void;
   horizon: Horizon;
   setHorizon: (h: Horizon) => void;
-  moves: UseQueryResult<MovesPayload>;
+  /** The moves' answer; none until it comes, or while the API solves (#306). */
+  m: MovesPayload | undefined;
+  movesError: Error | null;
   picked: MoveKey | null;
   onPick: (m: MoveKey) => void;
   /** The keyboard's row (j, k, Enter). */
@@ -637,7 +651,6 @@ function Waivers({
   const [filter, setFilter] = useState<AvailableFilter>(NO_FILTER);
   const [sort, setSort] = useState<AvailableSort>(DEFAULT_AVAILABLE_SORT);
   const other: ProjectionSystem = system === "bbm" ? "yahoo" : "bbm";
-  const m = moves.data;
   const mh = MOVE_HORIZON[horizon];
   const minGain = m?.search.min_gain ?? 0;
   const name = useNamer(s);
@@ -783,7 +796,7 @@ function Waivers({
         <span className="help" tabIndex={0} title={note.detail.join("\n")} aria-label={note.detail.join("; ")}>
           ?
         </span>
-        {moves.error ? <span className="bad">{` · no moves: ${moves.error.message}`}</span> : !m && s.my_team ? " · valuing the moves…" : ""}
+        {movesError ? <span className="bad">{` · no moves: ${movesError.message}`}</span> : !m && s.my_team ? " · valuing the moves…" : ""}
         {m?.claim && <span title={claimTitle(m.claim)}>{` · ${claimLine(m.claim)}`}</span>}
         {kept && keep && (
           <>
@@ -944,12 +957,24 @@ function BasisCell({ x, name, className, children }: { x: { drop: number | null;
 }
 
 /** The recommended sets, the three weeks first, then the rest of this week. */
-function Moves({ q, s, onPick, staleText }: { q: UseQueryResult<MovesPayload>; s: SeasonView; onPick: (m: MoveKey) => void; staleText: string | null }) {
+function Moves({
+  m,
+  error,
+  s,
+  onPick,
+  staleText,
+}: {
+  m: MovesPayload | undefined;
+  error: Error | null;
+  s: SeasonView;
+  onPick: (m: MoveKey) => void;
+  staleText: string | null;
+}) {
   const name = useNamer(s);
   if (!s.my_team) return <p className="muted">The moves need my team: none is set for this league.</p>;
-  if (q.error) return <p className="error">{q.error.message}</p>;
-  const m = q.data;
-  if (!m) return <p className="muted">Valuing the moves…</p>;
+  if (error) return <p className="error">{error.message}</p>;
+  // None of today kept: the API solves within its budget and the card asks again (#306).
+  if (!m) return staleText ? <p className="accent small">{staleText}</p> : <p className="muted">Valuing the moves…</p>;
   // Why some adds have no move at all: the week's adds used, or no legal drop (#124).
   const reasons = [...new Set(Object.values(m.candidates).flatMap((c) => (c.reason ? [c.reason] : [])))];
   return (
@@ -963,6 +988,11 @@ function Moves({ q, s, onPick, staleText }: { q: UseQueryResult<MovesPayload>; s
         {addsNote(m.adds)}
         {m.system.fallback ? ` · ${m.system.fallback}` : ""}
       </p>
+      {m.search.note && (
+        <p className="muted small" title="the solve keeps to its time budget (moves_budget_s in the autopilot settings file); the recommended sets are the best it found by then">
+          {cap(m.search.note)}.
+        </p>
+      )}
       {(m.cleared ?? []).map((c) => (
         <p key={c.player} className="bad small">
           {name(c.player)}&apos;s status cleared ({c.status ?? "healthy"}): Yahoo takes no add until he leaves {c.slot}

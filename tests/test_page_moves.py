@@ -1,7 +1,8 @@
 """A page's look at the moves (#240): ``source=page`` answers at once, never logged, with the
 league's kept answer of today marked ``stale`` while the solve of the newer inputs runs on the
-page's thread, at most one a key; the routine's call (no source) waits for its solve and writes
-one decision entry every call, from the kept answer with its build time when it did not solve.
+page's thread, at most one a key, and with none kept the answer is ``solving`` alone (#306); the
+routine's call (no source) waits for its solve and writes one decision entry every call, from
+the kept answer with its build time when it did not solve.
 
 The league is the season tests' made-up one; nothing here is from Basketball Monster.
 """
@@ -14,6 +15,7 @@ from datetime import datetime, timedelta
 import pytest
 
 from pickandroll.api import season_moves, seasons
+from pickandroll.season import moves as mv
 from tests.test_decisions import SITE, logged, snapshot
 from tests.test_season import LEAGUE, NOW, fixture, season_client, strategy_league
 
@@ -48,9 +50,9 @@ def solves(monkeypatch) -> list[int]:
     made: list[int] = []
     real = season_moves.moves_payload
 
-    def counted(built):
+    def counted(built, budget=None):
         made.append(1)
-        return real(built)
+        return real(built, budget)
 
     monkeypatch.setattr(season_moves, "moves_payload", counted)
     return made
@@ -65,10 +67,17 @@ def test_a_page_look_is_never_logged_and_the_routines_call_logs_from_its_answer(
     client, monkeypatch
 ):
     made = solves(monkeypatch)
+    later = Later()
+    client.app.state.seasons.page_solves = later
+    look = client.get(MOVES, params=PAGE)
+    assert look.status_code == 200, look.text
+    # Nothing kept yet: the page never waits (#306), its solve runs on the page's thread.
+    assert look.json()["solving"]["reason"] == seasons.SOLVING_REASON
+    assert made == [] and len(later.jobs) == 1 and logged(client) == []
+    later.run()
     page = client.get(MOVES, params=PAGE)
-    assert page.status_code == 200, page.text
-    # Nothing kept yet: the page waits for the solve, and logs nothing.
-    assert "stale" not in page.json() and len(made) == 1 and logged(client) == []
+    assert "stale" not in page.json() and "solving" not in page.json()
+    assert len(made) == 1 and logged(client) == []
     # The routine's call after it: no new solve, one entry from that answer, with its build time.
     later = NOW + timedelta(minutes=2)
     client.app.state.seasons.clock = lambda: later
@@ -91,6 +100,8 @@ def test_a_page_look_on_newer_inputs_answers_the_kept_one_stale_while_one_solve_
     made = solves(monkeypatch)
     later = Later()
     client.app.state.seasons.page_solves = later
+    client.get(MOVES, params=PAGE)
+    later.run()
     first = client.get(MOVES, params=PAGE).json()
     assert len(made) == 1
     at = NOW + timedelta(minutes=5)
@@ -116,8 +127,10 @@ def test_a_page_look_on_newer_inputs_answers_the_kept_one_stale_while_one_solve_
 
 def test_a_routine_call_on_newer_inputs_waits_for_its_solve_and_logs_it(client, monkeypatch):
     made = solves(monkeypatch)
-    client.app.state.seasons.page_solves = Later()
+    later = Later()
+    client.app.state.seasons.page_solves = later
     client.get(MOVES, params=PAGE)
+    later.run()
     new_inputs(client, NOW + timedelta(minutes=5))
     # Behaves as before #240: solves the new inputs and writes that solve's entry.
     client.get(MOVES)
@@ -125,26 +138,34 @@ def test_a_routine_call_on_newer_inputs_waits_for_its_solve_and_logs_it(client, 
     assert len(made) == 2 and "built_at" not in e
 
 
-def test_a_page_look_with_no_answer_of_today_waits_for_the_solve(client, monkeypatch):
+def test_a_page_look_with_no_answer_of_today_answers_solving_and_never_waits(client, monkeypatch):
     made = solves(monkeypatch)
     later = Later()
     client.app.state.seasons.page_solves = later
     client.get(MOVES, params=PAGE)
-    # The next day: yesterday's answer is never shown for today's.
+    later.run()
+    # The next day: yesterday's answer is never shown for today's, and the look never waits
+    # (#306): ``solving``, with the budget the solve keeps to, and one solve on the page's thread.
     tomorrow = NOW + timedelta(days=1)
     client.app.state.seasons.clock = lambda: tomorrow
     look = client.get(MOVES, params=PAGE).json()
-    assert "stale" not in look and len(made) == 2 and later.jobs == []
+    assert look == {"solving": {"reason": seasons.SOLVING_REASON, "budget_s": mv.MOVES_BUDGET_S}}
+    assert len(made) == 1 and len(later.jobs) == 1
+    assert client.get(MOVES, params=PAGE).json() == look and len(later.jobs) == 1
+    later.run()
+    fresh = client.get(MOVES, params=PAGE).json()
+    assert "solving" not in fresh and "stale" not in fresh and len(made) == 2
 
 
 def test_a_page_solve_that_fails_leaves_the_next_look_to_try_again(client, monkeypatch):
     later = Later()
     client.app.state.seasons.page_solves = later
     client.get(MOVES, params=PAGE)
+    later.run()
     new_inputs(client, NOW + timedelta(minutes=5))
     real = season_moves.moves_payload
 
-    def broken(built):
+    def broken(built, budget=None):
         raise RuntimeError("no")
 
     monkeypatch.setattr(season_moves, "moves_payload", broken)
@@ -162,11 +183,11 @@ def test_two_callers_of_one_key_wait_on_one_solve_and_log_one_entry(client, monk
     made: list[int] = []
     real = season_moves.moves_payload
 
-    def slow(built):
+    def slow(built, budget=None):
         made.append(1)
         started.set()
         assert go.wait(10)
-        return real(built)
+        return real(built, budget)
 
     monkeypatch.setattr(season_moves, "moves_payload", slow)
     out: list[dict] = []

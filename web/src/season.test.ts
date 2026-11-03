@@ -19,6 +19,8 @@ import type {
   ILRunLog,
   MovesPassLog,
   StartActiveRunLog,
+  MovesPayload,
+  MovesSolving,
   MovesView,
   PlayerFlag,
   QueueEntry,
@@ -46,7 +48,10 @@ import type {
   WeekPlans,
 } from "./api";
 import {
+  movesOf,
+  movesPending,
   movesPoll,
+  solvingLine,
   STALE_CAP_MS,
   staleLine,
   matchupColumns,
@@ -2265,6 +2270,20 @@ test("a stale moves answer asks again every 3 s for 120 s, then waits for a refr
   assert.equal(staleLine(stale, false, clock), "solving: inputs newer than this answer (this answer built 7:05 AM CT)");
   assert.equal(staleLine(stale, true, clock), "still solving (this answer built 7:05 AM CT): refresh to look again");
   assert.equal(staleLine({ ...stale, built_at: null }, false, clock), "solving: inputs newer than this answer");
+});
+
+test("a look with no answer of today kept is no answer: the card says solving and asks again (#306)", () => {
+  const solving: MovesSolving = { solving: { reason: "no answer of today yet; solving", budget_s: 90 } };
+  assert.equal(movesOf(solving), undefined);
+  assert.equal(movesOf(undefined), undefined);
+  assert.equal(movesPending(solving), true);
+  assert.equal(movesPending(undefined), false);
+  const fresh = { search: { pool: 30, min_gain: 0.01 } } as MovesPayload;
+  assert.equal(movesOf(fresh), fresh);
+  assert.equal(movesPending(fresh), false);
+  assert.equal(movesPending({ ...fresh, stale: { built_at: null, inputs_at: null, reason: "inputs newer than this answer; solving" } }), true);
+  assert.equal(solvingLine(solving.solving, false), "solving: no answer of today yet (within 90 s)");
+  assert.equal(solvingLine(solving.solving, true), "still solving: refresh to look again");
 });
 
 test("the league page steps to the previous or next league in the table's order, wrapping at the ends (#253)", () => {

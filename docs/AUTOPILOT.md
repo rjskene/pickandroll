@@ -698,9 +698,9 @@ page, from PR 2:
 
 Times are Central, the routine host's clock for every timer (`docs/OPS.md`; the host itself runs on
 UTC). The routines are `scripts/routine.py`'s, run by systemd timers on the host from the VM move
-(#225; until the cut-over the host runs them in dry run while the Mac stays live, and the private
-league's solve is left out there with `--skip-solve 31822`, `docs/OPS.md` §1 and §4); their steps
-are the master's to change through pull requests, never edited on the host.
+(#225; until the cut-over the host ran them in dry run while the Mac stayed live, and until #306
+the private league's solve was left out there with `--skip-solve 31822`, `docs/OPS.md` §1 and
+§4); their steps are the master's to change through pull requests, never edited on the host.
 
 | when | what | exists |
 |---|---|---|
@@ -791,6 +791,17 @@ tunes: the settings file's `rival_claim_rate` (`data/autopilot/executor.json`, b
 `live_after`), a number from 0 to 1, 0.3 when unset or unreadable, read at request time so a
 change needs no restart. The `claim` block carries the rate it used and `assumed: true`, which is
 its provenance; the decision log's knobs do not record it.
+
+Every moves solve keeps to a time budget (#306): the settings file's `moves_budget_s`, a number
+above 0 in seconds, 90 when unset or unreadable, read at each solve. Past it no new trial runs:
+each search keeps the best set it found, a move's re-solve not run prices it against the set
+without it, and the answer's `search` block says so (`cut`, the searches `finished` of those
+begun, and a `note`). 90 s sits under the late pass's 120 s wait for a public league's re-solve
+and the daily's 300 s; on the routine host the private league's solve took 13.6 s on 2026-11-03,
+so the budget bounds a slow day rather than shaping a normal one. A solve whose caller went (the
+route sees its client disconnect) stops at its next trial and is neither kept nor logged. A
+page's look never waits on a solve: with no answer of today kept it answers `solving`, and the
+Moves card asks again every 3 s for up to 120 s.
 
 
 ## 6. The hill-climb

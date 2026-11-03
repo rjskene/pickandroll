@@ -121,7 +121,7 @@ from datetime import UTC, date, datetime, timedelta, tzinfo
 from pathlib import Path
 from typing import Any, Literal
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi import Path as FastPath
 from pydantic import BaseModel, Field, ValidationError
 
@@ -286,6 +286,16 @@ def save(
 PAGE = "page"
 #: Why a page's answer is an older one while the moves of newer inputs are solved (#240).
 STALE_REASON = "inputs newer than this answer; solving"
+#: A page's look with no answer of today kept (#306): it never waits on the solve.
+SOLVING_REASON = "no answer of today yet; solving"
+#: How often a waiting moves route looks whether its client is still there (#306), seconds.
+CLIENT_POLL_S = 1.0
+
+
+class Abandoned(Exception):
+    """A moves solve stopped because its client went (#306): never kept, the next call solves."""
+
+
 #: The page's solves run here, one at a time, never on the process pool from the route (#240).
 _PAGE_SOLVES = ThreadPoolExecutor(max_workers=1, thread_name_prefix="moves-page")
 
@@ -796,11 +806,17 @@ class SeasonService:
         return built
 
     def moves(
-        self, league: str, system: str | None, source: str | None = None, entry: bool = False
+        self,
+        league: str,
+        system: str | None,
+        source: str | None = None,
+        entry: bool = False,
+        stop: Callable[[], bool] | None = None,
     ) -> dict[str, Any]:
         """``_moves``, with a standard-waivers league's claim at the rival claim rate the settings
-        file holds now (#261): read at request time, past the kept solve."""
-        out = self._moves(league, system, source, entry)
+        file holds now (#261): read at request time, past the kept solve. ``stop``: the client
+        went (#306), the solve stops and raises :class:`Abandoned`."""
+        out = self._moves(league, system, source, entry, stop)
         claim = out.get("claim")
         if claim is None:
             return out
@@ -808,14 +824,20 @@ class SeasonService:
         return {**out, "claim": mv.priority_claim(claim["priority"], claim["teams"], rate)}
 
     def _moves(
-        self, league: str, system: str | None, source: str | None = None, entry: bool = False
+        self,
+        league: str,
+        system: str | None,
+        source: str | None = None,
+        entry: bool = False,
+        stop: Callable[[], bool] | None = None,
     ) -> dict[str, Any]:
-        """Today's moves on the league's current inputs, solved once a key. A solve without
-        ``source`` writes its decision entry; ``entry`` (the route's call without a source, the
-        routine's) writes one every call, from the answer kept when there was no solve to write
-        it, with that answer's build time (#240 (i)). ``source="page"`` (#240): never logged and
-        never waits on a solve when an answer of today is kept: that one comes back at once with
-        ``stale`` while the solve of the newer inputs runs on the page's thread."""
+        """Today's moves on the league's current inputs, solved once a key within the moves
+        budget (#306). A solve without ``source`` writes its decision entry; ``entry`` (the
+        route's call without a source, the routine's) writes one every call, from the answer kept
+        when there was no solve to write it, with that answer's build time (#240 (i)).
+        ``source="page"`` (#240): never logged and never waits on a solve: an answer of today
+        kept comes back at once with ``stale`` while the solve of the newer inputs runs on the
+        page's thread, and with none kept the answer is ``solving`` alone (#306)."""
         system = self._system(league, system)
         today = nba_today(self.clock())
         stamp = self._moves_stamp(league)
@@ -825,9 +847,10 @@ class SeasonService:
             if kept is not None:
                 return kept
             older = self.moves_cache.latest(key[:3])
-            if older is None or older[0][3] != today:
-                return self._solve_moves(league, system, key, log=False)
             self._solve_later(league, system, key)
+            if older is None or older[0][3] != today:
+                budget = season_queue.moves_budget_s(self.data_dir)
+                return {"solving": {"reason": SOLVING_REASON, "budget_s": budget}}
             inputs = max((ns for _, ns in stamp), default=None)
             stale = {
                 "built_at": _iso(self._moves_at.get(older[0])),
@@ -838,7 +861,7 @@ class SeasonService:
             }
             return {**older[1], "stale": stale}
         made: list[bool] = []
-        out = self._solve_moves(league, system, key, log=True, made=made)
+        out = self._solve_moves(league, system, key, log=True, made=made, stop=stop)
         if entry and not made:
             built = self._built(league, system)
             built_at = _iso(self._moves_at.get(key))
@@ -855,13 +878,19 @@ class SeasonService:
         key: tuple[Any, ...],
         log: bool,
         made: list[bool] | None = None,
+        stop: Callable[[], bool] | None = None,
     ) -> dict[str, Any]:
-        """The moves of ``key``, solved once under the cache's gate for it; ``made`` gets True
-        when this call solved them, and ``log`` writes the decision entry of that solve."""
+        """The moves of ``key``, solved once under the cache's gate for it within the moves
+        budget (#306, the settings file's ``moves_budget_s``); ``made`` gets True when this call
+        solved them, and ``log`` writes the decision entry of that solve. A solve that ``stop``
+        ended (the client went) is never kept or logged: it raises :class:`Abandoned`."""
         built = self._built(league, system)
 
         def make() -> dict[str, Any]:
-            out = season_moves.moves_payload(built)
+            budget = mv.Budget.start(season_queue.moves_budget_s(self.data_dir), stop=stop)
+            out = season_moves.moves_payload(built, budget)
+            if budget.stopped:
+                raise Abandoned(f"league {league}: the client went; the solve stopped")
             at = self.clock()
             with self._page_lock:
                 for old in [k for k in self._moves_at if k[:3] == key[:3]]:
@@ -3229,6 +3258,7 @@ def register(
 
     @app.get("/seasons/{league}/moves")
     async def get_moves(
+        request: Request,
         league: str = league_id,
         system: str | None = system_q,
         source: str | None = Query(
@@ -3238,8 +3268,20 @@ def register(
         ),
     ) -> dict[str, Any]:
         """Every available player's best move on both horizons and the recommended moves. A call
-        without ``source`` (the routine's) waits for the solve and writes one decision entry."""
-        return await asyncio.to_thread(service.moves, league, system, source, source is None)
+        without ``source`` (the routine's) waits for the solve, within the moves budget, and
+        writes one decision entry; a client that goes stops it (#306)."""
+        gone = threading.Event()
+        task = asyncio.ensure_future(
+            asyncio.to_thread(service.moves, league, system, source, source is None, gone.is_set)
+        )
+        while not task.done():
+            await asyncio.wait({task}, timeout=CLIENT_POLL_S)
+            if not task.done() and not gone.is_set() and await request.is_disconnected():
+                gone.set()
+        try:
+            return task.result()
+        except Abandoned as exc:
+            raise HTTPException(499, str(exc)) from exc
 
     @app.get("/seasons/{league}/best")
     async def get_best(league: str = league_id, system: str | None = system_q) -> dict[str, Any]:

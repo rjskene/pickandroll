@@ -788,3 +788,84 @@ def test_a_cleared_occupant_leaves_a_full_il_first_activated_with_the_weakest_dr
     sends = {c.player: c.drop for c in mv.comebacks(p, "week", ())}
     assert a.advice == mv.IL_FULL
     assert a.leave == mv.Leave(8, "IL", "activate", sends[8], None, False)
+
+
+# --------------------------------------------------------------------------- the budget (#306)
+class Ticks:
+    """A clock that moves one second each time it is read."""
+
+    def __init__(self) -> None:
+        self.t = 0.0
+
+    def __call__(self) -> float:
+        self.t += 1.0
+        return self.t
+
+
+def budget_league():
+    roster, cands, rate, sched, opponent, field = deep_league()
+    p = build(roster, cands, rate, sched, opponent, field)
+    return mv.Evaluator(p), [c for c, _ in cands]
+
+
+def test_a_generous_budget_changes_nothing_and_says_it_was_not_spent():
+    ev, pool = budget_league()
+    free = mv.recommend(ev, "three", pool)
+    budget = mv.Budget.start(1e9, clock=Ticks())
+    with mv.budgeted(budget):
+        kept = mv.recommend(ev, "three", pool)
+    assert [pm.move for pm in kept.moves] == [pm.move for pm in free.moves]
+    assert [pm.price_without for pm in kept.moves] == [pm.price_without for pm in free.moves]
+    assert budget.searches > 1 and budget.cut == 0 and budget.skipped == 0
+    assert not budget.spent and not budget.stopped
+
+
+def test_a_search_ends_between_two_trials_when_the_budget_runs_out_with_the_best_it_holds():
+    ev, pool = budget_league()
+    full = mv.search(ev, "three", pool)
+    assert len(full) > 1
+    budget = mv.Budget.start(15.0, clock=Ticks())  # fifteen trials, inside the first round
+    with mv.budgeted(budget):
+        cut = mv.search(ev, "three", pool)
+    assert budget.spent and budget.searches == 1 and budget.cut == 1
+    assert len(cut) <= 1 and mv.feasible(ev.problem, cut)
+    assert ev.value("three", cut) <= ev.value("three", full) + 1e-9
+    # Spent: a search begun now returns at once, with nothing, and counts itself cut.
+    with mv.budgeted(budget):
+        assert mv.search(ev, "three", pool) == ()
+    assert budget.searches == 2 and budget.cut == 2
+
+
+def test_a_spent_budget_prices_each_move_against_the_set_without_it_and_runs_no_round():
+    ev, pool = budget_league()
+    moves = mv.search(ev, "three", pool)
+    budget = mv.Budget.start(0.0, clock=Ticks())
+    with mv.budgeted(budget):
+        rec = mv.recommend(ev, "three", pool, start=moves)
+    assert [pm.move for pm in rec.moves] == list(moves)  # the set as given, no re-solve replaced it
+    value = ev.value("three", moves)
+    for pm in rec.moves:
+        rest = tuple(m for m in moves if m != pm.move)
+        assert pm.instead_without == rest
+        assert pm.price_without == pytest.approx(value - ev.value("three", rest))
+    assert budget.searches == 0
+    assert budget.skipped == sum(1 if m.drop is None else 2 for m in moves)
+
+
+def test_a_stop_ends_the_search_like_the_deadline_and_says_the_client_went():
+    ev, pool = budget_league()
+    gone = [False]
+    budget = mv.Budget.start(None, stop=lambda: gone[0])
+    with mv.budgeted(budget):
+        assert len(mv.search(ev, "three", pool)) > 1  # no deadline: the search runs out itself
+        gone[0] = True
+        assert mv.search(ev, "three", pool) == ()
+    assert budget.stopped and budget.spent and budget.cut == 1
+
+
+def test_the_budget_holds_only_inside_its_block():
+    ev, pool = budget_league()
+    budget = mv.Budget.start(0.0, clock=Ticks())
+    with mv.budgeted(budget):
+        pass
+    assert len(mv.search(ev, "three", pool)) > 1 and budget.searches == 0

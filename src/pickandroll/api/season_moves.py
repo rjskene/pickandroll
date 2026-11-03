@@ -789,10 +789,31 @@ def claim_of(built: Built, rate: float = mv.RIVAL_CLAIM_RATE) -> dict[str, Any] 
     return None if built.priority is None else mv.priority_claim(*built.priority, rate)
 
 
-def moves_payload(built: Built) -> dict[str, Any]:
+def moves_payload(built: Built, budget: mv.Budget | None = None) -> dict[str, Any]:
     """The table's gains for every candidate and the recommended set on each horizon, and first
     the held players whose cleared status blocks every add and the room a no-drop add has; the
-    keep rule and the IL advice; the streaming plan and the week plans; the solve's seconds."""
+    keep rule and the IL advice; the streaming plan and the week plans; the solve's seconds.
+    Under ``budget`` (#306) every search keeps to it, and ``search`` says whether it ran out
+    (``cut``), how many searches finished of those begun, and ``note`` when it ran out."""
+    with mv.budgeted(budget):
+        out = _payload(built)
+    if budget is not None:
+        planned = budget.searches + budget.skipped
+        finished = budget.searches - budget.cut
+        out["search"] |= {
+            "budget_s": budget.seconds,
+            "cut": budget.spent,
+            "searches": planned,
+            "finished": finished,
+            "note": f"searched {finished} of {planned} within the budget"
+            f" ({budget.seconds:g} s): the best sets found by then"
+            if budget.spent and budget.seconds is not None
+            else None,
+        }
+    return out
+
+
+def _payload(built: Built) -> dict[str, Any]:
     began = time.perf_counter()
     p = built.problem
     ev = mv.Evaluator(p)
