@@ -1270,12 +1270,15 @@ pages; an armed queue through the extension is a later, opt-in phase.
 Basketball Monster exports (rest of season, this week, next week, the last 7 and 14 days, each
 the newest file with its as-of), each league's Yahoo reads (a public league's last refresh
 by its newest read, the private league's matchup, lineup, schedule and transactions pages) and
-each league's recommendations (the moves set and the streaming plan from the decision log's
-latest solve, against the newest projection export and Yahoo read; the strategy run and the
-trade evaluation are made on request and carry no state). The states are decided in
+each league's recommendations (the moves set and the streaming plan from the latest solve,
+against the newest projection export and Yahoo read; the strategy run and the trade evaluation
+are made on request and carry no state). The latest solve is the API's own on the league's
+current inputs when it has one, logged or not (#305): the Moves view's solve is never logged
+(#240), and the routine's page posts after its solve would otherwise leave every public league
+amber until the evening build. Without one it is the decision log's latest entry. The states are decided in
 `season/status.py`, on the routine host's Central clock, where the daily runs: **red** when something failed,
 or is missing once the run is due at 06:30 (`ROUTINE_DUE`); **amber** when something is stale
-or not due yet (a solve older than an input is amber, "re-solved on open"); **green**
+or not due yet (a solve older than an input is amber, "solves when the Moves view opens"); **green**
 otherwise. A league is its worst section with the exports; the whole is its worst league with
 the exports and the run.
 

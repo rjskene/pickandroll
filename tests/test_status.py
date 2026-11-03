@@ -229,13 +229,13 @@ def test_a_solve_older_than_its_inputs_is_amber_and_none_today_is_red_once_due()
     stale = st.recommendations([moves], at(0.5), at(2), NOW)
     assert (stale["state"], stale["rows"][0]["reason"]) == (
         st.AMBER,
-        "projection newer; re-solved on open",
+        "projection newer; solves when the Moves view opens",
     )
     read = st.recommendations([moves], at(4), at(0.5), NOW)
-    assert read["rows"][0]["reason"] == "Yahoo read newer; re-solved on open"
+    assert read["rows"][0]["reason"] == "Yahoo read newer; solves when the Moves view opens"
     # The private league names its newest page.
     page = st.recommendations([moves], at(4), at(0.5), NOW, yahoo="lineup")
-    assert page["rows"][0]["reason"] == "lineup read newer; re-solved on open"
+    assert page["rows"][0]["reason"] == "lineup read newer; solves when the Moves view opens"
     assert list(page["inputs"]) == ["projection", "lineup read"]
     # No solve today: amber before the run is due, red after.
     old = [entry("moves", 20)]
@@ -243,6 +243,39 @@ def test_a_solve_older_than_its_inputs_is_amber_and_none_today_is_red_once_due()
     late = st.recommendations(old, at(30), at(30), NOW)
     assert (late["state"], late["rows"][0]["reason"]) == (st.RED, "not solved today")
     assert st.recommendations([], at(4), at(2), NOW)["rows"][0]["state"] == st.RED
+
+
+def test_a_solve_on_the_current_inputs_is_green_logged_or_not():
+    """#305: the service's solve on the league's current inputs (the Moves view's own is never
+    logged, #240) is green from its time, whatever the inputs' times; without one the logged
+    entry is judged as before: green on today's inputs, amber older than an input, red with no
+    solve today once due."""
+    logged = entry("moves", 6, plan={"steps": []})
+    # The routine's logged solve, on today's inputs.
+    rows = st.recommendations([logged], at(8), at(7), NOW)["rows"]
+    assert (rows[0]["state"], rows[0]["built_at"]) == (st.GREEN, at(6).isoformat())
+    # A page post after it: amber until a solve on the newer inputs.
+    rows = st.recommendations([logged], at(8), at(5), NOW)["rows"]
+    assert (rows[0]["state"], rows[1]["state"]) == (st.AMBER, st.AMBER)
+    assert rows[0]["reason"] == "Yahoo read newer; solves when the Moves view opens"
+    # The page's solve on the current stamp: green from its own time, its plan judged.
+    page = {"at": at(2).isoformat(), "system": {"key": "bbm", "file": "f.csv"}, "plan": None}
+    recs = st.recommendations([logged], at(8), at(5), NOW, solved=page)
+    moves, plan = recs["rows"][:2]
+    assert (moves["state"], moves["built_at"], moves["reason"]) == (
+        st.GREEN,
+        at(2).isoformat(),
+        "on today's inputs",
+    )
+    assert (moves["system"], moves["projection_file"]) == ("bbm", "f.csv")
+    assert (plan["state"], plan["reason"]) == (None, "no plan for this league")
+    assert recs["state"] == st.GREEN
+    # A page solve on an older stamp is not handed over: the logged entry stays amber.
+    assert st.recommendations([logged], at(8), at(5), NOW, solved=None)["state"] == st.AMBER
+    # No solve today: red once due, a solve kept from yesterday included.
+    yesterday = {**page, "at": at(30).isoformat()}
+    late = st.recommendations([], at(30), at(30), NOW, solved=yesterday)
+    assert (late["state"], late["rows"][0]["reason"]) == (st.RED, "not solved today")
 
 
 def test_a_league_without_a_plan_says_so_and_a_strategy_run_shows_its_inputs():
@@ -315,7 +348,7 @@ def test_the_status_route_lights_every_league_and_names_what_is_late(tmp_path):
         moves = public["recommendations"]["rows"][0]
         assert (moves["state"], moves["reason"]) == (
             st.AMBER,
-            "projection newer; re-solved on open",
+            "projection newer; solves when the Moves view opens",
         )
         assert public["yahoo"]["rows"][0]["error"] == "Yahoo answered 503"
         assert public["yahoo"]["state"] == st.RED
