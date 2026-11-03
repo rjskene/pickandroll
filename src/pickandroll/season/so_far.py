@@ -3,8 +3,10 @@ player table prints his counting stats and his rounded percentages for the days 
 active slot, never his makes and attempts or his games. Those come from his final box scores
 this week (``sources.boxscores``, cached by the refresh): the one set of his games whose counting
 stats sum exactly to Yahoo's row and whose makes over attempts round to Yahoo's percentages is
-the games Yahoo counted. No such set, more than one, or no box scores for him: his line is
-Yahoo's as printed, its percentages without the attempts behind them and its games unknown.
+the games Yahoo counted, the empty set among them (he sat, or did not play, every day: Yahoo
+prints his zeros). No such set, more than one, or no box scores for him: his line is Yahoo's as
+printed, its percentages without the attempts behind them and its games unknown. A player not on
+the page as read has nothing known (``not_read``).
 
 Pure: the API hands over the page's row and his box-score lines.
 """
@@ -39,6 +41,7 @@ HALF = 0.0005 + 1e-9
 NO_BOX = "no box scores for him this week"
 NONE_ADDS_UP = "no set of his box-score games adds up to Yahoo's line"
 TOO_MANY = "more games than a week has"
+NOT_READ = "not on the matchup page as read"
 
 
 def ambiguous(n: int) -> str:
@@ -68,6 +71,13 @@ class SoFar:
 
     def to_dict(self) -> dict[str, Any]:
         return {**self.line, "games": self.games, "why": self.why}
+
+
+def not_read(points: bool) -> SoFar:
+    """A player not on the page's table (the page not read, read before its player table was, or
+    he joined after it was): every stat and his games unknown."""
+    keys = [*wk.STATS, *wk.PCT, *([wk.FPTS] if points else [])]
+    return SoFar(dict.fromkeys(keys), None, NOT_READ)
 
 
 def yahoo_line(row: Mapping[str, str]) -> dict[str, float | None]:
@@ -132,7 +142,7 @@ def so_far(
         return SoFar(fallback, None, TOO_MANY)
     found = [
         (n, total)
-        for n in range(1, len(games) + 1)
+        for n in range(len(games) + 1)
         for subset in combinations(games, n)
         if _fits(total := _sum(subset), yahoo)
     ]

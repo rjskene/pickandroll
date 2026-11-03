@@ -8,6 +8,7 @@ import {
   daysLeftLabel,
   gainLabel,
   leanTone,
+  cellTitle,
   lineValue,
   MATCHUP_LINE_KEY,
   MATCHUP_LINE_VIEWS,
@@ -273,7 +274,7 @@ function Players({
                     {g ?? "—"}
                   </td>
                   {cols.map((c) => (
-                    <td key={c} className="num" title={pctTitle(c, line, view, why)}>
+                    <td key={c} className="num" title={cellTitle(c, line, view, why)}>
                       {view === "per_game" ? catValue(c, line?.[c]) : lineValue(c, line?.[c], view)}
                     </td>
                   ))}

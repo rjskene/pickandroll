@@ -246,10 +246,11 @@ def payload(
         else:
             cats_, odds_ = expected - wk.expected_won(without), win - wk.matchup_won(without)
         line = printed[team].get(key)
-        # Not on the page's table (the page not read, or he joined after it was): nothing yet.
-        so = sf.so_far(line or {"PTS": "-"}, box.get(key), p.points)
-        if line is None:
-            so = sf.SoFar(so.line, so.games, "not on the matchup page as read")
+        so = (
+            sf.not_read(p.points is not None)
+            if line is None
+            else sf.so_far(line, box.get(key), p.points)
+        )
         rest = rest_line(pw, p.rates.get(key), p.points)
         return {
             "player": key,
