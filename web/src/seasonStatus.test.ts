@@ -98,11 +98,11 @@ test("the landing table names why the recommendations are not up to date, and no
   const late: StatusLeague = {
     ...payload().leagues[0],
     recommendations: recs({
-      moves: built("moves", T("06:02"), "amber", "Yahoo read newer; re-solved on open"),
+      moves: built("moves", T("06:02"), "amber", "Yahoo read newer; solves when the Moves view opens"),
       plan: built("plan", null, "red", "not built today"),
     }),
   };
-  assert.equal(recsReason(payload({ leagues: [late] }), "100001"), "Yahoo read newer; re-solved on open; not built today");
+  assert.equal(recsReason(payload({ leagues: [late] }), "100001"), "Yahoo read newer; solves when the Moves view opens; not built today");
   // The moves and the plan late for one reason say it once.
   const both: StatusLeague = {
     ...late,
@@ -119,7 +119,7 @@ test("the hover line says when everything landed, or what to look at, red first"
     ...payload().leagues[0],
     state: "red",
     yahoo: { state: "red", rows: [refresh({ status: "failed", error: "HTTP 502", state: "red", reason: "refresh failed" })] },
-    recommendations: recs({ moves: built("moves", T("06:02"), "amber", "Yahoo read newer; re-solved on open") }),
+    recommendations: recs({ moves: built("moves", T("06:02"), "amber", "Yahoo read newer; solves when the Moves view opens") }),
   };
   const p = payload({ leagues: [failed], routine: { state: "amber", reason: "refresh skipped" } });
   assert.equal(statusLine(p, "100001", NOW), "3 to look at: last refresh: refresh failed; daily run: refresh skipped; 1 more");

@@ -156,7 +156,7 @@ export function overviewLine(p: StatusPayload, leagues: { league: string; name: 
 }
 
 /** The reasons of a league's amber or red recommendations rows, each once ("Yahoo read newer;
- * re-solved on open"), for the landing table (#191); null when none is. */
+ * solves when the Moves view opens"), for the landing table (#191); null when none is. */
 export function recsReason(p: StatusPayload | undefined, league: string): string | null {
   const late = leagueOf(p, league)?.recommendations?.rows.filter((r) => (r.state === "amber" || r.state === "red") && r.reason) ?? [];
   return late.length ? [...new Set(late.map((r) => r.reason))].join("; ") : null;

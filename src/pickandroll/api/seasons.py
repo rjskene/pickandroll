@@ -2479,11 +2479,29 @@ class SeasonService:
                 newest = max(fetched, key=fetched.__getitem__, default=None)
                 kind = newest.split("/", 1)[0] if newest else "Yahoo"
             entries = season_status.latest_entries(folder, nba_today(now))
-            recs = st.recommendations(entries, projection_at, read_at, now, yahoo=kind)
+            solved = self._solved(league)
+            recs = st.recommendations(entries, projection_at, read_at, now, kind, solved)
             name = Season.from_parts(base, parts).settings.name
             out.append(st.league(league, name, is_public, rows, recs, exports["state"]))
         routine = st.routine_row(season_status.routine_marker(self.data_dir), now)
         return st.payload(routine, exports, out, now)
+
+    def _solved(self, league: str) -> dict[str, Any] | None:
+        """Today's moves solve on the league's current inputs, kept by this service in the
+        system in force, logged or not (the Moves view's own is not, #240): its time, system
+        and plan, for the light (#305); None when there is none."""
+        system = self._system(league, None)
+        key = (league, system, "moves", nba_today(self.clock()), self._moves_stamp(league))
+        payload = self.moves_cache.peek(key)
+        at = self._moves_at.get(key)
+        if payload is None or at is None:
+            return None
+        built = self.moves_cache.peek((*key[:2], "built", *key[3:]))
+        return {
+            "at": at.isoformat(),
+            "system": built.system if built is not None else {"key": system},
+            "plan": payload.get("plan"),
+        }
 
     # ------------------------------------------------------------------ refresh
     def start_refresh(self, league: str) -> RefreshJob:
