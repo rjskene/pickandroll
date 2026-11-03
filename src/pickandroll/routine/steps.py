@@ -333,6 +333,11 @@ def _when(x: Any) -> datetime | None:
 #: the entry's add page itself; a moves opening's wait: it reads the rendered claim form.
 IL_WAIT_S = 30.0
 MOVES_WAIT_S = 12.0
+#: A lineup opening's wait: the extension posts the page about four seconds in (loaded, then
+#: settled), reads the steps and, live, sets each change and reads Yahoo's answer before the
+#: next. Eight seconds cut five of nine live runs off mid-set on 2026-11-02 (#301): thirty, as
+#: for Start Active, leaves room for several changes.
+LINEUP_WAIT_S = 30.0
 
 
 @dataclass
@@ -384,7 +389,9 @@ def lineup_plan(
             if not league_page_ok(league, page):
                 skipped.append(f"{league}: page not the league's own ({page!r})")
                 continue
-            out.append(Opening(league, "lineup", f"{page}#{fragment}", 8.0, date=d.get("date")))
+            out.append(
+                Opening(league, "lineup", f"{page}#{fragment}", LINEUP_WAIT_S, date=d.get("date"))
+            )
     ctx.notes["lineup_skipped"] = skipped
     return out
 

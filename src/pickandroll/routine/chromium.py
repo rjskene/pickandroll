@@ -367,7 +367,7 @@ def fresh_worker(profile: Path, extension: Path) -> bool:
     since the stamp (or there is no stamp): the launch then registers the worker from the
     checkout. The sign-ins and the extension's own records live elsewhere in the profile and are
     kept. On 2026-11-02 the droplet ran the worker of 2026-10-29 under extension 0.11.2, without
-    the live lineup run's messages, and every live lineup run was skipped. Answers whether it
+    the live lineup run's messages, and every live lineup run was skipped (#301). Answers whether it
     dropped the copy."""
     stamp = profile / EXTENSION_STAMP
     now_ = extension_stamp(extension)
