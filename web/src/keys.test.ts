@@ -303,7 +303,7 @@ test("season: digits 1 to 9 open the nine cards, shifted in the bottom half", ()
   }
 });
 
-test("season: ] / j k arrows Enter t m r x , .", () => {
+test("season: ] / j k arrows Enter t m r x , . ← →", () => {
   const cases: [KeyLike, unknown[][], Partial<SeasonKeys>?][] = [
     [key("]"), [["toggle"]]],
     [key("x"), [["swap"]]],
@@ -319,12 +319,39 @@ test("season: ] / j k arrows Enter t m r x , .", () => {
     [key("p"), [["progress"]]],
     [key(","), [["step", -1]]],
     [key("."), [["step", 1]]],
+    [key("ArrowLeft"), [["step", -1]]],
+    [key("ArrowRight"), [["step", 1]]],
   ];
   for (const [e, want, over] of cases) {
     const { map, calls } = fakeSeason(over);
     assert.equal(handleKey(e, map), true, e.key);
     assert.deepEqual(calls, want, e.key);
   }
+});
+
+test("season: ← and → step the leagues as , and ., never in a focused field (#311)", () => {
+  const time = { tagName: "INPUT", type: "time" };
+  const range = { tagName: "INPUT", type: "range" };
+  for (const target of [field, select, time, range, checkbox]) {
+    for (const k of ["ArrowLeft", "ArrowRight"]) {
+      const { map, calls } = fakeSeason();
+      assert.equal(handleKey(key(k, { target }), map), false, `${k} in ${target.tagName} ${"type" in target ? target.type : ""}`);
+      assert.deepEqual(calls, []);
+    }
+  }
+  // A focused button or link still steps; the only league does not.
+  const { map, calls } = fakeSeason();
+  assert.equal(handleKey(key("ArrowRight", { target: { tagName: "BUTTON" } }), map), true);
+  assert.deepEqual(calls, [["step", 1]]);
+  assert.equal(handleKey(key("ArrowLeft"), fakeSeason({ step: null }).map), false);
+  assert.equal(handleKey(key("ArrowLeft", { altKey: true }), fakeSeason().map), false);
+  // A focused chart (Strategy, Scorecard) took the arrow first: the league stays.
+  const chart = fakeSeason();
+  assert.equal(handleKey(key("ArrowRight", { defaultPrevented: true }), chart.map), false);
+  assert.deepEqual(chart.calls, []);
+  const rows = SEASON_SHEET.groups.flatMap((g) => g.rows);
+  assert.ok(rows.some(([ks]) => ks.includes(",") && ks.includes("←")));
+  assert.ok(rows.some(([ks]) => ks.includes(".") && ks.includes("→")));
 });
 
 test("season: w, h, s and l show their views, [ the drawer, whatever the view", () => {
