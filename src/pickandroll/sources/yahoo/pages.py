@@ -759,6 +759,8 @@ def parse_matchup_page(
         out["games"] = games
     if not totals and (sums := _roster_sums(root, teams)):
         out["roster_totals"] = sums
+    if players := _roster_rows(root, teams):
+        out["players"] = players
     return out
 
 
@@ -817,6 +819,35 @@ def _roster_sums(root: Node, teams: list[int]) -> dict[str, dict[str, float]]:
             side = sums[str(teams[i >= split])]
             side[label] = round(side.get(label, 0.0) + value, 4)
     return sums
+
+
+def _roster_rows(root: Node, teams: list[int]) -> dict[str, list[dict[str, Any]]]:
+    """Each team's players on the page's player table (#304), as printed: his Yahoo id, his slot
+    today and his line for the week on that team by column (``-`` for no game counted), counted
+    as Yahoo counts the matchup (the days he sat in an active slot). A player dropped during the
+    week is not on it, and an empty slot is left out."""
+    table = root.find("table", pred=lambda n: (n.get("id") or "").startswith("statTable"))
+    if table is None:
+        return {}
+    labels, rows = table_rows(table)
+    at = [i for i, label in enumerate(labels) if label == "Player"]
+    if len(at) != 2:
+        return {}
+    sides = [(at[0], at[1]), (at[1], len(labels))]
+    out: dict[str, list[dict[str, Any]]] = {str(t): [] for t in teams}
+    for row in rows:
+        cs = cells(row)
+        for team, (player_i, end) in zip(teams, sides, strict=True):
+            if player_i >= len(cs) or (player := player_cell(cs[player_i])) is None:
+                continue
+            slot = cs[player_i - 1].text() if labels[player_i - 1] == "Pos" else ""
+            line = {
+                labels[i]: cs[i].text()
+                for i in range(player_i + 1, min(end, len(cs)))
+                if labels[i] and labels[i] != "Pos"
+            }
+            out[str(team)].append({"player": player.yahoo_id, "slot": slot, "line": line})
+    return {k: v for k, v in out.items() if v}
 
 
 def parse_transactions_page(html: str) -> dict[str, Any]:
