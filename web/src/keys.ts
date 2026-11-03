@@ -131,6 +131,8 @@ export interface KeyLike {
   ctrlKey?: boolean;
   altKey?: boolean;
   target?: unknown;
+  /** A focused widget's own handler took the key first (a chart's arrows, #311). */
+  defaultPrevented?: boolean;
 }
 
 interface TargetLike {
@@ -192,8 +194,8 @@ export interface KeyMap {
 /** One keydown: true when a shortcut took it (the caller prevents the browser's default).
  * Letters are ignored while a field has focus; Esc leaves the field first. A command-key chord
  * runs the map's `mod` entry unless text entry has focus; any other modified key is left to the
- * browser. Any shortcut used while the key sheet is open also closes the sheet, so keys can be
- * tried from it. */
+ * browser, and so is a key a focused widget's own handler already took. Any shortcut used while
+ * the key sheet is open also closes the sheet, so keys can be tried from it. */
 export function handleKey(e: KeyLike, map: KeyMap, mac: boolean = MAC): boolean {
   const f = focus(e.target);
   if (e.key === "Escape") {
@@ -205,6 +207,9 @@ export function handleKey(e: KeyLike, map: KeyMap, mac: boolean = MAC): boolean 
     }
     return true;
   }
+  // A key a focused widget already took (the Strategy and Scorecard charts' arrows) is not
+  // also a shortcut.
+  if (e.defaultPrevented) return false;
   const command = mac ? e.metaKey && !e.ctrlKey : e.ctrlKey && !e.metaKey;
   if (command && !e.altKey && !e.shiftKey) {
     const chord = f.typing ? undefined : map.mod?.[e.key.toLowerCase()];
@@ -490,6 +495,16 @@ export function seasonKeys(s: SeasonKeys): KeyMap {
         if (!s.step) return false;
         s.step(1);
       },
+      // The arrows as , and . (#311), except in a focused field (a time input, a slider, a
+      // checkbox): there they keep their own use.
+      ArrowLeft: ({ field }) => {
+        if (field || !s.step) return false;
+        s.step(-1);
+      },
+      ArrowRight: ({ field }) => {
+        if (field || !s.step) return false;
+        s.step(1);
+      },
     },
   };
 }
@@ -534,8 +549,8 @@ export const SEASON_SHEET: Sheet = {
         [["m"], "the panel shows Moves"],
         [["r"], "refresh the league (public leagues)"],
         [["p"], "the Progress screen: the hill-climb over the season, every league (read-only)"],
-        [[","], "the previous league, in the landing table's order (wraps at the start)"],
-        [["."], "the next league, in the landing table's order (wraps at the end)"],
+        [[",", "←"], "the previous league, in the landing table's order (wraps at the start)"],
+        [[".", "→"], "the next league, in the landing table's order (wraps at the end)"],
         [["?"], "this sheet"],
       ],
     },

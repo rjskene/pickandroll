@@ -428,7 +428,7 @@ export default function SeasonScreen({
         )}
         <span className="league-step">
           {prev && (
-            <button className="icon" onClick={() => onLeague(prev.league, views.view)} aria-label={`Previous: ${prev.name}`} title={`Previous: ${prev.name} (,)`}>
+            <button className="icon" onClick={() => onLeague(prev.league, views.view)} aria-label={`Previous: ${prev.name}`} title={`Previous: ${prev.name} (, or ←)`}>
               <Chevron dir="left" />
             </button>
           )}
@@ -436,7 +436,7 @@ export default function SeasonScreen({
             <LeaguesIcon />
           </button>
           {next && (
-            <button className="icon" onClick={() => onLeague(next.league, views.view)} aria-label={`Next: ${next.name}`} title={`Next: ${next.name} (.)`}>
+            <button className="icon" onClick={() => onLeague(next.league, views.view)} aria-label={`Next: ${next.name}`} title={`Next: ${next.name} (. or →)`}>
               <Chevron dir="right" />
             </button>
           )}
