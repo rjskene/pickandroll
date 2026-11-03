@@ -679,6 +679,9 @@ tr.breakdown > td { padding: 0; white-space: normal; background: var(--panel); }
 .mu-players { display: flex; flex-direction: column; gap: 4px; margin-top: 12px; }
 .mu-players .note { font-family: var(--body); font-size: 12px; letter-spacing: 0; text-transform: none; }
 .mu-players .season-table td { white-space: nowrap; }
+.mu-lines { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 14px; font-size: 12px; }
+.mu-team-line td { border-top: 1px solid var(--line-2); font-weight: 700; }
+.mu-team-line + .mu-team-line td { border-top: none; }
 /* A narrow board column scrolls the players' table, not the view, so Cats and Matchup stay in reach. */
 .mu-table { overflow-x: auto; }
 /* The Season view (#116): the summary, a chip per week left, the week a chip opens. */

@@ -66,6 +66,43 @@ def test_a_points_matchup_sums_its_player_table_to_the_score():
     assert sums["6"]["PTS"] == 54.0
 
 
+def test_a_matchup_page_gives_each_teams_players_as_yahoo_counts_them():
+    """#304: the player table under the scoreboard, each player's week on his team by column
+    (names replaced in the fixture). Its counting columns sum to the scoreboard's totals; it
+    prints rounded percentages, never the makes and attempts or the games."""
+    d = pages.parse_matchup_page(fixture("matchup_week_players.html"), 3, [7, 9])
+    rows = d["players"]
+    assert [len(rows["7"]), len(rows["9"])] == [13, 15]
+    first = rows["7"][0]
+    assert (first["player"], first["slot"]) == (10108, "PG")
+    assert first["line"] == {
+        "FG%": ".556",
+        "FT%": ".800",
+        "3PTM": "0",
+        "PTS": "14",
+        "REB": "3",
+        "AST": "3",
+        "ST": "1",
+        "BLK": "0",
+        "TO": "2",
+    }
+    assert rows["9"][-1]["slot"] == "IL" and set(rows["9"][-1]["line"].values()) == {"-"}
+    for team in ("7", "9"):
+        for col in ("3PTM", "PTS", "REB", "AST", "ST", "BLK", "TO"):
+            total = sum(float(r["line"][col]) for r in rows[team] if r["line"][col] != "-")
+            assert total == float(d["totals"][team][col])
+    assert d["games"] == {
+        "7": {"played": 10, "scheduled": 40},
+        "9": {"played": 10, "scheduled": 42},
+    }
+
+
+def test_a_points_matchup_page_gives_its_players_fantasy_points():
+    rows = pages.parse_matchup_page(fixture("matchup_week_points.html"), 1)["players"]
+    assert sum(float(r["line"]["Fan Pts"]) for r in rows["6"]) == pytest.approx(120.2)
+    assert {r["slot"] for r in rows["8"]} >= {"PG", "BN", "Util"}
+
+
 def test_the_draft_results_give_every_pick_by_round_and_overall():
     picks = pages.parse_draft_results(fixture("draftresults.html"))["picks"]
     assert len(picks) == 24

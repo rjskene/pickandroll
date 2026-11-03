@@ -26,7 +26,10 @@ import type {
   LineupRunLog,
   LineupStepLog,
   MatchKind,
+  MatchupLine,
   MatchupPayload,
+  MatchupPlayer,
+  MatchupTeamLines,
   MilpBlock,
   MoveAdds,
   MoveCandidate,
@@ -2014,6 +2017,70 @@ export function scoreLabel(s: Pick<SeasonSummary, "score" | "scoring">): string 
   if (!s.score) return "no score yet";
   const [mine, theirs] = s.score;
   return s.scoring === "points" ? `${round1(mine)}–${round1(theirs)}` : `${mine}-${theirs}`;
+}
+
+/** The players' tables' line (#304): his week so far, the rest of it, the two added, or one game. */
+export type MatchupLineView = "so_far" | "rest" | "total" | "per_game";
+export const MATCHUP_LINE_KEY = "pickandroll.matchup.line";
+export const MATCHUP_LINE_VIEWS: { key: MatchupLineView; label: string; title: string }[] = [
+  { key: "so_far", label: "So far", title: "his week to date on this team, as Yahoo counts it: only the days he sat in an active slot" },
+  { key: "rest", label: "Rest of week", title: "the projection of his starts left (games left × his per-game line)" },
+  { key: "total", label: "Week total", title: "so far plus the rest of the week" },
+  { key: "per_game", label: "Per game", title: "one game of his projected line" },
+];
+
+/** The line this browser kept, Week total unless it kept another it knows. */
+export function matchupLineView(saved: string | null): MatchupLineView {
+  return MATCHUP_LINE_VIEWS.some((v) => v.key === saved) ? (saved as MatchupLineView) : "total";
+}
+
+/** A player's line in ``view``. */
+export function playerLine(r: MatchupPlayer, view: MatchupLineView): Partial<Record<Cat | WeekStat, number | null>> | null {
+  return view === "per_game" ? r.per_game : r[view];
+}
+
+/** The G column in ``view``: games counted so far (null: not known), games left, both. */
+export function playerGames(r: MatchupPlayer, view: MatchupLineView): number | null {
+  if (view === "so_far") return r.so_far.games;
+  if (view === "total") return r.total.games;
+  return r.games;
+}
+
+const MAKES: Partial<Record<Cat, [WeekStat, WeekStat]>> = { fg_pct: ["fgm", "fga"], ft_pct: ["ftm", "fta"] };
+
+/** A stat as the line shows it: a count so far whole, a projection to one place, a percentage to
+ * three. */
+export function lineValue(cat: Cat, v: number | null | undefined, view: MatchupLineView): string {
+  if (v == null || Number.isNaN(v)) return "—";
+  if (isPct(cat) || view !== "so_far") return catValue(cat, v);
+  return Number.isInteger(v) ? String(v) : v.toFixed(1);
+}
+
+/** A percentage cell's title: the makes over attempts behind it, or why there are none (Yahoo's
+ * rounded figure, the box scores not placing his games). */
+export function pctTitle(cat: Cat, line: Partial<Record<Cat | WeekStat, number | null>> | null, view: MatchupLineView, why: string | null): string | undefined {
+  const pair = MAKES[cat];
+  if (!pair || !line || view === "per_game") return undefined;
+  const [m, a] = [line[pair[0]], line[pair[1]]];
+  const num = (x: number) => (view === "so_far" && Number.isInteger(x) ? String(x) : x.toFixed(1));
+  if (m != null && a != null) return a ? `${num(m)}/${num(a)}` : "no attempts";
+  if (view === "so_far") return `Yahoo's rounded percentage, no attempts behind it: ${why ?? "not placed"}`;
+  return `not known: the attempts so far are not (${why ?? "not placed"})`;
+}
+
+/** The team lines under a table in ``view``: so far Yahoo's count with what of it is on no
+ * player's row; the projection of the rest; the projected final; none per game. */
+export function teamRows(t: MatchupTeamLines, view: MatchupLineView): { label: string; line: MatchupLine; title: string }[] {
+  if (view === "so_far")
+    return [
+      ...(t.gap
+        ? [{ label: "Not on a player's row", line: t.gap, title: "Yahoo's count less the players' rows: a player dropped this week, and the makes, attempts and games of players whose games the box scores could not place" }]
+        : []),
+      { label: "Team, as Yahoo counts it", line: t.so_far, title: "the scoreboard's so far: the rows above plus the row above this one" },
+    ];
+  if (view === "rest") return [{ label: "Team, rest of week", line: t.rest, title: "the projection of the team's starts left" }];
+  if (view === "total") return [{ label: "Team, projected final", line: t.total, title: "the scoreboard's projected final: so far plus the rest of the week" }];
+  return [];
 }
 
 /** The landing's matchup odds in the "This week" cell (#303): the Matchup view's own hero number

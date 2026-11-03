@@ -1215,6 +1215,20 @@ then UI to evaluate available waiver options"). The flow:
    both are with him minus without him for the rest of the week, Cats in categories and Matchup
    in percentage points of the matchup odds, why the two disagree, the signs and the points-league
    variant.
+   A switch above the players' tables (#304) picks their line: **So far**, **Rest of week**,
+   **Week total** (the default) or **Per game**, kept per browser (`pickandroll.matchup.line`);
+   the G column follows it. So far is his week on that team as Yahoo counts it (only the days he
+   sat in an active slot): the matchup page's player table, which prints his counting stats and
+   rounded percentages but not his makes, attempts or games. Those come from his cached box
+   scores (#126, `season/so_far.py`): the one set of his games this week (at most seven) whose
+   counting stats sum exactly to Yahoo's row and whose makes over attempts round to Yahoo's
+   percentages. No such set, two or more, or no box scores for him: Yahoo's row as printed, its
+   percentage titled without attempts, his games and his week-total percentage `—`. Rest of week
+   is the projection of his starts left; Week total the two added, percentages made over
+   attempted. Under each table, the team's line in the same terms: so far Yahoo's count, with a
+   "Not on a player's row" line for a player dropped this week and the makes and attempts not
+   placed, so the rows reconcile with the scoreboard; Week total the projected final. A finished
+   day the matchup page was read before is in neither half and is listed above the tables.
 6. **The Season view** (#116, `s`), `GET /seasons/{league}/outlook?system=bbm|yahoo`. Every
    week left of my season. A summary line: the wins expected in the regular weeks left (their
    matchup odds summed), my record today, and how many of the named weeks are favoured (60% or

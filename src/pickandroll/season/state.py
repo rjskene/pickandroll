@@ -419,6 +419,11 @@ class Matchup:
     #: Every score line the page prints, by label: ``vs`` (the score) and, in a points league,
     #: Yahoo's own ``Orig Proj`` and ``Live Proj`` for the week.
     lines: Mapping[str, tuple[float, float]] = field(default_factory=dict)
+    #: Each team's players on the page's player table (#304), as printed: ``player`` (Yahoo id),
+    #: ``slot`` and ``line`` (his week on that team by column, as Yahoo counts it).
+    players: Mapping[int, tuple[Mapping[str, Any], ...]] = field(default_factory=dict)
+    #: Each team's games played and scheduled this week (``played``, ``scheduled``).
+    games: Mapping[int, Mapping[str, int]] = field(default_factory=dict)
 
     def opponent_of(self, team_id: int) -> int | None:
         a, b = self.teams
@@ -431,6 +436,8 @@ class Matchup:
             "totals": {str(k): dict(v) for k, v in self.totals.items()},
             "score": list(self.score) if self.score else None,
             "lines": {k: list(v) for k, v in self.lines.items()},
+            "players": {str(k): [dict(r) for r in v] for k, v in self.players.items()},
+            "games": {str(k): dict(v) for k, v in self.games.items()},
         }
 
     @classmethod
@@ -442,6 +449,8 @@ class Matchup:
             totals={int(k): dict(v) for k, v in (d.get("totals") or {}).items()},
             score=(float(d["score"][0]), float(d["score"][1])) if d.get("score") else None,
             lines={k: (float(v[0]), float(v[1])) for k, v in (d.get("lines") or {}).items()},
+            players={int(k): tuple(v) for k, v in (d.get("players") or {}).items()},
+            games={int(k): dict(v) for k, v in (d.get("games") or {}).items()},
         )
 
 

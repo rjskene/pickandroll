@@ -1,7 +1,30 @@
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { api, CAT_LABEL, type Cat, type MatchupPayload, type MatchupPlayer, type ProjectionSystem, type SeasonView } from "../api";
-import { ageLabel, catValue, dayLabel, daysLeftLabel, gainLabel, leanTone, matchupColumns, matchupExplainer, matchupRecord, oddsGainLabel, oddsLabel, playersById, recordLabel } from "../season";
+import { api, CAT_LABEL, type Cat, type MatchupPayload, type MatchupPlayer, type MatchupTeamLines, type ProjectionSystem, type SeasonView } from "../api";
+import {
+  ageLabel,
+  catValue,
+  dayLabel,
+  daysLeftLabel,
+  gainLabel,
+  leanTone,
+  lineValue,
+  MATCHUP_LINE_KEY,
+  MATCHUP_LINE_VIEWS,
+  matchupColumns,
+  matchupExplainer,
+  matchupLineView,
+  matchupRecord,
+  oddsGainLabel,
+  oddsLabel,
+  pctTitle,
+  playerGames,
+  playerLine,
+  playersById,
+  recordLabel,
+  teamRows,
+  type MatchupLineView,
+} from "../season";
 import Info from "./Info";
 
 /** The per-game columns of the players' tables, in the league's order. */
@@ -37,6 +60,14 @@ export default function MatchupView({
     retry: false,
   });
   const byId = useMemo(() => playersById(s), [s]);
+  const [view, setView] = useState<MatchupLineView>(savedLine);
+  useEffect(() => {
+    try {
+      localStorage.setItem(MATCHUP_LINE_KEY, view);
+    } catch {
+      // this browser keeps no line: Week total next time
+    }
+  }, [view]);
   if (!s.my_team) return <p className="muted">No team of mine in this league: the Matchup view needs my team id in its settings.</p>;
   if (q.error) return <p className="error">{q.error.message}</p>;
   const m = q.data;
@@ -117,10 +148,26 @@ export default function MatchupView({
           </div>
         </div>
       ))}
+      <div className="mu-lines">
+        <span className="seg small" role="group" aria-label="Players' line">
+          {MATCHUP_LINE_VIEWS.map((v) => (
+            <button key={v.key} className={view === v.key ? "on" : undefined} aria-pressed={view === v.key} onClick={() => setView(v.key)} title={v.title}>
+              {v.label}
+            </button>
+          ))}
+        </span>
+        {view !== "per_game" && view !== "rest" && m.unread.length > 0 && (
+          <span className="muted">
+            {m.unread.map((u) => `${dayLabel(u.day)}: not counted yet (matchup page read ${m.so_far_at ? ageLabel(m.so_far_at, now) : "never"}) · ${u.games[0]} and ${u.games[1]} games`).join("; ")}
+          </span>
+        )}
+      </div>
       <Players
         title={`My players · ${name(mine)}`}
         note={m.from ? `what each adds to the ${oddsLabel(m.win)}: out from ${dayLabel(m.from)}, his starts refilled from the bench` : "the week has no day left: its score so far is its final"}
         rows={m.players.mine}
+        team={m.team_lines.mine}
+        view={view}
         m={m}
         mine
         points={points}
@@ -130,6 +177,8 @@ export default function MatchupView({
         title={`Their players · ${name(theirs)}`}
         note={`what each adds to ${name(theirs)}'s chances, the same way`}
         rows={m.players.theirs}
+        team={m.team_lines.theirs}
+        view={view}
         m={m}
         mine={false}
         points={points}
@@ -139,12 +188,29 @@ export default function MatchupView({
   );
 }
 
-/** A team's players: games left, the per-game line, and the expected categories and matchup
- * odds each adds for his team. */
+function savedLine(): MatchupLineView {
+  try {
+    return matchupLineView(localStorage.getItem(MATCHUP_LINE_KEY));
+  } catch {
+    return "total";
+  }
+}
+
+/** The G column's title in ``view``. */
+function gamesTitle(view: MatchupLineView, from: string | null): string {
+  if (view === "so_far") return "games counted so far (— when the box scores could not place them)";
+  if (view === "total") return "games counted so far plus games left";
+  return from ? `games left from ${dayLabel(from)}` : "games left: none, the week is over";
+}
+
+/** A team's players: their games and line in ``view`` (#304), the team's lines under them, and
+ * the expected categories and matchup odds each adds for his team. */
 function Players({
   title,
   note,
   rows,
+  team,
+  view,
   m,
   mine,
   points,
@@ -153,6 +219,8 @@ function Players({
   title: string;
   note: string;
   rows: MatchupPlayer[];
+  team: MatchupTeamLines;
+  view: MatchupLineView;
   m: MatchupPayload;
   mine: boolean;
   points: boolean;
@@ -172,11 +240,11 @@ function Players({
             <tr>
               <th>Player</th>
               <th>Slot</th>
-              <th className="num" title={m.from ? `games left from ${dayLabel(m.from)}` : "games left: none, the week is over"}>
+              <th className="num" title={gamesTitle(view, m.from)}>
                 G
               </th>
               {cols.map((c) => (
-                <th key={c} className="num" title={`${CAT_LABEL[c]} per game`}>
+                <th key={c} className="num" title={`${CAT_LABEL[c]} ${MATCHUP_LINE_VIEWS.find((v) => v.key === view)?.label.toLowerCase()}`}>
                   {CAT_LABEL[c]}
                 </th>
               ))}
@@ -191,19 +259,22 @@ function Players({
           <tbody>
             {rows.map((r) => {
               const p = player(r.player);
+              const line = playerLine(r, view);
+              const g = playerGames(r, view);
+              const why = r.so_far.why;
               return (
-                <tr key={r.player} className={r.games === 0 ? "bench" : undefined}>
+                <tr key={r.player} className={r.games === 0 && view !== "so_far" ? "bench" : undefined}>
                   <td>
                     <span className="strong">{p?.name ?? `player ${r.player}`}</span>
                     {p?.nba_team && <span className="dim"> {p.nba_team}</span>}
                   </td>
                   <td className="dim">{r.slot}</td>
-                  <td className="num" title={r.started !== r.games ? `${r.started} of them in a starting slot` : undefined}>
-                    {r.games}
+                  <td className="num" title={view === "so_far" ? (why ?? undefined) : r.started !== r.games ? `${r.started} of the ${r.games} left in a starting slot` : undefined}>
+                    {g ?? "—"}
                   </td>
                   {cols.map((c) => (
-                    <td key={c} className="num">
-                      {catValue(c, r.per_game?.[c])}
+                    <td key={c} className="num" title={pctTitle(c, line, view, why)}>
+                      {view === "per_game" ? catValue(c, line?.[c]) : lineValue(c, line?.[c], view)}
                     </td>
                   ))}
                   {!points && <td className={`num ${tone(r.cats)}`}>{gainLabel(r.cats)}</td>}
@@ -212,6 +283,25 @@ function Players({
               );
             })}
           </tbody>
+          {view !== "per_game" && (
+            <tfoot>
+              {teamRows(team, view).map((t) => (
+                <tr key={t.label} className="mu-team-line">
+                  <td colSpan={2} title={t.title}>
+                    {t.label}
+                  </td>
+                  <td className="num">{t.line.games ?? "—"}</td>
+                  {cols.map((c) => (
+                    <td key={c} className="num" title={pctTitle(c, t.line, view, null)}>
+                      {lineValue(c, t.line[c], view)}
+                    </td>
+                  ))}
+                  {!points && <td />}
+                  <td />
+                </tr>
+              ))}
+            </tfoot>
+          )}
         </table>
       </div>
     </div>
