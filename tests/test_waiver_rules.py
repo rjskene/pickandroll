@@ -228,13 +228,28 @@ def test_a_standard_leagues_queue_places_no_bid_and_claims_by_priority():
         assert faab[102]["bid"]["amount"] == 0
 
 
+class Inline:
+    """The page's thread, run at once: a page look's solve is kept before the look answers."""
+
+    def submit(self, fn):
+        fn()
+
+
+def page_look(client) -> dict:
+    """The moves view's look, its solve run first: the first look answers ``solving`` (#306)."""
+    client.app.state.seasons.page_solves = Inline()
+    url, page = f"/seasons/{LEAGUE}/moves", {"source": "page"}
+    assert "solving" in client.get(url, params=page).json()
+    r = client.get(url, params=page)
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
 def test_a_faab_leagues_moves_view_carries_no_claim(client):
     projection_csv(client.data_dir / "bbm_projections_2026-10-21.csv", fixture_names())
     client.post(f"/seasons/{LEAGUE}/refresh", params={"wait": True})
     # The public fixture league bids (v3's uses_faab): no claim block.
-    r = client.get(f"/seasons/{LEAGUE}/moves", params={"source": "page"})
-    assert r.status_code == 200, r.text
-    assert r.json()["claim"] is None
+    assert page_look(client)["claim"] is None
 
 
 def test_a_standard_leagues_moves_view_carries_the_claims_terms(client, monkeypatch):
@@ -252,9 +267,9 @@ def test_a_standard_leagues_moves_view_carries_the_claims_terms(client, monkeypa
     assert built.priority == (2, 12)
     assert season_moves.moves_payload(built)["claim"] == mv.priority_claim(2, 12, 0.3)
     assert season_moves.claim_of(built, 0.4)["odds"] == 0.6
-    url, page = f"/seasons/{LEAGUE}/moves", {"source": "page"}
-    claim = client.get(url, params=page).json()["claim"]
+    claim = page_look(client)["claim"]
     assert (claim["priority"], claim["ahead"], claim["odds"], claim["after"]) == (2, 1, 0.7, 12)
+    url, page = f"/seasons/{LEAGUE}/moves", {"source": "page"}
     # The route reads the rate at request time, past the kept solve: no restart to change it.
     put_settings(client, {"rival_claim_rate": 0.5})
     claim = client.get(url, params=page).json()["claim"]

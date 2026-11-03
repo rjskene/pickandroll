@@ -4,8 +4,9 @@
 # while a routine unit runs. Then: main fast-forwarded; the dashboard rebuilt from web/ when
 # web/ changed in the pull or its build is missing (served by the API under /app, built with
 # --base=/app/ and the API at the page's own origin); the API restarted when src/ or
-# pyproject.toml changed (or --restart). Prints what it did. Exit 3 when a guard holds, 1 when
-# the API does not come back, 0 otherwise. The Mac's own room guard is the caller's.
+# pyproject.toml changed (or --restart); the cut-over's --skip-solve 31822 dropped from
+# routine.env (#306). Prints what it did. Exit 3 when a guard holds, 1 when the API does not
+# come back, 0 otherwise. The Mac's own room guard is the caller's.
 #   usage: ops/vm/update.sh [--restart]
 set -euo pipefail
 
@@ -63,4 +64,14 @@ if [ "$restart" = 1 ] || changed src pyproject.toml; then
   [ "$code" = 200 ] || exit 1
 else
   say "api: not restarted (no src/ or pyproject.toml change)"
+fi
+
+# 5. the settings folder (#306): the cut-over's routine.env of before left the private league's
+# solve out (--skip-solve 31822); the API keeps every solve to its budget now, so that exact
+# line is emptied, once. A routine.env written otherwise is the user's and stays as it is. The
+# run that pulls this step runs the script it started with: the next run applies it.
+conf=${PICKANDROLL_CONF:-$HOME/.config/pickandroll}
+if [ "$(cat "$conf/routine.env" 2>/dev/null)" = "ROUTINE_FLAGS=--skip-solve 31822" ]; then
+  echo "ROUTINE_FLAGS=" > "$conf/routine.env"
+  say "routine.env: --skip-solve 31822 dropped (every league solved within the moves budget, #306)"
 fi

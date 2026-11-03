@@ -83,7 +83,10 @@ slot when one is open (Yahoo blocks drops, not IL moves). His value net of retur
 from __future__ import annotations
 
 import re
-from collections.abc import Callable, Iterable, Mapping, Sequence
+import time
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 from typing import Protocol
@@ -939,6 +942,69 @@ def single_swaps(
     return out
 
 
+# --------------------------------------------------------------------------- the budget (#306)
+#: A solve's wall clock by default, in seconds (#306): six times the private league's solve on
+#: the droplet (15 s on 2026-11-03) and under the routine's shortest wait for an answer (the late
+#: re-solve's 120 s).
+MOVES_BUDGET_S = 90.0
+
+
+@dataclass
+class Budget:
+    """A solve's budget (#306): :meth:`out` once ``clock`` passes ``deadline`` or ``stop`` holds
+    (the client went), and from then on (``spent``; ``stopped`` when ``stop`` did it). The
+    searches count themselves on it: ``searches`` begun, ``cut`` the ones it ended before they
+    finished, ``skipped`` the re-solves never begun because it had run out."""
+
+    seconds: float | None = None
+    deadline: float | None = None
+    stop: Callable[[], bool] | None = None
+    clock: Callable[[], float] = time.monotonic
+    searches: int = 0
+    cut: int = 0
+    skipped: int = 0
+    spent: bool = False
+    stopped: bool = False
+
+    @classmethod
+    def start(
+        cls,
+        seconds: float | None,
+        stop: Callable[[], bool] | None = None,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> Budget:
+        """A budget of ``seconds`` from now (None: no deadline, only ``stop``)."""
+        deadline = None if seconds is None else clock() + seconds
+        return cls(seconds, deadline, stop, clock)
+
+    def out(self) -> bool:
+        if self.spent:
+            return True
+        if self.stop is not None and self.stop():
+            self.stopped = self.spent = True
+        elif self.deadline is not None and self.clock() >= self.deadline:
+            self.spent = True
+        return self.spent
+
+
+_BUDGET: ContextVar[Budget | None] = ContextVar("moves_budget", default=None)
+
+
+@contextmanager
+def budgeted(budget: Budget | None) -> Iterator[Budget | None]:
+    """Every :func:`search` and :func:`recommend` inside the block, on this thread, keeps to
+    ``budget`` (None: none)."""
+    token = _BUDGET.set(budget)
+    try:
+        yield budget
+    finally:
+        _BUDGET.reset(token)
+
+
+def _out(budget: Budget | None) -> bool:
+    return budget is not None and budget.out()
+
+
 # --------------------------------------------------------------------------- the search
 def search(
     ev: Valued,
@@ -955,12 +1021,18 @@ def search(
     replaced by its best alternative, or the move undone, until no change gains. ``exclude``
     are adds and ``keep`` drops the search may not use (a re-solve's forced choice); every set
     tried must pass ``allowed`` (the season guard) beside :func:`feasible`. Of two sets equal on
-    ``key`` the one ``season`` values more is taken (#221: ties go to the season)."""
+    ``key`` the one ``season`` values more is taken (#221: ties go to the season). Under a
+    budget (:func:`budgeted`, #306) the search ends when it runs out, between two trials, with
+    the best set it holds, and counts itself cut."""
     p = ev.problem
+    budget = _BUDGET.get()
+    if budget is not None:
+        budget.searches += 1
     banned, kept = set(exclude), set(keep)
     adds_ok = [c for c in pool if c not in banned]
     moves: list[Move] = []
     current = ev.value(key, ())
+    cut = False
 
     def tied_better(v: float, trial: Sequence[Move], than: float, other: Sequence[Move]) -> bool:
         return season is not None and abs(v - than) <= EPS and season(trial) > season(other) + EPS
@@ -970,26 +1042,34 @@ def search(
             return v > than
         return v > than + EPS or tied_better(v, trial, than, other)
 
-    while True:
+    while not cut:
         used = {m.add for m in moves}
         best: tuple[float, Move] | None = None
         for cand in adds_ok:
             if cand in used:
                 continue
             for drop in drop_options(p, moves, kept):
+                if _out(budget):
+                    cut = True
+                    break
                 trial = [*moves, Move(cand, drop)]
                 if not admitted(p, trial, allowed):
                     continue
                 v = ev.value(key, trial)
                 if best is None or better(v, trial, best[0], [*moves, best[1]]):
                     best = (v, Move(cand, drop))
+            if cut:
+                break
+        # A round the budget cut keeps the best move it found when that one gains.
         if best is None or best[0] - current <= max(min_gain, EPS):
             break
         current = best[0]
         moves.append(best[1])
-    while moves:
+    while moves and not cut:
         best_v, best_set = current, None
         for i, move in enumerate(moves):
+            if cut:
+                break
             rest = moves[:i] + moves[i + 1 :]
             used = {m.add for m in rest}
             trials = [rest]
@@ -1000,6 +1080,9 @@ def search(
                 [*rest, Move(move.add, d)] for d in drop_options(p, rest, kept) if d != move.drop
             ]
             for trial in trials:
+                if _out(budget):
+                    cut = True
+                    break
                 if not admitted(p, trial, allowed):
                     continue
                 v = ev.value(key, trial)
@@ -1012,6 +1095,8 @@ def search(
         if best_set is None:
             break
         moves, current = best_set, best_v
+    if cut and budget is not None:
+        budget.cut += 1
     return tuple(moves)
 
 
@@ -1055,7 +1140,7 @@ def recommend(
     that beats the set replaces it (the search is a heuristic), at most ``rounds`` times. The set
     is the search's, or ``start`` (another solver's, which the caller has allowed); ``keep`` are
     drops nothing may use; the search and every re-solve keep to ``allowed`` and break ties on
-    ``season``."""
+    ``season``. Once a budget (:func:`budgeted`, #306) runs out no round follows."""
     kept = frozenset(keep)
     moves = (
         tuple(start)
@@ -1064,7 +1149,7 @@ def recommend(
     )
     for attempt in range(rounds + 1):
         priced, better = _priced(ev, key, pool, moves, min_gain, kept, allowed, season)
-        if better is None or attempt == rounds:
+        if better is None or attempt == rounds or _out(_BUDGET.get()):
             gain = {h: ev.gain(h, moves) for h in ev.base}
             back = {h: tuple(comebacks(ev.problem, h, moves)) for h in ev.problem.horizons}
             return Recommendation(key, priced, gain, tuple(held_used(ev.problem, moves)), back)
@@ -1083,31 +1168,42 @@ def _priced(
     season: Season | None = None,
 ) -> tuple[tuple[PricedMove, ...], tuple[Move, ...] | None]:
     """Each move of ``moves`` priced by its two re-solves (each kept to ``allowed``, ties broken
-    on ``season``), and the best re-solve that beats the set, if one does."""
+    on ``season``), and the best re-solve that beats the set, if one does. Under a budget that
+    ran out (#306) a re-solve not run, or one it cut, gives way to the set without the move when
+    that is worth more: the move's price is then at most its own worth to the set."""
     value = ev.value(key, moves)
     priced: list[PricedMove] = []
     better: tuple[Move, ...] | None = None
+    budget = _BUDGET.get()
     for move in moves:
-        without = search(
-            ev, key, pool, {move.add}, kept, min_gain=min_gain, allowed=allowed, season=season
-        )
-        keep = None
-        if move.drop is not None:
-            keep = search(
-                ev,
-                key,
-                pool,
-                keep=kept | {move.drop},
-                min_gain=min_gain,
-                allowed=allowed,
-                season=season,
+        rest = tuple(m for m in moves if m != move)
+        if _out(budget):
+            without: tuple[Move, ...] = rest
+            keep = None if move.drop is None else rest
+            budget.skipped += 1 if move.drop is None else 2
+        else:
+            without = search(
+                ev, key, pool, {move.add}, kept, min_gain=min_gain, allowed=allowed, season=season
             )
+            keep = None
+            if move.drop is not None:
+                keep = search(
+                    ev,
+                    key,
+                    pool,
+                    keep=kept | {move.drop},
+                    min_gain=min_gain,
+                    allowed=allowed,
+                    season=season,
+                )
+            if _out(budget):
+                without = _worth_more(ev, key, without, rest, allowed)
+                keep = None if keep is None else _worth_more(ev, key, keep, rest, allowed)
         for alt in (without, keep):
             if alt is None or ev.value(key, alt) <= value + EPS:
                 continue
             if better is None or ev.value(key, alt) > ev.value(key, better):
                 better = alt
-        rest = [m for m in moves if m != move]
         priced.append(
             PricedMove(
                 move=move,
@@ -1119,6 +1215,16 @@ def _priced(
             )
         )
     return tuple(priced), better
+
+
+def _worth_more(
+    ev: Valued, key: str, found: tuple[Move, ...], rest: tuple[Move, ...], allowed: Allowed | None
+) -> tuple[Move, ...]:
+    """``found``, a re-solve's set, or ``rest`` when that one is admitted and worth more on
+    ``key`` (a re-solve the budget cut, #306)."""
+    if admitted(ev.problem, rest, allowed) and ev.value(key, rest) > ev.value(key, found) + EPS:
+        return rest
+    return found
 
 
 # --------------------------------------------------------------------------- the weekly limit

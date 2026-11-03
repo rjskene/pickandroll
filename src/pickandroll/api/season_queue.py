@@ -64,6 +64,8 @@ MOVES_LIVE_AFTER = "live_after"
 LINEUP_LIVE_AFTER = "lineup_live_after"
 #: The settings file's key for the rate a rival claims a waiver player (#261).
 RIVAL_CLAIM_RATE = "rival_claim_rate"
+#: The settings file's key for a moves solve's wall clock in seconds (#306).
+MOVES_BUDGET = "moves_budget_s"
 EXECUTE_TIME = re.compile(r"^([01][0-9]|2[0-3]):[0-5][0-9]$")
 #: The waiver days when a league's settings do not say: the public leagues' (read 2026-10-23).
 WAIVER_DAYS = 2
@@ -224,6 +226,20 @@ def rival_claim_rate(data_dir: Path) -> float:
     raw = body.get(RIVAL_CLAIM_RATE)
     if isinstance(raw, bool) or not isinstance(raw, int | float) or not 0 <= raw <= 1:
         return mv.RIVAL_CLAIM_RATE
+    return float(raw)
+
+
+def moves_budget_s(data_dir: Path) -> float:
+    """A moves solve's wall clock in seconds (#306), set in the settings file under
+    ``moves_budget_s``: a number above 0, else the default (``moves.MOVES_BUDGET_S``), as with a
+    file that does not read. Read at request time: a change needs no restart."""
+    try:
+        body = _read(autopilot_dir(data_dir) / SETTINGS, dict) or {}
+    except QueueError:
+        body = {}
+    raw = body.get(MOVES_BUDGET)
+    if isinstance(raw, bool) or not isinstance(raw, int | float) or not raw > 0:
+        return mv.MOVES_BUDGET_S
     return float(raw)
 
 

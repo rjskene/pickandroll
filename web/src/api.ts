@@ -1834,12 +1834,32 @@ export interface MovesPayload {
   week_plans?: WeekPlans | null;
   /** Available players without a line in the system (no move valued). */
   unprojected: number;
-  /** ``seconds``: the whole solve's (#221 part 2), absent before. */
-  search: { pool: number; min_gain: number; seconds?: number };
+  /** ``seconds``: the whole solve's (#221 part 2), absent before. The budget (#306): its
+   * seconds, whether it ran out (``cut``), the searches finished of those begun, and ``note``
+   * when it ran out; absent before. */
+  search: {
+    pool: number;
+    min_gain: number;
+    seconds?: number;
+    budget_s?: number;
+    cut?: boolean;
+    searches?: number;
+    finished?: number;
+    note?: string | null;
+  };
   /** A page's look while the moves of newer inputs are solved (#240): this answer is the kept
    * one; absent on a fresh answer. */
   stale?: MovesStale;
 }
+
+/** A page's look with no answer of today kept (#306): the API solves, within its budget, while
+ * the page asks again. */
+export interface MovesSolving {
+  solving: { reason: string; budget_s: number };
+}
+
+/** A page's look at the moves: the answer, or that it is being solved (#306). */
+export type MovesAnswer = MovesPayload | MovesSolving;
 
 /** Why a page's moves answer is an older one (#240): when it was built, the time of the newer
  * inputs being solved and the API's words. */
@@ -2713,9 +2733,10 @@ export const api = {
   seasons: () => request<SeasonSummary[]>("/seasons"),
   season: (league: string) => request<SeasonView>(`/seasons/${encodeURIComponent(league)}`),
   /** Every available player's best move on both horizons and the recommended sets (#94): a
-   * page's look, answered at once and never logged (#240). */
+   * page's look, answered at once and never logged (#240), or ``solving`` with none of today
+   * kept (#306). */
   moves: (league: string, system: ProjectionSystem) =>
-    request<MovesPayload>(`/seasons/${encodeURIComponent(league)}/moves?system=${system}&source=page`),
+    request<MovesAnswer>(`/seasons/${encodeURIComponent(league)}/moves?system=${system}&source=page`),
   /** My matchup this week as a scoreboard, and what each player adds to it (#116). */
   matchup: (league: string, system: ProjectionSystem) =>
     request<MatchupPayload>(`/seasons/${encodeURIComponent(league)}/matchup?system=${system}`),

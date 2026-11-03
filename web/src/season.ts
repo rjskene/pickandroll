@@ -36,6 +36,9 @@ import type {
   MoveRoom,
   MoveRos,
   MovesPassLog,
+  MovesAnswer,
+  MovesPayload,
+  MovesSolving,
   MovesStale,
   MovesSummary,
   MovesView,
@@ -1147,17 +1150,34 @@ export function addsThisWeek(row: Pick<QueueLeague, "adds_left">, today: string)
   return row.adds_left?.find((w) => w.start <= today && today <= w.end)?.adds ?? null;
 }
 
-/** How often the Moves card asks again (#240): every 3 s while its answer is stale, for at most
- * 120 s from the first stale one (then not until the next refresh); otherwise every minute. */
+/** How often the Moves card asks again (#240): every 3 s while its answer is stale or being
+ * solved (#306), for at most 120 s from the first such one (then not until the next refresh);
+ * otherwise every minute. */
 export const MOVES_POLL_MS = 60_000;
 export const STALE_POLL_MS = 3_000;
 export const STALE_CAP_MS = 120_000;
 
-/** The Moves card's refetch interval (#240): ``since`` is when its answer first came back stale,
- * null while it is fresh. */
+/** The Moves card's refetch interval (#240): ``since`` is when its answer first came back stale
+ * or solving, null while it is fresh. */
 export function movesPoll(stale: boolean, since: number | null, now: number): number | false {
   if (!stale) return MOVES_POLL_MS;
   return since != null && now - since >= STALE_CAP_MS ? false : STALE_POLL_MS;
+}
+
+/** The answer of a page's look, null while the API solves with none of today kept (#306). */
+export function movesOf(a: MovesAnswer | undefined): MovesPayload | undefined {
+  return a && !("solving" in a) ? a : undefined;
+}
+
+/** Whether a look's answer is one the card asks again for: stale (#240) or solving (#306). */
+export function movesPending(a: MovesAnswer | undefined): boolean {
+  return Boolean(a && ("solving" in a || a.stale));
+}
+
+/** The Moves card's line while the API solves with no answer of today kept (#306): solving
+ * within the budget, or, once the card stopped asking, still solving. */
+export function solvingLine(solving: MovesSolving["solving"], capped: boolean): string {
+  return capped ? "still solving: refresh to look again" : `solving: ${solving.reason.replace(/; solving$/, "")} (within ${solving.budget_s} s)`;
 }
 
 /** The Moves card's line while its answer is stale (#240): solving, or, once the card stopped
