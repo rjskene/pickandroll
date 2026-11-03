@@ -28,6 +28,12 @@ COUNTED |= {"fgm": 5, "fga": 9, "ftm": 1, "fta": 2}
 BENCHED = {**COUNTED, "pts": 20, "reb": 9, "fgm": 8, "fga": 14}
 UNBOXED = {"FG%": ".500", "FT%": "-", "3PTM": "0", "PTS": "8", "REB": "2"}
 UNBOXED |= {"AST": "1", "ST": "0", "BLK": "1", "TO": "1"}
+#: Yahoo's row for a player who did not play: zeros, no percentages.
+ZEROS = {
+    **dict.fromkeys(["3PTM", "PTS", "REB", "AST", "ST", "BLK", "TO"], "0"),
+    "FG%": "-",
+    "FT%": "-",
+}
 
 
 def printed(line: dict) -> dict:
@@ -44,18 +50,24 @@ def printed(line: dict) -> dict:
     }
 
 
-def box_day(cache, day: str, espn: str, line: dict) -> None:
-    game = {"id": day, "start": f"{day}T23:00:00Z", "teams": ["AAA", "BBB"]}
-    game["players"] = {espn: {"name": "made up", "team": "AAA", "line": line}}
-    (cache / f"{day}.json").write_text(json.dumps({"date": day, "games": [game]}))
+def box_day(cache, day: str, espn: str, line: dict | None) -> None:
+    """``espn``'s line on ``day``, added to the day's one game (None: on the injury report, out)."""
+    path = cache / f"{day}.json"
+    # The refresh's fake may have cached the day with no games: this one's added.
+    body = json.loads(path.read_text()) if path.exists() else {"date": day, "games": []}
+    if not body["games"]:
+        game = {"id": day, "start": f"{day}T23:00:00Z", "teams": ["AAA", "BBB"], "players": {}}
+        body["games"].append(game)
+    body["games"][0]["players"][espn] = {"name": "made up", "team": "AAA", "line": line}
+    path.write_text(json.dumps(body))
 
 
 @pytest.fixture
 def week(tmp_path):
     """The fixture league's matchup, its page read on Tuesday morning (before that day's games)
     with a player table: my first player counted one of his two games, the box scores hold
-    both; my second has no box scores; the rest of my count is a player dropped since; theirs
-    all on no row."""
+    both; my second has no box scores; my third did not play (out on Monday: Yahoo's zeros);
+    the rest of my count is a player dropped since; theirs not on the table."""
     with season_client(tmp_path) as client:
         projection_csv(client.data_dir / "bbm_projections_2026-10-21.csv", fixture_names())
         client.post(f"/seasons/{LEAGUE}/refresh", params={"wait": True})
@@ -68,7 +80,8 @@ def week(tmp_path):
             "4": [
                 {"player": mine[0], "slot": "PG", "line": printed(COUNTED)},
                 {"player": mine[1], "slot": "SG", "line": UNBOXED},
-                *({"player": k, "slot": "BN", "line": DASHES} for k in mine[2:]),
+                {"player": mine[2], "slot": "G", "line": ZEROS},
+                *({"player": k, "slot": "BN", "line": DASHES} for k in mine[3:]),
             ],
             "10": [],
         }
@@ -82,7 +95,8 @@ def week(tmp_path):
         cache.mkdir(exist_ok=True)
         box_day(cache, "2026-10-19", "e1", COUNTED)
         box_day(cache, "2026-10-20", "e1", BENCHED)
-        (cache / "ids.json").write_text(json.dumps({str(mine[0]): "e1"}))
+        box_day(cache, "2026-10-19", "e3", None)
+        (cache / "ids.json").write_text(json.dumps({str(mine[0]): "e1", str(mine[2]): "e3"}))
         r = client.get(f"/seasons/{LEAGUE}/matchup")
         assert r.status_code == 200, r.text
         yield r.json(), mine, part["data"]["totals"]
@@ -109,8 +123,21 @@ def test_a_players_counted_games_are_placed_from_his_box_scores(week):
         8,
     )
     assert rows[mine[1]]["total"]["fg_pct"] is None and rows[mine[1]]["total"]["games"] is None
+    # Yahoo's zeros, and his one game this week he did not play: no game counted, placed.
+    c = rows[mine[2]]["so_far"]
+    assert (c["why"], c["games"], c["pts"], c["fga"], c["fg_pct"]) == (None, 0, 0, 0, None)
     # A row of dashes: no game counted.
-    assert rows[mine[2]]["so_far"]["games"] == 0
+    assert rows[mine[3]]["so_far"]["games"] == 0
+
+
+def test_a_player_not_on_the_page_as_read_has_nothing_known_so_far(week):
+    m, _, _ = week
+    for r in m["players"]["theirs"]:
+        so, total = r["so_far"], r["total"]
+        assert so["why"] == sf.NOT_READ and so["games"] is None
+        assert all(so[k] is None for k in (*wk.STATS, *wk.PCT)), so
+        # The week's total is unknown with its first half.
+        assert total["games"] is None and all(total[k] is None for k in wk.STATS)
 
 
 def test_the_team_lines_reconcile_with_the_scoreboard_through_the_gap_row(week):

@@ -100,6 +100,7 @@ import {
   placeLabel,
   scoreLabel,
   matchupOddsCell,
+  cellTitle,
   lineValue,
   matchupLineView,
   pctTitle,
@@ -2382,6 +2383,15 @@ test("the players' line switch: Week total by default, each line's games, percen
   const so = { pts: 8, fg_pct: 0.5, fgm: null, fga: null, games: null, why };
   assert.equal(pctTitle("fg_pct", so, "so_far", why), `Yahoo's rounded percentage, no attempts behind it: ${why}`);
   assert.equal(pctTitle("fg_pct", { fg_pct: null, fgm: null, fga: null, games: null }, "total", why), `not known: the attempts so far are not (${why})`);
+  // Not on the matchup page as read: every so-far cell "—", each titled why.
+  const unread = "not on the matchup page as read";
+  const none = { pts: null, reb: null, fgm: null, fga: null, fg_pct: null, games: null, why: unread };
+  assert.equal(lineValue("pts", none.pts, "so_far"), "—");
+  assert.equal(cellTitle("pts", none, "so_far", unread), unread);
+  assert.equal(cellTitle("fg_pct", none, "so_far", unread), unread);
+  // A line Yahoo printed keeps its own titles: none on a count, the rounded figure on a percentage.
+  assert.equal(cellTitle("pts", so, "so_far", why), undefined);
+  assert.equal(cellTitle("fg_pct", so, "so_far", why), pctTitle("fg_pct", so, "so_far", why));
 });
 
 test("the team lines: Yahoo's count with the gap row so far, the rest, the projected final, none per game (#304)", () => {

@@ -92,6 +92,29 @@ def test_no_game_counted_is_certain_without_the_box_scores():
     assert so.matched and so.games == 0 and so.line["pts"] == 0 and so.line["fg_pct"] is None
 
 
+def test_no_game_played_is_the_empty_set_and_counts_once():
+    zeros = dict.fromkeys(["3PTM", "PTS", "REB", "AST", "ST", "BLK", "TO"], "0")
+    zeros |= {"FG%": "-", "FT%": "-"}
+    # Out every day he had a game (the box scores keep him with no line): no games, placed.
+    so = sf.so_far(zeros, [])
+    assert so.matched and so.games == 0 and so.line["pts"] == 0 and so.line["fga"] == 0
+    assert so.line["fg_pct"] is None
+    # Benched for his one game: the empty set alone adds up.
+    assert sf.so_far(zeros, [A]).games == 0
+    # A scoreless game with no attempts adds up too: two sets, not placed.
+    blank = game(pts=0, threes=0, reb=0, ast=0, stl=0, blk=0, tov=0, fgm=0, fga=0, ftm=0, fta=0)
+    assert sf.so_far(zeros, [blank]).why == sf.ambiguous(2)
+    # Not matched to the box scores: still Yahoo's line, games unknown.
+    assert sf.so_far(zeros, None).why == sf.NO_BOX
+
+
+def test_not_on_the_page_as_read_nothing_is_known():
+    so = sf.not_read(points=False)
+    assert (so.why, so.games) == (sf.NOT_READ, None)
+    assert set(so.line) == {*sf.wk.STATS, *sf.wk.PCT} and all(v is None for v in so.line.values())
+    assert sf.not_read(points=True).line[sf.wk.FPTS] is None
+
+
 def test_a_points_league_keeps_yahoos_fantasy_points_and_matches_its_columns():
     page = {
         "Fan Pts": "41.50",

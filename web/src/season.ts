@@ -2088,6 +2088,13 @@ export function pctTitle(cat: Cat, line: Partial<Record<Cat | WeekStat, number |
   return `not known: the attempts so far are not (${why ?? "not placed"})`;
 }
 
+/** A player's stat cell title: so far, a line with nothing known (he is not on the matchup page
+ * as read) says why on every cell; otherwise a percentage's makes over attempts (``pctTitle``). */
+export function cellTitle(cat: Cat, line: Partial<Record<Cat | WeekStat, number | null>> | null, view: MatchupLineView, why: string | null): string | undefined {
+  if (view === "so_far" && why && line && Object.entries(line).every(([k, v]) => k === "why" || v == null)) return why;
+  return pctTitle(cat, line, view, why);
+}
+
 /** The team lines under a table in ``view``: so far Yahoo's count with what of it is on no
  * player's row; the projection of the rest; the projected final; none per game. */
 export function teamRows(t: MatchupTeamLines, view: MatchupLineView): { label: string; line: MatchupLine; title: string }[] {
