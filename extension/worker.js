@@ -279,7 +279,9 @@ const ops = {
    * its lineup day, trigger, page and read. One at a time, and refused while the league's last
    * live run awaits its log or when the same pass set that lineup day already: same date run,
    * same trigger, same lineup day (#317), so yesterday's look-ahead never stops today's daily.
-   * ``ran`` keeps the date's earlier runs, as a daily sets two days and a late pass may follow. */
+   * ``ran`` keeps the date's earlier runs, as a daily sets two days and a late pass may follow.
+   * A comeback's move names its pass in its trigger, so a later pass may try it again; the same
+   * pass's lineup run right after one always comes, since the roster changed (#318). */
   lineup_setting({ league, record }, sender) {
     const run = setting.then(async () => {
       const key = lineupRanKey(league);
@@ -288,7 +290,8 @@ const ops = {
       const at = Date.now();
       const on = passDate(at);
       const earlier = (prev ? [...(prev.ran || []), prev] : []).filter((r) => passDate(r.at) === on);
-      if (earlier.some((r) => r.day === record.day && r.trigger === record.trigger)) throw new Error("this pass set the lineup already today");
+      const chained = prev && earlier.includes(prev) && prev.run_trigger === record.trigger && prev.day === record.day;
+      if (!chained && earlier.some((r) => r.day === record.day && r.trigger === record.trigger)) throw new Error("this pass set the lineup already today");
       const ran = earlier.map(({ day, trigger, at: when }) => ({ day, trigger, at: when }));
       const kept = { ...record, league: String(league), prev: prev ? { ...prev, prev: null } : null, ran, logged: false, tab: sender && sender.tab ? sender.tab.id : null, at };
       await chrome.storage.local.set({ [key]: kept });

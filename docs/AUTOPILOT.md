@@ -759,7 +759,7 @@ In the model's terms, carried by #124:
   whose moves switch is live under its guard; the private league never runs one, and STOP or the
   browser's brake hold it. A lineup page with a chain stays open two minutes a chain. In order:
   1. **The move.** He goes to an empty bench row, alone, on a record of his own in the browser
-     (`comeback:<player>`), so the pass's lineup run still comes. His click finds out whether a
+     (`comeback:<player>:<pass>`), so the pass's lineup run still comes. His click finds out whether a
      bench row shows: when none does the swap is cancelled by his own label, nothing is saved, the
      step logs `skipped` with the rows it saw, no drop follows and the alert stays.
   2. **The drop.** The engine's `drop` on the drop page, due from `drop_first` (entry

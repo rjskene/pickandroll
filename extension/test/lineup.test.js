@@ -362,7 +362,7 @@ test("a refused run is not kept as the last one", async () => {
 
 test("only the live run clicks; no field is set and nothing submitted; the reader loads the executor's library", () => {
   const manifest = JSON.parse(fs.readFileSync(path.join(DIR, "manifest.json"), "utf8"));
-  assert.equal(manifest.version, "0.11.3");
+  assert.equal(manifest.version, "0.11.4");
   const reader = manifest.content_scripts.find((c) => c.js.includes("league.js"));
   assert.deepEqual(reader.js, ["lib/league.js", "lib/lineup.js", "lib/moves.js", "lib/startactive.js", "lib/ilmove.js", "lib/drop.js", "league.js"]);
   // The moves executor's live claim (``fillClaim``, #171 PR 3) and Start Active's presses
@@ -1166,7 +1166,7 @@ test("a run with a comeback moves him alone, on his own record, then goes to the
   const v = await visitPage({ hash: "#pickandroll-lineup", answer: comebackWorker(), swap: roster });
   assert.deepEqual(roster.touched, ["click 1013 IL", "click empty BN"]);
   const setting = v.sent.find((m) => m.op === "lineup_setting").record;
-  assert.deepEqual([setting.trigger, setting.run_trigger], ["comeback:1013", "routine"]);
+  assert.deepEqual([setting.trigger, setting.run_trigger], ["comeback:1013:routine", "routine"]);
   const logs = v.sent.filter((m) => m.op === "lineup_log");
   assert.equal(logs.length, 1);
   assert.deepEqual([logs[0].run.trigger, logs[0].run.steps[0].kind, logs[0].run.steps[0].drop], ["routine", "return", 1009]);
@@ -1253,7 +1253,7 @@ test("already on the dated page, the chain reads it again: a fragment alone woul
 
 test("the worker: a comeback's move is its own record, the pass's run still comes, the same move never twice, a lost log keeps the pass's trigger", async () => {
   const w = loadWorker((f) => (f.method === "POST" ? [200, { at: "x" }] : [200, {}]), new Map());
-  const move = { day: DAY, mode: "live", trigger: "comeback:1013", run_trigger: "routine", page: "p", read_at: "r", extension: "e" };
+  const move = { day: DAY, mode: "live", trigger: "comeback:1013:routine", run_trigger: "routine", page: "p", read_at: "r", extension: "e" };
   assert.equal((await w.send({ op: "lineup_setting", league: LEAGUE, record: move })).ok, true);
   const run = { day: DAY, mode: "live", trigger: "routine", outcome: "set", steps: [{ outcome: "set" }] };
   assert.equal((await w.send({ op: "lineup_log", league: LEAGUE, run, clicked: true })).ok, true);
@@ -1268,4 +1268,25 @@ test("the worker reads today's steps with no date: the chain's way to today's da
   const w = loadWorker(() => [200, { page: "x" }]);
   assert.equal((await w.send({ op: "lineup_steps", league: LEAGUE })).ok, true);
   assert.equal(w.fetches[0].url, `http://api.test/seasons/${LEAGUE}/lineup/steps`);
+});
+
+test("the chain's lineup run always comes after its comeback, even where its pass set that day already (#317, #318)", async () => {
+  const p = passWorker("2026-11-04T10:30:00Z");
+  const day = "2026-11-04";
+  const set = async (record) => {
+    const put = await p.w.send({ op: "lineup_setting", league: LEAGUE, record: { day, page: "/p", read_at: "x", ...record } });
+    if (put.ok) await p.w.send({ op: "lineup_log", league: LEAGUE, run: { day, mode: "live", trigger: record.run_trigger || record.trigger, outcome: "set", steps: [{ outcome: "set" }] }, clicked: true });
+    return put;
+  };
+  const move = { trigger: "comeback:1013:routine", run_trigger: "routine" };
+  assert.equal((await set({ trigger: "routine" })).ok, true);
+  assert.equal((await set({ trigger: "routine" })).ok, false);
+  // The roster changed behind the same pass: its run goes again, once.
+  assert.equal((await set(move)).ok, true);
+  assert.equal((await set({ trigger: "routine" })).ok, true);
+  assert.equal((await set({ trigger: "routine" })).ok, false);
+  // The same pass never moves him twice; a later pass may try again.
+  assert.equal((await set(move)).ok, false);
+  assert.equal((await set({ trigger: "comeback:1013:routine_late", run_trigger: "routine_late" })).ok, true);
+  assert.equal((await set({ trigger: "routine_late" })).ok, true);
 });
