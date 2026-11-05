@@ -435,7 +435,7 @@ def test_yahoo_feed_passes_a_keeper_slot(store, carried):
     from .fakes import FakeQuery
 
     fake = FakeQuery(
-        names=["Nikola Jokic", "Luka Doncic", "James Harden", "Nobody Real", "Stephen Curry"]
+        names=["Nikola Jokic", "Luka Doncic", "James Harden", "Nobody Real", "Senduin Carloford"]
     )
     with yahoo_client(fake, store) as c:
         # Yahoo seats me 2 ("Me"); team 3 keeps the third Yahoo player in round 1 (pick 3).
@@ -478,7 +478,7 @@ def test_yahoo_feed_stops_at_someone_else_in_a_keeper_slot(store):
         pytest.skip("no Basketball Monster sample export in data/")
     from .fakes import FakeQuery
 
-    fake = FakeQuery(names=["Nikola Jokic", "Luka Doncic", "James Harden", "Stephen Curry"])
+    fake = FakeQuery(names=["Nikola Jokic", "Luka Doncic", "James Harden", "Senduin Carloford"])
     with yahoo_client(fake, store) as c:
         sid = create(c, num_teams=12, my_position=5, objective="sum")["id"]
         c.post(f"/sessions/{sid}/yahoo", json={"league_id": "12345", "start": False})

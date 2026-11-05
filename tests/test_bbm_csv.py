@@ -60,7 +60,7 @@ def test_normalize_csv_rebuilds_points_and_rebounds():
 
 def test_positions_attach_by_name_and_unknown_stay_util_only():
     df = normalize_bbm_csv(synthetic_csv())
-    table = pd.DataFrame({"Name": ["Nikola Jokić", "Someone Else"], "Pos": ["C", "PG/SG"]})
+    table = pd.DataFrame({"Name": ["Nomear Justafielić", "Someone Else"], "Pos": ["C", "PG/SG"]})
     positions = positions_from_table(table)
     assert positions["nikola jokic"] == "C"
     out, missing = apply_positions(df, positions)

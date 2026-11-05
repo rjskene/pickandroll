@@ -47,15 +47,15 @@ def test_player_row_handles_name_object():
 
 
 def test_normalize_name():
-    assert normalize_name("Luka Dončić") == "luka doncic"
-    assert normalize_name("Jaren Jackson Jr.") == "jaren jackson"
-    assert normalize_name("P.J. Washington") == "pj washington"
+    assert normalize_name("Lodoo Damaridgić") == "lodoo damaridgic"
+    assert normalize_name("Jimoar Justothorn Jr.") == "jimoar justothorn"
+    assert normalize_name("P.J. Wandemond") == "pj wandemond"
 
 
 def test_match_players_with_aliases_and_team_tiebreak():
     yahoo = pd.DataFrame(
         {
-            "name": ["Luka Dončić", "Jaren Jackson Jr.", "Nobody Here", "Jalen Williams"],
+            "name": ["Lodoo Damaridgić", "Jimoar Justothorn Jr.", "Nobody Here", "Jinaar Wonaton"],
             "team": ["LAL", "MEM", "XXX", "OKC"],
         },
         index=["k1", "k2", "k3", "k4"],
@@ -63,17 +63,17 @@ def test_match_players_with_aliases_and_team_tiebreak():
     proj = pd.DataFrame(
         {
             "player": [
-                "Luka Doncic",
-                "Jaren Jackson",
-                "Jalen Williams",
-                "Jalen Williams",
+                "Lodoo Damaridgic",
+                "Jimoar Justothorn",
+                "Jinaar Wonaton",
+                "Jinaar Wonaton",
                 "Extra Guy",
             ],
             "team": ["LAL", "MEM", "OKC", "PHX", "BOS"],
         },
-        index=["luka", "jjj", "jdub", "jwill", "extra"],
+        index=["lodoo", "jjj", "jdub", "jwill", "extra"],
     )
     result = match_players(yahoo, proj, aliases={"k3": "extra"})
-    assert result.mapping == {"k1": "luka", "k2": "jjj", "k3": "extra", "k4": "jdub"}
+    assert result.mapping == {"k1": "lodoo", "k2": "jjj", "k3": "extra", "k4": "jdub"}
     assert result.unmatched_yahoo == []
     assert result.unmatched_projection == ["jwill"]

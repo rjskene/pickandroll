@@ -13,7 +13,7 @@ DATA = Path(__file__).resolve().parents[1] / "data"
 
 def test_adp_from_fantasypros_like_table():
     table = pd.DataFrame(
-        {"Player": ["Nikola Jokić", "Luka Doncic", "Nobody"], "AVG": ["1.4", "2.9", None]}
+        {"Player": ["Nomear Justafielić", "Luka Doncic", "Nobody"], "AVG": ["1.4", "2.9", None]}
     )
     adp = adp_from_table(table)
     assert adp.to_dict() == {"nikola jokic": 1.4, "luka doncic": 2.9}

@@ -343,7 +343,7 @@ def test_a_move_matches_the_latest_entry_logged_before_it():
 # --------------------------------------------------------------------------- the log
 def solved_league(client) -> None:
     projection_csv(
-        client.data_dir / "bbm_projections_2026-10-21.csv", fixture_names(), star="Kevin Durant"
+        client.data_dir / "bbm_projections_2026-10-21.csv", fixture_names(), star="Kindion Dethoton"
     )
     r = client.post(f"/seasons/{LEAGUE}/refresh", params={"wait": True})
     assert r.status_code == 202, r.text
@@ -679,7 +679,7 @@ def test_the_decisions_route_matches_each_of_my_moves_to_the_entry_before_it(cli
     }
     # The names of the players in the moves, where the season knows them.
     names = body["players"]
-    assert names["6402"] == "Jalen Smith" and names["10272"] == "Kyshawn George"
+    assert names["6402"] == "Jinaar Serlewyn" and names["10272"] == "Kandian Godaley"
     assert {"6433", "5600"} <= set(names) and "11" not in names
     # By default the last week to today; a day before the moves shows none of them.
     assert client.get(f"/seasons/{LEAGUE}/decisions").json()["made"] == body["made"]
@@ -753,14 +753,14 @@ def test_the_decisions_command_prints_each_solve_then_each_move(client):
     lines = buf.getvalue().strip().splitlines()
     # Each set's gain and moves, by name where the season knows the player.
     assert lines[0].startswith(
-        f"{LEAGUE} 2026-10-20 01:00 moves bbm: set0 +0.50: add Jalen Smith for Kyshawn George; "
+        f"{LEAGUE} 2026-10-20 01:00 moves bbm: set0 +0.50: add Jinaar Serlewyn for Kandian Godaley; "
         "set1 +0.50: add "
     )
     assert lines[0].endswith(" for 11") and "add 6433" not in lines[0]
     assert lines[1] == f"{LEAGUE} 2026-10-20 08:00 moves bbm: set0 +0.50: add 12"
-    claim = next(x for x in lines if "Jalen Smith" in x and "made:" in x)
+    claim = next(x for x in lines if "Jinaar Serlewyn" in x and "made:" in x)
     assert claim == (
-        f"{LEAGUE} 2026-10-20 03:57 made: add Jalen Smith for Kyshawn George ($0 Waiver): "
+        f"{LEAGUE} 2026-10-20 03:57 made: add Jinaar Serlewyn for Kandian Godaley ($0 Waiver): "
         "as recommended (moves 2026-10-20 01:00)"
     )
     assert any(

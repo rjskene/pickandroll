@@ -20,7 +20,7 @@ TODAY = date(2026, 10, 21)
 def pickup(**kw) -> fl.Pickup:
     base = {
         "yahoo_id": 1,
-        "name": "Duncan Robinson",
+        "name": "Donael Rodistead",
         "nba_team": "DET",
         "positions": ("SG", "SF"),
         "pct_rostered": 10.0,
@@ -142,26 +142,26 @@ def injury(name, team="DET", groups=("G",), status="Out", days=20, mpg=None) -> 
 
 
 def test_opportunity_counts_teammates_at_his_position_out_for_weeks():
-    out = [injury("Cade Cunningham", mpg=34.0)]
+    out = [injury("Cevion Cendaley", mpg=34.0)]
     s = fl.opportunity(pickup(), inputs(injuries=out))
     assert s.score == pytest.approx(1.0)
     assert "34 projected min" in s.reason and "projected" not in s.public
-    assert "Cade Cunningham (G) out, est. return Nov 10" in s.public
+    assert "Cevion Cendaley (G) out, est. return Nov 10" in s.public
     # Without a projection a teammate counts 15 minutes.
     assert fl.opportunity(
-        pickup(), inputs(injuries=[injury("Cade Cunningham")])
+        pickup(), inputs(injuries=[injury("Cevion Cendaley")])
     ).score == pytest.approx(0.5)
 
 
 @pytest.mark.parametrize(
     "hurt",
     [
-        injury("Cade Cunningham", days=13),  # back inside two weeks
-        injury("Cade Cunningham", days=None),  # no return date
-        injury("Cade Cunningham", status="Day-To-Day"),
-        injury("Jalen Duren", groups=("C",)),  # another position
-        injury("Devin Vassell", team="SAS"),  # another team
-        injury("Duncan Robinson", groups=("G", "F")),  # himself
+        injury("Cevion Cendaley", days=13),  # back inside two weeks
+        injury("Cevion Cendaley", days=None),  # no return date
+        injury("Cevion Cendaley", status="Day-To-Day"),
+        injury("Jinaar Davowell", groups=("C",)),  # another position
+        injury("Darluic Vorluby", team="SAS"),  # another team
+        injury("Donael Rodistead", groups=("G", "F")),  # himself
     ],
 )
 def test_opportunity_ignores_other_cases(hurt):
@@ -169,11 +169,11 @@ def test_opportunity_ignores_other_cases(hurt):
 
 
 def test_a_player_out_himself_takes_no_opportunity():
-    out = [injury("Cade Cunningham", mpg=34.0)]
+    out = [injury("Cevion Cendaley", mpg=34.0)]
     assert fl.opportunity(pickup(status="O"), inputs(injuries=out)).score == 0.0
     assert fl.opportunity(pickup(status="INJ"), inputs(injuries=out)).score == 0.0
     # On ESPN's report as out, whatever Yahoo says.
-    hurt = [*out, injury("Duncan Robinson", groups=("G", "F"), days=30)]
+    hurt = [*out, injury("Donael Rodistead", groups=("G", "F"), days=30)]
     assert fl.opportunity(pickup(), inputs(injuries=hurt)).score == 0.0
     # A doubt is not out.
     assert fl.opportunity(pickup(status="GTD"), inputs(injuries=out)).score == pytest.approx(1.0)
@@ -197,8 +197,8 @@ def test_the_levels(score, level):
 
 def test_the_flag_sums_the_signals_and_only_players_a_signal_speaks_for_are_kept():
     loud = pickup(yahoo_id=1, adds=900)
-    quiet = pickup(yahoo_id=2, name="Pelle Larsson", nba_team="MIA")
-    i = inputs(buzz_rank={1: 1}, value_rank={1: 60}, injuries=[injury("Cade Cunningham")])
+    quiet = pickup(yahoo_id=2, name="Peviel Landulock", nba_team="MIA")
+    i = inputs(buzz_rank={1: 1}, value_rank={1: 60}, injuries=[injury("Cevion Cendaley")])
     out = fl.flags([loud, quiet], i)
     assert set(out) == {1}
     assert out[1].score == pytest.approx(1.0 + 0.75 * 0.8 + 0.5)
@@ -208,16 +208,16 @@ def test_the_flag_sums_the_signals_and_only_players_a_signal_speaks_for_are_kept
 
 
 def test_opportunity_alone_flags_nobody():
-    out = fl.flags([pickup()], inputs(injuries=[injury("Cade Cunningham", mpg=34.0)]))
+    out = fl.flags([pickup()], inputs(injuries=[injury("Cevion Cendaley", mpg=34.0)]))
     f = out[1]
     assert (f.score, f.level) == (0.0, None)
     # Its own score and evidence stay, for the dashboard's hover.
     assert f.signals["opportunity"].score == pytest.approx(1.0)
-    assert "Cade Cunningham" in f.signals["opportunity"].reason
+    assert "Cevion Cendaley" in f.signals["opportunity"].reason
 
 
 def test_opportunity_with_a_surge_counts_in_full():
-    i = inputs(buzz_rank={1: 50}, injuries=[injury("Cade Cunningham", mpg=34.0)])
+    i = inputs(buzz_rank={1: 50}, injuries=[injury("Cevion Cendaley", mpg=34.0)])
     f = fl.flag(pickup(adds=90), i)
     assert f.score == pytest.approx(0.3 + 1.0) and f.level == "watch"
 
@@ -225,15 +225,18 @@ def test_opportunity_with_a_surge_counts_in_full():
 # --------------------------------------------------------------------------- the digest
 def test_the_digest_names_leagues_by_id_and_prints_no_basketball_monster_number():
     a = pickup(yahoo_id=1, adds=900)
-    b = pickup(yahoo_id=2, name="Keldon Johnson", nba_team="SAS", positions=("SF", "PF"))
+    b = pickup(yahoo_id=2, name="Kulveen Jiveton", nba_team="SAS", positions=("SF", "PF"))
     i = inputs(
         buzz_rank={1: 1},
         value_rank={1: 37, 2: 88},
         projected={1: fl.Projection(19.0), 2: fl.Projection(23.0)},
         recent={1: [fl.Window(7, 3, 87, None)], 2: [fl.Window(14, 5, 160, None)]},
-        injuries=[injury("Cade Cunningham", mpg=33.0), injury("Devin Vassell", "SAS", ("G", "F"))],
+        injuries=[
+            injury("Cevion Cendaley", mpg=33.0),
+            injury("Darluic Vorluby", "SAS", ("G", "F")),
+        ],
     )
-    c = pickup(yahoo_id=3, name="Pelle Larsson", nba_team="MIA", adds=300)
+    c = pickup(yahoo_id=3, name="Peviel Landulock", nba_team="MIA", adds=300)
     i = fl.Inputs(**{**i.__dict__, "buzz_rank": {1: 1, 3: 2}})
     fa, fb, fc = fl.flag(a, i), fl.flag(b, i), fl.flag(c, i)
     assert (fa.level, fb.level, fc.level) == ("must-add", "add", "watch")
@@ -241,11 +244,11 @@ def test_the_digest_names_leagues_by_id_and_prints_no_basketball_monster_number(
     text = fl.digest_markdown(TODAY, leagues, ["no x"])
     assert text.startswith("## Breakout flags, Wed Oct 21")
     assert "### League 100001" in text and "### League 100002" in text
-    assert "- **must-add** Duncan Robinson (DET, SG/SF): adds surge (900 adds today" in text
-    assert "minutes up; value gap; opportunity (Cade Cunningham (G) out" in text
+    assert "- **must-add** Donael Rodistead (DET, SG/SF): adds surge (900 adds today" in text
+    assert "minutes up; value gap; opportunity (Cevion Cendaley (G) out" in text
     assert "Inputs: no x." in text
     # The watch level is a line of names.
-    assert "- watch (1): Pelle Larsson (MIA)\n" in text and "**watch**" not in text
+    assert "- watch (1): Peviel Landulock (MIA)\n" in text and "**watch**" not in text
     # Nothing from the projection: no rank, no minutes a game, no projected minutes.
     for number in ("37", "88", "19", "23", "29.0", "32.0", "33"):
         assert number not in text, number
@@ -262,7 +265,7 @@ def test_the_digest_names_leagues_by_id_and_prints_no_basketball_monster_number(
 # --------------------------------------------------------------------------- the parsers
 def test_the_buzz_index_parses_in_page_order():
     rows = pages.parse_buzz_page((FIXTURES / "buzz.html").read_text())["rows"]
-    assert [r["player"]["name"] for r in rows[:2]] == ["Andre Drummond", "Zaccharie Risacher"]
+    assert [r["player"]["name"] for r in rows[:2]] == ["Aurlaic Disathorn", "Zireen Rulviford"]
     first = rows[0]
     assert first["player"]["yahoo_id"] == 5015 and first["player"]["positions"] == ["C"]
     assert (first["pct_rostered"], first["adds"], first["drops"]) == (18.0, 7206, 120)
@@ -277,10 +280,10 @@ def test_the_buzz_url_names_the_day():
 
 def test_the_injury_report_parses_with_yahoo_teams_and_return_dates():
     listed = parse_injuries((FIXTURES / "espn_injuries.json").read_text())
-    assert [x.name for x in listed][:2] == ["Cade Cunningham", "Jalen Duren"]
-    vassell = next(x for x in listed if x.name == "Devin Vassell")
+    assert [x.name for x in listed][:2] == ["Cevion Cendaley", "Jinaar Davowell"]
+    vassell = next(x for x in listed if x.name == "Darluic Vorluby")
     assert vassell.team == "SAS" and vassell.position == "G-F"  # ESPN's SA
     assert vassell.returns == date(2026, 11, 20) and vassell.key == "espn:204"
-    duren = next(x for x in listed if x.name == "Jalen Duren")
+    duren = next(x for x in listed if x.name == "Jinaar Davowell")
     assert duren.status == "Day-To-Day"
     assert listed[0].from_dict(listed[0].to_dict()) == listed[0]

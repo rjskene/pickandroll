@@ -127,10 +127,10 @@ def test_the_team_page_gives_the_roster_by_slot():
     assert d["name"] == "Team 4" and d["week"] == 1
     assert [s["slot"] for s in d["spots"]] == ROSTER
     first = d["spots"][0]["player"]
-    # The link text is abbreviated ("N. Alexander-Walker"); the title carries the full name.
+    # The link text is abbreviated ("N. Auracombe-Wivuden"); the title carries the full name.
     assert first == {
         "yahoo_id": 6205,
-        "name": "Nickeil Alexander-Walker",
+        "name": "Nothiey Auracombe-Wivuden",
         "nba_team": "ATL",
         "positions": ["PG", "SG"],
         "status": None,
@@ -139,7 +139,7 @@ def test_the_team_page_gives_the_roster_by_slot():
     }
     out = [s["player"] for s in d["spots"] if s["player"]["status"]]
     assert [(p["name"], p["status"], p["status_full"]) for p in out] == [
-        ("Aaron Nesmith", "O", "Out")
+        ("Aumion Nevothorn", "O", "Out")
     ]
     # Injury slots are read as slots.
     il = pages.parse_team_page(fixture("team2.html"), 2)["spots"]
@@ -150,7 +150,7 @@ def test_the_players_page_gives_the_available_pool_with_ownership():
     rows = pages.parse_players_page(fixture("avail0.html"), TODAY)["rows"]
     assert len(rows) == 25
     top = rows[0]
-    assert top["player"]["name"] == "Dillon Brooks" and top["player"]["yahoo_id"] == 5858
+    assert top["player"]["name"] == "Dovael Buthaton" and top["player"]["yahoo_id"] == 5858
     assert top["availability"] == "W" and top["clears"] == "2026-10-22"
     assert (top["pct_rostered"], top["pct_rostered_change"]) == (46.0, 0.0)
     assert (top["pct_started"], top["pct_started_change"]) == (15.0, 1.0)
@@ -246,8 +246,8 @@ def test_the_transactions_page_pairs_each_add_with_its_drop():
     assert len(rows) == 8
     claim = [r for r in rows if r["group"] == 1]
     assert [(r["kind"], r["player"]["name"], r["detail"]) for r in claim] == [
-        ("add", "Jalen Smith", "$0 Waiver"),
-        ("drop", "Kyshawn George", "To Waivers"),
+        ("add", "Jinaar Serlewyn", "$0 Waiver"),
+        ("drop", "Kandian Godaley", "To Waivers"),
     ]
     assert {r["team_id"] for r in claim} == {8} and claim[0]["team_name"] == "Team 8"
     assert rows[0]["player"]["status"] == "O" and rows[0]["when"].startswith("Oct 20")
@@ -277,7 +277,7 @@ def test_v3_settings_and_players():
     # Yahoo's answer for a league it does not serve publicly.
     assert public.settings_from_v3({"error": {"description": "league not found"}}) is None
     pool = public.players_from_v3(json.loads(fixture("players.json")))
-    nesmith = next(p for p in pool if p["name"] == "Aaron Nesmith")
+    nesmith = next(p for p in pool if p["name"] == "Aumion Nevothorn")
     assert nesmith["status"] == "O" and nesmith["nba_team"] == "IND"
 
 
@@ -368,7 +368,7 @@ def test_the_season_assembles_its_parts():
     assert len(s.my_roster) == 13 and len(s.rosters[10]) == 13
     assert s.matchup_of(4).score == (5.0, 3.0)
     # The pool fills in what a page leaves out (the injury's words).
-    nesmith = next(x.player for x in s.my_roster if x.player.name == "Aaron Nesmith")
+    nesmith = next(x.player for x in s.my_roster if x.player.name == "Aumion Nevothorn")
     assert nesmith.out and nesmith.status_full == "Out"
     assert s.games("ATL", [date(2026, 10, 21), date(2026, 10, 22)]) == 2
     assert s.games("IND", [date(2026, 10, 21), date(2026, 10, 23)]) is None  # not covered
@@ -648,7 +648,7 @@ def test_a_refresh_reads_the_public_sources_and_serves_the_season(client):
     atl = next(x for x in v["roster"] if x["player"]["nba_team"] == "ATL")
     # The rest of week 1 from Oct 21: the fixture schedule has ATL on the 21st only.
     assert atl["games_left"] == 1
-    assert len(v["available"]) == 35 and v["available"][0]["player"]["name"] == "Dillon Brooks"
+    assert len(v["available"]) == 35 and v["available"][0]["player"]["name"] == "Dovael Buthaton"
     assert v["matchup"]["score"] == [5.0, 3.0]
     assert len(v["transactions"]) == 8
     assert v["sources"] == ["public"] and v["fetched"]["league"]["source"] == "public"
@@ -1070,12 +1070,12 @@ def fixture_names() -> list[str]:
     for team in (4, 10):
         d = pages.parse_team_page(fixture(f"team{team}.html"), team)
         out += [s["player"]["name"] for s in d["spots"]]
-    return out + ["Dillon Brooks"]
+    return out + ["Dovael Buthaton"]
 
 
 def test_the_week_projection_gives_games_rates_and_my_matchups_odds(client):
     projection_csv(
-        client.data_dir / "bbm_projections_2026-10-21.csv", fixture_names(), star="Kevin Durant"
+        client.data_dir / "bbm_projections_2026-10-21.csv", fixture_names(), star="Kindion Dethoton"
     )
     client.post(f"/seasons/{LEAGUE}/refresh", params={"wait": True})
     v = client.get(f"/seasons/{LEAGUE}").json()
@@ -1086,7 +1086,7 @@ def test_the_week_projection_gives_games_rates_and_my_matchups_odds(client):
     assert [x["number"] for x in w["weeks"]] == [1, 2, 3, 4]
     assert w["weeks"][0]["from"] == "2026-10-21" and w["weeks"][0]["games_from"] == "schedule"
     by_name = {s["player"]["name"]: s["player"] for s in v["roster"]}
-    durant = w["players"][str(by_name["Kevin Durant"]["yahoo_id"])]
+    durant = w["players"][str(by_name["Kindion Dethoton"]["yahoo_id"])]
     assert durant["bbm"]["pts"] == 22.6 and durant["bbm"]["fga"] == 18
     assert len(durant["games"]) == 4 and len(durant["started"]) == 4
     days = [date(2026, 10, 21), date(2026, 10, 22)]
@@ -1095,8 +1095,8 @@ def test_the_week_projection_gives_games_rates_and_my_matchups_odds(client):
     }
     assert durant["games"][0] == sum("HOU" in playing[d] for d in days)
     # Nesmith is out (O): no games this week.
-    assert w["players"][str(by_name["Aaron Nesmith"]["yahoo_id"])]["games"][0] == 0
-    brooks = next(a for a in v["available"] if a["player"]["name"] == "Dillon Brooks")["player"]
+    assert w["players"][str(by_name["Aumion Nevothorn"]["yahoo_id"])]["games"][0] == 0
+    brooks = next(a for a in v["available"] if a["player"]["name"] == "Dovael Buthaton")["player"]
     row = w["players"][str(brooks["yahoo_id"])]
     assert row["yahoo"]["pts"] == round(45.4 / 3, 4) and row["bbm"]["pts"] == 12.6
     assert row["started"] is None and len(row["games"]) == 4
@@ -1144,7 +1144,7 @@ def test_a_weekly_export_gives_the_weeks_games(client):
     w = v["week_projection"]
     assert w["weeks"][0]["games_from"] == "bbm" and w["weeks"][1]["games_from"] == "schedule"
     by_name = {s["player"]["name"]: s["player"] for s in v["roster"]}
-    nesmith = by_name["Aaron Nesmith"]
+    nesmith = by_name["Aumion Nevothorn"]
     playing = schedule.teams_playing(
         json.loads(fixture("espn_20261021.json"))
     ) + schedule.teams_playing(json.loads(fixture("espn_20261022.json")))
@@ -1218,7 +1218,7 @@ def test_the_projection_page_parser():
     rows = pages.parse_projection_page(fixture("avail_ps7.html"))["rows"]
     assert len(rows) == 10
     brooks = rows[0]
-    assert brooks["player"]["name"] == "Dillon Brooks" and brooks["gp"] == 3.0
+    assert brooks["player"]["name"] == "Dovael Buthaton" and brooks["gp"] == 3.0
     assert (brooks["fgm"], brooks["fga"], brooks["ftm"], brooks["fta"]) == (16.6, 38.8, 5.7, 6.9)
     assert (brooks["threes"], brooks["pts"], brooks["reb"], brooks["ast"]) == (6.5, 45.4, 11.3, 5.0)
     assert (brooks["stl"], brooks["blk"], brooks["tov"]) == (2.9, 0.5, 4.3)
@@ -1231,7 +1231,7 @@ def test_the_projection_page_parser():
 # --------------------------------------------------------------------------- moves (#94)
 def test_the_moves_route_values_every_candidate_and_recommends_a_set(client):
     projection_csv(
-        client.data_dir / "bbm_projections_2026-10-21.csv", fixture_names(), star="Kevin Durant"
+        client.data_dir / "bbm_projections_2026-10-21.csv", fixture_names(), star="Kindion Dethoton"
     )
     client.post(f"/seasons/{LEAGUE}/refresh", params={"wait": True})
     v = client.get(f"/seasons/{LEAGUE}").json()
@@ -1250,7 +1250,7 @@ def test_the_moves_route_values_every_candidate_and_recommends_a_set(client):
     assert m["adds"]["limit"] == v["settings"]["max_weekly_adds"]
     assert m["adds"]["complete"] is False
     assert m["adds"]["left"] == m["adds"]["limit"] - m["adds"]["used"]
-    brooks = next(a for a in v["available"] if a["player"]["name"] == "Dillon Brooks")
+    brooks = next(a for a in v["available"] if a["player"]["name"] == "Dovael Buthaton")
     row = m["candidates"][str(brooks["player"]["yahoo_id"])]
     assert row["from"] == brooks["clears"]
     best = row["week"]
@@ -1282,7 +1282,7 @@ def test_the_move_drawer_details_one_add_with_every_drop(client):
     client.post(f"/seasons/{LEAGUE}/refresh", params={"wait": True})
     v = client.get(f"/seasons/{LEAGUE}").json()
     m = client.get(f"/seasons/{LEAGUE}/moves").json()
-    brooks = next(a for a in v["available"] if a["player"]["name"] == "Dillon Brooks")
+    brooks = next(a for a in v["available"] if a["player"]["name"] == "Dovael Buthaton")
     pid = brooks["player"]["yahoo_id"]
     row = m["candidates"][str(pid)]["three"]
     drop = row["drop"] or row["next_drop"]
@@ -1381,7 +1381,7 @@ def test_a_sunday_evening_solve_moves_into_the_next_week(client):
 def test_a_sunday_evening_trade_changes_only_the_weeks_after(client):
     client.app.state.seasons.clock = lambda: datetime(2026, 10, 26, 2, 30, tzinfo=UTC)
     ids = trade_league(client)
-    body = {"team": 10, "give": [ids["Paul Reed"]], "get": [ids["Cooper Flagg"]]}
+    body = {"team": 10, "give": [ids["Pemoon Ruthacombe"]], "get": [ids["Cosuar Falvewell"]]}
     r = client.post(f"/seasons/{LEAGUE}/trade", json=body)
     assert r.status_code == 200, r.text
     t = r.json()
@@ -1401,7 +1401,7 @@ def test_a_saturday_evening_solve_keeps_sunday_in_this_week(client):
 # --------------------------------------------------------------------------- matchup view (#116)
 def test_the_matchup_route_scores_my_week_and_what_each_player_adds(client):
     projection_csv(
-        client.data_dir / "bbm_projections_2026-10-21.csv", fixture_names(), star="Kevin Durant"
+        client.data_dir / "bbm_projections_2026-10-21.csv", fixture_names(), star="Kindion Dethoton"
     )
     client.post(f"/seasons/{LEAGUE}/refresh", params={"wait": True})
     v = client.get(f"/seasons/{LEAGUE}").json()
@@ -1441,9 +1441,9 @@ def test_the_matchup_route_scores_my_week_and_what_each_player_adds(client):
         # No start left adds nothing.
         assert all(x["cats"] == 0 and x["matchup"] == 0 for x in rows if not x["started"])
     by_name = {s["player"]["name"]: s["player"]["yahoo_id"] for s in v["roster"]}
-    durant = next(x for x in mine if x["player"] == by_name["Kevin Durant"])
+    durant = next(x for x in mine if x["player"] == by_name["Kindion Dethoton"])
     assert durant == mine[0] and durant["per_game"]["pts"] == 22.6 and durant["slot"] == "SG"
-    nesmith = next(x for x in mine if x["player"] == by_name["Aaron Nesmith"])
+    nesmith = next(x for x in mine if x["player"] == by_name["Aumion Nevothorn"])
     assert nesmith["games"] == 0 and nesmith["matchup"] == 0 and mine[-1]["games"] == 0
     # His contribution is the week without him from the first day on (the drop path).
     built = client.app.state.seasons._built(LEAGUE, "bbm")
@@ -1472,7 +1472,7 @@ def test_the_matchup_route_needs_a_season_with_my_matchup(client):
 # --------------------------------------------------------------------------- landing grid (#108)
 def test_the_outlook_gives_every_week_left_against_its_opponent_or_the_field(client):
     projection_csv(
-        client.data_dir / "bbm_projections_2026-10-21.csv", fixture_names(), star="Kevin Durant"
+        client.data_dir / "bbm_projections_2026-10-21.csv", fixture_names(), star="Kindion Dethoton"
     )
     client.fake.every_day = True
     client.fake.unpaired |= {5}
@@ -1543,7 +1543,7 @@ def test_the_outlook_needs_a_season_of_my_team(client):
 
 def test_the_leagues_list_gives_the_weeks_score_adds_left_and_flag_counts(client):
     projection_csv(
-        client.data_dir / "bbm_projections_2026-10-21.csv", fixture_names(), star="Kevin Durant"
+        client.data_dir / "bbm_projections_2026-10-21.csv", fixture_names(), star="Kindion Dethoton"
     )
     client.post(f"/seasons/{LEAGUE}/refresh", params={"wait": True})
     rows = {r["league"]: r for r in client.get("/seasons").json()}
@@ -1564,7 +1564,7 @@ def test_the_leagues_list_gives_the_weeks_score_adds_left_and_flag_counts(client
 
 def test_the_best_move_comes_from_the_solved_moves_and_never_solves_them(client):
     projection_csv(
-        client.data_dir / "bbm_projections_2026-10-21.csv", fixture_names(), star="Kevin Durant"
+        client.data_dir / "bbm_projections_2026-10-21.csv", fixture_names(), star="Kindion Dethoton"
     )
     # Games every day: the three weeks after this one have moves too.
     client.fake.every_day = True
@@ -1626,7 +1626,7 @@ def strategy_league(client, mine_scale: dict[str, float] | None = None) -> seaso
     projection_csv(
         client.data_dir / "bbm_projections_2026-10-21.csv",
         [*mine, *pool],
-        star="Kevin Durant",
+        star="Kindion Dethoton",
         scale=scale,
     )
     service = client.app.state.seasons
@@ -1808,12 +1808,12 @@ def test_a_cache_peek_makes_nothing():
 
 # --------------------------------------------------------------------------- trades (#96)
 def trade_league(client) -> dict[str, int]:
-    """The fixture league refreshed with a projection where Cooper Flagg (team 10, my opponent
+    """The fixture league refreshed with a projection where Cosuar Falvewell (team 10, my opponent
     this week) is the one star, and games on every day; every player of teams 4 and 10 by
     name."""
     client.fake.every_day = True
     projection_csv(
-        client.data_dir / "bbm_projections_2026-10-21.csv", fixture_names(), star="Cooper Flagg"
+        client.data_dir / "bbm_projections_2026-10-21.csv", fixture_names(), star="Cosuar Falvewell"
     )
     client.post(f"/seasons/{LEAGUE}/refresh", params={"wait": True})
     v = client.get(f"/seasons/{LEAGUE}").json()
@@ -1824,7 +1824,7 @@ def trade_league(client) -> dict[str, int]:
 
 def test_a_trade_with_this_weeks_opponent_scores_both_sides(client):
     ids = trade_league(client)
-    body = {"team": 10, "give": [ids["Paul Reed"]], "get": [ids["Cooper Flagg"]]}
+    body = {"team": 10, "give": [ids["Pemoon Ruthacombe"]], "get": [ids["Cosuar Falvewell"]]}
     r = client.post(f"/seasons/{LEAGUE}/trade", json=body)
     assert r.status_code == 200, r.text
     t = r.json()
@@ -1848,13 +1848,13 @@ def test_a_trade_with_this_weeks_opponent_scores_both_sides(client):
     assert (t["first_day"], t["review_days"]) == ("2026-10-21", 2)
     assert (t["effective"], t["effective_rule"]) == ("2026-10-23", "review")
     assert mine["roster"]["valid"] and theirs["roster"]["valid"]
-    flagg = next(p for p in t["players"] if p["name"] == "Cooper Flagg")
+    flagg = next(p for p in t["players"] if p["name"] == "Cosuar Falvewell")
     assert (flagg["from"], flagg["to"]) == (10, 4)
     g = flagg["games"]["week"]
     assert g["old"]["games"] + g["new"]["games"] == g["before"]["games"]
     # The rest of the season (#151): each player's to the calendar's end from the trade's day,
     # each side's change what it receives less what it sends (no drop here).
-    reed = next(p for p in t["players"] if p["name"] == "Paul Reed")
+    reed = next(p for p in t["players"] if p["name"] == "Pemoon Ruthacombe")
     assert flagg["ros"]["games"] > flagg["ros"]["extrapolated"] >= 0
     assert flagg["ros"]["value"] == pytest.approx(
         flagg["ros"]["per_game"] * flagg["ros"]["games"], abs=1e-3
@@ -1880,8 +1880,8 @@ def test_a_trade_after_this_week_changes_nothing_this_week(client):
     ids = trade_league(client)
     body = {
         "team": 10,
-        "give": [ids["Paul Reed"]],
-        "get": [ids["Cooper Flagg"]],
+        "give": [ids["Pemoon Ruthacombe"]],
+        "get": [ids["Cosuar Falvewell"]],
         "effective": "2026-10-26",
     }
     t = client.post(f"/seasons/{LEAGUE}/trade", json=body).json()
@@ -1893,20 +1893,22 @@ def test_a_trade_after_this_week_changes_nothing_this_week(client):
 
 def test_a_two_for_one_reports_the_full_roster_and_the_freed_spot(client):
     ids = trade_league(client)
-    two = [ids["Cooper Flagg"], ids["Josh Hart"]]
+    two = [ids["Cosuar Falvewell"], ids["Jurleon Huviland"]]
     t = client.post(
-        f"/seasons/{LEAGUE}/trade", json={"team": 10, "give": [ids["Paul Reed"]], "get": two}
+        f"/seasons/{LEAGUE}/trade",
+        json={"team": 10, "give": [ids["Pemoon Ruthacombe"]], "get": two},
     ).json()
     mine = t["sides"]["mine"]["roster"]
     # My out bench player takes one of the league's open IL slots (#124): no drop.
     assert mine["valid"] and mine["active"] == 13 and not mine["drops"]
-    assert mine["held_moves"] == [{"player": ids["Aaron Nesmith"], "slot": "IL"}]
+    assert mine["held_moves"] == [{"player": ids["Aumion Nevothorn"], "slot": "IL"}]
     theirs = t["sides"]["theirs"]["roster"]
     assert theirs["valid"] and theirs["open"] == 1
     # A third player in is one too many: a drop, never one of those received.
-    three = [*two, ids["Austin Reaves"]]
+    three = [*two, ids["Aanuen Ranowyn"]]
     t = client.post(
-        f"/seasons/{LEAGUE}/trade", json={"team": 10, "give": [ids["Paul Reed"]], "get": three}
+        f"/seasons/{LEAGUE}/trade",
+        json={"team": 10, "give": [ids["Pemoon Ruthacombe"]], "get": three},
     ).json()
     mine = t["sides"]["mine"]["roster"]
     assert not mine["valid"] and len(mine["drops"]) == 1 and mine["active"] == 14
@@ -1916,24 +1918,24 @@ def test_a_two_for_one_reports_the_full_roster_and_the_freed_spot(client):
         f"/seasons/{LEAGUE}/trade",
         json={
             "team": 10,
-            "give": [ids["Paul Reed"], ids["Mitchell Robinson"]],
-            "get": [ids["Josh Hart"]],
+            "give": [ids["Pemoon Ruthacombe"], ids["Mamio Rodistead"]],
+            "get": [ids["Jurleon Huviland"]],
         },
     ).json()
     assert back["sides"]["mine"]["roster"]["open"] == 1
-    assert back["fill"]["name"] == "Dillon Brooks" and back["fill"]["gain"]["three"] > 0
+    assert back["fill"]["name"] == "Dovael Buthaton" and back["fill"]["gain"]["three"] > 0
 
 
 def test_a_trade_that_cannot_be_evaluated_is_refused(client):
     ids = trade_league(client)
-    reed, flagg = ids["Paul Reed"], ids["Cooper Flagg"]
+    reed, flagg = ids["Pemoon Ruthacombe"], ids["Cosuar Falvewell"]
 
     def post(body):
         return client.post(f"/seasons/{LEAGUE}/trade", json=body)
 
     assert post({"team": 10, "give": [reed], "get": [reed]}).status_code == 400
     assert post({"team": 10, "give": [flagg], "get": []}).status_code == 400
-    assert post({"team": 10, "give": [reed], "get": [ids["Kevin Durant"]]}).status_code == 400
+    assert post({"team": 10, "give": [reed], "get": [ids["Kindion Dethoton"]]}).status_code == 400
     assert post({"team": 4, "give": [reed], "get": []}).status_code == 400
     assert post({"team": 10}).status_code == 400
     assert post({"team": 10, "give": [reed], "system": "espn"}).status_code == 422
@@ -1945,7 +1947,7 @@ def test_a_trade_after_the_deadline_is_refused(client):
     settings["service"]["settings"]["trade_end_date"] = "2026-10-20"
     client.fake.settings = json.dumps(settings)
     ids = trade_league(client)
-    body = {"team": 10, "give": [ids["Paul Reed"]], "get": [ids["Cooper Flagg"]]}
+    body = {"team": 10, "give": [ids["Pemoon Ruthacombe"]], "get": [ids["Cosuar Falvewell"]]}
     r = client.post(f"/seasons/{LEAGUE}/trade", json=body)
     assert r.status_code == 409 and "2026-10-20" in r.json()["detail"]
 
@@ -1982,7 +1984,7 @@ def test_a_refresh_keeps_the_flags_inputs_and_the_view_flags_the_pool(client):
     assert "#1 by adds on Yahoo's buzz index" in drummond["signals"]["surge"]["reason"]
     # Vassell (G-F, no projection) is out to Nov 20: the minutes at forward in San Antonio.
     keldon = flags["6217"]["signals"]["opportunity"]
-    assert keldon["score"] == 0.5 and "Devin Vassell" in keldon["reason"]
+    assert keldon["score"] == 0.5 and "Darluic Vorluby" in keldon["reason"]
     # Cunningham is out to Nov 12 at guard in Detroit; Duren is day to day.
     assert flags["6073"]["signals"]["opportunity"]["score"] == 0.5
     # Opportunity alone flags nobody: kept for the hover, scored 0.
@@ -2001,14 +2003,14 @@ def test_a_refresh_keeps_the_flags_inputs_and_the_view_flags_the_pool(client):
 
 
 def test_the_projection_and_the_past_days_feed_the_value_and_minutes_signals(client):
-    names = [*fixture_names(), "Andre Drummond", "Keldon Johnson"]
+    names = [*fixture_names(), "Aurlaic Disathorn", "Kulveen Jiveton"]
     projection_csv(client.data_dir / "bbm_projections_2026-10-21.csv", names)
     # 38 minutes a game over three games against the projection's 30.
     past_days_csv(
         client.data_dir / "bbm_actual_7d_totals_20261021-1500.csv",
         [
-            ("Andre Drummond", "NYK", "C", 3, 114, 22.0),
-            ("Keldon Johnson", "SAS", "SF,PF", 1, 40, 20.0),
+            ("Aurlaic Disathorn", "NYK", "C", 3, 114, 22.0),
+            ("Kulveen Jiveton", "SAS", "SF,PF", 1, 40, 20.0),
         ],
     )
     client.post(f"/seasons/{LEAGUE}/refresh", params={"wait": True})
@@ -2024,7 +2026,9 @@ def test_the_projection_and_the_past_days_feed_the_value_and_minutes_signals(cli
     assert v["flag_inputs"]["silent"] == {}
     d = client.get("/flags/digest").json()
     md = d["markdown"]
-    assert "Andre Drummond (NYK, C): adds surge" in md and "minutes up" in md and "value gap" in md
+    assert (
+        "Aurlaic Disathorn (NYK, C): adds surge" in md and "minutes up" in md and "value gap" in md
+    )
     # The projection's numbers stay local: the JSON has them, the markdown does not.
     assert "38.0" in d["leagues"][0]["flagged"][0]["signals"]["minutes"]["reason"]
     assert "38.0" not in md and "ranked" not in md and "projected min" not in md
@@ -2039,7 +2043,7 @@ def test_the_flag_digest_lists_every_league_with_a_season(client):
     assert {"league": "100002", "reason": "no season read yet"} in d["skipped"]
     top = d["leagues"][0]["flagged"]
     # Johnson's surge and his opportunity outrank Drummond's surge alone; the highest first.
-    assert [x["name"] for x in top[:2]] == ["Keldon Johnson", "Andre Drummond"]
+    assert [x["name"] for x in top[:2]] == ["Kulveen Jiveton", "Aurlaic Disathorn"]
     assert [x["score"] for x in top] == sorted((x["score"] for x in top), reverse=True)
     assert all(x["level"] is not None for x in top)
     md = d["markdown"]
@@ -2047,7 +2051,7 @@ def test_the_flag_digest_lists_every_league_with_a_season(client):
     assert "Test League" not in md and "Team 4" not in md
     assert "no past-days export within 3 days" in md
     # The five most added are watch-level: one line of names, the evidence in the JSON.
-    assert "- watch (5): Keldon Johnson (SAS), Andre Drummond (NYK), Zaccharie Risacher" in md
+    assert "- watch (5): Kulveen Jiveton (SAS), Aurlaic Disathorn (NYK), Zireen Rulviford" in md
     assert top[0]["line"] not in md and top[0]["signals"]["opportunity"]["reason"]
     # The leagues not read close the flags, by id; the lineups follow, the lineup executor's
     # summary among them (#170).
@@ -2136,10 +2140,10 @@ def test_a_failed_flag_input_warns_and_the_refresh_still_lands(client):
 
 
 def test_a_past_days_export_is_never_offered_as_a_projection(client):
-    projection_csv(client.data_dir / "bbm_projections_2026-10-21.csv", ["Andre Drummond"])
+    projection_csv(client.data_dir / "bbm_projections_2026-10-21.csv", ["Aurlaic Disathorn"])
     past_days_csv(
         client.data_dir / "bbm_actual_7d_totals_20261021-1500.csv",
-        [("Andre Drummond", "NYK", "C", 3, 90, 20.0)],
+        [("Aurlaic Disathorn", "NYK", "C", 3, 90, 20.0)],
     )
     files = [f["file"] for f in client.get("/projections").json()]
     assert files == ["bbm_projections_2026-10-21.csv"]
@@ -2173,11 +2177,11 @@ def test_a_stale_past_days_export_leaves_only_the_minutes_silent():
 # --------------------------------------------------------------------------- the keep rule (#124)
 def test_the_moves_say_whom_the_keep_rule_keeps_and_what_to_do_with_an_out_player(client):
     """Made-up lines: the star and my out bench player above the best add, the rest below."""
-    strategy_league(client, {"Kevin Durant": 1.5, "Aaron Nesmith": 2.0})
+    strategy_league(client, {"Kindion Dethoton": 1.5, "Aumion Nevothorn": 2.0})
     v = client.get(f"/seasons/{LEAGUE}").json()
     m = client.get(f"/seasons/{LEAGUE}/moves").json()
     ids = {s["player"]["name"]: s["player"]["yahoo_id"] for s in v["roster"]}
-    star, out = ids["Kevin Durant"], ids["Aaron Nesmith"]
+    star, out = ids["Kindion Dethoton"], ids["Aumion Nevothorn"]
     rule = m["keep_rule"]
     assert rule["floor"] == 0.0 and rule["average"] == 0.0
     assert str(rule["best"]["player"]) in m["candidates"]
@@ -2227,7 +2231,7 @@ def test_the_moves_say_whom_the_keep_rule_keeps_and_what_to_do_with_an_out_playe
 
 
 def test_the_strategy_names_the_held_moves_and_never_drops_a_kept_player(client):
-    strategy_league(client, {"Kevin Durant": 1.5, "Aaron Nesmith": 2.0})
+    strategy_league(client, {"Kindion Dethoton": 1.5, "Aumion Nevothorn": 2.0})
     s = client.post(
         f"/seasons/{LEAGUE}/strategy", params={"wait": True, "pool": 10, "weights": "week,natural"}
     ).json()

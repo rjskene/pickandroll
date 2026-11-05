@@ -38,7 +38,7 @@ CSV_COLUMNS = [
 
 # --------------------------------------------------------------------------- synthetic league
 def _names(label: str, team: str) -> tuple[str, str]:
-    """ "V. Wembanyama", "SAS" -> ("Vsas", "Wembanyama"): unique, same initial and last name."""
+    """ "V. Withufield", "SAS" -> ("Vsas", "Withufield"): unique, same initial and last name."""
     initial, last = label.split(" ", 1)
     return f"{initial[0]}{team.lower()}", last
 
@@ -147,49 +147,49 @@ def attach(client, draft_id="d1", slot=1, **overrides):
 
 # --------------------------------------------------------------------------- id map
 def test_label_key_and_adp_tiebreak():
-    assert label_key("V. Wembanyama") == label_key("Victor Wembanyama") == "v wembanyama"
-    assert label_key("J. Jackson Jr.") == label_key("Jaren Jackson Jr.") == "j jackson"
-    assert label_key("S. Gilgeous-Alexander") == label_key("Shai Gilgeous-Alexander")
-    assert label_key("A. Şengün") == label_key("Alperen Sengun")
+    assert label_key("V. Withufield") == label_key("Veniic Withufield") == "v withufield"
+    assert label_key("J. Justothorn Jr.") == label_key("Jimoar Justothorn Jr.") == "j justothorn"
+    assert label_key("S. Gustowyn-Auracombe") == label_key("Setheel Gustowyn-Auracombe")
+    assert label_key("A. Şovulanić") == label_key("Aarlaic Sovulanic")
     players = pd.DataFrame(
         [
-            ("4612", "478.p.4612", "Stephen Curry", "Stephen", "Curry", "GSW", "PG", 22.0),
-            ("5000", "478.p.5000", "Seth Curry", "Seth", "Curry", "GSW", "SG", None),
-            ("6702", "478.p.6702", "Jalen Williams", "Jalen", "Williams", "OKC", "SF", 31.0),
-            ("6800", "478.p.6800", "Jaylin Williams", "Jaylin", "Williams", "OKC", "PF", 150.0),
-            ("10094", "478.p.10094", "Victor Wembanyama", "Victor", "Wembanyama", "SAS", "C", 1.6),
+            ("4612", "478.p.4612", "Senduin Carloford", "Senduin", "Carloford", "GSW", "PG", 22.0),
+            ("5000", "478.p.5000", "Selmon Carloford", "Selmon", "Carloford", "GSW", "SG", None),
+            ("6702", "478.p.6702", "Jinaar Wonaton", "Jinaar", "Wonaton", "OKC", "SF", 31.0),
+            ("6800", "478.p.6800", "Jorlen Wonaton", "Jorlen", "Wonaton", "OKC", "PF", 150.0),
+            ("10094", "478.p.10094", "Veniic Withufield", "Veniic", "Withufield", "SAS", "C", 1.6),
         ],
         columns=["yahoo_id", "player_key", "name", "first", "last", "team", "positions", "adp"],
     ).set_index("yahoo_id")
     projections = pd.DataFrame(
-        {"player": ["Stephen Curry", "Victor Wembanyama"], "team": ["", ""]},
-        index=["stephen-curry", "victor-wembanyama"],
+        {"player": ["Senduin Carloford", "Veniic Withufield"], "team": ["", ""]},
+        index=["senduin-carloford", "veniic-withufield"],
     )
     ids = build_id_map(players, projections)
-    assert ids.resolve_label("S. Curry", "GSW") == "4612"
-    assert ids.resolve_label("J. Williams", "OKC") == "6702"
-    assert ids.resolve_label("V. Wembanyama", "SAS") == "10094"
-    assert ids.resolve_label("V. Wembanyama", "NYK") == "10094"  # traded: any team
+    assert ids.resolve_label("S. Carloford", "GSW") == "4612"
+    assert ids.resolve_label("J. Wonaton", "OKC") == "6702"
+    assert ids.resolve_label("V. Withufield", "SAS") == "10094"
+    assert ids.resolve_label("V. Withufield", "NYK") == "10094"  # traded: any team
     assert ids.resolve_label("Z. Nobody", "SAS") is None
-    assert ids.pid("10094") == "victor-wembanyama" and ids.yid("stephen-curry") == "4612"
-    assert ids.row_name("10094") == {"ini": "V", "last": "Wembanyama", "team": "SAS"}
+    assert ids.pid("10094") == "veniic-withufield" and ids.yid("senduin-carloford") == "4612"
+    assert ids.row_name("10094") == {"ini": "V", "last": "Withufield", "team": "SAS"}
 
 
 def test_short_first_names_match_but_initials_do_not():
     yahoo = pd.DataFrame(
         {
-            "name": ["Nic Claxton", "Cameron Johnson", "Darius Brown", "Ronald Holland II"],
+            "name": ["Nic Clavale", "Cameron Jiveton", "Darius Brewlock", "Ronald Holmere II"],
             "team": ["BKN", "DEN", "XXX", "DET"],
         },
         index=["k1", "k2", "k3", "k4"],
     )
     projections = pd.DataFrame(
-        {"player": ["Nicolas Claxton", "Cam Johnson", "Dion Brown", "Ron Holland"]},
-        index=["nicolas-claxton", "cam-johnson", "dion-brown", "ron-holland"],
+        {"player": ["Nicolas Clavale", "Cam Jiveton", "Dion Brewlock", "Ron Holmere"]},
+        index=["nicolas-clavale", "cam-jiveton", "dion-brewlock", "ron-holmere"],
     )
     result = match_players(yahoo, projections)
-    assert result.mapping == {"k1": "nicolas-claxton", "k2": "cam-johnson", "k4": "ron-holland"}
-    assert result.unmatched_yahoo == ["k3"] and result.unmatched_projection == ["dion-brown"]
+    assert result.mapping == {"k1": "nicolas-clavale", "k2": "cam-jiveton", "k4": "ron-holmere"}
+    assert result.unmatched_yahoo == ["k3"] and result.unmatched_projection == ["dion-brewlock"]
 
 
 def test_players_file_reader(league):
@@ -197,7 +197,7 @@ def test_players_file_reader(league):
     players = load_players_file(directory / "yahoo_players_1.json")
     assert len(players) == 156 + 80 + 1
     first = players.loc[picks[0].yahoo_player_id]
-    assert first["name"] == "Vsas Wembanyama" and first["adp"] == 1.0
+    assert first["name"] == "Vsas Withufield" and first["adp"] == 1.0
     assert players.loc["900000", "adp"] is None or pd.isna(players.loc["900000", "adp"])
 
 

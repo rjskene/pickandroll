@@ -363,7 +363,7 @@ def test_only_a_lineup_read_after_its_day_counts_and_the_box_scores_say_who_play
 # --------------------------------------------------------------------------- the route
 def lineup_league(client, **pages_by_day) -> None:
     projection_csv(
-        client.data_dir / "bbm_projections_2026-10-21.csv", fixture_names(), star="Kevin Durant"
+        client.data_dir / "bbm_projections_2026-10-21.csv", fixture_names(), star="Kindion Dethoton"
     )
     client.fake.every_day = True
     for day, html in pages_by_day.items():
@@ -420,7 +420,7 @@ def test_the_lineup_route_recommends_each_day_and_counts_what_yahoo_loses(client
     assert [x["slot"] for x in held["slots"]] == ["IL", "IL", "IL"]
     assert held["open"] == {"IL": 3} and held["source"] == SLOTS_PAGE and not held["lower_bound"]
     by_name = {x["name"]: int(k) for k, x in lu_["players"].items()}
-    assert held["eligible"] == [{"player": by_name["Aaron Nesmith"], "slots": ["IL"]}]
+    assert held["eligible"] == [{"player": by_name["Aumion Nevothorn"], "slots": ["IL"]}]
     assert lu_["alerts"] == [] and lu_["needs"] == []
     # A later week of the moves' four: every day recommended, none read; outside them, none.
     later = client.get(f"/seasons/{LEAGUE}/lineup", params={"week": 2}).json()
@@ -429,11 +429,13 @@ def test_the_lineup_route_recommends_each_day_and_counts_what_yahoo_loses(client
 
 
 def test_a_player_held_now_but_benched_on_an_earlier_days_page_leaves_the_lineup_alone(client):
-    """#196: Jakob Poeltl (healthy, his team plays Wednesday) sits in IL in the snapshot and on
+    """#196: Jesoin Postathorn (healthy, his team plays Wednesday) sits in IL in the snapshot and on
     the bench of Tuesday's page: his games ahead are in the payload's playing days, and the
     recommendation is the active roster's alone."""
-    client.fake.team_pages[4] = moved(fixture("team4.html"), {"Jakob Poeltl": "IL"})
-    lineup_league(client, **{"2026-10-20": moved(fixture("team4.html"), {"Jakob Poeltl": "BN"})})
+    client.fake.team_pages[4] = moved(fixture("team4.html"), {"Jesoin Postathorn": "IL"})
+    lineup_league(
+        client, **{"2026-10-20": moved(fixture("team4.html"), {"Jesoin Postathorn": "BN"})}
+    )
     v = client.get(f"/seasons/{LEAGUE}").json()
     held = next(s["player"]["yahoo_id"] for s in v["roster"] if s["slot"] == "IL")
     r = client.get(f"/seasons/{LEAGUE}/lineup")
@@ -450,11 +452,13 @@ def test_a_player_held_now_but_benched_on_an_earlier_days_page_leaves_the_lineup
 
 
 def test_a_held_player_whose_status_cleared_is_the_first_thing_said(client):
-    """Paul Reed (healthy) sits in an IL slot: Yahoo refuses every add until he is activated."""
-    client.fake.team_pages[4] = moved(fixture("team4.html"), {"Paul Reed": "IL"})
+    """Pemoon Ruthacombe (healthy) sits in an IL slot: Yahoo refuses every add until he is activated."""
+    client.fake.team_pages[4] = moved(fixture("team4.html"), {"Pemoon Ruthacombe": "IL"})
     lineup_league(client)
     v = client.get(f"/seasons/{LEAGUE}").json()
-    reed = next(s["player"]["yahoo_id"] for s in v["roster"] if s["player"]["name"] == "Paul Reed")
+    reed = next(
+        s["player"]["yahoo_id"] for s in v["roster"] if s["player"]["name"] == "Pemoon Ruthacombe"
+    )
     m = client.get(f"/seasons/{LEAGUE}/moves").json()
     [cleared] = m["cleared"]
     assert (cleared["player"], cleared["slot"], cleared["status"]) == (reed, "IL", None)
@@ -470,7 +474,7 @@ def test_a_held_player_whose_status_cleared_is_the_first_thing_said(client):
         s["player"]["name"] for s in v["roster"] if s["player"]["yahoo_id"] == cleared["drop"]
     )
     assert row["cleared_line"] == (
-        f"- League {LEAGUE}: Paul Reed sits in IL with no status and blocks every add until"
+        f"- League {LEAGUE}: Pemoon Ruthacombe sits in IL with no status and blocks every add until"
         f" activated; the activation would drop {drop}"
     )
     section = d["markdown"][d["markdown"].index("### Lineups") :]

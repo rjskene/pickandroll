@@ -15,9 +15,9 @@ import pytest
 SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "draft_day.py"
 HEAD = "Name,Team,Pos,g,m,p,3,r,a,s,b,fg%,fga,ft%,fta,to,USG"
 NAMES = [
-    ("Andre Drummond", "NYK", "C"),
-    ("Keldon Johnson", "SAS", "SF,PF"),
-    ("Alex Caruso", "OKC", "SG,SF"),
+    ("Aurlaic Disathorn", "NYK", "C"),
+    ("Kulveen Jiveton", "SAS", "SF,PF"),
+    ("Aumuic Cenastead", "OKC", "SG,SF"),
 ]
 
 

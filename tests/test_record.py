@@ -118,7 +118,7 @@ def test_the_draft_results_give_every_pick_by_round_and_overall():
 def test_season_lines_name_who_has_each_player():
     rows = pages.parse_stat_lines(fixture("lines_season.html"))["rows"]
     george = rows[0]
-    assert george["player"]["name"] == "Paul George" and george["team_id"] == 7
+    assert george["player"]["name"] == "Pemoon Godaley" and george["team_id"] == 7
     assert (george["gp"], george["pts"], george["fgm"], george["fga"], george["mpg"]) == (
         1.0,
         38.0,
