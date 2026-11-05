@@ -86,6 +86,7 @@ CHECKED_DAYS = 2
 NEEDS_DROP = "needs a drop: the comeback is the moves queue's"
 #: A comeback's drop's entry in the drop log (#318): it has no queue entry.
 COMEBACK = "comeback"
+NO_KEEP_RULE = "the keep rule did not read: a comeback's drop never runs without it"
 #: The digest counts the runs of the last day.
 DIGEST_SPAN = timedelta(hours=24)
 
@@ -317,6 +318,18 @@ def comeback_entry(player: int) -> str:
     return f"{COMEBACK}:{player}"
 
 
+def is_comeback(entry: str | None) -> bool:
+    """Whether a drop log's ``entry`` is a comeback's."""
+    return str(entry or "").startswith(f"{COMEBACK}:")
+
+
+def _since_move(day: date, run: Mapping[str, Any], move: Mapping[str, Any]) -> bool:
+    """Whether the logged ``run`` of ``day`` came after the comeback's ``move``: a player may go
+    back on the IL and clear again, and an earlier stint's drop says nothing of this one."""
+    at, moved = _at(run.get("at")), _at(move.get("at"))
+    return at >= moved if at is not None and moved is not None else day >= move["day"]
+
+
 def comeback_moves(data_dir: Path, league: str) -> dict[int, dict[str, Any]]:
     """The live comeback moves on the log (#318), the latest of each player, by player: his
     ``drop``, the run's ``at`` and its log's ``day``."""
@@ -344,20 +357,23 @@ def comeback_pending(
 ) -> list[dict[str, Any]]:
     """The drops of comebacks that moved and were not dropped (#318), the log's own record: a
     partial run picks up here and never makes a second drop. Each is ``{player, drop, entry}``.
-    Left out: one dropped; one whose drop failed or went unconfirmed today (never retried that
-    day); and, on a roster read after the move, one whose drop has gone or whose roster is no
-    longer over the active spots (a hand fix: dropping now would be a drop nobody needs). With
-    no such read yet, only a move made today stands."""
+    Left out, each drop taken since his latest move only: one dropped; one whose drop failed or
+    went unconfirmed today (never retried that day). Also left out, on a roster read after the
+    move, one whose drop has gone or whose roster is no longer over the active spots (a hand fix:
+    dropping now would be a drop nobody needs). With no such read yet, only a move made today
+    stands."""
     moves = comeback_moves(data_dir, league)
     if not moves:
         return []
     drops = [(d, r) for d, r in runs(data_dir, league, DROP) if r.get("mode") == "live"]
-    done = {r.get("entry") for _, r in drops if r.get("outcome") == "dropped"}
-    stuck = {r.get("entry") for d, r in drops if d == today and r.get("outcome") in DROP_STICKS}
     out = []
     for player, move in moves.items():
         entry = comeback_entry(player)
-        if entry in done or entry in stuck:
+        since = [(d, r) for d, r in drops if r.get("entry") == entry and _since_move(d, r, move)]
+        if any(
+            r.get("outcome") == "dropped" or (d == today and r.get("outcome") in DROP_STICKS)
+            for d, r in since
+        ):
             continue
         at = _at(move.get("at"))
         if read_at is not None and at is not None and read_at > at:
@@ -866,7 +882,7 @@ def check_drop_run(
         return None
     if run.entry is None or run.player is None:
         return "a drop run names its entry and its player"
-    if run.entry.startswith(f"{COMEBACK}:"):
+    if is_comeback(run.entry):
         drop = (comebacks or {}).get(run.entry)
         if drop is None:
             return f"{run.entry} has no drop pending"

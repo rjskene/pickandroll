@@ -1105,12 +1105,15 @@ test("a comeback that cannot move leaves the pass's own run to go on in the same
   assert.deepEqual(logs.map((l) => l.run.steps.map((s) => [s.kind, s.outcome])), [[["return", "skipped"]], [["swap", "set"]]]);
 });
 
-test("a comeback whose move came back with anything else stops the run: no drop, no swap", async () => {
+test("a comeback whose move came back with anything else stops the visit, no drop, and the pass's run goes on from a fresh load", async () => {
   const roster = swapDom({ drop: ["1012"], empty: ["BN"], after: 0, answer: "nope" });
-  const v = await visitPage({ hash: "#pickandroll-lineup", answer: comebackWorker(), swap: roster });
+  const v = await visitPage({ hash: "#pickandroll-lineup-late", answer: comebackWorker(), swap: roster });
   assert.deepEqual(v.assigned, []);
   assert.deepEqual(roster.touched, ["click 1013 IL", "click empty BN"]);
-  assert.equal(v.sent.filter((m) => m.op === "lineup_log").length, 1);
+  const logs = v.sent.filter((m) => m.op === "lineup_log");
+  assert.deepEqual(logs.map((l) => l.run.steps[0].outcome), ["failed"]);
+  // The reload keeps its fragment: nothing strips it behind the load.
+  assert.deepEqual([v.replaced.at(-1), v.reloaded.length], [`/nba/${LEAGUE}/${TEAM}?date=${DAY}#pickandroll-lineup-late-chain`, 1]);
 });
 
 test("a move that landed with its drop still to make goes straight to the drop page: he is never moved twice", async () => {

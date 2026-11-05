@@ -768,13 +768,17 @@ In the model's terms, carried by #124:
      since only its post writes the lineup the steps read: the rebuilt recommendation starts the
      returned player if he has a game and belongs, and fills the slot the drop left.
 - A comeback does not run, with the reason under `skipped`, when the drop is protected ("no legal
-  drop"), or when his game began ("waits for the next day his page allows"). A drop that was not
-  made goes straight to the lineup run with the `-chain` fragment, which starts no comeback and
-  goes to no drop page, so the chain always ends.
+  drop"; the engine's keep rule and the day's queue row, and an unreadable keep rule runs no
+  comeback and logs no drop), or when his game began ("waits for the next day his page allows"). A
+  drop that was not made goes straight to the lineup run with the `-chain` fragment, which starts
+  no comeback and goes to no drop page, so the chain always ends. A move answered any way but
+  saved or cancelled stops the visit with no drop, and the same fragment runs the pass's lineup
+  from a fresh load; the comeback is offered again next pass.
 - The log is what a partial run resumes from. A move that landed with its drop still to make is
   `pending_drop` on the next lineup page, which goes straight to the drop page and never moves him
-  twice; a drop that failed or went unconfirmed is not retried that day; a roster read after the
-  move that shows the drop gone or the actives within their spots ends it, since a hand fix needs
+  twice; a drop that failed or went unconfirmed is not retried that day; only a drop after his
+  latest move counts, so a second IL stint is a comeback of its own; a roster read after the move
+  that shows the drop gone or the actives within their spots ends it, since a hand fix needs
   no drop. A moves pass that meets the pending drop makes it and keeps its own way on; its Start
   Active fills the slot. The digest has a line per comeback: moved, dropped, or why not.
 - An absence shorter than a week keeps a player on the bench, not on waivers: a player who is

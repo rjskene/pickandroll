@@ -1081,7 +1081,10 @@ class SeasonService:
             if mode["mode"] == "live"
             else None
         )
-        comeback = None if stop else self._comeback_gate(league, base, season, today)
+        wanted = lineup is not None and any(
+            a.get("kind") == "cleared" and a.get("drop") is not None for a in lineup["alerts"]
+        )
+        comeback = None if stop else self._comeback_gate(league, base, season, today, wanted)
         return season_autopilot.steps_payload(
             league, base.my_team_id, day, today, now, lineup, tips, mode, stop, live, comeback
         )
@@ -1097,20 +1100,43 @@ class SeasonService:
             pass
         return protected
 
+    def _comeback_protected(self, league: str, day: date) -> set[int] | None:
+        """The players a comeback never drops (#318): the engine's own and, when the day's queue
+        reads, its row's. None when the engine's keep rule does not read: a drop cannot be taken
+        back, so unlike the queue's path, where the row was built under the rule, this one holds
+        nothing else and runs nothing."""
+        try:
+            body = self._read_queue(day) or {}
+        except HTTPException:
+            body = {}
+        row = next((r for r in body.get("leagues") or [] if r.get("league") == league), None)
+        try:
+            rule = self._built(league, (row or {}).get("system")).rule
+            engine = season_queue.protected_of(rule)
+        except Exception:  # noqa: BLE001 - no keep rule, no drop
+            return None
+        return {int(k) for k in (*((row or {}).get("protected") or ()), *engine)}
+
     def _comeback_gate(
-        self, league: str, base: Any, season: Season, today: date
+        self, league: str, base: Any, season: Season, today: date, wanted: bool = True
     ) -> dict[str, Any] | None:
-        """What a comeback runs under (#318): None unless the moves switch is live and its guard
-        holds, the private league never. ``protected`` the players never dropped, ``pending`` the
-        comebacks moved and still to drop, ``moved`` their players."""
+        """What a comeback runs under (#318): None unless the moves switch is live, its guard
+        holds and the keep rule reads, the private league never. ``protected`` the players never
+        dropped, ``pending`` the comebacks moved and still to drop, ``moved`` their players.
+        ``wanted`` false: no alert asks for one, so with none pending nothing is built."""
         mode = leagues.executor_mode(self.data_dir, league, leagues.MOVES)
         if mode.get("private") or mode["mode"] != "live":
             return None
         if not season_autopilot.moves_live_check(self.data_dir, league, mode).get("ok"):
             return None
         pending = self._comebacks_pending(league, base, season, today)
+        if not wanted and not pending:
+            return {"protected": set(), "moved": set(), "pending": []}
+        protected = self._comeback_protected(league, today)
+        if protected is None:
+            return None
         return {
-            "protected": {int(k) for k in self._protected_now(league, None)},
+            "protected": protected,
             "moved": {p["player"] for p in pending},
             "pending": pending,
         }
@@ -1920,13 +1946,17 @@ class SeasonService:
             if run.mode == "live"
             else None
         )
-        self._base(league)
         # The moves on the log, not what is pending: a drop that landed is no longer pending once
         # the roster is read, and its run is still the league's to log.
         comebacks = {
             season_autopilot.comeback_entry(player): move["drop"]
             for player, move in season_autopilot.comeback_moves(self.data_dir, league).items()
         }
+        if run.outcome != "stopped" and season_autopilot.is_comeback(run.entry):
+            keep = self._comeback_protected(league, run.day)
+            if keep is None:
+                raise HTTPException(409, season_autopilot.NO_KEEP_RULE)
+            protected |= keep
         why = season_autopilot.check_drop_run(
             run, mode, season_autopilot.stopped(self.data_dir), mine, live, protected, comebacks
         )

@@ -166,6 +166,7 @@
   }
 
   let running = false;
+  let leaving = false;
 
   /** The live lineup run on record in this browser for the league, logging first one whose log
    * never came (the tab closed mid-run, a log that failed): its run as read, else clicked with its
@@ -224,6 +225,7 @@
    * post. Answers the run logged, or null. */
   /** To ``url`` as a fresh load: a URL differing only by its fragment would run no script. */
   function goOn(url) {
+    leaving = true;
     const to = new URL(url, location.href);
     if (to.pathname + to.search !== location.pathname + location.search) location.assign(url);
     else {
@@ -293,10 +295,12 @@
           goOn(dropUrl);
           return null;
         }
-        // Only a move that changed nothing lets the run go on; any other answer stops here.
+        // A move answered any other way leaves the page unknown: the pass's run goes on from a
+        // fresh load, with no comeback in it, so a move Yahoo refuses never costs the lineup.
         if (moved && moved.outcome !== "skipped") {
           strip(PR.stripText({ steps, run: done.run }));
-          return done.run;
+          goOn(`${where}#${PR.comebackChainOf(trigger)}`);
+          return null;
         }
       }
     }
@@ -325,7 +329,7 @@
       const posted = await post();
       run = await lineup(trigger, posted);
       // A routine's run happens once: a reload of the page is a plain visit.
-      if (trigger && location.hash) history.replaceState(null, "", location.pathname + location.search);
+      if (trigger && location.hash && !leaving) history.replaceState(null, "", location.pathname + location.search);
     } finally {
       running = false;
     }

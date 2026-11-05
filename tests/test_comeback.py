@@ -12,6 +12,7 @@ from datetime import UTC, date, datetime, timedelta
 import pytest
 
 from pickandroll.api import season_autopilot as ap
+from pickandroll.api import season_queue
 from pickandroll.api.seasons import nba_today
 from pickandroll.routine import steps as rs
 from pickandroll.sources.yahoo import public
@@ -193,6 +194,24 @@ def test_a_landed_move_with_a_failed_drop_resumes_at_the_drop_and_never_drops_tw
     assert pending(tmp_path, over, read, 3, later) == []
 
 
+def test_a_second_stint_is_a_comeback_of_its_own_and_drops_again(tmp_path):
+    ap.append_run(tmp_path, LEAGUE, move_run(), DAY)
+    ap.append_run(tmp_path, LEAGUE, drop_run("dropped"), DAY, ap.DROP)
+    assert pending(tmp_path) == []
+    # Back on the IL, cleared again: his new move owes a new drop.
+    later = DAY + timedelta(days=9)
+    again = AT + timedelta(days=9)
+    ap.append_run(tmp_path, LEAGUE, move_run(again, drop=2), later)
+    assert pending(tmp_path, today=later) == [{"player": BACK, "drop": 2, "entry": ENTRY}]
+    # An earlier failure the same day is no answer to it, nor an earlier stint's.
+    ap.append_run(tmp_path, LEAGUE, {**drop_run("failed"), "at": AT.isoformat()}, later, ap.DROP)
+    assert [p["drop"] for p in pending(tmp_path, today=later)] == [2]
+    # His own drop ends it.
+    done = {**drop_run("dropped"), "at": (again + timedelta(minutes=1)).isoformat()}
+    ap.append_run(tmp_path, LEAGUE, done, later, ap.DROP)
+    assert pending(tmp_path, today=later) == []
+
+
 def test_a_hand_fix_read_after_the_move_ends_the_comeback(tmp_path):
     ap.append_run(tmp_path, LEAGUE, move_run(), DAY)
     read = AT + timedelta(hours=1)
@@ -242,6 +261,7 @@ def test_the_drop_log_takes_the_comebacks_drop_and_refuses_any_other(client):
     assert other.status_code == 409 and "another drop" in other.json()["detail"]
     nobody = client.post(URL, json={**body, "entry": ap.comeback_entry(BACK + 1)})
     assert nobody.status_code == 409 and nobody.json()["detail"].endswith("has no drop pending")
+    client.app.state.seasons.clock = lambda: NOW + timedelta(minutes=10)
     r = client.post(URL, json=body)
     assert r.status_code == 200, r.text
     assert client.get(DUE).json()["drop_first"] == []
@@ -254,6 +274,60 @@ def test_stop_and_the_private_league_have_no_comeback_drop(client):
     assert client.get(DUE).json().get("drop_first", []) == []
     (client.data_dir / "autopilot" / "STOP").unlink()
     assert client.get(f"/seasons/{PRIVATE}/autopilot/moves/due").json().get("drop_first", []) == []
+
+
+def no_build(*_args, **_kw):
+    raise RuntimeError("the build failed")
+
+
+def cleared_on_the_il(client) -> tuple[int, int]:
+    """A live league whose bench player sits cleared on the IL: his id and the engine's drop."""
+    lineup_league(client)
+    roster = client.get(f"/seasons/{LEAGUE}").json()["roster"]
+    him = next(s["player"] for s in roster if s["slot"] == "BN")
+    client.fake.team_pages[4] = moved(fixture("team4.html"), {him["name"]: "IL"})
+    assert client.post(f"/seasons/{LEAGUE}/refresh", params={"wait": True}).status_code == 202
+    live_league(client)
+    alerts = client.get(f"/seasons/{LEAGUE}/lineup").json()["alerts"]
+    [alert] = [a for a in alerts if a["kind"] == "cleared"]
+    return alert["player"], alert["drop"]
+
+
+def test_the_steps_route_offers_a_real_comeback_and_never_without_the_keep_rule(
+    client, monkeypatch
+):
+    player, drop = cleared_on_the_il(client)
+    url = f"/seasons/{LEAGUE}/lineup/steps"
+    s = client.get(url).json()
+    assert [(c["player"], c["drop"]) for c in s["comebacks"]] == [(player, drop)]
+    # The keep rule does not read, the rest of the page does: he stays the user's.
+    monkeypatch.setattr(season_queue, "protected_of", no_build)
+    s = client.get(url).json()
+    assert s["comebacks"] == []
+    assert s["skipped"][0]["reason"] == ap.NEEDS_DROP
+
+
+def test_the_comeback_sees_at_least_what_the_days_queue_protects(client, monkeypatch):
+    player, drop = cleared_on_the_il(client)
+    seasons = client.app.state.seasons
+    row = {"league": LEAGUE, "protected": {str(drop): "kept by the queue"}}
+    monkeypatch.setattr(seasons, "_read_queue", lambda _day: {"leagues": [row]})
+    s = client.get(f"/seasons/{LEAGUE}/lineup/steps").json()
+    assert s["comebacks"] == []
+    assert s["skipped"][0]["reason"] == f"no legal drop: {drop} is protected, never dropped"
+    assert s["skipped"][0]["players"] == [player]
+
+
+def test_no_keep_rule_no_drop_due_and_none_on_the_log(client, monkeypatch):
+    today, drop = a_moved_comeback(client)
+    monkeypatch.setattr(client.app.state.seasons, "_built", no_build)
+    assert client.get(DUE).json().get("drop_first", []) == []
+    body = drop_body(ENTRY, drop, day=today.isoformat(), mode="live", outcome="dropped")
+    r = client.post(URL, json=body)
+    assert r.status_code == 409 and r.json()["detail"] == ap.NO_KEEP_RULE
+    # Saying it stopped needs no rule.
+    r = client.post(URL, json={**body, "outcome": "stopped"})
+    assert r.status_code == 200, r.text
 
 
 # --------------------------------------------------------------------------- after the drop
