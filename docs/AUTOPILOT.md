@@ -102,7 +102,11 @@ side (PR 1) is in `api/season_autopilot.py`; the click is the extension's, on th
     ("the lineup waits for its press"; a press after the read: "the next pass reads it again").
     `after_start_active` says whether the day's press came first.
   - The run is put on record in the browser before the page is touched: one live run per league
-    per pass (day and trigger), never a second; a run whose log never came is logged by the next
+    per pass, never a second. A pass is the date the run happens (Eastern, as the API's today),
+    its trigger and the lineup day it sets (#317): a daily's two lineup days both run, and
+    tomorrow's daily runs on the day this one set as its look-ahead. The API has no rule of its
+    own here; this guard in the extension's worker is the only one. A run that clicked nothing
+    gives the record back, so it does not count. A run whose log never came is logged by the next
     visit as clicked, its answer not read.
   - The units go in order: first each `returns` player, a held player whose status cleared and
     whose comeback has an open active spot (the lineup's `cleared` alerts with no drop, today's
