@@ -55,7 +55,7 @@ test("the triggers, the drop page and the item for it", () => {
   assert.equal(D.dropTriggerOf("#pickandroll-drop-evening"), "routine_evening");
   assert.equal(D.dropTriggerOf("#pickandroll-drop-panel"), "panel");
   assert.equal(D.dropTriggerOf("#pickandroll-il"), null);
-  assert.deepEqual(Object.keys(D.DROP_THEN).sort(), Object.values(D.DROP_TRIGGERS).sort());
+  assert.deepEqual(Object.keys(D.DROP_THEN).sort(), [...new Set(Object.values(D.DROP_TRIGGERS))].sort());
   assert.deepEqual(D.dropPageOf(`${SITE}${PAGE}#pickandroll-drop`), { league: LEAGUE, team: TEAM });
   assert.equal(D.dropPageOf(`${SITE}/nba/${LEAGUE}/${TEAM}`), null);
   assert.equal(D.dropPageOf(`${SITE}/nba/${LEAGUE}/addplayer?apid=${ADD}`), null);
@@ -343,6 +343,7 @@ const worker =
     if (msg.op === "drop_dropping") return kept ? { ok: true, data: { kept: true } } : { ok: false, error: "this drop awaits its log" };
     if (msg.op === "drop_log") return { ok: true, data: { at: "x" } };
     if (msg.op === "season_page") return { ok: true, data: { post: { accepted: [] }, follow: null } };
+    if (msg.op === "lineup_steps") return { ok: true, data: { page: `${SITE}/nba/${LEAGUE}/${TEAM}?date=${DAY}` } };
     return { ok: false, error: `unexpected ${msg.op}` };
   };
 const ops = (v) => v.sent.map((m) => m.op);
@@ -489,4 +490,55 @@ test("the worker keeps one drop on record: never submitted twice, logged once, r
   assert.equal((await w2.send({ op: "drop_log", league: LEAGUE, run })).ok, false);
   const ended = (await w2.send({ op: "drop_record", entry: ENTRY })).data;
   assert.deepEqual([ended.logged, ended.refused], [true, "refused"]);
+});
+
+// ---------------------------------------------------------------- a comeback's chain (#318)
+const TEAM_PAGE = `/nba/${LEAGUE}/${TEAM}`;
+const DATED = `${SITE}${TEAM_PAGE}?date=${DAY}`;
+const chainItem = (over = {}) => item({ entry: "comeback:5", slot: null, add: null, comeback: 5, back: `${SITE}${TEAM_PAGE}`, ...over });
+const chainUrl = `${SITE}${PAGE}#pickandroll-drop-comeback`;
+const landing = (over = {}) => ({ day: DAY, entry: "comeback:5", player: HELD, trigger: "routine", page: PAGE, back: `${SITE}${TEAM_PAGE}`, mode: "live", ...over });
+
+test("a comeback's drop keeps its way back on record before the submit", async () => {
+  const v = await visit({ url: chainUrl, answer: worker(due(LIVE, [chainItem()])) });
+  const put = v.sent.find((m) => m.op === "drop_dropping");
+  assert.deepEqual([put.record.entry, put.record.trigger, put.record.back], ["comeback:5", "routine", `${SITE}${TEAM_PAGE}`]);
+  // The submit waits for Yahoo's answer: the tab goes nowhere itself.
+  assert.deepEqual(v.assigned, []);
+});
+
+test("a drop page the chain opened goes on to the pass's lineup run when it makes no drop", async () => {
+  // Nothing due on it.
+  let v = await visit({ url: chainUrl, answer: worker(due({}, [])) });
+  assert.deepEqual(v.assigned, [`${DATED}#pickandroll-lineup-chain`]);
+  // A page it cannot use: logged, skipped.
+  v = await visit({ url: `${SITE}${PAGE}#pickandroll-drop-comeback-late`, answer: worker(due({}, [chainItem()])), dom: dropDom({ held: HELD + 1 }) });
+  assert.equal(logOf(v)[0].run.outcome, "skipped");
+  assert.deepEqual(v.assigned, [`${DATED}#pickandroll-lineup-late-chain`]);
+  assert.deepEqual(v.touched, []);
+});
+
+test("under STOP a chain's drop page stops there", async () => {
+  const v = await visit({ url: chainUrl, answer: worker(due({ stop: true, reason: "STOP is on" }, [chainItem()])) });
+  assert.equal(logOf(v)[0].run.outcome, "stopped");
+  assert.deepEqual(v.assigned, []);
+});
+
+test("a moves pass that meets a comeback's drop keeps its own way on, no chain", async () => {
+  const v = await visit({ answer: worker(due(LIVE, [chainItem()])) });
+  assert.equal(v.sent.find((m) => m.op === "drop_dropping").record.back, null);
+  assert.deepEqual(v.assigned, []);
+});
+
+test("a landed comeback drop goes on to the press; one not dropped to the pass's lineup run, never the press", async () => {
+  const dropped = await visit({
+    url: `${SITE}${TEAM_PAGE}?_global_alerts=${D.DROP_ERRNO}`,
+    answer: worker(due(), { landing: landing() }),
+    notices: ["You have successfully dropped him"],
+  });
+  assert.equal(logOf(dropped)[0].run.outcome, "dropped");
+  assert.deepEqual(dropped.assigned, [`${SITE}${TEAM_PAGE}#pickandroll-start-active-comeback`]);
+  const failed = await visit({ url: `${SITE}${PAGE}`, answer: worker(due(), { landing: landing({ trigger: "routine_late" }) }), notices: ["Error"], ids: [HELD] });
+  assert.notEqual(logOf(failed)[0].run.outcome, "dropped");
+  assert.deepEqual(failed.assigned, [`${DATED}#pickandroll-lineup-late-chain`]);
 });

@@ -25,6 +25,9 @@
     "pickandroll-drop-late": "routine_late",
     "pickandroll-drop-evening": "routine_evening",
     "pickandroll-drop-panel": "panel",
+    // A comeback's chain (#318, lib/lineup.js ``COMEBACK_CHAIN``): the routine's own pass.
+    "pickandroll-drop-comeback": "routine",
+    "pickandroll-drop-comeback-late": "routine_late",
   };
   const DROP_THEN = {
     routine: { il: "pickandroll-il", moves: "pickandroll-moves" },

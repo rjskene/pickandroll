@@ -166,6 +166,7 @@
   }
 
   let running = false;
+  let leaving = false;
 
   /** The live lineup run on record in this browser for the league, logging first one whose log
    * never came (the tab closed mid-run, a log that failed): its run as read, else clicked with its
@@ -186,7 +187,7 @@
    * before the page is touched (once per pass), then ``setLineup`` with STOP, the browser's brake
    * and the league's live guard read again from the API before every change, the first included:
    * no click rests on the steps this visit started from. Answers ``{run, clicked, release}``. */
-  async function setRun({ steps, trigger, where, posted, controls, checked, extension }) {
+  async function setRun({ steps, trigger, where, posted, controls, checked, extension, comeback = null }) {
     const runOf = (result, afterStartActive = null) => PR.liveRun({ steps, trigger, page: where, controls, checked, result, afterStartActive, extension });
     const skip = (reason, afterStartActive = null) => ({ run: runOf({ steps: [], outcome: "skipped", reason, after: null }, afterStartActive), clicked: false, release: false });
     if (!steps.tips) return skip("the day's tip-offs are not read: a live run sets nothing without them");
@@ -200,7 +201,9 @@
     if (waits) return skip(waits, after);
     await lineupRecord(extension);
     // On record before the page is touched: the same pass never sets this league again.
-    const put = await send({ op: "lineup_setting", league: page.league, record: { day: steps.date, mode: "live", trigger, page: where, read_at: steps.read.at, extension } });
+    // A comeback's move is its own record (#318): the pass's lineup run still comes after it.
+    const guard = comeback ? { trigger: `comeback:${comeback.player}`, run_trigger: trigger } : { trigger };
+    const put = await send({ op: "lineup_setting", league: page.league, record: { day: steps.date, mode: "live", ...guard, page: where, read_at: steps.read.at, extension } });
     if (!put || !put.ok) return skip(`the run could not be put on record: ${(put && put.error) || "no answer from the extension"}`, after);
     const stopNow = async () => {
       const brake = await send({ op: "settings" });
@@ -209,6 +212,7 @@
       if (!r || !r.ok) return "the steps did not answer before a change";
       if (r.data.stop) return "STOP came on";
       const m = PR.lineupMode(r.data);
+      if (comeback && !(r.data.comebacks || []).some((x) => x.player === comeback.player && x.drop === comeback.drop)) return "the comeback is no longer due";
       return m.mode === "live" ? null : m.refused || "the league is no longer live";
     };
     const result = await PR.setLineup(document, { controls, steps: steps.steps, returns: steps.returns || [], slots: steps.slots || [] }, { stopNow });
@@ -219,6 +223,25 @@
   /** A visit to my team page: the strip, and a run when ``trigger`` says one was asked for: live
    * where the league is live and its guard holds, else a dry run. ``posted`` is the page's own
    * post. Answers the run logged, or null. */
+  /** To ``url`` as a fresh load: a URL differing only by its fragment would run no script. */
+  function goOn(url) {
+    leaving = true;
+    const to = new URL(url, location.href);
+    if (to.pathname + to.search !== location.pathname + location.search) location.assign(url);
+    else {
+      history.replaceState(null, "", to.pathname + to.search + to.hash);
+      location.reload();
+    }
+  }
+
+  /** Today's dated team page with ``fragment``, the page the routine opens: the lineup run needs
+   * its post, since a plain page's writes no lineup for the steps to read. */
+  async function lineupPage(league, fragment) {
+    const r = await send({ op: "lineup_steps", league });
+    const url = r && r.ok && r.data.page;
+    return url ? `${String(url).split("#")[0]}#${fragment}` : null;
+  }
+
   async function lineup(trigger, posted) {
     const raw = formControls();
     if (!raw || page.kind !== "team") return null;
@@ -248,8 +271,41 @@
     const extension = extensionVersion();
     const postedAt = posted.accepted ? posted.at : NaN;
     const mode = PR.lineupMode(steps);
+    const chained = PR.comebackChained(location.hash);
+    // A comeback runs alone, first (#318): the move, the drop page, the press, then this run again.
+    if (mode.mode === "live" && !chained && !PR.runEnd({ steps, postedAt, controls, problem })) {
+      const dropUrl = PR.comebackDropUrl(steps, trigger);
+      if (dropUrl && steps.pending_drop) {
+        strip("live · a comeback's drop is due: on to the drop page");
+        goOn(dropUrl);
+        return null;
+      }
+      const back = PR.comebackOf(steps, trigger, mode.mode);
+      if (back && dropUrl) {
+        const one = PR.comebackSteps(steps, back);
+        const done = await setRun({ steps: one, trigger, where, posted, controls, checked: PR.checkSteps(controls, [], steps.slots || []), extension, comeback: back });
+        const log = await send({ op: "lineup_log", league: page.league, run: done.run, clicked: done.clicked, release: done.release });
+        if (!log || !log.ok) {
+          strip(`${done.clicked ? "clicked, " : ""}not logged: ${(log && log.error) || "no answer from the extension"}`);
+          return null;
+        }
+        const moved = done.run.steps.find((x) => x.kind === "return");
+        if (moved && moved.outcome === "set") {
+          strip(`${PR.stripText({ steps, run: done.run })} · on to the drop page`);
+          goOn(dropUrl);
+          return null;
+        }
+        // A move answered any other way leaves the page unknown: the pass's run goes on from a
+        // fresh load, with no comeback in it, so a move Yahoo refuses never costs the lineup.
+        if (moved && moved.outcome !== "skipped") {
+          strip(PR.stripText({ steps, run: done.run }));
+          goOn(`${where}#${PR.comebackChainOf(trigger)}`);
+          return null;
+        }
+      }
+    }
     // Live, a run that ends before any step logs as live; one that goes on sets the steps.
-    const end = mode.mode === "live" ? PR.runEnd({ steps, postedAt, controls, problem }) : null;
+    const end = mode.mode === "live" ? PR.runEnd({ steps: PR.comebackDone(steps), postedAt, controls, problem }) : null;
     let run;
     let clicked = false;
     let release = false;
@@ -273,7 +329,7 @@
       const posted = await post();
       run = await lineup(trigger, posted);
       // A routine's run happens once: a reload of the page is a plain visit.
-      if (trigger && location.hash) history.replaceState(null, "", location.pathname + location.search);
+      if (trigger && location.hash && !leaving) history.replaceState(null, "", location.pathname + location.search);
     } finally {
       running = false;
     }
@@ -839,10 +895,15 @@
    * nothing; a live league makes the drop once, put on record before the submit (``dropPlayer``),
    * and the page Yahoo lands on logs it. Answers the run logged, or null. */
   async function heldDrop(trigger) {
+    // Opened by a comeback's chain, the page goes on to the pass's lineup run whatever it finds
+    // here (#318), unless a submit is waiting for Yahoo's answer or STOP holds.
+    let onward = PR.comebackOnward(location.hash);
+    const chained = Boolean(onward);
     // A routine's run happens once: a reload of the page is a plain visit.
     if (location.hash) history.replaceState(null, "", location.pathname + location.search);
     if (running) return null;
     running = true;
+    let back = null;
     try {
       const settings = await send({ op: "settings" });
       if (settings && settings.ok && settings.data.moves_executor === "off") {
@@ -863,14 +924,17 @@
       const where = location.pathname;
       const mode = PR.passMode(due);
       let run;
-      if (due.stop) run = PR.dropRun({ day: due.date, trigger, mode: mode.mode, outcome: "stopped", reason: due.reason, page: where, extension });
-      else {
+      if (due.stop) {
+        onward = null;
+        run = PR.dropRun({ day: due.date, trigger, mode: mode.mode, outcome: "stopped", reason: due.reason, page: where, extension });
+      } else {
         const records = await dropRecords(due.drop_first || [], extension);
         const item = PR.dropItemFor(due, where, (x) => PR.ranToday(records[x.entry], due.date, mode.mode, trigger));
         if (!item) {
           dropStrip(PR.dropStripText({ none: "no held drop due on this page" }));
           return null;
         }
+        back = chained ? item.back || null : null;
         const controls = PR.readDropPage(dropControls(), item);
         const base = { item, day: due.date, trigger, page: where, controls, extension };
         const problem = PR.dropProblem(controls);
@@ -883,13 +947,14 @@
             const put = await send({
               op: "drop_dropping",
               league: dropPage.league,
-              record: { day: due.date, entry: item.entry, player: item.player, trigger, page: where, controls: { ...controls, confirm } },
+              record: { day: due.date, entry: item.entry, player: item.player, trigger, page: where, back, controls: { ...controls, confirm } },
             });
             refused = put && put.ok ? null : (put && put.error) || "no answer from the extension";
             return !refused;
           };
           const got = await PR.dropPlayer(document, item, { onConfirm });
           if (got === null) {
+            onward = null;
             dropStrip(`live · drop of ${item.player} submitted: reading Yahoo's answer…`);
             return null;
           }
@@ -906,6 +971,8 @@
       return run;
     } finally {
       running = false;
+      const to = onward ? await lineupPage(dropPage.league, onward) : null;
+      if (to) goOn(to);
     }
   }
 
@@ -931,12 +998,15 @@
       return false;
     }
     let next = null;
-    if (run.outcome === "dropped") {
+    if (record.back) {
+      const lost = run.outcome !== "dropped" && PR.comebackChainOf(record.trigger);
+      next = lost ? await lineupPage(league, lost) : PR.comebackPress(record.back, record.trigger);
+    } else if (run.outcome === "dropped") {
       const due = await send({ op: "moves_due", league });
       next = due && due.ok ? PR.dropNext(due.data, record.entry, record.trigger, location.origin) : null;
     }
     dropStrip(PR.dropStripText({ run, next }));
-    if (next) location.assign(next);
+    if (next) goOn(next);
     return Boolean(next);
   }
 
@@ -952,7 +1022,13 @@
     if (await dropLanded()) return;
     if (dropTrigger) await heldDrop(dropTrigger);
     else if (trigger) await claim(trigger);
-    else if (saTrigger) await startActive(saTrigger);
+    else if (saTrigger) {
+      const lineupAfter = PR.comebackLineupFragment(location.hash);
+      await startActive(saTrigger);
+      // The chain's last step (#318): the pass's lineup run on this page, read again.
+      const to = lineupAfter ? await lineupPage(page.league, lineupAfter) : null;
+      if (to) goOn(to);
+    }
     else if (ilTrigger) await ilMove(ilTrigger);
     else if (page) await visit(lineupTrigger);
   }, SETTLE_MS);

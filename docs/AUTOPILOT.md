@@ -106,9 +106,9 @@ side (PR 1) is in `api/season_autopilot.py`; the click is the extension's, on th
     visit as clicked, its answer not read.
   - The units go in order: first each `returns` player, a held player whose status cleared and
     whose comeback has an open active spot (the lineup's `cleared` alerts with no drop, today's
-    page only), to an empty bench row; one whose comeback needs a drop is the moves queue's
-    (`skipped`, "needs a drop"), as is a return with no empty bench row on the page. Then the
-    steps' groups. Before every unit, the first included, STOP, the browser's brake and the live
+    page only), to an empty bench row; one whose comeback needs a drop runs as a comeback of its
+    own (below) or, outside a live moves league, stays the user's (`skipped`, "needs a drop"), as
+    does a return with no empty bench row on the page. Then the steps' groups. Before every unit, the first included, STOP, the browser's brake and the live
     guard are read again from the API: no click rests on the steps the visit started from.
   - Before each unit every step of it passes `checkSteps` on the lineup as the swap labels show it
     now (a swap saves through Yahoo's script, so the labels, not the form's selects, are the page's
@@ -747,8 +747,40 @@ In the model's terms, carried by #124:
   occupant with the least value net of return, dropped. The ranking governs on the IL even for a
   protected occupant, who is marked as such there; the executor still never drops him. A cleared
   occupant whose comeback has an open active spot is moved to the bench by the lineup executor's
-  live run, before the day's steps (#170 PR 3); one whose comeback needs a drop is the moves
-  queue's.
+  live run, before the day's steps (#170 PR 3); one whose comeback needs a drop runs as its own
+  chain (#318, below).
+- A cleared IL player makes the roster illegal, and Yahoo refuses every transaction until he leaves
+  the IL (Error #845). A comeback that needs a drop (`cleared` alert with a `drop`, `comebacks` on
+  the steps route) is run by the routines' two lineup passes, daily and late, in a public league
+  whose moves switch is live under its guard; the private league never runs one, and STOP or the
+  browser's brake hold it. A lineup page with a chain stays open two minutes a chain. In order:
+  1. **The move.** He goes to an empty bench row, alone, on a record of his own in the browser
+     (`comeback:<player>`), so the pass's lineup run still comes. His click finds out whether a
+     bench row shows: when none does the swap is cancelled by his own label, nothing is saved, the
+     step logs `skipped` with the rows it saw, no drop follows and the alert stays.
+  2. **The drop.** The engine's `drop` on the drop page, due from `drop_first` (entry
+     `comeback:<player>`, no queue entry). It may be the player himself. The log takes that drop
+     and no other, and a protected player is never dropped.
+  3. **The press.** My plain team page, whose post writes the roster: the roster changed, so Start
+     Active Players is due (`after_comeback`). A press resets the remaining days, which is why the
+     lineup comes after it.
+  4. **The lineup.** The pass's own lineup run on today's dated page, the one the routine opens,
+     since only its post writes the lineup the steps read: the rebuilt recommendation starts the
+     returned player if he has a game and belongs, and fills the slot the drop left.
+- A comeback does not run, with the reason under `skipped`, when the drop is protected ("no legal
+  drop"; the engine's keep rule and the day's queue row, and an unreadable keep rule runs no
+  comeback and logs no drop), or when his game began ("waits for the next day his page allows"). A
+  drop that was not made goes straight to the lineup run with the `-chain` fragment, which starts
+  no comeback and goes to no drop page, so the chain always ends. A move answered any way but
+  saved or cancelled stops the visit with no drop, and the same fragment runs the pass's lineup
+  from a fresh load; the comeback is offered again next pass.
+- The log is what a partial run resumes from. A move that landed with its drop still to make is
+  `pending_drop` on the next lineup page, which goes straight to the drop page and never moves him
+  twice; a drop that failed or went unconfirmed is not retried that day; only a drop after his
+  latest move counts, so a second IL stint is a comeback of its own; a roster read after the move
+  that shows the drop gone or the actives within their spots ends it, since a hand fix needs
+  no drop. A moves pass that meets the pending drop makes it and keeps its own way on; its Start
+  Active fills the slot. The digest has a line per comeback: moved, dropped, or why not.
 - An absence shorter than a week keeps a player on the bench, not on waivers: a player who is
   better than the best available add over the rest of the season and returns within seven days is
   not a drop candidate for that solve, protected or not. A replacement-level player out for a few
