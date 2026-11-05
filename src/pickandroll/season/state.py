@@ -140,6 +140,9 @@ class SeasonSettings:
     #: Where the held slots of ``roster`` come from: :data:`SLOTS_PAGE`, or :data:`SLOTS_ROSTERS`
     #: (the most any read roster fills: a lower bound); None before the season is read.
     held_from: str | None = None
+    #: Whether the stored settings page gives every field of :data:`PAGE_RULES`: a page parsed
+    #: before a field existed is read again (#316).
+    page_rules_read: bool = False
     #: Whether an injured player can be added straight to an injury slot.
     injured_add_to_slot: bool | None = None
     #: The bracket's rules from the settings page (#172), None until it is read: the playoff
@@ -205,6 +208,7 @@ class SeasonSettings:
             lineup_changes=d.get("lineup_changes"),
             lineup_from=d.get("lineup_from"),
             held_from=d.get("held_from"),
+            page_rules_read=bool(d.get("page_rules_read")),
             injured_add_to_slot=_opt_bool(d.get("injured_add_to_slot")),
             playoff_tiebreak=d.get("playoff_tiebreak") or None,
             playoff_reseeding=_opt_bool(d.get("playoff_reseeding")),
@@ -246,6 +250,7 @@ class SeasonSettings:
                 lineup_changes=page.get("lineup_changes") if read else changes,
                 lineup_from=page.get("lineup_from") if read else effective,
                 held_from=SLOTS_PAGE,
+                page_rules_read=all(k in page for k in PAGE_RULES),
                 injured_add_to_slot=page.get("injured_add_to_slot"),
                 playoff_tiebreak=page.get("playoff_tiebreak") or None,
                 playoff_reseeding=_opt_bool(page.get("playoff_reseeding")),
