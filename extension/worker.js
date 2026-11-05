@@ -266,8 +266,9 @@ const ops = {
   },
   /** The lineup executor's steps for my team's page of ``date`` (#170). */
   async lineup_steps({ league, date }) {
-    const q = `date=${encodeURIComponent(date)}`;
-    return api(`/seasons/${encodeURIComponent(league)}/lineup/steps?${q}`, { timeout: 30000 });
+    // No date: today's, as the API counts it (a comeback's chain asks it for today's page, #318).
+    const q = date ? `?date=${encodeURIComponent(date)}` : "";
+    return api(`/seasons/${encodeURIComponent(league)}/lineup/steps${q}`, { timeout: 30000 });
   },
   /** The live lineup run on record in this browser for ``league``, null when none. */
   async lineup_record({ league }) {

@@ -25,6 +25,8 @@
     "pickandroll-start-active-daily",
     "pickandroll-start-active-panel",
     "pickandroll-start-active-after-lineup",
+    "pickandroll-start-active-comeback",
+    "pickandroll-start-active-comeback-late",
   ];
   /** The IL move's (lib/ilmove.js ``IL_TRIGGERS``, #214, 0.9.1). */
   const IL_FRAGMENTS = [
@@ -39,6 +41,8 @@
     "pickandroll-drop-late",
     "pickandroll-drop-evening",
     "pickandroll-drop-panel",
+    "pickandroll-drop-comeback",
+    "pickandroll-drop-comeback-late",
   ];
   const ATTR = "data-pickandroll-alerts";
   const ADD_PAGE = /^\/nba\/\d+\/addplayer\/?$/;

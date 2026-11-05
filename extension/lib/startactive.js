@@ -26,6 +26,9 @@
     "pickandroll-start-active-panel": "panel",
     // Today's page, opened from a later day's lineup set (#289).
     "pickandroll-start-active-after-lineup": "after_lineup",
+    // My plain team page between a comeback's drop and the pass's lineup run (#318).
+    "pickandroll-start-active-comeback": "after_comeback",
+    "pickandroll-start-active-comeback-late": "after_comeback",
   };
   const AFTER_LINEUP_FRAGMENT = "pickandroll-start-active-after-lineup";
   /** Yahoo's control (step 0): the button in its React root, the dialog it opens and the Rest of
@@ -329,6 +332,7 @@
     routine_daily: "daily routine",
     panel: "side panel",
     after_lineup: "after the lineup set",
+    after_comeback: "after a comeback's drop",
     after_add: "after an add",
   };
 
