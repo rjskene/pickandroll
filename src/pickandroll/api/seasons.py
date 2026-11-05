@@ -784,6 +784,12 @@ class SeasonService:
             files += sorted(self.data_dir.glob(pattern))
         return tuple((f.name, f.stat().st_mtime_ns) for f in files if f.exists())
 
+    def _begun(self, today: date) -> frozenset[str]:
+        """The teams whose game ``today`` began (#314): the lineups' players who stay put. In the
+        lineups' cache keys, so a tip-off passing re-places them."""
+        tips = nba_schedule.load_tips(today, self.data_dir / SCHEDULE_DIR)
+        return season_lineup.begun_teams(tips, self.clock())
+
     def _system(self, league: str, system: str | None) -> str:
         """``system``, or when the route names none the one the knob file has in force for
         ``league`` (#152; Basketball Monster's without one)."""
@@ -1014,12 +1020,13 @@ class SeasonService:
         cache = self.data_dir / season_scorecard.BOXSCORES_DIR
         # The box-score days cached so far (#304): a day landing re-places the week so far.
         box = tuple(sorted(p.name for p in cache.glob("????-??-??.json")))
-        key = (league, system, "matchup", today, self._moves_stamp(league), box)
+        begun = self._begun(today)
+        key = (league, system, "matchup", today, self._moves_stamp(league), box, begun)
 
         def make() -> dict[str, Any] | None:
             season = Season.from_parts(base, load_parts(self.data_dir, league))
             lines = season_matchup.box_lines(cache, season, today)
-            return season_matchup.payload(built, season, lines)
+            return season_matchup.payload(built, season, today, lines, begun)
 
         out = self.moves_cache.get(key, make)
         if out is None:
@@ -1033,11 +1040,12 @@ class SeasonService:
         built = self._built(league, system)
         base, _ = self._base(league)
         today = nba_today(self.clock())
-        key = (league, system, "outlook", today, self._moves_stamp(league))
+        begun = self._begun(today)
+        key = (league, system, "outlook", today, self._moves_stamp(league), begun)
 
         def make() -> dict[str, Any] | None:
             season = Season.from_parts(base, load_parts(self.data_dir, league))
-            return season_outlook.payload(built, season, today, self.data_dir)
+            return season_outlook.payload(built, season, today, self.data_dir, begun)
 
         out = self.moves_cache.get(key, make)
         if out is None:
@@ -2137,11 +2145,12 @@ class SeasonService:
         built = self._built(league, system)
         base, is_public = self._base(league)
         today = nba_today(self.clock())
-        key = (league, system, "lineup", week, today, self._moves_stamp(league))
+        begun = self._begun(today)
+        key = (league, system, "lineup", week, today, self._moves_stamp(league), begun)
 
         def make() -> dict[str, Any] | None:
             season = Season.from_parts(base, load_parts(self.data_dir, league))
-            return season_lineup.payload(built, season, today, week, is_public)
+            return season_lineup.payload(built, season, today, week, is_public, begun)
 
         out = self.moves_cache.get(key, make)
         if out is None:

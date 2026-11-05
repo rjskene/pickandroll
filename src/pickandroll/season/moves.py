@@ -84,7 +84,7 @@ from __future__ import annotations
 
 import re
 import time
-from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Collection, Iterable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
@@ -880,10 +880,13 @@ def project_mine(
     members: Sequence[Member] | None = None,
     gone: Mapping[int, date] | None = None,
     available: Mapping[int, date] | None = None,
+    chosen: Mapping[date, Collection[int]] | None = None,
 ) -> wk.TeamWeek:
     """My week over ``span`` with ``members`` (my roster, held slots included, when None), each
     player in ``gone`` stopped from his day on (a drop): his starts go to the bench. An add
-    plays from his day in ``available`` (a dated move's, #136), else from his effective day."""
+    plays from his day in ``available`` (a dated move's, #136), else from his effective day.
+    ``chosen`` ranks a day's named starters first (the recommended lineup's crowded days, #314:
+    the Matchup and Season views; the moves keep ``value``'s starters)."""
     p = problem
     return wk.project_week(
         [*p.held, *p.roster] if members is None else members,
@@ -898,6 +901,7 @@ def project_mine(
         no_games=p.no_games,
         available_from={**p.effective, **p.returns, **(available or {})},
         gone_from=gone or {},
+        chosen=chosen,
     )
 
 

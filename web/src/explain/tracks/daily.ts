@@ -295,6 +295,15 @@ export const daily: Track = {
             "no press after an add: in the live leagues an add is a claim until Yahoo's overnight run",
           ],
         },
+        {
+          text: "A crowded day's recommended starters are the set with the most expected categories won this week",
+          sub: [
+            "every legal set of the largest size is scored against this week's opponent",
+            "later weeks and an unread matchup rank by value",
+            "a near-tie keeps Yahoo's starters, so the two passes do not re-set the lineup on noise",
+            "a player whose game has begun stays where Yahoo has him, and the search works around him",
+          ],
+        },
         { text: "A player whose game has begun is never touched: his group is skipped whole; held slots never" },
       ],
       source: ["routine/routines.py · late", "docs/AUTOPILOT.md · the steps, the live run, §2 the reasons (lineup_set)"],

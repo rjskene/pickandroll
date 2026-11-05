@@ -563,11 +563,26 @@ lists and the solvers' seconds and sizes. Like every card it says "recommended",
 out, any of the Moves card's four weeks.
 
 - **Recommended.** Each day, the players who play (the move model's schedule, out rule, games
-  and returns, `weekly.playing_days`) placed by `weekly.starters`, the same daily starters the
-  projection counts. The sets a lineup's slots can hold form a matroid, so the most valuable
-  set is also the one that starts the most games: no legal lineup starts more. A league whose
-  lineups change weekly gets one lineup for the week, each player worth his games times his
-  per-game value. Held slots never start.
+  and returns, `weekly.playing_days`) placed by `weekly.starters`. The sets a lineup's slots can
+  hold form a matroid, so the most valuable set is also the one that starts the most games: no
+  legal lineup starts more. A league whose lineups change weekly gets one lineup for the week,
+  each player worth his games times his per-game value. Held slots never start.
+- **Crowded days this week (#314).** On a day with more players than the slots hold, in a
+  categories league against a named opponent whose roster is read, the recommended starters are
+  the legal set with the most expected categories won this week (`lineup.win_starters`), given
+  both teams' week so far and rest of week. It is an exact search of the day's largest legal
+  sets, since category odds do not add up across players; the sets are few. Days run in order,
+  an earlier day as chosen, a later one as its anchor: Yahoo's starters as read, topped up by
+  value, or the value set on a day not read. A set replaces its anchor only by a gain of `TIE`
+  (0.015 expected categories), so the daily and late passes do not re-set Yahoo on noise; that
+  figure rests on one snapshot and simulated noise. Today, a player whose game began (the
+  schedule copy's tip-offs) stays where Yahoo has him, on or off the lineup, and his slot with
+  him. Later weeks, an unread matchup, points leagues and weekly leagues rank by value. The
+  Matchup and Season views' week ranks a crowded day's recommended starters first (`recommended`,
+  their one source) and value fills a slot they leave; every other day stays on the value path,
+  so a held player back this week keeps his games there, though the search itself counts the
+  active roster only. The opponent's week stays by value, so the search is never circular. The
+  Moves card and the streaming plans keep value's starters.
 - **First day.** A day before the first day a change counts (the move model's first day, or
   tomorrow in a league whose changes count from tomorrow) shows Yahoo's lineup only.
 - **Yahoo's lineup.** My team page shown for the day (`lineup/<team>/<day>`), or for today the
@@ -1204,11 +1219,12 @@ then UI to evaluate available waiver options"). The flow:
    from the centre leftward, as long as my odds; theirs rightward, as long as theirs), the
    category and its odds as a pill (green at 60% or better, red at 40% or worse), and their
    final. The finals are the move model's own for the rest of the week (the same first day,
-   starters, games and rates as the Moves card), so the view, Moves and Strategy agree.
+   games and rates as the Moves card), a crowded day ranking the recommended starters first
+   (#314): those days can differ a little from the Moves card's, which ranks by value.
    Beneath, my players and theirs: slot, games left, the nine per-game rates of the chosen
    system, Cats and Matchup. A player's Cats is the expected categories his team has with him
-   less without him from the first day on, his starts going to the bench by the daily starters
-   (the move model's drop path), and Matchup the same for the matchup odds; a player with no
+   less without him from the first day on, his starts going to the bench, the other starters
+   staying (the move model's drop path), and Matchup the same for the matchup odds; a player with no
    start left adds nothing. Theirs are what each adds for them. Sorted by Matchup, the players
    with no game left last. A team whose page was never read projects as an empty roster, and
    the view says so above the categories. An "i" on the Cats and Matchup headers (#226) opens the explainer:

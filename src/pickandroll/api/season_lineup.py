@@ -2,7 +2,8 @@
 lineup for each day of a week against Yahoo's lineup as read, with the held slots.
 
 The lineup is the move model's own (``season_moves.build``: the same first day, rates, games,
-out rule and returns), placed by ``season.lineup``. A day before the first day a change counts
+out rule and returns), placed by ``season.lineup``: :func:`recommended`, which the Matchup and
+Season views' projections of this week count too. A day before the first day a change counts
 (today once its games began, or today in a league whose changes count tomorrow) shows Yahoo's
 lineup only. Yahoo's lineup for a day is the team page shown for it (``lineup/<team>/<day>``),
 or for today the team page read today. A day with neither is listed as not read, and a private
@@ -18,7 +19,9 @@ lineup read after the day, the cached box scores saying who played.
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections import Counter
+from collections.abc import Collection, Mapping, Sequence
+from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from typing import Any
 
@@ -29,6 +32,7 @@ from ..season import weekly as wk
 from ..season.calendar import Week
 from ..season.state import SLOTS_PAGE, RosterSpot, SeasonSettings, lineup_key, roster_key
 from ..sources.yahoo import public
+from . import season_week as sw
 from .season_moves import Built, cleared_payload
 from .season_scorecard import BoxScores
 from .season_week import NBA_TZ
@@ -113,10 +117,119 @@ def week_lost(season: Season, week: Week, box: BoxScores) -> dict[str, Any] | No
     return lu.week_lost(week.days(), lineups, played, wk.starting_slots(s.roster), espn)
 
 
+def begun_teams(tips: Mapping[str, str] | None, now: datetime) -> frozenset[str]:
+    """The teams of a day's ``tips`` (the schedule copy's) whose game began by ``now``: none
+    without tip-offs, and the executor still skips a group a passed tip-off holds."""
+    out = set()
+    for team, raw in (tips or {}).items():
+        try:
+            if datetime.fromisoformat(raw) <= now:
+                out.add(team)
+        except ValueError:
+            continue
+    return frozenset(out)
+
+
+def first_change(p: mv.MoveProblem, s: SeasonSettings, today: date) -> date:
+    """The first day of this week a lineup change counts."""
+    if s.lineup_from == "tomorrow":
+        return max(p.first_day, today + timedelta(days=1))
+    return p.first_day
+
+
+def _locked(read: Read | None, begun: Collection[str]) -> lu.Locked[int] | None:
+    """Today's players as read whose team's game began (:class:`season.lineup.Locked`); None
+    with no read of today, so nobody's place is known."""
+    if read is None:
+        return None
+    gone = [sp for sp in read[0] if sp.player.nba_team in begun]
+    on = {sp.player.yahoo_id: sp.slot for sp in gone if sp.slot.upper() not in wk.NOT_STARTING}
+    return lu.Locked(on, frozenset(sp.player.yahoo_id for sp in gone) - set(on))
+
+
+@dataclass(frozen=True)
+class Recommended:
+    """The recommended lineup of a week's days from the first a change counts."""
+
+    days: Mapping[date, Mapping[int, str]]
+    #: The crowded days' recommended starters who play, for a projection to rank first (every
+    #: other day stays on the value path, a held player back this week counted as ever); None
+    #: when the lineup is the one the projection already counts.
+    chosen: Mapping[date, frozenset[int]] | None = None
+
+
+def recommended(
+    built: Built,
+    season: Season,
+    today: date,
+    span: mv.WeekSpan,
+    first: date,
+    begun: Collection[str] = (),
+) -> Recommended:
+    """``span``'s recommended lineup (#314): on this week's days against a named opponent whose
+    roster is read, the most expected categories won (``season.lineup.win_starters``), anchored
+    on Yahoo's lineup as read and with today's players of the ``begun`` teams where Yahoo has
+    them. Any other week, an unread matchup and a points league rank by the general value, and a
+    league whose lineups change weekly keeps its one lineup."""
+    p = built.problem
+    s = season.settings
+    mine = s.my_team_id
+    ahead = [d for d in span.days if d >= first]
+    active = list(p.roster)
+    playing = wk.playing_days(
+        active,
+        span.days,
+        p.schedule,
+        span.this_week,
+        games=span.games,
+        no_games=p.no_games,
+        available_from=p.returns,
+    )
+    if s.lineup_changes == "weekly":
+        fixed = lu.weekly_lineup(active, playing, ahead, p.slots, p.value)
+        return Recommended({d: fixed for d in ahead})
+    by_value = wk.daily_starters(active, playing, ahead, p.slots, p.value)
+    matchup, _ = sw.matchup_read(season, mine)
+    other = matchup.opponent_of(mine) if matchup is not None else None
+    if not span.this_week or not span.opponents or p.points or other not in season.rosters:
+        return Recommended(by_value)
+    reads = yahoo_reads(season, mine, today)
+    done = wk.daily_starters(active, playing, [d for d in span.days if d < first], p.slots, p.value)
+    locked = _locked(reads.get(today), begun) if today in ahead and begun else None
+    theirs = span.so_far_theirs[0] if span.so_far_theirs else {}
+    days = lu.win_starters(
+        active,
+        playing,
+        ahead,
+        p.slots,
+        p.value,
+        p.rates,
+        p.cats,
+        span.so_far,
+        wk.finals(span.opponents[0], theirs, p.cats),
+        yahoo={
+            day: [sp.player.yahoo_id for sp in read[0] if sp.slot.upper() not in wk.NOT_STARTING]
+            for day, read in reads.items()
+        },
+        locked={today: locked} if locked is not None else None,
+        started=Counter(k for lineup in done.values() for k in lineup),
+    )
+    crowded = [d for d in ahead if sum(d in v for v in playing.values()) > len(by_value[d])]
+    return Recommended(
+        days, {d: frozenset(k for k in days[d] if d in playing.get(k, ())) for d in crowded}
+    )
+
+
 def payload(
-    built: Built, season: Season, today: date, week: int | None = None, is_public: bool = True
+    built: Built,
+    season: Season,
+    today: date,
+    week: int | None = None,
+    is_public: bool = True,
+    begun: Collection[str] = (),
 ) -> dict[str, Any] | None:
-    """The week's lineups, or None when the week is not one of the moves' four."""
+    """The week's lineups, or None when the week is not one of the moves' four. ``begun`` are the
+    teams whose game today began (:func:`begun_teams`)."""
     p = built.problem
     s = season.settings
     mine = s.my_team_id
@@ -129,9 +242,7 @@ def payload(
         return None
     span = spans[numbers.index(number)]
     w = next(x for x in season.calendar.weeks if x.number == number)
-    first = p.first_day if span.this_week else w.start
-    if span.this_week and s.lineup_from == "tomorrow":
-        first = max(first, today + timedelta(days=1))
+    first = first_change(p, s, today) if span.this_week else w.start
     ahead = [d for d in span.days if d >= first]
 
     reads = yahoo_reads(season, mine, today)
@@ -157,13 +268,7 @@ def payload(
     active = list(p.roster)
     # The recommendation is the active roster's alone: a day page's player held now, or gone,
     # plays in the compare and never in the lineup (#196).
-    starting = {k: playing.get(k, []) for k, _ in active}
-    weekly = s.lineup_changes == "weekly"
-    if weekly:
-        fixed = lu.weekly_lineup(active, starting, ahead, p.slots, p.value)
-        recs: Mapping[date, Mapping[int, str]] = {d: fixed for d in ahead}
-    else:
-        recs = wk.daily_starters(active, starting, ahead, p.slots, p.value)
+    recs = recommended(built, season, today, span, first, begun).days
 
     days = []
     mentioned: set[int] = {k for k, _ in p.roster} | {k for k, _ in p.held}

@@ -1,12 +1,16 @@
 """Lineups (#107, docs/ADD_DROP.md, "Lineups"): the recommended starters for each day of a
 week and Yahoo's lineup as read, compared.
 
-A day's recommended lineup is the projection's own: the players who play that day
-(:func:`weekly.playing_days`, the schedule and the out rule) placed by :func:`weekly.starters`,
-the most valuable set the starting slots can hold. That set is also the largest: the sets the
-slots can hold form a matroid, so no legal lineup counts more games. Yahoo's lineup counts the
-players its starting slots hold who play that day; the games it loses are the difference. Two
-lineups that start the same players in other slots count the same and are not a difference.
+A day's recommended lineup starts the players who play that day (:func:`weekly.playing_days`,
+the schedule and the out rule). The sets the starting slots can hold form a matroid, so the
+most valuable set (:func:`weekly.starters`) is also the largest: no legal lineup counts more
+games. Yahoo's lineup counts the players its starting slots hold who play that day; the games
+it loses are the difference. Two lineups that start the same players in other slots count the
+same and are not a difference.
+
+On a crowded day of the current week against a named opponent, the set is the largest one with
+the most expected categories won this week (:func:`win_starters`, #314); a near-tie keeps
+Yahoo's starters. Every other day, week and league ranks by the general per-game value.
 
 A league whose lineups change weekly sets one lineup for the week (:func:`weekly_lineup`): the
 most valuable set over the week's games, each player worth his games times his per-game value.
@@ -29,10 +33,12 @@ and the rest still applies. Held slots are never touched.
 
 from __future__ import annotations
 
+from collections import Counter
 from collections.abc import Collection, Hashable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date
 from functools import cache
+from itertools import combinations
 from typing import Any
 
 from . import weekly as wk
@@ -40,6 +46,11 @@ from .state import Player, RosterSpot
 
 #: The bench: a benched player who played can be a game lost; a held one (IL, IL+, NA) never is.
 BENCH = "BN"
+#: The expected categories a day's set must gain over Yahoo's starters to replace them (#314): a
+#: smaller gain is a near-tie, so the daily and late passes do not re-set Yahoo on noise. Thin:
+#: read off one snapshot of ten leagues (11 crowded days) with simulated noise on the rates,
+#: where it kept 95% of the gain and flipped under 4% of the re-runs. Revisit with real passes.
+TIE = 0.015
 
 
 @dataclass(frozen=True)
@@ -95,6 +106,124 @@ def weekly_lineup[K: Hashable](
     }
     candidates = [(k, p.positions) for k, p in roster if worth[k] > 0]
     return wk.starters(candidates, slots, worth)
+
+
+@dataclass(frozen=True)
+class Locked[K: Hashable]:
+    """A day's players whose game began: they stay where Yahoo has them."""
+
+    #: In a starting slot as read, with or without a game of his own to count: his slot.
+    on: Mapping[K, str] = field(default_factory=dict)
+    #: Off the starting slots as read.
+    off: Collection[K] = ()
+
+
+def _without(slots: Sequence[str], taken: Collection[str]) -> list[str]:
+    """``slots`` less one of each of ``taken``, a slot's name compared without its case."""
+    left = list(slots)
+    for slot in taken:
+        match = next((s for s in left if s.upper() == slot.upper()), None)
+        if match is not None:
+            left.remove(match)
+    return left
+
+
+def _legal_sets[K: Hashable](
+    rows: Sequence[tuple[K, Sequence[str]]], slots: Sequence[str]
+) -> list[frozenset[K]]:
+    """Every set of ``rows`` of the largest size the ``slots`` can hold: leaving a slot empty for
+    a player who could fill it is never a choice."""
+
+    def held(keys: Sequence[K]) -> int:
+        return len(wk.starters([(k, pos[k]) for k in keys], slots, dict.fromkeys(keys, 1.0)))
+
+    pos = dict(rows)
+    size = held(list(pos))
+    return [frozenset(c) for c in combinations(pos, size) if held(c) == size]
+
+
+def win_starters[K: Hashable](
+    roster: Sequence[tuple[K, Player]],
+    playing: Mapping[K, Sequence[date]],
+    days: Sequence[date],
+    slots: Sequence[str],
+    value: Mapping[K, float],
+    rates: Mapping[K, wk.Rates],
+    cats: Sequence[str],
+    so_far: Mapping[str, float],
+    theirs: Mapping[str, wk.Final],
+    yahoo: Mapping[date, Collection[K]] | None = None,
+    locked: Mapping[date, Locked[K]] | None = None,
+    started: Mapping[K, int] | None = None,
+) -> dict[date, dict[K, str]]:
+    """Each of ``days``' starters by slot, for the most expected categories won this week against
+    ``theirs`` (the opponent's finals). ``yahoo`` is a day's starters as read, ``locked`` its
+    players whose game began, ``started`` the starts counted on the week's other days.
+
+    Category odds do not add up across players (two players strong in one close category, a
+    percentage's whole set of shooters), so a day with a surplus is an exact search over its
+    legal sets rather than a greedy on a gain per player; the surplus is small (at most a few
+    hundred sets). Days run in order: an earlier day counts as chosen, a later one as its anchor,
+    the largest set that keeps the most of Yahoo's starters as read, then by ``value``. A set
+    replaces its anchor only by a gain of ``TIE``. The categories count ``theirs`` as given, so
+    nothing here depends on the projection these starters go on to feed.
+
+    A locked player is out of the search: one on the lineup holds his slot, one off it stays off.
+    """
+    yahoo = yahoo or {}
+    locked = locked or {}
+    positions = {k: p.positions for k, p in roster}
+    counts = Counter({k: 0 for k, _ in roster})
+    counts.update(started or {})
+
+    def expected() -> float:
+        week = wk.team_week({k: wk.PlayerWeek(n, n) for k, n in counts.items()}, rates, None)
+        return wk.expected_won(wk.odds_of(wk.finals(week, so_far, cats), theirs, cats))
+
+    def add(keys: Collection[K], by: int) -> None:
+        for k in keys:
+            counts[k] += by
+
+    def score(keys: frozenset[K]) -> float:
+        add(keys, 1)
+        out = expected()
+        add(keys, -1)
+        return out
+
+    open_slots: dict[date, list[str]] = {}
+    free: dict[date, list[tuple[K, Sequence[str]]]] = {}
+    picks: dict[date, frozenset[K]] = {}
+    for day in days:
+        fixed = locked.get(day, Locked())
+        open_slots[day] = _without(slots, fixed.on.values())
+        free[day] = [
+            (k, positions[k])
+            for k, _ in roster
+            if day in playing.get(k, ()) and k not in fixed.on and k not in fixed.off
+        ]
+        rank = wk.preferring(value, yahoo.get(day, ()))
+        picks[day] = frozenset(wk.starters(free[day], open_slots[day], rank))
+        add(picks[day], 1)
+        add([k for k in fixed.on if k in counts and day in playing.get(k, ())], 1)
+
+    for day in days:
+        sets = _legal_sets(free[day], open_slots[day])
+        if len(sets) < 2:
+            continue
+        anchor = picks[day]
+        add(anchor, -1)
+        scored = {s: score(s) for s in sets}
+        best = max(sets, key=lambda s: (scored[s], sorted(map(str, s))))
+        picks[day] = best if scored[best] - scored[anchor] >= TIE else anchor
+        add(picks[day], 1)
+
+    out: dict[date, dict[K, str]] = {}
+    for day in days:
+        rows = [(k, positions[k]) for k in picks[day]]
+        placed = wk.starters(rows, open_slots[day], value)
+        kept = locked.get(day, Locked()).on
+        out[day] = {**{k: slot for k, slot in kept.items() if k in positions}, **placed}
+    return out
 
 
 def compare(
