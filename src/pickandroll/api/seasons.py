@@ -148,7 +148,6 @@ from ..season import autopilot as qa
 from ..season import moves as mv
 from ..season import record as season_rec
 from ..season import status as st
-from ..season.state import SLOTS_PAGE
 from ..sources import boxscores
 from ..sources import schedule as nba_schedule
 from ..sources.yahoo import pages, public
@@ -2953,10 +2952,10 @@ def _lineup_pages(
     season: Season, calendar: Calendar | None, today: date, recorded: Week | None = None
 ) -> list[str]:
     """The pages a private league's lineups need from the user's Chrome: the settings page
-    until it was read, my team page shown for each day of this week from today, and for each
+    until every field it gives was read (#316), my team page shown for each day of this week from today, and for each
     day of the ``recorded`` week not read after it (#149)."""
     s = season.settings
-    out = [] if s.held_from == SLOTS_PAGE else [public.settings_page_url(s.league)]
+    out = [] if s.page_rules_read else [public.settings_page_url(s.league)]
     week = calendar.week_of(today) if calendar is not None else None
     if week is not None and s.my_team_id is not None:
         out += [public.team_url(s.league, s.my_team_id, d) for d in week.days(today)]

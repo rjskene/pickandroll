@@ -384,7 +384,9 @@ The two kinds of league (#261) run under different rules, and each league's own 
   as `W` with a clear date, and why no public add plays the same day: each lands at Yahoo's
   overnight run.
 - **The pinned private league (31822)** has no v3 read. Its rules come from its settings page,
-  which the extension posts with the daily:
+  which the daily opens while the route's `needs` lists it: until a stored read holds every
+  field of `PAGE_RULES`, so a part parsed before a field existed catches up (#316). The page is
+  not read on an interval, so a rule the league changes later is not picked up:
   - post-draft players are free agents (`free_agents`), so an add before a player's game plays
     that night;
   - waivers of 1 day, a continual rolling list decided by waiver priority, with no FAAB;
@@ -590,7 +592,7 @@ out, any of the Moves card's four weeks.
   each day before today of this week or the last until it was read after the day (#149): a
   lineup read on its own day may change later that day. Lineup parts older than fourteen days
   are dropped when the season is saved. The private league's pages come from the routine host's
-  browser, or the user's Chrome (extension 0.5.3): the route's `needs` lists the settings page until read and each day ahead
+  browser, or the user's Chrome (extension 0.5.3): the route's `needs` lists the settings page until each field it gives was read (#316) and each day ahead
   not read today, and the weekly recorder's response lists them as `lineup_pages`, after the
   schedule pages, with each day of the week recorded not read after it.
 - **Comparison.** Per day, the players each lineup starts who play that day; the games lost are

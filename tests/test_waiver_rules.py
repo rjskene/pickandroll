@@ -13,19 +13,22 @@ from __future__ import annotations
 import json
 from dataclasses import replace
 from datetime import date, timedelta
+from types import SimpleNamespace
 
 import pytest
 
-from pickandroll.api import season_knobs, season_moves, season_queue
+from pickandroll.api import season_knobs, season_lineup, season_moves, season_queue
 from pickandroll.api import seasons as season_api
 from pickandroll.season import Calendar, Season, Week
 from pickandroll.season import autopilot as qa
 from pickandroll.season import moves as mv
-from pickandroll.season.state import Player, Transaction
-from pickandroll.sources.yahoo import pages
+from pickandroll.season.state import PAGE_RULES, Player, Transaction
+from pickandroll.sources.yahoo import pages, public
+from tests.test_lineup import SITE, lineup_league
 from tests.test_moves_queue import PLAN, entry, league_day, move
 from tests.test_season import (
     LEAGUE,
+    NOW,
     TODAY,
     base,
     fixture,
@@ -33,6 +36,7 @@ from tests.test_season import (
     part,
     projection_csv,
     season_client,
+    wait_for_job,
 )
 
 
@@ -149,6 +153,88 @@ def test_the_weekly_cap_follows_the_league():
     assert season_api._glance(season(), TODAY)["adds"]["limit"] is None
 
 
+def listed(s: Season) -> list[bool]:
+    """Whether each list of what a private league needs names its settings page."""
+    url = public.settings_page_url(s.settings.league)
+    lineup = season_lineup._needs(s.settings, 1, [], {}, TODAY)
+    record = season_api._lineup_pages(s, None, TODAY)
+    return [url in lineup, url in record]
+
+
+@pytest.mark.parametrize("field", PAGE_RULES)
+def test_a_stored_settings_page_without_a_field_goes_back_on_the_list(field):
+    old = {k: v for k, v in private_page().items() if k != field}
+    s = season(page=old)
+    assert listed(s) == [True, True]
+    # Its slots still count: only the read is due again.
+    assert s.settings.held_from == "settings page"
+
+
+def test_a_complete_settings_page_stays_off_the_list():
+    assert listed(season(page=private_page())) == [False, False]
+    # A row the league's page does not print is read as None: the key is there, so it cannot
+    # keep the page on the list.
+    assert listed(season(page={**private_page(), **dict.fromkeys(PAGE_RULES)})) == [False, False]
+
+
+def test_an_unread_settings_page_is_on_the_list():
+    assert listed(season()) == [True, True]
+
+
+def test_the_field_survives_the_stored_settings():
+    for page, read in ((private_page(), True), ({}, False)):
+        s = season(page=page).settings
+        assert s.page_rules_read is read
+        assert type(s).from_dict(s.to_dict()).page_rules_read is read
+
+
+def test_re_reading_a_stale_settings_page_brings_the_cap_and_takes_it_off_the_list(
+    client, monkeypatch
+):
+    lineup_league(client)
+    site = f"{SITE}/100002"
+    settings = public.settings_page_url("100002")
+    read = {
+        site: "league.html",
+        f"{site}/7": "team4.html",
+        f"{site}/settings": "settings_page_private.html",
+    }
+    at = NOW.isoformat()
+
+    def post() -> None:
+        sent = [{"url": u, "html": fixture(f), "fetched_at": at} for u, f in read.items()]
+        body = {"pages": sent}
+        assert client.post("/seasons/100002/snapshot", json=body).status_code == 200
+        wait_for_job(client, "100002")
+
+    # The part as a parser from before the fields stored it.
+    parse = pages.parse_settings_page
+    monkeypatch.setattr(
+        pages,
+        "parse_settings_page",
+        lambda page: {k: v for k, v in parse(page).items() if k not in PAGE_RULES},
+    )
+    post()
+    assert client.get("/seasons/100002").json()["settings"]["max_weekly_adds"] is None
+    assert settings in client.get("/seasons/100002/lineup").json()["needs"]
+
+    monkeypatch.setattr(pages, "parse_settings_page", parse)
+    post()
+    s = client.get("/seasons/100002").json()["settings"]
+    assert (s["max_weekly_adds"], s["waiver_days"], s["uses_faab"]) == (5, 1, False)
+    assert settings not in client.get("/seasons/100002/lineup").json()["needs"]
+
+
+def test_the_cap_is_net_of_the_weeks_adds():
+    player = Player(301, "Player 301", "X", ("PG",))
+    add = Transaction("add", player, 4, None, None, "Oct 20, 3:57 am")
+    s = replace(season(page=private_page()), transactions=(add,))
+    ahead = [SimpleNamespace(week=w) for w in WEEKS[:2]]
+    used, limits = season_moves.add_limits(s, 4, ahead, TODAY)
+    assert used.count == 1
+    assert [x.adds for x in limits] == [4, 5]
+
+
 def drop(player: int, when: str) -> Transaction:
     return Transaction(
         "drop", Player(player, f"Player {player}", "X", ("PG",)), 4, None, None, when
@@ -226,6 +312,15 @@ def test_a_standard_leagues_queue_places_no_bid_and_claims_by_priority():
         faab = {x["add"]: x for x in claim_day(uses_faab)}
         assert faab[101]["bid"]["amount"] >= 1 and faab[101]["claim"] is None
         assert faab[102]["bid"]["amount"] == 0
+
+
+def test_the_private_league_places_nothing_once_its_mode_is_read():
+    e = entry(move(101, 201, 0.9), move(102, 202, 0.8))
+    availability = {101: ("W", date(2026, 10, 22)), 102: ("FA", None)}
+    day = league_day(e, availability=availability, uses_faab=False, private=True)
+    out = qa.queue_of(day, date(2026, 10, 21), PLAN, (0.1, "the plan floor"), None)
+    assert [x["queued"] for x in out] == [False, False]
+    assert {x["reason"] for x in out} == {qa.PRIVATE}
 
 
 class Inline:
