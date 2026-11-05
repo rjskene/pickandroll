@@ -405,8 +405,9 @@ def _needs(
     s: SeasonSettings, team: int, days: Sequence[date], reads: Mapping[date, Read], today: date
 ) -> list[str]:
     """The pages a private league's lineup still needs from the user's Chrome: the settings page
-    until read, and each day ahead whose lineup was not read today."""
-    out = [] if s.held_from == SLOTS_PAGE else [public.settings_page_url(s.league)]
+    until every field it gives was read (#316), and each day ahead whose lineup was not read
+    today."""
+    out = [] if s.page_rules_read else [public.settings_page_url(s.league)]
     for day in days:
         read = reads.get(day)
         if read is None or _local(read[1]) < today:
