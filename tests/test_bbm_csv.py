@@ -20,8 +20,8 @@ def synthetic_csv() -> pd.DataFrame:
     return pd.DataFrame(
         {
             "player_id": [1, 2],
-            "last_name": ["Jokic", "Doncic"],
-            "first_name": ["Nikola", "Luka"],
+            "last_name": ["Justafielic", "Damaridgic"],
+            "first_name": ["Nomear", "Lodoo"],
             "games": [70, 65],
             "minutes": [2400, 2300],
             "field_goals_attempted": [1200, 1300],
@@ -50,10 +50,10 @@ def test_normalize_csv_rebuilds_points_and_rebounds():
     assert is_bbm_csv(raw)
     df = normalize_bbm_csv(raw)
     validate(df)
-    assert df.loc["nikola-jokic", "pts"] == 2 * 700 + 80 + 410
-    assert df.loc["nikola-jokic", "reb"] == 850
-    assert df.loc["luka-doncic", "injury"] == "hamstring, day to day"
-    assert df.loc["nikola-jokic", "injury"] is None
+    assert df.loc["nomear-justafielic", "pts"] == 2 * 700 + 80 + 410
+    assert df.loc["nomear-justafielic", "reb"] == 850
+    assert df.loc["lodoo-damaridgic", "injury"] == "hamstring, day to day"
+    assert df.loc["nomear-justafielic", "injury"] is None
     assert (df["positions"] == "").all() and (df["team"] == "").all()
     assert df["bbm_player_id"].tolist() == [1, 2]
 
@@ -62,10 +62,10 @@ def test_positions_attach_by_name_and_unknown_stay_util_only():
     df = normalize_bbm_csv(synthetic_csv())
     table = pd.DataFrame({"Name": ["Nomear Justafielić", "Someone Else"], "Pos": ["C", "PG/SG"]})
     positions = positions_from_table(table)
-    assert positions["nikola jokic"] == "C"
+    assert positions["nomear justafielic"] == "C"
     out, missing = apply_positions(df, positions)
-    assert out.loc["nikola-jokic", "positions"] == "C"
-    assert missing == ["luka-doncic"]
+    assert out.loc["nomear-justafielic", "positions"] == "C"
+    assert missing == ["lodoo-damaridgic"]
     assert Slot("UTIL").accepts(()) and not Slot("PG", frozenset({"PG"})).accepts(())
     assert Slot("G", frozenset({"G"})).accepts(("SG",)) and Slot("PG", frozenset({"PG"})).accepts(
         ("G",)
@@ -75,9 +75,9 @@ def test_positions_attach_by_name_and_unknown_stay_util_only():
 
 def test_load_positions_from_csv(tmp_path):
     path = tmp_path / "positions.csv"
-    path.write_text("player,positions\nLuka Doncic,PG/SG\nBad Row,QB\n")
+    path.write_text("player,positions\nLodoo Damaridgic,PG/SG\nBad Row,QB\n")
     positions = load_positions(path)
-    assert positions.to_dict() == {"luka doncic": "PG/SG"}
+    assert positions.to_dict() == {"lodoo damaridgic": "PG/SG"}
 
 
 def test_real_csv_export_if_present():

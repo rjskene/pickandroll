@@ -13,10 +13,13 @@ DATA = Path(__file__).resolve().parents[1] / "data"
 
 def test_adp_from_fantasypros_like_table():
     table = pd.DataFrame(
-        {"Player": ["Nomear Justafielić", "Luka Doncic", "Nobody"], "AVG": ["1.4", "2.9", None]}
+        {
+            "Player": ["Nomear Justafielić", "Lodoo Damaridgic", "Nobody"],
+            "AVG": ["1.4", "2.9", None],
+        }
     )
     adp = adp_from_table(table)
-    assert adp.to_dict() == {"nikola jokic": 1.4, "luka doncic": 2.9}
+    assert adp.to_dict() == {"nomear justafielic": 1.4, "lodoo damaridgic": 2.9}
 
 
 def test_adp_rank_fallback_and_projection_mapping(pool):
