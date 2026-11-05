@@ -232,6 +232,14 @@
     }
   }
 
+  /** Today's dated team page with ``fragment``, the page the routine opens: the lineup run needs
+   * its post, since a plain page's writes no lineup for the steps to read. */
+  async function lineupPage(league, fragment) {
+    const r = await send({ op: "lineup_steps", league });
+    const url = r && r.ok && r.data.page;
+    return url ? `${String(url).split("#")[0]}#${fragment}` : null;
+  }
+
   async function lineup(trigger, posted) {
     const raw = formControls();
     if (!raw || page.kind !== "team") return null;
@@ -959,7 +967,8 @@
       return run;
     } finally {
       running = false;
-      if (onward) goOn(`${location.pathname.replace(/\/dropplayer\/?$/, "")}#${onward}`);
+      const to = onward ? await lineupPage(dropPage.league, onward) : null;
+      if (to) goOn(to);
     }
   }
 
@@ -985,8 +994,10 @@
       return false;
     }
     let next = null;
-    if (record.back) next = PR.comebackNext(record.back, record.trigger, run.outcome === "dropped");
-    else if (run.outcome === "dropped") {
+    if (record.back) {
+      const lost = run.outcome !== "dropped" && PR.comebackChainOf(record.trigger);
+      next = lost ? await lineupPage(league, lost) : PR.comebackPress(record.back, record.trigger);
+    } else if (run.outcome === "dropped") {
       const due = await send({ op: "moves_due", league });
       next = due && due.ok ? PR.dropNext(due.data, record.entry, record.trigger, location.origin) : null;
     }
@@ -1011,7 +1022,8 @@
       const lineupAfter = PR.comebackLineupFragment(location.hash);
       await startActive(saTrigger);
       // The chain's last step (#318): the pass's lineup run on this page, read again.
-      if (lineupAfter) goOn(`${location.pathname}${location.search}#${lineupAfter}`);
+      const to = lineupAfter ? await lineupPage(page.league, lineupAfter) : null;
+      if (to) goOn(to);
     }
     else if (ilTrigger) await ilMove(ilTrigger);
     else if (page) await visit(lineupTrigger);

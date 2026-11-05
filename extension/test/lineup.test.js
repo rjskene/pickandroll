@@ -383,7 +383,7 @@ test("only the live run clicks; no field is set and nothing submitted; the reade
 
 /** league.js on a fake team page: the form from ``form()`` as DOM-like elements, a chrome whose
  * worker answers each op with ``answer``. Returns the messages sent, the strip and the URL. */
-async function visitPage({ hash = "", answer, lock = [], swap: roster = null }) {
+async function visitPage({ hash = "", answer, lock = [], swap: roster = null, plain = false }) {
   const f = form({ lock });
   const elements = f.fields.map((x) => ({
     name: x.name,
@@ -409,7 +409,7 @@ async function visitPage({ hash = "", answer, lock = [], swap: roster = null }) 
       },
     },
   };
-  const url = new URL(`https://basketball.fantasysports.yahoo.com/nba/${LEAGUE}/${TEAM}?date=${DAY}${hash}`);
+  const url = new URL(`https://basketball.fantasysports.yahoo.com/nba/${LEAGUE}/${TEAM}${plain ? "" : `?date=${DAY}`}${hash}`);
   const assigned = [];
   const reloaded = [];
   const location = { href: url.href, hash: url.hash, pathname: url.pathname, search: url.search, assign: (u) => assigned.push(u), reload: () => reloaded.push(true) };
@@ -1002,12 +1002,12 @@ test("the chain's fragments are ones each page starts from, its alert recorder i
     const drop = hash(X.comebackDropUrl({ drop_page: DROP_PAGE }, trigger));
     assert.equal(D.dropTriggerOf(drop), trigger);
     assert.ok(R.DROP_FRAGMENTS.includes(drop.slice(1)));
-    const press = hash(X.comebackNext(BACK_PAGE, trigger, true));
+    const press = hash(X.comebackPress(BACK_PAGE, trigger));
     assert.equal(S.startActiveTriggerOf(press), "after_comeback");
     assert.ok(R.START_ACTIVE_FRAGMENTS.includes(press.slice(1)));
     assert.equal(X.triggerOf(`#${X.comebackLineupFragment(press)}`), trigger);
     assert.equal(X.comebackChained(`#${X.comebackLineupFragment(press)}`), false);
-    const chain = hash(X.comebackNext(BACK_PAGE, trigger, false));
+    const chain = `#${X.comebackChainOf(trigger)}`;
     assert.equal(X.triggerOf(chain), trigger);
     assert.equal(X.comebackChained(chain), true);
     assert.equal(`#${X.comebackOnward(drop)}`, chain);
@@ -1025,7 +1025,8 @@ test("only a routine's live lineup run takes a comeback, the first of them, alon
   assert.equal(X.comebackOf(steps, "routine", "dry_run"), null);
   assert.equal(X.comebackOf({}, "routine", "live"), null);
   assert.equal(X.comebackDropUrl(steps, "panel"), null);
-  assert.equal(X.comebackNext(BACK_PAGE, "panel", true), null);
+  assert.equal(X.comebackPress(BACK_PAGE, "panel"), null);
+  assert.equal(X.comebackChainOf("panel"), null);
   const alone = X.comebackSteps({ ...steps, steps: [swap(1011, "BN", "SF", 1004, 0)], target: { 1011: "SF" } }, COMEBACK);
   assert.deepEqual([alone.steps, alone.target, alone.returns, alone.comebacks], [[], {}, [COMEBACK], []]);
 });
@@ -1116,13 +1117,21 @@ test("the guard read before the click drops a comeback no longer due: nothing cl
   assert.match(v.sent.find((m) => m.op === "lineup_log").run.reason, /^the comeback is no longer due/);
 });
 
-test("the press after the drop goes on to the pass's lineup run on the same page, read again, whatever it did", async () => {
+test("the press after the drop, on the plain page, goes on to the pass's lineup run on today's dated page: only its post builds the steps", async () => {
+  const dated = `https://basketball.fantasysports.yahoo.com/nba/${LEAGUE}/${TEAM}?date=${DAY}`;
+  let v = await visitPage({ hash: "#pickandroll-start-active-comeback", answer: liveWorker(), swap: swapDom(), plain: true });
+  assert.deepEqual(v.assigned, [`${dated}#pickandroll-lineup`]);
+  v = await visitPage({ hash: "#pickandroll-start-active-comeback-late", answer: liveWorker(), swap: swapDom(), plain: true });
+  assert.deepEqual(v.assigned, [`${dated}#pickandroll-lineup-late`]);
+  // Any other press stays where it is.
+  v = await visitPage({ hash: "#pickandroll-start-active", answer: liveWorker(), swap: swapDom(), plain: true });
+  assert.deepEqual([v.assigned, v.reloaded], [[], []]);
+});
+
+test("already on the dated page, the chain reads it again: a fragment alone would run no script", async () => {
   const v = await visitPage({ hash: "#pickandroll-start-active-comeback", answer: liveWorker(), swap: swapDom() });
-  assert.deepEqual(v.replaced.at(-1), `/nba/${LEAGUE}/${TEAM}?date=${DAY}#pickandroll-lineup`);
-  assert.equal(v.reloaded.length, 1);
   assert.deepEqual(v.assigned, []);
-  const plain = await visitPage({ hash: "#pickandroll-start-active", answer: liveWorker(), swap: swapDom() });
-  assert.equal(plain.reloaded.length, 0);
+  assert.deepEqual([v.replaced.at(-1), v.reloaded.length], [`/nba/${LEAGUE}/${TEAM}?date=${DAY}#pickandroll-lineup`, 1]);
 });
 
 test("the worker: a comeback's move is its own record, the pass's run still comes, the same move never twice, a lost log keeps the pass's trigger", async () => {
@@ -1136,4 +1145,10 @@ test("the worker: a comeback's move is its own record, the pass's run still come
   assert.equal((await w.send({ op: "lineup_setting", league: LEAGUE, record: { ...move, trigger: "routine", run_trigger: undefined } })).ok, true);
   assert.equal(X.unreadLineup(move, "e").trigger, "routine");
   assert.equal(X.unreadLineup({ ...move, run_trigger: undefined, trigger: "routine_late" }, "e").trigger, "routine_late");
+});
+
+test("the worker reads today's steps with no date: the chain's way to today's dated page", async () => {
+  const w = loadWorker(() => [200, { page: "x" }]);
+  assert.equal((await w.send({ op: "lineup_steps", league: LEAGUE })).ok, true);
+  assert.equal(w.fetches[0].url, `http://api.test/seasons/${LEAGUE}/lineup/steps`);
 });

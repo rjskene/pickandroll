@@ -18,6 +18,7 @@ from pickandroll.sources.yahoo import public
 from tests.test_held_drop import DUE, URL, drop_body
 from tests.test_il_move import a_player
 from tests.test_lineup import lineup_league, moved
+from tests.test_lineup_executor import benched_thursday, dry_runs, run_body
 from tests.test_moves_queue import PRIVATE, live_league, queued
 from tests.test_season import LEAGUE, NOW, fixture, season_client
 
@@ -349,3 +350,29 @@ def test_a_lineup_page_with_a_comeback_stays_open_for_its_chain():
     assert waits(body) == [rs.LINEUP_WAIT_S]
     assert waits({**body, "comebacks": [{"player": BACK}]}) == [rs.COMEBACK_WAIT_S]
     assert waits({**body, "comebacks": [{}, {}], "pending_drop": True}) == [3 * rs.COMEBACK_WAIT_S]
+
+
+def test_the_press_of_a_chain_is_a_trigger_of_its_own():
+    assert "after_comeback" in ap.StartActiveRun.model_fields["trigger"].annotation.__args__
+
+
+def test_the_lineup_log_takes_a_comeback_move_and_says_its_drop_is_due(client):
+    benched_thursday(client)
+    dry_runs(client, days=7, checked=2)
+    assert client.put(f"/leagues/{LEAGUE}/lineups", json={"mode": "live"}).status_code == 200
+    step = {
+        **run_body()["steps"][0],
+        "player": BACK,
+        "from_slot": "IL",
+        "to_slot": "BN",
+        "kind": "return",
+        "drop": STAY,
+        "outcome": "set",
+        "message": "All changes saved",
+    }
+    body = run_body(mode="live", outcome="set", steps=[step], diff={}, after_start_active=True)
+    r = client.post(f"/seasons/{LEAGUE}/autopilot/lineup", json=body)
+    assert r.status_code == 200, r.text
+    assert r.json()["steps"][0]["drop"] == STAY
+    moves = ap.comeback_moves(client.data_dir, LEAGUE)
+    assert moves[BACK]["drop"] == STAY

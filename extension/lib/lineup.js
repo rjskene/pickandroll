@@ -632,13 +632,17 @@
     return Object.values(COMEBACK_CHAIN).some((c) => c.chain === name);
   }
 
-  /** Where the chain goes from the drop: the press once he is dropped, else straight to the
-   * pass's lineup run, so a pass never loses it. ``back`` is my plain team page: its post writes
-   * the roster, which a dated page's does not. */
-  function comebackNext(back, trigger, dropped) {
+  /** The press after a landed drop: ``back`` is my plain team page, whose post writes the roster,
+   * which a dated page's does not. */
+  function comebackPress(back, trigger) {
     const chain = COMEBACK_CHAIN[trigger];
-    if (!chain || !back) return null;
-    return `${String(back).split("#")[0]}#${dropped ? chain.press : chain.chain}`;
+    return chain && back ? `${String(back).split("#")[0]}#${chain.press}` : null;
+  }
+
+  /** The fragment of the pass's lineup run after a drop that was not made. */
+  function comebackChainOf(trigger) {
+    const chain = COMEBACK_CHAIN[trigger];
+    return chain ? chain.chain : null;
   }
 
   /** The fragment a drop page opened by the chain goes on with when it makes no drop, null on any
@@ -771,7 +775,8 @@
     comebackOf,
     comebackSteps,
     comebackDropUrl,
-    comebackNext,
+    comebackPress,
+    comebackChainOf,
     comebackDone,
     comebackChained,
     comebackOnward,

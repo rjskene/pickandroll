@@ -764,16 +764,16 @@ In the model's terms, carried by #124:
   3. **The press.** My plain team page, whose post writes the roster: the roster changed, so Start
      Active Players is due (`after_comeback`). A press resets the remaining days, which is why the
      lineup comes after it.
-  4. **The lineup.** The pass's own lineup run on the same page, read again: the rebuilt
-     recommendation starts the returned player if he has a game and belongs, and fills the slot
-     the drop left.
+  4. **The lineup.** The pass's own lineup run on today's dated page, the one the routine opens,
+     since only its post writes the lineup the steps read: the rebuilt recommendation starts the
+     returned player if he has a game and belongs, and fills the slot the drop left.
 - A comeback does not run, with the reason under `skipped`, when the drop is protected ("no legal
   drop"), or when his game began ("waits for the next day his page allows"). A drop that was not
   made goes straight to the lineup run with the `-chain` fragment, which starts no comeback and
   goes to no drop page, so the chain always ends.
 - The log is what a partial run resumes from. A move that landed with its drop still to make is
   `pending_drop` on the next lineup page, which goes straight to the drop page and never moves him
-  twice; a move that failed or went unconfirmed is not retried that day; a roster read after the
+  twice; a drop that failed or went unconfirmed is not retried that day; a roster read after the
   move that shows the drop gone or the actives within their spots ends it, since a hand fix needs
   no drop. A moves pass that meets the pending drop makes it and keeps its own way on; its Start
   Active fills the slot. The digest has a line per comeback: moved, dropped, or why not.
