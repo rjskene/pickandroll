@@ -295,6 +295,9 @@
     return el ? Number(el.getAttribute("data-ys-playerid")) : null;
   };
   const shownIn = (tr) => [...tr.querySelectorAll(LABEL)].filter(visible);
+  /** The slot of ``label`` in ``tr``: its own ``data-pos``, else its row's (the empty rows at rest
+   * read 2026-11-05 carry the slot, and the label of each is hidden until a swap shows it). */
+  const posIn = (tr, label) => label.getAttribute("data-pos") ?? tr.getAttribute("data-pos");
 
   function alertsOf(doc) {
     let kept;
@@ -369,8 +372,8 @@
         return l && tr.classList.contains("editable") && tr.classList.contains("swaptarget") && l.getAttribute("data-pos") === step.to_slot ? l : null;
       }
       const empty = rows()
-        .filter((tr) => idOf(tr) == null && tr.classList.contains("editable"))
-        .flatMap((tr) => shownIn(tr).filter((l) => l.getAttribute("data-pos") === step.to_slot));
+        .filter((tr) => idOf(tr) == null && tr.classList.contains("editable") && (step.drop == null || tr.classList.contains("empty-bench")))
+        .flatMap((tr) => shownIn(tr).filter((l) => (step.drop != null ? posIn(tr, l) : l.getAttribute("data-pos")) === step.to_slot));
       return empty[0] || null;
     };
     const notice = () =>
@@ -419,8 +422,9 @@
     if (!to && step.drop != null) {
       const off = cancel();
       if (off) {
-        const shown = rows().filter((tr) => shownIn(tr).some((l) => l.getAttribute("data-pos") === step.to_slot)).length;
-        return { outcome: "skipped", reason: `no empty ${step.to_slot} row shows (${shown} ${step.to_slot} rows, nothing saved${off})`, message: null };
+        const shown = rows().filter((tr) => shownIn(tr).some((l) => posIn(tr, l) === step.to_slot)).length;
+        const hidden = rows().filter((tr) => idOf(tr) == null && tr.classList.contains("empty-bench") && [...tr.querySelectorAll(LABEL)].some((l) => posIn(tr, l) === step.to_slot)).length;
+        return { outcome: "skipped", reason: `no empty ${step.to_slot} row shows (${shown} ${step.to_slot} rows, ${hidden} hidden empty, nothing saved${off})`, message: null };
       }
     }
     if (!to) return { outcome: "failed", reason: `${where} did not show as a target within ${Math.round(showCap / 1000)} s (nothing saved${cancel()})`, message: null };

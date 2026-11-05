@@ -550,7 +550,7 @@ const SAVED_WORDS = "All changes saved";
  * ``linger`` keeps ``swapactive`` on the first-clicked row for that many looks after the save
  * (Infinity: it never clears). A notice is one element; each save puts up a new one, or with
  * ``sameNotice`` rewrites the one showing in place. Clicks go in ``touched``. */
-function swapDom({ drop = [], empty = [], answer = "saved", after = 1, alert = null, untargeted = [], lockAfter = [], lock = [], linger = 0, sameNotice = false } = {}) {
+function swapDom({ drop = [], empty = [], noShow = [], rowPos = false, answer = "saved", after = 1, alert = null, untargeted = [], lockAfter = [], lock = [], linger = 0, sameNotice = false } = {}) {
   const f = form({ drop });
   const eligible = {};
   const rows = [];
@@ -593,7 +593,7 @@ function swapDom({ drop = [], empty = [], answer = "saved", after = 1, alert = n
       if (r.player == null || !r.editable) return;
       if (alert) attrs["data-pickandroll-alerts"] = JSON.stringify([alert]);
       active = r;
-      targets = rows.filter((q) => q !== r && q.editable && !untargeted.includes(q.player) && may(r.player, q.slot) && may(q.player, r.slot));
+      targets = rows.filter((q) => q !== r && q.editable && !untargeted.includes(q.player) && !(q.player == null && noShow.includes(q.slot)) && may(r.player, q.slot) && may(q.player, r.slot));
       return;
     }
     if (!targets.includes(r)) return done();
@@ -615,10 +615,10 @@ function swapDom({ drop = [], empty = [], answer = "saved", after = 1, alert = n
     else notices.splice(0, notices.length, n);
     if (saves === 1) for (const q of rows) if (lockAfter.includes(q.player)) q.editable = false;
   };
-  const classes = (r) => [r.editable && "editable", r.player == null && "empty-bench", active === r && "swapactive", targets.includes(r) && "swaptarget"].filter(Boolean);
+  const classes = (r) => [r.editable && "editable", r.player == null && "bench", r.player == null && "empty-bench", active === r && "swapactive", targets.includes(r) && "swaptarget"].filter(Boolean);
   const labelOf = (r) => {
     const l = {
-      getAttribute: (a) => ({ "data-pos": r.slot, role: "button" })[a] ?? null,
+      getAttribute: (a) => ({ "data-pos": rowPos && r.player == null ? null : r.slot, role: "button" })[a] ?? null,
       getClientRects: () => (r.player != null || targets.includes(r) ? [{}] : []),
       click: () => click(r),
     };
@@ -628,6 +628,9 @@ function swapDom({ drop = [], empty = [], answer = "saved", after = 1, alert = n
     const label = labelOf(r);
     return {
       classList: { contains: (c) => classes(r).includes(c) },
+      // An empty row as read at rest, 2026-11-05: its slot and swap groups, its label hidden.
+      getAttribute: (a) =>
+        r.player != null ? null : { "data-pos": r.slot, "data-swap-targets": r.slot === "BN" ? "ALL" : "POS-IL", "data-swap-groups": r.slot === "BN" ? "" : "ALL" }[a] ?? null,
       querySelector: (sel) => (sel === "[data-ys-playerid]" && r.player != null ? { getAttribute: () => String(r.player) } : null),
       querySelectorAll: (sel) => (sel === X.LINEUP_LABEL ? [label] : []),
     };
@@ -1043,7 +1046,33 @@ test("no empty bench row for a comeback: his label again cancels the swap, nothi
   const dom = swapDom();
   const got = await live(dom, [], { returns: [COMEBACK] });
   assert.deepEqual(dom.touched, ["click 1013 IL", "click 1013 IL"]);
-  assert.deepEqual([got.steps[0].outcome, got.steps[0].reason], ["skipped", "no empty BN row shows (2 BN rows, nothing saved; the swap was cancelled)"]);
+  assert.deepEqual([got.steps[0].outcome, got.steps[0].reason], ["skipped", "no empty BN row shows (2 BN rows, 0 hidden empty, nothing saved; the swap was cancelled)"]);
+  assert.equal(dom.lineup()["1013"], "IL");
+});
+
+test("a full bench keeps a hidden empty BN row: never read as no row, shown by his click and matched only then", async () => {
+  const full = () => swapDom({ empty: ["BN", "IL"] });
+  const hiddenAtRest = full();
+  const rows = hiddenAtRest.querySelectorAll(X.LINEUP_ROWS).filter((tr) => tr.classList.contains("empty-bench"));
+  assert.deepEqual(rows.map((tr) => [tr.getAttribute("data-pos"), tr.getAttribute("data-swap-targets"), tr.getAttribute("data-swap-groups")]), [["BN", "ALL", ""], ["IL", "POS-IL", "ALL"]]);
+  assert.ok(rows.every((tr) => tr.classList.contains("bench") && tr.classList.contains("editable") && tr.querySelectorAll(X.LINEUP_LABEL)[0].getClientRects().length === 0));
+  const dom = full();
+  const got = await live(dom, [], { returns: [COMEBACK] });
+  assert.deepEqual(dom.touched, ["click 1013 IL", "click empty BN"]);
+  assert.deepEqual([got.outcome, got.steps[0].outcome, got.after["1013"]], ["set", "set", "BN"]);
+});
+
+test("the empty row's slot may be on the row alone: it is matched all the same", async () => {
+  const dom = swapDom({ empty: ["BN", "IL"], rowPos: true });
+  const got = await live(dom, [], { returns: [COMEBACK] });
+  assert.deepEqual([dom.touched, got.outcome], [["click 1013 IL", "click empty BN"], "set"]);
+});
+
+test("the hidden row that never shows after his click: cancelled, nothing saved, the hidden row counted for the first live read", async () => {
+  const dom = swapDom({ empty: ["BN", "IL"], noShow: ["BN"] });
+  const got = await live(dom, [], { returns: [COMEBACK] });
+  assert.deepEqual(dom.touched, ["click 1013 IL", "click 1013 IL"]);
+  assert.deepEqual([got.steps[0].outcome, got.steps[0].reason], ["skipped", "no empty BN row shows (2 BN rows, 1 hidden empty, nothing saved; the swap was cancelled)"]);
   assert.equal(dom.lineup()["1013"], "IL");
 });
 
