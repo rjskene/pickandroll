@@ -6,8 +6,9 @@ agree. A category's final is the week so far plus the rest of the week; the matc
 :func:`weekly.matchup_won` on the category odds (independent categories, a headline), expected
 categories their sum.
 
+My week counts the recommended starters (``season_lineup.recommended``, #314), the Lineup view's.
 A player's contribution is the week played without him from the first day on, his starts going
-to the bench by the daily starters (the move model's drop path, ``moves.project_mine``): Cats is
+to the bench (the move model's drop path, ``moves.project_mine``; the other starters stay): Cats is
 the expected categories he adds, Matchup the matchup odds he adds, and in a points league Points
 the fantasy points. The opponent's players are valued the same way, for the opponent. A player
 with no start left adds nothing and is not re-projected.
@@ -24,7 +25,7 @@ day the matchup page was read before is in neither half and listed in ``unread``
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -34,6 +35,7 @@ from ..season import moves as mv
 from ..season import so_far as sf
 from ..season import weekly as wk
 from ..sources import boxscores
+from . import season_lineup as sl
 from . import season_week as sw
 from .season_moves import Built
 
@@ -185,9 +187,12 @@ def unread_days(
 def payload(
     built: Built,
     season: Season,
+    today: date,
     box: Mapping[int, Sequence[Mapping[str, float]]] | None = None,
+    begun: Collection[str] = (),
 ) -> dict[str, Any] | None:
-    """The scoreboard and both teams' players, or None without a named opponent this week."""
+    """The scoreboard and both teams' players, or None without a named opponent this week.
+    ``begun`` are the teams whose game today began (``season_lineup.begun_teams``)."""
     p = built.problem
     span = p.horizons["week"][0]
     mine = season.settings.my_team_id
@@ -217,7 +222,10 @@ def payload(
             gone_from=gone,
         )
 
-    full_mine = mv.project_mine(p, span)
+    chosen = sl.recommended(
+        built, season, today, span, sl.first_change(p, season.settings, today), begun
+    ).chosen
+    full_mine = mv.project_mine(p, span, chosen=chosen)
     full_theirs = span.opponents[0]
     fm = wk.finals(full_mine, span.so_far, cats)
     ft = wk.finals(full_theirs, theirs_so_far, cats)
@@ -274,7 +282,7 @@ def payload(
     for key, _ in [*p.held, *p.roster]:
         without = None
         if full_mine.players.get(key, wk.PlayerWeek(0, 0)).started:
-            week = mv.project_mine(p, span, gone={key: first})
+            week = mv.project_mine(p, span, gone={key: first}, chosen=chosen)
             without = wk.odds_of(wk.finals(week, span.so_far, cats), ft, cats)
         mine_rows.append(row(key, mine, slots.get(key, ""), full_mine, without))
     their_slots = {s.player.yahoo_id: s.slot for s in season.rosters.get(other, ())}

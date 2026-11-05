@@ -5,7 +5,8 @@ rates, the schedule and the rosters come in from the sources.
 
 A player's weekly total is his per-game rate times the games he starts. On each day the
 players with a game fill the league's starting slots (positions respected), most valuable
-first; a day with more players than slots leaves the rest on the bench. The spread of a counting
+first; a day with more players than slots leaves the rest on the bench. A caller may name a
+day's starters instead (``chosen``, the recommended lineup of ``season.lineup``, #314). The spread of a counting
 category's weekly total is ``phi`` times its mean (per-game variance over mean, from game logs);
 a percentage's spread is the binomial spread of the makes given the attempts.
 """
@@ -110,6 +111,13 @@ def starters[K: Hashable](
     return {order[ci][0]: slots[si] for si, ci in holder.items()}
 
 
+def preferring[K: Hashable](value: Mapping[K, float], first: Collection[K]) -> dict[K, float]:
+    """``value`` with the players of ``first`` ranked ahead of everyone else, each group in its
+    own order."""
+    top = 1.0 + 2.0 * max((abs(v) for v in value.values()), default=0.0)
+    return {**value, **{k: value.get(k, 0.0) + top for k in first}}
+
+
 def is_out(player: Player, this_week: bool, zero_games: bool = False) -> bool:
     """Whether ``player`` misses a week's games: every week for ``INJ``, ``OFS``, ``SUSP`` and
     ``NA``; the rest of this week for ``O``, and for a game-time decision that another
@@ -171,6 +179,7 @@ def project_week[K: Hashable](
     no_games: Collection[K] = (),
     available_from: Mapping[K, date] | None = None,
     gone_from: Mapping[K, date] | None = None,
+    chosen: Mapping[date, Collection[K]] | None = None,
 ) -> TeamWeek:
     """One roster's week over ``days``.
 
@@ -179,16 +188,17 @@ def project_week[K: Hashable](
     ``no_games`` are the players another projection gives no games (the out rule's game-time
     decisions). ``available_from`` holds back the players it names until that day (a waiver
     claim's clear date) and ``gone_from`` stops them from that day on (a drop). A player
-    without rates plays but adds nothing. Starters are chosen per day by ``value``."""
+    without rates plays but adds nothing. Starters are chosen per day by ``value``, or on a day
+    of ``chosen`` are the players it names (:func:`daily_starters`)."""
     playing = playing_days(
         roster, days, schedule, this_week, games, no_games, available_from, gone_from
     )
     started = {key: 0 for key, _ in roster}
-    for lineup in daily_starters(roster, playing, days, slots, value).values():
+    for lineup in daily_starters(roster, playing, days, slots, value, chosen).values():
         for key in lineup:
             started[key] += 1
     players = {key: PlayerWeek(len(playing[key]), started[key]) for key, _ in roster}
-    return _team_week(players, rates, points)
+    return team_week(players, rates, points)
 
 
 def playing_days[K: Hashable](
@@ -226,18 +236,24 @@ def daily_starters[K: Hashable](
     days: Sequence[date],
     slots: Sequence[str],
     value: Mapping[K, float],
+    chosen: Mapping[date, Collection[K]] | None = None,
 ) -> dict[date, dict[K, str]]:
     """Each day's starters by slot (:func:`starters` over the players of ``roster`` who play
-    that day): the lineup the projection counts."""
+    that day): the lineup the projection counts. ``chosen`` names a day's starters, players who
+    play: those exactly, a slot they leave open stays open; when one of them no longer plays
+    (``gone_from``, a player's week without him) the others stay and ``value`` fills the rest."""
     positions = {key: player.positions for key, player in roster}
-    return {
-        day: starters(
-            [(key, positions[key]) for key, played in playing.items() if day in played],
-            slots,
-            value,
-        )
-        for day in days
-    }
+
+    def one(day: date) -> dict[K, str]:
+        rows = [(key, positions[key]) for key, played in playing.items() if day in played]
+        named = chosen.get(day) if chosen is not None else None
+        if named is None:
+            return starters(rows, slots, value)
+        if set(named) <= {key for key, _ in rows}:
+            rows = [row for row in rows if row[0] in named]
+        return starters(rows, slots, preferring(value, named))
+
+    return {day: one(day) for day in days}
 
 
 def standalone_week(
@@ -258,9 +274,10 @@ def standalone_week(
     return PlayerWeek(played, played)
 
 
-def _team_week[K: Hashable](
+def team_week[K: Hashable](
     players: Mapping[K, PlayerWeek], rates: Mapping[K, Rates], points: Mapping[str, float] | None
 ) -> TeamWeek:
+    """The week of ``players``, each counting his ``started`` games."""
     totals = {s: 0.0 for s in STATS}
     for key, week in players.items():
         r = rates.get(key)

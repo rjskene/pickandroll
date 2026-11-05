@@ -18,7 +18,7 @@ the bench (``moves.project_mine``, as in the Matchup view).
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from datetime import date
 from pathlib import Path
 from typing import Any
@@ -26,6 +26,7 @@ from typing import Any
 from ..season import Matchup, Season
 from ..season import moves as mv
 from ..season import weekly as wk
+from . import season_lineup as sl
 from . import season_week as sw
 from .season_moves import Built
 
@@ -49,7 +50,9 @@ def lean(win: float | None) -> str | None:
     return "favoured" if win >= FAVOURED else "underdog" if win <= UNDERDOG else "toss_up"
 
 
-def payload(built: Built, season: Season, today: date, data_dir: Path) -> dict[str, Any] | None:
+def payload(
+    built: Built, season: Season, today: date, data_dir: Path, begun: Collection[str] = ()
+) -> dict[str, Any] | None:
     """Every week left from this one, or None without my team or the season's weeks."""
     p = built.problem
     s = season.settings
@@ -101,7 +104,23 @@ def payload(built: Built, season: Season, today: date, data_dir: Path) -> dict[s
             theirs = [wk.finals(project(t, span), {}, cats) for t in facing if t in season.rosters]
         playoffs = playoffs_from is not None and sp.week.number >= playoffs_from
         weeks.append(
-            _week(p, span, sp, opponent, theirs, slots, playoffs, matchup if i == 0 else None, mine)
+            _week(
+                p,
+                span,
+                sp,
+                opponent,
+                theirs,
+                slots,
+                playoffs,
+                matchup if i == 0 else None,
+                mine,
+                # This week counts the recommended starters, as in the Matchup view (#314).
+                sl.recommended(
+                    built, season, today, this, sl.first_change(p, season.settings, today), begun
+                ).chosen
+                if i == 0
+                else None,
+            )
         )
 
     me = season.team(mine)
@@ -139,10 +158,11 @@ def _week(
     playoffs: bool,
     matchup: Matchup | None,
     mine: int,
+    chosen: Mapping[date, Collection[int]] | None = None,
 ) -> dict[str, Any]:
     """One week: my finals against each team faced (one, or the field), averaged."""
     cats = p.cats
-    full = mv.project_mine(p, span)
+    full = mv.project_mine(p, span, chosen=chosen)
     fm = wk.finals(full, span.so_far, cats)
 
     def against(finals: Mapping[str, wk.Final]) -> tuple[list[list[wk.CategoryOdds]], float, float]:
@@ -159,7 +179,7 @@ def _week(
         pw = full.players.get(key, wk.PlayerWeek(0, 0))
         cats_ = odds_ = 0.0
         if read and pw.started:
-            gone = mv.project_mine(p, span, gone={key: first})
+            gone = mv.project_mine(p, span, gone={key: first}, chosen=chosen)
             _, e, w = against(wk.finals(gone, span.so_far, cats))
             cats_, odds_ = expected - e, win - w
         rows.append(
