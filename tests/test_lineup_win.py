@@ -171,19 +171,30 @@ def test_a_starter_whose_game_began_holds_his_slot_without_a_game_of_his_own():
     assert picked[1] == "Util" and len(picked) == 2
 
 
-def test_the_week_counts_exactly_the_days_named_and_a_gone_player_is_replaced():
+def test_a_named_days_players_start_first_and_value_fills_what_they_leave():
     roster = [p(1, "PG"), p(2, "PG"), p(3, "PG")]
     playing = {k: [MON] for k, _ in roster}
     # 1 outranks 2, but the day names 2.
     named = wk.daily_starters(roster, playing, [MON], ["Util"], VALUE, chosen={MON: {2}})
     assert set(named[MON]) == {2}
-    # A slot the names leave open stays open.
+    # A slot the names leave open is value's.
     two = wk.daily_starters(roster, playing, [MON], ["PG", "Util"], VALUE, chosen={MON: {2}})
-    assert set(two[MON]) == {2}
-    # Without a named player the others stay and value fills his slot.
+    assert set(two[MON]) == {1, 2}
+    # So is a named player's who no longer plays.
     playing[2] = []
     filled = wk.daily_starters(roster, playing, [MON], ["PG", "Util"], VALUE, chosen={MON: {2, 3}})
     assert set(filled[MON]) == {1, 3}
+
+
+def test_a_player_back_this_week_keeps_his_games_on_the_days_nobody_named():
+    # 9 is held, back on Tuesday: Monday is crowded and named, Tuesday has room and is not.
+    active = [p(1, "PG"), p(2, "PG")]
+    back = p(9, "PG")
+    playing = {1: [MON], 2: [MON, TUE], 9: [TUE]}
+    days = wk.daily_starters(
+        [back, *active], playing, [MON, TUE], ["PG", "Util"], VALUE, chosen={MON: {1, 2}}
+    )
+    assert set(days[MON]) == {1, 2} and set(days[TUE]) == {2, 9}
 
 
 def test_the_teams_whose_game_began():

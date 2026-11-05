@@ -152,8 +152,9 @@ class Recommended:
     """The recommended lineup of a week's days from the first a change counts."""
 
     days: Mapping[date, Mapping[int, str]]
-    #: Each day's recommended starters who play, for a projection to count; None when the
-    #: lineup is the one the projection already counts (ranked by the general value).
+    #: The crowded days' recommended starters who play, for a projection to rank first (every
+    #: other day stays on the value path, a held player back this week counted as ever); None
+    #: when the lineup is the one the projection already counts.
     chosen: Mapping[date, frozenset[int]] | None = None
 
 
@@ -213,8 +214,9 @@ def recommended(
         locked={today: locked} if locked is not None else None,
         started=Counter(k for lineup in done.values() for k in lineup),
     )
+    crowded = [d for d in ahead if sum(d in v for v in playing.values()) > len(by_value[d])]
     return Recommended(
-        days, {d: frozenset(k for k in days[d] if d in playing.get(k, ())) for d in ahead}
+        days, {d: frozenset(k for k in days[d] if d in playing.get(k, ())) for d in crowded}
     )
 
 

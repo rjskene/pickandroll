@@ -885,8 +885,8 @@ def project_mine(
     """My week over ``span`` with ``members`` (my roster, held slots included, when None), each
     player in ``gone`` stopped from his day on (a drop): his starts go to the bench. An add
     plays from his day in ``available`` (a dated move's, #136), else from his effective day.
-    ``chosen`` names a day's starters (the recommended lineup, #314: the Matchup and Season
-    views; the moves keep ``value``'s starters)."""
+    ``chosen`` ranks a day's named starters first (the recommended lineup's crowded days, #314:
+    the Matchup and Season views; the moves keep ``value``'s starters)."""
     p = problem
     return wk.project_week(
         [*p.held, *p.roster] if members is None else members,

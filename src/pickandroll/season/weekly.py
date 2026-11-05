@@ -5,8 +5,9 @@ rates, the schedule and the rosters come in from the sources.
 
 A player's weekly total is his per-game rate times the games he starts. On each day the
 players with a game fill the league's starting slots (positions respected), most valuable
-first; a day with more players than slots leaves the rest on the bench. A caller may name a
-day's starters instead (``chosen``, the recommended lineup of ``season.lineup``, #314). The spread of a counting
+first; a day with more players than slots leaves the rest on the bench. A caller may rank a
+day's named starters first (``chosen``, the crowded days of ``season.lineup``'s recommended
+lineup, #314). The spread of a counting
 category's weekly total is ``phi`` times its mean (per-game variance over mean, from game logs);
 a percentage's spread is the binomial spread of the makes given the attempts.
 """
@@ -188,8 +189,8 @@ def project_week[K: Hashable](
     ``no_games`` are the players another projection gives no games (the out rule's game-time
     decisions). ``available_from`` holds back the players it names until that day (a waiver
     claim's clear date) and ``gone_from`` stops them from that day on (a drop). A player
-    without rates plays but adds nothing. Starters are chosen per day by ``value``, or on a day
-    of ``chosen`` are the players it names (:func:`daily_starters`)."""
+    without rates plays but adds nothing. Starters are chosen per day by ``value``, a day of
+    ``chosen`` ranking the players it names first (:func:`daily_starters`)."""
     playing = playing_days(
         roster, days, schedule, this_week, games, no_games, available_from, gone_from
     )
@@ -239,19 +240,15 @@ def daily_starters[K: Hashable](
     chosen: Mapping[date, Collection[K]] | None = None,
 ) -> dict[date, dict[K, str]]:
     """Each day's starters by slot (:func:`starters` over the players of ``roster`` who play
-    that day): the lineup the projection counts. ``chosen`` names a day's starters, players who
-    play: those exactly, a slot they leave open stays open; when one of them no longer plays
-    (``gone_from``, a player's week without him) the others stay and ``value`` fills the rest."""
+    that day): the lineup the projection counts. ``chosen`` ranks a day's named players first and
+    ``value`` fills what they leave: a slot none of them holds, or one of them who no longer
+    plays (``gone_from``, a player's week without him)."""
     positions = {key: player.positions for key, player in roster}
 
     def one(day: date) -> dict[K, str]:
         rows = [(key, positions[key]) for key, played in playing.items() if day in played]
         named = chosen.get(day) if chosen is not None else None
-        if named is None:
-            return starters(rows, slots, value)
-        if set(named) <= {key for key, _ in rows}:
-            rows = [row for row in rows if row[0] in named]
-        return starters(rows, slots, preferring(value, named))
+        return starters(rows, slots, value if named is None else preferring(value, named))
 
     return {day: one(day) for day in days}
 

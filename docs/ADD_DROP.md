@@ -578,9 +578,11 @@ out, any of the Moves card's four weeks.
   figure rests on one snapshot and simulated noise. Today, a player whose game began (the
   schedule copy's tip-offs) stays where Yahoo has him, on or off the lineup, and his slot with
   him. Later weeks, an unread matchup, points leagues and weekly leagues rank by value. The
-  Matchup and Season views' week counts these starters (`recommended`, its one source); the
-  opponent's week stays by value, so the search is never circular. The Moves card and the streaming
-  plans keep value's starters.
+  Matchup and Season views' week ranks a crowded day's recommended starters first (`recommended`,
+  their one source) and value fills a slot they leave; every other day stays on the value path,
+  so a held player back this week keeps his games there, though the search itself counts the
+  active roster only. The opponent's week stays by value, so the search is never circular. The
+  Moves card and the streaming plans keep value's starters.
 - **First day.** A day before the first day a change counts (the move model's first day, or
   tomorrow in a league whose changes count from tomorrow) shows Yahoo's lineup only.
 - **Yahoo's lineup.** My team page shown for the day (`lineup/<team>/<day>`), or for today the
@@ -1217,8 +1219,8 @@ then UI to evaluate available waiver options"). The flow:
    from the centre leftward, as long as my odds; theirs rightward, as long as theirs), the
    category and its odds as a pill (green at 60% or better, red at 40% or worse), and their
    final. The finals are the move model's own for the rest of the week (the same first day,
-   games and rates as the Moves card), counting the recommended starters (#314): on a crowded
-   day they can differ a little from the Moves card's, which ranks by value.
+   games and rates as the Moves card), a crowded day ranking the recommended starters first
+   (#314): those days can differ a little from the Moves card's, which ranks by value.
    Beneath, my players and theirs: slot, games left, the nine per-game rates of the chosen
    system, Cats and Matchup. A player's Cats is the expected categories his team has with him
    less without him from the first day on, his starts going to the bench, the other starters
