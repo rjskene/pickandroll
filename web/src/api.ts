@@ -1385,7 +1385,7 @@ export interface StartActiveRunLog {
   at: string;
   day: string;
   mode: "dry_run" | "live";
-  trigger: MovesPassLog["trigger"] | "routine_daily" | "after_lineup" | "after_add";
+  trigger: MovesPassLog["trigger"] | "routine_daily" | "after_lineup" | "after_add" | "after_comeback";
   outcome: "would_start" | "started" | "already" | "skipped" | "failed" | "stopped";
   reason: string | null;
   reasons: string[];

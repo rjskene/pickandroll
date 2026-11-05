@@ -17,7 +17,13 @@
 
   /** The fragments a run starts from: the routine's link and its late pass before the day's
    * first tip-off. Yahoo never sees a fragment. Any other visit only shows the strip. */
-  const LINEUP_TRIGGERS = { "pickandroll-lineup": "routine", "pickandroll-lineup-late": "routine_late" };
+  const LINEUP_TRIGGERS = {
+    "pickandroll-lineup": "routine",
+    "pickandroll-lineup-late": "routine_late",
+    // After a comeback's drop that was not made (#318): the pass's run, no comeback in it.
+    "pickandroll-lineup-chain": "routine",
+    "pickandroll-lineup-late-chain": "routine_late",
+  };
   /** The slot codes the API's steps use. */
   const SLOT_CODES = new Set(["PG", "SG", "G", "SF", "PF", "F", "C", "Util", "BN", "IL", "IL+", "NA"]);
   const BENCH = "BN";
@@ -205,7 +211,7 @@
     if (problem) return { outcome: "skipped", reason: problem, after: null };
     const differs = lineupDiffers(controls, steps.yahoo);
     if (differs) return { outcome: "skipped", reason: differs, after: null };
-    if (!steps.steps.length && !(steps.returns || []).length) return { outcome: "nothing_to_do", reason: steps.reason, after: controls.lineup };
+    if (!steps.steps.length && !(steps.returns || []).length && !(steps.comebacks || []).length && !steps.pending_drop) return { outcome: "nothing_to_do", reason: steps.reason, after: controls.lineup };
     return null;
   }
 
@@ -408,6 +414,15 @@
     }
     if (yahoo().length) return { outcome: "failed", reason: `Yahoo answered the first click: "${yahoo()[0]}"${cancel()}`, message: null };
     const where = step.with != null ? `player ${step.with}'s ${step.to_slot}` : `an empty ${step.to_slot}`;
+    // A comeback with no empty row of the slot (#318): cancelled, nothing changed, so it is a skip
+    // and the pass's own run goes on; a swap that would not cancel stays a failure.
+    if (!to && step.drop != null) {
+      const off = cancel();
+      if (off) {
+        const shown = rows().filter((tr) => shownIn(tr).some((l) => l.getAttribute("data-pos") === step.to_slot)).length;
+        return { outcome: "skipped", reason: `no empty ${step.to_slot} row shows (${shown} ${step.to_slot} rows, nothing saved${off})`, message: null };
+      }
+    }
     if (!to) return { outcome: "failed", reason: `${where} did not show as a target within ${Math.round(showCap / 1000)} s (nothing saved${cancel()})`, message: null };
     // Read again: the same label, its row a target still.
     if (target() !== to) return { outcome: "failed", reason: `${where} changed before its click (nothing saved${cancel()})`, message: null };
@@ -454,7 +469,7 @@
   function unitsOf(steps, returns) {
     const out = returns.map((r) => ({
       kind: "return",
-      steps: [{ player: r.player, from_slot: r.slot, to_slot: BENCH, with: null, tip: r.tip ?? null, group: null, kind: "return" }],
+      steps: [{ player: r.player, from_slot: r.slot, to_slot: BENCH, with: null, tip: r.tip ?? null, group: null, kind: "return", drop: r.drop ?? null }],
     }));
     for (const s of steps) {
       const last = out[out.length - 1];
@@ -483,6 +498,7 @@
         tip: s.tip ?? null,
         group: s.group ?? null,
         kind: s.kind || "swap",
+        drop: s.drop ?? null,
         outcome,
         reason,
         message,
@@ -502,7 +518,9 @@
         continue;
       }
       const labels = readLabels(doc);
-      if (u.kind === "return" && !labels.bench) {
+      // A comeback's bench row may only show once the swap starts: its click finds out, and
+      // cancels when none does (#318).
+      if (u.kind === "return" && !labels.bench && u.steps[0].drop == null) {
         for (const s of u.steps) record(s, "skipped", NEEDS_DROP);
         skipped += 1;
         continue;
@@ -577,13 +595,74 @@
     };
   }
 
+  /** The fragments of a comeback's chain (#318), by the lineup pass's trigger: only the routines'
+   * two lineup passes run one. ``chain`` is the pass's lineup run after a drop that was not made:
+   * it starts no comeback and goes to no drop page, so the chain always ends. */
+  const COMEBACK_CHAIN = {
+    routine: { drop: "pickandroll-drop-comeback", press: "pickandroll-start-active-comeback", lineup: "pickandroll-lineup", chain: "pickandroll-lineup-chain" },
+    routine_late: { drop: "pickandroll-drop-comeback-late", press: "pickandroll-start-active-comeback-late", lineup: "pickandroll-lineup-late", chain: "pickandroll-lineup-late-chain" },
+  };
+
+  /** The comeback this visit runs (#318): the first of the steps', on a routine's live run. */
+  function comebackOf(steps, trigger, mode) {
+    if (mode !== "live" || !COMEBACK_CHAIN[trigger]) return null;
+    return (steps.comebacks || [])[0] || null;
+  }
+
+  /** The steps of a comeback's move, alone: he moves first, and the recommendation waits for the
+   * roster after the drop (the chain's lineup run). */
+  function comebackSteps(steps, back) {
+    return { ...steps, steps: [], skipped: [], target: {}, returns: [back], comebacks: [] };
+  }
+
+  /** The drop page of a moved comeback, with its pass's fragment; null off a routine's run. */
+  function comebackDropUrl(steps, trigger) {
+    const chain = COMEBACK_CHAIN[trigger];
+    return chain && steps.drop_page ? `${String(steps.drop_page).split("#")[0]}#${chain.drop}` : null;
+  }
+
+  /** The steps a run sees once its comeback is out of the way: none left to start, no drop due. */
+  function comebackDone(steps) {
+    return { ...steps, comebacks: [], pending_drop: false };
+  }
+
+  /** Whether the fragment is the pass's lineup run after a drop that was not made. */
+  function comebackChained(hash) {
+    const name = String(hash || "").replace(/^#/, "");
+    return Object.values(COMEBACK_CHAIN).some((c) => c.chain === name);
+  }
+
+  /** Where the chain goes from the drop: the press once he is dropped, else straight to the
+   * pass's lineup run, so a pass never loses it. ``back`` is my plain team page: its post writes
+   * the roster, which a dated page's does not. */
+  function comebackNext(back, trigger, dropped) {
+    const chain = COMEBACK_CHAIN[trigger];
+    if (!chain || !back) return null;
+    return `${String(back).split("#")[0]}#${dropped ? chain.press : chain.chain}`;
+  }
+
+  /** The fragment a drop page opened by the chain goes on with when it makes no drop, null on any
+   * other drop page. */
+  function comebackOnward(hash) {
+    const name = String(hash || "").replace(/^#/, "");
+    const chain = Object.values(COMEBACK_CHAIN).find((c) => c.drop === name);
+    return chain ? chain.chain : null;
+  }
+
+  /** The fragment of the pass's lineup run after the press, from the press's fragment. */
+  function comebackLineupFragment(hash) {
+    const name = String(hash || "").replace(/^#/, "");
+    const chain = Object.values(COMEBACK_CHAIN).find((c) => c.press === name);
+    return chain ? chain.lineup : null;
+  }
+
   /** A live run on record whose log never came, as the next visit logs it: clicked, its answer not
    * read; never run again by the same pass. */
   function unreadLineup(record, extension) {
     return {
       day: record.day,
       mode: "live",
-      trigger: record.trigger,
+      trigger: record.run_trigger || record.trigger,
       outcome: "failed",
       reason: "clicked; Yahoo's answer was not read",
       page: record.page || null,
@@ -689,6 +768,14 @@
     liveRun,
     unreadLineup,
     startActiveWait,
+    comebackOf,
+    comebackSteps,
+    comebackDropUrl,
+    comebackNext,
+    comebackDone,
+    comebackChained,
+    comebackOnward,
+    comebackLineupFragment,
     stripText,
     lastRunText,
   };
