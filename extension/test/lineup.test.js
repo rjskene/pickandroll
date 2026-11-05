@@ -277,7 +277,7 @@ test("the strip says the brake, the mode and STOP, a run's outcome, or what a ru
 
 /** worker.js in a context with a fake chrome; ``reply`` answers each fetch, ``local`` holds the
  * records the worker keeps (the settings are fixed). */
-function loadWorker(reply, local = new Map()) {
+function loadWorker(reply, local = new Map(), now = null) {
   const listeners = [];
   const fetches = [];
   const store = new Map();
@@ -314,7 +314,8 @@ function loadWorker(reply, local = new Map()) {
     const [status, data] = reply(f);
     return { ok: status < 400, status, text: async () => JSON.stringify(data) };
   }
-  const ctx = vm.createContext({ chrome, fetch, AbortController, setTimeout, clearTimeout, console, URL });
+  const clock = now ? { Date: class extends Date { static now() { return now(); } } } : {};
+  const ctx = vm.createContext({ chrome, fetch, AbortController, setTimeout, clearTimeout, console, URL, ...clock });
   ctx.self = ctx;
   ctx.importScripts = (...files) => {
     for (const f of files) vm.runInContext(fs.readFileSync(path.join(DIR, f), "utf8"), ctx);
@@ -361,7 +362,7 @@ test("a refused run is not kept as the last one", async () => {
 
 test("only the live run clicks; no field is set and nothing submitted; the reader loads the executor's library", () => {
   const manifest = JSON.parse(fs.readFileSync(path.join(DIR, "manifest.json"), "utf8"));
-  assert.equal(manifest.version, "0.11.3");
+  assert.equal(manifest.version, "0.11.4");
   const reader = manifest.content_scripts.find((c) => c.js.includes("league.js"));
   assert.deepEqual(reader.js, ["lib/league.js", "lib/lineup.js", "lib/moves.js", "lib/startactive.js", "lib/ilmove.js", "lib/drop.js", "league.js"]);
   // The moves executor's live claim (``fillClaim``, #171 PR 3) and Start Active's presses
@@ -863,6 +864,90 @@ test("the worker puts a live run on record once per pass, keeps its run until th
   assert.equal((await w.send({ op: "lineup_record", league: LEAGUE })).data.trigger, "routine");
 });
 
+/** A worker on a clock of ``at`` (an ISO time), with what a pass does to it: ``set`` puts a run of
+ * ``day`` on record and logs it as clicked, ``put`` only puts it. */
+function passWorker(at, local = new Map()) {
+  const clock = { at: Date.parse(at) };
+  const w = loadWorker((f) => (f.method === "POST" ? [200, { at: "x" }] : [200, {}]), local, () => clock.at);
+  const put = (day, trigger = "routine") => w.send({ op: "lineup_setting", league: LEAGUE, record: { day, trigger, page: "/p", read_at: "x" } });
+  const log = (day, trigger, extra) =>
+    w.send({ op: "lineup_log", league: LEAGUE, run: { day, mode: "live", trigger, outcome: "set", steps: [{ outcome: "set" }] }, ...extra });
+  const set = async (day, trigger = "routine") => {
+    const r = await put(day, trigger);
+    assert.equal(r.ok, true, r.error);
+    await log(day, trigger, { clicked: true });
+  };
+  return { w, clock, local, put, log, set };
+}
+
+const ALREADY = "this pass set the lineup already today";
+
+test("the next day's daily runs on the day the daily before it set as its look-ahead", async () => {
+  const p = passWorker("2026-11-03T10:30:00Z");
+  await p.set("2026-11-03");
+  await p.set("2026-11-04");
+  p.clock.at = Date.parse("2026-11-04T10:30:00Z");
+  assert.equal((await p.put("2026-11-04")).ok, true);
+  await p.log("2026-11-04", "routine", { clicked: true });
+  assert.equal((await p.put("2026-11-05")).ok, true);
+});
+
+test("the same pass on the same lineup day is refused, and a run awaiting its log still is", async () => {
+  const p = passWorker("2026-11-04T10:30:00Z");
+  assert.equal((await p.put("2026-11-04")).ok, true);
+  assert.deepEqual((await p.put("2026-11-05")).error, "a live run in this league awaits its log");
+  await p.log("2026-11-04", "routine", { clicked: true });
+  assert.equal((await p.put("2026-11-04")).error, ALREADY);
+  // Another pass of the same date sets it.
+  assert.equal((await p.put("2026-11-04", "routine_late")).ok, true);
+});
+
+test("a pass run again finds both its days, a later pass between them or not", async () => {
+  const p = passWorker("2026-11-04T10:30:00Z");
+  await p.set("2026-11-04");
+  await p.set("2026-11-05");
+  assert.equal((await p.put("2026-11-04")).error, ALREADY);
+  assert.equal((await p.put("2026-11-05")).error, ALREADY);
+  await p.set("2026-11-04", "routine_late");
+  assert.equal((await p.put("2026-11-04")).error, ALREADY);
+  assert.equal((await p.put("2026-11-05")).error, ALREADY);
+});
+
+test("a run that clicked nothing does not count, and the day's list keeps only that day", async () => {
+  const p = passWorker("2026-11-03T10:30:00Z");
+  await p.set("2026-11-03");
+  p.clock.at = Date.parse("2026-11-04T10:30:00Z");
+  assert.equal((await p.put("2026-11-04")).ok, true);
+  await p.log("2026-11-04", "routine", { release: true });
+  assert.equal((await p.put("2026-11-04")).ok, true);
+  await p.log("2026-11-04", "routine", { clicked: true });
+  const kept = p.local.get(`lineup_ran:${LEAGUE}`);
+  assert.deepEqual(kept.ran, []);
+});
+
+test("a record from before the pass date was compared reads by its time, and none blocks without one", async () => {
+  const old = { day: "2026-11-04", trigger: "routine", page: "/p", logged: true, prev: null };
+  const key = `lineup_ran:${LEAGUE}`;
+  const at = (iso) => new Map([[key, { ...old, at: Date.parse(iso) }]]);
+  const yesterday = passWorker("2026-11-04T10:30:00Z", at("2026-11-03T10:30:00Z"));
+  assert.equal((await yesterday.put("2026-11-04")).ok, true);
+  const untimed = passWorker("2026-11-04T10:30:00Z", new Map([[key, old]]));
+  assert.equal((await untimed.put("2026-11-04")).ok, true);
+  const sameDate = passWorker("2026-11-04T15:30:00Z", at("2026-11-04T10:30:00Z"));
+  assert.equal((await sameDate.put("2026-11-04")).error, ALREADY);
+});
+
+test("the pass's date is the Eastern one, as the API's today", async () => {
+  // Past midnight in UTC, not in the East: one date.
+  const p = passWorker("2026-11-04T23:30:00Z");
+  await p.set("2026-11-05");
+  p.clock.at = Date.parse("2026-11-05T04:30:00Z");
+  assert.equal((await p.put("2026-11-05")).error, ALREADY);
+  // Past midnight in the East: the next.
+  p.clock.at = Date.parse("2026-11-05T05:30:00Z");
+  assert.equal((await p.put("2026-11-05")).ok, true);
+});
+
 /** The worker's answers in a live league whose guard holds: no Start Active due, no run on record. */
 const liveWorker =
   ({ steps = {}, sa = [], press = null, put = { ok: true, data: { kept: true } } } = {}) =>
@@ -1081,7 +1166,7 @@ test("a run with a comeback moves him alone, on his own record, then goes to the
   const v = await visitPage({ hash: "#pickandroll-lineup", answer: comebackWorker(), swap: roster });
   assert.deepEqual(roster.touched, ["click 1013 IL", "click empty BN"]);
   const setting = v.sent.find((m) => m.op === "lineup_setting").record;
-  assert.deepEqual([setting.trigger, setting.run_trigger], ["comeback:1013", "routine"]);
+  assert.deepEqual([setting.trigger, setting.run_trigger], ["comeback:1013:routine", "routine"]);
   const logs = v.sent.filter((m) => m.op === "lineup_log");
   assert.equal(logs.length, 1);
   assert.deepEqual([logs[0].run.trigger, logs[0].run.steps[0].kind, logs[0].run.steps[0].drop], ["routine", "return", 1009]);
@@ -1168,7 +1253,7 @@ test("already on the dated page, the chain reads it again: a fragment alone woul
 
 test("the worker: a comeback's move is its own record, the pass's run still comes, the same move never twice, a lost log keeps the pass's trigger", async () => {
   const w = loadWorker((f) => (f.method === "POST" ? [200, { at: "x" }] : [200, {}]), new Map());
-  const move = { day: DAY, mode: "live", trigger: "comeback:1013", run_trigger: "routine", page: "p", read_at: "r", extension: "e" };
+  const move = { day: DAY, mode: "live", trigger: "comeback:1013:routine", run_trigger: "routine", page: "p", read_at: "r", extension: "e" };
   assert.equal((await w.send({ op: "lineup_setting", league: LEAGUE, record: move })).ok, true);
   const run = { day: DAY, mode: "live", trigger: "routine", outcome: "set", steps: [{ outcome: "set" }] };
   assert.equal((await w.send({ op: "lineup_log", league: LEAGUE, run, clicked: true })).ok, true);
@@ -1183,4 +1268,25 @@ test("the worker reads today's steps with no date: the chain's way to today's da
   const w = loadWorker(() => [200, { page: "x" }]);
   assert.equal((await w.send({ op: "lineup_steps", league: LEAGUE })).ok, true);
   assert.equal(w.fetches[0].url, `http://api.test/seasons/${LEAGUE}/lineup/steps`);
+});
+
+test("the chain's lineup run always comes after its comeback, even where its pass set that day already (#317, #318)", async () => {
+  const p = passWorker("2026-11-04T10:30:00Z");
+  const day = "2026-11-04";
+  const set = async (record) => {
+    const put = await p.w.send({ op: "lineup_setting", league: LEAGUE, record: { day, page: "/p", read_at: "x", ...record } });
+    if (put.ok) await p.w.send({ op: "lineup_log", league: LEAGUE, run: { day, mode: "live", trigger: record.run_trigger || record.trigger, outcome: "set", steps: [{ outcome: "set" }] }, clicked: true });
+    return put;
+  };
+  const move = { trigger: "comeback:1013:routine", run_trigger: "routine" };
+  assert.equal((await set({ trigger: "routine" })).ok, true);
+  assert.equal((await set({ trigger: "routine" })).ok, false);
+  // The roster changed behind the same pass: its run goes again, once.
+  assert.equal((await set(move)).ok, true);
+  assert.equal((await set({ trigger: "routine" })).ok, true);
+  assert.equal((await set({ trigger: "routine" })).ok, false);
+  // The same pass never moves him twice; a later pass may try again.
+  assert.equal((await set(move)).ok, false);
+  assert.equal((await set({ trigger: "comeback:1013:routine_late", run_trigger: "routine_late" })).ok, true);
+  assert.equal((await set({ trigger: "routine_late" })).ok, true);
 });

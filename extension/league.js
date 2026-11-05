@@ -202,7 +202,7 @@
     await lineupRecord(extension);
     // On record before the page is touched: the same pass never sets this league again.
     // A comeback's move is its own record (#318): the pass's lineup run still comes after it.
-    const guard = comeback ? { trigger: `comeback:${comeback.player}`, run_trigger: trigger } : { trigger };
+    const guard = comeback ? { trigger: `comeback:${comeback.player}:${trigger}`, run_trigger: trigger } : { trigger };
     const put = await send({ op: "lineup_setting", league: page.league, record: { day: steps.date, mode: "live", ...guard, page: where, read_at: steps.read.at, extension } });
     if (!put || !put.ok) return skip(`the run could not be put on record: ${(put && put.error) || "no answer from the extension"}`, after);
     const stopNow = async () => {
