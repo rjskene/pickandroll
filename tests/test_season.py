@@ -1094,7 +1094,7 @@ def test_the_week_projection_gives_games_rates_and_my_matchups_odds(client):
         d: set(schedule.teams_playing(json.loads(fixture(f"espn_{d:%Y%m%d}.json")))) for d in days
     }
     assert durant["games"][0] == sum("HOU" in playing[d] for d in days)
-    # Nesmith is out (O): no games this week.
+    # Nevothorn is out (O): no games this week.
     assert w["players"][str(by_name["Aumion Nevothorn"]["yahoo_id"])]["games"][0] == 0
     brooks = next(a for a in v["available"] if a["player"]["name"] == "Dovael Buthaton")["player"]
     row = w["players"][str(brooks["yahoo_id"])]
@@ -1871,8 +1871,8 @@ def test_a_trade_with_this_weeks_opponent_scores_both_sides(client):
     m = t["margin"]
     assert m["horizon"] == t["lead"] == "three"
     assert m["change"] == mine["horizons"]["three"]["change"]
-    # Reed sits on my bench and Flagg leaves a team of my field (three teams with a roster
-    # here): the trade is no worse for me even if Flagg produced nothing.
+    # Ruthacombe sits on my bench and Falvewell leaves a team of my field (three teams with a roster
+    # here): the trade is no worse for me even if Falvewell produced nothing.
     assert m["reading"] == "wins_at_zero" and m["neutral"] is None
 
 
@@ -1978,18 +1978,18 @@ def test_a_refresh_keeps_the_flags_inputs_and_the_view_flags_the_pool(client):
     v = client.get(f"/seasons/{LEAGUE}").json()
     assert v["refresh"]["warnings"] == {}
     flags = v["flags"]
-    # Drummond tops the buzz index: a full surge, a watch on its own.
+    # Disathorn tops the buzz index: a full surge, a watch on its own.
     drummond = flags["5015"]
     assert drummond["level"] == "watch" and drummond["signals"]["surge"]["score"] == 1.0
     assert "#1 by adds on Yahoo's buzz index" in drummond["signals"]["surge"]["reason"]
-    # Vassell (G-F, no projection) is out to Nov 20: the minutes at forward in San Antonio.
+    # Vorluby (G-F, no projection) is out to Nov 20: the minutes at forward in San Antonio.
     keldon = flags["6217"]["signals"]["opportunity"]
     assert keldon["score"] == 0.5 and "Darluic Vorluby" in keldon["reason"]
-    # Cunningham is out to Nov 12 at guard in Detroit; Duren is day to day.
+    # Cendaley is out to Nov 12 at guard in Detroit; Davowell is day to day.
     assert flags["6073"]["signals"]["opportunity"]["score"] == 0.5
     # Opportunity alone flags nobody: kept for the hover, scored 0.
     assert flags["6073"]["level"] is None and flags["6073"]["score"] == 0.0
-    # Gilgeous-Alexander is back inside two weeks: nothing for Oklahoma City's guards.
+    # Gustowyn-Auracombe is back inside two weeks: nothing for Oklahoma City's guards.
     assert "10276" not in flags or flags["10276"]["signals"]["opportunity"]["score"] == 0.0
     assert v["flag_inputs"]["buzz"]["rows"] == 5 and v["flag_inputs"]["projection"] is None
     # Without a projection the minutes and the value gap cannot speak; opportunity still does.
@@ -2042,7 +2042,7 @@ def test_the_flag_digest_lists_every_league_with_a_season(client):
     assert d["leagues"][0]["name"] == "Test League 100001"
     assert {"league": "100002", "reason": "no season read yet"} in d["skipped"]
     top = d["leagues"][0]["flagged"]
-    # Johnson's surge and his opportunity outrank Drummond's surge alone; the highest first.
+    # Jiveton's surge and his opportunity outrank Disathorn's surge alone; the highest first.
     assert [x["name"] for x in top[:2]] == ["Kulveen Jiveton", "Aurlaic Disathorn"]
     assert [x["score"] for x in top] == sorted((x["score"] for x in top), reverse=True)
     assert all(x["level"] is not None for x in top)
