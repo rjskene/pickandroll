@@ -481,6 +481,59 @@ def test_after_the_drop_the_returned_player_starts_and_no_slot_stays_empty(clien
     assert s["games"]["after"] == d["games"]["recommended"] == len(started)
 
 
+# --------------------------------------------------------------------------- the run's reason
+def swap_page(alerts: list[dict] = ()) -> dict:
+    """A day whose one change swaps a player who tipped off for the bench."""
+    page = lineup_page()
+    page["alerts"] = list(alerts)
+    page["days"][0] |= {"start": [3], "sit": [1]}
+    return page
+
+
+def reason_of(page: dict, comeback: dict | None = None) -> dict:
+    tips = {"BOS": (AT - timedelta(hours=1)).isoformat()}
+    live = {"mode": "live"}
+    return ap.steps_payload(LEAGUE, 4, DAY, DAY, AT, page, tips, live, False, None, comeback)
+
+
+def test_a_day_with_only_a_comeback_skipped_says_why_not_a_game():
+    assert steps(None)["reason"] == ap.NEEDS_DROP
+    why = f"no legal drop: {STAY} is protected, never dropped"
+    assert steps(gate(protected={STAY}))["reason"] == why
+
+
+def test_a_day_with_only_tip_offs_skipped_keeps_its_words():
+    s = reason_of(swap_page())
+    assert [g["reason"] for g in s["skipped"]] == [ap.TIP_OFF_PASSED]
+    assert (s["steps"], s["reason"]) == ([], "every change waits on a game that began")
+
+
+def test_a_day_with_mixed_skips_names_each_reason_once():
+    alert = lineup_page()["alerts"]
+    s = reason_of(swap_page(alert))
+    assert (s["steps"], [g["reason"] for g in s["skipped"]]) == (
+        [],
+        [ap.NEEDS_DROP, ap.TIP_OFF_PASSED],
+    )
+    assert s["reason"] == f"several reasons: {ap.NEEDS_DROP}; {ap.TIP_OFF_PASSED}"
+    twice = [{"reason": ap.TIP_OFF_PASSED}, {"reason": "other"}, {"reason": ap.TIP_OFF_PASSED}]
+    assert ap._no_steps_reason(twice) == f"several reasons: {ap.TIP_OFF_PASSED}; other"
+
+
+def test_a_day_with_nothing_skipped_says_the_lineup_stands():
+    assert ap._no_steps_reason([]) == "Yahoo's lineup already starts the recommended players"
+
+
+def test_a_day_with_steps_has_no_reason():
+    s = steps(gate())
+    assert s["comebacks"] == [row("drop")] and s["steps"] == []
+    tips = {"BOS": (AT + timedelta(hours=1)).isoformat()}
+    live = {"mode": "live"}
+    page = swap_page()
+    s = ap.steps_payload(LEAGUE, 4, DAY, DAY, AT, page, tips, live, False)
+    assert s["steps"] and s["skipped"] == [] and s["reason"] is None
+
+
 # --------------------------------------------------------------------------- the digest
 def digest(tmp_path, today=DAY, since=AT - timedelta(hours=1)) -> list[str]:
     return ap.comeback_digest_lines(tmp_path, [LEAGUE], today, since)
