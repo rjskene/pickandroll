@@ -335,6 +335,31 @@ def test_the_drop_log_takes_the_offered_drop_and_refuses_any_other(client):
     assert r.status_code == 200, r.text
 
 
+@pytest.mark.parametrize("outcome", ["dropped", "unconfirmed"])
+def test_a_landed_drop_is_logged_when_the_steps_now_name_another(client, outcome):
+    """The landing's read reached the API first and the steps moved on to another drop: the log
+    takes what landed, or the record that stops a second drop is never written."""
+    player, drop = cleared_on_the_il(client)
+    body = drop_body(
+        ap.comeback_entry(player),
+        drop + 1,
+        day=nba_today(NOW).isoformat(),
+        mode="live",
+        outcome=outcome,
+    )
+    r = client.post(URL, json=body)
+    assert r.status_code == 200, r.text
+    assert ap.comeback_pending(client.data_dir, LEAGUE, nba_today(NOW)) == [
+        {
+            "player": player,
+            "drop": drop + 1,
+            "entry": ap.comeback_entry(player),
+            "at": r.json()["at"],
+            "outcome": outcome,
+        }
+    ]
+
+
 def no_build(*_args, **_kw):
     raise RuntimeError("the build failed")
 

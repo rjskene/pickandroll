@@ -763,8 +763,9 @@ In the model's terms, carried by #124:
   1. **The drop.** The engine's `drop` on the drop page, with the chain's fragment. It is taken from
      today's steps read fresh there, never from `drop_first`, so only the chain makes it (entry
      `comeback:<player>`, no queue entry). It may be the player himself: then no move follows and the
-     chain goes on to the press. The log takes the steps' drop and no other, and a protected player
-     is never dropped.
+     chain goes on to the press. The log takes the steps' drop and no other, except a run that says
+     what landed (`dropped`, `unconfirmed`), which it takes whatever the steps name by then, since
+     that record is what stops a second drop. A protected player is never dropped.
   2. **The move.** Back on today's dated page, whose fresh post is the read that confirms the drop:
      the steps say `stage: move` only when a read at or after the drop's run no longer shows him. He
      goes to an empty bench row, alone, on a record of his own in the browser

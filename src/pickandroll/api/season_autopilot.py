@@ -898,10 +898,10 @@ def check_drop_run(
 ) -> str | None:
     """Why the log refuses a drop run, None when it takes it: the moves executor's own rules
     (:func:`check_moves_run`), and the held drop the queue's churn names or the comeback's
-    (``comebacks``, entry to drop as the steps offer it now, #318), nothing else. A comeback's
-    drop the steps no longer offer is still taken when it says what landed: the roster may have
-    been read since, and its record is what stops a second drop. ``queue`` is the day's entries
-    of the league by id; ``protected`` the players the keep rule keeps now."""
+    (``comebacks``, entry to drop as the steps offer it now, #318), nothing else. A run that says
+    what landed is taken even where the steps no longer offer that drop or now name another: the
+    roster may have been read since, and its record is what stops a second drop. ``queue`` is the
+    day's entries of the league by id; ``protected`` the players the keep rule keeps now."""
     if mode.get("private"):
         return "the private league is never touched"
     if stop and run.outcome != "stopped":
@@ -922,10 +922,11 @@ def check_drop_run(
         return "a drop run names its entry and its player"
     if is_comeback(run.entry):
         drop = (comebacks or {}).get(run.entry)
-        if drop is None and run.outcome not in ("dropped", "unconfirmed"):
-            return f"{run.entry} has no drop due"
-        if drop is not None and run.player != drop:
-            return f"{run.entry} names another drop than the comeback's"
+        if run.outcome not in ("dropped", "unconfirmed"):
+            if drop is None:
+                return f"{run.entry} has no drop due"
+            if run.player != drop:
+                return f"{run.entry} names another drop than the comeback's"
         if run.outcome in ("would_drop", "dropped") and run.player in set(protected):
             return f"{run.player} is protected: never dropped"
         return None
