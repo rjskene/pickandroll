@@ -99,6 +99,8 @@ COMEBACK_SPAN = timedelta(days=7)
 COMEBACK_WORDS = 200
 #: The digest counts the runs of the last day.
 DIGEST_SPAN = timedelta(hours=24)
+#: How far back a comeback's line reads when the last daily posted no digest (#325).
+DIGEST_BACKSTOP = timedelta(days=2)
 
 _lock = threading.Lock()
 
@@ -1370,53 +1372,86 @@ def _comeback_why(step: Mapping[str, Any]) -> str:
     return f" ({words[:COMEBACK_WORDS]})" if words else ""
 
 
-def comeback_digest_lines(data_dir: Path, leagues_: Iterable[str], today: date) -> list[str]:
-    """The digest's line per league for a comeback of ``today`` (#318), each step on the log,
-    whatever its outcome: who was dropped or why not, who moved or why not, a landed drop whose
-    move is still to make, and why a comeback that ran no step did not. Leagues by id."""
+def last_digest(marker: Mapping[str, Any] | None, now: datetime) -> datetime:
+    """When the last digest went out: the end of the last daily, ``data/routine/daily.json``,
+    whose last step is the post (#325). A daily that posted nothing says nothing about the one
+    before it, so that reads two days back: a line said twice beats a chain never said."""
+    marker = marker or {}
+    post = (marker.get("steps") or {}).get("post") or {}
+    at = _at(marker.get("finished_at"))
+    return at if at is not None and post.get("status") == "ok" else now - DIGEST_BACKSTOP
+
+
+def _comeback_line(
+    lg: str,
+    day: date,
+    today: date,
+    lineups: Sequence[Mapping[str, Any]],
+    drops: Sequence[Mapping[str, Any]],
+) -> str | None:
+    """A league's line for the comebacks of the runs logged on ``day``."""
+    moves: dict[int, Mapping[str, Any]] = {}
+    held: dict[int, str] = {}
+    for run in lineups:
+        for s in run.get("steps") or []:
+            if s.get("kind") == "return" and s.get("drop") is not None:
+                moves[int(s["player"])] = s
+        for g in run.get("skipped") or []:
+            if g.get("comeback") and g.get("reason") != NEEDS_DROP:
+                held |= {int(k): str(g["reason"]) for k in g.get("players") or ()}
+    dropped = {int(str(r["entry"]).split(":")[1]): r for r in drops if is_comeback(r.get("entry"))}
+    parts = []
+    for player in sorted({*moves, *dropped, *held}):
+        run, move = dropped.get(player), moves.get(player)
+        said = []
+        if run is not None:
+            said.append(
+                f"{run.get('player')} dropped"
+                if run.get("outcome") == "dropped"
+                else f"drop of {run.get('player')} {run.get('outcome')}"
+                + (f" ({str(run['reason'])[:COMEBACK_WORDS]})" if run.get("reason") else "")
+            )
+        if move is not None:
+            said.append(
+                "moved to the bench"
+                if move.get("outcome") == "set"
+                else f"move {move.get('outcome')}{_comeback_why(move)}"
+            )
+        elif run is not None and run.get("outcome") == "dropped":
+            why = f" ({held[player]})" if player in held else ""
+            said.append(f"move still to make{why}")
+        elif run is None:
+            said.append(f"nothing ran ({held[player]})")
+        parts.append(f"comeback of {player}: " + ", ".join(said))
+    if not parts:
+        return None
+    return f"- League {lg}{'' if day == today else f' ({day})'}: " + "; ".join(parts)
+
+
+def comeback_digest_lines(
+    data_dir: Path, leagues_: Iterable[str], today: date, since: datetime
+) -> list[str]:
+    """The digest's lines for the comebacks (#318) run after ``since``, the last digest
+    (:func:`last_digest`), so a chain is in the first digest after it ran and only there (#325):
+    each step on the log, whatever its outcome: who was dropped or why not, who moved or why not,
+    a landed drop whose move is still to make, and why a comeback that ran no step did not. A line
+    per league and day, leagues by id and days in order, an earlier day's naming it."""
+
+    def fresh(key: str, lg: str) -> dict[date, list[dict[str, Any]]]:
+        by_day: dict[date, list[dict[str, Any]]] = {}
+        for day, run in runs(data_dir, lg, key):
+            at = _at(run.get("at"))
+            if run.get("mode") == "live" and at is not None and at > since:
+                by_day.setdefault(day, []).append(run)
+        return by_day
+
     lines = []
     for lg in sorted(leagues_):
-        moves: dict[int, Mapping[str, Any]] = {}
-        held: dict[int, str] = {}
-        for d, run in lineup_runs(data_dir, lg):
-            if d != today or run.get("mode") != "live":
-                continue
-            for s in run.get("steps") or []:
-                if s.get("kind") == "return" and s.get("drop") is not None:
-                    moves[int(s["player"])] = s
-            for g in run.get("skipped") or []:
-                if g.get("comeback") and g.get("reason") != NEEDS_DROP:
-                    held |= {int(k): str(g["reason"]) for k in g.get("players") or ()}
-        drops = {
-            int(str(r["entry"]).split(":")[1]): r
-            for d, r in runs(data_dir, lg, DROP)
-            if d == today and r.get("mode") == "live" and is_comeback(r.get("entry"))
-        }
-        parts = []
-        for player in sorted({*moves, *drops, *held}):
-            run, move = drops.get(player), moves.get(player)
-            said = []
-            if run is not None:
-                said.append(
-                    f"{run.get('player')} dropped"
-                    if run.get("outcome") == "dropped"
-                    else f"drop of {run.get('player')} {run.get('outcome')}"
-                    + (f" ({str(run['reason'])[:COMEBACK_WORDS]})" if run.get("reason") else "")
-                )
-            if move is not None:
-                said.append(
-                    "moved to the bench"
-                    if move.get("outcome") == "set"
-                    else f"move {move.get('outcome')}{_comeback_why(move)}"
-                )
-            elif run is not None and run.get("outcome") == "dropped":
-                why = f" ({held[player]})" if player in held else ""
-                said.append(f"move still to make{why}")
-            elif run is None:
-                said.append(f"nothing ran ({held[player]})")
-            parts.append(f"comeback of {player}: " + ", ".join(said))
-        if parts:
-            lines.append(f"- League {lg}: " + "; ".join(parts))
+        lineups, drops = fresh(LINEUP, lg), fresh(DROP, lg)
+        for day in sorted({*lineups, *drops}):
+            line = _comeback_line(lg, day, today, lineups.get(day, []), drops.get(day, []))
+            if line:
+                lines.append(line)
     return lines
 
 
