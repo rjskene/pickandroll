@@ -654,6 +654,10 @@
         saStrip(PR.startActiveStripText({ error: row.error }));
         return null;
       }
+      if (settings && settings.ok && PR.startActiveBraked(settings.data, row)) {
+        saStrip(PR.startActiveStripText({ browserOff: true }));
+        return null;
+      }
       // Opened from a later day's lineup set (#289): the set day's diff its page read.
       const handoff = trigger === "after_lineup" ? await send({ op: "after_lineup_take", league: page.league }) : null;
       const setDay = (handoff && handoff.ok && handoff.data) || null;
