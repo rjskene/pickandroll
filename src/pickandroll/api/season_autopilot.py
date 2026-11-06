@@ -1478,9 +1478,10 @@ def moves_digest_lines(
 ) -> list[str]:
     """The digest's lines for the moves executor (#171): one summary over the armed leagues, the
     latest queue's entries (``queue``, ``season_queue``'s day) counted queued and struck and the
-    entries the last day's passes reported counted by outcome, then a line per league only for
-    what it skipped or failed, or placed with a reason (a claim whose answer was not read, #171
-    PR 3). Leagues by id; no player, team or projection number."""
+    entries the last day's passes reported counted by outcome, then a line per league whose week
+    plan leads its queue (#332: a step counts as queued only on its day), and a line per league
+    only for what it skipped or failed, or placed with a reason (a claim whose answer was not
+    read, #171 PR 3). Leagues by id; no player, team or projection number."""
     armed = {
         lg: m["mode"] for lg, m in modes.items() if not m.get("private") and m["mode"] != "off"
     }
@@ -1549,6 +1550,11 @@ def moves_digest_lines(
         + f"{il_text}."
     ]
     for lg in sorted(recent):
+        steps = [e for e in entries if e.get("league") == lg and e.get("plan")]
+        if steps:
+            on = sum(1 for e in steps if e.get("queued") and not e.get("struck"))
+            of = max(int(e["plan"].get("steps") or 0) for e in steps)
+            lines.append(f"- League {lg}: a week plan leads, {on} of {of} steps queued today")
         parts = []
         for r in recent[lg]:
             bad = [

@@ -27,6 +27,8 @@ import {
   queueFlagWord,
   queueFloorLine,
   queueFoldLine,
+  planOdds,
+  queueGain,
   queueMoveText,
   queueNamer,
   queueOrder,
@@ -308,7 +310,9 @@ function Today({ p, now, title, strike, onOpenLeague }: { p: QueuePayload; now: 
                 <tr key={e.id} className={e.struck ? "struck" : e.outcome ? "done" : undefined}>
                   <LeagueCell league={e.league} title={title(e.league)} onOpen={onOpenLeague} />
                   <td>{queueMoveText(e, name)}</td>
-                  <td className="num good">{gainLabel(e.gain)}</td>
+                  <td className="num good" title={planOdds(e.plan) || undefined}>
+                    {queueGain(e)}
+                  </td>
                   <td className={`num ${rosTone({ value: e.season }, e.scoring)}`}>{rosLabel({ value: e.season }, e.scoring)}</td>
                   <td>{queueFlagWord(e.flag)}</td>
                   <td title={e.bid?.reason}>{bidLabel(e)}</td>
@@ -365,7 +369,7 @@ function Left({ p, now, title, onOpenLeague }: { p: QueuePayload; now: number; t
                 <tr key={e.id}>
                   <LeagueCell league={e.league} title={title(e.league)} onOpen={onOpenLeague} />
                   <td>{queueMoveText(e, name)}</td>
-                  <td className="num">{gainLabel(e.gain)}</td>
+                  <td className="num">{queueGain(e)}</td>
                   <td className={`num ${rosTone({ value: e.season }, e.scoring)}`}>{rosLabel({ value: e.season }, e.scoring)}</td>
                   <td className="muted" title={e.floor.below && row ? queueFloorLine(row) : undefined}>
                     {queueStateText(e, now)}

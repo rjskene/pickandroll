@@ -24,6 +24,7 @@ export const KNOB_SHORT: Record<KnobName, string> = {
   plan_floor_points: "plan floor (points)",
   stash_threshold: "stash",
   faab_sizing: "FAAB",
+  three_weight: "three weeks",
   daily_cap: "cap",
 };
 export const KNOB_TITLE: Record<KnobName, string> = {
@@ -35,6 +36,7 @@ export const KNOB_TITLE: Record<KnobName, string> = {
   plan_floor_points: "plan floor, points",
   stash_threshold: "stash threshold",
   faab_sizing: "FAAB sizing",
+  three_weight: "three weeks' weight in a plan's score",
   daily_cap: "daily move cap",
 };
 

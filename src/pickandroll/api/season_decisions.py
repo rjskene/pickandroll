@@ -108,12 +108,12 @@ def _week(ev: mv.Evaluator, moves: Sequence[mv.Move]) -> dict[str, Any]:
 
 def knobs(built: Built) -> dict[str, Any]:
     """The AUTOPILOT knobs (docs/AUTOPILOT.md, section 6) the solve ran with, every one of
-    ``season.progress.KNOBS`` whether the solve uses it or not (#152): the projection system and
+    ``season.progress.LIVE_KNOBS`` whether the solve uses it or not (#152): the projection system and
     its blend weight, the strategy's recommended weight, the keep rule's protection floor, the
     streaming plan's floors and moves a day, the stash threshold and the FAAB sizing; and beside
     them ``file_system``, the system the knob file had in force for the league, which a route
     naming another overrode (the scorecard projects each week on it)."""
-    return {**{k: built.knobs.get(k) for k in pg.KNOBS}, "file_system": built.file_system}
+    return {**{k: built.knobs.get(k) for k in pg.LIVE_KNOBS}, "file_system": built.file_system}
 
 
 def _logged(move: Mapping[str, Any], built: Built | None = None) -> dict[str, Any]:
@@ -257,9 +257,12 @@ def moves_entry(built: Built, payload: Mapping[str, Any], at: datetime) -> dict[
         unit = {
             "id": plan_id(_id(at, "moves", built.system["key"])),
             "day": built.problem.first_day.isoformat(),
+            "matchup": w["matchup"],
+            "against": wp["judged"]["set"]["matchup"],
         }
         for i, (m, s) in enumerate(zip(moves, w["steps"], strict=True)):
             m["after"] = s["after"]
+            m["score"] = s["score"]
             m["plan"] = {**unit, "step": i + 1, "steps": len(moves)}
         model = _moves_of(moves)
         sets.append(
@@ -299,8 +302,10 @@ def plan_id(entry: str) -> str:
 
 def week_plans_record(wp: Mapping[str, Any] | None) -> dict[str, Any] | None:
     """The week plans as every moves entry logs them (#221 part 2): each plan's source, its moves
-    (add, drop, day), its total on both horizons and its rest of the season, the plan the queue
-    took (an index, None for none), the floor and the search's seconds; None with no day left."""
+    (add, drop, day), its total on both horizons, its rest of the season, its score and matchup
+    odds, the plan the queue took (an index, None for none), what it was chosen on (the weight,
+    the playoff week, the floor, the three weeks' set's score and odds), so the choice can be
+    replayed, the plan floor and the search's seconds; None with no day left."""
     if wp is None:
         return None
     return {
@@ -310,10 +315,13 @@ def week_plans_record(wp: Mapping[str, Any] | None) -> dict[str, Any] | None:
                 "moves": [{k: s[k] for k in ("add", "drop", "from")} for s in w["steps"]],
                 "total": w["total"],
                 "ros": w["ros"],
+                "score": w["score"],
+                "matchup": w["matchup"],
             }
             for w in wp["plans"]
         ],
         "queue": wp["queue"],
+        "judged": wp["judged"],
         "floor": wp["floor"],
         "seconds": wp["seconds"],
     }

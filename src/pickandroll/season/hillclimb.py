@@ -677,7 +677,7 @@ def _undo(raw: dict[str, Any], change: Mapping[str, Any], leagues: Iterable[str]
     if not isinstance(was, dict):
         was = {change["knob"]: dict.fromkeys(change.get("leagues") or [], change.get("from"))}
     for knob, before in was.items():
-        if knob not in pg.KNOBS or not isinstance(before, dict):
+        if knob not in pg.LIVE_KNOBS or not isinstance(before, dict):
             continue
         keep = {lg: v for lg, v in before.items() if not frozen(knobs, str(lg), knob)}
         write(raw, knob, {str(k): v for k, v in keep.items()}, leagues)
@@ -701,7 +701,7 @@ def _roll_out(
         if (scoring is None or s == scoring) and not frozen(knobs, lg, change["knob"])
     )
     for knob, to in values.items():
-        if knob in pg.KNOBS:
+        if knob in pg.LIVE_KNOBS:
             write(raw, knob, dict.fromkeys(reach, to), leagues)
     return reach
 

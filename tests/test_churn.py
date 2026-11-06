@@ -218,7 +218,8 @@ def test_the_payload_logs_and_queues_a_churn_with_its_held_drop_and_holds_it_rea
 def test_the_queue_queues_a_churn_as_one_entry_whose_add_waits_on_its_held_drop():
     p = churn_league()
     rule = mv.keep_rule(p)
-    p = replace(p, kept=rule.kept)
+    # The three weeks' set is the subject here: no plan leads it (the floor is out of reach).
+    p = replace(p, kept=rule.kept, plan_floor=99.0)
     built = built_of(p, rule=rule)
     entry = season_decisions.moves_entry(built, sm.moves_payload(built), AT)
     three = next(s for s in entry["sets"] if s["key"] == "three")

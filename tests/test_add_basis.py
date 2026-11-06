@@ -6,6 +6,7 @@ by construction."""
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, date, datetime
 
 import pytest
@@ -197,7 +198,8 @@ def day_of(e) -> qa.LeagueDay:
 def test_the_queue_entry_copies_the_moves_basis_and_held_move():
     roster, cands, rate, sched, opponent, field, value = il_league()
     p = build(roster, cands, rate, sched, opponent, field, held_open={"IL": 1}, value=value)
-    _, entry = solved(p)
+    # The three weeks' set is the subject here: no plan leads it (the floor is out of reach).
+    _, entry = solved(replace(p, plan_floor=99.0))
     (e,) = qa.queue_of(day_of(entry), date(2026, 10, 26), qa.noise_floor([], 0.1), (0.1, "x"), None)
     assert (e["add"], e["drop"], e["basis"], e["held_move"]) == (11, None, dl.HELD, IL5)
     # The set's held list stays beside it, as before.
@@ -232,7 +234,8 @@ def test_the_landing_line_carries_the_set_with_each_basis_the_room_and_their_nam
         "open": lambda: build(*streaming_league(), spots=4),
         "drop": lambda: il_full_league([(7, "O")], {}),
     }[league]()
-    built = built_of(p)
+    # The three weeks' set is the subject here: no plan leads it (the floor is out of reach).
+    built = built_of(replace(p, plan_floor=99.0))
     out = sm.moves_payload(built)
     b = sm.best_payload(built, out)
     rec = out["recommended"][b["horizon"]]

@@ -170,7 +170,8 @@ def test_the_strategy_takes_the_searchs_set_when_the_guard_refuses_the_programs(
 # --------------------------------------------------------------------------- the log
 def test_the_decision_log_records_what_the_guard_held_back_on_each_set():
     p = resting_league()
-    built = built_of(p)
+    # The three weeks' set is the subject here: no plan leads it (the floor is out of reach).
+    built = built_of(replace(p, plan_floor=99.0))
     out = sm.moves_payload(built)
     entry = season_decisions.moves_entry(built, out, datetime(2026, 10, 26, 12, tzinfo=UTC))
     week, three = entry["sets"]

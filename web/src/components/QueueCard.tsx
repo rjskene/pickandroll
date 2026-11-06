@@ -1,7 +1,7 @@
 import { useMemo } from "react";
 import { useMutation, useQuery, useQueryClient, type UseMutationResult } from "@tanstack/react-query";
 import { api, type LineupMode, type MovesView, type QueueEntry, type QueuePayload, type SeasonView } from "../api";
-import { bidLabel, gainLabel, ilLine, movesExecutorText, movesLiveText, passLine, passTitle, playersById, queueFlagWord, queueFloorLine, queueMoveText, queueStateLine, queueStateText, queueStateTone, startActiveLine } from "../season";
+import { bidLabel, ilLine, movesExecutorText, movesLiveText, passLine, passTitle, playersById, queueFlagWord, queueFloorLine, queueGain, queueMoveText, queuePlanLine, queueStateLine, queueStateText, queueStateTone, startActiveLine } from "../season";
 import ModeSwitch from "./ModeSwitch";
 import { useNow } from "./YahooSync";
 
@@ -122,11 +122,12 @@ function Today({ v, queued, left, now, name, strike }: { v: MovesView; queued: Q
           {queued.filter((e) => !e.struck).length} queued{struckCount ? ` · ${struckCount} struck` : ""} · cap {row.cap} ({row.cap_from}) · executes from {time} CT
         </span>
       </div>
+      {queuePlanLine([...queued, ...left]) && <p className="muted lv-note">{queuePlanLine([...queued, ...left])}</p>}
       {queued.length === 0 && <p className="dim lv-note">Nothing queued today.</p>}
       {queued.map((e) => (
         <div key={e.id} className="row small">
           <span title={e.bid?.reason}>
-            {e.rank}. {queueMoveText(e, name)} · {gainLabel(e.gain)}
+            {e.rank}. {queueMoveText(e, name)} · {queueGain(e)}
             {bidLabel(e) ? ` · ${bidLabel(e)}` : e.claim === "priority" ? " · priority claim" : ""}
             {queueFlagWord(e.flag) ? ` · ${queueFlagWord(e.flag)}` : ""}
           </span>
@@ -145,7 +146,7 @@ function Today({ v, queued, left, now, name, strike }: { v: MovesView; queued: Q
           <span className="k">Not queued</span>
           {left.map((e) => (
             <p key={e.id} className="dim lv-note" title={e.floor.below ? queueFloorLine(row) : undefined}>
-              {queueMoveText(e, name)} · {gainLabel(e.gain)}: {queueStateText(e, now)}
+              {queueMoveText(e, name)} · {queueGain(e)}: {queueStateText(e, now)}
             </p>
           ))}
         </>

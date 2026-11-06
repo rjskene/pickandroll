@@ -994,6 +994,12 @@ class Budget:
 _BUDGET: ContextVar[Budget | None] = ContextVar("moves_budget", default=None)
 
 
+def budget_out() -> bool:
+    """Whether the budget in force on this thread (:func:`budgeted`) has run out."""
+    budget = _BUDGET.get()
+    return budget is not None and budget.out()
+
+
 @contextmanager
 def budgeted(budget: Budget | None) -> Iterator[Budget | None]:
     """Every :func:`search` and :func:`recommend` inside the block, on this thread, keeps to

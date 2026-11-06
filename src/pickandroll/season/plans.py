@@ -16,14 +16,31 @@ or the problem's own, a knob). The search is a beam over the blocks, :data:`BEAM
 score (each block's own week gain); the best :data:`EXACT` plans are valued exactly with the
 Moves card's evaluator. A step's increment is the plan up to it less the plan before it, on
 ``week`` and on ``three``, so the increments telescope to the plan's gain over the base
-(:func:`valued`). A plan is kept only when the season guard holds on it (``allowed``).
+(:func:`valued`). A plan is kept only when the season guard holds on it (``allowed``). The pool
+also takes the three weeks' set's moves, so a plan can carry a lasting pickup with the week's
+streamers, and the beam's cheap score then weighs the three weeks as the plan's score does.
 
 The roster's own changes inside the week are listed on their day as zero-choice steps
 (:class:`Back`): a cleared player's activation, a held-slot move's comeback and a held player's
 return, each with the drop it forces (``moves.comebacks``). A held return's increment is the plan
 with him back less the plan with him held past the horizons; it is shown, never summed in the
 total. A heuristic: the plans are recommended, never optimal. Plan 1 is the recommended week set
-unless a searched plan beats its week by the plan floor (``stream.floor_of``). Pure.
+unless a searched plan beats its week by the plan floor (``stream.floor_of``).
+
+The queue (:func:`for_queue`, the user's ruling of 2026-11-06) weighs this week first: a plan's
+score is its week gain plus ``three_weight`` times its three-week gain, and the plan with the
+highest score leads when it keeps the rules and beats the three weeks' set by the plan floor on
+that score. Standings count each category as a win, so expected categories (points in a points
+league) are the measure and the matchup odds a headline beside them. In a playoff week a matchup
+decides who advances: the score is the matchup odds, the floor :data:`PLAYOFF_FLOOR`, and the
+three weeks do not count.
+
+A weekly add and a claim are not spent on a step that gives the plan nothing (:func:`trimmed`, the
+master's ruling of 2026-11-06): the plan that leads loses, lowest first, each step whose removal
+keeps it valid and costs its score less than :data:`TRIM_SHARE` of the floor, leave-one-out rather
+than by increment, and what remains faces the set again. A chain step a later step drops stays,
+since the plan without it is not valid. The Moves card keeps the plan as searched; the queue, the
+log and what executes are the trimmed plan. Pure.
 """
 
 from __future__ import annotations
@@ -34,6 +51,7 @@ from datetime import date, timedelta
 
 from . import moves as mv
 from . import stream as st
+from . import weekly as wk
 
 #: The plans shown at most, and the steps a plan takes at most.
 WEEK_PLANS = 5
@@ -48,6 +66,14 @@ DROPS = 2
 SET, SEARCH = "set", "search"
 #: The decision log's set for the plan the queue takes instead of the three weeks' set.
 QUEUE_PLAN = "week_plan"
+#: The weight of the three weeks in a plan's score: the default of the knob ``three_weight``
+#: (docs/AUTOPILOT.md section 6). The Monday step never moves it.
+THREE_WEIGHT = 0.33
+#: What a plan must beat the three weeks' set by on the matchup odds in a playoff week: 3
+#: percentage points.
+PLAYOFF_FLOOR = 0.03
+#: A step of the plan the queue takes comes out when it costs less than this share of the floor.
+TRIM_SHARE = 0.5
 
 
 @dataclass(frozen=True)
@@ -89,9 +115,11 @@ def blocks(
     problem: mv.MoveProblem,
     swaps: Mapping[int, Sequence[mv.SwapGain]],
     stream_plan: st.Plan | None = None,
+    three_set: Sequence[mv.Move] = (),
 ) -> list[tuple[mv.Move, ...]]:
     """The pool a plan's steps come from: the week's best single moves (``swaps``, the week's
-    ``single_swaps``), each a block of one, and each stream spot's chain, whole."""
+    ``single_swaps``), each a block of one, each stream spot's chain, whole, and each of the three
+    weeks' set's moves, a block of one, whatever it gains this week."""
     ranked = sorted(
         (c for c, g in swaps.items() if g and g[0].gain > mv.EPS),
         key=lambda c: (-swaps[c][0].gain, c),
@@ -101,6 +129,7 @@ def blocks(
         out += [(mv.Move(cand, g.drop),) for g in swaps[cand][:DROPS] if g.gain > mv.EPS]
     if stream_plan is not None:
         out += [tuple(sp.steps) for sp in stream_plan.spots if sp.steps]
+    out += [(m,) for m in three_set]
     return list(dict.fromkeys(out))
 
 
@@ -137,26 +166,28 @@ def search(
     ev: mv.Evaluator,
     pool: Sequence[tuple[mv.Move, ...]],
     allowed: mv.Allowed | None = None,
+    weight: float = 0.0,
 ) -> list[tuple[mv.Move, ...]]:
     """The best :data:`EXACT` plans by cheap score: a beam over the blocks of ``pool``, each
-    block's cheap score its own week gain, every plan kept to :func:`valid` and ``allowed``."""
+    block's cheap score its own :func:`score` at ``weight``, every plan kept to :func:`valid` and
+    ``allowed``."""
     p = ev.problem
-    cheap = [ev.gain("week", b) for b in pool]
+    cheap = [score(ev, b, weight) for b in pool]
     beam: list[tuple[tuple[mv.Move, ...], float, int]] = [((), 0.0, -1)]
     seen: dict[frozenset[mv.Move], tuple[tuple[mv.Move, ...], float]] = {}
     for _ in range(PLAN_STEPS):
         nxt = []
-        for moves, score, last in beam:
+        for moves, worth, last in beam:
             for i in range(last + 1, len(pool)):
                 trial = (*moves, *pool[i])
                 if valid(p, trial) and (allowed is None or allowed(trial)):
-                    nxt.append((trial, score + cheap[i], i))
+                    nxt.append((trial, worth + cheap[i], i))
         if not nxt:
             break
         nxt.sort(key=lambda x: -x[1])
         beam = nxt[:BEAM]
-        for moves, score, _ in beam:
-            seen.setdefault(frozenset(moves), (moves, score))
+        for moves, worth, _ in beam:
+            seen.setdefault(frozenset(moves), (moves, worth))
     ranked = sorted(seen.values(), key=lambda x: -x[1])
     return [moves for moves, _ in ranked[:EXACT]]
 
@@ -219,6 +250,49 @@ def key_of(problem: mv.MoveProblem, moves: Sequence[mv.Move]) -> frozenset[tuple
     return frozenset((m.add, mv.day_of(problem, m)) for m in moves)
 
 
+def every_plan(
+    ev: mv.Evaluator,
+    week_set: Sequence[mv.Move],
+    swaps: Mapping[int, Sequence[mv.SwapGain]],
+    stream_plan: st.Plan | None = None,
+    allowed: mv.Allowed | None = None,
+    out: HeldOut | None = None,
+    three_set: Sequence[mv.Move] = (),
+    weight: float = 0.0,
+) -> list[WeekPlan]:
+    """Every plan the search valued, distinct by adds and days (:func:`key_of`; of the searched
+    plans with the same adds and days only the one with the best score at ``weight`` is kept, and
+    none with the set's: the set is plan 1's idea): plan 1 the recommended ``week_set`` unless a
+    searched plan beats its week by the plan floor, the others by their week gain, best first;
+    none without a day left in the week."""
+    p = ev.problem
+    if not p.horizons["week"][0].days:
+        return []
+    base = valued(ev, week_set, SET, out)
+    ranked = [
+        valued(ev, moves, SEARCH, out)
+        for moves in search(ev, blocks(p, swaps, stream_plan, three_set), allowed, weight)
+    ]
+
+    def three(w: WeekPlan) -> float:
+        return w.total.get("three", 0.0)
+
+    ranked.sort(key=lambda w: (-(w.total["week"] + weight * three(w)), -three(w), len(w.steps)))
+    seen = {key_of(p, week_set)}
+    found = []
+    for w in ranked:
+        if (k := key_of(p, w.moves)) not in seen:
+            seen.add(k)
+            found.append(w)
+    found.sort(key=lambda w: (-w.total["week"], -three(w), len(w.steps)))
+    floor = st.floor_of(p)
+    if found and found[0].total["week"] > base.total["week"] + floor:
+        plans = [found[0], *sorted([base, *found[1:]], key=lambda w: -w.total["week"])]
+    else:
+        plans = [base, *found]
+    return plans
+
+
 def week_plans(
     ev: mv.Evaluator,
     week_set: Sequence[mv.Move],
@@ -227,49 +301,125 @@ def week_plans(
     allowed: mv.Allowed | None = None,
     out: HeldOut | None = None,
 ) -> list[WeekPlan]:
-    """The week's plans, at most :data:`WEEK_PLANS`, distinct by adds and days (:func:`key_of`;
-    of the searched plans with the same adds and days only the one worth most on the week is kept,
-    and none with the set's: the set is plan 1's idea): plan 1 the recommended ``week_set`` unless
-    a searched plan beats its week by the plan floor, the others by their week gain, best first;
-    none without a day left in the week."""
+    """The week's plans the Moves card shows, at most :data:`WEEK_PLANS`, of :func:`every_plan`."""
+    return every_plan(ev, week_set, swaps, stream_plan, allowed, out)[:WEEK_PLANS]
+
+
+def shown(plans: Sequence[WeekPlan], chosen: WeekPlan | None) -> list[WeekPlan]:
+    """The plans the card shows of ``plans``: the first :data:`WEEK_PLANS`, the plan the queue
+    took in the last place when no plan among them has its moves."""
+    top = list(plans[:WEEK_PLANS])
+    if chosen is None or place(top, chosen) is not None:
+        return top
+    return [*top[: WEEK_PLANS - 1], chosen]
+
+
+def place(plans: Sequence[WeekPlan], chosen: WeekPlan) -> int | None:
+    """Where the plan with ``chosen``'s moves stands in ``plans``, None when none has them."""
+    moves = set(chosen.moves)
+    return next((i for i, w in enumerate(plans) if set(w.moves) == moves), None)
+
+
+def score(ev: mv.Evaluator, moves: Sequence[mv.Move], weight: float) -> float:
+    """A set's or plan's score in the regular season: its week gain plus ``weight`` times its
+    three-week gain. In a playoff week the weight is 0 for everything but the gate (:func:`gate`)."""
+    return ev.gain("week", moves) + weight * ev.gain("three", moves)
+
+
+def matchup(ev: mv.Evaluator, moves: Sequence[mv.Move]) -> float | None:
+    """The odds of winning this week's matchup with ``moves`` made, over the opponents the week
+    reads (``weekly.matchup_won``); None with no opponent read."""
+    weeks = ev.odds("week", moves)
+    if not weeks or not weeks[0]:
+        return None
+    return sum(wk.matchup_won(o) for o in weeks[0]) / len(weeks[0])
+
+
+def step_score(step: Step, weight: float) -> float:
+    """What a step adds to its plan's score: its increments, weighted as :func:`score`."""
+    return step.gain["week"] + weight * step.gain.get("three", 0.0)
+
+
+def gate(
+    ev: mv.Evaluator, moves: Sequence[mv.Move], weight: float, playoff: bool = False
+) -> float | None:
+    """What :func:`for_queue` chooses on: the :func:`score`, or in a playoff week the
+    :func:`matchup` odds, None with no opponent read."""
+    return matchup(ev, moves) if playoff else score(ev, moves, weight)
+
+
+def gate_floor(problem: mv.MoveProblem, playoff: bool = False) -> float:
+    """What a plan must beat the three weeks' set by on :func:`gate`."""
+    return PLAYOFF_FLOOR if playoff else st.floor_of(problem)
+
+
+def trimmed(
+    ev: mv.Evaluator,
+    plan: WeekPlan,
+    weight: float = THREE_WEIGHT,
+    playoff: bool = False,
+    allowed: mv.Allowed | None = None,
+    out: HeldOut | None = None,
+) -> WeekPlan:
+    """``plan`` without the steps that give it nothing: while some step's removal leaves a plan
+    that keeps the rules and the season guard and costs less than :data:`TRIM_SHARE` of
+    :func:`gate_floor` on :func:`gate`, leave-one-out, the one that costs least comes out. A plan
+    is left at least one step. ``plan`` itself when no step comes out."""
     p = ev.problem
-    if not p.horizons["week"][0].days:
-        return []
-    base = valued(ev, week_set, SET, out)
-    ranked = [
-        valued(ev, moves, SEARCH, out)
-        for moves in search(ev, blocks(p, swaps, stream_plan), allowed)
-    ]
-    ranked.sort(key=lambda w: (-w.total["week"], -w.total.get("three", 0.0), len(w.steps)))
-    seen = {key_of(p, week_set)}
-    found = []
-    for w in ranked:
-        if (k := key_of(p, w.moves)) not in seen:
-            seen.add(k)
-            found.append(w)
-    floor = st.floor_of(p)
-    if found and found[0].total["week"] > base.total["week"] + floor:
-        plans = [found[0], *sorted([base, *found[1:]], key=lambda w: -w.total["week"])]
-    else:
-        plans = [base, *found]
-    return plans[:WEEK_PLANS]
+    margin = TRIM_SHARE * gate_floor(p, playoff)
+    moves = list(plan.moves)
+    while len(moves) > 1:
+        now = gate(ev, moves, weight, playoff)
+        costs = []
+        for m in moves:
+            rest = [o for o in moves if o is not m]
+            then = gate(ev, rest, weight, playoff)
+            if (
+                now is not None
+                and then is not None
+                and now - then < margin
+                and valid(p, rest)
+                and mv.admitted(p, rest, allowed)
+            ):
+                costs.append((now - then, m))
+        if not costs:
+            break
+        gone = min(costs, key=lambda c: c[0])[1]
+        moves = [o for o in moves if o is not gone]
+    return plan if len(moves) == len(plan.moves) else valued(ev, moves, plan.source, out)
 
 
 def for_queue(
-    ev: mv.Evaluator, plans: Sequence[WeekPlan], three_set: Sequence[mv.Move], key: str = "three"
+    ev: mv.Evaluator,
+    plans: Sequence[WeekPlan],
+    three_set: Sequence[mv.Move],
+    weight: float = THREE_WEIGHT,
+    playoff: bool = False,
+    allowed: mv.Allowed | None = None,
+    out: HeldOut | None = None,
 ) -> WeekPlan | None:
-    """The plan the queue takes instead of the three weeks' set (the ruling's second answer): the
-    one worth most on ``key`` (the queue's judging horizon) among those that beat the set there
-    by the plan floor; None when none does or a plan has no step. Only a plan that keeps the
-    rules (:func:`valid`) is weighed: plan 1, the week's recommended set, may take more steps than
-    :data:`PLAN_STEPS` or more moves a day than the cap, and then never takes the queue (the
-    master's ruling of 2026-10-29)."""
+    """The plan the queue takes instead of the three weeks' set: the one with the highest
+    :func:`gate` among those that beat the set's by :func:`gate_floor`, :func:`trimmed`, while it
+    still beats the set; None when none does, when no plan has a step, or in a playoff week with no
+    opponent read, and the queue then takes the set. Only a plan that keeps the rules
+    (:func:`valid`) and the season guard (``allowed``) is weighed: plan 1, the week's recommended
+    set, may take more steps than :data:`PLAN_STEPS` or more moves a day than the cap, and then
+    never takes the queue (the master's ruling of 2026-10-29)."""
     p = ev.problem
-    floor = st.floor_of(p)
-    against = ev.value(key, three_set)
-    better = [
-        w
-        for w in plans
-        if w.steps and valid(p, w.moves) and ev.value(key, w.moves) > against + floor
-    ]
-    return max(better, key=lambda w: ev.value(key, w.moves), default=None)
+    against = gate(ev, three_set, weight, playoff)
+    if against is None:
+        return None
+    line = against + gate_floor(p, playoff)
+    top = line
+    best = None
+    for w in plans:
+        if not w.steps or not valid(p, w.moves) or not mv.admitted(p, list(w.moves), allowed):
+            continue
+        value = gate(ev, w.moves, weight, playoff)
+        if value is not None and value > top:
+            best, top = w, value
+    if best is None:
+        return None
+    best = trimmed(ev, best, weight, playoff, allowed, out)
+    value = gate(ev, best.moves, weight, playoff)
+    return best if value is not None and value > line else None

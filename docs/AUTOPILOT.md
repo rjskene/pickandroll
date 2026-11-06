@@ -276,6 +276,7 @@ page, from PR 2:
   day says so. Every move of the set is an entry with the set, the decision and the knobs in
   force, queued or with the first reason it is not: the private league or the mode off; a drop
   the keep rule protects (read from the engine, never re-solved, held players included, #221); a
+  drop on a claim already placed and not yet processed (#332; a claim lost or lapsed frees him); a
   move flagged season-costly; an add the league dropped within the waiver days (or one the set
   drops); below the noise floor; no adds left in the week of its clear date; over the day's cap.
   The rest are queued by their gain
@@ -288,17 +289,34 @@ page, from PR 2:
   them: a `held` add executes after its held move (its page then shows an open spot, #199), never
   before it as an open-spot claim. A churn is queued as one entry since #221 part 3: its held drop
   first, on its own (below), and its add only once that drop landed.
-- **The week plan (#221 part 2, ruled 2026-10-29).** When the day's solve logged a week plan for
-  the queue (the set `week_plan`, docs/ADD_DROP.md "Week plans": a plan that beats the three weeks'
-  set on the three weeks after by the plan floor and passed the season guard on its total), the
-  build takes its steps instead of the three weeks' set, in the plan's order, each entry with the
-  set `week_plan`, the plan (`plan`: its id, day, step and steps) and the ids of the steps before
-  it (`after`). The plan is the unit for the floor and the season guard: no step is held below the
-  floor or as season-costly on its own. Only today's executable steps are queued (a free agent
+- **The week plan (#221 part 2, ruled 2026-10-29; the choice ruled 2026-11-06, #332).** Waiver
+  pickups are not judged mainly on the three weeks ahead: a pickup, or a series of them, that
+  improves this week goes in even when it does little for the three weeks after. A set's or
+  plan's score is its week gain plus `three_weight` times its three-week gain, in expected
+  categories (points in a points league), because standings count each category as a win; the
+  matchup odds are a headline beside it. When the day's solve logged a week plan for the queue
+  (the set `week_plan`, docs/ADD_DROP.md "Week plans": the plan with the highest score that keeps
+  the rules, passes the season guard on its total and beats the three weeks' set by the plan
+  floor on the score; from `Season.first_playoff_week` on, the plan with the best matchup odds
+  that beats the set's by 3 percentage points, the three weeks not counting, and none with no
+  opponent read; trimmed of any step the plan does not need, docs/ADD_DROP.md), the build takes its
+  steps instead of the three weeks' set, in the plan's order,
+  each entry with the set `week_plan`, judged on the week, the three weeks (`three`) and the
+  season beside it, the plan (`plan`: its id, day, step, steps and matchup odds, its and the
+  set's) and the ids of the steps before it (`after`). A step's bid scales on its `score`, what
+  it adds to the plan's score, so a step that costs the three weeks is not bid at $1; in a
+  playoff week the score is the odds, other units than the typical gain, and it scales on the
+  week gain. The season guard and the keep rule stand: a great player with one game this week is
+  still not dropped. The plan is the unit for the floor and the season guard: no step is held below
+  the floor or as season-costly on its own. Only today's executable steps are queued (a free agent
   dated today, a claim dated at the day it clears when placed today); a later step's reason is
   "a later step of the week plan: queued at its day's build", and the build of its day re-derives
   it from that day's solve, never carrying it over. A step after one that is not queued (a churn,
-  a protected drop, a later step) is "an earlier step of the week plan is not queued". The due
+  a protected drop, a later step) is "an earlier step of the week plan is not queued". A solve
+  does not know the claims placed, so the next day's plan may repeat a placed step or spend its
+  drop: a step whose add is on an open claim is "a claim on the add is already placed", not placed
+  again and holding no later step; a step whose drop is on one is "its drop is on a claim already
+  placed", and the steps after it are held. The due
   route holds a queued step until every step before it has landed (added, a claim won, or in a
   dry run a free agent it would claim): its `held` list gives each with `waits` ("waits for step N
   to land", that step's entry and add), the Queue route's entries carry the same `waits`, and a
@@ -944,6 +962,7 @@ The details (#144, plan ruled on the issue 2026-10-23; docs/ADD_DROP.md "Scoreca
 | the stash threshold | #124 | the margin by which the freed spot must beat the return |
 | the FAAB sizing | section 5 | the sizing rule only; no ceiling |
 | the daily move cap | section 2 | 1 to 3 |
+| `three_weight`, the three weeks' weight in a week plan's score, default 0.33 | section 2 (#332), logged with each decision | 0 to 1; no Monday rule moves it |
 
 **The protocol.** One knob changes per week, pooled across the armed leagues; where the leagues
 allow it, half of them take the change and half keep the setting (A/B), since nine to twelve

@@ -1407,6 +1407,8 @@ class SeasonService:
             holding = [e for e in keep if qa.holds_place(e)]
             protected = season_queue.protected_of(built.rule)
             left = season_queue.adds_left(entry.get("adds"), [*claims, *holding])
+            placed_today = season_queue.pending([old], league)
+            gone = season_queue.resolutions(season, placed_today, today)
             budget = season_queue.budget_of(season)
             day = qa.LeagueDay(
                 league=league,
@@ -1426,6 +1428,7 @@ class SeasonService:
                 uses_faab=season.settings.uses_faab,
                 kept=frozenset(e["id"] for e in keep),
                 done=len(holding),
+                open_claims=[*claims, *(c for c in placed_today if c["id"] not in gone)],
             )
             builds[league] = qa.queue_of(day, today, floor, typical, knobs.get("faab_sizing"))
             rows.append(
