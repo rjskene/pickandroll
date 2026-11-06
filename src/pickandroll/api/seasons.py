@@ -674,7 +674,10 @@ class SeasonService:
         markdown = season_flags.fl.digest_markdown(today, shown, notes, unread)
         executor = season_autopilot.digest_lines(self.data_dir, self._lineup_modes(), now)
         executor += season_autopilot.comeback_digest_lines(
-            self.data_dir, leagues.leagues(self.data_dir), today
+            self.data_dir,
+            leagues.leagues(self.data_dir),
+            today,
+            season_autopilot.last_digest(season_status.routine_marker(self.data_dir), now),
         )
         moves_executor = season_autopilot.moves_digest_lines(
             self.data_dir,
