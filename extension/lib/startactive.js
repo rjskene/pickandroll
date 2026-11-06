@@ -26,7 +26,7 @@
     "pickandroll-start-active-panel": "panel",
     // Today's page, opened from a later day's lineup set (#289).
     "pickandroll-start-active-after-lineup": "after_lineup",
-    // My plain team page between a comeback's drop and the pass's lineup run (#318).
+    // My plain team page between a comeback's move and the pass's lineup run (#318).
     "pickandroll-start-active-comeback": "after_comeback",
     "pickandroll-start-active-comeback-late": "after_comeback",
   };
@@ -332,7 +332,7 @@
     routine_daily: "daily routine",
     panel: "side panel",
     after_lineup: "after the lineup set",
-    after_comeback: "after a comeback's drop",
+    after_comeback: "after a comeback's move",
     after_add: "after an add",
   };
 

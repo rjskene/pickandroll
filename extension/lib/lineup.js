@@ -20,7 +20,7 @@
   const LINEUP_TRIGGERS = {
     "pickandroll-lineup": "routine",
     "pickandroll-lineup-late": "routine_late",
-    // After a comeback's drop that was not made (#318): the pass's run, no comeback in it.
+    // After a comeback's step that did not land (#318): the pass's run, no comeback in it.
     "pickandroll-lineup-chain": "routine",
     "pickandroll-lineup-late-chain": "routine_late",
   };
@@ -211,7 +211,7 @@
     if (problem) return { outcome: "skipped", reason: problem, after: null };
     const differs = lineupDiffers(controls, steps.yahoo);
     if (differs) return { outcome: "skipped", reason: differs, after: null };
-    if (!steps.steps.length && !(steps.returns || []).length && !(steps.comebacks || []).length && !steps.pending_drop) return { outcome: "nothing_to_do", reason: steps.reason, after: controls.lineup };
+    if (!steps.steps.length && !(steps.returns || []).length && !(steps.comebacks || []).length) return { outcome: "nothing_to_do", reason: steps.reason, after: controls.lineup };
     return null;
   }
 
@@ -600,8 +600,9 @@
   }
 
   /** The fragments of a comeback's chain (#318), by the lineup pass's trigger: only the routines'
-   * two lineup passes run one. ``chain`` is the pass's lineup run after a drop that was not made:
-   * it starts no comeback and goes to no drop page, so the chain always ends. */
+   * two lineup passes run one, drop first, since Yahoo refuses his move while the roster is over
+   * its size (Error #160). ``chain`` is the pass's lineup run after a step that did not land: it
+   * starts no comeback and goes to no drop page, so the chain always ends. */
   const COMEBACK_CHAIN = {
     routine: { drop: "pickandroll-drop-comeback", press: "pickandroll-start-active-comeback", lineup: "pickandroll-lineup", chain: "pickandroll-lineup-chain" },
     routine_late: { drop: "pickandroll-drop-comeback-late", press: "pickandroll-start-active-comeback-late", lineup: "pickandroll-lineup-late", chain: "pickandroll-lineup-late-chain" },
@@ -613,40 +614,56 @@
     return (steps.comebacks || [])[0] || null;
   }
 
-  /** The steps of a comeback's move, alone: he moves first, and the recommendation waits for the
-   * roster after the drop (the chain's lineup run). */
+  /** The steps of a comeback's move, alone: the recommendation waits for the roster after the
+   * press (the chain's lineup run). */
   function comebackSteps(steps, back) {
     return { ...steps, steps: [], skipped: [], target: {}, returns: [back], comebacks: [] };
   }
 
-  /** The drop page of a moved comeback, with its pass's fragment; null off a routine's run. */
+  /** The drop page of a comeback, with its pass's fragment; null off a routine's run. */
   function comebackDropUrl(steps, trigger) {
     const chain = COMEBACK_CHAIN[trigger];
     return chain && steps.drop_page ? `${String(steps.drop_page).split("#")[0]}#${chain.drop}` : null;
   }
 
-  /** The steps a run sees once its comeback is out of the way: none left to start, no drop due. */
+  /** The steps a run sees once its comeback is out of the way: none left to start. */
   function comebackDone(steps) {
-    return { ...steps, comebacks: [], pending_drop: false };
+    return { ...steps, comebacks: [] };
   }
 
-  /** Whether the fragment is the pass's lineup run after a drop that was not made. */
+  /** The ``drop_first`` items of the comebacks whose drop is due now, from today's steps read
+   * fresh: every gate of the drop is on the steps (the API's ``comeback_stage``), and a live
+   * lineup run must be able to follow it. Each carries ``back``, my plain team page. */
+  function comebackDrops(steps) {
+    if (lineupMode(steps).mode !== "live" || !steps.drop_page) return [];
+    return (steps.comebacks || [])
+      .filter((c) => c.stage === "drop")
+      .map((c) => ({ entry: c.entry, player: c.drop, slot: null, add: null, comeback: c.player, back: steps.back || null, page: steps.drop_page }));
+  }
+
+  /** Whether the fragment is the pass's lineup run after a step that did not land. */
   function comebackChained(hash) {
     const name = String(hash || "").replace(/^#/, "");
     return Object.values(COMEBACK_CHAIN).some((c) => c.chain === name);
   }
 
-  /** The press after a landed drop: ``back`` is my plain team page, whose post writes the roster,
+  /** The press after his move: ``back`` is my plain team page, whose post writes the roster,
    * which a dated page's does not. */
   function comebackPress(back, trigger) {
     const chain = COMEBACK_CHAIN[trigger];
     return chain && back ? `${String(back).split("#")[0]}#${chain.press}` : null;
   }
 
-  /** The fragment of the pass's lineup run after a drop that was not made. */
+  /** The fragment of the pass's lineup run after a step that did not land. */
   function comebackChainOf(trigger) {
     const chain = COMEBACK_CHAIN[trigger];
     return chain ? chain.chain : null;
+  }
+
+  /** The fragment of the pass's lineup run that takes up his move after a landed drop. */
+  function comebackMoveOf(trigger) {
+    const chain = COMEBACK_CHAIN[trigger];
+    return chain ? chain.lineup : null;
   }
 
   /** The fragment a drop page opened by the chain goes on with when it makes no drop, null on any
@@ -782,6 +799,8 @@
     comebackPress,
     comebackChainOf,
     comebackDone,
+    comebackDrops,
+    comebackMoveOf,
     comebackChained,
     comebackOnward,
     comebackLineupFragment,

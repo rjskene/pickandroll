@@ -25,7 +25,8 @@
     "pickandroll-drop-late": "routine_late",
     "pickandroll-drop-evening": "routine_evening",
     "pickandroll-drop-panel": "panel",
-    // A comeback's chain (#318, lib/lineup.js ``COMEBACK_CHAIN``): the routine's own pass.
+    // A comeback's chain (#318, lib/lineup.js ``COMEBACK_CHAIN``): the routine's own pass. Its
+    // drop comes first, and only such a page takes it: its items are the steps', not the due's.
     "pickandroll-drop-comeback": "routine",
     "pickandroll-drop-comeback-late": "routine_late",
   };
@@ -49,6 +50,8 @@
   /** Yahoo's answer on the landed page: the alert code of a drop, and its notice. */
   const DROP_ERRNO = 933;
   const DROP_NOTICE = /^You have successfully dropped\b/i;
+  /** Yahoo's refusal on the page after the submit, by its error number (#160, #845). */
+  const DROP_REFUSED = /\berror\s*#?\s*\d+/i;
   /** How long the run waits for Yahoo's confirm after the row's button. */
   const DROP_CONFIRM_MS = 15 * 1000;
   /** How long a submit waits for its landed page in the same tab; a drop on record past it whose
@@ -95,12 +98,21 @@
   /** The outcomes after which a drop is never made again that day (the API's ``DROP_STICKS``). */
   const DROP_STICKS = ["dropped", "failed", "unconfirmed"];
 
+  /** Whether the live answer on record (``record``, the worker's) holds the entry's drop from
+   * ``trigger``'s pass that day. A comeback's refused or unread drop holds that pass only: a later
+   * one may try again on the page's own read, and a drop that landed is never made twice. */
+  function dropHolds(record, trigger) {
+    if (!String(record.entry || "").startsWith("comeback:")) return DROP_STICKS.includes(record.outcome);
+    return record.outcome === "dropped" || (DROP_STICKS.includes(record.outcome) && record.trigger === trigger);
+  }
+
   /** Whether the run on record for the item (``record``, the worker's) rules it out of this
-   * visit: a live drop submitted or sticky that day; otherwise a run of this mode logged that day
-   * by this pass (``trigger``), so one pass takes each item once and a later pass retries a skip. */
+   * visit: a live drop submitted or holding (``dropHolds``) that day; otherwise a run of this mode
+   * logged that day by this pass (``trigger``), so one pass takes each item once and a later pass
+   * retries a skip. */
   function ranToday(record, day, mode, trigger) {
     if (!record || record.day !== day) return false;
-    if (record.mode === "live" && (!record.logged || DROP_STICKS.includes(record.outcome))) return true;
+    if (record.mode === "live" && (!record.logged || dropHolds(record, trigger))) return true;
     return record.mode === mode && record.trigger === trigger;
   }
 
@@ -213,15 +225,18 @@
 
   /** Yahoo's answer on the page it landed on after the submit (``raw``: ``{path, alerts, notices,
    * shown}``, where ``alerts`` is the ``_global_alerts`` query value): ``dropped`` with errno 933
-   * saying he was dropped, or the notice; otherwise ``unconfirmed``, never ``dropped``. */
+   * saying he was dropped, or the notice; ``failed`` when the page carries Yahoo's error number;
+   * otherwise ``unconfirmed``, never ``dropped``. */
   function readDropLanded(raw) {
     const codes = alertCodes(raw.alerts);
     const said = codes.find((a) => Number(a.errno) === DROP_ERRNO && /\bdropped\b/i.test((a.params || []).join(" ")));
     const notice = (raw.notices || []).map(squash).find((x) => DROP_NOTICE.test(x));
     const landed = { path: raw.path || null, errnos: codes.map((a) => Number(a.errno)), notice: notice || null, shown: raw.shown ?? null };
     if (said || notice) return { outcome: "dropped", message: notice || squash((said.params || []).join(" ")), landed };
-    const words = [...codes.flatMap((a) => a.params || []), ...(raw.notices || [])].map(squash).filter(Boolean)[0] || null;
-    return { outcome: "unconfirmed", message: words, landed };
+    const words = [...codes.flatMap((a) => a.params || []), ...(raw.notices || [])].map(squash).filter(Boolean);
+    const refused = words.find((x) => DROP_REFUSED.test(x));
+    if (refused) return { outcome: "failed", message: refused, landed };
+    return { outcome: "unconfirmed", message: words[0] || null, landed };
   }
 
   /** The alerts Yahoo put in the landed URL's ``_global_alerts``: "<signature>|<JSON list>". */
@@ -260,7 +275,12 @@
   function landedDrop(record, read, extension = null) {
     const item = { entry: record.entry, player: record.player };
     if (!read) return dropRun({ item, day: record.day, trigger: record.trigger, mode: "live", outcome: "unconfirmed", reason: "submitted; Yahoo's answer was not read", controls: record.controls || null, page: record.page || null, extension });
-    const reason = read.outcome === "dropped" ? null : "the landed page did not say he was dropped (no errno 933, no notice)";
+    const reason =
+      read.outcome === "dropped"
+        ? null
+        : read.outcome === "failed"
+          ? `Yahoo refused the drop: "${read.message}"`
+          : "the landed page did not say he was dropped (no errno 933, no notice)";
     return dropRun({ item, day: record.day, trigger: record.trigger, mode: "live", outcome: read.outcome, reason, message: read.message, controls: record.controls || null, landed: read.landed, page: record.page || null, extension });
   }
 
@@ -325,6 +345,7 @@
     DROP_CONFIRM_MS,
     DROP_STICKS,
     DROP_LANDING_MS,
+    dropHolds,
     dropTriggerOf,
     dropPageOf,
     dropItemFor,

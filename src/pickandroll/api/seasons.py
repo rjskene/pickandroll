@@ -1084,7 +1084,7 @@ class SeasonService:
         wanted = lineup is not None and any(
             a.get("kind") == "cleared" and a.get("drop") is not None for a in lineup["alerts"]
         )
-        comeback = None if stop else self._comeback_gate(league, base, season, today, wanted)
+        comeback = None if stop else self._comeback_gate(league, today, wanted)
         return season_autopilot.steps_payload(
             league, base.my_team_id, day, today, now, lineup, tips, mode, stop, live, comeback
         )
@@ -1118,45 +1118,24 @@ class SeasonService:
         return {int(k) for k in (*((row or {}).get("protected") or ()), *engine)}
 
     def _comeback_gate(
-        self, league: str, base: Any, season: Season, today: date, wanted: bool = True
+        self, league: str, today: date, wanted: bool = True
     ) -> dict[str, Any] | None:
         """What a comeback runs under (#318): None unless the moves switch is live, its guard
         holds and the keep rule reads, the private league never. ``protected`` the players never
-        dropped, ``pending`` the comebacks moved and still to drop, ``moved`` their players.
+        dropped, ``pending`` the comebacks whose drop is on the log and whose move is still due.
         ``wanted`` false: no alert asks for one, so with none pending nothing is built."""
         mode = leagues.executor_mode(self.data_dir, league, leagues.MOVES)
         if mode.get("private") or mode["mode"] != "live":
             return None
         if not season_autopilot.moves_live_check(self.data_dir, league, mode).get("ok"):
             return None
-        pending = self._comebacks_pending(league, base, season, today)
+        pending = season_autopilot.comeback_pending(self.data_dir, league, today)
         if not wanted and not pending:
-            return {"protected": set(), "moved": set(), "pending": []}
+            return {"protected": set(), "pending": []}
         protected = self._comeback_protected(league, today)
         if protected is None:
             return None
-        return {
-            "protected": protected,
-            "moved": {p["player"] for p in pending},
-            "pending": pending,
-        }
-
-    def _comebacks_pending(
-        self, league: str, base: Any, season: Season, today: date
-    ) -> list[dict[str, Any]]:
-        """``season_autopilot.comeback_pending`` on my roster as last read."""
-        me = base.my_team_id
-        spots = season.rosters.get(me) if me is not None else None
-        fetched = season.fetched.get(roster_key(me)) if me is not None else None
-        active = sum(1 for x in base.roster if x.upper() not in mv.HELD)
-        return season_autopilot.comeback_pending(
-            self.data_dir,
-            league,
-            today,
-            season_autopilot.roster_record(spots) if spots else None,
-            fetched[0] if fetched else None,
-            active,
-        )
+        return {"protected": protected, "pending": pending}
 
     def autopilot(self, league: str) -> dict[str, Any]:
         """The Lineup view's executor panel (#170)."""
@@ -1617,9 +1596,6 @@ class SeasonService:
             return closed("STOP is on (data/autopilot/STOP)")
         if day != today:
             return closed("only today's queue executes")
-        # A comeback's drop has no queue entry (#318): it is due with no queue, or nothing else.
-        comebacks = self._comeback_drops(league, base, today)
-        out["drop_first"] = comebacks
         body = self._read_queue(day)
         if body is None:
             return closed("no queue today: the build runs at the end of the morning routine")
@@ -1681,40 +1657,10 @@ class SeasonService:
             "il_first": []
             if blocked
             else self._il_first(league, base, mine, due, pending, adds_left),
-            "drop_first": comebacks
-            + (
-                []
-                if blocked
-                else self._drop_first(league, base, mine, now, pending, adds_left, protected)
-            ),
+            "drop_first": []
+            if blocked
+            else self._drop_first(league, base, mine, now, pending, adds_left, protected),
         }
-
-    def _comeback_drops(self, league: str, base: Any, today: date) -> list[dict[str, Any]]:
-        """The ``drop_first`` items of the comebacks whose player moved (#318), each with
-        ``back``, my plain team page: the chain's way on, whatever the drop's outcome. None under
-        a guard that refuses, and never a player the keep rule protects now."""
-        if base.my_team_id is None:
-            return []
-        try:
-            season = Season.from_parts(base, load_parts(self.data_dir, league))
-        except Exception:  # noqa: BLE001 - no read, no drop
-            return []
-        gate = self._comeback_gate(league, base, season, today)
-        if gate is None:
-            return []
-        return [
-            {
-                "entry": p["entry"],
-                "player": p["drop"],
-                "slot": None,
-                "add": None,
-                "comeback": p["player"],
-                "back": public.team_url(league, base.my_team_id),
-                "page": public.drop_url(league, base.my_team_id),
-            }
-            for p in gate["pending"]
-            if p["drop"] not in gate["protected"]
-        ]
 
     def _drop_first(
         self,
@@ -1946,17 +1892,18 @@ class SeasonService:
             if run.mode == "live"
             else None
         )
-        # The moves on the log, not what is pending: a drop that landed is no longer pending once
-        # the roster is read, and its run is still the league's to log.
-        comebacks = {
-            season_autopilot.comeback_entry(player): move["drop"]
-            for player, move in season_autopilot.comeback_moves(self.data_dir, league).items()
-        }
+        comebacks: dict[str, int] = {}
         if run.outcome != "stopped" and season_autopilot.is_comeback(run.entry):
             keep = self._comeback_protected(league, run.day)
             if keep is None:
                 raise HTTPException(409, season_autopilot.NO_KEEP_RULE)
             protected |= keep
+            # The drop the steps offer: a comeback has no queue entry to name it.
+            try:
+                steps = self.lineup_steps(league, None)
+                comebacks = {c["entry"]: c["drop"] for c in steps["comebacks"]}
+            except Exception:  # noqa: BLE001, S110 - a drop that landed is still logged
+                pass
         why = season_autopilot.check_drop_run(
             run, mode, season_autopilot.stopped(self.data_dir), mine, live, protected, comebacks
         )

@@ -515,7 +515,9 @@ def test_todays_cleared_held_players_with_an_open_spot_return_first_and_the_rest
     assert s["returns"] == [
         {"player": 4, "slot": "IL", "status": None, "tip": "2026-10-26T23:00:00+00:00"}
     ]
-    assert s["skipped"] == [{"reason": ap.NEEDS_DROP, "players": [5], "steps": []}]
+    assert s["skipped"] == [
+        {"reason": ap.NEEDS_DROP, "players": [5], "steps": [], "comeback": True}
+    ]
     assert (s["steps"], s["live"]) == ([], live)
     # Another day's page returns no one: the alerts are today's.
     later = {**lineup, "days": [{**lineup["days"][0], "date": "2026-10-27"}]}
