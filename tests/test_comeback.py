@@ -7,6 +7,7 @@ of it. Nothing here opens a page: the runs are the extension's, faked.
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, date, datetime, timedelta
 
 import pytest
@@ -481,8 +482,8 @@ def test_after_the_drop_the_returned_player_starts_and_no_slot_stays_empty(clien
 
 
 # --------------------------------------------------------------------------- the digest
-def digest(tmp_path, today=DAY) -> list[str]:
-    return ap.comeback_digest_lines(tmp_path, [LEAGUE], today)
+def digest(tmp_path, today=DAY, since=AT - timedelta(hours=1)) -> list[str]:
+    return ap.comeback_digest_lines(tmp_path, [LEAGUE], today, since)
 
 
 def line(words: str) -> list[str]:
@@ -518,7 +519,6 @@ def test_the_digest_says_a_chain_that_ran_whole(tmp_path):
     ap.append_run(tmp_path, LEAGUE, drop_run("dropped"), DAY, ap.DROP)
     ap.append_run(tmp_path, LEAGUE, move_run(), DAY)
     assert digest(tmp_path) == line(f"{STAY} dropped, moved to the bench")
-    assert digest(tmp_path, DAY + timedelta(days=1)) == []
 
 
 def test_the_digest_says_a_drop_that_was_skipped_or_unread(tmp_path):
@@ -543,6 +543,87 @@ def test_the_digest_leaves_the_users_own_comebacks_and_other_groups_to_their_lin
     other = {"reason": "tip-off passed", "players": [1, 2], "steps": []}
     ap.append_run(tmp_path, LEAGUE, run_with(skipped=[held, other]), DAY)
     assert digest(tmp_path) == []
+
+
+def chain(tmp_path, at: datetime, day: date = DAY) -> None:
+    ap.append_run(tmp_path, LEAGUE, drop_run("dropped", at=at), day, ap.DROP)
+    ap.append_run(tmp_path, LEAGUE, move_run(at), day)
+
+
+#: The two digests: the first posted just after AT, the next a day on.
+POSTED, NEXT = AT + timedelta(minutes=5), AT + timedelta(days=1)
+
+
+def test_a_chain_before_the_digest_is_in_that_days_only(tmp_path):
+    chain(tmp_path, AT)
+    assert digest(tmp_path) == line(f"{STAY} dropped, moved to the bench")
+    assert digest(tmp_path, DAY + timedelta(days=1), POSTED) == []
+
+
+def test_a_chain_after_the_digest_is_in_the_next_only_and_names_its_day(tmp_path):
+    chain(tmp_path, AT + timedelta(hours=9))
+    assert digest(tmp_path, DAY + timedelta(days=1), POSTED) == [
+        f"- League {LEAGUE} ({DAY}): comeback of {BACK}: {STAY} dropped, moved to the bench"
+    ]
+    assert digest(tmp_path, DAY + timedelta(days=2), NEXT + timedelta(hours=9)) == []
+
+
+def test_chains_either_side_of_midnight_keep_their_own_lines_earlier_day_first(tmp_path):
+    tomorrow = DAY + timedelta(days=1)
+    chain(tmp_path, AT + timedelta(hours=9))
+    chain(tmp_path, NEXT - timedelta(minutes=30), tomorrow)
+    words = f"comeback of {BACK}: {STAY} dropped, moved to the bench"
+    assert digest(tmp_path, tomorrow, POSTED) == [
+        f"- League {LEAGUE} ({DAY}): {words}",
+        f"- League {LEAGUE}: {words}",
+    ]
+
+
+def test_a_drop_said_in_one_digest_leaves_its_move_to_the_next(tmp_path):
+    ap.append_run(tmp_path, LEAGUE, drop_run("dropped"), DAY, ap.DROP)
+    assert digest(tmp_path) == line(f"{STAY} dropped, move still to make")
+    ap.append_run(tmp_path, LEAGUE, move_run(AT + timedelta(hours=9)), DAY)
+    assert digest(tmp_path, DAY + timedelta(days=1), POSTED) == [
+        f"- League {LEAGUE} ({DAY}): comeback of {BACK}: moved to the bench"
+    ]
+
+
+def test_the_last_digest_is_the_end_of_the_last_daily_that_posted():
+    end = NEXT.isoformat()
+    posted = {"finished_at": end, "steps": {"post": {"status": "ok", "detail": "url"}}}
+    assert ap.last_digest(posted, NEXT + timedelta(days=1)) == NEXT
+
+
+@pytest.mark.parametrize(
+    "marker",
+    [
+        None,
+        {},
+        {"finished_at": AT.isoformat(), "steps": {"post": {"status": "failed", "detail": "gh"}}},
+        {"finished_at": AT.isoformat(), "steps": {"post": {"status": "skipped", "detail": "off"}}},
+        {"finished_at": "not a time", "steps": {"post": {"status": "ok", "detail": "url"}}},
+    ],
+)
+def test_a_daily_that_posted_nothing_reads_two_days_back(marker):
+    assert ap.last_digest(marker, NEXT) == NEXT - ap.DIGEST_BACKSTOP
+
+
+def test_the_digest_route_takes_its_line_from_the_routines_marker(client):
+    now = client.app.state.seasons.clock()
+    today = nba_today(now)
+    late = now - timedelta(hours=3)
+    chain(client.data_dir, late, today - timedelta(days=1))
+    marker = client.data_dir / "routine" / "daily.json"
+    marker.parent.mkdir()
+    posted = {"post": {"status": "ok", "detail": "url"}}
+    marker.write_text(
+        json.dumps({"finished_at": (late - timedelta(hours=1)).isoformat(), "steps": posted})
+    )
+    words = f"comeback of {BACK}: {STAY} dropped, moved to the bench"
+    said = f"- League {LEAGUE} ({today - timedelta(days=1)}): {words}"
+    assert said in client.get("/flags/digest").json()["executor"]
+    marker.write_text(json.dumps({"finished_at": now.isoformat(), "steps": posted}))
+    assert said not in client.get("/flags/digest").json()["executor"]
 
 
 # --------------------------------------------------------------------------- the routine's wait
