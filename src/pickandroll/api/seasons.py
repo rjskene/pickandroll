@@ -92,6 +92,10 @@ Routes:
     comment for #127 (``comment``: counts and ratios, leagues by id, no team or league name, no
     projection number); once a Monday (``?force=true`` undoes that Monday's change and runs
     again), ``?dry_run=true`` writes nothing.
+``GET /history``
+    Every move and trade in every league, the private one too, newest first, with why each was
+    made and how it came out (#334, ``season_history``); ``?league=``, ``?from=`` and ``?to=``
+    narrow it. It joins what is already on disk and writes nothing.
 ``GET /flags/digest``
     The day's breakout flags across every league with a season: each league's flagged players
     with their evidence, and the digest as markdown for a public issue (leagues by id, no team
@@ -158,6 +162,7 @@ from . import (
     season_decisions,
     season_flags,
     season_hillclimb,
+    season_history,
     season_knobs,
     season_lineup,
     season_matchup,
@@ -2531,6 +2536,42 @@ class SeasonService:
         )
         return {**out, "generated_at": self.clock().isoformat()}
 
+    def history(
+        self,
+        league: str | None = None,
+        start: date | None = None,
+        end: date | None = None,
+    ) -> dict[str, Any]:
+        """The History screen (#334): every move and trade in every league, the private one too,
+        each with why it was made and how it came out; reads only. A league that does not read
+        leaves the others, and says so."""
+        today = nba_today(self.clock())
+        queue = season_history.queue_entries(self.data_dir)
+        rows: list[dict[str, Any]] = []
+        names: dict[str, str] = {}
+        skipped: list[dict[str, str]] = []
+        for lg in leagues.leagues(self.data_dir):
+            if league is not None and lg != league:
+                continue
+            try:
+                base, _ = base_settings(self.data_dir, lg)
+                got, said = season_history.league_rows(
+                    lg,
+                    Season.from_parts(base, load_parts(self.data_dir, lg)),
+                    season_dir(self.data_dir, lg),
+                    self.data_dir,
+                    queue.get(lg, ()),
+                    today,
+                    season_decisions.TRANSACTIONS_TZ,
+                )
+            except Exception as exc:  # noqa: BLE001 - one league's failure leaves the others
+                skipped.append({"league": lg, "reason": _failure(exc)})
+                continue
+            rows += got
+            names |= said
+        out = season_history.payload(rows, names, league, start, end, skipped)
+        return {**out, "generated_at": self.clock().isoformat()}
+
     def monday(
         self, monday: date | None = None, dry_run: bool = False, force: bool = False
     ) -> dict[str, Any]:
@@ -3275,6 +3316,19 @@ def register(
         """The hill-climb over the season (#129): every league's weeks against their
         projection, pooled, the moves, the knob changes and the Monday notes; reads only."""
         return await asyncio.to_thread(service.progress, system)
+
+    history_league_q = Query(None, description="one league; every league by default")
+    history_from_q = Query(None, alias="from", description="the first day")
+    history_to_q = Query(None, alias="to", description="the last day")
+
+    @app.get("/history")
+    async def get_history(
+        league: str | None = history_league_q,
+        start: date | None = history_from_q,
+        end: date | None = history_to_q,
+    ) -> dict[str, Any]:
+        """Every move and trade, why it was made and how it came out (#334); reads only."""
+        return await asyncio.to_thread(service.history, league, start, end)
 
     monday_q = Query(None, description="the Monday; this week's by default")
 

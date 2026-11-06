@@ -10,6 +10,7 @@ import KeySheet from "./components/KeySheet";
 import Rail from "./components/Rail";
 import Landing from "./components/Landing";
 import ProgressScreen from "./components/ProgressScreen";
+import HistoryScreen from "./components/HistoryScreen";
 import QueueScreen from "./components/QueueScreen";
 import SeasonScreen from "./components/SeasonScreen";
 import ExplainScreen from "./explain/ExplainScreen";
@@ -210,6 +211,8 @@ export default function App() {
   const [progress, setProgress] = useState(() => location.pathname === view("progress"));
   // The Queue screen (#194) at /queue, wired like Progress; opening one closes the other.
   const [queue, setQueue] = useState(() => location.pathname === view("queue"));
+  // The History screen (#334) at /history, wired like the Queue.
+  const [record, setRecord] = useState(() => location.pathname === view("history"));
   // The Explain screen (#283) at /explain, its place (track and step) in the hash.
   const [explain, setExplain] = useState(() => location.pathname === view("explain"));
   const [solveEvents, setSolveEvents] = useState<SolveEvent[]>([]);
@@ -242,7 +245,7 @@ export default function App() {
 
   // A live room opens straight into its draft the first time the page loads without a session
   // (#74); "switch draft" comes back to the landing page and stays there.
-  const autoOpened = useRef(!!sessionId || !!leagueId || progress || queue || explain);
+  const autoOpened = useRef(!!sessionId || !!leagueId || progress || queue || record || explain);
   const rooms = useQuery({ queryKey: ["rooms"], queryFn: api.rooms, enabled: !sessionId, refetchInterval: 5000 });
   useEffect(() => {
     if (autoOpened.current || sessionId || !rooms.data) return;
@@ -258,10 +261,10 @@ export default function App() {
     if (leagueId && !sessionId) url.searchParams.set("league", leagueId);
     else url.searchParams.delete("league");
     url.pathname =
-      sessionId || leagueId ? BASE_PATH : progress ? view("progress") : queue ? view("queue") : explain ? view("explain") : BASE_PATH;
+      sessionId || leagueId ? BASE_PATH : progress ? view("progress") : queue ? view("queue") : record ? view("history") : explain ? view("explain") : BASE_PATH;
     if (!explain) url.hash = "";
     history.replaceState(null, "", url);
-  }, [sessionId, leagueId, progress, queue, explain]);
+  }, [sessionId, leagueId, progress, queue, record, explain]);
 
   // Live feed: any pick (manual, simulated or from Yahoo) invalidates the board, picks and
   // session; a finished background solve invalidates the recommendation and the score. A Yahoo
@@ -328,19 +331,28 @@ export default function App() {
     setLeagueId(null);
     setLeagueView(null);
     setQueue(false);
+    setRecord(false);
     setExplain(false);
     setProgress(true);
   };
   const openQueue = () => {
     setProgress(false);
+    setRecord(false);
     setExplain(false);
     setQueue(true);
+  };
+  const openHistory = () => {
+    setProgress(false);
+    setQueue(false);
+    setExplain(false);
+    setRecord(true);
   };
   const openExplain = () => {
     setLeagueId(null);
     setLeagueView(null);
     setProgress(false);
     setQueue(false);
+    setRecord(false);
     setExplain(true);
   };
   const openLeague = (league: string, view?: SeasonViewId) => {
@@ -358,6 +370,7 @@ export default function App() {
     setLeagueView(null);
     setProgress(false);
     setQueue(false);
+    setRecord(false);
     setExplain(false);
   };
   if (!sessionId && leagueId)
@@ -366,9 +379,10 @@ export default function App() {
     );
   if (!sessionId && progress) return <ProgressScreen onBack={() => setProgress(false)} onOpenLeague={setLeagueId} onExplain={openExplain} />;
   if (!sessionId && queue) return <QueueScreen onBack={() => setQueue(false)} onOpenLeague={(league) => openLeague(league)} onProgress={openProgress} onExplain={openExplain} />;
+  if (!sessionId && record) return <HistoryScreen onBack={() => setRecord(false)} onOpenLeague={(league) => openLeague(league)} onProgress={openProgress} onExplain={openExplain} />;
   if (!sessionId && explain) return <ExplainScreen onBack={() => setExplain(false)} onProgress={openProgress} />;
   if (!sessionId || !session.data)
-    return <Landing onOpenLeague={openLeague} onOpenSession={setSessionId} onProgress={openProgress} onQueue={openQueue} onExplain={openExplain} error={session.error} />;
+    return <Landing onOpenLeague={openLeague} onOpenSession={setSessionId} onProgress={openProgress} onQueue={openQueue} onHistory={openHistory} onExplain={openExplain} error={session.error} />;
   return (
     <DraftProvider
       session={session.data}

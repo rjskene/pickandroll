@@ -26,7 +26,14 @@ def test_the_api_serves_the_dashboard_build_under_app(tmp_path):
     data.mkdir()
     with TestClient(create_app(SessionStore(), data_dir=data, web_dist=build(tmp_path))) as c:
         # the page, for every path the app keeps a view in, with its queries
-        for path in ("/app", "/app/", "/app/progress", "/app/queue", "/app/?league=31822"):
+        for path in (
+            "/app",
+            "/app/",
+            "/app/progress",
+            "/app/queue",
+            "/app/history",
+            "/app/?league=31822",
+        ):
             r = c.get(path, headers=HTML)
             assert r.status_code == 200, path
             assert r.text.startswith("<!doctype html>") and "text/html" in r.headers["content-type"]

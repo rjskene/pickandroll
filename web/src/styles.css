@@ -185,6 +185,13 @@ button.primary kbd { background: rgba(0, 0, 0, 0.18); border-color: rgba(0, 0, 0
 .qs-chip .mode-switch { align-items: flex-start; }
 .qs-chip .mode-switch .lv-note { text-align: left; }
 .qs-section { display: grid; gap: 8px; }
+.hs-filters { flex-wrap: wrap; gap: 6px 14px; }
+.hs-filters label { display: inline-flex; align-items: center; gap: 6px; }
+.hs-table tr.hs-row { cursor: pointer; }
+.hs-table tr.hs-why td { padding: 8px 12px 10px 24px; background: var(--panel-2); white-space: normal; }
+.hs-table tr.hs-why p { margin: 0 0 3px; line-height: 1.45; }
+.hs-table td.good { color: var(--good); }
+.hs-table td.bad { color: var(--bad); }
 details.qs-section > summary { cursor: pointer; }
 .qs-scroll { overflow-x: auto; }
 .qs-table td { font-size: 12px; }

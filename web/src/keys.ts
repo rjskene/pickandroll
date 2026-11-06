@@ -656,9 +656,9 @@ export const PROGRESS_SHEET: Sheet = {
 };
 
 // ---------------------------------------------------------------- the landing and the Queue screen (#194)
-/** The landing's one key: ``q`` opens the Queue screen, unless a field has focus or ``openQueue``
- * is null (the drafts drawer is open). */
-export function landingKeys(openQueue: (() => void) | null): KeyMap {
+/** The landing's keys: ``q`` opens the Queue screen and ``h`` the History screen, unless a field
+ * has focus or the opener is null (the drafts drawer is open). */
+export function landingKeys(openQueue: (() => void) | null, openHistory: (() => void) | null = null): KeyMap {
   return {
     cards: 0,
     openCard: () => {},
@@ -670,11 +670,15 @@ export function landingKeys(openQueue: (() => void) | null): KeyMap {
         if (field || !openQueue) return false;
         openQueue();
       },
+      h: ({ field }) => {
+        if (field || !openHistory) return false;
+        openHistory();
+      },
     },
   };
 }
 
-/** The Queue screen's key: Esc goes back. */
+/** The Queue and History screens' key: Esc goes back. */
 export function queueKeys(back: () => void): KeyMap {
   return { cards: 0, openCard: () => {}, sheetOpen: false, setSheetOpen: () => {}, escape: back, keys: {} };
 }

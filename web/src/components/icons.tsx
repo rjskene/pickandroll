@@ -293,6 +293,16 @@ export function ProgressIcon() {
   );
 }
 
+/** History, the record of every move (#334): a clock. */
+export function HistoryIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" {...stroke} aria-hidden="true">
+      <circle cx="12" cy="12" r="9" />
+      <path d="M12 7v5l3 2" />
+    </svg>
+  );
+}
+
 /** Explain, the walkthrough (#283): an open book. */
 export function ExplainIcon() {
   return (

@@ -757,6 +757,74 @@ export interface SeasonTeamRef {
 }
 
 /** One league folder's season for the landing page's Leagues section. */
+/** One step of a comeback's chain or an IL move (#334). */
+export interface HistoryStep {
+  stage: string;
+  player: number | null;
+  outcome: string | null;
+  at: string | null;
+  words: string | null;
+}
+
+/** Why a row of the History screen happened: the fields of its kind. */
+export interface HistoryWhy {
+  /** A note instead of a reason: no record, or a trade, which logs none. */
+  note?: string;
+  set?: string | null;
+  step?: number | null;
+  steps_of?: number | null;
+  week?: number | null;
+  three?: number | null;
+  season?: number | null;
+  matchup?: number | null;
+  against?: number | null;
+  bid_reason?: string | null;
+  /** A move by hand against the latest recommendation (``decisions.match``). */
+  match?: "as_recommended" | "differently" | "not_recommended" | "no_entry";
+  entry?: string | null;
+  move?: { add: number; drop: number | null } | null;
+  /** A comeback's need in words, or the claim an IL move opened a spot for. */
+  need?: string | { for: number | null; slot: string | null };
+  from?: string | null;
+  steps?: HistoryStep[];
+}
+
+export interface HistorySide {
+  player: number;
+  name: string;
+  side: "got" | "gave" | null;
+  detail: string | null;
+}
+
+export interface HistoryRow {
+  id: string;
+  league: string;
+  date: string | null;
+  at: string | null;
+  kind: "claim" | "free_agent" | "drop" | "trade" | "comeback" | "il";
+  /** Who moved, in a comeback or an IL move. */
+  player: number | null;
+  add: number | null;
+  drop: number | null;
+  sides: HistorySide[] | null;
+  bid: number | null;
+  result: "won" | "lost" | "lapsed" | "landed" | "by hand" | "pending" | "partial";
+  who: string | null;
+  /** A trade the page could not place on a team. */
+  unread: boolean;
+  why: HistoryWhy;
+}
+
+export interface HistoryPayload {
+  rows: HistoryRow[];
+  names: Record<string, string>;
+  kinds: HistoryRow["kind"][];
+  results: HistoryRow["result"][];
+  first_record: string;
+  skipped: { league: string; reason: string }[];
+  generated_at: string;
+}
+
 export interface SeasonSummary {
   league: string;
   name: string | null;
@@ -2792,6 +2860,7 @@ export const api = {
     request<AutopilotView>(`/leagues/${encodeURIComponent(league)}/lineups`, { method: "PUT", body: JSON.stringify({ mode }) }),
   /** A day's queue of the moves executor (#171), today's by default; reads only. */
   queue: (date?: string) => request<QueuePayload>(`/autopilot/queue${date ? `?date=${date}` : ""}`),
+  history: () => request<HistoryPayload>("/history"),
   /** The user's veto: strike a queue entry, or its bid alone, or undo either. */
   strike: (id: string, body: { bid_only?: boolean; undo?: boolean }) =>
     request<QueuePayload>(`/autopilot/queue/${encodeURIComponent(id)}/strike`, { method: "POST", body: JSON.stringify(body) }),
