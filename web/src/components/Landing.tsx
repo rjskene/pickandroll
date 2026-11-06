@@ -10,7 +10,7 @@ import ExecuteTime from "./ExecuteTime";
 import LeagueGrid from "./LeagueGrid";
 import { useLandingOrder } from "./landingOrder";
 import AppBarLead from "./AppBarLead";
-import { ExplainIcon } from "./icons";
+import { ExplainIcon, HistoryIcon } from "./icons";
 import { OverviewStatus } from "./StatusLight";
 import Wordmark from "./Wordmark";
 import { POOLED, rangeSum, recordLabel, scopeWeeks } from "../progress";
@@ -36,6 +36,7 @@ export default function Landing({
   onOpenSession,
   onProgress,
   onQueue,
+  onHistory,
   onExplain,
   error,
 }: {
@@ -43,6 +44,7 @@ export default function Landing({
   onOpenSession: (id: string) => void;
   onProgress: () => void;
   onQueue: () => void;
+  onHistory: () => void;
   onExplain: () => void;
   error: Error | null;
 }) {
@@ -69,7 +71,7 @@ export default function Landing({
     setDrawer("new");
   };
   const closeDrawer = useCallback(() => setDrawer(null), []);
-  useHotkeys(landingKeys(drawer ? null : onQueue));
+  useHotkeys(landingKeys(drawer ? null : onQueue, drawer ? null : onHistory));
   const ready = leagues.data !== undefined || leagues.isError;
   const page = pageFor(layout, leagues.data ?? [], rooms.data ?? [], now);
   const soon = draftsAhead(leagues.data ?? [], rooms.data ?? [], now).filter((l) => l.draft_time && Date.parse(l.draft_time) < now + DRAFT_SEASON_DAYS * 86_400_000);
@@ -85,9 +87,12 @@ export default function Landing({
             <button className="icon" onClick={onExplain} aria-label="Explain" title="Explain: how the draft, the moves and the day work">
               <ExplainIcon />
             </button>
+            <button className="icon" onClick={onHistory} aria-label="History" title="History: every move and trade, and why (h)">
+              <HistoryIcon />
+            </button>
           </>
         ) : (
-          <AppBarLead onHome={closeDrawer} status={<OverviewStatus leagues={shown} now={now} />} onProgress={onProgress} onExplain={onExplain} />
+          <AppBarLead onHome={closeDrawer} status={<OverviewStatus leagues={shown} now={now} />} onProgress={onProgress} onExplain={onExplain} onHistory={onHistory} />
         )}
         <span className="grow" />
         <span className="modeswitch">

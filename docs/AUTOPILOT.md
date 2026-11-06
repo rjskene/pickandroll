@@ -329,6 +329,16 @@ page, from PR 2:
     (`superseded_at`, the first rebuild that dropped it). It holds no place, is never due and
     has nothing to strike. If a later solve recommends it again, it is queued again with a new
     hour. The Monday re-solve's rebuild does the same. `struck` is set by the user alone.
+- **The History screen (#334).** `/history`, from the landing's app bar or `h` there, Esc to go
+  back. Every move and trade in every league, the private one too, newest first, filtered by league,
+  kind and result; a row opens to why it was made. `GET /history` reads only and writes nothing: it
+  joins my transactions from the week records and the latest snapshot (a group once, trades
+  included), the queue's day files (so a claim that never landed is a row, lost or lapsed), the run
+  logs (comebacks and IL moves) and the decision log (a move by hand against the latest
+  recommendation, through `decisions.match`, with the figures the scorecard reads). A claim the
+  queue stopped looking at, past `PENDING_DAYS` with nothing settled, reads lapsed. No trade has
+  been seen live: a trade the page cannot place on a team is shown as an unread trade, and a trade's
+  reason is not logged. Moves before 2026-10-24 have no queue record, and say so.
 - **The Queue screen (#194).** `/queue`, from the landing's Queue line or `q` there (not from a
   field or a select): every league's proposed moves of the day in one view. It reads
   `GET /autopilot/queue` every minute and never solves, builds or executes; its only writes are

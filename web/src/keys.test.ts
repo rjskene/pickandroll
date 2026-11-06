@@ -569,6 +569,11 @@ test("the landing's q opens the Queue screen, but not from a field, a select or 
   for (const target of [field, time, checkbox, select]) assert.equal(handleKey(key("q", { target }), map), false, target.type ?? target.tagName);
   assert.equal(handleKey(key("q", { metaKey: true }), map), false);
   assert.equal(handleKey(key("q"), landingKeys(null)), false);
+  let history = 0;
+  assert.equal(handleKey(key("h"), landingKeys(null, () => history++)), true);
+  assert.equal(history, 1);
+  assert.equal(handleKey(key("h"), landingKeys(() => {}, null)), false);
+  assert.equal(handleKey(key("h", { target: { tagName: "INPUT" } }), landingKeys(null, () => history++)), false);
   assert.equal(opened, 2);
   let back = 0;
   assert.equal(handleKey(key("Escape"), queueKeys(() => back++)), true);
