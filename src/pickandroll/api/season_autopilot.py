@@ -87,6 +87,14 @@ NEEDS_DROP = "needs a drop: the comeback is the moves queue's"
 #: A comeback's drop's entry in the drop log (#318): it has no queue entry.
 COMEBACK = "comeback"
 NO_KEEP_RULE = "the keep rule did not read: a comeback's drop never runs without it"
+#: A comeback's two stages (#318): his drop is due, or it landed and his move off the IL is.
+DROP_STAGE = "drop"
+MOVE_STAGE = "move"
+#: How long a landed drop waits for its move. Past it the entry is a comeback of its own: a player
+#: who left the IL by hand and came back to it later needs a drop of his own.
+COMEBACK_SPAN = timedelta(days=7)
+#: What a comeback's digest line keeps of Yahoo's words.
+COMEBACK_WORDS = 200
 #: The digest counts the runs of the last day.
 DIGEST_SPAN = timedelta(hours=24)
 
@@ -151,11 +159,11 @@ def steps_payload(
     needs it to hold, else the page runs dry (#170 PR 3). ``returns`` are today's held players
     whose status cleared and whose comeback has an open active spot (the lineup's ``cleared``
     alerts with no drop), each ``{player, slot, status, tip}``: a live run moves each to the bench
-    first. One whose comeback needs a drop is under ``comebacks`` with its ``drop`` when
-    ``comeback`` (:func:`comeback_gate`, None outside a live moves league) lets it run (#318): the
-    run moves him alone, then the drop page takes the drop; else under ``skipped`` with why.
-    ``drop_page`` is the drop page to open when a moved player's drop is still to make
-    (``pending_drop``)."""
+    first. One whose comeback needs a drop is under ``comebacks`` with its ``drop``, ``entry`` and
+    ``stage`` when ``comeback`` (``Seasons._comeback_gate``, None outside a live moves league) lets
+    it run (#318, :func:`comeback_stage`): at ``drop`` the run goes to ``drop_page`` first, and
+    only a read that shows the drop gone puts him at ``move``, alone, then the press on ``back``,
+    my plain team page. Else he is under ``skipped`` with why, marked ``comeback``."""
     out: dict[str, Any] = {
         "league": league,
         "team": team,
@@ -176,8 +184,8 @@ def steps_payload(
         "live": dict(live) if live is not None and mode["mode"] == "live" else None,
         "returns": [],
         "comebacks": [],
-        "pending_drop": False,
         "drop_page": public.drop_url(league, team) if team is not None else None,
+        "back": public.team_url(league, team) if team is not None else None,
     }
 
     def closed(reason: str) -> dict[str, Any]:
@@ -185,10 +193,6 @@ def steps_payload(
 
     if mode.get("private"):
         return closed("the private league is never touched")
-    if comeback is not None and day == today:
-        out["pending_drop"] = any(
-            p["drop"] not in comeback["protected"] for p in comeback.get("pending") or ()
-        )
     if team is None:
         return closed("no team of mine in this league")
     days = {d["date"]: d for d in (lineup or {}).get("days", [])}
@@ -219,24 +223,40 @@ def steps_payload(
         return None if k is None else tip_at(tips, players.get(str(k), {}).get("nba_team"))
 
     if day == today:
+        landed = {p["player"]: p for p in (comeback or {}).get("pending") or ()}
         for a in lineup.get("alerts", []):
             if a.get("kind") != "cleared":
                 continue
             t = tip(a["player"])
-            if a.get("drop") is not None:
-                why = comeback_refused(a, t, now, comeback)
-                if why is not None:
-                    out["skipped"].append({"reason": why, "players": [a["player"]], "steps": []})
-                    continue
-                out["comebacks"].append(
-                    {
-                        "player": a["player"],
-                        "slot": a["slot"],
-                        "status": a.get("status"),
-                        "tip": t.isoformat() if t is not None else None,
-                        "drop": a["drop"],
-                    }
+            mine = landed.get(a["player"])
+            if a.get("drop") is not None or mine is not None:
+                drop = mine["drop"] if mine is not None else a["drop"]
+                stage, why = comeback_stage(
+                    a,
+                    mine,
+                    (t, tip(drop)),
+                    now,
+                    comeback,
+                    tips is not None,
+                    out["yahoo"],
+                    _at(d["yahoo"]["read_at"]),
                 )
+                if why is not None:
+                    out["skipped"].append(
+                        {"reason": why, "players": [a["player"]], "steps": [], "comeback": True}
+                    )
+                elif stage is not None:
+                    out["comebacks"].append(
+                        {
+                            "player": a["player"],
+                            "slot": a["slot"],
+                            "status": a.get("status"),
+                            "tip": t.isoformat() if t is not None else None,
+                            "drop": drop,
+                            "entry": comeback_entry(a["player"]),
+                            "stage": stage,
+                        }
+                    )
                 continue
             out["returns"].append(
                 {
@@ -292,25 +312,51 @@ def steps_payload(
     return out
 
 
-def comeback_refused(
+def comeback_stage(
     alert: Mapping[str, Any],
-    tip: datetime | None,
+    landed: Mapping[str, Any] | None,
+    tips: tuple[datetime | None, datetime | None],
     now: datetime,
     gate: Mapping[str, Any] | None,
-) -> str | None:
-    """Why a cleared player whose comeback needs a drop does not run now (#318), None when he
-    does: outside a live moves league under its guard (``gate`` None) he is the user's, as
-    before; a drop the keep rule or Yahoo protects is no legal drop; a game that began fixes his
-    slot, so he waits for the next day his page allows; a move on the log is done."""
+    tips_read: bool,
+    yahoo: Mapping[str, str],
+    read_at: datetime | None,
+) -> tuple[str | None, str | None]:
+    """Where a cleared player's comeback stands now (#318), as ``(stage, why not)``: drop first,
+    since Yahoo refuses his move while the roster is over its size (Error #160), and his move only
+    once the day's page, read after the drop (``read_at``, ``yahoo``), no longer shows the drop. A
+    drop already gone by hand goes straight to the move; one on the log (``landed``) that the page
+    still shows is never made again, unless Yahoo's answer was never read, when the page says it
+    did not land. Off the held slots on that page he is done, with neither. Every gate of a drop
+    holds here, before its first click: outside a live moves league under its guard (``gate``
+    None) he is the user's, as before; the day's tip-offs unread, or a game of his or the drop's
+    that began, waits; a drop the keep rule or Yahoo protects is no legal drop."""
     if gate is None:
-        return NEEDS_DROP
-    if alert["player"] in gate.get("moved", ()):
-        return "his move is on the log: the drop follows"
-    if alert["drop"] in gate.get("protected", ()):
-        return f"no legal drop: {alert['drop']} is protected, never dropped"
-    if tip is not None and tip <= now:
-        return "his game began: the comeback waits for the next day his page allows"
-    return None
+        return None, NEEDS_DROP
+    if str(yahoo.get(str(alert["player"]), "")).upper() not in lu.HELD_SLOTS:
+        return None, None
+    if not tips_read:
+        return None, "the day's tip-offs are not read: a comeback waits for them"
+    his, its = tips
+    if his is not None and his <= now:
+        return None, "his game began: the comeback waits for the next day his page allows"
+    drop = landed["drop"] if landed is not None else alert["drop"]
+    shown = str(drop) in yahoo
+    if landed is not None:
+        at = _at(landed.get("at"))
+        if read_at is None or at is None or read_at < at:
+            return None, f"no read since {drop}'s drop: his move waits for one"
+        if not shown:
+            return MOVE_STAGE, None
+        if landed.get("outcome") == "dropped":
+            return None, f"{drop}'s drop is on the log and the page still shows him: no second drop"
+    elif not shown:
+        return MOVE_STAGE, None
+    if drop in gate.get("protected", ()):
+        return None, f"no legal drop: {drop} is protected, never dropped"
+    if its is not None and its <= now:
+        return None, f"{drop}'s game began: his drop waits for the next day"
+    return DROP_STAGE, None
 
 
 def comeback_entry(player: int) -> str:
@@ -321,13 +367,6 @@ def comeback_entry(player: int) -> str:
 def is_comeback(entry: str | None) -> bool:
     """Whether a drop log's ``entry`` is a comeback's."""
     return str(entry or "").startswith(f"{COMEBACK}:")
-
-
-def _since_move(day: date, run: Mapping[str, Any], move: Mapping[str, Any]) -> bool:
-    """Whether the logged ``run`` of ``day`` came after the comeback's ``move``: a player may go
-    back on the IL and clear again, and an earlier stint's drop says nothing of this one."""
-    at, moved = _at(run.get("at")), _at(move.get("at"))
-    return at >= moved if at is not None and moved is not None else day >= move["day"]
 
 
 def comeback_moves(data_dir: Path, league: str) -> dict[int, dict[str, Any]]:
@@ -347,43 +386,40 @@ def comeback_moves(data_dir: Path, league: str) -> dict[int, dict[str, Any]]:
     return out
 
 
-def comeback_pending(
-    data_dir: Path,
-    league: str,
-    today: date,
-    roster: Mapping[str, list[int]] | None,
-    read_at: datetime | None,
-    spots: int,
-) -> list[dict[str, Any]]:
-    """The drops of comebacks that moved and were not dropped (#318), the log's own record: a
-    partial run picks up here and never makes a second drop. Each is ``{player, drop, entry}``.
-    Left out, each drop taken since his latest move only: one dropped; one whose drop failed or
-    went unconfirmed today (never retried that day). Also left out, on a roster read after the
-    move, one whose drop has gone or whose roster is no longer over the active spots (a hand fix:
-    dropping now would be a drop nobody needs). With no such read yet, only a move made today
-    stands."""
+def comeback_pending(data_dir: Path, league: str, today: date) -> list[dict[str, Any]]:
+    """The moves of comebacks whose drop is on the log (#318), the log's own record: a partial run
+    resumes at the move and never makes a second drop. Each is ``{player, drop, entry, at,
+    outcome}``, from the entry's latest live answer of the last :data:`COMEBACK_SPAN`: ``dropped``,
+    or ``unconfirmed``, which only a read can settle (:func:`comeback_stage`). Left out, a drop
+    that a move set after it, or that a later run says was refused. What the roster shows now
+    is for :func:`comeback_stage`, on the page's own read."""
     moves = comeback_moves(data_dir, league)
-    if not moves:
-        return []
-    drops = [(d, r) for d, r in runs(data_dir, league, DROP) if r.get("mode") == "live"]
-    out = []
-    for player, move in moves.items():
-        entry = comeback_entry(player)
-        since = [(d, r) for d, r in drops if r.get("entry") == entry and _since_move(d, r, move)]
-        if any(
-            r.get("outcome") == "dropped" or (d == today and r.get("outcome") in DROP_STICKS)
-            for d, r in since
+    latest: dict[str, dict[str, Any]] = {}
+    for day, r in runs(data_dir, league, DROP):
+        if (
+            r.get("mode") == "live"
+            and is_comeback(r.get("entry"))
+            and r.get("outcome") in DROP_STICKS
+            and day >= today - COMEBACK_SPAN
         ):
+            latest[str(r["entry"])] = r
+    out = []
+    for entry, r in latest.items():
+        if r["outcome"] == "failed":
             continue
-        at = _at(move.get("at"))
-        if read_at is not None and at is not None and read_at > at:
-            players = set((roster or {}).get("players") or ())
-            held = set((roster or {}).get("held") or ())
-            if move["drop"] not in players or len(players - held) <= spots:
-                continue
-        elif move["day"] != today:
+        player = int(entry.split(":")[1])
+        at, moved = _at(r.get("at")), _at((moves.get(player) or {}).get("at"))
+        if at is not None and moved is not None and moved >= at:
             continue
-        out.append({"player": player, "drop": move["drop"], "entry": entry})
+        out.append(
+            {
+                "player": player,
+                "drop": int(r["player"]),
+                "entry": entry,
+                "at": r.get("at"),
+                "outcome": r["outcome"],
+            }
+        )
     return out
 
 
@@ -413,7 +449,7 @@ class StepRun(BaseModel):
     group: int | None = None
     #: A swap of the steps, or a cleared held player's return to the bench (#170 PR 3).
     kind: Literal["swap", "return"] = "swap"
-    #: A comeback's return (#318): the player the drop page drops once he is off the IL.
+    #: A comeback's return (#318): the player whose drop came first, off the roster by now.
     drop: int | None = None
     outcome: Literal["would_set", "skipped", "set", "failed"]
     reason: str | None = None
@@ -861,9 +897,11 @@ def check_drop_run(
     comebacks: Mapping[str, int] | None = None,
 ) -> str | None:
     """Why the log refuses a drop run, None when it takes it: the moves executor's own rules
-    (:func:`check_moves_run`), and the held drop the queue's churn names or the pending comeback's
-    drop (``comebacks``, entry to drop, #318), nothing else. ``queue`` is the day's entries of the
-    league by id; ``protected`` the players the keep rule keeps now."""
+    (:func:`check_moves_run`), and the held drop the queue's churn names or the comeback's
+    (``comebacks``, entry to drop as the steps offer it now, #318), nothing else. A comeback's
+    drop the steps no longer offer is still taken when it says what landed: the roster may have
+    been read since, and its record is what stops a second drop. ``queue`` is the day's entries
+    of the league by id; ``protected`` the players the keep rule keeps now."""
     if mode.get("private"):
         return "the private league is never touched"
     if stop and run.outcome != "stopped":
@@ -884,9 +922,9 @@ def check_drop_run(
         return "a drop run names its entry and its player"
     if is_comeback(run.entry):
         drop = (comebacks or {}).get(run.entry)
-        if drop is None:
-            return f"{run.entry} has no drop pending"
-        if run.player != drop:
+        if drop is None and run.outcome not in ("dropped", "unconfirmed"):
+            return f"{run.entry} has no drop due"
+        if drop is not None and run.player != drop:
             return f"{run.entry} names another drop than the comeback's"
         if run.outcome in ("would_drop", "dropped") and run.player in set(protected):
             return f"{run.player} is protected: never dropped"
@@ -945,7 +983,7 @@ class StartActiveRun(BaseModel):
     mode: Literal["dry_run", "live"]
     #: ``after_lineup``: pressed on the team page right after a live lineup run set a swap (#289);
     #: ``after_add``: kept for an add that lands at once (none does in a live league today);
-    #: ``after_comeback``: between a comeback's drop and the pass's lineup run (#318).
+    #: ``after_comeback``: between a comeback's move and the pass's lineup run (#318).
     trigger: Literal[
         "routine",
         "routine_late",
@@ -1315,30 +1353,57 @@ def digest_lines(
     return lines
 
 
+def _comeback_why(step: Mapping[str, Any]) -> str:
+    """`` (Yahoo's words, else the reason)`` of a comeback's step, nothing with neither."""
+    words = str(step.get("message") or step.get("reason") or "").strip()
+    return f" ({words[:COMEBACK_WORDS]})" if words else ""
+
+
 def comeback_digest_lines(data_dir: Path, leagues_: Iterable[str], today: date) -> list[str]:
-    """The digest's line per league for a comeback of ``today`` (#318), each step on the log: who
-    moved, who was dropped or why not, and a move still waiting for its drop. Leagues by id."""
+    """The digest's line per league for a comeback of ``today`` (#318), each step on the log,
+    whatever its outcome: who was dropped or why not, who moved or why not, a landed drop whose
+    move is still to make, and why a comeback that ran no step did not. Leagues by id."""
     lines = []
     for lg in sorted(leagues_):
-        moves = {p: m for p, m in comeback_moves(data_dir, lg).items() if m["day"] == today}
+        moves: dict[int, Mapping[str, Any]] = {}
+        held: dict[int, str] = {}
+        for d, run in lineup_runs(data_dir, lg):
+            if d != today or run.get("mode") != "live":
+                continue
+            for s in run.get("steps") or []:
+                if s.get("kind") == "return" and s.get("drop") is not None:
+                    moves[int(s["player"])] = s
+            for g in run.get("skipped") or []:
+                if g.get("comeback") and g.get("reason") != NEEDS_DROP:
+                    held |= {int(k): str(g["reason"]) for k in g.get("players") or ()}
         drops = {
-            r.get("entry"): r
+            int(str(r["entry"]).split(":")[1]): r
             for d, r in runs(data_dir, lg, DROP)
-            if d == today and str(r.get("entry") or "").startswith(f"{COMEBACK}:")
+            if d == today and r.get("mode") == "live" and is_comeback(r.get("entry"))
         }
         parts = []
-        for player, move in moves.items():
-            run = drops.get(comeback_entry(player))
-            outcome = (run or {}).get("outcome")
-            then = (
-                f"{move['drop']} dropped"
-                if outcome == "dropped"
-                else f"drop of {move['drop']} {outcome}"
-                + (f" ({run.get('reason')})" if run and run.get("reason") else "")
-                if outcome
-                else f"drop of {move['drop']} still to make"
-            )
-            parts.append(f"comeback of {player}: moved to the bench, {then}")
+        for player in sorted({*moves, *drops, *held}):
+            run, move = drops.get(player), moves.get(player)
+            said = []
+            if run is not None:
+                said.append(
+                    f"{run.get('player')} dropped"
+                    if run.get("outcome") == "dropped"
+                    else f"drop of {run.get('player')} {run.get('outcome')}"
+                    + (f" ({str(run['reason'])[:COMEBACK_WORDS]})" if run.get("reason") else "")
+                )
+            if move is not None:
+                said.append(
+                    "moved to the bench"
+                    if move.get("outcome") == "set"
+                    else f"move {move.get('outcome')}{_comeback_why(move)}"
+                )
+            elif run is not None and run.get("outcome") == "dropped":
+                why = f" ({held[player]})" if player in held else ""
+                said.append(f"move still to make{why}")
+            elif run is None:
+                said.append(f"nothing ran ({held[player]})")
+            parts.append(f"comeback of {player}: " + ", ".join(said))
         if parts:
             lines.append(f"- League {lg}: " + "; ".join(parts))
     return lines

@@ -500,7 +500,7 @@ const ops = {
       const key = dropKey(record.entry);
       const prev = (await chrome.storage.local.get(key))[key] || null;
       if (prev && !prev.logged) throw new Error("this drop awaits its log");
-      if (prev && prev.day === record.day && prev.mode === "live" && self.PickAndRoll.DROP_STICKS.includes(prev.outcome)) throw new Error(`this drop is ${prev.outcome} today`);
+      if (prev && prev.day === record.day && prev.mode === "live" && self.PickAndRoll.dropHolds(prev, record.trigger)) throw new Error(`this drop is ${prev.outcome} today`);
       const kept = { ...record, mode: "live", league: String(league), logged: false, tab: sender && sender.tab ? sender.tab.id : null, at: Date.now() };
       await chrome.storage.local.set({ [key]: kept });
       return { kept: true };

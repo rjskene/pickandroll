@@ -338,7 +338,7 @@ MOVES_WAIT_S = 12.0
 #: next. Eight seconds cut five of nine live runs off mid-set on 2026-11-02 (#301): thirty, as
 #: for Start Active, leaves room for several changes.
 LINEUP_WAIT_S = 30.0
-#: A comeback's chain in one tab (#318): the move, the drop page, the press, the lineup run.
+#: A comeback's chain in one tab (#318): the drop page, the move, the press, the lineup run.
 COMEBACK_WAIT_S = 120.0
 
 
@@ -391,7 +391,7 @@ def lineup_plan(
             if not league_page_ok(league, page):
                 skipped.append(f"{league}: page not the league's own ({page!r})")
                 continue
-            chains = len(d.get("comebacks") or ()) + bool(d.get("pending_drop"))
+            chains = len(d.get("comebacks") or ())
             wait = COMEBACK_WAIT_S * chains if chains else LINEUP_WAIT_S
             out.append(Opening(league, "lineup", f"{page}#{fragment}", wait, date=d.get("date")))
     ctx.notes["lineup_skipped"] = skipped

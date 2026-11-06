@@ -632,7 +632,7 @@ const TRIGGER: Record<LineupRunLog["trigger"] | StartActiveRunLog["trigger"], st
   panel: "side panel",
   after_lineup: "after the lineup set",
   after_add: "after an add",
-  after_comeback: "after a comeback's drop",
+  after_comeback: "after a comeback's move",
 };
 
 /** A run in a line: "05:02 · Sat 24 · routine: would set 2 moves", a live run's count the steps

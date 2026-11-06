@@ -1,8 +1,8 @@
-"""A cleared IL player's comeback that needs a drop (#318): the API's half. The steps route offers
-it only in a live moves league under its guard, never with a protected drop or a game begun; the
-league's log says which moved and still owe their drop, the due route and the drop log take it
-from there, and the digest says each step. Nothing here opens a page: the runs are the
-extension's, faked.
+"""A cleared IL player's comeback that needs a drop (#318), drop first: the API's half. The steps
+route offers the drop only in a live moves league under its guard, never with a protected drop or
+a game begun, and his move only once a read after the drop no longer shows it; the league's log
+says which drops landed and still owe their move, and the digest says each step, whatever became
+of it. Nothing here opens a page: the runs are the extension's, faked.
 """
 
 from __future__ import annotations
@@ -17,10 +17,9 @@ from pickandroll.api.seasons import nba_today
 from pickandroll.routine import steps as rs
 from pickandroll.sources.yahoo import public
 from tests.test_held_drop import DUE, URL, drop_body
-from tests.test_il_move import a_player
 from tests.test_lineup import lineup_league, moved
 from tests.test_lineup_executor import benched_thursday, dry_runs, run_body
-from tests.test_moves_queue import PRIVATE, live_league, queued
+from tests.test_moves_queue import PRIVATE, live_league
 from tests.test_season import LEAGUE, NOW, fixture, season_client
 
 DAY = date(2026, 10, 26)
@@ -35,7 +34,13 @@ def client(tmp_path):
         yield c
 
 
-def lineup_page(day: date = DAY) -> dict:
+#: The day's page as read before the drop, and as read after it.
+BEFORE = {"PG": 1, "C": 2, "BN": STAY, "IL": BACK}
+AFTER = {"PG": 1, "C": 2, "IL": BACK}
+READ = "2026-10-26T12:00:00+00:00"
+
+
+def lineup_page(day: date = DAY, spots: dict = BEFORE, read_at: str = READ) -> dict:
     return {
         "rule": {"changes": "daily"},
         "start": DAY.isoformat(),
@@ -53,14 +58,9 @@ def lineup_page(day: date = DAY) -> dict:
                 "past": False,
                 "recommended": [{"slot": "PG", "player": 1}, {"slot": "C", "player": 2}],
                 "yahoo": {
-                    "read_at": "2026-10-26T12:00:00+00:00",
+                    "read_at": read_at,
                     "page": "dated page",
-                    "slots": [
-                        {"slot": "PG", "player": 1},
-                        {"slot": "C", "player": 2},
-                        {"slot": "BN", "player": STAY},
-                        {"slot": "IL", "player": BACK},
-                    ],
+                    "slots": [{"slot": k, "player": v} for k, v in spots.items()],
                 },
                 "start": [],
                 "sit": [],
@@ -72,18 +72,30 @@ def lineup_page(day: date = DAY) -> dict:
 
 
 def gate(**over) -> dict:
-    return {"protected": set(), "moved": set(), "pending": [], **over}
+    return {"protected": set(), "pending": [], **over}
 
 
-def steps(comeback, *, mode=None, stop=False, now=AT, tips=None, day=DAY, today=DAY) -> dict:
+def steps(
+    comeback,
+    *,
+    mode=None,
+    stop=False,
+    now=AT,
+    tips=None,
+    day=DAY,
+    today=DAY,
+    spots=BEFORE,
+    read_at=READ,
+    no_tips=False,
+) -> dict:
     return ap.steps_payload(
         LEAGUE,
         4,
         day,
         today,
         now,
-        lineup_page(day),
-        tips or {},
+        lineup_page(day, spots, read_at),
+        None if no_tips else tips or {},
         mode or {"mode": "live"},
         stop,
         {"ok": True, "reason": None},
@@ -92,25 +104,44 @@ def steps(comeback, *, mode=None, stop=False, now=AT, tips=None, day=DAY, today=
 
 
 # --------------------------------------------------------------------------- the steps
-def test_a_comeback_is_offered_only_under_the_moves_gate():
-    s = steps(gate())
-    assert s["comebacks"] == [
-        {"player": BACK, "slot": "IL", "status": None, "tip": None, "drop": STAY}
+def row(stage: str, drop: int = STAY) -> dict:
+    return {
+        "player": BACK,
+        "slot": "IL",
+        "status": None,
+        "tip": None,
+        "drop": drop,
+        "entry": ENTRY,
+        "stage": stage,
+    }
+
+
+def landed(outcome: str = "dropped", at: datetime = AT - timedelta(hours=2)) -> list[dict]:
+    return [
+        {"player": BACK, "drop": STAY, "entry": ENTRY, "at": at.isoformat(), "outcome": outcome}
     ]
-    assert (s["skipped"], s["returns"], s["pending_drop"]) == ([], [], False)
+
+
+def test_a_comeback_starts_at_its_drop_and_only_under_the_moves_gate():
+    s = steps(gate())
+    assert s["comebacks"] == [row("drop")]
+    assert (s["skipped"], s["returns"]) == ([], [])
+    assert s["drop_page"] == public.drop_url(LEAGUE, 4)
+    assert s["back"] == public.team_url(LEAGUE, 4)
     # Outside a live moves league he stays the user's.
     s = steps(None)
     assert s["comebacks"] == []
-    assert s["skipped"] == [{"reason": ap.NEEDS_DROP, "players": [BACK], "steps": []}]
+    assert s["skipped"] == [
+        {"reason": ap.NEEDS_DROP, "players": [BACK], "steps": [], "comeback": True}
+    ]
 
 
 def test_the_private_league_and_stop_run_no_comeback():
     assert steps(gate(), mode={"mode": "off", "private": True})["comebacks"] == []
     assert steps(gate(), stop=True)["comebacks"] == []
-    pending = [{"player": BACK, "drop": STAY, "entry": ENTRY}]
-    assert (
-        steps(gate(pending=pending), mode={"mode": "off", "private": True})["pending_drop"] is False
-    )
+    done = gate(pending=landed())
+    assert steps(done, mode={"mode": "off", "private": True}, spots=AFTER)["comebacks"] == []
+    assert steps(done, stop=True, spots=AFTER)["comebacks"] == []
 
 
 def test_no_legal_drop_skips_with_the_reason_and_never_offers_the_comeback():
@@ -121,6 +152,7 @@ def test_no_legal_drop_skips_with_the_reason_and_never_offers_the_comeback():
             "reason": f"no legal drop: {STAY} is protected, never dropped",
             "players": [BACK],
             "steps": [],
+            "comeback": True,
         }
     ]
 
@@ -134,17 +166,60 @@ def test_a_game_that_began_waits_for_the_next_day_his_page_allows():
     assert steps(gate(), tips={"NYK": (AT + timedelta(hours=1)).isoformat()})["comebacks"]
     later = DAY + timedelta(days=1)
     assert steps(gate(), day=later)["comebacks"] == []
+    # A landed drop's move waits the same way.
+    s = steps(gate(pending=landed()), tips={"NYK": tip.isoformat()}, spots=AFTER)
+    assert s["comebacks"] == []
+    assert s["skipped"][0]["reason"].startswith("his game began")
 
 
-def test_a_moved_player_is_not_moved_again_and_his_drop_is_due():
-    pending = [{"player": BACK, "drop": STAY, "entry": ENTRY}]
-    s = steps(gate(moved={BACK}, pending=pending))
-    assert (s["comebacks"], s["pending_drop"]) == ([], True)
-    assert s["drop_page"] == public.drop_url(LEAGUE, 4)
-    assert s["skipped"][0]["reason"] == "his move is on the log: the drop follows"
-    # A drop protected since is no drop due.
-    s = steps(gate(moved={BACK}, pending=pending, protected={STAY}))
-    assert s["pending_drop"] is False
+def test_a_drop_never_runs_blind_to_the_clock():
+    s = steps(gate(), no_tips=True)
+    assert s["comebacks"] == []
+    assert "tip-offs are not read" in s["skipped"][0]["reason"]
+    # The drop's own game began: he waits too.
+    tip = AT - timedelta(minutes=1)
+    s = steps(gate(), tips={"BOS": tip.isoformat()})
+    assert s["comebacks"] == []
+    assert s["skipped"][0]["reason"] == f"{STAY}'s game began: his drop waits for the next day"
+
+
+def test_a_landed_drop_resumes_at_the_move_once_a_read_confirms_it():
+    # The page read after the drop no longer shows him: the move, never a second drop.
+    assert steps(gate(pending=landed()), spots=AFTER)["comebacks"] == [row("move")]
+    # A read from before the drop confirms nothing.
+    s = steps(gate(pending=landed(at=AT)), spots=AFTER)
+    assert s["comebacks"] == []
+    assert s["skipped"][0]["reason"] == f"no read since {STAY}'s drop: his move waits for one"
+    # A drop on the log that the page still shows: no move, and no second drop.
+    s = steps(gate(pending=landed()))
+    assert s["comebacks"] == []
+    assert "no second drop" in s["skipped"][0]["reason"]
+
+
+def test_an_unread_drop_is_settled_by_the_page():
+    # Gone: it landed, and the move goes on.
+    assert steps(gate(pending=landed("unconfirmed")), spots=AFTER)["comebacks"] == [row("move")]
+    # Still there: it did not land, so the drop is due again, under every gate.
+    assert steps(gate(pending=landed("unconfirmed")))["comebacks"] == [row("drop")]
+    keep = gate(pending=landed("unconfirmed"), protected={STAY})
+    assert steps(keep)["comebacks"] == []
+
+
+def test_the_page_ends_or_resumes_a_comeback_changed_by_hand():
+    # The drop gone by hand: straight to the move, nothing to drop.
+    assert steps(gate(), spots=AFTER)["comebacks"] == [row("move")]
+    # He left the IL by hand: nothing is due, before or after the drop.
+    off = {"PG": 1, "C": 2, "BN": BACK, "UTIL": STAY}
+    assert steps(gate(), spots=off)["comebacks"] == []
+    assert steps(gate(pending=landed()), spots=off)["comebacks"] == []
+    assert steps(gate(pending=landed()), spots={"PG": 1, "C": 2})["comebacks"] == []
+
+
+def test_a_drop_of_the_player_himself_is_a_drop_and_then_nothing():
+    page = lineup_page()
+    page["alerts"][0]["drop"] = BACK
+    args = (LEAGUE, 4, DAY, DAY, AT, page, {}, {"mode": "live"}, False, {"ok": True}, gate())
+    assert [c["stage"] for c in ap.steps_payload(*args)["comebacks"]] == ["drop"]
 
 
 # --------------------------------------------------------------------------- the league's log
@@ -156,124 +231,108 @@ def move_run(at: datetime = AT, outcome: str = "set", drop: int | None = STAY) -
     }
 
 
-def drop_run(outcome: str, entry: str = ENTRY) -> dict:
-    return {"at": AT.isoformat(), "mode": "live", "entry": entry, "outcome": outcome}
+def drop_run(outcome: str, entry: str = ENTRY, at: datetime = AT, player: int = STAY) -> dict:
+    return {
+        "at": at.isoformat(),
+        "mode": "live",
+        "entry": entry,
+        "player": player,
+        "outcome": outcome,
+    }
 
 
-def roster(*players: int, held: tuple[int, ...] = ()) -> dict:
-    return {"players": list(players), "held": list(held)}
+def pending(tmp_path, today=DAY):
+    return ap.comeback_pending(tmp_path, LEAGUE, today)
 
 
-def pending(tmp_path, roster_=None, read_at=None, spots=2, today=DAY):
-    return ap.comeback_pending(tmp_path, LEAGUE, today, roster_, read_at, spots)
+def entry_of(outcome: str) -> list[dict]:
+    return landed(outcome, AT)
 
 
-def test_only_a_set_comeback_move_of_a_live_run_is_on_the_log(tmp_path):
-    ap.append_run(tmp_path, LEAGUE, move_run(outcome="skipped"), DAY)
-    ap.append_run(tmp_path, LEAGUE, move_run(drop=None), DAY)
-    ap.append_run(tmp_path, LEAGUE, {**move_run(), "mode": "dry_run"}, DAY)
+def test_a_landed_drop_owes_its_move(tmp_path):
     assert pending(tmp_path) == []
-    ap.append_run(tmp_path, LEAGUE, move_run(), DAY)
-    assert pending(tmp_path) == [{"player": BACK, "drop": STAY, "entry": ENTRY}]
+    ap.append_run(tmp_path, LEAGUE, drop_run("dropped"), DAY, ap.DROP)
+    assert pending(tmp_path) == entry_of("dropped")
 
 
-def test_a_landed_move_with_a_failed_drop_resumes_at_the_drop_and_never_drops_twice(tmp_path):
-    ap.append_run(tmp_path, LEAGUE, move_run(), DAY)
-    # A skip stays due: the next pass takes it.
+def test_only_a_live_drop_that_may_have_landed_is_on_the_log(tmp_path):
+    ap.append_run(tmp_path, LEAGUE, {**drop_run("dropped"), "mode": "dry_run"}, DAY, ap.DROP)
     ap.append_run(tmp_path, LEAGUE, drop_run("skipped"), DAY, ap.DROP)
-    assert [p["entry"] for p in pending(tmp_path)] == [ENTRY]
-    # A failure is not made again that day, and is the next day.
     ap.append_run(tmp_path, LEAGUE, drop_run("failed"), DAY, ap.DROP)
+    ap.append_run(tmp_path, LEAGUE, drop_run("dropped", entry="c-1"), DAY, ap.DROP)
     assert pending(tmp_path) == []
+    ap.append_run(tmp_path, LEAGUE, drop_run("unconfirmed"), DAY, ap.DROP)
+    assert pending(tmp_path) == entry_of("unconfirmed")
+
+
+def test_a_refused_drop_leaves_the_comeback_to_a_later_pass(tmp_path):
+    ap.append_run(tmp_path, LEAGUE, drop_run("failed"), DAY, ap.DROP)
+    # Nothing landed: the steps offer the drop again, and the worker holds this pass only.
+    assert pending(tmp_path) == []
+    assert steps(gate(pending=pending(tmp_path)))["comebacks"] == [row("drop")]
+
+
+def test_a_refused_move_after_a_landed_drop_resumes_at_the_move(tmp_path):
+    ap.append_run(tmp_path, LEAGUE, drop_run("dropped"), DAY, ap.DROP)
+    ap.append_run(tmp_path, LEAGUE, move_run(AT + timedelta(minutes=1), "failed"), DAY)
+    ap.append_run(tmp_path, LEAGUE, move_run(AT + timedelta(minutes=2), "skipped"), DAY)
     later = DAY + timedelta(days=1)
-    over = roster(1, 2, STAY, BACK)
-    read = AT + timedelta(hours=2)
-    assert [p["entry"] for p in pending(tmp_path, over, read, 3, later)] == [ENTRY]
-    # Once dropped, never again.
-    ap.append_run(tmp_path, LEAGUE, drop_run("dropped"), later, ap.DROP)
-    assert pending(tmp_path, over, read, 3, later) == []
+    assert pending(tmp_path, later) == entry_of("dropped")
+    # Only a set move ends it.
+    ap.append_run(tmp_path, LEAGUE, move_run(AT + timedelta(days=1)), later)
+    assert pending(tmp_path, later) == []
+
+
+def test_no_drop_is_made_twice_on_the_log(tmp_path):
+    ap.append_run(tmp_path, LEAGUE, drop_run("dropped"), DAY, ap.DROP)
+    # On this pass or the next, on the read that confirms it: the move, no drop stage.
+    for today in (DAY, DAY + timedelta(days=1)):
+        fresh = (AT + timedelta(minutes=1)).isoformat()
+        s = steps(gate(pending=pending(tmp_path, today)), spots=AFTER, read_at=fresh)
+        assert [c["stage"] for c in s["comebacks"]] == ["move"]
 
 
 def test_a_second_stint_is_a_comeback_of_its_own_and_drops_again(tmp_path):
-    ap.append_run(tmp_path, LEAGUE, move_run(), DAY)
     ap.append_run(tmp_path, LEAGUE, drop_run("dropped"), DAY, ap.DROP)
+    ap.append_run(tmp_path, LEAGUE, move_run(AT + timedelta(minutes=5)), DAY)
     assert pending(tmp_path) == []
-    # Back on the IL, cleared again: his new move owes a new drop.
+    # Back on the IL, cleared again: nothing on the log answers for this stint.
     later = DAY + timedelta(days=9)
+    assert steps(gate(pending=pending(tmp_path, later)))["comebacks"] == [row("drop")]
+    # His new drop owes its own move.
     again = AT + timedelta(days=9)
-    ap.append_run(tmp_path, LEAGUE, move_run(again, drop=2), later)
-    assert pending(tmp_path, today=later) == [{"player": BACK, "drop": 2, "entry": ENTRY}]
-    # An earlier failure the same day is no answer to it, nor an earlier stint's.
-    ap.append_run(tmp_path, LEAGUE, {**drop_run("failed"), "at": AT.isoformat()}, later, ap.DROP)
-    assert [p["drop"] for p in pending(tmp_path, today=later)] == [2]
-    # His own drop ends it.
-    done = {**drop_run("dropped"), "at": (again + timedelta(minutes=1)).isoformat()}
-    ap.append_run(tmp_path, LEAGUE, done, later, ap.DROP)
-    assert pending(tmp_path, today=later) == []
+    ap.append_run(tmp_path, LEAGUE, drop_run("dropped", at=again, player=2), later, ap.DROP)
+    assert [p["drop"] for p in pending(tmp_path, later)] == [2]
 
 
-def test_a_hand_fix_read_after_the_move_ends_the_comeback(tmp_path):
-    ap.append_run(tmp_path, LEAGUE, move_run(), DAY)
-    read = AT + timedelta(hours=1)
-    # Over the active spots with his drop still here: due.
-    assert pending(tmp_path, roster(1, 2, STAY, BACK), read, 3)
-    # The drop already gone, or the roster back within its spots: dropping would be a loss.
-    assert pending(tmp_path, roster(1, 2, BACK), read, 3) == []
-    assert pending(tmp_path, roster(1, STAY, BACK), read, 3) == []
-    # With no read since the move, only today's move stands.
-    earlier = AT - timedelta(hours=1)
-    assert pending(tmp_path, roster(1, 2, BACK), earlier, 3)
-    assert pending(tmp_path, roster(1, 2, BACK), earlier, 3, DAY + timedelta(days=1)) == []
+def test_a_landed_drop_with_no_move_goes_stale(tmp_path):
+    ap.append_run(tmp_path, LEAGUE, drop_run("dropped"), DAY, ap.DROP)
+    assert pending(tmp_path, DAY + ap.COMEBACK_SPAN)
+    assert pending(tmp_path, DAY + ap.COMEBACK_SPAN + timedelta(days=1)) == []
 
 
-# --------------------------------------------------------------------------- due and the drop log
-def a_moved_comeback(client) -> tuple[date, int]:
-    """A live league with a comeback of ``BACK`` moved today, its drop (a player of the fixture)
-    still to go."""
-    queued(client)
-    drop = a_player(client)[0]
-    live_league(client)
+# --------------------------------------------------------------------------- the drop log
+def test_the_due_route_never_lists_a_comebacks_drop(client):
+    cleared_on_the_il(client)
+    assert client.get(f"/seasons/{LEAGUE}/lineup/steps").json()["comebacks"]
+    assert [x["entry"] for x in client.get(DUE).json()["drop_first"]] == []
+
+
+def test_the_drop_log_takes_the_offered_drop_and_refuses_any_other(client):
+    player, drop = cleared_on_the_il(client)
     today = nba_today(NOW)
-    ap.append_run(client.data_dir, LEAGUE, move_run(NOW + timedelta(minutes=5), drop=drop), today)
-    return today, drop
-
-
-def test_the_due_route_names_the_drop_first_with_the_way_back(client):
-    _, drop = a_moved_comeback(client)
-    d = client.get(DUE).json()
-    assert d["drop_first"] == [
-        {
-            "entry": ENTRY,
-            "player": drop,
-            "slot": None,
-            "add": None,
-            "comeback": BACK,
-            "back": public.team_url(LEAGUE, 4),
-            "page": public.drop_url(LEAGUE, 4),
-        }
-    ]
-
-
-def test_the_drop_log_takes_the_comebacks_drop_and_refuses_any_other(client):
-    today, drop = a_moved_comeback(client)
-    body = drop_body(ENTRY, drop, day=today.isoformat(), mode="live", outcome="dropped")
+    entry = ap.comeback_entry(player)
+    body = drop_body(entry, drop, day=today.isoformat(), mode="live", outcome="failed")
     other = client.post(URL, json={**body, "player": drop + 1})
     assert other.status_code == 409 and "another drop" in other.json()["detail"]
-    nobody = client.post(URL, json={**body, "entry": ap.comeback_entry(BACK + 1)})
-    assert nobody.status_code == 409 and nobody.json()["detail"].endswith("has no drop pending")
-    client.app.state.seasons.clock = lambda: NOW + timedelta(minutes=10)
+    nobody = client.post(URL, json={**body, "entry": ap.comeback_entry(player + 1)})
+    assert nobody.status_code == 409 and nobody.json()["detail"].endswith("has no drop due")
     r = client.post(URL, json=body)
     assert r.status_code == 200, r.text
-    assert client.get(DUE).json()["drop_first"] == []
-
-
-def test_stop_and_the_private_league_have_no_comeback_drop(client):
-    a_moved_comeback(client)
-    (client.data_dir / "autopilot").mkdir(exist_ok=True)
-    (client.data_dir / "autopilot" / "STOP").write_text("")
-    assert client.get(DUE).json().get("drop_first", []) == []
-    (client.data_dir / "autopilot" / "STOP").unlink()
-    assert client.get(f"/seasons/{PRIVATE}/autopilot/moves/due").json().get("drop_first", []) == []
+    # A drop that landed is logged whatever the steps say by now: it is what stops a second one.
+    landed_ = {**body, "entry": ap.comeback_entry(player + 1), "outcome": "dropped"}
+    r = client.post(URL, json=landed_)
+    assert r.status_code == 200, r.text
 
 
 def no_build(*_args, **_kw):
@@ -293,13 +352,13 @@ def cleared_on_the_il(client) -> tuple[int, int]:
     return alert["player"], alert["drop"]
 
 
-def test_the_steps_route_offers_a_real_comeback_and_never_without_the_keep_rule(
-    client, monkeypatch
-):
+def test_the_steps_route_offers_a_real_drop_and_never_without_the_keep_rule(client, monkeypatch):
     player, drop = cleared_on_the_il(client)
     url = f"/seasons/{LEAGUE}/lineup/steps"
     s = client.get(url).json()
-    assert [(c["player"], c["drop"]) for c in s["comebacks"]] == [(player, drop)]
+    assert [(c["player"], c["drop"], c["stage"]) for c in s["comebacks"]] == [
+        (player, drop, "drop")
+    ]
     # The keep rule does not read, the rest of the page does: he stays the user's.
     monkeypatch.setattr(season_queue, "protected_of", no_build)
     s = client.get(url).json()
@@ -310,19 +369,31 @@ def test_the_steps_route_offers_a_real_comeback_and_never_without_the_keep_rule(
 def test_the_comeback_sees_at_least_what_the_days_queue_protects(client, monkeypatch):
     player, drop = cleared_on_the_il(client)
     seasons = client.app.state.seasons
-    row = {"league": LEAGUE, "protected": {str(drop): "kept by the queue"}}
-    monkeypatch.setattr(seasons, "_read_queue", lambda _day: {"leagues": [row]})
+    row_ = {"league": LEAGUE, "protected": {str(drop): "kept by the queue"}}
+    monkeypatch.setattr(seasons, "_read_queue", lambda _day: {"leagues": [row_]})
     s = client.get(f"/seasons/{LEAGUE}/lineup/steps").json()
     assert s["comebacks"] == []
     assert s["skipped"][0]["reason"] == f"no legal drop: {drop} is protected, never dropped"
     assert s["skipped"][0]["players"] == [player]
 
 
-def test_no_keep_rule_no_drop_due_and_none_on_the_log(client, monkeypatch):
-    today, drop = a_moved_comeback(client)
-    monkeypatch.setattr(client.app.state.seasons, "_built", no_build)
-    assert client.get(DUE).json().get("drop_first", []) == []
-    body = drop_body(ENTRY, drop, day=today.isoformat(), mode="live", outcome="dropped")
+def test_stop_and_the_private_league_offer_no_comeback_drop(client):
+    cleared_on_the_il(client)
+    (client.data_dir / "autopilot").mkdir(exist_ok=True)
+    (client.data_dir / "autopilot" / "STOP").write_text("")
+    assert client.get(f"/seasons/{LEAGUE}/lineup/steps").json()["comebacks"] == []
+    (client.data_dir / "autopilot" / "STOP").unlink()
+    assert client.get(f"/seasons/{PRIVATE}/lineup/steps").json().get("comebacks", []) == []
+
+
+def test_no_keep_rule_no_drop_offered_and_none_on_the_log(client, monkeypatch):
+    player, drop = cleared_on_the_il(client)
+    monkeypatch.setattr(season_queue, "protected_of", no_build)
+    assert client.get(f"/seasons/{LEAGUE}/lineup/steps").json()["comebacks"] == []
+    today = nba_today(NOW)
+    body = drop_body(
+        ap.comeback_entry(player), drop, day=today.isoformat(), mode="live", outcome="dropped"
+    )
     r = client.post(URL, json=body)
     assert r.status_code == 409 and r.json()["detail"] == ap.NO_KEEP_RULE
     # Saying it stopped needs no rule.
@@ -385,20 +456,68 @@ def test_after_the_drop_the_returned_player_starts_and_no_slot_stays_empty(clien
 
 
 # --------------------------------------------------------------------------- the digest
-def test_the_digest_says_each_step_of_a_comeback(tmp_path):
-    ap.append_run(tmp_path, LEAGUE, move_run(), DAY)
-    assert ap.comeback_digest_lines(tmp_path, [LEAGUE], DAY) == [
-        f"- League {LEAGUE}: comeback of {BACK}: moved to the bench, drop of {STAY} still to make"
-    ]
-    ap.append_run(tmp_path, LEAGUE, {**drop_run("skipped"), "reason": "no row"}, DAY, ap.DROP)
-    assert ap.comeback_digest_lines(tmp_path, [LEAGUE], DAY) == [
-        f"- League {LEAGUE}: comeback of {BACK}: moved to the bench, drop of {STAY} skipped (no row)"
-    ]
+def digest(tmp_path, today=DAY) -> list[str]:
+    return ap.comeback_digest_lines(tmp_path, [LEAGUE], today)
+
+
+def line(words: str) -> list[str]:
+    return [f"- League {LEAGUE}: comeback of {BACK}: {words}"]
+
+
+def run_with(steps_: list[dict] = (), skipped: list[dict] = ()) -> dict:
+    return {"at": AT.isoformat(), "mode": "live", "steps": list(steps_), "skipped": list(skipped)}
+
+
+def test_the_digest_says_a_refused_drop(tmp_path):
+    run = {**drop_run("failed"), "reason": 'Yahoo refused the drop: "Error #845"'}
+    ap.append_run(tmp_path, LEAGUE, run, DAY, ap.DROP)
+    assert digest(tmp_path) == line(f'drop of {STAY} failed (Yahoo refused the drop: "Error #845")')
+
+
+def test_the_digest_says_a_refused_move_with_yahoos_words(tmp_path):
     ap.append_run(tmp_path, LEAGUE, drop_run("dropped"), DAY, ap.DROP)
-    assert ap.comeback_digest_lines(tmp_path, [LEAGUE], DAY) == [
-        f"- League {LEAGUE}: comeback of {BACK}: moved to the bench, {STAY} dropped"
-    ]
-    assert ap.comeback_digest_lines(tmp_path, [LEAGUE], DAY + timedelta(days=1)) == []
+    assert digest(tmp_path) == line(f"{STAY} dropped, move still to make")
+    step = {**move_run(outcome="failed")["steps"][0], "message": "Error #160"}
+    ap.append_run(tmp_path, LEAGUE, run_with([step]), DAY)
+    assert digest(tmp_path) == line(f"{STAY} dropped, move failed (Error #160)")
+
+
+def test_the_digest_says_a_move_that_failed_with_no_drop_on_the_log(tmp_path):
+    # The first live run, drop still second: four leagues, and no line for any of them.
+    step = {**move_run(outcome="failed")["steps"][0], "reason": 'Yahoo answered: "Error #160"'}
+    ap.append_run(tmp_path, LEAGUE, run_with([step]), DAY)
+    assert digest(tmp_path) == line('move failed (Yahoo answered: "Error #160")')
+
+
+def test_the_digest_says_a_chain_that_ran_whole(tmp_path):
+    ap.append_run(tmp_path, LEAGUE, drop_run("dropped"), DAY, ap.DROP)
+    ap.append_run(tmp_path, LEAGUE, move_run(), DAY)
+    assert digest(tmp_path) == line(f"{STAY} dropped, moved to the bench")
+    assert digest(tmp_path, DAY + timedelta(days=1)) == []
+
+
+def test_the_digest_says_a_drop_that_was_skipped_or_unread(tmp_path):
+    ap.append_run(tmp_path, LEAGUE, {**drop_run("skipped"), "reason": "no row"}, DAY, ap.DROP)
+    assert digest(tmp_path) == line(f"drop of {STAY} skipped (no row)")
+    ap.append_run(tmp_path, LEAGUE, drop_run("unconfirmed"), DAY, ap.DROP)
+    assert digest(tmp_path) == line(f"drop of {STAY} unconfirmed")
+
+
+def test_the_digest_says_why_a_comeback_ran_no_step(tmp_path):
+    why = f"no legal drop: {STAY} is protected, never dropped"
+    held = {"reason": why, "players": [BACK], "steps": [], "comeback": True}
+    ap.append_run(tmp_path, LEAGUE, run_with(skipped=[held]), DAY)
+    assert digest(tmp_path) == line(f"nothing ran ({why})")
+    # A held move says why it waits; a player the user keeps is the Lineup alert's, not a line here.
+    ap.append_run(tmp_path, LEAGUE, drop_run("dropped"), DAY, ap.DROP)
+    assert digest(tmp_path) == line(f"{STAY} dropped, move still to make ({why})")
+
+
+def test_the_digest_leaves_the_users_own_comebacks_and_other_groups_to_their_lines(tmp_path):
+    held = {"reason": ap.NEEDS_DROP, "players": [BACK], "steps": [], "comeback": True}
+    other = {"reason": "tip-off passed", "players": [1, 2], "steps": []}
+    ap.append_run(tmp_path, LEAGUE, run_with(skipped=[held, other]), DAY)
+    assert digest(tmp_path) == []
 
 
 # --------------------------------------------------------------------------- the routine's wait
@@ -423,14 +542,14 @@ def test_a_lineup_page_with_a_comeback_stays_open_for_its_chain():
 
     assert waits(body) == [rs.LINEUP_WAIT_S]
     assert waits({**body, "comebacks": [{"player": BACK}]}) == [rs.COMEBACK_WAIT_S]
-    assert waits({**body, "comebacks": [{}, {}], "pending_drop": True}) == [3 * rs.COMEBACK_WAIT_S]
+    assert waits({**body, "comebacks": [{}, {}]}) == [2 * rs.COMEBACK_WAIT_S]
 
 
 def test_the_press_of_a_chain_is_a_trigger_of_its_own():
     assert "after_comeback" in ap.StartActiveRun.model_fields["trigger"].annotation.__args__
 
 
-def test_the_lineup_log_takes_a_comeback_move_and_says_its_drop_is_due(client):
+def test_the_lineup_log_takes_a_comeback_move_and_ends_its_pending_drop(client):
     benched_thursday(client)
     dry_runs(client, days=7, checked=2)
     assert client.put(f"/leagues/{LEAGUE}/lineups", json={"mode": "live"}).status_code == 200
@@ -450,3 +569,4 @@ def test_the_lineup_log_takes_a_comeback_move_and_says_its_drop_is_due(client):
     assert r.json()["steps"][0]["drop"] == STAY
     moves = ap.comeback_moves(client.data_dir, LEAGUE)
     assert moves[BACK]["drop"] == STAY
+    assert ap.comeback_pending(client.data_dir, LEAGUE, nba_today(NOW)) == []
