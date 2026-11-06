@@ -50,6 +50,7 @@ from ..season import Season
 from ..season import autopilot as qa
 from ..season import moves as mv
 from ..season import progress as pg
+from ..season.state import roster_key
 from . import season_scorecard
 from .season_knobs import autopilot_dir
 from .season_week import NBA_TZ
@@ -350,18 +351,26 @@ def resolutions(
     season: Season, entries: Iterable[Mapping[str, Any]], today: date
 ) -> dict[str, str]:
     """The placed claims the league's transactions now settle, by entry id: ``won`` when my team
-    added the player on or after the claim's day, ``lost`` when another team did."""
+    added the player on or after the claim's day, ``lost`` when another team did. On a build after
+    the clear day (the day's own build reads that morning's run first), on a transactions and a
+    roster page both read after it, the player on my roster is ``won`` and a claim nothing settles
+    is ``lapsed`` (#324): a stale read settles nothing, ``PENDING_DAYS`` staying the backstop."""
     me = season.settings.my_team_id
+    roster = frozenset(s.player.yahoo_id for s in season.my_roster)
+    reads = [season.fetched.get(k) for k in ("transactions", roster_key(me))]
+    days = [r[0].astimezone(NBA_TZ).date() if r else None for r in reads]
     out = {}
     for e in entries:
         since = day_of(e["id"])
+        clear = date.fromisoformat(e["from"]) if e.get("from") else since
+        overdue = clear is not None and all(d is not None and d > clear for d in (today, *days))
         added, elsewhere = set(), set()
         for t in season.transactions:
             when = mv.when_date(t.when, today)
             if t.kind != "add" or when is None or (since is not None and when < since):
                 continue
             (added if t.team_id == me else elsewhere).add(t.player.yahoo_id)
-        result = qa.resolve(e, frozenset(added), frozenset(elsewhere))
+        result = qa.resolve(e, frozenset(added), frozenset(elsewhere), roster, overdue)
         if result is not None:
             out[e["id"]] = result
     return out

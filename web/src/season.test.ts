@@ -1828,6 +1828,7 @@ test("the Queue card says what the moves executor does, each entry's state and b
   assert.equal(queueStateText({ ...e, struck: true }, now), "struck");
   assert.equal(queueStateText(e, now + 3_600_000), "due at the next pass");
   assert.equal(queueStateText({ ...e, outcome: "claimed", resolved: "won" }, now), "claimed, won");
+  assert.equal(queueStateText({ ...e, outcome: "claimed", resolved: "lapsed" }, now), "claimed, lapsed");
   assert.equal(queueStateText({ ...e, outcome: "gone", outcome_reason: null }, now), "gone: another team had him first");
   assert.equal(queueStateText({ ...e, queued: false, reason: "below the noise floor", floor: { ...floor, below: "scored" } }, now), "below the scored floor");
   assert.equal(queueStateText({ ...e, queued: false, reason: "over the day's cap" }, now), "over the day's cap");

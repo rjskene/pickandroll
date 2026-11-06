@@ -1319,8 +1319,9 @@ export interface QueueEntry {
   outcome_reason: string | null;
   outcome_at: string | null;
   bid_placed?: number | null;
-  /** A placed claim the morning after, from the transactions. */
-  resolved: "won" | "lost" | null;
+  /** A placed claim the morning after, from the transactions; `lapsed` past its clear day with
+   * no transaction to settle it and the player not on my roster (#324). */
+  resolved: "won" | "lost" | "lapsed" | null;
   /** The latest pass line naming the entry on the queue's day (#200), read from the league's log;
    * null when no pass has read it, absent from a server before it. */
   pass?: QueuePass | null;

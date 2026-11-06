@@ -413,7 +413,12 @@ page, from PR 2:
   the moment it is placed (a claim placed and not yet processed counts, won or not; the next
   build reads the adds used from the page and the transactions); the day's cap, the knob's
   `daily_cap` unless the user set the league's own (`PUT /leagues/{league}/moves` `{mode, cap}`).
-  A placed claim is resolved `won` or `lost` from the transactions at the next build.
+  A placed claim is resolved `won` or `lost` from the transactions at the next build. On a build
+  after its clear day (its `from`, else its queue day), on transactions and roster pages read after
+  that day, the player on my roster is `won` whatever the transactions show, and a claim nothing
+  settles is `lapsed` (#324): neither a win nor a loss, it takes no add and holds its player no
+  longer. The clear day's own build stays pending, and so does any build on an older read; the
+  seven days the build looks back stay the backstop.
 - **What the extension reads.** `GET /seasons/{league}/autopilot/moves/due`: the entries due now
   with the bid to place and the add page, my team, the players protected and why (the build's and
   the engine's now: the page check refuses a protected drop whatever the queue says), the claims
