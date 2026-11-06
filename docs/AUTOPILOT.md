@@ -804,7 +804,10 @@ In the model's terms, carried by #124:
   a comeback changed by hand: the drop already gone goes straight to the move, and a player off the
   held slots needs nothing more. Only a `set` move ends a landed drop, so a second IL stint is a
   comeback of its own. The digest has a line per comeback, whatever became of it: dropped, moved, or
-  why not, in Yahoo's words where it answered.
+  why not, in Yahoo's words where it answered. Each run is in the first digest posted after it
+  (#325), the last one read from the daily's marker, and a line from an earlier day names that day.
+  A daily that posted nothing sends the next digest two days back, so a line may repeat but no chain
+  goes unsaid.
 - An absence shorter than a week keeps a player on the bench, not on waivers: a player who is
   better than the best available add over the rest of the season and returns within seven days is
   not a drop candidate for that solve, protected or not. A replacement-level player out for a few
