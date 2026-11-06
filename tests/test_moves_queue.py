@@ -432,6 +432,71 @@ def test_the_queue_takes_the_week_plan_in_its_order_and_only_todays_steps():
     ) == [(101, None, 1)]
 
 
+def scored(add, drop, week, three, score, frm="2026-10-21", after=0, n=1):
+    s = step(add, drop, 0.0, frm, after, n)
+    s["gain"] = {"week": week, "three": three}
+    s["score"] = score
+    s["value"] = {"horizons": {"week": {"value": week * 2}, "season": {"value": 1.0}}}
+    return s
+
+
+def test_a_plan_step_is_judged_on_the_week_with_the_three_weeks_beside_it():
+    out = qa.queue_of(
+        league_day(planned(scored(111, 211, 0.4, -0.1, 0.367))), DAY, PLAN, TYPICAL, 1
+    )
+    [e] = out
+    assert (e["judged"], e["gain"], e["three"], e["score"]) == ("week", 0.4, -0.1, 0.367)
+    assert e["value"] == 0.8 and e["season"] == 1.0
+    # A move of the three weeks' set stays where it was.
+    [m] = qa.queue_of(league_day(entry(move(101, 201, 0.9))), DAY, PLAN, TYPICAL, None)
+    assert (m["judged"], m["gain"], m["three"], m["score"]) == ("three", 0.9, None, None)
+
+
+def test_a_step_with_a_negative_three_week_gain_bids_on_its_score():
+    # #332: on the three-week gain this step would bid the floor's $1.
+    [e] = qa.queue_of(
+        league_day(planned(scored(111, 211, 0.6, -0.3, 0.5))), DAY, PLAN, TYPICAL, None
+    )
+    assert e["bid"]["amount"] == qa.bid_of(0.5, TYPICAL, 100, None, None, "W").amount == 5
+    # A step logged before the score bids on its week gain.
+    s = scored(111, 211, 0.6, -0.3, None)
+    [e] = qa.queue_of(league_day(planned(s)), DAY, PLAN, TYPICAL, None)
+    assert e["bid"]["amount"] == 6
+
+
+def test_a_move_whose_drop_is_on_an_open_claim_is_not_queued_on_either_path():
+    open_ = [{"id": "x", "add": 501, "drop": 201}]
+    three = league_day(entry(move(101, 201, 0.9), move(102, 202, 0.8)), open_claims=open_)
+    assert reasons(qa.queue_of(three, DAY, PLAN, TYPICAL, None)) == [
+        (101, qa.DROP_CLAIMED, None),
+        (102, None, 1),
+    ]
+    e = planned(step(111, 201, 0.5, "2026-10-21", 0, 2), step(112, 212, 0.5, "2026-10-21", 1, 2))
+    assert reasons(qa.queue_of(league_day(e, open_claims=open_), DAY, PLAN, TYPICAL, None)) == [
+        (111, qa.DROP_CLAIMED, None),
+        (112, qa.EARLIER_HELD, None),
+    ]
+    # A claim with no drop speaks for nobody's spot.
+    free = league_day(
+        entry(move(101, 201, 0.9)), open_claims=[{"id": "x", "add": 501, "drop": None}]
+    )
+    assert reasons(qa.queue_of(free, DAY, PLAN, TYPICAL, None)) == [(101, None, 1)]
+
+
+def test_a_step_whose_add_is_on_an_open_claim_is_not_placed_again_and_holds_nothing():
+    open_ = [{"id": "x", "add": 111, "drop": 211}]
+    e = planned(step(111, 211, 0.5, "2026-10-21", 0, 2), step(112, 212, 0.5, "2026-10-21", 1, 2))
+    out = qa.queue_of(league_day(e, open_claims=open_), DAY, PLAN, TYPICAL, None)
+    assert reasons(out) == [(111, qa.ALREADY_CLAIMED, None), (112, None, 1)]
+    assert out[1]["after"] == []
+    now = datetime(2026, 10, 21, 10, 0, tzinfo=UTC)
+    merged = qa.merge([], out, DAY, "07:00", now)
+    assert [x["add"] for x in qa.due(merged, now + timedelta(hours=2))] == [112]
+    # The add half is the plan's alone: the three weeks' set leaves a repeat to the extension.
+    three = league_day(entry(move(111, 201, 0.9)), open_claims=open_)
+    assert reasons(qa.queue_of(three, DAY, PLAN, TYPICAL, None)) == [(111, None, 1)]
+
+
 def test_a_step_waits_for_the_steps_before_it_to_land_and_never_runs_out_of_order():
     e = planned(step(111, 211, 0.5, "2026-10-21", 0, 2), step(112, 212, 0.5, "2026-10-21", 1, 2))
     now = datetime(2026, 10, 21, 10, 0, tzinfo=UTC)
@@ -896,6 +961,134 @@ def test_the_due_route_holds_a_later_step_and_the_pass_record_says_what_it_waits
     placed(client, on[0]["id"], "added")
     d = client.get(url).json()
     assert [e["id"] for e in d["entries"]] == [on[1]["id"]] and d["held"] == []
+
+
+# --------------------------------------------------------------------------- a plan over two days
+SECOND = date(2026, 10, 22)
+
+
+def log_plan(client, logged, day: date, *steps, stamp="T19") -> None:
+    """Append a moves solve to ``day``'s log that takes a week plan of ``steps`` (add, drop)."""
+    folder = client.data_dir / "leagues" / LEAGUE / "season" / "decisions"
+    path = folder / f"{day.isoformat()}.json"
+    old = json.loads(path.read_text()) if path.exists() else []
+    at = f"{day.isoformat()}{stamp}:00:00+00:00"
+    plan = {"id": f"{day}{stamp}:week_plan", "day": day.isoformat(), "steps": len(steps)}
+    moves = [
+        {
+            "add": add,
+            "drop": drop,
+            "from": day.isoformat(),
+            "gain": {"week": 0.4, "three": -0.1},
+            "score": 0.367,
+            "after": list(range(i)),
+            "plan": {**plan, "step": i + 1},
+        }
+        for i, (add, drop) in enumerate(steps)
+    ]
+    entry = {
+        **logged,
+        "id": f"{day}{stamp}",
+        "at": at,
+        "sets": [*logged["sets"], {"key": "week_plan", "moves": moves, "held": []}],
+    }
+    path.write_text(json.dumps([*old, entry]))
+
+
+def by_add(q) -> dict:
+    return {e["add"]: e for e in q["entries"]}
+
+
+@pytest.fixture
+def two_steps(client):
+    """Day one's plan: step 1 queued and placed, step 2 waiting for its day."""
+    strategy_league(client)
+    assert client.get(f"/seasons/{LEAGUE}/moves").status_code == 200
+    logged, three = three_set(client)
+    a, b = [m["add"] for m in three["moves"][:2]]
+    guarded = season_queue.protected_of(client.app.state.seasons._built(LEAGUE, None).rule)
+    v = client.get(f"/seasons/{LEAGUE}").json()
+    x, y = [k for r in v["roster"] if (k := r["player"]["yahoo_id"]) not in guarded][:2]
+    folder = client.data_dir / "leagues" / LEAGUE / "season" / "decisions"
+    log_plan(client, logged, DAY, (a, x), (b, y))
+    # Step 2 is dated later: the build shows it and queues nothing for it.
+    path = folder / "2026-10-21.json"
+    body = json.loads(path.read_text())
+    body[-1]["sets"][-1]["moves"][1]["from"] = WEEK[1].isoformat()
+    path.write_text(json.dumps(body))
+    q = client.post("/autopilot/queue/build").json()
+    first, second = by_add(q)[a], by_add(q)[b]
+    assert (first["queued"], second["reason"]) == (True, qa.LATER_STEP)
+    placed(client, first["id"], "claimed")
+    spare = [
+        x["player"]["yahoo_id"] for x in v["available"] if x["player"]["yahoo_id"] not in (a, b)
+    ]
+    return SimpleNamespace(a=a, x=x, b=b, y=y, first=first, logged=logged, spare=spare)
+
+
+def test_the_digest_says_a_week_plan_leads_and_how_many_steps_are_queued(client, two_steps):
+    q = client.get("/autopilot/queue").json()
+    modes = {LEAGUE: {"mode": "dry_run"}}
+    lines = ap.moves_digest_lines(client.data_dir, modes, q, NOW)
+    assert f"- League {LEAGUE}: a week plan leads, 1 of 2 steps queued today" in lines
+
+
+def on_day_two(client) -> None:
+    client.app.state.seasons.clock = lambda: NOW + timedelta(days=1)
+
+
+def test_day_two_finds_the_same_plan_and_takes_step_two_with_step_one_still_on_its_claim(
+    client, two_steps
+):
+    t = two_steps
+    on_day_two(client)
+    log_plan(client, t.logged, SECOND, (t.a, t.x), (t.b, t.y))
+    q = client.post("/autopilot/queue/build").json()
+    one, two = by_add(q)[t.a], by_add(q)[t.b]
+    assert (one["queued"], one["reason"]) == (False, qa.ALREADY_CLAIMED)
+    assert (two["queued"], two["reason"], two["after"]) == (True, None, [])
+    assert row_of(q)["pending"][0]["add"] == t.a
+    client.app.state.seasons.clock = lambda: NOW + timedelta(days=1, hours=2)
+    d = client.get(f"/seasons/{LEAGUE}/autopilot/moves/due").json()
+    assert [e["add"] for e in d["entries"]] == [t.b] and d["held"] == []
+
+
+def test_day_two_finds_another_plan_and_leaves_step_ones_drop_alone(client, two_steps):
+    t = two_steps
+    c, d = t.spare[:2]
+    on_day_two(client)
+    log_plan(client, t.logged, SECOND, (c, t.x), (d, t.y))
+    q = client.post("/autopilot/queue/build").json()
+    other, after = by_add(q)[c], by_add(q)[d]
+    assert (other["queued"], other["reason"]) == (False, qa.DROP_CLAIMED)
+    assert (after["queued"], after["reason"]) == (False, qa.EARLIER_HELD)
+    # Yesterday's claim is still open, and nothing of today's plan runs.
+    assert [c_["id"] for c_ in row_of(q)["pending"]] == [t.first["id"]]
+    client.app.state.seasons.clock = lambda: NOW + timedelta(days=1, hours=2)
+    assert client.get(f"/seasons/{LEAGUE}/autopilot/moves/due").json()["entries"] == []
+
+
+@pytest.mark.parametrize("outcome", ["lost", "lapsed"])
+def test_a_claim_lost_or_lapsed_frees_its_drop_again(client, two_steps, monkeypatch, outcome):
+    t = two_steps
+    c = t.spare[0]
+    on_day_two(client)
+    monkeypatch.setattr(
+        season_queue, "resolutions", lambda season, entries, today: {t.first["id"]: outcome}
+    )
+    log_plan(client, t.logged, SECOND, (c, t.x))
+    q = client.post("/autopilot/queue/build").json()
+    assert by_add(q)[c]["queued"] and row_of(q)["pending"] == []
+
+
+def test_a_rebuild_the_same_day_keeps_the_placed_step_and_leaves_its_drop_alone(client, two_steps):
+    t = two_steps
+    c = t.spare[0]
+    log_plan(client, t.logged, DAY, (c, t.x), stamp="T20")
+    q = client.post("/autopilot/queue/build").json()
+    assert by_add(q)[t.a]["outcome"] == "claimed"
+    assert (by_add(q)[c]["queued"], by_add(q)[c]["reason"]) == (False, qa.DROP_CLAIMED)
+    assert t.b not in by_add(q)
 
 
 def test_the_due_route_counts_the_days_executed_entries_and_their_adds(client):

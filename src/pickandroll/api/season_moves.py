@@ -108,6 +108,9 @@ class Built:
     #: and the league's team count; None in a FAAB league. The odds take the rate at request
     #: time (``claim_of``).
     priority: tuple[int | None, int] | None = None
+    #: Whether this week is a playoff week (``Season.first_playoff_week``): a week plan then leads
+    #: on the matchup odds, not on its score (``season.plans.for_queue``).
+    playoff: bool = False
 
 
 @dataclass(frozen=True)
@@ -404,6 +407,7 @@ def build(
         knobs,
         file_system,
         priority,
+        (first := season.first_playoff_week) is not None and this.number >= first,
     )
 
 
@@ -891,6 +895,9 @@ def _payload(built: Built) -> dict[str, Any]:
             "season_guard": held_back(built, ev, key, sets[key], ros, free),
         }
     stream = stream_of(built, ev, sets["week"], guard)
+    # The week plans' pool takes the chain the three-week guard would refuse, the season guard
+    # kept, unless the budget has run out (#306): the plans weigh the week first themselves.
+    free = None if mv.budget_out() else stream_of(built, ev, sets["week"], guard, False)
     return {
         "cleared": cleared_payload(p),
         "room": room_payload(p),
@@ -902,9 +909,11 @@ def _payload(built: Built) -> dict[str, Any]:
         "claim": claim_of(built),
         "candidates": candidates,
         "recommended": recommended,
-        "plan": plan_payload(built, ev, sets["week"], recommended["week"]["moves"], stream, guard),
+        "plan": plan_payload(
+            built, ev, sets["week"], recommended["week"]["moves"], stream, guard, free
+        ),
         "week_plans": week_plans_payload(
-            built, ev, sets["week"], sets["three"], swaps["week"], stream, guard
+            built, ev, sets["week"], sets["three"], swaps["week"], free or stream, guard
         ),
         "unprojected": built.unprojected,
         "search": {
@@ -921,14 +930,19 @@ def _started(ev: mv.Evaluator, moves: list[mv.Move]) -> int:
 
 
 def stream_of(
-    built: Built, ev: mv.Evaluator, against: list[mv.Move], allowed: mv.Allowed | None = None
+    built: Built,
+    ev: mv.Evaluator,
+    against: list[mv.Move],
+    allowed: mv.Allowed | None = None,
+    guard: bool = True,
 ) -> st.Plan | None:
-    """The week's streaming plan (#136) against ``against``, solved once a moves solve for its
-    section and the week plans' pool (#221 part 2); None without the league's scorer."""
+    """The week's streaming plan (#136) against ``against``, for the Moves card's section; without
+    the three-week ``guard`` for the week plans' pool (#332) and the section's refused plan; None
+    without the league's scorer."""
     if built.rule is None or built.scorer is None:
         return None
     per_game = {k: wk.net_value(built.scorer, r) for k, r in built.problem.rates.items()}
-    return st.plan(ev, built.rule, against, per_game, allowed=allowed)
+    return st.plan(ev, built.rule, against, per_game, guard=guard, allowed=allowed)
 
 
 def plan_payload(
@@ -938,8 +952,10 @@ def plan_payload(
     rows: list[dict[str, Any]],
     plan: st.Plan | None,
     allowed: mv.Allowed | None = None,
+    unguarded: st.Plan | None = None,
 ) -> dict[str, Any] | None:
-    """The week's streaming plan (#136, ``plan``: :func:`stream_of` on the same set and guard)
+    """The week's streaming plan (#136, ``plan``: :func:`stream_of` on the same set and guard; the
+    same without the three-week guard in ``unguarded``, solved here when not given)
     against its recommended set (``against``, whose payload rows are ``rows``): the set's moves it keeps, its steps by day with each one's own gain on
     both horizons, the spots it turns over, my started games and the adds with no move, the set
     and the plan, and the plan's value beside the set's; recommended only when its week beats
@@ -966,7 +982,7 @@ def plan_payload(
     recommended = st.recommended(ev, plan)
     reason, guard = (None, None) if recommended else ("short", None)
     if not recommended:
-        free = st.plan(ev, built.rule, against, per_game, guard=False, allowed=allowed)
+        free = unguarded or st.plan(ev, built.rule, against, per_game, guard=False, allowed=allowed)
         if free is not None and free.steps:
             gain = {h: ev.value(h, list(free.moves)) - value["set"][h] for h in HORIZONS}
             if gain["week"] > floor and gain["three"] < -mv.EPS:
@@ -1036,22 +1052,45 @@ def week_plans_payload(
     allowed: mv.Allowed | None = None,
 ) -> dict[str, Any] | None:
     """The week plans (#221 part 2, ``season.plans``; ``stream``, the week's streaming plan whose
-    chains join the pool): each plan's steps by day, each with its
-    basis, its held moves, what it adds to the plan before it on both horizons, its rest of the
-    season and the earlier steps it waits on (``after``, the ruling's condition: every earlier
-    step), the roster's own changes on their day, the plan's total and its rest of the season;
-    the plan the queue takes instead of the three weeks' set (``queue``, an index, None for
-    none), the floor, the search's limits and its seconds. None with no day left in the week."""
+    chains join the pool with the three weeks' set's moves): each plan's steps by day, each with
+    its basis, its held moves, what it adds to the plan before it on both horizons and to its
+    score, its rest of the season and the earlier steps it waits on (``after``, the ruling's
+    condition: every earlier step), the roster's own changes on their day, the plan's total, its
+    rest of the season, its ``score`` (what the queue chooses on: the matchup odds in a playoff
+    week) and its matchup odds; the plan the queue takes instead of the three weeks' set
+    (``queue``, an index, None for none) and what it was chosen on (``judged``: the weight, the
+    playoff week, the floor on the score, the set's score and matchup odds); ``floor``, the plan
+    floor plan 1 is ranked by, the search's limits and its seconds. None with no day left in the
+    week."""
     p = built.problem
     if not p.horizons["week"][0].days:
         return None
     began = time.perf_counter()
-    plans = pl.week_plans(ev, week_set, swaps, stream, allowed, pl.held_out(ev))
-    chosen = pl.for_queue(ev, plans, three_set)
+    knob = float(built.knobs.get("three_weight", pl.THREE_WEIGHT))
+    weight = 0.0 if built.playoff else knob
+    held = pl.held_out(ev)
+    every = pl.every_plan(ev, week_set, swaps, stream, allowed, held, three_set, weight)
+    chosen = pl.for_queue(ev, every, three_set, weight, built.playoff, allowed, held)
+    plans = pl.shown(every, chosen)
+
+    def judged(moves: Sequence[mv.Move]) -> dict[str, float | None]:
+        score = pl.gate(ev, moves, weight, built.playoff)
+        odds = pl.matchup(ev, moves)
+        return {
+            "score": None if score is None else _r(score),
+            "matchup": None if odds is None else round(odds, 4),
+        }
+
     seconds = time.perf_counter() - began
     return {
-        "plans": [_week_plan(built, w) for w in plans],
-        "queue": None if chosen is None else plans.index(chosen),
+        "plans": [{**_week_plan(built, w, weight), **judged(w.moves)} for w in plans],
+        "queue": None if chosen is None else pl.place(plans, chosen),
+        "judged": {
+            "weight": knob,
+            "playoff": built.playoff,
+            "floor": pl.gate_floor(p, built.playoff),
+            "set": judged(three_set),
+        },
         "floor": st.floor_of(p),
         "limits": {
             "plans": pl.WEEK_PLANS,
@@ -1063,7 +1102,7 @@ def week_plans_payload(
     }
 
 
-def _week_plan(built: Built, w: pl.WeekPlan) -> dict[str, Any]:
+def _week_plan(built: Built, w: pl.WeekPlan, weight: float = 0.0) -> dict[str, Any]:
     p = built.problem
     held = held_by_add(p, list(w.moves))
     steps = []
@@ -1076,6 +1115,7 @@ def _week_plan(built: Built, w: pl.WeekPlan) -> dict[str, Any]:
                 "held_drop": held_drop(p, s.move),
                 "basis": basis(p, s.move, h),
                 "gain": {k: _r(v) for k, v in s.gain.items()},
+                "score": _r(pl.step_score(s, weight)),
                 "ros": ros_move(built, s.move),
                 "after": list(range(i)),
             }
@@ -1133,12 +1173,23 @@ def _guarded(
 
 
 def best_payload(built: Built, payload: dict[str, Any]) -> dict[str, Any]:
-    """The landing table's line for a league (#108, #191): the recommended move that adds most
-    on the three weeks ahead (the rest of this week when no week follows), with the set's gain;
-    for the row's panel the whole set on that horizon, each move with its basis and held move,
-    the room, and the names of every player they mention."""
-    key = "three" if built.horizons["three"]["weeks"] else "week"
-    rec = payload["recommended"][key]
+    """The landing table's line for a league (#108, #191): the queue's choice (#332). The
+    recommended move that adds most on the three weeks ahead (the rest of this week when no week
+    follows), with the set's gain; or, when a week plan leads, its step that adds most this week,
+    with the plan's gain, and in ``plan`` its matchup odds against the three weeks' set's, its
+    three weeks and its season. For the row's panel the whole set on that horizon, each move with
+    its basis and held move, the room, and the names of every player they mention."""
+    wp = payload.get("week_plans") or {}
+    chosen = None if wp.get("queue") is None else wp["plans"][wp["queue"]]
+    key = "week" if chosen else "three" if built.horizons["three"]["weeks"] else "week"
+    rec = (
+        {
+            "moves": [{**s, "marginal": s["gain"]} for s in chosen["steps"]],
+            "gain": chosen["total"],
+        }
+        if chosen
+        else payload["recommended"][key]
+    )
     p = built.problem
     names = {k: player.name for k, player in (*p.roster, *p.held, *p.candidates)}
     lines = [
@@ -1178,6 +1229,14 @@ def best_payload(built: Built, payload: dict[str, Any]) -> dict[str, Any]:
         "move": move,
         "moves": len(rec["moves"]),
         "gain": rec["gain"][key],
+        "plan": {
+            "matchup": chosen["matchup"],
+            "against": wp["judged"]["set"]["matchup"],
+            "three": chosen["total"]["three"],
+            "ros": chosen["ros"],
+        }
+        if chosen
+        else None,
         "min_gain": MIN_GAIN,
         "set": lines,
         "room": room,

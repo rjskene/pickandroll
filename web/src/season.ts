@@ -774,6 +774,30 @@ export function waitText(w: Pick<NonNullable<QueueEntry["waits"]>, "text" | "add
   return w.add != null ? `${w.text} (${name(w.add)})` : w.text;
 }
 
+/** An entry's gain as the queue judges it: a week plan's step on this week with the three weeks
+ * beside it (#332), "+0.40 this week, −0.10 over three weeks"; a move of the set its three weeks. */
+export function queueGain(e: Pick<QueueEntry, "gain" | "judged" | "three">): string {
+  if (e.judged !== "week") return gainLabel(e.gain);
+  return `${gainLabel(e.gain)} this week${e.three != null ? `, ${gainLabel(e.three)} over three weeks` : ""}`;
+}
+
+/** The odds as a week plan shows them (#332): "matchup odds 62%, 58% with the three weeks' set";
+ * blank with no opponent read. */
+export function planOdds(p: { matchup?: number | null; against?: number | null } | null | undefined): string {
+  if (p?.matchup == null) return "";
+  const set = p.against != null ? `, ${pctLabel(p.against * 100)} with the three weeks' set` : "";
+  return `matchup odds ${pctLabel(p.matchup * 100)}${set}`;
+}
+
+/** The Queue card's line when a week plan leads (#332): the expected categories decide it, the
+ * matchup odds are its headline; blank when the three weeks' set leads. */
+export function queuePlanLine(entries: Pick<QueueEntry, "plan">[]): string {
+  const plan = entries.find((e) => e.plan)?.plan;
+  if (!plan) return "";
+  const odds = planOdds(plan);
+  return `A week plan of ${plan.steps} ${plan.steps === 1 ? "step" : "steps"} leads${odds ? `: ${odds}` : ""}.`;
+}
+
 /** A week plan's step on the queue (#221 part 2): "step 2 of 3"; blank for a move of the set. */
 export function planStepTag(e: Pick<QueueEntry, "plan">): string {
   return e.plan ? `step ${e.plan.step} of ${e.plan.steps}` : "";
@@ -1348,19 +1372,27 @@ export function shownWeekPlans(wp: WeekPlans | null | undefined): WeekPlan[] {
 /** The Week plans section's tooltip (#221 part 2): the limits, plan 1's rule and the floor. Plan 1
  * is the week's recommended set, whatever its steps; the searched plans keep the limit (the
  * master's ruling of 2026-10-29). */
-export function weekPlansTitle(wp: Pick<WeekPlans, "limits" | "seconds" | "floor">, units: string): string {
+export function weekPlansTitle(wp: Pick<WeekPlans, "limits" | "seconds" | "floor" | "judged">, units: string): string {
   const l = wp.limits;
+  const j = wp.judged;
+  const queue = !j
+    ? ""
+    : j.playoff
+      ? `a playoff week: the queue takes the plan with the best matchup odds that beats the three weeks' set by ${Math.round(j.floor * 100)} points; `
+      : `the queue takes the plan with the best score, its week plus ${j.weight} of its three weeks, that beats the three weeks' set by ${j.floor} ${units}; `;
   return (
     `plan 1 is the week's recommended set; the searched plans are at most ${l.steps} steps, up to ${l.plans} plans over the rest of the week, ` +
     `searched ${l.beam} wide and the best ${l.exact} valued exactly in ${wp.seconds.toFixed(1)} s; a searched plan is plan 1 only when it beats the set's week by the floor, ${wp.floor} ${units}; ` +
-    "plans with the same adds on the same days are one, the best week kept; recommended, a heuristic"
+    queue +
+    "plans with the same adds on the same days are one; recommended, a heuristic"
   );
 }
 
 /** A week plan's head: "Plan 1 · the week's set · +0.42 this week, +0.10 over three weeks", the
  * queue's plan marked "queued in place of the three weeks' set". */
 export function weekPlanHead(w: WeekPlan, i: number, queued: boolean): string {
-  const parts = [`Plan ${i + 1}`, w.source === "set" ? "the week's set" : null, `${gainLabel(w.total.week)} this week, ${gainLabel(w.total.three)} over three weeks`];
+  const odds = w.matchup != null ? `matchup odds ${pctLabel(w.matchup * 100)}` : null;
+  const parts = [`Plan ${i + 1}`, w.source === "set" ? "the week's set" : null, `${gainLabel(w.total.week)} this week, ${gainLabel(w.total.three)} over three weeks`, odds];
   if (queued) parts.push("queued in place of the three weeks' set");
   return parts.filter(Boolean).join(" · ");
 }
@@ -2292,6 +2324,11 @@ export function setSummary(b: BestMove | undefined): string {
   if (!b) return "";
   if (b.status !== "solved") return "not solved yet";
   if (!b.moves) return `no move gains ${b.min_gain} over ${b.label}`;
+  if (b.plan) {
+    const odds = planOdds(b.plan);
+    const beside = `${gainLabel(b.plan.three)} over three weeks${b.plan.ros ? `, ${rosLabel(b.plan.ros, null)} to the season's end` : ""}`;
+    return `A week plan of ${b.moves} ${b.moves === 1 ? "step" : "steps"} adds ${gainLabel(b.gain)} over ${b.label}${odds ? `, ${odds}` : ""}; ${beside}`;
+  }
   return b.moves === 1
     ? `1 move recommended adds ${gainLabel(b.gain)} over ${b.label}`
     : `${b.moves} moves recommended together add ${gainLabel(b.gain)} over ${b.label}`;

@@ -884,6 +884,9 @@ export type BestMove =
       /** The recommended set's size and its gain on the horizon. */
       moves: number;
       gain: number;
+      /** The week plan the queue takes in place of the three weeks' set (#332): the line above is
+       * then its step that adds most this week. Null or absent when the set leads. */
+      plan?: BestPlan | null;
       min_gain: number;
       /** The landing table's panel (#191): the whole set on the horizon, the room and a name
        * for every player they mention (ids as strings); absent from a server before #191. */
@@ -891,6 +894,15 @@ export type BestMove =
       room?: MoveRoom;
       names?: Record<string, string>;
     };
+
+/** The queue's week plan beside this week's gain (#332): the matchup odds with it, and with the
+ * three weeks' set (``against``), its three weeks and its rest of the season. */
+export interface BestPlan {
+  matchup: number | null;
+  against: number | null;
+  three: number;
+  ros: MoveRos | null;
+}
 
 /** A move of the recommended set as the landing table's panel lists it (#191): its gain on the
  * best move's horizon, its basis and the held move that makes room for it (#187). */
@@ -1336,7 +1348,9 @@ export type QueueReason =
   | "no adds left this week"
   | "over the day's cap"
   | "a later step of the week plan: queued at its day's build"
-  | "an earlier step of the week plan is not queued";
+  | "an earlier step of the week plan is not queued"
+  | "its drop is on a claim already placed"
+  | "a claim on the add is already placed";
 
 /** An execute pass's outcome for one entry: ``gone`` when another team had the add first. */
 export type MoveOutcome = "would_claim" | "claimed" | "added" | "skipped" | "failed" | "gone";
@@ -1365,8 +1379,13 @@ export interface QueueEntry {
   /** The day the claim clears. */
   from: string | null;
   availability: "FA" | "W" | null;
-  judged: "three";
+  /** The three weeks after; the week for a week plan's step (#332). */
+  judged: "three" | "week";
   gain: number | null;
+  /** A plan step's gain on the three weeks and what it adds to the plan's score; null for a move
+   * of the three weeks' set, absent from a server before #332. */
+  three?: number | null;
+  score?: number | null;
   /** The move's value on the judging horizon and over the season, in the scorer's units. */
   value: number | null;
   season: number | null;
@@ -1422,6 +1441,9 @@ export interface QueuePlanStep {
   day: string;
   step: number;
   steps: number;
+  /** The matchup odds with the plan and with the three weeks' set (#332). */
+  matchup?: number | null;
+  against?: number | null;
 }
 
 /** The earlier step a week plan's step waits for: its entry, step and add, and the line. */
@@ -2010,12 +2032,19 @@ export interface WeekPlan {
   /** Its steps' gains summed, on each horizon: the plan less no move. */
   total: Record<MoveHorizon, number>;
   ros: RosTotal | null;
+  /** The plan's score (the matchup odds in a playoff week) and its matchup odds (#332); absent
+   * from a server before it. */
+  score?: number | null;
+  matchup?: number | null;
 }
 
 export interface WeekPlans {
   plans: WeekPlan[];
   /** The plan the queue takes in place of the three weeks' set; null for none. */
   queue: number | null;
+  /** What the queue chose on (#332): the three weeks' weight, a playoff week (the score is then
+   * the matchup odds), the floor on the score and the three weeks' set's figures. */
+  judged?: { weight: number; playoff: boolean; floor: number; set: { score: number | null; matchup: number | null } };
   floor: number;
   limits: { plans: number; steps: number; beam: number; exact: number };
   seconds: number;
@@ -2499,6 +2528,7 @@ export type KnobName =
   | "plan_floor_points"
   | "stash_threshold"
   | "faab_sizing"
+  | "three_weight"
   | "daily_cap";
 export type Scoring = "categories" | "points";
 

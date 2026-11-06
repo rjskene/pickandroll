@@ -17,6 +17,7 @@ from datetime import date
 from typing import Any
 
 from .moves import PROTECTION_FLOOR
+from .plans import THREE_WEIGHT
 from .stream import DAILY_CAP, PLAN_FLOOR_CATS, PLAN_FLOOR_POINTS
 
 #: The knobs of docs/AUTOPILOT.md section 6, by the names the decision log records them under
@@ -32,6 +33,10 @@ KNOBS = (
     "faab_sizing",
     "daily_cap",
 )
+#: Every knob the knob file takes. The season simulator's arms name each of :data:`KNOBS` and the
+#: simulator is on hold (the user, 2026-11-05), so a knob it does not know stays out of that list:
+#: ``three_weight`` (#332) weighs the three weeks in a week plan's score.
+LIVE_KNOBS = (*KNOBS, "three_weight")
 #: The lowest value a knob may take, from section 6's table (#150): the protection floor never
 #: below its default, so no setting lets the engine drop a player worth more than the best add
 #: over the rest of the season; the blend weight and the daily move cap at their bounds' low end.
@@ -41,10 +46,11 @@ KNOB_MINIMUMS: Mapping[str, float] = {
     "protection_floor": PROTECTION_FLOOR,
     "blend": 0.25,
     "daily_cap": 1,
+    "three_weight": 0.0,
 }
-#: The highest value a knob may take, the bounds' high end (#152): the blend weight and the
-#: daily move cap.
-KNOB_MAXIMUMS: Mapping[str, float] = {"blend": 0.75, "daily_cap": 3}
+#: The highest value a knob may take, the bounds' high end (#152): the blend weight, the daily
+#: move cap and the three weeks' weight in a week plan's score.
+KNOB_MAXIMUMS: Mapping[str, float] = {"blend": 0.75, "daily_cap": 3, "three_weight": 1.0}
 #: The values a named knob may take: the projection systems, and the strategy weights the bounds
 #: allow (the week weight never: the season is what counts).
 CHOICES: Mapping[str, tuple[str, ...]] = {
@@ -53,7 +59,14 @@ CHOICES: Mapping[str, tuple[str, ...]] = {
 }
 #: The knobs that are numbers, and those of them a count of whole moves.
 NUMBERS = frozenset(
-    {"blend", "protection_floor", "plan_floor_cats", "plan_floor_points", "daily_cap"}
+    {
+        "blend",
+        "protection_floor",
+        "plan_floor_cats",
+        "plan_floor_points",
+        "daily_cap",
+        "three_weight",
+    }
 )
 WHOLE = frozenset({"daily_cap"})
 #: The knobs the engine reads at solve time (#152); the others are recorded and nothing reads
@@ -68,6 +81,7 @@ HOOKED = frozenset(
         "plan_floor_cats",
         "plan_floor_points",
         "daily_cap",
+        "three_weight",
     }
 )
 #: Each knob's value when the knob file sets none: the code's own.
@@ -81,6 +95,7 @@ DEFAULTS: Mapping[str, Any] = {
     "stash_threshold": None,
     "faab_sizing": None,
     "daily_cap": DAILY_CAP,
+    "three_weight": THREE_WEIGHT,
 }
 #: Yahoo's share in the blend when the file names the blend system and no weight.
 BLEND = 0.5
@@ -171,7 +186,7 @@ def _known(where: str, raw: Any, problems: list[str]) -> dict[str, Any]:
         return {}
     out = {}
     for k, v in raw.items():
-        if k not in KNOBS:
+        if k not in LIVE_KNOBS:
             problems.append(f"{where}: {k} is not a knob")
         elif why := refused(k, v):
             # Left out, so the default (or the value before it) stays in force.
@@ -190,7 +205,7 @@ def _change(i: int, raw: Any, problems: list[str]) -> dict[str, Any] | None:
     if monday is None:
         problems.append(f"{cid}: its monday is not a date")
         return None
-    if raw.get("knob") not in KNOBS:
+    if raw.get("knob") not in LIVE_KNOBS:
         problems.append(f"{cid}: {raw.get('knob')} is not a knob")
         return None
     if why := refused(raw["knob"], raw.get("to")):
@@ -251,10 +266,10 @@ def knob_file(raw: Any) -> tuple[dict[str, Any], list[str]]:
     if isinstance(frozen, Mapping):
         for k, v in frozen.items():
             names = v if isinstance(v, list) else []
-            bad = [x for x in names if x not in KNOBS]
+            bad = [x for x in names if x not in LIVE_KNOBS]
             if bad or not isinstance(v, list):
                 problems.append(f"frozen in league {k}: {', '.join(map(str, bad)) or v} not knobs")
-            out["frozen"][str(k)] = [x for x in names if x in KNOBS]
+            out["frozen"][str(k)] = [x for x in names if x in LIVE_KNOBS]
     else:
         problems.append("frozen is not an object")
     changes = raw.get("changes") or []

@@ -6,30 +6,40 @@ pages, and keeps the queue.
 
 The queue takes each league's three weeks' set (the ruling on #171, 2026-10-23: season first), as
 the day's last moves solve logged it (#125), and judges each move on the three weeks after (#143)
-with the rest of the season beside it (#144). Nothing here solves: an entry is the decision log's
-move, read.
+with the rest of the season beside it (#144), unless a week plan leads (below). Nothing here
+solves: an entry is the decision log's move, read.
 
 A move is left out, in this order, when:
 
 1. the league is the private one, or its moves executor is off;
 2. its drop is protected (the keep rule, #124: read, never re-solved);
 3. it costs the season (#144; the guard never recommends one, the queue checks anyway);
-4. its add is a player the league dropped within the waiver days, or one the set drops;
-5. it is below the noise floor (:class:`Floor`);
-6. the week of its clear date has no add left, the claims placed counted;
-7. the day's cap is reached.
+3. its drop is on a claim already placed and not yet processed (:data:`DROP_CLAIMED`): that claim
+   takes him, so a second move on him cannot run; a claim lost or lapsed frees him again;
+4. it costs the season (#144; the guard never recommends one, the queue checks anyway);
+5. its add is a player the league dropped within the waiver days, or one the set drops;
+6. it is below the noise floor (:class:`Floor`);
+7. the week of its clear date has no add left, the claims placed counted;
+8. the day's cap is reached.
 
 The rest are queued by their gain on the judging horizon, highest first.
 
-When the day's solve logged a week plan for the queue (#221 part 2, the set ``week_plan``: a plan
-that beats the three weeks' set there by the plan floor and passed the season guard on its
-total), the queue takes its steps instead, in the plan's order. The plan is the unit for the floor
-and the guard, so no step is held below the floor or as season-costly on its own (rules 3 and 5);
-a step not executable today (:data:`LATER_STEP`) is shown, never queued, and is re-derived by the
-day's build that reaches it; a step after one that is not queued is held too
-(:data:`EARLIER_HELD`). Each step's entry carries the plan (its id, day, step and steps) and the
-ids of the steps before it (``after``): :func:`due` holds it until every one of them has landed
-(:func:`waits`), so no step executes out of order, and the day's cap counts only what executed.
+When the day's solve logged a week plan for the queue (#221 part 2, the set ``week_plan``, the
+user's ruling of 2026-11-06, ``season.plans.for_queue``: a plan that keeps the rules and the season
+guard and beats the three weeks' set by the plan floor on its score, week gain plus
+``three_weight`` times three-week gain, or on the matchup odds in a playoff week), the queue takes
+its steps instead, in the plan's order, judged on the week with the three weeks and the season
+beside them. The plan is the unit for the floor and the guard, so no step is held below the floor
+or as season-costly on its own (rules 4 and 6); a step not executable today (:data:`LATER_STEP`)
+is shown, never queued, and is re-derived by the day's build that reaches it; a step after one
+that is not queued is held too (:data:`EARLIER_HELD`). A step whose add is already on a placed
+claim, a rebuild's find after step 1 went in, is not placed again (:data:`ALREADY_CLAIMED`) and
+holds no later step. Each step's entry carries the plan (its id, day, step, steps and matchup
+odds) and the ids of the steps before it (``after``): :func:`due` holds it until every one of them
+has landed (:func:`waits`), so no step executes out of order, and the day's cap counts only what
+executed. A step's bid scales on its score, so a step that costs the three weeks is not bid at $1;
+in a playoff week the score is the odds, in other units than the typical gain, and it scales on
+the week gain.
 
 Every claim's bid is
 :func:`bid_of`'s. A second build of a day keeps the entries struck or executed by id, leaves
@@ -50,6 +60,8 @@ from zoneinfo import ZoneInfo
 #: The set the queue takes, and the horizon it is judged on (#143): the three weeks after.
 QUEUE_SET = "three"
 JUDGED = "three"
+#: The horizon a week plan's steps are judged on (the user's ruling of 2026-11-06).
+PLAN_JUDGED = "week"
 SEASON = "season"
 #: The scored moves the scorecard's spread needs before it is a floor; the moves the fortnight's
 #: typical gain needs, over how many days.
@@ -96,6 +108,10 @@ WEEK_PLAN = "week_plan"
 LATER_STEP = "a later step of the week plan: queued at its day's build"
 #: A week plan's step after one that is not queued: it waits on that step, which will not land.
 EARLIER_HELD = "an earlier step of the week plan is not queued"
+#: A move whose drop an open claim already takes: when that claim clears he is gone (#332).
+DROP_CLAIMED = "its drop is on a claim already placed"
+#: A week plan's step whose add is on an open claim: placed once, it needs no second claim.
+ALREADY_CLAIMED = "a claim on the add is already placed"
 #: A queued entry a rebuild's solve no longer recommends (#209): kept in the day's file, not
 #: queued and holding no place, so the Queue screen shows what changed.
 SUPERSEDED = "superseded by a later solve"
@@ -258,6 +274,9 @@ class LeagueDay:
     #: build, and those that hold a place (:func:`holds_place`) count toward the cap (``done``).
     kept: frozenset[str] = frozenset()
     done: int = 0
+    #: The claims placed and not yet processed, earlier days' and today's: their adds and drops
+    #: are spoken for.
+    open_claims: Sequence[Mapping[str, Any]] = ()
 
 
 def three_set(entry: Mapping[str, Any]) -> Mapping[str, Any] | None:
@@ -283,7 +302,8 @@ def queue_of(
 ) -> list[dict[str, Any]]:
     """The league's entries of the day: every move of its three weeks' set, queued or with the
     reason it is not, the queued ones ranked by gain on the judging horizon; the steps of the
-    day's week plan instead when its solve logged one (#221 part 2), in the plan's order."""
+    day's week plan instead when its solve logged one (#221 part 2), in the plan's order, each
+    judged on the week with the three weeks beside it, its bid on its score."""
     plan = week_plan(lg.entry)
     s = plan if plan is not None else three_set(lg.entry)
     if s is None:
@@ -298,13 +318,18 @@ def queue_of(
     out = []
     #: A plan's steps queued (or executed and kept) so far, by index: a later step waits on them.
     ready: set[int] = set()
+    #: A plan's steps already on an open claim, by index: nothing to wait on today.
+    placed: set[int] = set()
+    judged = JUDGED if plan is None else PLAN_JUDGED
+    claimed_adds = {int(c["add"]) for c in lg.open_claims if c.get("add") is not None}
+    claimed_drops = {int(c["drop"]) for c in lg.open_claims if c.get("drop") is not None}
     for i, m in enumerate(moves):
         add, drop = int(m["add"]), m.get("drop")
         if ids[i] in lg.kept:
             ready.add(i)
             continue
-        gain = (m.get("gain") or {}).get(JUDGED)
-        value = _horizon(m, JUDGED)
+        gain = (m.get("gain") or {}).get(judged)
+        value = _horizon(m, judged)
         kind, clears = lg.availability.get(add, (None, None))
         clear = date.fromisoformat(m["from"]) if m.get("from") else clears
         week = _week_of(left, clear) if clear is not None else None
@@ -318,6 +343,12 @@ def queue_of(
             reason = OFF
         elif drop is not None and drop in lg.protected:
             reason = PROTECTED
+        elif plan is not None and add in claimed_adds:
+            reason = ALREADY_CLAIMED
+            ready.add(i)
+            placed.add(i)
+        elif drop is not None and int(drop) in claimed_drops:
+            reason = DROP_CLAIMED
         elif plan is None and m.get("season_costly"):
             reason = SEASON_COSTLY
         elif add in lg.dropped or (add in drops if plan is None else _dropped_before(moves, i)):
@@ -339,10 +370,12 @@ def queue_of(
                 left[week] -= 1
         # A standard-waivers league places no bid: its claims go by waiver priority (#261).
         standard = lg.uses_faab is False
+        # A step's bid scales on its score (the ruling): its week gain alone when none was logged.
+        worth = m.get("score") if plan is not None and m.get("score") is not None else gain
         bid = (
             None
             if standard
-            else bid_of(gain or 0.0, typical, lg.budget, lg.flags.get(add), sizing, kind)
+            else bid_of(worth or 0.0, typical, lg.budget, lg.flags.get(add), sizing, kind)
         )
         out.append(
             {
@@ -357,8 +390,11 @@ def queue_of(
                 "drop": drop,
                 "from": clear.isoformat() if clear else None,
                 "availability": kind,
-                "judged": JUDGED,
+                "judged": judged,
                 "gain": gain,
+                # A plan's step: what it adds on the three weeks and to the plan's score.
+                "three": None if plan is None else (m.get("gain") or {}).get(JUDGED),
+                "score": None if plan is None else m.get("score"),
                 "value": value,
                 "season": _horizon(m, SEASON),
                 "season_costly": m.get("season_costly"),
@@ -370,7 +406,7 @@ def queue_of(
                 "held_drop": m.get("held_drop"),
                 # The week plan's step (#221 part 2): its plan and the entries it waits on.
                 "plan": m.get("plan"),
-                "after": [ids[j] for j in after],
+                "after": [ids[j] for j in after if j not in placed],
                 "flag": lg.flags.get(add),
                 "floor": {**floor.to_dict(), "below": below},
                 "bid": None

@@ -381,6 +381,7 @@ def test_each_solve_of_the_moves_route_appends_an_entry_to_its_days_log(client):
         "horizon_weight": "natural",
         "protection_floor": 0.0,
         "plan_floor_cats": 0.1,
+        "three_weight": 0.33,
         "plan_floor_points": 0.01,
         "stash_threshold": None,
         "faab_sizing": None,
@@ -531,10 +532,20 @@ def test_a_recommended_plan_is_logged_as_one_more_set_its_steps_by_day(client):
     for s in entry["sets"][3:]:
         # Each step carries the plan's id and day and the steps it waits on (the first condition).
         n = len(s["moves"])
-        assert [m["plan"] for m in s["moves"]] == [
-            {"id": f"{entry['id']}:week_plan", "day": entry["first_day"], "step": i + 1, "steps": n}
-            for i in range(n)
-        ]
+        wp = entry["week_plans"]
+        unit = {
+            "id": f"{entry['id']}:week_plan",
+            "day": entry["first_day"],
+            "matchup": wp["plans"][wp["queue"]]["matchup"],
+            "against": wp["judged"]["set"]["matchup"],
+            "steps": n,
+        }
+        assert [m["plan"] for m in s["moves"]] == [{**unit, "step": i + 1} for i in range(n)]
+        # The step's score is logged for its bid, and the choice can be replayed.
+        assert all(m["score"] is not None for m in s["moves"])
+        assert wp["judged"]["weight"] == 0.33 and wp["judged"]["set"]["score"] is not None
+        chosen = wp["plans"][wp["queue"]]["score"]
+        assert chosen > wp["judged"]["set"]["score"] + wp["judged"]["floor"]
         assert [m["after"] for m in s["moves"]] == [list(range(i)) for i in range(n)]
     logged_plan = entry["sets"][2]
     rows = [*plan["base"], *plan["steps"]]

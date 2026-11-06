@@ -143,7 +143,10 @@ import {
   movesExecutorText,
   movesLiveText,
   passLine,
+  planOdds,
   queueFloorLine,
+  queueGain,
+  queuePlanLine,
   queueFlagWord,
   queueFoldLine,
   passBar,
@@ -2254,7 +2257,7 @@ test("a week plan's head, its roster changes and the plans shown (#221 part 2)",
   // The tooltip says plan 1 is the set and only the searched plans keep the step limit.
   assert.equal(
     weekPlansTitle(plans, "expected categories"),
-    "plan 1 is the week's recommended set; the searched plans are at most 4 steps, up to 5 plans over the rest of the week, searched 8 wide and the best 8 valued exactly in 0.4 s; a searched plan is plan 1 only when it beats the set's week by the floor, 0.1 expected categories; plans with the same adds on the same days are one, the best week kept; recommended, a heuristic",
+    "plan 1 is the week's recommended set; the searched plans are at most 4 steps, up to 5 plans over the rest of the week, searched 8 wide and the best 8 valued exactly in 0.4 s; a searched plan is plan 1 only when it beats the set's week by the floor, 0.1 expected categories; plans with the same adds on the same days are one; recommended, a heuristic",
   );
 });
 
@@ -2402,6 +2405,32 @@ test("the team lines: Yahoo's count with the gap row so far, the rest, the proje
   assert.equal(teamRows(t, "rest")[0].line.pts, 80);
   assert.equal(teamRows(t, "total")[0].label, "Team, projected final");
   assert.deepEqual(teamRows(t, "per_game"), []);
+});
+
+test("a week plan's step reads on the week with the three weeks beside it (#332)", () => {
+  assert.equal(queueGain({ gain: 0.4, judged: "week", three: -0.1 }), "+0.40 this week, −0.10 over three weeks");
+  assert.equal(queueGain({ gain: 0.4, judged: "week", three: null }), "+0.40 this week");
+  assert.equal(queueGain({ gain: 0.4, judged: "three", three: null }), "+0.40");
+  assert.equal(planOdds({ matchup: 0.62, against: 0.58 }), "matchup odds 62%, 58% with the three weeks' set");
+  assert.equal(planOdds({ matchup: 0.62, against: null }), "matchup odds 62%");
+  assert.equal(planOdds({ matchup: null, against: 0.58 }), "");
+  assert.equal(planOdds(null), "");
+  const plan = { id: "x", day: "2026-10-21", step: 1, steps: 2, matchup: 0.62, against: 0.58 };
+  assert.equal(queuePlanLine([{ plan: null }, { plan }]), "A week plan of 2 steps leads: matchup odds 62%, 58% with the three weeks' set.");
+  assert.equal(queuePlanLine([{ plan: { ...plan, steps: 1, matchup: null } }]), "A week plan of 1 step leads.");
+  assert.equal(queuePlanLine([{ plan: null }]), "");
+});
+
+test("the league list's best move says when a week plan leads (#332)", () => {
+  const b = { ...(solved("1", 0.4) as Extract<BestMove, { status: "solved" }>), moves: 2, gain: 0.4, label: "rest of week 3", plan: { matchup: 0.62, against: 0.58, three: -0.1, ros: null } };
+  assert.equal(setSummary(b), "A week plan of 2 steps adds +0.40 over rest of week 3, matchup odds 62%, 58% with the three weeks' set; −0.10 over three weeks");
+});
+
+test("the plans' tooltip says what the queue chose on (#332)", () => {
+  const base = { limits: { plans: 5, steps: 4, beam: 8, exact: 8 }, seconds: 0.4, floor: 0.1 };
+  const set = { score: 0.2, matchup: 0.5 };
+  assert.match(weekPlansTitle({ ...base, judged: { weight: 0.33, playoff: false, floor: 0.1, set } }, "expected categories"), /best score, its week plus 0.33 of its three weeks, that beats the three weeks' set by 0.1 expected categories/);
+  assert.match(weekPlansTitle({ ...base, judged: { weight: 0.33, playoff: true, floor: 0.03, set } }, "expected categories"), /a playoff week: the queue takes the plan with the best matchup odds that beats the three weeks' set by 3 points/);
 });
 
 test("a league's dollars and adds left read the same on the list and the Queue (#333)", () => {

@@ -1015,9 +1015,12 @@ The streaming plan turns over a weak spot; a week plan orders the week's moves o
 - **The pool** is blocks: the week's twelve best single moves (`SINGLES`, each with its two best
   drops, `DROPS`) from the week's `single_swaps`, each a block of one, and each stream spot's
   chain from the streaming plan, whole, so a step that drops an earlier step's add never comes
-  without it.
+  without it; the chain the three-week guard would refuse (`guard=False`, the season guard kept,
+  #332) unless the moves budget has run out (#306), when it is the guarded chain. The three weeks'
+  set's moves join too, so a plan can carry a lasting pickup with the week's streamers.
 - **The search** is a beam over the blocks, eight wide (`BEAM`), by a cheap score (each block's
-  own week gain); the eight best (`EXACT`) are valued exactly with the Moves card's evaluator.
+  own score, below; its week gain in a playoff week); the eight best (`EXACT`) are valued exactly
+  with the Moves card's evaluator.
   Every searched plan passes the season guard. A heuristic: "recommended", never "optimal".
 - **The steps' increments.** A step's gain on each horizon is the plan up to it less the plan
   before it, so the increments telescope to the plan's total.
@@ -1028,25 +1031,42 @@ The streaming plan turns over a weak spot; a week plan orders the week's moves o
 - **Plan 1** is the recommended week set unless a searched plan beats its week by the plan floor
   (`stream.floor_of`); the others by their week, five at most (`WEEK_PLANS`), distinct by adds
   and days (`plans.key_of`, never the drops: of the searched plans with the same adds on the same
-  days only the best week is kept, and none with the set's). Plan 1, the week's recommended set,
-  may take more steps than four or more moves a day than the cap; the searched plans may not.
-- **The queue's plan.** The plan worth most on the three weeks after among those that keep the
-  rules (`plans.valid`, so plan 1 over the step limit or the daily cap never does) and beat the
-  three weeks' set there by the plan floor (`plans.for_queue`; the queue's judging horizon, so a
-  plan never takes the queue on its week alone); none when none does. The decision log keeps it as
-  one more set, `week_plan`, its steps by day, each with its increment as `gain`, its `after` (the
+  days only the best score is kept, and none with the set's). The queue's plan outside the five
+  takes the last place. Plan 1, the week's recommended set, may take more steps than four or more
+  moves a day than the cap; the searched plans may not.
+- **The queue's plan** (the user's ruling of 2026-11-06, #332). A set's or plan's score is its
+  week gain plus `three_weight` times its three-week gain (`plans.score`; the knob, default 0.33,
+  0 to 1, never moved by the Monday step), in expected categories, points in a points league:
+  standings count each category as a win, and the matchup odds are a headline beside it. The
+  queue takes the plan with the highest score among those that keep the rules (`plans.valid`, so
+  plan 1 over the step limit or the daily cap never does), pass the season guard and beat the
+  three weeks' set by the plan floor on the score (`plans.for_queue`), else the set. From
+  `Season.first_playoff_week` on the score is the matchup odds (`ev.odds("week", moves)`), the
+  floor 3 percentage points and the three weeks do not count; with no opponent read no plan
+  leads. The plan that leads is then trimmed (`plans.trimmed`, ruled 2026-11-06): a step comes out
+  when the plan without it stays valid and passes the season guard and its score falls by less
+  than half the floor, leave-one-out rather than by increment, the lowest first, until none
+  qualifies, and the trimmed plan must still beat the set. A weekly add and a claim are not spent
+  on a step that gives the plan nothing. A chain step a later step drops stays, since the plan
+  without it is not valid. The Moves card keeps the plan as searched; the queue, the log and what
+  executes are the trimmed plan, in the last place when it is not among the five. The decision log
+  keeps it as
+  one more set, `week_plan`, its steps by day, each with its increment as `gain`, its `score`
+  (what it adds to the plan's, its bid's measure), its `after` (the
   steps before it) and `plan` (the plan's id, `<entry id>:week_plan`, its day, its step and
-  steps); the queue then takes its steps instead of the three weeks' set (docs/AUTOPILOT.md
+  steps, its matchup odds and the set's); the queue then takes its steps instead of the three weeks' set (docs/AUTOPILOT.md
   section 2, "The week plan"). The plan is the unit for the floor and the season guard, and the
   scorecard judges its steps made as one decision (`season_scorecard.compared_units`: their
-  projected and realized values summed on the three weeks after), in the Monday summary and in
-  the noise floor's spread.
+  projected and realized values summed on the week, its judging horizon, with the three weeks and
+  the season beside it), in the Monday summary and in the noise floor's spread.
 - **Output.** The moves payload's `week_plans`: `plans` (each with `source`, `set` or `search`;
   `steps` with `add`, `drop`, `from`, `held`, `held_drop`, `basis`, `gain` on both horizons,
-  `ros` and `after`; `backs`; `total`; `ros`), `queue` (an index, null for none), `floor`,
-  `limits` and `seconds`; null with no day left in the week. `search.seconds` beside it times the
-  whole moves solve. Every moves entry of the decision log carries `week_plans`: each plan's
-  source, moves, total and rest of the season, the queue's index, the floor and the seconds.
+  `score`, `ros` and `after`; `backs`; `total`; `ros`; `score`; `matchup`), `queue` (an index,
+  null for none), `judged` (`weight`, `playoff`, `floor` on the score and the three weeks' set's
+  `set`: `score`, `matchup`), `floor`, `limits` and `seconds`; null with no day left in the week.
+  `search.seconds` beside it times the whole moves solve. Every moves entry of the decision log
+  carries `week_plans`: each plan's source, moves, total, rest of the season, score and matchup
+  odds, the queue's index, `judged`, the floor and the seconds, so the choice can be replayed.
 - **Out of scope.** Plans across weeks; the Moves card's section is part 2b.
 
 ## The breakout flag

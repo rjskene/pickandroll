@@ -6,16 +6,18 @@ construction."""
 from __future__ import annotations
 
 from dataclasses import replace
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
+from pickandroll.api import season_decisions
 from pickandroll.api import season_moves as sm
 from pickandroll.season import Player
 from pickandroll.season import moves as mv
 from pickandroll.season import plans as pl
+from pickandroll.season import weekly as wk
 
-from .test_moves import WEEKS, build, il_full_league, rates, streaming_league
+from .test_moves import WEEKS, build, il_full_league, player, rates, streaming_league
 from .test_season_guard import built_of
 
 FIRST = WEEKS[0][0]
@@ -214,3 +216,325 @@ def test_plans_with_the_same_adds_and_days_are_one_the_best_week_kept():
     for w in plans:
         if w.source == pl.SEARCH:
             assert w.total["week"] == pytest.approx(best[pl.key_of(p, w.moves)])
+
+
+# --------------------------------------------------------------------------- the queue's choice
+class Priced:
+    """An evaluator with the gains set by hand, and each set's matchup odds, one category's."""
+
+    def __init__(self, problem, gains, odds=None):
+        self.problem = problem
+        self.gains = {frozenset(k): v for k, v in gains.items()}
+        self.odds_of = {frozenset(k): v for k, v in (odds or {}).items()}
+
+    def gain(self, key, moves):
+        # A set not priced costs everything, so none of its steps comes out by accident.
+        if not moves:
+            return 0.0
+        return self.gains.get(frozenset(moves), (-99.0, -99.0))[0 if key == "week" else 1]
+
+    value = gain
+
+    def odds(self, key, moves):
+        p_win = self.odds_of.get(frozenset(moves))
+        if p_win is None:
+            return [[]]
+        return [[[wk.CategoryOdds("PTS", None, None, 1.0, p_win)]]]
+
+
+def choice(p, *moves):
+    return pl.WeekPlan(pl.SEARCH, tuple(pl.Step(m, FIRST, {}) for m in moves), (), {})
+
+
+A, B, C = mv.Move(10, 7), mv.Move(11, 3), mv.Move(12, 2)
+
+
+def test_a_plan_that_costs_the_three_weeks_but_wins_on_score_leads():
+    p = replace(full_league(), plan_floor=0.1)
+    # The set: 0.1 + 0.33 x 0.6 = 0.298. The plan: 0.8 + 0.33 x -0.2 = 0.734.
+    ev = Priced(p, {(C,): (0.1, 0.6), (A, B): (0.8, -0.2)})
+    w = choice(p, A, B)
+    assert pl.for_queue(ev, [w], [C]) is w
+    assert pl.score(ev, [A, B], 0.33) == pytest.approx(0.734)
+    # At a weight that counts the three weeks in full the set holds.
+    assert pl.for_queue(ev, [w], [C], weight=1.0) is None
+
+
+def test_a_plan_under_the_floor_does_not_lead_and_the_best_score_does():
+    p = replace(full_league(), plan_floor=0.1)
+    ev = Priced(p, {(C,): (0.3, 0.0), (A,): (0.39, 0.0), (B,): (0.45, 0.0), (A, B): (0.6, 0.0)})
+    assert pl.for_queue(ev, [choice(p, A)], [C]) is None
+    assert pl.for_queue(ev, [choice(p, B)], [C]) is not None
+    two = choice(p, A, B)
+    assert pl.for_queue(ev, [choice(p, A), choice(p, B), two], [C]) is two
+
+
+def test_a_plan_the_season_guard_or_the_rules_refuse_never_leads():
+    p = replace(full_league(), plan_floor=0.0)
+    ev = Priced(p, {(): (0.0, 0.0), (A, B): (1.0, 1.0)})
+    w = choice(p, A, B)
+    assert pl.for_queue(ev, [w], []) is w
+    assert pl.for_queue(ev, [w], [], allowed=lambda moves: False) is None
+    capped = Priced(replace(p, daily_cap=1), {(): (0.0, 0.0), (A, B): (1.0, 1.0)})
+    assert pl.for_queue(capped, [w], []) is None
+
+
+def test_a_playoff_week_chooses_on_the_matchup_odds_by_three_points():
+    p = full_league()
+    gains = {(C,): (0.9, 0.9), (A,): (0.0, -1.0), (B,): (0.0, 0.0)}
+    odds = {(C,): 0.50, (A,): 0.54, (B,): 0.52}
+    ev = Priced(p, gains, odds)
+    a, b = choice(p, A), choice(p, B)
+    # The score favours the set everywhere; the odds pick the plan and the three weeks don't count.
+    assert pl.for_queue(ev, [a, b], [C]) is None
+    assert pl.for_queue(ev, [a, b], [C], weight=0.0, playoff=True) is a
+    assert pl.for_queue(ev, [b], [C], weight=0.0, playoff=True) is None
+    assert pl.gate(ev, [A], 0.0, True) == pytest.approx(0.54)
+    assert pl.gate_floor(p, True) == pl.PLAYOFF_FLOOR == 0.03
+
+
+def test_a_playoff_week_with_no_opponent_read_leaves_the_three_weeks_set():
+    p = full_league()
+    ev = Priced(p, {(C,): (0.0, 0.0), (A,): (9.0, 9.0)})
+    assert pl.matchup(ev, [C]) is None
+    assert pl.for_queue(ev, [choice(p, A)], [C], weight=0.0, playoff=True) is None
+
+
+def test_the_three_weeks_sets_moves_join_the_pool_whatever_they_gain_this_week():
+    p = full_league()
+    _, swaps, _ = solved(p)
+    lasting = mv.Move(11, 2, WEEKS[0][3])
+    assert (lasting,) not in pl.blocks(p, swaps)
+    assert pl.blocks(p, swaps, three_set=[lasting])[-1] == (lasting,)
+
+
+def test_the_beam_weighs_the_three_weeks_as_the_score_does(monkeypatch):
+    p = replace(full_league(), plan_floor=0.0)
+    # Two moves on one add: a plan takes one. The week picks the first, the score the second.
+    quick, lasting = mv.Move(10, 7), mv.Move(10, 3)
+    ev = Priced(p, {(quick,): (0.5, -1.0), (lasting,): (0.1, 2.0)})
+    monkeypatch.setattr(pl, "EXACT", 1)
+    pool = [(quick,), (lasting,)]
+    assert pl.search(ev, pool) == [(quick,)]
+    assert pl.search(ev, pool, weight=0.33) == [(lasting,)]
+
+
+def test_a_step_scores_its_increments_and_the_shown_plans_keep_the_choice():
+    step = pl.Step(A, FIRST, {"week": 0.4, "three": -0.3})
+    assert pl.step_score(step, 0.33) == pytest.approx(0.301)
+    assert pl.step_score(step, 0.0) == pytest.approx(0.4)
+    plans = [
+        pl.WeekPlan(pl.SEARCH, (pl.Step(mv.Move(20 + i, 7), FIRST, {}),), (), {"week": float(i)})
+        for i in range(7)
+    ]
+    assert pl.shown(plans, None) == plans[:5]
+    assert pl.shown(plans, plans[2]) == plans[:5]
+    assert pl.shown(plans, plans[6]) == [*plans[:4], plans[6]]
+
+
+def test_the_payload_gives_each_plans_score_and_odds_and_what_the_choice_was_made_on():
+    p = full_league()
+    out = sm.moves_payload(built_of(p, rule=mv.keep_rule(p)))["week_plans"]
+    assert out["judged"]["weight"] == pl.THREE_WEIGHT and out["judged"]["playoff"] is False
+    assert out["judged"]["floor"] == out["floor"]
+    assert set(out["judged"]["set"]) == {"score", "matchup"}
+    for w in out["plans"]:
+        assert w["score"] == pytest.approx(
+            w["total"]["week"] + pl.THREE_WEIGHT * w["total"]["three"], abs=1e-2
+        )
+        assert sum(s["score"] for s in w["steps"]) == pytest.approx(w["score"], abs=1e-2)
+
+
+def test_the_payload_of_a_playoff_week_scores_on_the_odds():
+    p = full_league()
+    out = sm.moves_payload(built_of(p, rule=mv.keep_rule(p), playoff=True))["week_plans"]
+    assert out["judged"]["playoff"] is True and out["judged"]["floor"] == pl.PLAYOFF_FLOOR
+    for w in out["plans"]:
+        assert w["score"] == pytest.approx(w["matchup"], abs=1e-3)
+        for s in w["steps"]:
+            assert s["score"] == pytest.approx(s["gain"]["week"], abs=1e-3)
+
+
+def test_the_pool_takes_the_unguarded_chain_until_the_budget_is_out(monkeypatch):
+    p = full_league()
+    built = built_of(p, rule=mv.keep_rule(p))
+    seen = []
+    real = sm.stream_of
+
+    def stream_of(built, ev, against, allowed=None, guard=True):
+        seen.append(guard)
+        return real(built, ev, against, allowed, guard)
+
+    monkeypatch.setattr(sm, "stream_of", stream_of)
+    sm.moves_payload(built)
+    assert seen == [True, False]
+    seen.clear()
+    spent = mv.Budget.start(None)
+    spent.spent = True
+    sm.moves_payload(built, spent)
+    assert seen == [True]
+
+
+def test_the_best_line_shows_the_queues_plan_first():
+    p = full_league()
+    built = built_of(replace(p, plan_floor=-9.0), rule=mv.keep_rule(p))
+    payload = sm.moves_payload(built)
+    wp = payload["week_plans"]
+    assert wp["queue"] is not None
+    chosen = wp["plans"][wp["queue"]]
+    out = sm.best_payload(built, payload)
+    assert out["horizon"] == "week" and out["moves"] == len(chosen["steps"])
+    assert out["gain"] == chosen["total"]["week"]
+    assert [x["add"] for x in out["set"]] == [s["add"] for s in chosen["steps"]]
+    assert out["plan"] == {
+        "matchup": chosen["matchup"],
+        "against": wp["judged"]["set"]["matchup"],
+        "three": chosen["total"]["three"],
+        "ros": chosen["ros"],
+    }
+
+
+def test_the_best_line_shows_the_three_weeks_set_when_no_plan_leads():
+    p = full_league()
+    built = built_of(replace(p, plan_floor=99.0), rule=mv.keep_rule(p))
+    payload = sm.moves_payload(built)
+    assert payload["week_plans"]["queue"] is None
+    assert sm.best_payload(built, payload)["plan"] is None
+
+
+# --------------------------------------------------------------------------- the trim
+def wide_league():
+    """The keep league with two more candidates and no daily cap to speak of."""
+    p = replace(full_league(), plan_floor=0.1, daily_cap=4)
+    more = (12, 13)
+    return replace(
+        p,
+        candidates=(*p.candidates, *(player(k, "STR") for k in more)),
+        effective={**p.effective, **dict.fromkeys(more, FIRST)},
+    )
+
+
+def test_a_step_that_gives_the_plan_nothing_comes_out_lowest_first():
+    p = replace(full_league(), plan_floor=0.1)
+    gains = {(A, B): (1.0, 0.0), (B,): (0.99, 0.0), (A,): (0.98, 0.0)}
+    got = pl.trimmed(Priced(p, gains), choice(p, A, B), weight=0.0)
+    # Both would pass; A costs the least, and a plan keeps a step.
+    assert got.moves == (B,)
+    # The trimmed plan is valued again, so its steps and total are what executes.
+    assert got.total["week"] == pytest.approx(0.99)
+    assert [s.gain["week"] for s in got.steps] == [pytest.approx(0.99)]
+
+
+def test_a_four_step_plan_loses_its_idle_step_and_keeps_its_chain():
+    # A league's real shape: a stream through one spot, each step dropping the last one's add, and
+    # a step of its own. The chain's first steps gain almost nothing, yet cannot come out alone.
+    p = wide_league()
+    day = WEEKS[0]
+    first = mv.Move(10, 7, day[0])
+    second = mv.Move(11, 10, day[1])
+    third = mv.Move(12, 11, day[2])
+    idle = mv.Move(13, 3, day[2])
+    full = (first, second, third, idle)
+    assert pl.valid(p, full)
+    assert not pl.valid(p, (second, third, idle)) and not pl.valid(p, (first, third, idle))
+    gains = {
+        full: (0.5, 0.0),
+        (first, second, third): (0.49, 0.0),  # without the idle step: costs 0.01
+        (first, second, idle): (0.1, 0.0),  # without the chain's end: costs 0.4
+        (first, second): (0.0, 0.0),
+        (first,): (0.0, 0.0),
+    }
+    got = pl.trimmed(Priced(p, gains), choice(p, *full), weight=0.0)
+    assert set(got.moves) == {first, second, third}
+
+
+def test_the_trim_goes_on_the_plans_cost_not_the_steps_increment():
+    p = replace(full_league(), plan_floor=0.1)
+    # A's increment is nil as the first step priced, but the plan without it loses 0.3.
+    ev = Priced(p, {(A,): (0.0, 0.0), (A, B): (0.5, 0.0), (B,): (0.2, 0.0)})
+    w = choice(p, A, B)
+    assert pl.trimmed(ev, w, weight=0.0) is w
+
+
+def test_a_plan_keeps_a_step_over_half_the_floor_and_at_least_one_step():
+    p = replace(full_league(), plan_floor=0.1)
+    w = choice(p, A, B)
+    at_margin = Priced(p, {(A, B): (0.5, 0.0), (A,): (0.44, 0.0), (B,): (0.44, 0.0)})
+    assert pl.trimmed(at_margin, w, weight=0.0) is w
+    lone = choice(p, A)
+    assert pl.trimmed(Priced(p, {(A,): (0.0, 0.0)}), lone, weight=0.0) is lone
+
+
+def test_a_chain_step_a_later_step_drops_stays():
+    p = replace(full_league(), plan_floor=0.1)
+    first, second = mv.Move(10, 7, WEEKS[0][0]), mv.Move(11, 10, WEEKS[0][1])
+    # The stream's chain: the second step drops the first's add. The first gives nothing, but the
+    # plan without it would drop a player it does not hold.
+    assert pl.valid(p, [first, second]) and not pl.valid(p, [second])
+    ev = Priced(p, {(first, second): (0.5, 0.0), (second,): (0.5, 0.0), (first,): (0.1, 0.0)})
+    w = choice(p, first, second)
+    assert pl.trimmed(ev, w, weight=0.0) is w
+
+
+def test_a_step_the_season_guard_needs_stays():
+    p = replace(full_league(), plan_floor=0.1)
+    ev = Priced(p, {(A, B): (0.5, 0.0), (B,): (0.5, 0.0), (A,): (0.1, 0.0)})
+    w = choice(p, A, B)
+    assert pl.trimmed(ev, w, weight=0.0, allowed=lambda moves: A in moves) is w
+
+
+def test_a_trimmed_plan_faces_the_set_again():
+    p = replace(full_league(), plan_floor=0.1)
+    # The set 0.1; the line 0.2. The plan at 0.22 clears it, without its idle step at 0.18 it does
+    # not, so the queue takes the set.
+    gains = {(C,): (0.1, 0.0), (A, B): (0.22, 0.0), (A,): (0.18, 0.0), (B,): (0.01, 0.0)}
+    assert pl.for_queue(Priced(p, gains), [choice(p, A, B)], [C], weight=0.0) is None
+    # Clear of the line once trimmed, the trimmed plan leads.
+    gains[(A, B)], gains[(A,)] = (0.5, 0.0), (0.48, 0.0)
+    got = pl.for_queue(Priced(p, gains), [choice(p, A, B)], [C], weight=0.0)
+    assert got.moves == (A,)
+
+
+def test_a_playoff_week_trims_on_half_the_odds_floor():
+    p = replace(full_league(), plan_floor=0.1)
+    odds = {(C,): 0.5, (A, B): 0.6, (B,): 0.59, (A,): 0.4}
+    ev = Priced(p, {}, odds)
+    got = pl.for_queue(ev, [choice(p, A, B)], [C], weight=0.0, playoff=True)
+    assert got.moves == (B,)
+    # At two points the step is worth more than half the three-point floor.
+    ev = Priced(p, {}, {**odds, (B,): 0.58})
+    w = choice(p, A, B)
+    assert pl.for_queue(ev, [w], [C], weight=0.0, playoff=True) is w
+
+
+def test_the_card_keeps_the_searched_plan_and_the_queue_points_at_the_trimmed_one():
+    p = replace(full_league(), plan_floor=0.1)
+    searched, trim = choice(p, A, B), choice(p, A)
+    assert pl.shown([searched], trim) == [searched, trim]
+    assert pl.place(pl.shown([searched], trim), trim) == 1
+    # A plan already listed with the trimmed moves stands for it.
+    other = pl.WeekPlan(pl.SET, trim.steps, (), {"week": 1.0})
+    assert pl.shown([searched, other], trim) == [searched, other]
+    assert pl.place([searched, other], trim) == 1
+    assert pl.place([searched], trim) is None
+    # Five plans listed: it takes the last place.
+    five = [choice(p, mv.Move(20 + i, 7)) for i in range(5)]
+    assert pl.shown(five, trim) == [*five[:4], trim]
+
+
+def test_the_queue_and_the_log_carry_the_trimmed_plan_and_the_card_the_searched_one(monkeypatch):
+    def first_step(ev, plan, weight, playoff, allowed, out):
+        return pl.valued(ev, plan.moves[:1], plan.source, out)
+
+    monkeypatch.setattr(pl, "trimmed", first_step)
+    p = full_league()
+    built = built_of(replace(p, plan_floor=-9.0), rule=mv.keep_rule(p))
+    payload = sm.moves_payload(built)
+    wp = payload["week_plans"]
+    chosen = wp["plans"][wp["queue"]]
+    assert len(chosen["steps"]) == 1
+    assert any(len(w["steps"]) > 1 for w in wp["plans"])
+    entry = season_decisions.moves_entry(built, payload, datetime(2026, 10, 26, 12, tzinfo=UTC))
+    logged = next(s for s in entry["sets"] if s["key"] == pl.QUEUE_PLAN)
+    assert [m["add"] for m in logged["moves"]] == [s["add"] for s in chosen["steps"]]
+    assert sm.best_payload(built, payload)["moves"] == 1

@@ -52,9 +52,10 @@ NEAR = timedelta(hours=1)
 #: The horizons a move is judged on (#143, #144): the rest of its week, the three matchup weeks
 #: after, and the rest of the season.
 WEEK, THREE, SEASON = "week", "three", "season"
-#: The moves route's sets recommended for the three weeks after, and the week plan the queue takes
-#: in place of the three weeks' set (#221 part 2), judged where the queue judges it.
-THREE_SETS = ("three", "week_plan")
+#: The moves route's set recommended for the three weeks after. The week plan the queue takes in
+#: its place (#221 part 2) is judged on the week, with the three weeks and the season beside it
+#: (#143, #144; the user's ruling of 2026-11-06).
+THREE_SETS = ("three",)
 #: The strategy's sets solved under the week weight (λ = 1, this week alone) and under the season
 #: weight (λ = 0, the rest of the season alone).
 WEEK_SET, SEASON_SET = "week", "season"

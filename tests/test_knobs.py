@@ -35,10 +35,12 @@ def put_knobs(client, body) -> None:
 
 # --------------------------------------------------------------------------- the knobs
 def test_the_hooked_knobs_are_every_knob_but_the_stash_threshold_and_the_faab_sizing():
-    assert set(pg.DEFAULTS) == set(pg.KNOBS)
-    assert pg.HOOKED <= set(pg.KNOBS)
+    assert set(pg.DEFAULTS) == set(pg.LIVE_KNOBS)
+    assert pg.HOOKED <= set(pg.LIVE_KNOBS)
     # Recorded, never read: the Monday step never changes one.
-    assert set(pg.KNOBS) - pg.HOOKED == {"stash_threshold", "faab_sizing"}
+    assert set(pg.LIVE_KNOBS) - pg.HOOKED == {"stash_threshold", "faab_sizing"}
+    # The simulator's arms name each of KNOBS, and it is on hold: a new knob stays out of them.
+    assert set(pg.LIVE_KNOBS) - set(pg.KNOBS) == {"three_weight"} and len(pg.KNOBS) == 9
     assert pg.DEFAULTS["system"] == "bbm" and pg.DEFAULTS["horizon_weight"] == "natural"
     assert (pg.DEFAULTS["protection_floor"], pg.DEFAULTS["daily_cap"]) == (0.0, 2)
     assert (pg.DEFAULTS["plan_floor_cats"], pg.DEFAULTS["plan_floor_points"]) == (0.10, 0.01)
@@ -142,6 +144,7 @@ def test_every_hooked_knob_reaches_the_solve_and_the_log(client):
                     "blend": 0.25,
                     "plan_floor_cats": 0.2,
                     "horizon_weight": "season",
+                    "three_weight": 0.5,
                 }
             },
         },
@@ -149,6 +152,7 @@ def test_every_hooked_knob_reaches_the_solve_and_the_log(client):
     m = client.get(f"/seasons/{LEAGUE}/moves").json()
     assert m["system"]["key"] == "blend" and m["system"]["blend"] == 0.25
     assert m["keep_rule"]["floor"] == 0.3 and m["plan"]["floor"] == 0.2
+    assert m["week_plans"]["judged"]["weight"] == 0.5
     built = client.app.state.seasons._built(LEAGUE, None)
     assert (built.problem.floor, built.problem.plan_floor, built.problem.daily_cap) == (0.3, 0.2, 1)
     [entry] = logged(client)
@@ -164,6 +168,7 @@ def test_every_hooked_knob_reaches_the_solve_and_the_log(client):
         "stash_threshold": 0.2,
         "faab_sizing": None,
         "daily_cap": 1,
+        "three_weight": 0.5,
         # The system the file had in force, beside the one the solve ran on.
         "file_system": "blend",
     }
@@ -244,3 +249,12 @@ def test_the_routes_and_the_trade_body_take_the_blend_and_refuse_another_system(
     assert client.get("/seasons/scorecard", params={"system": "blend"}).status_code == 200
     assert season_api.TradeBody(team=1).system is None
     assert season_api.TradeBody(team=1, system="blend").system == "blend"
+
+
+def test_the_three_weeks_weight_stays_between_0_and_1_and_the_monday_step_never_moves_it():
+    assert pg.DEFAULTS["three_weight"] == 0.33
+    raw = {"in_force": {"three_weight": 1.5}, "leagues": {"100001": {"three_weight": -0.1}}}
+    knobs, problems = pg.knob_file(raw)
+    assert "three_weight" not in knobs["in_force"]
+    assert "three_weight" not in knobs["leagues"].get("100001", {})
+    assert len(problems) == 2
