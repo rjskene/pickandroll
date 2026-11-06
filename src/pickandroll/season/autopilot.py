@@ -101,11 +101,12 @@ EARLIER_HELD = "an earlier step of the week plan is not queued"
 SUPERSEDED = "superseded by a later solve"
 
 #: An execution's outcome, from the extension's page check; ``won`` and ``lost`` resolve a claim
-#: the morning after, from the league's transactions.
+#: the morning after, from the league's transactions, and ``lapsed`` one past its clear day that
+#: no transaction settles and that is not on my roster (#324): neither a win nor a loss.
 OUTCOMES = ("would_claim", "claimed", "added", "skipped", "failed", "gone")
 EXECUTED = frozenset({"would_claim", "claimed", "added"})
 PLACED = frozenset({"claimed", "added"})
-RESOLUTIONS = ("won", "lost")
+RESOLUTIONS = ("won", "lost", "lapsed")
 
 
 def entry_id(day: date, league: str, add: int, drop: int | None) -> str:
@@ -580,16 +581,26 @@ def effective_bid(e: Mapping[str, Any]) -> int:
     return 0 if e.get("bid_struck") else int((e.get("bid") or {}).get("amount") or 0)
 
 
-def resolve(e: Mapping[str, Any], added: frozenset[int], elsewhere: frozenset[int]) -> str | None:
+def resolve(
+    e: Mapping[str, Any],
+    added: frozenset[int],
+    elsewhere: frozenset[int],
+    roster: frozenset[int] = frozenset(),
+    overdue: bool = False,
+) -> str | None:
     """A placed claim's outcome the morning after, from the league's transactions: ``won`` when
-    my team added the player, ``lost`` when another team has him; None while neither shows."""
+    my team added the player, ``lost`` when another team has him; None while neither shows. Once
+    ``overdue``, past its clear day (#324), a player on my ``roster`` is ``won`` whatever the
+    transactions show (a win may have scrolled off them), and a claim neither settles ``lapsed``."""
     if e.get("outcome") not in PLACED or e.get("resolved"):
         return e.get("resolved")
+    if overdue and e["add"] in roster:
+        return "won"
     if e["add"] in added:
         return "won"
     if e["add"] in elsewhere:
         return "lost"
-    return None
+    return "lapsed" if overdue else None
 
 
 #: Why a player on Yahoo's can't-cut list is protected (#220).

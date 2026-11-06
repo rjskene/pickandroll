@@ -467,9 +467,17 @@ def transaction(kind, player, team, when, group=0):
     )
 
 
-def league(transactions, waiver_days=2, me=4):
+def league(transactions, waiver_days=2, me=4, roster=(), read=None):
     settings = SimpleNamespace(my_team_id=me, waiver_days=waiver_days)
-    return SimpleNamespace(settings=settings, transactions=transactions, teams=())
+    fetched = {} if read is None else {"transactions": (read, "t"), f"roster/{me}": (read, "t")}
+    spots = [SimpleNamespace(player=SimpleNamespace(yahoo_id=p)) for p in roster]
+    return SimpleNamespace(
+        settings=settings,
+        transactions=transactions,
+        teams=(),
+        my_roster=tuple(spots),
+        fetched=fetched,
+    )
 
 
 def test_a_drop_within_the_waiver_days_is_never_added_back():
@@ -533,6 +541,89 @@ def test_a_claim_counts_against_its_week_when_placed_and_resolves_from_the_trans
         "2026-10-20:900001:101:0": "won",
         "2026-10-20:900001:102:0": "lost",
     }
+
+
+def claim(add=101, clear="2026-10-20", day="2026-10-18", outcome="claimed") -> dict:
+    return {
+        "id": f"{day}:900001:{add}:0",
+        "league": "900001",
+        "add": add,
+        "from": clear,
+        "outcome": outcome,
+        "resolved": None,
+    }
+
+
+#: The morning read of the day after the clear day, and the build on it.
+READ = datetime(2026, 10, 21, 10, 10, tzinfo=UTC)
+
+
+def test_a_claim_past_its_clear_day_that_nothing_settles_lapses():
+    e = claim()
+    assert season_queue.resolutions(league([], read=READ), [e], DAY) == {e["id"]: "lapsed"}
+
+
+def test_a_claim_with_no_clear_date_lapses_after_its_queue_day():
+    e = claim(clear=None, day="2026-10-20")
+    assert season_queue.resolutions(league([], read=READ), [e], DAY) == {e["id"]: "lapsed"}
+    same = claim(clear=None, day="2026-10-21")
+    assert season_queue.resolutions(league([], read=READ), [same], DAY) == {}
+
+
+def test_a_claim_on_its_clear_day_stays_pending():
+    e = claim(clear="2026-10-21")
+    assert season_queue.resolutions(league([], read=READ), [e], DAY) == {}
+
+
+def test_the_player_on_my_roster_is_won_whatever_the_transactions_show():
+    e = claim()
+    s = league([], roster=[101], read=READ)
+    assert season_queue.resolutions(s, [e], DAY) == {e["id"]: "won"}
+    s = league([transaction("add", 101, 9, "Oct 20, 4:15 am")], roster=[101], read=READ)
+    assert season_queue.resolutions(s, [e], DAY) == {e["id"]: "won"}
+    # Before the day after, the transactions alone say: the roster settles nothing.
+    held = claim(clear="2026-10-21")
+    assert season_queue.resolutions(league([], roster=[101], read=READ), [held], DAY) == {}
+
+
+def test_a_settled_claim_keeps_its_transaction_past_the_clear_day():
+    won, lost = claim(), claim(102)
+    s = league(
+        [
+            transaction("add", 101, 4, "Oct 20, 4:15 am"),
+            transaction("add", 102, 9, "Oct 20, 4:15 am"),
+        ],
+        read=READ,
+    )
+    assert season_queue.resolutions(s, [won, lost], DAY) == {won["id"]: "won", lost["id"]: "lost"}
+
+
+@pytest.mark.parametrize("read", [None, datetime(2026, 10, 20, 10, 10, tzinfo=UTC)])
+def test_a_read_from_on_or_before_the_clear_day_lapses_nothing(read):
+    assert season_queue.resolutions(league([], read=read), [claim()], DAY) == {}
+
+
+def test_a_stale_roster_read_alone_lapses_nothing():
+    s = league([], read=READ)
+    s.fetched["roster/4"] = (datetime(2026, 10, 19, 10, 10, tzinfo=UTC), "t")
+    assert season_queue.resolutions(s, [claim()], DAY) == {}
+
+
+def test_a_lapsed_claim_is_not_open_and_takes_no_add():
+    e = claim(clear="2026-10-20")
+    adds = {"weeks": [{"start": "2026-10-19", "end": "2026-10-25", "adds": 2}]}
+    assert season_queue.pending([{"entries": [{**e, "resolved": "lapsed"}]}], "900001") == []
+    open_ = season_queue.pending([{"entries": [e]}], "900001")
+    week = (date(2026, 10, 19), date(2026, 10, 25))
+    assert season_queue.adds_left(adds, open_)[week] == 1
+    settled = season_queue.resolutions(league([], read=READ), open_, DAY)
+    left = [c for c in open_ if c["id"] not in settled]
+    assert left == [] and season_queue.adds_left(adds, left)[week] == 2
+
+
+def test_lapsed_is_a_resolution_and_not_a_landing():
+    assert "lapsed" in qa.RESOLUTIONS
+    assert not qa.landed({"outcome": "claimed", "resolved": "lapsed"})
 
 
 # --------------------------------------------------------------------------- the routes
@@ -1517,3 +1608,29 @@ def test_a_build_resolves_the_earlier_days_placed_claims_and_counts_the_open_one
     week = next(w for w in row["adds_left"] if w["start"] <= "2026-10-22" <= w["end"])
     solved = next(w for w in row["adds"]["weeks"] if w["start"] == week["start"])
     assert week["adds"] == solved["adds"] - 1
+
+
+def test_a_build_lapses_a_dead_claim_frees_its_add_and_lets_its_player_go(client):
+    folder = client.data_dir / "autopilot" / "queue"
+    folder.mkdir(parents=True)
+    dead = {
+        "id": f"2026-10-18:{LEAGUE}:9001:0",
+        "league": LEAGUE,
+        "add": 9001,
+        "from": "2026-10-20",
+        "outcome": "claimed",
+        "resolved": None,
+    }
+    (folder / "2026-10-18.json").write_text(json.dumps({"entries": [dead]}))
+    row = row_of(queued(client))
+    written = json.loads((folder / "2026-10-18.json").read_text())["entries"][0]
+    assert written["resolved"] == "lapsed" and written["resolved_at"] == NOW.isoformat()
+    assert row["pending"] == []
+    week = next(w for w in row["adds_left"] if w["start"] <= "2026-10-20" <= w["end"])
+    assert week["adds"] == next(
+        w["adds"] for w in row["adds"]["weeks"] if w["start"] == week["start"]
+    )
+    # A lapse stands: a later build reads it as settled, and leaves it alone.
+    (folder / "2026-10-18.json").write_text(json.dumps({"entries": [written]}))
+    assert client.post("/autopilot/queue/build").status_code == 200
+    assert json.loads((folder / "2026-10-18.json").read_text())["entries"][0] == written
