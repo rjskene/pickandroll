@@ -4,12 +4,12 @@
 // whole (a chip row on a phone), and folds to its numbers with `[` or ⌘B (Ctrl+B off a Mac),
 // kept per browser. The popouts (a step's worked example, a bullet's formula), and the place
 // kept in the URL hash (#draft/3).
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactElement } from "react";
 import { EXPLAIN_SHEET, explainKeys } from "../keys";
 import { useHotkeys } from "../useKeys";
 import AppBarLead from "../components/AppBarLead";
 import KeySheet from "../components/KeySheet";
-import { LeaguesIcon } from "../components/icons";
+import { BothPanelsIcon, FigurePanelIcon, LeaguesIcon, SideBySideIcon, StackedIcon, TextPanelIcon } from "../components/icons";
 import { useLandingOrder } from "../components/landingOrder";
 import { OverviewStatus } from "../components/StatusLight";
 import { useNow } from "../components/YahooSync";
@@ -23,6 +23,7 @@ import { Drawer, ExampleBody, FormulaBody } from "./Popout";
 import StepCard from "./StepCard";
 import Rail from "./Rail";
 import { RAIL_KEY, railOpen } from "./railModel";
+import { chooseLayout, chooseShow, cycleShow, flipLayout, savedLayout, stageClass, VIEW_KEY, type CardView, type Layout, type Show } from "./view";
 import { TRACKS, trackById } from "./tracks/index.ts";
 
 interface Props {
@@ -38,6 +39,24 @@ function savedRail(): boolean {
   }
 }
 
+function savedView(): CardView {
+  try {
+    return { layout: savedLayout(localStorage.getItem(VIEW_KEY)), show: "both" };
+  } catch {
+    return { layout: "side", show: "both" };
+  }
+}
+
+const LAYOUTS: { id: Layout; label: string; Icon: () => ReactElement }[] = [
+  { id: "side", label: "Figure beside the text", Icon: SideBySideIcon },
+  { id: "stack", label: "Figure stacked above the text", Icon: StackedIcon },
+];
+const PANELS: { id: Show; label: string; Icon: () => ReactElement }[] = [
+  { id: "both", label: "Figure and text", Icon: BothPanelsIcon },
+  { id: "fig", label: "The figure alone", Icon: FigurePanelIcon },
+  { id: "text", label: "The text alone", Icon: TextPanelIcon },
+];
+
 export default function ExplainScreen({ onBack, onProgress }: Props) {
   const landing = useLandingOrder();
   const leagues = [...landing.rows.pinned, ...landing.rows.rest];
@@ -50,6 +69,7 @@ export default function ExplainScreen({ onBack, onProgress }: Props) {
   // The last popout opened, so its sheet keeps its content while it slides out.
   const [shownPop, setShownPop] = useState<Pop | null>(null);
   const [railShown, setRailShown] = useState(savedRail);
+  const [view, setView] = useState(savedView);
   const body = useRef<HTMLDivElement>(null);
   const track = trackById(place.track) ?? TRACKS[0];
   const step = track.steps[Math.min(place.step, track.steps.length - 1)];
@@ -139,8 +159,24 @@ export default function ExplainScreen({ onBack, onProgress }: Props) {
       // The fold is a convenience: the rail opens again without storage.
     }
   }, [railShown]);
+  useEffect(() => {
+    try {
+      localStorage.setItem(VIEW_KEY, view.layout);
+    } catch {
+      // The layout is a convenience: the card opens side by side without storage.
+    }
+  }, [view.layout]);
+  // Every card's height changes with the view: read-it-all keeps the reader on the current card.
+  const viewed = useRef(view);
+  useLayoutEffect(() => {
+    if (viewed.current === view) return;
+    viewed.current = view;
+    if (all && step) document.getElementById(`ex-${track.id}-${step.id}`)?.scrollIntoView({ block: "start" });
+  }, [all, step, track.id, view]);
+  const onFlipLayout = useCallback(() => setView(flipLayout), []);
+  const onCycleShow = useCallback(() => setView(cycleShow), []);
   useHotkeys(
-    explainKeys({ prev, next, back: onBack, glossaryOpen: gloss.open, closeGlossary, toggleGlossary, popOpen: pop !== null, closePop, toggleExample, toggleAll, toggleRail, sheetOpen, setSheetOpen }),
+    explainKeys({ prev, next, back: onBack, glossaryOpen: gloss.open, closeGlossary, toggleGlossary, popOpen: pop !== null, closePop, toggleExample, toggleAll, toggleRail, flipLayout: onFlipLayout, cycleShow: onCycleShow, sheetOpen, setSheetOpen }),
   );
   const popStep = shownPop?.kind === "example" ? trackById(shownPop.track)?.steps.find((s) => s.id === shownPop.step) : undefined;
   const popFormula = shownPop?.kind === "formula" ? FORMULAS[shownPop.id] : undefined;
@@ -161,6 +197,25 @@ export default function ExplainScreen({ onBack, onProgress }: Props) {
         </span>
         <span className="grow" />
         <span className="ex-break" aria-hidden />
+        <span className="ex-views">
+          <span className="seg ex-view" role="group" aria-label="The card's layout">
+            {LAYOUTS.map(({ id, label, Icon }) => {
+              const on = view.show === "both" && view.layout === id;
+              return (
+                <button key={id} className={on ? "on" : ""} aria-pressed={on} aria-label={label} title={`${label} (v)`} onClick={() => setView(chooseLayout(id))}>
+                  <Icon />
+                </button>
+              );
+            })}
+          </span>
+          <span className="seg ex-show" role="group" aria-label="Panels shown">
+            {PANELS.map(({ id, label, Icon }) => (
+              <button key={id} className={view.show === id ? "on" : ""} aria-pressed={view.show === id} aria-label={label} title={`${label} (h)`} onClick={() => setView(chooseShow(id))}>
+                <Icon />
+              </button>
+            ))}
+          </span>
+        </span>
         <label className={`switch ex-all${all ? " on" : ""}`} title="Every step of the track on one page (a)">
           <input type="checkbox" checked={all} onChange={(e) => setAll(e.target.checked)} /> <span className="ex-long">Read it all</span>
           <span className="ex-short">All</span> <kbd>a</kbd>
@@ -191,7 +246,7 @@ export default function ExplainScreen({ onBack, onProgress }: Props) {
           <div className="ex-body">
             <Rail track={track} step={place.step} open={railShown} onGo={(i) => go({ track: track.id, step: i })} onToggle={toggleRail} />
             <div className="ex-scroll" ref={body}>
-              <div className={`ex-stage${all ? " all" : ""}`}>
+              <div className={stageClass(all, view)}>
                 {shown.map((s, k) => (
                   <StepCard key={s.id} track={track} step={s} index={all ? k : place.step} />
                 ))}

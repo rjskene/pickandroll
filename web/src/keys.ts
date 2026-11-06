@@ -701,12 +701,16 @@ export interface ExplainApi {
   toggleAll: () => void;
   /** [: the step rail folded to its numbers, or open (#282). */
   toggleRail: () => void;
+  /** v: the figure beside the text, or stacked above it (#337). */
+  flipLayout: () => void;
+  /** h: both panels, the figure alone, the text alone (#337). */
+  cycleShow: () => void;
   sheetOpen: boolean;
   setSheetOpen: (open: boolean) => void;
 }
 
 /** The Explain screen's keys (#283): the arrows walk the steps, g the glossary, e the step's
- * example (#282), a read it all, [ the rail folded or open; from a field (the animations' range and toggles) the keys keep
+ * example (#282), a read it all, [ the rail folded or open, v the card's layout, h its panels; from a field (the animations' range and toggles) the keys keep
  * their native meaning. Esc closes the key sheet, then an example, then the glossary, then goes
  * back. */
 export function explainKeys(x: ExplainApi): KeyMap {
@@ -731,6 +735,8 @@ export function explainKeys(x: ExplainApi): KeyMap {
       e: unlessField(x.toggleExample),
       a: unlessField(x.toggleAll),
       "[": unlessField(x.toggleRail),
+      v: unlessField(x.flipLayout),
+      h: unlessField(x.cycleShow),
     },
     mod: { b: x.toggleRail },
   };
@@ -745,6 +751,13 @@ export const EXPLAIN_SHEET: Sheet = {
         [["←", "→"], "the step before or after; past a track's last step, the next track"],
         [["a"], "read it all: every step of the track on one page, the rail following the scroll"],
         [["[", modChord("B")], "fold the rail to its numbers, or open it; a number shows its step's name on hover, and this browser keeps the choice"],
+      ],
+    },
+    {
+      title: "The card",
+      rows: [
+        [["v"], "the figure beside the text, or stacked above it; this browser keeps the choice"],
+        [["h"], "both panels, the figure alone, the text alone; a choice of layout brings both back"],
       ],
     },
     {
