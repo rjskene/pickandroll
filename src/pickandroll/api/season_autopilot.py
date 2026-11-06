@@ -82,6 +82,8 @@ STEP_OUTCOMES = ("would_set", "skipped", "set", "failed")
 #: are the defaults of its ``live_after`` (#171 PR 3).
 DRY_RUN_DAYS = 7
 CHECKED_DAYS = 2
+#: A group of steps left out because a game it touches began.
+TIP_OFF_PASSED = "tip-off passed"
 #: A held player whose status cleared and whose comeback needs a drop: the moves queue's (#124).
 NEEDS_DROP = "needs a drop: the comeback is the moves queue's"
 #: A comeback's drop's entry in the drop log (#318): it has no queue entry.
@@ -282,7 +284,7 @@ def steps_payload(
         if any(t <= now for t in times):
             out["skipped"].append(
                 {
-                    "reason": "tip-off passed",
+                    "reason": TIP_OFF_PASSED,
                     "players": sorted(moved),
                     "steps": [_step(s, tip, None) for s in group],
                 }
@@ -304,12 +306,20 @@ def steps_payload(
         ),
     }
     if not out["steps"]:
-        out["reason"] = (
-            "every change waits on a game that began"
-            if out["skipped"]
-            else "Yahoo's lineup already starts the recommended players"
-        )
+        out["reason"] = _no_steps_reason(out["skipped"])
     return out
+
+
+def _no_steps_reason(skipped: Sequence[Mapping[str, Any]]) -> str:
+    """Why a day has no steps (#326), from its skip groups: nothing skipped means nothing to
+    change, only tip-offs that every change waits on them, one other reason says itself, and
+    several name each once, in the order the groups came."""
+    reasons = list(dict.fromkeys(str(g["reason"]) for g in skipped))
+    if not reasons:
+        return "Yahoo's lineup already starts the recommended players"
+    if reasons == [TIP_OFF_PASSED]:
+        return "every change waits on a game that began"
+    return reasons[0] if len(reasons) == 1 else f"several reasons: {'; '.join(reasons)}"
 
 
 def comeback_stage(
