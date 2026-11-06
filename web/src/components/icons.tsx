@@ -303,6 +303,55 @@ export function HistoryIcon() {
   );
 }
 
+/** An Explain card (#337): the figure beside the text. */
+export function SideBySideIcon() {
+  return (
+    <svg width="17" height="17" viewBox="0 0 24 24" {...stroke} aria-hidden="true">
+      <rect x="3" y="5" width="18" height="14" rx="2" />
+      <path d="M12 5v14" />
+    </svg>
+  );
+}
+
+/** An Explain card (#337): the figure stacked above the text. */
+export function StackedIcon() {
+  return (
+    <svg width="17" height="17" viewBox="0 0 24 24" {...stroke} aria-hidden="true">
+      <rect x="3" y="4" width="18" height="16" rx="2" />
+      <path d="M3 12h18" />
+    </svg>
+  );
+}
+
+/** An Explain card (#337): both panels. */
+export function BothPanelsIcon() {
+  return (
+    <svg width="17" height="17" viewBox="0 0 24 24" {...stroke} aria-hidden="true">
+      <rect x="3" y="5" width="7.5" height="14" rx="1.5" />
+      <rect x="13.5" y="5" width="7.5" height="14" rx="1.5" />
+    </svg>
+  );
+}
+
+/** An Explain card (#337): the figure alone. */
+export function FigurePanelIcon() {
+  return (
+    <svg width="17" height="17" viewBox="0 0 24 24" {...stroke} aria-hidden="true">
+      <rect x="3" y="5" width="18" height="14" rx="2" />
+      <path d="m7 15 3.5-4 3 2.5L17 9" />
+    </svg>
+  );
+}
+
+/** An Explain card (#337): the text alone. */
+export function TextPanelIcon() {
+  return (
+    <svg width="17" height="17" viewBox="0 0 24 24" {...stroke} aria-hidden="true">
+      <path d="M5 7h14M5 12h14M5 17h9" />
+    </svg>
+  );
+}
+
 /** Explain, the walkthrough (#283): an open book. */
 export function ExplainIcon() {
   return (

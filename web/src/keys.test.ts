@@ -582,7 +582,7 @@ test("the landing's q opens the Queue screen, but not from a field, a select or 
 });
 
 test("the Explain screen's arrows walk the steps, g, a and [ toggle, and fields keep their keys; Esc closes the glossary before going back (#283)", () => {
-  const n = { prev: 0, next: 0, back: 0, gloss: 0, all: 0, rail: 0, closed: 0 };
+  const n = { prev: 0, next: 0, back: 0, gloss: 0, all: 0, rail: 0, closed: 0, layout: 0, show: 0 };
   const api = (glossaryOpen: boolean) =>
     explainKeys({
       prev: () => n.prev++,
@@ -596,6 +596,8 @@ test("the Explain screen's arrows walk the steps, g, a and [ toggle, and fields 
       toggleExample: () => {},
       toggleAll: () => n.all++,
       toggleRail: () => n.rail++,
+      flipLayout: () => n.layout++,
+      cycleShow: () => n.show++,
       sheetOpen: false,
       setSheetOpen: () => {},
     });
@@ -604,16 +606,20 @@ test("the Explain screen's arrows walk the steps, g, a and [ toggle, and fields 
   assert.equal(handleKey(key("g"), api(false)), true);
   assert.equal(handleKey(key("a"), api(false)), true);
   assert.equal(handleKey(key("["), api(false)), true);
-  assert.deepEqual([n.prev, n.next, n.gloss, n.all, n.rail], [1, 1, 1, 1, 1]);
+  assert.equal(handleKey(key("v"), api(false)), true);
+  assert.equal(handleKey(key("h"), api(false)), true);
+  assert.deepEqual([n.prev, n.next, n.gloss, n.all, n.rail, n.layout, n.show], [1, 1, 1, 1, 1, 1, 1]);
   // The animations' range and checkbox keep the arrows and the letters.
   for (const target of [field, checkbox]) {
     assert.equal(handleKey(key("ArrowRight", { target }), api(false)), false, target.type);
     assert.equal(handleKey(key("a", { target }), api(false)), false, target.type);
     assert.equal(handleKey(key("[", { target }), api(false)), false, target.type);
+    assert.equal(handleKey(key("v", { target }), api(false)), false, target.type);
+    assert.equal(handleKey(key("h", { target }), api(false)), false, target.type);
   }
   assert.equal(handleKey(key("ArrowRight", { target: select }), api(false)), false);
   assert.equal(handleKey(key("ArrowRight", { metaKey: true }), api(false)), false);
-  assert.deepEqual([n.prev, n.next, n.gloss, n.all, n.rail], [1, 1, 1, 1, 1]);
+  assert.deepEqual([n.prev, n.next, n.gloss, n.all, n.rail, n.layout, n.show], [1, 1, 1, 1, 1, 1, 1]);
   assert.equal(handleKey(key("Escape"), api(true)), true);
   assert.deepEqual([n.closed, n.back], [1, 0]);
   assert.equal(handleKey(key("Escape"), api(false)), true);
@@ -635,6 +641,8 @@ test("⌘B (Ctrl+B off a Mac) toggles the rail as [ does, but not while typing (
     toggleExample: () => {},
     toggleAll: () => {},
     toggleRail: () => rail++,
+    flipLayout: () => {},
+    cycleShow: () => {},
     sheetOpen: true,
     setSheetOpen: (open) => (sheet = open),
   });
@@ -672,6 +680,8 @@ test("e opens the step's example and Esc closes it before the glossary (#282)", 
       toggleExample: () => n.example++,
       toggleAll: () => {},
       toggleRail: () => {},
+      flipLayout: () => {},
+      cycleShow: () => {},
       sheetOpen: false,
       setSheetOpen: () => {},
     });
