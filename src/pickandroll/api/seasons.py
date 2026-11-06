@@ -1953,19 +1953,21 @@ class SeasonService:
 
     def start_active_due(self) -> dict[str, Any]:
         """The armed public leagues and whether each wants Yahoo's Start Active Players for the
-        rest of the week (#215): ``season_autopilot.start_active_need`` on the moves mode, the
-        week's first day from the league's calendar (else the Monday) and my roster as last read,
-        with the team page of today to open and the live guard. On a Monday every armed league's
+        rest of the week (#215): ``season_autopilot.start_active_need`` on the league's
+        ``season_autopilot.start_active_mode`` (#327), the week's first day from the league's
+        calendar (else the Monday) and my roster as last read, with the team page of today to
+        open, the live guard and which switch it is. On a Monday every armed league's
         last run is last week's, so it says ``week_start`` before any run of the week. Under STOP
         none needs a run. Nothing here opens a page."""
         now = self.clock()
         today = nba_today(now)
         stop = season_autopilot.stopped(self.data_dir)
         rows = []
-        for league, mode in self._modes(leagues.MOVES).items():
-            if mode.get("private") or mode["mode"] == "off":
+        for league, moves in self._modes(leagues.MOVES).items():
+            if moves.get("private") or moves["mode"] == "off":
                 continue
-            row: dict[str, Any] = {"league": league, "mode": mode["mode"]}
+            mode = season_autopilot.start_active_mode(self.data_dir, league, moves)
+            row: dict[str, Any] = {"league": league, "mode": mode["mode"], "guard": mode["guard"]}
             try:
                 base, season, roster = self._my_roster(league)
             except HTTPException as exc:
@@ -1989,7 +1991,7 @@ class SeasonService:
                     else {"start": start.isoformat(), "end": None},
                     "roster": roster,
                     "page": public.team_url(league, team, today) if team is not None else None,
-                    "live": season_autopilot.moves_live_check(self.data_dir, league, mode),
+                    "live": mode["live"],
                 }
             )
         return {
@@ -2009,12 +2011,9 @@ class SeasonService:
         the live guard says it should not have run. A routine's moves-pass run goes to the open moves
         pass, by league."""
         _, _, roster = self._my_roster(league)
-        mode = leagues.executor_mode(self.data_dir, league, leagues.MOVES)
-        live = (
-            season_autopilot.moves_live_check(self.data_dir, league, mode)
-            if run.mode == "live"
-            else None
-        )
+        moves = leagues.executor_mode(self.data_dir, league, leagues.MOVES)
+        mode = season_autopilot.start_active_mode(self.data_dir, league, moves)
+        live = mode["live"] if run.mode == "live" else None
         why = season_autopilot.check_start_active_run(
             run, mode, season_autopilot.stopped(self.data_dir), live
         )

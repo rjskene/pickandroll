@@ -80,6 +80,8 @@ test("the page checks, the mode and the same-day rule", () => {
   assert.deepEqual(S.startActiveMode(row()), { mode: "dry_run", reason: null });
   assert.deepEqual(S.startActiveMode(row(LIVE)), { mode: "live", reason: null });
   assert.deepEqual(S.startActiveMode(row({ mode: "live", live: { ok: false, reason: "a dry run on 7 days first" } })), { mode: "dry_run", reason: "live refused: a dry run on 7 days first" });
+  // Moves on dry_run with lineups live (#327): the row says live, under the lineup guard.
+  assert.deepEqual(S.startActiveMode(row({ ...LIVE, guard: "lineups" })), { mode: "live", reason: null });
 
   // One press a day (rulings on #215 and #214): the guard lifts only when the page's roster
   // differs from the press's, players or held; the need rule's reasons never lift it alone.
@@ -552,4 +554,11 @@ test("the worker: one press on record at a time, kept until the API has its run,
   status = 200;
   assert.equal((await w.send({ op: "start_active_log", league: "100003", run: { ...run, mode: "dry_run", outcome: "would_start" } })).ok, true);
   assert.equal(w.local.has("start_active_press:100003"), false);
+});
+
+test("a run the lineup guard answers for stops at the lineup brake, a moves league's does not (#327)", () => {
+  assert.equal(S.startActiveBraked({ lineup_executor: "off" }, { guard: "lineups" }), true);
+  assert.equal(S.startActiveBraked({ lineup_executor: "on" }, { guard: "lineups" }), false);
+  assert.equal(S.startActiveBraked({ lineup_executor: "off" }, { guard: "moves" }), false);
+  assert.equal(S.startActiveBraked({ lineup_executor: "off" }, {}), false);
 });

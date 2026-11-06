@@ -186,6 +186,13 @@ side (PR 1) is in `api/season_autopilot.py`; the click is the extension's, on th
   claim that clears is `roster_changed` at the next pass, and every pass presses for every live
   league whose need is true. The trigger `after_add` is kept for a same-day free-agent add.
 
+  The press is a lineup action, so a league runs live when either switch is (#327). Moves live is
+  under the moves guard, as before. Moves `dry_run` with lineups live is a real press under the
+  lineup guard, on every trigger, and the browser's lineup brake stops it as well as the moves
+  brake; the row says which with `guard` (`moves`, `lineups`) and its `mode` is the run's. Neither
+  live logs `would_start`. Moves `off` and the private league are as they were, whatever the
+  lineups say. Placing claims and drops still follows the moves switch alone.
+
   Each row also carries the team page of today, my roster as last read, the last run and the
   live guard. Under STOP no league needs a run. A run is `POST
   /seasons/{league}/autopilot/start-active` (`StartActiveRun`: `day`, `mode`, `trigger`, which

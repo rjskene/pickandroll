@@ -989,8 +989,8 @@ SA_RAN = {"dry_run": ("would_start",), "live": ("started", "already")}
 
 class StartActiveRun(BaseModel):
     """Yahoo's Start Active Players on the team page, rest of the week (#215): pressing the main
-    button runs Today Only, and the dialog's Rest of Week row has its own Start. By the moves
-    executor's mode: a dry run presses nothing."""
+    button runs Today Only, and the dialog's Rest of Week row has its own Start. By
+    :func:`start_active_mode`: a dry run presses nothing."""
 
     day: date
     mode: Literal["dry_run", "live"]
@@ -1029,6 +1029,21 @@ class StartActiveRun(BaseModel):
     extension: str | None = None
 
 
+def start_active_mode(data_dir: Path, league: str, moves: Mapping[str, Any]) -> dict[str, Any]:
+    """The mode Start Active runs in (#327), the moves mode ``moves`` with ``guard``, the switch
+    that answers for it, and ``live``, that switch's guard now. The press is a lineup action and
+    ``dry_run`` on moves only means no claims and no drops, so a league on moves ``dry_run`` with
+    lineups live is live under the lineup guard. Moves live stays under its own guard; moves off
+    and the private league stay as they are, whatever the lineups."""
+    if moves["mode"] == "dry_run" and not moves.get("private"):
+        lineups = leagues.lineup_mode(data_dir, league)
+        if lineups["mode"] == "live":
+            guard = live_check(data_dir, league, lineups)
+            return {**moves, "mode": "live", "guard": leagues.LINEUPS, "live": guard}
+    guard = moves_live_check(data_dir, league, moves)
+    return {**moves, "guard": leagues.MOVES, "live": guard}
+
+
 def check_start_active_run(
     run: StartActiveRun,
     mode: Mapping[str, Any],
@@ -1036,8 +1051,8 @@ def check_start_active_run(
     live: Mapping[str, Any] | None = None,
 ) -> str | None:
     """Why the log refuses a Start Active run, None when it takes it: the moves executor's own
-    rules (:func:`check_moves_run`); a dry run presses nothing, not even the main button, since
-    that runs Today Only."""
+    rules (:func:`check_moves_run`) on ``mode``, :func:`start_active_mode`'s; a dry run presses
+    nothing, not even the main button, since that runs Today Only."""
     if mode.get("private"):
         return "the private league is never touched"
     if stop and run.outcome != "stopped":
@@ -1522,7 +1537,9 @@ def moves_digest_lines(
         for rs in sa_recent.values()
         if any(r.get("outcome") in ("would_start", "started", "already") for r in rs)
     )
-    sa_verb = {"claimed": "ran", "would be claimed": "would run"}.get(verb, "ran or would run")
+    sa_outcomes = {r.get("outcome") for rs in sa_recent.values() for r in rs}
+    pressed, would = bool(sa_outcomes & {"started", "already"}), "would_start" in sa_outcomes
+    sa_verb = "ran or would run" if pressed and would else "ran" if pressed else "would run"
     il_text += f", Start Active {sa_verb} in {sa_ran}" if sa_ran else ""
     lines = [
         f"- Moves executor ({modes_text}): "

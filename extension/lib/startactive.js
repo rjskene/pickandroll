@@ -120,6 +120,12 @@
     return { mode: "dry_run", reason: `live refused: ${(row.live && row.live.reason) || "the guard did not answer"}` };
   }
 
+  /** Whether this browser's brake stops the run beyond the moves brake every run checks first
+   * (#327): a run the lineup guard answers for stops at the lineup brake too. */
+  function startActiveBraked(settings, row) {
+    return row.guard === "lineups" && settings.lineup_executor === "off";
+  }
+
   const ids = (xs) => [...new Set((xs || []).map(Number))].sort((a, b) => a - b).join(",");
 
   /** Whether ``a`` and ``b`` (``{players, held}`` by id) are different rosters; false when either
@@ -360,6 +366,7 @@
     readStartActive,
     startActiveProblem,
     startActiveMode,
+    startActiveBraked,
     rosterDiffers,
     lineupSince,
     laterDay,

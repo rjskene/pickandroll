@@ -7,14 +7,16 @@ faked.
 
 from __future__ import annotations
 
+import json
 from datetime import timedelta
 
 import pytest
 
+from pickandroll.api import leagues
 from pickandroll.api import season_autopilot as ap
 from pickandroll.season import autopilot as qa
 from pickandroll.sources.yahoo import public
-from tests.test_moves_queue import DAY, PRIVATE, live_league, queued
+from tests.test_moves_queue import DAY, PRIVATE, live_league, queued, settings_file
 from tests.test_season import LEAGUE, NOW, season_client, strategy_league
 
 DUE = "/autopilot/start-active/due"
@@ -179,6 +181,108 @@ def test_the_log_refuses_a_crumb_a_dry_press_a_live_would_and_the_private_league
     assert refused(sa_body()) == qa.OFF
     priv = f"/seasons/{PRIVATE}/autopilot/start-active"
     assert refused(sa_body(), url=priv) == qa.PRIVATE
+
+
+# --------------------------------------------------------------------------- either switch (#327)
+def lineups_live(client, guard_days: int = 0) -> None:
+    """The fixture league's lineups live and its moves on dry_run; ``guard_days`` then raises
+    the lineup guard, so it refuses."""
+    settings_file(client, {"lineup_live_after": {"dry_run_days": 0, "checked_days": 0}})
+    r = client.put(f"/leagues/{LEAGUE}/lineups", json={"mode": "live"})
+    assert r.status_code == 200, r.text
+    if guard_days:
+        needs = {"dry_run_days": guard_days, "checked_days": 0}
+        settings_file(client, {"lineup_live_after": needs})
+
+
+STARTED = {"mode": "live", "outcome": "started", "message": "6 lineups updated"}
+
+
+def test_moves_live_stays_under_its_own_guard(client):
+    strategy_league(client)
+    live_league(client)
+    r = row(client)
+    assert (r["mode"], r["guard"], r["live"]["ok"]) == ("live", "moves", True)
+    assert client.post(URL, json=sa_body(**STARTED)).status_code == 200
+
+
+def test_moves_on_dry_run_with_lineups_live_presses_under_the_lineup_guard(client):
+    strategy_league(client)
+    assert client.post(URL, json=sa_body()).status_code == 200  # Its would_start of the dry run.
+    lineups_live(client)
+    r = row(client)
+    assert (r["mode"], r["guard"], r["live"]["ok"]) == ("live", "lineups", True)
+    # A would_start is no run in the other mode: the need rule, unchanged, asks for the press.
+    assert (r["need"], r["reasons"]) == (True, ["no_run"])
+    assert client.post(URL, json=sa_body(**STARTED)).status_code == 200
+    r = row(client)
+    assert r["need"] is False and r["last"]["outcome"] == "started"
+    # The moves switch still says dry_run: the claims' side has not moved.
+    assert leagues.executor_mode(client.data_dir, LEAGUE, leagues.MOVES)["mode"] == "dry_run"
+
+
+def test_neither_switch_live_stays_a_dry_run(client):
+    strategy_league(client)
+    assert (row(client)["mode"], row(client)["guard"]) == ("dry_run", "moves")
+    assert client.post(URL, json=sa_body()).status_code == 200
+    r = client.post(URL, json=sa_body(**STARTED))
+    assert (r.status_code, r.json()["detail"]) == (409, "a live run in a league that is not live")
+
+
+def test_a_lineup_guard_that_refuses_refuses_the_press(client):
+    strategy_league(client)
+    lineups_live(client, guard_days=30)
+    r = row(client)
+    assert (r["mode"], r["guard"], r["live"]["ok"]) == ("live", "lineups", False)
+    refused = client.post(URL, json=sa_body(**STARTED))
+    assert refused.status_code == 409 and refused.json()["detail"].startswith("live refused")
+    # As a moves league under a refusing guard, the page runs dry and says why.
+    assert client.post(URL, json=sa_body(reason="live refused")).status_code == 200
+
+
+def test_moves_off_and_the_private_league_ignore_the_lineups_switch(client):
+    strategy_league(client)
+    lineups_live(client)
+    client.put(f"/leagues/{LEAGUE}/moves", json={"mode": "off"})
+    assert row(client) is None
+    assert client.post(URL, json=sa_body(**STARTED)).json()["detail"] == qa.OFF
+    assert PRIVATE not in [r["league"] for r in client.get(DUE).json()["leagues"]]
+    priv = f"/seasons/{PRIVATE}/autopilot/start-active"
+    assert client.post(priv, json=sa_body(**STARTED)).json()["detail"] == qa.PRIVATE
+    moves = leagues.executor_mode(client.data_dir, PRIVATE, leagues.MOVES)
+    assert ap.start_active_mode(client.data_dir, PRIVATE, moves)["mode"] == "off"
+
+
+def test_the_private_league_stays_off_even_with_a_lineups_key_in_its_file(client):
+    # The switch refuses it; a hand-edited file is read as off all the same.
+    armed = client.data_dir / "leagues" / PRIVATE / "armed.json"
+    armed.write_text(json.dumps({"lineups": "live", "moves": "dry_run"}))
+    moves = leagues.executor_mode(client.data_dir, PRIVATE, leagues.MOVES)
+    mode = ap.start_active_mode(client.data_dir, PRIVATE, moves)
+    assert (mode["mode"], mode["guard"], mode["private"]) == ("off", "moves", True)
+
+
+def test_stop_holds_a_league_the_lineup_guard_answers_for(client):
+    strategy_league(client)
+    lineups_live(client)
+    stop = ap.stop_path(client.data_dir)
+    stop.parent.mkdir(parents=True, exist_ok=True)
+    stop.write_text("")
+    d = client.get(DUE).json()
+    assert d["stop"] is True and all(r["need"] is False for r in d["leagues"])
+    r = client.post(URL, json=sa_body(**STARTED))
+    assert r.status_code == 409 and r.json()["detail"].startswith("STOP is on")
+    stopped = {"mode": "live", "outcome": "stopped"}
+    assert client.post(URL, json=sa_body(**stopped)).status_code == 200
+
+
+def test_the_digest_says_a_press_ran_in_a_league_on_moves_dry_run(client):
+    queued(client)
+    lineups_live(client)
+    client.app.state.seasons.clock = lambda: NOW + timedelta(hours=1)
+    assert client.post(URL, json=sa_body(**STARTED)).status_code == 200
+    lines = client.get("/flags/digest").json()["moves_executor"]
+    assert lines[0].endswith("0 would be claimed, 0 skipped, 0 failed, Start Active ran in 1.")
 
 
 def test_the_runs_go_to_the_open_moves_pass_the_queue_and_the_card(client):
