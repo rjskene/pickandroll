@@ -884,7 +884,14 @@ button.icon.light.bad { color: var(--bad); }
 .ex-bar .switch input { accent-color: var(--accent); }
 .ex-bar .seg, .ex-bar .bar-lead, .ex-bar .ex-nav { flex-shrink: 0; }
 .ex-short, .ex-break { display: none; }
-@media (max-width: 1280px) { .ex-bar kbd { display: none; } }
+/* the card's two view controls (#337): its layout and which panels show */
+.ex-views { display: inline-flex; gap: 8px; flex-shrink: 0; }
+.ex-bar .ex-views .seg button { padding: 5px 7px; display: inline-flex; align-items: center; }
+@media (max-width: 1560px) { .ex-bar kbd { display: none; } }
+@media (max-width: 1400px) {
+  .ex-bar .ex-tracks .ex-long { display: none; }
+  .ex-bar .ex-tracks .ex-short { display: inline; }
+}
 @media (max-width: 1000px) {
   .ex-bar .ex-long, .ex-bar .ex-keys { display: none; }
   .ex-bar .ex-short { display: inline; }
@@ -939,8 +946,12 @@ button.ex-rail-fold { flex: none; margin: -5px -8px 0 0; }
 .ex-stage:not(.all) { min-height: 100%; }
 .ex-stage:not(.all) .ex-step { min-height: 460px; }
 .ex-step.wide { grid-template-columns: minmax(0, 1fr); }
+.ex-stage.stack .ex-step, .ex-stage.only-fig .ex-step, .ex-stage.only-text .ex-step { grid-template-columns: minmax(0, 1fr); }
+.ex-stage.stack .ex-fig { border-right: 0; border-bottom: 1px solid var(--line); }
+.ex-stage.only-fig .ex-text, .ex-stage.only-text .ex-fig { display: none; }
 .ex-fig { padding: 22px 26px; background: linear-gradient(180deg, #131c26 0%, #0e141b 100%); border-right: 1px solid var(--line); display: flex; flex-direction: column; gap: 8px; justify-content: center; min-width: 0; }
 .ex-step.wide .ex-fig { border-right: 0; border-bottom: 1px solid var(--line); }
+.ex-stage.only-fig .ex-fig { border-right: 0; border-bottom: 0; }
 .ex-fig > svg { display: block; width: 100%; height: auto; overflow: visible; max-width: 760px; margin: 0 auto; }
 .ex-text { padding: 26px 30px 28px; display: grid; gap: 14px; align-content: start; min-width: 0; }
 .ex-text h3 { margin: 0; font-family: var(--display); font-weight: 600; letter-spacing: 0.04em; font-size: 28px; line-height: 1.15; }
@@ -976,6 +987,15 @@ dfn.ex-term:focus-visible { outline: 1px solid var(--accent); outline-offset: 1p
 .ex-head .ex-xbtn { flex: none; margin-top: 3px; }
 /* the kicker heads the figure panel; the figure stays centred in the room below it */
 .ex-fig > .ex-n { margin-bottom: auto; }
+/* the panel alone (#337): the figure takes the title and the Example button, the text the kicker */
+.ex-fig-head, .ex-text-n { display: none; }
+.ex-stage.only-fig .ex-fig-head { display: flex; align-items: flex-start; gap: 14px; margin-bottom: auto; }
+.ex-stage.only-fig .ex-fig > .ex-n { margin-bottom: 0; }
+.ex-fig-head h3 { flex: 1; min-width: 0; margin: 0; font-family: var(--display); font-weight: 600; letter-spacing: 0.04em; font-size: 26px; line-height: 1.15; }
+.ex-fig-head .ex-xbtn { flex: none; margin-top: 2px; }
+.ex-stage.only-text .ex-text-n { display: block; }
+.ex-stage.only-fig .ex-fig > svg, .ex-stage.only-fig .ex-fig .ex-draw > svg { max-width: 940px; }
+.ex-stage.only-fig .ex-step.wide .ex-fig > svg { max-width: 1040px; }
 .ex-fig > :last-child { margin-bottom: auto; }
 button.ex-xbtn { font-size: 13px; padding: 5px 10px; border-color: var(--accent); color: var(--accent); }
 button.ex-xbtn:hover { background: var(--accent); color: var(--accent-ink); }
@@ -1073,7 +1093,7 @@ button.ex-fx:hover { border-color: var(--accent); }
 .ex-fig svg .win { fill: var(--panel-2); stroke: var(--line-2); }
 .ex-fig svg .win.b { fill: rgba(78, 161, 255, 0.16); stroke: var(--them); }
 /* the animated frames: the toolbar, the lane chart, the range, the legend, the readout */
-.ex-anim { display: grid; gap: 8px; width: 100%; min-width: 0; }
+.ex-anim { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; width: 100%; min-width: 0; }
 .ex-ctl { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .ex-now { font-family: var(--display); font-size: 20px; font-weight: 600; color: var(--accent); letter-spacing: 0.04em; min-width: 70px; }
 .ex-hint { font-size: 12px; color: var(--dim); flex-basis: 100%; }
@@ -1118,20 +1138,27 @@ button.ex-play.on { background: var(--accent); color: var(--accent-ink); border-
 .ex-k-block { color: var(--bad); }
 .ex-k-done, .ex-k-after { color: var(--accent); }
 .ex-k-idle { color: var(--dim); }
-@media (max-width: 860px) {
+@media (max-width: 960px) {
+  .ex-bar { flex-wrap: wrap; row-gap: 6px; }
   .ex-bar .bar-lead { order: 1; }
-  .ex-bar .ex-gloss { order: 2; margin-left: auto; }
+  .ex-bar .ex-views { order: 2; margin-left: auto; }
+  .ex-bar .ex-gloss { order: 2; margin-left: 0; }
   .ex-bar .ex-break { display: block; order: 3; flex-basis: 100%; height: 0; }
   .ex-bar .ex-tracks { order: 4; }
   .ex-bar .ex-all { order: 5; }
   .ex-bar .ex-nav { order: 6; margin-left: auto; }
-  .ex-bar .grow, .ex-bar .ex-keys, .ex-bar .ex-home { display: none; }
+  .ex-bar .ex-home { order: 7; }
+  .ex-bar .grow, .ex-bar .ex-keys { display: none; }
+}
+@media (max-width: 860px) {
+  .ex-bar .ex-view { display: none; }
+  .ex-bar .ex-home { display: none; }
   .ex-stage { padding: 12px 16px 16px; gap: 12px; }
   .ex-step { grid-template-columns: minmax(0, 1fr); }
   .ex-stage:not(.all), .ex-stage:not(.all) .ex-step { min-height: 0; }
   .ex-fig { border-right: 0; border-bottom: 1px solid var(--line); padding: 12px; }
   .ex-text { padding: 14px 16px 16px; gap: 10px; }
-  .ex-text h3 { font-size: 22px; }
+  .ex-text h3, .ex-fig-head h3 { font-size: 22px; }
   .ex-n { font-size: 12px; }
   .ex-bullets { font-size: 15.5px; gap: 8px; padding-left: 18px; }
   .ex-bullets ul { font-size: 14px; padding-left: 16px; }
