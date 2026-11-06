@@ -19,6 +19,7 @@ import type {
   KeepRule,
   KeptPlayer,
   AutopilotView,
+  LeagueFunds,
   LineupMode,
   LineupAlert,
   LineupDay,
@@ -1148,12 +1149,6 @@ export function keptLines(a: AllModesAnswer, title: (league: string) => string):
   return a.leagues.filter((x) => !x.ok).map((x) => `${title(x.league)} stays ${MODE_WORDS[x.mode]}: ${x.reason ?? "refused"}`);
 }
 
-/** The adds left in the week holding ``today`` as the build read them; null for no limit, or a
- * week it did not read. */
-export function addsThisWeek(row: Pick<QueueLeague, "adds_left">, today: string): number | null {
-  return row.adds_left?.find((w) => w.start <= today && today <= w.end)?.adds ?? null;
-}
-
 /** How often the Moves card asks again (#240): every 3 s while its answer is stale or being
  * solved (#306), for at most 120 s from the first such one (then not until the next refresh);
  * otherwise every minute. */
@@ -2144,6 +2139,31 @@ export function addsLeft(a: SeasonSummary["adds"]): string {
   if (!a) return "";
   if (a.limit == null) return "no add limit";
   return `${a.complete ? "" : "at most "}${a.left ?? a.limit} of ${a.limit} adds left`;
+}
+
+/** "$88 left · 1 of 4 adds left", or "priority 5 of 12 · …" in a standard-waivers league (#333);
+ * a part that was not read is left out. */
+export function fundsLabel(f: LeagueFunds | null | undefined): string {
+  if (!f) return "";
+  const money = f.dollars != null ? `$${f.dollars} left` : f.priority != null ? `priority ${f.priority} of ${f.teams}` : "";
+  return [money, addsLeft(f.adds)].filter(Boolean).join(" · ");
+}
+
+/** The tooltip: the bids on claims not yet processed beside the dollars, and how the adds count. */
+export function fundsNote(f: LeagueFunds | null | undefined): string | undefined {
+  if (!f) return undefined;
+  const money =
+    f.dollars == null
+      ? f.priority != null
+        ? "standard waivers: no dollars, the waiver priority decides a claim"
+        : "the budget is not read yet"
+      : f.bids
+        ? `$${f.bids} bid on claims placed and not yet processed`
+        : null;
+  const adds = f.adds ? addsNote(f.adds) : null;
+  const n = f.adds?.pending ?? 0;
+  const claims = n ? `${n} claim${n === 1 ? "" : "s"} placed counted as used` : null;
+  return [money, adds, claims].filter(Boolean).join(" · ");
 }
 
 /** "1 add · 11 watch": the pool's flagged players by level, the highest first. */

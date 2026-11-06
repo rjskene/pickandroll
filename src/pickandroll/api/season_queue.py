@@ -337,6 +337,42 @@ def adds_left(
     return out
 
 
+def funds(season: Season, claims: Iterable[Mapping[str, Any]], today: date) -> dict[str, Any]:
+    """What my team has left, as the league list and the Queue both show it (#333). ``claims`` are
+    the open ones, placed and not yet processed. ``dollars`` is the budget the league's page read,
+    ``bids`` what those claims would spend of it; a standard-waivers league has no dollars and
+    shows its waiver ``priority`` of ``teams``. ``adds`` is this week's count by the rule of
+    :func:`adds_left`: the limit less the adds the transactions page shows, less the claims that
+    clear this week; None without my team or the week."""
+    s = season.settings
+    mine = s.my_team_id
+    open_ = list(claims)
+    me = next((t for t in season.teams if t.team_id == mine), None)
+    standard = s.uses_faab is False
+    week = season.current(today)
+    adds = None
+    if mine is not None and week is not None:
+        used = mv.adds_used(season.transactions, mine, week.start, week.end, today)
+        read = None if s.max_weekly_adds is None else max(0, s.max_weekly_adds - used.count)
+        span = (week.start, week.end)
+        weeks = {"weeks": [{"start": str(span[0]), "end": str(span[1]), "adds": read}]}
+        left = adds_left(weeks, open_)[span]
+        adds = {
+            "limit": s.max_weekly_adds,
+            "used": used.count,
+            "complete": used.complete,
+            "pending": 0 if read is None or left is None else read - left,
+            "left": left,
+        }
+    return {
+        "dollars": None if standard else budget_of(season),
+        "bids": 0 if standard else sum(qa.effective_bid(c) for c in open_),
+        "priority": me.waiver_priority if standard and me else None,
+        "teams": s.num_teams,
+        "adds": adds,
+    }
+
+
 def pending(queues: Iterable[Mapping[str, Any]], league: str) -> list[dict[str, Any]]:
     """The league's claims placed on earlier days and not yet resolved."""
     return [

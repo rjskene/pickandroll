@@ -169,7 +169,8 @@ import {
   startActiveTally,
   passTally,
   passTitle,
-  addsThisWeek,
+  fundsLabel,
+  fundsNote,
   centralClock,
   notQueued,
   stripOrder,
@@ -1949,11 +1950,6 @@ test("the Queue screen orders the day's entries across the leagues, says why a l
   ];
   assert.equal(stripReason(row("queued"), none), "below the plan floor");
   assert.equal(stripReason(row("queued"), []), "nothing queued");
-  // The adds left in the week holding the day; null for an unread week or no limit.
-  const weeks = { adds_left: [{ start: "2026-10-20", end: "2026-10-26", adds: 3 }, { start: "2026-10-27", end: "2026-11-02", adds: null }] };
-  assert.equal(addsThisWeek(weeks, "2026-10-24"), 3);
-  assert.equal(addsThisWeek(weeks, "2026-10-28"), null);
-  assert.equal(addsThisWeek({}, "2026-10-24"), null);
   // The strip: the private league first, then by name.
   const names: Record<string, string> = { "900001": "Bravo", "900002": "Alpha", "900003": "Charlie" };
   const strip = stripOrder([row("queued", { league: "900001" }), row("queued", { league: "900002" }), row("private", { league: "900003" })], (l) => names[l]);
@@ -2406,4 +2402,25 @@ test("the team lines: Yahoo's count with the gap row so far, the rest, the proje
   assert.equal(teamRows(t, "rest")[0].line.pts, 80);
   assert.equal(teamRows(t, "total")[0].label, "Team, projected final");
   assert.deepEqual(teamRows(t, "per_game"), []);
+});
+
+test("a league's dollars and adds left read the same on the list and the Queue (#333)", () => {
+  const adds = { limit: 4, used: 2, complete: true, pending: 1, left: 1 };
+  const faab = { dollars: 88, bids: 12, priority: null, teams: 12, adds };
+  assert.equal(fundsLabel(faab), "$88 left · 1 of 4 adds left");
+  assert.equal(fundsNote(faab), "$12 bid on claims placed and not yet processed · 4 adds a week · 2 used this week · 1 left · 1 claim placed counted as used");
+  // A standard-waivers league has no dollars: its priority stands there instead.
+  const standard = { dollars: null, bids: 0, priority: 5, teams: 12, adds: { ...adds, pending: 0, left: 2 } };
+  assert.equal(fundsLabel(standard), "priority 5 of 12 · 2 of 4 adds left");
+  assert.match(fundsNote(standard) ?? "", /^standard waivers: no dollars/);
+  // A league whose budget is not read shows its adds, and the tooltip says why.
+  const unread = { dollars: null, bids: 0, priority: null, teams: 12, adds };
+  assert.equal(fundsLabel(unread), "1 of 4 adds left");
+  assert.match(fundsNote(unread) ?? "", /^the budget is not read yet/);
+  // No bids out: the tooltip does not mention them.
+  assert.doesNotMatch(fundsNote({ ...faab, bids: 0 }) ?? "", /bid on claims/);
+  // Nothing read at all.
+  assert.equal(fundsLabel({ dollars: null, bids: 0, priority: null, teams: 12, adds: null }), "");
+  assert.equal(fundsLabel(null), "");
+  assert.equal(fundsNote(undefined), undefined);
 });

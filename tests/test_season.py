@@ -1554,7 +1554,9 @@ def test_the_leagues_list_gives_the_weeks_score_adds_left_and_flag_counts(client
     assert mine["score"] == ([a, b] if v["matchup"]["teams"][0] == 4 else [b, a])
     # The adds are the moves' own count, without solving a move.
     m = client.get(f"/seasons/{LEAGUE}/moves").json()
-    assert mine["adds"] == {k: m["adds"][k] for k in ("limit", "used", "complete", "left")}
+    keys = ("limit", "used", "complete", "left")
+    assert {k: mine["adds"][k] for k in keys} == {k: m["adds"][k] for k in keys}
+    assert mine["adds"]["pending"] == 0 and mine["funds"]["adds"] == mine["adds"]
     levels = [f["level"] for f in v["flags"].values() if f["level"] is not None]
     assert sum(mine["flags"].values()) == len(levels)
     assert set(mine["flags"]) <= {"must-add", "add", "watch"}

@@ -626,6 +626,66 @@ def test_lapsed_is_a_resolution_and_not_a_landing():
     assert not qa.landed({"outcome": "claimed", "resolved": "lapsed"})
 
 
+# --------------------------------------------------------------------------- dollars and adds left
+def funded(transactions=(), limit=4, uses_faab=True, faab=88.0, priority=3, me=4):
+    """A league's standing as ``season_queue.funds`` reads it, in the week of ``DAY``."""
+    settings = SimpleNamespace(
+        my_team_id=me, max_weekly_adds=limit, uses_faab=uses_faab, num_teams=12
+    )
+    team = SimpleNamespace(team_id=4, faab=faab, waiver_priority=priority)
+    week = SimpleNamespace(start=WEEK[0], end=WEEK[1])
+    return SimpleNamespace(
+        settings=settings,
+        teams=(team,),
+        transactions=list(transactions),
+        current=lambda today: week,
+    )
+
+
+def open_claim(add, bid, clear="2026-10-22", **over):
+    return {
+        "id": f"2026-10-21:900001:{add}:0",
+        "from": clear,
+        "bid": {"amount": bid},
+        **over,
+    }
+
+
+def test_the_funds_take_a_placed_claim_from_the_adds_and_show_its_bid():
+    s = funded([transaction("add", 201, 4, "Oct 20, 4:15 am")])
+    out = season_queue.funds(s, [open_claim(101, 7), open_claim(102, 5)], DAY)
+    assert (out["dollars"], out["bids"], out["priority"]) == (88.0, 12, None)
+    assert out["adds"] == {"limit": 4, "used": 1, "complete": False, "pending": 2, "left": 1}
+
+
+def test_the_funds_count_a_claim_in_the_week_it_clears_and_a_struck_bid_as_nothing():
+    claims = [open_claim(101, 7, clear="2026-10-26"), open_claim(102, 5, bid_struck=True)]
+    out = season_queue.funds(funded(), claims, DAY)
+    assert out["bids"] == 7
+    assert out["adds"]["pending"] == 1 and out["adds"]["left"] == 3
+
+
+def test_the_adds_left_never_go_under_nothing():
+    claims = [open_claim(a, 1) for a in (101, 102, 103)]
+    out = season_queue.funds(funded(limit=2), claims, DAY)
+    assert out["adds"]["left"] == 0 and out["adds"]["pending"] == 2
+
+
+def test_a_standard_waivers_league_shows_its_priority_and_no_dollars():
+    out = season_queue.funds(funded(uses_faab=False, faab=100.0), [], DAY)
+    assert (out["dollars"], out["bids"], out["priority"], out["teams"]) == (None, 0, 3, 12)
+
+
+def test_a_league_with_no_budget_read_or_no_limit_says_so():
+    assert season_queue.funds(funded(faab=None), [], DAY)["dollars"] is None
+    out = season_queue.funds(funded(limit=None), [open_claim(101, 1)], DAY)
+    assert out["adds"]["left"] is None and out["adds"]["pending"] == 0
+
+
+def test_the_funds_have_no_adds_without_my_team():
+    assert season_queue.funds(funded(me=None), [], DAY)["adds"] is None
+
+
 # --------------------------------------------------------------------------- the routes
 def queued(client) -> dict:
     """The fixture league solved and the day's queue built."""
@@ -674,7 +734,7 @@ def test_the_build_reads_the_days_solve_and_never_solves(client):
     assert {e["executes_at"] for e in on} == {(NOW + timedelta(hours=1)).isoformat()}
     assert q["built"] == [NOW.isoformat(), NOW.isoformat()]
     # The private league is never queued.
-    assert row_of(q, PRIVATE) == {
+    assert {k: v for k, v in row_of(q, PRIVATE).items() if k != "funds"} == {
         "league": PRIVATE,
         "scoring": "categories",
         "mode": "off",
@@ -858,6 +918,61 @@ def test_the_due_route_counts_the_days_executed_entries_and_their_adds(client):
     week = next(w for w in d["adds_left"] if w["start"] <= clear <= w["end"])
     was = next(w for w in before["adds_left"] if w["start"] == week["start"])
     assert was["adds"] is not None and week["adds"] == max(0, was["adds"] - 1)
+
+
+def test_the_league_list_and_the_queue_show_one_count_of_the_adds_left(client):
+    # #333: the summary counted the transactions page alone, the Queue the placed claims too.
+    q = queued(client)
+    on = [e for e in q["entries"] if e["queued"]]
+    service = client.app.state.seasons
+    before = service.summary(LEAGUE)["funds"]
+    assert before == row_of(q)["funds"]
+    placed(client, on[0]["id"], "claimed")
+
+    summary = service.summary(LEAGUE)
+    row = row_of(client.get("/autopilot/queue").json())
+    assert summary["funds"] == row["funds"] and summary["adds"] == row["funds"]["adds"]
+    assert row["funds"]["adds"]["pending"] == 1
+    assert row["funds"]["adds"]["left"] == before["adds"]["left"] - 1
+    assert row["funds"]["bids"] == qa.effective_bid(on[0])
+    assert row["funds"]["dollars"] == 100.0
+
+
+def test_a_claim_the_transactions_settled_is_counted_once(client):
+    q = queued(client)
+    on = next(e for e in q["entries"] if e["queued"])
+    placed(client, on["id"], "claimed")
+    service = client.app.state.seasons
+    season = service.season(LEAGUE)
+    settled = season_queue.resolutions(season, [on], DAY)
+    assert settled == {}
+    won = transaction("add", on["add"], season.settings.my_team_id, "Oct 21, 4:15 am", group=99)
+    won_season = SimpleNamespace(
+        settings=season.settings,
+        teams=season.teams,
+        transactions=[won, *season.transactions],
+        current=season.current,
+        my_roster=season.my_roster,
+        fetched=season.fetched,
+    )
+    out = service._funds(LEAGUE, won_season, DAY)
+    assert out["adds"]["pending"] == 0 and out["bids"] == 0
+
+
+def test_the_private_row_shows_its_adds_and_its_priority_read_at_request_time(client):
+    strategy_league(client)
+    season = client.app.state.seasons.season(PRIVATE)
+    row = row_of(client.post("/autopilot/queue/build").json(), PRIVATE)
+    assert row["status"] == season_queue.PRIVATE
+    assert row["funds"] == season_queue.funds(season, [], DAY)
+
+
+def test_an_unreadable_queue_leaves_the_summary_its_own_count(client):
+    q = queued(client)
+    assert q["entries"]
+    (client.data_dir / "autopilot" / "queue" / "2026-10-21.json").write_text("{not json")
+    out = client.app.state.seasons.summary(LEAGUE)
+    assert out["funds"] is None and out["adds"]["limit"] is not None
 
 
 def test_a_sunday_evening_build_queues_monday_claims_on_the_new_weeks_adds(client):

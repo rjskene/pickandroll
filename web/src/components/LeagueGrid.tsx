@@ -123,7 +123,7 @@ export default function LeagueGrid({ landing, onOpen }: { landing: LandingOrder;
               <span className="k">League</span>
               <span className="k">This week</span>
               <span className="k">Place</span>
-              <span className="k">Adds</span>
+              <span className="k">Left</span>
               <span className="k">Flags</span>
               <span className="k">Best move</span>
               <span className="k lt-gain">Gain</span>
