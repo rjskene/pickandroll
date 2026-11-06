@@ -781,9 +781,23 @@ export interface SeasonSummary {
   score?: [number, number] | null;
   /** My adds this week against the league's weekly limit; null without the week calendar. */
   adds?: Omit<MoveAdds, "weeks"> | null;
+  /** The dollars and adds left (#333); null when the queue's files do not read. */
+  funds?: LeagueFunds | null;
   /** The pool's flagged players by level; null, with the error, when the flags do not make. */
   flags?: Partial<Record<FlagLevel, number>> | null;
   flags_error?: string;
+}
+
+/** What my team has left (#333), the one count of the league list and the Queue. A
+ * standard-waivers league has ``priority`` of ``teams`` and no dollars; a league whose budget is
+ * not read has neither. ``bids`` are the open claims' bids; ``adds.pending`` the open claims that
+ * clear this week, already taken from ``adds.left``. */
+export interface LeagueFunds {
+  dollars: number | null;
+  bids: number;
+  priority: number | null;
+  teams: number;
+  adds: (Omit<MoveAdds, "weeks"> & { pending: number }) | null;
 }
 
 /** The landing grid's best move for a league (#108), from today's solved moves: never solved
@@ -1445,6 +1459,8 @@ export interface QueueLeague {
    * these are the user's own cap now (null: the knob's) and the live guard now. */
   user_cap?: number | null;
   live?: AutopilotView["live"];
+  /** Read at request time on every row, the private one too (#333). */
+  funds?: LeagueFunds | null;
 }
 
 /** The Queue screen's one switch's answer (#205): each public league's mode after it, and why a

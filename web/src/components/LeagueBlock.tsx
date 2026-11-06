@@ -4,6 +4,8 @@ import { api, type BestMove, type SeasonSummary, type StatusPayload } from "../a
 import {
   addsLeft,
   addsNote,
+  fundsLabel,
+  fundsNote,
   ageLabel,
   bestLine,
   bestNamer,
@@ -142,8 +144,8 @@ export function LeagueBlock(props: BlockProps) {
           </small>
         </span>
         <span className={placeTone(s)}>{placeLabel(s)}</span>
-        <span className={s.adds?.limit == null ? "muted" : ""} title={s.adds ? addsNote(s.adds) : undefined}>
-          {addsLeft(s.adds)}
+        <span className={s.adds?.limit == null ? "muted" : ""} title={s.funds ? fundsNote(s.funds) : s.adds ? addsNote(s.adds) : undefined}>
+          {s.funds ? fundsLabel(s.funds) : addsLeft(s.adds)}
         </span>
         <span className={s.flags?.["must-add"] || s.flags?.add ? "accent" : "muted"} title={s.flags_error ?? "the waiver pool's breakout flags, by level"}>
           {s.flags_error ? "flags did not read" : flagCounts(s.flags)}

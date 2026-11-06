@@ -581,7 +581,11 @@ class SeasonService:
         if not parts:
             return out
         # The landing grid's card (#108): the week's score, the adds left and the flags.
-        out |= _glance(season, nba_today(self.clock()))
+        today = nba_today(self.clock())
+        out |= _glance(season, today)
+        out["funds"] = self._funds(league, season, today)
+        if out["funds"] is not None:
+            out["adds"] = out["funds"]["adds"]
         try:
             players, flags, _ = self._flags(league)
             out["flags"] = dict(Counter(f.level for _, f in season_flags.flagged(players, flags)))
@@ -589,6 +593,23 @@ class SeasonService:
             out["flags"] = None
             out["flags_error"] = f"{type(exc).__name__}: {exc}"
         return out
+
+    def _funds(self, league: str, season: Season, today: date) -> dict[str, Any] | None:
+        """The league's dollars and adds left (#333), the one count of the league list and the
+        Queue: claims the transactions now settle are out, since the count already has them.
+        None when the queue's files do not read."""
+        since = today - timedelta(days=season_queue.PENDING_DAYS)
+        try:
+            queues = [
+                q
+                for d in season_queue.days(self.data_dir)
+                if since <= d <= today and (q := season_queue.read(self.data_dir, d)) is not None
+            ]
+        except season_queue.QueueError:
+            return None
+        claims = season_queue.pending(queues, league)
+        settled = season_queue.resolutions(season, claims, today)
+        return season_queue.funds(season, [c for c in claims if c["id"] not in settled], today)
 
     def view(self, league: str) -> dict[str, Any]:
         base, is_public = self._base(league)
@@ -2183,15 +2204,23 @@ class SeasonService:
     def _row_now(self, row: Mapping[str, Any]) -> dict[str, Any]:
         """A league's row of the day's queue with what has moved since the build (#205): the
         moves executor's mode and the user's own cap now, and the live guard now; a row the build
-        left off whose league was switched on since says so. The private row is as built."""
-        if row.get("status") == season_queue.PRIVATE:
-            return dict(row)
+        left off whose league was switched on since says so, and its dollars and adds now (#333).
+        The private row is as built, its dollars and adds apart."""
+        league = str(row["league"])
         try:
-            mode = leagues.executor_mode(self.data_dir, str(row["league"]), leagues.MOVES)
+            season = self.season(league)
+            funds = self._funds(league, season, nba_today(self.clock()))
+        except Exception:  # noqa: BLE001 - a league that does not read keeps its row
+            funds = None
+        built = {**row, "funds": funds}
+        if row.get("status") == season_queue.PRIVATE:
+            return built
+        try:
+            mode = leagues.executor_mode(self.data_dir, league, leagues.MOVES)
         except leagues.LeagueError:
-            return dict(row)
-        live = season_autopilot.moves_live_check(self.data_dir, str(row["league"]), mode)
-        out = {**row, "mode": mode["mode"], "user_cap": mode["cap"], "live": live}
+            return built
+        live = season_autopilot.moves_live_check(self.data_dir, league, mode)
+        out = {**built, "mode": mode["mode"], "user_cap": mode["cap"], "live": live}
         if row.get("status") == season_queue.OFF and mode["mode"] != "off":
             out["reason"] = qa.SWITCHED_ON
         return out

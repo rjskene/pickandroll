@@ -3,7 +3,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, type LineupMode, type ProjectionSystem, type QueueEntry, type QueueLeague, type QueuePayload, type SeasonSummary } from "../api";
 import { queueKeys } from "../keys";
 import {
-  addsThisWeek,
+  fundsLabel,
+  fundsNote,
   allLiveLine,
   allLiveTitle,
   bestLine,
@@ -227,20 +228,20 @@ function ChipMode({ row, title }: { row: QueueLeague; title: string }) {
   );
 }
 
-/** A league's chip: its mode and its switch, its cap and where the cap is from, the adds left this
- * week, what it queued, and why it queued none. */
+/** A league's chip: its mode and its switch, its cap and where the cap is from, the dollars and
+ * adds left (#333), what it queued, and why it queued none. */
 function Chip({ row, p, title, onOpen }: { row: QueueLeague; p: QueuePayload; title: string; onOpen: () => void }) {
   const mine = p.entries.filter((e) => e.league === row.league && e.queued);
   const struck = mine.filter((e) => e.struck).length;
   const would = mine.filter((e) => !e.struck && !e.outcome && e.pass?.outcome === "would_claim").length;
-  const adds = addsThisWeek(row, p.date);
+  const funds = fundsLabel(row.funds);
   const why = stripReason(row, p.entries);
   const opening = p.active?.current?.league === row.league ? p.active : null;
   const facts = [
     row.status === "private" ? "suggestions only" : null,
     row.scoring === "points" ? "points" : null,
     row.cap != null ? `cap ${row.cap} (${row.cap_from === "the user" ? "yours" : "the knob's"})` : null,
-    adds != null ? `${adds} add${adds === 1 ? "" : "s"} left this week` : null,
+    funds || null,
     row.status === "queued" ? `${mine.length - struck} queued${struck ? ` · ${struck} struck` : ""}` : null,
     would ? `${would} would claim` : null,
   ].filter(Boolean);
@@ -253,7 +254,9 @@ function Chip({ row, p, title, onOpen }: { row: QueueLeague; p: QueuePayload; ti
       {opening && <span className="accent">{opening.kind === "moves" ? "opening the add page…" : "opening the team page…"}</span>}
       <span className="qs-facts">
         {facts.map((f) => (
-          <span key={f}>{f}</span>
+          <span key={f} title={f === funds ? fundsNote(row.funds) : undefined}>
+            {f}
+          </span>
         ))}
       </span>
       {why && <span className="dim">{why}</span>}
