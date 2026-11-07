@@ -10,9 +10,10 @@ import ExecuteTime from "./ExecuteTime";
 import LeagueGrid from "./LeagueGrid";
 import { useLandingOrder } from "./landingOrder";
 import AppBarLead from "./AppBarLead";
-import { ExplainIcon, HistoryIcon } from "./icons";
+import { ExplainIcon } from "./icons";
 import { OverviewStatus } from "./StatusLight";
 import Wordmark from "./Wordmark";
+import { historyFoldLine } from "../history";
 import { POOLED, rangeSum, recordLabel, scopeWeeks } from "../progress";
 import { queueFoldLine, queuePoll } from "../season";
 import { useNow } from "./YahooSync";
@@ -87,12 +88,9 @@ export default function Landing({
             <button className="icon" onClick={onExplain} aria-label="Explain" title="Explain: how the draft, the moves and the day work">
               <ExplainIcon />
             </button>
-            <button className="icon" onClick={onHistory} aria-label="History" title="History: every move and trade, and why (h)">
-              <HistoryIcon />
-            </button>
           </>
         ) : (
-          <AppBarLead onHome={closeDrawer} status={<OverviewStatus leagues={shown} now={now} />} onProgress={onProgress} onExplain={onExplain} onHistory={onHistory} />
+          <AppBarLead onHome={closeDrawer} status={<OverviewStatus leagues={shown} now={now} />} onProgress={onProgress} onExplain={onExplain} />
         )}
         <span className="grow" />
         <span className="modeswitch">
@@ -118,6 +116,7 @@ export default function Landing({
           <LeagueGrid landing={landing} onOpen={onOpenLeague} />
           <ProgressFold onOpen={onProgress} />
           <QueueFold onOpen={onQueue} />
+          <HistoryFold onOpen={onHistory} />
           <DraftsFold leagues={leagues.data ?? []} rooms={rooms.data ?? []} now={now} onDrafts={() => setDrawer("drafts")} onNew={() => setDrawer("new")} />
         </div>
       )}
@@ -186,6 +185,21 @@ function QueueFold({ onOpen }: { onOpen: () => void }) {
       <ExecuteTime q={q.data} />
       <button className="small" onClick={onOpen} title="every league's proposed moves today in one view, with the veto (q)">
         Queue
+      </button>
+    </OpenRow>
+  );
+}
+
+/** The History screen (#334) in one line: how many moves are on record and the latest one's day. */
+function HistoryFold({ onOpen }: { onOpen: () => void }) {
+  const q = useQuery({ queryKey: ["history"], queryFn: () => api.history(), refetchInterval: 600_000 });
+  return (
+    <OpenRow onOpen={onOpen}>
+      <span className="k">History</span>
+      <span className="muted">{q.data ? historyFoldLine(q.data) : q.isError ? "not read" : "reading…"}</span>
+      <span className="grow" />
+      <button className="small" onClick={onOpen} title="every move and trade in every league, and why (h)">
+        History
       </button>
     </OpenRow>
   );

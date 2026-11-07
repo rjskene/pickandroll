@@ -1,13 +1,12 @@
 import type { ReactNode } from "react";
-import { ExplainIcon, HistoryIcon, ProgressIcon } from "./icons";
+import { ExplainIcon, ProgressIcon } from "./icons";
 import Wordmark from "./Wordmark";
 
 /** The app bar's lead (#270), on the landing, a league page, Progress and the Queue: the
  * wordmark, the update indicator immediately right of it, then the Progress button (icon only).
  * They stay together when a phone's bar wraps. On Progress itself the button marks the page.
  * A page's own icons follow the button (the league page's Yahoo link, #278). The Explain entry
- * (#283) follows Progress wherever a page passes it; on Explain itself it marks the page. The
- * History entry (#334) is the landing's. */
+ * (#283) follows Progress wherever a page passes it; on Explain itself it marks the page. */
 export default function AppBarLead({
   onHome,
   status,
@@ -15,7 +14,6 @@ export default function AppBarLead({
   here,
   onExplain,
   explainHere,
-  onHistory,
   children,
 }: {
   onHome?: () => void;
@@ -24,7 +22,6 @@ export default function AppBarLead({
   here?: boolean;
   onExplain?: () => void;
   explainHere?: boolean;
-  onHistory?: () => void;
   children?: ReactNode;
 }) {
   return (
@@ -49,11 +46,6 @@ export default function AppBarLead({
           title={explainHere ? "Explain: how the draft, the moves and the day work (this page)" : "Explain: how the draft, the moves and the day work"}
         >
           <ExplainIcon />
-        </button>
-      )}
-      {onHistory && (
-        <button className="icon" onClick={onHistory} aria-label="History" title="History: every move and trade, and why (h)">
-          <HistoryIcon />
         </button>
       )}
       {children}

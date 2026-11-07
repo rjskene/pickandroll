@@ -1,8 +1,8 @@
 // The History screen's words and filters (#334).
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import type { HistoryRow } from "./api";
-import { bidText, filterRows, moveLine, NO_FILTER, whyLines } from "./history.ts";
+import type { HistoryPayload, HistoryRow } from "./api";
+import { bidText, filterRows, historyFoldLine, moveLine, NO_FILTER, whyLines } from "./history.ts";
 
 const name = (id: number | null | undefined) => (id == null ? "" : `P${id}`);
 
@@ -99,4 +99,16 @@ test("a bid reads in dollars, blank for none and $0 for a zero bid", () => {
   assert.equal(bidText(null), "");
   assert.equal(bidText(0), "$0");
   assert.equal(bidText(4), "$4");
+});
+
+test("the landing's row counts the moves and gives the latest one's day", () => {
+  const payload = (rows: HistoryRow[], skipped: HistoryPayload["skipped"] = []): HistoryPayload => ({ rows, names: {}, kinds: [], results: [], first_record: "2026-10-24", skipped, generated_at: "2026-11-06T12:00:00Z" });
+  assert.equal(historyFoldLine(payload([])), "no moves on record yet");
+  assert.equal(historyFoldLine(payload([row()])), "1 move · latest Nov 2");
+  assert.equal(historyFoldLine(payload([row({ date: "2026-10-30" }), row({ date: null }), row({ date: "2026-11-06" })])), "3 moves · latest Nov 6");
+  assert.equal(historyFoldLine(payload([row({ date: null })])), "1 move");
+  // A league the record could not read is said, so the count does not pass for all of them.
+  const skipped = [{ league: "1", reason: "no snapshot" }];
+  assert.equal(historyFoldLine(payload([row()], skipped)), "1 move · latest Nov 2 · 1 league not read");
+  assert.equal(historyFoldLine(payload([], [...skipped, { league: "2", reason: "no snapshot" }])), "no moves on record yet · 2 leagues not read");
 });
