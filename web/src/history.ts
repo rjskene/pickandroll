@@ -1,6 +1,6 @@
 // The History screen's words and filters (#334). Pure, so `npm test` runs it under Node.
-import type { HistoryRow, HistoryStep } from "./api";
-import { gainLabel } from "./season.ts";
+import type { HistoryPayload, HistoryRow, HistoryStep } from "./api";
+import { dayLabel, gainLabel } from "./season.ts";
 
 export type Namer = (id: number | null | undefined) => string;
 
@@ -102,4 +102,19 @@ export function whyLines(r: HistoryRow, name: Namer): string[] {
 
 export function bidText(bid: number | null): string {
   return bid == null ? "" : `$${bid}`;
+}
+
+/** The landing's History row: how many moves are on record and the latest one's day, plus any
+ * league the record could not read. */
+export function historyFoldLine(p: HistoryPayload): string {
+  const n = p.rows.length;
+  const latest = p.rows.reduce<string | null>((best, r) => (r.date && (!best || r.date > best) ? r.date : best), null);
+  const skipped = p.skipped.length;
+  return [
+    n ? `${n} move${n === 1 ? "" : "s"}` : "no moves on record yet",
+    latest ? `latest ${dayLabel(latest)}` : null,
+    skipped ? `${skipped} league${skipped === 1 ? "" : "s"} not read` : null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
 }

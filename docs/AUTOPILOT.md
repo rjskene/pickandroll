@@ -347,7 +347,7 @@ page, from PR 2:
     (`superseded_at`, the first rebuild that dropped it). It holds no place, is never due and
     has nothing to strike. If a later solve recommends it again, it is queued again with a new
     hour. The Monday re-solve's rebuild does the same. `struck` is set by the user alone.
-- **The History screen (#334).** `/history`, from the landing's app bar or `h` there, Esc to go
+- **The History screen (#334).** `/history`, from the landing's History row or `h` there, Esc to go
   back. Every move and trade in every league, the private one too, newest first, filtered by league,
   kind and result; a row opens to why it was made. `GET /history` reads only and writes nothing: it
   joins my transactions from the week records and the latest snapshot (a group once, trades
