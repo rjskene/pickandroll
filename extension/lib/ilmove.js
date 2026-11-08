@@ -36,6 +36,9 @@
   const IL_ROWS = "table[id^=statTable] tbody tr";
   const IL_LABEL = "span.pos-label";
   const IL_SAVED = ".rostersave-msg";
+  /** A row's injury or availability code, where the season parser reads it (``player_cell``): the
+   * titled span's text in this cell, else the cell's own (#342). */
+  const IL_STATUS = "span.ysf-player-status";
   /** How long the run waits for the IL row's label after the first click, and for Yahoo's save
    * after the second. */
   const IL_SHOW_MS = 5 * 1000;
@@ -65,9 +68,9 @@
   }
 
   /** The swap controls as the content script read them (``{path, editable, rows: [{player,
-   * editable, labels: [{pos, button, visible}]}]}``) into what the run checks and logs for
-   * ``item``: the player's rows, his slot, whether his label is one visible button in an editable
-   * row, and the empty rows of the item's slot. */
+   * editable, status, labels: [{pos, button, visible}]}]}``) into what the run checks and logs for
+   * ``item``: the player's rows, his slot and status (null when his row shows none), whether his
+   * label is one visible button in an editable row, and the empty rows of the item's slot. */
   function readILPage(raw, item) {
     const rows = raw.rows || [];
     const mine = rows.filter((r) => r.player === item.player);
@@ -78,16 +81,22 @@
       editable: raw.editable === true,
       rows: mine.length,
       from_slot: shown.length === 1 ? shown[0].pos : null,
+      status: mine.length === 1 ? mine[0].status || null : null,
       movable: mine.length === 1 && mine[0].editable && shown.length === 1 && shown[0].button,
       targets: empty.length,
     };
   }
 
-  /** Why the move may not be made on this page, null when it may. */
+  /** Why the move may not be made on this page, null when it may. A status the item's slot does
+   * not take (``item.accepts``, the API's table) is one (#342): Yahoo offers no held slot to him,
+   * so nothing is clicked; an item without ``accepts`` is not checked for it. */
   function ilProblem(item, controls) {
     if (!controls.editable) return "the roster is not editable on this page";
     if (controls.rows !== 1) return controls.rows ? "the player shows more than once on this page" : "the player is not on this page";
     if (IL_SLOTS.includes(controls.from_slot)) return `the player is on ${controls.from_slot} already`;
+    if (Array.isArray(item.accepts) && !item.accepts.includes(controls.status)) {
+      return `no longer eligible for ${item.slot} (${controls.status ? `status ${controls.status}` : "no status"})`;
+    }
     if (!controls.movable) return "the player's slot is locked on this page";
     if (!controls.targets) return `no empty ${item.slot} slot on this page`;
     return null;
@@ -260,6 +269,7 @@
     IL_ROWS,
     IL_LABEL,
     IL_SAVED,
+    IL_STATUS,
     IL_SHOW_MS,
     IL_SAVE_MS,
     IL_UNREAD_MS,

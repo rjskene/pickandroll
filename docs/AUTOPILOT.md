@@ -639,8 +639,9 @@ page, from PR 2:
   no drop and a `held_move` to `IL` or `IL+`, its held player once (in the queue's order), unless
   he was moved to the IL today, the entry's IL move failed today, the add has a claim open, or the
   entry's week has no adds left; none past the day's cap, and none in an answer that is closed
-  (off, STOP, private, another day, no queue). Each item is `{entry, player, slot, date, tip,
-  page}`: `date` is the team page's day, today unless his NBA team's tip-off today has passed
+  (off, STOP, private, another day, no queue). Each item is `{entry, player, slot, accepts, date,
+  tip, page}`: `accepts` the statuses the slot takes (`season.moves.HELD_ACCEPTS`: IL O and OFS,
+  IL+ also INJ and GTD, #342), `date` the team page's day, today unless his NBA team's tip-off today has passed
   (today's page is locked: tomorrow's), `tip` that tip-off (null when the day's schedule copy has
   none) and `page` the team page of that day. The routine opens each item's team page before the
   league's add pages, in the moves executor's mode. The run is `POST /seasons/{league}/autopilot/il`
@@ -669,8 +670,13 @@ page, from PR 2:
   whose `page` is this page (my team, the item's date); none logs nothing:
   - under STOP it logs `stopped` (no entry) and the tab stays;
   - the page checks: the swap manager editable, the player once on the page, his slot one visible
-    label button (`span.pos-label[role=button]`) in an editable row and not IL / IL+ already, an
-    empty editable row with a label of the item's slot; a failed check logs `skipped`;
+    label button (`span.pos-label[role=button]`) in an editable row and not IL / IL+ already, his
+    status one the item's `accepts` lists (#342: the code in his row's `span.ysf-player-status`, as
+    the season parser reads it, logged as `controls.status`; a status that changed since the build,
+    O to Q, skips "no longer eligible for IL (status Q)", or "(no status)", since Yahoo then shows
+    no held slot), an empty editable row with a label of the item's slot; a failed check logs
+    `skipped`. A skip is not kept on the entry, so a later pass reads the page again, and the next
+    build re-derives the claim from the status it reads (no held move, so a drop);
   - a dry run, or a live league whose guard refuses now, logs `would_move` and clicks nothing;
   - live: the move goes on record in this browser before any click (`il_move:<entry>`), never
     made twice that day. The run clicks the player's label once, waits up to 5 s for exactly one

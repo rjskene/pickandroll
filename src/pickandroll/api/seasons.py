@@ -1792,7 +1792,8 @@ class SeasonService:
         claim nothing else stops (no claim on the add open, an add left in its week), its held
         player once, in the queue's order, unless he was moved to the IL today or the entry's
         move failed today. ``date`` is the first day he can still be moved: today, or tomorrow
-        once his team's game has tipped off (null tip: today's page says)."""
+        once his team's game has tipped off (null tip: today's page says). ``accepts`` are the
+        statuses his slot takes: the page skips the move when his shows another (#342)."""
         moved = {
             (e.get("held_move") or {}).get("player")
             for e in mine
@@ -1818,7 +1819,9 @@ class SeasonService:
             )
             if week is not None and week.get("adds") is not None and week["adds"] < 1:
                 continue
-            out.append({"entry": e["id"], "player": player, "slot": slot})
+            # The statuses the slot takes, for the page's own check before the click (#342).
+            accepts = sorted(mv.HELD_ACCEPTS.get(slot, ()))
+            out.append({"entry": e["id"], "player": player, "slot": slot, "accepts": accepts})
         if not out:
             return out
         now = self.clock()
