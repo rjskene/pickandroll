@@ -212,6 +212,18 @@ def test_the_queue_entry_copies_the_moves_basis_and_held_move():
     assert (e["basis"], e["held_move"]) == (None, None)
 
 
+def test_a_held_player_now_questionable_gives_the_build_no_move_behind_him():
+    # #342: Yahoo's status went from O to Q after the build. The next build reads Q, so no held
+    # slot takes him: no entry is queued behind an IL move of his, and the add needs a drop.
+    roster, cands, rate, sched, opponent, field, value = il_league("Q")
+    p = build(roster, cands, rate, sched, opponent, field, held_open={"IL": 1}, value=value)
+    _, entry = solved(replace(p, plan_floor=99.0))
+    out = qa.queue_of(day_of(entry), date(2026, 10, 26), qa.noise_floor([], 0.1), (0.1, "x"), None)
+    assert out
+    assert all(e["held_move"] is None and e["basis"] != dl.HELD for e in out)
+    assert all(e["drop"] is not None for e in out if e["add"] == 11)
+
+
 # --------------------------------------------------------------------------- the landing (#191)
 @pytest.mark.parametrize(
     ("league", "line", "names"),

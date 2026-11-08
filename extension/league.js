@@ -737,8 +737,8 @@
   const ilStrip = (line) => strip(line, "IL move");
 
   /** Yahoo's swap controls on my team page as a plain object for ``readILPage``: whether the
-   * manager is editable, and each roster row's player id, classes that matter (editable, empty)
-   * and slot labels (slot, a button, visible). No field is read. */
+   * manager is editable, and each roster row's player id, classes that matter (editable, empty),
+   * status code (#342) and slot labels (slot, a button, visible). No field is read. */
   function ilControls() {
     const manager = document.querySelector(PR.IL_MANAGER);
     const visible = (el) => typeof el.getClientRects === "function" && el.getClientRects().length > 0;
@@ -747,10 +747,13 @@
       editable: manager ? manager.getAttribute("data-is-editable") === "true" : null,
       rows: [...document.querySelectorAll(PR.IL_ROWS)].map((tr) => {
         const id = tr.querySelector("[data-ys-playerid]");
+        const flag = tr.querySelector(PR.IL_STATUS);
+        const code = flag ? flag.querySelector("span[title]") || flag : null;
         return {
           player: id ? Number(id.getAttribute("data-ys-playerid")) : null,
           editable: tr.classList.contains("editable"),
           empty: tr.classList.contains("empty-bench"),
+          status: code ? String(code.textContent || "").trim() || null : null,
           labels: [...tr.querySelectorAll(PR.IL_LABEL)].map((l) => ({ pos: l.getAttribute("data-pos"), button: l.getAttribute("role") === "button", visible: visible(l) })),
         };
       }),

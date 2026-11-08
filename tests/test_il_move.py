@@ -103,6 +103,7 @@ def test_a_due_claim_behind_an_il_move_names_the_move_first_once_a_player(client
             "entry": on[0]["id"],
             "player": k,
             "slot": "IL",
+            "accepts": ["O", "OFS"],
             "date": "2026-10-21",
             "tip": None,
             "page": public.team_url(LEAGUE, 4, DAY),
@@ -134,7 +135,8 @@ def test_no_il_move_first_for_a_claim_that_cannot_go_in(client):
     held_spot(client, on[0]["id"], k, slot="BN")
     assert client.get(DUE).json()["il_first"] == []
     held_spot(client, on[0]["id"], k, slot="IL+")
-    assert client.get(DUE).json()["il_first"][0]["slot"] == "IL+"
+    [x] = client.get(DUE).json()["il_first"]
+    assert (x["slot"], x["accepts"]) == ("IL+", ["GTD", "INJ", "O", "OFS"])
     # A struck claim is not due, so its player stays.
     strike(client, on[0]["id"])
     assert client.get(DUE).json()["il_first"] == []

@@ -63,12 +63,12 @@ test("the triggers, the item for the page and the add page after it", () => {
 
 /** The swap controls as the content script reads them, from today's markup: rows with their
  * player, editable and empty classes and slot labels. */
-const rawRows = ({ held = "C", heldEditable = true, heldButton = true, il = true, editable = true, dupe = false } = {}) => ({
+const rawRows = ({ held = "C", heldEditable = true, heldButton = true, il = true, editable = true, dupe = false, status = "O" } = {}) => ({
   path: `/nba/${LEAGUE}/${TEAM}?date=${DAY}`,
   editable,
   rows: [
     { player: 5767, editable: true, empty: false, labels: [{ pos: "PG", button: true, visible: true }] },
-    { player: HELD, editable: heldEditable, empty: false, labels: [{ pos: held, button: heldButton, visible: true }] },
+    { player: HELD, editable: heldEditable, empty: false, status, labels: [{ pos: held, button: heldButton, visible: true }] },
     ...(dupe ? [{ player: HELD, editable: true, empty: false, labels: [{ pos: "BN", button: true, visible: true }] }] : []),
     { player: null, editable: true, empty: true, labels: [{ pos: "BN", button: true, visible: false }, { pos: "BN", button: true, visible: false }] },
     ...(il ? [{ player: null, editable: true, empty: true, labels: [{ pos: "IL", button: true, visible: false }, { pos: "IL", button: true, visible: false }] }] : []),
@@ -77,7 +77,7 @@ const rawRows = ({ held = "C", heldEditable = true, heldButton = true, il = true
 
 test("the page checks: editable, the player once with one visible button label, an empty slot of the item's", () => {
   const c = I.readILPage(rawRows(), item());
-  assert.deepEqual(c, { path: `/nba/${LEAGUE}/${TEAM}?date=${DAY}`, editable: true, rows: 1, from_slot: "C", movable: true, targets: 1 });
+  assert.deepEqual(c, { path: `/nba/${LEAGUE}/${TEAM}?date=${DAY}`, editable: true, rows: 1, from_slot: "C", status: "O", movable: true, targets: 1 });
   assert.equal(I.ilProblem(item(), c), null);
   const why = (over, it = item()) => I.ilProblem(it, I.readILPage(rawRows(over), it));
   assert.equal(why({ editable: false }), "the roster is not editable on this page");
@@ -88,6 +88,27 @@ test("the page checks: editable, the player once with one visible button label, 
   assert.equal(why({ heldButton: false }), "the player's slot is locked on this page");
   assert.equal(why({ il: false }), "no empty IL slot on this page");
   assert.equal(why({}, item({ slot: "IL+" })), "no empty IL+ slot on this page");
+});
+
+test("the page checks the player's status against the statuses his slot takes (#342)", () => {
+  const IL = ["O", "OFS"];
+  const PLUS = ["GTD", "INJ", "O", "OFS"];
+  const why = (over, it) => I.ilProblem(it, I.readILPage(rawRows(over), it));
+  // Out: the IL takes him. Questionable since the queue was built: no held slot shows, so no click.
+  assert.equal(why({ status: "O" }, item({ accepts: IL })), null);
+  assert.equal(why({ status: "Q" }, item({ accepts: IL })), "no longer eligible for IL (status Q)");
+  assert.equal(why({ status: "INJ" }, item({ accepts: IL })), "no longer eligible for IL (status INJ)");
+  // A row with no code (healthy, or a cell not read) is not eligible either.
+  assert.equal(why({ status: null }, item({ accepts: IL })), "no longer eligible for IL (no status)");
+  assert.equal(I.readILPage(rawRows({ status: null }), item()).status, null);
+  // IL+ takes a day-to-day player; Q nowhere.
+  assert.equal(why({ status: "GTD" }, item({ slot: "IL+", accepts: PLUS })), "no empty IL+ slot on this page");
+  assert.equal(why({ status: "Q" }, item({ slot: "IL+", accepts: PLUS })), "no longer eligible for IL+ (status Q)");
+  // The other checks come first: a player not here, or on IL already, says so.
+  assert.equal(why({ status: "Q" }, item({ player: 9999, accepts: IL })), "the player is not on this page");
+  assert.equal(why({ held: "IL", status: "Q" }, item({ accepts: IL })), "the player is on IL already");
+  // An item without ``accepts`` (an API before #342) is not checked for it.
+  assert.equal(why({ status: "Q" }, item()), null);
 });
 
 test("the run the log takes, an unread move, the strip and the claim's wait", () => {
@@ -120,7 +141,7 @@ test("the run the log takes, an unread move, the strip and the claim's wait", ()
  * notice reads ``answer`` (``saved`` "All changes saved", ``error`` Yahoo's error, null nothing)
  * and the player's label reads IL. ``alert`` is an alert Yahoo raises on the first click. Clicks
  * go in ``touched``. */
-function ilDom({ held = "C", editable = true, shows = 1, answer = "saved", after = 2, alert = null, stale = false } = {}) {
+function ilDom({ held = "C", editable = true, shows = 1, answer = "saved", after = 2, alert = null, stale = false, status = "O" } = {}) {
   const touched = [];
   const attrs = {};
   let looks = null;
@@ -133,11 +154,14 @@ function ilDom({ held = "C", editable = true, shows = 1, answer = "saved", after
     };
     return l;
   };
+  // The held player's code as Yahoo draws it: a titled span inside the status cell.
+  const flag = (code) => (code ? { querySelector: (sel) => (sel === "span[title]" ? { textContent: ` ${code} ` } : null), textContent: ` ${code} ` } : null);
   const row = (classes, player, labels) => ({
     player,
     labels,
     classList: { contains: (c) => classes.split(" ").includes(c) },
-    querySelector: (sel) => (sel === "[data-ys-playerid]" && row_(player) ? { getAttribute: () => String(player) } : null),
+    querySelector: (sel) =>
+      sel === "[data-ys-playerid]" && row_(player) ? { getAttribute: () => String(player) } : sel === I.IL_STATUS && player === HELD ? flag(status) : null,
     querySelectorAll: (sel) => (sel === I.IL_LABEL ? labels : []),
   });
   const row_ = (p) => p != null;
@@ -392,6 +416,23 @@ test("a live move clicks nothing when it may not, and a stop or an unlogged run 
   v = await visitTeam({ answer: worker(due(), { log: false }) });
   assert.deepEqual(v.assigned, []);
   assert.match(v.strip.textContent, /not logged: STOP is on/);
+});
+
+test("a player no longer eligible for the slot: skipped with his status, nothing clicked, the claim still opens (#342)", async () => {
+  const accepts = ["O", "OFS"];
+  const v = await visitTeam({ answer: worker(due(LIVE, [item({ accepts })])), dom: ilDom({ status: "Q" }) });
+  assert.deepEqual(v.touched, []);
+  assert.equal(ops(v).includes("il_moving"), false);
+  const { run, clicked, release } = logOf(v)[0];
+  assert.deepEqual([run.mode, run.outcome, run.reason, run.controls.status, clicked, release], ["live", "skipped", "no longer eligible for IL (status Q)", "Q", false, false]);
+  assert.deepEqual(v.assigned, [CLAIM]);
+  assert.equal(v.strip.textContent, `pickandroll IL move: live · skipped ${HELD} C → IL (dated ${DAY}) (no longer eligible for IL (status Q)) · opening the claim`);
+  // A dry run skips the same way rather than saying it would move him.
+  const d = await visitTeam({ answer: worker(due({}, [item({ accepts })])), dom: ilDom({ status: "Q" }) });
+  assert.deepEqual([logOf(d)[0].run.mode, logOf(d)[0].run.outcome], ["dry_run", "skipped"]);
+  // Still out: the move is made, and the status is logged beside the controls.
+  const o = await visitTeam({ answer: worker(due(LIVE, [item({ accepts })])) });
+  assert.deepEqual([logOf(o)[0].run.outcome, logOf(o)[0].run.controls.status, o.touched], ["moved", "O", ["click held", "click IL 0"]]);
 });
 
 test("a move whose run never reached the log is logged first; a plain visit runs nothing", async () => {
