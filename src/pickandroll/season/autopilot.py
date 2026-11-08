@@ -57,6 +57,8 @@ from datetime import UTC, date, datetime, time, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
+from . import moves as mv
+
 #: The set the queue takes, and the horizon it is judged on (#143): the three weeks after.
 QUEUE_SET = "three"
 JUDGED = "three"
@@ -654,3 +656,70 @@ def keep_reason(
             "better than the best add over the season and back within a week: he stays on the bench"
         )
     return "net positive, not beaten by the best add by the floor, and back this season"
+
+
+# --------------------------------------------------------------------------- a cleared player (#341)
+#: The held slots a cleared player blocks every transaction from (Yahoo's Error 845, #318).
+CLEARED_SLOTS = ("IL", "IL+")
+#: The parts a team page posts, where a player's status is drawn: a team's roster and its lineup
+#: of a day.
+TEAM_PARTS = ("roster/", "lineup/")
+
+
+def newest_statuses(
+    states: Iterable[tuple[str, Mapping[str, Any]]], players: Iterable[int]
+) -> dict[int, dict[str, Any]]:
+    """Each of ``players``' status in the newest team-page read of him in any league: ``{status,
+    read_at, league}``. ``states`` are the leagues' ids with their stored parts by key. A
+    player's status is the NBA's, the same in every league, so a read in another league a minute
+    ago says more than this league's read this morning (#341)."""
+    want = set(players)
+    out: dict[int, dict[str, Any]] = {}
+    for league, parts in states:
+        for key, part in (parts or {}).items():
+            if not str(key).startswith(TEAM_PARTS) or not isinstance(part, Mapping):
+                continue
+            try:
+                at = datetime.fromisoformat(str(part.get("fetched_at")))
+            except ValueError:
+                continue
+            at = at if at.tzinfo else at.replace(tzinfo=UTC)
+            data = part.get("data")
+            spots = data.get("spots") if isinstance(data, Mapping) else None
+            for spot in spots or ():
+                p = spot.get("player") if isinstance(spot, Mapping) else None
+                pid = p.get("yahoo_id") if isinstance(p, Mapping) else None
+                if pid not in want or (pid in out and out[pid]["at"] >= at):
+                    continue
+                out[pid] = {"status": p.get("status"), "at": at, "league": str(league)}
+    return {
+        k: {"status": v["status"], "read_at": v["at"].isoformat(), "league": v["league"]}
+        for k, v in out.items()
+    }
+
+
+def held_cleared(
+    held: Iterable[tuple[int, str, str | None]], newest: Mapping[int, Mapping[str, Any]]
+) -> list[dict[str, Any]]:
+    """My players on IL or IL+ (``held``: id, slot and this league's read of his status) whose
+    newest status (``newest``, :func:`newest_statuses`; this league's read when none) no longer
+    fits the slot: while one sits there Yahoo refuses every claim (Error 845), so the claim waits
+    for his comeback (#341). Each is ``{player, slot, status, read_at, league}``, the read's time
+    and league null when it is this league's own."""
+    out = []
+    for pid, slot, status in held:
+        if slot not in CLEARED_SLOTS:
+            continue
+        read = newest.get(pid)
+        now = read["status"] if read else status
+        if mv.is_cleared(now, slot):
+            out.append(
+                {
+                    "player": pid,
+                    "slot": slot,
+                    "status": now,
+                    "read_at": read["read_at"] if read else None,
+                    "league": read["league"] if read else None,
+                }
+            )
+    return out

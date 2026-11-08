@@ -616,10 +616,13 @@ async function visitAdd({ hash = "#pickandroll-moves", answer, add = ADD, dom = 
         nodes[e.id] = e;
       },
       getAttribute: (a) => (dom.documentElement ? dom.documentElement.getAttribute(a) : null),
+      // A league page's own read posts the page (my team page, where a claim lands): nothing in it.
+      cloneNode: () => ({ querySelectorAll: () => [], outerHTML: "<html></html>" }),
     },
   };
   const url = new URL(at);
-  const location = { href: url.href, hash: url.hash, pathname: url.pathname, search: url.search, assign() {} };
+  const assigned = [];
+  const location = { href: url.href, origin: url.origin, hash: url.hash, pathname: url.pathname, search: url.search, assign: (u) => assigned.push(u) };
   const sent = [];
   const replaced = [];
   const timers = [];
@@ -650,7 +653,7 @@ async function visitAdd({ hash = "#pickandroll-moves", answer, add = ADD, dom = 
   ctx.globalThis = ctx;
   for (const file of ["lib/league.js", "lib/lineup.js", "lib/moves.js", "lib/startactive.js", "lib/ilmove.js", "lib/drop.js", "league.js"]) vm.runInContext(fs.readFileSync(path.join(DIR, file), "utf8"), ctx);
   for (const fn of timers.splice(0)) await fn();
-  return { sent, replaced, strip: nodes["pickandroll-strip"], touched: dom.touched || [] };
+  return { sent, replaced, assigned, strip: nodes["pickandroll-strip"], touched: dom.touched || [] };
 }
 
 /** The worker's answers: the settings, the due entries, the log taking the pass and the submit
@@ -665,6 +668,7 @@ const worker =
     if (msg.op === "moves_landed") return { ok: true, data: landing };
     if (msg.op === "moves_submits") return { ok: true, data: records };
     if (msg.op === "moves_submitting") return kept ? { ok: true, data: { kept: true } } : { ok: false, error: "this claim was submitted already" };
+    if (msg.op === "moves_settling") return { ok: true, data: { kept: true } };
     return { ok: false, error: `unexpected ${msg.op}` };
   };
 const ops = (v) => v.sent.map((m) => m.op);
@@ -820,12 +824,13 @@ function landedDom({ notes = [], errors = [], form = false, heading = "Team page
 test("the page Yahoo lands on logs the claim's live pass: placed, refused, or its answer not read", async () => {
   const line = X.moveCheck(entry(), { outcome: "would_claim", reason: null }, X.readAddPage(rawPage(), CLEARS), due(LIVE), READ_AT);
   const landing = { day: DAY, trigger: "routine_late", line, league: LEAGUE, tab: 9, at: Date.now() };
-  const landedAt = (dom) => visitAdd({ answer: worker(LIVE, {}, { landing }), dom, url: `${SITE}/nba/${LEAGUE}/${TEAM}/addplayer` });
+  const landedAt = (dom) => visitAdd({ answer: worker(LIVE, {}, { landing }), dom, url: `${SITE}/nba/${LEAGUE}/${TEAM}` });
   let v = await landedAt(landedDom({ notes: ["Your waiver claim has been submitted."] }));
-  assert.deepEqual(ops(v), ["moves_landed", "moves_log", "drop_landed"]);
+  // My team page's own read (its post) follows the landing's.
+  assert.deepEqual(ops(v), ["moves_landed", "moves_log", "drop_landed", "season_page"]);
   let run = sentOf(v, "moves_log")[0].run;
   assert.deepEqual([run.day, run.mode, run.trigger, run.outcome], [DAY, "live", "routine_late", "claimed"]);
-  assert.deepEqual([run.entries[0].message, run.entries[0].controls.landed], ["Your waiver claim has been submitted.", { path: `/nba/${LEAGUE}/${TEAM}/addplayer`, heading: "Team page", bid: null }]);
+  assert.deepEqual([run.entries[0].message, run.entries[0].controls.landed], ["Your waiver claim has been submitted.", { path: `/nba/${LEAGUE}/${TEAM}`, heading: "Team page", form: false, notes: ["Your waiver claim has been submitted."], errors: [], bid: null }]);
   assert.match(v.strip.textContent, /^pickandroll moves: live · claimed for \$3, dropping 2005: Yahoo: Your waiver claim has been submitted\.; logged \d\d:\d\d$/);
   v = await landedAt(landedDom({ form: true, errors: ["You have reached the maximum number of adds."] }));
   run = sentOf(v, "moves_log")[0].run;
@@ -845,8 +850,8 @@ test("the page Yahoo lands on logs the claim's live pass: placed, refused, or it
   v = await landedAt(landedDom({ claimId: `${TEAM}_${ADD}_2006` }));
   assert.match(sentOf(v, "moves_log")[0].run.entries[0].reason, /Yahoo's answer was not read/);
   // No claim awaiting its answer in this tab: the page logs nothing.
-  v = await visitAdd({ answer: worker(LIVE), dom: landedDom(), url: `${SITE}/nba/${LEAGUE}/${TEAM}/addplayer` });
-  assert.deepEqual(ops(v), ["moves_landed", "drop_landed"]);
+  v = await visitAdd({ answer: worker(LIVE), dom: landedDom(), url: `${SITE}/nba/${LEAGUE}/${TEAM}` });
+  assert.deepEqual(ops(v), ["moves_landed", "drop_landed", "season_page"]);
 });
 
 // ---------------------------------------------------------------- the worker's record of a submit
@@ -1014,7 +1019,7 @@ test("the landed page reads the claim's bid on its pending line; a claim placed 
     const page = open ? X.readAddPage({ ...rawPage(), empty: "You currently have 1 empty spot on your roster" }, CLEARS) : X.readAddPage(rawPage(), CLEARS);
     const line = X.moveCheck(e, X.pageCheck(e, page, due(LIVE)), page, due(LIVE), READ_AT);
     const landing = { day: DAY, trigger: "routine_evening", line, league: LEAGUE, tab: 9, at: Date.now() };
-    const v = await visitAdd({ answer: worker(LIVE, {}, { landing }), dom, url: `${SITE}/nba/${LEAGUE}/${TEAM}/addplayer` });
+    const v = await visitAdd({ answer: worker(LIVE, {}, { landing }), dom, url: `${SITE}/nba/${LEAGUE}/${TEAM}` });
     return sentOf(v, "moves_log")[0].run.entries[0];
   };
   const placed = "You have successfully created a waiver claim for A";
@@ -1091,14 +1096,14 @@ test("the landed page reads the claim's bid off the pending box first, the link'
     const page = X.readAddPage({ ...rawPage(), empty: "You currently have 1 empty spot on your roster" }, CLEARS);
     const line = { ...X.moveCheck(e, X.pageCheck(e, page, due(LIVE)), page, due(LIVE), READ_AT), ...over };
     const landing = { day: DAY, trigger: "routine_late", line, league: LEAGUE, tab: 9, at: Date.now() };
-    const v = await visitAdd({ answer: worker(LIVE, {}, { landing }), dom, url: `${SITE}/nba/${LEAGUE}/${TEAM}/addplayer` });
+    const v = await visitAdd({ answer: worker(LIVE, {}, { landing }), dom, url: `${SITE}/nba/${LEAGUE}/${TEAM}` });
     return sentOf(v, "moves_log")[0].run.entries[0];
   };
   const box = F.parse(BOX);
   const placed = "You have successfully created a waiver claim for A";
   // Yahoo's real box: the link reader misses the line (the icon glyph), the box reads it.
   let e = await landedOn(landedDom({ notes: [placed], box }), { add: 10279, drop: null, bid: 1 });
-  assert.deepEqual([e.outcome, e.reason, e.controls.landed], ["claimed", null, { path: `/nba/${LEAGUE}/${TEAM}/addplayer`, heading: "Team page", bid: 1, bid_link: null }]);
+  assert.deepEqual([e.outcome, e.reason, e.controls.landed], ["claimed", null, { path: `/nba/${LEAGUE}/${TEAM}`, heading: "Team page", form: false, notes: [placed], errors: [], bid: 1, bid_link: null }]);
   // A bid other than the queue's stays claimed, with the reason to edit it in Yahoo (ruling (a)).
   e = await landedOn(landedDom({ notes: [placed], box }), { add: 6411, drop: null, bid: 3 });
   assert.deepEqual([e.outcome, e.controls.landed.bid, e.reason], ["claimed", 1, "placed at $1, the queue's $3: edit the bid in Yahoo's pending claims"]);
@@ -1249,4 +1254,116 @@ test("in a live league an open spot on a page with Yahoo's words is put on recor
   const none = await visitAdd({ answer: worker({ ...LIVE, entries: [open] }), dom: openSpotDom({ words: true, count: 0 }) });
   const line = sentOf(none, "moves_log")[0].run.entries[0];
   assert.deepEqual([line.outcome, line.reason, none.touched], ["skipped", 'no single "don\'t drop anyone" button (0 on the page)', []]);
+});
+
+// ---------------------------------------------------------------- #341: the landing settled
+test("a landing on the claim form's own path is no placement; my team page's pending box settles an unread answer (#341)", () => {
+  const action = `/nba/${LEAGUE}/${TEAM}/addplayer`;
+  // 2026-11-07: a refused claim stayed on the form's action path under "Subscribe in the app".
+  const stayed = X.readLanded({ path: action, heading: "Subscribe in the app", form: false, notes: [], errors: [], action });
+  assert.deepEqual(stayed, { outcome: "failed", message: null, reason: `Yahoo stayed on the claim form (${action}, "Subscribe in the app"): not placed`, stayed: true });
+  // Yahoo's words there are kept; a sign of placement still wins.
+  assert.equal(X.readLanded({ path: action, heading: null, notes: ["You have reached the maximum number of adds."], errors: [], action }).reason, `Yahoo stayed on the claim form (${action}, "no heading"): not placed: "You have reached the maximum number of adds."`);
+  assert.equal(X.readLanded({ path: action, heading: "Team page", notes: ["You have successfully created a waiver claim for A"], errors: [], action }).outcome, "claimed");
+  assert.equal(X.readLanded({ path: action, heading: "x", notes: [], errors: [], action, claim: true }).outcome, "claimed");
+  // The add page itself (with apid) and an action of another shape are not the form's path.
+  assert.equal(X.onClaimForm(`/nba/${LEAGUE}/addplayer?apid=${ADD}`, action), false);
+  assert.equal(X.onClaimForm(`${action}?x=1`, action), true);
+  assert.equal(X.onClaimForm(action, null), false);
+  assert.equal(X.onClaimForm("/nba/1/addplayer", "/nba/1/addplayer"), false);
+  assert.equal(X.readLanded({ path: action, heading: "Confirm Transaction", notes: [], errors: [] }), null);
+  assert.equal(X.teamPageOf(action), `/nba/${LEAGUE}/${TEAM}`);
+  assert.equal(X.teamPageOf(`/nba/${LEAGUE}/addplayer`), null);
+  assert.equal(X.teamPageOf(null), null);
+  assert.deepEqual([X.wantsSettle(null), X.wantsSettle(stayed), X.wantsSettle({ outcome: "failed", message: "no" }), X.wantsSettle({ outcome: "claimed" })], [true, true, false, false]);
+  // The box with the claim's line: claimed. The box without it: failed. No box: the first answer.
+  const placed = { outcome: "claimed", message: "the claim shows among the pending transactions" };
+  assert.deepEqual(X.settleLanded(stayed, { bid_box: 1 }, [{ href: "x", text: "y" }]), placed);
+  assert.deepEqual(X.settleLanded(null, { bid_box: 0 }, []), placed);
+  assert.deepEqual(X.settleLanded(null, { claim: true, bid_box: null }, null), placed);
+  assert.deepEqual(X.settleLanded(stayed, { bid_box: null }, []), { outcome: "failed", message: null, reason: `not among Yahoo's pending transactions; ${stayed.reason}` });
+  assert.deepEqual(X.settleLanded(null, { bid_box: null }, [{ href: "x", text: "y" }]), { outcome: "failed", message: null, reason: "not among Yahoo's pending transactions" });
+  assert.equal(X.settleLanded(stayed, { bid_box: null }, null), stayed);
+  assert.equal(X.settleLanded(null, { bid_box: null }, null), null);
+});
+
+test("the claim form's landing goes to my team page to settle, and the pending box there logs the pass (#341)", async () => {
+  const action = `/nba/${LEAGUE}/${TEAM}/addplayer`;
+  const lineOf = (add) => {
+    const e = entry({ add, drop: null, basis: "open", page: `/nba/${LEAGUE}/addplayer?apid=${add}` });
+    const page = X.readAddPage({ ...rawPage({ add }), empty: "You currently have 1 empty spot on your roster" }, CLEARS);
+    return { ...X.moveCheck(e, X.pageCheck(e, page, due(LIVE)), page, due(LIVE), READ_AT), bid: 1 };
+  };
+  const landing = (add, settle) => ({ day: DAY, trigger: "routine", line: lineOf(add), league: LEAGUE, tab: 9, at: Date.now(), ...(settle ? { settle } : {}) });
+  // The first read, on the form's path: nothing logged, the read kept and the tab sent on.
+  let v = await visitAdd({ answer: worker(LIVE, {}, { landing: landing(10279) }), dom: landedDom({ heading: "Subscribe in the app" }), url: `${SITE}${action}` });
+  assert.deepEqual(ops(v), ["moves_landed", "moves_settling"]);
+  assert.deepEqual(v.assigned, [`${SITE}/nba/${LEAGUE}/${TEAM}`]);
+  assert.equal(v.strip.textContent, "pickandroll moves: live · Yahoo's answer not recognised here: reading my team page's pending transactions…");
+  const [{ id, settle }] = sentOf(v, "moves_settling");
+  assert.equal(id, lineOf(10279).id);
+  assert.deepEqual(settle.seen, { path: action, heading: "Subscribe in the app", form: false, notes: [], errors: [], bid: null });
+  assert.deepEqual([settle.answer.outcome, settle.answer.stayed], ["failed", true]);
+  // The second read, on my team page: the claim's line in the box is claimed, the first read kept.
+  const second = async (add, box) => {
+    const w = await visitAdd({ answer: worker(LIVE, {}, { landing: landing(add, settle) }), dom: landedDom({ box }), url: `${SITE}/nba/${LEAGUE}/${TEAM}` });
+    assert.deepEqual([...ops(w).slice(0, 2), w.assigned], ["moves_landed", "moves_log", []]);
+    return sentOf(w, "moves_log")[0].run;
+  };
+  let run = await second(10279, F.parse(BOX));
+  assert.deepEqual([run.outcome, run.entries[0].message, run.entries[0].controls.landed.bid, run.entries[0].controls.landed.first], ["claimed", "the claim shows among the pending transactions", 1, settle.seen]);
+  // The box shown without it: failed, the first read's reason beside.
+  run = await second(5471, F.parse(BOX));
+  assert.deepEqual([run.outcome, run.reason], ["failed", `not among Yahoo's pending transactions; ${settle.answer.reason}`]);
+  // No box: the first read's answer stands (failed, ruling (3)).
+  run = await second(5471, null);
+  assert.deepEqual([run.outcome, run.reason], ["failed", settle.answer.reason]);
+  // A worker that cannot keep the read: the form's answer is logged where it stands.
+  const refusing = (msg, sent) => (msg.op === "moves_settling" ? { ok: false, error: "no submit of this claim on record" } : worker(LIVE, {}, { landing: landing(10279) })(msg, sent));
+  v = await visitAdd({ answer: refusing, dom: landedDom({ heading: "Subscribe in the app" }), url: `${SITE}${action}` });
+  assert.deepEqual([ops(v).slice(0, 3), v.assigned], [["moves_landed", "moves_settling", "moves_log"], []]);
+  assert.equal(sentOf(v, "moves_log")[0].run.outcome, "failed");
+});
+
+test("an answer not recognised on another page is settled on my team page too; a stale settle logs its first read (#341)", async () => {
+  const line = X.moveCheck(entry(), { outcome: "would_claim", reason: null }, X.readAddPage(rawPage(), CLEARS), due(LIVE), READ_AT);
+  const landing = { day: DAY, trigger: "routine", line, league: LEAGUE, tab: 9, at: Date.now() };
+  // A players page with no answer on it: sent on to my team page.
+  let v = await visitAdd({ answer: worker(LIVE, {}, { landing }), dom: landedDom({ heading: "Confirm Transaction" }), url: `${SITE}/nba/${LEAGUE}/players` });
+  assert.deepEqual([ops(v).slice(0, 2), v.assigned], [["moves_landed", "moves_settling"], [`${SITE}/nba/${LEAGUE}/${TEAM}`]]);
+  assert.equal(sentOf(v, "moves_settling")[0].settle.answer, null);
+  // A settle read on record past the landing window: the add page logs its first answer.
+  const first = { answer: X.readLanded({ path: `/nba/${LEAGUE}/${TEAM}/addplayer`, heading: "Subscribe in the app", notes: [], errors: [], action: `/nba/${LEAGUE}/${TEAM}/addplayer` }), seen: { path: `/nba/${LEAGUE}/${TEAM}/addplayer` } };
+  const stale = { ...landing, at: Date.now() - X.LANDING_MS - 1000, settle: first };
+  v = await visitAdd({ answer: worker(LIVE, {}, { records: [stale] }) });
+  let run = sentOf(v, "moves_log")[0].run;
+  assert.deepEqual([run.outcome, run.reason, run.entries[0].controls.landed], ["failed", first.answer.reason, first.seen]);
+  // One never recognised: claimed, its answer not read, as before.
+  v = await visitAdd({ answer: worker(LIVE, {}, { records: [{ ...stale, settle: { answer: null, seen: first.seen } }] }) });
+  run = sentOf(v, "moves_log")[0].run;
+  assert.equal(run.outcome, "claimed");
+  assert.match(run.entries[0].reason, /Yahoo's answer was not read/);
+});
+
+test("the worker keeps a landing's first read on the submit's record, its time unchanged (#341)", async () => {
+  const w = loadWorker(() => [200, { at: "x" }]);
+  const record = { day: DAY, trigger: "routine", line: { id: entry().id, add: ADD, drop: 2005, outcome: "would_claim" } };
+  assert.equal((await w.send({ op: "moves_submitting", league: LEAGUE, record })).ok, true);
+  const at = w.local.get(`moves_submit:${entry().id}`).at;
+  const settle = { answer: null, seen: { path: "/x" } };
+  assert.deepEqual(await w.send({ op: "moves_settling", league: LEAGUE, id: entry().id, settle }), { ok: true, data: { kept: true } });
+  const kept = w.local.get(`moves_submit:${entry().id}`);
+  assert.deepEqual([kept.settle, kept.at], [settle, at]);
+  assert.deepEqual((await w.send({ op: "moves_landed", league: LEAGUE })).data.settle, settle);
+  const none = await w.send({ op: "moves_settling", league: LEAGUE, id: "nope", settle });
+  assert.deepEqual([none.ok, none.error], [false, "no submit of this claim on record"]);
+});
+
+test("a player cleared to play sitting on IL or IL+ in any league's newest read stops the claim (#341, Error 845)", () => {
+  const held = (over = {}) => ({ player: 10460, slot: "IL", status: "Q", read_at: "2026-11-07T15:15:19Z", league: "31153", ...over });
+  assert.equal(checkOn(rawPage(), due({ held_cleared: [] })).outcome, "would_claim");
+  assert.equal(checkOn(rawPage(), due()).outcome, "would_claim");
+  assert.deepEqual(checkOn(rawPage(), due({ held_cleared: [held()] })), { outcome: "skipped", reason: "10460 sits on IL with status Q: Yahoo refuses every claim until he leaves it (Error 845)" });
+  assert.equal(X.clearedWords([held({ slot: "IL+", status: null }), held({ player: 5765 })]), "10460 sits on IL+ with no status (and 1 more): Yahoo refuses every claim until he leaves it (Error 845)");
+  assert.equal(X.clearedWords(undefined), null);
 });

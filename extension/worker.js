@@ -366,6 +366,16 @@ const ops = {
     const mine = (await submits(league)).filter((x) => x.tab === tab && now - x.at < self.PickAndRoll.LANDING_MS);
     return mine.sort((a, b) => b.at - a.at)[0] || null;
   },
+  /** The first read of a submitted claim's landing, kept on its record while the tab goes to my
+   * team page to settle it (#341): ``settle`` is ``{answer, seen}``. The record keeps its time,
+   * so the landing window still runs from the submit. */
+  async moves_settling({ id, settle }) {
+    const key = submitKey(id);
+    const record = (await chrome.storage.local.get(key))[key];
+    if (!record) throw new Error("no submit of this claim on record");
+    await chrome.storage.local.set({ [key]: { ...record, settle } });
+    return { kept: true };
+  },
   /** Every live claim on record in ``league``: the add page logs the stale ones first and never
    * submits one of them again. */
   async moves_submits({ league }) {

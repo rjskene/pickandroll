@@ -270,7 +270,20 @@
     if (bid < page.bid_min || bid > page.bid_max) return skip(`the bid ($${bid}) is outside the page's $${page.bid_min} to $${page.bid_max}`);
     if (page.budget == null || bid > page.budget) return skip(`the bid ($${bid}) is over the $${page.budget ?? "?"} left`);
     if (page.submit !== SUBMIT) return skip("the page has no claim submit");
+    const cleared = clearedWords(due.held_cleared);
+    if (cleared) return skip(cleared);
     return { outcome: "would_claim", reason: entry.drop == null ? OPEN_SPOT : null };
+  }
+
+  /** Why no claim goes in while a player of mine sits on IL or IL+ with a status that no longer
+   * fits it (``due.held_cleared``, his newest read in any league, #341): Yahoo refuses every
+   * claim then (Error 845) until his comeback moves him. Null when there is none. */
+  function clearedWords(cleared) {
+    const list = Array.isArray(cleared) ? cleared : [];
+    if (!list.length) return null;
+    const [c] = list;
+    const more = list.length > 1 ? ` (and ${list.length - 1} more)` : "";
+    return `${c.player} sits on ${c.slot} with ${c.status ? `status ${c.status}` : "no status"}${more}: Yahoo refuses every claim until he leaves it (Error 845)`;
   }
 
   /** The claim the form would carry for ``entry``: its action and the fields this pass would
@@ -518,18 +531,60 @@
    * over any error); null when the answer is not recognised (logged ``claimed``, its answer not
    * read: the ruling on #171), so a claim that may be placed never frees its place. The real page (2026-10-26) lands on my team page with "You have
    * successfully created a waiver claim for … dropping …", the claim's link, and red stat
-   * figures in the error classes. */
+   * figures in the error classes. A page on the claim form's own action path (``raw.action``,
+   * ``/nba/<league>/<team>/addplayer``) with no sign of placement is ``failed`` with ``stayed``
+   * (#341): a claim that went in lands on the team page, and on 2026-11-07 a refused one stayed
+   * there under the heading "Subscribe in the app". */
   function readLanded(raw) {
     const notes = (raw.notes || []).filter(Boolean);
     const errors = (raw.errors || []).filter((x) => WORDS.test(x || ""));
     const placed = [...notes, ...errors, raw.heading || ""].filter(Boolean).find((x) => PLACED.test(x));
     if (placed) return { outcome: "claimed", message: placed };
     if (raw.claim) return { outcome: "claimed", message: "the claim shows among the pending transactions" };
+    if (onClaimForm(raw.path, raw.action)) {
+      const said = [...errors, ...notes].find((x) => WORDS.test(x)) || null;
+      const where = `${pathOnly(raw.path)}, "${raw.heading || "no heading"}"`;
+      return { outcome: "failed", message: said, reason: `Yahoo stayed on the claim form (${where}): not placed${said ? `: "${said}"` : ""}`, stayed: true };
+    }
     if (errors.length) return { outcome: "failed", message: errors[0] };
     const said = notes.filter((x) => WORDS.test(x));
     if (raw.form && said.length) return { outcome: "failed", message: said[0] };
     if (raw.pending && !raw.form) return { outcome: "claimed", message: "the add shows among the pending claims" };
     return null;
+  }
+
+  const pathOnly = (p) => String(p || "").split(/[?#]/)[0].replace(/\/+$/, "");
+
+  /** Whether ``path`` (a page's, with any query) is the claim form's own action path. */
+  function onClaimForm(path, action) {
+    return Boolean(action) && /^\/nba\/\d+\/\d+\/addplayer$/.test(pathOnly(action)) && pathOnly(path) === pathOnly(action);
+  }
+
+  /** My team page's path from the claim form's action (``/nba/<league>/<team>/addplayer``), where
+   * the Pending Transactions box is; null for another action. */
+  function teamPageOf(action) {
+    const m = /^(\/nba\/\d+\/\d+)\/addplayer$/.exec(pathOnly(action));
+    return m ? m[1] : null;
+  }
+
+  /** Whether the landing's answer is settled on my team page first (#341): none recognised, or
+   * the claim form's own path. */
+  function wantsSettle(answer) {
+    return !answer || Boolean(answer.stayed);
+  }
+
+  /** The answer once my team page's Pending Transactions box is read (#341): the claim's View
+   * Waiver link or its line in the box is ``claimed``; the box shown without it is ``failed``;
+   * no box says nothing, so the first landing's answer stands (``first``, ``readLanded``'s, null
+   * when it was not recognised: logged ``claimed``, its answer not read). ``raw`` is this page's
+   * read (``claim``, ``bid_box``) and ``lines`` the box's links (null: no box). */
+  function settleLanded(first, raw, lines) {
+    if (raw.claim || raw.bid_box != null) return { outcome: "claimed", message: "the claim shows among the pending transactions" };
+    if (Array.isArray(lines)) {
+      const why = "not among Yahoo's pending transactions";
+      return { outcome: "failed", message: first ? first.message : null, reason: first && first.reason ? `${why}; ${first.reason}` : why };
+    }
+    return first;
   }
 
   /** The reason a claim whose answer was not read carries: it may be placed, so it counts. */
@@ -581,7 +636,7 @@
     // claim's line was not found). A placed claim at another bid than the queue's still counts:
     // it is never submitted again, and the reason says to edit it in Yahoo (step 0b, #214).
     const off = landed && outcome === "claimed" && seen && seen.bid != null && record.line.bid != null && seen.bid !== record.line.bid;
-    const reason = !landed ? unreadReason(record.at) : outcome === "failed" ? landed.message : off ? `placed at $${seen.bid}, the queue's $${record.line.bid}: edit the bid in Yahoo's pending claims` : null;
+    const reason = !landed ? unreadReason(record.at) : outcome === "failed" ? landed.reason || landed.message : off ? `placed at $${seen.bid}, the queue's $${record.line.bid}: edit the bid in Yahoo's pending claims` : null;
     const line = {
       ...record.line,
       outcome,
@@ -712,6 +767,7 @@
     readAddPage,
     entryProblem,
     pageCheck,
+    clearedWords,
     wouldFill,
     moveCheck,
     passMode,
@@ -722,6 +778,10 @@
     bidProblem,
     fillClaim,
     readLanded,
+    onClaimForm,
+    teamPageOf,
+    wantsSettle,
+    settleLanded,
     unreadReason,
     PENDING_HEADING,
     pendingBid,
