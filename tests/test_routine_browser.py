@@ -401,7 +401,8 @@ def test_open_refuses_the_draft_client_and_foreign_hosts_and_reports_the_landed_
     page = FakePage(landed={f"{PRIVATE}/3#pickandroll-il": f"{PRIVATE}/addplayer?apid=5"})
     b = browser_at(tmp_path, page)
     assert b.open(f"{PRIVATE}/3#pickandroll-il", 30.0) == f"{PRIVATE}/addplayer?apid=5"
-    assert b.sleeps == [30.0] and b.opened == [f"{PRIVATE}/3#pickandroll-il"]
+    # A page opened with the extension's fragment waits in half-second steps (#341).
+    assert b.sleeps == [0.5] * 60 and b.opened == [f"{PRIVATE}/3#pickandroll-il"]
     with pytest.raises(ValueError, match="draft client"):
         b.open(f"{YAHOO}/draftclient/abc", 5.0)
     assert page.calls == [("goto", f"{PRIVATE}/3#pickandroll-il")]  # the refused one never loaded
@@ -1040,3 +1041,51 @@ def test_a_signed_out_check_page_that_does_not_load_counts_as_signed_out_with_th
     b = browser_at(tmp_path, page)
     assert b.signed_in("yahoo") is False and "TimeoutError" in b.reason
     assert b.opened == [YAHOO_CHECK]
+
+
+def test_a_watched_page_screens_each_arrival_on_the_claim_forms_own_path(tmp_path):
+    """#341: the routine's tab is read every half second while a moves page waits; a claim Yahoo
+    kept on its form (``/nba/<league>/<team>/addplayer``) is screened once per arrival."""
+    url = f"{PRIVATE}/addplayer?apid=5#pickandroll-moves"
+    page = FakePage()
+    b = browser_at(tmp_path, page)
+    # Where the tab is after each step: the add page, the form's path twice, my team page, the
+    # form's path again.
+    where = iter(
+        [
+            url,
+            f"{PRIVATE}/3/addplayer",
+            f"{PRIVATE}/3/addplayer",
+            f"{PRIVATE}/3",
+            f"{PRIVATE}/3/addplayer/",
+        ]
+    )
+    steps: list[float] = []
+
+    def sleep(s):
+        steps.append(s)
+        page.url = next(where, f"{PRIVATE}/3")
+
+    b.sleep = sleep
+    shots: list[str] = []
+    b._screenshot = lambda kind: shots.append(kind)  # type: ignore[method-assign]
+    assert b.open(url, 3.2) == f"{PRIVATE}/3"
+    assert steps == [0.5, 0.5, 0.5, 0.5, 0.5, 0.5, pytest.approx(0.2)]
+    assert shots == ["claim-form", "claim-form"]
+    # A page with no fragment of the extension's waits once and is never read.
+    steps.clear()
+    assert b.open(f"{PRIVATE}/3/addplayer", 5.0) == f"{PRIVATE}/3"
+    assert (steps, shots) == ([5.0], ["claim-form", "claim-form"])
+    b.close()
+
+
+def test_the_claim_form_screen_lands_in_the_screens_folder(tmp_path):
+    page = FakePage(
+        landed={f"{PRIVATE}/addplayer?apid=5#pickandroll-moves": f"{PRIVATE}/3/addplayer"}
+    )
+    b = browser_at(tmp_path, page)
+    b.open(f"{PRIVATE}/addplayer?apid=5#pickandroll-moves", 1.0)
+    assert b.sleeps == [0.5, 0.5]
+    [shot] = sorted((tmp_path / "screens").iterdir())
+    assert shot.name.startswith("claim-form-") and shot.suffix == ".png"
+    b.close()

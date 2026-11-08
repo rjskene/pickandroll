@@ -1586,7 +1586,8 @@ class SeasonService:
         the page check refuses a protected drop whatever the queue says), the claims still open
         (earlier days' placed and unresolved, and today's placed), the day's cap and how many of
         today's entries took their place, the adds left as read less every claim since, and the
-        budget. None when the mode is off, STOP is on or the day is not today. Every answer
+        budget, and my players on IL or IL+ whose newest status no longer fits (``held_cleared``,
+        #341). None when the mode is off, STOP is on or the day is not today. Every answer
         carries ``live``, the live guard now (``season_autopilot.moves_live_check``): a pass
         places its claims only in a live league where it holds (#171 PR 3)."""
         base, _ = self._base(league)
@@ -1613,6 +1614,7 @@ class SeasonService:
             "il_first": [],
             "drop_first": [],
             "held": [],
+            "held_cleared": [],
             "live": season_autopilot.moves_live_check(self.data_dir, league, mode),
             "at": now.isoformat(),
         }
@@ -1692,7 +1694,39 @@ class SeasonService:
             "drop_first": []
             if blocked
             else self._drop_first(league, base, mine, now, pending, adds_left, protected),
+            # A player on IL or IL+ whose newest status no longer fits: the claims wait (#341).
+            "held_cleared": self._held_cleared(league, base),
         }
+
+    def _held_cleared(self, league: str, base: Any) -> list[dict[str, Any]]:
+        """My players on IL or IL+ in this league whose newest status in any league no longer
+        fits the slot (``qa.held_cleared``): Yahoo refuses every claim while one sits there. The
+        leagues' states are read only when someone is on IL or IL+ here."""
+        if base.my_team_id is None:
+            return []
+        try:
+            spots = Season.from_parts(base, load_parts(self.data_dir, league)).rosters[
+                base.my_team_id
+            ]
+        except Exception:  # noqa: BLE001 - no roster read: nothing to say
+            return []
+        held = [
+            (sp.player.yahoo_id, sp.slot, sp.player.status)
+            for sp in spots
+            if sp.slot in qa.CLEARED_SLOTS
+        ]
+        if not held:
+            return []
+        root = self.data_dir / leagues.LEAGUES_DIR
+        states = []
+        for folder in sorted(root.iterdir()) if root.is_dir() else ():
+            try:
+                raw = json.loads((folder / SEASON_DIR / STATE).read_text())
+            except (OSError, ValueError):
+                continue
+            if isinstance(raw, Mapping):
+                states.append((folder.name, raw.get("parts") or {}))
+        return qa.held_cleared(held, qa.newest_statuses(states, [h[0] for h in held]))
 
     def _drop_first(
         self,

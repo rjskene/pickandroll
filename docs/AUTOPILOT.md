@@ -505,6 +505,16 @@ page, from PR 2:
     moves" icon.
   - **The bid:** a whole dollar inside the page's "between $x and $y" and at most the budget.
   - **The submit:** the claim submit `submit_drop_player` is on the page.
+  - **No cleared player on IL (#341, extension 0.11.8).** `GET …/moves/due` carries `held_cleared`:
+    my players on IL or IL+ in this league whose newest status no longer fits the slot (IL takes
+    O and OFS, IL+ also GTD and INJ). The status is the newest team-page read of the player
+    (`roster/…` or `lineup/…` parts) in any league's stored state, this league's own when it is
+    the newest: the NBA's status is the same in every league, and on 2026-11-07 223259's last read
+    (05:28 CST) still said O while 31153's at 09:15 CST said Q. While one is listed every claim skips
+    with "<id> sits on IL with status Q: Yahoo refuses every claim until he leaves it (Error 845)",
+    and the skip stays due. The limit: a player read in no league since his status changed is
+    judged on the stale read. Each item is `{player, slot, status, read_at, league}`, the time and
+    league null when this league's own read is the newest.
 
   `gone` only when the page shows the add on a team (an on-team icon on the add's row, or a
   page without the form saying so); a page without the claim form is skipped "page not read",
@@ -573,6 +583,26 @@ page, from PR 2:
   4. A submit whose answer was never read (the tab closed, a page the reader missed) is logged the
      same way by the next pass in the league, before anything else. The record is dropped only
      once the API has the pass.
+  5. **The landing settled (#341, extension 0.11.8).** On 2026-11-07 a claim in 223259 landed on
+     the claim form's own action path (`/nba/<league>/<team>/addplayer`) under the heading
+     "Subscribe in the app", no words of Yahoo's read, and was logged `claimed` with its answer
+     not read; it was never placed (its player sat on IL cleared to play, Error 845). A claim that
+     goes in lands on my team page, so a page on the form's action path with no sign of placement
+     is `failed` ("Yahoo stayed on the claim form (<path>, "<heading>"): not placed", Yahoo's
+     words quoted when there are any). That answer, and one not recognised on any other page, is
+     settled before it is logged: the worker keeps the first read on the submit's record
+     (`moves_settling`, the record's time unchanged) and the tab goes to my team page, where the
+     "Pending Transactions" box decides. The claim's line in the box (or its View Waiver link) is
+     `claimed`; the box shown without it is `failed` "not among Yahoo's pending transactions",
+     with the first read's reason beside; no box says nothing, and the first read's answer stands
+     (`failed` on the form's path, `claimed` with its answer not read elsewhere). The run's
+     `controls.landed` keeps the words read (`path`, `heading`, `form`, `notes`, `errors`, the
+     bids) and, after a settle, the first page's read under `first`. A record past the landing
+     window that holds a first read is logged with that read's answer. The routine's browser
+     reads its tab's address every half second while a page opened with one of the extension's
+     fragments waits, and screens each arrival on the form's action path once
+     (`data/routine/screens/claim-form-*.png`: never committed, never posted). The extension has no
+     capture permission and asks for none.
 
   Held back in live: free-agent adds (the "Add Player" page; a follow-up builds that form once the
   dry run has logged one) and an open spot whose page does not say "You currently have N empty

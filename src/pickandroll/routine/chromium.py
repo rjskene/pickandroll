@@ -14,13 +14,17 @@ Monster: the export pages' selects, set from JavaScript with a change event (the
 re-render on it), the Refresh button, and one real click on the export button (Chrome silently
 blocks a script-triggered download after the first of a session). On Yahoo: opens only. The
 page is loaded, the wait passes, the extension acts. Nothing on Yahoo is ever clicked, typed
-or read beyond a count of elements.
+or read beyond a count of elements. While a page opened with one of the extension's fragments
+waits, the tab's address is read every half second: a claim Yahoo kept on its form's own path
+is screened once (``screens/claim-form-*.png``, #341), the evidence the page's words alone did
+not give on 2026-11-07.
 """
 
 from __future__ import annotations
 
 import contextlib
 import hashlib
+import re
 import shutil
 import time
 from collections.abc import Callable
@@ -49,6 +53,11 @@ EXPORT_CEILING_S = 120.0
 SELECT_WAIT_S = 4.0
 REFRESH_WAIT_S = 5.0
 SCREENS_KEPT = 20
+#: A page opened with one of these fragments is watched while it waits (#341).
+WATCHED = "#pickandroll-"
+WATCH_STEP_S = 0.5
+#: The claim form's own action path: a submit Yahoo did not take stays there (#341).
+CLAIM_FORM = re.compile(r"^/nba/\d+/\d+/addplayer/?$")
 WINDOW = "1440,900"
 #: The profile keeps the extension's background worker compiled in this folder and runs that
 #: copy on every launch: ``--load-extension`` reads the manifest and the content scripts from
@@ -313,8 +322,26 @@ class ChromiumBrowser:
         if not self.available():
             raise RuntimeError(self.reason)
         self._goto(url)
-        self.sleep(wait_s)
+        if WATCHED in url:
+            self._watch(wait_s)
+        else:
+            self.sleep(wait_s)
         return str(self._page.url)
+
+    def _watch(self, wait_s: float) -> None:
+        """The wait in steps of :data:`WATCH_STEP_S`, the tab's address read after each: each
+        arrival on the claim form's own action path is screened once (#341). The steps add up to
+        ``wait_s``; the clock is not read."""
+        waited = 0.0
+        on_form = False
+        while waited < wait_s:
+            step = min(WATCH_STEP_S, wait_s - waited)
+            self.sleep(step)
+            waited += step
+            here = bool(CLAIM_FORM.match(urlsplit(str(self._page.url)).path))
+            if here and not on_form:
+                self._screenshot("claim-form")
+            on_form = here
 
     def count(self, selector: str) -> int:
         return int(self._page.evaluate(COUNT_JS, selector))

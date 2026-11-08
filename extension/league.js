@@ -473,16 +473,47 @@
     };
   }
 
+  /** What a landing read keeps for the run (#341): the page, its heading and the words read, and
+   * the claim's bid. */
+  const seenOf = (raw) => ({ path: raw.path, heading: raw.heading, form: raw.form, notes: raw.notes, errors: raw.errors, ...PR.landedBid(raw.bid_box, raw.bid_link) });
+
   /** On any page of the league: a claim this tab submitted and whose answer is not logged yet
-   * (the worker keeps it) is read from this page and its live pass logged. The worker drops the
-   * record only once the API has the pass. Answers the pass logged, or null. */
+   * (the worker keeps it) is read from this page and its live pass logged. An answer not
+   * recognised, or the claim form's own path, is settled first on my team page (#341): the
+   * record keeps this read and the tab goes there, where the Pending Transactions box says
+   * whether the claim is in. The worker drops the record only once the API has the pass.
+   * Answers the pass logged, or null. */
   async function landed() {
     const r = await send({ op: "moves_landed", league });
     if (!r || !r.ok || !r.data) return null;
     const record = r.data;
     const raw = landedControls(record.line);
-    const seen = { path: raw.path, heading: raw.heading, ...PR.landedBid(raw.bid_box, raw.bid_link) };
-    const run = PR.landedPass(record, PR.readLanded(raw), seen, extensionVersion());
+    const action = (record.line.controls && record.line.controls.action) || null;
+    const team = PR.teamPageOf(action);
+    let answer;
+    let seen;
+    if (record.settle) {
+      // The second read, on my team page or wherever the tab went: the box decides, else the
+      // first landing's answer stands.
+      answer = PR.settleLanded(record.settle.answer, raw, pendingLines());
+      seen = { ...seenOf(raw), first: record.settle.seen };
+    } else {
+      answer = PR.readLanded({ ...raw, action });
+      seen = seenOf(raw);
+      if (PR.wantsSettle(answer) && team) {
+        if (location.pathname.replace(/\/+$/, "") === team) answer = PR.settleLanded(answer, raw, pendingLines());
+        else {
+          const kept = await send({ op: "moves_settling", league, id: record.line.id, settle: { answer, seen } });
+          if (kept && kept.ok) {
+            movesStrip("live · Yahoo's answer not recognised here: reading my team page's pending transactions…");
+            leaving = true;
+            location.assign(`${location.origin}${team}`);
+            return null;
+          }
+        }
+      }
+    }
+    const run = PR.landedPass(record, answer, seen, extensionVersion());
     const logged = await send({ op: "moves_log", league, run });
     if (!logged || !logged.ok) {
       movesStrip(`claim submitted, not logged: ${(logged && logged.error) || "no answer from the extension"}`);
@@ -504,7 +535,10 @@
     const records = await submits();
     const stale = records.filter((x) => now - x.at >= PR.LANDING_MS);
     for (const record of stale) {
-      await send({ op: "moves_log", league, run: PR.landedPass(record, null, null, extensionVersion()) });
+      // A landing read on record and never settled (#341) keeps its answer: the claim form's own
+      // path stays failed; one not recognised is claimed, its answer not read.
+      const first = record.settle || null;
+      await send({ op: "moves_log", league, run: PR.landedPass(record, first ? first.answer : null, first ? first.seen : null, extensionVersion()) });
     }
     return stale.length ? submits() : records;
   }
@@ -1039,6 +1073,8 @@
   const dropTrigger = dropPage ? PR.dropTriggerOf(location.hash) : null;
   setTimeout(async () => {
     await landed();
+    // A landing settled on my team page (#341): the tab is on its way there.
+    if (leaving) return;
     if (await dropLanded()) return;
     if (dropTrigger) await heldDrop(dropTrigger);
     else if (trigger) await claim(trigger);
