@@ -1,5 +1,5 @@
 # One routine run: pickandroll-routine@daily, @morning, @late, @evening-build, @evening-pass,
-# @monday and @signin, each started by its timer. scripts/routine.py exits 0 when every step
+# @monday, @signin and @pretip, each started by its timer. scripts/routine.py exits 0 when every step
 # is ok, 1 when a step failed, 2 when the API never answered, 3 when refused outside the
 # routine's window (a timer catching up after a reboot) and 4 when STOP is set; 3 and 4 are
 # not failures. A failure starts pickandroll-alert@<this unit>. ROUTINE_FLAGS comes from the

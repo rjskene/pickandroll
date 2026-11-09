@@ -37,6 +37,8 @@ TIMERS = {
     "evening-pass": "*-*-* 22:40:00",
     "monday": "Mon *-*-* 06:00:00",
     "signin": "*-*-* 04:50:00",
+    # The pre-tip check (#355): every five minutes, 09:00 to 20:55.
+    "pretip": "*-*-* 09..20:00/5:00",
 }
 
 
@@ -74,7 +76,7 @@ def one(u: dict[str, list[tuple[str, str]]], section: str, key: str) -> str:
 
 def test_every_unit_file_parses_with_a_description() -> None:
     files = sorted(VM.glob("*.service")) + sorted(VM.glob("*.timer"))
-    assert len(files) == 13
+    assert len(files) == 14
     for path in files:
         u = unit(path)
         assert one(u, "Unit", "Description")
@@ -84,14 +86,8 @@ def test_every_unit_file_parses_with_a_description() -> None:
             assert "Service" in u
 
 
-#: Routines whose timer is not in ops/vm yet: the pre-tip check's timer is #355's PR 2, after its
-#: routine (PR 1); until then the routine runs only by hand.
-NO_TIMER_YET = {"pretip"}
-
-
 def test_the_timers_are_the_runners_routines_on_the_central_clock() -> None:
-    assert set(TIMERS) == set(RUNNER) - NO_TIMER_YET
-    assert not list(VM.glob("pickandroll-routine@pretip.timer"))
+    assert set(TIMERS) == set(RUNNER)
     for name, calendar in TIMERS.items():
         u = unit(VM / f"pickandroll-routine@{name}.timer")
         assert one(u, "Timer", "OnCalendar") == f"{calendar} {ZONE}"
@@ -100,8 +96,11 @@ def test_the_timers_are_the_runners_routines_on_the_central_clock() -> None:
         # The timer fires at the routine's window start (routines.WINDOWS), except the morning's,
         # which fires inside its window at 09:15, after the user's 09:00 execute time (the window
         # opens 07:45 for a run by hand); the sign-in check's window is the whole day, its timer
-        # 04:50, before the daily.
-        if name == "morning":
+        # 04:50, before the daily; the pre-tip check's runs from its window's start to five
+        # minutes before its end.
+        if name == "pretip":
+            assert WINDOWS[name] == ("09:00", "21:00") and calendar.endswith("09..20:00/5:00")
+        elif name == "morning":
             assert WINDOWS[name][0] < calendar.split()[-1][:5] < WINDOWS[name][1]
         elif name != "signin":
             assert calendar.split()[-1][:5] == WINDOWS[name][0]
@@ -790,6 +789,37 @@ def test_the_alert_for_the_signin_unit_names_the_mac_command(alert) -> None:
 
 
 # --------------------------------------------------------------- the sign-in browser (#238)
+
+
+def sign_in_browser():
+    spec = importlib.util.spec_from_file_location("signin_browser", VM / "signin_browser.py")
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_the_sign_in_browser_refuses_while_a_routine_holds_the_profile(tmp_path, capsys) -> None:
+    """#355: the sign-in browser takes the lock every routine takes, beside the profile, and
+    launches nothing while a routine holds it."""
+    from pickandroll.routine.lock import BrowserLock
+
+    module = sign_in_browser()
+    profile, extension = tmp_path / "routine" / "profile", tmp_path / "extension"
+    extension.mkdir()
+    (extension / "manifest.json").write_text("{}")
+    assert module.lock_path(profile) == tmp_path / "routine" / "browser.lock"
+    ran: list[Path] = []
+    module._run = lambda p, e: ran.append(p) or 0
+    routine = BrowserLock(module.lock_path(profile), "the pretip routine", 0)
+    routine.acquire()
+    assert module.main(profile, extension) == 1 and ran == []
+    assert "in use by the pretip routine, pid" in capsys.readouterr().out
+    routine.release()
+    assert module.main(profile, extension) == 0 and ran == [profile]
+    # Given back at the end: a routine takes it again at once.
+    routine.acquire()
+    routine.release()
 
 
 def test_the_sign_in_browser_opens_its_devtools_port_to_the_frontend_the_mac_opens() -> None:

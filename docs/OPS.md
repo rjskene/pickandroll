@@ -1,6 +1,6 @@
 # OPS: the routine host
 
-The six AUTOPILOT routines (`docs/AUTOPILOT.md` §3) and the sign-in check run on the user's
+The six AUTOPILOT routines (`docs/AUTOPILOT.md` §3), the sign-in check and the pre-tip check run on the user's
 DigitalOcean droplet as systemd user units, off the Mac, since the VM move (#225). This is the
 runbook: the host, the bootstrap, the one-time sign-in, the soak, cut-over, rollback, the alerts
 and the morning check. The units and scripts are `ops/vm/`; the Mac's side is `ops/mac/`.
@@ -53,6 +53,25 @@ command updates the host after a merge: run it again (it pulls `main` and restar
 under the room guard). The lighter update after a merge is `ops/vm/update.sh` (§2a): the
 fast-forward of `main` under the room and routine guards, the dashboard rebuilt when `web/`
 changed, the API restarted when `src/` or `pyproject.toml` changed, nothing else touched.
+
+`update.sh` copies no unit: a merge that adds a timer reaches systemd only by hand. The pre-tip
+check's (#355, `pickandroll-routine@pretip.timer`, every five minutes 09:00 to 20:55 Central)
+goes in once, by the user, after the `update.sh` that pulls it:
+
+```bash
+cp ~/pickandroll/ops/vm/pickandroll-routine@.service ~/pickandroll/ops/vm/pickandroll-routine@pretip.timer ~/.config/systemd/user/ && systemctl --user daemon-reload && systemctl --user enable --now pickandroll-routine@pretip.timer
+```
+
+(`install.sh --cutover` does the same with every unit, and restarts the API.) The timer is
+harmless on its own: a check with no slate due is refused (exit 3, not a failure) before any
+browser, lock or report, and no slate is due while `pretip.enabled` is false in
+`data/autopilot/executor.json`, which stays false until the user turns the pass on.
+
+Every Chromium on the profile takes `data/routine/browser.lock` (`flock`, #355): the routines
+when their browser launches, and the sign-in browser (`ops/vm/signin_browser.py`), which
+refuses while a routine holds it. A routine that cannot have it waits (the pre-tip pass 15
+minutes, then skips; the others 20, then fail with an alert naming the holder; the evening pass
+never past 22:58).
 
 What stays the user's, printed at the end: `gh auth login` as `pickandroll` (the alert's issue
 comments; gh itself is already installed), the ntfy topic in `~/.config/pickandroll/ntfy_topic` with the app subscribed to
@@ -167,7 +186,7 @@ the Mac stays live. Start it:
 which sets every league's lineup mode and every public league's moves mode to `dry_run`
 through the local API (the private league is refused by the API, as always: suggestions only),
 prints the modes read back, writes `ROUTINE_FLAGS=--no-post` to `routine.env` unless the
-user's own exists (no posts), and enables the seven routine timers and the watchdog. Until #306
+user's own exists (no posts), and enables the routine timers (eight since #355) and the watchdog. Until #306
 the soak also left the private league's solve out (`--skip-solve 31822`, §1).
 
 During the soak both extensions act on Yahoo, the Mac's live and the droplet's in dry run,
@@ -185,7 +204,8 @@ kinds, each saved or identical), the private league's pages opened and read back
 summaries (entries due, pages opened), the run times against the windows (`docs/AUTOPILOT.md`
 §3: daily 05:00 to 06:20, morning 07:45 to 14:30 with its timer at 09:15, after the user's
 09:00 execute time, late 15:00 to 20:30, evening-build 21:00 to 21:30, evening-pass 22:40 to
-22:58, monday 06:00 to 12:00), and the `signin` result. A
+22:58, monday 06:00 to 12:00, the pre-tip check every five minutes 09:00 to 20:55), and the
+`signin` result. A
 difference is a finding on #225. Through the soak the private league's solve was left out on
 this host (`--skip-solve 31822`, §1): the solve step reported it as left out and stayed ok.
 
