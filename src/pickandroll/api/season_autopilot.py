@@ -48,7 +48,7 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from ..season import autopilot as qa
 from ..season import lineup as lu
@@ -1629,3 +1629,115 @@ def _at(raw: Any) -> datetime | None:
         return datetime.fromisoformat(raw) if isinstance(raw, str) else None
     except ValueError:
         return None
+
+
+# --------------------------------------------------------------------------- Yahoo's claim page (#345)
+#: The one read of Yahoo's page of a pending claim (#345 step 0, the master's ruling): the
+#: evening pass opens my team page with this fragment once, and the extension goes on from its
+#: Pending Transactions box to one claim's page and reads what is there, clicking nothing.
+CLAIM_PAGE = "claim_page.json"
+CLAIM_PAGE_FRAGMENT = "pickandroll-claim-read"
+#: The words a control or a link may carry: a label, never a field's value.
+CLAIM_WORDS = 200
+
+
+def _no_query(path: str | None) -> str | None:
+    """A path as read: the extension sends none with a query (a crumb may ride in one)."""
+    if path is not None and ("?" in path or "#" in path):
+        raise ValueError("a path is read without its query or fragment")
+    return path
+
+
+class ClaimField(BaseModel):
+    """A form field by its kind and names only: never its value."""
+
+    model_config = ConfigDict(extra="forbid")
+    tag: str = Field(max_length=20)
+    type: str | None = Field(default=None, max_length=40)
+    name: str | None = Field(default=None, max_length=CLAIM_WORDS)
+    id: str | None = Field(default=None, max_length=CLAIM_WORDS)
+
+
+class ClaimControl(BaseModel):
+    """A button, a submit or a link: its kind, names and the words it shows; a link's path
+    without its query."""
+
+    model_config = ConfigDict(extra="forbid")
+    tag: str = Field(max_length=20)
+    type: str | None = Field(default=None, max_length=40)
+    name: str | None = Field(default=None, max_length=CLAIM_WORDS)
+    id: str | None = Field(default=None, max_length=CLAIM_WORDS)
+    text: str | None = Field(default=None, max_length=CLAIM_WORDS)
+    path: str | None = Field(default=None, max_length=CLAIM_WORDS)
+
+    @field_validator("path")
+    @classmethod
+    def _plain_path(cls, v: str | None) -> str | None:
+        return _no_query(v)
+
+
+class ClaimForm(BaseModel):
+    """A form of the page: its names, method and action path, its fields and its controls."""
+
+    model_config = ConfigDict(extra="forbid")
+    id: str | None = Field(default=None, max_length=CLAIM_WORDS)
+    name: str | None = Field(default=None, max_length=CLAIM_WORDS)
+    method: str | None = Field(default=None, max_length=10)
+    action: str | None = Field(default=None, max_length=CLAIM_WORDS)
+    fields: list[ClaimField] = Field(default_factory=list, max_length=100)
+    controls: list[ClaimControl] = Field(default_factory=list, max_length=50)
+
+    @field_validator("action")
+    @classmethod
+    def _plain_action(cls, v: str | None) -> str | None:
+        return _no_query(v)
+
+
+class ClaimPageRead(BaseModel):
+    """The extension's read of one pending claim's page (#345 step 0): where it landed, its
+    heading and notices, its forms and the controls outside them. Names and words only: no
+    field's value, no query, no crumb; a read carrying any other key is refused."""
+
+    model_config = ConfigDict(extra="forbid")
+    trigger: Literal["routine_evening"]
+    read_at: datetime
+    claim: str | None = Field(default=None, max_length=60)
+    path: str = Field(max_length=CLAIM_WORDS)
+    heading: str | None = Field(default=None, max_length=CLAIM_WORDS)
+    notes: list[str] = Field(default_factory=list, max_length=20)
+    forms: list[ClaimForm] = Field(default_factory=list, max_length=20)
+    controls: list[ClaimControl] = Field(default_factory=list, max_length=50)
+    extension: str | None = Field(default=None, max_length=20)
+
+    @field_validator("path")
+    @classmethod
+    def _plain_path(cls, v: str | None) -> str | None:
+        return _no_query(v)
+
+
+def claim_page_path(data_dir: Path) -> Path:
+    return autopilot_dir(data_dir) / CLAIM_PAGE
+
+
+def claim_page_reads(data_dir: Path) -> list[dict[str, Any]]:
+    """The claim-page reads on file, oldest first; none when the file is missing or does not
+    read as a list."""
+    try:
+        body = json.loads(claim_page_path(data_dir).read_text())
+    except (OSError, ValueError):
+        return []
+    return [r for r in body if isinstance(r, dict)] if isinstance(body, list) else []
+
+
+def append_claim_page_read(data_dir: Path, league: str, read: ClaimPageRead) -> dict[str, Any]:
+    """File a claim-page read with its league, never rewriting an earlier one; written whole
+    to a temporary file and moved into place."""
+    row = {"league": league, **read.model_dump(mode="json")}
+    path = claim_page_path(data_dir)
+    with _lock:
+        body = [*claim_page_reads(data_dir), row]
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(body, indent=1) + "\n")
+        os.replace(tmp, path)
+    return row

@@ -362,9 +362,9 @@ test("a refused run is not kept as the last one", async () => {
 
 test("only the live run clicks; no field is set and nothing submitted; the reader loads the executor's library", () => {
   const manifest = JSON.parse(fs.readFileSync(path.join(DIR, "manifest.json"), "utf8"));
-  assert.equal(manifest.version, "0.11.9");
+  assert.equal(manifest.version, "0.11.10");
   const reader = manifest.content_scripts.find((c) => c.js.includes("league.js"));
-  assert.deepEqual(reader.js, ["lib/league.js", "lib/lineup.js", "lib/moves.js", "lib/startactive.js", "lib/ilmove.js", "lib/drop.js", "league.js"]);
+  assert.deepEqual(reader.js, ["lib/league.js", "lib/lineup.js", "lib/moves.js", "lib/startactive.js", "lib/ilmove.js", "lib/drop.js", "lib/claimread.js", "league.js"]);
   // The moves executor's live claim (``fillClaim``, #171 PR 3) and Start Active's presses
   // (``pressStartActive``, #215) are the places that touch a page; moves.test.js and
   // startactive.test.js hold each to its controls.
@@ -450,7 +450,7 @@ async function visitPage({ hash = "", answer, lock = [], swap: roster = null, pl
   });
   ctx.window = ctx;
   ctx.globalThis = ctx;
-  for (const file of ["lib/league.js", "lib/lineup.js", "lib/moves.js", "lib/startactive.js", "lib/ilmove.js", "lib/drop.js", "league.js"]) vm.runInContext(fs.readFileSync(path.join(DIR, file), "utf8"), ctx);
+  for (const file of ["lib/league.js", "lib/lineup.js", "lib/moves.js", "lib/startactive.js", "lib/ilmove.js", "lib/drop.js", "lib/claimread.js", "league.js"]) vm.runInContext(fs.readFileSync(path.join(DIR, file), "utf8"), ctx);
   for (const fn of timers.splice(0)) await fn();
   return { sent, strip: nodes["pickandroll-strip"], replaced, listeners, landed, assigned, reloaded };
 }

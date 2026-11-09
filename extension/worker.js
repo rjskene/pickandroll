@@ -396,6 +396,14 @@ const ops = {
   async moves_submits({ league }) {
     return submits(league);
   },
+  /** Whether the one read of a pending claim's page is due, and which claim (#345 step 0). */
+  async claim_page_due() {
+    return api("/autopilot/claim-page/due", { timeout: 30000 });
+  },
+  /** The read of a pending claim's page, for the API to file (#345 step 0): names and words only. */
+  async claim_page_read({ league, read }) {
+    return api(`/seasons/${encodeURIComponent(league)}/autopilot/claim-page`, { method: "POST", body: read, timeout: 15000 });
+  },
   /** Every armed public league and whether it wants Start Active Players now (#215). */
   async start_active_due() {
     return api("/autopilot/start-active/due", { timeout: 30000 });
