@@ -308,14 +308,16 @@
         }
       }
     }
-    // Live, a run that ends before any step logs as live; one that goes on sets the steps.
-    const end = mode.mode === "live" ? PR.runEnd({ steps: PR.comebackDone(steps), postedAt, controls, problem }) : null;
+    // Live, a run that ends before any step logs as live; one that goes on sets the steps. A
+    // comeback the steps offered and this visit did not run is under the run's skipped (#346).
+    const rest = PR.comebackDone(steps, PR.comebackWhy({ mode: mode.mode, trigger, chained }));
+    const end = mode.mode === "live" ? PR.runEnd({ steps: rest, postedAt, controls, problem }) : null;
     let run;
     let clicked = false;
     let release = false;
     if (mode.mode !== "live" || end) {
-      run = PR.dryRun({ steps, trigger, page: where, postedAt, controls, problem, checked, extension, refused: mode.refused, mode: end ? "live" : "dry_run" });
-    } else ({ run, clicked, release } = await setRun({ steps, trigger, where, posted, controls, checked, extension }));
+      run = PR.dryRun({ steps: rest, trigger, page: where, postedAt, controls, problem, checked, extension, refused: mode.refused, mode: end ? "live" : "dry_run" });
+    } else ({ run, clicked, release } = await setRun({ steps: rest, trigger, where, posted, controls, checked, extension }));
     const logged = await send({ op: "lineup_log", league: page.league, run, clicked, release });
     if (!logged || !logged.ok) {
       strip(`${clicked ? "clicked, " : ""}not logged: ${(logged && logged.error) || "no answer from the extension"}`);
@@ -919,7 +921,7 @@
    * never reached the log is logged first, unconfirmed, and never submitted again. */
   async function dropRecords(items, extension) {
     const read = async (entry) => {
-      const r = await send({ op: "drop_record", entry });
+      const r = await send({ op: "drop_record", league: dropPage.league, entry });
       return (r && r.ok && r.data) || null;
     };
     const out = {};

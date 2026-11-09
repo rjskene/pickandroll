@@ -519,10 +519,16 @@ def test_todays_cleared_held_players_with_an_open_spot_return_first_and_the_rest
         {"reason": ap.NEEDS_DROP, "players": [5], "steps": [], "comeback": True}
     ]
     assert (s["steps"], s["live"]) == ([], live)
-    # Another day's page returns no one: the alerts are today's.
+    # Another day's page returns no one: the alerts are today's, and each cleared player says so
+    # (#346), with no say in the day's reason.
     later = {**lineup, "days": [{**lineup["days"][0], "date": "2026-10-27"}]}
     s = ap.steps_payload(LEAGUE, 4, date(2026, 10, 27), day, now, later, tips, mode, False, live)
-    assert (s["returns"], s["skipped"]) == ([], [])
+    assert (s["returns"], s["comebacks"]) == ([], [])
+    assert s["skipped"] == [
+        {"reason": ap.COMEBACK_TODAY_ONLY, "players": [k], "steps": [], "comeback": True}
+        for k in (4, 5)
+    ]
+    assert s["reason"] == "Yahoo's lineup already starts the recommended players"
     # The guard is only a live league's.
     s = ap.steps_payload(LEAGUE, 4, day, day, now, lineup, tips, {"mode": "dry_run"}, False, live)
     assert s["live"] is None
@@ -576,6 +582,31 @@ def test_a_run_is_appended_to_the_days_log_and_the_panel_shows_it(client):
     assert view["mode"]["mode"] == "dry_run" and view["stop"] is False
     assert view["last"]["trigger"] == "panel" and len(view["today"]) == 2
     assert view["days"] == ["2026-10-21"]
+
+
+def test_the_run_keeps_the_returns_and_comebacks_the_steps_offered(client):
+    # #346: 258332's chained run on 2026-11-09 kept neither, so the log could not say why.
+    url = f"/seasons/{LEAGUE}/autopilot/lineup"
+    back = {"player": 6038, "slot": "IL", "status": "P", "tip": None, "drop": 6267}
+    come = {**back, "entry": "comeback:6038", "stage": "drop"}
+    why = "the chain came back without his move"
+    held = {"reason": why, "players": [6038], "steps": [], "comeback": True, "stage": "drop"}
+    body = run_body(
+        outcome="nothing_to_do",
+        reason=why,
+        steps=[],
+        returns=[back],
+        comebacks=[come],
+        skipped=[held],
+    )
+    assert client.post(url, json=body).status_code == 200
+    path = client.data_dir / "leagues" / LEAGUE / "autopilot" / "2026-10-21.json"
+    [run] = json.loads(path.read_text())["lineup"]
+    assert (run["returns"], run["comebacks"], run["skipped"]) == ([back], [come], [held])
+    # An older extension sends neither: both are empty.
+    assert client.post(url, json=run_body()).status_code == 200
+    run = json.loads(path.read_text())["lineup"][1]
+    assert (run["returns"], run["comebacks"]) == ([], [])
 
 
 def test_the_log_refuses_the_crumb_a_live_run_a_dry_set_and_anything_under_stop(client):

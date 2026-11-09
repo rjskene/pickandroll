@@ -739,7 +739,9 @@ page, from PR 2:
     H and one visible submit `input#submit-add-drop-button[name=submit_drop_player]` whose value
     is "Drop <his name>" (the name read from his row). Anything else, or an alert (kept as text),
     is `failed` "stopped before the submit: …" with the page's words, and nothing is submitted.
-    Otherwise the drop goes on record in this browser (`held_drop:<entry>`), the confirm is read
+    Otherwise the drop goes on record in this browser (`held_drop:<league>:<entry>` since 0.11.9,
+    #346; a record under the old `held_drop:<entry>` key still holds its own league, and moves to
+    the new key when its run is logged), the confirm is read
     again and its submit is clicked once;
   - the page Yahoo lands on (my team page) logs the run: `dropped` when its `_global_alerts`
     carries errno 933 saying he was dropped, or the notice "You have successfully dropped …";
@@ -871,12 +873,30 @@ In the model's terms, carried by #124:
   did not land and a later pass may try again. In the browser a landed drop holds for the day
   whatever the pass, and one refused or unread holds that pass only. The day's page ends or resumes
   a comeback changed by hand: the drop already gone goes straight to the move, and a player off the
-  held slots needs nothing more. Only a `set` move ends a landed drop, so a second IL stint is a
+  held slots needs nothing more (`skipped` "the page shows him off the held slots: no comeback to
+  run"). Only a `set` move ends a landed drop, so a second IL stint is a
   comeback of its own. The digest has a line per comeback, whatever became of it: dropped, moved, or
   why not, in Yahoo's words where it answered. Each run is in the first digest posted after it
   (#325), the last one read from the daily's marker, and a line from an earlier day names that day.
   A daily that posted nothing sends the next digest two days back, so a line may repeat but no chain
   goes unsaid.
+- **No comeback left out without a word (#346, extension 0.11.9).** On 2026-11-09 the daily ran
+  the chain in 31153 (drop 10313, 6038 to the bench, 11:31Z), then left the same player's comeback
+  out in 258332. The browser kept a drop on record by its entry alone, and a comeback's entry
+  (`comeback:<player>`) names no league. 31153's `dropped` record therefore held the drop in 258332.
+  258332's drop page found no drop due, logged nothing and went on with the `-chain` fragment, and
+  that run, which starts no comeback, logged `nothing_to_do` with no steps and nothing skipped.
+  Since then:
+  - the record is keyed by league and entry;
+  - the steps put every cleared held player they run nothing for under `skipped`, marked
+    `comeback`: on another day's page "a comeback runs on today's page only", on a page that shows
+    him off the held slots the words above, and every gate's own reason as before. These first two
+    never become the day's reason and never make a digest line;
+  - a lineup run that does not run the steps' comeback puts it under its own `skipped`, with why: a
+    dry run, a run no routine chains, the chain back from its drop page (whose run says why, and
+    none logged means it found no drop due), or his move that did not run on the page. With no
+    other step this is the run's reason, and it is a digest line;
+  - the lineup run's record keeps the steps' `returns` and `comebacks` as offered.
 - An absence shorter than a week keeps a player on the bench, not on waivers: a player who is
   better than the best available add over the rest of the season and returns within seven days is
   not a drop candidate for that solve, protected or not. A replacement-level player out for a few
