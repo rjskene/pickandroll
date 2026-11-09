@@ -159,6 +159,28 @@ def test_a_late_slate_whose_set_is_the_firsts_is_done_without_a_push(tmp_path):
     assert pt.done_of({"solved_at": "x"}) is False and pt.done_of({"pushed_at": "x"}) is False
 
 
+def test_a_first_slate_never_pushed_leaves_the_late_slate_to_push_the_same_set(tmp_path):
+    """The first slate solved but its push failed until its time ran out: the user never got
+    that set, so a late slate that solves the same one pushes it, never logs it unchanged."""
+    knobs(tmp_path, **ON)
+    moves = [{"add": 6038, "drop": 6733}]
+    for started, solved in (("17:05", "17:12"), ("17:15", "17:16"), ("17:40", "17:16")):
+        pt.record(
+            tmp_path,
+            DAY,
+            attempt(started=started, outcome="failed", solved_at=at(solved), moves=moves),
+        )
+    d = pt.due(tmp_path, at("20:05"), DAY, TIPS, False)
+    assert d["due"] and d["slate"] == "late" and d["first_moves"] is None
+    # Pushed once, the first slate's set is the one the late slate compares against.
+    pt.record(
+        tmp_path,
+        DAY,
+        attempt(started="17:42", solved_at=at("17:16"), pushed_at=at("17:43"), moves=moves),
+    )
+    assert pt.due(tmp_path, at("20:05"), DAY, TIPS, False)["first_moves"] == moves
+
+
 def test_a_push_alone_may_finish_past_the_latest_start(tmp_path):
     knobs(tmp_path, **ON)
     pt.record(tmp_path, DAY, attempt("late", "20:05", outcome="failed", solved_at=at("20:10")))
@@ -462,6 +484,16 @@ def test_a_late_slate_with_the_first_slates_set_pushes_nothing_and_is_done(tmp_p
     assert report.find("day_file").detail == "late slate done"
 
 
+def test_a_late_slate_pushes_the_same_set_when_the_first_was_never_pushed(tmp_path):
+    runs: list[dict] = []
+    due = {"slate": "late", "tip": "2026-11-09T21:00:00-06:00", "first_moves": None}
+    ctx, _, _ = pretip_ctx(tmp_path, pretip_answers(due, runs=runs), at="20:05")
+    report = run("pretip", ctx, "http://api")
+    assert len(ctx.notes["_pushes"]) == 1
+    assert runs[0]["pushed_at"] and not runs[0].get("unchanged")
+    assert report.find("day_file").detail == "late slate done"
+
+
 def test_a_due_for_another_league_fails_and_opens_nothing(tmp_path):
     ctx, _, b = pretip_ctx(tmp_path, pretip_answers({"league": "252098"}))
     report = run("pretip", ctx, "http://api")
@@ -587,3 +619,16 @@ def test_a_long_push_is_cut_to_ntfys_limit(tmp_path):
     sent = []
     ntfy_pusher(tmp_path, opener=lambda r, timeout: sent.append(r) or Answer(200))("t", "x" * 9000)
     assert len(sent[0].data) == 3800
+
+
+def test_a_push_is_cut_on_a_character_boundary(tmp_path):
+    """A name whose letter straddles the cut loses the whole letter, never half of it: a body
+    that is not UTF-8 is an attachment to ntfy."""
+    (tmp_path / "ntfy_topic").write_text("t")
+    sent = []
+    push = ntfy_pusher(tmp_path, opener=lambda r, timeout: sent.append(r) or Answer(200))
+    # The ć of Jokić is bytes 3800 and 3801: the cut at 3800 would split it.
+    push("t", "x" * 3795 + "Jokić and Dončić")
+    assert sent[0].data.decode("utf-8") == "x" * 3795 + "Joki"
+    push("t", "x" * 3799 + "ć")
+    assert sent[1].data.decode("utf-8") == "x" * 3799

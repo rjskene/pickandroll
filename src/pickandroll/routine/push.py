@@ -38,7 +38,8 @@ def ntfy_pusher(
             return False, f"no topic in {path}: nothing pushed"
         request = urllib.request.Request(
             f"{NTFY}/{quote(topic, safe='')}",
-            data=text.encode()[:MAX_BYTES],
+            # Cut on a character boundary: a body that is not UTF-8 is an attachment to ntfy.
+            data=text.encode()[:MAX_BYTES].decode("utf-8", "ignore").encode(),
             headers={
                 "Title": title.encode("ascii", "replace").decode(),
                 "Tags": "basketball",

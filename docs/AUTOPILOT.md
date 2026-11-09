@@ -855,7 +855,8 @@ force by their pull time on the Central clock, in every league.
 
 Each attempt is logged on the day file `data/routine/pretip/<date>.json` (`POST
 /autopilot/pretip/runs`). A slate is done only once an attempt's solve and push both completed
-(a late slate whose recommended set is the first slate's needs no push). A lock skip, a crash or
+(a late slate whose recommended set is the one pushed for the first slate needs no push; a
+first-slate set that never reached the user is pushed again). A lock skip, a crash or
 a failed push leaves it due, so the next check tries again until fifteen minutes before the
 tip-off; an attempt that solved and only failed its push is retried as a push alone, opening
 nothing. Suggestions only: the pass clicks nothing in the private league.

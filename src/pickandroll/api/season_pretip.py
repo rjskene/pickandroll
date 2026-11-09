@@ -13,7 +13,7 @@ Central: no pass starts later, so it is over before the 21:00 build).
 A slate is due from its start (its tip-off less the lead) until fifteen minutes before its
 tip-off. The day file ``data/routine/pretip/<date>.json`` keeps every attempt of each slate, and
 a slate is done only once an attempt's solve and push both completed (a late slate whose
-recommended set is the first slate's needs no push). A lock skip, a crash or a failed push
+recommended set is the one pushed for the first slate needs no push). A lock skip, a crash or a failed push
 leaves it due, so the next tick of the check timer tries again until fifteen minutes before the
 tip-off; an attempt that solved and only failed to push is retried as a push alone.
 """
@@ -52,7 +52,7 @@ SLATES = (FIRST, LATE)
 DAY_DIR = ("routine", "pretip")
 RULE = (
     "a slate is done only once an attempt's solve and push both completed (a late slate whose "
-    "recommended set is the first's needs no push); a lock skip, a crash or a failed push leaves "
+    "recommended set is the one pushed for the first slate needs no push); a lock skip, a crash or a failed push leaves "
     f"it due until {UNTIL_TIP_MIN} minutes before its tip-off"
 )
 _HHMM = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
@@ -196,7 +196,8 @@ def due(
 ) -> dict[str, Any]:
     """Whether a slate's pass is due now, and which: ``{date, due, slate, tip, start_at, until,
     push_only, reason, slates, first_moves, knobs}``. ``push_only``: the slate's last attempt
-    solved after its start and only its push is left. Nothing here opens a page."""
+    solved after its start and only its push is left. ``first_moves``: the first slate's set as
+    last pushed, None when none was pushed. Nothing here opens a page."""
     knobs = settings(data_dir)
     body = read_day(data_dir, day)
     out: dict[str, Any] = {
@@ -213,10 +214,12 @@ def due(
         "knobs": knobs,
         "rule": RULE,
     }
+    # The set the user was sent for the first slate: its last pushed attempt's. A solve whose
+    # push never went is not one the user has, so the late slate pushes.
     first = body["slates"].get(FIRST) or {}
-    solved = [a for a in first.get("attempts") or [] if a.get("solved_at")]
-    if solved:
-        out["first_moves"] = solved[-1].get("moves") or []
+    pushed = [a for a in first.get("attempts") or [] if a.get("pushed_at")]
+    if pushed:
+        out["first_moves"] = pushed[-1].get("moves") or []
     if not knobs["enabled"]:
         return {**out, "reason": "the pre-tip pass is off (executor.json pretip.enabled)"}
     if stopped:
