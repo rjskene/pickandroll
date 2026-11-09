@@ -10,6 +10,7 @@ from collections.abc import Callable, Mapping, Sequence
 from datetime import datetime
 from typing import Any
 
+from .api import Unreachable
 from .browser import NO_BROWSER
 from .clock import before, seconds_until
 from .report import Report
@@ -84,6 +85,9 @@ MONDAY = 0
 #: The pre-tip pass's exports (#355): the rest of the season and this week, under the daily's
 #: not-due rule for this week.
 PRETIP_KINDS = ("ros", "week_this")
+#: The same-day lineup pass's fragment: the late pass's, run by the pre-tip pass while it is on
+#: (#355 PR 3), so the extension, its trigger and its record are unchanged.
+LATE_LINEUP_FRAGMENT = "pickandroll-lineup-late"
 #: How long a run waits for the browser profile's lock (#355): the pre-tip pass a quarter hour,
 #: then skips and stays due; every other run twenty minutes, then fails with the alert; the
 #: evening pass never past its hard stop.
@@ -201,6 +205,15 @@ def on_team_page(landed: str, url: str) -> bool:
     return landed.split("#")[0].startswith(url.split("#")[0].split("?")[0])
 
 
+def _from(at: Any, since: datetime) -> bool:
+    """A run's ``at`` is ``since`` or later; one whose time does not read is counted."""
+    try:
+        when = datetime.fromisoformat(str(at))
+    except ValueError:
+        return True
+    return when.tzinfo is None or when >= since
+
+
 def _dedupe(openings: Sequence[Opening]) -> list[Opening]:
     seen: set[str] = set()
     out = []
@@ -211,10 +224,17 @@ def _dedupe(openings: Sequence[Opening]) -> list[Opening]:
     return out
 
 
-def pass_check(ctx: Context, leagues: Sequence[str], kinds: Sequence[str], trigger: str) -> None:
+def pass_check(
+    ctx: Context,
+    leagues: Sequence[str],
+    kinds: Sequence[str],
+    trigger: str,
+    since: datetime | None = None,
+) -> None:
     """After a pass: each league's runs logged today (the lineup's ``today``, the moves' ``today``,
-    ``il_today`` and ``start_active_today``), by trigger. A league opened with none is "no run
-    logged"; none anywhere is an alert."""
+    ``il_today`` and ``start_active_today``), by trigger; with ``since``, only the runs from then
+    (the pre-tip slates share the late trigger). A league opened with none is "no run logged";
+    none anywhere is an alert."""
     if not leagues:
         return
     lines = []
@@ -230,7 +250,9 @@ def pass_check(ctx: Context, leagues: Sequence[str], kinds: Sequence[str], trigg
             runs = [
                 r
                 for r in body.get("today") or []
-                if isinstance(r, dict) and r.get("trigger") == trigger
+                if isinstance(r, dict)
+                and r.get("trigger") == trigger
+                and (since is None or _from(r.get("at"), since))
             ]
             outcomes = ", ".join(
                 f"{r.get('outcome')} ({r.get('reason')})"
@@ -289,8 +311,13 @@ def late(ctx: Context, api: str) -> None:
     api_check(ctx)
     stop_check(ctx)
     pub = public_leagues(seasons(ctx))
-    lineups = lineup_plan(ctx, pub, tomorrow=False, fragment="pickandroll-lineup-late")
-    opened = browser_pass(ctx, "lineup", lineups, ("lineup", "routine_late", None))
+    pretip_on = _pretip_sets_lineups(ctx)
+    if pretip_on:
+        ctx.report.skipped("lineup", pretip_on)
+        opened: list[str] = []
+    else:
+        lineups = lineup_plan(ctx, pub, tomorrow=False, fragment=LATE_LINEUP_FRAGMENT)
+        opened = browser_pass(ctx, "lineup", lineups, ("lineup", "routine_late", None))
     plan = moves_plan(ctx, pub, "pickandroll-moves-late", "pickandroll-il-late")
     _report_plan(ctx, plan)
     opened_moves = browser_pass(
@@ -332,18 +359,44 @@ def evening_pass(ctx: Context, api: str) -> None:
         _sunday_adds(ctx)
 
 
+def _pretip_sets_lineups(ctx: Context) -> str | None:
+    """Why the late pass leaves today's lineups to the pre-tip pass (#355 PR 3, the user's Q2 =
+    C), or None: only while ``pretip.enabled`` is on and today has a slate. A due route that
+    does not answer, the pass off, no schedule copy or no game: the late pass sets them as ever."""
+    try:
+        code, body, _ = ctx.get("/autopilot/pretip/due", 60)
+    except Unreachable:
+        return None
+    if code != 200 or not isinstance(body, dict):
+        return None
+    if not (body.get("knobs") or {}).get("enabled") or not body.get("slates"):
+        return None
+    tips = ", ".join(
+        f"{s.get('slate')} {str(s.get('tip'))[11:16]}"
+        for s in body["slates"]
+        if isinstance(s, dict)
+    )
+    return f"the pre-tip pass sets today's lineups (pretip.enabled; slates {tips})"
+
+
 def pretip(ctx: Context, api: str) -> None:
     """The private league's pre-tip pass (#355): when the due route names a slate, Basketball
     Monster's rest-of-season and this-week exports, the league's pages, its solve, and its
-    suggestions pushed to the user's private channel; each attempt logged on the day file. Not
-    due: refused, no browser and no report. A lock skip, a failed solve or a failed push leaves
-    the slate due for the next check; an attempt that solved and failed only its push is
-    pushed again alone. Suggestions only: nothing is clicked in the league."""
+    suggestions pushed to the user's private channel; each attempt logged on the day file; then
+    the public leagues' same-day lineups, the late pass's lineup step at the slate's time (PR 3).
+    Not due: refused, no browser and no report. A lock skip, a failed solve or a failed push
+    leaves the slate due for the next check; an attempt that solved and failed only its push is
+    pushed again alone. A slate whose window passed without it done fails the check once, with
+    an alert: the daily's lineups and suggestions stand. Suggestions only in the private league:
+    nothing is clicked there."""
     api_check(ctx)
     stop_check(ctx)
     code, due, _ = ctx.get("/autopilot/pretip/due", 60)
     if code != 200 or not isinstance(due, dict):
         ctx.report.failed("pretip_due", f"the due route answered {code}")
+        return
+    _pretip_missed(ctx, due.get("missed") or [])
+    if not due.get("due") and ctx.report.find("pretip_missed") is not None:
         return
     if not due.get("due"):
         reason = f"not due: {due.get('reason') or 'nothing due'}"
@@ -382,13 +435,44 @@ def pretip(ctx: Context, api: str) -> None:
         k: "pulled" if k in ctx.report.exports else lines.get(k, "not made") for k in PRETIP_KINDS
     }
     codes = solve_all(ctx, [league])
-    if ctx.dry_run:
-        return
-    if codes.get(league) != 200:
-        why = f"the solve answered {codes.get(league)}"
-        _pretip_log(ctx, {**attempt, "outcome": "failed", "reason": why, "pulls": pulls})
-        return
-    _pretip_push(ctx, league, due, {**attempt, "solved_at": ctx.now().isoformat()}, pulls)
+    if not ctx.dry_run:
+        if codes.get(league) != 200:
+            why = f"the solve answered {codes.get(league)}"
+            _pretip_log(ctx, {**attempt, "outcome": "failed", "reason": why, "pulls": pulls})
+        else:
+            _pretip_push(ctx, league, due, {**attempt, "solved_at": ctx.now().isoformat()}, pulls)
+    _pretip_lineups(ctx, started)
+
+
+def _pretip_missed(ctx: Context, missed: Sequence[Mapping[str, Any]]) -> None:
+    """Each slate whose window passed without it done (PR 3): a failed step and an alert, and the
+    slate logged missed so the next check says nothing more of it."""
+    for m in missed:
+        slate = str(m.get("slate"))
+        line = (
+            f"the {slate} slate (tip {str(m.get('tip'))[11:16]}) passed without its solve and push"
+            f" ({m.get('attempts', 0)} attempts): today's lineups are the daily's, its suggestions"
+            " the 05:00 ones"
+        )
+        ctx.report.failed("pretip_missed", line, slate=slate)
+        alert_once(ctx, f"the pre-tip pass missed a slate: {line}")
+        _pretip_log(
+            ctx,
+            {"slate": slate, "started_at": ctx.now().isoformat(), "outcome": "missed"},
+        )
+
+
+def _pretip_lineups(ctx: Context, since: datetime) -> None:
+    """The public leagues' same-day lineups inside the slate (#355 PR 3): the late pass's lineup
+    step as it was (its pages, fragment, trigger and record, the extension's steps, which leave
+    out a group whose tip-off passed as a skip with its reason), then the re-solve and the light
+    of the leagues opened. The daily's set for the day stays the baseline."""
+    pub = public_leagues(seasons(ctx))
+    lineups = lineup_plan(ctx, pub, tomorrow=False, fragment=LATE_LINEUP_FRAGMENT)
+    opened = browser_pass(ctx, "lineup", lineups, ("lineup", "routine_late", None))
+    resolve(ctx, opened)
+    pass_check(ctx, opened, ["lineup"], "routine_late", since=since)
+    status_check(ctx, opened)
 
 
 def _pull_line(pulls: Mapping[str, str]) -> str:

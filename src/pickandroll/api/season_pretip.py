@@ -15,7 +15,9 @@ tip-off. The day file ``data/routine/pretip/<date>.json`` keeps every attempt of
 a slate is done only once an attempt's solve and push both completed (a late slate whose
 recommended set is the one pushed for the first slate needs no push). A lock skip, a crash or a failed push
 leaves it due, so the next tick of the check timer tries again until fifteen minutes before the
-tip-off; an attempt that solved and only failed to push is retried as a push alone.
+tip-off; an attempt that solved and only failed to push is retried as a push alone. A slate
+whose window passed without it done is named once under ``missed`` (logged ``missed`` by the
+check, which alerts), and the day keeps the daily's lineups and the 05:00 suggestions.
 """
 
 from __future__ import annotations
@@ -149,7 +151,9 @@ class PretipRun(BaseModel):
     model_config = ConfigDict(extra="forbid")
     slate: Literal["first", "late"]
     started_at: datetime
-    outcome: Literal["done", "skipped", "failed"]
+    #: ``missed``: the slate's window passed without it done (PR 3): logged once, so the check
+    #: alerts once and the daily's lineups and suggestions stand.
+    outcome: Literal["done", "skipped", "failed", "missed"]
     reason: str | None = Field(default=None, max_length=600)
     solved_at: datetime | None = None
     pushed_at: datetime | None = None
@@ -176,6 +180,8 @@ def record(data_dir: Path, day: date, run: PretipRun) -> dict[str, Any]:
         slate = body["slates"].setdefault(run.slate, {"done": False, "attempts": []})
         slate["attempts"].append(row)
         slate["done"] = bool(slate.get("done")) or done_of(row)
+        if run.outcome == "missed":
+            slate["missed"] = True
         path.parent.mkdir(parents=True, exist_ok=True)
         tmp = path.with_suffix(".json.tmp")
         tmp.write_text(json.dumps(body, indent=1) + "\n")
@@ -197,7 +203,9 @@ def due(
     """Whether a slate's pass is due now, and which: ``{date, due, slate, tip, start_at, until,
     push_only, reason, slates, first_moves, knobs}``. ``push_only``: the slate's last attempt
     solved after its start and only its push is left. ``first_moves``: the first slate's set as
-    last pushed, None when none was pushed. Nothing here opens a page."""
+    last pushed, None when none was pushed. ``missed``: the slates whose window passed without
+    them done and not yet logged missed, each ``{slate, tip, attempts}``, for the check to alert
+    on once. Nothing here opens a page."""
     knobs = settings(data_dir)
     body = read_day(data_dir, day)
     out: dict[str, Any] = {
@@ -211,6 +219,7 @@ def due(
         "reason": None,
         "slates": [],
         "first_moves": None,
+        "missed": [],
         "knobs": knobs,
         "rule": RULE,
     }
@@ -245,6 +254,10 @@ def due(
             break
         if now >= until:
             reasons.append(f"the {s['slate']} slate's time passed at {_hhmm(until)}")
+            if not kept.get("missed"):
+                out["missed"].append(
+                    {"slate": s["slate"], "tip": s["tip"], "attempts": len(attempts)}
+                )
             continue
         last = attempts[-1] if attempts else None
         push_only = bool(
