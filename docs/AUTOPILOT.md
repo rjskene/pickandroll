@@ -835,7 +835,7 @@ the private league's solve was left out there with `--skip-solve 31822`, `docs/O
 | Monday, after the recorder | the scorecard (#126): last week and YTD, projected against actual, posted on #127 | phase 0 |
 | Monday, after the scorecard | the hill-climb step (section 6): the verdicts due and at most one change applied, the comment posted on #127 | yes (#152, `scripts/season.py monday`); the Monday routine runs it from 2026-10-26 |
 | Monday, then | the week's first queue is built under the new setting, before the first claims | phase 2 |
-| a game day, an hour before the first tip-off (and the late slate's) | the pre-tip pass for the private league (#355): Basketball Monster's rest-of-season and this-week exports, its pages, its solve, its suggestions pushed to the user privately | routine `pretip` (PR 1, off: `pretip.enabled` false); its five-minute check timer is PR 2 |
+| a game day, an hour before the first tip-off (and the late slate's) | the pre-tip pass for the private league (#355): Basketball Monster's rest-of-season and this-week exports, its pages, its solve, its suggestions pushed to the user privately; then the public leagues' same-day lineups (the late pass's lineup step, moved here while the pass is on) | yes (`pickandroll-routine@pretip`, every five minutes 09:00-20:55; off until the user sets `pretip.enabled`) |
 
 **The pre-tip pass (#355).** The 05:00 copy of the week's games is hours old by the first
 tip-off of the private league's day, and its adds are same-day. A check every five minutes from
@@ -859,7 +859,26 @@ Each attempt is logged on the day file `data/routine/pretip/<date>.json` (`POST
 first-slate set that never reached the user is pushed again). A lock skip, a crash or
 a failed push leaves it due, so the next check tries again until fifteen minutes before the
 tip-off; an attempt that solved and only failed its push is retried as a push alone, opening
-nothing. Suggestions only: the pass clicks nothing in the private league.
+nothing. A slate whose window passes without it done fails the next check once, with an alert
+naming it, and is logged `missed` on the day file. The day then keeps the daily's lineups and
+the 05:00 suggestions. Suggestions only: the pass clicks nothing in the private league.
+
+**The same-day lineups in the slates (#355 PR 3, the user's ruling 2026-11-09).** Each slate's
+pass, first and late, ends with the public leagues' same-day lineup step, after the private
+league's solve and push. It is the late pass's step as it was: the same pages, fragment
+(`#pickandroll-lineup-late`), trigger (`routine_late`), pass record and extension, the same
+modes and live guard (`lineup_live_after`, the per-league switches), then the re-solve and the
+light of the leagues it opened. The pass check counts only the runs logged since the slate
+began. A player whose game began is never moved: the steps leave out each group that holds
+him, under `skipped` with the tip-off reason, and the run logs that reason, which is a skip and
+never a failure (the late slate, and weekend days with early games). The private league stays
+suggestions only. A slate's lineups run once: the attempt is logged again with `lineups_at`
+once its lineup step ran, and a retry after a failed solve or push leaves them out with the
+reason. A push alone, or a slate skipped for the lock, sets no lineup; the next full attempt
+does. While `pretip.enabled` is on and today has a slate, the late pass at 15:00 leaves
+its lineup step to the slates, and its moves and Start Active run as before. With the pass off,
+no schedule copy, no game, or a due route that does not answer, 15:00 sets the lineups as it
+always did. The daily's set for today and tomorrow (05:00) stays the baseline in every case.
 
 **The browser profile's lock (#355).** Every routine takes `data/routine/browser.lock` (`flock`)
 when its browser launches and gives it back at close; the process ending gives it back too. The

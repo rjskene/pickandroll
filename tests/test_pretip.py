@@ -407,11 +407,12 @@ def test_a_due_slate_pulls_reads_solves_pushes_and_logs_done(tmp_path):
     assert any("/nba/31822" in u for u, _ in b.opened)
     gets = api.paths("GET")
     assert gets.index("/seasons/31822/moves") < gets.index("/seasons/31822/pretip")
-    assert [n for n, _ in statuses(report)][-3:] == ["solve", "push", "day_file"]
+    names = [n for n, _ in statuses(report)]
+    assert names.index("solve") < names.index("push") < names.index("day_file")
     ((title, text),) = ctx.notes["_pushes"]
     assert title == "pickandroll 31822 pre-tip, first slate (tip 18:00)"
     assert text.endswith("This pass: projections pulled; this week pulled.\n")
-    (logged,) = runs
+    logged = runs[0]
     assert logged["outcome"] == "done" and logged["solved_at"] and logged["pushed_at"]
     assert logged["moves"] == [{"add": 1, "drop": 2}]
     assert report.find("day_file").detail == "first slate done"
@@ -434,7 +435,7 @@ def test_a_held_browser_skips_the_pass_and_leaves_the_slate_due(tmp_path):
     assert b.exported == [] and b.opened == [] and ctx.notes["_pushes"] == []
     assert "/seasons/31822/moves" not in api.paths("GET")
     assert report.find("browser").status == "skipped"
-    (logged,) = runs
+    logged = runs[0]
     assert logged["outcome"] == "skipped" and logged["reason"] == busy
     assert "solved_at" not in logged
     assert report.find("day_file").detail == "first slate still due"
@@ -447,7 +448,7 @@ def test_a_failed_push_is_logged_solved_and_still_due(tmp_path):
     )
     report = run("pretip", ctx, "http://api")
     assert report.find("push").status == "failed"
-    (logged,) = runs
+    logged = runs[0]
     assert logged["outcome"] == "failed" and logged["solved_at"] and "pushed_at" not in logged
     assert report.find("day_file").detail == "first slate still due"
 
@@ -457,7 +458,7 @@ def test_a_failed_solve_pushes_nothing_and_stays_due(tmp_path):
     ctx, api, _ = pretip_ctx(tmp_path, pretip_answers(solve=504, runs=runs))
     run("pretip", ctx, "http://api")
     assert ctx.notes["_pushes"] == [] and "/seasons/31822/pretip" not in api.paths("GET")
-    (logged,) = runs
+    logged = runs[0]
     assert logged["outcome"] == "failed" and "solved_at" not in logged
 
 
@@ -505,6 +506,293 @@ def test_without_a_push_channel_the_slate_stays_due(tmp_path):
     ctx, _, _ = pretip_ctx(tmp_path, pretip_answers(runs=runs), push=None)
     run("pretip", ctx, "http://api")
     assert runs[0]["outcome"] == "failed" and runs[0]["reason"] == "no push channel"
+
+
+# --------------------------------------------------------------------------- the lineups (PR 3)
+#: The public leagues of the routine tests' seasons list; 31822 is the private one.
+LEAGUES = [
+    {"league": "252098", "public": True},
+    {"league": "230585", "public": True},
+    {"league": "31822", "public": False},
+]
+YAHOO = "https://basketball.fantasysports.yahoo.com"
+
+
+def lineup_answers(runs_at="2026-11-09T17:20:00-06:00", steps=None, **kw):
+    """A due first slate with the two public leagues' lineup steps open, their pass record, the
+    re-solve and the light, and each league's lineup run logged at ``runs_at``."""
+    out = pretip_answers(**kw)
+    out[("GET", "/seasons")] = (200, LEAGUES)
+    out[("POST", "/autopilot/passes")] = (200, {"id": "p"})
+    out[("POST", "/autopilot/passes/p/opening")] = (200, {})
+    out[("POST", "/autopilot/passes/p/done")] = (200, {})
+    rows = []
+    for k in ("252098", "230585"):
+        out[("GET", f"/seasons/{k}/lineup/steps")] = (
+            200,
+            {
+                "mode": "live",
+                "open": True,
+                "date": "2026-11-09",
+                "page": f"{YAHOO}/nba/{k}/2?date=2026-11-09",
+                **(steps or {}),
+            },
+        )
+        out[("GET", f"/seasons/{k}/moves")] = (200, {"sets": []})
+        run_row = {"trigger": "routine_late", "outcome": "set", "at": runs_at}
+        if steps and steps.get("reason"):
+            run_row = {**run_row, "outcome": "nothing_to_do", "reason": steps["reason"]}
+        out[("GET", f"/seasons/{k}/autopilot")] = (200, {"today": [run_row]})
+        rows.append(
+            {
+                "league": k,
+                "yahoo": {"rows": [{"read_at": "2026-11-09T17:18:00-06:00"}]},
+                "recommendations": {
+                    "rows": [{"kind": "moves", "built_at": "2026-11-09T17:22:00-06:00"}]
+                },
+            }
+        )
+    out[("GET", "/seasons/status")] = (200, {"leagues": rows})
+    return out
+
+
+def test_a_slate_sets_the_public_lineups_after_the_private_push(tmp_path):
+    ctx, api, b = pretip_ctx(tmp_path, lineup_answers())
+    report = run("pretip", ctx, "http://api")
+    lineup = [u for u, _ in b.opened if "#pickandroll-lineup-late" in u]
+    # The late pass's lineup step as it was: each public league's own page, its fragment and
+    # its trigger, thirty seconds each; never the private league's.
+    assert [u.split("/nba/")[1].split("/")[0] for u in lineup] == ["252098", "230585"]
+    assert {w for u, w in b.opened if u in lineup} == {30.0}
+    assert not any("/nba/31822/" in u and "lineup" in u for u in lineup)
+    calls = [p for _, p in api.calls]
+    assert calls.index("/seasons/31822/pretip") < calls.index("/seasons/252098/lineup/steps")
+    assert len(ctx.notes["_pushes"]) == 1
+    assert {
+        (n, s) for n, s in statuses(report) if n in ("lineup", "resolve", "check", "status")
+    } == {
+        ("lineup", "ok"),
+        ("resolve", "ok"),
+        ("check", "ok"),
+        ("status", "ok"),
+    }
+    assert not [n for n, s in statuses(report) if s == "failed"]
+
+
+def test_the_check_counts_only_the_runs_of_this_slate(tmp_path):
+    """The slates and the late pass share the late trigger: a run from before the slate began
+    (the 15:00 pass's, or the first slate's) is not this slate's."""
+    ctx, _, _ = pretip_ctx(tmp_path, lineup_answers(runs_at="2026-11-09T15:05:00-06:00"))
+    report = run("pretip", ctx, "http://api")
+    assert report.find("check").status == "failed"
+    assert report.alerts == ["the pretip pass opened pages but no run was logged"]
+
+
+def test_a_started_game_is_a_skip_with_its_reason_never_a_failure(tmp_path):
+    """The late slate on a weekend: the early games began, so the steps leave out every group
+    with a player whose tip-off passed (the executor never moves him) and say why; the pass
+    opens the page, the extension logs nothing to do with that reason, and nothing fails."""
+    started = {
+        "steps": [],
+        "skipped": [
+            {"reason": "tip-off passed", "players": [6038, 6733], "steps": []},
+        ],
+        "reason": "every change waits on a game that began",
+    }
+    due = {"slate": "late", "tip": "2026-11-08T21:00:00-06:00"}
+    ctx, _, b = pretip_ctx(
+        tmp_path,
+        lineup_answers(runs_at="2026-11-08T20:12:00-06:00", steps=started, due=due),
+        at="20:05",
+    )
+    ctx.now = Clock("2026-11-08 20:05")
+    report = run("pretip", ctx, "http://api")
+    assert len([u for u, _ in b.opened if "#pickandroll-lineup-late" in u]) == 2
+    check = report.find("check")
+    assert check.status == "ok"
+    assert all(
+        "nothing_to_do (every change waits on a game that began)" in line
+        for line in check.data["lines"]
+    )
+    assert not [n for n, s in statuses(report) if s == "failed"]
+
+
+def test_once_every_game_began_the_steps_move_nobody_and_say_why(client):
+    """The steps the extension runs, on the real route: when every team of the day's changes has
+    tipped off (a late slate after the early games), nobody is moved, every group is a skip
+    with the tip-off reason, and the day stays open (nothing fails, nothing closes)."""
+    from tests.test_lineup_executor import benched_saturday
+
+    benched_saturday(client)
+    lineup = client.get(f"/seasons/{LEAGUE}/lineup").json()
+    day = next(d for d in lineup["days"] if d["date"] == "2026-10-24")
+    teams = {lineup["players"][str(k)]["nba_team"] for k in day["start"]}
+    began = datetime(2026, 10, 21, 18, 0, tzinfo=UTC).isoformat()
+    path = client.data_dir / "schedule" / "2026-10-24.json"
+    body = json.loads(path.read_text())
+    path.write_text(json.dumps({**body, "tips": dict.fromkeys(teams, began)}))
+    s = client.get(f"/seasons/{LEAGUE}/lineup/steps", params={"date": "2026-10-24"}).json()
+    assert s["open"] is True and s["steps"] == []
+    assert s["skipped"] and all(g["reason"] == "tip-off passed" for g in s["skipped"])
+    assert s["reason"] == "every change waits on a game that began"
+    # Everyone was benched: each recommended starter is held where Yahoo has him, in a skip.
+    assert set(day["start"]) <= {p for g in s["skipped"] for p in g["players"]}
+
+
+def test_a_push_alone_and_a_held_browser_set_no_lineup(tmp_path):
+    ctx, api, b = pretip_ctx(tmp_path, lineup_answers(due={"push_only": True}))
+    run("pretip", ctx, "http://api")
+    assert "/seasons/252098/lineup/steps" not in api.paths("GET")
+    busy = "the browser profile is in use by the late routine, pid 1, since 17:00:00 (waited 900 s)"
+    ctx, api, b = pretip_ctx(tmp_path, lineup_answers(), busy=busy)
+    run("pretip", ctx, "http://api")
+    assert "/seasons/252098/lineup/steps" not in api.paths("GET") and b.opened == []
+
+
+def test_a_failed_solve_still_sets_the_public_lineups(tmp_path):
+    runs: list[dict] = []
+    ctx, _, b = pretip_ctx(tmp_path, lineup_answers(solve=504, runs=runs))
+    run("pretip", ctx, "http://api")
+    assert runs[0]["outcome"] == "failed" and ctx.notes["_pushes"] == []
+    assert len([u for u, _ in b.opened if "#pickandroll-lineup-late" in u]) == 2
+
+
+def on_the_day_file(tmp_path, answers, clock_of):
+    """The due route and the runs route on the real day file and due rule, at the run's clock."""
+    knobs(tmp_path, **ON)
+
+    def get_due(_):
+        return 200, {**pt.due(tmp_path, clock_of(), DAY, TIPS, False), "league": "31822"}
+
+    def post_run(body):
+        return 200, pt.record(tmp_path, DAY, pt.PretipRun(**body))
+
+    return {
+        **answers,
+        ("GET", "/autopilot/pretip/due"): get_due,
+        ("POST", "/autopilot/pretip/runs"): post_run,
+    }
+
+
+def pretip_run(tmp_path, at, **kw):
+    """One check at ``at`` on the real day file: its report, its API and its browser."""
+    busy = kw.pop("busy", None)
+    holder = {}
+    answers = on_the_day_file(tmp_path, lineup_answers(**kw), lambda: holder["ctx"].now())
+    ctx, api, b = pretip_ctx(tmp_path, answers, busy=busy, at=at)
+    holder["ctx"] = ctx
+    return run("pretip", ctx, "http://api"), api, b
+
+
+def lineup_pages_of(b):
+    return [u for u, _ in b.opened if "#pickandroll-lineup-late" in u]
+
+
+def test_a_slate_whose_lineups_ran_never_runs_them_again_on_a_retry(tmp_path):
+    """A failed private solve leaves the slate due, but its lineups ran: the retry five minutes
+    later re-solves and leaves the lineups out, with the reason, so a solve that keeps failing
+    never re-runs the public pass on every tick."""
+    report, _, b = pretip_run(tmp_path, "17:05", solve=504)
+    assert len(lineup_pages_of(b)) == 2 and report.find("lineups_logged").status == "ok"
+    day = pt.read_day(tmp_path, DAY)["slates"]["first"]
+    (only,) = day["attempts"]  # the attempt logged again with its lineup time, not twice
+    assert only["outcome"] == "failed" and only["lineups_at"] and day["lineups_done"] is True
+    assert day["done"] is False
+    report, api, b = pretip_run(tmp_path, "17:10", solve=504)
+    assert lineup_pages_of(b) == [] and not any("lineup/steps" in p for p in api.paths("GET"))
+    assert "/seasons/31822/moves" in api.paths("GET")  # the solve is tried again
+    skipped = report.find("lineup")
+    assert skipped.status == "skipped" and skipped.detail.startswith("the first slate's lineups")
+    assert skipped.detail.endswith(": not again")
+    assert len(pt.read_day(tmp_path, DAY)["slates"]["first"]["attempts"]) == 2
+
+
+def test_a_lock_skip_leaves_the_lineups_to_the_retry(tmp_path):
+    busy = "the browser profile is in use by the late routine, pid 1, since 17:00:00 (waited 900 s)"
+    _, _, b = pretip_run(tmp_path, "17:05", busy=busy)
+    assert b.opened == []
+    assert pt.due(tmp_path, at("17:10"), DAY, TIPS, False)["lineups_done"] is False
+    _, _, b = pretip_run(tmp_path, "17:10")
+    assert (
+        len(lineup_pages_of(b)) == 2
+        and len(pt.read_day(tmp_path, DAY)["slates"]["first"]["attempts"]) == 2
+    )
+    day = pt.read_day(tmp_path, DAY)["slates"]["first"]
+    assert day["done"] is True and day["lineups_done"] is True
+
+
+def late_answers(due):
+    out = lineup_answers()
+    out[("GET", "/autopilot/pretip/due")] = due
+    out[("GET", "/autopilot/start-active/due")] = (200, {"stop": False, "leagues": []})
+    for k in ("252098", "230585"):
+        out[("GET", f"/seasons/{k}/autopilot/moves")] = (200, {"today": [], "entries": []})
+    return out
+
+
+def test_the_late_pass_leaves_todays_lineups_to_the_pretip_pass_only_while_it_is_on(tmp_path):
+    on = {
+        "due": False,
+        "knobs": {**pt.DEFAULTS, "enabled": True},
+        "slates": [
+            {"slate": "first", "tip": "2026-11-09T18:00:00-06:00"},
+            {"slate": "late", "tip": "2026-11-09T21:00:00-06:00"},
+        ],
+    }
+    clock = Clock("2026-11-09 15:02")
+    browser = FakeBrowser(clock=clock)
+    api = FakeAPI(late_answers((200, on)))
+    report = run("late", make_ctx(api, clock, tmp_path, routine="late", browser=browser), "x")
+    assert report.find("lineup").status == "skipped"
+    assert report.find("lineup").detail == (
+        "the pre-tip pass sets today's lineups (pretip.enabled; slates first 18:00, late 21:00)"
+    )
+    assert not any("lineup/steps" in p for p in api.paths("GET"))
+    assert not any("#pickandroll-lineup-late" in u for u, _ in browser.opened)
+    # Off, with no game today, or a due route that does not answer: the late pass sets them.
+    for due in (
+        (200, {**on, "knobs": pt.DEFAULTS}),
+        (200, {**on, "slates": []}),
+        (500, {"detail": "boom"}),
+    ):
+        clock = Clock("2026-11-09 15:02")
+        browser = FakeBrowser(clock=clock)
+        api = FakeAPI(late_answers(due))
+        ctx = make_ctx(api, clock, tmp_path, routine="late", browser=browser)
+        report = run("late", ctx, "x")
+        assert report.find("lineup").status == "ok"
+        assert sum("#pickandroll-lineup-late" in u for u, _ in browser.opened) == 2
+
+
+def test_a_missed_slate_fails_the_check_once_with_an_alert(tmp_path):
+    knobs(tmp_path, **ON)
+    pt.record(tmp_path, DAY, attempt(outcome="skipped", reason="the browser profile is in use"))
+    d = pt.due(tmp_path, at("17:50"), DAY, TIPS, False)
+    assert not d["due"] and d["missed"] == [
+        {"slate": "first", "tip": at("18:00").isoformat(), "attempts": 1}
+    ]
+    runs: list[dict] = []
+    answers = pretip_answers(
+        {"due": False, "reason": d["reason"], "missed": d["missed"]}, runs=runs
+    )
+    ctx, _, b = pretip_ctx(tmp_path, answers, at="17:50")
+    report = run("pretip", ctx, "http://api")
+    assert report.refused is None and report.find("pretip_missed").status == "failed"
+    assert report.alerts == [
+        (
+            "the pre-tip pass missed a slate: the first slate (tip 18:00) passed without its"
+            " solve and push (1 attempts): today's lineups are the daily's, its suggestions the"
+            " 05:00 ones"
+        )
+    ]
+    assert b.opened == [] and b.exported == [] and runs[0]["outcome"] == "missed"
+    # Logged missed, the slate is never named again; it is not done.
+    body = pt.record(tmp_path, DAY, pt.PretipRun(**{**runs[0], "started_at": at("17:50")}))
+    assert body["slates"]["first"]["missed"] is True and body["slates"]["first"]["done"] is False
+    assert pt.due(tmp_path, at("17:55"), DAY, TIPS, False)["missed"] == []
+    # A slate done on time is never missed.
+    pt.record(tmp_path, DAY, attempt("late", "20:05", solved_at=at("20:06"), pushed_at=at("20:07")))
+    assert pt.due(tmp_path, at("20:50"), DAY, TIPS, False)["missed"] == []
 
 
 # --------------------------------------------------------------------------- the lock
