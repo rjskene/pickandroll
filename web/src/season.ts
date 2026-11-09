@@ -2138,10 +2138,10 @@ export function teamRows(t: MatchupTeamLines, view: MatchupLineView): { label: s
   return [];
 }
 
-/** The landing's matchup odds in the "This week" cell (#303): the Matchup view's own hero number
- * (its route, its system), "62% to win" toned as its pill; "—" with why when it cannot be
- * projected, a roster not read in the view's own words; null while it loads, and for a points
- * league (the landing hides those). */
+/** The landing's matchup odds in their own "Win" column (#303, #347): the Matchup view's own
+ * hero number (its route, its system), the percentage alone ("62%") toned as its pill, the
+ * explanation in the title; "—" with why when it cannot be projected, a roster not read in the
+ * view's own words; null while it loads, and for a points league (the landing hides those). */
 export function matchupOddsCell(
   s: Pick<SeasonSummary, "scoring" | "my_team" | "opponent">,
   m: Pick<MatchupPayload, "win" | "teams" | "rosters_read" | "system"> | undefined,
@@ -2157,7 +2157,8 @@ export function matchupOddsCell(
     const unread = m.teams.filter((_, i) => !m.rosters_read[i]).map(name);
     return none(`${unread.join(" and ")}: roster not read, so it projects as empty and the odds overstate the other side.`);
   }
-  return { text: `${oddsLabel(m.win)} to win`, tone: leanTone(m.win), title: `the odds of winning this week's matchup, as the Matchup view shows them (${m.system.label})` };
+  const pct = oddsLabel(m.win);
+  return { text: pct, tone: leanTone(m.win), title: `${pct} to win: the odds of winning this week's matchup, as the Matchup view shows them (${m.system.label})` };
 }
 
 /** "4th of 12", my place in the standings. */

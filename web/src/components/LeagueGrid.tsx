@@ -122,6 +122,9 @@ export default function LeagueGrid({ landing, onOpen }: { landing: LandingOrder;
               <span />
               <span className="k">League</span>
               <span className="k">This week</span>
+              <span className="k" title="the odds of winning this week's matchup, as the Matchup view shows them">
+                Win
+              </span>
               <span className="k">Place</span>
               <span className="k">Left</span>
               <span className="k">Flags</span>
