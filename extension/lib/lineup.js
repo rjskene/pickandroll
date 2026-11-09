@@ -232,6 +232,9 @@
       read_at: steps.read ? steps.read.at : null,
       steps: [],
       skipped: steps.skipped || [],
+      // What the steps offered (#346): the returns, and the comebacks before a visit set them aside.
+      returns: steps.returns || [],
+      comebacks: steps.offered || steps.comebacks || [],
       controls: controls
         ? {
             action: controls.action,
@@ -626,9 +629,27 @@
     return chain && steps.drop_page ? `${String(steps.drop_page).split("#")[0]}#${chain.drop}` : null;
   }
 
-  /** The steps a run sees once its comeback is out of the way: none left to start. */
-  function comebackDone(steps) {
-    return { ...steps, comebacks: [] };
+  /** The steps a run sees once its comeback is out of the way: none left to start. Each comeback
+   * the steps offered and this visit did not run is under ``skipped`` with ``why``, marked
+   * ``comeback`` (#346), and with no step left that is the run's reason; ``offered`` keeps the
+   * steps' own for the record. */
+  function comebackDone(steps, why = null) {
+    const left = steps.comebacks || [];
+    if (!left.length) return { ...steps, comebacks: [], offered: [] };
+    const reason = why || "his comeback did not run in this visit";
+    const skipped = [...(steps.skipped || []), ...left.map((c) => ({ reason, players: [c.player], steps: [], comeback: true, stage: c.stage ?? null, drop: c.drop ?? null }))];
+    const quiet = !(steps.steps || []).length && !(steps.skipped || []).length;
+    return { ...steps, comebacks: [], skipped, reason: quiet ? reason : steps.reason, offered: left };
+  }
+
+  /** Why a visit did not run the steps' comeback (#346): a dry run, a run no routine chains, the
+   * chain back from its drop page (which logs its own run, or found none due), or his move that
+   * did not run on this page. */
+  function comebackWhy({ mode, trigger, chained }) {
+    if (mode !== "live") return "a comeback's drop and move run live only";
+    if (!COMEBACK_CHAIN[trigger]) return "a comeback runs on a routine's pass only";
+    if (chained) return "the chain came back without his move: the drop page's run says why, and none logged means it found no drop due";
+    return "his move did not run on this page: its own run says why";
   }
 
   /** The ``drop_first`` items of the comebacks whose drop is due now, from today's steps read
@@ -799,6 +820,7 @@
     comebackPress,
     comebackChainOf,
     comebackDone,
+    comebackWhy,
     comebackDrops,
     comebackMoveOf,
     comebackChained,

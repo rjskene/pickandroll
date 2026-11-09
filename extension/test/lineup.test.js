@@ -362,7 +362,7 @@ test("a refused run is not kept as the last one", async () => {
 
 test("only the live run clicks; no field is set and nothing submitted; the reader loads the executor's library", () => {
   const manifest = JSON.parse(fs.readFileSync(path.join(DIR, "manifest.json"), "utf8"));
-  assert.equal(manifest.version, "0.11.8");
+  assert.equal(manifest.version, "0.11.9");
   const reader = manifest.content_scripts.find((c) => c.js.includes("league.js"));
   assert.deepEqual(reader.js, ["lib/league.js", "lib/lineup.js", "lib/moves.js", "lib/startactive.js", "lib/ilmove.js", "lib/drop.js", "league.js"]);
   // The moves executor's live claim (``fillClaim``, #171 PR 3) and Start Active's presses
@@ -1232,7 +1232,37 @@ test("the run after a step that did not land starts no comeback and goes to no d
     assert.deepEqual(v.assigned, []);
     assert.deepEqual(roster.touched, ["click 1011 BN", "click 1004 SF"]);
     assert.deepEqual(v.sent.find((m) => m.op === "lineup_setting").record.trigger, "routine");
+    // The comeback set aside is on the run's record, under skipped with why (#346).
+    const { run } = v.sent.find((m) => m.op === "lineup_log");
+    assert.deepEqual(run.comebacks, comebacks);
+    assert.deepEqual(run.skipped.filter((g) => g.comeback), [{ reason: X.comebackWhy({ mode: "live", trigger: "routine", chained: true }), players: [1013], steps: [], comeback: true, stage: comebacks[0].stage, drop: 1009 }]);
   }
+});
+
+test("a chain back with nothing else to do logs the comeback it set aside as its reason, not 'already starts' (#346, 258332 2026-11-09)", async () => {
+  const roster = swapDom({ after: 0 });
+  const answer = comebackWorker({ comebacks: [AT_DROP], steps: [], target: {}, reason: "Yahoo's lineup already starts the recommended players" });
+  const v = await visitPage({ hash: "#pickandroll-lineup-chain", answer, swap: roster });
+  assert.deepEqual([v.assigned, roster.touched], [[], []]);
+  const { run } = v.sent.find((m) => m.op === "lineup_log");
+  const why = X.comebackWhy({ mode: "live", trigger: "routine", chained: true });
+  assert.deepEqual([run.outcome, run.reason, run.comebacks, run.skipped.map((g) => [g.players, g.comeback])], ["nothing_to_do", why, [AT_DROP], [[[1013], true]]]);
+});
+
+test("every visit that does not run the steps' comeback says why (#346)", () => {
+  assert.equal(X.comebackWhy({ mode: "dry_run", trigger: "routine", chained: false }), "a comeback's drop and move run live only");
+  assert.equal(X.comebackWhy({ mode: "live", trigger: "panel", chained: false }), "a comeback runs on a routine's pass only");
+  assert.match(X.comebackWhy({ mode: "live", trigger: "routine_late", chained: true }), /^the chain came back without his move/);
+  assert.match(X.comebackWhy({ mode: "live", trigger: "routine", chained: false }), /^his move did not run on this page/);
+  // Nothing offered: nothing added. Offered with other skips: the API's reason stands.
+  const steps = { steps: [], skipped: [], reason: "r", comebacks: [] };
+  assert.deepEqual(X.comebackDone(steps, "w"), { ...steps, offered: [] });
+  const tipped = { steps: [], skipped: [{ reason: "tip" }], reason: "every change waits on a game that began", comebacks: [AT_DROP], returns: [COMEBACK] };
+  const done = X.comebackDone(tipped, "w");
+  assert.deepEqual([done.comebacks, done.offered, done.reason, done.skipped.length], [[], [AT_DROP], tipped.reason, 2]);
+  // The record keeps the returns and the comebacks offered.
+  const base = X.dryRun({ steps: { ...done, open: true, read: null }, trigger: "routine", page: "/p", postedAt: NaN, controls: null });
+  assert.deepEqual([base.returns, base.comebacks], [[COMEBACK], [AT_DROP]]);
 });
 
 test("the guard read before the click takes a comeback off his move: nothing clicked", async () => {

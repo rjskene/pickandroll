@@ -89,6 +89,11 @@ NEEDS_DROP = "needs a drop: the comeback is the moves queue's"
 #: A comeback's drop's entry in the drop log (#318): it has no queue entry.
 COMEBACK = "comeback"
 NO_KEEP_RULE = "the keep rule did not read: a comeback's drop never runs without it"
+#: A cleared player the steps say nothing else of (#346): another day's page than today's, or
+#: today's page that shows him off the held slots. The digest's comeback line leaves them out.
+COMEBACK_TODAY_ONLY = "a comeback runs on today's page only"
+OFF_HELD = "the page shows him off the held slots: no comeback to run"
+QUIET_COMEBACK = frozenset({NEEDS_DROP, COMEBACK_TODAY_ONLY, OFF_HELD})
 #: A comeback's two stages (#318): his drop is due, or it landed and his move off the IL is.
 DROP_STAGE = "drop"
 MOVE_STAGE = "move"
@@ -167,7 +172,9 @@ def steps_payload(
     ``stage`` when ``comeback`` (``Seasons._comeback_gate``, None outside a live moves league) lets
     it run (#318, :func:`comeback_stage`): at ``drop`` the run goes to ``drop_page`` first, and
     only a read that shows the drop gone puts him at ``move``, alone, then the press on ``back``,
-    my plain team page. Else he is under ``skipped`` with why, marked ``comeback``."""
+    my plain team page. Else he is under ``skipped`` with why, marked ``comeback``, and on
+    another day than today each cleared player is there too (:data:`COMEBACK_TODAY_ONLY`): no
+    cleared held player leaves the steps without a word (#346)."""
     out: dict[str, Any] = {
         "league": league,
         "team": team,
@@ -226,7 +233,18 @@ def steps_payload(
     def tip(k: int | None) -> datetime | None:
         return None if k is None else tip_at(tips, players.get(str(k), {}).get("nba_team"))
 
-    if day == today:
+    if day != today:
+        for a in lineup.get("alerts", []):
+            if a.get("kind") == "cleared":
+                out["skipped"].append(
+                    {
+                        "reason": COMEBACK_TODAY_ONLY,
+                        "players": [a["player"]],
+                        "steps": [],
+                        "comeback": True,
+                    }
+                )
+    else:
         landed = {p["player"]: p for p in (comeback or {}).get("pending") or ()}
         for a in lineup.get("alerts", []):
             if a.get("kind") != "cleared":
@@ -315,8 +333,13 @@ def steps_payload(
 def _no_steps_reason(skipped: Sequence[Mapping[str, Any]]) -> str:
     """Why a day has no steps (#326), from its skip groups: nothing skipped means nothing to
     change, only tip-offs that every change waits on them, one other reason says itself, and
-    several name each once, in the order the groups came."""
-    reasons = list(dict.fromkeys(str(g["reason"]) for g in skipped))
+    several name each once, in the order the groups came. A cleared player with nothing to run
+    here (:data:`COMEBACK_TODAY_ONLY`, :data:`OFF_HELD`) is no reason the lineup has no steps."""
+    reasons = list(
+        dict.fromkeys(
+            str(g["reason"]) for g in skipped if g["reason"] not in (COMEBACK_TODAY_ONLY, OFF_HELD)
+        )
+    )
     if not reasons:
         return "Yahoo's lineup already starts the recommended players"
     if reasons == [TIP_OFF_PASSED]:
@@ -339,14 +362,14 @@ def comeback_stage(
     once the day's page, read after the drop (``read_at``, ``yahoo``), no longer shows the drop. A
     drop already gone by hand goes straight to the move; one on the log (``landed``) that the page
     still shows is never made again, unless Yahoo's answer was never read, when the page says it
-    did not land. Off the held slots on that page he is done, with neither. Every gate of a drop
+    did not land. Off the held slots on that page he is done (:data:`OFF_HELD`). Every gate of a drop
     holds here, before its first click: outside a live moves league under its guard (``gate``
     None) he is the user's, as before; the day's tip-offs unread, or a game of his or the drop's
     that began, waits; a drop the keep rule or Yahoo protects is no legal drop."""
     if gate is None:
         return None, NEEDS_DROP
     if str(yahoo.get(str(alert["player"]), "")).upper() not in lu.HELD_SLOTS:
-        return None, None
+        return None, OFF_HELD
     if not tips_read:
         return None, "the day's tip-offs are not read: a comeback waits for them"
     his, its = tips
@@ -487,6 +510,10 @@ class LineupRun(BaseModel):
     steps: list[StepRun] = []
     #: The API's groups left out, as the steps gave them.
     skipped: list[dict[str, Any]] = []
+    #: What the steps offered (#346): the held players whose status cleared with an open spot,
+    #: and the comebacks that need a drop, before the visit ran or set them aside.
+    returns: list[dict[str, Any]] = []
+    comebacks: list[dict[str, Any]] = []
     #: The form as the page had it: its action path and method, its field names (never a
     #: value), the swap labels counted.
     controls: dict[str, Any] | None = None
@@ -1412,7 +1439,7 @@ def _comeback_line(
             if s.get("kind") == "return" and s.get("drop") is not None:
                 moves[int(s["player"])] = s
         for g in run.get("skipped") or []:
-            if g.get("comeback") and g.get("reason") != NEEDS_DROP:
+            if g.get("comeback") and g.get("reason") not in QUIET_COMEBACK:
                 held |= {int(k): str(g["reason"]) for k in g.get("players") or ()}
     dropped = {int(str(r["entry"]).split(":")[1]): r for r in drops if is_comeback(r.get("entry"))}
     parts = []

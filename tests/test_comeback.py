@@ -209,11 +209,34 @@ def test_an_unread_drop_is_settled_by_the_page():
 def test_the_page_ends_or_resumes_a_comeback_changed_by_hand():
     # The drop gone by hand: straight to the move, nothing to drop.
     assert steps(gate(), spots=AFTER)["comebacks"] == [row("move")]
-    # He left the IL by hand: nothing is due, before or after the drop.
+    # He left the IL by hand: nothing is due, before or after the drop, and the steps say so
+    # (#346).
     off = {"PG": 1, "C": 2, "BN": BACK, "UTIL": STAY}
-    assert steps(gate(), spots=off)["comebacks"] == []
-    assert steps(gate(pending=landed()), spots=off)["comebacks"] == []
-    assert steps(gate(pending=landed()), spots={"PG": 1, "C": 2})["comebacks"] == []
+    quiet = [{"reason": ap.OFF_HELD, "players": [BACK], "steps": [], "comeback": True}]
+    for g, spots_ in (
+        (gate(), off),
+        (gate(pending=landed()), off),
+        (gate(pending=landed()), {"PG": 1, "C": 2}),
+    ):
+        s = steps(g, spots=spots_)
+        assert (s["comebacks"], s["skipped"]) == ([], quiet)
+
+
+def test_no_cleared_held_player_leaves_the_steps_without_a_word():
+    # #346: every path that runs no comeback for him puts him under skipped, marked comeback.
+    tipped = {"NYK": (AT - timedelta(minutes=5)).isoformat()}
+    cases = [
+        steps(None),  # outside a live moves league
+        steps(gate(), no_tips=True),
+        steps(gate(), tips=tipped),
+        steps(gate(protected={STAY})),
+        steps(gate(), spots={"PG": 1, "C": 2, "BN": BACK, "UTIL": STAY}),
+        steps(gate(), day=DAY + timedelta(days=1)),
+    ]
+    for s in cases:
+        assert s["comebacks"] or any(
+            BACK in g["players"] and g.get("comeback") for g in s["skipped"]
+        )
 
 
 def test_a_drop_of_the_player_himself_is_a_drop_and_then_nothing():
@@ -596,6 +619,20 @@ def test_the_digest_leaves_the_users_own_comebacks_and_other_groups_to_their_lin
     other = {"reason": "tip-off passed", "players": [1, 2], "steps": []}
     ap.append_run(tmp_path, LEAGUE, run_with(skipped=[held, other]), DAY)
     assert digest(tmp_path) == []
+
+
+def test_the_digest_leaves_out_a_comeback_with_nothing_to_run_on_its_page(tmp_path):
+    # #346: another day's page and a page that shows him off the held slots say so on the run,
+    # never in the digest.
+    for why in (ap.COMEBACK_TODAY_ONLY, ap.OFF_HELD):
+        held = {"reason": why, "players": [BACK], "steps": [], "comeback": True}
+        ap.append_run(tmp_path, LEAGUE, run_with(skipped=[held]), DAY)
+    assert digest(tmp_path) == []
+    # The chain that came back without his move (the extension's words) is a line.
+    why = "the chain came back without his move: the drop page's run says why"
+    held = {"reason": why, "players": [BACK], "steps": [], "comeback": True}
+    ap.append_run(tmp_path, LEAGUE, run_with(skipped=[held]), DAY)
+    assert digest(tmp_path) == line(f"nothing ran ({why})")
 
 
 def chain(tmp_path, at: datetime, day: date = DAY) -> None:
