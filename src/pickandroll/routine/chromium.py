@@ -35,6 +35,7 @@ from urllib.parse import urlsplit
 
 from .browser import BBM_HOST, YAHOO_HOST, refused
 from .clock import now
+from .lock import BrowserBusy, BrowserLock
 from .report import EXPORT_KINDS
 from .steps import PRIVATE_LEAGUE, YAHOO
 
@@ -190,6 +191,9 @@ class ChromiumBrowser:
         launch: Launch = playwright_launch,
         headless: bool = False,
         clock: Callable[[], float] = time.monotonic,
+        lock: Path | None = None,
+        holder: str = "a routine",
+        lock_wait_s: float = 0.0,
     ) -> None:
         self.profile = Path(profile)
         self.extension = Path(extension)
@@ -200,6 +204,12 @@ class ChromiumBrowser:
         self.headless = headless
         self.clock = clock
         self.reason = ""
+        #: The profile's lock (#355), taken at launch and given back at close; ``busy`` is the
+        #: holder's line when the run's wait ran out.
+        self._lock = (
+            BrowserLock(lock, holder, lock_wait_s, sleep=sleep, clock=clock) if lock else None
+        )
+        self.busy: str | None = None
         #: The extension's worker scripts, once up.
         self.workers: list[str] = []
         #: Every URL this run loaded, in order (the run log's evidence).
@@ -214,8 +224,13 @@ class ChromiumBrowser:
     def available(self) -> bool:
         if self._available is None:
             try:
+                if self._lock is not None:
+                    self._lock.acquire()
                 self._launch()
                 self._available = True
+            except BrowserBusy as exc:
+                self.reason = self.busy = str(exc)
+                self._available = False
             except Exception as exc:  # noqa: BLE001 - the reason is reported, never raised
                 self.reason = one_line(exc)
                 self._available = False
@@ -248,6 +263,8 @@ class ChromiumBrowser:
         if pw is not None:
             with contextlib.suppress(Exception):
                 pw.stop()
+        if self._lock is not None:
+            self._lock.release()
 
     # ------------------------------------------------------------------ the sites
     def signed_in(self, site: str) -> bool:

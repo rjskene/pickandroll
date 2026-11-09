@@ -7,6 +7,7 @@
     python scripts/routine.py evening-pass         # 22:40: the evening's pages, hard stop 22:58
     python scripts/routine.py monday               # Mon 06:00: record, scorecard, hill-climb, queue
     python scripts/routine.py signin               # the browser up, both sites' sign-in state
+    python scripts/routine.py pretip               # every 5 min: the private league's pre-tip pass when due
     python scripts/routine.py daily --dry-run      # the plan from the live API; opens nothing
     python scripts/routine.py daily --force        # outside the window (a test, a re-run)
     python scripts/routine.py daily --no-browser   # the API steps only (the Mac, side by side)
@@ -48,8 +49,9 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 from pickandroll.routine import CENTRAL, Context, Report, Unreachable, http, now, run
+from pickandroll.routine.push import ntfy_pusher
 from pickandroll.routine.report import marker, write_json
-from pickandroll.routine.routines import ROUTINES
+from pickandroll.routine.routines import ROUTINES, lock_wait_s
 from pickandroll.routine.steps import gh_comment, script_runner
 
 API = os.environ.get("PICKANDROLL_API", "http://127.0.0.1:8000").rstrip("/")
@@ -108,6 +110,10 @@ def main(argv: list[str] | None = None) -> int:
             profile=Path(os.environ.get("PICKANDROLL_PROFILE", args.data / "routine" / "profile")),
             extension=Path(os.environ.get("PICKANDROLL_EXTENSION", ROOT / "extension")),
             downloads=downloads,
+            # One run at a time on the profile (#355): the lock beside it, this run's wait.
+            lock=args.data / "routine" / "browser.lock",
+            holder=f"the {args.routine} routine",
+            lock_wait_s=lock_wait_s(args.routine, clock()),
         )
     ctx = Context(
         call=http(args.api),
@@ -121,6 +127,10 @@ def main(argv: list[str] | None = None) -> int:
         dry_run=args.dry_run,
         posting=not args.no_post,
         skip_solve=frozenset(args.skip_solve),
+        # The user's private push (#355): the topic file in the user's own config, never here.
+        push=ntfy_pusher(
+            Path(os.environ.get("PICKANDROLL_CONF", Path.home() / ".config" / "pickandroll"))
+        ),
     )
     try:
         run(args.routine, ctx, args.api, force=args.force)

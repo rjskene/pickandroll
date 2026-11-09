@@ -41,6 +41,7 @@ import type {
   MoveRos,
   MovesPassLog,
   MovesAnswer,
+  MovesExports,
   MovesPayload,
   MovesSolving,
   MovesStale,
@@ -1251,6 +1252,21 @@ export function centralClock(iso: string | null | undefined): string {
   const t = iso ? Date.parse(iso) : NaN;
   if (Number.isNaN(t)) return "";
   return `${new Date(t).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: "America/Chicago" })} CT`;
+}
+
+/** The Moves card's inputs line (#355): "BBM: projections 4:58 PM CT · this week 5:03 AM CT ·
+ * next week none", each export by its pull time on the Central clock; blank before the API
+ * serves it. */
+export function exportsLine(e: MovesExports | undefined, clock: (iso: string | null) => string = centralClock): string {
+  if (!e) return "";
+  const parts = (
+    [
+      ["ros", "projections"],
+      ["week_this", "this week"],
+      ["week_next", "next week"],
+    ] as const
+  ).map(([k, label]) => `${label} ${e[k] ? clock(e[k].at) || "none" : "none"}`);
+  return `BBM: ${parts.join(" · ")}`;
 }
 
 /** An entry's flag in the Queue card's words: "strong breakout", "breakout", or blank. */

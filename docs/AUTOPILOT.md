@@ -835,6 +835,36 @@ the private league's solve was left out there with `--skip-solve 31822`, `docs/O
 | Monday, after the recorder | the scorecard (#126): last week and YTD, projected against actual, posted on #127 | phase 0 |
 | Monday, after the scorecard | the hill-climb step (section 6): the verdicts due and at most one change applied, the comment posted on #127 | yes (#152, `scripts/season.py monday`); the Monday routine runs it from 2026-10-26 |
 | Monday, then | the week's first queue is built under the new setting, before the first claims | phase 2 |
+| a game day, an hour before the first tip-off (and the late slate's) | the pre-tip pass for the private league (#355): Basketball Monster's rest-of-season and this-week exports, its pages, its solve, its suggestions pushed to the user privately | routine `pretip` (PR 1, off: `pretip.enabled` false); its five-minute check timer is PR 2 |
+
+**The pre-tip pass (#355).** The 05:00 copy of the week's games is hours old by the first
+tip-off of the private league's day, and its adds are same-day. A check every five minutes from
+09:00 asks `GET /autopilot/pretip/due`, which reads today's tip-offs from the schedule copy and
+the knobs under `pretip` in `data/autopilot/executor.json`: `enabled` (false until the user
+says so; the flip is made on the host after an update, on the user's word only), `lead_min`
+(60), `late_slate` (true), `late_gap_min` (150: the late slate is the first tip-off at least
+that long after the first one) and `latest_start` (20:40, so no full pass runs into the 21:00
+build). A slate is due from its tip-off less the lead until fifteen minutes before it. A check
+with nothing due is refused: no browser, no lock, no report. A due slate runs the two exports
+(this week under the daily's Sunday rule, so Sunday's games come from Saturday's copy), the
+private league's pages and lineup pages, its solve, then `GET /seasons/<private>/pretip`
+(names and teams only, never a Basketball Monster number), pushed to the user's ntfy topic,
+the one `ops/vm/alert.sh` uses, read from the user's own file and never written to the repo;
+never to #99, whose drops would name the private roster. The Moves card names the exports in
+force by their pull time on the Central clock, in every league.
+
+Each attempt is logged on the day file `data/routine/pretip/<date>.json` (`POST
+/autopilot/pretip/runs`). A slate is done only once an attempt's solve and push both completed
+(a late slate whose recommended set is the first slate's needs no push). A lock skip, a crash or
+a failed push leaves it due, so the next check tries again until fifteen minutes before the
+tip-off; an attempt that solved and only failed its push is retried as a push alone, opening
+nothing. Suggestions only: the pass clicks nothing in the private league.
+
+**The browser profile's lock (#355).** Every routine takes `data/routine/browser.lock` (`flock`)
+when its browser launches and gives it back at close; the process ending gives it back too. The
+pre-tip pass waits fifteen minutes for it, then skips and stays due; every other run waits
+twenty minutes, then fails its browser steps with an alert naming the holder; the evening pass
+never waits past its 22:58 hard stop.
 
 ## 4. The strategy rule (user, 2026-10-22)
 

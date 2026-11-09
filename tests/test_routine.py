@@ -770,6 +770,7 @@ def test_windows_cover_every_routine():
         "evening-pass",
         "monday",
         "signin",
+        "pretip",
     }
     o = Opening("252098", "moves", "u", 12.0)
     assert o.entry is None

@@ -169,6 +169,7 @@ from . import (
     season_moves,
     season_outlook,
     season_passes,
+    season_pretip,
     season_progress,
     season_queue,
     season_record,
@@ -183,6 +184,7 @@ from .season_week import (
     BBM_THIS_WEEK,
     DEFAULT_SYSTEM,
     NBA_TZ,
+    exports_in_force,
     week_projection,
 )
 
@@ -856,6 +858,8 @@ class SeasonService:
         file holds now (#261): read at request time, past the kept solve. ``stop``: the client
         went (#306), the solve stops and raises :class:`Abandoned`."""
         out = self._moves(league, system, source, entry, stop)
+        # The exports the moves rest on, with their pull times on the Central clock (#355).
+        out = {**out, "exports": exports_in_force(self.data_dir, season_pretip.CENTRAL)}
         claim = out.get("claim")
         if claim is None:
             return out
@@ -2148,6 +2152,58 @@ class SeasonService:
             "leagues": rows,
             "at": now.isoformat(),
         }
+
+    # ------------------------------------------------------------------ the pre-tip pass (#355)
+    def private_league(self) -> str | None:
+        """The private league (its settings' ``public`` false), the first by id; None without."""
+        return next(
+            (
+                k
+                for k in sorted(leagues.leagues(self.data_dir))
+                if not leagues.load_settings(self.data_dir, k).get("public", True)
+            ),
+            None,
+        )
+
+    def pretip_due(self) -> dict[str, Any]:
+        """Whether a slate's pre-tip pass is due now, from today's tip-offs and the day file
+        (``season_pretip.due``), with the private league it is for. Nothing here opens a page."""
+        now = self.clock()
+        today = nba_today(now)
+        tips = nba_schedule.load_tips(today, self.data_dir / SCHEDULE_DIR)
+        stopped = season_autopilot.stopped(self.data_dir)
+        out = season_pretip.due(self.data_dir, now, today, tips, stopped)
+        return {**out, "league": self.private_league()}
+
+    def pretip(self, league: str) -> dict[str, Any]:
+        """The private league's recommended set for the pre-tip push (#355), solved now when it
+        is not (a cache hit after the routine's solve): its moves, the exports in force and the
+        push's text, names and teams only. Refused for a public league."""
+        if league != self.private_league():
+            raise HTTPException(409, "the pre-tip pass is the private league's only")
+        today = nba_today(self.clock())
+        best = self.best(league, None, solve=True)
+        moves = (best.get("set") or []) if best.get("status") == "solved" else []
+        p = self._built(league, None).problem
+        players = {k: player for k, player in (*p.roster, *p.held, *p.candidates)}
+        names = {k: pl.name for k, pl in players.items()}
+        teams = {k: pl.nba_team for k, pl in players.items()}
+        exports = exports_in_force(self.data_dir, season_pretip.CENTRAL)
+        return {
+            "league": league,
+            "date": today.isoformat(),
+            "status": best.get("status"),
+            "moves": [{"add": m["add"], "drop": m["drop"]} for m in moves],
+            "exports": exports,
+            "markdown": season_pretip.markdown(
+                league, today, moves, names, teams, exports, str(best.get("status"))
+            ),
+        }
+
+    def log_pretip_run(self, run: season_pretip.PretipRun) -> dict[str, Any]:
+        """One attempt of a slate's pass, on today's day file; the slate is done only by
+        ``season_pretip.done_of``."""
+        return season_pretip.record(self.data_dir, nba_today(self.clock()), run)
 
     def claim_page_due(self) -> dict[str, Any]:
         """The one read of Yahoo's page of a pending claim (#345 step 0): due until a read is on
@@ -3755,6 +3811,21 @@ def register(
         except ValidationError as exc:
             raise HTTPException(422, exc.errors(include_url=False, include_context=False)) from exc
         return service.log_il_run(league, run)
+
+    @app.get("/autopilot/pretip/due")
+    def get_pretip_due() -> dict[str, Any]:
+        """Whether the private league's pre-tip pass is due now, and which slate (#355)."""
+        return service.pretip_due()
+
+    @app.get("/seasons/{league}/pretip")
+    async def get_pretip(league: str = league_id) -> dict[str, Any]:
+        """The private league's pre-tip suggestions and their push text (#355)."""
+        return await asyncio.to_thread(service.pretip, league)
+
+    @app.post("/autopilot/pretip/runs")
+    def post_pretip_run(run: season_pretip.PretipRun) -> dict[str, Any]:
+        """One attempt of a slate's pre-tip pass, for the day file (#355)."""
+        return service.log_pretip_run(run)
 
     @app.get("/autopilot/claim-page/due")
     def get_claim_page_due() -> dict[str, Any]:

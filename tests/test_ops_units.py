@@ -84,8 +84,14 @@ def test_every_unit_file_parses_with_a_description() -> None:
             assert "Service" in u
 
 
+#: Routines whose timer is not in ops/vm yet: the pre-tip check's timer is #355's PR 2, after its
+#: routine (PR 1); until then the routine runs only by hand.
+NO_TIMER_YET = {"pretip"}
+
+
 def test_the_timers_are_the_runners_routines_on_the_central_clock() -> None:
-    assert set(TIMERS) == set(RUNNER)
+    assert set(TIMERS) == set(RUNNER) - NO_TIMER_YET
+    assert not list(VM.glob("pickandroll-routine@pretip.timer"))
     for name, calendar in TIMERS.items():
         u = unit(VM / f"pickandroll-routine@{name}.timer")
         assert one(u, "Timer", "OnCalendar") == f"{calendar} {ZONE}"
