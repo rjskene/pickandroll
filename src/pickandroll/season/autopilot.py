@@ -707,8 +707,9 @@ def held_cleared(
     """My players on IL or IL+ (``held``: id, slot and this league's read of his status) whose
     newest status (``newest``, :func:`newest_statuses`; this league's read when none) no longer
     fits the slot: while one sits there Yahoo refuses every claim (Error 845), so the claim waits
-    for his comeback (#341). Each is ``{player, slot, status, read_at, league}``, the read's time
-    and league null when it is this league's own."""
+    for his comeback (#341). Each is ``{player, slot, status, read_at, league}``: the newest read's
+    time and league, this league's when its own read is the newest (``newest`` scans every
+    league, this one included); null only when no team-page read of him is stored at all."""
     out = []
     for pid, slot, status in held:
         if slot not in CLEARED_SLOTS:

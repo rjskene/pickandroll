@@ -513,8 +513,9 @@ page, from PR 2:
     (05:28 CST) still said O while 31153's at 09:15 CST said Q. While one is listed every claim skips
     with "<id> sits on IL with status Q: Yahoo refuses every claim until he leaves it (Error 845)",
     and the skip stays due. The limit: a player read in no league since his status changed is
-    judged on the stale read. Each item is `{player, slot, status, read_at, league}`, the time and
-    league null when this league's own read is the newest.
+    judged on the stale read. Each item is `{player, slot, status, read_at, league}`: the newest
+    read's time and league, this league's when its own read is the newest (the scan covers every
+    league, this one included), null only when no team-page read of him is stored.
   - **A placed claim judged again when a held player clears (#345, PR 1).** A claim keeps its place
     until Yahoo settles it, and his comeback then drops the least valuable active player, the
     claim's add included (31153, 2026-11-09: a $2 claim won at 04:17 and its add dropped by the
