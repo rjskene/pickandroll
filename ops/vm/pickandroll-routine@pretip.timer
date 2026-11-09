@@ -1,0 +1,16 @@
+# The pretip routine's timer (#355): a check every five minutes from 09:00 to 20:55, on the
+# Central clock whatever the host's zone. A check with no slate due is refused (exit 3) before
+# any browser, lock or report; a due slate runs the private league's pre-tip pass, so every
+# browser run has a tip-off behind it. The pass is off until the user sets pretip.enabled in
+# data/autopilot/executor.json. Persistent: a check missed while the host was down runs at boot.
+[Unit]
+Description=pickandroll pretip routine (every five minutes 09:00-20:55 Central, the pre-tip check)
+
+[Timer]
+OnCalendar=*-*-* 09..20:00/5:00 America/Chicago
+AccuracySec=15s
+Persistent=true
+Unit=pickandroll-routine@pretip.service
+
+[Install]
+WantedBy=timers.target

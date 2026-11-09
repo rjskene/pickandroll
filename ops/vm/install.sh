@@ -8,10 +8,11 @@
 # are left as they are unless asked:
 #   --soak     every league's lineup mode and every public league's moves mode set to dry_run
 #              through the local API and read back, ROUTINE_FLAGS=--no-post (unless the
-#              user's routine.env exists), the seven routine timers and the watchdog enabled:
+#              user's routine.env exists), the eight routine timers and the watchdog enabled:
 #              the soak, the Mac still live
 #   --cutover  ROUTINE_FLAGS empty (posts on), the timers enabled; the modes are the user's own
-#              clicks on the dashboard
+#              clicks on the dashboard. Run again after a pull that adds a timer (the pretip
+#              check's, #355): update.sh copies no unit, and a plain install leaves timers off
 # The dashboard (web/) is built here and served by the API under /app, for the tailnet (§2a).
 # Every league is solved here, the private one included: the API keeps each moves solve to its
 # budget (moves_budget_s in the autopilot settings file, 90 s by default, #306) and stops one
@@ -41,7 +42,7 @@ export DBUS_SESSION_BUS_ADDRESS=${DBUS_SESSION_BUS_ADDRESS:-unix:path=$XDG_RUNTI
 py=$repo/.venv/bin/python
 timers="pickandroll-routine@daily.timer pickandroll-routine@morning.timer pickandroll-routine@late.timer
 pickandroll-routine@evening-build.timer pickandroll-routine@evening-pass.timer pickandroll-routine@monday.timer
-pickandroll-routine@signin.timer pickandroll-watchdog.timer"
+pickandroll-routine@signin.timer pickandroll-routine@pretip.timer pickandroll-watchdog.timer"
 
 say() { printf '%s\n' "$*"; }
 

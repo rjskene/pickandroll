@@ -2,7 +2,9 @@
 the extension loaded, the same launch the routines make plus the DevTools port on localhost,
 with the DevTools frontend's origin allowed on it, a tab on each site. The user signs in from
 the Mac over DevTools (``ops/mac/signin.sh``) and presses Enter in the terminal; nothing here
-reads, types or logs a credential."""
+reads, types or logs a credential. The browser takes the profile's lock first, the one every
+routine takes (``data/routine/browser.lock`` beside the profile, #355), and refuses while a
+routine holds it: two Chromiums on one profile never run at once."""
 
 from __future__ import annotations
 
@@ -34,12 +36,32 @@ def launch_args(extension: Path) -> list[str]:
     ]
 
 
+def lock_path(profile: Path) -> Path:
+    """The profile's lock, beside it: ``data/routine/browser.lock`` for the routines' profile."""
+    return profile.parent / "browser.lock"
+
+
 def main(profile: Path, extension: Path) -> int:
-    from playwright.sync_api import sync_playwright
+    from pickandroll.routine.lock import BrowserBusy, BrowserLock
 
     if not (extension / "manifest.json").is_file():
         print(f"no extension at {extension}")
         return 1
+    lock = BrowserLock(lock_path(profile), "the sign-in browser", 0)
+    try:
+        lock.acquire()
+    except BrowserBusy as exc:
+        print(f"{exc}: run this again once it ends")
+        return 1
+    try:
+        return _run(profile, extension)
+    finally:
+        lock.release()
+
+
+def _run(profile: Path, extension: Path) -> int:
+    from playwright.sync_api import sync_playwright
+
     profile.mkdir(parents=True, exist_ok=True)
     profile.chmod(0o700)
     with sync_playwright() as pw:
