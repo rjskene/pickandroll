@@ -1433,6 +1433,28 @@ export interface QueueEntry {
   /** The latest IL run naming the entry on the queue's day (#214), read from the league's log;
    * null before one, absent from a server before it. */
   il_pass?: QueueILPass | null;
+  /** A placed claim judged again once a held player of mine cleared (#345); absent before one. */
+  rejudge?: ClaimRejudge | null;
+}
+
+/** A placed claim's verdict judged again (#345): ``cancel`` when it no longer pays with the cleared
+ * held players back (or his comeback would drop the add), ``keep`` when it still does, null when it
+ * could not be judged or no one is cleared any more; ``reason`` in words. */
+export interface ClaimRejudge {
+  at: string;
+  verdict: "keep" | "cancel" | null;
+  reason: string;
+  held?: number[];
+}
+
+/** An earlier day's placed claim still open, on its league's row (#171; bid and verdict #345). */
+export interface QueuePending {
+  id: string;
+  add: number;
+  drop: number | null;
+  from: string | null;
+  bid?: number | null;
+  rejudge?: ClaimRejudge | null;
 }
 
 /** A week plan's step on the queue (#221 part 2): the plan's id and day, the step and the steps. */
@@ -1539,7 +1561,7 @@ export interface QueueLeague {
   cap_from?: "the user" | "the knob";
   budget?: number | null;
   adds_left?: { start: string; end: string; adds: number | null }[];
-  pending?: string[];
+  pending?: QueuePending[];
   protected?: Record<string, string>;
   floor?: QueueFloor;
   typical?: { value: number; from: string };

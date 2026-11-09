@@ -56,6 +56,7 @@ import type {
   PriorityClaim,
   QueueEntry,
   QueueLeague,
+  QueuePending,
   QueuePass,
   QueuePayload,
   Rates,
@@ -1102,6 +1103,19 @@ export function stripReason(row: QueueLeague, entries: QueueEntry[]): string {
   let top = "";
   for (const [why, n] of counts) if (!top || n > counts.get(top)!) top = why;
   return top || "nothing queued";
+}
+
+/** The league's open claims judged again and cancelled (#345), each as the user is to cancel it in
+ * Yahoo's pending claims: the earlier days' on the row and today's placed among the entries. */
+export function cancelByHand(row: QueueLeague, entries: QueueEntry[]): string[] {
+  const today = entries.filter((e) => e.league === row.league && (e.outcome === "claimed" || e.outcome === "added") && !e.resolved);
+  const open: Pick<QueuePending, "add" | "drop" | "bid" | "rejudge">[] = [
+    ...(row.pending ?? []),
+    ...today.map((e) => ({ add: e.add, drop: e.drop, bid: e.bid_placed, rejudge: e.rejudge })),
+  ];
+  return open
+    .filter((c) => c.rejudge?.verdict === "cancel")
+    .map((c) => `cancel by hand: add ${c.add}, ${c.drop == null ? "open spot" : `drop ${c.drop}`}${c.bid != null ? `, $${c.bid}` : ""} (${c.rejudge!.reason})`);
 }
 
 // ---------------------------------------------------------------- one switch (#205)
