@@ -1547,7 +1547,7 @@ def cancel_digest_lines(data_dir: Path, today: date) -> list[str]:
         e
         for q in open_queues(data_dir, today)
         for e in q.get("entries") or []
-        if e.get("outcome") in qa.PLACED
+        if e.get("outcome") == qa.CLAIMED
         and not e.get("resolved")
         and (e.get("rejudge") or {}).get("verdict") == qa.CANCEL
     ]

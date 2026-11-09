@@ -520,7 +520,8 @@ page, from PR 2:
     claim's add included (31153, 2026-11-09: a $2 claim won at 04:17 and its add dropped by the
     comeback at 05:31; the claim was an add with a drop, not the spot his IL move opened). So
     every queue build, for a league with a held player cleared by his newest status in any league
-    (as above), judges each open claim of the league again, earlier days' and today's placed alike,
+    (as above), judges each open waiver claim of the league again (`claimed`, never a free agent
+    `added` at once, which landed and has nothing to cancel), earlier days' and today's alike,
     as it judges a new entry: the move's gain on the entry's judging horizon from the moves
     evaluator with the cleared statuses applied, which charges each comeback's drop, the season
     guard, and the noise floor. A claim a comeback would drop the add of is cancelled whatever the

@@ -1955,7 +1955,7 @@ test("the Queue screen orders the day's entries across the leagues, says why a l
   assert.equal(stripReason(row("queued"), none), "below the plan floor");
   assert.equal(stripReason(row("queued"), []), "nothing queued");
   // The claims judged again and cancelled (#345): an earlier day's on the row, today's placed among
-  // the entries; a kept one, a resolved one and another league's say nothing.
+  // the entries; a kept one, a resolved one, a free agent's add and another league's say nothing.
   const why = "with 6038 back his comeback would drop 10313, the claim's own add";
   const cancel = { at: "2026-11-08T21:00:00Z", verdict: "cancel" as const, reason: why };
   const pending = [
@@ -1966,6 +1966,8 @@ test("the Queue screen orders the day's entries across the leagues, says why a l
     at("t1", { league: "900004", outcome: "claimed", drop: null, bid_placed: 1, rejudge: cancel }),
     at("t2", { league: "900004", outcome: "claimed", resolved: "won", rejudge: cancel }),
     at("t3", { league: "900002", outcome: "claimed", rejudge: cancel }),
+    // A free agent added at once has landed: nothing to cancel, whatever an old verdict says.
+    at("t4", { league: "900004", outcome: "added", rejudge: cancel }),
   ];
   assert.deepEqual(cancelByHand(row("queued", { pending }), placed), [
     `cancel by hand: add 10313, drop 10460, $2 (${why})`,

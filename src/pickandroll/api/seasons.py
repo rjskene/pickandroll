@@ -1756,7 +1756,9 @@ class SeasonService:
         the newest status in any league (#341): as the build judges a new entry, his comeback's
         drop charged, and cancelled when it no longer pays or the comeback would drop the add.
         By entry id; a verdict from an earlier build lapses (:data:`qa.NO_CLEARED`) once no one
-        is cleared. Nothing when no claim is open."""
+        is cleared. Nothing when no claim is open. Only a waiver claim is judged: a free agent
+        added at once has landed and has nothing to cancel."""
+        claims = [c for c in claims if c.get("outcome") == qa.CLAIMED]
         if not claims:
             return {}
         at = now.isoformat()
@@ -2171,7 +2173,7 @@ class SeasonService:
             e
             for q in season_autopilot.open_queues(self.data_dir, today)
             for e in q.get("entries") or []
-            if e.get("outcome") in qa.PLACED and not e.get("resolved")
+            if e.get("outcome") == qa.CLAIMED and not e.get("resolved")
         ]
         for league, mode in sorted(self._modes(leagues.MOVES).items()):
             if mode.get("private") or mode["mode"] == "off":
@@ -3158,9 +3160,10 @@ def _resolver(
 
 
 def _rejudge_into(entries: list[dict[str, Any]], rejudged: Mapping[str, dict[str, Any]]) -> None:
-    """Each open claim's verdict judged again (#345) on its entry: never on one resolved."""
+    """Each open claim's verdict judged again (#345) on its entry: never on one resolved, nor on
+    a free agent added at once."""
     for e in entries:
-        if e.get("id") in rejudged and e.get("outcome") in qa.PLACED and not e.get("resolved"):
+        if e.get("id") in rejudged and e.get("outcome") == qa.CLAIMED and not e.get("resolved"):
             e["rejudge"] = rejudged[e["id"]]
 
 
