@@ -12,14 +12,24 @@ function descendants(n) {
   return n.children.flatMap((c) => [c, ...descendants(c)]);
 }
 
+/** A tag, an id, a class and one attribute test, each optional: ``[a]`` is there, ``[a*="v"]``
+ * contains, ``[a="v"]`` or ``[a=v]`` equals; comma lists of those. */
+const SELECTOR = /^(?<tag>[a-z0-9]+)?(?:#(?<id>[\w-]+))?(?:\.(?<cls>[\w-]+))?(?:\[(?<attr>[\w-]+)(?:(?<op>\*?)=(?:"(?<quoted>[^"]*)"|(?<bare>[\w-]+)))?\])?$/i;
+
 function matches(e, sel) {
   return sel.split(",").some((part) => {
     const s = part.trim();
-    let m = /^#([\w-]+)$/.exec(s);
-    if (m) return e.getAttribute("id") === m[1];
-    m = /^([a-z0-9]+)?(?:\[([\w-]+)\*="([^"]*)"\])?$/i.exec(s);
-    if (!m || (!m[1] && !m[2])) throw new Error(`the fixture DOM does not read the selector ${s}`);
-    return (!m[1] || e.tagName === m[1].toUpperCase()) && (!m[2] || (e.getAttribute(m[2]) || "").includes(m[3]));
+    const m = SELECTOR.exec(s);
+    if (!s || !m) throw new Error(`the fixture DOM does not read the selector ${s}`);
+    const { tag, id, cls, attr, op, quoted, bare } = m.groups;
+    const value = quoted !== undefined ? quoted : bare;
+    const has = attr ? e.getAttribute(attr) : null;
+    return (
+      (!tag || e.tagName === tag.toUpperCase()) &&
+      (!id || e.getAttribute("id") === id) &&
+      (!cls || e.className.split(/\s+/).includes(cls)) &&
+      (!attr || (has !== null && (value === undefined || (op ? has.includes(value) : has === value))))
+    );
   });
 }
 
@@ -38,7 +48,10 @@ function element(tag, attrs, parent) {
     },
     querySelectorAll: (sel) => descendants(e).filter((d) => matches(d, sel)),
     querySelector: (sel) => e.querySelectorAll(sel)[0] || null,
-    closest: () => null,
+    closest: (sel) => {
+      for (let at = e; at && at.tagName !== "#ROOT"; at = at.parentElement) if (matches(at, sel)) return at;
+      return null;
+    },
   };
   return e;
 }

@@ -1756,7 +1756,9 @@ class SeasonService:
         the newest status in any league (#341): as the build judges a new entry, his comeback's
         drop charged, and cancelled when it no longer pays or the comeback would drop the add.
         By entry id; a verdict from an earlier build lapses (:data:`qa.NO_CLEARED`) once no one
-        is cleared. Nothing when no claim is open."""
+        is cleared. Nothing when no claim is open. Only a waiver claim is judged: a free agent
+        added at once has landed and has nothing to cancel."""
+        claims = [c for c in claims if c.get("outcome") == qa.CLAIMED]
         if not claims:
             return {}
         at = now.isoformat()
@@ -2146,6 +2148,68 @@ class SeasonService:
             "leagues": rows,
             "at": now.isoformat(),
         }
+
+    def claim_page_due(self) -> dict[str, Any]:
+        """The one read of Yahoo's page of a pending claim (#345 step 0): due until a read is on
+        file, then never again. The league is the first public league by id whose moves
+        executor is not off with a claim placed and not settled on a queue of the open days
+        (``season_queue.PENDING_DAYS``), never the private one; the page is my team page there,
+        whose Pending Transactions box links the claim's page. Under STOP nothing is due.
+        Nothing here opens a page."""
+        now = self.clock()
+        today = nba_today(now)
+        reads = season_autopilot.claim_page_reads(self.data_dir)
+        out: dict[str, Any] = {
+            "date": today.isoformat(),
+            "fragment": season_autopilot.CLAIM_PAGE_FRAGMENT,
+            "reads": len(reads),
+            "due": False,
+        }
+        if reads:
+            return {**out, "reason": "a read of the claim page is on file"}
+        if season_autopilot.stopped(self.data_dir):
+            return {**out, "reason": "STOP is on (data/autopilot/STOP)"}
+        open_ = [
+            e
+            for q in season_autopilot.open_queues(self.data_dir, today)
+            for e in q.get("entries") or []
+            if e.get("outcome") == qa.CLAIMED and not e.get("resolved")
+        ]
+        for league, mode in sorted(self._modes(leagues.MOVES).items()):
+            if mode.get("private") or mode["mode"] == "off":
+                continue
+            claims = [e for e in open_ if e.get("league") == league]
+            if not claims:
+                continue
+            try:
+                base, _ = base_settings(self.data_dir, league)
+            except leagues.LeagueError:
+                continue
+            if base.my_team_id is None:
+                continue
+            return {
+                **out,
+                "due": True,
+                "reason": None,
+                "league": league,
+                "claim": claims[0].get("id"),
+                "add": claims[0].get("add"),
+                "drop": claims[0].get("drop"),
+                "page": public.team_url(league, base.my_team_id, today),
+            }
+        return {**out, "reason": "no claim placed and open in a public league"}
+
+    def log_claim_page_read(
+        self, league: str, read: season_autopilot.ClaimPageRead
+    ) -> dict[str, Any]:
+        """File the extension's read of a pending claim's page (#345 step 0): refused in the
+        private league and in a league with no moves executor on file."""
+        mode = self._modes(leagues.MOVES).get(league)
+        if mode is None:
+            raise HTTPException(404, f"league {league} has no moves executor")
+        if mode.get("private"):
+            raise HTTPException(409, "the private league's pages are never read for this")
+        return season_autopilot.append_claim_page_read(self.data_dir, league, read)
 
     def log_start_active_run(
         self, league: str, run: season_autopilot.StartActiveRun
@@ -3096,9 +3160,10 @@ def _resolver(
 
 
 def _rejudge_into(entries: list[dict[str, Any]], rejudged: Mapping[str, dict[str, Any]]) -> None:
-    """Each open claim's verdict judged again (#345) on its entry: never on one resolved."""
+    """Each open claim's verdict judged again (#345) on its entry: never on one resolved, nor on
+    a free agent added at once."""
     for e in entries:
-        if e.get("id") in rejudged and e.get("outcome") in qa.PLACED and not e.get("resolved"):
+        if e.get("id") in rejudged and e.get("outcome") == qa.CLAIMED and not e.get("resolved"):
             e["rejudge"] = rejudged[e["id"]]
 
 
@@ -3690,6 +3755,30 @@ def register(
         except ValidationError as exc:
             raise HTTPException(422, exc.errors(include_url=False, include_context=False)) from exc
         return service.log_il_run(league, run)
+
+    @app.get("/autopilot/claim-page/due")
+    def get_claim_page_due() -> dict[str, Any]:
+        """Whether the one read of a pending claim's page is due, and the team page to start
+        from (#345 step 0); nothing here opens a page."""
+        return service.claim_page_due()
+
+    @app.get("/autopilot/claim-page")
+    def get_claim_page_reads() -> dict[str, Any]:
+        """The reads of a pending claim's page on file (#345 step 0)."""
+        return {"reads": season_autopilot.claim_page_reads(service.data_dir)}
+
+    @app.post("/seasons/{league}/autopilot/claim-page")
+    def post_claim_page_read(body: dict[str, Any], league: str = league_id) -> dict[str, Any]:
+        """The extension's read of a pending claim's page (#345 step 0): names and words only.
+        A read carrying the page's crumb, a field's value, a query or any other key is
+        refused."""
+        if season_autopilot.has_crumb(body):
+            raise HTTPException(422, "a read never carries the page's crumb")
+        try:
+            read = season_autopilot.ClaimPageRead.model_validate(body)
+        except ValidationError as exc:
+            raise HTTPException(422, exc.errors(include_url=False, include_context=False)) from exc
+        return service.log_claim_page_read(league, read)
 
     @app.get("/autopilot/start-active/due")
     def get_start_active_due() -> dict[str, Any]:

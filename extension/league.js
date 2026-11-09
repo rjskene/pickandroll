@@ -41,14 +41,20 @@
 // page Yahoo lands on in the same tab logs what Yahoo answered and goes on to the entry's IL move
 // or add page. A dry run clicks nothing.
 //
+// On my team page opened with the claim read's fragment (#pickandroll-claim-read, #345 step 0,
+// lib/claimread.js) it follows the Pending Transactions box's View Details link of the claim the
+// API names to Yahoo's page of that claim, and there reads the page's forms, fields and buttons by
+// name and words only (never a value) and files the read; it clicks nothing.
+//
 // Outside ``setLineup``, ``pressStartActive``, ``moveToIL`` and ``dropPlayer`` it clicks and sets only on a page
 // opened with a moves fragment: the entry's one drop
 // button, the bid and Yahoo's final button, once each (addpage.js keeps Yahoo's alerts on such a
 // page as text, so an alert is logged and never blocks the tab). It never reads a form's crumb,
 // never fetches a Yahoo page (the tick's post is Yahoo's own script's) and never runs on the draft
 // client. It navigates only to follow the players page's Next 25 link during a multi-page read the
-// user armed from the side panel, from an IL move's team page to its claim's add page, and from
-// a held drop's landed page to the entry's IL move or add page.
+// user armed from the side panel, from an IL move's team page to its claim's add page, from
+// a held drop's landed page to the entry's IL move or add page, and from my team page to a
+// pending claim's page for the claim read.
 (() => {
   "use strict";
   const PR = globalThis.PickAndRoll;
@@ -1066,6 +1072,106 @@
     return Boolean(next);
   }
 
+  // ---------------------------------------------------------------- a claim page's read (#345 step 0)
+  const claimStrip = (line) => strip(line, "claim read");
+  const claimPage = PR.claimPageOf(location.href);
+
+  /** Yahoo's page of a claim as a plain object for ``PR.claimPageRead``: its URL, heading (not
+   * one of Yahoo's header or navigation), notices, its forms (names, method, action, each
+   * field's kind and names, its buttons and links) and the buttons and claim links outside them.
+   * No field's value is read: an input button's label is, as its words. Nothing is clicked. */
+  function claimControls() {
+    const chromeOf = (el) => typeof el.closest === "function" && Boolean(el.closest("header, nav, [role=navigation], #ybar"));
+    const BUTTONS = new Set(["submit", "button", "reset", "image"]);
+    const typeOf = (el) => String(el.getAttribute("type") || (el.tagName === "BUTTON" ? "submit" : "text")).toLowerCase();
+    const control = (el) => {
+      const tag = el.tagName.toLowerCase();
+      const type = tag === "a" ? null : typeOf(el);
+      return {
+        tag,
+        type,
+        name: el.getAttribute("name"),
+        id: el.getAttribute("id"),
+        text: tag === "input" ? null : textOf(el),
+        label: tag === "input" && BUTTONS.has(type) ? el.getAttribute("value") : null,
+        href: tag === "a" ? el.getAttribute("href") : null,
+      };
+    };
+    const isButton = (el) => el.tagName === "BUTTON" || (el.tagName === "INPUT" && BUTTONS.has(typeOf(el)));
+    const CONTROLS = "button, input[type=submit], input[type=button], input[type=reset], input[type=image], a[href]";
+    const forms = [...document.querySelectorAll("form")].filter((f) => !chromeOf(f));
+    const texts = (sel) => [...document.querySelectorAll(sel)].filter((x) => !chromeOf(x)).map(textOf).filter((x) => x && x.length < 300);
+    const claimish = /waiver|claim|cancel|edit|delete|remove|change|modify|back/i;
+    const outside = [...document.querySelectorAll("button, a[href]")].filter(
+      (el) => !el.closest("form") && !chromeOf(el) && (el.tagName === "BUTTON" || claimish.test(el.getAttribute("href") || "") || claimish.test(textOf(el)))
+    );
+    return {
+      url: location.href,
+      heading: [...document.querySelectorAll("h1, h2, h3")].filter((h) => !chromeOf(h)).map(textOf).find((x) => x && !/^yahoo/i.test(x)) || null,
+      notes: texts(".Alert, .alert, [role=alert], .F-positive, .success, .Success, .notice, .Notice, .error, .Error, .F-negative"),
+      forms: forms.map((f) => ({
+        id: f.getAttribute("id"),
+        name: f.getAttribute("name"),
+        method: f.getAttribute("method") || "get",
+        action: f.getAttribute("action"),
+        fields: [...f.querySelectorAll("input, select, textarea")]
+          .filter((el) => !isButton(el))
+          .map((el) => ({ tag: el.tagName.toLowerCase(), type: el.tagName === "INPUT" ? typeOf(el) : null, name: el.getAttribute("name"), id: el.getAttribute("id") })),
+        controls: [...f.querySelectorAll(CONTROLS)].map(control),
+      })),
+      controls: outside.map(control),
+    };
+  }
+
+  /** The read's due, fresh, for this league: null (the strip says why) when the browser's brake
+   * is on, the due does not answer, or no read is due here. */
+  async function claimReadDue() {
+    const settings = await send({ op: "settings" });
+    if (settings && settings.ok && settings.data.moves_executor === "off") {
+      claimStrip(PR.claimReadStripText({ skipped: "the browser's brake is on" }));
+      return null;
+    }
+    const due = await send({ op: "claim_page_due" });
+    if (!due || !due.ok) {
+      claimStrip(PR.claimReadStripText({ error: (due && due.error) || "no answer from the extension" }));
+      return null;
+    }
+    if (!due.data.due || String(due.data.league) !== String(league)) {
+      claimStrip(PR.claimReadStripText({ skipped: due.data.due ? `the read is due in league ${due.data.league}` : due.data.reason || "not due" }));
+      return null;
+    }
+    return due.data;
+  }
+
+  /** On my team page opened with the read's fragment: the Pending Transactions box's View
+   * Details link of the due claim (else its first), followed with the fragment. Nothing clicked. */
+  async function claimReadFrom() {
+    if (location.hash) history.replaceState(null, "", location.pathname + location.search);
+    const due = await claimReadDue();
+    if (!due) return;
+    const href = PR.claimLink(pendingLines(), due);
+    if (!href) {
+      claimStrip(PR.claimReadStripText({ skipped: "no View Details link in the Pending Transactions box" }));
+      return;
+    }
+    claimStrip(PR.claimReadStripText());
+    const to = new URL(href, location.href);
+    to.hash = PR.CLAIM_READ_FRAGMENT;
+    goOn(to.href);
+  }
+
+  /** On the claim's page opened with the read's fragment: the page read (names and words only)
+   * and filed, once; nothing clicked. */
+  async function claimRead(trigger) {
+    if (location.hash) history.replaceState(null, "", location.pathname + location.search);
+    const due = await claimReadDue();
+    if (!due) return;
+    const read = PR.claimPageRead(claimControls(), { trigger, readAt: Date.now(), extension: extensionVersion() });
+    const r = await send({ op: "claim_page_read", league, read });
+    if (!r || !r.ok) claimStrip(PR.claimReadStripText({ error: (r && r.error) || "no answer from the extension" }));
+    else claimStrip(PR.claimReadStripText({ logged: true, forms: read.forms.length, controls: read.controls.length + read.forms.reduce((n, f) => n + f.controls.length, 0) }));
+  }
+
   // A live pass submits only on a page opened with a moves fragment; any other page of the league
   // reads a claim this tab submitted, first.
   const trigger = addPage ? PR.movesTriggerOf(location.hash) : null;
@@ -1073,12 +1179,16 @@
   const saTrigger = page && page.kind === "team" ? PR.startActiveTriggerOf(location.hash) : null;
   const ilTrigger = page && page.kind === "team" ? PR.ilTriggerOf(location.hash) : null;
   const dropTrigger = dropPage ? PR.dropTriggerOf(location.hash) : null;
+  const claimFrom = page && page.kind === "team" ? PR.claimReadTriggerOf(location.hash) : null;
+  const claimTrigger = claimPage ? PR.claimReadTriggerOf(location.hash) : null;
   setTimeout(async () => {
     await landed();
     // A landing settled on my team page (#341): the tab is on its way there.
     if (leaving) return;
     if (await dropLanded()) return;
-    if (dropTrigger) await heldDrop(dropTrigger);
+    if (claimTrigger) await claimRead(claimTrigger);
+    else if (claimFrom) await claimReadFrom();
+    else if (dropTrigger) await heldDrop(dropTrigger);
     else if (trigger) await claim(trigger);
     else if (saTrigger) {
       const lineupAfter = PR.comebackLineupFragment(location.hash);

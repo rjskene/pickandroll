@@ -335,7 +335,7 @@ async function visitTeam({ hash = "#pickandroll-il", answer, dom = ilDom(), date
   });
   ctx.window = ctx;
   ctx.globalThis = ctx;
-  for (const file of ["lib/league.js", "lib/lineup.js", "lib/moves.js", "lib/startactive.js", "lib/ilmove.js", "lib/drop.js", "league.js"]) vm.runInContext(fs.readFileSync(path.join(DIR, file), "utf8"), ctx);
+  for (const file of ["lib/league.js", "lib/lineup.js", "lib/moves.js", "lib/startactive.js", "lib/ilmove.js", "lib/drop.js", "lib/claimread.js", "league.js"]) vm.runInContext(fs.readFileSync(path.join(DIR, file), "utf8"), ctx);
   ctx.started = true;
   for (const fn of timers.splice(0)) await fn();
   return { sent, replaced, assigned, strip: nodes["pickandroll-strip"], touched: dom.touched };

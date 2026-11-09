@@ -1129,7 +1129,7 @@ export function stripReason(row: QueueLeague, entries: QueueEntry[]): string {
 /** The league's open claims judged again and cancelled (#345), each as the user is to cancel it in
  * Yahoo's pending claims: the earlier days' on the row and today's placed among the entries. */
 export function cancelByHand(row: QueueLeague, entries: QueueEntry[]): string[] {
-  const today = entries.filter((e) => e.league === row.league && (e.outcome === "claimed" || e.outcome === "added") && !e.resolved);
+  const today = entries.filter((e) => e.league === row.league && e.outcome === "claimed" && !e.resolved);
   const open: Pick<QueuePending, "add" | "drop" | "bid" | "rejudge">[] = [
     ...(row.pending ?? []),
     ...today.map((e) => ({ add: e.add, drop: e.drop, bid: e.bid_placed, rejudge: e.rejudge })),

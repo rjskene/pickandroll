@@ -427,6 +427,30 @@ def start_active_plan(
     return out
 
 
+#: The read of a pending claim's page (#345 step 0): the team page, the box's link followed, the
+#: claim's page read and posted.
+CLAIM_PAGE_WAIT_S = 30.0
+
+
+def claim_page_plan(ctx: Context) -> list[Opening]:
+    """``GET /autopilot/claim-page/due``: the one read of a pending claim's page (#345 step 0),
+    my team page in the league it names with the read's fragment, thirty seconds; nothing once
+    a read is on file, under STOP or with no open claim, and never the private league."""
+    code, body, _ = ctx.get("/autopilot/claim-page/due", 120)
+    if code != 200 or not isinstance(body, dict):
+        ctx.notes["claim_page"] = f"due route answered {code}"
+        return []
+    if not body.get("due"):
+        ctx.notes["claim_page"] = str(body.get("reason") or "not due")
+        return []
+    league, page = str(body.get("league")), body.get("page")
+    if league == PRIVATE_LEAGUE or not league_page_ok(league, page):
+        ctx.notes["claim_page"] = f"page not a public league's own ({league}: {page!r})"
+        return []
+    fragment = str(body.get("fragment") or "pickandroll-claim-read")
+    return [Opening(league, "claim_page", f"{page}#{fragment}", CLAIM_PAGE_WAIT_S)]
+
+
 @dataclass
 class MovesPlan:
     openings: list[Opening]

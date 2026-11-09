@@ -23,6 +23,7 @@ from .steps import (
     alert_once,
     all_leagues,
     api_check,
+    claim_page_plan,
     digest,
     export_all,
     lineup_pages,
@@ -302,6 +303,8 @@ def evening_pass(ctx: Context, api: str) -> None:
     )
     sa = start_active_plan(ctx, "pickandroll-start-active-evening", only=opened)
     browser_pass(ctx, "start_active", sa, hard_stop=EVENING_HARD_STOP)
+    # The one read of a pending claim's page (#345 step 0): after the claims, clicking nothing.
+    browser_pass(ctx, "claim_page", claim_page_plan(ctx), hard_stop=EVENING_HARD_STOP)
     pass_check(ctx, opened, ["moves"], "routine_evening")
     if ctx.now().weekday() == 6:
         _sunday_adds(ctx)

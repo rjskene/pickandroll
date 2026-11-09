@@ -124,6 +124,9 @@ SUPERSEDED = "superseded by a later solve"
 OUTCOMES = ("would_claim", "claimed", "added", "skipped", "failed", "gone")
 EXECUTED = frozenset({"would_claim", "claimed", "added"})
 PLACED = frozenset({"claimed", "added"})
+#: A waiver claim placed and pending until Yahoo's run: the one placed outcome a re-judge reads
+#: (#345). An ``added`` free agent landed at once and has nothing left to cancel.
+CLAIMED = "claimed"
 RESOLUTIONS = ("won", "lost", "lapsed")
 
 

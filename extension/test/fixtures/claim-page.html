@@ -1,0 +1,25 @@
+<div id="page">
+  <header>
+    <form id="search" method="get" action="/search?p=1">
+      <input type="text" name="p" value="typed words"/>
+      <button type="submit">Search</button>
+    </form>
+    <a href="/nba/100001/7/viewwaiver?claim_id=7_6038_6733">Back to claim</a>
+  </header>
+  <h1>Waiver Claim</h1>
+  <div class="Alert">Your claim is pending</div>
+  <div class="Alert">Your claim is pending</div>
+  <form id="claim-form" name="claim" method="POST" action="/nba/100001/7/viewwaiver?claim_id=7_6038_6733&amp;crumb=SECRETCRUMB">
+    <input type="hidden" name="crumb" value="SECRETCRUMB"/>
+    <input type="hidden" name="claim_id" value="7_6038_6733"/>
+    <input type="text" name="faab" id="bid" value="3"/>
+    <select name="priority"><option value="1">1</option></select>
+    <input type="submit" name="cancel" value="Cancel Claim"/>
+    <button type="submit" name="edit">Edit Claim</button>
+    <a href="/nba/100001/7/editwaiver?claim_id=7_6038_6733&amp;crumb=SECRETCRUMB">Edit bid</a>
+  </form>
+  <a href="/nba/100001/7/cancelwaiver?claim_id=7_6038_6733&amp;crumb=SECRETCRUMB#x">Cancel</a>
+  <a href="/nba/100001/players">Players</a>
+  <a href="mailto:claims@example.com">Contact</a>
+  <button>Back</button>
+</div>

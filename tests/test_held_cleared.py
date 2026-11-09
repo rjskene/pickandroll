@@ -151,7 +151,10 @@ def test_a_build_rejudges_the_placed_claims_once_a_held_player_clears_and_says_c
     cancel = {**claim, "id": f"2026-10-20:{LEAGUE}:9001:7", "add": 9001, "drop": 7, "bid_placed": 2}
     keep = {**claim, "id": f"2026-10-20:{LEAGUE}:9002:0", "add": 9002, "drop": None}
     settled = {**claim, "id": f"2026-10-20:{LEAGUE}:9003:0", "add": 9003, "resolved": "won"}
-    (folder / "2026-10-20.json").write_text(json.dumps({"entries": [cancel, keep, settled]}))
+    # A free agent added at once: landed, nothing to cancel, never judged.
+    added = {**claim, "id": f"2026-10-20:{LEAGUE}:9004:0", "add": 9004, "outcome": "added"}
+    entries = [cancel, keep, settled, added]
+    (folder / "2026-10-20.json").write_text(json.dumps({"entries": entries}))
     seen = []
 
     def judge(built, claims, statuses):
@@ -160,6 +163,7 @@ def test_a_build_rejudges_the_placed_claims_once_a_held_player_clears_and_says_c
         return {
             cancel["id"]: {**base, "comeback_drops": {6406: 9001}},
             keep["id"]: {**base, "comeback_drops": {6406: 7}},
+            added["id"]: {**base, "comeback_drops": {6406: 9004}},
         }
 
     monkeypatch.setattr(season_moves, "rejudge_claims", judge)
@@ -183,6 +187,7 @@ def test_a_build_rejudges_the_placed_claims_once_a_held_player_clears_and_says_c
     assert got["comeback_drops"] == {"6406": 9001} and got["floor"]["plan"] is not None
     assert written[keep["id"]]["rejudge"]["verdict"] == qa.KEEP
     assert "rejudge" not in written[settled["id"]]
+    assert "rejudge" not in written[added["id"]]
     # The Queue screen's row carries each open claim's verdict and bid.
     row = next(r for r in q["leagues"] if r["league"] == LEAGUE)
     pending = {c["id"]: c for c in row["pending"]}
@@ -194,6 +199,11 @@ def test_a_build_rejudges_the_placed_claims_once_a_held_player_clears_and_says_c
         "with 6406 back his comeback would drop 9001, the claim's own add"
     )
     assert ap.cancel_digest_lines(client.data_dir, NOW.date()) == [line]
+    # A cancel verdict on a free agent's add (an older build's) prints no line either.
+    stale = {**added, "rejudge": {"verdict": qa.CANCEL, "reason": "x"}}
+    (folder / "2026-10-19.json").write_text(json.dumps({"entries": [stale]}))
+    assert ap.cancel_digest_lines(client.data_dir, NOW.date()) == [line]
+    (folder / "2026-10-19.json").unlink()
     assert line in client.get("/flags/digest").json()["moves_executor"]
     # Back to O: the verdict lapses on the next build, and the line goes.
     hold(client, 6406, "O")
