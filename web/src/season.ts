@@ -400,6 +400,27 @@ export function oddsTone(p: number): "good" | "bad" | "" {
   return p >= 0.65 ? "good" : p <= 0.35 ? "bad" : "";
 }
 
+/** A change in odds in percentage points (#350): "+6", "−3", "0"; blank when unknown. */
+export function oddsPoints(d: number | null | undefined): string {
+  if (d == null || Number.isNaN(d)) return "";
+  const r = Math.round(d * 100);
+  return r === 0 ? "0" : `${r > 0 ? "+" : "−"}${Math.abs(r)}`;
+}
+
+/** A change in odds that rounds to a point or more either way. */
+export function oddsPointsTone(d: number | null | undefined): "good" | "bad" | "" {
+  if (d == null) return "";
+  const r = Math.round(d * 100);
+  return r > 0 ? "good" : r < 0 ? "bad" : "";
+}
+
+/** Odds before and after a move, with the change in points (#350): "32% → 38% (+6)"; blank when
+ * either is unknown. */
+export function oddsMove(before: number | null | undefined, after: number | null | undefined): string {
+  if (before == null || after == null) return "";
+  return `${oddsLabel(before)} → ${oddsLabel(after)} (${oddsPoints(after - before)})`;
+}
+
 // ---------------------------------------------------------------- matchup view (#116)
 /** The matchup lines: favoured at 60% or better, an underdog at 40% or worse, else a toss-up. */
 export const FAVOURED = 0.6;

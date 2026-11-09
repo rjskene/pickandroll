@@ -219,6 +219,9 @@ import {
   MOVE_HORIZON,
   openingDrop,
   oddsLabel,
+  oddsMove,
+  oddsPoints,
+  oddsPointsTone,
   oddsTone,
   projectedTotals,
   DEFAULT_AVAILABLE_SORT,
@@ -459,6 +462,21 @@ test("category cells and odds labels", () => {
   assert.equal(oddsTone(0.7), "good");
   assert.equal(oddsTone(0.2), "bad");
   assert.equal(oddsTone(0.5), "");
+});
+
+test("a move's odds read in percentage points, before and after (#350)", () => {
+  // FT% over three weeks: 0.96 → 1.14 wins summed is 32% → 38% a week, six points.
+  assert.equal(oddsMove(0.96 / 3, 1.14 / 3), "32% → 38% (+6)");
+  assert.equal(oddsPoints(0.06), "+6");
+  assert.equal(oddsPoints(-0.031), "−3");
+  assert.equal(oddsPoints(0.004), "0");
+  assert.equal(oddsPoints(null), "");
+  assert.equal(oddsPointsTone(0.02), "good");
+  assert.equal(oddsPointsTone(-0.02), "bad");
+  assert.equal(oddsPointsTone(0.004), "");
+  assert.equal(oddsPointsTone(undefined), "");
+  assert.equal(oddsMove(0.5, null), "");
+  assert.equal(oddsMove(0.001, 0.999), "<1% → >99% (+100)");
 });
 
 test("the table opens on the three-week gain; until the moves are valued Yahoo's order stands", () => {

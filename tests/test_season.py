@@ -1296,6 +1296,17 @@ def test_the_move_drawer_details_one_add_with_every_drop(client):
     # This week's categories carry both finals; the three weeks' only the wins.
     assert {"wins", "mine", "theirs"} <= set(week["cats"]["after"]["pts"])
     assert set(d["horizons"]["three"]["cats"]["after"]["pts"]) == {"wins"}
+    # The matchup odds before and after (#350): this week's matchup, the three weeks' average
+    # week against the field; and the weeks the categories' wins are summed over.
+    three = d["horizons"]["three"]
+    assert (week["weeks"], three["weeks"]) == (1, 3)
+    for h in (week, three):
+        assert 0 <= h["matchup"]["before"] <= 1 and 0 <= h["matchup"]["after"] <= 1
+    # Each drop and each other add carries the change in this week's matchup odds.
+    mine = next(x for x in d["drops"] if x["drop"] == drop)
+    change = week["matchup"]["after"] - week["matchup"]["before"]
+    assert mine["matchup"] == pytest.approx(change, abs=2e-3)
+    assert all(x["matchup"] is not None for x in [*d["drops"], *d["adds"]])
     # Every active player is a drop, best three-week gain first.
     assert len(d["drops"]) >= len([s for s in v["roster"] if s["slot"] not in ("IL", "IL+", "NA")])
     assert [x["three"] for x in d["drops"]] == sorted(
