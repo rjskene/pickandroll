@@ -858,8 +858,6 @@ class SeasonService:
         file holds now (#261): read at request time, past the kept solve. ``stop``: the client
         went (#306), the solve stops and raises :class:`Abandoned`."""
         out = self._moves(league, system, source, entry, stop)
-        # The exports the moves rest on, with their pull times on the Central clock (#355).
-        out = {**out, "exports": exports_in_force(self.data_dir, season_pretip.CENTRAL)}
         claim = out.get("claim")
         if claim is None:
             return out
@@ -934,6 +932,9 @@ class SeasonService:
             out = season_moves.moves_payload(built, budget)
             if budget.stopped:
                 raise Abandoned(f"league {league}: the client went; the solve stopped")
+            # The exports this solve rests on, by their pull times on the Central clock (#355):
+            # the key's stamp is their mtimes, so a kept answer names its own inputs.
+            out["exports"] = exports_in_force(self.data_dir, season_pretip.CENTRAL)
             at = self.clock()
             with self._page_lock:
                 for old in [k for k in self._moves_at if k[:3] == key[:3]]:
