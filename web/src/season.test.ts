@@ -175,6 +175,7 @@ import {
   fundsLabel,
   fundsNote,
   centralClock,
+  exportsLine,
   notQueued,
   stripOrder,
   switchRows,
@@ -2006,6 +2007,16 @@ test("the Queue screen orders the day's entries across the leagues, says why a l
   assert.equal(centralClock("2026-10-24T12:00:00Z"), "7:00 AM CT");
   assert.equal(centralClock("2026-12-01T13:00:00Z"), "7:00 AM CT");
   assert.equal(centralClock(null), "");
+});
+
+test("the Moves card's inputs line names each export by its pull time on the Central clock (#355)", () => {
+  const e = {
+    ros: { file: "bbm_projections_2026-11-09.xls", at: "2026-11-09T22:58:12Z" },
+    week_this: { file: "bbm_week_this_2026-11-09.xls", at: "2026-11-09T05:03:00-06:00" },
+    week_next: null,
+  };
+  assert.equal(exportsLine(e), "BBM: projections 4:58 PM CT · this week 5:03 AM CT · next week none");
+  assert.equal(exportsLine(undefined), "");
 });
 
 test("a routine's pass reads live: the league it is on, the entries checked, its results, and its end for ten minutes (#201)", () => {

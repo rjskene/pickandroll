@@ -6,15 +6,17 @@ always finishes the report."""
 from __future__ import annotations
 
 import contextlib
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from datetime import datetime
 from typing import Any
 
 from .browser import NO_BROWSER
-from .clock import before
+from .clock import before, seconds_until
 from .report import Report
 from .steps import (
     MOVES_WAIT_S,
+    PRIVATE_LEAGUE,
+    SOLVE_TIMEOUT_S,
     Abort,
     Context,
     MovesPlan,
@@ -63,6 +65,9 @@ WINDOWS: dict[str, tuple[str, str]] = {
     "evening-pass": ("22:40", "22:58"),
     "monday": ("06:00", "12:00"),
     "signin": ("00:00", "23:59"),
+    # The pre-tip pass's check (#355): every five minutes; the due route says when a slate's pass
+    # starts (no full pass past the knob's latest start, 20:40 by default; a push alone later).
+    "pretip": ("09:00", "21:00"),
 }
 #: The daily's refresh retry pass runs only before this (the Monday recorder reads Yahoo at 06:00).
 DAILY_RETRY_BEFORE = "05:45"
@@ -76,6 +81,23 @@ EVENING_HARD_STOP = "22:58"
 DAILY_WEEK_THIS_NOT_DUE = (6,)
 EVENING_WEEK_THIS_NOT_DUE = (5, 6)
 MONDAY = 0
+#: The pre-tip pass's exports (#355): the rest of the season and this week, under the daily's
+#: not-due rule for this week.
+PRETIP_KINDS = ("ros", "week_this")
+#: How long a run waits for the browser profile's lock (#355): the pre-tip pass a quarter hour,
+#: then skips and stays due; every other run twenty minutes, then fails with the alert; the
+#: evening pass never past its hard stop.
+PRETIP_LOCK_WAIT_S = 15 * 60.0
+LOCK_WAIT_S = 20 * 60.0
+
+
+def lock_wait_s(name: str, when: datetime) -> float:
+    """The lock wait of routine ``name`` started at ``when``."""
+    if name == "pretip":
+        return PRETIP_LOCK_WAIT_S
+    if name == "evening-pass":
+        return min(LOCK_WAIT_S, seconds_until(when, EVENING_HARD_STOP))
+    return LOCK_WAIT_S
 
 
 class Refused(RuntimeError):
@@ -310,6 +332,146 @@ def evening_pass(ctx: Context, api: str) -> None:
         _sunday_adds(ctx)
 
 
+def pretip(ctx: Context, api: str) -> None:
+    """The private league's pre-tip pass (#355): when the due route names a slate, Basketball
+    Monster's rest-of-season and this-week exports, the league's pages, its solve, and its
+    suggestions pushed to the user's private channel; each attempt logged on the day file. Not
+    due: refused, no browser and no report. A lock skip, a failed solve or a failed push leaves
+    the slate due for the next check; an attempt that solved and failed only its push is
+    pushed again alone. Suggestions only: nothing is clicked in the league."""
+    api_check(ctx)
+    stop_check(ctx)
+    code, due, _ = ctx.get("/autopilot/pretip/due", 60)
+    if code != 200 or not isinstance(due, dict):
+        ctx.report.failed("pretip_due", f"the due route answered {code}")
+        return
+    if not due.get("due"):
+        reason = f"not due: {due.get('reason') or 'nothing due'}"
+        ctx.report.refused = reason
+        raise Refused(reason)
+    league, slate = str(due.get("league") or ""), str(due["slate"])
+    if league != PRIVATE_LEAGUE:
+        ctx.report.failed("pretip_due", f"the due names league {league}, not {PRIVATE_LEAGUE}")
+        return
+    started = ctx.now()
+    ctx.report.ok(
+        "pretip_due",
+        f"{slate} slate, tip {str(due['tip'])[11:16]}"
+        + (", the push alone (the solve is in)" if due.get("push_only") else ""),
+        slate=slate,
+        tip=due["tip"],
+        push_only=bool(due.get("push_only")),
+    )
+    attempt: dict[str, Any] = {"slate": slate, "started_at": started.isoformat()}
+    if due.get("push_only"):
+        _pretip_push(ctx, league, due, attempt, {})
+        return
+    browser = ctx.browser
+    if browser is not None and not ctx.dry_run and not browser.available():
+        busy = getattr(browser, "busy", None)
+        if busy:
+            ctx.report.skipped("browser", f"{busy}: the {slate} slate stays due")
+            _pretip_log(ctx, {**attempt, "outcome": "skipped", "reason": busy})
+            return
+    export_all(ctx, DAILY_WEEK_THIS_NOT_DUE, None, kinds=PRETIP_KINDS)
+    private_pages(ctx)
+    lineup_pages(ctx)
+    exports = ctx.report.find("exports")
+    lines = dict((exports.data.get("lines") if exports else None) or {})
+    pulls = {
+        k: "pulled" if k in ctx.report.exports else lines.get(k, "not made") for k in PRETIP_KINDS
+    }
+    codes = solve_all(ctx, [league])
+    if ctx.dry_run:
+        return
+    if codes.get(league) != 200:
+        why = f"the solve answered {codes.get(league)}"
+        _pretip_log(ctx, {**attempt, "outcome": "failed", "reason": why, "pulls": pulls})
+        return
+    _pretip_push(ctx, league, due, {**attempt, "solved_at": ctx.now().isoformat()}, pulls)
+
+
+def _pull_line(pulls: Mapping[str, str]) -> str:
+    """This pass's own pulls in words: the inputs' line has the times of the files in force."""
+    if not pulls:
+        return ""
+    words = {"ros": "projections", "week_this": "this week"}
+    parts = [
+        f"{words.get(k, k)} {v}"
+        if v == "pulled"
+        else f"{words.get(k, k)} not pulled ({v}): the last copy stands"
+        for k, v in pulls.items()
+    ]
+    return "This pass: " + "; ".join(parts) + ".\n"
+
+
+def _pretip_push(
+    ctx: Context,
+    league: str,
+    due: Mapping[str, Any],
+    attempt: dict[str, Any],
+    pulls: Mapping[str, str],
+) -> None:
+    """The suggestions pushed (or, for a late slate whose set is the first's, not needed), and the
+    attempt logged with what completed."""
+    slate = str(due["slate"])
+    code, body, _ = ctx.get(f"/seasons/{league}/pretip", SOLVE_TIMEOUT_S)
+    if code != 200 or not isinstance(body, dict):
+        why = f"the pre-tip route answered {code}"
+        ctx.report.failed("push", why)
+        _pretip_log(ctx, {**attempt, "outcome": "failed", "reason": why, "pulls": dict(pulls)})
+        return
+    if not attempt.get("solved_at"):
+        attempt = {**attempt, "solved_at": ctx.now().isoformat()}
+    moves = [{"add": m["add"], "drop": m.get("drop")} for m in body.get("moves") or []]
+    attempt = {**attempt, "moves": moves, "pulls": dict(pulls)}
+    first = due.get("first_moves")
+    if slate == "late" and first is not None and _same(moves, first):
+        ctx.report.ok("push", "the late slate's set is the first's: nothing pushed")
+        _pretip_log(ctx, {**attempt, "outcome": "done", "unchanged": True})
+        return
+    if ctx.dry_run or not ctx.posting:
+        why = "dry run" if ctx.dry_run else "posting off"
+        ctx.report.skipped("push", f"{why}: nothing pushed; the slate stays due")
+        _pretip_log(ctx, {**attempt, "outcome": "skipped", "reason": why})
+        return
+    if ctx.push is None:
+        ctx.report.failed("push", "no push channel in this run: the slate stays due")
+        _pretip_log(ctx, {**attempt, "outcome": "failed", "reason": "no push channel"})
+        return
+    title = f"pickandroll {league} pre-tip, {slate} slate (tip {str(due['tip'])[11:16]})"
+    ok, detail = ctx.push(title, str(body.get("markdown") or "") + _pull_line(pulls))
+    if not ok:
+        ctx.report.failed("push", f"{detail}; the slate stays due")
+        _pretip_log(ctx, {**attempt, "outcome": "failed", "reason": detail})
+        return
+    ctx.report.ok("push", f"{len(moves)} suggestions pushed: {detail}", moves=moves)
+    _pretip_log(ctx, {**attempt, "outcome": "done", "pushed_at": ctx.now().isoformat()})
+
+
+def _same(a: Sequence[Mapping[str, Any]], b: Sequence[Mapping[str, Any]]) -> bool:
+    """The same set of moves, in any order."""
+
+    def key(ms: Sequence[Mapping[str, Any]]) -> list[tuple[int, int]]:
+        return sorted((int(m["add"]), -1 if m.get("drop") is None else int(m["drop"])) for m in ms)
+
+    return key(a) == key(b)
+
+
+def _pretip_log(ctx: Context, attempt: Mapping[str, Any]) -> None:
+    """The attempt on the day file (``POST /autopilot/pretip/runs``); never in a dry run."""
+    if ctx.dry_run:
+        return
+    code, body, _ = ctx.post_json("/autopilot/pretip/runs", dict(attempt), 60)
+    if code != 200:
+        ctx.report.failed("day_file", f"the attempt was not logged: {code} {str(body)[:200]}")
+        return
+    done = bool(((body.get("slates") or {}).get(attempt["slate"]) or {}).get("done"))
+    ctx.report.ok(
+        "day_file", f"{attempt['slate']} slate {'done' if done else 'still due'}", done=done
+    )
+
+
 def monday(ctx: Context, api: str) -> None:
     api_check(ctx, start=True)
     lines = record_all(ctx, api)
@@ -398,6 +560,7 @@ ROUTINES: dict[str, Callable[[Context, str], None]] = {
     "evening-pass": evening_pass,
     "monday": monday,
     "signin": signin,
+    "pretip": pretip,
 }
 
 

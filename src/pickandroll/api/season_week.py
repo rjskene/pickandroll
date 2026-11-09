@@ -15,7 +15,7 @@ import json
 import re
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
-from datetime import UTC, date, datetime, time
+from datetime import UTC, date, datetime, time, tzinfo
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -49,6 +49,28 @@ def _latest(data_dir: Path, patterns: Iterable[str]) -> Path | None:
         if f.suffix.lower() in PROJECTION_SUFFIXES and "sample" not in f.name
     ]
     return max(files, key=lambda f: f.stat().st_mtime, default=None)
+
+
+#: The exports a league's moves rest on, by kind (``season.status.RESTS_ON``).
+IN_FORCE = {"ros": BBM_ROS, "week_this": (BBM_THIS_WEEK,), "week_next": (BBM_NEXT_WEEK,)}
+
+
+def exports_in_force(data_dir: Path, tz: tzinfo) -> dict[str, dict[str, str] | None]:
+    """The Basketball Monster exports the moves use now (#355), by kind: the file and when it
+    was pulled (its import's time, the file's mtime: the stamped names mix clocks), on ``tz``'s
+    clock; None for a kind with no file."""
+    out: dict[str, dict[str, str] | None] = {}
+    for kind, patterns in IN_FORCE.items():
+        f = _latest(data_dir, patterns)
+        out[kind] = (
+            None
+            if f is None
+            else {
+                "file": f.name,
+                "at": datetime.fromtimestamp(f.stat().st_mtime, tz).isoformat(timespec="seconds"),
+            }
+        )
+    return out
 
 
 _frames: dict[tuple[str, float], pd.DataFrame] = {}

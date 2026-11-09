@@ -1246,6 +1246,9 @@ def test_the_moves_route_values_every_candidate_and_recommends_a_set(client):
     assert m["horizons"]["week"]["label"] == "rest of week 1 against Team 10"
     assert m["horizons"]["three"]["weeks"] == [2, 3, 4]
     assert m["system"]["key"] == "bbm"
+    # The exports the moves rest on, by their pull time (#355): no week export in the fixture.
+    assert m["exports"]["ros"]["file"] == "bbm_projections_2026-10-21.csv"
+    assert m["exports"]["week_this"] is None and m["exports"]["week_next"] is None
     # The weekly limit, net of my adds this week; the page does not reach back past Monday.
     assert m["adds"]["limit"] == v["settings"]["max_weekly_adds"]
     assert m["adds"]["complete"] is False

@@ -2004,6 +2004,22 @@ export interface MovesPayload {
   /** A page's look while the moves of newer inputs are solved (#240): this answer is the kept
    * one; absent on a fresh answer. */
   stale?: MovesStale;
+  /** The Basketball Monster exports the moves rest on, by kind, with their pull time (#355);
+   * absent before. */
+  exports?: MovesExports;
+}
+
+/** One export in force (#355): its file and when it was pulled, an ISO instant. */
+export interface ExportInForce {
+  file: string;
+  at: string;
+}
+
+/** The exports in force by kind (#355); null: no file of that kind. */
+export interface MovesExports {
+  ros: ExportInForce | null;
+  week_this: ExportInForce | null;
+  week_next: ExportInForce | null;
 }
 
 /** A page's look with no answer of today kept (#306): the API solves, within its budget, while

@@ -105,6 +105,7 @@ import {
   weekTone,
   writeWatch,
   centralClock,
+  exportsLine,
   movesOf,
   movesPending,
   movesPoll,
@@ -1000,6 +1001,11 @@ function Moves({
         {addsNote(m.adds)}
         {m.system.fallback ? ` · ${m.system.fallback}` : ""}
       </p>
+      {m.exports && (
+        <p className="muted small" title="the Basketball Monster exports these moves rest on, each by the time it was pulled">
+          {exportsLine(m.exports)}
+        </p>
+      )}
       {m.search.note && (
         <p className="muted small" title="the solve keeps to its time budget (moves_budget_s in the autopilot settings file); the recommended sets are the best it found by then">
           {cap(m.search.note)}.

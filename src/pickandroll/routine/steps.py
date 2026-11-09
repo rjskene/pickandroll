@@ -37,6 +37,8 @@ SOLVE_TIMEOUT_S = 300.0
 
 RunScript = Callable[[Sequence[str]], tuple[int, str, str]]
 Poster = Callable[[int, Path], tuple[int, str]]
+#: The user's private push channel (#355): ``(title, text)`` to (ok, detail).
+Pusher = Callable[[str, str], tuple[bool, str]]
 
 
 class Stopped(RuntimeError):
@@ -68,6 +70,8 @@ class Context:
     #: the daily's window on a slow host, and a solve the client gives up on keeps computing in
     #: the API; the step reports them skipped.
     skip_solve: frozenset[str] = frozenset()
+    #: The private push (``routine/push.py``); None: no channel in this run.
+    push: Pusher | None = None
     notes: dict[str, Any] = field(default_factory=dict)
 
     def get(self, path: str, timeout: float = 60.0) -> tuple[int, Any, dict[str, str]]:
@@ -790,6 +794,12 @@ def ready_browser(ctx: Context, name: str, site: str, would: str, **data: Any) -
         ctx.report.skipped(name, f"{NO_BROWSER}; {would}", **data)
         return None
     if not browser.available():
+        busy = getattr(browser, "busy", None)
+        if busy:
+            # Another run held the profile past this run's wait (#355): a failure, alerted.
+            ctx.report.failed(name, f"{busy}: nothing opened; {would}", **data)
+            alert_once(ctx, f"the {ctx.report.routine} routine could not have the browser: {busy}")
+            return None
         ctx.report.skipped(name, f"browser unavailable ({browser.reason}); {would}", **data)
         alert_once(
             ctx,
@@ -844,25 +854,30 @@ def _first_line(out: str, err: str) -> str:
 
 
 def export_all(
-    ctx: Context, not_due_on: Sequence[int] = (), by: str | None = None, name: str = "exports"
+    ctx: Context,
+    not_due_on: Sequence[int] = (),
+    by: str | None = None,
+    name: str = "exports",
+    kinds: Sequence[str] = EXPORT_KINDS,
 ) -> None:
     """The five Basketball Monster exports (the SKILL's 3a-3d), each imported as soon as it
     lands: ``report.exports[kind]`` is the file that stands under data/. The this-week export is
     not due on the ``not_due_on`` weekdays (the daily's Sunday, the evening's Saturday and
     Sunday); from ``by`` on (the evening's 21:15) the kinds still to make are skipped and
-    named. A refused import is reported with its line and never retried."""
+    named. A refused import is reported with its line and never retried. ``kinds``: the ones
+    this run makes (the pre-tip pass's two, #355)."""
     today = ctx.now()
     lines: dict[str, str] = {}
-    if today.weekday() in not_due_on:
+    if today.weekday() in not_due_on and "week_this" in kinds:
         lines["week_this"] = f"not due on a {today:%A}"
-    due = [k for k in EXPORT_KINDS if k not in lines]
+    due = [k for k in kinds if k not in lines]
     browser = ready_browser(ctx, name, "bbm", f"would export {len(due)} kinds: {', '.join(due)}")
     if browser is None:
         return
     failed: list[str] = []
     late: list[str] = []
     seconds: dict[str, int] = {}
-    for kind in EXPORT_KINDS:
+    for kind in kinds:
         if kind in lines:
             continue
         if by and not before(ctx.now(), by):
@@ -890,9 +905,9 @@ def export_all(
             ctx.report.exports[kind] = saved
         else:
             failed.append(kind)
-    made = [k for k in EXPORT_KINDS if k in ctx.report.exports]
+    made = [k for k in kinds if k in ctx.report.exports]
     detail = f"{len(made)} of {len(due)} due saved"
-    if "week_this" not in due:
+    if "week_this" in kinds and "week_this" not in due:
         detail += f"; this week {lines['week_this']}"
     if failed:
         detail += "; failed: " + ", ".join(f"{k} ({lines[k]})" for k in failed)
