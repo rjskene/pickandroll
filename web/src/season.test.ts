@@ -2338,7 +2338,9 @@ test("the landing's matchup odds are the Matchup view's hero, or a dash with why
   const s = { scoring: "categories" as const, my_team: { team_id: 4, name: "Mine", record: null, rank: null }, opponent: { team_id: 9, name: "Theirs", record: null, rank: null } };
   const m = { win: 0.624, teams: [4, 9] as [number, number], rosters_read: [true, true] as [boolean, boolean], system: { key: "bbm" as const, label: "Basketball Monster", as_of: null } };
   // Projected: the hero's number, toned as its pill.
-  assert.deepEqual(matchupOddsCell(s, m, null), { text: "62% to win", tone: "good", title: "the odds of winning this week's matchup, as the Matchup view shows them (Basketball Monster)" });
+  // The percentage alone (#347): the words are the title's.
+  assert.deepEqual(matchupOddsCell(s, m, null), { text: "62%", tone: "good", title: "62% to win: the odds of winning this week's matchup, as the Matchup view shows them (Basketball Monster)" });
+  assert.equal(matchupOddsCell(s, { ...m, win: 0.5 }, null)?.tone, "");
   assert.equal(matchupOddsCell(s, { ...m, win: 0.31 }, null)?.tone, "bad");
   // Loading: nothing yet; a points league: no cell.
   assert.equal(matchupOddsCell(s, undefined, null), null);

@@ -131,18 +131,16 @@ export function LeagueBlock(props: BlockProps) {
           <span className="big" title={s.scoring === "points" ? "this week's points so far, mine first" : "categories won so far this week, mine first"}>
             {scoreLabel(s)}
           </span>
-          <small>
-            {s.opponent ? `vs ${s.opponent.name}` : "no opponent read"}
-            {cell && (
-              <>
-                {" · "}
-                <span className={cell.text === "—" ? "muted" : `mu-pill ${cell.tone}`} title={cell.title}>
-                  {cell.text}
-                </span>
-              </>
-            )}
-          </small>
+          <small>{s.opponent ? `vs ${s.opponent.name}` : "no opponent read"}</small>
         </span>
+        {/* The matchup odds in a column of their own (#347): the toned percentage alone. */}
+        {cell ? (
+          <span className={`lt-win ${cell.text === "—" ? "muted" : cell.tone}`} title={cell.title}>
+            {cell.text}
+          </span>
+        ) : (
+          <span />
+        )}
         <span className={placeTone(s)}>{placeLabel(s)}</span>
         <span className={s.adds?.limit == null ? "muted" : ""} title={s.funds ? fundsNote(s.funds) : s.adds ? addsNote(s.adds) : undefined}>
           {s.funds ? fundsLabel(s.funds) : addsLeft(s.adds)}
