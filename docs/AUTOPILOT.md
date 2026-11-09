@@ -515,6 +515,24 @@ page, from PR 2:
     and the skip stays due. The limit: a player read in no league since his status changed is
     judged on the stale read. Each item is `{player, slot, status, read_at, league}`, the time and
     league null when this league's own read is the newest.
+  - **A placed claim judged again when a held player clears (#345, PR 1).** A claim keeps its place
+    until Yahoo settles it, and his comeback then drops the least valuable active player, the
+    claim's add included (31153, 2026-11-09: a $2 claim won at 04:17 and its add dropped by the
+    comeback at 05:31; the claim was an add with a drop, not the spot his IL move opened). So
+    every queue build, for a league with a held player cleared by his newest status in any league
+    (as above), judges each open claim of the league again, earlier days' and today's placed alike,
+    as it judges a new entry: the move's gain on the entry's judging horizon from the moves
+    evaluator with the cleared statuses applied, which charges each comeback's drop, the season
+    guard, and the noise floor. A claim a comeback would drop the add of is cancelled whatever the
+    gain. The verdict goes on the entry as `rejudge` (`at`, `verdict` keep, cancel or null, `reason`
+    in words, `held`, `judged`, `gain`, `value`, `floor`, `season_costly`, `comeback_drops`), never
+    its outcome; null when the add is out of the pool or the move no longer fits, and a verdict
+    lapses (null, "no held player cleared any more…") once no one is cleared. The league's row on
+    the queue lists its earlier days' open claims with their bid and verdict (`pending`). Until the
+    executor cancels (PR 2, after a read of Yahoo's claim page), a cancel verdict is the user's to
+    act on: the digest's Moves section and the Queue screen's league chip say "cancel by hand" with
+    the claim and the reason, while the claim is open. A comeback's digest line names a dropped
+    player added that day or the day before, "(added <day>)".
 
   `gone` only when the page shows the add on a team (an on-team icon on the add's row, or a
   page without the form saying so); a page without the claim form is skipped "page not read",

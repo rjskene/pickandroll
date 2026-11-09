@@ -574,6 +574,35 @@ def test_the_digest_says_a_chain_that_ran_whole(tmp_path):
     assert digest(tmp_path) == line(f"{STAY} dropped, moved to the bench")
 
 
+def test_the_digest_says_a_comeback_dropped_a_player_added_that_day_or_the_day_before(tmp_path):
+    # 31153, 2026-11-09: a claim won at 04:17 and its add dropped by the comeback at 05:31 (#345).
+    yesterday = DAY - timedelta(days=1)
+
+    def placed(day: date, **entry) -> None:
+        path = season_queue.queue_path(tmp_path, day)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({"entries": [{"league": LEAGUE, "add": STAY, **entry}]}))
+
+    won = {"outcome": "claimed", "resolved": "won", "date": "2026-10-23"}
+    placed(
+        date(2026, 10, 23), **won, id=f"2026-10-23:{LEAGUE}:{STAY}:0", **{"from": str(yesterday)}
+    )
+    ap.append_run(tmp_path, LEAGUE, drop_run("dropped"), DAY, ap.DROP)
+    assert digest(tmp_path) == line(f"{STAY} dropped (added {yesterday}), move still to make")
+    # A free agent added that day says so too; one added three days before, or another league's
+    # claim, or a claim still open, says nothing.
+    placed(DAY, outcome="added", date=str(DAY), id=f"{DAY}:{LEAGUE}:{STAY}:0")
+    assert ap.placed_adds(tmp_path, DAY)[LEAGUE] == {STAY: DAY}
+    assert digest(tmp_path) == line(f"{STAY} dropped (added {DAY}), move still to make")
+    season_queue.queue_path(tmp_path, DAY).unlink()
+    placed(date(2026, 10, 23), **won, id="x", **{"from": "2026-10-23"})
+    assert digest(tmp_path) == line(f"{STAY} dropped, move still to make")
+    placed(date(2026, 10, 23), **{**won, "resolved": None}, id="x", **{"from": str(DAY)})
+    assert digest(tmp_path) == line(f"{STAY} dropped, move still to make")
+    placed(date(2026, 10, 23), **won, id="x", league="100009", **{"from": str(DAY)})
+    assert digest(tmp_path) == line(f"{STAY} dropped, move still to make")
+
+
 def test_the_digest_says_a_drop_that_was_skipped_or_unread(tmp_path):
     ap.append_run(tmp_path, LEAGUE, {**drop_run("skipped"), "reason": "no row"}, DAY, ap.DROP)
     assert digest(tmp_path) == line(f"drop of {STAY} skipped (no row)")

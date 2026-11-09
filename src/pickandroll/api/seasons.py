@@ -711,6 +711,8 @@ class SeasonService:
             season_queue.latest(self.data_dir, today),
             now,
         )
+        # The placed claims judged again and cancelled (#345): the user's to cancel by hand.
+        moves_executor += season_autopilot.cancel_digest_lines(self.data_dir, today)
         return {
             "date": today.isoformat(),
             "generated_at": now.isoformat(),
@@ -1377,6 +1379,7 @@ class SeasonService:
         for league, (_, entries) in reads.items():
             gains.setdefault(scoring[league], []).extend(season_queue.recent_gains(entries, today))
         resolved: dict[str, str] = {}
+        rejudged: dict[str, dict[str, Any]] = {}
         builds: dict[str, list[dict[str, Any]]] = {}
         for league, (season, entries) in sorted(reads.items()):
             mode, kind = modes[league], scoring[league]
@@ -1410,6 +1413,9 @@ class SeasonService:
             placed_today = season_queue.pending([old], league)
             gone = season_queue.resolutions(season, placed_today, today)
             budget = season_queue.budget_of(season)
+            open_claims = [*claims, *(c for c in placed_today if c["id"] not in gone)]
+            # The placed claims judged again when a held player cleared (#345).
+            rejudged |= self._rejudge(season, built, open_claims, floor, now)
             day = qa.LeagueDay(
                 league=league,
                 scoring=kind,
@@ -1428,7 +1434,7 @@ class SeasonService:
                 uses_faab=season.settings.uses_faab,
                 kept=frozenset(e["id"] for e in keep),
                 done=len(holding),
-                open_claims=[*claims, *(c for c in placed_today if c["id"] not in gone)],
+                open_claims=open_claims,
             )
             builds[league] = qa.queue_of(day, today, floor, typical, knobs.get("faab_sizing"))
             rows.append(
@@ -1447,7 +1453,12 @@ class SeasonService:
                         for (s, e), n in left.items()
                     ],
                     "pending": [
-                        {k: c.get(k) for k in ("id", "add", "drop", "from")} for c in claims
+                        {
+                            **{k: c.get(k) for k in ("id", "add", "drop", "from")},
+                            "bid": c.get("bid_placed"),
+                            "rejudge": rejudged.get(c["id"], c.get("rejudge")),
+                        }
+                        for c in claims
                     ],
                     "protected": {str(k): why for k, why in protected.items()},
                     "floor": floor.to_dict(),
@@ -1468,6 +1479,7 @@ class SeasonService:
             for league, new in builds.items():
                 todays = [e for e in body.get("entries") or [] if e.get("league") == league]
                 out += qa.merge(todays, new, today, execute_time, now)
+            _rejudge_into(out, rejudged)
             return {
                 "date": today.isoformat(),
                 "built": [*(body.get("built") or []), now.isoformat()],
@@ -1478,8 +1490,8 @@ class SeasonService:
 
         try:
             for day, q in earlier.items():
-                if {e["id"] for e in q.get("entries") or []} & set(resolved):
-                    season_queue.update(self.data_dir, day, _resolver(resolved, now))
+                if {e["id"] for e in q.get("entries") or []} & (set(resolved) | set(rejudged)):
+                    season_queue.update(self.data_dir, day, _resolver(resolved, now, rejudged))
             body = season_queue.update(self.data_dir, today, change)
         except season_queue.QueueError as exc:
             raise HTTPException(409, str(exc)) from exc
@@ -1710,6 +1722,10 @@ class SeasonService:
             ]
         except Exception:  # noqa: BLE001 - no roster read: nothing to say
             return []
+        return self._cleared_of(spots)
+
+    def _cleared_of(self, spots: Iterable[Any]) -> list[dict[str, Any]]:
+        """:meth:`_held_cleared` on a roster already read: its spots."""
         held = [
             (sp.player.yahoo_id, sp.slot, sp.player.status)
             for sp in spots
@@ -1727,6 +1743,69 @@ class SeasonService:
             if isinstance(raw, Mapping):
                 states.append((folder.name, raw.get("parts") or {}))
         return qa.held_cleared(held, qa.newest_statuses(states, [h[0] for h in held]))
+
+    def _rejudge(
+        self,
+        season: Season,
+        built: season_moves.Built,
+        claims: list[dict[str, Any]],
+        floor: qa.Floor,
+        now: datetime,
+    ) -> dict[str, dict[str, Any]]:
+        """The league's placed claims judged again (#345) when a held player of mine cleared, by
+        the newest status in any league (#341): as the build judges a new entry, his comeback's
+        drop charged, and cancelled when it no longer pays or the comeback would drop the add.
+        By entry id; a verdict from an earlier build lapses (:data:`qa.NO_CLEARED`) once no one
+        is cleared. Nothing when no claim is open."""
+        if not claims:
+            return {}
+        at = now.isoformat()
+        me = season.settings.my_team_id
+        spots = season.rosters.get(me) if me is not None else None
+        cleared = self._cleared_of(spots or ())
+        if not cleared:
+            return {
+                c["id"]: {"at": at, "verdict": None, "reason": qa.NO_CLEARED}
+                for c in claims
+                if (c.get("rejudge") or {}).get("verdict")
+            }
+        statuses = {int(x["player"]): x["status"] for x in cleared}
+        held = sorted(statuses)
+        try:
+            judged = season_moves.rejudge_claims(built, claims, statuses)
+        except Exception as exc:  # noqa: BLE001 - one league's failure leaves the others
+            reason = f"not judged: {_failure(exc)}"
+            return {
+                c["id"]: {"at": at, "verdict": None, "held": held, "reason": reason} for c in claims
+            }
+        out: dict[str, dict[str, Any]] = {}
+        for c in claims:
+            j = judged.get(c["id"])
+            if j is None:
+                out[c["id"]] = {"at": at, "verdict": None, "held": held, "reason": qa.NOT_JUDGED}
+                continue
+            verdict, reason = qa.rejudge_verdict(
+                int(c["add"]),
+                held,
+                j["gain"],
+                j["value"],
+                floor,
+                j["season_costly"],
+                j["comeback_drops"],
+            )
+            out[c["id"]] = {
+                "at": at,
+                "verdict": verdict,
+                "reason": reason,
+                "held": held,
+                "judged": j["judged"],
+                "gain": round(j["gain"], 4),
+                "value": j["value"],
+                "floor": floor.to_dict(),
+                "season_costly": j["season_costly"],
+                "comeback_drops": {str(k): v for k, v in j["comeback_drops"].items()},
+            }
+        return out
 
     def _drop_first(
         self,
@@ -2997,9 +3076,12 @@ def _failure(exc: Exception) -> str:
 
 
 def _resolver(
-    resolved: dict[str, str], now: datetime
+    resolved: dict[str, str],
+    now: datetime,
+    rejudged: Mapping[str, dict[str, Any]] | None = None,
 ) -> Callable[[dict[str, Any] | None], dict[str, Any]]:
-    """An earlier queue's change that sets the claims the transactions settled (#171)."""
+    """An earlier queue's change that sets the claims the transactions settled (#171), and the
+    open claims' verdicts once judged again (#345)."""
 
     def change(body: dict[str, Any] | None) -> dict[str, Any]:
         body = body or {}
@@ -3007,9 +3089,17 @@ def _resolver(
             if e.get("id") in resolved and not e.get("resolved"):
                 e["resolved"] = resolved[e["id"]]
                 e["resolved_at"] = now.isoformat()
+        _rejudge_into(body.get("entries") or [], rejudged or {})
         return body
 
     return change
+
+
+def _rejudge_into(entries: list[dict[str, Any]], rejudged: Mapping[str, dict[str, Any]]) -> None:
+    """Each open claim's verdict judged again (#345) on its entry: never on one resolved."""
+    for e in entries:
+        if e.get("id") in rejudged and e.get("outcome") in qa.PLACED and not e.get("resolved"):
+            e["rejudge"] = rejudged[e["id"]]
 
 
 def _public_reason(reason: str) -> str:
