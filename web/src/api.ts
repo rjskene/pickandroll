@@ -2072,7 +2072,7 @@ export interface WeekPlans {
   seconds: number;
 }
 
-/** A category over a horizon: expected wins summed over its weeks; this week's finals too. */
+/** A category over a horizon: expected wins summed over its weeks (its odds of winning it each week, added up); this week's finals too. */
 export interface MoveCategory {
   wins: number;
   mine?: number | null;
@@ -2090,15 +2090,21 @@ export interface MoveDetail extends MoveRef {
       gain: number;
       cats: { before: Partial<Record<Cat, MoveCategory>>; after: Partial<Record<Cat, MoveCategory>> };
       comebacks?: Comeback[];
+      /** The weeks the categories' wins are summed over (#350); absent from a server before it. */
+      weeks?: number;
+      /** The odds of winning the matchup without and with the move (#350): this week's on the week,
+       * the average week's against the field on the three weeks; null with no opponent read. */
+      matchup?: { before: number | null; after: number | null };
     }
   >;
   /** The move to the season's end, beside its two horizons (#151). */
   ros?: MoveRos | null;
   /** Every drop the add can come with, best over three weeks first; ``kept``: the keep rule keeps
    * him, so the search never takes it (#124). */
-  drops: ({ drop: number | null; kept?: boolean; held?: HeldMove | null; ros?: MoveRos | null } & Record<MoveHorizon, number>)[];
-  /** The best other adds for this drop. */
-  adds: ({ add: number; ros?: MoveRos | null } & Record<MoveHorizon, number>)[];
+  drops: ({ drop: number | null; kept?: boolean; held?: HeldMove | null; ros?: MoveRos | null; matchup?: number | null } & Record<MoveHorizon, number>)[];
+  /** The best other adds for this drop; ``matchup`` on each, the change in this week's matchup
+   * odds (#350). */
+  adds: ({ add: number; ros?: MoveRos | null; matchup?: number | null } & Record<MoveHorizon, number>)[];
 }
 
 // ---------------------------------------------------------------- strategy (#110)

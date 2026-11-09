@@ -1262,9 +1262,26 @@ def _cats(ev: mv.Evaluator, key: str, moves: list[mv.Move]) -> dict[str, dict[st
     }
 
 
+def matchup_odds(ev: mv.Evaluator, key: str, moves: Sequence[mv.Move]) -> float | None:
+    """The odds of winning the matchup over horizon ``key`` with ``moves`` made
+    (``weekly.matchup_won``), averaged over each week's opponents and then over its weeks: this
+    week's matchup on the week, the average week against the field on the three weeks (#350).
+    None with no opponent read. A headline beside the expected categories won, which rank."""
+    weeks = [w for w in ev.odds(key, moves) if w]
+    if not weeks:
+        return None
+    return sum(sum(wk.matchup_won(o) for o in w) / len(w) for w in weeks) / len(weeks)
+
+
+def _odds_change(ev: mv.Evaluator, before: float | None, moves: Sequence[mv.Move]) -> float | None:
+    after = matchup_odds(ev, "week", moves)
+    return None if before is None or after is None else _r(after - before)
+
+
 def detail_payload(built: Built, add: int, drop: int | None) -> dict[str, Any] | None:
-    """The move drawer: per category before and after on both horizons, every drop the add can
-    come with and the best other adds for this drop, each with both gains."""
+    """The move drawer: per category before and after on both horizons, with the matchup odds
+    (#350), every drop the add can come with and the best other adds for this drop, each with
+    both gains and the change in this week's matchup odds."""
     p = built.problem
     if add not in p.effective:
         return None
@@ -1280,7 +1297,17 @@ def detail_payload(built: Built, add: int, drop: int | None) -> dict[str, Any] |
             "gain": _r(ev.gain(key, move)),
             "cats": {"before": _cats(ev, key, []), "after": _cats(ev, key, move)},
             "comebacks": comebacks_rows(mv.comebacks(p, key, move)),
+            # The weeks the categories' wins are summed over, and the matchup odds (#350).
+            "weeks": len(p.horizons[key]),
+            "matchup": {
+                when: None if x is None else _r(x)
+                for when, x in (
+                    ("before", matchup_odds(ev, key, [])),
+                    ("after", matchup_odds(ev, key, move)),
+                )
+            },
         }
+    week_odds = matchup_odds(ev, "week", [])
     # Every drop the add can come with, those the keep rule keeps too, marked: the drawer shows
     # what keeping them costs.
     drops = [
@@ -1290,6 +1317,7 @@ def detail_payload(built: Built, add: int, drop: int | None) -> dict[str, Any] |
             "held": _held_for(p, mv.Move(add, d)) if mv.needs_spot(p, mv.Move(add, d)) else None,
             "held_drop": held_drop(p, mv.Move(add, d)),
             **{key: _r(ev.gain(key, [mv.Move(add, d)])) for key in HORIZONS},
+            "matchup": _odds_change(ev, week_odds, [mv.Move(add, d)]),
             "ros": ros_move(built, mv.Move(add, d)),
         }
         for d in [None, *(k for k, _ in p.roster), *(k for k, _ in p.held)]
@@ -1303,7 +1331,12 @@ def detail_payload(built: Built, add: int, drop: int | None) -> dict[str, Any] |
     ]
     others.sort(key=lambda r: -r["three"])
     shown = [
-        {**r, "ros": ros_move(built, mv.Move(r["add"], drop))} for r in others[:ALTERNATIVE_ADDS]
+        {
+            **r,
+            "matchup": _odds_change(ev, week_odds, [mv.Move(r["add"], drop)]),
+            "ros": ros_move(built, mv.Move(r["add"], drop)),
+        }
+        for r in others[:ALTERNATIVE_ADDS]
     ]
     return {
         "add": add,

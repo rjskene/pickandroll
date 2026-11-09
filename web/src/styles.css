@@ -351,6 +351,7 @@ tr.hl td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
 .strategy-tabs { flex-shrink: 0; align-self: flex-start; }
 .strategy-tabs .rec-mark { font-size: 11px; font-weight: 400; opacity: 0.8; }
 .season-table.strategy-moves th, .season-table.strategy-moves td { padding: 3px 3px; }
+.season-table.tight th, .season-table.tight td { padding: 3px 3px; }
 .lock-toggle { padding: 0 2px; vertical-align: -1px; color: var(--dim); }
 .lock-toggle:hover, .lock-toggle.on { color: var(--accent); }
 /* The two first-order lists side by side, stacked when the card is too narrow for a name, its "kept" tag and value. */

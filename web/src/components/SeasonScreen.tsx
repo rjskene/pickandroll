@@ -61,6 +61,9 @@ import {
   MOVE_HORIZON,
   NO_FILTER,
   oddsLabel,
+  oddsMove,
+  oddsPoints,
+  oddsPointsTone,
   oddsTone,
   openingDrop,
   roomNote,
@@ -581,6 +584,15 @@ const TREND_COLUMNS: { key: AvailableSortKey; label: string; title: string }[] =
 const SYSTEM_SHORT: Record<ProjectionSystem, string> = { bbm: "BBM", yahoo: "Yahoo" };
 /** A move horizon's column: the rest of this week, the three weeks after it. */
 const GAIN_SHORT: Record<MoveHorizon, string> = { week: "+1wk", three: "+3wk" };
+/** The alternatives' gain headers in words (#350). */
+const GAIN_TITLE_LONG: Record<MoveHorizon, string> = {
+  week: "expected categories won this week, gained",
+  three: "expected categories won over the three weeks, gained",
+};
+const MATCHUP_TITLE = "the odds of winning the matchup: more categories won than lost, each category with its own odds";
+const MATCHUP_CHANGE_TITLE = "win: the change in this week's odds of winning the matchup, in points";
+/** The weeks a horizon's categories are summed over: three for a server before #350. */
+const weeksOf = (h: { weeks?: number }) => h.weeks ?? 3;
 const GAIN_KEY: Record<MoveHorizon, AvailableSortKey> = { week: "gain_week", three: "gain_three" };
 
 /** The move a drawer shows: an add and his drop (null: an open spot). */
@@ -1467,16 +1479,28 @@ function MoveDrawer({
       {d && (
         <>
           <div className="block">
-            <span className="k" title="expected categories won this week, the week so far included">
-              {cap(horizonName(m, "week"))} · {d.horizons.week.before.toFixed(2)} → {d.horizons.week.after.toFixed(2)} ({gainLabel(d.horizons.week.gain)})
+            <span className="k" title="expected categories won this week: each category's odds of winning it, summed, the week so far included">
+              {cap(horizonName(m, "week"))} · expected categories won {d.horizons.week.before.toFixed(2)} → {d.horizons.week.after.toFixed(2)} ({gainLabel(d.horizons.week.gain)})
             </span>
             <WeekCats cats={cats} before={d.horizons.week.cats.before} after={d.horizons.week.cats.after} />
+            {d.horizons.week.matchup?.before != null && (
+              <p className="small" title={MATCHUP_TITLE}>
+                Win the matchup {oddsMove(d.horizons.week.matchup.before, d.horizons.week.matchup.after)}
+              </p>
+            )}
           </div>
           <div className="block">
-            <span className="k" title="expected categories won over the three weeks, each week's odds averaged over the other teams">
-              {cap(horizonName(m, "three"))} · {d.horizons.three.before.toFixed(2)} → {d.horizons.three.after.toFixed(2)} ({gainLabel(d.horizons.three.gain)})
+            <span className="k" title="expected categories won over the three weeks: each week's odds of winning each category against the other teams, averaged over them, summed over the categories and the weeks">
+              {cap(horizonName(m, "three"))} · expected categories won {d.horizons.three.before.toFixed(2)} → {d.horizons.three.after.toFixed(2)} ({gainLabel(d.horizons.three.gain)})
+              {weeksOf(d.horizons.three) > 1 &&
+                ` · a week ${(d.horizons.three.before / weeksOf(d.horizons.three)).toFixed(2)} → ${(d.horizons.three.after / weeksOf(d.horizons.three)).toFixed(2)}`}
             </span>
-            <FieldCats cats={cats} before={d.horizons.three.cats.before} after={d.horizons.three.cats.after} />
+            <FieldCats cats={cats} weeks={weeksOf(d.horizons.three)} before={d.horizons.three.cats.before} after={d.horizons.three.cats.after} />
+            {d.horizons.three.matchup?.before != null && (
+              <p className="small" title={`${MATCHUP_TITLE}, against each other team and averaged over them and the three weeks`}>
+                Win the average week's matchup {oddsMove(d.horizons.three.matchup.before, d.horizons.three.matchup.after)}
+              </p>
+            )}
           </div>
           <div className="block">
             <span className="k" title={rosHeadTitle(s.scoring)}>
@@ -1486,12 +1510,19 @@ function MoveDrawer({
           </div>
           <div className="block">
             <span className="k">Drop instead</span>
-            <table className="season-table">
+            <table className="season-table tight">
               <thead>
                 <tr>
                   <th>For</th>
-                  <th className="num">{GAIN_SHORT.week}</th>
-                  <th className="num">{GAIN_SHORT.three}</th>
+                  <th className="num" title={GAIN_TITLE_LONG.week}>
+                    {GAIN_SHORT.week}
+                  </th>
+                  <th className="num" title={MATCHUP_CHANGE_TITLE}>
+                    win
+                  </th>
+                  <th className="num" title={GAIN_TITLE_LONG.three}>
+                    {GAIN_SHORT.three}
+                  </th>
                   <th className="num" title={rosHeadTitle(s.scoring)}>
                     ROS
                   </th>
@@ -1509,6 +1540,9 @@ function MoveDrawer({
                       )}
                     </BasisCell>
                     <td className={`num ${gainTone(x.week, min)}`}>{gainLabel(x.week)}</td>
+                    <td className={`num ${oddsPointsTone(x.matchup)}`} title={MATCHUP_CHANGE_TITLE}>
+                      {oddsPoints(x.matchup)}
+                    </td>
                     <td className={`num ${gainTone(x.three, min)}`}>{gainLabel(x.three)}</td>
                     <td className={`num ${rosTone(x.ros, s.scoring)}`} title={rosTitle(x.ros, { add: picked.add, drop: x.drop }, name, s.scoring)}>
                       {rosLabel(x.ros, s.scoring)}
@@ -1521,12 +1555,19 @@ function MoveDrawer({
           {d.adds.length > 0 && (
             <div className="block">
               <span className="k">Other adds for {name(picked.drop)}</span>
-              <table className="season-table">
+              <table className="season-table tight">
                 <thead>
                   <tr>
                     <th>Add</th>
-                    <th className="num">{GAIN_SHORT.week}</th>
-                    <th className="num">{GAIN_SHORT.three}</th>
+                    <th className="num" title={GAIN_TITLE_LONG.week}>
+                      {GAIN_SHORT.week}
+                    </th>
+                    <th className="num" title={MATCHUP_CHANGE_TITLE}>
+                      win
+                    </th>
+                    <th className="num" title={GAIN_TITLE_LONG.three}>
+                      {GAIN_SHORT.three}
+                    </th>
                     <th className="num" title={rosHeadTitle(s.scoring)}>
                       ROS
                     </th>
@@ -1537,6 +1578,9 @@ function MoveDrawer({
                     <tr key={x.add} className="pick" onClick={() => onPick({ add: x.add, drop: picked.drop })}>
                       <td>{name(x.add)}</td>
                       <td className={`num ${gainTone(x.week, min)}`}>{gainLabel(x.week)}</td>
+                      <td className={`num ${oddsPointsTone(x.matchup)}`} title={MATCHUP_CHANGE_TITLE}>
+                        {oddsPoints(x.matchup)}
+                      </td>
                       <td className={`num ${gainTone(x.three, min)}`}>{gainLabel(x.three)}</td>
                       <td className={`num ${rosTone(x.ros, s.scoring)}`} title={rosTitle(x.ros, { add: x.add, drop: picked.drop }, name, s.scoring)}>
                         {rosLabel(x.ros, s.scoring)}
@@ -1558,7 +1602,7 @@ type CatsByCat = Partial<Record<Cat, MoveCategory>>;
 /** This week against the opponent: my final before and after, theirs, and the odds of each. */
 function WeekCats({ cats, before, after }: { cats: Cat[]; before: CatsByCat; after: CatsByCat }) {
   return (
-    <table className="season-table">
+    <table className="season-table tight">
       <thead>
         <tr>
           <th></th>
@@ -1575,12 +1619,16 @@ function WeekCats({ cats, before, after }: { cats: Cat[]; before: CatsByCat; aft
           <th className="num" title="the odds with the move">
             after
           </th>
+          <th className="num" title="the change in the odds of winning the category, in points">
+            change
+          </th>
         </tr>
       </thead>
       <tbody>
         {cats.map((c) => {
           const b = before[c];
           const a = after[c];
+          const diff = a && b ? a.wins - b.wins : null;
           return (
             <tr key={c}>
               <td>{CAT_LABEL[c]}</td>
@@ -1589,6 +1637,7 @@ function WeekCats({ cats, before, after }: { cats: Cat[]; before: CatsByCat; aft
               <td className="num dim">{catValue(c, b?.theirs)}</td>
               <td className={`num ${b ? oddsTone(b.wins) : ""}`}>{b ? oddsLabel(b.wins) : ""}</td>
               <td className={`num ${a ? oddsTone(a.wins) : ""}`}>{a ? oddsLabel(a.wins) : ""}</td>
+              <td className={`num ${oddsPointsTone(diff)}`}>{oddsPoints(diff)}</td>
             </tr>
           );
         })}
@@ -1597,33 +1646,38 @@ function WeekCats({ cats, before, after }: { cats: Cat[]; before: CatsByCat; aft
   );
 }
 
-/** The three weeks against the field: expected wins of each category, before and after. */
-function FieldCats({ cats, before, after }: { cats: Cat[]; before: CatsByCat; after: CatsByCat }) {
+/** The three weeks against the field (#350): each category's weekly odds of winning it, before
+ * and after, and the change in points; the payload sums them over the ``weeks``. */
+function FieldCats({ cats, weeks, before, after }: { cats: Cat[]; weeks: number; before: CatsByCat; after: CatsByCat }) {
   return (
     <table className="season-table">
       <thead>
         <tr>
           <th></th>
-          <th className="num" title="expected weeks won without the move">
-            wins
+          <th className="num" title="each week's odds of winning the category without the move, averaged over the other teams and the weeks">
+            win
           </th>
-          <th className="num" title="with the move">
+          <th className="num" title="the odds with the move">
             after
           </th>
-          <th className="num">change</th>
+          <th className="num" title="the change in the weekly odds of winning the category, in points">
+            change
+          </th>
         </tr>
       </thead>
       <tbody>
         {cats.map((c) => {
           const b = before[c]?.wins;
           const a = after[c]?.wins;
-          const diff = a != null && b != null ? a - b : null;
+          const pb = b == null ? null : b / weeks;
+          const pa = a == null ? null : a / weeks;
+          const diff = pa != null && pb != null ? pa - pb : null;
           return (
             <tr key={c}>
               <td>{CAT_LABEL[c]}</td>
-              <td className="num dim">{b?.toFixed(2) ?? ""}</td>
-              <td className="num">{a?.toFixed(2) ?? ""}</td>
-              <td className={`num ${diff == null ? "" : diff > 0.005 ? "good" : diff < -0.005 ? "bad" : ""}`}>{gainLabel(diff)}</td>
+              <td className={`num dim ${pb == null ? "" : oddsTone(pb)}`}>{pb == null ? "" : oddsLabel(pb)}</td>
+              <td className={`num ${pa == null ? "" : oddsTone(pa)}`}>{pa == null ? "" : oddsLabel(pa)}</td>
+              <td className={`num ${oddsPointsTone(diff)}`}>{oddsPoints(diff)}</td>
             </tr>
           );
         })}
