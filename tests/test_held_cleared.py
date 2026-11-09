@@ -11,9 +11,11 @@ from datetime import timedelta
 
 import pytest
 
+from pickandroll.api import season_autopilot as ap
+from pickandroll.api import season_moves
 from pickandroll.season import autopilot as qa
 from tests.test_moves_queue import queued
-from tests.test_season import LEAGUE, NOW, season_client
+from tests.test_season import LEAGUE, NOW, season_client, strategy_league
 
 DUE = f"/seasons/{LEAGUE}/autopilot/moves/due"
 OTHER = "100002"
@@ -137,3 +139,88 @@ def test_the_due_route_names_a_held_player_cleared_in_his_newest_read(client):
     hold(client, held, "Q")
     [x] = client.get(DUE).json()["held_cleared"]
     assert (x["player"], x["status"], x["league"]) == (held, "Q", LEAGUE)
+
+
+# --------------------------------------------------------------------------- a claim re-judged (#345)
+def test_a_build_rejudges_the_placed_claims_once_a_held_player_clears_and_says_cancel_by_hand(
+    client, monkeypatch
+):
+    folder = client.data_dir / "autopilot" / "queue"
+    folder.mkdir(parents=True)
+    claim = {"league": LEAGUE, "outcome": "claimed", "resolved": None, "from": "2026-10-22"}
+    cancel = {**claim, "id": f"2026-10-20:{LEAGUE}:9001:7", "add": 9001, "drop": 7, "bid_placed": 2}
+    keep = {**claim, "id": f"2026-10-20:{LEAGUE}:9002:0", "add": 9002, "drop": None}
+    settled = {**claim, "id": f"2026-10-20:{LEAGUE}:9003:0", "add": 9003, "resolved": "won"}
+    (folder / "2026-10-20.json").write_text(json.dumps({"entries": [cancel, keep, settled]}))
+    seen = []
+
+    def judge(built, claims, statuses):
+        seen.append(([c["id"] for c in claims], dict(statuses)))
+        base = {"judged": "three", "gain": 0.5, "value": None, "season_costly": None}
+        return {
+            cancel["id"]: {**base, "comeback_drops": {6406: 9001}},
+            keep["id"]: {**base, "comeback_drops": {6406: 7}},
+        }
+
+    monkeypatch.setattr(season_moves, "rejudge_claims", judge)
+    # No one cleared: nothing judged, nothing written.
+    queued(client)
+    assert seen == []
+    assert all(
+        "rejudge" not in e for e in json.loads((folder / "2026-10-20.json").read_text())["entries"]
+    )
+    # He clears (Q on IL): the open claims are judged with his newest status; a settled one never.
+    hold(client, 6406, "Q")
+    q = client.post("/autopilot/queue/build").json()
+    assert seen == [([cancel["id"], keep["id"]], {6406: "Q"})]
+    written = {e["id"]: e for e in json.loads((folder / "2026-10-20.json").read_text())["entries"]}
+    got = written[cancel["id"]]["rejudge"]
+    assert (got["verdict"], got["reason"], got["held"]) == (
+        qa.CANCEL,
+        "with 6406 back his comeback would drop 9001, the claim's own add",
+        [6406],
+    )
+    assert got["comeback_drops"] == {"6406": 9001} and got["floor"]["plan"] is not None
+    assert written[keep["id"]]["rejudge"]["verdict"] == qa.KEEP
+    assert "rejudge" not in written[settled["id"]]
+    # The Queue screen's row carries each open claim's verdict and bid.
+    row = next(r for r in q["leagues"] if r["league"] == LEAGUE)
+    pending = {c["id"]: c for c in row["pending"]}
+    assert pending[cancel["id"]]["rejudge"]["verdict"] == qa.CANCEL
+    assert pending[cancel["id"]]["bid"] == 2
+    # The digest: the user's to cancel by hand, with the reason.
+    line = (
+        f"- League {LEAGUE}: cancel by hand the pending claim add 9001, drop 7, $2: "
+        "with 6406 back his comeback would drop 9001, the claim's own add"
+    )
+    assert ap.cancel_digest_lines(client.data_dir, NOW.date()) == [line]
+    assert line in client.get("/flags/digest").json()["moves_executor"]
+    # Back to O: the verdict lapses on the next build, and the line goes.
+    hold(client, 6406, "O")
+    client.post("/autopilot/queue/build")
+    written = {e["id"]: e for e in json.loads((folder / "2026-10-20.json").read_text())["entries"]}
+    assert written[cancel["id"]]["rejudge"]["verdict"] is None
+    assert written[cancel["id"]]["rejudge"]["reason"] == qa.NO_CLEARED
+    assert ap.cancel_digest_lines(client.data_dir, NOW.date()) == []
+
+
+def test_a_claim_the_real_build_cannot_judge_says_so_and_is_no_cancel(client):
+    folder = client.data_dir / "autopilot" / "queue"
+    folder.mkdir(parents=True)
+    out_of_pool = {
+        "id": f"2026-10-20:{LEAGUE}:999999:0",
+        "league": LEAGUE,
+        "add": 999999,
+        "drop": None,
+        "outcome": "claimed",
+        "resolved": None,
+        "from": "2026-10-22",
+    }
+    (folder / "2026-10-20.json").write_text(json.dumps({"entries": [out_of_pool]}))
+    strategy_league(client)
+    hold(client, 6406, "Q")
+    assert client.get(f"/seasons/{LEAGUE}/moves").status_code == 200
+    assert client.post("/autopilot/queue/build").status_code == 200
+    [e] = json.loads((folder / "2026-10-20.json").read_text())["entries"]
+    assert (e["rejudge"]["verdict"], e["rejudge"]["reason"]) == (None, qa.NOT_JUDGED)
+    assert ap.cancel_digest_lines(client.data_dir, NOW.date()) == []

@@ -723,3 +723,44 @@ def held_cleared(
                 }
             )
     return out
+
+
+# --------------------------------------------------------------------------- a claim re-judged (#345)
+#: A placed claim's verdict once a held player cleared: it still pays, or it is cancelled.
+KEEP = "keep"
+CANCEL = "cancel"
+#: A re-judged claim whose league no longer has a cleared held player: the verdict lapses.
+NO_CLEARED = "no held player cleared any more: the claim stands as placed"
+#: A claim the build cannot judge: its add is out of the pool or the move no longer fits.
+NOT_JUDGED = "not judged: the add is out of the pool or the move no longer fits the roster"
+
+
+def _back(held: Sequence[int]) -> str:
+    return f"with {' and '.join(str(k) for k in held)} back"
+
+
+def rejudge_verdict(
+    add: int,
+    held: Sequence[int],
+    gain: float | None,
+    value: float | None,
+    floor: Floor,
+    season_costly: bool | None,
+    comeback_drops: Mapping[int, int],
+) -> tuple[str, str]:
+    """A placed claim's verdict once ``held`` (my cleared held players) come back (#345), judged
+    as the build judges a new entry: on its judging horizon with their comebacks' drops charged
+    (``gain``), the season guard (``season_costly``) and the noise floor (``floor``, on ``gain``
+    and ``value``); and cancelled whenever a comeback would drop the claim's own add
+    (``comeback_drops``: each cleared player and whom his comeback sends). ``(verdict, reason)``,
+    the reason in words without a figure."""
+    back = _back(held)
+    sends = sorted(k for k, d in comeback_drops.items() if d == add)
+    if sends:
+        return CANCEL, f"{_back(sends)} his comeback would drop {add}, the claim's own add"
+    if season_costly:
+        return CANCEL, f"{back} it costs the season (season-costly)"
+    below = floor.below(gain, value)
+    if below is not None:
+        return CANCEL, f"{back} it is below the noise floor ({below})"
+    return KEEP, f"{back} it still clears the noise floor"

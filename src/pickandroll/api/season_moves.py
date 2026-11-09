@@ -1351,6 +1351,56 @@ def detail_payload(built: Built, add: int, drop: int | None) -> dict[str, Any] |
     }
 
 
+# --------------------------------------------------------------------------- a claim re-judged (#345)
+def with_statuses(problem: mv.MoveProblem, statuses: Mapping[int, str | None]) -> mv.MoveProblem:
+    """The problem with my held players' statuses as ``statuses`` has them: the newest read in
+    any league (#341) can clear a player this league's own read still shows out."""
+    if not statuses:
+        return problem
+    held = tuple(
+        (k, replace(p, status=statuses[k]) if k in statuses else p) for k, p in problem.held
+    )
+    return replace(problem, held=held)
+
+
+def rejudge_claims(
+    built: Built,
+    claims: Sequence[Mapping[str, Any]],
+    statuses: Mapping[int, str | None],
+) -> dict[str, dict[str, Any] | None]:
+    """Each placed claim (``claims``, queue entries) judged again with my cleared held players
+    back (#345): ``statuses`` are their newest statuses. By entry id: the move's gain on the
+    entry's judging horizon with every cleared player's comeback drop charged (the evaluator's
+    own, :func:`moves.comebacks`), its value there and its season guard as the decision log
+    reads them, and whom each cleared player's comeback sends with the claim made; None when
+    the add is out of the pool or the move no longer fits."""
+    p = with_statuses(built.problem, statuses)
+    cleared = {k for k, _ in mv.cleared(p)}
+    ev = mv.Evaluator(p)
+    mine = {k for k, _ in (*p.roster, *p.held)}
+    out: dict[str, dict[str, Any] | None] = {}
+    for c in claims:
+        add, drop = int(c["add"]), c.get("drop")
+        judged = c.get("judged") or dl.THREE
+        move = mv.Move(add, None if drop is None else int(drop))
+        fits = (move.drop is None or move.drop in mine) and add in p.effective
+        if not fits or judged not in p.horizons or not mv.feasible(p, [move]):
+            out[c["id"]] = None
+            continue
+        proj = dl.move_projection(p, built.scorer, move.add, move.drop, mv.day_of(p, move))
+        on = ((proj or {}).get("horizons") or {}).get(judged) or {}
+        out[c["id"]] = {
+            "judged": judged,
+            "gain": ev.gain(judged, [move]),
+            "value": on.get("value"),
+            "season_costly": dl.season_costly(proj, judged),
+            "comeback_drops": {
+                cb.player: cb.drop for cb in mv.comebacks(p, judged, [move]) if cb.player in cleared
+            },
+        }
+    return out
+
+
 # --------------------------------------------------------------------------- the cache
 class MovesCache:
     """The moves of a league per system, snapshot and day: the search takes seconds."""
