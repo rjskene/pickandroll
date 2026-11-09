@@ -153,7 +153,7 @@ def test_the_private_league_is_never_read_and_an_unknown_league_is_not_found(cli
     r = client.post(f"/seasons/{PRIVATE}/autopilot/claim-page", json=read_body())
     assert r.status_code == 409
     r = client.post("/seasons/999999/autopilot/claim-page", json=read_body())
-    assert r.status_code in (404, 422)
+    assert r.status_code == 404
     assert ap.claim_page_reads(client.data_dir) == []
 
 
