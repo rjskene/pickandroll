@@ -533,6 +533,26 @@ page, from PR 2:
     act on: the digest's Moves section and the Queue screen's league chip say "cancel by hand" with
     the claim and the reason, while the claim is open. A comeback's digest line names a dropped
     player added that day or the day before, "(added <day>)".
+  - **The read of a pending claim's page (#345 step 0, extension 0.11.10).** Before the executor
+    may cancel a claim, the evening pass reads one claim's page once, clicking nothing.
+    `GET /autopilot/claim-page/due` is due until a read is on file and never after. It names the
+    first public league by id whose moves executor is not off and that has a claim placed and
+    not settled in the open days' queues, with the claim's id, add and drop and my team page
+    there. It is never the private league, and under STOP nothing is due. After its claims and
+    Start Active, the 22:40 pass opens that page with `#pickandroll-claim-read` for thirty
+    seconds. The extension (lib/claimread.js) asks the due again, follows the Pending
+    Transactions box's View Details link of that claim (else the box's first) with the fragment,
+    and on Yahoo's claim page (`/nba/<league>/<team>/viewwaiver`) reads:
+    - where it landed and its heading and notices;
+    - each form by its id, name, method and action path, each field by its tag, type, name and
+      id, and its buttons and links;
+    - the buttons and claim links outside the forms.
+
+    Words are a control's label (an input button's own), paths are without their query or
+    fragment, and no field's value is read. `POST /seasons/<league>/autopilot/claim-page` files
+    the read with its league in `data/autopilot/claim_page.json`. A read carrying a value, a
+    query, the crumb or any other key is refused (422), and the private league is refused (409).
+    `GET /autopilot/claim-page` lists the reads. PR 2's cancel waits for this read.
 
   `gone` only when the page shows the add on a team (an on-team icon on the add's row, or a
   page without the form saying so); a page without the claim form is skipped "page not read",

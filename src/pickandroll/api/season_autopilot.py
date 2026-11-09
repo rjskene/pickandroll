@@ -1504,7 +1504,7 @@ def comeback_digest_lines(
     return lines
 
 
-def _open_queues(data_dir: Path, today: date) -> list[dict[str, Any]]:
+def open_queues(data_dir: Path, today: date) -> list[dict[str, Any]]:
     """The queues of the days a claim can still be open on (``season_queue.PENDING_DAYS``), oldest
     first; one that does not read is left out."""
     since = today - timedelta(days=season_queue.PENDING_DAYS)
@@ -1525,7 +1525,7 @@ def placed_adds(data_dir: Path, today: date) -> dict[str, dict[int, date]]:
     """My adds the queue placed and Yahoo landed in the open days, by league and player: the day
     each joined my roster, a won claim's clear day or a free agent's own day (#345)."""
     out: dict[str, dict[int, date]] = {}
-    for q in _open_queues(data_dir, today):
+    for q in open_queues(data_dir, today):
         for e in q.get("entries") or []:
             won = e.get("outcome") == "claimed" and e.get("resolved") == "won"
             if not (won or e.get("outcome") == "added") or e.get("add") is None:
@@ -1545,7 +1545,7 @@ def cancel_digest_lines(data_dir: Path, today: date) -> list[str]:
     the reason. A line per open claim, by league and entry."""
     rows = [
         e
-        for q in _open_queues(data_dir, today)
+        for q in open_queues(data_dir, today)
         for e in q.get("entries") or []
         if e.get("outcome") in qa.PLACED
         and not e.get("resolved")

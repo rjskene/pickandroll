@@ -2167,20 +2167,12 @@ class SeasonService:
             return {**out, "reason": "a read of the claim page is on file"}
         if season_autopilot.stopped(self.data_dir):
             return {**out, "reason": "STOP is on (data/autopilot/STOP)"}
-        since = today - timedelta(days=season_queue.PENDING_DAYS)
-        open_: list[dict[str, Any]] = []
-        for day in season_queue.days(self.data_dir):
-            if not since <= day <= today:
-                continue
-            try:
-                q = season_queue.read(self.data_dir, day) or {}
-            except season_queue.QueueError:
-                continue
-            open_ += [
-                e
-                for e in q.get("entries") or []
-                if e.get("outcome") in qa.PLACED and not e.get("resolved")
-            ]
+        open_ = [
+            e
+            for q in season_autopilot.open_queues(self.data_dir, today)
+            for e in q.get("entries") or []
+            if e.get("outcome") in qa.PLACED and not e.get("resolved")
+        ]
         for league, mode in sorted(self._modes(leagues.MOVES).items()):
             if mode.get("private") or mode["mode"] == "off":
                 continue
