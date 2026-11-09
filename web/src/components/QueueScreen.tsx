@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, type LineupMode, type ProjectionSystem, type QueueEntry, type QueueLeague, type QueuePayload, type SeasonSummary } from "../api";
 import { queueKeys } from "../keys";
 import {
+  cancelByHand,
   fundsLabel,
   fundsNote,
   allLiveLine,
@@ -231,13 +232,14 @@ function ChipMode({ row, title }: { row: QueueLeague; title: string }) {
 }
 
 /** A league's chip: its mode and its switch, its cap and where the cap is from, the dollars and
- * adds left (#333), what it queued, and why it queued none. */
+ * adds left (#333), what it queued, why it queued none, and the claims to cancel by hand (#345). */
 function Chip({ row, p, title, onOpen }: { row: QueueLeague; p: QueuePayload; title: string; onOpen: () => void }) {
   const mine = p.entries.filter((e) => e.league === row.league && e.queued);
   const struck = mine.filter((e) => e.struck).length;
   const would = mine.filter((e) => !e.struck && !e.outcome && e.pass?.outcome === "would_claim").length;
   const funds = fundsLabel(row.funds);
   const why = stripReason(row, p.entries);
+  const cancels = cancelByHand(row, p.entries);
   const opening = p.active?.current?.league === row.league ? p.active : null;
   const facts = [
     row.status === "private" ? "suggestions only" : null,
@@ -262,6 +264,11 @@ function Chip({ row, p, title, onOpen }: { row: QueueLeague; p: QueuePayload; ti
         ))}
       </span>
       {why && <span className="dim">{why}</span>}
+      {cancels.map((c) => (
+        <span key={c} className="bad" title="judged again once a held player cleared: cancel it in Yahoo's pending claims before the next waiver run">
+          {c}
+        </span>
+      ))}
     </div>
   );
 }

@@ -54,7 +54,7 @@ from ..season import autopilot as qa
 from ..season import lineup as lu
 from ..season import weekly as wk
 from ..sources.yahoo import public
-from . import leagues
+from . import leagues, season_queue
 from .season_knobs import autopilot_dir
 from .season_queue import LINEUP_LIVE_AFTER, live_after
 
@@ -1430,8 +1430,10 @@ def _comeback_line(
     today: date,
     lineups: Sequence[Mapping[str, Any]],
     drops: Sequence[Mapping[str, Any]],
+    added: Mapping[int, date] | None = None,
 ) -> str | None:
-    """A league's line for the comebacks of the runs logged on ``day``."""
+    """A league's line for the comebacks of the runs logged on ``day``; a drop of a player added
+    that day or the day before (``added``: my adds the queue placed, by player) says so (#345)."""
     moves: dict[int, Mapping[str, Any]] = {}
     held: dict[int, str] = {}
     for run in lineups:
@@ -1447,8 +1449,10 @@ def _comeback_line(
         run, move = dropped.get(player), moves.get(player)
         said = []
         if run is not None:
+            came = (added or {}).get(int(run["player"])) if run.get("player") is not None else None
+            fresh = came is not None and day - timedelta(days=1) <= came <= day
             said.append(
-                f"{run.get('player')} dropped"
+                f"{run.get('player')} dropped" + (f" (added {came.isoformat()})" if fresh else "")
                 if run.get("outcome") == "dropped"
                 else f"drop of {run.get('player')} {run.get('outcome')}"
                 + (f" ({str(run['reason'])[:COMEBACK_WORDS]})" if run.get("reason") else "")
@@ -1488,12 +1492,73 @@ def comeback_digest_lines(
         return by_day
 
     lines = []
+    adds = placed_adds(data_dir, today)
     for lg in sorted(leagues_):
         lineups, drops = fresh(LINEUP, lg), fresh(DROP, lg)
         for day in sorted({*lineups, *drops}):
-            line = _comeback_line(lg, day, today, lineups.get(day, []), drops.get(day, []))
+            line = _comeback_line(
+                lg, day, today, lineups.get(day, []), drops.get(day, []), adds.get(lg)
+            )
             if line:
                 lines.append(line)
+    return lines
+
+
+def _open_queues(data_dir: Path, today: date) -> list[dict[str, Any]]:
+    """The queues of the days a claim can still be open on (``season_queue.PENDING_DAYS``), oldest
+    first; one that does not read is left out."""
+    since = today - timedelta(days=season_queue.PENDING_DAYS)
+    out = []
+    for d in season_queue.days(data_dir):
+        if not since <= d <= today:
+            continue
+        try:
+            q = season_queue.read(data_dir, d)
+        except season_queue.QueueError:
+            continue
+        if q is not None:
+            out.append(q)
+    return out
+
+
+def placed_adds(data_dir: Path, today: date) -> dict[str, dict[int, date]]:
+    """My adds the queue placed and Yahoo landed in the open days, by league and player: the day
+    each joined my roster, a won claim's clear day or a free agent's own day (#345)."""
+    out: dict[str, dict[int, date]] = {}
+    for q in _open_queues(data_dir, today):
+        for e in q.get("entries") or []:
+            won = e.get("outcome") == "claimed" and e.get("resolved") == "won"
+            if not (won or e.get("outcome") == "added") or e.get("add") is None:
+                continue
+            day = e.get("from") if won and e.get("from") else e.get("date")
+            try:
+                when = date.fromisoformat(str(day))
+            except ValueError:
+                continue
+            out.setdefault(str(e.get("league")), {})[int(e["add"])] = when
+    return out
+
+
+def cancel_digest_lines(data_dir: Path, today: date) -> list[str]:
+    """The digest's lines for the placed claims judged again and cancelled (#345): while the
+    executor has no cancel, each is the user's to cancel in Yahoo before the next waiver run, with
+    the reason. A line per open claim, by league and entry."""
+    rows = [
+        e
+        for q in _open_queues(data_dir, today)
+        for e in q.get("entries") or []
+        if e.get("outcome") in qa.PLACED
+        and not e.get("resolved")
+        and (e.get("rejudge") or {}).get("verdict") == qa.CANCEL
+    ]
+    lines = []
+    for e in sorted(rows, key=lambda e: (str(e.get("league")), str(e.get("id")))):
+        drop = "open spot" if e.get("drop") is None else f"drop {e['drop']}"
+        bid = f", ${e['bid_placed']}" if e.get("bid_placed") is not None else ""
+        lines.append(
+            f"- League {e.get('league')}: cancel by hand the pending claim add {e.get('add')}, "
+            f"{drop}{bid}: {e['rejudge'].get('reason')}"
+        )
     return lines
 
 
