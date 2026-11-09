@@ -441,7 +441,15 @@ def pretip(ctx: Context, api: str) -> None:
             _pretip_log(ctx, {**attempt, "outcome": "failed", "reason": why, "pulls": pulls})
         else:
             _pretip_push(ctx, league, due, {**attempt, "solved_at": ctx.now().isoformat()}, pulls)
-    _pretip_lineups(ctx, started)
+    if due.get("lineups_done"):
+        # Once per slate (#355 PR 3): a retry, after a failed solve or push, never runs them again.
+        at = str(due.get("lineups_at") or "")[11:16]
+        ctx.report.skipped("lineup", f"the {slate} slate's lineups ran at {at}: not again")
+        return
+    if _pretip_lineups(ctx, started) and not ctx.dry_run:
+        logged = ctx.notes.get("pretip_logged")
+        if logged is not None:
+            _pretip_log(ctx, {**logged, "lineups_at": ctx.now().isoformat()}, "lineups_logged")
 
 
 def _pretip_missed(ctx: Context, missed: Sequence[Mapping[str, Any]]) -> None:
@@ -462,17 +470,19 @@ def _pretip_missed(ctx: Context, missed: Sequence[Mapping[str, Any]]) -> None:
         )
 
 
-def _pretip_lineups(ctx: Context, since: datetime) -> None:
+def _pretip_lineups(ctx: Context, since: datetime) -> bool:
     """The public leagues' same-day lineups inside the slate (#355 PR 3): the late pass's lineup
     step as it was (its pages, fragment, trigger and record, the extension's steps, which leave
     out a group whose tip-off passed as a skip with its reason), then the re-solve and the light
-    of the leagues opened. The daily's set for the day stays the baseline."""
+    of the leagues opened. The daily's set for the day stays the baseline. True when the step
+    ran: a page opened, or none was due; False when the browser never opened one."""
     pub = public_leagues(seasons(ctx))
     lineups = lineup_plan(ctx, pub, tomorrow=False, fragment=LATE_LINEUP_FRAGMENT)
     opened = browser_pass(ctx, "lineup", lineups, ("lineup", "routine_late", None))
     resolve(ctx, opened)
     pass_check(ctx, opened, ["lineup"], "routine_late", since=since)
     status_check(ctx, opened)
+    return not lineups or bool(opened)
 
 
 def _pull_line(pulls: Mapping[str, str]) -> str:
@@ -542,15 +552,21 @@ def _same(a: Sequence[Mapping[str, Any]], b: Sequence[Mapping[str, Any]]) -> boo
     return key(a) == key(b)
 
 
-def _pretip_log(ctx: Context, attempt: Mapping[str, Any]) -> None:
-    """The attempt on the day file (``POST /autopilot/pretip/runs``); never in a dry run."""
+def _pretip_log(ctx: Context, attempt: Mapping[str, Any], name: str = "day_file") -> None:
+    """The attempt on the day file (``POST /autopilot/pretip/runs``), kept in the notes for the
+    lineup step to log again; never in a dry run."""
     if ctx.dry_run:
         return
     code, body, _ = ctx.post_json("/autopilot/pretip/runs", dict(attempt), 60)
     if code != 200:
-        ctx.report.failed("day_file", f"the attempt was not logged: {code} {str(body)[:200]}")
+        ctx.report.failed(name, f"the attempt was not logged: {code} {str(body)[:200]}")
         return
-    done = bool(((body.get("slates") or {}).get(attempt["slate"]) or {}).get("done"))
+    ctx.notes["pretip_logged"] = dict(attempt)
+    slate = (body.get("slates") or {}).get(attempt["slate"]) or {}
+    if name != "day_file":
+        ctx.report.ok(name, f"{attempt['slate']} slate's lineups logged")
+        return
+    done = bool(slate.get("done"))
     ctx.report.ok(
         "day_file", f"{attempt['slate']} slate {'done' if done else 'still due'}", done=done
     )

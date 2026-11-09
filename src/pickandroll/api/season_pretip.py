@@ -158,6 +158,9 @@ class PretipRun(BaseModel):
     solved_at: datetime | None = None
     pushed_at: datetime | None = None
     unchanged: bool = False
+    #: When the attempt's public lineup step ran (PR 3): a slate's lineups run once, and a retry
+    #: of the slate skips them.
+    lineups_at: datetime | None = None
     moves: list[PretipMove] = Field(default_factory=list, max_length=40)
     pulls: dict[str, str] = Field(default_factory=dict)
 
@@ -170,16 +173,35 @@ def done_of(attempt: Mapping[str, Any]) -> bool:
 
 
 def record(data_dir: Path, day: date, run: PretipRun) -> dict[str, Any]:
-    """Append ``run`` to the day file and mark its slate done by :func:`done_of`; written whole
-    to a temporary file and moved into place."""
+    """Append ``run`` to the day file, or, when it carries ``lineups_at``, replace the attempt of
+    the same start (the routine logs an attempt again once its lineup step ran), and mark its slate done by :func:`done_of` and
+    its lineups done once an attempt has ``lineups_at``; written whole to a temporary file and
+    moved into place."""
     row = run.model_dump(mode="json")
     path = day_path(data_dir, day)
     with _lock:
         body = read_day(data_dir, day)
         body["rule"] = RULE
         slate = body["slates"].setdefault(run.slate, {"done": False, "attempts": []})
-        slate["attempts"].append(row)
-        slate["done"] = bool(slate.get("done")) or done_of(row)
+        attempts = slate["attempts"]
+        same = (
+            next(
+                (
+                    i
+                    for i, a in reversed(list(enumerate(attempts)))
+                    if a.get("started_at") == row["started_at"] and a.get("outcome") != "missed"
+                ),
+                None,
+            )
+            if run.lineups_at is not None
+            else None
+        )
+        if same is not None:
+            attempts[same] = row
+        else:
+            attempts.append(row)
+        slate["done"] = bool(slate.get("done")) or any(done_of(a) for a in attempts)
+        slate["lineups_done"] = any(a.get("lineups_at") for a in attempts)
         if run.outcome == "missed":
             slate["missed"] = True
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -202,7 +224,8 @@ def due(
 ) -> dict[str, Any]:
     """Whether a slate's pass is due now, and which: ``{date, due, slate, tip, start_at, until,
     push_only, reason, slates, first_moves, knobs}``. ``push_only``: the slate's last attempt
-    solved after its start and only its push is left. ``first_moves``: the first slate's set as
+    solved after its start and only its push is left. ``lineups_done``: an attempt of the slate
+    ran its public lineup step (at ``lineups_at``), so a retry skips it. ``first_moves``: the first slate's set as
     last pushed, None when none was pushed. ``missed``: the slates whose window passed without
     them done and not yet logged missed, each ``{slate, tip, attempts}``, for the check to alert
     on once. Nothing here opens a page."""
@@ -216,6 +239,8 @@ def due(
         "start_at": None,
         "until": None,
         "push_only": False,
+        "lineups_done": False,
+        "lineups_at": None,
         "reason": None,
         "slates": [],
         "first_moves": None,
@@ -243,7 +268,14 @@ def due(
     for s in found:
         kept = body["slates"].get(s["slate"]) or {}
         attempts = kept.get("attempts") or []
-        s = {**s, "done": bool(kept.get("done")), "attempts": len(attempts)}
+        lineups = [a["lineups_at"] for a in attempts if a.get("lineups_at")]
+        s = {
+            **s,
+            "done": bool(kept.get("done")),
+            "attempts": len(attempts),
+            "lineups_done": bool(lineups),
+            "lineups_at": lineups[0] if lineups else None,
+        }
         out["slates"].append(s)
         start, until = datetime.fromisoformat(s["start_at"]), datetime.fromisoformat(s["until"])
         if s["done"]:
@@ -277,6 +309,8 @@ def due(
             "start_at": s["start_at"],
             "until": s["until"],
             "push_only": push_only,
+            "lineups_done": s["lineups_done"],
+            "lineups_at": s["lineups_at"],
             "reason": None,
         }
     return {**out, "reason": "; ".join(reasons) or "nothing due"}

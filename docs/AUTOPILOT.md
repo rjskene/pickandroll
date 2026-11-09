@@ -872,8 +872,10 @@ light of the leagues it opened. The pass check counts only the runs logged since
 began. A player whose game began is never moved: the steps leave out each group that holds
 him, under `skipped` with the tip-off reason, and the run logs that reason, which is a skip and
 never a failure (the late slate, and weekend days with early games). The private league stays
-suggestions only. A push alone, or a slate skipped for the lock, sets no lineup; the next full
-attempt does. While `pretip.enabled` is on and today has a slate, the late pass at 15:00 leaves
+suggestions only. A slate's lineups run once: the attempt is logged again with `lineups_at`
+once its lineup step ran, and a retry after a failed solve or push leaves them out with the
+reason. A push alone, or a slate skipped for the lock, sets no lineup; the next full attempt
+does. While `pretip.enabled` is on and today has a slate, the late pass at 15:00 leaves
 its lineup step to the slates, and its moves and Start Active run as before. With the pass off,
 no schedule copy, no game, or a due route that does not answer, 15:00 sets the lineups as it
 always did. The daily's set for today and tomorrow (05:00) stays the baseline in every case.
