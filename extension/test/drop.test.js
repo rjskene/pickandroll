@@ -516,6 +516,10 @@ test("a drop on record under the old key (before 0.11.9) still holds its own lea
   assert.equal((await w.send({ op: "drop_record", league: "100009", entry: ENTRY })).data, null);
   const record = { day: DAY, entry: ENTRY, player: HELD, trigger: "routine", page: PAGE };
   assert.equal((await w.send({ op: "drop_dropping", league: LEAGUE, record })).error, "this drop is dropped today");
+  // Another league ignores it: its own drop is due and goes on record under its own key.
+  assert.deepEqual((await w.send({ op: "drop_dropping", league: "100009", record })).data, { kept: true });
+  assert.equal(w.store.get(`held_drop:${ENTRY}`).league, LEAGUE);
+  assert.equal(w.store.has(`held_drop:100009:${ENTRY}`), true);
   // One submitted before the upgrade and not logged: the landing logs it under the league's key.
   w.store.set(`held_drop:${ENTRY}`, { ...old, logged: false, outcome: undefined, tab: 1 });
   assert.equal((await w.send({ op: "drop_landed", league: LEAGUE })).data.entry, ENTRY);
