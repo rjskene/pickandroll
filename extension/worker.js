@@ -136,9 +136,24 @@ let pressing = Promise.resolve();
 const ilKey = (entry) => `il_move:${entry}`;
 let moving = Promise.resolve();
 /** A churn's held drop on record for a queue entry (local), one after another (#221 part 3): the
- * last run logged for it, or the live drop about to be submitted. */
-const dropKey = (entry) => `held_drop:${entry}`;
+ * last run logged for it, or the live drop about to be submitted. Keyed by league and entry
+ * (#346): a comeback's entry (``comeback:<player>``) names no league, and the same player's
+ * comeback in another league is not this one. */
+const dropKey = (league, entry) => `held_drop:${league}:${entry}`;
+/** The key before 0.11.9, the entry alone: read while its record is this league's, so a drop
+ * on record before the upgrade is never made again. */
+const legacyDropKey = (entry) => `held_drop:${entry}`;
 let dropping = Promise.resolve();
+/** The record of ``entry``'s held drop in ``league``, and the key it is kept under. */
+async function dropRecordOf(league, entry) {
+  const key = dropKey(String(league), entry);
+  const own = (await chrome.storage.local.get(key))[key];
+  if (own) return { key, record: own };
+  const old = legacyDropKey(entry);
+  const prev = (await chrome.storage.local.get(old))[old];
+  if (prev && String(prev.league) === String(league)) return { key: old, record: prev };
+  return { key, record: null };
+}
 
 /** The live claims on record in ``league``: submitted, their pass not yet taken by the API. */
 async function submits(league) {
@@ -496,10 +511,10 @@ const ops = {
     if (open && clicked) await chrome.storage.local.set({ [key]: { ...open, run, logged: true } });
     return logged;
   },
-  /** The held drop on record in this browser for the queue's ``entry``, null when none. */
-  async drop_record({ entry }) {
-    const key = dropKey(entry);
-    return (await chrome.storage.local.get(key))[key] || null;
+  /** The held drop on record in this browser for the queue's ``entry`` in ``league``, null when
+   * none. */
+  async drop_record({ league, entry }) {
+    return (await dropRecordOf(league, entry)).record || null;
   },
   /** A live held drop about to be submitted on the drop page in ``sender``'s tab (#221 part 3):
    * ``record`` is its day, entry, player, trigger, page and the confirm as read. One at a time,
@@ -507,8 +522,8 @@ const ops = {
    * dropped, failed or unconfirmed: it is never submitted twice. */
   drop_dropping({ league, record }, sender) {
     const run = dropping.then(async () => {
-      const key = dropKey(record.entry);
-      const prev = (await chrome.storage.local.get(key))[key] || null;
+      const { record: prev } = await dropRecordOf(league, record.entry);
+      const key = dropKey(String(league), record.entry);
       if (prev && !prev.logged) throw new Error("this drop awaits its log");
       if (prev && prev.day === record.day && prev.mode === "live" && self.PickAndRoll.dropHolds(prev, record.trigger)) throw new Error(`this drop is ${prev.outcome} today`);
       const kept = { ...record, mode: "live", league: String(league), logged: false, tab: sender && sender.tab ? sender.tab.id : null, at: Date.now() };
@@ -533,18 +548,23 @@ const ops = {
    * record becomes this run, logged, so a visit takes the next item; a refusal of a submitted
    * drop also ends it (it is never sent or submitted again). */
   async drop_log({ league, run }) {
-    const key = dropKey(run.entry);
-    const record = run.entry ? (await chrome.storage.local.get(key))[key] || null : null;
+    const { key: from, record } = run.entry ? await dropRecordOf(league, run.entry) : { key: null, record: null };
+    const key = dropKey(String(league), run.entry);
     const open = record && !record.logged ? record : null;
+    // A record kept under the old key moves to the league's once its run is logged.
+    const put = async (value) => {
+      await chrome.storage.local.set({ [key]: value });
+      if (from && from !== key) await chrome.storage.local.remove(from);
+    };
     const kept = (extra = {}) => ({ ...(open || {}), day: run.day, entry: run.entry, mode: run.mode, trigger: run.trigger, outcome: run.outcome, league: String(league), run, logged: true, at: Date.now(), ...extra });
     let logged;
     try {
       logged = await api(`/seasons/${encodeURIComponent(league)}/autopilot/drop`, { method: "POST", body: run, timeout: 15000 });
     } catch (e) {
-      if (open && e.status >= 400 && e.status < 500) await chrome.storage.local.set({ [key]: kept({ refused: e.message }) });
+      if (open && e.status >= 400 && e.status < 500) await put(kept({ refused: e.message }));
       throw e;
     }
-    if (run.entry && run.outcome !== "stopped") await chrome.storage.local.set({ [key]: kept() });
+    if (run.entry && run.outcome !== "stopped") await put(kept());
     return logged;
   },
   /** The league's season summary (GET /seasons), null when pickandroll has no folder for it. */

@@ -478,7 +478,7 @@ test("the worker keeps one drop on record: never submitted twice, logged once, r
   const run = D.dropRun({ item: item(), day: DAY, trigger: "routine", mode: "live", outcome: "dropped" });
   assert.equal((await w.send({ op: "drop_log", league: LEAGUE, run })).ok, true);
   assert.equal(w.fetches.at(-1).url, `http://localhost:8000/seasons/${LEAGUE}/autopilot/drop`);
-  const kept = (await w.send({ op: "drop_record", entry: ENTRY })).data;
+  const kept = (await w.send({ op: "drop_record", league: LEAGUE, entry: ENTRY })).data;
   assert.deepEqual([kept.logged, kept.outcome, kept.mode, kept.trigger], [true, "dropped", "live", "routine"]);
   assert.equal((await w.send({ op: "drop_landed", league: LEAGUE })).data, null);
   assert.equal((await w.send({ op: "drop_dropping", league: LEAGUE, record })).error, "this drop is dropped today");
@@ -488,8 +488,46 @@ test("the worker keeps one drop on record: never submitted twice, logged once, r
   assert.deepEqual((await w2.send({ op: "drop_dropping", league: LEAGUE, record })).data, { kept: true });
   w2.refuse();
   assert.equal((await w2.send({ op: "drop_log", league: LEAGUE, run })).ok, false);
-  const ended = (await w2.send({ op: "drop_record", entry: ENTRY })).data;
+  const ended = (await w2.send({ op: "drop_record", league: LEAGUE, entry: ENTRY })).data;
   assert.deepEqual([ended.logged, ended.refused], [true, "refused"]);
+});
+
+test("a comeback's drop on record in one league never holds the same player's comeback in another (#346)", async () => {
+  // 2026-11-09: 31153 dropped for comeback:6038 at 11:31Z; 258332's drop page then found no drop
+  // due, logged nothing, and its chain logged nothing_to_do.
+  const w = loadWorker();
+  const record = { day: DAY, entry: "comeback:5", player: HELD, trigger: "routine", page: PAGE };
+  assert.deepEqual((await w.send({ op: "drop_dropping", league: "100009", record })).data, { kept: true });
+  const run = D.dropRun({ item: { ...item(), entry: "comeback:5" }, day: DAY, trigger: "routine", mode: "live", outcome: "dropped" });
+  assert.equal((await w.send({ op: "drop_log", league: "100009", run })).ok, true);
+  assert.equal((await w.send({ op: "drop_record", league: "100009", entry: "comeback:5" })).data.outcome, "dropped");
+  // This league: nothing on record, so the drop is due and goes on record.
+  assert.equal((await w.send({ op: "drop_record", league: LEAGUE, entry: "comeback:5" })).data, null);
+  assert.equal(D.ranToday(null, DAY, "live", "routine"), false);
+  assert.deepEqual((await w.send({ op: "drop_dropping", league: LEAGUE, record })).data, { kept: true });
+  assert.deepEqual([...w.store.keys()].filter((k) => k.startsWith("held_drop:")).sort(), [`held_drop:${LEAGUE}:comeback:5`, "held_drop:100009:comeback:5"]);
+});
+
+test("a drop on record under the old key (before 0.11.9) still holds its own league, and moves to the new key when logged (#346)", async () => {
+  const w = loadWorker();
+  const old = { day: DAY, entry: ENTRY, player: HELD, trigger: "routine", page: PAGE, mode: "live", league: LEAGUE, logged: true, outcome: "dropped", at: Date.now() };
+  w.store.set(`held_drop:${ENTRY}`, old);
+  assert.equal((await w.send({ op: "drop_record", league: LEAGUE, entry: ENTRY })).data.outcome, "dropped");
+  assert.equal((await w.send({ op: "drop_record", league: "100009", entry: ENTRY })).data, null);
+  const record = { day: DAY, entry: ENTRY, player: HELD, trigger: "routine", page: PAGE };
+  assert.equal((await w.send({ op: "drop_dropping", league: LEAGUE, record })).error, "this drop is dropped today");
+  // Another league ignores it: its own drop is due and goes on record under its own key.
+  assert.deepEqual((await w.send({ op: "drop_dropping", league: "100009", record })).data, { kept: true });
+  assert.equal(w.store.get(`held_drop:${ENTRY}`).league, LEAGUE);
+  assert.equal(w.store.has(`held_drop:100009:${ENTRY}`), true);
+  // One submitted before the upgrade and not logged: the landing logs it under the league's key.
+  w.store.set(`held_drop:${ENTRY}`, { ...old, logged: false, outcome: undefined, tab: 1 });
+  assert.equal((await w.send({ op: "drop_landed", league: LEAGUE })).data.entry, ENTRY);
+  const run = D.dropRun({ item: item(), day: DAY, trigger: "routine", mode: "live", outcome: "dropped" });
+  assert.equal((await w.send({ op: "drop_log", league: LEAGUE, run })).ok, true);
+  assert.equal(w.store.has(`held_drop:${ENTRY}`), false);
+  assert.equal(w.store.get(`held_drop:${LEAGUE}:${ENTRY}`).logged, true);
+  assert.equal((await w.send({ op: "drop_landed", league: LEAGUE })).data, null);
 });
 
 // ---------------------------------------------------------------- a comeback's chain (#318)
