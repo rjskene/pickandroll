@@ -1299,6 +1299,9 @@
       if (!href) {
         return cancelLog(PR.cancelRun({ day: due.date, mode: mode.mode, trigger, outcome: "skipped", reason: "the claim is not among Yahoo's pending transactions on my team page", item, claim, page: location.pathname, extension }));
       }
+      // The box's count before the press: only a box that listed this claim alone may vanish
+      // for a cancel.
+      await send({ op: "cancel_box", league, entry: item.entry, count: PR.pendingCount(pendingLines()) });
       cancelStrip(PR.cancelStripText());
       const to = new URL(href, location.href);
       to.hash = PR.CANCEL_FRAGMENT;
@@ -1343,8 +1346,10 @@
       if (mode.mode !== "live") return cancelLog(PR.cancelRun({ ...base, mode: "dry_run", outcome: "would_cancel", reason: mode.refused }));
       let refused = null;
       const team = `/nba/${league}/${due.team}`;
+      const box = await send({ op: "cancel_box_read", league, entry: item.entry });
+      const before = box && box.ok && box.data && Number.isInteger(box.data.count) ? box.data.count : null;
       const onPress = async () => {
-        const put = await send({ op: "cancel_pressing", league, record: { day: due.date, item, claim, trigger, page: where, controls, team } });
+        const put = await send({ op: "cancel_pressing", league, record: { day: due.date, item, claim, trigger, page: where, controls: { ...controls, pending_before: before }, team, pending_before: before } });
         refused = put && put.ok ? null : (put && put.error) || "no answer from the extension";
         return !refused;
       };
@@ -1389,7 +1394,7 @@
         answer = { outcome: "unconfirmed", reason: "pressed; my team page could not be read for the box" };
       } else {
         const roster = Boolean(document.querySelector("[data-ys-playerid]"));
-        answer = PR.settleCancel(pendingLines(), record.claim, roster) || { outcome: "unconfirmed", reason: "pressed; my team page showed neither the box nor my roster" };
+        answer = PR.settleCancel(pendingLines(), record.claim, roster, record.pending_before ?? null);
         if (!record.settle) landed = { team: raw };
       }
     }

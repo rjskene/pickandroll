@@ -590,10 +590,13 @@ page, from PR 2:
     only when the words name cancelling the waiver or the claim; any other confirm is answered no
     and the run is `not_cancelled` with its words. Every confirm's words are kept. After the press
     Yahoo's form drawn again on the claim's pages (another stage) is `not_cancelled` and nothing
-    more is clicked; any other landing goes to my team page, where the box without the claim (or
-    no box on a page showing my roster) is `cancelled` and the claim still listed is
-    `not_cancelled`; neither is `unconfirmed`, as is a press whose answer never came within two
-    minutes. `POST /seasons/<league>/autopilot/cancel` logs the run under `cancel` in the league's
+    more is clicked; any other landing goes to my team page, where the box without the claim is
+    `cancelled` and the claim still listed is `not_cancelled`. No box at all is `cancelled` only
+    when the box listed this claim alone when my team page was read before the press (the count
+    is kept on the press's record as `pending_before`) and the page shows my roster: a box that
+    failed to draw while the claim stands is never taken for a cancel. Any other missing box is
+    `unconfirmed` ("the box is gone but listed N claims before the press"), as is a press whose
+    answer never came within two minutes. `POST /seasons/<league>/autopilot/cancel` logs the run under `cancel` in the league's
     day file. A dry run never says it pressed, a live run only in a live league whose guard holds,
     the claim must be the queue's entry's (add, drop and Yahoo id), the private league is refused
     (409), and a run carrying the crumb or any other key is refused (422). A live `cancelled`,

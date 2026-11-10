@@ -148,6 +148,9 @@ let dropping = Promise.resolve();
  * logged for it, or the live press about to go; one at a time. */
 const cancelKey = (league, entry) => `claim_cancel:${league}:${entry}`;
 let cancelling = Promise.resolve();
+/** The box's count before a press, per league and entry, and how long it holds. */
+const cancelBoxKey = (league, entry) => `claim_cancel_box:${league}:${entry}`;
+const CANCEL_BOX_MS = 5 * 60 * 1000;
 /** The record of ``entry``'s held drop in ``league``, and the key it is kept under. */
 async function dropRecordOf(league, entry) {
   const key = dropKey(String(league), entry);
@@ -582,6 +585,20 @@ const ops = {
   /** The league's pending claims to cancel now, with the mode, STOP and the live guard (#345 PR 2). */
   async cancel_due({ league }) {
     return api(`/seasons/${encodeURIComponent(league)}/autopilot/cancels`, { timeout: 30000 });
+  },
+  /** The Pending Transactions box's count of claims as my team page read it before the tab went on
+   * to the claim's page (#345 PR 2): kept for the press, so that only a box which listed this claim
+   * alone may vanish for a cancel. */
+  async cancel_box({ league, entry, count }) {
+    const value = Number.isInteger(count) ? count : null;
+    await chrome.storage.local.set({ [cancelBoxKey(league, entry)]: { count: value, at: Date.now() } });
+    return { kept: true };
+  },
+  /** That count, while fresh (``CANCEL_BOX_MS``); null otherwise. */
+  async cancel_box_read({ league, entry }) {
+    const key = cancelBoxKey(league, entry);
+    const kept = (await chrome.storage.local.get(key))[key];
+    return kept && Date.now() - kept.at < CANCEL_BOX_MS ? kept : null;
   },
   /** The cancel on record in this browser for the queue's ``entry`` in ``league``, null when none. */
   async cancel_record({ league, entry }) {

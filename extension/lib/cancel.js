@@ -227,16 +227,28 @@
     return null;
   }
 
+  /** How many claims the Pending Transactions box lists (``lines``, null: no box): each distinct
+   * ``claim_id`` among its links; null with no box. */
+  function pendingCount(lines) {
+    if (!Array.isArray(lines)) return null;
+    return new Set(lines.map((l) => claimIdIn(l && l.href)).filter(Boolean)).size;
+  }
+
   /** The answer on my team page (#341's settle): the claim's link in the Pending Transactions box
-   * (``lines``, null: no box) is ``not_cancelled``; the box without it, or no box on a page
-   * that shows my roster, is ``cancelled``; anything else says nothing (null). */
-  function settleCancel(lines, claim, roster) {
+   * (``lines``, null: no box) is ``not_cancelled``; the box without it is ``cancelled``. No box is
+   * ``cancelled`` only when the box listed this claim alone before the press (``before``, the
+   * count kept on the press's record) and the page shows my roster: a box that failed to draw, or
+   * drew late, while the claim still stands is never taken for a cancel. Otherwise
+   * ``unconfirmed``. */
+  function settleCancel(lines, claim, roster, before = null) {
     if (Array.isArray(lines)) {
       if (lines.some((l) => claimIdIn(l && l.href) === claim)) return { outcome: "not_cancelled", reason: "the claim is still among Yahoo's pending transactions" };
       return { outcome: "cancelled", reason: null };
     }
-    if (roster) return { outcome: "cancelled", reason: null };
-    return null;
+    if (!roster) return { outcome: "unconfirmed", reason: "pressed; my team page showed neither the box nor my roster" };
+    if (before === 1) return { outcome: "cancelled", reason: null };
+    if (before == null) return { outcome: "unconfirmed", reason: "the box is gone and no count of it was kept before the press" };
+    return { outcome: "unconfirmed", reason: `the box is gone but listed ${before} claims before the press` };
   }
 
   /** The run the log takes (the API's ``CancelRun``). */
@@ -314,6 +326,7 @@
     confirmsOf,
     pressCancel,
     readCancelLanded,
+    pendingCount,
     settleCancel,
     cancelRun,
     unreadCancel,

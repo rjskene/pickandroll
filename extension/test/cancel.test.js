@@ -223,9 +223,16 @@ test("my team page's box decides: the claim gone is cancelled, still there is no
   const box = [{ href: `/nba/${LEAGUE}/7/viewwaiver?claim_id=7_10279_0` }];
   assert.deepEqual(C.settleCancel(box, CLAIM, true), { outcome: "cancelled", reason: null });
   assert.deepEqual(C.settleCancel([...box, { href: `/nba/${LEAGUE}/7/viewwaiver?claim_id=${CLAIM}&pspid=0` }], CLAIM, true), { outcome: "not_cancelled", reason: "the claim is still among Yahoo's pending transactions" });
-  // No box: cancelled only on a page that shows my roster.
-  assert.deepEqual(C.settleCancel(null, CLAIM, true), { outcome: "cancelled", reason: null });
-  assert.equal(C.settleCancel(null, CLAIM, false), null);
+  // No box: cancelled only when the box listed this claim alone before the press, on a page that
+  // shows my roster (the master's fix on #359: a box that failed to draw is never a cancel).
+  assert.deepEqual(C.settleCancel(null, CLAIM, true, 1), { outcome: "cancelled", reason: null });
+  assert.deepEqual(C.settleCancel(null, CLAIM, true, 2), { outcome: "unconfirmed", reason: "the box is gone but listed 2 claims before the press" });
+  assert.deepEqual(C.settleCancel(null, CLAIM, true, null), { outcome: "unconfirmed", reason: "the box is gone and no count of it was kept before the press" });
+  assert.deepEqual(C.settleCancel(null, CLAIM, true), { outcome: "unconfirmed", reason: "the box is gone and no count of it was kept before the press" });
+  assert.deepEqual(C.settleCancel(null, CLAIM, false, 1), { outcome: "unconfirmed", reason: "pressed; my team page showed neither the box nor my roster" });
+  // The box's count: each claim once, the edit link left out; null with no box.
+  const lines = [...box, { href: `/nba/${LEAGUE}/7/viewwaiver?claim_id=7_10279_0&x=1` }, { href: `/nba/${LEAGUE}/7/editwaivers?pspid=0` }, { href: `/nba/${LEAGUE}/7/viewwaiver?claim_id=${CLAIM}` }];
+  assert.deepEqual([C.pendingCount(lines), C.pendingCount(box), C.pendingCount(null)], [2, 1, null]);
   assert.equal(C.readCancelLanded({ path: TEAM_PAGE, form: false }), null);
   const again = C.readCancelLanded({ path: `/nba/${LEAGUE}/${TEAM}/editwaiver`, form: true, heading: "Confirm", notes: ["Are you sure?"] });
   assert.deepEqual([again.outcome, again.message], ["not_cancelled", "Confirm · Are you sure?"]);
@@ -296,8 +303,10 @@ async function visit({ url, html, answer, confirm }) {
 
 /** The worker's answers: the settings, the cancels due, the record, the landing and the log. */
 const worker =
-  (d = due(), { settings = {}, record = null, kept = true, landing = null } = {}) =>
+  (d = due(), { settings = {}, record = null, kept = true, landing = null, box = null } = {}) =>
   (msg) => {
+    if (msg.op === "cancel_box") return { ok: true, data: { kept: true } };
+    if (msg.op === "cancel_box_read") return { ok: true, data: box };
     if (msg.op === "settings") return { ok: true, data: { lineup_executor: "on", moves_executor: "on", ...settings } };
     if (msg.op === "moves_landed" || msg.op === "drop_landed") return { ok: true, data: null };
     if (msg.op === "cancel_landed") return { ok: true, data: landing };
@@ -320,6 +329,9 @@ test("my team page with the fragment follows the due claim's own link, clicking 
   v = await visit({ url: `${SITE}${TEAM_PAGE}?date=${DAY}#${FRAGMENT}`, html: BOX_HTML, answer: worker(due({}, [OPEN])) });
   assert.deepEqual(v.assigned, [`${SITE}/nba/${LEAGUE}/7/viewwaiver?claim_id=7_6411_0&pspid=0&activity=transaction#${FRAGMENT}`]);
   assert.deepEqual([logOf(v), v.touched, v.replaced], [[], [], [`${TEAM_PAGE}?date=${DAY}`]]);
+  // The box's count is kept before the tab goes on: it lists two claims.
+  const kept = v.sent.find((m) => m.op === "cancel_box");
+  assert.deepEqual([kept.entry, kept.count], [OPEN.entry, 2]);
   // A claim that ran today in this mode is not taken again.
   v = await visit({ url: `${SITE}${TEAM_PAGE}#${FRAGMENT}`, html: BOX_HTML, answer: worker(due({}, [OPEN]), { record: { mode: "dry_run", day: DAY, logged: true, outcome: "would_cancel" } }) });
   assert.deepEqual([v.assigned, logOf(v)], [[], []]);
@@ -367,9 +379,11 @@ test("a dry run on the claim's page checks it and logs would_cancel, clicking no
 });
 
 test("a live league puts the press on record, then presses Cancel Waiver once and waits for Yahoo", async () => {
-  let v = await visit({ url: `${CLAIM_URL}#${FRAGMENT}`, html: PAGE_HTML, answer: worker(due(LIVE)) });
+  let v = await visit({ url: `${CLAIM_URL}#${FRAGMENT}`, html: PAGE_HTML, answer: worker(due(LIVE), { box: { count: 1, at: Date.now() } }) });
   const put = v.sent.find((m) => m.op === "cancel_pressing");
   assert.deepEqual([put.clicks, put.record.claim, put.record.item.entry, put.record.team, put.record.trigger], [0, CLAIM, ITEM.entry, TEAM_PAGE, "routine_evening"]);
+  // The box's count read before the press goes on the record and the run's controls.
+  assert.deepEqual([put.record.pending_before, put.record.controls.pending_before], [1, 1]);
   assert.deepEqual([v.touched, v.posted, logOf(v)], [["Cancel Waiver"], ["s=Cancel Waiver"], []]);
   assert.equal(v.strip.textContent, `pickandroll cancel: live · cancel of claim ${CLAIM} pressed: reading Yahoo's answer…`);
   // A page that stays goes to my team page to read the box.
@@ -408,10 +422,16 @@ test("after the press, my team page's box decides and every other page goes ther
   v = await visit({ url: `${SITE}${TEAM_PAGE}`, html: listed, answer: worker(due(LIVE), { landing: settled }) });
   [run] = logOf(v);
   assert.deepEqual([run.outcome, run.reason], ["not_cancelled", "the claim is still among Yahoo's pending transactions"]);
-  // No box, my roster shown: cancelled; neither: unconfirmed.
-  v = await visit({ url: `${SITE}${TEAM_PAGE}`, html: '<div><a data-ys-playerid="6038">x</a></div>', answer: worker(due(LIVE), { landing: settled }) });
+  // No box, my roster shown: cancelled only when the box listed this claim alone before the
+  // press; with two listed, or no count kept, unconfirmed; no roster either: unconfirmed.
+  const roster = '<div><a data-ys-playerid="6038">x</a></div>';
+  v = await visit({ url: `${SITE}${TEAM_PAGE}`, html: roster, answer: worker(due(LIVE), { landing: { ...settled, pending_before: 1 } }) });
   assert.equal(logOf(v)[0].outcome, "cancelled");
-  v = await visit({ url: `${SITE}${TEAM_PAGE}`, html: "<div><p>Oops</p></div>", answer: worker(due(LIVE), { landing: settled }) });
+  v = await visit({ url: `${SITE}${TEAM_PAGE}`, html: roster, answer: worker(due(LIVE), { landing: { ...settled, pending_before: 2 } }) });
+  assert.deepEqual([logOf(v)[0].outcome, logOf(v)[0].reason], ["unconfirmed", "the box is gone but listed 2 claims before the press"]);
+  v = await visit({ url: `${SITE}${TEAM_PAGE}`, html: roster, answer: worker(due(LIVE), { landing: settled }) });
+  assert.deepEqual([logOf(v)[0].outcome, logOf(v)[0].reason], ["unconfirmed", "the box is gone and no count of it was kept before the press"]);
+  v = await visit({ url: `${SITE}${TEAM_PAGE}`, html: "<div><p>Oops</p></div>", answer: worker(due(LIVE), { landing: { ...settled, pending_before: 1 } }) });
   assert.equal(logOf(v)[0].outcome, "unconfirmed");
   // Yahoo draws a form again on the claim's pages: not cancelled, nothing more clicked.
   v = await visit({ url: CLAIM_URL, html: PAGE_HTML, answer: worker(due(LIVE), { landing: landing() }) });
@@ -499,6 +519,13 @@ test("the worker keeps one press on record: never pressed twice, read on landing
   // Never pressed again.
   const held = await w.send({ op: "cancel_pressing", league: LEAGUE, record });
   assert.deepEqual([held.ok, held.error], [false, "this cancel is not_cancelled: it is never pressed again"]);
+  // The box's count before the press, read back while fresh.
+  await w.send({ op: "cancel_box", league: LEAGUE, entry: ITEM.entry, count: 1 });
+  assert.equal((await w.send({ op: "cancel_box_read", league: LEAGUE, entry: ITEM.entry })).data.count, 1);
+  assert.equal((await w.send({ op: "cancel_box_read", league: LEAGUE, entry: "other" })).data, null);
+  const boxKey = `claim_cancel_box:${LEAGUE}:${ITEM.entry}`;
+  w.store.set(boxKey, { count: 1, at: Date.now() - 6 * 60 * 1000 });
+  assert.equal((await w.send({ op: "cancel_box_read", league: LEAGUE, entry: ITEM.entry })).data, null);
   // The due is the league's own route.
   await w.send({ op: "cancel_due", league: LEAGUE });
   assert.match(w.fetches.at(-1).url, new RegExp(`/seasons/${LEAGUE}/autopilot/cancels$`));
