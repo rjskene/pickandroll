@@ -282,6 +282,56 @@ def resolve(ctx: Context, leagues: Sequence[str]) -> None:
     solve_all(ctx, leagues, name="resolve", timeout=120)
 
 
+#: A comeback's drop run on the log (#318): its entry is ``comeback:<player>``.
+COMEBACK_ENTRY = "comeback:"
+#: A live drop run's outcomes after which the roster may have changed: ``unconfirmed`` may have
+#: dropped him, so it counts.
+ROSTER_CHANGED = frozenset({"dropped", "unconfirmed"})
+
+
+def comeback_touched(ctx: Context, leagues: Sequence[str], since: datetime) -> list[str]:
+    """The leagues among ``leagues`` whose comeback dropped a player live since ``since`` (#360):
+    a live drop run of a comeback entry, ``dropped`` or ``unconfirmed``. Their solve predates the
+    drop, so their queue would carry steps on a player already gone. A league whose route does
+    not answer is not counted: its earlier solve stands, as it did before."""
+    out = []
+    for league in leagues:
+        try:
+            code, body, _ = ctx.get(f"/seasons/{league}/autopilot/moves", 60)
+        except Unreachable:
+            continue
+        if code != 200 or not isinstance(body, dict):
+            continue
+        if any(
+            isinstance(r, dict)
+            and r.get("mode") == "live"
+            and str(r.get("entry") or "").startswith(COMEBACK_ENTRY)
+            and r.get("outcome") in ROSTER_CHANGED
+            and (at := _when(r.get("at"))) is not None
+            and (at.tzinfo is None or at >= since)
+            for r in body.get("drop_today") or []
+        ):
+            out.append(league)
+    return out
+
+
+def resolve_comebacks(ctx: Context, leagues: Sequence[str], since: datetime) -> None:
+    """The daily's re-solve before its queue (#360, the issue's third ask): only the leagues a
+    comeback dropped a player in since ``since`` (:func:`comeback_touched`), so the queue is built
+    from a solve that saw the roster the comeback left; nothing when none did."""
+    name = "resolve_comebacks"
+    if ctx.dry_run:
+        ctx.report.skipped(
+            name, "dry run: would re-solve the leagues a comeback dropped a player in"
+        )
+        return
+    touched = comeback_touched(ctx, leagues, since)
+    if not touched:
+        ctx.report.skipped(name, "no comeback dropped a player: the solve stands")
+        return
+    solve_all(ctx, touched, name=name, timeout=120)
+
+
 def status_check(ctx: Context, leagues: Sequence[str]) -> None:
     """``GET /seasons/status``: each re-solved league's moves row must be built after its last
     Yahoo read, else it is "still behind the Yahoo read"."""

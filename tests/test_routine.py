@@ -774,3 +774,85 @@ def test_windows_cover_every_routine():
     }
     o = Opening("252098", "moves", "u", 12.0)
     assert o.entry is None
+
+
+# --------------------------------------------------------------------------- comebacks before the queue (#360)
+def _drop_run(at, outcome="dropped", mode="live", entry="comeback:6707"):
+    return {"at": at, "mode": mode, "outcome": outcome, "entry": entry, "player": 10333}
+
+
+def _moves_route(*drops):
+    return (200, {"today": [], "drop_today": list(drops)})
+
+
+def test_comeback_touched_counts_a_live_comeback_drop_since_the_passes_and_nothing_else(tmp_path):
+    from pickandroll.routine.steps import comeback_touched
+
+    since = datetime.fromisoformat("2026-11-10 05:30").replace(tzinfo=CENTRAL)
+    api = FakeAPI(
+        {
+            # A live comeback drop after the passes began: solved again.
+            ("GET", "/seasons/224319/autopilot/moves"): _moves_route(
+                _drop_run("2026-11-10T05:35:00-06:00")
+            ),
+            # Unconfirmed may have dropped him: counted.
+            ("GET", "/seasons/251146/autopilot/moves"): _moves_route(
+                _drop_run("2026-11-10T05:38:00-06:00", "unconfirmed")
+            ),
+            # A dry run, a skip, a churn's held drop and an earlier run change nothing now.
+            ("GET", "/seasons/252098/autopilot/moves"): _moves_route(
+                _drop_run("2026-11-10T05:36:00-06:00", "would_drop", "dry_run"),
+                _drop_run("2026-11-10T05:36:00-06:00", "skipped"),
+                _drop_run("2026-11-10T05:37:00-06:00", entry="2026-11-10:252098:1:2"),
+                _drop_run("2026-11-10T05:10:00-06:00"),
+            ),
+            # A route that does not answer leaves the earlier solve standing.
+            ("GET", "/seasons/223259/autopilot/moves"): (500, {}),
+        }
+    )
+    ctx = make_ctx(api, Clock("2026-11-10 05:45"), tmp_path)
+    leagues = ["224319", "251146", "252098", "223259"]
+    assert comeback_touched(ctx, leagues, since) == ["224319", "251146"]
+
+
+def test_the_daily_solves_again_only_the_leagues_a_comeback_touched_before_its_queue(
+    tmp_path, monkeypatch
+):
+    from pickandroll.routine import routines
+
+    # The browser opened both public leagues; only 252098's comeback dropped a player.
+    def opened(ctx, name, plan, *a, **kw):
+        ctx.report.ok(name, "opened")
+        return list(PUBLIC)
+
+    monkeypatch.setattr(routines, "browser_pass", opened)
+    monkeypatch.setattr(routines, "pass_check", lambda *a, **kw: None)
+    api = FakeAPI(
+        base_answers(
+            {
+                ("GET", "/seasons/252098/autopilot/moves"): _moves_route(
+                    _drop_run("2026-10-29T05:40:00-05:00")
+                ),
+                ("GET", "/seasons/230585/autopilot/moves"): _moves_route(),
+            }
+        )
+    )
+    clock = Clock("2026-10-29 05:01")
+    report = run("daily", make_ctx(api, clock, tmp_path), "http://api")
+    calls = api.paths()
+    build = calls.index("/autopilot/queue/build")
+    solves = [i for i, p in enumerate(calls) if p == "/seasons/252098/moves"]
+    assert len(solves) == 2 and solves[1] < build  # solved again, before the queue
+    assert calls.count("/seasons/230585/moves") == 1  # untouched: solved once
+    step = report.find("resolve_comebacks")
+    assert step.status == "ok" and step.detail.startswith("1 leagues solved")
+
+
+def test_the_daily_without_a_comeback_drop_solves_nothing_again(tmp_path):
+    api = FakeAPI(base_answers())
+    report = run("daily", make_ctx(api, Clock("2026-10-29 05:01"), tmp_path), "http://api")
+    # No browser: nothing opened, so nothing is asked and nothing solved twice.
+    assert not any(p.endswith("/autopilot/moves") for p in api.paths())
+    assert api.paths().count("/seasons/252098/moves") == 1
+    step = report.find("resolve_comebacks")
+    assert step.status == "skipped" and "no comeback dropped a player" in step.detail
