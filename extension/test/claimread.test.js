@@ -164,7 +164,7 @@ async function visit({ url, html, answer }) {
   });
   ctx.window = ctx;
   ctx.globalThis = ctx;
-  for (const file of ["lib/league.js", "lib/lineup.js", "lib/moves.js", "lib/startactive.js", "lib/ilmove.js", "lib/drop.js", "lib/claimread.js", "league.js"]) vm.runInContext(fs.readFileSync(path.join(DIR, file), "utf8"), ctx);
+  for (const file of ["lib/league.js", "lib/lineup.js", "lib/moves.js", "lib/startactive.js", "lib/ilmove.js", "lib/drop.js", "lib/claimread.js", "lib/cancel.js", "league.js"]) vm.runInContext(fs.readFileSync(path.join(DIR, file), "utf8"), ctx);
   for (const fn of timers.splice(0)) await fn();
   return { sent, assigned, replaced, strip: nodes["pickandroll-strip"], ops: sent.map((m) => m.op) };
 }
@@ -180,7 +180,7 @@ const worker =
     if (msg.op === "season_page") return { ok: true, data: { post: { accepted: [] }, follow: null } };
     return { ok: false, error: `unexpected ${msg.op}` };
   };
-const BEFORE = ["moves_landed", "drop_landed", "settings", "claim_page_due"];
+const BEFORE = ["moves_landed", "drop_landed", "cancel_landed", "settings", "claim_page_due"];
 
 test("on my team page with the fragment the box's link of the due claim is followed with it, nothing clicked", async () => {
   const team = `${SITE}/nba/${LEAGUE}/${TEAM}#${FRAGMENT}`;
@@ -199,7 +199,7 @@ test("on my team page with the fragment the box's link of the due claim is follo
   v = await visit({ url: team, html: BOX_DROP, answer: worker(due({ league: "100002" })) });
   assert.deepEqual([v.assigned, v.strip.textContent], [[], "pickandroll claim read: no claim page read: the read is due in league 100002"]);
   v = await visit({ url: team, html: BOX_DROP, answer: worker(due(), { settings: { moves_executor: "off" } }) });
-  assert.deepEqual([v.ops, v.assigned], [["moves_landed", "drop_landed", "settings"], []]);
+  assert.deepEqual([v.ops, v.assigned], [["moves_landed", "drop_landed", "cancel_landed", "settings"], []]);
   // Without the fragment my team page is a plain visit: no read asked for.
   v = await visit({ url: `${SITE}/nba/${LEAGUE}/${TEAM}`, html: BOX_DROP, answer: worker() });
   assert.ok(!v.ops.includes("claim_page_due"));
@@ -249,7 +249,7 @@ test("the claim's page files nothing when the read is not due, without the fragm
   assert.deepEqual(v.ops, BEFORE);
   assert.equal(v.strip.textContent, "pickandroll claim read: no claim page read: STOP is on (data/autopilot/STOP)");
   v = await visit({ url: CLAIM_URL, html: CLAIM, answer: worker() });
-  assert.deepEqual(v.ops, ["moves_landed", "drop_landed"]);
+  assert.deepEqual(v.ops, ["moves_landed", "drop_landed", "cancel_landed"]);
   v = await visit({ url: `${CLAIM_URL}#${FRAGMENT}`, html: CLAIM, answer: worker(due(), { read: { ok: false, error: "422 a path is read without its query" } }) });
   assert.deepEqual(v.ops, [...BEFORE, "claim_page_read"]);
   assert.equal(v.strip.textContent, "pickandroll claim read: the claim page's read failed: 422 a path is read without its query");

@@ -47,6 +47,7 @@ from collections.abc import Callable, Iterable, Mapping, Sequence
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any, Literal
+from zoneinfo import ZoneInfo
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -57,6 +58,10 @@ from ..sources.yahoo import public
 from . import leagues, season_queue
 from .season_knobs import autopilot_dir
 from .season_queue import LINEUP_LIVE_AFTER, live_after
+from .season_week import NBA_TZ
+
+#: The digest's clock: the droplet runs on Central time.
+CENTRAL = ZoneInfo("America/Chicago")
 
 STOP = "STOP"
 #: The executors' log under the league folder: one file per NBA date.
@@ -70,7 +75,9 @@ IL = "il"
 DROP = "drop"
 #: Yahoo's Start Active Players for the rest of the week (#215), beside them.
 START_ACTIVE = "start_active"
-LOG_KEYS = (LINEUP, MOVES, IL, START_ACTIVE, DROP)
+#: A pending claim cancelled on Yahoo once judged again (#345 PR 2), beside them.
+CANCEL = "cancel"
+LOG_KEYS = (LINEUP, MOVES, IL, START_ACTIVE, DROP, CANCEL)
 #: What started a pass: the morning routine, the late one, the side panel, and for the moves
 #: executor alone the evening routine (#209).
 TRIGGERS = ("routine", "routine_late", "panel", "routine_evening")
@@ -1540,26 +1547,63 @@ def placed_adds(data_dir: Path, today: date) -> dict[str, dict[int, date]]:
 
 
 def cancel_digest_lines(data_dir: Path, today: date) -> list[str]:
-    """The digest's lines for the placed claims judged again and cancelled (#345): while the
-    executor has no cancel, each is the user's to cancel in Yahoo before the next waiver run, with
-    the reason. A line per open claim, by league and entry."""
+    """The digest's lines for the placed claims judged again and cancelled (#345): one the
+    executor cancelled on Yahoo (PR 2) since yesterday says so; any other is the user's to cancel
+    in Yahoo before the next waiver run, with the reason, and the executor's own word when its
+    cancel ran live and did not take. A line per claim, by league and entry."""
+
+    def shown(e: Mapping[str, Any]) -> bool:
+        cancel = e.get("cancel") or {}
+        if cancel.get("outcome") == "cancelled":
+            at = _at_day(cancel.get("at"))
+            return at is not None and at >= today - timedelta(days=1)
+        return not e.get("resolved")
+
     rows = [
         e
         for q in open_queues(data_dir, today)
         for e in q.get("entries") or []
         if e.get("outcome") == qa.CLAIMED
-        and not e.get("resolved")
         and (e.get("rejudge") or {}).get("verdict") == qa.CANCEL
+        and shown(e)
     ]
     lines = []
     for e in sorted(rows, key=lambda e: (str(e.get("league")), str(e.get("id")))):
         drop = "open spot" if e.get("drop") is None else f"drop {e['drop']}"
         bid = f", ${e['bid_placed']}" if e.get("bid_placed") is not None else ""
-        lines.append(
-            f"- League {e.get('league')}: cancel by hand the pending claim add {e.get('add')}, "
-            f"{drop}{bid}: {e['rejudge'].get('reason')}"
+        claim = f"the pending claim add {e.get('add')}, {drop}{bid}"
+        why = e["rejudge"].get("reason")
+        cancel = e.get("cancel") or {}
+        if cancel.get("outcome") == "cancelled":
+            lines.append(
+                f"- League {e.get('league')}: cancelled on Yahoo at {_clock(cancel.get('at'))} "
+                f"{claim}: {why}"
+            )
+            continue
+        ran = (
+            f" (the executor's cancel: {cancel['outcome']}"
+            + (f", {cancel['reason']}" if cancel.get("reason") else "")
+            + ")"
+            if cancel.get("outcome")
+            else ""
         )
+        lines.append(f"- League {e.get('league')}: cancel by hand {claim}: {why}{ran}")
     return lines
+
+
+def _at_day(at: Any) -> date | None:
+    try:
+        return datetime.fromisoformat(str(at)).astimezone(NBA_TZ).date() if at else None
+    except ValueError:
+        return None
+
+
+def _clock(at: Any) -> str:
+    """A time as the digest prints it, on the Central clock."""
+    try:
+        return datetime.fromisoformat(str(at)).astimezone(CENTRAL).strftime("%H:%M CT")
+    except (TypeError, ValueError):
+        return "an unknown time"
 
 
 def moves_digest_lines(
@@ -1806,3 +1850,166 @@ def append_claim_page_read(data_dir: Path, league: str, read: ClaimPageRead) -> 
         tmp.write_text(json.dumps(body, indent=1) + "\n")
         os.replace(tmp, path)
     return row
+
+
+# --------------------------------------------------------------------------- the claim's cancel (#345)
+#: The cancel of a pending claim judged again (#345 PR 2): the evening pass opens my team page with
+#: this fragment once per cancel due, and the extension follows the claim's own View Details link
+#: to Yahoo's page of it, checks the page against the read on file (step 0) and presses its
+#: "Cancel Waiver" button once, in a live league whose guard holds; a dry run clicks nothing.
+CANCEL_FRAGMENT = "pickandroll-claim-cancel"
+CANCEL_OUTCOMES = (
+    "would_cancel",
+    "cancelled",
+    "not_cancelled",
+    "skipped",
+    "failed",
+    "unconfirmed",
+    "stopped",
+)
+#: A live cancel's outcomes once the button was pressed (or may have been): they go on the queue's
+#: entry as its ``cancel`` and the claim is never pressed again; a live skip clicked nothing.
+CANCEL_STICKS = frozenset({"cancelled", "not_cancelled", "failed", "unconfirmed"})
+#: What a cancelled claim is resolved as: Yahoo never processes it, so it lapsed.
+CANCEL_RESOLVED = "lapsed"
+
+
+class CancelRun(BaseModel):
+    """A pending claim's cancel on Yahoo's page of it (#345 PR 2), by the moves executor's mode.
+    ``not_cancelled``: pressed, and my team page's Pending Transactions box still lists the
+    claim (or Yahoo's confirm did not name the cancel, or another stage came); ``unconfirmed``:
+    pressed, and no page said what Yahoo did. Neither is ever pressed again."""
+
+    model_config = ConfigDict(extra="forbid")
+    day: date
+    mode: Literal["dry_run", "live"]
+    trigger: Literal["routine_evening"]
+    outcome: Literal[
+        "would_cancel",
+        "cancelled",
+        "not_cancelled",
+        "skipped",
+        "failed",
+        "unconfirmed",
+        "stopped",
+    ]
+    reason: str | None = Field(default=None, max_length=500)
+    #: The queue entry of the claim; null only in a run that says it stopped.
+    entry: str | None = Field(default=None, max_length=80)
+    add: int | None = None
+    drop: int | None = None
+    #: Yahoo's id of the claim, ``<team>_<add>_<drop>`` (an open spot's drop is 0).
+    claim: str | None = Field(default=None, max_length=60)
+    #: The claim page's path, never its query.
+    page: str | None = Field(default=None, max_length=CLAIM_WORDS)
+    #: What the page showed: the form, its action path, the button's words and the confirm's
+    #: text; never a field's value.
+    controls: dict[str, Any] | None = None
+    #: The pages after the press: where Yahoo landed, its words, and my team page's box.
+    landed: dict[str, Any] | None = None
+    #: Yahoo's words, as the page printed them.
+    message: str | None = Field(default=None, max_length=500)
+    extension: str | None = Field(default=None, max_length=20)
+
+    @field_validator("page")
+    @classmethod
+    def _plain_page(cls, v: str | None) -> str | None:
+        return _no_query(v)
+
+
+def claim_id(team: int | None, add: Any, drop: Any) -> str | None:
+    """Yahoo's id of a claim, ``<team>_<add>_<drop>`` (0 for an open spot); None without a team."""
+    if team is None or add is None:
+        return None
+    return f"{team}_{int(add)}_{0 if drop is None else int(drop)}"
+
+
+def _verdict_day(entry: Mapping[str, Any]) -> date | None:
+    return _at_day((entry.get("rejudge") or {}).get("at"))
+
+
+def cancel_due(
+    entries: Iterable[Mapping[str, Any]], league: str, today: date
+) -> list[dict[str, Any]]:
+    """The league's placed claims to cancel now (#345 PR 2): a waiver claim not settled, whose
+    verdict judged again is ``cancel`` by a build of ``today`` (an older verdict cancels
+    nothing), and whose cancel never ran live; oldest first, by entry id."""
+    out = []
+    for e in entries:
+        if str(e.get("league")) != str(league) or e.get("outcome") != qa.CLAIMED:
+            continue
+        if e.get("resolved") or (e.get("cancel") or {}).get("outcome") in CANCEL_STICKS:
+            continue
+        rejudge = e.get("rejudge") or {}
+        if rejudge.get("verdict") != qa.CANCEL or _verdict_day(e) != today:
+            continue
+        out.append(
+            {
+                "entry": e["id"],
+                "add": e.get("add"),
+                "drop": e.get("drop"),
+                "bid": e.get("bid_placed"),
+                "reason": rejudge.get("reason"),
+                "verdict_at": rejudge.get("at"),
+            }
+        )
+    return sorted(out, key=lambda x: str(x["entry"]))
+
+
+def check_cancel_run(
+    run: CancelRun,
+    mode: Mapping[str, Any],
+    stop: bool,
+    entry: Mapping[str, Any] | None,
+    today: date,
+    team: int | None,
+    live: Mapping[str, Any] | None = None,
+) -> str | None:
+    """Why the log refuses a cancel run, None when it takes it: the moves executor's own rules
+    (the private league never, STOP, off, the live guard), a dry run never pressing, and the
+    claim the queue's entry names. A run that says it pressed is taken even where the verdict has
+    since changed: its record is what stops a second press. ``entry`` is the queue's entry of
+    ``run.entry`` in this league (None: not found)."""
+    if mode.get("private"):
+        return "the private league is never touched"
+    if stop and run.outcome != "stopped":
+        return "STOP is on: a run can only say it stopped"
+    if mode["mode"] == "off" and run.outcome != "stopped":
+        return "the moves executor is off in this league"
+    if run.mode == "live" and mode["mode"] != "live":
+        return "a live run in a league that is not live"
+    if run.mode == "live" and run.outcome != "stopped" and live is not None and not live.get("ok"):
+        return f"live refused: {live.get('reason')}"
+    if run.mode == "live" and run.outcome == "would_cancel":
+        return "a live run cancels the claim or says why not; it never says would"
+    if run.mode == "dry_run" and run.outcome in CANCEL_STICKS:
+        return "a dry run presses nothing"
+    if run.outcome == "stopped":
+        return None
+    if run.entry is None or entry is None:
+        return f"{run.entry} is not an open claim of the league's queues"
+    if entry.get("outcome") != qa.CLAIMED:
+        return f"{run.entry} is not a waiver claim placed"
+    if run.add != entry.get("add") or run.drop != entry.get("drop"):
+        return f"{run.entry} names another add or drop than the queue's"
+    want = claim_id(team, entry.get("add"), entry.get("drop"))
+    if run.claim is not None and want is not None and run.claim != want:
+        return f"{run.entry}'s claim on Yahoo is {want}, not {run.claim}"
+    if run.mode == "live" and (entry.get("cancel") or {}).get("outcome") in CANCEL_STICKS:
+        return f"{run.entry}'s cancel is {entry['cancel']['outcome']}: it is never pressed again"
+    if run.outcome == "would_cancel" and not any(
+        c["entry"] == run.entry for c in cancel_due([entry], str(entry.get("league")), today)
+    ):
+        return f"{run.entry} is not due a cancel now"
+    return None
+
+
+def cancel_lines(data_dir: Path, league: str, day: date) -> list[dict[str, Any]]:
+    """The league's cancel runs of ``day``, oldest first; none when the file does not read."""
+    try:
+        body = read_log(data_dir, league, day) or {}
+    except LogError:
+        return []
+    return [
+        r for r in body.get(CANCEL, []) if isinstance(r, dict) and r.get("day") == day.isoformat()
+    ]

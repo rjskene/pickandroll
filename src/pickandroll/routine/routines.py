@@ -26,6 +26,7 @@ from .steps import (
     alert_once,
     all_leagues,
     api_check,
+    cancel_plan,
     claim_page_plan,
     digest,
     export_all,
@@ -345,6 +346,9 @@ def evening_pass(ctx: Context, api: str) -> None:
     api_check(ctx)
     stop_check(ctx)
     pub = public_leagues(seasons(ctx))
+    # The pending claims judged again at 21:00 and cancelled (#345 PR 2): first, before the claims,
+    # so the waiver run never processes one; the 05:00 daily never cancels.
+    browser_pass(ctx, "cancel", cancel_plan(ctx), hard_stop=EVENING_HARD_STOP)
     plan = moves_plan(ctx, pub, "pickandroll-moves-evening", "pickandroll-il-evening")
     _report_plan(ctx, plan)
     opened = browser_pass(

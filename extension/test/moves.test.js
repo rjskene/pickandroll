@@ -651,7 +651,7 @@ async function visitAdd({ hash = "#pickandroll-moves", answer, add = ADD, dom = 
   });
   ctx.window = ctx;
   ctx.globalThis = ctx;
-  for (const file of ["lib/league.js", "lib/lineup.js", "lib/moves.js", "lib/startactive.js", "lib/ilmove.js", "lib/drop.js", "lib/claimread.js", "league.js"]) vm.runInContext(fs.readFileSync(path.join(DIR, file), "utf8"), ctx);
+  for (const file of ["lib/league.js", "lib/lineup.js", "lib/moves.js", "lib/startactive.js", "lib/ilmove.js", "lib/drop.js", "lib/claimread.js", "lib/cancel.js", "league.js"]) vm.runInContext(fs.readFileSync(path.join(DIR, file), "utf8"), ctx);
   for (const fn of timers.splice(0)) await fn();
   return { sent, replaced, assigned, strip: nodes["pickandroll-strip"], touched: dom.touched || [] };
 }
@@ -673,7 +673,7 @@ const worker =
   };
 const ops = (v) => v.sent.map((m) => m.op);
 const sentOf = (v, op) => v.sent.filter((m) => m.op === op);
-const PASS = ["moves_landed", "drop_landed", "settings", "moves_submits", "moves_due"];
+const PASS = ["moves_landed", "drop_landed", "cancel_landed", "settings", "moves_submits", "moves_due"];
 
 test("the routine's link: the fragment dropped, the page's entry checked on the rendered form and the claim it would place logged", async () => {
   const v = await visitAdd({ answer: worker({ entries: [entry({ id: "other", add: 3002, page: `/nba/${LEAGUE}/addplayer?apid=3002` }), entry()] }) });
@@ -706,7 +706,7 @@ test("the late and evening passes and the panel's link carry their triggers", as
 test("a plain visit runs nothing; a player not due logs nothing", async () => {
   // A plain visit only asks whether this tab submitted a claim awaiting its answer.
   let v = await visitAdd({ hash: "", answer: worker() });
-  assert.deepEqual([ops(v), v.replaced], [["moves_landed", "drop_landed"], []]);
+  assert.deepEqual([ops(v), v.replaced], [["moves_landed", "drop_landed", "cancel_landed"], []]);
   v = await visitAdd({ answer: worker({ entries: [] }) });
   assert.deepEqual(ops(v), PASS);
   assert.equal(v.strip.textContent, "pickandroll moves: dry run · this player is not due in the queue: nothing logged");
@@ -717,7 +717,7 @@ test("off in the league, the browser's brake and STOP", async () => {
   assert.ok(!ops(v).includes("moves_log"));
   assert.equal(v.strip.textContent, "pickandroll moves: off in this league");
   v = await visitAdd({ answer: worker({}, { moves_executor: "off" }) });
-  assert.deepEqual(ops(v), ["moves_landed", "drop_landed", "settings"]);
+  assert.deepEqual(ops(v), ["moves_landed", "drop_landed", "cancel_landed", "settings"]);
   assert.equal(v.strip.textContent, "pickandroll moves: off in this browser (the extension's settings)");
   v = await visitAdd({ answer: worker({ stop: true, entries: [] }) });
   const run = sentOf(v, "moves_log")[0].run;
@@ -776,7 +776,7 @@ test("a live league with the guard refusing, a failed check, a free-agent add or
   assert.deepEqual([run.outcome, run.entries[0].reason, v.touched], ["skipped", "the submit could not be put on record", []]);
   // A plain visit to the add page of a live league submits nothing.
   v = await visitAdd({ hash: "", answer: worker(LIVE) });
-  assert.deepEqual([ops(v), v.touched], [["moves_landed", "drop_landed"], []]);
+  assert.deepEqual([ops(v), v.touched], [["moves_landed", "drop_landed", "cancel_landed"], []]);
 });
 
 test("a submit on record is never made again: a stale one is logged first with its answer not read", async () => {
@@ -788,7 +788,7 @@ test("a submit on record is never made again: a stale one is logged first with i
   const stale = { ...fresh, at: Date.now() - X.LANDING_MS - 1000 };
   v = await visitAdd({ answer: worker(LIVE, {}, { records: [stale] }) });
   const [first] = sentOf(v, "moves_log");
-  assert.deepEqual(ops(v).slice(0, 5), ["moves_landed", "drop_landed", "settings", "moves_submits", "moves_log"]);
+  assert.deepEqual(ops(v).slice(0, 6), ["moves_landed", "drop_landed", "cancel_landed", "settings", "moves_submits", "moves_log"]);
   assert.deepEqual([first.run.mode, first.run.outcome, first.run.entries[0].outcome], ["live", "claimed", "claimed"]);
   assert.match(first.run.entries[0].reason, /^submitted \d\d:\d\d; Yahoo's answer was not read: check the pending claims$/);
   assert.deepEqual(v.touched, []);
@@ -827,7 +827,7 @@ test("the page Yahoo lands on logs the claim's live pass: placed, refused, or it
   const landedAt = (dom) => visitAdd({ answer: worker(LIVE, {}, { landing }), dom, url: `${SITE}/nba/${LEAGUE}/${TEAM}` });
   let v = await landedAt(landedDom({ notes: ["Your waiver claim has been submitted."] }));
   // My team page's own read (its post) follows the landing's.
-  assert.deepEqual(ops(v), ["moves_landed", "moves_log", "drop_landed", "season_page"]);
+  assert.deepEqual(ops(v), ["moves_landed", "moves_log", "drop_landed", "cancel_landed", "season_page"]);
   let run = sentOf(v, "moves_log")[0].run;
   assert.deepEqual([run.day, run.mode, run.trigger, run.outcome], [DAY, "live", "routine_late", "claimed"]);
   assert.deepEqual([run.entries[0].message, run.entries[0].controls.landed], ["Your waiver claim has been submitted.", { path: `/nba/${LEAGUE}/${TEAM}`, heading: "Team page", form: false, notes: ["Your waiver claim has been submitted."], errors: [], bid: null }]);
@@ -851,7 +851,7 @@ test("the page Yahoo lands on logs the claim's live pass: placed, refused, or it
   assert.match(sentOf(v, "moves_log")[0].run.entries[0].reason, /Yahoo's answer was not read/);
   // No claim awaiting its answer in this tab: the page logs nothing.
   v = await visitAdd({ answer: worker(LIVE), dom: landedDom(), url: `${SITE}/nba/${LEAGUE}/${TEAM}` });
-  assert.deepEqual(ops(v), ["moves_landed", "drop_landed", "season_page"]);
+  assert.deepEqual(ops(v), ["moves_landed", "drop_landed", "cancel_landed", "season_page"]);
 });
 
 // ---------------------------------------------------------------- the worker's record of a submit

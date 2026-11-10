@@ -530,10 +530,11 @@ page, from PR 2:
     in words, `held`, `judged`, `gain`, `value`, `floor`, `season_costly`, `comeback_drops`), never
     its outcome; null when the add is out of the pool or the move no longer fits, and a verdict
     lapses (null, "no held player cleared any more…") once no one is cleared. The league's row on
-    the queue lists its earlier days' open claims with their bid and verdict (`pending`). Until the
-    executor cancels (PR 2, after a read of Yahoo's claim page), a cancel verdict is the user's to
-    act on: the digest's Moves section and the Queue screen's league chip say "cancel by hand" with
-    the claim and the reason, while the claim is open. A comeback's digest line names a dropped
+    the queue lists its earlier days' open claims with their bid and verdict (`pending`). Where the
+    executor does not cancel it (PR 2, below: a dry-run league, or a live cancel that did not
+    take), a cancel verdict is the user's to act on: the digest's Moves section and the Queue
+    screen's league chip say "cancel by hand" with the claim and the reason, while the claim is
+    open. A comeback's digest line names a dropped
     player added that day or the day before, "(added <day>)".
   - **The read of a pending claim's page (#345 step 0, extension 0.11.10).** Before the executor
     may cancel a claim, the evening pass reads one claim's page once, clicking nothing.
@@ -554,7 +555,56 @@ page, from PR 2:
     fragment, and no field's value is read. `POST /seasons/<league>/autopilot/claim-page` files
     the read with its league in `data/autopilot/claim_page.json`. A read carrying a value, a
     query, the crumb or any other key is refused (422), and the private league is refused (409).
-    `GET /autopilot/claim-page` lists the reads. PR 2's cancel waits for this read.
+    `GET /autopilot/claim-page` lists the reads. The read filed on 2026-11-09 (league 223259)
+    showed `form#edit-waiver-form` posting to `/nba/<league>/<team>/editwaiver` with hidden
+    `stage`, `claim_id`, `crumb`, `mode` and `apid`, the text field `faab`, the player's
+    `a#playernote-<add>` and two submits named `s`, "Save Bid" and "Cancel Waiver". Since PR 2 the
+    read puts spaces between the heading's parts, leaves out number-only notices, and leaves out
+    the links back to the page's own path that are not a claim's (the player card's stats tabs).
+  - **A pending claim's cancel (#345 PR 2, extension 0.11.11).** Under the league's moves switch,
+    never in the private league, and only in the 22:40 evening pass, first, before its claims (the
+    05:00 daily, the late pass and the pre-tip pass never cancel). A claim is due a cancel when it
+    is a waiver claim placed (`claimed`), not settled, whose `rejudge` verdict is `cancel` from a
+    build of today (an older verdict cancels nothing), and whose cancel never ran live.
+    `GET /autopilot/cancels/due` lists each public league with one, its moves mode, my team page
+    there and the entries; `GET /seasons/<league>/autopilot/cancels` gives the league's cancels
+    with Yahoo's claim id (`<team>_<add>_<drop>`, 0 for an open spot), the mode, STOP and the live
+    guard. Nothing is due under STOP or with the executor off. The pass opens my team page with
+    `#pickandroll-claim-cancel` once per cancel, forty-five seconds each. The extension
+    (lib/cancel.js):
+    - on my team page takes the league's next claim not run today and follows the Pending
+      Transactions box's View Details link whose `claim_id` is exactly that claim, never another;
+      a claim not in the box is logged `skipped`;
+    - on the claim's page checks that the URL names that claim of my team, that the one
+      `form#edit-waiver-form` posts to my team's `/editwaiver`, that the add's playernote link is
+      in it and that it has exactly one submit `s` labelled "Cancel Waiver"; a page not as read
+      is `skipped`;
+    - in a dry run, or a live league whose guard refuses, logs `would_cancel` and clicks nothing;
+    - in a live league puts the press on record in the worker (refused while one awaits its log
+      or after a live press that stuck), then clicks that button once (the submitter's
+      `s=Cancel Waiver` goes with Yahoo's own post; no form is submitted by script and the bid
+      field is never touched).
+
+    Yahoo's `confirm`, should it ask, is answered by addpage.js on that page alone: yes only while
+    the press holds its one-shot flag (`data-pickandroll-confirm-armed`, taken down at once) and
+    only when the words name cancelling the waiver or the claim; any other confirm is answered no
+    and the run is `not_cancelled` with its words. Every confirm's words are kept. After the press
+    Yahoo's form drawn again on the claim's pages (another stage) is `not_cancelled` and nothing
+    more is clicked; any other landing goes to my team page, where the box without the claim is
+    `cancelled` and the claim still listed is `not_cancelled`. No box at all is `cancelled` only
+    when the box listed this claim alone when my team page was read before the press (the count
+    is kept on the press's record as `pending_before`) and the page shows my roster: a box that
+    failed to draw while the claim stands is never taken for a cancel. Any other missing box is
+    `unconfirmed` ("the box is gone but listed N claims before the press"), as is a press whose
+    answer never came within two minutes. `POST /seasons/<league>/autopilot/cancel` logs the run under `cancel` in the league's
+    day file. A dry run never says it pressed, a live run only in a live league whose guard holds,
+    the claim must be the queue's entry's (add, drop and Yahoo id), the private league is refused
+    (409), and a run carrying the crumb or any other key is refused (422). A live `cancelled`,
+    `not_cancelled`, `failed` or `unconfirmed` goes on the entry as `cancel` and is never pressed
+    again; `cancelled` also resolves the claim `lapsed`, so it no longer counts as pending. The
+    digest says "cancelled on Yahoo at HH:MM CT" (that day and the next morning); a claim whose
+    live cancel did not take, or one in a dry-run league, stays "cancel by hand", with the
+    executor's word when it ran. The Queue screen's chip says the same.
 
   `gone` only when the page shows the add on a team (an on-team icon on the add's row, or a
   page without the form saying so); a page without the claim form is skipped "page not read",

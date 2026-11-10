@@ -333,7 +333,7 @@ async function visitTeam({ hash = "#pickandroll-start-active", answer, dom = saD
   });
   ctx.window = ctx;
   ctx.globalThis = ctx;
-  for (const file of ["lib/league.js", "lib/lineup.js", "lib/moves.js", "lib/startactive.js", "lib/ilmove.js", "lib/drop.js", "lib/claimread.js", "league.js"]) vm.runInContext(fs.readFileSync(path.join(DIR, file), "utf8"), ctx);
+  for (const file of ["lib/league.js", "lib/lineup.js", "lib/moves.js", "lib/startactive.js", "lib/ilmove.js", "lib/drop.js", "lib/claimread.js", "lib/cancel.js", "league.js"]) vm.runInContext(fs.readFileSync(path.join(DIR, file), "utf8"), ctx);
   ctx.started = true;
   for (const fn of timers.splice(0)) await fn();
   return { sent, replaced, strip: nodes["pickandroll-strip"], touched: dom.touched };
@@ -357,7 +357,7 @@ const worker =
   };
 const ops = (v) => v.sent.map((m) => m.op);
 const logOf = (v) => v.sent.filter((m) => m.op === "start_active_log");
-const RUN = ["moves_landed", "drop_landed", "settings", "season_page", "start_active_record", "start_active_due"];
+const RUN = ["moves_landed", "drop_landed", "cancel_landed", "settings", "season_page", "start_active_record", "start_active_due"];
 
 test("a dry run: the fragment dropped, the page posted, the due read and would_start logged; nothing pressed", async () => {
   const v = await visitTeam({ answer: worker() });
@@ -426,7 +426,7 @@ test("a live run presses nothing when it may not: not due, STOP, the same day, t
   assert.deepEqual([logOf(v)[0].run.outcome, logOf(v)[0].run.controls.outside, v.touched], ["started", 1, ["click main", "click start"]]);
   // Off in this browser: nothing read, nothing logged.
   v = await visitTeam({ answer: worker(due(LIVE), { settings: { moves_executor: "off" } }) });
-  assert.deepEqual([ops(v), v.touched], [["moves_landed", "drop_landed", "settings"], []]);
+  assert.deepEqual([ops(v), v.touched], [["moves_landed", "drop_landed", "cancel_landed", "settings"], []]);
 });
 
 test("today's page opened after a later day's lineup set: the press, both reads logged on its run (#289)", async () => {

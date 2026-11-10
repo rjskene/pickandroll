@@ -1271,13 +1271,19 @@ class SeasonService:
         }
         passes = self._passes(day)
         by_id = {e["id"]: e for e in out["entries"]}
+        cancels = {
+            str(e["id"]): e["cancel"]
+            for e in self._open_claim_entries(day)
+            if e.get("cancel") and e.get("id")
+        }
         return {
             **out,
             # The routine's pass while it runs, and the day's last one closed (#201).
             "active": season_passes.active(passes),
             "last_pass": season_passes.last_closed(passes),
             # The modes now (#205): a switch after the build shows on the next read.
-            "leagues": [self._row_now(r) for r in out["leagues"]],
+            # An earlier day's open claim carries its cancel once one ran live (#345 PR 2).
+            "leagues": [_with_cancels(self._row_now(r), cancels) for r in out["leagues"]],
             # The day's pass results (#200), read from the leagues' logs: never stored on the queue.
             # A week plan's step (#221 part 2) with what it waits for, None for nothing.
             "entries": [
@@ -2268,6 +2274,160 @@ class SeasonService:
             raise HTTPException(409, "the private league's pages are never read for this")
         return season_autopilot.append_claim_page_read(self.data_dir, league, read)
 
+    # ------------------------------------------------------------------ the claim's cancel (#345)
+    def _open_claim_entries(self, today: date) -> list[dict[str, Any]]:
+        """Every entry of the queues a claim can still be open on, oldest day first."""
+        return [
+            e
+            for q in season_autopilot.open_queues(self.data_dir, today)
+            for e in q.get("entries") or []
+        ]
+
+    def cancels_due(self, league: str) -> dict[str, Any]:
+        """The league's pending claims to cancel on Yahoo now (#345 PR 2), for the extension on my
+        team page: :func:`season_autopilot.cancel_due` over the open queues, with the moves
+        executor's mode, STOP and its live guard, my team and the claim's Yahoo id. None in the
+        private league, with the executor off, under STOP or without a team of mine. Nothing here
+        opens a page."""
+        base, _ = self._base(league)
+        now = self.clock()
+        today = nba_today(now)
+        mode = leagues.executor_mode(self.data_dir, league, leagues.MOVES)
+        stop = season_autopilot.stopped(self.data_dir)
+        out: dict[str, Any] = {
+            "league": league,
+            "date": today.isoformat(),
+            "mode": mode["mode"],
+            "stop": stop,
+            "reason": None,
+            "team": base.my_team_id,
+            "fragment": season_autopilot.CANCEL_FRAGMENT,
+            "cancels": [],
+            "live": season_autopilot.moves_live_check(self.data_dir, league, mode),
+            "at": now.isoformat(),
+        }
+        if mode.get("private"):
+            return {**out, "reason": qa.PRIVATE}
+        if mode["mode"] == "off":
+            return {**out, "reason": qa.OFF}
+        if stop:
+            return {**out, "reason": "STOP is on (data/autopilot/STOP)"}
+        if base.my_team_id is None:
+            return {**out, "reason": "no team of mine in this league"}
+        cancels = [
+            {**c, "claim": season_autopilot.claim_id(base.my_team_id, c["add"], c["drop"])}
+            for c in season_autopilot.cancel_due(self._open_claim_entries(today), league, today)
+        ]
+        return {**out, "cancels": cancels, "reason": None if cancels else "no claim to cancel"}
+
+    def cancels_due_all(self) -> dict[str, Any]:
+        """The public leagues with a pending claim to cancel now (#345 PR 2), for the evening
+        pass: each league's team page and its cancels, by league; never the private one, nor a
+        league whose moves executor is off. Under STOP nothing is due."""
+        now = self.clock()
+        today = nba_today(now)
+        out: dict[str, Any] = {
+            "date": today.isoformat(),
+            "fragment": season_autopilot.CANCEL_FRAGMENT,
+            "leagues": [],
+            "reason": None,
+        }
+        if season_autopilot.stopped(self.data_dir):
+            return {**out, "reason": "STOP is on (data/autopilot/STOP)"}
+        entries = self._open_claim_entries(today)
+        rows = []
+        for league, mode in sorted(self._modes(leagues.MOVES).items()):
+            if mode.get("private") or mode["mode"] == "off":
+                continue
+            due = season_autopilot.cancel_due(entries, league, today)
+            if not due:
+                continue
+            try:
+                base, _ = base_settings(self.data_dir, league)
+            except leagues.LeagueError:
+                continue
+            if base.my_team_id is None:
+                continue
+            rows.append(
+                {
+                    "league": league,
+                    "mode": mode["mode"],
+                    "page": public.team_url(league, base.my_team_id, today),
+                    "cancels": [c["entry"] for c in due],
+                }
+            )
+        return {**out, "leagues": rows, "reason": None if rows else "no claim to cancel"}
+
+    def log_cancel_run(self, league: str, run: season_autopilot.CancelRun) -> dict[str, Any]:
+        """Log a pending claim's cancel the extension made (or would make) on Yahoo's page of it
+        (#345 PR 2), under ``cancel`` in the league's day file. A live run that pressed (or may
+        have: ``cancelled``, ``not_cancelled``, ``failed``, ``unconfirmed``) goes on the queue's
+        entry as its ``cancel``, so it is never pressed again; ``cancelled`` also resolves the
+        claim as lapsed (Yahoo never processes it). Refused (409) when the mode, STOP or the live
+        guard says it should not have run, the private league always, or the run names another
+        claim than the queue's."""
+        base, _ = self._base(league)
+        now = self.clock()
+        today = nba_today(now)
+        mode = leagues.executor_mode(self.data_dir, league, leagues.MOVES)
+        day = season_queue.day_of(run.entry) if run.entry else None
+        entry = None
+        if day is not None:
+            body = self._read_queue(day) or {}
+            entry = next(
+                (
+                    e
+                    for e in body.get("entries") or []
+                    if e.get("id") == run.entry and str(e.get("league")) == league
+                ),
+                None,
+            )
+        live = (
+            season_autopilot.moves_live_check(self.data_dir, league, mode)
+            if run.mode == "live"
+            else None
+        )
+        why = season_autopilot.check_cancel_run(
+            run,
+            mode,
+            season_autopilot.stopped(self.data_dir),
+            entry,
+            today,
+            base.my_team_id,
+            live,
+        )
+        if why is not None:
+            raise HTTPException(409, why)
+        record = {"at": now.isoformat(timespec="seconds"), **run.model_dump(mode="json")}
+        try:
+            season_autopilot.append_run(
+                self.data_dir, league, record, today, season_autopilot.CANCEL
+            )
+        except season_autopilot.LogError as exc:
+            raise HTTPException(409, str(exc)) from exc
+        if run.mode == "live" and run.outcome in season_autopilot.CANCEL_STICKS and day:
+
+            def change(q: dict[str, Any] | None) -> dict[str, Any]:
+                q = q or {}
+                for e in q.get("entries") or []:
+                    if e.get("id") == run.entry and str(e.get("league")) == league:
+                        e["cancel"] = {
+                            "outcome": run.outcome,
+                            "at": now.isoformat(),
+                            "reason": run.reason,
+                            "message": run.message,
+                        }
+                        if run.outcome == "cancelled" and not e.get("resolved"):
+                            e["resolved"] = season_autopilot.CANCEL_RESOLVED
+                            e["resolved_at"] = now.isoformat()
+                return q
+
+            try:
+                season_queue.update(self.data_dir, day, change)
+            except season_queue.QueueError as exc:
+                raise HTTPException(409, str(exc)) from exc
+        return record
+
     def log_start_active_run(
         self, league: str, run: season_autopilot.StartActiveRun
     ) -> dict[str, Any]:
@@ -3216,6 +3376,22 @@ def _resolver(
     return change
 
 
+def _with_cancels(row: dict[str, Any], cancels: Mapping[str, Any]) -> dict[str, Any]:
+    """The row with each open claim's live cancel (#345 PR 2), as its entry has it now."""
+    pending = row.get("pending")
+    if not pending or not cancels:
+        return row
+    return {
+        **row,
+        "pending": [
+            {**c, "cancel": cancels[str(c.get("id"))]}
+            if isinstance(c, Mapping) and str(c.get("id")) in cancels
+            else c
+            for c in pending
+        ],
+    }
+
+
 def _rejudge_into(entries: list[dict[str, Any]], rejudged: Mapping[str, dict[str, Any]]) -> None:
     """Each open claim's verdict judged again (#345) on its entry: never on one resolved, nor on
     a free agent added at once."""
@@ -3851,6 +4027,30 @@ def register(
         except ValidationError as exc:
             raise HTTPException(422, exc.errors(include_url=False, include_context=False)) from exc
         return service.log_claim_page_read(league, read)
+
+    @app.get("/autopilot/cancels/due")
+    def get_cancels_due() -> dict[str, Any]:
+        """The public leagues with a pending claim to cancel now and their team pages (#345 PR
+        2), for the evening pass; nothing here opens a page."""
+        return service.cancels_due_all()
+
+    @app.get("/seasons/{league}/autopilot/cancels")
+    def get_cancels(league: str = league_id) -> dict[str, Any]:
+        """The league's pending claims to cancel now, with the mode, STOP and the live guard
+        (#345 PR 2), for the extension on my team page."""
+        return service.cancels_due(league)
+
+    @app.post("/seasons/{league}/autopilot/cancel")
+    def post_cancel_run(body: dict[str, Any], league: str = league_id) -> dict[str, Any]:
+        """A pending claim's cancel the extension made or would make (#345 PR 2). A run carrying
+        the page's crumb or any key the run does not have is refused."""
+        if season_autopilot.has_crumb(body):
+            raise HTTPException(422, "a run never carries the page's crumb")
+        try:
+            run = season_autopilot.CancelRun.model_validate(body)
+        except ValidationError as exc:
+            raise HTTPException(422, exc.errors(include_url=False, include_context=False)) from exc
+        return service.log_cancel_run(league, run)
 
     @app.get("/autopilot/start-active/due")
     def get_start_active_due() -> dict[str, Any]:

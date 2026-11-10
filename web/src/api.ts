@@ -1435,6 +1435,17 @@ export interface QueueEntry {
   il_pass?: QueueILPass | null;
   /** A placed claim judged again once a held player of mine cleared (#345); absent before one. */
   rejudge?: ClaimRejudge | null;
+  /** The executor's live cancel of the claim on Yahoo (#345 PR 2); absent before one. */
+  cancel?: ClaimCancel | null;
+}
+
+/** A live cancel of a pending claim (#345 PR 2): ``cancelled`` resolves the claim as lapsed; any
+ * other outcome pressed (or may have) and is never pressed again. */
+export interface ClaimCancel {
+  outcome: "cancelled" | "not_cancelled" | "failed" | "unconfirmed";
+  at: string;
+  reason: string | null;
+  message: string | null;
 }
 
 /** A placed claim's verdict judged again (#345): ``cancel`` when it no longer pays with the cleared
@@ -1455,6 +1466,8 @@ export interface QueuePending {
   from: string | null;
   bid?: number | null;
   rejudge?: ClaimRejudge | null;
+  /** The executor's live cancel of the claim on Yahoo (#345 PR 2); absent before one. */
+  cancel?: ClaimCancel | null;
 }
 
 /** A week plan's step on the queue (#221 part 2): the plan's id and day, the step and the steps. */

@@ -1993,6 +1993,18 @@ test("the Queue screen orders the day's entries across the leagues, says why a l
     `cancel by hand: add ${placed[0].add}, open spot, $1 (${why})`,
   ]);
   assert.deepEqual(cancelByHand(row("queued"), []), []);
+  // The executor's live cancel (#345 PR 2): cancelled on Yahoo, or by hand with its word.
+  const done = { outcome: "cancelled" as const, at: "2026-11-10T04:41:00Z", reason: null, message: null };
+  const ran = [
+    { ...pending[0], cancel: done },
+    { id: "p3", add: 7001, drop: null, from: "2026-11-09", bid: 1, rejudge: cancel, cancel: { ...done, outcome: "not_cancelled" as const, reason: "still in the box" } },
+  ];
+  const lapsed = [at("t5", { league: "900004", outcome: "claimed", drop: 3, bid_placed: 4, resolved: "lapsed", rejudge: cancel, cancel: done })];
+  assert.deepEqual(cancelByHand(row("queued", { pending: ran }), lapsed), [
+    `cancelled on Yahoo: add 10313, drop 10460, $2 (${why})`,
+    `cancel by hand: add 7001, open spot, $1 (${why}; the executor's cancel: not_cancelled, still in the box)`,
+    `cancelled on Yahoo: add ${lapsed[0].add}, drop 3, $4 (${why})`,
+  ]);
   // The strip: the private league first, then by name.
   const names: Record<string, string> = { "900001": "Bravo", "900002": "Alpha", "900003": "Charlie" };
   const strip = stripOrder([row("queued", { league: "900001" }), row("queued", { league: "900002" }), row("private", { league: "900003" })], (l) => names[l]);
