@@ -160,6 +160,22 @@ active player by per-game value, the returning player included, and the drawer n
 ("From Nov 4, X goes when Y returns"). This uses the starters' own ranking; it does not re-value
 every choice.
 
+Today's activation is the exception (#360, the user's ruling on Q1, 2026-11-10). A held player
+whose status cleared is activated on the first day, and that drop is a decision made today, so it
+is chosen by the objective (`moves.choose_activation`), not by per-game value: of the active
+players, him included, the drop that leaves the queue's own score of that day highest, the week
+plan's score (week gain + 0.33 × three-week gain, the matchup odds in a playoff week) when a plan
+leads the queue, otherwise the three weeks, with the day's queued moves made (a move that drops
+the same player is left out). A drop the keep rule keeps is never chosen. A drop the season guard
+would refuse in a set (the player's rest-of-season value above the cleared player's) is skipped;
+when every legal drop is refused, the season-best of them goes. The build makes a first choice on
+the three weeks; the solve then chooses again on the queue's score and, when that changes the
+drop, solves once more (never more). The answer and its decision entry carry it (`activation`:
+`by`, `drops`), and the comeback executor (#318) runs the logged choice while it still holds on
+the roster read. 224319, 2026-11-10: the comeback dropped the day's add, a streamer the plan kept
+to 11-13, because his per-game value was the lowest. Held moves' and returning players' later
+comebacks keep the per-game rule.
+
 A player already in a held slot is charged the same way (#221, the ruling's fifth condition):
 when he comes back inside a horizon (next Monday for an O, or his later return date), the set
 drops its least valuable active player that day, him included, unless the set leaves an active

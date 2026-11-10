@@ -288,6 +288,8 @@ def moves_entry(built: Built, payload: Mapping[str, Any], at: datetime) -> dict[
         "week_plans": week_plans_record(wp),
         # The claims pending the solve counted made (#360).
         "pending": list(payload.get("pending") or []),
+        # Today's activations and the score they were chosen on (#360): the comeback executes them.
+        "activation": payload.get("activation"),
         "pool": {
             "size": search.get("pool"),
             "candidates": len(payload.get("candidates") or {}),

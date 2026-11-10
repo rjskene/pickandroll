@@ -416,6 +416,12 @@ def build(
     real = replace(base, kept=mv.keep_rule(base).kept) if pending else None
     pool = max(1, s.num_teams * problem.spots)
     scorer = wk.scorer_of(rated.bbm.rates, cats, points, pool) if rated.bbm.rates else None
+    # Today's activations, a first choice on the three weeks before any search (#360): the solve
+    # chooses again on the queue's own score once it knows the plan (:func:`solve`).
+    first = mv.choose_activation(problem, three_value, activation_worth(problem, scorer))
+    if first:
+        problem = replace(problem, activation=first)
+        real = replace(real, activation=first) if real is not None else None
     # A standard-waivers league's claims go by waiver priority, not a bid (#261).
     me = next((t for t in season.teams if t.team_id == mine), None)
     priority = (me.waiver_priority if me else None, s.num_teams) if s.uses_faab is False else None
@@ -862,6 +868,124 @@ def claim_of(built: Built, rate: float = mv.RIVAL_CLAIM_RATE) -> dict[str, Any] 
     """A standard-waivers league's claim (#261, ``moves.priority_claim``) at the rival claim
     rate ``rate``; None in a FAAB league."""
     return None if built.priority is None else mv.priority_claim(*built.priority, rate)
+
+
+def three_value(ev: mv.Evaluator, moves: Sequence[mv.Move]) -> float:
+    """A set's worth on the three weeks: the queue's objective when no week plan leads it."""
+    return ev.value("three", moves)
+
+
+def plan_value(weight: float, playoff: bool) -> mv.Objective:
+    """A plan's worth as the queue scores it (``plans.gate``, #221 part 2) in values, not gains:
+    the week plus ``weight`` times the three weeks, or in a playoff week the matchup odds."""
+
+    def value(ev: mv.Evaluator, moves: Sequence[mv.Move]) -> float:
+        if playoff:
+            odds = pl.matchup(ev, moves)
+            if odds is not None:
+                return odds
+        return ev.value("week", moves) + weight * ev.value("three", moves)
+
+    return value
+
+
+def activation_worth(problem: mv.MoveProblem, scorer: Mapping[str, Any] | None) -> mv.Worth | None:
+    """The season guard's figure for an activation (#360): the cleared player kept for a drop is
+    the move "him for the drop", worth his rest of the season less the drop's, each his per-game
+    value under the league's scorer net of an empty line times his games from the first day
+    (``decisions.season_games``, as the guard values a move). None without a scorer or a season
+    end, when there is nothing to guard on."""
+    if scorer is None or problem.season_end is None:
+        return None
+    players = dict(problem.roster) | dict(problem.held)
+    seen: dict[int, float | None] = {}
+
+    def season(k: int) -> float | None:
+        if k not in seen:
+            line, player = problem.rates.get(k), players.get(k)
+            games = None
+            if line is not None and player is not None:
+                games = dl.season_games(problem, k, player, problem.first_day)
+            seen[k] = None if games is None else games[0] * wk.net_value(scorer, line)
+        return seen[k]
+
+    def worth(k: int, d: int) -> float | None:
+        a, b = season(k), season(d)
+        return None if a is None or b is None else a - b
+
+    return worth
+
+
+def with_activation(built: Built, chosen: Mapping[int, int]) -> Built:
+    """``built`` with today's activations ``chosen``, on the solve's roster and on Yahoo's."""
+    return replace(
+        built,
+        problem=replace(built.problem, activation=dict(chosen)),
+        real=None if built.real is None else replace(built.real, activation=dict(chosen)),
+    )
+
+
+def logged_activation(built: Built, logged: Mapping[int, int]) -> Built:
+    """``built`` with the activations the day's solve logged (#360), each while its player is
+    still cleared on Yahoo's roster and its drop is still active there (or the player himself):
+    the comeback executes the solve's decision, and a roster changed since keeps the build's own."""
+    p = built.as_read
+    now = {k for k, _ in mv.cleared(p)}
+    active = {k for k, _ in p.roster}
+    valid = {k: d for k, d in logged.items() if k in now and (d == k or d in active)}
+    if not valid or all(p.activation.get(k) == d for k, d in valid.items()):
+        return built
+    return with_activation(built, {**p.activation, **valid})
+
+
+def queue_moves(built: Built, out: Mapping[str, Any]) -> tuple[list[mv.Move], mv.Objective, str]:
+    """What the queue takes from a solve (#360, the user's ruling on Q1): the week plan's steps
+    and its score when a plan leads, else the three weeks' set and its value; and which."""
+    wp = out.get("week_plans") or {}
+    if wp.get("queue") is not None:
+        rows = wp["plans"][wp["queue"]]["steps"]
+        knob = float(built.knobs.get("three_weight", pl.THREE_WEIGHT))
+        weight = 0.0 if built.playoff else knob
+        objective, by = plan_value(weight, built.playoff), pl.QUEUE_PLAN
+    else:
+        rows = out["recommended"]["three"]["moves"]
+        objective, by = three_value, "three"
+    moves = [
+        mv.Move(
+            int(r["add"]),
+            None if r.get("drop") is None else int(r["drop"]),
+            date.fromisoformat(r["from"]) if r.get("from") else None,
+        )
+        for r in rows
+    ]
+    return moves, objective, by
+
+
+def solve(
+    built: Built, budget: Callable[[], mv.Budget | None] = lambda: None
+) -> tuple[Built, dict[str, Any]]:
+    """The moves of ``built`` (:func:`moves_payload`, each solve under a fresh ``budget()``) with
+    today's activations chosen on the queue's own score (#360): the build's first choice is on the
+    three weeks; once the solve knows what the queue takes, each cleared player's drop is chosen
+    again on it (``moves.choose_activation``), and the moves are solved once more when it changed.
+    The answer says what was chosen and on what (``activation``); the Built returned is the one
+    the answer was solved on."""
+    b = budget()
+    out = moves_payload(built, b)
+    if not mv.cleared(built.problem) or (b is not None and b.stopped):
+        return built, out
+    moves, objective, by = queue_moves(built, out)
+    worth = activation_worth(built.problem, built.scorer)
+    chosen = mv.choose_activation(built.problem, objective, worth, moves)
+    if chosen != dict(built.problem.activation):
+        built = with_activation(built, chosen)
+        b = budget()
+        out = moves_payload(built, b)
+    out["activation"] = {
+        "by": by,
+        "drops": [{"player": k, "drop": d} for k, d in built.problem.activation.items()],
+    }
+    return built, out
 
 
 def moves_payload(built: Built, budget: mv.Budget | None = None) -> dict[str, Any]:
@@ -1455,6 +1579,12 @@ def rejudge_claims(
     out: dict[str, dict[str, Any] | None] = {}
     pend = {(c.add, c.drop): c for c in built.pending}
     base = with_statuses(built.base if built.base is not None else built.problem, statuses)
+    # Today's activations as the solve chose them (#360); one cleared since, on the three weeks.
+    base = replace(base, activation=dict(built.problem.activation))
+    missing = [k for k, _ in mv.cleared(base) if k not in base.activation]
+    if missing:
+        more = mv.choose_activation(base, three_value, activation_worth(base, built.scorer))
+        base = replace(base, activation={**more, **base.activation})
     folds: dict[frozenset[int], tuple[mv.MoveProblem, mv.Evaluator]] = {}
 
     def folded(made: Iterable[mv.Pending]) -> tuple[mv.MoveProblem, mv.Evaluator]:

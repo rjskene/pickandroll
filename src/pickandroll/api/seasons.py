@@ -558,6 +558,10 @@ class SeasonService:
         #: The page solves started and not done, by key: at most one a key (#240).
         self._page_solving: set[tuple[Any, ...]] = set()
         self._page_lock = threading.Lock()
+        #: The Built each kept moves answer was solved on (#360: its activations chosen on the
+        #: queue's score), by the answer's key; and the day's activations by league and day.
+        self._solved_on: dict[tuple[Any, ...], season_moves.Built] = {}
+        self._activations: dict[tuple[str, date], dict[int, int]] = {}
         #: Where a page's solve runs (tests run it at once).
         self.page_solves: Executor = _PAGE_SOLVES
         self.flags_cache = season_moves.MovesCache()
@@ -925,7 +929,7 @@ class SeasonService:
         made: list[bool] = []
         out = self._solve_moves(league, system, key, log=True, made=made, stop=stop)
         if entry and not made:
-            built = self._built(league, system)
+            built = self._solved_on.get(key) or self._built(league, system)
             built_at = _iso(self._moves_at.get(key))
             self._log(
                 league,
@@ -949,9 +953,15 @@ class SeasonService:
         built = self._built(league, system)
 
         def make() -> dict[str, Any]:
-            budget = mv.Budget.start(season_queue.moves_budget_s(self.data_dir), stop=stop)
-            out = season_moves.moves_payload(built, budget)
-            if budget.stopped:
+            budgets: list[mv.Budget] = []
+
+            def budget() -> mv.Budget:
+                b = mv.Budget.start(season_queue.moves_budget_s(self.data_dir), stop=stop)
+                budgets.append(b)
+                return b
+
+            solved, out = season_moves.solve(built, budget)
+            if any(b.stopped for b in budgets):
                 raise Abandoned(f"league {league}: the client went; the solve stopped")
             # The exports this solve rests on, by their pull times on the Central clock (#355):
             # the key's stamp is their mtimes, so a kept answer names its own inputs.
@@ -960,11 +970,15 @@ class SeasonService:
             with self._page_lock:
                 for old in [k for k in self._moves_at if k[:3] == key[:3]]:
                     del self._moves_at[old]
+                    self._solved_on.pop(old, None)
                 self._moves_at[key] = at
+                self._solved_on[key] = solved
+                if out.get("activation") is not None:
+                    self._activations[(league, key[3])] = dict(solved.problem.activation)
             if made is not None:
                 made.append(True)
             if log:
-                self._log(league, lambda at: season_decisions.moves_entry(built, out, at))
+                self._log(league, lambda at: season_decisions.moves_entry(solved, out, at))
             return out
 
         return self.moves_cache.get(key, make)
@@ -2667,11 +2681,14 @@ class SeasonService:
         """The Lineup view (#107): my recommended starters for each day of ``week`` (this one
         by default) against Yahoo's lineup as read."""
         system = self._system(league, system)
-        built = self._built(league, system)
         base, is_public = self._base(league)
         today = nba_today(self.clock())
+        # The comeback executes the day's solve's activations (#360), on Yahoo's roster as read.
+        logged = self._day_activation(league, today)
+        built = season_moves.logged_activation(self._built(league, system), logged)
         begun = self._begun(today)
-        key = (league, system, "lineup", week, today, self._moves_stamp(league), begun)
+        chosen = tuple(sorted(built.as_read.activation.items()))
+        key = (league, system, "lineup", week, today, self._moves_stamp(league), begun, chosen)
 
         def make() -> dict[str, Any] | None:
             season = Season.from_parts(base, load_parts(self.data_dir, league))
@@ -2681,6 +2698,26 @@ class SeasonService:
         if out is None:
             raise HTTPException(404, f"week {week} of league {league} has no lineup to show")
         return {"league": league, **out}
+
+    def _day_activation(self, league: str, today: date) -> dict[int, int]:
+        """Today's activations as the league's last solve chose them (#360): kept from the
+        solve, else its decision entry's (a restart since), else none."""
+        found = self._activations.get((league, today))
+        if found is not None:
+            return found
+        found = {}
+        path = season_decisions.decisions_dir(season_dir(self.data_dir, league))
+        try:
+            entries = json.loads((path / f"{today.isoformat()}.json").read_text())
+        except (OSError, ValueError):
+            entries = []
+        for e in reversed(entries if isinstance(entries, list) else []):
+            act = e.get("activation") if isinstance(e, Mapping) else None
+            if act:
+                found = {int(x["player"]): int(x["drop"]) for x in act.get("drops") or []}
+                break
+        self._activations[(league, today)] = found
+        return found
 
     def move_detail(
         self, league: str, add: int, drop: int | None, system: str | None

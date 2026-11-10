@@ -517,8 +517,8 @@ page, from PR 2:
     read's time and league, this league's when its own read is the newest (the scan covers every
     league, this one included), null only when no team-page read of him is stored.
   - **A placed claim judged again when a held player clears (#345, PR 1).** A claim keeps its place
-    until Yahoo settles it, and his comeback then drops the least valuable active player, the
-    claim's add included (31153, 2026-11-09: a $2 claim won at 04:17 and its add dropped by the
+    until Yahoo settles it, and his comeback then dropped the least valuable active player (by
+    per-game value until #360 PR 3, below), the claim's add included (31153, 2026-11-09: a $2 claim won at 04:17 and its add dropped by the
     comeback at 05:31; the claim was an add with a drop, not the spot his IL move opened). So
     every queue build, for a league with a held player cleared by his newest status in any league
     (as above), judges each open waiver claim of the league again (`claimed`, never a free agent
@@ -560,6 +560,19 @@ page, from PR 2:
     and one that no longer fits is cancelled ("no open spot left for it: <add> takes the room",
     `no_room` on the verdict); judged for the room alone, with no held player cleared, a claim
     that fits keeps its place as placed and no other verdict is given.
+  - **The comeback's drop, on the queue's own score (#360, PR 3).** 224319, 2026-11-10: the
+    comeback of a cleared IL player dropped the day's add, a streamer the week plan kept to
+    11-13, because the comeback took the lowest per-game value. The user ruled (Q1 b) that the
+    drop is the one that leaves the queue's own score of that day highest: the week plan's score
+    when a plan leads, otherwise the three weeks. The solve now chooses it
+    (`moves.choose_activation`) with the day's queued moves made, of the active players and him,
+    never a player the keep rule keeps, and skips a drop the season guard would refuse in a set;
+    when every legal drop is refused, the season-best goes. A first choice at build on the three
+    weeks; after the solve a second on the queue's score, and one more solve when it changed. The
+    choice is in the moves answer and the decision entry (`activation`: `by` `week_plan` or
+    `three`, `drops` of `{player, drop}`), kept in memory and read back from today's decision log
+    after a restart. The comeback's steps take it while the read still shows him cleared and the
+    drop active; otherwise the build's own choice.
   - **The read of a pending claim's page (#345 step 0, extension 0.11.10).** Before the executor
     may cancel a claim, the evening pass reads one claim's page once, clicking nothing.
     `GET /autopilot/claim-page/due` is due until a read is on file and never after. It names the
@@ -1002,7 +1015,8 @@ In the model's terms, carried by #124:
   each with its `stage`) is run by the routines' two lineup passes, daily and late, in a public
   league whose moves switch is live under its guard; the private league never runs one, and STOP or
   the browser's brake hold it. A lineup page with a chain stays open two minutes a chain. In order:
-  1. **The drop.** The engine's `drop` on the drop page, with the chain's fragment. It is taken from
+  1. **The drop.** The engine's `drop` on the drop page, with the chain's fragment: the solve's
+     activation, chosen on the queue's own score (#360 PR 3, above). It is taken from
      today's steps read fresh there, never from `drop_first`, so only the chain makes it (entry
      `comeback:<player>`, no queue entry). It may be the player himself: then no move follows and the
      chain goes on to the press. The log takes the steps' drop and no other, except a run that says
