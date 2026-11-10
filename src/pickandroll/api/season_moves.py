@@ -46,7 +46,7 @@ from __future__ import annotations
 import threading
 import time
 from collections import Counter
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import date
 from pathlib import Path
@@ -55,6 +55,7 @@ from typing import Any
 import pandas as pd
 
 from ..season import Player, Season
+from ..season import autopilot as qa
 from ..season import decisions as dl
 from ..season import moves as mv
 from ..season import plans as pl
@@ -111,6 +112,20 @@ class Built:
     #: Whether this week is a playoff week (``Season.first_playoff_week``): a week plan then leads
     #: on the matchup odds, not on its score (``season.plans.for_queue``).
     playoff: bool = False
+    #: My claims placed and not yet processed (#360), folded into ``problem``
+    #: (``moves.with_pending``): the moves are solved on the roster Yahoo's run will leave.
+    pending: tuple[mv.Pending, ...] = ()
+    #: Before the fold, keep inputs set and nobody kept: what the re-judge folds the other claims
+    #: into (:func:`fold`); None when no claim is pending (``problem`` is then the same roster).
+    base: mv.MoveProblem | None = None
+    #: Yahoo's roster as read, the claims not made, its own keep rule's kept: the lineup and the
+    #: views that show my roster (:attr:`as_read`); None when no claim is pending.
+    real: mv.MoveProblem | None = None
+
+    @property
+    def as_read(self) -> mv.MoveProblem:
+        """The problem on Yahoo's roster as read (#360): the lineup can start only my players."""
+        return self.real if self.real is not None else self.problem
 
 
 @dataclass(frozen=True)
@@ -234,11 +249,14 @@ def build(
     data_dir: Path,
     system: str,
     knobs: Mapping[str, Any] | None = None,
+    open_claims: Iterable[Mapping[str, Any]] = (),
 ) -> Built | None:
     """The move problem for my team, or None when the season lacks my team or its weeks; the
     solve runs on ``system`` with ``knobs``, the league's knobs as ``api.season_knobs`` reads
     them (the code's defaults when None), and Yahoo's can't-cut list as the executor last read
-    it (``api.season_cantcut``, #220)."""
+    it (``api.season_cantcut``, #220). ``open_claims`` are the queue's entries of the league in its
+    open days: those still pending on this read (:func:`pending_claims`) are made in the problem
+    (#360), the lineup and the views keeping Yahoo's roster as read (``Built.real``)."""
     s = season.settings
     mine = s.my_team_id
     if mine is None or not season.calendar or mine not in season.rosters:
@@ -388,8 +406,14 @@ def build(
         daily_cap=int(knobs["daily_cap"]),
         cantcut=season_cantcut.load(data_dir, s.league),
     )
-    rule = mv.keep_rule(problem)
-    problem = replace(problem, kept=rule.kept)
+    pending = pending_claims(
+        on_roster,
+        {a.player.yahoo_id: a for a in pool if a.player.yahoo_id in rates},
+        open_claims,
+    )
+    base = problem
+    problem, rule = fold(base, pending)
+    real = replace(base, kept=mv.keep_rule(base).kept) if pending else None
     pool = max(1, s.num_teams * problem.spots)
     scorer = wk.scorer_of(rated.bbm.rates, cats, points, pool) if rated.bbm.rates else None
     # A standard-waivers league's claims go by waiver priority, not a bid (#261).
@@ -408,7 +432,47 @@ def build(
         file_system,
         priority,
         (first := season.first_playoff_week) is not None and this.number >= first,
+        pending,
+        base if pending else None,
+        real,
     )
+
+
+def pending_claims(
+    mine: Iterable[int], pool: Mapping[int, Any], claims: Iterable[Mapping[str, Any]]
+) -> tuple[mv.Pending, ...]:
+    """My placed waiver claims still pending on this read (#360): ``claims`` are the queue's
+    entries, each counted once by its add. A claim is settled, so not pending, when the read says
+    Yahoo's run passed it: its add is on my roster (it landed: never counted twice), its drop is
+    off it (Yahoo voids the claim), or its add is no longer on waivers in the pool (lost to
+    another team, or a free agent again after it failed). ``mine`` is my roster, held slots
+    included; ``pool`` the league's available players by id. Its clear day is the entry's, else
+    the pool's."""
+    mine = set(mine)
+    out: dict[int, mv.Pending] = {}
+    for c in claims:
+        if c.get("outcome") != qa.CLAIMED or c.get("resolved") or c.get("add") is None:
+            continue
+        add, drop = int(c["add"]), c.get("drop")
+        drop = None if drop is None else int(drop)
+        a = pool.get(add)
+        if add in mine or (drop is not None and drop not in mine) or a is None:
+            continue
+        if a.availability != "W" or add in out:
+            continue
+        day = date.fromisoformat(c["from"]) if c.get("from") else a.clears
+        if day is None:
+            continue
+        out[add] = mv.Pending(add, a.player, drop, day)
+    return tuple(out.values())
+
+
+def fold(base: mv.MoveProblem, pending: Sequence[mv.Pending]) -> tuple[mv.MoveProblem, mv.KeepRule]:
+    """``base`` with ``pending`` made (``moves.with_pending``) and the keep rule read on that
+    roster: a claim's add is kept too, since no move may drop him before Yahoo's run."""
+    p = mv.with_pending(base, pending)
+    rule = mv.keep_rule(p)
+    return replace(p, kept=rule.kept | p.pending), rule
 
 
 def keep_inputs(
@@ -608,6 +672,12 @@ def cleared_payload(problem: mv.MoveProblem) -> list[dict[str, Any]]:
     ]
 
 
+def pending_payload(built: Built) -> list[dict[str, Any]]:
+    """My claims pending that the solve counted made (#360): each add, his drop and the day he
+    joins the roster."""
+    return [{"add": c.add, "drop": c.drop, "from": c.day.isoformat()} for c in built.pending]
+
+
 def room_payload(problem: mv.MoveProblem) -> dict[str, Any]:
     """The room an add without a drop has (#187, ``moves.room``): the open active spots, each
     held kind's open slots (a full one at zero) and my active players whose status fits one,
@@ -708,7 +778,8 @@ def keep_payload(built: Built) -> dict[str, Any]:
         "floor": rule.floor,
         "average": _r(p.average),
         "best": best,
-        "players": [_kept_row(key, k) for key, k in rule.players.items()],
+        # A claim's add is not mine before Yahoo's run (#360): kept, and not listed as mine.
+        "players": [_kept_row(key, k) for key, k in rule.players.items() if key not in p.pending],
         "held": [_kept_row(key, k) for key, k in rule.held.items()],
     }
 
@@ -899,6 +970,7 @@ def _payload(built: Built) -> dict[str, Any]:
     # kept, unless the budget has run out (#306): the plans weigh the week first themselves.
     free = None if mv.budget_out() else stream_of(built, ev, sets["week"], guard, False)
     return {
+        "pending": pending_payload(built),
         "cleared": cleared_payload(p),
         "room": room_payload(p),
         "keep_rule": keep_payload(built),
@@ -1368,21 +1440,83 @@ def rejudge_claims(
     claims: Sequence[Mapping[str, Any]],
     statuses: Mapping[int, str | None],
 ) -> dict[str, dict[str, Any] | None]:
-    """Each placed claim (``claims``, queue entries) judged again with my cleared held players
-    back (#345): ``statuses`` are their newest statuses. By entry id: the move's gain on the
-    entry's judging horizon with every cleared player's comeback drop charged (the evaluator's
-    own, :func:`moves.comebacks`), its value there and its season guard as the decision log
-    reads them, and whom each cleared player's comeback sends with the claim made; None when
-    the add is out of the pool or the move no longer fits."""
-    p = with_statuses(built.problem, statuses)
-    cleared = {k for k, _ in mv.cleared(p)}
-    ev = mv.Evaluator(p)
-    mine = {k for k, _ in (*p.roster, *p.held)}
+    """Each placed claim (``claims``, queue entries) judged again (#345), with my cleared held
+    players back (``statuses``: their newest statuses) and the other claims pending made (#360).
+    By entry id: the move's gain on the entry's judging horizon with every cleared player's
+    comeback drop charged (the evaluator's own, :func:`moves.comebacks`), its value there and its
+    season guard as the decision log reads them, and whom each cleared player's comeback sends
+    with the claim made; None when the add is out of the pool or the move no longer fits.
+
+    A no-drop claim needs an active spot, and the claims pending can hold more of them than the
+    roster has (#360): the no-drop claims are taken by their own gain, highest first, each while
+    the room left fits it (:func:`moves.feasible`), and one that no longer fits says so
+    (``no_room``: the adds that take the room) instead of a gain. A claim the read already settled
+    (not in ``built.pending``) is judged on the problem as built."""
     out: dict[str, dict[str, Any] | None] = {}
-    for c in claims:
-        add, drop = int(c["add"]), c.get("drop")
+    pend = {(c.add, c.drop): c for c in built.pending}
+    base = with_statuses(built.base if built.base is not None else built.problem, statuses)
+    folds: dict[frozenset[int], tuple[mv.MoveProblem, mv.Evaluator]] = {}
+
+    def folded(made: Iterable[mv.Pending]) -> tuple[mv.MoveProblem, mv.Evaluator]:
+        made = list(made)
+        key = frozenset(c.add for c in made)
+        if key not in folds:
+            p = fold(base, made)[0] if built.base is not None else base
+            folds[key] = (p, mv.Evaluator(p))
+        return folds[key]
+
+    def move_of(c: Mapping[str, Any]) -> mv.Move:
+        drop = c.get("drop")
+        return mv.Move(int(c["add"]), None if drop is None else int(drop))
+
+    def pending_of(c: Mapping[str, Any]) -> mv.Pending | None:
+        m = move_of(c)
+        return pend.get((m.add, m.drop))
+
+    # The room: the no-drop claims by their own gain, with the claims that drop someone made.
+    with_drop = [c for c in built.pending if c.drop is not None]
+    open_spot = [c for c in claims if pending_of(c) is not None and c.get("drop") is None]
+    alone: dict[str, float] = {}
+    for c in open_spot:
+        p, ev = folded(with_drop)
         judged = c.get("judged") or dl.THREE
-        move = mv.Move(add, None if drop is None else int(drop))
+        move = move_of(c)
+        if judged in p.horizons and move.add in p.effective and mv.feasible(p, [move]):
+            alone[c["id"]] = ev.gain(judged, [move])
+    admitted: list[mv.Pending] = []
+    no_room: dict[str, list[int]] = {}
+    order = sorted(open_spot, key=lambda c: -alone.get(c["id"], float("-inf")))
+    for c in order:
+        if c["id"] not in alone:
+            continue
+        p, _ = folded([*with_drop, *admitted])
+        mine_c = pending_of(c)
+        if mine_c is not None and mv.feasible(p, [move_of(c)]):
+            admitted.append(mine_c)
+        else:
+            no_room[c["id"]] = [a.add for a in admitted]
+    made = [*with_drop, *admitted]
+    for c in claims:
+        add = int(c["add"])
+        judged = c.get("judged") or dl.THREE
+        if c["id"] in no_room:
+            out[c["id"]] = {
+                "judged": judged,
+                "gain": None,
+                "value": None,
+                "season_costly": None,
+                "comeback_drops": {},
+                "no_room": no_room[c["id"]],
+            }
+            continue
+        if pending_of(c) is None:
+            p = with_statuses(built.problem, statuses)
+            ev = mv.Evaluator(p)
+        else:
+            p, ev = folded(x for x in made if x.add != add)
+        cleared = {k for k, _ in mv.cleared(p)}
+        mine = {k for k, _ in (*p.roster, *p.held)}
+        move = move_of(c)
         fits = (move.drop is None or move.drop in mine) and add in p.effective
         if not fits or judged not in p.horizons or not mv.feasible(p, [move]):
             out[c["id"]] = None

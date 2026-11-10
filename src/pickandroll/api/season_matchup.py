@@ -193,7 +193,7 @@ def payload(
 ) -> dict[str, Any] | None:
     """The scoreboard and both teams' players, or None without a named opponent this week.
     ``begun`` are the teams whose game today began (``season_lineup.begun_teams``)."""
-    p = built.problem
+    p = built.as_read
     span = p.horizons["week"][0]
     mine = season.settings.my_team_id
     matchup, read_at = sw.matchup_read(season, mine)

@@ -536,6 +536,30 @@ page, from PR 2:
     screen's league chip say "cancel by hand" with the claim and the reason, while the claim is
     open. A comeback's digest line names a dropped
     player added that day or the day before, "(added <day>)".
+  - **The claims pending, in the solve and in the re-judge (#360, PR 2).** On 2026-11-09 the 09:15
+    pass placed a no-drop claim into the one open spot of 223259 and of 31153, and the 22:40 pass
+    placed a second into the same spot (6707 then 10510, 6724 then 6017): the 21:00 solve read
+    only the roster, where the spot was still open, and the re-judge ran only for a cleared held
+    player. Now every build counts my waiver claims placed and open (`claimed`, not resolved)
+    as made (`moves.with_pending`): each add is on the roster from his clear day, each drop off it,
+    a no-drop claim takes its spot from now (anything else in it fails the claim), and no move
+    drops a claim's add or its drop. So a solve never places a second claim into one spot, and
+    its sets, comebacks and week plans are judged on the roster Yahoo's run will leave. A claim's
+    drop plays until the clear day on Yahoo; the solve has him gone from now, alike in the base
+    and in every set. A claim the read says Yahoo's run already settled is not pending: its add
+    is on my roster (it landed, so it is never counted twice; the 05:00 daily reads an hour after
+    the run, before the build marks the entry won), its drop is off it (Yahoo voids it), or its
+    add is no longer on waivers (lost, or a free agent again after it failed). The solve's
+    answer lists them (`pending`: add, drop, the day he joins) and so does its decision entry;
+    the solve is kept per claims pending by their content, so a queue write that changes no
+    claim never solves again. The lineup, the Matchup and the Season views keep Yahoo's roster
+    as read (`Built.real`): the lineup can start only my players. The re-judge judges each claim
+    with the other claims made and not itself, and it also runs when the claims hold more
+    no-drop adds than the roster has spots (`moves.overfull`). The no-drop claims are then taken
+    by their own gain on their judging horizon, highest first, each while the room left fits it,
+    and one that no longer fits is cancelled ("no open spot left for it: <add> takes the room",
+    `no_room` on the verdict); judged for the room alone, with no held player cleared, a claim
+    that fits keeps its place as placed and no other verdict is given.
   - **The read of a pending claim's page (#345 step 0, extension 0.11.10).** Before the executor
     may cancel a claim, the evening pass reads one claim's page once, clicking nothing.
     `GET /autopilot/claim-page/due` is due until a read is on file and never after. It names the
