@@ -751,13 +751,21 @@ def rejudge_verdict(
     floor: Floor,
     season_costly: bool | None,
     comeback_drops: Mapping[int, int],
+    no_room: Sequence[int] | None = None,
 ) -> tuple[str, str]:
     """A placed claim's verdict once ``held`` (my cleared held players) come back (#345), judged
     as the build judges a new entry: on its judging horizon with their comebacks' drops charged
     (``gain``), the season guard (``season_costly``) and the noise floor (``floor``, on ``gain``
     and ``value``); and cancelled whenever a comeback would drop the claim's own add
     (``comeback_drops``: each cleared player and whom his comeback sends). ``(verdict, reason)``,
-    the reason in words without a figure."""
+    the reason in words without a figure. A no-drop claim the room no longer fits (``no_room``,
+    the claims that take it, #360) is cancelled first: Yahoo's run would fail it."""
+    if no_room is not None:
+        takers = " and ".join(str(k) for k in no_room)
+        if not takers:
+            return CANCEL, "no open spot left for it"
+        verb = "takes" if len(no_room) == 1 else "take"
+        return CANCEL, f"no open spot left for it: {takers} {verb} the room"
     back = _back(held)
     sends = sorted(k for k, d in comeback_drops.items() if d == add)
     if sends:

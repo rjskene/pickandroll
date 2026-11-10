@@ -171,7 +171,7 @@ def recommended(
     on Yahoo's lineup as read and with today's players of the ``begun`` teams where Yahoo has
     them. Any other week, an unread matchup and a points league rank by the general value, and a
     league whose lineups change weekly keeps its one lineup."""
-    p = built.problem
+    p = built.as_read
     s = season.settings
     mine = s.my_team_id
     ahead = [d for d in span.days if d >= first]
@@ -230,7 +230,7 @@ def payload(
 ) -> dict[str, Any] | None:
     """The week's lineups, or None when the week is not one of the moves' four. ``begun`` are the
     teams whose game today began (:func:`begun_teams`)."""
-    p = built.problem
+    p = built.as_read
     s = season.settings
     mine = s.my_team_id
     if mine is None or season.calendar is None:

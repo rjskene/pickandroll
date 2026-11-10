@@ -78,6 +78,13 @@ refuses his drop on the add page) is protected whatever the three tests say. Nei
 drop on any horizon (``kept``, :func:`drop_options`); a protected player out still goes to a held
 slot when one is open (Yahoo blocks drops, not IL moves). His value net of return
 (:func:`net_of_return`) only ranks the IL and is shown, never protects.
+
+My claims placed and not yet processed (#360) are made in the problem before it is solved
+(:func:`with_pending`): each add is on the roster from his clear day, each drop off it, a no-drop
+claim takes its active spot, and no move drops a claim's add (``kept``, the caller's) or his drop.
+A solve then never places a second claim into one spot, and every set is judged on the roster
+Yahoo's run will leave. A claim's drop plays until the clear day on Yahoo; here he is gone from
+now, alike in the base and in every set.
 """
 
 from __future__ import annotations
@@ -87,7 +94,7 @@ import time
 from collections.abc import Callable, Collection, Iterable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date, timedelta
 from typing import Protocol
 
@@ -216,6 +223,57 @@ class MoveProblem:
     daily_cap: int | None = None
     #: The candidates on waivers: an add of one is a claim, which may be lost (#221).
     claims: frozenset[int] = frozenset()
+    #: The adds of my claims placed and not yet processed (#360, :func:`with_pending`): on the
+    #: roster from their clear day, and never a drop or a held-slot move before Yahoo's run.
+    pending: frozenset[int] = frozenset()
+
+
+@dataclass(frozen=True)
+class Pending:
+    """A waiver claim of mine placed and not yet processed (#360): its add joins my roster on
+    the claim's clear day, and its drop (None: an open spot) leaves it."""
+
+    add: int
+    player: Player
+    drop: int | None
+    day: date
+
+
+def with_pending(problem: MoveProblem, pending: Sequence[Pending]) -> MoveProblem:
+    """The problem as my roster stands once ``pending`` are made (#360): each claim's add on the
+    roster, playing from its clear day, his drop off it, so every set, its spots, its drops and its
+    comebacks are judged on the roster Yahoo's run will leave. A no-drop claim takes its active
+    spot from now: anything else in it fails the claim. A claim's drop plays until the clear day
+    on Yahoo; here he is gone from now, alike in the base and in every set. The adds are out of
+    the candidates and are :attr:`MoveProblem.pending`; whom the keep rule keeps is the caller's
+    (it is read on this roster)."""
+    if not pending:
+        return problem
+    drops = {c.drop for c in pending if c.drop is not None}
+    adds = {c.add for c in pending}
+    returns = dict(problem.returns)
+    for c in pending:
+        returns[c.add] = max(c.day, returns.get(c.add, c.day))
+    return replace(
+        problem,
+        roster=(
+            *(m for m in problem.roster if m[0] not in drops),
+            *((c.add, c.player) for c in pending),
+        ),
+        held=tuple(m for m in problem.held if m[0] not in drops),
+        held_slots={k: s for k, s in problem.held_slots.items() if k not in drops},
+        candidates=tuple(m for m in problem.candidates if m[0] not in adds),
+        effective={k: d for k, d in problem.effective.items() if k not in adds},
+        claims=problem.claims - adds,
+        returns=returns,
+        pending=problem.pending | adds,
+    )
+
+
+def overfull(problem: MoveProblem) -> int:
+    """How many players the roster holds beyond its active spots (#360): a no-drop claim placed
+    with no spot left for it once :func:`with_pending` counts the claims."""
+    return max(0, len(problem.roster) - problem.spots)
 
 
 def day_of(problem: MoveProblem, move: Move) -> date:
@@ -314,7 +372,9 @@ def stash_order(problem: MoveProblem) -> tuple[Member, ...]:
         back = back_from(problem, key, player)
         return (0, 0, i) if back is None else (1, -back.toordinal(), i)
 
-    order = tuple(m for _, m in sorted(enumerate(problem.roster), key=later))
+    # A claim's add is not mine before Yahoo's run: he cannot go to a held slot (#360).
+    mine = [(i, m) for i, m in enumerate(problem.roster) if m[0] not in problem.pending]
+    order = tuple(m for _, m in sorted(mine, key=later))
     object.__setattr__(problem, "_stash_order", order)
     return order
 

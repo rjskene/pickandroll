@@ -817,7 +817,27 @@ class SeasonService:
         ]
         for pattern in (*BBM_ROS, BBM_THIS_WEEK, BBM_NEXT_WEEK):
             files += sorted(self.data_dir.glob(pattern))
-        return tuple((f.name, f.stat().st_mtime_ns) for f in files if f.exists())
+        stamp = tuple((f.name, f.stat().st_mtime_ns) for f in files if f.exists())
+        # The claims placed and open (#360) by their content, not the queue file's time: a queue
+        # write that changes no claim never solves again.
+        claims = tuple(
+            (str(c.get("id")), c.get("add"), c.get("drop"), c.get("from"))
+            for c in self._league_claims(league)
+        )
+        return (*stamp, ("pending", claims)) if claims else stamp
+
+    def _league_claims(self, league: str) -> list[dict[str, Any]]:
+        """The league's waiver claims placed in the open days and not resolved (#360): what the
+        moves solve counts as pending, once the read says Yahoo's run has not passed them
+        (``season_moves.pending_claims``)."""
+        today = nba_today(self.clock())
+        return [
+            e
+            for e in self._open_claim_entries(today)
+            if e.get("league") == league
+            and e.get("outcome") == qa.CLAIMED
+            and not e.get("resolved")
+        ]
 
     def _begun(self, today: date) -> frozenset[str]:
         """The teams whose game ``today`` began (#314): the lineups' players who stay put. In the
@@ -839,7 +859,8 @@ class SeasonService:
         def make() -> season_moves.Built | None:
             season = Season.from_parts(base, load_parts(self.data_dir, league))
             knobs = season_knobs.for_league(self.data_dir, league)
-            return season_moves.build(season, today, self.data_dir, system, knobs)
+            claims = self._league_claims(league)
+            return season_moves.build(season, today, self.data_dir, system, knobs, claims)
 
         built = self.moves_cache.get(key, make)
         if built is None:
@@ -1768,7 +1789,9 @@ class SeasonService:
         drop charged, and cancelled when it no longer pays or the comeback would drop the add.
         By entry id; a verdict from an earlier build lapses (:data:`qa.NO_CLEARED`) once no one
         is cleared. Nothing when no claim is open. Only a waiver claim is judged: a free agent
-        added at once has landed and has nothing to cancel."""
+        added at once has landed and has nothing to cancel. The claims are judged too when they
+        hold more no-drop adds than the roster has spots (#360, ``moves.overfull``): then only a
+        claim the room no longer fits gets a verdict, a cancel."""
         claims = [c for c in claims if c.get("outcome") == qa.CLAIMED]
         if not claims:
             return {}
@@ -1776,12 +1799,15 @@ class SeasonService:
         me = season.settings.my_team_id
         spots = season.rosters.get(me) if me is not None else None
         cleared = self._cleared_of(spots or ())
-        if not cleared:
-            return {
-                c["id"]: {"at": at, "verdict": None, "reason": qa.NO_CLEARED}
-                for c in claims
-                if (c.get("rejudge") or {}).get("verdict")
-            }
+        # The claims pending hold more no-drop adds than the roster has spots (#360): judged too.
+        crowded = mv.overfull(built.problem) > 0
+        lapsed = {
+            c["id"]: {"at": at, "verdict": None, "reason": qa.NO_CLEARED}
+            for c in claims
+            if (c.get("rejudge") or {}).get("verdict")
+        }
+        if not cleared and not crowded:
+            return lapsed
         statuses = {int(x["player"]): x["status"] for x in cleared}
         held = sorted(statuses)
         try:
@@ -1794,6 +1820,11 @@ class SeasonService:
         out: dict[str, dict[str, Any]] = {}
         for c in claims:
             j = judged.get(c["id"])
+            if not cleared and (j is None or j.get("no_room") is None):
+                # Judged for the room alone: a claim that fits keeps its place, as placed.
+                if c["id"] in lapsed:
+                    out[c["id"]] = lapsed[c["id"]]
+                continue
             if j is None:
                 out[c["id"]] = {"at": at, "verdict": None, "held": held, "reason": qa.NOT_JUDGED}
                 continue
@@ -1805,6 +1836,7 @@ class SeasonService:
                 floor,
                 j["season_costly"],
                 j["comeback_drops"],
+                j.get("no_room"),
             )
             out[c["id"]] = {
                 "at": at,
@@ -1812,11 +1844,12 @@ class SeasonService:
                 "reason": reason,
                 "held": held,
                 "judged": j["judged"],
-                "gain": round(j["gain"], 4),
+                "gain": None if j["gain"] is None else round(j["gain"], 4),
                 "value": j["value"],
                 "floor": floor.to_dict(),
                 "season_costly": j["season_costly"],
                 "comeback_drops": {str(k): v for k, v in j["comeback_drops"].items()},
+                **({"no_room": j["no_room"]} if j.get("no_room") is not None else {}),
             }
         return out
 

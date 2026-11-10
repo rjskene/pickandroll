@@ -54,7 +54,7 @@ def payload(
     built: Built, season: Season, today: date, data_dir: Path, begun: Collection[str] = ()
 ) -> dict[str, Any] | None:
     """Every week left from this one, or None without my team or the season's weeks."""
-    p = built.problem
+    p = built.as_read
     s = season.settings
     mine = s.my_team_id
     if mine is None or season.calendar is None:

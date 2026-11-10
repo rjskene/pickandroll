@@ -211,6 +211,13 @@ it stay put and are dropped only as a churn (#221, "IL churn" below). Which stat
 slot, how many held slots the league has, and a held player whose status cleared are in "Held
 slots" below.
 
+Claims pending (#360): my waiver claims placed and not yet processed are made in the problem
+before anything is solved (`moves.with_pending`). Each add is on the roster from his clear day
+and each drop off it, a no-drop claim takes its active spot, and no move drops a claim's add or
+its drop, so the searches, the streaming plan's spots line and the comebacks all count the room
+the claims leave. A claim the read shows settled (its add on my roster, its drop off it, or its
+add no longer on waivers) is not pending. The lineup and the views keep the roster as read.
+
 ### Held slots (#107, #124)
 
 Yahoo's rule for basketball (help article SLN6863, also served as SLN28136, read 2026-10-22):
