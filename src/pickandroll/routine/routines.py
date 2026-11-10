@@ -49,6 +49,7 @@ from .steps import (
     record_retry,
     refresh_all,
     resolve,
+    resolve_comebacks,
     scorecard,
     seasons,
     solve_all,
@@ -286,12 +287,17 @@ def daily(ctx: Context, api: str) -> None:
     pub = public_leagues(rows)
     refresh_all(ctx, pub, DAILY_RETRY_BEFORE)
     solve_all(ctx, all_leagues(rows))
+    passes_from = ctx.now()
     sa = start_active_plan(ctx, "pickandroll-start-active-daily")
     opened = browser_pass(ctx, "start_active", sa)
     lineups = lineup_plan(ctx, pub, tomorrow=True, fragment="pickandroll-lineup")
     opened_lineups = browser_pass(ctx, "lineup", lineups)
-    if opened or opened_lineups:
-        pass_check(ctx, sorted(set(opened) | set(opened_lineups)), ["lineup", "moves"], "routine")
+    touched = sorted(set(opened) | set(opened_lineups))
+    if touched:
+        pass_check(ctx, touched, ["lineup", "moves"], "routine")
+    # A comeback's drop changed the roster after the solve (#360): those leagues are solved
+    # again, and only those, before the queue is built from the solve.
+    resolve_comebacks(ctx, touched, passes_from)
     queue_build(ctx)
     post_digest(ctx, digest(ctx))
 

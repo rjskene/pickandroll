@@ -914,7 +914,7 @@ the private league's solve was left out there with `--skip-solve 31822`, `docs/O
 | when | what | exists |
 |---|---|---|
 | daily 05:00 | Basketball Monster exports, public refresh, breakout digest on #99 | yes (`pickandroll-routine@daily`, window 05:00-06:20) |
-| daily, after the refresh | the moves solve per league writes its decision-log entry (#125; one entry per routine call, from the kept answer with its `built_at` when a page look solved it first, #240; a page look is never logged); the queue is built from the armed leagues' recommended sets; the lineup for today and tomorrow is set | phase 1, 2 |
+| daily, after the refresh | the moves solve per league writes its decision-log entry (#125; one entry per routine call, from the kept answer with its `built_at` when a page look solved it first, #240; a page look is never logged); the lineup for today and tomorrow is set; the leagues a comeback dropped a player in are solved again (#360); the queue is built from the armed leagues' recommended sets | phase 1, 2 |
 | daily 09:15 | the moves pass opens the due entries' add pages, less what the user struck (the day's execute time, 07:00 Central unless the user set another, has passed; the user's is 09:00, so the timer fires at 09:15, the Mac's own 09:14 mirrored, and the window opens at 07:45 for a run by hand); the late pass at 15:00 catches the rest | yes (`pickandroll-routine@morning`, fires 09:15 Central, window 07:45 to 14:30, and `pickandroll-routine@late` at 15:00, window to 20:30; a league places its claims once the user switches it live, #171 PR 3; the routine opens, names each opening and closes its pass record, #201) |
 | daily 21:00 | the evening build (#209): refresh, re-solve, the queue rebuilt | yes (`pickandroll-routine@evening-build`, window 21:00-21:30) |
 | daily 22:40 | the evening pass opens the evening's pages, hard stop 22:58 | yes (`pickandroll-routine@evening-pass`, window 22:40-22:58) |
@@ -1058,6 +1058,15 @@ In the model's terms, carried by #124:
   (#325), the last one read from the daily's marker, and a line from an earlier day names that day.
   A daily that posted nothing sends the next digest two days back, so a line may repeat but no chain
   goes unsaid.
+- **The queue after a comeback (#360).** The daily solves every league before its lineup pass, so
+  a comeback's drop in that pass changes a roster the solve never saw. On 2026-11-10 the queue
+  built at 05:45 from the 05:25 solve carried three steps whose drop the 05:31-05:41 comebacks had
+  already made, and each skipped at 09:15 ("the drop cannot be picked"). Since then the daily
+  solves again, before it builds the queue, each league whose pass logged a live comeback drop
+  (`dropped`, or `unconfirmed`, which may have dropped him) after the passes began
+  (`resolve_comebacks`), and only those: a league without one keeps its 05:25 solve, and the step
+  says so. The comeback's own team-page read already wrote the roster, so no refresh is needed. The
+  15:00 late pass already solves again every league it opened.
 - **No comeback left out without a word (#346, extension 0.11.9).** On 2026-11-09 the daily ran
   the chain in 31153 (drop 10313, 6038 to the bench, 11:31Z), then left the same player's comeback
   out in 258332. The browser kept a drop on record by its entry alone, and a comeback's entry
