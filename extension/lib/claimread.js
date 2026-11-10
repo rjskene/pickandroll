@@ -99,27 +99,40 @@
     return { tag, type, name: name(raw.name), id: name(raw.id), text, path: tag === "a" ? plainPath(raw.href, base) : null };
   }
 
+  /** Words a claim's own link or button shows. */
+  const CLAIM_WORDS = /waiver|claim|cancel|bid|save|drop|add/i;
+
+  /** A stats tab of the player's card: a link back to the page's own path whose words are not a
+   * claim's ("Stats", "Last 7 Days", "2025-26"): noise the read leaves out (#345 PR 2). */
+  function statsTab(c, own) {
+    return c.tag === "a" && own != null && c.path === own && !CLAIM_WORDS.test(c.text || "");
+  }
+
   /** The read the API files (``POST /seasons/<league>/autopilot/claim-page``) from the content
    * script's ``raw`` page: ``{url, heading, notes, forms: [{id, name, method, action, fields,
    * controls}], controls}``. Only the names and words listed above are kept. */
   function claimPageRead(raw, { trigger, readAt, extension }) {
     const at = claimPageOf(raw.url);
     const base = raw.url;
+    const own = plainPath(raw.url, base);
     const forms = (raw.forms || []).slice(0, MAX_FORMS).map((f) => ({
       id: name(f.id),
       name: name(f.name),
       method: f.method ? String(f.method).toLowerCase().slice(0, 10) : null,
       action: f.action == null ? null : plainPath(f.action, base),
       fields: (f.fields || []).slice(0, MAX_FIELDS).map(fieldOf),
-      controls: (f.controls || []).slice(0, MAX_CONTROLS).map((c) => controlOf(c, base)),
+      controls: (f.controls || [])
+        .map((c) => controlOf(c, base))
+        .filter((c) => !statsTab(c, own))
+        .slice(0, MAX_CONTROLS),
     }));
     return {
       trigger,
       read_at: new Date(readAt).toISOString(),
       claim: at ? at.claim : null,
-      path: plainPath(raw.url, base) || "",
+      path: own || "",
       heading: words(raw.heading),
-      notes: [...new Set((raw.notes || []).map(words).filter(Boolean))].slice(0, MAX_NOTES),
+      notes: [...new Set((raw.notes || []).map(words).filter((x) => x && !/^\d+$/.test(x)))].slice(0, MAX_NOTES),
       forms,
       controls: (raw.controls || []).slice(0, MAX_CONTROLS).map((c) => controlOf(c, base)),
       extension: extension == null ? null : String(extension).slice(0, 20),

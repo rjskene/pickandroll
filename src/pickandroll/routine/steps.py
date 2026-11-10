@@ -455,6 +455,41 @@ def claim_page_plan(ctx: Context) -> list[Opening]:
     return [Opening(league, "claim_page", f"{page}#{fragment}", CLAIM_PAGE_WAIT_S)]
 
 
+#: A pending claim's cancel (#345 PR 2): my team page, the claim's link followed, its page checked
+#: and its button pressed once, the page Yahoo lands on, then my team page again for the box.
+CANCEL_WAIT_S = 45.0
+
+
+def cancel_plan(ctx: Context) -> list[Opening]:
+    """``GET /autopilot/cancels/due``: one opening per pending claim to cancel (#345 PR 2), my team
+    page in its league with the cancel's fragment, forty-five seconds each; the extension takes
+    the league's next claim due and logs it. Never the private league; nothing under STOP or
+    when no claim is due."""
+    code, body, _ = ctx.get("/autopilot/cancels/due", 120)
+    if code != 200 or not isinstance(body, dict):
+        ctx.notes["cancel"] = f"due route answered {code}"
+        return []
+    fragment = str(body.get("fragment") or "pickandroll-claim-cancel")
+    out: list[Opening] = []
+    refused: list[str] = []
+    for row in body.get("leagues") or []:
+        if not isinstance(row, dict):
+            continue
+        league, page = str(row.get("league")), row.get("page")
+        if league == PRIVATE_LEAGUE or not league_page_ok(league, page):
+            refused.append(league)
+            continue
+        for entry in row.get("cancels") or []:
+            out.append(
+                Opening(league, "cancel", f"{page}#{fragment}", CANCEL_WAIT_S, entry=str(entry))
+            )
+    if refused:
+        ctx.notes["cancel_refused"] = refused
+    if not out:
+        ctx.notes["cancel"] = str(body.get("reason") or "no claim to cancel")
+    return out
+
+
 @dataclass
 class MovesPlan:
     openings: list[Opening]

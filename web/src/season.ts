@@ -1128,16 +1128,23 @@ export function stripReason(row: QueueLeague, entries: QueueEntry[]): string {
 }
 
 /** The league's open claims judged again and cancelled (#345), each as the user is to cancel it in
- * Yahoo's pending claims: the earlier days' on the row and today's placed among the entries. */
+ * Yahoo's pending claims: the earlier days' on the row and today's placed among the entries. One
+ * the executor cancelled on Yahoo (PR 2) says so; one whose live cancel did not take keeps "cancel
+ * by hand" with the executor's word. */
 export function cancelByHand(row: QueueLeague, entries: QueueEntry[]): string[] {
-  const today = entries.filter((e) => e.league === row.league && e.outcome === "claimed" && !e.resolved);
-  const open: Pick<QueuePending, "add" | "drop" | "bid" | "rejudge">[] = [
+  const today = entries.filter((e) => e.league === row.league && e.outcome === "claimed" && (!e.resolved || e.cancel?.outcome === "cancelled"));
+  const open: Pick<QueuePending, "add" | "drop" | "bid" | "rejudge" | "cancel">[] = [
     ...(row.pending ?? []),
-    ...today.map((e) => ({ add: e.add, drop: e.drop, bid: e.bid_placed, rejudge: e.rejudge })),
+    ...today.map((e) => ({ add: e.add, drop: e.drop, bid: e.bid_placed, rejudge: e.rejudge, cancel: e.cancel })),
   ];
   return open
     .filter((c) => c.rejudge?.verdict === "cancel")
-    .map((c) => `cancel by hand: add ${c.add}, ${c.drop == null ? "open spot" : `drop ${c.drop}`}${c.bid != null ? `, $${c.bid}` : ""} (${c.rejudge!.reason})`);
+    .map((c) => {
+      const claim = `add ${c.add}, ${c.drop == null ? "open spot" : `drop ${c.drop}`}${c.bid != null ? `, $${c.bid}` : ""}`;
+      if (c.cancel?.outcome === "cancelled") return `cancelled on Yahoo: ${claim} (${c.rejudge!.reason})`;
+      const ran = c.cancel ? `; the executor's cancel: ${c.cancel.outcome}${c.cancel.reason ? `, ${c.cancel.reason}` : ""}` : "";
+      return `cancel by hand: ${claim} (${c.rejudge!.reason}${ran})`;
+    });
 }
 
 // ---------------------------------------------------------------- one switch (#205)

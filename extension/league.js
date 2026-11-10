@@ -1107,7 +1107,7 @@
     );
     return {
       url: location.href,
-      heading: [...document.querySelectorAll("h1, h2, h3")].filter((h) => !chromeOf(h)).map(textOf).find((x) => x && !/^yahoo/i.test(x)) || null,
+      heading: [...document.querySelectorAll("h1, h2, h3")].filter((h) => !chromeOf(h)).map(spacedText).find((x) => x && !/^yahoo/i.test(x)) || null,
       notes: texts(".Alert, .alert, [role=alert], .F-positive, .success, .Success, .notice, .Notice, .error, .Error, .F-negative"),
       forms: forms.map((f) => ({
         id: f.getAttribute("id"),
@@ -1172,6 +1172,247 @@
     else claimStrip(PR.claimReadStripText({ logged: true, forms: read.forms.length, controls: read.controls.length + read.forms.reduce((n, f) => n + f.controls.length, 0) }));
   }
 
+  // ---------------------------------------------------------------- a claim's cancel (#345 PR 2)
+  const cancelStrip = (line) => strip(line, "cancel");
+  const cancelPage = PR.cancelPageOf(location.href);
+
+  /** The text of ``el`` with a space between its text nodes: Yahoo's heading runs a player's name
+   * and "Player Note" together otherwise. */
+  function spacedText(el) {
+    if (!el) return "";
+    const parts = [];
+    const walk = (n) => {
+      if (typeof n === "string") parts.push(n);
+      else if (n.nodeType === 3) parts.push(n.nodeValue);
+      else for (const c of n.childNodes || n.nodes || []) walk(c);
+    };
+    walk(el);
+    return parts.map((x) => String(x).trim()).filter(Boolean).join(" ").replace(/\s+/g, " ");
+  }
+
+  const chromeOf = (el) => typeof el.closest === "function" && Boolean(el.closest("header, nav, [role=navigation], #ybar"));
+  const headingOf = () => [...document.querySelectorAll("h1, h2, h3")].filter((h) => !chromeOf(h)).map(spacedText).find((x) => x && !/^yahoo/i.test(x)) || null;
+  const noticesOf = (sel) => [...document.querySelectorAll(sel)].filter((x) => !chromeOf(x)).map(textOf).filter((x) => x && x.length < 300 && !/^\d+$/.test(x));
+
+  /** The claim's page as a plain object for ``PR.readCancelPage``: the URL, and each claim form's
+   * id, action, the player links' ids in it and its submits by name, type and label. Never a
+   * field's value. */
+  function cancelControls() {
+    return {
+      url: location.href,
+      forms: [...document.querySelectorAll("form")].filter((f) => !chromeOf(f)).map((f) => ({
+        id: f.getAttribute("id"),
+        action: f.getAttribute("action"),
+        players: [...f.querySelectorAll('a[id*="playernote-"]')].map((a) => a.getAttribute("id")).filter((id) => id.startsWith("playernote-")).map((id) => id.slice("playernote-".length)),
+        buttons: [...f.querySelectorAll("input[type=submit], button")].map((b) => ({
+          name: b.getAttribute("name"),
+          type: b.tagName === "INPUT" ? String(b.getAttribute("type") || "").toLowerCase() : String(b.getAttribute("type") || "submit").toLowerCase(),
+          label: b.tagName === "INPUT" ? b.getAttribute("value") : textOf(b),
+        })),
+      })),
+    };
+  }
+
+  /** The page the tab is on after a press, for the run: its path, heading, notices and errors,
+   * and whether a claim form is there. */
+  function cancelLandedRead() {
+    const errors = noticesOf(".error, .Error, .F-negative");
+    return {
+      path: location.pathname,
+      form: Boolean(document.querySelector(PR.CANCEL_FORM)),
+      heading: headingOf(),
+      notes: noticesOf(".Alert, .alert, [role=alert], .F-positive, .success, .Success, .notice, .Notice").filter((x) => !errors.includes(x)),
+      errors,
+    };
+  }
+
+  /** The league's cancels due, fresh: null (the strip says why) under the browser's brake, with no
+   * answer, or with the executor off here. */
+  async function cancelDue() {
+    const settings = await send({ op: "settings" });
+    if (settings && settings.ok && settings.data.moves_executor === "off") {
+      cancelStrip(PR.cancelStripText({ browserOff: true }));
+      return null;
+    }
+    const r = await send({ op: "cancel_due", league });
+    if (!r || !r.ok) {
+      cancelStrip(PR.cancelStripText({ error: (r && r.error) || "no answer from the extension" }));
+      return null;
+    }
+    if (r.data.mode === "off" || /private/i.test(String(r.data.reason || ""))) {
+      cancelStrip(PR.cancelStripText({ none: r.data.reason || "the moves executor is off in this league" }));
+      return null;
+    }
+    return r.data;
+  }
+
+  /** The cancels on record in this browser for ``items``, by entry; a press whose run never
+   * reached the log is logged first, unconfirmed, and never pressed again. */
+  async function cancelRecords(items, extension) {
+    const read = async (entry) => {
+      const r = await send({ op: "cancel_record", league, entry });
+      return (r && r.ok && r.data) || null;
+    };
+    const out = {};
+    for (const x of items) {
+      let record = await read(x.entry);
+      if (record && record.mode === "live" && !record.logged && Date.now() - record.at >= PR.CANCEL_LANDING_MS) {
+        await send({ op: "cancel_log", league, run: PR.unreadCancel(record, extension) });
+        record = await read(x.entry);
+      }
+      out[x.entry] = record;
+    }
+    return out;
+  }
+
+  async function cancelLog(run) {
+    const logged = await send({ op: "cancel_log", league, run });
+    if (!logged || !logged.ok) {
+      cancelStrip(`not logged: ${(logged && logged.error) || "no answer from the extension"}`);
+      return null;
+    }
+    cancelStrip(PR.cancelStripText({ run }));
+    return run;
+  }
+
+  /** On my team page opened with the cancel's fragment: the league's next cancel due, and that
+   * claim's own View Details link followed with the fragment; under STOP the run says it stopped,
+   * and a claim not in the box is logged skipped. Nothing is clicked here. */
+  async function cancelFrom(trigger) {
+    if (location.hash) history.replaceState(null, "", location.pathname + location.search);
+    if (running) return null;
+    running = true;
+    try {
+      const due = await cancelDue();
+      if (!due) return null;
+      const extension = extensionVersion();
+      const mode = PR.passMode(due);
+      if (due.stop) return cancelLog(PR.cancelRun({ day: due.date, mode: mode.mode, trigger, outcome: "stopped", reason: due.reason, page: location.pathname, extension }));
+      const records = await cancelRecords(due.cancels || [], extension);
+      const item = PR.cancelItemFor(due, (x) => PR.cancelRanToday(records[x.entry], due.date, mode.mode));
+      if (!item) {
+        cancelStrip(PR.cancelStripText({ none: due.reason || "every claim due ran today" }));
+        return null;
+      }
+      const claim = PR.claimIdOf(due.team, item);
+      const href = PR.cancelLink(pendingLines(), due.team, item);
+      if (!href) {
+        return cancelLog(PR.cancelRun({ day: due.date, mode: mode.mode, trigger, outcome: "skipped", reason: "the claim is not among Yahoo's pending transactions on my team page", item, claim, page: location.pathname, extension }));
+      }
+      cancelStrip(PR.cancelStripText());
+      const to = new URL(href, location.href);
+      to.hash = PR.CANCEL_FRAGMENT;
+      goOn(to.href);
+      return null;
+    } finally {
+      running = false;
+    }
+  }
+
+  /** On the claim's page opened with the cancel's fragment: the due read fresh and this page's
+   * claim taken from it; the page checked; a dry run (or a live league whose guard refuses) logs
+   * ``would_cancel`` and clicks nothing; a live league puts the press on record and presses
+   * "Cancel Waiver" once (``PR.pressCancel``), and the page Yahoo lands on goes on to my team
+   * page, whose box the run is logged from. */
+  async function cancelOnPage(trigger) {
+    if (location.hash) history.replaceState(null, "", location.pathname + location.search);
+    if (running) return null;
+    running = true;
+    try {
+      const due = await cancelDue();
+      if (!due) return null;
+      const extension = extensionVersion();
+      const mode = PR.passMode(due);
+      const where = location.pathname;
+      if (due.stop) return cancelLog(PR.cancelRun({ day: due.date, mode: mode.mode, trigger, outcome: "stopped", reason: due.reason, page: where, extension }));
+      const item = (due.cancels || []).find((c) => PR.claimIdOf(due.team, c) === cancelPage.claim) || null;
+      if (!item) {
+        cancelStrip(PR.cancelStripText({ none: `claim ${cancelPage.claim || "none"} is not due a cancel` }));
+        return null;
+      }
+      const records = await cancelRecords([item], extension);
+      if (PR.cancelRanToday(records[item.entry], due.date, mode.mode)) {
+        cancelStrip(PR.cancelStripText({ none: "this claim's cancel ran today" }));
+        return null;
+      }
+      const claim = PR.claimIdOf(due.team, item);
+      const controls = PR.readCancelPage(cancelControls());
+      const base = { day: due.date, trigger, item, claim, page: where, controls, extension };
+      const problem = PR.cancelProblem(controls, { league, team: due.team, item });
+      if (problem) return cancelLog(PR.cancelRun({ ...base, mode: mode.mode, outcome: "skipped", reason: problem }));
+      if (mode.mode !== "live") return cancelLog(PR.cancelRun({ ...base, mode: "dry_run", outcome: "would_cancel", reason: mode.refused }));
+      let refused = null;
+      const team = `/nba/${league}/${due.team}`;
+      const onPress = async () => {
+        const put = await send({ op: "cancel_pressing", league, record: { day: due.date, item, claim, trigger, page: where, controls, team } });
+        refused = put && put.ok ? null : (put && put.error) || "no answer from the extension";
+        return !refused;
+      };
+      const got = await PR.pressCancel(document, item, { onPress });
+      if (got.pressed) {
+        cancelStrip(PR.cancelStripText({ pressing: claim }));
+        // Yahoo's post leaves the page; one that stays goes to my team page to read the box.
+        setTimeout(() => {
+          if (!leaving) goOn(`${location.origin}${team}`);
+        }, PR.CANCEL_STAY_MS);
+        return null;
+      }
+      const reason = refused ? `${got.reason}: ${refused}` : got.reason;
+      return cancelLog(PR.cancelRun({ ...base, controls: { ...controls, confirm: got.confirm }, mode: "live", outcome: got.outcome, reason }));
+    } finally {
+      running = false;
+    }
+  }
+
+  /** On any page of the league: a cancel this tab pressed whose run is not logged yet (the worker
+   * keeps it) is read here. Yahoo's claim form drawn again is ``not_cancelled`` (nothing more is
+   * clicked); otherwise my team page's box decides, and from any other page the tab goes there
+   * first. Answers whether the tab is leaving for my team page: once logged, the page goes on
+   * with whatever it was opened for (the pass's next cancel may open on my team page). */
+  async function cancelLanded() {
+    const r = await send({ op: "cancel_landed", league });
+    if (!r || !r.ok || !r.data) return false;
+    const record = r.data;
+    const raw = cancelLandedRead();
+    const extension = extensionVersion();
+    const onTeam = location.pathname.replace(/\/+$/, "") === record.team;
+    let answer = record.settle ? null : PR.readCancelLanded(raw);
+    let landed = record.settle ? { ...record.settle.seen, team: raw } : raw;
+    if (!answer) {
+      if (!onTeam) {
+        const kept = await send({ op: "cancel_settling", league, entry: record.item.entry, settle: { seen: raw } });
+        if (kept && kept.ok) {
+          cancelStrip("live · pressed: reading my team page's pending transactions…");
+          goOn(`${location.origin}${record.team}`);
+          return true;
+        }
+        answer = { outcome: "unconfirmed", reason: "pressed; my team page could not be read for the box" };
+      } else {
+        const roster = Boolean(document.querySelector("[data-ys-playerid]"));
+        answer = PR.settleCancel(pendingLines(), record.claim, roster) || { outcome: "unconfirmed", reason: "pressed; my team page showed neither the box nor my roster" };
+        if (!record.settle) landed = { team: raw };
+      }
+    }
+    const message = [raw.heading, ...(raw.errors || []), ...(raw.notes || [])].filter(Boolean).join(" · ").slice(0, 300) || null;
+    await cancelLog(
+      PR.cancelRun({
+        day: record.day,
+        mode: "live",
+        trigger: record.trigger,
+        outcome: answer.outcome,
+        reason: answer.reason,
+        item: record.item,
+        claim: record.claim,
+        page: record.page,
+        controls: record.controls,
+        landed,
+        message: answer.message || message,
+        extension,
+      })
+    );
+    return false;
+  }
+
   // A live pass submits only on a page opened with a moves fragment; any other page of the league
   // reads a claim this tab submitted, first.
   const trigger = addPage ? PR.movesTriggerOf(location.hash) : null;
@@ -1181,12 +1422,17 @@
   const dropTrigger = dropPage ? PR.dropTriggerOf(location.hash) : null;
   const claimFrom = page && page.kind === "team" ? PR.claimReadTriggerOf(location.hash) : null;
   const claimTrigger = claimPage ? PR.claimReadTriggerOf(location.hash) : null;
+  const cancelFromTrigger = page && page.kind === "team" ? PR.cancelTriggerOf(location.hash) : null;
+  const cancelTrigger = cancelPage ? PR.cancelTriggerOf(location.hash) : null;
   setTimeout(async () => {
     await landed();
     // A landing settled on my team page (#341): the tab is on its way there.
     if (leaving) return;
     if (await dropLanded()) return;
-    if (claimTrigger) await claimRead(claimTrigger);
+    if (await cancelLanded()) return;
+    if (cancelTrigger) await cancelOnPage(cancelTrigger);
+    else if (cancelFromTrigger) await cancelFrom(cancelFromTrigger);
+    else if (claimTrigger) await claimRead(claimTrigger);
     else if (claimFrom) await claimReadFrom();
     else if (dropTrigger) await heldDrop(dropTrigger);
     else if (trigger) await claim(trigger);

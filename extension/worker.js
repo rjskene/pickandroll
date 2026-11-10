@@ -15,7 +15,7 @@
 // chrome.storage.local, so a restart keeps it) and dropped only once the API has its pass: while
 // it is there no pass submits that entry again.
 "use strict";
-importScripts("lib/protocol.js", "lib/league.js", "lib/lineup.js", "lib/moves.js", "lib/startactive.js", "lib/ilmove.js", "lib/drop.js");
+importScripts("lib/protocol.js", "lib/league.js", "lib/lineup.js", "lib/moves.js", "lib/startactive.js", "lib/ilmove.js", "lib/drop.js", "lib/cancel.js");
 
 const DEFAULTS = {
   api: "http://localhost:8000",
@@ -144,6 +144,10 @@ const dropKey = (league, entry) => `held_drop:${league}:${entry}`;
  * on record before the upgrade is never made again. */
 const legacyDropKey = (entry) => `held_drop:${entry}`;
 let dropping = Promise.resolve();
+/** A pending claim's cancel on record (local), keyed by league and entry (#345 PR 2): the last run
+ * logged for it, or the live press about to go; one at a time. */
+const cancelKey = (league, entry) => `claim_cancel:${league}:${entry}`;
+let cancelling = Promise.resolve();
 /** The record of ``entry``'s held drop in ``league``, and the key it is kept under. */
 async function dropRecordOf(league, entry) {
   const key = dropKey(String(league), entry);
@@ -573,6 +577,70 @@ const ops = {
       throw e;
     }
     if (run.entry && run.outcome !== "stopped") await put(kept());
+    return logged;
+  },
+  /** The league's pending claims to cancel now, with the mode, STOP and the live guard (#345 PR 2). */
+  async cancel_due({ league }) {
+    return api(`/seasons/${encodeURIComponent(league)}/autopilot/cancels`, { timeout: 30000 });
+  },
+  /** The cancel on record in this browser for the queue's ``entry`` in ``league``, null when none. */
+  async cancel_record({ league, entry }) {
+    const key = cancelKey(league, entry);
+    return (await chrome.storage.local.get(key))[key] || null;
+  },
+  /** A live cancel about to be pressed on the claim's page in ``sender``'s tab (#345 PR 2):
+   * ``record`` is its day, item, claim, trigger, page and controls. One at a time, and refused
+   * while the entry's press awaits its log or when a live press of it holds: it is never pressed
+   * twice. */
+  cancel_pressing({ league, record }, sender) {
+    const run = cancelling.then(async () => {
+      const key = cancelKey(league, record.item.entry);
+      const prev = (await chrome.storage.local.get(key))[key];
+      if (prev && prev.mode === "live" && !prev.logged) throw new Error("this cancel awaits its log");
+      if (prev && prev.mode === "live" && self.PickAndRoll.CANCEL_STICKS.includes(prev.outcome)) throw new Error(`this cancel is ${prev.outcome}: it is never pressed again`);
+      const kept = { ...record, mode: "live", league: String(league), logged: false, tab: sender && sender.tab ? sender.tab.id : null, at: Date.now() };
+      await chrome.storage.local.set({ [key]: kept });
+      return { kept: true };
+    });
+    cancelling = run.catch(() => {});
+    return run;
+  },
+  /** The cancel ``sender``'s tab pressed in ``league`` and whose run is not logged, while its
+   * answer may still be on this page (``CANCEL_LANDING_MS``); null otherwise. */
+  async cancel_landed({ league }, sender) {
+    const tab = sender && sender.tab ? sender.tab.id : null;
+    const now = Date.now();
+    const all = await chrome.storage.local.get(null);
+    const mine = Object.entries(all)
+      .filter(([k, v]) => k.startsWith("claim_cancel:") && v && !v.logged && v.mode === "live" && v.league === String(league) && v.tab === tab && now - v.at < self.PickAndRoll.CANCEL_LANDING_MS)
+      .map(([, v]) => v);
+    return mine.sort((a, b) => b.at - a.at)[0] || null;
+  },
+  /** The landing's read kept on the press's record while the tab goes to my team page to read
+   * the box (the settle). */
+  async cancel_settling({ league, entry, settle }) {
+    const key = cancelKey(league, entry);
+    const prev = (await chrome.storage.local.get(key))[key];
+    if (!prev || prev.logged) throw new Error("no press awaits its answer");
+    await chrome.storage.local.set({ [key]: { ...prev, settle } });
+    return { kept: true };
+  },
+  /** A cancel run, for the league's log (``POST /seasons/{league}/autopilot/cancel``). The
+   * entry's record becomes this run, logged, so a visit takes the next claim; a refusal of a
+   * pressed cancel also ends it (it is never pressed again). */
+  async cancel_log({ league, run }) {
+    const key = run.entry ? cancelKey(league, run.entry) : null;
+    const prev = key ? (await chrome.storage.local.get(key))[key] : null;
+    const open = prev && !prev.logged ? prev : null;
+    const kept = (extra = {}) => ({ ...(open || {}), day: run.day, entry: run.entry, mode: run.mode, trigger: run.trigger, outcome: run.outcome, league: String(league), run, logged: true, at: Date.now(), ...extra });
+    let logged;
+    try {
+      logged = await api(`/seasons/${encodeURIComponent(league)}/autopilot/cancel`, { method: "POST", body: run, timeout: 15000 });
+    } catch (e) {
+      if (key && open && e.status >= 400 && e.status < 500) await chrome.storage.local.set({ [key]: kept({ refused: e.message }) });
+      throw e;
+    }
+    if (key && run.outcome !== "stopped") await chrome.storage.local.set({ [key]: kept() });
     return logged;
   },
   /** The league's season summary (GET /seasons), null when pickandroll has no folder for it. */

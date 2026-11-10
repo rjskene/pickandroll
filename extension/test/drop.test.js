@@ -324,7 +324,7 @@ async function visit({ url = `${SITE}${PAGE}#pickandroll-drop`, answer, dom = dr
   });
   ctx.window = ctx;
   ctx.globalThis = ctx;
-  for (const file of ["lib/league.js", "lib/lineup.js", "lib/moves.js", "lib/startactive.js", "lib/ilmove.js", "lib/drop.js", "lib/claimread.js", "league.js"]) vm.runInContext(fs.readFileSync(path.join(DIR, file), "utf8"), ctx);
+  for (const file of ["lib/league.js", "lib/lineup.js", "lib/moves.js", "lib/startactive.js", "lib/ilmove.js", "lib/drop.js", "lib/claimread.js", "lib/cancel.js", "league.js"]) vm.runInContext(fs.readFileSync(path.join(DIR, file), "utf8"), ctx);
   ctx.started = true;
   for (const fn of timers.splice(0)) await fn();
   return { sent, replaced, assigned, strip: nodes["pickandroll-strip"], touched: dom.touched };
@@ -348,7 +348,7 @@ const worker =
   };
 const ops = (v) => v.sent.map((m) => m.op);
 const logOf = (v) => v.sent.filter((m) => m.op === "drop_log");
-const RUN = ["moves_landed", "drop_landed", "settings", "moves_due", "drop_record"];
+const RUN = ["moves_landed", "drop_landed", "cancel_landed", "settings", "moves_due", "drop_record"];
 
 test("a dry run on the drop page logs would_drop and clicks nothing", async () => {
   const v = await visit({ answer: worker() });
@@ -400,12 +400,12 @@ test("a drop on record or done today, STOP, no item and the brake click nothing"
   assert.deepEqual([logOf(v)[0].run.outcome, logOf(v)[0].run.entry, v.touched], ["stopped", null, []]);
   // Off in this browser, and off in the league.
   v = await visit({ answer: worker(due(LIVE), { settings: { moves_executor: "off" } }) });
-  assert.deepEqual([ops(v), v.touched], [["moves_landed", "drop_landed", "settings"], []]);
+  assert.deepEqual([ops(v), v.touched], [["moves_landed", "drop_landed", "cancel_landed", "settings"], []]);
   v = await visit({ answer: worker(due({ mode: "off" })) });
   assert.deepEqual([ops(v).includes("drop_log"), v.touched], [false, []]);
   // No fragment: a plain visit of the drop page does nothing.
   v = await visit({ url: `${SITE}${PAGE}`, answer: worker(due(LIVE)) });
-  assert.deepEqual([ops(v), v.touched], [["moves_landed", "drop_landed"], []]);
+  assert.deepEqual([ops(v), v.touched], [["moves_landed", "drop_landed", "cancel_landed"], []]);
 });
 
 test("the page Yahoo lands on logs the drop and goes on to its IL move or add page", async () => {
