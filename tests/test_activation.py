@@ -74,6 +74,19 @@ def test_a_drop_the_keep_rule_keeps_is_never_chosen_and_all_kept_choose_nothing(
     assert mv.choose_activation(everyone, SCORE, None, PLAN) == {}
 
 
+def test_a_pending_claims_add_is_never_the_activation_drop_chosen_or_fallen_back_to():
+    # A claim's add is on the folded roster from his clear day but not mine before Yahoo's run.
+    for add in (WEAK, STREAMER):
+        p = replace(league(), pending=frozenset({add}))
+        assert mv.choose_activation(p, SCORE, None, PLAN)[BACK] != add
+    # The fallback skips him although his per-game value is the lowest, and so does a choice
+    # that names him.
+    p = replace(league(), pending=frozenset({STREAMER}))
+    assert [c.drop for c in mv.comebacks(p, "week", ())] != [STREAMER]
+    named = replace(p, activation={BACK: STREAMER})
+    assert [c.drop for c in mv.comebacks(named, "week", ())] != [STREAMER]
+
+
 def test_the_season_guard_refuses_a_drop_worth_more_than_him_and_falls_back_to_the_season_best():
     p = league()
     # 3 is worth more than 5 over the season: refused although the plan's score likes him.

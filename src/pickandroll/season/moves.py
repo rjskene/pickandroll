@@ -608,12 +608,17 @@ def comebacks(problem: MoveProblem, key: str, moves: Iterable[Move]) -> list[Com
                 continue
         # Today's activation is the day's decision (#360), while its drop is still there to send.
         chosen = problem.activation.get(k) if k in now and not back else None
-        if chosen is not None and chosen in active:
+        if chosen is not None and chosen in active and chosen not in problem.pending:
             active.remove(chosen)
             out.append(Comeback(k, slot, day, chosen, back))
             continue
-        # Never a player the keep rule keeps, while another can go.
-        pool = [x for x in active if x not in problem.kept] or active
+        # Never a player the keep rule keeps, while another can go, and never a pending claim's
+        # add, who is not mine before Yahoo's run (#360).
+        pool = (
+            [x for x in active if x not in problem.kept and x not in problem.pending]
+            or [x for x in active if x not in problem.pending]
+            or active
+        )
         weakest = min(pool, key=lambda x: (problem.value.get(x, 0.0), str(x)))
         active.remove(weakest)
         out.append(Comeback(k, slot, day, weakest, back))
@@ -635,7 +640,8 @@ def choose_activation(
     moves: Sequence[Move] = (),
 ) -> dict[int, int]:
     """Whom each cleared held player's activation drops today (#360): of the active players
-    no move of ``moves`` drops and the keep rule does not keep, and himself, the one whose drop
+    no move of ``moves`` drops, the keep rule does not keep and no pending claim adds (he is not
+    mine before Yahoo's run), and himself, the one whose drop
     leaves ``moves`` worth the most by ``objective`` (the queue's own score that day, the user's
     ruling on #360), with the activations chosen before it made; a step of ``moves`` that drops
     the player is left out of his value, since it can no longer run. A drop the season guard
@@ -652,7 +658,11 @@ def choose_activation(
     like = Evaluator(problem)
     chosen: dict[int, int] = {}
     for k, _ in back_now:
-        pool = [x for x in active if x not in problem.kept and x not in chosen.values()]
+        pool = [
+            x
+            for x in active
+            if x not in problem.kept and x not in problem.pending and x not in chosen.values()
+        ]
         if k not in problem.kept:
             pool.append(k)
         if not pool:
