@@ -37,8 +37,11 @@ not know (:data:`KNOWN_STATUSES`) goes nowhere, and a suspension goes nowhere.
 
 A player in a held slot whose status no longer fits it (his status cleared, :func:`cleared`)
 makes the roster illegal: Yahoo refuses every add until he is activated, and activating him
-takes an active spot. The move model activates him on the first day and drops the least
-valuable active player then, him included, in every set and in none (:func:`comebacks`).
+takes an active spot. The move model activates him on the first day, in every set and in none
+(:func:`comebacks`), and drops the player ``activation`` names: chosen on the queue's own score
+of the day, never one the keep rule keeps, the season guard's refusals skipped (#360,
+:func:`choose_activation`). With no choice made, the least valuable active player then, him
+included.
 
 A held-slot move defers a drop; it does not avoid one (#97). The player moved comes back on
 the first day of the first week the out rule lets him play (next Monday for an O), or on his
@@ -226,6 +229,10 @@ class MoveProblem:
     #: The adds of my claims placed and not yet processed (#360, :func:`with_pending`): on the
     #: roster from their clear day, and never a drop or a held-slot move before Yahoo's run.
     pending: frozenset[int] = frozenset()
+    #: Whom each cleared held player's activation drops (#360, :func:`choose_activation`): the
+    #: day's decision, by the queue's own score; one not named, or no longer active, falls back
+    #: to the least valuable active player (:func:`comebacks`).
+    activation: Mapping[int, int] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -522,7 +529,8 @@ class Comeback:
     player: int
     slot: str
     day: date
-    #: The least valuable active player on that day, by per-game value (maybe himself).
+    #: Today's activation: the problem's ``activation`` (#360, chosen on the queue's score);
+    #: otherwise the least valuable active player on that day, by per-game value (maybe himself).
     drop: int
     #: A player already in a held slot whose return is charged (#221), not a set's held move.
     returning: bool = False
@@ -566,7 +574,8 @@ def returning(
 def comebacks(problem: MoveProblem, key: str, moves: Iterable[Move]) -> list[Comeback]:
     """The deferred drops of ``moves`` over horizon ``key``: each held-slot move whose player
     comes back inside it sends the least valuable active player then, him included; each held
-    player whose status cleared (:func:`cleared`) does so on the first day, moves or none; and
+    player whose status cleared (:func:`cleared`) does so on the first day, moves or none, unless
+    ``problem.activation`` names his drop (#360) and that player is still active; and
     each held player not dropped who comes back inside it (:func:`returning`) does so on his
     day back, unless the set leaves an active spot open for him (#221)."""
     moves = list(moves)
@@ -589,6 +598,7 @@ def comebacks(problem: MoveProblem, key: str, moves: Iterable[Move]) -> list[Com
         if day is not None:
             backs.append((day, k, slot, False))
     backs += [(day, k, slot, True) for day, k, slot in back_later]
+    now = {k for k, _ in back_now}
     out: list[Comeback] = []
     for day, k, slot, back in sorted(backs):
         if back:
@@ -596,12 +606,82 @@ def comebacks(problem: MoveProblem, key: str, moves: Iterable[Move]) -> list[Com
             if spare > 0:
                 spare -= 1
                 continue
-        # Never a player the keep rule keeps, while another can go.
-        pool = [x for x in active if x not in problem.kept] or active
+        # Today's activation is the day's decision (#360), while its drop is still there to send.
+        chosen = problem.activation.get(k) if k in now and not back else None
+        if chosen is not None and chosen in active and chosen not in problem.pending:
+            active.remove(chosen)
+            out.append(Comeback(k, slot, day, chosen, back))
+            continue
+        # Never a player the keep rule keeps, while another can go, and never a pending claim's
+        # add, who is not mine before Yahoo's run (#360).
+        pool = (
+            [x for x in active if x not in problem.kept and x not in problem.pending]
+            or [x for x in active if x not in problem.pending]
+            or active
+        )
         weakest = min(pool, key=lambda x: (problem.value.get(x, 0.0), str(x)))
         active.remove(weakest)
         out.append(Comeback(k, slot, day, weakest, back))
     return out
+
+
+#: A set's or plan's worth with today's activations made: what :func:`choose_activation` ranks
+#: on. A value, not a gain: the base changes with the drop.
+Objective = Callable[["Evaluator", Sequence[Move]], float]
+#: A cleared player ``k`` kept for a drop ``d``, over the rest of the season: ``k``'s worth less
+#: ``d``'s (None when either has no line). The season guard reads it as the move "k for d".
+Worth = Callable[[int, int], float | None]
+
+
+def choose_activation(
+    problem: MoveProblem,
+    objective: Objective,
+    worth: Worth | None = None,
+    moves: Sequence[Move] = (),
+) -> dict[int, int]:
+    """Whom each cleared held player's activation drops today (#360): of the active players
+    no move of ``moves`` drops, the keep rule does not keep and no pending claim adds (he is not
+    mine before Yahoo's run), and himself, the one whose drop
+    leaves ``moves`` worth the most by ``objective`` (the queue's own score that day, the user's
+    ruling on #360), with the activations chosen before it made; a step of ``moves`` that drops
+    the player is left out of his value, since it can no longer run. A drop the season guard
+    would refuse (``worth``: the returning player worth less than him over the season) is never
+    chosen while another is allowed; if none is, the drop worth least over the season goes.
+    Ties on the objective go to the season. With every active player kept nothing is chosen, and
+    :func:`comebacks` falls back to the least valuable one. Several cleared players are taken in
+    roster order."""
+    back_now = cleared(problem)
+    if not back_now:
+        return {}
+    taken = {m.drop for m in moves if m.drop is not None}
+    active = [k for k, _ in problem.roster if k not in taken]
+    like = Evaluator(problem)
+    chosen: dict[int, int] = {}
+    for k, _ in back_now:
+        pool = [
+            x
+            for x in active
+            if x not in problem.kept and x not in problem.pending and x not in chosen.values()
+        ]
+        if k not in problem.kept:
+            pool.append(k)
+        if not pool:
+            continue
+        scored: list[tuple[int, float, float | None]] = []
+        for d in pool:
+            p = replace(problem, activation={**chosen, k: d})
+            steps = [m for m in moves if m.drop != d]
+            season = 0.0 if d == k else (worth(k, d) if worth is not None else None)
+            scored.append((d, objective(Evaluator(p, like), steps), season))
+        allowed = [x for x in scored if x[2] is None or x[2] >= -EPS]
+        if allowed:
+            top = max(v for _, v, _ in allowed)
+            near = [x for x in allowed if x[1] >= top - EPS]
+            best = max(near, key=lambda x: (x[2] if x[2] is not None else 0.0, -x[0]))
+        else:
+            best = max(scored, key=lambda x: (x[2] or 0.0, x[1], -x[0]))
+        chosen[k] = best[0]
+    return chosen
 
 
 # --------------------------------------------------------------------------- the keep rule
@@ -849,23 +929,29 @@ class Evaluator:
     """Values of move sets over the problem's horizons, remembered: the searches and their
     re-solves visit the same sets many times."""
 
-    def __init__(self, problem: MoveProblem) -> None:
+    def __init__(self, problem: MoveProblem, like: Evaluator | None = None) -> None:
+        """``like``: an evaluator of the same horizons, whose opponents' finals are taken as
+        they are (a choice of activation changes my roster only, #360)."""
         self.problem = problem
         self._by_id = dict(problem.candidates)
         self._memo: dict[tuple[str, frozenset[Move]], float] = {}
         # The opponents' finals never change with my moves: once per week.
-        self._theirs = {
-            id(span): [
-                wk.finals(opp, so_far, problem.cats)
-                for opp, so_far in zip(
-                    span.opponents,
-                    span.so_far_theirs or tuple({} for _ in span.opponents),
-                    strict=True,
-                )
-            ]
-            for spans in problem.horizons.values()
-            for span in spans
-        }
+        self._theirs = (
+            like._theirs
+            if like is not None
+            else {
+                id(span): [
+                    wk.finals(opp, so_far, problem.cats)
+                    for opp, so_far in zip(
+                        span.opponents,
+                        span.so_far_theirs or tuple({} for _ in span.opponents),
+                        strict=True,
+                    )
+                ]
+                for spans in problem.horizons.values()
+                for span in spans
+            }
+        )
         self.base = {key: self.value(key, ()) for key in problem.horizons}
 
     def value(self, key: str, moves: Iterable[Move]) -> float:
