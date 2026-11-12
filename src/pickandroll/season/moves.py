@@ -233,6 +233,10 @@ class MoveProblem:
     #: day's decision, by the queue's own score; one not named, or no longer active, falls back
     #: to the least valuable active player (:func:`comebacks`).
     activation: Mapping[int, int] = field(default_factory=dict)
+    #: The held-slot moves my no-drop claims pending need beyond the open spots, made in the
+    #: problem (#364, :func:`owe_held`): each player in it is held here, though Yahoo shows him
+    #: active until the next moves pass moves him. In :func:`held_moves` order.
+    il_owed: tuple[tuple[int, str], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -250,7 +254,8 @@ def with_pending(problem: MoveProblem, pending: Sequence[Pending]) -> MoveProble
     """The problem as my roster stands once ``pending`` are made (#360): each claim's add on the
     roster, playing from its clear day, his drop off it, so every set, its spots, its drops and its
     comebacks are judged on the roster Yahoo's run will leave. A no-drop claim takes its active
-    spot from now: anything else in it fails the claim. A claim's drop plays until the clear day
+    spot from now: anything else in it fails the claim. One beyond the open spots takes a held-slot
+    move instead, made here (:func:`owe_held`, #364). A claim's drop plays until the clear day
     on Yahoo; here he is gone from now, alike in the base and in every set. The adds are out of
     the candidates and are :attr:`MoveProblem.pending`; whom the keep rule keeps is the caller's
     (it is read on this roster)."""
@@ -261,7 +266,7 @@ def with_pending(problem: MoveProblem, pending: Sequence[Pending]) -> MoveProble
     returns = dict(problem.returns)
     for c in pending:
         returns[c.add] = max(c.day, returns.get(c.add, c.day))
-    return replace(
+    folded = replace(
         problem,
         roster=(
             *(m for m in problem.roster if m[0] not in drops),
@@ -274,6 +279,32 @@ def with_pending(problem: MoveProblem, pending: Sequence[Pending]) -> MoveProble
         claims=problem.claims - adds,
         returns=returns,
         pending=problem.pending | adds,
+    )
+    return owe_held(folded)
+
+
+def owe_held(problem: MoveProblem) -> MoveProblem:
+    """The problem with the held-slot moves its no-drop claims pending need made (#364): a
+    roster over its active spots (:func:`overfull`) moves that many eligible players to an open
+    held slot, in :func:`held_moves` order, as the next moves pass does on Yahoo. Each one then
+    backs that claim alone: a later add finds the slot taken. When fewer can move than the roster
+    is over, the rest stays over: a claim no move makes room for, which the re-judge cancels."""
+    n = overfull(problem)
+    owed = held_moves(problem)[:n] if n else []
+    if not owed:
+        return problem
+    moved = dict(owed)
+    players = dict(problem.roster)
+    held_open = dict(problem.held_open)
+    for _, slot in owed:
+        held_open[slot] -= 1
+    return replace(
+        problem,
+        roster=tuple(m for m in problem.roster if m[0] not in moved),
+        held=(*problem.held, *((k, players[k]) for k, _ in owed)),
+        held_slots={**problem.held_slots, **moved},
+        held_open=held_open,
+        il_owed=(*problem.il_owed, *owed),
     )
 
 

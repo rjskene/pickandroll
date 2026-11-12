@@ -564,6 +564,38 @@ def cancel_plan(ctx: Context) -> list[Opening]:
     return out
 
 
+def placed_il_plan(ctx: Context, leagues: Sequence[str], il_fragment: str) -> list[Opening]:
+    """``GET /seasons/<id>/autopilot/moves/due`` per league: the IL moves my placed claims need
+    before Yahoo's run (#364, the ``il_first`` items marked ``placed``), each on its team page
+    with the IL fragment for thirty seconds, no add page after (the claim is in). The evening
+    pass opens them before its cancels, so a move that fails has its claim cancelled in the same
+    pass. Off, STOP or none needed opens nothing."""
+    out: list[Opening] = []
+    for league in leagues:
+        code, body, _ = ctx.get(f"/seasons/{league}/autopilot/moves/due", 120)
+        if code != 200 or not isinstance(body, dict):
+            ctx.notes.setdefault("placed_il", {})[league] = f"due route answered {code}"
+            continue
+        if body.get("mode") == "off" or body.get("stop"):
+            continue
+        for item in placed_items(body):
+            page, entry = item.get("page"), str(item.get("entry"))
+            if not league_page_ok(league, page):
+                ctx.notes.setdefault("placed_il", {})[f"{league}:{entry}"] = (
+                    f"IL page not the league's own ({page!r})"
+                )
+                continue
+            out.append(
+                Opening(league, "il", f"{page}#{il_fragment}", IL_WAIT_S, entry, item.get("date"))
+            )
+    return out
+
+
+def placed_items(body: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """The due answer's IL moves for placed claims (#364)."""
+    return [i for i in body.get("il_first") or [] if isinstance(i, dict) and i.get("placed")]
+
+
 @dataclass
 class MovesPlan:
     openings: list[Opening]
@@ -587,7 +619,12 @@ def moves_plan(ctx: Context, leagues: Sequence[str], fragment: str, il_fragment:
         if code != 200 or not isinstance(body, dict):
             reasons[league] = f"due route answered {code}"
             continue
-        if body.get("mode") == "off" or body.get("stop") or not body.get("entries"):
+        # A placed claim's IL move (#364) is due with no entry due.
+        if (
+            body.get("mode") == "off"
+            or body.get("stop")
+            or not (body.get("entries") or placed_items(body))
+        ):
             reasons[league] = str(body.get("reason") or body.get("mode") or "nothing due")
             continue
         il_first = [i for i in body.get("il_first") or [] if isinstance(i, dict)]
@@ -604,7 +641,7 @@ def moves_plan(ctx: Context, leagues: Sequence[str], fragment: str, il_fragment:
                 continue
             add = add_pages.get(entry)
             then = f"{YAHOO}{add}#{fragment}" if add_page_ok(league, add) else None
-            if then is None:
+            if then is None and not item.get("placed"):
                 reasons[f"{league}:{entry}"] = (
                     f"IL entry without an add page of the league's ({add!r}): no follow-up"
                 )
@@ -613,7 +650,7 @@ def moves_plan(ctx: Context, leagues: Sequence[str], fragment: str, il_fragment:
                     league, "il", f"{page}#{il_fragment}", IL_WAIT_S, entry, item.get("date"), then
                 )
             )
-        for e in body["entries"]:
+        for e in body.get("entries") or []:
             if not isinstance(e, dict):
                 continue
             eid = str(e.get("id"))

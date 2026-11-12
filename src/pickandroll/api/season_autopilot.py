@@ -841,8 +841,9 @@ def check_il_run(
     live: Mapping[str, Any] | None = None,
 ) -> str | None:
     """Why the log refuses an IL run, None when it takes it: the moves executor's own rules
-    (:func:`check_moves_run`), and the move the queue's entry names, nothing else. ``queue`` is
-    the day's entries of the league by id."""
+    (:func:`check_moves_run`), and the move the queue's entry names, nothing else: its
+    ``held_move``, or for a placed claim the one its room needs (``il_need``, #364). ``queue`` is
+    the day's entries of the league by id, with the open days' placed claims."""
     if mode.get("private"):
         return "the private league is never touched"
     if stop and run.outcome != "stopped":
@@ -864,20 +865,29 @@ def check_il_run(
     q = queue.get(run.entry)
     if q is None:
         return f"{run.entry} is not in the day's queue"
-    held = q.get("held_move") or {}
+    # A placed claim's room through a held-slot move (#364), else the queue's own IL move.
+    open_claim = q.get("outcome") == qa.CLAIMED and not q.get("resolved")
+    need = (q.get("il_need") or {}) if open_claim else {}
+    held = need or q.get("held_move") or {}
     # A churn's IL move comes after its held drop landed (#221 part 3).
     churn = qa.churn_drop(q) is not None and qa.drop_outcome(q) == qa.DROPPED
-    if not held or not (churn or (q.get("basis") == "held" and q.get("drop") is None)):
+    if not held or not (need or churn or (q.get("basis") == "held" and q.get("drop") is None)):
         return f"{run.entry} is not an open-spot claim behind an IL move"
     if (run.player, run.to_slot) != (held.get("player"), held.get("slot")):
         return f"{run.entry} names another IL move than the queue's"
     if run.outcome in ("would_move", "moved") and (not q.get("queued") or q.get("struck")):
         return f"{run.entry} is struck or not queued: its IL move is never made"
     for other in queue.values():
-        mine = (other.get("held_move") or {}).get("player") == run.player
-        if mine and (other.get("il") or {}).get("outcome") == "moved":
+        theirs = (
+            (other.get("il_need") or {}).get("player"),
+            (other.get("held_move") or {}).get("player"),
+        )
+        il = other.get("il") or {}
+        today = _at_day(il.get("at")) in (run.day, None)
+        if run.player in theirs and il.get("outcome") == "moved" and today:
             return f"{run.player} was moved to the IL already today"
-    if (q.get("il") or {}).get("outcome") == "failed":
+    il = q.get("il") or {}
+    if il.get("outcome") == "failed" and _at_day(il.get("at")) in (run.day, None):
         return f"{run.entry}'s IL move failed today: it is never retried that day"
     return None
 
@@ -1928,12 +1938,28 @@ def _verdict_day(entry: Mapping[str, Any]) -> date | None:
     return _at_day((entry.get("rejudge") or {}).get("at"))
 
 
+#: A placed claim's cancel when the held-slot move its room needed failed (#364).
+IL_FAILED = "its IL move failed: no spot left for it"
+
+
+def il_failed(entry: Mapping[str, Any], today: date) -> bool:
+    """Whether the held-slot move a placed claim needs (``il_need``, #364) failed live today:
+    its room is gone, so the claim is cancelled before Yahoo's run."""
+    il = entry.get("il") or {}
+    return (
+        bool(entry.get("il_need"))
+        and il.get("outcome") == "failed"
+        and _at_day(il.get("at")) == today
+    )
+
+
 def cancel_due(
     entries: Iterable[Mapping[str, Any]], league: str, today: date
 ) -> list[dict[str, Any]]:
     """The league's placed claims to cancel now (#345 PR 2): a waiver claim not settled, whose
     verdict judged again is ``cancel`` by a build of ``today`` (an older verdict cancels
-    nothing), and whose cancel never ran live; oldest first, by entry id."""
+    nothing), or whose held-slot move failed today (#364, :func:`il_failed`), and whose cancel
+    never ran live; oldest first, by entry id."""
     out = []
     for e in entries:
         if str(e.get("league")) != str(league) or e.get("outcome") != qa.CLAIMED:
@@ -1941,7 +1967,11 @@ def cancel_due(
         if e.get("resolved") or (e.get("cancel") or {}).get("outcome") in CANCEL_STICKS:
             continue
         rejudge = e.get("rejudge") or {}
-        if rejudge.get("verdict") != qa.CANCEL or _verdict_day(e) != today:
+        if il_failed(e, today):
+            reason, at = IL_FAILED, (e.get("il") or {}).get("at")
+        elif rejudge.get("verdict") == qa.CANCEL and _verdict_day(e) == today:
+            reason, at = rejudge.get("reason"), rejudge.get("at")
+        else:
             continue
         out.append(
             {
@@ -1949,11 +1979,40 @@ def cancel_due(
                 "add": e.get("add"),
                 "drop": e.get("drop"),
                 "bid": e.get("bid_placed"),
-                "reason": rejudge.get("reason"),
-                "verdict_at": rejudge.get("at"),
+                "reason": reason,
+                "verdict_at": at,
             }
         )
     return sorted(out, key=lambda x: str(x["entry"]))
+
+
+def placed_il_due(
+    entries: Iterable[Mapping[str, Any]], league: str, today: date
+) -> list[dict[str, Any]]:
+    """The held-slot moves the league's placed claims need before Yahoo's run (#364): each
+    waiver claim not settled whose build named one (``il_need``) to an IL slot, not cancelled
+    (judged so today, or pressed), its move neither made nor failed today; each player once,
+    oldest entry first. Each item is ``{entry, player, slot, placed}``."""
+    out: list[dict[str, Any]] = []
+    for e in sorted(entries, key=lambda x: str(x.get("id"))):
+        if str(e.get("league")) != str(league) or e.get("outcome") != qa.CLAIMED:
+            continue
+        if e.get("resolved") or (e.get("cancel") or {}).get("outcome") in CANCEL_STICKS:
+            continue
+        need = e.get("il_need") or {}
+        player, slot = need.get("player"), need.get("slot")
+        if player is None or slot not in IL_SLOTS:
+            continue
+        rejudge = e.get("rejudge") or {}
+        if rejudge.get("verdict") == qa.CANCEL and _verdict_day(e) == today:
+            continue
+        il = e.get("il") or {}
+        if il.get("outcome") == "moved" or il_failed(e, today):
+            continue
+        if any(x["player"] == player for x in out):
+            continue
+        out.append({"entry": e["id"], "player": player, "slot": slot, "placed": True})
+    return out
 
 
 def check_cancel_run(
