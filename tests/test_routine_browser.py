@@ -13,7 +13,14 @@ from types import SimpleNamespace
 import pytest
 
 from pickandroll.routine import chromium
-from pickandroll.routine.browser import NO_BROWSER, refused
+from pickandroll.routine.browser import (
+    NO_BROWSER,
+    NOT_LOADED,
+    SIGNED_IN,
+    SIGNED_OUT,
+    SignCheck,
+    refused,
+)
 from pickandroll.routine.chromium import (
     BBM_CHECK,
     EXTENSION_STAMP,
@@ -97,7 +104,15 @@ class FakePage:
     selector, the sign-in markers, the download each export page serves."""
 
     def __init__(
-        self, *, landed=None, selects=None, counts=None, signed_out=False, downloads=None, refuse=()
+        self,
+        *,
+        landed=None,
+        selects=None,
+        counts=None,
+        signed_out=False,
+        downloads=None,
+        refuse=(),
+        statuses=None,
     ):
         self.calls: list[tuple] = []
         self.url = "about:blank"
@@ -108,12 +123,16 @@ class FakePage:
         self.signed_out = signed_out
         self.downloads = downloads if downloads is not None else dict(DOWNLOADS)
         self.refuse = set(refuse)
+        #: Each URL's response statuses, one a load (then 200): a 502 that loads (#364).
+        self.statuses = {k: list(v) for k, v in (statuses or {}).items()}
 
     def goto(self, url, wait_until=None, timeout=None):
         self.calls.append(("goto", url))
         if url in self.refuse:
             raise TimeoutError(f"Timeout {timeout}ms exceeded: {url}")
         self.url = self.landed.get(url, url)
+        left = self.statuses.get(url)
+        return SimpleNamespace(status=left.pop(0) if left else 200)
 
     def evaluate(self, js, arg=None):
         if js is chromium.SET_SELECT_JS:
@@ -431,7 +450,13 @@ class ScriptedBrowser:
         return self._available
 
     def signed_in(self, site):
-        return self.signed[site]
+        return self.sign_check(site).state == SIGNED_IN
+
+    def sign_check(self, site):
+        found = self.signed[site]
+        if isinstance(found, SignCheck):
+            return found
+        return SignCheck(SIGNED_IN if found else SIGNED_OUT)
 
     def export(self, kind):
         self.exports.append(kind)
@@ -979,6 +1004,22 @@ def test_the_signin_routine_reports_both_sites_and_fails_when_one_is_out(tmp_pat
     assert report.alerts == ["the browser profile is signed out of yahoo"] and report.any_failed
     assert browser.closed
 
+    # A check page that did not load is not the user's sign-in (#364).
+    reason = "HTTP 502 at the check page"
+    browser = ScriptedBrowser(
+        tmp_path, signed={"bbm": True, "yahoo": SignCheck(NOT_LOADED, reason, 3)}
+    )
+    ctx = make_ctx(api, Clock("2026-10-29 04:50"), tmp_path, routine="signin", browser=browser)
+    report = run("signin", ctx, "http://api")
+    step = report.find("yahoo")
+    assert step.status == "failed" and step.detail == (
+        f"the yahoo sign-in check page did not load after 3 tries ({reason}): not a sign-out"
+    )
+    assert step.data["signin"]["state"] == NOT_LOADED
+    assert report.alerts == [
+        "the yahoo sign-in check page did not load at the signin routine: not a sign-out"
+    ]
+
     browser = ScriptedBrowser(tmp_path, available=False, reason="RuntimeError: no DISPLAY")
     ctx = make_ctx(api, Clock("2026-10-29 04:50"), tmp_path, routine="signin", browser=browser)
     report = run("signin", ctx, "http://api")
@@ -1036,11 +1077,66 @@ def test_the_script_runner_passes_the_downloads_folder_to_the_importers(tmp_path
     assert out.splitlines()[0] in ("unset", os.environ.get("PICKANDROLL_DOWNLOADS", "unset"))
 
 
-def test_a_signed_out_check_page_that_does_not_load_counts_as_signed_out_with_the_reason(tmp_path):
+def test_a_check_page_that_does_not_load_is_tried_three_times_and_is_not_a_sign_out(tmp_path):
     page = FakePage(refuse={YAHOO_CHECK})
     b = browser_at(tmp_path, page)
+    check = b.sign_check("yahoo")
+    assert (check.state, check.tries) == (NOT_LOADED, 3) and "TimeoutError" in check.reason
     assert b.signed_in("yahoo") is False and "TimeoutError" in b.reason
-    assert b.opened == [YAHOO_CHECK]
+    assert b.sleeps == [15.0, 45.0, 15.0, 45.0]  # not kept: the second ask checked again
+    assert b.opened == [YAHOO_CHECK] * 6
+
+
+def test_a_502_check_page_is_tried_again_and_passes_when_it_loads(tmp_path):
+    # Yahoo's 502 loads without raising: the 2026-11-12 05:00 daily read it as signed out (#364).
+    page = FakePage(statuses={YAHOO_CHECK: [502]})
+    b = browser_at(tmp_path, page)
+    assert b.sign_check("yahoo") == SignCheck(SIGNED_IN, "", 2)
+    assert b.sleeps == [15.0] and b.opened == [YAHOO_CHECK] * 2
+    assert b.signed_in("yahoo") and b.opened == [YAHOO_CHECK] * 2  # kept once it loaded
+
+    page = FakePage(statuses={YAHOO_CHECK: [502, 503, 999], chromium.BBM_CHECK: [429, 429, 429]})
+    b = browser_at(tmp_path, page)
+    check = b.sign_check("yahoo")
+    assert (check.state, check.tries, check.reason) == (NOT_LOADED, 3, f"HTTP 999 at {YAHOO_CHECK}")
+    assert b.sign_check("bbm").state == NOT_LOADED and b.sleeps == [15.0, 45.0, 15.0, 45.0]
+
+
+def test_a_check_page_that_loads_signed_out_is_read_once_with_where_it_landed(tmp_path):
+    page = FakePage(landed={YAHOO_CHECK: "https://login.yahoo.com/?.src=fantasy"})
+    b = browser_at(tmp_path, page)
+    assert b.sign_check("yahoo") == SignCheck(SIGNED_OUT, "sent to login.yahoo.com", 1)
+    assert b.sleeps == [] and b.reason == "sent to login.yahoo.com"
+    b = browser_at(tmp_path, FakePage(signed_out=True))
+    assert b.sign_check("yahoo").reason.startswith("a sign-in form, or no My Team link")
+    b = browser_at(tmp_path, FakePage(counts={LOGOUT: 0}))
+    assert b.sign_check("bbm") == SignCheck(SIGNED_OUT, f"no Logout link on {BBM_CHECK}", 1)
+    assert b.sleeps == []
+
+
+def test_an_export_page_that_does_not_load_says_so_not_signed_out(tmp_path):
+    page = FakePage(statuses={chromium.RECIPES["ros"].page: [502]})
+    with pytest.raises(RuntimeError, match="did not load: HTTP 502") as info:
+        browser_at(tmp_path, page).export("ros")
+    assert "signed out" not in str(info.value)
+
+
+def test_a_daily_step_whose_check_page_did_not_load_fails_without_the_sign_in_wording(tmp_path):
+    reason = f"HTTP 502 at {BBM_CHECK}"
+    browser = ScriptedBrowser(tmp_path, signed={"bbm": SignCheck(NOT_LOADED, reason, 3)})
+    ctx = make_ctx(FakeAPI(base_answers()), Clock("2026-11-12 05:01"), tmp_path, browser=browser)
+    calls = importer(ctx)
+    export_all(ctx, (6,), None)
+    step = ctx.report.find("exports")
+    assert step.status == "failed" and browser.exports == [] and calls == []
+    assert step.detail.startswith(
+        f"the bbm sign-in check page did not load after 3 tries ({reason}): not a sign-out;"
+    )
+    assert step.data["signin"] == {"state": NOT_LOADED, "reason": reason, "tries": 3}
+    [alert] = ctx.report.alerts
+    assert alert.startswith("the bbm sign-in check page did not load at the daily routine")
+    assert "signed out" not in alert and "needs the user" not in alert
+    assert "signed out" not in step.detail and "not signed in" not in step.detail
 
 
 def test_a_watched_page_screens_each_arrival_on_the_claim_forms_own_path(tmp_path):

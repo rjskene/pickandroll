@@ -174,6 +174,21 @@ The `signin` routine exits 0 with both sites signed in; its timer runs it at 04:
 and a failure alerts (a session expired, a password changed) before the daily at 05:00, naming
 the Mac command.
 
+A site's check reads one page (Basketball Monster's front page, the private league's page) and
+ends in one of three states (#364): signed in; signed out (the page loaded and shows it: the
+sign-in redirect, the consent page, a sign-in form, no My Team or Logout link); or the page did
+not load (the load raised, or it answered a server error, 429 or Yahoo's 999). Only signed out
+is the user's re-sign-in. A page that did not load is tried three times, 15 s and 45 s apart, and
+is not kept for the run, so each browser step after it checks again. In a long outage a step's
+check costs the 60 s of waits plus its three loads: about a minute when the site answers 502 at
+once, up to four minutes when each load hangs to its 60 s timeout. The daily has five such steps
+(the exports on Basketball Monster; the private pages, the lineup pages, Start Active and the
+lineups on Yahoo), so about 5 minutes and at worst 20 inside its 05:00-05:45 window; a pretip
+slate has up to four. The step fails with "the <site> sign-in check page did not
+load after 3 tries (<reason>): not a sign-out", its `signin` data has the state, the reason and
+the tries, and its alert never asks for a sign-in. On 2026-11-12 Yahoo's 502 at 05:00 was read as
+signed out for the whole daily.
+
 ## 4. The soak (from the first sign-in to the cut-over)
 
 The droplet runs every routine on its own copy of `data/` in dry run, posting nothing, while
@@ -303,6 +318,8 @@ droplet keeps its profile for the next attempt.
   missing, not today's or has a failed step, when `GET /seasons` is not 200, or when the Mac's
   copy stamp is older than 72 h (once it exists).
 - The `signin` timer (04:50) fails, and so alerts, when either site is signed out: §3 again.
+  When its check page did not load (the alert says "not a sign-out"), it is the site's outage,
+  not the profile: nothing to sign in; the daily checks again.
 - The API restarts itself (`Restart=always`, no start limit); a restart loop shows as the
   routines' exit 2 and the watchdog's probe.
 

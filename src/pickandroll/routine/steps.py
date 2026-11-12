@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from .api import Call, Unreachable
-from .browser import NO_BROWSER, Browser
+from .browser import NO_BROWSER, NOT_LOADED, SIGNED_IN, Browser, SignCheck
 from .clock import before, seconds_until
 from .report import EXPORT_KINDS, Report
 
@@ -906,8 +906,9 @@ def alert_once(ctx: Context, line: str) -> None:
 def ready_browser(ctx: Context, name: str, site: str, would: str, **data: Any) -> Browser | None:
     """The browser for a step that opens pages, or None with the step recorded: a dry run and
     ``--no-browser`` skip it, a browser that cannot start skips it with the reason (alerted
-    once), a profile signed out of ``site`` fails it (alerted once). Nothing opens but the
-    sign-in check."""
+    once), a profile signed out of ``site`` fails it (alerted once), and so does a sign-in check
+    page that did not load, which is not a sign-out and never says so (#364). Nothing opens but
+    the sign-in check."""
     if ctx.dry_run:
         ctx.report.skipped(name, f"dry run: {would}", **data)
         return None
@@ -928,13 +929,33 @@ def ready_browser(ctx: Context, name: str, site: str, would: str, **data: Any) -
             f"the browser could not start at the {ctx.report.routine} routine: {browser.reason}",
         )
         return None
-    if not browser.signed_in(site):
-        ctx.report.failed(
-            name, f"the browser profile is not signed in to {site}: nothing opened; {would}", **data
+    check = browser.sign_check(site)
+    if check.state == SIGNED_IN:
+        return browser
+    data = {**data, "signin": check.record()}
+    if check.state == NOT_LOADED:
+        ctx.report.failed(name, f"{not_loaded(site, check)}; nothing opened; {would}", **data)
+        alert_once(
+            ctx,
+            f"the {site} sign-in check page did not load at the {ctx.report.routine} routine:"
+            " not a sign-out, the steps that needed it did not run (their detail says why)",
         )
-        alert_once(ctx, f"the browser profile is signed out of {site}")
         return None
-    return browser
+    ctx.report.failed(
+        name,
+        f"the browser profile is not signed in to {site} ({check.reason}): nothing opened; {would}",
+        **data,
+    )
+    alert_once(ctx, f"the browser profile is signed out of {site}")
+    return None
+
+
+def not_loaded(site: str, check: SignCheck) -> str:
+    """A sign-in check page that did not load, in words (#364): never the user's sign-in."""
+    tries = f"{check.tries} {'try' if check.tries == 1 else 'tries'}"
+    return (
+        f"the {site} sign-in check page did not load after {tries} ({check.reason}): not a sign-out"
+    )
 
 
 def one_line(exc: BaseException) -> str:

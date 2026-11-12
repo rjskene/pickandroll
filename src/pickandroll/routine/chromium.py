@@ -33,7 +33,15 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
-from .browser import BBM_HOST, YAHOO_HOST, refused
+from .browser import (
+    BBM_HOST,
+    NOT_LOADED,
+    SIGNED_IN,
+    SIGNED_OUT,
+    YAHOO_HOST,
+    SignCheck,
+    refused,
+)
 from .clock import now
 from .lock import BrowserBusy, BrowserLock
 from .report import EXPORT_KINDS
@@ -47,6 +55,9 @@ YAHOO_CHECK = f"{YAHOO}/nba/{PRIVATE_LEAGUE}"
 #: The extension's background worker must be up before anything opens.
 WORKER_WAIT_S = 20.0
 GOTO_TIMEOUT_MS = 60_000
+#: A sign-in check page that did not load is tried again after each of these waits (#364): three
+#: tries, about a minute. Yahoo's 502s at the 2026-11-12 05:00 daily were brief.
+SIGNIN_RETRY_S = (15.0, 45.0)
 DOWNLOAD_TIMEOUT_MS = 60_000
 #: A stuck export page may not eat the routine's window.
 EXPORT_CEILING_S = 120.0
@@ -218,7 +229,10 @@ class ChromiumBrowser:
         self._context: Any = None
         self._page: Any = None
         self._available: bool | None = None
-        self._signed: dict[str, bool] = {}
+        #: The sign-in checks kept for the run: signed in or out, never a page that did not load.
+        self._signed: dict[str, SignCheck] = {}
+        #: The HTTP status of the last page loaded (None when the load gave no response).
+        self.status: int | None = None
 
     # ------------------------------------------------------------------ lifecycle
     def available(self) -> bool:
@@ -268,24 +282,50 @@ class ChromiumBrowser:
 
     # ------------------------------------------------------------------ the sites
     def signed_in(self, site: str) -> bool:
-        if site not in self._signed:
-            if site not in ("bbm", "yahoo"):
-                raise ValueError(f"unknown site {site!r}")
-            if not self.available():
-                return False
-            try:
-                if site == "bbm":
-                    self._goto(BBM_CHECK)
-                    self._signed[site] = self.count(BBM_LOGOUT) > 0
-                else:
-                    landed = self._goto(YAHOO_CHECK)
-                    host = (urlsplit(landed).hostname or "").lower()
-                    signed_in = bool(self._page.evaluate(YAHOO_SIGNED_IN_JS))
-                    self._signed[site] = host == YAHOO_HOST and signed_in
-            except Exception as exc:  # noqa: BLE001 - a check page that did not load
-                self.reason = one_line(exc)
-                self._signed[site] = False
-        return self._signed[site]
+        return self.sign_check(site).state == SIGNED_IN
+
+    def sign_check(self, site: str) -> SignCheck:
+        """The site's sign-in check (#364): its check page loaded and read, up to three tries
+        while it does not load (:data:`SIGNIN_RETRY_S`). Signed in or out is kept for the run; a
+        page that did not load is not, so the next step checks again. ``reason`` says why."""
+        if site not in ("bbm", "yahoo"):
+            raise ValueError(f"unknown site {site!r}")
+        if site in self._signed:
+            return self._signed[site]
+        if not self.available():
+            return SignCheck(NOT_LOADED, self.reason, 0)
+        check = self._check(site, 1)
+        for tries, wait in enumerate(SIGNIN_RETRY_S, 2):
+            if check.state != NOT_LOADED:
+                break
+            self.sleep(wait)
+            check = self._check(site, tries)
+        if check.state != NOT_LOADED:
+            self._signed[site] = check
+        if check.state != SIGNED_IN:
+            self.reason = check.reason
+        return check
+
+    def _check(self, site: str, tries: int) -> SignCheck:
+        url = BBM_CHECK if site == "bbm" else YAHOO_CHECK
+        try:
+            landed = self._goto(url)
+            if not loaded(self.status):
+                return SignCheck(NOT_LOADED, f"HTTP {self.status} at {url}", tries)
+            if site == "bbm":
+                if self.count(BBM_LOGOUT) > 0:
+                    return SignCheck(SIGNED_IN, "", tries)
+                return SignCheck(SIGNED_OUT, f"no Logout link on {landed}", tries)
+            host = (urlsplit(landed).hostname or "").lower()
+            if host != YAHOO_HOST:
+                return SignCheck(SIGNED_OUT, f"sent to {host or landed}", tries)
+            if not self._page.evaluate(YAHOO_SIGNED_IN_JS):
+                return SignCheck(
+                    SIGNED_OUT, "a sign-in form, or no My Team link, on the league page", tries
+                )
+            return SignCheck(SIGNED_IN, "", tries)
+        except Exception as exc:  # noqa: BLE001 - a check page that did not load
+            return SignCheck(NOT_LOADED, one_line(exc), tries)
 
     def export(self, kind: str) -> Path:
         recipe = RECIPES[kind]
@@ -294,6 +334,8 @@ class ChromiumBrowser:
         deadline = self.clock() + EXPORT_CEILING_S
         try:
             self._goto(recipe.page)
+            if not loaded(self.status):
+                raise RuntimeError(f"the export page did not load: HTTP {self.status}")
             if self.count(BBM_LOGOUT) == 0:
                 raise RuntimeError("signed out of Basketball Monster")
             for action in recipe.actions:
@@ -366,7 +408,9 @@ class ChromiumBrowser:
     # ------------------------------------------------------------------ helpers
     def _goto(self, url: str) -> str:
         self.opened.append(url)
-        self._page.goto(url, wait_until="domcontentloaded", timeout=GOTO_TIMEOUT_MS)
+        self.status = None
+        response = self._page.goto(url, wait_until="domcontentloaded", timeout=GOTO_TIMEOUT_MS)
+        self.status = getattr(response, "status", None)
         return str(self._page.url)
 
     def _inside(self, deadline: float, where: str) -> None:
@@ -381,6 +425,13 @@ class ChromiumBrowser:
             return shot
         except Exception:  # noqa: BLE001 - the screenshot is best effort
             return None
+
+
+def loaded(status: int | None) -> bool:
+    """A page loaded: not a server error or a rate limit (429, Yahoo's 999). A signed-out
+    profile lands on a page that loaded (the sign-in redirect), so it is never this. No status
+    (a load with no response) counts as loaded: the page's own markers decide."""
+    return status is None or (status < 500 and status != 429)
 
 
 def one_line(exc: BaseException) -> str:

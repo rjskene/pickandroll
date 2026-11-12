@@ -11,7 +11,7 @@ from datetime import datetime
 from typing import Any
 
 from .api import Unreachable
-from .browser import NO_BROWSER
+from .browser import NO_BROWSER, NOT_LOADED, SIGNED_IN
 from .clock import before, seconds_until
 from .report import Report
 from .steps import (
@@ -35,6 +35,7 @@ from .steps import (
     monday_pages,
     monday_step,
     moves_plan,
+    not_loaded,
     open_page,
     pass_done,
     pass_open,
@@ -625,11 +626,21 @@ def signin(ctx: Context, api: str) -> None:
         return
     ctx.report.ok("browser", "launched, the extension's worker up")
     for site in ("bbm", "yahoo"):
-        if browser.signed_in(site):
-            ctx.report.ok(site, "signed in")
+        check = browser.sign_check(site)
+        if check.state == SIGNED_IN:
+            ctx.report.ok(site, "signed in", signin=check.record())
+        elif check.state == NOT_LOADED:
+            # A page that did not load is not a sign-out (#364): never the user's step.
+            ctx.report.failed(site, not_loaded(site, check), signin=check.record())
+            alert_once(
+                ctx,
+                f"the {site} sign-in check page did not load at the signin routine: not a sign-out",
+            )
         else:
             ctx.report.failed(
-                site, "signed out: the profile needs the user's sign-in (docs/OPS.md)"
+                site,
+                f"signed out ({check.reason}): the profile needs the user's sign-in (docs/OPS.md)",
+                signin=check.record(),
             )
             alert_once(ctx, f"the browser profile is signed out of {site}")
 
