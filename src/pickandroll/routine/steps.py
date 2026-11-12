@@ -222,7 +222,8 @@ def solve_all(
     ctx: Context, leagues: Sequence[str], name: str = "solve", timeout: float = SOLVE_TIMEOUT_S
 ) -> dict[str, int]:
     """``GET /seasons/<id>/moves`` per league, one at a time: each writes the day's decision-log
-    entry (#125); nothing is posted or changed by it."""
+    entry (#125); nothing is posted or changed by it. The detail names the leagues whose search
+    the budget cut (#306) or stopped on a cycle (#364), from each answer's ``search``."""
     left_out = [k for k in leagues if k in ctx.skip_solve]
     leagues = [k for k in leagues if k not in ctx.skip_solve]
     note = f"; left out by --skip-solve: {', '.join(left_out)}" if left_out else ""
@@ -230,19 +231,42 @@ def solve_all(
         ctx.report.skipped(name, f"dry run: would solve {len(leagues)} leagues{note}")
         return {}
     codes: dict[str, int] = {}
+    searched: dict[str, dict[str, Any]] = {}
     for league in leagues:
         try:
-            code, _, _ = ctx.get(f"/seasons/{league}/moves", timeout)
+            code, body, _ = ctx.get(f"/seasons/{league}/moves", timeout)
         except Unreachable:
-            code = 599
+            code, body = 599, None
         codes[league] = code
+        search = body.get("search") if isinstance(body, dict) else None
+        if isinstance(search, dict):
+            searched[league] = search
+    cut = [
+        f"{k} ({s.get('finished')} of {s.get('searches')})"
+        for k, s in searched.items()
+        if s.get("cut")
+    ]
+    cycled = [k for k, s in searched.items() if s.get("cycle")]
+    if cut:
+        note += f"; cut by the budget: {', '.join(cut)}"
+    if cycled:
+        note += f"; stopped on a cycle: {', '.join(cycled)}"
     failed = [k for k, v in codes.items() if not 200 <= v < 300]
     detail = f"{len(leagues) - len(failed)} leagues solved"
     if failed:
         detail += f"; failed: {', '.join(f'{k} ({codes[k]})' for k in failed)}"
-        ctx.report.failed(name, detail + note, codes=codes, left_out=left_out)
+        ctx.report.failed(
+            name, detail + note, codes=codes, left_out=left_out, cut=cut, cycled=cycled
+        )
     else:
-        ctx.report.ok(name, detail + ", all 200" + note, codes=codes, left_out=left_out)
+        ctx.report.ok(
+            name,
+            detail + ", all 200" + note,
+            codes=codes,
+            left_out=left_out,
+            cut=cut,
+            cycled=cycled,
+        )
     return codes
 
 

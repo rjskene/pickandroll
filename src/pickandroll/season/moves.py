@@ -1104,7 +1104,8 @@ class Budget:
     """A solve's budget (#306): :meth:`out` once ``clock`` passes ``deadline`` or ``stop`` holds
     (the client went), and from then on (``spent``; ``stopped`` when ``stop`` did it). The
     searches count themselves on it: ``searches`` begun, ``cut`` the ones it ended before they
-    finished, ``skipped`` the re-solves never begun because it had run out."""
+    finished, ``skipped`` the re-solves never begun because it had run out, ``cycles`` the ones
+    whose improve loop came back to a set it had stood on (#364) and stopped there."""
 
     seconds: float | None = None
     deadline: float | None = None
@@ -1113,6 +1114,7 @@ class Budget:
     searches: int = 0
     cut: int = 0
     skipped: int = 0
+    cycles: int = 0
     spent: bool = False
     stopped: bool = False
 
@@ -1179,7 +1181,11 @@ def search(
     tried must pass ``allowed`` (the season guard) beside :func:`feasible`. Of two sets equal on
     ``key`` the one ``season`` values more is taken (#221: ties go to the season). Under a
     budget (:func:`budgeted`, #306) the search ends when it runs out, between two trials, with
-    the best set it holds, and counts itself cut."""
+    the best set it holds, and counts itself cut. An improve round that would come back to a set
+    the loop has stood on is a cycle (#364: a round may undo a move worth less than ``min_gain``
+    and then take a swap that beats the undone set but not the one it started from): the search
+    stops on the best set of that cycle (:func:`cycle_best`) and counts the cycle on the
+    budget."""
     p = ev.problem
     budget = _BUDGET.get()
     if budget is not None:
@@ -1221,6 +1227,11 @@ def search(
             break
         current = best[0]
         moves.append(best[1])
+    # The sets the improve loop stood on, as sets (the order of the moves never counts), with
+    # where each one stands in ``stood``.
+    stood: list[tuple[tuple[Move, ...], float]] = [(tuple(moves), current)]
+    where = {frozenset(moves): 0}
+    cycled = False
     while moves and not cut:
         best_v, best_set = current, None
         for i, move in enumerate(moves):
@@ -1250,10 +1261,31 @@ def search(
                     best_v, best_set = v, trial
         if best_set is None:
             break
+        back = where.get(frozenset(best_set))
+        if back is not None:
+            best = cycle_best(stood[back:], better)
+            moves, current, cycled = list(best[0]), best[1], True
+            break
+        where[frozenset(best_set)] = len(stood)
+        stood.append((tuple(best_set), best_v))
         moves, current = best_set, best_v
-    if cut and budget is not None:
-        budget.cut += 1
+    if budget is not None:
+        budget.cut += int(cut)
+        budget.cycles += int(cycled)
     return tuple(moves)
+
+
+def cycle_best(
+    cycle: Sequence[tuple[Sequence[Move], float]],
+    better: Callable[[float, Sequence[Move], float, Sequence[Move]], bool],
+) -> tuple[Sequence[Move], float]:
+    """The best of the sets an improve loop went round (#364), each with its value: the first
+    that no later one is ``better`` than (the search's own test: the horizon, then the season)."""
+    best = cycle[0]
+    for moves, value in cycle[1:]:
+        if better(value, moves, best[1], best[0]):
+            best = (moves, value)
+    return best
 
 
 @dataclass(frozen=True)
