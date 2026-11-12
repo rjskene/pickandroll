@@ -40,6 +40,7 @@ from .steps import (
     pass_done,
     pass_open,
     pass_opening,
+    placed_il_plan,
     plan_lines,
     post_digest,
     private_pages,
@@ -134,13 +135,14 @@ def browser_pass(
     record: tuple[str, str, Sequence[str] | None] | None = None,
     hard_stop: str | None = None,
     site: str = "yahoo",
+    idle: str = "nothing to open",
 ) -> list[str]:
     """Open each page in the routine's own tab and wait for the extension; with a pass record
     (kind, trigger, entries) the record is opened, told each opening and closed. Gives the
     leagues whose pages were opened. In a dry run, without a browser, or signed out, the plan
-    is reported and nothing opens."""
+    is reported and nothing opens. ``idle`` is the step's line when nothing is planned."""
     if not openings:
-        ctx.report.skipped(name, "nothing to open")
+        ctx.report.skipped(name, idle)
         return []
     plan = plan_lines(openings)
     browser = ready_browser(ctx, name, site, f"{len(openings)} pages would open", plan=plan)
@@ -353,9 +355,24 @@ def evening_pass(ctx: Context, api: str) -> None:
     api_check(ctx)
     stop_check(ctx)
     pub = public_leagues(seasons(ctx))
+    # The IL moves my placed claims need before Yahoo's run (#364): before the cancels, so a move
+    # that fails has its claim cancelled in this pass, not after the 4 am run.
+    browser_pass(
+        ctx,
+        "placed_il",
+        placed_il_plan(ctx, pub, "pickandroll-il-evening"),
+        hard_stop=EVENING_HARD_STOP,
+        idle="no placed claim needs an IL move",
+    )
     # The pending claims judged again at 21:00 and cancelled (#345 PR 2): first, before the claims,
     # so the waiver run never processes one; the 05:00 daily never cancels.
-    browser_pass(ctx, "cancel", cancel_plan(ctx), hard_stop=EVENING_HARD_STOP)
+    browser_pass(
+        ctx,
+        "cancel",
+        cancel_plan(ctx),
+        hard_stop=EVENING_HARD_STOP,
+        idle=str(ctx.notes.get("cancel") or "no claim to cancel"),
+    )
     plan = moves_plan(ctx, pub, "pickandroll-moves-evening", "pickandroll-il-evening")
     _report_plan(ctx, plan)
     opened = browser_pass(

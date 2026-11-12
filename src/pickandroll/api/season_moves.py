@@ -1574,8 +1574,11 @@ def rejudge_claims(
     A no-drop claim needs an active spot, and the claims pending can hold more of them than the
     roster has (#360): the no-drop claims are taken by their own gain, highest first, each while
     the room left fits it (:func:`moves.feasible`), and one that no longer fits says so
-    (``no_room``: the adds that take the room) instead of a gain. A claim the read already settled
-    (not in ``built.pending``) is judged on the problem as built."""
+    (``no_room``: the adds that take the room) instead of a gain; one with no room even alone has
+    ``no_room`` empty. The first admitted take the open spots, the rest the held-slot moves the
+    fold made for them (#364): each of those names its move (``il_need``, ``{player, slot}``),
+    else None. A claim the read already settled (not in ``built.pending``) is judged on the
+    problem as built."""
     out: dict[str, dict[str, Any] | None] = {}
     pend = {(c.add, c.drop): c for c in built.pending}
     base = with_statuses(built.base if built.base is not None else built.problem, statuses)
@@ -1607,14 +1610,21 @@ def rejudge_claims(
     with_drop = [c for c in built.pending if c.drop is not None]
     open_spot = [c for c in claims if pending_of(c) is not None and c.get("drop") is None]
     alone: dict[str, float] = {}
+    roomless: set[str] = set()
     for c in open_spot:
         p, ev = folded(with_drop)
         judged = c.get("judged") or dl.THREE
         move = move_of(c)
-        if judged in p.horizons and move.add in p.effective and mv.feasible(p, [move]):
+        if judged not in p.horizons or move.add not in p.effective:
+            continue
+        if mv.feasible(p, [move]):
             alone[c["id"]] = ev.gain(judged, [move])
+        else:
+            # No spot and no held-slot move even alone (#364): it has no room at all.
+            roomless.add(c["id"])
     admitted: list[mv.Pending] = []
-    no_room: dict[str, list[int]] = {}
+    taken: list[str] = []
+    no_room: dict[str, list[int]] = {c: [] for c in roomless}
     order = sorted(open_spot, key=lambda c: -alone.get(c["id"], float("-inf")))
     for c in order:
         if c["id"] not in alone:
@@ -1623,9 +1633,18 @@ def rejudge_claims(
         mine_c = pending_of(c)
         if mine_c is not None and mv.feasible(p, [move_of(c)]):
             admitted.append(mine_c)
+            taken.append(c["id"])
         else:
             no_room[c["id"]] = [a.add for a in admitted]
     made = [*with_drop, *admitted]
+    # The held-slot move each admitted claim beyond the open spots takes (#364): the first ones
+    # admitted take the open spots, the rest the moves the fold made for them, in order.
+    spots = mv.open_spots(folded(with_drop)[0])
+    owed = folded(made)[0].il_owed
+    il_need = {
+        cid: {"player": k, "slot": slot}
+        for cid, (k, slot) in zip(taken[spots:], owed, strict=False)
+    }
     for c in claims:
         add = int(c["add"])
         judged = c.get("judged") or dl.THREE
@@ -1637,6 +1656,7 @@ def rejudge_claims(
                 "season_costly": None,
                 "comeback_drops": {},
                 "no_room": no_room[c["id"]],
+                "il_need": None,
             }
             continue
         if pending_of(c) is None:
@@ -1661,6 +1681,7 @@ def rejudge_claims(
             "comeback_drops": {
                 cb.player: cb.drop for cb in mv.comebacks(p, judged, [move]) if cb.player in cleared
             },
+            "il_need": il_need.get(c["id"]),
         }
     return out
 

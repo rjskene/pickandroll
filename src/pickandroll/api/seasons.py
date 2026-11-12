@@ -1426,6 +1426,8 @@ class SeasonService:
             gains.setdefault(scoring[league], []).extend(season_queue.recent_gains(entries, today))
         resolved: dict[str, str] = {}
         rejudged: dict[str, dict[str, Any]] = {}
+        #: The held-slot move each placed claim needs before Yahoo's run (#364), None for none.
+        needs: dict[str, dict[str, Any] | None] = {}
         builds: dict[str, list[dict[str, Any]]] = {}
         for league, (season, entries) in sorted(reads.items()):
             mode, kind = modes[league], scoring[league]
@@ -1461,7 +1463,9 @@ class SeasonService:
             budget = season_queue.budget_of(season)
             open_claims = [*claims, *(c for c in placed_today if c["id"] not in gone)]
             # The placed claims judged again when a held player cleared (#345).
-            rejudged |= self._rejudge(season, built, open_claims, floor, now)
+            judged, need = self._rejudge(season, built, open_claims, floor, now)
+            rejudged |= judged
+            needs |= need
             day = qa.LeagueDay(
                 league=league,
                 scoring=kind,
@@ -1525,7 +1529,7 @@ class SeasonService:
             for league, new in builds.items():
                 todays = [e for e in body.get("entries") or [] if e.get("league") == league]
                 out += qa.merge(todays, new, today, execute_time, now)
-            _rejudge_into(out, rejudged)
+            _rejudge_into(out, rejudged, needs)
             return {
                 "date": today.isoformat(),
                 "built": [*(body.get("built") or []), now.isoformat()],
@@ -1536,8 +1540,11 @@ class SeasonService:
 
         try:
             for day, q in earlier.items():
-                if {e["id"] for e in q.get("entries") or []} & (set(resolved) | set(rejudged)):
-                    season_queue.update(self.data_dir, day, _resolver(resolved, now, rejudged))
+                ids = {e["id"] for e in q.get("entries") or []}
+                if ids & (set(resolved) | set(rejudged) | set(needs)):
+                    season_queue.update(
+                        self.data_dir, day, _resolver(resolved, now, rejudged, needs)
+                    )
             body = season_queue.update(self.data_dir, today, change)
         except season_queue.QueueError as exc:
             raise HTTPException(409, str(exc)) from exc
@@ -1746,9 +1753,10 @@ class SeasonService:
             "done": len(done),
             "adds_left": adds_left,
             "budget": row.get("budget"),
-            "il_first": []
-            if blocked
-            else self._il_first(league, base, mine, due, pending, adds_left),
+            # The cap stops new claims, never the IL move a placed claim needs (#364).
+            "il_first": self._il_first(
+                league, base, mine, [] if blocked else due, pending, adds_left
+            ),
             "drop_first": []
             if blocked
             else self._drop_first(league, base, mine, now, pending, adds_left, protected),
@@ -1797,7 +1805,7 @@ class SeasonService:
         claims: list[dict[str, Any]],
         floor: qa.Floor,
         now: datetime,
-    ) -> dict[str, dict[str, Any]]:
+    ) -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, Any] | None]]:
         """The league's placed claims judged again (#345) when a held player of mine cleared, by
         the newest status in any league (#341): as the build judges a new entry, his comeback's
         drop charged, and cancelled when it no longer pays or the comeback would drop the add.
@@ -1805,10 +1813,15 @@ class SeasonService:
         is cleared. Nothing when no claim is open. Only a waiver claim is judged: a free agent
         added at once has landed and has nothing to cancel. The claims are judged too when they
         hold more no-drop adds than the roster has spots (#360, ``moves.overfull``): then only a
-        claim the room no longer fits gets a verdict, a cancel."""
+        claim the room no longer fits gets a verdict, a cancel.
+
+        Beside the verdicts, by entry id, the held-slot move each claim that fits only through one
+        needs before Yahoo's run (#364: ``{player, slot, at}``, the next moves pass makes it), and
+        None for a claim that had one and needs none now (judged again on the room it has)."""
         claims = [c for c in claims if c.get("outcome") == qa.CLAIMED]
         if not claims:
-            return {}
+            return {}, {}
+        stale = {c["id"]: None for c in claims if c.get("il_need")}
         at = now.isoformat()
         me = season.settings.my_team_id
         spots = season.rosters.get(me) if me is not None else None
@@ -1821,7 +1834,7 @@ class SeasonService:
             if (c.get("rejudge") or {}).get("verdict")
         }
         if not cleared and not crowded:
-            return lapsed
+            return lapsed, stale
         statuses = {int(x["player"]): x["status"] for x in cleared}
         held = sorted(statuses)
         try:
@@ -1830,10 +1843,14 @@ class SeasonService:
             reason = f"not judged: {_failure(exc)}"
             return {
                 c["id"]: {"at": at, "verdict": None, "held": held, "reason": reason} for c in claims
-            }
+            }, {}
         out: dict[str, dict[str, Any]] = {}
+        needs: dict[str, dict[str, Any] | None] = dict(stale)
         for c in claims:
             j = judged.get(c["id"])
+            need = (j or {}).get("il_need")
+            if need is not None:
+                needs[c["id"]] = {**need, "at": at}
             if not cleared and (j is None or j.get("no_room") is None):
                 # Judged for the room alone: a claim that fits keeps its place, as placed.
                 if c["id"] in lapsed:
@@ -1865,7 +1882,7 @@ class SeasonService:
                 "comeback_drops": {str(k): v for k, v in j["comeback_drops"].items()},
                 **({"no_room": j["no_room"]} if j.get("no_room") is not None else {}),
             }
-        return out
+        return out, needs
 
     def _drop_first(
         self,
@@ -1932,14 +1949,22 @@ class SeasonService:
         player once, in the queue's order, unless he was moved to the IL today or the entry's
         move failed today. ``date`` is the first day he can still be moved: today, or tomorrow
         once his team's game has tipped off (null tip: today's page says). ``accepts`` are the
-        statuses his slot takes: the page skips the move when his shows another (#342)."""
+        statuses his slot takes: the page skips the move when his shows another (#342).
+
+        First, the held-slot moves my placed claims need before Yahoo's run (#364,
+        ``season_autopilot.placed_il_due``, ``placed`` true): a claim of any open day, with no add
+        page to follow."""
+        today = nba_today(self.clock())
+        out: list[dict[str, Any]] = [
+            {**x, "accepts": sorted(mv.HELD_ACCEPTS.get(x["slot"], ()))}
+            for x in season_autopilot.placed_il_due(self._open_claim_entries(today), league, today)
+        ]
         moved = {
             (e.get("held_move") or {}).get("player")
             for e in mine
             if (e.get("il") or {}).get("outcome") == "moved"
         }
         claimed = {c.get("add") for c in pending}
-        out: list[dict[str, Any]] = []
         for e in due:
             held = e.get("held_move") or {}
             player, slot = held.get("player"), held.get("slot")
@@ -2035,7 +2060,8 @@ class SeasonService:
 
     def log_il_run(self, league: str, run: season_autopilot.ILRun) -> dict[str, Any]:
         """Log an IL move the extension made (or would make) on the team page for an open-spot
-        claim (#214), under ``il`` in the league's day file. A live ``moved`` or ``failed`` goes
+        claim (#214), or for a placed claim's room (#364, its ``il_need``, from any open day),
+        under ``il`` in the league's day file. A live ``moved`` or ``failed`` goes
         on the queue's entry as its ``il`` (never its outcome or place): the player is not moved
         again that day, and a failed move is never retried that day. Refused (409) when the mode,
         STOP, the live guard or the queue says it should not have run, or names another move than
@@ -2044,6 +2070,10 @@ class SeasonService:
         mode = leagues.executor_mode(self.data_dir, league, leagues.MOVES)
         body = self._read_queue(run.day) or {}
         mine = {e["id"]: e for e in body.get("entries") or [] if e.get("league") == league}
+        # The open days' placed claims, whose room an IL move makes before Yahoo's run (#364).
+        for e in self._open_claim_entries(nba_today(self.clock())):
+            if e.get("league") == league and e.get("id") not in mine and e.get("il_need"):
+                mine[e["id"]] = e
         live = (
             season_autopilot.moves_live_check(self.data_dir, league, mode)
             if run.mode == "live"
@@ -2076,7 +2106,9 @@ class SeasonService:
                         }
                 return q
 
-            season_queue.update(self.data_dir, run.day, change)
+            # On the entry's own day: a placed claim may be an earlier day's (#364).
+            day = season_queue.day_of(run.entry) if run.entry else None
+            season_queue.update(self.data_dir, day or run.day, change)
         if run.entry is not None:
             self._attribute("moves", league, run.trigger, {run.entry: run.outcome}, key="il")
         return record
@@ -3430,9 +3462,10 @@ def _resolver(
     resolved: dict[str, str],
     now: datetime,
     rejudged: Mapping[str, dict[str, Any]] | None = None,
+    needs: Mapping[str, dict[str, Any] | None] | None = None,
 ) -> Callable[[dict[str, Any] | None], dict[str, Any]]:
     """An earlier queue's change that sets the claims the transactions settled (#171), and the
-    open claims' verdicts once judged again (#345)."""
+    open claims' verdicts once judged again (#345) and the held-slot moves they need (#364)."""
 
     def change(body: dict[str, Any] | None) -> dict[str, Any]:
         body = body or {}
@@ -3440,7 +3473,7 @@ def _resolver(
             if e.get("id") in resolved and not e.get("resolved"):
                 e["resolved"] = resolved[e["id"]]
                 e["resolved_at"] = now.isoformat()
-        _rejudge_into(body.get("entries") or [], rejudged or {})
+        _rejudge_into(body.get("entries") or [], rejudged or {}, needs or {})
         return body
 
     return change
@@ -3462,12 +3495,25 @@ def _with_cancels(row: dict[str, Any], cancels: Mapping[str, Any]) -> dict[str, 
     }
 
 
-def _rejudge_into(entries: list[dict[str, Any]], rejudged: Mapping[str, dict[str, Any]]) -> None:
-    """Each open claim's verdict judged again (#345) on its entry: never on one resolved, nor on
-    a free agent added at once."""
+def _rejudge_into(
+    entries: list[dict[str, Any]],
+    rejudged: Mapping[str, dict[str, Any]],
+    needs: Mapping[str, dict[str, Any] | None] | None = None,
+) -> None:
+    """Each open claim's verdict judged again (#345) on its entry, and the held-slot move it
+    needs (``il_need``, #364; removed once it needs none): never on one resolved, nor on a free
+    agent added at once."""
+    needs = needs or {}
     for e in entries:
-        if e.get("id") in rejudged and e.get("outcome") == qa.CLAIMED and not e.get("resolved"):
+        if e.get("outcome") != qa.CLAIMED or e.get("resolved"):
+            continue
+        if e.get("id") in rejudged:
             e["rejudge"] = rejudged[e["id"]]
+        if e.get("id") in needs:
+            if needs[e["id"]] is None:
+                e.pop("il_need", None)
+            else:
+                e["il_need"] = needs[e["id"]]
 
 
 def _public_reason(reason: str) -> str:
