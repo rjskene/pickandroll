@@ -200,7 +200,11 @@ exact swaps found a better set than the MILP in 0.8 s in total. So:
   columns and the drawer's alternative drops and adds with their prices.
 - The recommended set under the add limit is greedy exact swaps (the best swap, then the best
   swap given it) followed by a replacement pass that tries every alternative for each chosen add
-  and drop until nothing improves; it stops early when the next add does not pay. It is a strong
+  and drop until nothing improves; it stops early when the next add does not pay. Each round of
+  that pass keeps its best swap and its best undo apart and moves once: to the undo when it loses
+  less than `min_gain` to the better of the round's start and its best swap, else to the swap when
+  it beats the start (the user's ruling of 2026-11-12, #364: across 188 league-days it changed no
+  recommendation and removed the one cycle seen). It is a strong
   heuristic, not a proof, so the UI says "recommended", never "optimal", and a test checks it
   against brute force on a small league where k = 2 can be enumerated.
 - The deviation price of an alternative is the same search re-run with that choice forced, so

@@ -1,9 +1,10 @@
 """The search's improve loop never goes round (#364, item 3). On 2026-11-11 21:00 one search of
 258901 went round two sets until the 90 s budget ran out: a round undid a move worth less than
 ``min_gain``, then took a swap that beat the undone set but not the set it started from, and the
-next round swapped back. The loop now stops on the best set of the cycle, counts it on the budget,
-and the answer, the decision log and the run report say so. Wherever the search ends today its
-answer is the same. Nothing here opens a page.
+next round swapped back. Since the user's ruling of 2026-11-12 a swap must beat the set its round
+started from, so that round takes the undo. The cycle guard stays as a backstop: a loop that comes
+back to a set stops on the best of the cycle, counts it on the budget, and the answer, the decision
+log and the run report say so. Nothing here opens a page.
 """
 
 from __future__ import annotations
@@ -71,18 +72,20 @@ def as_set(moves):
 
 
 # --------------------------------------------------------------------------- the search
-def test_a_search_that_goes_round_two_sets_stops_on_the_better_of_them():
+def test_the_258901_shape_ends_on_the_undo_with_no_cycle():
+    """Before the user's ruling of 2026-11-12 this went round (10 for 2, 11 for 3, 13 for 1) and
+    (10 for 2, 12 for 3, 13 for 1): a round undid 10 for 2, then a swap beat the undone set but
+    not the start. A swap now beats the start, so the round takes the undo and the loop ends."""
     p = four_candidates()
     ev = Seeded(p, 800)
     budget = mv.Budget.start(None)
     found = search(ev, budget)
-    # The loop went round (10 for 2, 11 for 3, 13 for 1) and (10 for 2, 12 for 3, 13 for 1):
-    # it stops on the second, the better one, within a few hundred value calls.
-    assert as_set(found) == [(10, 2), (12, 3), (13, 1)]
-    other = [mv.Move(10, 2), mv.Move(11, 3), mv.Move(13, 1)]
-    assert ev.value("week", found) > ev.value("week", other)
+    assert as_set(found) == [(12, 3), (13, 1)]
+    full = [mv.Move(10, 2), mv.Move(12, 3), mv.Move(13, 1)]
+    # The undone move was worth less than min_gain on the set it left.
+    assert 0 < ev.value("week", full) - ev.value("week", found) < 0.01
     assert ev.calls < 1_000
-    assert (budget.cycles, budget.cut, budget.searches) == (1, 0, 1)
+    assert (budget.cycles, budget.cut, budget.searches) == (0, 0, 1)
 
 
 def test_a_search_that_never_goes_round_counts_no_cycle():
@@ -143,3 +146,73 @@ def test_the_guard_keys_the_searchs_own_moves_with_an_owed_il_move_in_the_proble
             found = mv.search(Seeded(q, seed), "week", [11, 12], min_gain=0.01, allowed=drops_only)
         assert mv.feasible(q, found) and all(m.drop != OUT for m in found)
         assert budget.searches == 1 and budget.cut == 0
+
+
+def test_under_the_ruling_no_seed_goes_round():
+    """The guard is a backstop: with a swap judged on the round's start, each round either gains
+    on the horizon or undoes a move, so no seeded search of the fixture comes back to a set."""
+    p = four_candidates()
+    for seed in range(1_000):
+        budget = mv.Budget.start(None)
+        search(Seeded(p, seed), budget)
+        assert budget.cycles == 0, seed
+
+
+# --------------------------------------------------------------------------- one move a round
+P, R, Q, S = mv.Move(10, 1), mv.Move(11, 2), mv.Move(12, 3), mv.Move(13, 1)
+
+
+class Table:
+    """Values by the set of adds; the moves of ``TABLE`` alone are allowed."""
+
+    def __init__(self, problem, table):
+        self.problem, self.table, self.base = problem, table, {"week": 0.0}
+
+    def value(self, key, moves):
+        return self.table.get(frozenset(m.add for m in moves), 0.0)
+
+    def gain(self, key, moves):
+        return self.value(key, moves)
+
+
+#: Greedy takes P, then R, then Q (each gaining more than min_gain): a start of 0.10. Undoing P
+#: loses 0.008, undoing Q 0.015 and undoing R 0.03.
+TABLE = {
+    frozenset({10}): 0.05,
+    frozenset({11}): 0.04,
+    frozenset({12}): 0.03,
+    frozenset({10, 11}): 0.085,
+    frozenset({10, 12}): 0.07,
+    frozenset({11, 12}): 0.092,
+    frozenset({10, 11, 12}): 0.10,
+}
+
+
+def only(*moves):
+    allowed = set(moves)
+    return lambda trial: all(m in allowed for m in trial)
+
+
+def test_a_round_takes_its_best_undo_never_one_a_worse_undo_chained_below():
+    ev = Table(four_candidates(), TABLE)
+    budget = mv.Budget.start(None)
+    with mv.budgeted(budget):
+        found = mv.search(ev, "week", [10, 11, 12], min_gain=0.01, allowed=only(P, R, Q))
+    # Undoing P (0.092) is taken; undoing Q (0.085) loses more than min_gain and never replaces
+    # it, though it clears min_gain below the undo already held.
+    assert as_set(found) == [(11, 2), (12, 3)]
+    assert budget.cycles == 0
+
+
+def test_an_undo_within_min_gain_of_a_better_swap_wins():
+    # Swapping P for S beats the start by 0.001; undoing P loses 0.009 to that swap: fewer moves
+    # win within min_gain.
+    ev = Table(four_candidates(), {**TABLE, frozenset({13, 11, 12}): 0.101})
+    with mv.budgeted(mv.Budget.start(None)):
+        found = mv.search(ev, "week", [10, 11, 12, 13], min_gain=0.01, allowed=only(P, R, Q, S))
+    assert as_set(found) == [(11, 2), (12, 3)]
+    # A swap more than min_gain better than the undo is taken instead.
+    ev = Table(four_candidates(), {**TABLE, frozenset({13, 11, 12}): 0.105})
+    with mv.budgeted(mv.Budget.start(None)):
+        found = mv.search(ev, "week", [10, 11, 12, 13], min_gain=0.01, allowed=only(P, R, Q, S))
+    assert as_set(found) == [(11, 2), (12, 3), (13, 1)]
