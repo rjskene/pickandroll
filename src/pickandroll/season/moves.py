@@ -1212,11 +1212,13 @@ def search(
     tried must pass ``allowed`` (the season guard) beside :func:`feasible`. Of two sets equal on
     ``key`` the one ``season`` values more is taken (#221: ties go to the season). Under a
     budget (:func:`budgeted`, #306) the search ends when it runs out, between two trials, with
-    the best set it holds, and counts itself cut. An improve round that would come back to a set
-    the loop has stood on is a cycle (#364: a round may undo a move worth less than ``min_gain``
-    and then take a swap that beats the undone set but not the one it started from): the search
-    stops on the best set of that cycle (:func:`cycle_best`) and counts the cycle on the
-    budget."""
+    the best set it holds, and counts itself cut. In a round an undo needs the move to have been
+    worth less than ``min_gain``, and a swap must beat the set the round started from (the user's
+    ruling of 2026-11-12, #364): an undo never lowers the bar a swap is judged on. Before that
+    ruling a round could undo a move, take a swap that beat the undone set but not the start, and
+    the next round swap back (258901, 2026-11-11). An improve round that would come back to a set
+    the loop has stood on is still a cycle, as a backstop: the search stops on the best set of
+    that cycle (:func:`cycle_best`) and counts the cycle on the budget."""
     p = ev.problem
     budget = _BUDGET.get()
     if budget is not None:
@@ -1284,10 +1286,16 @@ def search(
                 if not admitted(p, trial, allowed):
                     continue
                 v = ev.value(key, trial)
-                # Undoing a move needs it to have been worth less than min_gain.
-                bar = best_v - (min_gain if trial is rest else 0.0)
-                now = moves if best_set is None else best_set
-                tie = trial is not rest and tied_better(v, trial, bar, now)
+                if trial is rest:
+                    # Undoing a move needs it to have been worth less than min_gain.
+                    bar, tie = best_v - min_gain, False
+                else:
+                    # A swap beats the set the round started from (the user's ruling of
+                    # 2026-11-12, #364), never a bar an undo lowered: the better of that set
+                    # and the best swap so far.
+                    swapped = best_set is not None and best_v >= current
+                    bar, now = (best_v, best_set) if swapped else (current, moves)
+                    tie = tied_better(v, trial, bar, now)
                 if v > bar + EPS or tie:
                     best_v, best_set = v, trial
         if best_set is None:

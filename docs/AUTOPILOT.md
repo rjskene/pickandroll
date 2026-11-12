@@ -1166,7 +1166,8 @@ guard). A round undid a move worth less than `min_gain`, then took a swap that b
 but not the one the round started from, and the next round swapped back. The loop keeps the sets it
 has stood on, keyed as sets (the moves' order never counts), and when a round would come back to one
 of them it stops on the best set of that cycle, on the horizon with the season as the tie-break.
-Wherever the search ends without a cycle its answer is the same. The answer's `search` block says so
+Since the user's ruling of 2026-11-12 a swap must beat the set its round started from, so that round
+takes the undo instead, and the guard stays as a backstop. The answer's `search` block says so
 (`cycle`, and `cycles` for how many), the decision log's `pool` keeps `cut` and `cycles`, and the
 daily's `solve` step names the leagues the budget cut and those stopped on a cycle.
 
