@@ -294,6 +294,9 @@ def moves_entry(built: Built, payload: Mapping[str, Any], at: datetime) -> dict[
             "size": search.get("pool"),
             "candidates": len(payload.get("candidates") or {}),
             "min_gain": search.get("min_gain"),
+            # Whether the budget cut a search (#306) or one stopped on a cycle (#364).
+            "cut": search.get("cut"),
+            "cycles": search.get("cycles"),
         },
         "sets": sets,
     }

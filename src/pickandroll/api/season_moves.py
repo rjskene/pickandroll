@@ -993,7 +993,9 @@ def moves_payload(built: Built, budget: mv.Budget | None = None) -> dict[str, An
     the held players whose cleared status blocks every add and the room a no-drop add has; the
     keep rule and the IL advice; the streaming plan and the week plans; the solve's seconds.
     Under ``budget`` (#306) every search keeps to it, and ``search`` says whether it ran out
-    (``cut``), how many searches finished of those begun, and ``note`` when it ran out."""
+    (``cut``), how many searches finished of those begun, and ``note`` when it ran out; ``cycle``
+    whether a search's improve loop came round to a set it had stood on and stopped there
+    (#364), ``cycles`` how many did."""
     with mv.budgeted(budget):
         out = _payload(built)
     if budget is not None:
@@ -1004,6 +1006,8 @@ def moves_payload(built: Built, budget: mv.Budget | None = None) -> dict[str, An
             "cut": budget.spent,
             "searches": planned,
             "finished": finished,
+            "cycle": budget.cycles > 0,
+            "cycles": budget.cycles,
             "note": f"searched {finished} of {planned} within the budget"
             f" ({budget.seconds:g} s): the best sets found by then"
             if budget.spent and budget.seconds is not None

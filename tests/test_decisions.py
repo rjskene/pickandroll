@@ -394,6 +394,9 @@ def test_each_solve_of_the_moves_route_appends_an_entry_to_its_days_log(client):
         "size": m["search"]["pool"],
         "candidates": len(m["candidates"]),
         "min_gain": m["search"]["min_gain"],
+        # Whether the budget cut a search (#306) or one stopped on a cycle (#364).
+        "cut": m["search"]["cut"],
+        "cycles": m["search"]["cycles"],
     }
     # Each horizon's recommended set: its moves, the held slots, the comebacks, the gains.
     assert [s["key"] for s in first["sets"]] == ["week", "three"]
