@@ -1160,6 +1160,16 @@ route sees its client disconnect) stops at its next trial and is neither kept no
 page's look never waits on a solve: with no answer of today kept it answers `solving`, and the
 Moves card asks again every 3 s for up to 120 s.
 
+A search's improve loop never goes round (#364, item 3). On 2026-11-11 21:00 one search of 258901
+went round two sets until the budget ran out (1 of 11 searches finished, against 1.5 s with the
+guard). A round undid a move worth less than `min_gain`, then took a swap that beat the undone set
+but not the one the round started from, and the next round swapped back. The loop keeps the sets it
+has stood on, keyed as sets (the moves' order never counts), and when a round would come back to one
+of them it stops on the best set of that cycle, on the horizon with the season as the tie-break.
+Wherever the search ends without a cycle its answer is the same. The answer's `search` block says so
+(`cycle`, and `cycles` for how many), the decision log's `pool` keeps `cut` and `cycles`, and the
+daily's `solve` step names the leagues the budget cut and those stopped on a cycle.
+
 
 ## 6. The hill-climb
 
