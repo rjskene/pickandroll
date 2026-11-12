@@ -75,7 +75,14 @@ Limits:
 - Reliability fixes only: making a run do what it was meant to do. These still need the user's ruling first:
   - a change to what the model recommends or how it scores (the objective, the rules, thresholds, knobs);
   - a new rule of the ad-hoc kind the user rejected.
-- `ops/vm/update.sh` (the deploy) still runs only on the user's word.
+- Deploy without asking too (user, 2026-11-12). After the merge, fantasyMASTER runs `ops/vm/update.sh` on the
+  droplet. It deploys all of main.
+  - Never while a routine unit is active (`systemctl --user list-units 'pickandroll-*' --state=active,activating`).
+  - Never inside these quiet windows (CT): 04:45-05:50, 09:10-09:25, 14:50-15:15, a pretip slate's run,
+    21:00-21:30, 22:35-23:00.
+  - After it: the droplet's HEAD is the merged sha, the API answers 200, and fantasyVM watches the next run of
+    the fixed routine.
+  - A failed deploy, or an API that does not come back, goes to the user at once.
 - The loop never touches:
   - credentials or sign-ins;
   - a browser's cookie or login stores;
