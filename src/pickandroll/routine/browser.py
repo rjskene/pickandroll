@@ -5,6 +5,7 @@ Desktop routines did when Chrome was away."""
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 from urllib.parse import urlsplit
@@ -13,6 +14,24 @@ YAHOO_HOST = "basketball.fantasysports.yahoo.com"
 BBM_HOST = "basketballmonster.com"
 #: Never opened by a routine: a draft room runs in the user's own Chrome.
 DRAFT_CLIENT = "draftclient"
+
+#: What a site's sign-in check found (#364): only ``SIGNED_OUT`` is the user's re-sign-in; a
+#: check page that did not load (a load that raised, a server error, a rate limit) is not.
+SIGNED_IN = "signed in"
+SIGNED_OUT = "signed out"
+NOT_LOADED = "did not load"
+
+
+@dataclass(frozen=True)
+class SignCheck:
+    """A site's sign-in check: its state, why when not signed in, and the tries it took."""
+
+    state: str
+    reason: str = ""
+    tries: int = 1
+
+    def record(self) -> dict[str, object]:
+        return {"state": self.state, "reason": self.reason, "tries": self.tries}
 
 
 class Browser(Protocol):
@@ -26,6 +45,11 @@ class Browser(Protocol):
 
     def signed_in(self, site: str) -> bool:
         """``site`` is ``"bbm"`` or ``"yahoo"``; opens that site's check page and nothing else."""
+        ...
+
+    def sign_check(self, site: str) -> SignCheck:
+        """The check behind :meth:`signed_in`: signed in, signed out, or the page did not load
+        (tried again, and never kept for the run, so the next step checks once more)."""
         ...
 
     def export(self, kind: str) -> Path:

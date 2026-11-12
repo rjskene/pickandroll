@@ -11,6 +11,7 @@ from pathlib import Path
 import pytest
 
 from pickandroll.routine import CENTRAL, Context, Report, Unreachable, run
+from pickandroll.routine.browser import NOT_LOADED, SIGNED_IN, SIGNED_OUT, SignCheck
 from pickandroll.routine.report import MARKER_STEPS, marker
 from pickandroll.routine.routines import WINDOWS
 from pickandroll.routine.steps import (
@@ -416,7 +417,12 @@ class FakeBrowser:
         return True
 
     def signed_in(self, site):
-        return self.signed
+        return self.sign_check(site).state == SIGNED_IN
+
+    def sign_check(self, site):
+        if isinstance(self.signed, SignCheck):
+            return self.signed
+        return SignCheck(SIGNED_IN if self.signed else SIGNED_OUT)
 
     def export(self, kind):
         return None
@@ -549,6 +555,21 @@ def test_a_signed_out_browser_opens_nothing_and_alerts(tmp_path):
         report.find("moves").status == "failed" and "not signed in" in report.find("moves").detail
     )
     assert report.alerts == ["the browser profile is signed out of yahoo"]
+    assert "/autopilot/passes" not in " ".join(api.paths("POST"))
+
+
+def test_a_check_page_that_did_not_load_opens_nothing_and_never_asks_for_a_sign_in(tmp_path):
+    api = FakeAPI(due_answers())
+    check = SignCheck(NOT_LOADED, "HTTP 502 at the check page", 3)
+    ctx = make_ctx(
+        api, Clock("2026-10-29 07:50"), tmp_path, routine="morning", browser=FakeBrowser(check)
+    )
+    report = run("morning", ctx, "http://api")
+    step = report.find("moves")
+    assert step.status == "failed" and "did not load after 3 tries" in step.detail
+    assert "not signed in" not in step.detail and step.data["signin"]["tries"] == 3
+    [alert] = report.alerts
+    assert "did not load" in alert and "signed out" not in alert
     assert "/autopilot/passes" not in " ".join(api.paths("POST"))
 
 
