@@ -171,11 +171,14 @@ def test_the_payload_lists_each_plans_steps_their_waits_the_queue_and_the_second
     assert wp["limits"] == {"plans": 5, "steps": 4, "beam": 8, "exact": 8}
     assert wp["seconds"] >= 0 and out["search"]["seconds"] >= wp["seconds"]
     for w in wp["plans"]:
-        assert [s["after"] for s in w["steps"]] == [list(range(i)) for i in range(len(w["steps"]))]
+        # Each step waits on earlier steps only, those it does not stand without (#364).
+        assert all(set(s["after"]) <= set(range(i)) for i, s in enumerate(w["steps"]))
         assert sum(s["gain"]["week"] for s in w["steps"]) == pytest.approx(
             w["total"]["week"], abs=1e-2
         )
         assert all(s["basis"] in ("open", "held", "drop", "churn") for s in w["steps"])
+    # A later step with its own room and worth waits on nothing: placed the night it is due.
+    assert any(not s["after"] for w in wp["plans"] for s in w["steps"][1:])
     churns = [s for w in wp["plans"] for s in w["steps"] if s["basis"] == "churn"]
     assert churns and all(s["held_drop"]["player"] == 7 for s in churns)
     # The stream's chains join the pool: a plan with a churn and a step dated after the first day.
