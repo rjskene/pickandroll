@@ -53,6 +53,38 @@ as such, with the evidence.
   drafter's wait, the solve budgets and every gate.
 - Scratch experiments never go in `src/`. Reference material is ported, not imported; delete it once ported.
 
+## Self-repair loop (user, 2026-11-12)
+
+When a droplet routine fails, the sessions find the cause, fix it and merge the fix without asking the user first.
+A failure means a failed step, an alert, a non-zero exit, a watchdog failure, or a step that did not do its job
+(a claim that should have landed, a solve cut by its budget).
+
+1. fantasyVM reports the failure to fantasyMASTER. It includes the run report's failed steps, their detail and
+   the journal lines. It stays read only.
+2. fantasyMASTER finds the cause from the reports, the journal and the code.
+   - An outside failure (Yahoo 5xx, a rate limit) still gets a fix when the code handled it badly: no retry, a
+     wrong verdict, or a reason it did not log.
+3. When the cause is in the code, fantasyMASTER:
+   - files the issue (a failure fix needs no yes);
+   - briefs fantasyEMISSARY;
+   - reviews the PR and merges it, pinned to its head sha, once its gates are green;
+   - posts the main-moved note.
+4. fantasyMASTER then tells the user the failure, the cause, the fix and the PR.
+
+Limits:
+- Reliability fixes only: making a run do what it was meant to do. These still need the user's ruling first:
+  - a change to what the model recommends or how it scores (the objective, the rules, thresholds, knobs);
+  - a new rule of the ad-hoc kind the user rejected.
+- `ops/vm/update.sh` (the deploy) still runs only on the user's word.
+- The loop never touches:
+  - credentials or sign-ins;
+  - a browser's cookie or login stores;
+  - the moves and lineup live switches or the executor knobs;
+  - clicks on Yahoo.
+  A real sign-out is the user's step.
+- One fix PR per failure.
+- If the same failure comes back after its fix is deployed, stop and ask the user instead of layering fixes.
+
 ## Workflow
 
 - Branch per issue off `main`: `feat/yahoo-sync-<issue>`, in a git worktree under `.claude/worktrees/<name>` inside this
