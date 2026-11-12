@@ -399,8 +399,10 @@ def _pretip_sets_lineups(ctx: Context) -> str | None:
         return None
     if not (body.get("knobs") or {}).get("enabled") or not body.get("slates"):
         return None
+    # Each slate by its start, the tip beside it (#364): the start is when the pass runs.
     tips = ", ".join(
-        f"{s.get('slate')} {str(s.get('tip'))[11:16]}"
+        f"{s.get('slate')} {str(s.get('start_at') or s.get('tip'))[11:16]}"
+        + (f" for the {str(s.get('tip'))[11:16]} tip" if s.get("start_at") else "")
         for s in body["slates"]
         if isinstance(s, dict)
     )
@@ -437,7 +439,8 @@ def pretip(ctx: Context, api: str) -> None:
     started = ctx.now()
     ctx.report.ok(
         "pretip_due",
-        f"{slate} slate, tip {str(due['tip'])[11:16]}"
+        f"{slate} slate, started {str(due.get('start_at') or due['tip'])[11:16]}"
+        f" for the {str(due['tip'])[11:16]} tip"
         + (", the push alone (the solve is in)" if due.get("push_only") else ""),
         slate=slate,
         tip=due["tip"],

@@ -209,6 +209,10 @@
     if (!record || record.day !== day) return null;
     if (rosterDiffers(record.roster, row.roster)) return null;
     if (lineupSince(lineup, record)) return null;
+    // A move today (an IL move, a roster change) the press already ran after (#364): the roster
+    // is the one it ran on, not one that never changed.
+    const moved = (row.reasons || []).some((r) => r === "il_moved" || r === "roster_changed");
+    if (moved) return "Start Active ran in this league today after today's move; the roster is the one it ran on and no lineup was set since";
     return "Start Active ran in this league today; the roster has not changed and no lineup was set since";
   }
 
