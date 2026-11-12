@@ -1279,7 +1279,7 @@ def week_plans_payload(
 
     seconds = time.perf_counter() - began
     return {
-        "plans": [{**_week_plan(built, w, weight), **judged(w.moves)} for w in plans],
+        "plans": [{**_week_plan(built, w, weight, ev), **judged(w.moves)} for w in plans],
         "queue": None if chosen is None else pl.place(plans, chosen),
         "judged": {
             "weight": knob,
@@ -1298,7 +1298,11 @@ def week_plans_payload(
     }
 
 
-def _week_plan(built: Built, w: pl.WeekPlan, weight: float = 0.0) -> dict[str, Any]:
+def _week_plan(
+    built: Built, w: pl.WeekPlan, weight: float = 0.0, ev: mv.Evaluator | None = None
+) -> dict[str, Any]:
+    """A week plan's answer: its steps, each with the earlier steps it waits on (#364, item 4:
+    ``plans.waits_on``, every earlier step when no ``ev`` is given), its returns and its spots."""
     p = built.problem
     held = held_by_add(p, list(w.moves))
     steps = []
@@ -1313,7 +1317,9 @@ def _week_plan(built: Built, w: pl.WeekPlan, weight: float = 0.0) -> dict[str, A
                 "gain": {k: _r(v) for k, v in s.gain.items()},
                 "score": _r(pl.step_score(s, weight)),
                 "ros": ros_move(built, s.move),
-                "after": list(range(i)),
+                "after": list(range(i))
+                if ev is None
+                else pl.waits_on(ev, w.steps, i, weight, MIN_GAIN),
             }
         )
     backs = [

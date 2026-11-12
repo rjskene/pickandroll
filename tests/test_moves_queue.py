@@ -939,14 +939,19 @@ def test_the_due_route_holds_a_later_step_and_the_pass_record_says_what_it_waits
     d = client.get(url).json()
     assert [e["id"] for e in d["entries"]] == [on[0]["id"]]
     [h] = d["held"]
-    assert (h["id"], h["waits"]["text"], h["waits"]["add"]) == (
+    # Both steps are claims: the second clears later than its plan's day (#364).
+    assert (h["id"], h["waits"]["text"], h["waits"]["add"], h["waits"]["slips"]) == (
         on[1]["id"],
-        "waits for step 1 to land",
+        "waits for step 1 to land: placed after its 4 am run, it clears later than 2026-10-21",
         on[0]["add"],
+        True,
     )
     # The Queue screen reads the same line on the entry.
     by = {e["id"]: e for e in client.get("/autopilot/queue").json()["entries"]}
-    assert by[on[1]["id"]]["waits"]["text"] == "waits for step 1 to land"
+    assert (
+        by[on[1]["id"]]["waits"]["text"]
+        == "waits for step 1 to land: placed after its 4 am run, it clears later than 2026-10-21"
+    )
     assert by[on[0]["id"]]["waits"] is None
     card = {e["id"]: e for e in client.get(f"/seasons/{LEAGUE}/autopilot/moves").json()["entries"]}
     assert card[on[1]["id"]]["waits"] == by[on[1]["id"]]["waits"]

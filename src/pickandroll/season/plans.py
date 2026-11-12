@@ -340,6 +340,34 @@ def step_score(step: Step, weight: float) -> float:
     return step.gain["week"] + weight * step.gain.get("three", 0.0)
 
 
+def waits_on(
+    ev: mv.Evaluator, steps: Sequence[Step], j: int, weight: float, min_gain: float
+) -> list[int]:
+    """The earlier steps of a plan step ``j`` waits on before it is placed (#364, item 4): each
+    step ``i`` before it that ``j`` does not stand without. ``j`` stands without ``i`` when it
+    keeps its room and its worth with ``i`` not made: it does not drop ``i``'s add, the steps up
+    to ``j`` less ``i`` still fit (:func:`moves.feasible`), and ``j`` adds at least ``min_gain``
+    to the steps before it less ``i``, on the plan's score (:func:`step_score`'s weights). The
+    plan chose ``j`` given ``i``: a step that waits on nothing goes in the night it is due even
+    if ``i`` is lost at 4 am."""
+    p = ev.problem
+    move = steps[j].move
+    out = []
+    for i in range(j):
+        earlier = steps[i].move
+        if move.drop is not None and move.drop == earlier.add:
+            out.append(i)
+            continue
+        before = [s.move for k, s in enumerate(steps[:j]) if k != i]
+        if not mv.feasible(p, [*before, move]):
+            out.append(i)
+            continue
+        gain = {h: ev.value(h, [*before, move]) - ev.value(h, before) for h in p.horizons}
+        if step_score(Step(move, steps[j].day, gain), weight) < min_gain:
+            out.append(i)
+    return out
+
+
 def gate(
     ev: mv.Evaluator, moves: Sequence[mv.Move], weight: float, playoff: bool = False
 ) -> float | None:

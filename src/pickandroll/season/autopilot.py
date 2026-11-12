@@ -560,7 +560,10 @@ def drop_outcome(e: Mapping[str, Any]) -> str | None:
 def waits(e: Mapping[str, Any], by_id: Mapping[str, Mapping[str, Any]]) -> dict[str, Any] | None:
     """What a week plan's step waits for (#221 part 2, the ruling's third condition): the first
     of its earlier steps (``after``) not landed, with its step and add, and the line the Queue
-    screen and the pass record read; None when it waits for nothing. A step whose earlier step
+    screen and the pass record read (``slips`` when both are claims: the later one clears later
+    than its plan's day, #364); None when it waits for nothing. A step waits only on the steps
+    it does not stand without (``plans.waits_on``, #364 item 4; every earlier step in an entry
+    logged before). A step whose earlier step
     failed, was lost or was struck waits on it all day: never executed out of order. A churn's
     add waits on its held drop (part 3), ``add`` then naming H; a drop that failed or was not
     confirmed holds it all day."""
@@ -574,12 +577,15 @@ def waits(e: Mapping[str, Any], by_id: Mapping[str, Mapping[str, Any]]) -> dict[
         if o is not None and landed(o):
             continue
         step = ((o or {}).get("plan") or {}).get("step")
-        return {
-            "entry": k,
-            "step": step,
-            "add": (o or {}).get("add"),
-            "text": f"waits for step {step if step is not None else '?'} to land",
-        }
+        text = f"waits for step {step if step is not None else '?'} to land"
+        # A claim behind a claim (#364, item 4): it is placed after the earlier one's waiver run
+        # at the soonest, so it clears later than the day its plan gave it.
+        slips = e.get("availability") == "W" and (o or {}).get("availability") == "W"
+        if slips:
+            text += (
+                f": placed after its 4 am run, it clears later than {e.get('from') or 'planned'}"
+            )
+        return {"entry": k, "step": step, "add": (o or {}).get("add"), "text": text, "slips": slips}
     return None
 
 

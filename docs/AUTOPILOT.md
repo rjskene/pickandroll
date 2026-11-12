@@ -303,7 +303,13 @@ page, from PR 2:
   steps instead of the three weeks' set, in the plan's order,
   each entry with the set `week_plan`, judged on the week, the three weeks (`three`) and the
   season beside it, the plan (`plan`: its id, day, step, steps and matchup odds, its and the
-  set's) and the ids of the steps before it (`after`). A step's bid scales on its `score`, what
+  set's) and the ids of the steps before it that it waits on (`after`). A step waits only on the
+  earlier steps it does not stand without (#364, item 4; `plans.waits_on`). It stands without an
+  earlier step when it keeps its room (it does not drop that step's add, and the steps up to it
+  still fit with that step left out) and its worth (it adds at least `min_gain` on the plan's
+  score with that step not made). So a claim with its own drop behind a no-drop claim goes in the
+  night it is due, not after the earlier claim's 4 am run. An entry logged before keeps waiting on
+  every earlier step. A step's bid scales on its `score`, what
   it adds to the plan's score, so a step that costs the three weeks is not bid at $1; in a
   playoff week the score is the odds, other units than the typical gain, and it scales on the
   week gain. The season guard and the keep rule stand: a great player with one game this week is
@@ -319,7 +325,8 @@ page, from PR 2:
   placed", and the steps after it are held. The due
   route holds a queued step until every step before it has landed (added, a claim won, or in a
   dry run a free agent it would claim): its `held` list gives each with `waits` ("waits for step N
-  to land", that step's entry and add), the Queue route's entries carry the same `waits`, and a
+  to land", that step's entry and add, and `slips` when both are claims: the line then adds
+  "placed after its 4 am run, it clears later than <day>"), the Queue route's entries carry the same `waits`, and a
   moves pass's done writes the steps it left held in the pass record (`held`, by entry). A step
   whose earlier step failed or was lost is held all day, never executed out of order, and the
   day's cap counts only what executed. A churn step is queued like any other: its add also waits
