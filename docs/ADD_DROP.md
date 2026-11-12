@@ -234,6 +234,14 @@ its drop, so the searches, the streaming plan's spots line and the comebacks all
 the claims leave. A claim the read shows settled (its add on my roster, its drop off it, or its
 add no longer on waivers) is not pending. The lineup and the views keep the roster as read.
 
+A no-drop claim beyond the open spots makes its room through a held-slot move (#364): the fold
+makes that move in the problem (`moves.owe_held`, in `held_moves` order), so the player is held
+there and the IL spot taken. One IL spot therefore backs one add: a later no-drop add, a new
+entry or another pending claim, finds no room through it (251146 and 258332, 2026-11-11: a
+second claim "fit" on the IL move the first one needed). When fewer players can move than the
+roster is over, it stays over, and the re-judge cancels the claim with no room. The moves pass
+makes the move on Yahoo (AUTOPILOT §2).
+
 ### Held slots (#107, #124)
 
 Yahoo's rule for basketball (help article SLN6863, also served as SLN28136, read 2026-10-22):

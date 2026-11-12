@@ -151,6 +151,7 @@ def test_two_no_drop_claims_for_one_spot_keep_the_better_and_cancel_the_other():
         "season_costly": None,
         "comeback_drops": {},
         "no_room": [10],
+        "il_need": None,
     }
     verdict = qa.rejudge_verdict(11, [], None, None, qa.Floor(-100.0, None, 0), None, {}, [10])
     assert verdict == (qa.CANCEL, "no open spot left for it: 10 takes the room")

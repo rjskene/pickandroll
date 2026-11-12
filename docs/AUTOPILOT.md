@@ -573,6 +573,28 @@ page, from PR 2:
     `three`, `drops` of `{player, drop}`), kept in memory and read back from today's decision log
     after a restart. The comeback's steps take it while the read still shows him cleared and the
     drop active; otherwise the build's own choice.
+  - **The IL room a placed claim needs (#364, items 1 and 2).** 2026-11-11: two no-drop claims
+    had been placed for one open spot in 251146 and in 258332 (before #362). At the 21:00 build
+    the second "fit" because `moves.feasible` counted an Out player's IL move as room, and no
+    pass made that move, so the 258332 claim lapsed at 4 am. Now:
+    - the fold makes the held-slot move a no-drop claim beyond the open spots needs
+      (`moves.owe_held`), so that IL spot backs that claim alone, in the solve, the week plans
+      and the re-judge;
+    - the re-judge admits the no-drop claims by gain as before, the first on the open spots and
+      the rest on the held-slot moves, and writes the move each one needs on its entry as
+      `il_need` (`player`, `slot`, `at`), apart from its verdict (a claim that fits still gets no
+      verdict); the next build takes it off once the room is open, so a player no longer Out
+      gives no move and the claim is judged on the room it has;
+    - the moves due's `il_first` lists those moves first (`placed` true, any open day's claim,
+      never one judged cancel or already moved or failed that day, each player once, never
+      stopped by the day's cap), and the moves passes open them on the team page with the IL
+      fragment, no add page after; the 22:40 pass does so in its own `placed_il` step before
+      its cancels;
+    - the IL log takes a placed claim's move (`il_need`) from any open day and writes `il` on
+      that entry in its own day's file; a move that lands leaves the claim placed; one that
+      fails makes its cancel due at once ("its IL move failed: no spot left for it"), so the
+      22:40 pass cancels it in the same pass, before the 4 am run.
+    The cancel step says "no claim to cancel" when it has nothing to do (was "nothing to open").
   - **The read of a pending claim's page (#345 step 0, extension 0.11.10).** Before the executor
     may cancel a claim, the evening pass reads one claim's page once, clicking nothing.
     `GET /autopilot/claim-page/due` is due until a read is on file and never after. It names the
