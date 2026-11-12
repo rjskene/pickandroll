@@ -156,3 +156,63 @@ def test_under_the_ruling_no_seed_goes_round():
         budget = mv.Budget.start(None)
         search(Seeded(p, seed), budget)
         assert budget.cycles == 0, seed
+
+
+# --------------------------------------------------------------------------- one move a round
+P, R, Q, S = mv.Move(10, 1), mv.Move(11, 2), mv.Move(12, 3), mv.Move(13, 1)
+
+
+class Table:
+    """Values by the set of adds; the moves of ``TABLE`` alone are allowed."""
+
+    def __init__(self, problem, table):
+        self.problem, self.table, self.base = problem, table, {"week": 0.0}
+
+    def value(self, key, moves):
+        return self.table.get(frozenset(m.add for m in moves), 0.0)
+
+    def gain(self, key, moves):
+        return self.value(key, moves)
+
+
+#: Greedy takes P, then R, then Q (each gaining more than min_gain): a start of 0.10. Undoing P
+#: loses 0.008, undoing Q 0.015 and undoing R 0.03.
+TABLE = {
+    frozenset({10}): 0.05,
+    frozenset({11}): 0.04,
+    frozenset({12}): 0.03,
+    frozenset({10, 11}): 0.085,
+    frozenset({10, 12}): 0.07,
+    frozenset({11, 12}): 0.092,
+    frozenset({10, 11, 12}): 0.10,
+}
+
+
+def only(*moves):
+    allowed = set(moves)
+    return lambda trial: all(m in allowed for m in trial)
+
+
+def test_a_round_takes_its_best_undo_never_one_a_worse_undo_chained_below():
+    ev = Table(four_candidates(), TABLE)
+    budget = mv.Budget.start(None)
+    with mv.budgeted(budget):
+        found = mv.search(ev, "week", [10, 11, 12], min_gain=0.01, allowed=only(P, R, Q))
+    # Undoing P (0.092) is taken; undoing Q (0.085) loses more than min_gain and never replaces
+    # it, though it clears min_gain below the undo already held.
+    assert as_set(found) == [(11, 2), (12, 3)]
+    assert budget.cycles == 0
+
+
+def test_an_undo_within_min_gain_of_a_better_swap_wins():
+    # Swapping P for S beats the start by 0.001; undoing P loses 0.009 to that swap: fewer moves
+    # win within min_gain.
+    ev = Table(four_candidates(), {**TABLE, frozenset({13, 11, 12}): 0.101})
+    with mv.budgeted(mv.Budget.start(None)):
+        found = mv.search(ev, "week", [10, 11, 12, 13], min_gain=0.01, allowed=only(P, R, Q, S))
+    assert as_set(found) == [(11, 2), (12, 3)]
+    # A swap more than min_gain better than the undo is taken instead.
+    ev = Table(four_candidates(), {**TABLE, frozenset({13, 11, 12}): 0.105})
+    with mv.budgeted(mv.Budget.start(None)):
+        found = mv.search(ev, "week", [10, 11, 12, 13], min_gain=0.01, allowed=only(P, R, Q, S))
+    assert as_set(found) == [(11, 2), (12, 3), (13, 1)]

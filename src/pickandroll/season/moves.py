@@ -1212,9 +1212,11 @@ def search(
     tried must pass ``allowed`` (the season guard) beside :func:`feasible`. Of two sets equal on
     ``key`` the one ``season`` values more is taken (#221: ties go to the season). Under a
     budget (:func:`budgeted`, #306) the search ends when it runs out, between two trials, with
-    the best set it holds, and counts itself cut. In a round an undo needs the move to have been
-    worth less than ``min_gain``, and a swap must beat the set the round started from (the user's
-    ruling of 2026-11-12, #364): an undo never lowers the bar a swap is judged on. Before that
+    the best set it holds, and counts itself cut. Each round keeps its best swap and its best
+    undo apart and then moves once (the user's ruling of 2026-11-12, #364): to the best undo when
+    it loses less than ``min_gain`` to the better of the round's start and its best swap (fewer
+    moves win within ``min_gain``), else to the best swap when it beats the start; so no undo
+    lowers the bar of a swap or of another undo. Before that
     ruling a round could undo a move, take a swap that beat the undone set but not the start, and
     the next round swap back (258901, 2026-11-11). An improve round that would come back to a set
     the loop has stood on is still a cycle, as a backstop: the search stops on the best set of
@@ -1266,7 +1268,10 @@ def search(
     where = {frozenset(moves): 0}
     cycled = False
     while moves and not cut:
-        best_v, best_set = current, None
+        # The round's best swap and best undo, kept apart (the user's ruling of 2026-11-12, #364):
+        # each by its value, ties to the season, so no trial's order lowers another's bar.
+        swap: tuple[float, list[Move]] | None = None
+        undo: tuple[float, list[Move]] | None = None
         for i, move in enumerate(moves):
             if cut:
                 break
@@ -1286,18 +1291,23 @@ def search(
                 if not admitted(p, trial, allowed):
                     continue
                 v = ev.value(key, trial)
-                if trial is rest:
-                    # Undoing a move needs it to have been worth less than min_gain.
-                    bar, tie = best_v - min_gain, False
-                else:
-                    # A swap beats the set the round started from (the user's ruling of
-                    # 2026-11-12, #364), never a bar an undo lowered: the better of that set
-                    # and the best swap so far.
-                    swapped = best_set is not None and best_v >= current
-                    bar, now = (best_v, best_set) if swapped else (current, moves)
-                    tie = tied_better(v, trial, bar, now)
-                if v > bar + EPS or tie:
-                    best_v, best_set = v, trial
+                held = undo if trial is rest else swap
+                if held is None or better(v, trial, held[0], held[1]):
+                    if trial is rest:
+                        undo = (v, trial)
+                    else:
+                        swap = (v, trial)
+        # Fewer moves win within min_gain: the best undo when it loses less than min_gain to
+        # the better of the round's start and its best swap; else the best swap when it beats
+        # the start (or ties it on the season); else the loop ends.
+        top = current if swap is None else max(current, swap[0])
+        best_v, best_set = current, None
+        if undo is not None and undo[0] > top - min_gain + EPS:
+            best_v, best_set = undo
+        elif swap is not None and (
+            swap[0] > current + EPS or tied_better(swap[0], swap[1], current, moves)
+        ):
+            best_v, best_set = swap
         if best_set is None:
             break
         back = where.get(frozenset(best_set))
