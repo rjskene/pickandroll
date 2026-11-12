@@ -92,8 +92,10 @@ test("the page checks, the mode and the same-day rule", () => {
   assert.match(S.sameDayProblem(record, row({ reasons: ["no_run"] }), DAY), /roster has not changed/);
   assert.equal(S.sameDayProblem(record, row({ reasons: ["no_run"], roster: { players: [2001, 2002, 2003, 2005], held: [2004] } }), DAY), null);
   assert.equal(S.sameDayProblem(record, row({ reasons: ["no_run"], roster: { players: ROSTER.players, held: [2003, 2004] } }), DAY), null);
-  assert.match(S.sameDayProblem(record, row({ reasons: ["roster_changed"] }), DAY), /roster has not changed/);
-  assert.match(S.sameDayProblem(record, row({ reasons: ["il_moved"] }), DAY), /roster has not changed/);
+  // A move the press already ran after (#364): the roster is the one it ran on, never "not changed".
+  assert.match(S.sameDayProblem(record, row({ reasons: ["roster_changed"] }), DAY), /after today's move; the roster is the one it ran on/);
+  assert.match(S.sameDayProblem(record, row({ reasons: ["il_moved"] }), DAY), /after today's move; the roster is the one it ran on/);
+  assert.doesNotMatch(S.sameDayProblem(record, row({ reasons: ["il_moved"] }), DAY), /has not changed/);
   assert.equal(S.sameDayProblem(record, row({ reasons: ["roster_changed"], roster: { players: [2001], held: [] } }), DAY), null);
   // An unknown roster never lifts it; the same roster in another order is the same roster.
   assert.match(S.sameDayProblem({ ...record, roster: null }, row({ reasons: ["no_run"] }), DAY), /ran in this league today/);
