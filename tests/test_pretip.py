@@ -338,6 +338,7 @@ def pretip_answers(due=None, pretip=None, solve=200, runs=None):
         "league": "31822",
         "slate": "first",
         "tip": TIP,
+        "start_at": "2026-11-09T17:00:00-06:00",
         "push_only": False,
         "first_moves": None,
         **(due or {}),
@@ -416,6 +417,8 @@ def test_a_due_slate_pulls_reads_solves_pushes_and_logs_done(tmp_path):
     assert logged["outcome"] == "done" and logged["solved_at"] and logged["pushed_at"]
     assert logged["moves"] == [{"add": 1, "drop": 2}]
     assert report.find("day_file").detail == "first slate done"
+    # The slate by its start, the tip beside it (#364).
+    assert report.find("pretip_due").detail == "first slate, started 17:00 for the 18:00 tip"
 
 
 def test_a_sunday_pass_keeps_the_last_this_week_copy(tmp_path):
@@ -735,8 +738,16 @@ def test_the_late_pass_leaves_todays_lineups_to_the_pretip_pass_only_while_it_is
         "due": False,
         "knobs": {**pt.DEFAULTS, "enabled": True},
         "slates": [
-            {"slate": "first", "tip": "2026-11-09T18:00:00-06:00"},
-            {"slate": "late", "tip": "2026-11-09T21:00:00-06:00"},
+            {
+                "slate": "first",
+                "tip": "2026-11-09T18:00:00-06:00",
+                "start_at": "2026-11-09T17:00:00-06:00",
+            },
+            {
+                "slate": "late",
+                "tip": "2026-11-09T21:00:00-06:00",
+                "start_at": "2026-11-09T20:15:00-06:00",
+            },
         ],
     }
     clock = Clock("2026-11-09 15:02")
@@ -745,7 +756,8 @@ def test_the_late_pass_leaves_todays_lineups_to_the_pretip_pass_only_while_it_is
     report = run("late", make_ctx(api, clock, tmp_path, routine="late", browser=browser), "x")
     assert report.find("lineup").status == "skipped"
     assert report.find("lineup").detail == (
-        "the pre-tip pass sets today's lineups (pretip.enabled; slates first 18:00, late 21:00)"
+        "the pre-tip pass sets today's lineups (pretip.enabled;"
+        " slates first 17:00 for the 18:00 tip, late 20:15 for the 21:00 tip)"
     )
     assert not any("lineup/steps" in p for p in api.paths("GET"))
     assert not any("#pickandroll-lineup-late" in u for u, _ in browser.opened)
