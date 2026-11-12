@@ -125,3 +125,21 @@ def test_the_solve_step_names_the_leagues_cut_by_the_budget_or_stopped_on_a_cycl
         f"; cut by the budget: {cut} (1 of 11); stopped on a cycle: {cycled}"
     )
     assert solve.data["cut"] == [f"{cut} (1 of 11)"] and solve.data["cycled"] == [cycled]
+
+
+def test_the_guard_keys_the_searchs_own_moves_with_an_owed_il_move_in_the_problem():
+    """With a placed claim's IL move owed (#364, items 1 and 2), the move sits in the problem,
+    the same for every trial, so the sets the loop stands on hold the search's own moves only:
+    every search ends, on a set that fits, and never drops the player the IL slot holds."""
+    from tests.test_il_room import OUT, il_league
+    from tests.test_pending import claim, folded
+
+    p, players = il_league()
+    q = folded(p, [claim(players, 10)])
+    assert q.il_owed == ((OUT, "IL"),)
+    for seed in range(60):
+        budget = mv.Budget.start(None)
+        with mv.budgeted(budget):
+            found = mv.search(Seeded(q, seed), "week", [11, 12], min_gain=0.01, allowed=drops_only)
+        assert mv.feasible(q, found) and all(m.drop != OUT for m in found)
+        assert budget.searches == 1 and budget.cut == 0
