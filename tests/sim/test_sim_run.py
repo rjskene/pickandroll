@@ -88,12 +88,12 @@ def test_a_replay_world_plays_the_recorded_lines():
     k = setup.pool[0]
     days = [d for d in setup.days if setup.players[k].nba_team in setup.schedule[d]]
     lines = {k: {days[0]: {"pts": 7.0}, days[2]: {"pts": 9.0}}}
-    w = rn.replay_world(setup, lines, {k: {"pts": 8.0}}, 0.0, 0.0, 1, 1, 0)
+    w = rn.replay_world(setup, lines, 1, 1, 0)
     assert w.line(k, days[0]) == {"pts": 7.0}
     assert w.line(k, days[1]) is None  # a game day without a line: he sat out
     assert w.line(k, days[2]) == {"pts": 9.0}
     assert list(w.available(k)[:3]) == [True, False, True]
-    assert w.kind == "replay"
+    assert w.kind == "replay" and w.belief == "causal" and w.truth == {}
 
 
 # --------------------------------------------------------------------------- lockstep and pairing
@@ -351,9 +351,9 @@ def test_a_replay_league_is_drafted_on_the_stand_in_and_keyed_to_each_players_ga
         }
         for k in players
     }
-    lines[40] = {first: {"pts": 1.0}}  # too few games for the pool
-    truth = rn.realized_rates(lines)
-    assert truth[1]["pts"] == 11.0 and set(truth[1]) <= set(wk.STATS)
+    lines[40] = {first: {"pts": 1.0}}  # too few games for a stand-in to project
+    truth = rn.realized_rates(lines, min_games=rn.STANDIN_MIN_GAMES)
+    assert truth[1]["pts"] == 11.0 and set(truth[1]) <= set(wk.STATS) and 40 not in truth
     setup = rn.replay_setup(
         2025,
         lines,
@@ -366,10 +366,11 @@ def test_a_replay_league_is_drafted_on_the_stand_in_and_keyed_to_each_players_ga
         playoff_weeks=1,
         playoff_teams=2,
     )
-    assert setup.teams == (1, 2, 3, 4) and len(setup.players) == 39
-    assert 40 not in setup.players
+    # Everyone with a scheduled game is in the league; nobody projected 40, so he is on the wire.
+    assert setup.teams == (1, 2, 3, 4) and len(setup.players) == 40
+    assert 40 in setup.players and 40 not in setup.projection and 40 in setup.pool
     assert all(len(r) == 4 for r in setup.rosters.values())
-    assert len(setup.pool) == 39 - 16
+    assert len(setup.pool) == 40 - 16
     assert setup.spec is not None and setup.spec.playoff_weeks == (8,) and setup.spec.byes == 0
     # Every player is his own team: his game days are the days he has a line.
     assert setup.players[1].nba_team == "p1"
@@ -392,10 +393,10 @@ def test_a_replay_league_is_drafted_on_the_stand_in_and_keyed_to_each_players_ga
         first + timedelta(60) in with_sched.schedule
         and "p1" in with_sched.schedule[first + timedelta(60)]
     )
-    noised = rn.oracle_standin(truth, 0.2, 1, 0)
+    noised = rn.oracle_standin(lines, 0.2, 1, 0)
     assert set(noised) == set(truth) and noised[1]["pts"] != truth[1]["pts"]
     assert all(v["fgm"] <= v["fga"] for v in noised.values() if "fga" in v)
-    assert rn.oracle_standin(truth, 0.2, 1, 0) == noised
+    assert rn.oracle_standin(lines, 0.2, 1, 0) == noised
 
 
 def test_simulate_runs_a_replay_league_end_to_end():
@@ -436,7 +437,7 @@ def test_simulate_runs_a_replay_league_end_to_end():
         playoff_weeks=1,
         playoff_teams=2,
     )
-    w = rn.replay_world(setup, lines, truth, 0.1, 0.0, 1, 1, 0)
+    w = rn.replay_world(setup, lines, 1, 1, 0)
     arms = {"A": arm("A", "surrogate", "static"), "B": arm("B", "ranking", "static")}
     out = rn.room(setup, w, arms, ["A", "B"], 0)
     assert set(out["by_arm"]) == {"A", "B"} and out["bracket_unread"] is None

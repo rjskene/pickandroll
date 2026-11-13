@@ -1,15 +1,18 @@
 """The runner (#172, PR 2b): one world a path, arms in lockstep, the paired difference.
 
 A :class:`World` is one path of one league: the truth (the projection with its persistent error),
-each player's game days, availability and lines, the shared beliefs refreshed weekly and what the
-policy has heard of each absence. Every draw comes from ``world.rng(seed, path, player, game,
-stream)`` and never from an arm, so a roster change in one arm reshuffles nothing for any player:
-common random numbers. :func:`forward_world` builds it from a setup and the frozen fit's figures;
-:func:`replay_world` from a season's recorded lines, which are then the truth (no game noise, no
-hazard: the logs happened).
+each player's game days, availability and lines, the shared beliefs and what the policy has heard
+of each absence. Every draw comes from ``world.rng(seed, path, player, game, stream)`` and never
+from an arm, so a roster change in one arm reshuffles nothing for any player: common random
+numbers. :func:`forward_world` builds it from a setup and the frozen fit's figures, its beliefs
+refreshed weekly toward the drawn truth; :func:`replay_world` from a season's recorded lines,
+which are then the truth (no game noise, no hazard: the logs happened), its seats believing only
+the games already played (``sim.belief``) in a league drawn from what was known before the
+season (:func:`replay_setup`).
 
 :func:`simulate` advances several variants of one league through the same world day by day: the
-moves decided yesterday land, each seat decides, the day is played and scored. Variants whose
+moves decided yesterday land, each seat decides on the day's beliefs, the lineup is set, the day
+is played and scored; a hook is handed each day's :class:`DayRecord`. Variants whose
 states agree share one solve (the lockstep of the design note); from the first divergence each
 solves alone. :func:`paired` runs arm A and arm B for one seat and returns the paired difference
 of the season's outcomes, B less A; :func:`room` runs twelve seats under named arms rotated across
@@ -34,9 +37,10 @@ import numpy as np
 from . import league as lg
 from . import opponents as op
 from . import policy, world
+from .belief import CausalBelief, consistent, newcomer_prior
 from .engine import KNOBS, mv, wk
-from .fit import Component, Hazard
-from .state import Member, Setup, initial, round_robin, snake_draft, weeks_from
+from .fit import W_DEFAULT, Component, Hazard
+from .state import Member, Setup, SimState, initial, round_robin, snake_draft, weeks_from
 
 Rates = Mapping[str, float]
 #: The shrinks a comparison runs at (the design note's axis).
@@ -169,8 +173,18 @@ def check_fit(spec: Mapping[str, Any], sha: str) -> None:
 
 
 # --------------------------------------------------------------------------- the world
+#: How a world's seats believe: the drawn world's weekly refresh toward its truth, a replay's
+#: causal belief from the games already played (``sim.belief``), or the projection all season.
+BELIEFS = ("refresh", "causal", "fixed")
+
+
 class World:
-    """One path of one league: truth, lines, availability, beliefs and news."""
+    """One path of one league: truth, lines, availability, beliefs and news.
+
+    ``belief`` is one of :data:`BELIEFS`: ``refresh`` moves the projection toward ``truth`` each
+    week at ``kappa`` with noise ``sigma_eta``; ``causal`` reads ``causal`` (a
+    :class:`belief.CausalBelief`) on each day; ``fixed`` is the projection all season. The told
+    return date's spread is ``news_sd`` days."""
 
     def __init__(
         self,
@@ -181,11 +195,18 @@ class World:
         game_days: Mapping[int, Sequence[date]],
         available: Callable[[int], np.ndarray],
         line: Callable[[int, int], Mapping[str, float] | None],
-        kappa: float,
-        sigma_eta: float,
         lag: int,
         kind: str,
+        belief: str = "refresh",
+        kappa: float = 0.0,
+        sigma_eta: float = 0.0,
+        causal: CausalBelief | None = None,
+        news_sd: float = world.NEWS_SD_DAYS,
     ) -> None:
+        if belief not in BELIEFS:
+            raise ValueError(f"belief {belief!r}: one of {BELIEFS}")
+        if belief == "causal" and causal is None:
+            raise ValueError("a causal belief needs its CausalBelief")
         self.setup = setup
         self.seed, self.path = seed, path
         self.truth = truth
@@ -195,11 +216,15 @@ class World:
         self._line = line
         self.kappa, self.sigma_eta, self.lag = kappa, sigma_eta, lag
         self.kind = kind
+        self.belief = belief
+        self.causal = causal
+        self.news_sd = float(news_sd)
         self._avail: dict[int, np.ndarray] = {}
         self._absences: dict[int, list[world.Absence]] = {}
         self._lines: dict[tuple[int, date], Mapping[str, float] | None] = {}
         self._beliefs: dict[int, Mapping[int, Rates]] = {0: dict(setup.projection)}
         self._status: dict[date, tuple[dict[int, str | None], dict[int, date]]] = {}
+        self._weeks: dict[date, int] | None = None
 
     def available(self, player: int) -> np.ndarray:
         if player not in self._avail:
@@ -234,13 +259,39 @@ class World:
         return self._lines[key]
 
     def beliefs(self, week: int) -> Mapping[int, Rates]:
-        """The shared beliefs after ``week`` weekly refreshes (0: the projection)."""
+        """The shared beliefs after ``week`` weekly refreshes (0: the projection); the projection
+        itself for a ``fixed`` world. A ``causal`` belief is read by day (:meth:`beliefs_on`)."""
+        if self.belief == "causal":
+            raise ValueError("a causal belief is read by day: beliefs_on")
+        if self.belief == "fixed":
+            return self._beliefs[0]
         if week not in self._beliefs:
             prev = self.beliefs(week - 1)
             self._beliefs[week] = world.refresh(
                 prev, self.truth, self.kappa, self.sigma_eta, self.seed, self.path, week
             )
         return self._beliefs[week]
+
+    def week_index(self, day: date) -> int:
+        """The weekly refreshes behind ``day``: one for every Monday after the first simulated
+        day, counted over the days a week holds, as the day loop counts them."""
+        if self._weeks is None:
+            index, out = 0, {}
+            for d in self.setup.days:
+                if self.setup.week_of(d) is None:
+                    continue
+                if d.weekday() == 0 and d != self.setup.start:
+                    index += 1
+                out[d] = index
+            self._weeks = out
+        return self._weeks.get(day, 0)
+
+    def beliefs_on(self, day: date) -> Mapping[int, Rates]:
+        """The shared beliefs the seats decide on, on ``day``."""
+        if self.belief == "causal":
+            assert self.causal is not None
+            return self.causal.on(day)
+        return self.beliefs(self.week_index(day))
 
     def status_on(self, day: date) -> tuple[dict[int, str | None], dict[int, date]]:
         """What the policy has heard by ``day``: ``O`` with the return date it was told for an
@@ -274,7 +325,7 @@ class World:
                     continue
                 last = days[a.end] if a.end < len(days) else days[-1]
                 g = world.rng(self.seed, self.path, k, a.start, world.STREAMS["news"])
-                noise = round(float(g.standard_normal() * world.NEWS_SD_DAYS))
+                noise = round(float(g.standard_normal() * self.news_sd))
                 told = max(heard, last + timedelta(1 + noise))
                 if day <= told:
                     status[k] = "O"
@@ -307,19 +358,6 @@ def _out_through(setup: Setup, player: int, days: Sequence[date]) -> int:
         ret = setup.returns.get(player) or setup.start + timedelta(policy.DEFAULT_ABSENCE_DAYS)
         return max(-1, sum(1 for d in days if d < ret) - 1)
     return -1
-
-
-def consistent(rates: Rates) -> dict[str, float]:
-    """A rate line whose makes do not exceed its attempts nor its threes its field goals: the
-    errors are drawn a stat at a time, and a line that breaks the identities has no variance."""
-    out = {k: float(v) for k, v in rates.items()}
-    if "fgm" in out and "fga" in out:
-        out["fgm"] = min(out["fgm"], out["fga"])
-    if "ftm" in out and "fta" in out:
-        out["ftm"] = min(out["ftm"], out["fta"])
-    if "threes" in out and "fgm" in out:
-        out["threes"] = min(out["threes"], out["fgm"])
-    return out
 
 
 def forward_world(setup: Setup, inputs: WorldInputs, seed: int, path: int, s: float) -> World:
@@ -357,26 +395,41 @@ def forward_world(setup: Setup, inputs: WorldInputs, seed: int, path: int, s: fl
         game_days,
         available,
         line,
-        inputs.kappa,
-        inputs.sigma_eta,
         inputs.lag,
         "forward",
+        belief="refresh",
+        kappa=inputs.kappa,
+        sigma_eta=inputs.sigma_eta,
     )
 
 
 def replay_world(
     setup: Setup,
     lines: Mapping[int, Mapping[date, Mapping[str, float]]],
-    truth: Mapping[int, Rates],
-    kappa: float,
-    sigma_eta: float,
     lag: int,
     seed: int,
     path: int,
+    weights: Mapping[str, float] | None = None,
+    belief: str = "causal",
+    news_sd: float = world.NEWS_SD_DAYS,
 ) -> World:
     """A replay's world: the recorded lines are the truth of every game, a game day without a
-    line an absence; beliefs still refresh toward the season's realized rates."""
+    line an absence. The seats' belief is ``causal`` (the setup's projection updated with the
+    games played before each day, at ``weights``, :data:`fit.W_DEFAULT` for a stat without one;
+    a player nobody projected on the newcomer's prior once he has played) or ``fixed`` (the
+    projection all season, the hold-out gate's)."""
     game_days = game_days_of(setup)
+    causal = None
+    if belief == "causal":
+        w = {s: float((weights or {}).get(s, W_DEFAULT)) for s in wk.STATS}
+        undrafted = [k for k in setup.pool if k in setup.projection]
+        causal = CausalBelief(
+            setup.players,
+            setup.projection,
+            lines,
+            w,
+            newcomer_prior(setup.projection, undrafted),
+        )
 
     def available(player: int) -> np.ndarray:
         days = game_days.get(player, [])
@@ -388,7 +441,18 @@ def replay_world(
         return lines.get(player, {}).get(day)
 
     return World(
-        setup, seed, path, truth, game_days, available, line, kappa, sigma_eta, lag, "replay"
+        setup,
+        seed,
+        path,
+        {},
+        game_days,
+        available,
+        line,
+        lag,
+        "replay",
+        belief=belief,
+        causal=causal,
+        news_sd=news_sd,
     )
 
 
@@ -408,6 +472,32 @@ class VariantResult:
     forced_drops: int = 0
 
 
+def _record(
+    setup: Setup,
+    variant: int,
+    state: SimState,
+    due: Mapping[int, tuple[mv.Move, ...]],
+    decided: Mapping[int, policy.Decision],
+    beliefs: Mapping[int, Rates],
+    status: Mapping[int, str | None],
+    returns: Mapping[int, date],
+    value: Mapping[int, float],
+) -> DayRecord:
+    on = {t: {k for k, _ in r} for t, r in state.rosters.items()}
+    return DayRecord(
+        state.day,
+        variant,
+        beliefs,
+        status,
+        returns,
+        {t: tuple(m for m in moves if m.add in on.get(t, ())) for t, moves in due.items() if moves},
+        dict(decided),
+        {t: moves for t, moves in state.pending.items() if moves},
+        {t: policy.starters_of(setup, state, t, state.day, status, value) for t in setup.teams},
+        state,
+    )
+
+
 def _rotation(teams: Sequence[int], i: int) -> list[int]:
     n = len(teams)
     return [teams[(j + i) % n] for j in range(n)] if n else []
@@ -420,13 +510,38 @@ def _cap(strategy: Any) -> int:
     return int(policy.knob(knobs, "daily_cap"))
 
 
+@dataclass(frozen=True)
+class DayRecord:
+    """One variant's day as its seats lived it, taken after the day's lineup is set and before
+    its lines are scored: what the no-peek check compares and the daily audit reads."""
+
+    day: date
+    variant: int
+    #: The shared beliefs and what the seats have heard (statuses, told return dates).
+    beliefs: Mapping[int, Rates]
+    status: Mapping[int, str | None]
+    returns: Mapping[int, date]
+    #: Yesterday's queued moves whose add is on the team's roster this morning, by team.
+    landed: Mapping[int, tuple[mv.Move, ...]]
+    #: Each moving seat's decision, and the moves it queued to land tomorrow, by team.
+    decisions: Mapping[int, policy.Decision]
+    queued: Mapping[int, tuple[mv.Move, ...]]
+    #: Each team's starters for the day (player to slot).
+    starters: Mapping[int, Mapping[int, str]]
+    #: The variant's state, the day's totals not yet added.
+    state: SimState
+
+
 def simulate(
     setup: Setup,
     w: World,
     variants: Sequence[Mapping[int, op.Strategy]],
     execute_plan: Sequence[bool] | None = None,
+    on_day: Callable[[DayRecord], None] | None = None,
 ) -> list[VariantResult]:
-    """Every variant (a strategy by seat) through one world in lockstep."""
+    """Every variant (a strategy by seat) through one world in lockstep. ``on_day`` is handed a
+    :class:`DayRecord` for each variant and day, after the lineup is set and before the day's
+    lines are read."""
     n = len(variants)
     states = [initial(setup) for _ in range(n)]
     solves = [0] * n
@@ -434,27 +549,26 @@ def simulate(
     plans = list(execute_plan or [False] * n)
     points = dict(setup.points) if setup.scoring == "points" and setup.points else None
     spots, slot_counts = setup.spots(), Counter(setup.roster_slots)
-    week_index = 0
     for di, day in enumerate(setup.days):
         week = setup.week_of(day)
         if week is None:
             continue
         monday = day.weekday() == 0 and day != setup.start
-        if monday:
-            week_index += 1
-        beliefs = w.beliefs(week_index)
+        beliefs = w.beliefs_on(day)
         status, returns = w.status_on(day)
         value = wk.per_game_values(beliefs, setup.cats, points)
         # Yesterday's moves land first, cleared held players back and the held-slot moves made
         # before them: on a Monday they were made on Sunday and spend the ending week's adds, so
         # the week's count starts over only once they are in.
         order = _rotation(setup.teams, di)
+        due = [s.pending for s in states]
         states = [policy.land(s, order, spots, slot_counts, status, value) for s in states]
         if monday:
             states = [policy.new_week(s) for s in states]
         cache: dict[tuple[Any, ...], policy.Decision] = {}
         for vi, state in enumerate(states):
             state = replace(state, day=day)
+            decided: dict[int, policy.Decision] = {}
             for team in setup.teams:
                 strat = variants[vi].get(team)
                 if strat is None or strat.kind == "static":
@@ -468,10 +582,13 @@ def simulate(
                     decision = strat.decide(setup, state, team, beliefs, status, returns, g)
                     cache[key] = decision
                     solves[vi] += decision.solves
+                decided[team] = decision
                 state = policy.queue(
                     state, team, decision, _cap(strat), setup.max_weekly_adds, plans[vi], spots
                 )
             states[vi] = state
+            if on_day is not None:
+                on_day(_record(setup, vi, state, due[vi], decided, beliefs, status, returns, value))
         states = [policy.score_day(setup, s, day, status, value, w.line) for s in states]
     out = []
     for vi, state in enumerate(states):
@@ -546,13 +663,18 @@ def rotate(arms: Sequence[str], teams: Sequence[int], path: int) -> dict[int, st
 
 
 def room(
-    setup: Setup, w: World, arms: Mapping[str, Arm], seats: Sequence[str], path: int
+    setup: Setup,
+    w: World,
+    arms: Mapping[str, Arm],
+    seats: Sequence[str],
+    path: int,
+    on_day: Callable[[DayRecord], None] | None = None,
 ) -> dict[str, Any]:
     """Twelve seats under named arms, rotated by ``path``; each arm's outcomes pooled over its
-    seats this path."""
+    seats this path. ``on_day`` is :func:`simulate`'s."""
     assigned = rotate(list(seats), setup.teams, path)
     variant = {t: arms[name].seat() for t, name in assigned.items()}
-    (r,) = simulate(setup, w, [variant], [any(arms[n].execute_plan for n in seats)])
+    (r,) = simulate(setup, w, [variant], [any(arms[n].execute_plan for n in seats)], on_day=on_day)
     by_arm: dict[str, list[dict[str, float | None]]] = {}
     for t, name in assigned.items():
         by_arm.setdefault(name, []).append(_metrics(r.summaries.get(t)))
@@ -641,8 +763,14 @@ REPLAY_WEEKS = 22
 REPLAY_PLAYOFF_WEEKS = 3
 REPLAY_PLAYOFF_TEAMS = 6
 REPLAY_TEAMS = 12
-#: A player needs this many played games in the season to be in a replay's pool.
-REPLAY_MIN_GAMES = 20
+#: A stand-in forecaster projects a player with at least this many played games in the season
+#: it reads: the prior season for the prior-season forecaster, the replayed one for the oracle.
+STANDIN_MIN_GAMES = 20
+#: The gates read the players with at least this many played games in the season.
+GATE_MIN_GAMES = 20
+#: A replay's draft takes the projected players with a scheduled game in the season's first this
+#: many days: an opening-night roster is known before a draft.
+OPENING_DAYS = 7
 
 
 def replay_setup(
@@ -658,18 +786,27 @@ def replay_setup(
     playoff_weeks: int = REPLAY_PLAYOFF_WEEKS,
     playoff_teams: int = REPLAY_PLAYOFF_TEAMS,
     cats: Sequence[str] = ("fg_pct", "ft_pct", "threes", "pts", "reb", "ast", "stl", "blk", "tov"),
+    opening_days: int | None = OPENING_DAYS,
 ) -> Setup:
-    """A made-up league on a recorded season: ``teams`` seats snake-drafting the pool on the
-    stand-in projection, a round robin over the regular weeks, the bracket reseeded with the
-    higher seed through a tie. Every player is his own team in the schedule (``p<id>``): his
-    game days are his ``scheduled`` entries (played or not; the days he has a line for when
-    none are given), so a trade or a team read later than the season moves nothing."""
+    """A made-up league on a recorded season, from what is known before it starts. Its players
+    are everyone ``players`` lists with a scheduled game, projected or not; ``teams`` seats
+    snake-draft the projected ones with a scheduled game in the season's first ``opening_days``
+    days (from ``period_one``; None drafts every projected player) on the stand-in projection,
+    and everyone else is on the wire. A round robin over the regular weeks, the bracket reseeded
+    with the higher seed through a tie. Every player is his own team in the schedule
+    (``p<id>``): his game days are his ``scheduled`` entries (played or not; the days he has a
+    line for when none are given), so a trade or a team read later than the season moves
+    nothing."""
     schedule: dict[date, set[str]] = {}
     members: dict[int, Member] = {}
+    game_days: dict[int, list[date]] = {}
     for k, m in players.items():
+        days = list((scheduled or {}).get(k) or list(lines.get(k, {})))
+        if not days:
+            continue
         own = f"p{k}"
         members[k] = Member(k, m.name, own, m.positions)
-        days = (scheduled or {}).get(k) or list(lines.get(k, {}))
+        game_days[k] = days
         for d in days:
             schedule.setdefault(d, set()).add(own)
     calendar = weeks_from(period_one, weeks)
@@ -677,11 +814,17 @@ def replay_setup(
     playoffs = tuple(range(weeks - playoff_weeks + 1, weeks + 1))
     ids = tuple(range(1, teams + 1))
     pairings = round_robin(ids, regular)
-    pool = [k for k in standin if k in members and len(lines.get(k, {})) >= REPLAY_MIN_GAMES]
+    projected = [k for k in standin if k in members]
+    opening = None if opening_days is None else period_one + timedelta(opening_days - 1)
+    draftable = [
+        k
+        for k in projected
+        if opening is None or any(period_one <= d <= opening for d in game_days[k])
+    ]
     points = None
-    value = wk.per_game_values({k: standin[k] for k in pool}, tuple(cats), points)
+    value = wk.per_game_values({k: standin[k] for k in projected}, tuple(cats), points)
     spots = sum(1 for s in slots if s not in mv.HELD)
-    rosters = snake_draft(pool, value, ids, spots)
+    rosters = snake_draft(draftable, value, ids, spots)
     taken = {k for r in rosters.values() for k, _ in r}
     spec = lg.LeagueSpec(
         ids,
@@ -699,27 +842,27 @@ def replay_setup(
         calendar=calendar,
         pairings=pairings,
         teams=ids,
-        players={k: members[k] for k in pool},
+        players=members,
         rosters=rosters,
-        pool=tuple(k for k in pool if k not in taken),
-        projection={k: dict(standin[k]) for k in pool},
+        pool=tuple(k for k in members if k not in taken),
+        projection={k: dict(standin[k]) for k in projected},
         schedule={d: frozenset(t) for d, t in schedule.items()},
         roster_slots=tuple(slots),
         cats=tuple(cats),
         max_weekly_adds=4,
-        market={k: value.get(k, 0.0) for k in pool},
+        market={k: value.get(k, 0.0) for k in projected},
         spec=spec,
     )
 
 
 def realized_rates(
-    lines: Mapping[int, Mapping[date, Mapping[str, float]]],
+    lines: Mapping[int, Mapping[date, Mapping[str, float]]], min_games: int = 1
 ) -> dict[int, dict[str, float]]:
-    """Each player's per-game rates over the games he played."""
+    """Each player's per-game rates over the games he played, for those with ``min_games``."""
     out: dict[int, dict[str, float]] = {}
     for k, by_day in lines.items():
         n = len(by_day)
-        if not n:
+        if not n or n < min_games:
             continue
         totals: dict[str, float] = {}
         for ln in by_day.values():
@@ -730,20 +873,32 @@ def realized_rates(
 
 
 def oracle_standin(
-    truth: Mapping[int, Rates], spread: float, seed: int, path: int
+    lines: Mapping[int, Mapping[date, Mapping[str, float]]],
+    spread: float,
+    seed: int,
+    path: int,
+    min_games: int = STANDIN_MIN_GAMES,
 ) -> dict[int, dict[str, float]]:
-    """The realized rates noised on the log scale at ``spread`` per player and stat: a stand-in
-    projection whose error is known."""
+    """The replayed season's realized rates noised on the log scale at ``spread`` per player and
+    stat: a stand-in projection whose error is known, a labelled look-ahead. It projects only the
+    players with ``min_games`` played games in the replayed season, a stated part of that
+    look-ahead; the others arrive by the newcomer's rule."""
+    truth = realized_rates(lines, min_games)
     keys = sorted(truth)
     eps = world.errors(seed, path, keys, list(wk.STATS), 0.0, {}, dict.fromkeys(wk.STATS, spread))
     return {k: consistent(v) for k, v in world.true_rates({k: truth[k] for k in keys}, eps).items()}
 
 
 __all__ = [
+    "BELIEFS",
+    "GATE_MIN_GAMES",
     "KNOBS",
     "METRICS",
+    "OPENING_DAYS",
     "SHRINKS",
+    "STANDIN_MIN_GAMES",
     "Arm",
+    "DayRecord",
     "VariantResult",
     "World",
     "WorldInputs",

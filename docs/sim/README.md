@@ -143,9 +143,16 @@ availability and lines, the beliefs refreshed weekly, and what the policy has he
 absence (an `O` with the told return date, `lag` days after it began; a status read on day one
 stands until its return). Every draw comes from `(seed, path, player, game, stream)` and never from
 an arm, so a roster change in one arm reshuffles nothing: common random numbers. A **replay** world
-has the recorded lines as the truth of every game (no game noise, no hazard: the logs happened), a
-game day without a line an absence, and beliefs refreshing toward the season's realized rates. The
+has the recorded lines as the truth of every game (no game noise, no hazard: the logs happened) and
+a game day without a line an absence; what its seats believe is below (**The replay**). The
 truth's makes never exceed its attempts (the errors are drawn a stat at a time).
+
+A world's belief is one of three kinds: `refresh` (the forward world's: the projection moved toward
+the drawn truth each Monday at `κ` with noise `σ_η`), `causal` (a replay's: read every day from
+the games already played) and `fixed` (the projection all season: gate 1's). `simulate` can hand
+a caller a **day record** for each variant and day, taken after the lineup is set and before the
+day's lines are scored: the beliefs, the statuses and return dates heard, the moves that landed,
+each seat's decision, the queue, every team's starters and the state.
 
 `simulate` advances variants of one league through one world a day at a time: yesterday's queue
 lands (a held player whose status has cleared comes back to the bench first and the roster is
@@ -183,9 +190,9 @@ Each command runs as `python -m pickandroll.sim <command>`:
   before PR 3. A league whose bracket is unread reports rank and category wins and no playoff
   odds.
 - `replay --season 2024 --standin prior|oracle:0.1,0.2,0.3 --seats A.json B.json`: a made-up
-  twelve-team league on a recorded season, snake-drafted on the stand-in projection (the prior
-  season's per-game rates, or the realized rates noised at a spread), the arms rotated across
-  paths; the hold-out is refused.
+  twelve-team league on a recorded season (below), the arms rotated across paths; the hold-out is
+  refused. `--news-sd` sets the told return date's spread in days (default 2). `--no-peek
+  YYYY-MM-DD` runs the no-peek check instead and writes nothing.
 - `room --leagues all --seats A.json B.json ... --draft rosters|snake`: the arms around one
   league's table from the recorded rosters or a snake redraft.
 - `validate --league all`: the six gates on this season's recorded weeks and on the hold-out, side
@@ -203,6 +210,66 @@ the results. A run first times one task and estimates the whole; the guard then 
 would touch 04:45-06:45 on the Mac's clock, a draft room open on the API, or a run over an hour
 not announced to fantasyMASTER (`--announced`).
 
+## The replay: what a seat knows (`sim/belief.py`, `sim/nopeek.py`)
+
+A replay plays a made-up league on a season that happened, so its seats must know only what a
+manager could have known on each day. Before #172's PR B1 they did not: every seat's belief moved
+each week toward the season's realized rates, its whole-season average, and the draft and the pool
+took only players who went on to play twenty games. Replay figures from before it (payloads with
+no `replay_version`) are superseded; a replay now writes `replay_version: 2`.
+
+**The belief.** On day `d`, stat by stat, a seat believes
+`(w · the forecaster's figure + the sum of his lines dated before d) / (w + his games before d)`,
+read every day. "Before" is strict: the line of a game played on `d` is in the belief of `d + 1`.
+Makes and attempts are shrunk as stats of their own and the percentages follow from them; the
+result keeps makes within attempts and threes within field goals. The forecaster is the stand-in:
+the prior season's per-game rates, or the oracle (below); each forecaster gets its own belief.
+
+**The weights.** One `w` per stat, in games, from the grid 2, 4, 6, 10, 16, 25, 40, 65, 100,
+chosen by the least squared error of each projected player's next game against the belief before
+it, summed over his games in date order; a tie takes the larger weight. They are fitted on the
+seasons on file earlier than the one replayed whose own prior season is on file, with the
+prior-season forecaster, never on the hold-out (a season whose prior season is the hold-out is
+skipped too). With no such season every stat takes 10. The oracle stand-in uses the prior
+forecaster's weights. The weights are computed once per command, from the logs alone, and the
+payload records them, the seasons they came from and whether the default stood; the frozen fit is
+not touched.
+
+**The league and the draft.** The league is everyone the season's log lists with a scheduled game.
+The draft is a snake on the stand-in's values over the projected players with a scheduled game in
+the season's first seven days, as an opening-night roster shows; everyone else is on the wire. The
+prior forecaster projects the players with twenty played games in the prior season, the oracle
+those with twenty in the replayed season.
+
+**A newcomer.** A player nobody projected (a rookie, a player who missed most of the prior season)
+is on the wire from day one but in no belief, so no seat can add him, until the day after his first
+recorded game; from then his prior is the mean projection, stat by stat, over the projected players
+left undrafted: an average wire player until his games say otherwise. The opponents' market view
+stays the projected players' values.
+
+**The no-peek check.** Two replay worlds that agree on the preseason inputs, the schedule, every
+line dated before `d` and every absence that begins on or before `d` (its start and its end), and
+differ in the lines dated `d` or later and in the absences that begin after it, must hand every
+seat the same day records through `d`. `tests/sim/test_no_peek.py` holds this on a small league
+with seats that move, on three days, one a Monday; it also shows the check catches a belief that
+counts the day's own line and news heard a day early. `replay --no-peek YYYY-MM-DD` runs it on the
+real log: it builds the second season from the first by a seeded change with exactly that
+agreement, runs one path of each, prints whether they agree through the date and where they first
+part, writes nothing, and exits non-zero on a difference at or before the date.
+
+**What a replay still assumes.**
+
+- The date a seat is told for a return is the true one, the day after the last missed game, plus a
+  rounded normal error of `--news-sd` days (default 2), never before the absence is heard; the
+  absence is heard `lag` days after it begins.
+- A player's game days are those of the team the log records him on, all season: the schedule of
+  a player who was later traded is known from day one.
+- The prior forecaster knows no rookie and nobody who missed the prior season; they arrive by the
+  newcomer's rule. The oracle stand-in is a labelled look-ahead: its figures are the replayed
+  season's own realized rates, noised.
+- A replay reads no status on day one, so a drafted player out from opening night is heard to be
+  out only `lag` days after his first missed game.
+
 ## The gates as they stand (PR 2b)
 
 `validate` runs what the data on disk supports and writes what each gate had to work with; a gate
@@ -210,9 +277,10 @@ without its inputs is **not run** and says why, never passed.
 
 - Gate 1 on the hold-out: twelve snake-drafted teams' realized weekly totals (their players'
   recorded lines) as transforms under the simulator's team-week distribution centred on the
-  players' own realized rates, the game-noise and absence layers alone. Gates 1 and 2 on this
-  season's recorded weeks, the current rosters standing in for the week's, once the recorder has
-  weeks.
+  players' own realized rates, the game-noise and absence layers alone. It keeps its own league:
+  the players with twenty played games, all drafted on their realized rates, a `fixed` belief.
+  Gates 1 and 2 on this season's recorded weeks, the current rosters standing in for the week's,
+  once the recorder has weeks.
 - Gate 4 on the hold-out and on this season's log: each player's season under the hazard drawn
   once a path and split into his weeks, so an absence that began one week is still missed the next.
 - Gate 5 on the league's setup: the surrogate's set against the exact set on five league-days.
@@ -231,6 +299,4 @@ real ones, in every arm alike (the comparison is paired, the bias shared).
 
 Every command runs through the commands' guard: low priority, never when its span touches 04:45
 to 06:45 on the Mac's clock, never while a draft room is open on the API, and a run expected over
-an hour is announced to fantasyMASTER first. PR 3 brings the Monday hook, the knob file's field
-and the Progress card, after the user's rulings on the threshold, the block, the promotion and
-which knobs the simulator may tune.
+an hour is announced to fantasyMASTER first.

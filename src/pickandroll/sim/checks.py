@@ -142,7 +142,8 @@ def surrogate_matches(
     knobs: Mapping[str, object],
 ) -> list[bool]:
     """On each of ``days``, from day one's rosters, whether the surrogate's set equals the exact
-    set (as sets of moves): gate 5's input."""
+    set (as sets of moves): gate 5's input. A world whose belief is read by day (a replay's
+    causal one) is read on each day; any other after the weeks since the start."""
     out = []
     base = initial(setup)
     week0 = setup.calendar.week_of(setup.start)
@@ -150,7 +151,9 @@ def surrogate_matches(
         week = setup.calendar.week_of(day)
         if week is None or week0 is None:
             continue
-        beliefs = w.beliefs(week.number - week0.number)
+        beliefs = (
+            w.beliefs_on(day) if w.belief == "causal" else w.beliefs(week.number - week0.number)
+        )
         status, returns = w.status_on(day)
         state = SimState(day, base.rosters, base.pool, {})
         built = policy.problem_of(setup, state, team, knobs, beliefs, status, returns)
