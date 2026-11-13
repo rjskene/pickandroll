@@ -14,6 +14,7 @@ from pickandroll.sim import counts as ct
 from pickandroll.sim import policy
 from pickandroll.sim import run as rn
 from pickandroll.sim.engine import mv
+from pickandroll.sim.opponents import Static
 from tests.sim.sim_league import KNOBS, arm, inputs, make_setup, rates
 
 MON = date(2026, 10, 26)  # the fixture's first day, a Monday
@@ -21,16 +22,17 @@ MON = date(2026, 10, 26)  # the fixture's first day, a Monday
 
 @dataclass(frozen=True)
 class Script:
-    """A seat that decides the moves it is given on the days it is given them."""
+    """A seat that decides the moves it is given on the days it is given them, each day's with
+    the held-slot moves they need (player, slot) when a third item names them."""
 
-    plan: tuple[tuple[date, tuple[mv.Move, ...]], ...]
+    plan: tuple[tuple[Any, ...], ...]
     knobs: Mapping[str, Any] = field(default_factory=lambda: {**KNOBS, "daily_cap": 4})
     kind: str = "seat"
 
     def decide(self, setup, state, team, beliefs, status, returns, g) -> policy.Decision:
-        for day, moves in self.plan:
+        for day, moves, *held in self.plan:
             if day == state.day:
-                return policy.Decision(moves, (), (), 0, "script")
+                return policy.Decision(moves, tuple(held[0]) if held else (), (), 0, "script")
         return policy.NONE
 
 
@@ -83,6 +85,7 @@ def test_the_counts_by_hand_on_a_short_run():
     assert one["landed"] == 2 and one["gone"] == 1 and one["forced_drops"] == 1
     assert one["adds_per_week"] == pytest.approx(1.0) and one["weeks_at_cap"] == pytest.approx(0.5)
     assert one["held_stints"] == 1 and one["held_days"] == 3  # Monday to Wednesday in IL
+    assert one["held_refused"] == 0 and two["held_refused"] == 0
     assert two["landed"] == 1 and two["gone"] == 0 and two["forced_drops"] == 0
     assert two["adds_per_week"] == pytest.approx(0.5) and two["weeks_at_cap"] == 0.0
     assert two["held_stints"] == 0 and two["held_days"] == 0
@@ -98,6 +101,39 @@ def test_the_counts_by_hand_on_a_short_run():
     assert sum(c["landed"] for c in r.counts.values()) == r.executed
     assert sum(c["gone"] for c in r.counts.values()) == r.gone
     assert sum(c["forced_drops"] for c in r.counts.values()) == r.forced_drops
+    assert r.breaches == ()
+
+
+def test_a_refused_held_move_is_counted_for_its_seat():
+    """Team 1 at its six spots, its IL slot empty, one active player heard out until Thursday.
+    On Wednesday, the last day the seat hears him out, it queues him for IL with a no-drop add;
+    by Thursday morning his status has cleared, so the move is refused and the add has no spot:
+    one refusal and one move lost, both team 1's, and nobody placed or forced out."""
+    setup = make_setup(
+        teams=2, spots=6, pool=6, weeks=2, playoff_weeks=1, max_weekly_adds=2, held_slots=("IL",)
+    )
+    hurt = setup.rosters[1][0][0]
+    told = MON + timedelta(3)
+    setup = replace(setup, statuses={hurt: "O"}, returns={hurt: told})
+    free = min(setup.pool)
+    wednesday = told - timedelta(1)
+    plans = {1: Script(((wednesday, (mv.Move(free),), ((hurt, "IL"),)),)), 2: Static()}
+    lines = {
+        k: {d: rates(1.0) for d in setup.days if setup.players[k].nba_team in setup.schedule[d]}
+        for k in setup.players
+    }
+    records = []
+    (r,) = rn.simulate(
+        setup, rn.replay_world(setup, lines, 1, 1, 0), [plans], on_day=records.append
+    )
+    heard = {rec.day: rec.status.get(hurt) for rec in records}
+    assert heard[wednesday] == "O" and heard[told] is None
+    one = r.counts[1]
+    assert one["held_refused"] == 1 and one["gone"] == 1 and one["landed"] == 0
+    assert one["held_stints"] == 0 and one["forced_drops"] == 0
+    assert r.counts[2]["held_refused"] == 0 and r.held_refused == 1
+    final = records[-1].state
+    assert dict(final.rosters[1])[hurt] != "IL" and free in final.pool
     assert r.breaches == ()
 
 

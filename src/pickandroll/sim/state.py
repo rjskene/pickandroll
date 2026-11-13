@@ -129,6 +129,9 @@ class SimState:
     #: Active players the executor had to drop when a cleared held player came back over the
     #: league's spots (``policy.land``), by team: never an add, so neither executed nor gone.
     forced_by: Mapping[int, int] = field(default_factory=dict)
+    #: Held-slot moves the executor did not make because the slot did not accept the player's
+    #: status on the morning they were to land (``policy.land``), by team.
+    held_refused_by: Mapping[int, int] = field(default_factory=dict)
 
     @property
     def executed(self) -> int:
@@ -144,6 +147,11 @@ class SimState:
     def forced_drops(self) -> int:
         """The drops forced by a returning held player, every team's."""
         return sum(self.forced_by.values())
+
+    @property
+    def held_refused(self) -> int:
+        """The held-slot moves refused at landing, every team's."""
+        return sum(self.held_refused_by.values())
 
     def key(self) -> tuple[Any, ...]:
         """What a decision depends on: two arms with the same key share one solve."""

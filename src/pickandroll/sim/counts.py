@@ -4,9 +4,10 @@ An edge that comes from an artefact (four adds a week against rivals who never m
 them. For each seat over one variant's season: the moves landed, the moves lost because the
 player (or the drop) was gone, the adds charged to each week (their mean and the share of weeks
 at the league's cap), the drops forced by a returning held player, the held-slot stints and the
-days they lasted, and the starters' games played. The landing counters live on the state
-(``SimState.executed_by``, ``gone_by``, ``forced_by``); the rest is tallied here from the days
-the audit reads and the day's lines once they are scored. Pure.
+days they lasted, the held-slot moves refused because the slot no longer accepted the player the
+morning they landed, and the starters' games played. The landing counters live on the state
+(``SimState.executed_by``, ``gone_by``, ``forced_by``, ``held_refused_by``); the rest is tallied
+here from the days the audit reads and the day's lines once they are scored. Pure.
 """
 
 from __future__ import annotations
@@ -25,6 +26,7 @@ METRICS = (
     "adds_per_week",
     "weeks_at_cap",
     "forced_drops",
+    "held_refused",
     "held_stints",
     "held_days",
     "starter_games",
@@ -94,6 +96,7 @@ class Tally:
                     else sum(1 for n in per if n >= self.limit) / len(per)
                 ),
                 "forced_drops": float(state.forced_by.get(t, 0)),
+                "held_refused": float(state.held_refused_by.get(t, 0)),
                 "held_stints": float(self.stints[t]),
                 "held_days": float(self.held_days[t]),
                 "starter_games": float(self.games[t]),

@@ -227,6 +227,21 @@ def test_a_clean_replay_with_seats_that_move_breaks_no_rule():
     assert out["counts"]["A"]["landed"] + out["counts"]["B"]["landed"] > 0  # the seats moved
 
 
+def test_the_held_slot_paths_void_no_path():
+    """The 18 paths of a league with IL and IL+ on which the audit first found players placed in
+    IL the morning their status had cleared (fixed in the executor, #378): no breach on any of
+    them, and the refused held moves counted."""
+    refused = 0.0
+    for seed in (3, 5, 8):
+        setup = make_setup(held_slots=("IL", "IL+"), seed=seed, weeks=8)
+        for path in range(6):
+            w = rn.forward_world(setup, inputs(), 11, path, 0.25)
+            out = rn.paired(setup, w, arm("A", "exact"), arm("B", "surrogate"), me=1)
+            assert out["breaches"] == [], (seed, path, out["breaches"])
+            refused += out["counts"]["a"]["held_refused"] + out["counts"]["b"]["held_refused"]
+    assert refused > 0  # not vacuous: these are the paths whose held moves were refused
+
+
 def test_the_audit_runs_without_a_hook_and_its_rules_can_be_added_to():
     setup = make_setup(teams=2, spots=3, pool=4, weeks=2, playoff_weeks=1)
     w = rn.forward_world(setup, inputs(), 2, 0, 0.0)

@@ -313,10 +313,11 @@ pooled like the outcomes (a seat's season, the mean over the arm's seats a path,
 paths that stand): the moves landed; the moves lost because the add or the drop was gone or no
 active spot was open; the adds charged to each week, their mean and the share of weeks at the cap
 (an add counts in the week it was made, the adds made before day one in week one); the drops
-forced by a returning held player; the held-slot stints and their days; and the starters' games
-played. Compare adds the rivals' seats as one row, both arms' seasons pooled. The landing
-counters are per seat on the state (`SimState.executed_by`, `gone_by`, `forced_by`, their sums the
-old whole-state counters); the rest is tallied by `sim/counts.py`.
+forced by a returning held player; the held-slot moves refused because the slot no longer
+accepted the player the morning they landed; the held-slot stints and their days; and the
+starters' games played. Compare adds the rivals' seats as one row, both arms' seasons pooled. The landing
+counters are per seat on the state (`SimState.executed_by`, `gone_by`, `forced_by`,
+`held_refused_by`, their sums the whole-state counters); the rest is tallied by `sim/counts.py`.
 
 ## The gates as they stand (PR 2b)
 

@@ -456,6 +456,7 @@ COUNTS_NOTE = {
     "adds_per_week": "adds charged to a week, its mean over the weeks played",
     "weeks_at_cap": "the share of weeks whose adds reached the league's cap",
     "forced_drops": "active players dropped when a held player came back over the spots",
+    "held_refused": "held-slot moves refused: the slot no longer accepted the player that morning",
     "held_stints": "players placed in (or starting the run in) a held slot",
     "held_days": "days spent in a held slot",
     "starter_games": "games the day's starters played",
