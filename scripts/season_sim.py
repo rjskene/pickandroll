@@ -19,9 +19,9 @@ figures stay under ``data/`` and are described in words anywhere public.
 
 ``compare`` plays each league's rest of the season from today many times over in the same
 simulated worlds, once with arm A in my seat and once with arm B, at three shrinks of the
-projection error toward the market, and reports the paired difference with its standard error:
-the verdict line is advisory (the design note's one-SE rule; no block and no promotion before
-PR 3). ``replay`` plays a made-up league on a recorded season's game lines, never the hold-out.
+projection error toward the market, and reports the paired difference, B less A, with its
+standard error: the verdict line is advisory (the design note's one-SE rule; no block and no
+promotion before PR 3). ``replay`` plays a made-up league on a recorded season's game lines, never the hold-out.
 ``room`` seats the arms given around one league's table, rotated across paths. ``validate`` runs
 the six gates on this season's recorded weeks and on the hold-out, side by side, and writes what
 each had to work with. Every run's payload goes under ``data/autopilot/sim/runs/`` with the code's
@@ -546,6 +546,7 @@ def cmd_compare(args: argparse.Namespace) -> int:
         "system": args.system,
         "seconds_first_task": one,
         "results": {
+            "difference": "b less a",
             "by_shrink": by_shrink,
             "arms_by_shrink": {
                 s: {k: rn.aggregate(v) for k, v in d.items()} for s, d in arms_by_shrink.items()
@@ -569,7 +570,7 @@ def cmd_compare(args: argparse.Namespace) -> int:
         d = agg["made_playoffs"]
         mean = "n/a" if d["mean"] is None else f"{100 * d['mean']:+.1f} pp"
         se = "n/a" if d["se"] is None else f"{100 * d['se']:.1f} pp"
-        print(f"shrink {s}: playoff odds {mean} (SE {se}) over {d['n']} paths")
+        print(f"shrink {s}: playoff odds, B less A, {mean} (SE {se}) over {d['n']} paths")
     v = payload["verdict"]
     print(
         f"verdict ({v['rule']}, advisory): {'passes' if v['passes'] else 'does not pass' if v['passes'] is False else 'no verdict'}"

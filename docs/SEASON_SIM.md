@@ -140,10 +140,12 @@ trimmed to the league's spots, then a churn's held drop, the held-slot moves and
 with no active spot gone), Monday resets the adds, each seat decides (a decision cached by team
 and state, so arms in lockstep solve once), the day is played and scored; the season is then
 scored by the league. `paired` runs arm A and arm B in my seat and returns each outcome (playoff
-odds, rank, category wins, matchup wins, title) and their difference; `room` seats the arms given
-around the table, seat `i` taking arm `(i + path) mod n` so every arm sits in every seat across
-paths. The process pool is the
-simulator's own (cores less two workers at `nice 10`; the API's pools are untouched).
+odds, rank, category wins, matchup wins, title) and their difference. **The difference is B less
+A**: arm B's outcome less arm A's, path by path, so a positive difference is what B gains over A
+in playoff odds, category wins, matchup wins and titles; rank is better when lower, so there a
+negative difference is B finishing higher. `room` seats the arms given around the table, seat
+`i` taking arm `(i + path) mod n` so every arm sits in every seat across paths. The process pool
+is the simulator's own (cores less two workers at `nice 10`; the API's pools are untouched).
 
 ## The readers (`api/season_sim.py`) and the runs (`scripts/season_sim.py`)
 
@@ -160,10 +162,11 @@ than the season moves nothing; scoring period `p` is the season's first period p
 the first periods verified against ESPN's scoreboard on 2026-10-24 (named in every payload).
 
 - `compare A.json B.json --leagues all --paths 100`: arm A against arm B in my seat, paired, per
-  league, at shrinks 0, 0.25 and 0.5; the paired change in each outcome with its standard error;
-  the verdict line is **advisory**: a change passes when the paired change in playoff odds is not
-  below zero by more than one SE at any shrink; no block and no promotion before PR 3. A league
-  whose bracket is unread reports rank and category wins and no playoff odds.
+  league, at shrinks 0, 0.25 and 0.5; the paired change in each outcome (B less A) with its
+  standard error; the verdict line is **advisory**: a change (arm B) passes when its paired change
+  in playoff odds is not below zero by more than one SE at any shrink; no block and no promotion
+  before PR 3. A league whose bracket is unread reports rank and category wins and no playoff
+  odds.
 - `replay --season 2024 --standin prior|oracle:0.1,0.2,0.3 --seats A.json B.json`: a made-up
   twelve-team league on a recorded season, snake-drafted on the stand-in projection (the prior
   season's per-game rates, or the realized rates noised at a spread), the arms rotated across

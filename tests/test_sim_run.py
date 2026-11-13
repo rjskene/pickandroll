@@ -113,12 +113,28 @@ def test_two_arms_diverge_and_the_pairing_reports_both():
     out = rn.paired(setup, w, arm("A", "exact"), arm("B", "ranking"), me=1)
     assert set(out["a"]) == set(rn.METRICS) == set(out["delta"])
     assert out["a"]["rank"] in {1.0, 2.0, 3.0, 4.0}
-    assert out["delta"]["rank"] == out["a"]["rank"] - out["b"]["rank"]
+    assert out["delta"]["rank"] == out["b"]["rank"] - out["a"]["rank"]
     assert out["bracket_unread"] is None
     unread = replace(setup, spec=None, bracket_unread="the settings page has not been read")
     none = rn.paired(unread, w, arm("A", "ranking"), arm("B", "ranking"), me=1)
     assert none["a"]["made_playoffs"] is None and none["delta"]["rank"] is None
     assert none["bracket_unread"] == "the settings page has not been read"
+
+
+def test_the_paired_difference_is_b_less_a_on_every_metric():
+    # Seed 1 at shrink 0.25 parts the two arms on all five metrics, so a reversed sign fails
+    # each of them: A less B would equal B less A only where the arms agree.
+    setup = make_setup()
+    w = rn.forward_world(setup, inputs(), 1, 0, 0.25)
+    out = rn.paired(setup, w, arm("A", "exact"), arm("B", "ranking"), me=1)
+    a, b, delta = out["a"], out["b"], out["delta"]
+    assert all(a[k] is not None and b[k] is not None for k in rn.METRICS)
+    assert all(a[k] != b[k] for k in rn.METRICS)
+    for k in rn.METRICS:
+        assert delta[k] == b[k] - a[k], k
+    # Swapping the arms negates the difference.
+    back = rn.paired(setup, w, arm("B", "ranking"), arm("A", "exact"), me=1)
+    assert back["delta"] == {k: -delta[k] for k in rn.METRICS}
 
 
 def test_common_random_numbers_a_roster_change_moves_no_other_players_line():
