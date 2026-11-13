@@ -460,24 +460,30 @@ def land(
 ) -> SimState:
     """Yesterday's queued moves land, team by team in ``order``. First, given the day's ``status``
     and ``value``, each team's cleared held players come back and the active roster is trimmed
-    to ``spots`` (:func:`_activate`; each player it sends counts in ``forced_drops``, never in
-    ``executed`` or ``gone``). Then a churn's held drop goes to the pool on his own, as the
-    engine times it (#221), freeing his slot; then the held-slot moves it queued, each player to
-    his held slot while the slot has room (``slot_counts``, the league's slots by kind); then the
-    adds: one with a drop of an active player takes his slot; one that needs an active spot (no
-    drop, or the churn's) takes a bench slot while the active roster is under ``spots`` and is
-    otherwise gone, like an add another team took first (a churn's drop stands either way, made
-    before the add; a plain swap's is never made). Without ``spots`` nothing is counted."""
+    to ``spots`` (:func:`_activate`; each player it sends counts in the team's ``forced_by``,
+    never in ``executed_by`` or ``gone_by``). Then a churn's held drop goes to the pool on his
+    own, as the engine times it (#221), freeing his slot; then the held-slot moves it queued,
+    each player to his held slot while the slot has room (``slot_counts``, the league's slots by
+    kind); then the adds: one with a drop of an active player takes his slot; one that needs an
+    active spot (no drop, or the churn's) takes a bench slot while the active roster is under
+    ``spots`` and is otherwise gone, like an add another team took first (a churn's drop stands
+    either way, made before the add; a plain swap's is never made). Without ``spots`` nothing is
+    counted."""
     rosters = {t: list(r) for t, r in state.rosters.items()}
     pool = set(state.pool)
     adds_used = dict(state.adds_used)
-    executed, gone, forced = state.executed, state.gone, state.forced_drops
+    executed, gone, forced = dict(state.executed_by), dict(state.gone_by), dict(state.forced_by)
+
+    def count(by: dict[int, int], team: int, n: int = 1) -> None:
+        if n:
+            by[team] = by.get(team, 0) + n
+
     for team in order:
         roster = rosters.setdefault(team, [])
         if status is not None and value is not None:
             left = _activate(roster, spots, status, value)
             pool.update(left)
-            forced += len(left)
+            count(forced, team, len(left))
         moves = state.pending.get(team, ())
         churned: set[int] = set()
         for m in moves:
@@ -501,17 +507,17 @@ def land(
                 roster[idx] = (k, slot)
         for m in moves:
             if m.add not in pool:
-                gone += 1
+                count(gone, team)
                 continue
             idx = None
             if m.drop is not None and m.drop not in churned:
                 idx = next((i for i, (pk, _) in enumerate(roster) if pk == m.drop), None)
                 if idx is None:
-                    gone += 1
+                    count(gone, team)
                     continue
             if idx is None:
                 if spots is not None and _active_count(roster) >= spots:
-                    gone += 1
+                    count(gone, team)
                     continue
                 slot = BENCH
             else:
@@ -521,7 +527,7 @@ def land(
             roster.append((m.add, slot))
             pool.discard(m.add)
             adds_used[team] = adds_used.get(team, 0) + 1
-            executed += 1
+            count(executed, team)
     return replace(
         state,
         rosters={t: tuple(r) for t, r in rosters.items()},
@@ -529,9 +535,9 @@ def land(
         adds_used=adds_used,
         pending={},
         pending_held={},
-        executed=executed,
-        gone=gone,
-        forced_drops=forced,
+        executed_by=executed,
+        gone_by=gone,
+        forced_by=forced,
     )
 
 
@@ -569,14 +575,21 @@ def score_day(
     status: Mapping[int, str | None],
     value: Mapping[int, float],
     line: Callable[[int, date], Mapping[str, float] | None],
+    starters: Mapping[int, Mapping[int, str]] | None = None,
 ) -> SimState:
     """Every team's starters' lines added to the week's totals; a starter without a line (out at
-    game time, unheard) adds nothing."""
+    game time, unheard) adds nothing. ``starters`` is the day's lineup by team when it is already
+    set (:func:`starters_of` of the same state, status and value); else it is set here."""
     week = setup.week_of(day)
     if week is None:
         return state
     for team in setup.teams:
-        for k in starters_of(setup, state, team, day, status, value):
+        lineup = (
+            starters[team]
+            if starters is not None and team in starters
+            else starters_of(setup, state, team, day, status, value)
+        )
+        for k in lineup:
             ln = line(k, day)
             if ln:
                 state = add_totals(

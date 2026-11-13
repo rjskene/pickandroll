@@ -28,17 +28,18 @@ import os
 from collections import Counter
 from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import ProcessPoolExecutor
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import date, timedelta
 from typing import Any
 
 import numpy as np
 
+from . import audit, policy, world
+from . import counts as ct
 from . import league as lg
 from . import opponents as op
-from . import policy, world
 from .belief import CausalBelief, consistent, newcomer_prior
-from .engine import KNOBS, mv, wk
+from .engine import KNOBS, Week, mv, wk
 from .fit import W_DEFAULT, Component, Hazard
 from .state import Member, Setup, SimState, initial, round_robin, snake_draft, weeks_from
 
@@ -470,6 +471,10 @@ class VariantResult:
     bracket_unread: str | None = None
     #: Active players the executor dropped when a cleared held player came back over the spots.
     forced_drops: int = 0
+    #: Each seat's mechanism counts over the season (``counts.METRICS``).
+    counts: Mapping[int, Mapping[str, float | None]] = field(default_factory=dict)
+    #: The audit's breaches in this variant: any one voids the path.
+    breaches: tuple[audit.Breach, ...] = ()
 
 
 def _record(
@@ -481,7 +486,7 @@ def _record(
     beliefs: Mapping[int, Rates],
     status: Mapping[int, str | None],
     returns: Mapping[int, date],
-    value: Mapping[int, float],
+    starters: Mapping[int, Mapping[int, str]],
 ) -> DayRecord:
     on = {t: {k for k, _ in r} for t, r in state.rosters.items()}
     return DayRecord(
@@ -493,7 +498,7 @@ def _record(
         {t: tuple(m for m in moves if m.add in on.get(t, ())) for t, moves in due.items() if moves},
         dict(decided),
         {t: moves for t, moves in state.pending.items() if moves},
-        {t: policy.starters_of(setup, state, t, state.day, status, value) for t in setup.teams},
+        dict(starters),
         state,
     )
 
@@ -538,10 +543,12 @@ def simulate(
     variants: Sequence[Mapping[int, op.Strategy]],
     execute_plan: Sequence[bool] | None = None,
     on_day: Callable[[DayRecord], None] | None = None,
+    rules: Sequence[audit.Rule] | None = None,
 ) -> list[VariantResult]:
-    """Every variant (a strategy by seat) through one world in lockstep. ``on_day`` is handed a
-    :class:`DayRecord` for each variant and day, after the lineup is set and before the day's
-    lines are read."""
+    """Every variant (a strategy by seat) through one world in lockstep. Each day, after the
+    lineup is set and before the day's lines are read, the audit (``sim.audit``: ``rules``, or
+    :data:`audit.RULES`) reads every variant's day and its counts are tallied; ``on_day`` is
+    handed a :class:`DayRecord` for each variant and day at the same point."""
     n = len(variants)
     states = [initial(setup) for _ in range(n)]
     solves = [0] * n
@@ -549,6 +556,9 @@ def simulate(
     plans = list(execute_plan or [False] * n)
     points = dict(setup.points) if setup.scoring == "points" and setup.points else None
     spots, slot_counts = setup.spots(), Counter(setup.roster_slots)
+    auditor = audit.Auditor(setup, rules, w.path)
+    tallies = [ct.Tally(setup) for _ in range(n)]
+    made: Week | None = None  # the week of the last simulated day, when yesterday's moves were made
     for di, day in enumerate(setup.days):
         week = setup.week_of(day)
         if week is None:
@@ -562,10 +572,14 @@ def simulate(
         # the week's count starts over only once they are in.
         order = _rotation(setup.teams, di)
         due = [s.pending for s in states]
+        before = [s.executed_by for s in states]
         states = [policy.land(s, order, spots, slot_counts, status, value) for s in states]
+        for vi, s in enumerate(states):
+            tallies[vi].charge((made or week).number, before[vi], s.executed_by)
         if monday:
             states = [policy.new_week(s) for s in states]
         cache: dict[tuple[Any, ...], policy.Decision] = {}
+        lineups: list[dict[int, dict[int, str]]] = []
         for vi, state in enumerate(states):
             state = replace(state, day=day)
             decided: dict[int, policy.Decision] = {}
@@ -587,9 +601,23 @@ def simulate(
                     state, team, decision, _cap(strat), setup.max_weekly_adds, plans[vi], spots
                 )
             states[vi] = state
+            lineup = {
+                t: policy.starters_of(setup, state, t, day, status, value) for t in setup.teams
+            }
+            lineups.append(lineup)
+            auditor.check(audit.Day(day, vi, state, status, lineup))
+            tallies[vi].day(week.number, state)
             if on_day is not None:
-                on_day(_record(setup, vi, state, due[vi], decided, beliefs, status, returns, value))
-        states = [policy.score_day(setup, s, day, status, value, w.line) for s in states]
+                on_day(
+                    _record(setup, vi, state, due[vi], decided, beliefs, status, returns, lineup)
+                )
+        states = [
+            policy.score_day(setup, s, day, status, value, w.line, lineups[vi])
+            for vi, s in enumerate(states)
+        ]
+        for vi in range(n):
+            tallies[vi].played(lineups[vi], day, w.line)
+        made = week
     out = []
     for vi, state in enumerate(states):
         result = None
@@ -612,6 +640,8 @@ def simulate(
                 state.gone,
                 setup.bracket_unread,
                 forced_drops=state.forced_drops,
+                counts=tallies[vi].rows(state),
+                breaches=tuple(b for b in auditor.breaches if b.variant == vi),
             )
         )
     return out
@@ -643,6 +673,7 @@ def paired(setup: Setup, w: World, a: Arm, b: Arm, me: int) -> dict[str, Any]:
     vb = {**opponents_of(setup, b, me), me: b.seat()}
     ra, rb = simulate(setup, w, [va, vb], [a.execute_plan, b.execute_plan])
     ma, mb = _metrics(ra.summaries.get(me)), _metrics(rb.summaries.get(me))
+    rivals = [t for t in setup.teams if t != me]
     return {
         "a": ma,
         "b": mb,
@@ -653,6 +684,16 @@ def paired(setup: Setup, w: World, a: Arm, b: Arm, me: int) -> dict[str, Any]:
         "gone": [ra.gone, rb.gone],
         "forced_drops": [ra.forced_drops, rb.forced_drops],
         "bracket_unread": setup.bracket_unread,
+        "counts": {
+            "a": ct.row_of(ra.counts, [me]),
+            "b": ct.row_of(rb.counts, [me]),
+            # The rival seats of both arms' seasons as one row.
+            "rivals": ct.row_of(
+                {(v, t): c for v, r in enumerate((ra, rb)) for t, c in r.counts.items()},
+                [(v, t) for v in (0, 1) for t in rivals],
+            ),
+        },
+        "breaches": [b.payload() for b in (*ra.breaches, *rb.breaches)],
     }
 
 
@@ -676,8 +717,10 @@ def room(
     variant = {t: arms[name].seat() for t, name in assigned.items()}
     (r,) = simulate(setup, w, [variant], [any(arms[n].execute_plan for n in seats)], on_day=on_day)
     by_arm: dict[str, list[dict[str, float | None]]] = {}
+    seats_of: dict[str, list[int]] = {}
     for t, name in assigned.items():
         by_arm.setdefault(name, []).append(_metrics(r.summaries.get(t)))
+        seats_of.setdefault(name, []).append(t)
     return {
         "seats": {str(t): name for t, name in assigned.items()},
         "by_arm": {
@@ -689,6 +732,9 @@ def room(
         "gone": r.gone,
         "forced_drops": r.forced_drops,
         "bracket_unread": setup.bracket_unread,
+        # Every seat is an arm's: a room has no rival seats.
+        "counts": {name: ct.row_of(r.counts, ts) for name, ts in seats_of.items()},
+        "breaches": [b.payload() for b in r.breaches],
     }
 
 
@@ -699,10 +745,12 @@ def _mean(xs: Sequence[float | None]) -> float | None:
 
 def aggregate(
     rows: Sequence[Mapping[str, float | None]],
+    metrics: Sequence[str] = METRICS,
 ) -> dict[str, dict[str, float | int | None]]:
-    """Each metric's mean, standard error and count over ``rows`` (one a path)."""
+    """Each metric's mean, standard error and count over ``rows`` (one a path): the outcomes'
+    :data:`METRICS`, or the mechanism counts' (``counts.METRICS``)."""
     out: dict[str, dict[str, float | int | None]] = {}
-    for k in METRICS:
+    for k in metrics:
         vals = [float(r[k]) for r in rows if r.get(k) is not None]
         n = len(vals)
         if n == 0:

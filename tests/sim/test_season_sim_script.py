@@ -3,6 +3,8 @@ argument, the fit command on a synthetic cache."""
 
 from __future__ import annotations
 
+import contextlib
+import io
 import json
 from datetime import datetime
 from pathlib import Path
@@ -10,7 +12,10 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
+from pickandroll.sim import audit
 from pickandroll.sim import cli as ss
+from pickandroll.sim import counts as ct
+from pickandroll.sim import run as rn
 from tests.sim.sim_fixtures import synthetic_lines
 from tests.sim.test_gamelogs import body, entry, line
 
@@ -483,3 +488,235 @@ def test_fit_refits_the_refresh_and_the_residual_tau(run_data: Path, capsys):
     assert payload["tau"] is None and payload["refresh"] is None
     exports, realized, games = ss.residual_inputs(data, LEAGUE)
     assert len(exports) == 2 and len(realized) == 93 and len(games) == 93
+
+
+# --------------------------------------------------------------------------- the audit (PR B2)
+#: What two runs of one spec, seed and season may differ in: when they ran.
+WHEN = ("started_at", "finished_at")
+
+
+def _replay(data: Path, *extra: str) -> list[str]:
+    return [
+        "--data",
+        str(data),
+        "--rooms",
+        "0",
+        "replay",
+        "--season",
+        "2024",
+        "--standin",
+        "prior",
+        "--seats",
+        str(data / "A.json"),
+        str(data / "B.json"),
+        *extra,
+    ]
+
+
+def _written(out: str) -> Path:
+    (line_,) = [x for x in out.splitlines() if x.startswith("written: ")]
+    return Path(line_.removeprefix("written: "))
+
+
+def _as_written(payload: dict, aside: tuple[str, ...] = WHEN) -> str:
+    """The payload's bytes as the run writer writes them, ``aside`` left out."""
+    return json.dumps(
+        {k: v for k, v in payload.items() if k not in aside}, indent=1, sort_keys=True, default=str
+    )
+
+
+def _spy_tasks(mp: pytest.MonkeyPatch, name: str, at: int) -> dict[int, dict]:
+    """Each task's result by its path (the task's argument ``at``), in this process."""
+    seen: dict[int, dict] = {}
+    real = getattr(ss, name)
+
+    def task(*t):
+        r = real(*t)
+        seen[t[at]] = r
+        return r
+
+    mp.setattr(ss, name, task)
+    return seen
+
+
+def _plant(mp: pytest.MonkeyPatch, path: int) -> None:
+    """One breach on the first day of ``path``, found as a rule's would be. Nothing else in the
+    run changes: the audit only reads."""
+    real = audit.Auditor.check
+
+    def check(self, today):
+        found = real(self, today)
+        if self.path == path and not getattr(self, "planted", False):
+            self.planted = True
+            b = audit.Breach(today.day, today.variant, 1, "planted", "the test's breach", self.path)
+            self.breaches.append(b)
+            found = [*found, b]
+        return found
+
+    mp.setattr(audit.Auditor, "check", check)
+
+
+@pytest.fixture(scope="module")
+def replays(run_data: Path) -> dict:
+    """One replay of three paths run three times: on one worker, again on one, on two (its
+    first task in this process, the other two in the pool). The first run's tasks are kept (the
+    pool cannot carry the spy, so the run on two has none)."""
+    data = run_data
+    out: dict = {}
+    for name, workers in (("one", "1"), ("again", "1"), ("two", "2")):
+        with pytest.MonkeyPatch.context() as mp:
+            if workers == "1":
+                out[f"{name}_tasks"] = _spy_tasks(mp, "task_replay", 12)
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                code = ss.main(_replay(data, "--paths", "3", "--seed", "5", "--workers", workers))
+            assert code == 0
+            out[name] = json.loads(_written(buf.getvalue()).read_text())
+    return out
+
+
+def test_the_same_spec_seed_and_season_give_the_same_payload(replays):
+    one, again, two = replays["one"], replays["again"], replays["two"]
+    assert one["started_at"] != again["started_at"] or one["finished_at"] != again["finished_at"]
+    assert _as_written(one) == _as_written(again)
+    assert one["workers"] == 1 and two["workers"] == 2
+    assert _as_written(one, (*WHEN, "workers")) == _as_written(two, (*WHEN, "workers"))
+    assert sorted(replays["one_tasks"]) == [0, 1, 2] == sorted(replays["again_tasks"])
+    assert replays["one_tasks"] == replays["again_tasks"]
+
+
+def test_a_replay_payload_carries_the_counts_and_the_audit(replays):
+    p = replays["one"]
+    assert p["audit"]["paths_voided"] == 0 and p["audit"]["breaches"] == []
+    assert [r["name"] for r in p["audit"]["rules"]] == [r.name for r in audit.RULES]
+    counts = p["counts"]["by_standin"]["prior:0"]
+    assert set(counts) == {"A", "B"} and p["counts"]["rivals"] is None
+    assert set(counts["A"]) == set(ct.METRICS) and counts["A"]["landed"]["n"] == 3
+    assert counts["A"]["starter_games"]["mean"] > 0
+    assert set(p["counts"]["note"]) == {*ct.METRICS, "pooling"}
+
+
+def test_a_breach_voids_its_path_and_only_its_path(run_data: Path, replays, capsys):
+    data = run_data
+    clean = replays["one_tasks"]
+    with pytest.MonkeyPatch.context() as mp:
+        seen = _spy_tasks(mp, "task_replay", 12)
+        _plant(mp, 1)
+        code = ss.main(_replay(data, "--paths", "3", "--seed", "5", "--workers", "1"))
+    out = capsys.readouterr().out
+    assert code == ss.AUDIT_EXIT and "AUDIT: 1 breach(es) voided 1 path(s)" in out
+    payload = json.loads(_written(out).read_text())  # written all the same
+    note = payload["audit"]
+    assert note["paths_voided"] == 1 and note["voided"] == [{"standin": "prior:0", "path": 1}]
+    ((b),) = note["breaches"]
+    assert (b["standin"], b["path"], b["rule"], b["seat"]) == ("prior:0", 1, "planted", 1)
+    # The paths that stand ran as they did without the breach, and only they are aggregated.
+    for p in (0, 2):
+        assert seen[p] == clean[p]
+    for arm in ("A", "B"):
+        want = rn.aggregate([clean[p]["by_arm"][arm] for p in (0, 2)])
+        assert payload["results"]["prior:0"][arm] == json.loads(json.dumps(want))
+        assert payload["results"]["prior:0"][arm]["made_playoffs"]["n"] == 2
+        counts = ss.counts_of([clean[p]["counts"][arm] for p in (0, 2)])
+        assert payload["counts"]["by_standin"]["prior:0"][arm] == json.loads(json.dumps(counts))
+
+
+def test_compare_and_room_void_a_breached_path_and_carry_the_counts(run_data: Path, capsys):
+    data = run_data
+    compare = [
+        "--data",
+        str(data),
+        "--rooms",
+        "0",
+        "compare",
+        str(data / "A.json"),
+        str(data / "B.json"),
+        "--leagues",
+        LEAGUE,
+        "--paths",
+        "3",
+        "--workers",
+        "1",
+        "--today",
+        "2026-10-21",
+        "--seed",
+        "3",
+        "--shrink",
+        "0",
+    ]
+    with pytest.MonkeyPatch.context() as mp:
+        clean = _spy_tasks(mp, "task_compare", 3)
+        assert ss.main(compare) == 0
+    payload = json.loads(_written(capsys.readouterr().out).read_text())
+    c = payload["counts"]["by_shrink"]["0.0"]
+    assert set(c) == {"a", "b", "rivals"} and c["a"]["landed"]["n"] == 3
+    assert c["a"]["landed"]["mean"] + c["b"]["landed"]["mean"] > 0  # the seats moved
+    assert "seats other than mine" in payload["counts"]["rivals"]
+    assert payload["audit"]["paths_voided"] == 0
+    with pytest.MonkeyPatch.context() as mp:
+        _plant(mp, 2)
+        assert ss.main(compare) == ss.AUDIT_EXIT
+    payload = json.loads(_written(capsys.readouterr().out).read_text())
+    assert payload["audit"]["voided"] == [{"league": LEAGUE, "shrink": 0.0, "path": 2}]
+    assert payload["verdict"]["passes"] is None and "voided 1 path" in payload["verdict"]["why"]
+    agg = payload["results"]["by_shrink"]["0.0"]
+    want = rn.aggregate([clean[p]["delta"] for p in (0, 1)])
+    assert agg == json.loads(json.dumps(want)) and agg["made_playoffs"]["n"] == 2
+    room = [
+        "--data",
+        str(data),
+        "--rooms",
+        "0",
+        "room",
+        "--leagues",
+        LEAGUE,
+        "--seats",
+        str(data / "A.json"),
+        str(data / "B.json"),
+        "--paths",
+        "2",
+        "--workers",
+        "1",
+        "--today",
+        "2026-10-21",
+    ]
+    with pytest.MonkeyPatch.context() as mp:
+        _plant(mp, 0)
+        assert ss.main(room) == ss.AUDIT_EXIT
+    payload = json.loads(_written(capsys.readouterr().out).read_text())
+    assert payload["audit"]["voided"] == [{"league": LEAGUE, "path": 0}]
+    assert payload["results"]["by_arm"]["A"]["rank"]["n"] == 1
+    assert payload["counts"]["by_arm"]["A"]["landed"]["n"] == 1
+
+
+def test_a_dry_run_prints_its_tasks_counts_and_exits_on_a_breach(run_data: Path, capsys):
+    data = run_data
+    before = len(_runs(data))
+    assert ss.main(_replay(data, "--paths", "1", "--workers", "1", "--dry-run")) == 0
+    out = capsys.readouterr().out
+    assert "counts, A, the first task: landed" in out and "dry run, nothing written" in out
+    with pytest.MonkeyPatch.context() as mp:
+        _plant(mp, 0)
+        assert ss.main(_replay(data, "--paths", "1", "--workers", "1", "--dry-run")) == 3
+        out = capsys.readouterr().out
+        assert "AUDIT: 1 breach(es) voided 1 path(s)" in out and "planted on" in out
+        # The no-peek check stands only on runs the audit passes.
+        assert ss.main(_replay(data, "--no-peek", "2023-11-06")) == ss.AUDIT_EXIT
+        out = capsys.readouterr().out
+        assert "AUDIT (recorded season): planted" in out and "AUDIT (changed season)" in out
+    assert len(_runs(data)) == before
+
+
+def test_the_no_peek_check_gives_the_guard_its_span(run_data: Path, monkeypatch, capsys):
+    """Fifteen minutes before the routines' window: a plain replay starts, the no-peek check (two
+    seasons, a few minutes) is refused because its span touches the window."""
+    data = run_data
+    at = datetime(2026, 10, 27, 4, 35, tzinfo=MAC)
+    monkeypatch.setattr(ss, "now_local", lambda: at)
+    assert ss.main(_replay(data, "--no-peek", "2023-11-06")) == 2
+    assert "touches" in capsys.readouterr().out
+    assert ss.guard(0.0, now=at, rooms=0, nice=None) == (True, "ok")  # a plain replay's start
+    ok, why = ss.guard(ss.NO_PEEK_HOURS, now=at, rooms=0, nice=None)
+    assert not ok and "touches" in why
+    earlier = datetime(2026, 10, 27, 4, 25, tzinfo=MAC)
+    assert ss.touches_quiet_window(earlier, ss.NO_PEEK_HOURS) is False

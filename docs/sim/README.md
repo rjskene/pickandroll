@@ -20,7 +20,13 @@ through `sim/engine.py` only, the whole list of engine code it calls as library 
 engine's files are never edited from here); only `sim/readers.py`, `sim/gamelogs.py` and
 `sim/cli.py` import `pickandroll.sources`; and its imports from `pickandroll.api`, the live
 league's readers the commands use today, are an explicit list in the test that shrinks to empty
-when the simulator stops reading the live league.
+when the simulator stops reading the live league. The same test reads the core (`world`, `state`,
+`league`, `opponents`, `policy`, `run`, `fit`, `checks`, `validate`, `engine`, `belief`, `nopeek`,
+`audit`, `counts`) for any way to a file, a process or the network: none of them imports
+`pathlib`, `io`, `shutil`, `tempfile`, `socket`, `ssl`, `urllib`, `http`, `requests`, `httpx`,
+`subprocess`, `sqlite3` or `pickle`, none calls `open`, and only `run.py` uses `os`, for the
+worker count and the workers' priority. The policy and the opponents reach nothing of `run.py`,
+directly or through another module: the world is never among a seat's inputs.
 
 ## The world (`sim/world.py`)
 
@@ -270,6 +276,48 @@ part, writes nothing, and exits non-zero on a difference at or before the date.
 - A replay reads no status on day one, so a drafted player out from opening night is heard to be
   out only `lag` days after his first missed game.
 
+## The audit and the counts (`sim/audit.py`, `sim/counts.py`)
+
+The policy decides and the world checks. On every simulated day of every run of every command
+(compare, replay, room and the no-peek check, dry runs too), for each variant and every seat, the
+rivals' included, the audit reads the day at the point the day record is taken: yesterday's queue
+landed, the day's moves queued, the lineup set, the day's lines not yet read. No hook is needed;
+`simulate` runs it. Its rules are a list (`audit.RULES`), each named, each a function of the
+setup, the day and the same variant's day before; a later rule is one more entry.
+
+- `roster_slots`: a roster within the league's slots, its active players within the active spots,
+  each held kind within its count.
+- `one_place`: nobody on two rosters, nobody on a roster and on the wire.
+- `weekly_adds`: the adds charged to the week, landed and queued today, within the cap.
+- `lands_next_day`: every player who joined a roster today is the add of a move the same team
+  queued the day before (the auditor keeps each variant's day before; on day one the setup's
+  rosters stand for it, with nothing queued).
+- `held_kind`: a player placed in a held slot today is one the slot's kind accepts
+  (`moves.eligible`) under the status heard today.
+- `lineup`: each starter on his team's active roster and eligible for his slot, no more starters
+  in a slot than the league starts, every starter's team playing that day, nobody started whom the
+  seat had heard was out. The lineup is a function of the setup, the state, the team, the day, the
+  statuses and the values (`policy.starters_of`): no line reaches it, and changing a day's lines
+  changes nobody's starters that day.
+
+A breach (path, day, variant, seat, rule, what was found) voids its path: the runner records it,
+the command leaves the task out of every aggregate (compare voids a league, shrink and path;
+replay a stand-in and path; room a league and path), lists every breach and the voided tasks in
+the payload's `audit` block with the rules, writes the payload and exits 3. A dry run audits its
+one task and exits 3 on a breach too; the no-peek check prints the breaches of either season and
+exits 3 before it reads a difference. Nothing is repaired.
+
+**The counts.** An edge that comes from an artefact (four adds a week against rivals who never
+move) shows in what happened, so every compare, replay and room payload carries, per arm and
+pooled like the outcomes (a seat's season, the mean over the arm's seats a path, then over the
+paths that stand): the moves landed; the moves lost because the add or the drop was gone or no
+active spot was open; the adds charged to each week, their mean and the share of weeks at the cap
+(an add counts in the week it was made, the adds made before day one in week one); the drops
+forced by a returning held player; the held-slot stints and their days; and the starters' games
+played. Compare adds the rivals' seats as one row, both arms' seasons pooled. The landing
+counters are per seat on the state (`SimState.executed_by`, `gone_by`, `forced_by`, their sums the
+old whole-state counters); the rest is tallied by `sim/counts.py`.
+
 ## The gates as they stand (PR 2b)
 
 `validate` runs what the data on disk supports and writes what each gate had to work with; a gate
@@ -299,4 +347,6 @@ real ones, in every arm alike (the comparison is paired, the bias shared).
 
 Every command runs through the commands' guard: low priority, never when its span touches 04:45
 to 06:45 on the Mac's clock, never while a draft room is open on the API, and a run expected over
-an hour is announced to fantasyMASTER first.
+an hour is announced to fantasyMASTER first. The no-peek check runs two seasons before it can time one, so
+the guard gives it a span of a quarter of an hour (`NO_PEEK_HOURS`) and refuses it when that span
+touches the window.

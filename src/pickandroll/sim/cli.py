@@ -51,7 +51,8 @@ from typing import Any
 
 from ..api import seasons as season_api
 from ..api.leagues import leagues as all_leagues
-from . import checks, gamelogs, nopeek, policy, world
+from . import audit, checks, gamelogs, nopeek, policy, world
+from . import counts as ct
 from . import fit as fitmod
 from . import readers as reader
 from . import run as rn
@@ -445,6 +446,85 @@ def league_note(setup: Any) -> dict[str, Any]:
     }
 
 
+# --------------------------------------------------------------------------- the audit and the counts
+#: A run whose audit found a breach exits with this, after writing its payload.
+AUDIT_EXIT = 3
+#: What each mechanism count is, for the payload.
+COUNTS_NOTE = {
+    "landed": "moves landed",
+    "gone": "moves lost: the add (or the drop) was gone, or no active spot was open",
+    "adds_per_week": "adds charged to a week, its mean over the weeks played",
+    "weeks_at_cap": "the share of weeks whose adds reached the league's cap",
+    "forced_drops": "active players dropped when a held player came back over the spots",
+    "held_stints": "players placed in (or starting the run in) a held slot",
+    "held_days": "days spent in a held slot",
+    "starter_games": "games the day's starters played",
+    "pooling": "a seat's season, the mean over the arm's seats a path, then over paths",
+}
+
+
+def audited(
+    keys: Sequence[Mapping[str, Any]], results: Sequence[Mapping[str, Any]]
+) -> tuple[list[bool], dict[str, Any]]:
+    """Which tasks stand and the payload's audit block. A task with a breach is a voided path: it
+    is left out of every aggregate, and each breach is listed with the task it voids."""
+    keep = [not r.get("breaches") for r in results]
+    return keep, {
+        "rules": audit.names(),
+        "breaches": [
+            {**key, **b}
+            for key, r in zip(keys, results, strict=True)
+            for b in r.get("breaches", ())
+        ],
+        "paths_voided": keep.count(False),
+        "voided": [dict(key) for key, k in zip(keys, keep, strict=True) if not k],
+    }
+
+
+def audit_exit(note: Mapping[str, Any]) -> int:
+    """The exit code after writing: :data:`AUDIT_EXIT` when the audit voided a path."""
+    if not note["paths_voided"]:
+        return 0
+    print(
+        f"AUDIT: {len(note['breaches'])} breach(es) voided {note['paths_voided']} path(s); "
+        "they are listed in the payload and left out of its figures"
+    )
+    for b in note["breaches"][:10]:
+        print(f"  {b['rule']} on {b['day']}, seat {b['seat']}: {b['found']}")
+    return AUDIT_EXIT
+
+
+def dry_run(key: Mapping[str, Any], first: Mapping[str, Any]) -> int:
+    """A dry run's one task: its counts by arm and its audit printed, nothing written. A breach in
+    it exits with :data:`AUDIT_EXIT` all the same: a dry run is a run the audit reads too."""
+    for arm, row in (first.get("counts") or {}).items():
+        if row:
+            shown = ", ".join(f"{m} {row[m]:.4g}" for m in ct.METRICS if row.get(m) is not None)
+            print(f"counts, {arm}, the first task: {shown}")
+    _, note = audited([key], [first])
+    print("dry run, nothing written")
+    return audit_exit(note)
+
+
+def verdict_of(by_shrink: Mapping[str, Any], note: Mapping[str, Any]) -> dict[str, Any]:
+    """The advisory verdict over the paths that stand; none at all when the audit voided a path,
+    since the paths left may not be the ones a clean run would have kept."""
+    v = rn.verdict(by_shrink)
+    if note["paths_voided"]:
+        v = {
+            **v,
+            "passes": None,
+            "why": f"no verdict: the audit voided {note['paths_voided']} path(s)",
+        }
+    return v
+
+
+def counts_of(rows: Sequence[Any]) -> dict[str, Any] | None:
+    """The counts of the paths that stand, pooled like the outcomes; None without a row."""
+    have = [r for r in rows if r is not None]
+    return rn.aggregate(have, ct.METRICS) if have else None
+
+
 # --------------------------------------------------------------------------- compare
 def task_compare(
     setup: Any,
@@ -507,18 +587,27 @@ def cmd_compare(args: argparse.Namespace) -> int:
         f"{len(tasks)} tasks ({len(setups)} leagues x {len(shrinks)} shrinks x {args.paths} paths), one took {one:.1f}s, about {hours:.2f} h on {workers} workers"
     )
     if args.dry_run:
-        print("dry run, nothing written")
-        return 0
+        return dry_run(
+            {"league": tasks[0][0].league, "shrink": tasks[0][4], "path": tasks[0][3]}, first
+        )
     ok, why = guard(hours, rooms=args.rooms, announced=args.announced)
     if not ok:
         print(f"refused: {why}")
         return 2
     results = [first, *rn.run_tasks(task_compare, tasks[1:], workers)]
+    keep, note = audited(
+        [{"league": t[0].league, "shrink": t[4], "path": t[3]} for t in tasks], results
+    )
+    tasks = [t for t, k in zip(tasks, keep, strict=True) if k]
+    results = [r for r, k in zip(results, keep, strict=True) if k]
     rows_by_shrink: dict[str, list[dict[str, Any]]] = {}
     arms_by_shrink: dict[str, dict[str, list[dict[str, Any]]]] = {}
     by_league: dict[str, dict[str, list[dict[str, Any]]]] = {}
+    counts_by_shrink: dict[str, dict[str, list[Any]]] = {}
     for task, r in zip(tasks, results, strict=True):
         league, s = task[0].league, str(task[4])
+        for side in ("a", "b", "rivals"):
+            counts_by_shrink.setdefault(s, {}).setdefault(side, []).append(r["counts"][side])
         rows_by_shrink.setdefault(s, []).append(r["delta"])
         arms_by_shrink.setdefault(s, {}).setdefault("a", []).append(r["a"])
         arms_by_shrink[s].setdefault("b", []).append(r["b"])
@@ -565,7 +654,16 @@ def cmd_compare(args: argparse.Namespace) -> int:
             ],
             "gone": [sum(r["gone"][0] for r in results), sum(r["gone"][1] for r in results)],
         },
-        "verdict": rn.verdict(by_shrink),
+        "verdict": verdict_of(by_shrink, note),
+        "counts": {
+            "note": COUNTS_NOTE,
+            "rivals": "the seats other than mine, both arms' seasons, as one row",
+            "by_shrink": {
+                s: {side: counts_of(rows) for side, rows in d.items()}
+                for s, d in counts_by_shrink.items()
+            },
+        },
+        "audit": note,
     }
     path = finish(payload, args.data, False)
     for s, agg in by_shrink.items():
@@ -578,7 +676,7 @@ def cmd_compare(args: argparse.Namespace) -> int:
         f"verdict ({v['rule']}, advisory): {'passes' if v['passes'] else 'does not pass' if v['passes'] is False else 'no verdict'}"
     )
     print(f"written: {path}")
-    return 0
+    return audit_exit(note)
 
 
 # --------------------------------------------------------------------------- replay
@@ -682,29 +780,36 @@ def no_peek(
     seats: Sequence[str],
     seed: int,
     day: date,
-) -> tuple[Any, int]:
+) -> tuple[Any, int, list[dict[str, Any]]]:
     """Path 0 of the replay on the recorded lines and on :func:`nopeek.perturb`'s, with one
     league built before either: the first difference between their day records (None when
-    they never part) and the records compared."""
+    they never part), the records compared and the audit's breaches in either run."""
     setup = replay_setup_of(season, lines, members, scheduled, standin, prior, seed, 0)
     if day not in setup.days:
         raise ValueError(f"{day} is not a day of the replayed season")
     other = nopeek.perturb(lines, rn.game_days_of(setup), day, seed)
     digests: list[dict[tuple[date, int], dict[str, str]]] = []
-    for these in (lines, other):
+    breaches: list[dict[str, Any]] = []
+    for run_, these in (("recorded", lines), ("changed", other)):
         got: dict[tuple[date, int], dict[str, str]] = {}
 
         def keep(r: rn.DayRecord, got: dict[tuple[date, int], dict[str, str]] = got) -> None:
             got[(r.day, r.variant)] = nopeek.digest(r)
 
         w = rn.replay_world(setup, these, lag, seed, 0, weights, news_sd=news_sd)
-        rn.room(setup, w, arms, seats, 0, on_day=keep)
+        out = rn.room(setup, w, arms, seats, 0, on_day=keep)
+        breaches += [{"run": run_, **b} for b in out["breaches"]]
         digests.append(got)
-    return nopeek.first_difference(digests[0], digests[1]), len(digests[0])
+    return nopeek.first_difference(digests[0], digests[1]), len(digests[0]), breaches
+
+
+#: The span the guard gives ``replay --no-peek``: two paths of a real season take about three
+#: minutes; a quarter of an hour leaves room.
+NO_PEEK_HOURS = 0.25
 
 
 def cmd_replay(args: argparse.Namespace) -> int:
-    ok, why = guard(0.0, rooms=args.rooms)
+    ok, why = guard(NO_PEEK_HOURS if args.no_peek else 0.0, rooms=args.rooms)
     if not ok:
         print(f"refused: {why}")
         return 2
@@ -744,7 +849,7 @@ def cmd_replay(args: argparse.Namespace) -> int:
     if day is not None:
         t0 = clock.perf_counter()
         try:
-            first, n = no_peek(
+            first, n, breaches = no_peek(
                 args.season,
                 lines,
                 members,
@@ -764,6 +869,13 @@ def cmd_replay(args: argparse.Namespace) -> int:
             return 2
         took = clock.perf_counter() - t0
         print(f"no-peek check on {day}: {n} day records a run, {took:.1f}s, nothing written")
+        for b in breaches:
+            print(
+                f"AUDIT ({b['run']} season): {b['rule']} on {b['day']}, seat {b['seat']}: {b['found']}"
+            )
+        if breaches:
+            print(f"AUDIT: {len(breaches)} breach(es); the check does not stand")
+            return AUDIT_EXIT
         if first is not None and first[0] <= day:
             print(
                 f"FAILED: the records part on {first[0]} (variant {first[1]}, "
@@ -807,18 +919,27 @@ def cmd_replay(args: argparse.Namespace) -> int:
         f"{len(tasks)} tasks ({len(standins)} stand-ins x {args.paths} paths), one took {one:.1f}s, about {hours:.2f} h on {workers} workers"
     )
     if args.dry_run:
-        print("dry run, nothing written")
-        return 0
+        return dry_run(
+            {"standin": f"{tasks[0][4][0]}:{tasks[0][4][1]:g}", "path": tasks[0][12]}, first_run
+        )
     ok, why = guard(hours, rooms=args.rooms, announced=args.announced)
     if not ok:
         print(f"refused: {why}")
         return 2
     results = [first_run, *rn.run_tasks(task_replay, tasks[1:], workers)]
+    keep, note = audited(
+        [{"standin": f"{t[4][0]}:{t[4][1]:g}", "path": t[12]} for t in tasks], results
+    )
+    tasks = [t for t, k in zip(tasks, keep, strict=True) if k]
+    results = [r for r, k in zip(results, keep, strict=True) if k]
     by_standin: dict[str, dict[str, list[dict[str, Any]]]] = {}
+    counts_by_standin: dict[str, dict[str, list[Any]]] = {}
     for task, r in zip(tasks, results, strict=True):
         key = f"{task[4][0]}:{task[4][1]:g}"
         for arm, metrics in r["by_arm"].items():
             by_standin.setdefault(key, {}).setdefault(arm, []).append(metrics)
+        for arm, row in r["counts"].items():
+            counts_by_standin.setdefault(key, {}).setdefault(arm, []).append(row)
     payload = base_payload(
         "replay",
         args.name or f"replay-{args.season}",
@@ -846,6 +967,15 @@ def cmd_replay(args: argparse.Namespace) -> int:
             for key, d in by_standin.items()
         },
         "solves": sum(r["solves"] for r in results),
+        "counts": {
+            "note": COUNTS_NOTE,
+            "rivals": None,
+            "by_standin": {
+                key: {arm: counts_of(rows) for arm, rows in d.items()}
+                for key, d in counts_by_standin.items()
+            },
+        },
+        "audit": note,
     }
     path = finish(payload, args.data, False)
     for key, d in payload["results"].items():
@@ -855,7 +985,7 @@ def cmd_replay(args: argparse.Namespace) -> int:
                 f"{key} {arm}: playoff odds {m['mean']:.3f} (SE {m['se'] if m['se'] is None else round(m['se'], 3)}) over {m['n']} paths"
             )
     print(f"written: {path}")
-    return 0
+    return audit_exit(note)
 
 
 # --------------------------------------------------------------------------- room
@@ -927,19 +1057,24 @@ def cmd_room(args: argparse.Namespace) -> int:
         f"{len(tasks)} tasks ({len(setups)} leagues x {args.paths} paths), one took {one:.1f}s, about {hours:.2f} h on {workers} workers"
     )
     if args.dry_run:
-        print("dry run, nothing written")
-        return 0
+        return dry_run({"league": tasks[0][0].league, "path": tasks[0][5]}, first)
     ok, why = guard(hours, rooms=args.rooms, announced=args.announced)
     if not ok:
         print(f"refused: {why}")
         return 2
     results = [first, *rn.run_tasks(task_room, tasks[1:], workers)]
+    keep, note = audited([{"league": t[0].league, "path": t[5]} for t in tasks], results)
+    tasks = [t for t, k in zip(tasks, keep, strict=True) if k]
+    results = [r for r, k in zip(results, keep, strict=True) if k]
     by_arm: dict[str, list[dict[str, Any]]] = {}
     by_league: dict[str, dict[str, list[dict[str, Any]]]] = {}
+    counts_by_arm: dict[str, list[Any]] = {}
     for task, r in zip(tasks, results, strict=True):
         for arm, metrics in r["by_arm"].items():
             by_arm.setdefault(arm, []).append(metrics)
             by_league.setdefault(task[0].league, {}).setdefault(arm, []).append(metrics)
+        for arm, row in r["counts"].items():
+            counts_by_arm.setdefault(arm, []).append(row)
     payload = base_payload(
         "room", args.name or "room", started, sha, fit_path, fit, workers, tau_note, inputs
     )
@@ -963,6 +1098,12 @@ def cmd_room(args: argparse.Namespace) -> int:
             },
             "solves": sum(r["solves"] for r in results),
         },
+        "counts": {
+            "note": COUNTS_NOTE,
+            "rivals": None,
+            "by_arm": {arm: counts_of(rows) for arm, rows in counts_by_arm.items()},
+        },
+        "audit": note,
     }
     path = finish(payload, args.data, False)
     for arm, agg in payload["results"]["by_arm"].items():
@@ -970,7 +1111,7 @@ def cmd_room(args: argparse.Namespace) -> int:
         odds = m["mean"] if m["mean"] is None else round(m["mean"], 3)
         print(f"{arm}: playoff odds {odds} over {m['n']} paths, its seats pooled")
     print(f"written: {path}")
-    return 0
+    return audit_exit(note)
 
 
 # --------------------------------------------------------------------------- validate

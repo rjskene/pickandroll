@@ -184,3 +184,134 @@ def test_the_ties_to_the_live_api_are_exactly_the_ledger():
     }
     assert found - API_TIES == set(), f"a new tie to the live API: {sorted(found - API_TIES)}"
     assert API_TIES - found == set(), f"a tie the code no longer has: {sorted(API_TIES - found)}"
+
+
+# --------------------------------------------------------------------------- the core (PR B2)
+#: The simulator's core: the world, the seats, the runner and what they are checked by. Its
+#: inputs come in as values and its results go out as values; the readers and the commands do
+#: the files.
+CORE = (
+    "world",
+    "state",
+    "league",
+    "opponents",
+    "policy",
+    "run",
+    "fit",
+    "checks",
+    "validate",
+    "engine",
+    "belief",
+    "nopeek",
+    "audit",
+    "counts",
+)
+#: What the core never imports: files, processes, the network, stores on disk.
+NO_IO = {
+    "pathlib",
+    "io",
+    "shutil",
+    "tempfile",
+    "socket",
+    "ssl",
+    "urllib",
+    "http",
+    "requests",
+    "httpx",
+    "subprocess",
+    "sqlite3",
+    "pickle",
+}
+#: ``os`` in the core: only the runner, for the worker count and its workers' priority.
+OS_USES = {"pickandroll.sim.run": {"cpu_count", "nice"}}
+
+
+def core_sources() -> dict[str, str]:
+    return {f"pickandroll.sim.{m}": (SIM / f"{m}.py").read_text() for m in CORE}
+
+
+def io_of(source: str, module: str) -> list[str]:
+    """What in ``source`` reaches a file, a process or the network: an import of :data:`NO_IO`
+    (a submodule counts), an import of ``os``, a call or a mention of ``open``, and each
+    ``os.<name>`` used."""
+    found = []
+    for name in sorted(imports_of(source, module, False)):
+        top = name.split(".")[0]
+        if top in NO_IO or top == "os":
+            found.append(f"import {name}")
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, ast.Name) and node.id == "open":
+            found.append("open")
+        elif isinstance(node, ast.Attribute) and node.attr == "open":
+            found.append(f"{ast.unparse(node)}")
+        elif (
+            isinstance(node, ast.Attribute)
+            and isinstance(node.value, ast.Name)
+            and node.value.id == "os"
+        ):
+            found.append(f"os.{node.attr}")
+    return found
+
+
+def test_the_io_reader_sees_every_way_to_a_file():
+    source = (
+        "import os\n"
+        "import json\n"
+        "from pathlib import Path\n"
+        "import urllib.request\n"
+        "def f(p):\n"
+        "    with open(p) as fh:\n"
+        "        return fh.read(), os.getcwd(), Path(p).open()\n"
+        "g = open\n"
+    )
+    got = io_of(source, "pickandroll.sim.run")
+    assert sorted(got) == sorted(
+        [
+            "import os",
+            "import pathlib",
+            "import urllib.request",
+            "open",
+            "open",
+            "Path(p).open",
+            "os.getcwd",
+        ]
+    )
+
+
+def test_the_core_touches_no_file_and_no_network():
+    found = {}
+    for module, source in core_sources().items():
+        allowed = OS_USES.get(module, set())
+        bad = [
+            x
+            for x in io_of(source, module)
+            if not (x == "import os" and allowed) and not (x.startswith("os.") and x[3:] in allowed)
+        ]
+        if bad:
+            found[module] = bad
+    assert found == {}, f"the core reaches a file, a process or the network: {found}"
+    # Not vacuous: the runner's two uses of os are seen, and nowhere else has any.
+    seen = {m: io_of(s, m) for m, s in core_sources().items()}
+    assert sorted(seen["pickandroll.sim.run"]) == ["import os", "os.cpu_count", "os.nice"]
+    assert all(not v for m, v in seen.items() if m != "pickandroll.sim.run")
+
+
+def test_the_seats_import_nothing_from_the_runner():
+    """The policy's inputs carry no world: neither the policy nor the opponents reaches
+    ``run.py``, directly or through another of the simulator's modules."""
+    t = sim_table()
+
+    def reach(module: str) -> set[str]:
+        seen, todo = set(), [module]
+        while todo:
+            m = todo.pop()
+            for i in t.get(m, ()):
+                if within(i, "pickandroll.sim") and i not in seen:
+                    seen.add(i)
+                    todo.append(i)
+        return seen
+
+    for module in ("pickandroll.sim.policy", "pickandroll.sim.opponents"):
+        assert "pickandroll.sim.run" not in reach(module), f"{module} reaches run.py"
+    assert "pickandroll.sim.policy" in reach("pickandroll.sim.opponents")  # not vacuous
+    assert "pickandroll.sim.run" in reach("pickandroll.sim.checks")

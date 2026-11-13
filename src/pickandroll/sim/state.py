@@ -122,11 +122,28 @@ class SimState:
     pending_held: Mapping[int, tuple[tuple[int, str], ...]] = field(default_factory=dict)
     #: Every week's totals so far: week number to team to stat totals.
     totals: Mapping[int, Mapping[int, Mapping[str, float]]] = field(default_factory=dict)
-    executed: int = 0
-    gone: int = 0
+    #: The moves landed (``executed``) and the moves lost because the add or its drop was gone
+    #: (``gone``), by team.
+    executed_by: Mapping[int, int] = field(default_factory=dict)
+    gone_by: Mapping[int, int] = field(default_factory=dict)
     #: Active players the executor had to drop when a cleared held player came back over the
-    #: league's spots (``policy.land``): never an add, so neither executed nor gone.
-    forced_drops: int = 0
+    #: league's spots (``policy.land``), by team: never an add, so neither executed nor gone.
+    forced_by: Mapping[int, int] = field(default_factory=dict)
+
+    @property
+    def executed(self) -> int:
+        """The moves landed, every team's."""
+        return sum(self.executed_by.values())
+
+    @property
+    def gone(self) -> int:
+        """The moves lost, every team's."""
+        return sum(self.gone_by.values())
+
+    @property
+    def forced_drops(self) -> int:
+        """The drops forced by a returning held player, every team's."""
+        return sum(self.forced_by.values())
 
     def key(self) -> tuple[Any, ...]:
         """What a decision depends on: two arms with the same key share one solve."""
