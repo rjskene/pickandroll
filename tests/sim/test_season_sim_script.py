@@ -720,3 +720,49 @@ def test_the_no_peek_check_gives_the_guard_its_span(run_data: Path, monkeypatch,
     assert not ok and "touches" in why
     earlier = datetime(2026, 10, 27, 4, 25, tzinfo=MAC)
     assert ss.touches_quiet_window(earlier, ss.NO_PEEK_HOURS) is False
+
+
+# --------------------------------------------------------------------------- a replay that moves (PR C)
+#: Players the moving replay's logs add beyond the fixture's: enough that its draft leaves
+#: projected players on the wire (``sim_league.make_data_dir``).
+WIRE = 120
+
+
+@pytest.fixture(scope="module")
+def wire_data(tmp_path_factory) -> Path:
+    """The fixture folder with :data:`WIRE` more players in its logs, fitted, and two arms: a
+    ranking seat (it moves without an evaluator, so a path is a few seconds) and a static one."""
+    data = make_data_dir(tmp_path_factory.mktemp("wire"), wire=WIRE)
+    assert ss.main(["--data", str(data), "--rooms", "0", "fit", "--seasons", "2023-2024"]) == 0
+    for name, tier in (("R", "ranking"), ("S", "static")):
+        spec = {"name": name, "tier": tier, "knobs": KNOBS, "opponents": {"kind": "market"}}
+        (data / f"{name}.json").write_text(json.dumps(spec))
+    return data
+
+
+def test_a_replay_with_a_wire_lands_moves_and_voids_nothing(wire_data: Path, capsys):
+    data = wire_data
+    args = [
+        "--data",
+        str(data),
+        "--rooms",
+        "0",
+        "replay",
+        "--season",
+        "2024",
+        "--seats",
+        str(data / "R.json"),
+        str(data / "S.json"),
+        "--paths",
+        "1",
+        "--workers",
+        "1",
+        "--seed",
+        "5",
+    ]
+    assert ss.main(args) == 0
+    payload = json.loads(_written(capsys.readouterr().out).read_text())
+    assert payload["audit"]["paths_voided"] == 0 and payload["audit"]["breaches"] == []
+    counts = payload["counts"]["by_standin"]["prior:0"]
+    assert counts["R"]["landed"]["mean"] >= 1 and counts["R"]["adds_per_week"]["mean"] > 0
+    assert counts["S"]["landed"]["mean"] == 0

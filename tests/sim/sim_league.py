@@ -311,9 +311,32 @@ def write_logs(data: Path, seasons: tuple[int, ...], players: list[dict[str, Any
         (folder / f"{season}.json").write_text(json.dumps({"season": season, "body": body}))
 
 
-def make_data_dir(tmp: Path, seasons: tuple[int, ...] = (2023, 2024, 2025, 2026)) -> Path:
+#: The positions the replay's extra players cycle through (:func:`make_data_dir`'s ``wire``).
+WIRE_POSITIONS = (["PG"], ["SG"], ["SF"], ["PF"], ["C"], ["PG", "SG"], ["SF", "PF"], ["PF", "C"])
+
+
+def wire_players(n: int) -> list[dict[str, Any]]:
+    """``n`` made-up players for the logs only: in no league's state, so a replay's draft has
+    more projected players than its seats take and the rest are on its wire."""
+    return [
+        {"name": f"Wire Player{i}", "positions": WIRE_POSITIONS[i % len(WIRE_POSITIONS)]}
+        for i in range(n)
+    ]
+
+
+def make_data_dir(
+    tmp: Path, seasons: tuple[int, ...] = (2023, 2024, 2025, 2026), wire: int = 0
+) -> Path:
     """A data folder with one public league's recorded season (twelve six-man teams drawn from
-    the anonymised fixtures), two made-up exports, ESPN ids, synthetic logs and no fit yet."""
+    the anonymised fixtures), two made-up exports, ESPN ids, synthetic logs and no fit yet.
+
+    ``wire`` made-up players join the logs after the fixture's (:func:`wire_players`), and
+    nowhere else. The fixture's 93 are fewer than a replay's twelve seats take (thirteen
+    spots each), so its draft takes every projected player and its wire is empty: no seat can
+    move. With ``wire`` 120 a replay of 2024 projects 191 of its 213 players (those with 20
+    games in 2023), drafts 156 and leaves 35 projected free agents beside the newcomers. The
+    first 93 players' lines are the same either way (they are drawn first), and ``wire`` 0 is
+    the folder as it always was."""
     data = tmp / "data"
     league_dir = data / "leagues" / LEAGUE
     season_dir = league_dir / "season"
@@ -470,7 +493,7 @@ def make_data_dir(tmp: Path, seasons: tuple[int, ...] = (2023, 2024, 2025, 2026)
     (box / "ids.json").write_text(
         json.dumps({str(p["yahoo_id"]): str(1000 + i) for i, p in enumerate(players)})
     )
-    write_logs(data, seasons, players)
+    write_logs(data, seasons, players + wire_players(wire))
     return data
 
 
