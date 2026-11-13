@@ -230,8 +230,10 @@ side (PR 1) is in `api/season_autopilot.py`; the click is the extension's, on th
   - live: one press per run. The press goes on record in this browser before the page is
     touched (`start_active_press:<league>`), with the page's roster (the run presses only from a
     page the API took). A second press in the league the same day is refused unless the page's
-    roster differs from the one the day's press ran on (players or held); the need rule's reasons
-    never lift it alone, and an unknown roster never does (ruled on #214, ext 0.9.1). It also
+    roster differs from the one the day's press ran on (players or held); of the need rule's
+    reasons only `il_moved` lifts it alone (#374, ext 0.11.13: the API's IL log by time, so a press
+    after the move clears it, while the roster a row carries can lag the move), and an unknown
+    roster never does (ruled on #214, ext 0.9.1). It also
     lifts once a live lineup run on record in this browser set a swap on a later day than the
     press's and was logged after it (#289, ext 0.11.2): one press per lineup set, then it holds
     again. The run then presses the main button, waits up to 10 s

@@ -203,16 +203,15 @@
    * #214), null when it may run: ``record`` is the press on record in this browser, ``row`` the
    * due route's row read after the page was posted, ``lineup`` the live lineup run on record. One
    * per day; the guard lifts when the page's roster differs from the one the day's press ran on
-   * (players or held), or when a live lineup run set a swap after it (``lineupSince``, #289). The
-   * need rule's reasons never lift it alone, and an unknown roster never lifts it. */
+   * (players or held), when a live IL move landed after it (``il_moved``, #374), or when a live
+   * lineup run set a swap after it (``lineupSince``, #289). Of the need rule's reasons only
+   * ``il_moved`` lifts it alone: the server's IL log by time, so a press after the move clears it,
+   * while the roster a row carries may lag the move. An unknown roster never lifts it. */
   function sameDayProblem(record, row, day, lineup = null) {
     if (!record || record.day !== day) return null;
+    if ((row.reasons || []).includes("il_moved")) return null;
     if (rosterDiffers(record.roster, row.roster)) return null;
     if (lineupSince(lineup, record)) return null;
-    // A move today (an IL move, a roster change) the press already ran after (#364): the roster
-    // is the one it ran on, not one that never changed.
-    const moved = (row.reasons || []).some((r) => r === "il_moved" || r === "roster_changed");
-    if (moved) return "Start Active ran in this league today after today's move; the roster is the one it ran on and no lineup was set since";
     return "Start Active ran in this league today; the roster has not changed and no lineup was set since";
   }
 
