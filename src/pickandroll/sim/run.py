@@ -471,6 +471,8 @@ class VariantResult:
     bracket_unread: str | None = None
     #: Active players the executor dropped when a cleared held player came back over the spots.
     forced_drops: int = 0
+    #: Held-slot moves the executor refused: the slot no longer accepted the player that morning.
+    held_refused: int = 0
     #: Each seat's mechanism counts over the season (``counts.METRICS``).
     counts: Mapping[int, Mapping[str, float | None]] = field(default_factory=dict)
     #: The audit's breaches in this variant: any one voids the path.
@@ -640,6 +642,7 @@ def simulate(
                 state.gone,
                 setup.bracket_unread,
                 forced_drops=state.forced_drops,
+                held_refused=state.held_refused,
                 counts=tallies[vi].rows(state),
                 breaches=tuple(b for b in auditor.breaches if b.variant == vi),
             )

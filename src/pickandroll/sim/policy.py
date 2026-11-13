@@ -23,9 +23,11 @@ most ``daily_cap`` a day and the league's adds a week, free agents only, never a
 dropped. The executor keeps the roster as Yahoo would: a held player whose status has cleared
 comes back to the bench the next morning and, over the league's spots, the least valuable active
 player leaves (the engine's rule for a cleared player); the held-slot moves a set needs are made
-before its adds land; an add that needs an active spot (no drop, or a churn's held drop, #221)
-takes a bench slot and is gone when none is open. Phase 1 models no waiver clear dates and no
-bids: ``EXECUTIONS`` names that in every run's payload.
+before its adds land, each only while its slot has room and accepts the player's status on the
+morning it lands (``moves.eligible``: a move is carried out against the day it lands, as an add
+another team took is); an add that needs an active spot (no drop, a churn's held drop, #221, or
+a held move refused) takes a bench slot and is gone when none is open. Phase 1 models no waiver
+clear dates and no bids: ``EXECUTIONS`` names that in every run's payload.
 """
 
 from __future__ import annotations
@@ -464,15 +466,19 @@ def land(
     never in ``executed_by`` or ``gone_by``). Then a churn's held drop goes to the pool on his
     own, as the engine times it (#221), freeing his slot; then the held-slot moves it queued,
     each player to his held slot while the slot has room (``slot_counts``, the league's slots by
-    kind); then the adds: one with a drop of an active player takes his slot; one that needs an
-    active spot (no drop, or the churn's) takes a bench slot while the active roster is under
-    ``spots`` and is otherwise gone, like an add another team took first (a churn's drop stands
-    either way, made before the add; a plain swap's is never made). Without ``spots`` nothing is
-    counted."""
+    kind) and, given ``status``, only if the slot accepts the status he has that morning
+    (``moves.eligible``, the engine's test): a move is carried out against the day it lands. One
+    the slot does not accept is not made and counts in the team's ``held_refused_by``; he stays
+    active and frees no spot. Then the adds: one with a drop of an active player takes his slot;
+    one that needs an active spot (no drop, the churn's, or one whose held move was refused)
+    takes a bench slot while the active roster is under ``spots`` and is otherwise gone, like an
+    add another team took first (a churn's drop stands either way, made before the add; a plain
+    swap's is never made). Without ``spots`` nothing is counted."""
     rosters = {t: list(r) for t, r in state.rosters.items()}
     pool = set(state.pool)
     adds_used = dict(state.adds_used)
     executed, gone, forced = dict(state.executed_by), dict(state.gone_by), dict(state.forced_by)
+    refused = dict(state.held_refused_by)
 
     def count(by: dict[int, int], team: int, n: int = 1) -> None:
         if n:
@@ -503,7 +509,11 @@ def land(
             idx = next(
                 (i for i, (pk, s) in enumerate(roster) if pk == k and s not in mv.HELD), None
             )
-            if idx is not None and room:
+            if idx is None:
+                continue
+            if status is not None and not mv.eligible(status.get(k), slot):
+                count(refused, team)  # decided while out; the slot no longer takes him
+            elif room:
                 roster[idx] = (k, slot)
         for m in moves:
             if m.add not in pool:
@@ -538,6 +548,7 @@ def land(
         executed_by=executed,
         gone_by=gone,
         forced_by=forced,
+        held_refused_by=refused,
     )
 
 
