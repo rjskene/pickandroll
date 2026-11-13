@@ -80,7 +80,13 @@ is kept on the bench for the solve. A player on Yahoo's can't-cut list (``cantcu
 refuses his drop on the add page) is protected whatever the three tests say. Neither is ever a
 drop on any horizon (``kept``, :func:`drop_options`); a protected player out still goes to a held
 slot when one is open (Yahoo blocks drops, not IL moves). His value net of return
-(:func:`net_of_return`) only ranks the IL and is shown, never protects.
+(:func:`net_of_return`) ranks the IL and is shown; the keep rule never protects on it.
+
+The stash threshold (#373, docs/ADD_DROP.md "The stash threshold") weighs it, when the knob file
+sets one: a returning player leaves only when the player who keeps his spot beats his value net
+of return by the threshold's share, on the plain drop and a churn's held drop (:func:`stash_ok`,
+in :func:`feasible`) and on the drop a comeback forces (:func:`guarded_pool`). With none, every
+league's value, nothing changes.
 
 My claims placed and not yet processed (#360) are made in the problem before it is solved
 (:func:`with_pending`): each add is on the roster from his clear day, each drop off it, a no-drop
@@ -237,6 +243,10 @@ class MoveProblem:
     #: problem (#364, :func:`owe_held`): each player in it is held here, though Yahoo shows him
     #: active until the next moves pass moves him. In :func:`held_moves` order.
     il_owed: tuple[tuple[int, str], ...] = ()
+    #: The stash threshold (#373, a knob, docs/AUTOPILOT.md section 6): the share of a returning
+    #: player's value net of return by which the player who keeps the spot must beat it for him
+    #: to leave (:func:`stash_ok`, :func:`guarded_pool`); None for no test, as before the reader.
+    stash_threshold: float | None = None
 
 
 @dataclass(frozen=True)
@@ -492,13 +502,16 @@ def churn_ok(problem: MoveProblem, move: Move) -> bool:
 def feasible(problem: MoveProblem, moves: Sequence[Move]) -> bool:
     """Whether the moves fit: distinct adds and drops, each add with a drop of an active player,
     or an active spot (an open one, or one a held-slot move of a player not dropped frees,
-    churns' freed slots included), each churn allowed (:func:`churn_ok`), and each week's adds
-    within its limit."""
+    churns' freed slots included), each churn allowed (:func:`churn_ok`), each drop of a returning
+    player allowed by the stash threshold (:func:`stash_ok`, #373), and each week's adds within its
+    limit."""
     adds = [m.add for m in moves]
     drops = [m.drop for m in moves if m.drop is not None]
     if len(set(adds)) < len(adds) or len(set(drops)) < len(drops):
         return False
     if any(is_churn(problem, m) and not churn_ok(problem, m) for m in moves):
+        return False
+    if problem.stash_threshold is not None and not all(stash_ok(problem, m) for m in moves):
         return False
     need = sum(1 for m in moves if needs_spot(problem, m))
     if need > open_spots(problem) + len(held_moves(problem, drops, freed_by(problem, moves))):
@@ -608,7 +621,8 @@ def comebacks(problem: MoveProblem, key: str, moves: Iterable[Move]) -> list[Com
     player whose status cleared (:func:`cleared`) does so on the first day, moves or none, unless
     ``problem.activation`` names his drop (#360) and that player is still active; and
     each held player not dropped who comes back inside it (:func:`returning`) does so on his
-    day back, unless the set leaves an active spot open for him (#221)."""
+    day back, unless the set leaves an active spot open for him (#221). A returning player the
+    stash threshold keeps is not sent while another can go (:func:`guarded_pool`, #373)."""
     moves = list(moves)
     held = held_used(problem, moves)
     back_now = cleared(problem)
@@ -650,6 +664,8 @@ def comebacks(problem: MoveProblem, key: str, moves: Iterable[Move]) -> list[Com
             or [x for x in active if x not in problem.pending]
             or active
         )
+        # A returning player the stash threshold keeps goes only when no one else can (#373).
+        pool = guarded_pool(problem, pool, day)
         weakest = min(pool, key=lambda x: (problem.value.get(x, 0.0), str(x)))
         active.remove(weakest)
         out.append(Comeback(k, slot, day, weakest, back))
@@ -678,7 +694,8 @@ def choose_activation(
     the player is left out of his value, since it can no longer run. A drop the season guard
     would refuse (``worth``: the returning player worth less than him over the season) is never
     chosen while another is allowed; if none is, the drop worth least over the season goes.
-    Ties on the objective go to the season. With every active player kept nothing is chosen, and
+    Ties on the objective go to the season. A returning player the stash threshold keeps is left
+    out while another can go (:func:`guarded_pool`, #373). With every active player kept nothing is chosen, and
     :func:`comebacks` falls back to the least valuable one. Several cleared players are taken in
     roster order."""
     back_now = cleared(problem)
@@ -696,6 +713,8 @@ def choose_activation(
         ]
         if k not in problem.kept:
             pool.append(k)
+        # A returning player the stash threshold keeps, while another can go (#373).
+        pool = guarded_pool(problem, pool, problem.first_day)
         if not pool:
             continue
         scored: list[tuple[int, float, float | None]] = []
@@ -763,7 +782,8 @@ def games_left(problem: MoveProblem, nba_team: str | None, start: date) -> float
 def net_of_return(problem: MoveProblem, key: int, player: Player) -> float | None:
     """His value net of return: his per-game value above a dead spot times his games from his
     return to the season's last day; 0 when he does not return, None without a season value.
-    It ranks the IL and is shown; it never protects."""
+    It ranks the IL, is shown, and is what the stash threshold weighs (#373, :func:`stash_ok`);
+    the keep rule never protects on it."""
     value = problem.season_value.get(key)
     if value is None:
         return None
@@ -771,6 +791,96 @@ def net_of_return(problem: MoveProblem, key: int, player: Player) -> float | Non
     if back is None:
         return 0.0
     return (value - problem.dead) * games_left(problem, player.nba_team, back)
+
+
+# --------------------------------------------------------------------------- the stash threshold
+def _players(problem: MoveProblem) -> dict[int, Player]:
+    """Every player of the problem by key: mine, active and held, and the candidates."""
+    cached = problem.__dict__.get("_players")
+    if cached is None:
+        cached = {**dict(problem.candidates), **dict(problem.held), **dict(problem.roster)}
+        object.__setattr__(problem, "_players", cached)
+    return cached
+
+
+def worth_from(problem: MoveProblem, key: int, day: date) -> float | None:
+    """What ``key`` is worth from ``day`` to the season's last day, in :func:`net_of_return`'s
+    units: his per-game value above a dead spot times his games from then; None without a
+    season value (#373)."""
+    value = problem.season_value.get(key)
+    player = _players(problem).get(key)
+    if value is None or player is None:
+        return None
+    return (value - problem.dead) * games_left(problem, player.nba_team, day)
+
+
+def returning_net(problem: MoveProblem, key: int) -> float | None:
+    """A returning player's value net of return (#373), the figure the stash threshold weighs:
+    a player of mine (active or held) out now (back after the first day, his status not cleared,
+    not a pending claim's add) who is back this season and worth something then; None for anyone
+    else."""
+    cached = problem.__dict__.get("_returning")
+    if cached is None:
+        cached = {}
+        object.__setattr__(problem, "_returning", cached)
+    if key in cached:
+        return cached[key]
+    mine = {**dict(problem.held), **dict(problem.roster)}
+    player = mine.get(key)
+    net: float | None = None
+    # A pending claim's add is arriving, not out (#360).
+    gone = {k for k, _ in cleared(problem)} | problem.pending
+    if player is not None and key not in gone:
+        back = back_from(problem, key, player)
+        if back is not None and back > problem.first_day:
+            r = net_of_return(problem, key, player)
+            net = r if r is not None and r > EPS else None
+    cached[key] = net
+    return net
+
+
+def stash_clears(problem: MoveProblem, worth: float | None, net: float) -> bool:
+    """Whether ``worth``, what the player keeping the spot is worth, beats a returning player's
+    value net of return ``net`` by the stash threshold's share: ``worth > (1 + t) * net``. An
+    alternative with no season value never does (#373)."""
+    t = problem.stash_threshold
+    if t is None:
+        return True
+    return worth is not None and worth > (1.0 + t) * net + EPS
+
+
+def stash_ok(problem: MoveProblem, move: Move) -> bool:
+    """Whether ``move`` may drop its player under the stash threshold (#373): always with no
+    threshold or when the drop is not a returning player (:func:`returning_net`); else only when
+    the add, from the day the move counts, beats his value net of return by the threshold's share
+    (:func:`stash_clears`). The plain drop of an active player out and a churn's held drop alike."""
+    if problem.stash_threshold is None or move.drop is None:
+        return True
+    net = returning_net(problem, move.drop)
+    if net is None:
+        return True
+    return stash_clears(problem, worth_from(problem, move.add, day_of(problem, move)), net)
+
+
+def guarded_pool(problem: MoveProblem, pool: Sequence[int], day: date) -> list[int]:
+    """A forced drop's candidates on ``day`` under the stash threshold (#373): each returning
+    player (:func:`returning_net`) is left out unless the weakest of the others by per-game value,
+    the one who would go instead, beats his value net of return by the threshold's share
+    (:func:`stash_clears`) from that day. With no threshold, or no one else in the pool, the pool
+    as it is: the drop is still made."""
+    pool = list(pool)
+    if problem.stash_threshold is None:
+        return pool
+    others = [x for x in pool if returning_net(problem, x) is None]
+    if not others or len(others) == len(pool):
+        return pool
+    instead = min(others, key=lambda x: (problem.value.get(x, 0.0), str(x)))
+    worth = worth_from(problem, instead, day)
+    return [
+        x
+        for x in pool
+        if (net := returning_net(problem, x)) is None or stash_clears(problem, worth, net)
+    ]
 
 
 @dataclass(frozen=True)

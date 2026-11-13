@@ -305,11 +305,20 @@ def test_a_knob_changed_in_the_last_four_weeks_or_frozen_is_not_changed_again():
 
 def test_the_step_never_changes_a_knob_without_a_hook():
     knobs, _ = pg.knob_file(None)
-    for knob in ("stash_threshold", "faab_sizing"):
-        assert knob not in pg.HOOKED
-        assert hc.refused_change(knobs, knob, 0.2, "2026-11-02", ["1", "2"]) == (
-            f"{knob} has no hook, so the step never changes it"
+    assert "faab_sizing" not in pg.HOOKED
+    assert hc.refused_change(knobs, "faab_sizing", 0.2, "2026-11-02", ["1", "2"]) == (
+        "faab_sizing has no hook, so the step never changes it"
+    )
+    # The stash threshold is read at solve time (#373) and still never stepped, a legal value
+    # included.
+    assert "stash_threshold" not in pg.HOOKED and "stash_threshold" in pg.READ_UNSTEPPED
+    for to in (0.0, 0.2):
+        assert hc.refused_change(knobs, "stash_threshold", to, "2026-11-02", ["1", "2"]) == (
+            "stash_threshold is read but never stepped, so the step never changes it"
         )
+    # No rule of the table sets it.
+    for r in hc.rules(knobs, {}, [], "2026-11-02"):
+        assert "stash_threshold" not in (r.get("set") or {}) and r.get("knob") != "stash_threshold"
     # Every knob a rule can change is hooked; a bound is refused like a minimum.
     assert {"protection_floor", "plan_floor_cats", "plan_floor_points", "system", "blend"} <= (
         pg.HOOKED

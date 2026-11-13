@@ -47,6 +47,8 @@ KNOB_MINIMUMS: Mapping[str, float] = {
     "blend": 0.25,
     "daily_cap": 1,
     "three_weight": 0.0,
+    # A share of a returning player's value net of return (#373): none, or 0 and above.
+    "stash_threshold": 0.0,
 }
 #: The highest value a knob may take, the bounds' high end (#152): the blend weight, the daily
 #: move cap and the three weeks' weight in a week plan's score.
@@ -66,12 +68,14 @@ NUMBERS = frozenset(
         "plan_floor_points",
         "daily_cap",
         "three_weight",
+        "stash_threshold",
     }
 )
 WHOLE = frozenset({"daily_cap"})
-#: The knobs the engine reads at solve time (#152); the others are recorded and nothing reads
-#: them (the stash threshold, and the FAAB sizing until it exists), so the Monday step never
-#: changes one.
+#: The knobs the Monday step may step (#152), each read by the engine at solve time. Beside them
+#: :data:`READ_UNSTEPPED` the engine reads and the step never changes until the user rules
+#: (the stash threshold, #373); the FAAB sizing is neither, recorded and read by nothing until it
+#: exists. The step changes no knob outside this set (``hillclimb.refused_change``).
 HOOKED = frozenset(
     {
         "system",
@@ -84,6 +88,10 @@ HOOKED = frozenset(
         "three_weight",
     }
 )
+#: The knobs the engine reads at solve time and the Monday step never changes (#373): the stash
+#: threshold, read by the move model (``moves.stash_ok``, ``moves.guarded_pool``), none in every
+#: league until the user rules on a value.
+READ_UNSTEPPED = frozenset({"stash_threshold"})
 #: Each knob's value when the knob file sets none: the code's own.
 DEFAULTS: Mapping[str, Any] = {
     "system": "bbm",

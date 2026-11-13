@@ -335,12 +335,37 @@ for one out for the season), so the season guard sees the whole cost.
 - **The queue** holds a churn as one entry: its held drop is made on its own first, then Y's IL
   move and the add as an open-spot claim (#221 part 3, docs/AUTOPILOT.md §2 "The held drop first").
 
-There is no stash threshold. The search prices the held move against every drop on each horizon
-and takes the better, and a tie goes to the move with no drop (on the moves route, unless the
-drop is worth more over the season: ties go to the season, #221). So the held move wins when the
-freed spot plays more than the deferred drop costs. A plain drop wins when the drop the return
-would force costs more than dropping now. `stash_threshold` stays an unhooked knob, recorded in
-the decision log as docs/AUTOPILOT.md section 6 says.
+The search prices the held move against every drop on each horizon and takes the better, and a
+tie goes to the move with no drop (on the moves route, unless the drop is worth more over the
+season: ties go to the season, #221). So the held move wins when the freed spot plays more than the
+deferred drop costs. A plain drop wins when the drop the return would force costs more than
+dropping now.
+
+**The stash threshold** (#373, `stash_threshold`, docs/AUTOPILOT.md section 6). A knob the move
+model reads at solve time and the Monday step never steps; none in every league until the user
+rules on a value, and with none the engine is as described above, no test made.
+
+- **A returning player** is one of mine, active or held, out now (back after the first day, his
+  status not cleared, not a pending claim's add), back this season, and worth something then: his
+  value net of return (`moves.net_of_return`) is above zero. Anyone else is never weighed by it.
+- **The rule.** With a threshold `t`, he leaves the roster only when the player who keeps his
+  spot is worth more than `(1 + t)` times his value net of return, both over the rest of the
+  season: the alternative's per-game value above a dead spot times his games from the day
+  (`moves.worth_from`). The unit is a share, so it means the same in a categories and a points
+  league. At `t = 0` the alternative must beat his return at all; an alternative with no season
+  value never does.
+- **The plain drop and a churn's held drop** (`moves.stash_ok`, inside `moves.feasible`): the
+  alternative is the move's add, from the day the move counts. A refused move is never searched,
+  priced or planned. A claim's churn still needs its held drop worth nothing net of his return.
+- **The drop a comeback forces** (`moves.guarded_pool`, in `moves.comebacks` and
+  `moves.choose_activation`): the drop is still made. Each returning player in the pool is left out
+  unless the weakest of the others by per-game value, the one who would go instead, beats his
+  return by the share from that day; the weakest left goes, and with no one else the pool is as it
+  was.
+- **Monotone, per player.** A move a higher threshold admits a lower one admits, and a returning
+  player a higher threshold leaves in a forced drop's pool a lower one leaves there too: the
+  protection only grows. A whole set is not held to it: with one drop refused the search may take
+  another returning player who still clears the bar.
 
 The moves payload states the room (`room`, from `moves.room`), so the web never infers it:
 
@@ -753,7 +778,8 @@ when left out.
   league's from the knob file over the code's defaults, with the system the solve ran on: the
   system and the blend weight, the horizon weight the strategy marks recommended, the keep rule's
   protection floor, #124, the streaming plan's floors, #136, and its moves a day, and the stash
-  threshold and the FAAB sizing, recorded though nothing reads them; beside them `file_system`,
+  threshold, read by the move model and never stepped (#373), and the FAAB sizing, recorded
+  though nothing reads it; beside them `file_system`,
   the system the knob file had in force for the league, which a route naming another overrode;
   a strategy entry also names its `recommended` weight and marks that weight's set), the first day a
   move counts, the adds left, the horizons' labels and the pool (the moves route's search pool,

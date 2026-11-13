@@ -404,6 +404,7 @@ def build(
         floor=float(knobs["protection_floor"]),
         plan_floor=float(knobs["plan_floor_points" if points else "plan_floor_cats"]),
         daily_cap=int(knobs["daily_cap"]),
+        stash_threshold=stash_threshold(knobs),
         cantcut=season_cantcut.load(data_dir, s.league),
     )
     pending = pending_claims(
@@ -479,6 +480,13 @@ def fold(base: mv.MoveProblem, pending: Sequence[mv.Pending]) -> tuple[mv.MovePr
     p = mv.with_pending(base, pending)
     rule = mv.keep_rule(p)
     return replace(p, kept=rule.kept | p.pending), rule
+
+
+def stash_threshold(knobs: Mapping[str, Any]) -> float | None:
+    """The stash threshold in force (#373): the knob file's number, None when it sets none (the
+    engine as before the reader)."""
+    value = knobs.get("stash_threshold")
+    return None if value is None else float(value)
 
 
 def keep_inputs(

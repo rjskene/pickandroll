@@ -1,0 +1,4824 @@
+{
+ "cleared_activation": {
+  "activation": {
+   "by": "three",
+   "drops": [
+    {
+     "drop": 3,
+     "player": 5
+    }
+   ]
+  },
+  "adds": {},
+  "candidates": {
+   "10": {
+    "from": "2026-10-26",
+    "three": {
+     "drop": 3,
+     "gain": 0.0,
+     "held": null,
+     "held_drop": null,
+     "next_drop": 2,
+     "next_price": 3.249,
+     "ros": {
+      "add_games": 6.0,
+      "drop_games": 15.0,
+      "extrapolated": {
+       "add": 2.0,
+       "drop": 5.0
+      },
+      "from": "2026-10-26",
+      "to": "2026-12-06",
+      "value": 45.0
+     }
+    },
+    "week": {
+     "drop": 2,
+     "gain": 0.0,
+     "held": null,
+     "held_drop": null,
+     "next_drop": 3,
+     "next_price": 0.0,
+     "ros": {
+      "add_games": 6.0,
+      "drop_games": 15.0,
+      "extrapolated": {
+       "add": 2.0,
+       "drop": 5.0
+      },
+      "from": "2026-10-26",
+      "to": "2026-12-06",
+      "value": -90.0
+     }
+    }
+   },
+   "11": {
+    "from": "2026-10-26",
+    "three": {
+     "drop": 2,
+     "gain": 2.769,
+     "held": null,
+     "held_drop": null,
+     "next_drop": 1,
+     "next_price": 0.417,
+     "ros": {
+      "add_games": 19.5,
+      "drop_games": 15.0,
+      "extrapolated": {
+       "add": 6.5,
+       "drop": 5.0
+      },
+      "from": "2026-10-26",
+      "to": "2026-12-06",
+      "value": 45.0
+     }
+    },
+    "week": {
+     "drop": 3,
+     "gain": 0.0,
+     "held": null,
+     "held_drop": null,
+     "next_drop": 2,
+     "next_price": 1.214,
+     "ros": {
+      "add_games": 19.5,
+      "drop_games": 15.0,
+      "extrapolated": {
+       "add": 6.5,
+       "drop": 5.0
+      },
+      "from": "2026-10-26",
+      "to": "2026-12-06",
+      "value": 180.0
+     }
+    }
+   }
+  },
+  "claim": null,
+  "cleared": [
+   {
+    "drop": 3,
+    "from": "2026-10-26",
+    "player": 5,
+    "slot": "IL",
+    "status": "Q"
+   }
+  ],
+  "horizons": {
+   "three": {
+    "base": 4.68,
+    "label": "weeks 2-4",
+    "weeks": [
+     2,
+     3,
+     4
+    ]
+   },
+   "week": {
+    "base": 1.832,
+    "label": "rest of week 1",
+    "weeks": [
+     1
+    ]
+   }
+  },
+  "keep_rule": {
+   "average": 0.0,
+   "best": null,
+   "floor": 0.0,
+   "held": [],
+   "players": []
+  },
+  "pending": [],
+  "plan": null,
+  "recommended": {
+   "three": {
+    "comebacks": {
+     "three": [
+      {
+       "drop": 3,
+       "from": "2026-10-26",
+       "player": 5,
+       "slot": "IL"
+      }
+     ],
+     "week": [
+      {
+       "drop": 3,
+       "from": "2026-10-26",
+       "player": 5,
+       "slot": "IL"
+      }
+     ]
+    },
+    "gain": {
+     "three": 2.769,
+     "week": -1.214
+    },
+    "held": [],
+    "moves": [
+     {
+      "add": 11,
+      "decided_by": "three",
+      "drop": 2,
+      "from": "2026-10-26",
+      "held": null,
+      "held_drop": null,
+      "instead_keep": [
+       {
+        "add": 11,
+        "drop": 1,
+        "from": "2026-10-26",
+        "held": null,
+        "held_drop": null
+       }
+      ],
+      "instead_without": [],
+      "marginal": {
+       "three": 2.769,
+       "week": -1.214
+      },
+      "price_keep": 0.417,
+      "price_without": 2.769,
+      "ros": {
+       "add_games": 19.5,
+       "drop_games": 15.0,
+       "extrapolated": {
+        "add": 6.5,
+        "drop": 5.0
+       },
+       "from": "2026-10-26",
+       "to": "2026-12-06",
+       "value": 45.0
+      }
+     }
+    ],
+    "ros": {
+     "value": 45.0
+    },
+    "season_guard": {
+     "held_back": false
+    }
+   },
+   "week": {
+    "comebacks": {
+     "three": [
+      {
+       "drop": 3,
+       "from": "2026-10-26",
+       "player": 5,
+       "slot": "IL"
+      }
+     ],
+     "week": [
+      {
+       "drop": 3,
+       "from": "2026-10-26",
+       "player": 5,
+       "slot": "IL"
+      }
+     ]
+    },
+    "gain": {
+     "three": 0.0,
+     "week": 0.0
+    },
+    "held": [],
+    "moves": [],
+    "ros": {
+     "value": 0.0
+    },
+    "season_guard": {
+     "held_back": false
+    }
+   }
+  },
+  "room": {
+   "eligible": [],
+   "held_open": {
+    "IL": 0
+   },
+   "open_spots": 0
+  },
+  "search": {
+   "min_gain": 0.01,
+   "pool": 30
+  },
+  "stash": [],
+  "system": {
+   "key": "bbm"
+  },
+  "unprojected": 0,
+  "week_plans": {
+   "floor": 0.1,
+   "judged": {
+    "floor": 0.1,
+    "playoff": false,
+    "set": {
+     "matchup": 0.1091,
+     "score": -0.301
+    },
+    "weight": 0.33
+   },
+   "limits": {
+    "beam": 8,
+    "exact": 8,
+    "plans": 5,
+    "steps": 4
+   },
+   "plans": [
+    {
+     "backs": [
+      {
+       "day": "2026-10-26",
+       "drop": 3,
+       "gain": null,
+       "player": 5,
+       "returning": false,
+       "slot": "IL"
+      }
+     ],
+     "matchup": 0.6632,
+     "ros": {
+      "value": 0.0
+     },
+     "score": 0.0,
+     "source": "set",
+     "steps": [],
+     "total": {
+      "three": 0.0,
+      "week": 0.0
+     }
+    },
+    {
+     "backs": [
+      {
+       "day": "2026-10-26",
+       "drop": 3,
+       "gain": null,
+       "player": 5,
+       "returning": false,
+       "slot": "IL"
+      }
+     ],
+     "matchup": 0.1091,
+     "ros": {
+      "value": 45.0
+     },
+     "score": -0.301,
+     "source": "search",
+     "steps": [
+      {
+       "add": 11,
+       "after": [],
+       "basis": "drop",
+       "drop": 2,
+       "from": "2026-10-26",
+       "gain": {
+        "three": 2.769,
+        "week": -1.214
+       },
+       "held": null,
+       "held_drop": null,
+       "ros": {
+        "add_games": 19.5,
+        "drop_games": 15.0,
+        "extrapolated": {
+         "add": 6.5,
+         "drop": 5.0
+        },
+        "from": "2026-10-26",
+        "to": "2026-12-06",
+        "value": 45.0
+       },
+       "score": -0.301
+      }
+     ],
+     "total": {
+      "three": 2.769,
+      "week": -1.214
+     }
+    }
+   ],
+   "queue": null
+  }
+ },
+ "held_o_back_monday": {
+  "adds": {},
+  "candidates": {
+   "10": {
+    "from": "2026-10-26",
+    "three": {
+     "drop": 2,
+     "gain": 0.0,
+     "held": null,
+     "held_drop": null,
+     "next_drop": 3,
+     "next_price": 0.0,
+     "ros": {
+      "add_games": 6.0,
+      "drop_games": 15.0,
+      "extrapolated": {
+       "add": 2.0,
+       "drop": 5.0
+      },
+      "from": "2026-10-26",
+      "to": "2026-12-06",
+      "value": -90.0
+     }
+    },
+    "week": {
+     "drop": 5,
+     "gain": 1.513,
+     "held": null,
+     "held_drop": null,
+     "next_drop": 7,
+     "next_price": 0.0,
+     "ros": {
+      "add_games": 6.0,
+      "drop_games": 11.0,
+      "extrapolated": {
+       "add": 2.0,
+       "drop": 5.0
+      },
+      "from": "2026-10-26",
+      "to": "2026-12-06",
+      "value": -50.0
+     }
+    }
+   },
+   "11": {
+    "from": "2026-10-26",
+    "three": {
+     "drop": 2,
+     "gain": 3.515,
+     "held": null,
+     "held_drop": null,
+     "next_drop": 5,
+     "next_price": 0.0,
+     "ros": {
+      "add_games": 19.5,
+      "drop_games": 15.0,
+      "extrapolated": {
+       "add": 6.5,
+       "drop": 5.0
+      },
+      "from": "2026-10-26",
+      "to": "2026-12-06",
+      "value": 45.0
+     }
+    },
+    "week": {
+     "drop": 5,
+     "gain": 0.286,
+     "held": null,
+     "held_drop": null,
+     "next_drop": 7,
+     "next_price": 0.0,
+     "ros": {
+      "add_games": 19.5,
+      "drop_games": 11.0,
+      "extrapolated": {
+       "add": 6.5,
+       "drop": 5.0
+      },
+      "from": "2026-10-26",
+      "to": "2026-12-06",
+      "value": 85.0
+     }
+    }
+   }
+  },
+  "claim": null,
+  "cleared": [],
+  "horizons": {
+   "three": {
+    "base": 4.68,
+    "label": "weeks 2-4",
+    "weeks": [
+     2,
+     3,
+     4
+    ]
+   },
+   "week": {
+    "base": 0.435,
+    "label": "rest of week 1",
+    "weeks": [
+     1
+    ]
+   }
+  },
+  "keep_rule": {
+   "average": 0.0,
+   "best": null,
+   "floor": 0.0,
+   "held": [],
+   "players": []
+  },
+  "pending": [],
+  "plan": null,
+  "recommended": {
+   "three": {
+    "comebacks": {
+     "three": [
+      {
+       "drop": 3,
+       "from": "2026-11-02",
+       "player": 7,
+       "slot": "IL"
+      }
+     ],
+     "week": []
+    },
+    "gain": {
+     "three": 3.515,
+     "week": 0.286
+    },
+    "held": [],
+    "moves": [
+     {
+      "add": 11,
+      "decided_by": "season",
+      "drop": 5,
+      "from": "2026-10-26",
+      "held": null,
+      "held_drop": null,
+      "instead_keep": [
+       {
+        "add": 11,
+        "drop": 7,
+        "from": "2026-10-26",
+        "held": {
+         "player": 5,
+         "slot": "IL"
+        },
+        "held_drop": {
+         "player": 7,
+         "slot": "IL"
+        }
+       }
+      ],
+      "instead_without": [],
+      "marginal": {
+       "three": 3.515,
+       "week": 0.286
+      },
+      "price_keep": 0.0,
+      "price_without": 3.515,
+      "ros": {
+       "add_games": 19.5,
+       "drop_games": 11.0,
+       "extrapolated": {
+        "add": 6.5,
+        "drop": 5.0
+       },
+       "from": "2026-10-26",
+       "to": "2026-12-06",
+       "value": 85.0
+      }
+     }
+    ],
+    "ros": {
+     "value": 85.0
+    },
+    "season_guard": {
+     "held_back": false
+    }
+   },
+   "week": {
+    "comebacks": {
+     "three": [
+      {
+       "drop": 10,
+       "from": "2026-11-02",
+       "player": 7,
+       "slot": "IL"
+      }
+     ],
+     "week": []
+    },
+    "gain": {
+     "three": 3.515,
+     "week": 1.761
+    },
+    "held": [],
+    "moves": [
+     {
+      "add": 10,
+      "decided_by": "week",
+      "drop": 3,
+      "from": "2026-10-26",
+      "held": null,
+      "held_drop": null,
+      "instead_keep": [
+       {
+        "add": 11,
+        "drop": 5,
+        "from": "2026-10-26",
+        "held": null,
+        "held_drop": null
+       }
+      ],
+      "instead_without": [
+       {
+        "add": 11,
+        "drop": 5,
+        "from": "2026-10-26",
+        "held": null,
+        "held_drop": null
+       }
+      ],
+      "marginal": {
+       "three": 0.0,
+       "week": 1.474
+      },
+      "price_keep": 1.474,
+      "price_without": 1.474,
+      "ros": {
+       "add_games": 6.0,
+       "drop_games": 15.0,
+       "extrapolated": {
+        "add": 2.0,
+        "drop": 5.0
+       },
+       "from": "2026-10-26",
+       "to": "2026-12-06",
+       "value": 45.0
+      }
+     },
+     {
+      "add": 11,
+      "decided_by": "season",
+      "drop": 5,
+      "from": "2026-10-26",
+      "held": null,
+      "held_drop": null,
+      "instead_keep": [
+       {
+        "add": 10,
+        "drop": 3,
+        "from": "2026-10-26",
+        "held": null,
+        "held_drop": null
+       },
+       {
+        "add": 11,
+        "drop": 7,
+        "from": "2026-10-26",
+        "held": {
+         "player": 5,
+         "slot": "IL"
+        },
+        "held_drop": {
+         "player": 7,
+         "slot": "IL"
+        }
+       }
+      ],
+      "instead_without": [
+       {
+        "add": 10,
+        "drop": 3,
+        "from": "2026-10-26",
+        "held": null,
+        "held_drop": null
+       }
+      ],
+      "marginal": {
+       "three": 3.515,
+       "week": 0.364
+      },
+      "price_keep": 0.0,
+      "price_without": 0.364,
+      "ros": {
+       "add_games": 19.5,
+       "drop_games": 11.0,
+       "extrapolated": {
+        "add": 6.5,
+        "drop": 5.0
+       },
+       "from": "2026-10-26",
+       "to": "2026-12-06",
+       "value": 85.0
+      }
+     }
+    ],
+    "ros": {
+     "value": 130.0
+    },
+    "season_guard": {
+     "held_back": false
+    }
+   }
+  },
+  "room": {
+   "eligible": [
+    5
+   ],
+   "held_open": {
+    "IL": 0
+   },
+   "open_spots": 0
+  },
+  "search": {
+   "min_gain": 0.01,
+   "pool": 30
+  },
+  "stash": [],
+  "system": {
+   "key": "bbm"
+  },
+  "unprojected": 0,
+  "week_plans": {
+   "floor": 0.1,
+   "judged": {
+    "floor": 0.1,
+    "playoff": false,
+    "set": {
+     "matchup": 0.1452,
+     "score": 1.446
+    },
+    "weight": 0.33
+   },
+   "limits": {
+    "beam": 8,
+    "exact": 8,
+    "plans": 5,
+    "steps": 4
+   },
+   "plans": [
+    {
+     "backs": [],
+     "matchup": 0.8231,
+     "ros": {
+      "value": 130.0
+     },
+     "score": 2.92,
+     "source": "set",
+     "steps": [
+      {
+       "add": 10,
+       "after": [],
+       "basis": "drop",
+       "drop": 3,
+       "from": "2026-10-26",
+       "gain": {
+        "three": 0.0,
+        "week": 1.397
+       },
+       "held": null,
+       "held_drop": null,
+       "ros": {
+        "add_games": 6.0,
+        "drop_games": 15.0,
+        "extrapolated": {
+         "add": 2.0,
+         "drop": 5.0
+        },
+        "from": "2026-10-26",
+        "to": "2026-12-06",
+        "value": 45.0
+       },
+       "score": 1.397
+      },
+      {
+       "add": 11,
+       "after": [],
+       "basis": "drop",
+       "drop": 5,
+       "from": "2026-10-26",
+       "gain": {
+        "three": 3.515,
+        "week": 0.364
+       },
+       "held": null,
+       "held_drop": null,
+       "ros": {
+        "add_games": 19.5,
+        "drop_games": 11.0,
+        "extrapolated": {
+         "add": 6.5,
+         "drop": 5.0
+        },
+        "from": "2026-10-26",
+        "to": "2026-12-06",
+        "value": 85.0
+       },
+       "score": 1.524
+      }
+     ],
+     "total": {
+      "three": 3.515,
+      "week": 1.761
+     }
+    },
+    {
+     "backs": [],
+     "matchup": 0.1452,
+     "ros": {
+      "value": 85.0
+     },
+     "score": 1.446,
+     "source": "search",
+     "steps": [
+      {
+       "add": 11,
+       "after": [],
+       "basis": "drop",
+       "drop": 5,
+       "from": "2026-10-26",
+       "gain": {
+        "three": 3.515,
+        "week": 0.286
+       },
+       "held": null,
+       "held_drop": null,
+       "ros": {
+        "add_games": 19.5,
+        "drop_games": 11.0,
+        "extrapolated": {
+         "add": 6.5,
+         "drop": 5.0
+        },
+        "from": "2026-10-26",
+        "to": "2026-12-06",
+        "value": 85.0
+       },
+       "score": 1.446
+      }
+     ],
+     "total": {
+      "three": 3.515,
+      "week": 0.286
+     }
+    }
+   ],
+   "queue": 0
+  }
+ },
+ "held_o_claims": {
+  "adds": {},
+  "candidates": {
+   "10": {
+    "from": "2026-10-26",
+    "three": {
+     "drop": 2,
+     "gain": 0.0,
+     "held": null,
+     "held_drop": null,
+     "next_drop": 3,
+     "next_price": 0.0,
+     "ros": {
+      "add_games": 6.0,
+      "drop_games": 15.0,
+      "extrapolated": {
+       "add": 2.0,
+       "drop": 5.0
+      },
+      "from": "2026-10-26",
+      "to": "2026-12-06",
+      "value": -90.0
+     }
+    },
+    "week": {
+     "drop": 5,
+     "gain": 1.513,
+     "held": null,
+     "held_drop": null,
+     "next_drop": 7,
+     "next_price": 0.0,
+     "ros": {
+      "add_games": 6.0,
+      "drop_games": 11.0,
+      "extrapolated": {
+       "add": 2.0,
+       "drop": 5.0
+      },
+      "from": "2026-10-26",
+      "to": "2026-12-06",
+      "value": -50.0
+     }
+    }
+   },
+   "11": {
+    "from": "2026-10-26",
+    "three": {
+     "drop": 2,
+     "gain": 3.515,
+     "held": null,
+     "held_drop": null,
+     "next_drop": 5,
+     "next_price": 0.0,
+     "ros": {
+      "add_games": 19.5,
+      "drop_games": 15.0,
+      "extrapolated": {
+       "add": 6.5,
+       "drop": 5.0
+      },
+      "from": "2026-10-26",
+      "to": "2026-12-06",
+      "value": 45.0
+     }
+    },
+    "week": {
+     "drop": 5,
+     "gain": 0.286,
+     "held": null,
+     "held_drop": null,
+     "next_drop": 3,
+     "next_price": 0.104,
+     "ros": {
+      "add_games": 19.5,
+      "drop_games": 11.0,
+      "extrapolated": {
+       "add": 6.5,
+       "drop": 5.0
+      },
+      "from": "2026-10-26",
+      "to": "2026-12-06",
+      "value": 85.0
+     }
+    }
+   }
+  },
+  "claim": null,
+  "cleared": [],
+  "horizons": {
+   "three": {
+    "base": 4.68,
+    "label": "weeks 2-4",
+    "weeks": [
+     2,
+     3,
+     4
+    ]
+   },
+   "week": {
+    "base": 0.435,
+    "label": "rest of week 1",
+    "weeks": [
+     1
+    ]
+   }
+  },
+  "keep_rule": {
+   "average": 0.0,
+   "best": null,
+   "floor": 0.0,
+   "held": [],
+   "players": []
+  },
+  "pending": [],
+  "plan": null,
+  "recommended": {
+   "three": {
+    "comebacks": {
+     "three": [
+      {
+       "drop": 3,
+       "from": "2026-11-02",
+       "player": 7,
+       "slot": "IL"
+      }
+     ],
+     "week": []
+    },
+    "gain": {
+     "three": 3.515,
+     "week": 0.286
+    },
+    "held": [],
+    "moves": [
+     {
+      "add": 11,
+      "decided_by": "season",
+      "drop": 5,
+      "from": "2026-10-26",
+      "held": null,
+      "held_drop": null,
+      "instead_keep": [
+       {
+        "add": 11,
+        "drop": 2,
+        "from": "2026-10-26",
+        "held": null,
+        "held_drop": null
+       }
+      ],
+      "instead_without": [],
+      "marginal": {
+       "three": 3.515,
+       "week": 0.286
+      },
+      "price_keep": 0.0,
+      "price_without": 3.515,
+      "ros": {
+       "add_games": 19.5,
+       "drop_games": 11.0,
+       "extrapolated": {
+        "add": 6.5,
+        "drop": 5.0
+       },
+       "from": "2026-10-26",
+       "to": "2026-12-06",
+       "value": 85.0
+      }
+     }
+    ],
+    "ros": {
+     "value": 85.0
+    },
+    "season_guard": {
+     "held_back": false
+    }
+   },
+   "week": {
+    "comebacks": {
+     "three": [
+      {
+       "drop": 10,
+       "from": "2026-11-02",
+       "player": 7,
+       "slot": "IL"
+      }
+     ],
+     "week": []
+    },
+    "gain": {
+     "three": 3.515,
+     "week": 1.761
+    },
+    "held": [],
+    "moves": [
+     {
+      "add": 10,
+      "decided_by": "week",
+      "drop": 3,
+      "from": "2026-10-26",
+      "held": null,
+      "held_drop": null,
+      "instead_keep": [
+       {
+        "add": 11,
+        "drop": 5,
+        "from": "2026-10-26",
+        "held": null,
+        "held_drop": null
+       }
+      ],
+      "instead_without": [
+       {
+        "add": 11,
+        "drop": 5,
+        "from": "2026-10-26",
+        "held": null,
+        "held_drop": null
+       }
+      ],
+      "marginal": {
+       "three": 0.0,
+       "week": 1.474
+      },
+      "price_keep": 1.474,
+      "price_without": 1.474,
+      "ros": {
+       "add_games": 6.0,
+       "drop_games": 15.0,
+       "extrapolated": {
+        "add": 2.0,
+        "drop": 5.0
+       },
+       "from": "2026-10-26",
+       "to": "2026-12-06",
+       "value": 45.0
+      }
+     },
+     {
+      "add": 11,
+      "decided_by": "week",
+      "drop": 5,
+      "from": "2026-10-26",
+      "held": null,
+      "held_drop": null,
+      "instead_keep": [
+       {
+        "add": 10,
+        "drop": 3,
+        "from": "2026-10-26",
+        "held": null,
+        "held_drop": null
+       }
+      ],
+      "instead_without": [
+       {
+        "add": 10,
+        "drop": 3,
+        "from": "2026-10-26",
+        "held": null,
+        "held_drop": null
+       }
+      ],
+      "marginal": {
+       "three": 3.515,
+       "week": 0.364
+      },
+      "price_keep": 0.364,
+      "price_without": 0.364,
+      "ros": {
+       "add_games": 19.5,
+       "drop_games": 11.0,
+       "extrapolated": {
+        "add": 6.5,
+        "drop": 5.0
+       },
+       "from": "2026-10-26",
+       "to": "2026-12-06",
+       "value": 85.0
+      }
+     }
+    ],
+    "ros": {
+     "value": 130.0
+    },
+    "season_guard": {
+     "held_back": false
+    }
+   }
+  },
+  "room": {
+   "eligible": [
+    5
+   ],
+   "held_open": {
+    "IL": 0
+   },
+   "open_spots": 0
+  },
+  "search": {
+   "min_gain": 0.01,
+   "pool": 30
+  },
+  "stash": [],
+  "system": {
+   "key": "bbm"
+  },
+  "unprojected": 0,
+  "week_plans": {
+   "floor": 0.1,
+   "judged": {
+    "floor": 0.1,
+    "playoff": false,
+    "set": {
+     "matchup": 0.1452,
+     "score": 1.446
+    },
+    "weight": 0.33
+   },
+   "limits": {
+    "beam": 8,
+    "exact": 8,
+    "plans": 5,
+    "steps": 4
+   },
+   "plans": [
+    {
+     "backs": [],
+     "matchup": 0.8231,
+     "ros": {
+      "value": 130.0
+     },
+     "score": 2.92,
+     "source": "set",
+     "steps": [
+      {
+       "add": 10,
+       "after": [],
+       "basis": "drop",
+       "drop": 3,
+       "from": "2026-10-26",
+       "gain": {
+        "three": 0.0,
+        "week": 1.397
+       },
+       "held": null,
+       "held_drop": null,
+       "ros": {
+        "add_games": 6.0,
+        "drop_games": 15.0,
+        "extrapolated": {
+         "add": 2.0,
+         "drop": 5.0
+        },
+        "from": "2026-10-26",
+        "to": "2026-12-06",
+        "value": 45.0
+       },
+       "score": 1.397
+      },
+      {
+       "add": 11,
+       "after": [],
+       "basis": "drop",
+       "drop": 5,
+       "from": "2026-10-26",
+       "gain": {
+        "three": 3.515,
+        "week": 0.364
+       },
+       "held": null,
+       "held_drop": null,
+       "ros": {
+        "add_games": 19.5,
+        "drop_games": 11.0,
+        "extrapolated": {
+         "add": 6.5,
+         "drop": 5.0
+        },
+        "from": "2026-10-26",
+        "to": "2026-12-06",
+        "value": 85.0
+       },
+       "score": 1.524
+      }
+     ],
+     "total": {
+      "three": 3.515,
+      "week": 1.761
+     }
+    },
+    {
+     "backs": [],
+     "matchup": 0.1452,
+     "ros": {
+      "value": 85.0
+     },
+     "score": 1.446,
+     "source": "search",
+     "steps": [
+      {
+       "add": 11,
+       "after": [],
+       "basis": "drop",
+       "drop": 5,
+       "from": "2026-10-26",
+       "gain": {
+        "three": 3.515,
+        "week": 0.286
+       },
+       "held": null,
+       "held_drop": null,
+       "ros": {
+        "add_games": 19.5,
+        "drop_games": 11.0,
+        "extrapolated": {
+         "add": 6.5,
+         "drop": 5.0
+        },
+        "from": "2026-10-26",
+        "to": "2026-12-06",
+        "value": 85.0
+       },
+       "score": 1.446
+      }
+     ],
+     "total": {
+      "three": 3.515,
+      "week": 0.286
+     }
+    }
+   ],
+   "queue": 0
+  }
+ },
+ "held_o_worth_little": {
+  "adds": {},
+  "candidates": {
+   "10": {
+    "from": "2026-10-26",
+    "three": {
+     "drop": 2,
+     "gain": 0.0,
+     "held": null,
+     "held_drop": null,
+     "next_drop": 3,
+     "next_price": 0.0,
+     "ros": {
+      "add_games": 6.0,
+      "drop_games": 15.0,
+      "extrapolated": {
+       "add": 2.0,
+       "drop": 5.0
+      },
+      "from": "2026-10-26",
+      "to": "2026-12-06",
+      "value": -90.0
+     }
+    },
+    "week": {
+     "drop": 5,
+     "gain": 1.513,
+     "held": null,
+     "held_drop": null,
+     "next_drop": 7,
+     "next_price": 0.0,
+     "ros": {
+      "add_games": 6.0,
+      "drop_games": 11.0,
+      "extrapolated": {
+       "add": 2.0,
+       "drop": 5.0
+      },
+      "from": "2026-10-26",
+      "to": "2026-12-06",
+      "value": -50.0
+     }
+    }
+   },
+   "11": {
+    "from": "2026-10-26",
+    "three": {
+     "drop": 2,
+     "gain": 3.515,
+     "held": null,
+     "held_drop": null,
+     "next_drop": 5,
+     "next_price": 0.0,
+     "ros": {
+      "add_games": 19.5,
+      "drop_games": 15.0,
+      "extrapolated": {
+       "add": 6.5,
+       "drop": 5.0
+      },
+      "from": "2026-10-26",
+      "to": "2026-12-06",
+      "value": 45.0
+     }
+    },
+    "week": {
+     "drop": 5,
+     "gain": 0.286,
+     "held": null,
+     "held_drop": null,
+     "next_drop": 7,
+     "next_price": 0.0,
+     "ros": {
+      "add_games": 19.5,
+      "drop_games": 11.0,
+      "extrapolated": {
+       "add": 6.5,
+       "drop": 5.0
+      },
+      "from": "2026-10-26",
+      "to": "2026-12-06",
+      "value": 85.0
+     }
+    }
+   }
+  },
+  "claim": null,
+  "cleared": [],
+  "horizons": {
+   "three": {
+    "base": 4.68,
+    "label": "weeks 2-4",
+    "weeks": [
+     2,
+     3,
+     4
+    ]
+   },
+   "week": {
+    "base": 0.435,
+    "label": "rest of week 1",
+    "weeks": [
+     1
+    ]
+   }
+  },
+  "keep_rule": {
+   "average": 0.0,
+   "best": null,
+   "floor": 0.0,
+   "held": [],
+   "players": []
+  },
+  "pending": [],
+  "plan": null,
+  "recommended": {
+   "three": {
+    "comebacks": {
+     "three": [
+      {
+       "drop": 3,
+       "from": "2026-11-02",
+       "player": 7,
+       "slot": "IL"
+      }
+     ],
+     "week": []
+    },
+    "gain": {
+     "three": 3.515,
+     "week": 0.286
+    },
+    "held": [],
+    "moves": [
+     {
+      "add": 11,
+      "decided_by": "season",
+      "drop": 5,
+      "from": "2026-10-26",
+      "held": null,
+      "held_drop": null,
+      "instead_keep": [
+       {
+        "add": 11,
+        "drop": 7,
+        "from": "2026-10-26",
+        "held": {
+         "player": 5,
+         "slot": "IL"
+        },
+        "held_drop": {
+         "player": 7,
+         "slot": "IL"
+        }
+       }
+      ],
+      "instead_without": [],
+      "marginal": {
+       "three": 3.515,
+       "week": 0.286
+      },
+      "price_keep": 0.0,
+      "price_without": 3.515,
+      "ros": {
+       "add_games": 19.5,
+       "drop_games": 11.0,
+       "extrapolated": {
+        "add": 6.5,
+        "drop": 5.0
+       },
+       "from": "2026-10-26",
+       "to": "2026-12-06",
+       "value": 85.0
+      }
+     }
+    ],
+    "ros": {
+     "value": 85.0
+    },
+    "season_guard": {
+     "held_back": false
+    }
+   },
+   "week": {
+    "comebacks": {
+     "three": [
+      {
+       "drop": 10,
+       "from": "2026-11-02",
+       "player": 7,
+       "slot": "IL"
+      }
+     ],
+     "week": []
+    },
+    "gain": {
+     "three": 3.515,
+     "week": 1.761
+    },
+    "held": [],
+    "moves": [
+     {
+      "add": 10,
+      "decided_by": "week",
+      "drop": 3,
+      "from": "2026-10-26",
+      "held": null,
+      "held_drop": null,
+      "instead_keep": [
+       {
+        "add": 11,
+        "drop": 5,
+        "from": "2026-10-26",
+        "held": null,
+        "held_drop": null
+       }
+      ],
+      "instead_without": [
+       {
+        "add": 11,
+        "drop": 5,
+        "from": "2026-10-26",
+        "held": null,
+        "held_drop": null
+       }
+      ],
+      "marginal": {
+       "three": 0.0,
+       "week": 1.474
+      },
+      "price_keep": 1.474,
+      "price_without": 1.474,
+      "ros": {
+       "add_games": 6.0,
+       "drop_games": 15.0,
+       "extrapolated": {
+        "add": 2.0,
+        "drop": 5.0
+       },
+       "from": "2026-10-26",
+       "to": "2026-12-06",
+       "value": 45.0
+      }
+     },
+     {
+      "add": 11,
+      "decided_by": "season",
+      "drop": 5,
+      "from": "2026-10-26",
+      "held": null,
+      "held_drop": null,
+      "instead_keep": [
+       {
+        "add": 10,
+        "drop": 3,
+        "from": "2026-10-26",
+        "held": null,
+        "held_drop": null
+       },
+       {
+        "add": 11,
+        "drop": 7,
+        "from": "2026-10-26",
+        "held": {
+         "player": 5,
+         "slot": "IL"
+        },
+        "held_drop": {
+         "player": 7,
+         "slot": "IL"
+        }
+       }
+      ],
+      "instead_without": [
+       {
+        "add": 10,
+        "drop": 3,
+        "from": "2026-10-26",
+        "held": null,
+        "held_drop": null
+       }
+      ],
+      "marginal": {
+       "three": 3.515,
+       "week": 0.364
+      },
+      "price_keep": 0.0,
+      "price_without": 0.364,
+      "ros": {
+       "add_games": 19.5,
+       "drop_games": 11.0,
+       "extrapolated": {
+        "add": 6.5,
+        "drop": 5.0
+       },
+       "from": "2026-10-26",
+       "to": "2026-12-06",
+       "value": 85.0
+      }
+     }
+    ],
+    "ros": {
+     "value": 130.0
+    },
+    "season_guard": {
+     "held_back": false
+    }
+   }
+  },
+  "room": {
+   "eligible": [
+    5
+   ],
+   "held_open": {
+    "IL": 0
+   },
+   "open_spots": 0
+  },
+  "search": {
+   "min_gain": 0.01,
+   "pool": 30
+  },
+  "stash": [],
+  "system": {
+   "key": "bbm"
+  },
+  "unprojected": 0,
+  "week_plans": {
+   "floor": 0.1,
+   "judged": {
+    "floor": 0.1,
+    "playoff": false,
+    "set": {
+     "matchup": 0.1452,
+     "score": 1.446
+    },
+    "weight": 0.33
+   },
+   "limits": {
+    "beam": 8,
+    "exact": 8,
+    "plans": 5,
+    "steps": 4
+   },
+   "plans": [
+    {
+     "backs": [],
+     "matchup": 0.8231,
+     "ros": {
+      "value": 130.0
+     },
+     "score": 2.92,
+     "source": "set",
+     "steps": [
+      {
+       "add": 10,
+       "after": [],
+       "basis": "drop",
+       "drop": 3,
+       "from": "2026-10-26",
+       "gain": {
+        "three": 0.0,
+        "week": 1.397
+       },
+       "held": null,
+       "held_drop": null,
+       "ros": {
+        "add_games": 6.0,
+        "drop_games": 15.0,
+        "extrapolated": {
+         "add": 2.0,
+         "drop": 5.0
+        },
+        "from": "2026-10-26",
+        "to": "2026-12-06",
+        "value": 45.0
+       },
+       "score": 1.397
+      },
+      {
+       "add": 11,
+       "after": [],
+       "basis": "drop",
+       "drop": 5,
+       "from": "2026-10-26",
+       "gain": {
+        "three": 3.515,
+        "week": 0.364
+       },
+       "held": null,
+       "held_drop": null,
+       "ros": {
+        "add_games": 19.5,
+        "drop_games": 11.0,
+        "extrapolated": {
+         "add": 6.5,
+         "drop": 5.0
+        },
+        "from": "2026-10-26",
+        "to": "2026-12-06",
+        "value": 85.0
+       },
+       "score": 1.524
+      }
+     ],
+     "total": {
+      "three": 3.515,
+      "week": 1.761
+     }
+    },
+    {
+     "backs": [],
+     "matchup": 0.1452,
+     "ros": {
+      "value": 85.0
+     },
+     "score": 1.446,
+     "source": "search",
+     "steps": [
+      {
+       "add": 11,
+       "after": [],
+       "basis": "drop",
+       "drop": 5,
+       "from": "2026-10-26",
+       "gain": {
+        "three": 3.515,
+        "week": 0.286
+       },
+       "held": null,
+       "held_drop": null,
+       "ros": {
+        "add_games": 19.5,
+        "drop_games": 11.0,
+        "extrapolated": {
+         "add": 6.5,
+         "drop": 5.0
+        },
+        "from": "2026-10-26",
+        "to": "2026-12-06",
+        "value": 85.0
+       },
+       "score": 1.446
+      }
+     ],
+     "total": {
+      "three": 3.515,
+      "week": 0.286
+     }
+    }
+   ],
+   "queue": 0
+  }
+ },
+ "held_ofs": {
+  "adds": {},
+  "candidates": {
+   "10": {
+    "from": "2026-10-26",
+    "three": {
+     "drop": 3,
+     "gain": 0.0,
+     "held": null,
+     "held_drop": null,
+     "next_drop": 7,
+     "next_price": 0.0,
+     "ros": {
+      "add_games": 6.0,
+      "drop_games": 15.0,
+      "extrapolated": {
+       "add": 2.0,
+       "drop": 5.0
+      },
+      "from": "2026-10-26",
+      "to": "2026-12-06",
+      "value": 45.0
+     }
+    },
+    "week": {
+     "drop": 5,
+     "gain": 1.513,
+     "held": null,
+     "held_drop": null,
+     "next_drop": 7,
+     "next_price": 0.0,
+     "ros": {
+      "add_games": 6.0,
+      "drop_games": 11.0,
+      "extrapolated": {
+       "add": 2.0,
+       "drop": 5.0
+      },
+      "from": "2026-10-26",
+      "to": "2026-12-06",
+      "value": -50.0
+     }
+    }
+   },
+   "11": {
+    "from": "2026-10-26",
+    "three": {
+     "drop": 3,
+     "gain": 3.515,
+     "held": null,
+     "held_drop": null,
+     "next_drop": 7,
+     "next_price": 0.0,
+     "ros": {
+      "add_games": 19.5,
+      "drop_games": 15.0,
+      "extrapolated": {
+       "add": 6.5,
+       "drop": 5.0
+      },
+      "from": "2026-10-26",
+      "to": "2026-12-06",
+      "value": 180.0
+     }
+    },
+    "week": {
+     "drop": 5,
+     "gain": 0.286,
+     "held": null,
+     "held_drop": null,
+     "next_drop": 7,
+     "next_price": 0.0,
+     "ros": {
+      "add_games": 19.5,
+      "drop_games": 11.0,
+      "extrapolated": {
+       "add": 6.5,
+       "drop": 5.0
+      },
+      "from": "2026-10-26",
+      "to": "2026-12-06",
+      "value": 85.0
+     }
+    }
+   }
+  },
+  "claim": null,
+  "cleared": [],
+  "horizons": {
+   "three": {
+    "base": 4.68,
+    "label": "weeks 2-4",
+    "weeks": [
+     2,
+     3,
+     4
+    ]
+   },
+   "week": {
+    "base": 0.435,
+    "label": "rest of week 1",
+    "weeks": [
+     1
+    ]
+   }
+  },
+  "keep_rule": {
+   "average": 0.0,
+   "best": null,
+   "floor": 0.0,
+   "held": [],
+   "players": []
+  },
+  "pending": [],
+  "plan": null,
+  "recommended": {
+   "three": {
+    "comebacks": {
+     "three": [
+      {
+       "drop": 3,
+       "from": "2026-11-02",
+       "player": 5,
+       "slot": "IL"
+      }
+     ],
+     "week": []
+    },
+    "gain": {
+     "three": 3.515,
+     "week": 0.286
+    },
+    "held": [
+     {
+      "player": 5,
+      "slot": "IL"
+     }
+    ],
+    "moves": [
+     {
+      "add": 11,
+      "decided_by": "season",
+      "drop": 7,
+      "from": "2026-10-26",
+      "held": {
+       "player": 5,
+       "slot": "IL"
+      },
+      "held_drop": {
+       "player": 7,
+       "slot": "IL"
+      },
+      "instead_keep": [
+       {
+        "add": 11,
+        "drop": 3,
+        "from": "2026-10-26",
+        "held": null,
+        "held_drop": null
+       }
+      ],
+      "instead_without": [],
+      "marginal": {
+       "three": 3.515,
+       "week": 0.286
+      },
+      "price_keep": 0.0,
+      "price_without": 3.515,
+      "ros": {
+       "add_games": 19.5,
+       "drop_games": 0.0,
+       "extrapolated": {
+        "add": 6.5,
+        "drop": 0.0
+       },
+       "from": "2026-10-26",
+       "to": "2026-12-06",
+       "value": 195.0
+      }
+     }
+    ],
+    "ros": {
+     "value": 195.0
+    },
+    "season_guard": {
+     "held_back": false
+    }
+   },
+   "week": {
+    "comebacks": {
+     "three": [
+      {
+       "drop": 10,
+       "from": "2026-11-02",
+       "player": 5,
+       "slot": "IL"
+      }
+     ],
+     "week": []
+    },
+    "gain": {
+     "three": 3.515,
+     "week": 1.761
+    },
+    "held": [
+     {
+      "player": 5,
+      "slot": "IL"
+     }
+    ],
+    "moves": [
+     {
+      "add": 10,
+      "decided_by": "season",
+      "drop": 7,
+      "from": "2026-10-26",
+      "held": {
+       "player": 5,
+       "slot": "IL"
+      },
+      "held_drop": {
+       "player": 7,
+       "slot": "IL"
+      },
+      "instead_keep": [
+       {
+        "add": 10,
+        "drop": 3,
+        "from": "2026-10-26",
+        "held": null,
+        "held_drop": null
+       },
+       {
+        "add": 11,
+        "drop": 5,
+        "from": "2026-10-26",
+        "held": null,
+        "held_drop": null
+       }
+      ],
+      "instead_without": [
+       {
+        "add": 11,
+        "drop": 7,
+        "from": "2026-10-26",
+        "held": {
+         "player": 5,
+         "slot": "IL"
+        },
+        "held_drop": {
+         "player": 7,
+         "slot": "IL"
+        }
+       }
+      ],
+      "marginal": {
+       "three": 0.0,
+       "week": 1.578
+      },
+      "price_keep": 0.0,
+      "price_without": 1.474,
+      "ros": {
+       "add_games": 6.0,
+       "drop_games": 0.0,
+       "extrapolated": {
+        "add": 2.0,
+        "drop": 0.0
+       },
+       "from": "2026-10-26",
+       "to": "2026-12-06",
+       "value": 60.0
+      }
+     },
+     {
+      "add": 11,
+      "decided_by": "week",
+      "drop": 3,
+      "from": "2026-10-26",
+      "held": null,
+      "held_drop": null,
+      "instead_keep": [
+       {
+        "add": 10,
+        "drop": 7,
+        "from": "2026-10-26",
+        "held": {
+         "player": 5,
+         "slot": "IL"
+        },
+        "held_drop": {
+         "player": 7,
+         "slot": "IL"
+        }
+       }
+      ],
+      "instead_without": [
+       {
+        "add": 10,
+        "drop": 7,
+        "from": "2026-10-26",
+        "held": {
+         "player": 5,
+         "slot": "IL"
+        },
+        "held_drop": {
+         "player": 7,
+         "slot": "IL"
+        }
+       }
+      ],
+      "marginal": {
+       "three": 3.515,
+       "week": 0.248
+      },
+      "price_keep": 0.248,
+      "price_without": 0.248,
+      "ros": {
+       "add_games": 19.5,
+       "drop_games": 15.0,
+       "extrapolated": {
+        "add": 6.5,
+        "drop": 5.0
+       },
+       "from": "2026-10-26",
+       "to": "2026-12-06",
+       "value": 180.0
+      }
+     }
+    ],
+    "ros": {
+     "value": 240.0
+    },
+    "season_guard": {
+     "held_back": false
+    }
+   }
+  },
+  "room": {
+   "eligible": [
+    5
+   ],
+   "held_open": {
+    "IL": 0
+   },
+   "open_spots": 0
+  },
+  "search": {
+   "min_gain": 0.01,
+   "pool": 30
+  },
+  "stash": [],
+  "system": {
+   "key": "bbm"
+  },
+  "unprojected": 0,
+  "week_plans": {
+   "floor": 0.1,
+   "judged": {
+    "floor": 0.1,
+    "playoff": false,
+    "set": {
+     "matchup": 0.1452,
+     "score": 1.446
+    },
+    "weight": 0.33
+   },
+   "limits": {
+    "beam": 8,
+    "exact": 8,
+    "plans": 5,
+    "steps": 4
+   },
+   "plans": [
+    {
+     "backs": [],
+     "matchup": 0.8231,
+     "ros": {
+      "value": 240.0
+     },
+     "score": 2.92,
+     "source": "set",
+     "steps": [
+      {
+       "add": 10,
+       "after": [],
+       "basis": "churn",
+       "drop": 7,
+       "from": "2026-10-26",
+       "gain": {
+        "three": 0.0,
+        "week": 1.513
+       },
+       "held": {
+        "player": 5,
+        "slot": "IL"
+       },
+       "held_drop": {
+        "player": 7,
+        "slot": "IL"
+       },
+       "ros": {
+        "add_games": 6.0,
+        "drop_games": 0.0,
+        "extrapolated": {
+         "add": 2.0,
+         "drop": 0.0
+        },
+        "from": "2026-10-26",
+        "to": "2026-12-06",
+        "value": 60.0
+       },
+       "score": 1.513
+      },
+      {
+       "add": 11,
+       "after": [],
+       "basis": "drop",
+       "drop": 3,
+       "from": "2026-10-26",
+       "gain": {
+        "three": 3.515,
+        "week": 0.248
+       },
+       "held": null,
+       "held_drop": null,
+       "ros": {
+        "add_games": 19.5,
+        "drop_games": 15.0,
+        "extrapolated": {
+         "add": 6.5,
+         "drop": 5.0
+        },
+        "from": "2026-10-26",
+        "to": "2026-12-06",
+        "value": 180.0
+       },
+       "score": 1.407
+      }
+     ],
+     "total": {
+      "three": 3.515,
+      "week": 1.761
+     }
+    },
+    {
+     "backs": [],
+     "matchup": 0.7175,
+     "ros": {
+      "value": 60.0
+     },
+     "score": 1.513,
+     "source": "search",
+     "steps": [
+      {
+       "add": 10,
+       "after": [],
+       "basis": "churn",
+       "drop": 7,
+       "from": "2026-10-26",
+       "gain": {
+        "three": 0.0,
+        "week": 1.513
+       },
+       "held": {
+        "player": 5,
+        "slot": "IL"
+       },
+       "held_drop": {
+        "player": 7,
+        "slot": "IL"
+       },
+       "ros": {
+        "add_games": 6.0,
+        "drop_games": 0.0,
+        "extrapolated": {
+         "add": 2.0,
+         "drop": 0.0
+        },
+        "from": "2026-10-26",
+        "to": "2026-12-06",
+        "value": 60.0
+       },
+       "score": 1.513
+      }
+     ],
+     "total": {
+      "three": 0.0,
+      "week": 1.513
+     }
+    },
+    {
+     "backs": [],
+     "matchup": 0.1452,
+     "ros": {
+      "value": 195.0
+     },
+     "score": 1.446,
+     "source": "search",
+     "steps": [
+      {
+       "add": 11,
+       "after": [],
+       "basis": "churn",
+       "drop": 7,
+       "from": "2026-10-26",
+       "gain": {
+        "three": 3.515,
+        "week": 0.286
+       },
+       "held": {
+        "player": 5,
+        "slot": "IL"
+       },
+       "held_drop": {
+        "player": 7,
+        "slot": "IL"
+       },
+       "ros": {
+        "add_games": 19.5,
+        "drop_games": 0.0,
+        "extrapolated": {
+         "add": 6.5,
+         "drop": 0.0
+        },
+        "from": "2026-10-26",
+        "to": "2026-12-06",
+        "value": 195.0
+       },
+       "score": 1.446
+      }
+     ],
+     "total": {
+      "three": 3.515,
+      "week": 0.286
+     }
+    }
+   ],
+   "queue": 0
+  }
+ },
+ "keep_later_date": {
+  "adds": {},
+  "candidates": {
+   "10": {
+    "from": "2026-10-26",
+    "three": {
+     "drop": null,
+     "gain": 0.0,
+     "held": {
+      "player": 5,
+      "slot": "IL"
+     },
+     "held_drop": null,
+     "next_drop": 3,
+     "next_price": 0.144,
+     "ros": {
+      "add_games": 6.0,
+      "drop_games": null,
+      "extrapolated": {
+       "add": 2.0,
+       "drop": null
+      },
+      "from": "2026-10-26",
+      "to": "2026-12-06",
+      "value": 60.0
+     }
+    },
+    "week": {
+     "drop": null,
+     "gain": 1.513,
+     "held": {
+      "player": 5,
+      "slot": "IL"
+     },
+     "held_drop": null,
+     "next_drop": 5,
+     "next_price": 0.0,
+     "ros": {
+      "add_games": 6.0,
+      "drop_games": null,
+      "extrapolated": {
+       "add": 2.0,
+       "drop": null
+      },
+      "from": "2026-10-26",
+      "to": "2026-12-06",
+      "value": 60.0
+     }
+    }
+   },
+   "11": {
+    "from": "2026-10-26",
+    "three": {
+     "drop": null,
+     "gain": 4.821,
+     "held": {
+      "player": 5,
+      "slot": "IL"
+     },
+     "held_drop": null,
+     "next_drop": 3,
+     "next_price": 0.031,
+     "ros": {
+      "add_games": 19.5,
+      "drop_games": null,
+      "extrapolated": {
+       "add": 6.5,
+       "drop": null
+      },
+      "from": "2026-10-26",
+      "to": "2026-12-06",
+      "value": 195.0
+     }
+    },
+    "week": {
+     "drop": null,
+     "gain": 0.286,
+     "held": {
+      "player": 5,
+      "slot": "IL"
+     },
+     "held_drop": null,
+     "next_drop": 5,
+     "next_price": 0.0,
+     "ros": {
+      "add_games": 19.5,
+      "drop_games": null,
+      "extrapolated": {
+       "add": 6.5,
+       "drop": null
+      },
+      "from": "2026-10-26",
+      "to": "2026-12-06",
+      "value": 195.0
+     }
+    }
+   }
+  },
+  "claim": null,
+  "cleared": [],
+  "horizons": {
+   "three": {
+    "base": 3.157,
+    "label": "weeks 2-4",
+    "weeks": [
+     2,
+     3,
+     4
+    ]
+   },
+   "week": {
+    "base": 0.435,
+    "label": "rest of week 1",
+    "weeks": [
+     1
+    ]
+   }
+  },
+  "keep_rule": {
+   "average": 0.0,
+   "best": null,
+   "floor": 0.0,
+   "held": [],
+   "players": []
+  },
+  "pending": [],
+  "plan": null,
+  "recommended": {
+   "three": {
+    "comebacks": {
+     "three": [
+      {
+       "drop": 3,
+       "from": "2026-11-12",
+       "player": 5,
+       "slot": "IL"
+      }
+     ],
+     "week": []
+    },
+    "gain": {
+     "three": 4.821,
+     "week": 0.286
+    },
+    "held": [
+     {
+      "player": 5,
+      "slot": "IL"
+     }
+    ],
+    "moves": [
+     {
+      "add": 11,
+      "decided_by": "three",
+      "drop": null,
+      "from": "2026-10-26",
+      "held": {
+       "player": 5,
+       "slot": "IL"
+      },
+      "held_drop": null,
+      "instead_keep": null,
+      "instead_without": [],
+      "marginal": {
+       "three": 4.821,
+       "week": 0.286
+      },
+      "price_keep": null,
+      "price_without": 4.821,
+      "ros": {
+       "add_games": 19.5,
+       "drop_games": null,
+       "extrapolated": {
+        "add": 6.5,
+        "drop": null
+       },
+       "from": "2026-10-26",
+       "to": "2026-12-06",
+       "value": 195.0
+      }
+     }
+    ],
+    "ros": {
+     "value": 195.0
+    },
+    "season_guard": {
+     "held_back": false
+    }
+   },
+   "week": {
+    "comebacks": {
+     "three": [
+      {
+       "drop": 10,
+       "from": "2026-11-12",
+       "player": 5,
+       "slot": "IL"
+      }
+     ],
+     "week": []
+    },
+    "gain": {
+     "three": 4.79,
+     "week": 1.761
+    },
+    "held": [
+     {
+      "player": 5,
+      "slot": "IL"
+     }
+    ],
+    "moves": [
+     {
+      "add": 10,
+      "decided_by": "week",
+      "drop": null,
+      "from": "2026-10-26",
+      "held": {
+       "player": 5,
+       "slot": "IL"
+      },
+      "held_drop": null,
+      "instead_keep": null,
+      "instead_without": [
+       {
+        "add": 11,
+        "drop": null,
+        "from": "2026-10-26",
+        "held": {
+         "player": 5,
+         "slot": "IL"
+        },
+        "held_drop": null
+       }
+      ],
+      "marginal": {
+       "three": 0.0,
+       "week": 1.578
+      },
+      "price_keep": null,
+      "price_without": 1.474,
+      "ros": {
+       "add_games": 6.0,
+       "drop_games": null,
+       "extrapolated": {
+        "add": 2.0,
+        "drop": null
+       },
+       "from": "2026-10-26",
+       "to": "2026-12-06",
+       "value": 60.0
+      }
+     },
+     {
+      "add": 11,
+      "decided_by": "week",
+      "drop": 3,
+      "from": "2026-10-26",
+      "held": null,
+      "held_drop": null,
+      "instead_keep": [
+       {
+        "add": 10,
+        "drop": null,
+        "from": "2026-10-26",
+        "held": {
+         "player": 5,
+         "slot": "IL"
+        },
+        "held_drop": null
+       }
+      ],
+      "instead_without": [
+       {
+        "add": 10,
+        "drop": null,
+        "from": "2026-10-26",
+        "held": {
+         "player": 5,
+         "slot": "IL"
+        },
+        "held_drop": null
+       }
+      ],
+      "marginal": {
+       "three": 4.79,
+       "week": 0.248
+      },
+      "price_keep": 0.248,
+      "price_without": 0.248,
+      "ros": {
+       "add_games": 19.5,
+       "drop_games": 15.0,
+       "extrapolated": {
+        "add": 6.5,
+        "drop": 5.0
+       },
+       "from": "2026-10-26",
+       "to": "2026-12-06",
+       "value": 180.0
+      }
+     }
+    ],
+    "ros": {
+     "value": 240.0
+    },
+    "season_guard": {
+     "held_back": false
+    }
+   }
+  },
+  "room": {
+   "eligible": [
+    5
+   ],
+   "held_open": {
+    "IL": 1
+   },
+   "open_spots": 0
+  },
+  "search": {
+   "min_gain": 0.01,
+   "pool": 30
+  },
+  "stash": [],
+  "system": {
+   "key": "bbm"
+  },
+  "unprojected": 0,
+  "week_plans": {
+   "floor": 0.1,
+   "judged": {
+    "floor": 0.1,
+    "playoff": false,
+    "set": {
+     "matchup": 0.1452,
+     "score": 1.877
+    },
+    "weight": 0.33
+   },
+   "limits": {
+    "beam": 8,
+    "exact": 8,
+    "plans": 5,
+    "steps": 4
+   },
+   "plans": [
+    {
+     "backs": [],
+     "matchup": 0.8231,
+     "ros": {
+      "value": 240.0
+     },
+     "score": 3.341,
+     "source": "set",
+     "steps": [
+      {
+       "add": 10,
+       "after": [],
+       "basis": "held",
+       "drop": null,
+       "from": "2026-10-26",
+       "gain": {
+        "three": 0.0,
+        "week": 1.513
+       },
+       "held": {
+        "player": 5,
+        "slot": "IL"
+       },
+       "held_drop": null,
+       "ros": {
+        "add_games": 6.0,
+        "drop_games": null,
+        "extrapolated": {
+         "add": 2.0,
+         "drop": null
+        },
+        "from": "2026-10-26",
+        "to": "2026-12-06",
+        "value": 60.0
+       },
+       "score": 1.513
+      },
+      {
+       "add": 11,
+       "after": [],
+       "basis": "drop",
+       "drop": 3,
+       "from": "2026-10-26",
+       "gain": {
+        "three": 4.79,
+        "week": 0.248
+       },
+       "held": null,
+       "held_drop": null,
+       "ros": {
+        "add_games": 19.5,
+        "drop_games": 15.0,
+        "extrapolated": {
+         "add": 6.5,
+         "drop": 5.0
+        },
+        "from": "2026-10-26",
+        "to": "2026-12-06",
+        "value": 180.0
+       },
+       "score": 1.828
+      }
+     ],
+     "total": {
+      "three": 4.79,
+      "week": 1.761
+     }
+    },
+    {
+     "backs": [],
+     "matchup": 0.7175,
+     "ros": {
+      "value": 60.0
+     },
+     "score": 1.513,
+     "source": "search",
+     "steps": [
+      {
+       "add": 10,
+       "after": [],
+       "basis": "held",
+       "drop": null,
+       "from": "2026-10-26",
+       "gain": {
+        "three": 0.0,
+        "week": 1.513
+       },
+       "held": {
+        "player": 5,
+        "slot": "IL"
+       },
+       "held_drop": null,
+       "ros": {
+        "add_games": 6.0,
+        "drop_games": null,
+        "extrapolated": {
+         "add": 2.0,
+         "drop": null
+        },
+        "from": "2026-10-26",
+        "to": "2026-12-06",
+        "value": 60.0
+       },
+       "score": 1.513
+      }
+     ],
+     "total": {
+      "three": 0.0,
+      "week": 1.513
+     }
+    },
+    {
+     "backs": [],
+     "matchup": 0.1452,
+     "ros": {
+      "value": 195.0
+     },
+     "score": 1.877,
+     "source": "search",
+     "steps": [
+      {
+       "add": 11,
+       "after": [],
+       "basis": "held",
+       "drop": null,
+       "from": "2026-10-26",
+       "gain": {
+        "three": 4.821,
+        "week": 0.286
+       },
+       "held": {
+        "player": 5,
+        "slot": "IL"
+       },
+       "held_drop": null,
+       "ros": {
+        "add_games": 19.5,
+        "drop_games": null,
+        "extrapolated": {
+         "add": 6.5,
+         "drop": null
+        },
+        "from": "2026-10-26",
+        "to": "2026-12-06",
+        "value": 195.0
+       },
+       "score": 1.877
+      }
+     ],
+     "total": {
+      "three": 4.821,
+      "week": 0.286
+     }
+    }
+   ],
+   "queue": 0
+  }
+ },
+ "keep_low_return": {
+  "adds": {},
+  "candidates": {
+   "10": {
+    "from": "2026-10-26",
+    "three": {
+     "drop": null,
+     "gain": 0.0,
+     "held": {
+      "player": 5,
+      "slot": "IL"
+     },
+     "held_drop": null,
+     "next_drop": 3,
+     "next_price": 0.0,
+     "ros": {
+      "add_games": 6.0,
+      "drop_games": null,
+      "extrapolated": {
+       "add": 2.0,
+       "drop": null
+      },
+      "from": "2026-10-26",
+      "to": "2026-12-06",
+      "value": 60.0
+     }
+    },
+    "week": {
+     "drop": null,
+     "gain": 1.513,
+     "held": {
+      "player": 5,
+      "slot": "IL"
+     },
+     "held_drop": null,
+     "next_drop": 5,
+     "next_price": 0.0,
+     "ros": {
+      "add_games": 6.0,
+      "drop_games": null,
+      "extrapolated": {
+       "add": 2.0,
+       "drop": null
+      },
+      "from": "2026-10-26",
+      "to": "2026-12-06",
+      "value": 60.0
+     }
+    }
+   },
+   "11": {
+    "from": "2026-10-26",
+    "three": {
+     "drop": null,
+     "gain": 3.515,
+     "held": {
+      "player": 5,
+      "slot": "IL"
+     },
+     "held_drop": null,
+     "next_drop": 3,
+     "next_price": 0.0,
+     "ros": {
+      "add_games": 19.5,
+      "drop_games": null,
+      "extrapolated": {
+       "add": 6.5,
+       "drop": null
+      },
+      "from": "2026-10-26",
+      "to": "2026-12-06",
+      "value": 195.0
+     }
+    },
+    "week": {
+     "drop": null,
+     "gain": 0.286,
+     "held": {
+      "player": 5,
+      "slot": "IL"
+     },
+     "held_drop": null,
+     "next_drop": 5,
+     "next_price": 0.0,
+     "ros": {
+      "add_games": 19.5,
+      "drop_games": null,
+      "extrapolated": {
+       "add": 6.5,
+       "drop": null
+      },
+      "from": "2026-10-26",
+      "to": "2026-12-06",
+      "value": 195.0
+     }
+    }
+   }
+  },
+  "claim": null,
+  "cleared": [],
+  "horizons": {
+   "three": {
+    "base": 4.68,
+    "label": "weeks 2-4",
+    "weeks": [
+     2,
+     3,
+     4
+    ]
+   },
+   "week": {
+    "base": 0.435,
+    "label": "rest of week 1",
+    "weeks": [
+     1
+    ]
+   }
+  },
+  "keep_rule": {
+   "average": 0.0,
+   "best": null,
+   "floor": 0.0,
+   "held": [],
+   "players": []
+  },
+  "pending": [],
+  "plan": null,
+  "recommended": {
+   "three": {
+    "comebacks": {
+     "three": [
+      {
+       "drop": 3,
+       "from": "2026-11-02",
+       "player": 5,
+       "slot": "IL"
+      }
+     ],
+     "week": []
+    },
+    "gain": {
+     "three": 3.515,
+     "week": 0.286
+    },
+    "held": [
+     {
+      "player": 5,
+      "slot": "IL"
+     }
+    ],
+    "moves": [
+     {
+      "add": 11,
+      "decided_by": "three",
+      "drop": null,
+      "from": "2026-10-26",
+      "held": {
+       "player": 5,
+       "slot": "IL"
+      },
+      "held_drop": null,
+      "instead_keep": null,
+      "instead_without": [],
+      "marginal": {
+       "three": 3.515,
+       "week": 0.286
+      },
+      "price_keep": null,
+      "price_without": 3.515,
+      "ros": {
+       "add_games": 19.5,
+       "drop_games": null,
+       "extrapolated": {
+        "add": 6.5,
+        "drop": null
+       },
+       "from": "2026-10-26",
+       "to": "2026-12-06",
+       "value": 195.0
+      }
+     }
+    ],
+    "ros": {
+     "value": 195.0
+    },
+    "season_guard": {
+     "held_back": false
+    }
+   },
+   "week": {
+    "comebacks": {
+     "three": [
+      {
+       "drop": 10,
+       "from": "2026-11-02",
+       "player": 5,
+       "slot": "IL"
+      }
+     ],
+     "week": []
+    },
+    "gain": {
+     "three": 3.515,
+     "week": 1.761
+    },
+    "held": [
+     {
+      "player": 5,
+      "slot": "IL"
+     }
+    ],
+    "moves": [
+     {
+      "add": 10,
+      "decided_by": "week",
+      "drop": null,
+      "from": "2026-10-26",
+      "held": {
+       "player": 5,
+       "slot": "IL"
+      },
+      "held_drop": null,
+      "instead_keep": null,
+      "instead_without": [
+       {
+        "add": 11,
+        "drop": null,
+        "from": "2026-10-26",
+        "held": {
+         "player": 5,
+         "slot": "IL"
+        },
+        "held_drop": null
+       }
+      ],
+      "marginal": {
+       "three": 0.0,
+       "week": 1.578
+      },
+      "price_keep": null,
+      "price_without": 1.474,
+      "ros": {
+       "add_games": 6.0,
+       "drop_games": null,
+       "extrapolated": {
+        "add": 2.0,
+        "drop": null
+       },
+       "from": "2026-10-26",
+       "to": "2026-12-06",
+       "value": 60.0
+      }
+     },
+     {
+      "add": 11,
+      "decided_by": "week",
+      "drop": 3,
+      "from": "2026-10-26",
+      "held": null,
+      "held_drop": null,
+      "instead_keep": [
+       {
+        "add": 10,
+        "drop": null,
+        "from": "2026-10-26",
+        "held": {
+         "player": 5,
+         "slot": "IL"
+        },
+        "held_drop": null
+       }
+      ],
+      "instead_without": [
+       {
+        "add": 10,
+        "drop": null,
+        "from": "2026-10-26",
+        "held": {
+         "player": 5,
+         "slot": "IL"
+        },
+        "held_drop": null
+       }
+      ],
+      "marginal": {
+       "three": 3.515,
+       "week": 0.248
+      },
+      "price_keep": 0.248,
+      "price_without": 0.248,
+      "ros": {
+       "add_games": 19.5,
+       "drop_games": 15.0,
+       "extrapolated": {
+        "add": 6.5,
+        "drop": 5.0
+       },
+       "from": "2026-10-26",
+       "to": "2026-12-06",
+       "value": 180.0
+      }
+     }
+    ],
+    "ros": {
+     "value": 240.0
+    },
+    "season_guard": {
+     "held_back": false
+    }
+   }
+  },
+  "room": {
+   "eligible": [
+    5
+   ],
+   "held_open": {
+    "IL": 1
+   },
+   "open_spots": 0
+  },
+  "search": {
+   "min_gain": 0.01,
+   "pool": 30
+  },
+  "stash": [],
+  "system": {
+   "key": "bbm"
+  },
+  "unprojected": 0,
+  "week_plans": {
+   "floor": 0.1,
+   "judged": {
+    "floor": 0.1,
+    "playoff": false,
+    "set": {
+     "matchup": 0.1452,
+     "score": 1.446
+    },
+    "weight": 0.33
+   },
+   "limits": {
+    "beam": 8,
+    "exact": 8,
+    "plans": 5,
+    "steps": 4
+   },
+   "plans": [
+    {
+     "backs": [],
+     "matchup": 0.8231,
+     "ros": {
+      "value": 240.0
+     },
+     "score": 2.92,
+     "source": "set",
+     "steps": [
+      {
+       "add": 10,
+       "after": [],
+       "basis": "held",
+       "drop": null,
+       "from": "2026-10-26",
+       "gain": {
+        "three": 0.0,
+        "week": 1.513
+       },
+       "held": {
+        "player": 5,
+        "slot": "IL"
+       },
+       "held_drop": null,
+       "ros": {
+        "add_games": 6.0,
+        "drop_games": null,
+        "extrapolated": {
+         "add": 2.0,
+         "drop": null
+        },
+        "from": "2026-10-26",
+        "to": "2026-12-06",
+        "value": 60.0
+       },
+       "score": 1.513
+      },
+      {
+       "add": 11,
+       "after": [],
+       "basis": "drop",
+       "drop": 3,
+       "from": "2026-10-26",
+       "gain": {
+        "three": 3.515,
+        "week": 0.248
+       },
+       "held": null,
+       "held_drop": null,
+       "ros": {
+        "add_games": 19.5,
+        "drop_games": 15.0,
+        "extrapolated": {
+         "add": 6.5,
+         "drop": 5.0
+        },
+        "from": "2026-10-26",
+        "to": "2026-12-06",
+        "value": 180.0
+       },
+       "score": 1.407
+      }
+     ],
+     "total": {
+      "three": 3.515,
+      "week": 1.761
+     }
+    },
+    {
+     "backs": [],
+     "matchup": 0.7175,
+     "ros": {
+      "value": 60.0
+     },
+     "score": 1.513,
+     "source": "search",
+     "steps": [
+      {
+       "add": 10,
+       "after": [],
+       "basis": "held",
+       "drop": null,
+       "from": "2026-10-26",
+       "gain": {
+        "three": 0.0,
+        "week": 1.513
+       },
+       "held": {
+        "player": 5,
+        "slot": "IL"
+       },
+       "held_drop": null,
+       "ros": {
+        "add_games": 6.0,
+        "drop_games": null,
+        "extrapolated": {
+         "add": 2.0,
+         "drop": null
+        },
+        "from": "2026-10-26",
+        "to": "2026-12-06",
+        "value": 60.0
+       },
+       "score": 1.513
+      }
+     ],
+     "total": {
+      "three": 0.0,
+      "week": 1.513
+     }
+    },
+    {
+     "backs": [],
+     "matchup": 0.1452,
+     "ros": {
+      "value": 195.0
+     },
+     "score": 1.446,
+     "source": "search",
+     "steps": [
+      {
+       "add": 11,
+       "after": [],
+       "basis": "held",
+       "drop": null,
+       "from": "2026-10-26",
+       "gain": {
+        "three": 3.515,
+        "week": 0.286
+       },
+       "held": {
+        "player": 5,
+        "slot": "IL"
+       },
+       "held_drop": null,
+       "ros": {
+        "add_games": 19.5,
+        "drop_games": null,
+        "extrapolated": {
+         "add": 6.5,
+         "drop": null
+        },
+        "from": "2026-10-26",
+        "to": "2026-12-06",
+        "value": 195.0
+       },
+       "score": 1.446
+      }
+     ],
+     "total": {
+      "three": 3.515,
+      "week": 0.286
+     }
+    }
+   ],
+   "queue": 0
+  }
+ },
+ "keep_no_il": {
+  "adds": {},
+  "candidates": {
+   "10": {
+    "from": "2026-10-26",
+    "three": {
+     "drop": 3,
+     "gain": 0.0,
+     "held": null,
+     "held_drop": null,
+     "next_drop": 2,
+     "next_price": 2.989,
+     "ros": {
+      "add_games": 6.0,
+      "drop_games": 15.0,
+      "extrapolated": {
+       "add": 2.0,
+       "drop": 5.0
+      },
+      "from": "2026-10-26",
+      "to": "2026-12-06",
+      "value": 45.0
+     }
+    },
+    "week": {
+     "drop": 5,
+     "gain": 1.513,
+     "held": null,
+     "held_drop": null,
+     "next_drop": 3,
+     "next_price": 0.116,
+     "ros": {
+      "add_games": 6.0,
+      "drop_games": 11.0,
+      "extrapolated": {
+       "add": 2.0,
+       "drop": 5.0
+      },
+      "from": "2026-10-26",
+      "to": "2026-12-06",
+      "value": -50.0
+     }
+    }
+   },
+   "11": {
+    "from": "2026-10-26",
+    "three": {
+     "drop": 3,
+     "gain": 3.515,
+     "held": null,
+     "held_drop": null,
+     "next_drop": 2,
+     "next_price": 0.653,
+     "ros": {
+      "add_games": 19.5,
+      "drop_games": 15.0,
+      "extrapolated": {
+       "add": 6.5,
+       "drop": 5.0
+      },
+      "from": "2026-10-26",
+      "to": "2026-12-06",
+      "value": 180.0
+     }
+    },
+    "week": {
+     "drop": 5,
+     "gain": 0.286,
+     "held": null,
+     "held_drop": null,
+     "next_drop": 3,
+     "next_price": 0.104,
+     "ros": {
+      "add_games": 19.5,
+      "drop_games": 11.0,
+      "extrapolated": {
+       "add": 6.5,
+       "drop": 5.0
+      },
+      "from": "2026-10-26",
+      "to": "2026-12-06",
+      "value": 85.0
+     }
+    }
+   }
+  },
+  "claim": null,
+  "cleared": [],
+  "horizons": {
+   "three": {
+    "base": 4.68,
+    "label": "weeks 2-4",
+    "weeks": [
+     2,
+     3,
+     4
+    ]
+   },
+   "week": {
+    "base": 0.435,
+    "label": "rest of week 1",
+    "weeks": [
+     1
+    ]
+   }
+  },
+  "keep_rule": {
+   "average": 0.0,
+   "best": null,
+   "floor": 0.0,
+   "held": [],
+   "players": []
+  },
+  "pending": [],
+  "plan": null,
+  "recommended": {
+   "three": {
+    "comebacks": {
+     "three": [],
+     "week": []
+    },
+    "gain": {
+     "three": 3.515,
+     "week": 0.182
+    },
+    "held": [],
+    "moves": [
+     {
+      "add": 11,
+      "decided_by": "three",
+      "drop": 3,
+      "from": "2026-10-26",
+      "held": null,
+      "held_drop": null,
+      "instead_keep": [
+       {
+        "add": 11,
+        "drop": 5,
+        "from": "2026-10-26",
+        "held": null,
+        "held_drop": null
+       }
+      ],
+      "instead_without": [],
+      "marginal": {
+       "three": 3.515,
+       "week": 0.182
+      },
+      "price_keep": 0.653,
+      "price_without": 3.515,
+      "ros": {
+       "add_games": 19.5,
+       "drop_games": 15.0,
+       "extrapolated": {
+        "add": 6.5,
+        "drop": 5.0
+       },
+       "from": "2026-10-26",
+       "to": "2026-12-06",
+       "value": 180.0
+      }
+     }
+    ],
+    "ros": {
+     "value": 180.0
+    },
+    "season_guard": {
+     "held_back": false
+    }
+   },
+   "week": {
+    "comebacks": {
+     "three": [],
+     "week": []
+    },
+    "gain": {
+     "three": 2.769,
+     "week": 1.761
+    },
+    "held": [],
+    "moves": [
+     {
+      "add": 10,
+      "decided_by": "week",
+      "drop": 3,
+      "from": "2026-10-26",
+      "held": null,
+      "held_drop": null,
+      "instead_keep": [
+       {
+        "add": 11,
+        "drop": 5,
+        "from": "2026-10-26",
+        "held": null,
+        "held_drop": null
+       }
+      ],
+      "instead_without": [
+       {
+        "add": 11,
+        "drop": 5,
+        "from": "2026-10-26",
+        "held": null,
+        "held_drop": null
+       }
+      ],
+      "marginal": {
+       "three": -0.093,
+       "week": 1.474
+      },
+      "price_keep": 1.474,
+      "price_without": 1.474,
+      "ros": {
+       "add_games": 6.0,
+       "drop_games": 15.0,
+       "extrapolated": {
+        "add": 2.0,
+        "drop": 5.0
+       },
+       "from": "2026-10-26",
+       "to": "2026-12-06",
+       "value": 45.0
+      }
+     },
+     {
+      "add": 11,
+      "decided_by": "week",
+      "drop": 5,
+      "from": "2026-10-26",
+      "held": null,
+      "held_drop": null,
+      "instead_keep": [
+       {
+        "add": 10,
+        "drop": 3,
+        "from": "2026-10-26",
+        "held": null,
+        "held_drop": null
+       }
+      ],
+      "instead_without": [
+       {
+        "add": 10,
+        "drop": 3,
+        "from": "2026-10-26",
+        "held": null,
+        "held_drop": null
+       }
+      ],
+      "marginal": {
+       "three": 2.769,
+       "week": 0.364
+      },
+      "price_keep": 0.364,
+      "price_without": 0.364,
+      "ros": {
+       "add_games": 19.5,
+       "drop_games": 11.0,
+       "extrapolated": {
+        "add": 6.5,
+        "drop": 5.0
+       },
+       "from": "2026-10-26",
+       "to": "2026-12-06",
+       "value": 85.0
+      }
+     }
+    ],
+    "ros": {
+     "value": 130.0
+    },
+    "season_guard": {
+     "held_back": false
+    }
+   }
+  },
+  "room": {
+   "eligible": [],
+   "held_open": {},
+   "open_spots": 0
+  },
+  "search": {
+   "min_gain": 0.01,
+   "pool": 30
+  },
+  "stash": [],
+  "system": {
+   "key": "bbm"
+  },
+  "unprojected": 0,
+  "week_plans": {
+   "floor": 0.1,
+   "judged": {
+    "floor": 0.1,
+    "playoff": false,
+    "set": {
+     "matchup": 0.1091,
+     "score": 1.342
+    },
+    "weight": 0.33
+   },
+   "limits": {
+    "beam": 8,
+    "exact": 8,
+    "plans": 5,
+    "steps": 4
+   },
+   "plans": [
+    {
+     "backs": [],
+     "matchup": 0.8231,
+     "ros": {
+      "value": 130.0
+     },
+     "score": 2.674,
+     "source": "set",
+     "steps": [
+      {
+       "add": 10,
+       "after": [],
+       "basis": "drop",
+       "drop": 3,
+       "from": "2026-10-26",
+       "gain": {
+        "three": 0.0,
+        "week": 1.397
+       },
+       "held": null,
+       "held_drop": null,
+       "ros": {
+        "add_games": 6.0,
+        "drop_games": 15.0,
+        "extrapolated": {
+         "add": 2.0,
+         "drop": 5.0
+        },
+        "from": "2026-10-26",
+        "to": "2026-12-06",
+        "value": 45.0
+       },
+       "score": 1.397
+      },
+      {
+       "add": 11,
+       "after": [],
+       "basis": "drop",
+       "drop": 5,
+       "from": "2026-10-26",
+       "gain": {
+        "three": 2.769,
+        "week": 0.364
+       },
+       "held": null,
+       "held_drop": null,
+       "ros": {
+        "add_games": 19.5,
+        "drop_games": 11.0,
+        "extrapolated": {
+         "add": 6.5,
+         "drop": 5.0
+        },
+        "from": "2026-10-26",
+        "to": "2026-12-06",
+        "value": 85.0
+       },
+       "score": 1.278
+      }
+     ],
+     "total": {
+      "three": 2.769,
+      "week": 1.761
+     }
+    },
+    {
+     "backs": [],
+     "matchup": 0.6632,
+     "ros": {
+      "value": 45.0
+     },
+     "score": 1.397,
+     "source": "search",
+     "steps": [
+      {
+       "add": 10,
+       "after": [],
+       "basis": "drop",
+       "drop": 3,
+       "from": "2026-10-26",
+       "gain": {
+        "three": 0.0,
+        "week": 1.397
+       },
+       "held": null,
+       "held_drop": null,
+       "ros": {
+        "add_games": 6.0,
+        "drop_games": 15.0,
+        "extrapolated": {
+         "add": 2.0,
+         "drop": 5.0
+        },
+        "from": "2026-10-26",
+        "to": "2026-12-06",
+        "value": 45.0
+       },
+       "score": 1.397
+      }
+     ],
+     "total": {
+      "three": 0.0,
+      "week": 1.397
+     }
+    },
+    {
+     "backs": [],
+     "matchup": 0.1091,
+     "ros": {
+      "value": 180.0
+     },
+     "score": 1.342,
+     "source": "search",
+     "steps": [
+      {
+       "add": 11,
+       "after": [],
+       "basis": "drop",
+       "drop": 3,
+       "from": "2026-10-26",
+       "gain": {
+        "three": 3.515,
+        "week": 0.182
+       },
+       "held": null,
+       "held_drop": null,
+       "ros": {
+        "add_games": 19.5,
+        "drop_games": 15.0,
+        "extrapolated": {
+         "add": 6.5,
+         "drop": 5.0
+        },
+        "from": "2026-10-26",
+        "to": "2026-12-06",
+        "value": 180.0
+       },
+       "score": 1.342
+      }
+     ],
+     "total": {
+      "three": 3.515,
+      "week": 0.182
+     }
+    }
+   ],
+   "queue": 0
+  }
+ },
+ "keep_open_il": {
+  "adds": {},
+  "candidates": {
+   "10": {
+    "from": "2026-10-26",
+    "three": {
+     "drop": null,
+     "gain": 0.0,
+     "held": {
+      "player": 5,
+      "slot": "IL"
+     },
+     "held_drop": null,
+     "next_drop": 3,
+     "next_price": 0.0,
+     "ros": {
+      "add_games": 6.0,
+      "drop_games": null,
+      "extrapolated": {
+       "add": 2.0,
+       "drop": null
+      },
+      "from": "2026-10-26",
+      "to": "2026-12-06",
+      "value": 60.0
+     }
+    },
+    "week": {
+     "drop": null,
+     "gain": 1.513,
+     "held": {
+      "player": 5,
+      "slot": "IL"
+     },
+     "held_drop": null,
+     "next_drop": 5,
+     "next_price": 0.0,
+     "ros": {
+      "add_games": 6.0,
+      "drop_games": null,
+      "extrapolated": {
+       "add": 2.0,
+       "drop": null
+      },
+      "from": "2026-10-26",
+      "to": "2026-12-06",
+      "value": 60.0
+     }
+    }
+   },
+   "11": {
+    "from": "2026-10-26",
+    "three": {
+     "drop": null,
+     "gain": 3.515,
+     "held": {
+      "player": 5,
+      "slot": "IL"
+     },
+     "held_drop": null,
+     "next_drop": 3,
+     "next_price": 0.0,
+     "ros": {
+      "add_games": 19.5,
+      "drop_games": null,
+      "extrapolated": {
+       "add": 6.5,
+       "drop": null
+      },
+      "from": "2026-10-26",
+      "to": "2026-12-06",
+      "value": 195.0
+     }
+    },
+    "week": {
+     "drop": null,
+     "gain": 0.286,
+     "held": {
+      "player": 5,
+      "slot": "IL"
+     },
+     "held_drop": null,
+     "next_drop": 5,
+     "next_price": 0.0,
+     "ros": {
+      "add_games": 19.5,
+      "drop_games": null,
+      "extrapolated": {
+       "add": 6.5,
+       "drop": null
+      },
+      "from": "2026-10-26",
+      "to": "2026-12-06",
+      "value": 195.0
+     }
+    }
+   }
+  },
+  "claim": null,
+  "cleared": [],
+  "horizons": {
+   "three": {
+    "base": 4.68,
+    "label": "weeks 2-4",
+    "weeks": [
+     2,
+     3,
+     4
+    ]
+   },
+   "week": {
+    "base": 0.435,
+    "label": "rest of week 1",
+    "weeks": [
+     1
+    ]
+   }
+  },
+  "keep_rule": {
+   "average": 0.0,
+   "best": null,
+   "floor": 0.0,
+   "held": [],
+   "players": []
+  },
+  "pending": [],
+  "plan": null,
+  "recommended": {
+   "three": {
+    "comebacks": {
+     "three": [
+      {
+       "drop": 3,
+       "from": "2026-11-02",
+       "player": 5,
+       "slot": "IL"
+      }
+     ],
+     "week": []
+    },
+    "gain": {
+     "three": 3.515,
+     "week": 0.286
+    },
+    "held": [
+     {
+      "player": 5,
+      "slot": "IL"
+     }
+    ],
+    "moves": [
+     {
+      "add": 11,
+      "decided_by": "three",
+      "drop": null,
+      "from": "2026-10-26",
+      "held": {
+       "player": 5,
+       "slot": "IL"
+      },
+      "held_drop": null,
+      "instead_keep": null,
+      "instead_without": [],
+      "marginal": {
+       "three": 3.515,
+       "week": 0.286
+      },
+      "price_keep": null,
+      "price_without": 3.515,
+      "ros": {
+       "add_games": 19.5,
+       "drop_games": null,
+       "extrapolated": {
+        "add": 6.5,
+        "drop": null
+       },
+       "from": "2026-10-26",
+       "to": "2026-12-06",
+       "value": 195.0
+      }
+     }
+    ],
+    "ros": {
+     "value": 195.0
+    },
+    "season_guard": {
+     "held_back": false
+    }
+   },
+   "week": {
+    "comebacks": {
+     "three": [
+      {
+       "drop": 10,
+       "from": "2026-11-02",
+       "player": 5,
+       "slot": "IL"
+      }
+     ],
+     "week": []
+    },
+    "gain": {
+     "three": 3.515,
+     "week": 1.761
+    },
+    "held": [
+     {
+      "player": 5,
+      "slot": "IL"
+     }
+    ],
+    "moves": [
+     {
+      "add": 10,
+      "decided_by": "week",
+      "drop": null,
+      "from": "2026-10-26",
+      "held": {
+       "player": 5,
+       "slot": "IL"
+      },
+      "held_drop": null,
+      "instead_keep": null,
+      "instead_without": [
+       {
+        "add": 11,
+        "drop": null,
+        "from": "2026-10-26",
+        "held": {
+         "player": 5,
+         "slot": "IL"
+        },
+        "held_drop": null
+       }
+      ],
+      "marginal": {
+       "three": 0.0,
+       "week": 1.578
+      },
+      "price_keep": null,
+      "price_without": 1.474,
+      "ros": {
+       "add_games": 6.0,
+       "drop_games": null,
+       "extrapolated": {
+        "add": 2.0,
+        "drop": null
+       },
+       "from": "2026-10-26",
+       "to": "2026-12-06",
+       "value": 60.0
+      }
+     },
+     {
+      "add": 11,
+      "decided_by": "week",
+      "drop": 3,
+      "from": "2026-10-26",
+      "held": null,
+      "held_drop": null,
+      "instead_keep": [
+       {
+        "add": 10,
+        "drop": null,
+        "from": "2026-10-26",
+        "held": {
+         "player": 5,
+         "slot": "IL"
+        },
+        "held_drop": null
+       }
+      ],
+      "instead_without": [
+       {
+        "add": 10,
+        "drop": null,
+        "from": "2026-10-26",
+        "held": {
+         "player": 5,
+         "slot": "IL"
+        },
+        "held_drop": null
+       }
+      ],
+      "marginal": {
+       "three": 3.515,
+       "week": 0.248
+      },
+      "price_keep": 0.248,
+      "price_without": 0.248,
+      "ros": {
+       "add_games": 19.5,
+       "drop_games": 15.0,
+       "extrapolated": {
+        "add": 6.5,
+        "drop": 5.0
+       },
+       "from": "2026-10-26",
+       "to": "2026-12-06",
+       "value": 180.0
+      }
+     }
+    ],
+    "ros": {
+     "value": 240.0
+    },
+    "season_guard": {
+     "held_back": false
+    }
+   }
+  },
+  "room": {
+   "eligible": [
+    5
+   ],
+   "held_open": {
+    "IL": 1
+   },
+   "open_spots": 0
+  },
+  "search": {
+   "min_gain": 0.01,
+   "pool": 30
+  },
+  "stash": [],
+  "system": {
+   "key": "bbm"
+  },
+  "unprojected": 0,
+  "week_plans": {
+   "floor": 0.1,
+   "judged": {
+    "floor": 0.1,
+    "playoff": false,
+    "set": {
+     "matchup": 0.1452,
+     "score": 1.446
+    },
+    "weight": 0.33
+   },
+   "limits": {
+    "beam": 8,
+    "exact": 8,
+    "plans": 5,
+    "steps": 4
+   },
+   "plans": [
+    {
+     "backs": [],
+     "matchup": 0.8231,
+     "ros": {
+      "value": 240.0
+     },
+     "score": 2.92,
+     "source": "set",
+     "steps": [
+      {
+       "add": 10,
+       "after": [],
+       "basis": "held",
+       "drop": null,
+       "from": "2026-10-26",
+       "gain": {
+        "three": 0.0,
+        "week": 1.513
+       },
+       "held": {
+        "player": 5,
+        "slot": "IL"
+       },
+       "held_drop": null,
+       "ros": {
+        "add_games": 6.0,
+        "drop_games": null,
+        "extrapolated": {
+         "add": 2.0,
+         "drop": null
+        },
+        "from": "2026-10-26",
+        "to": "2026-12-06",
+        "value": 60.0
+       },
+       "score": 1.513
+      },
+      {
+       "add": 11,
+       "after": [],
+       "basis": "drop",
+       "drop": 3,
+       "from": "2026-10-26",
+       "gain": {
+        "three": 3.515,
+        "week": 0.248
+       },
+       "held": null,
+       "held_drop": null,
+       "ros": {
+        "add_games": 19.5,
+        "drop_games": 15.0,
+        "extrapolated": {
+         "add": 6.5,
+         "drop": 5.0
+        },
+        "from": "2026-10-26",
+        "to": "2026-12-06",
+        "value": 180.0
+       },
+       "score": 1.407
+      }
+     ],
+     "total": {
+      "three": 3.515,
+      "week": 1.761
+     }
+    },
+    {
+     "backs": [],
+     "matchup": 0.7175,
+     "ros": {
+      "value": 60.0
+     },
+     "score": 1.513,
+     "source": "search",
+     "steps": [
+      {
+       "add": 10,
+       "after": [],
+       "basis": "held",
+       "drop": null,
+       "from": "2026-10-26",
+       "gain": {
+        "three": 0.0,
+        "week": 1.513
+       },
+       "held": {
+        "player": 5,
+        "slot": "IL"
+       },
+       "held_drop": null,
+       "ros": {
+        "add_games": 6.0,
+        "drop_games": null,
+        "extrapolated": {
+         "add": 2.0,
+         "drop": null
+        },
+        "from": "2026-10-26",
+        "to": "2026-12-06",
+        "value": 60.0
+       },
+       "score": 1.513
+      }
+     ],
+     "total": {
+      "three": 0.0,
+      "week": 1.513
+     }
+    },
+    {
+     "backs": [],
+     "matchup": 0.1452,
+     "ros": {
+      "value": 195.0
+     },
+     "score": 1.446,
+     "source": "search",
+     "steps": [
+      {
+       "add": 11,
+       "after": [],
+       "basis": "held",
+       "drop": null,
+       "from": "2026-10-26",
+       "gain": {
+        "three": 3.515,
+        "week": 0.286
+       },
+       "held": {
+        "player": 5,
+        "slot": "IL"
+       },
+       "held_drop": null,
+       "ros": {
+        "add_games": 19.5,
+        "drop_games": null,
+        "extrapolated": {
+         "add": 6.5,
+         "drop": null
+        },
+        "from": "2026-10-26",
+        "to": "2026-12-06",
+        "value": 195.0
+       },
+       "score": 1.446
+      }
+     ],
+     "total": {
+      "three": 3.515,
+      "week": 0.286
+     }
+    }
+   ],
+   "queue": 0
+  }
+ },
+ "resting": {
+  "adds": {},
+  "candidates": {
+   "10": {
+    "from": "2026-10-26",
+    "three": {
+     "drop": 2,
+     "gain": -2.112,
+     "held": null,
+     "held_drop": null,
+     "next_drop": 1,
+     "next_price": 0.644,
+     "ros": {
+      "add_games": 4.0,
+      "drop_games": 10.0,
+      "extrapolated": {
+       "add": 0.0,
+       "drop": 0.0
+      },
+      "from": "2026-10-26",
+      "to": "2026-11-22",
+      "value": -60.0
+     }
+    },
+    "week": {
+     "drop": 3,
+     "gain": 1.497,
+     "held": null,
+     "held_drop": null,
+     "next_drop": 2,
+     "next_price": 1.497,
+     "ros": {
+      "add_games": 4.0,
+      "drop_games": 9.0,
+      "extrapolated": {
+       "add": 0.0,
+       "drop": 0.0
+      },
+      "from": "2026-10-26",
+      "to": "2026-11-22",
+      "value": -95.0
+     }
+    }
+   },
+   "11": {
+    "from": "2026-10-26",
+    "three": {
+     "drop": 2,
+     "gain": 0.772,
+     "held": null,
+     "held_drop": null,
+     "next_drop": 1,
+     "next_price": 0.038,
+     "ros": {
+      "add_games": 13.0,
+      "drop_games": 10.0,
+      "extrapolated": {
+       "add": 0.0,
+       "drop": 0.0
+      },
+      "from": "2026-10-26",
+      "to": "2026-11-22",
+      "value": 56.0
+     }
+    },
+    "week": {
+     "drop": 3,
+     "gain": 0.351,
+     "held": null,
+     "held_drop": null,
+     "next_drop": 2,
+     "next_price": 0.662,
+     "ros": {
+      "add_games": 13.0,
+      "drop_games": 9.0,
+      "extrapolated": {
+       "add": 0.0,
+       "drop": 0.0
+      },
+      "from": "2026-10-26",
+      "to": "2026-11-22",
+      "value": 21.0
+     }
+    }
+   }
+  },
+  "claim": null,
+  "cleared": [],
+  "horizons": {
+   "three": {
+    "base": 8.134,
+    "label": "weeks 2-4",
+    "weeks": [
+     2,
+     3,
+     4
+    ]
+   },
+   "week": {
+    "base": 0.334,
+    "label": "rest of week 1",
+    "weeks": [
+     1
+    ]
+   }
+  },
+  "keep_rule": {
+   "average": 0.0,
+   "best": null,
+   "floor": 0.0,
+   "held": [],
+   "players": []
+  },
+  "pending": [],
+  "plan": null,
+  "recommended": {
+   "three": {
+    "comebacks": {
+     "three": [],
+     "week": []
+    },
+    "gain": {
+     "three": 0.772,
+     "week": -0.31
+    },
+    "held": [],
+    "moves": [
+     {
+      "add": 11,
+      "decided_by": "three",
+      "drop": 2,
+      "from": "2026-10-26",
+      "held": null,
+      "held_drop": null,
+      "instead_keep": [
+       {
+        "add": 11,
+        "drop": 1,
+        "from": "2026-10-26",
+        "held": null,
+        "held_drop": null
+       }
+      ],
+      "instead_without": [],
+      "marginal": {
+       "three": 0.772,
+       "week": -0.31
+      },
+      "price_keep": 0.038,
+      "price_without": 0.772,
+      "ros": {
+       "add_games": 13.0,
+       "drop_games": 10.0,
+       "extrapolated": {
+        "add": 0.0,
+        "drop": 0.0
+       },
+       "from": "2026-10-26",
+       "to": "2026-11-22",
+       "value": 56.0
+      }
+     }
+    ],
+    "ros": {
+     "value": 56.0
+    },
+    "season_guard": {
+     "held_back": false
+    }
+   },
+   "week": {
+    "comebacks": {
+     "three": [],
+     "week": []
+    },
+    "gain": {
+     "three": 0.168,
+     "week": 0.351
+    },
+    "held": [],
+    "moves": [
+     {
+      "add": 11,
+      "decided_by": "week",
+      "drop": 3,
+      "from": "2026-10-26",
+      "held": null,
+      "held_drop": null,
+      "instead_keep": [],
+      "instead_without": [],
+      "marginal": {
+       "three": 0.168,
+       "week": 0.351
+      },
+      "price_keep": 0.351,
+      "price_without": 0.351,
+      "ros": {
+       "add_games": 13.0,
+       "drop_games": 9.0,
+       "extrapolated": {
+        "add": 0.0,
+        "drop": 0.0
+       },
+       "from": "2026-10-26",
+       "to": "2026-11-22",
+       "value": 21.0
+      }
+     }
+    ],
+    "ros": {
+     "value": 21.0
+    },
+    "season_guard": {
+     "forgone": {
+      "three": -6.56,
+      "week": 1.146
+     },
+     "gain": {
+      "three": -6.392,
+      "week": 1.497
+     },
+     "held_back": true,
+     "moves": [
+      {
+       "add": 10,
+       "drop": 3,
+       "from": "2026-10-26",
+       "held": null,
+       "marginal": {
+        "three": -6.392,
+        "week": 1.497
+       },
+       "ros": {
+        "add_games": 4.0,
+        "drop_games": 9.0,
+        "extrapolated": {
+         "add": 0.0,
+         "drop": 0.0
+        },
+        "from": "2026-10-26",
+        "to": "2026-11-22",
+        "value": -95.0
+       },
+       "season_costly": true
+      }
+     ],
+     "ros": {
+      "partial": false,
+      "value": -95.0
+     },
+     "saved": {
+      "partial": false,
+      "value": 116.0
+     }
+    }
+   }
+  },
+  "room": {
+   "eligible": [],
+   "held_open": {},
+   "open_spots": 0
+  },
+  "search": {
+   "min_gain": 0.01,
+   "pool": 30
+  },
+  "stash": [],
+  "system": {
+   "key": "bbm"
+  },
+  "unprojected": 0,
+  "week_plans": {
+   "floor": 0.1,
+   "judged": {
+    "floor": 0.1,
+    "playoff": false,
+    "set": {
+     "matchup": 0.0002,
+     "score": -0.056
+    },
+    "weight": 0.33
+   },
+   "limits": {
+    "beam": 8,
+    "exact": 8,
+    "plans": 5,
+    "steps": 4
+   },
+   "plans": [
+    {
+     "backs": [],
+     "matchup": 0.1324,
+     "ros": {
+      "value": 21.0
+     },
+     "score": 0.407,
+     "source": "set",
+     "steps": [
+      {
+       "add": 11,
+       "after": [],
+       "basis": "drop",
+       "drop": 3,
+       "from": "2026-10-26",
+       "gain": {
+        "three": 0.168,
+        "week": 0.351
+       },
+       "held": null,
+       "held_drop": null,
+       "ros": {
+        "add_games": 13.0,
+        "drop_games": 9.0,
+        "extrapolated": {
+         "add": 0.0,
+         "drop": 0.0
+        },
+        "from": "2026-10-26",
+        "to": "2026-11-22",
+        "value": 21.0
+       },
+       "score": 0.407
+      }
+     ],
+     "total": {
+      "three": 0.168,
+      "week": 0.351
+     }
+    }
+   ],
+   "queue": 0
+  }
+ },
+ "streaming": {
+  "adds": {},
+  "candidates": {
+   "10": {
+    "from": "2026-10-29",
+    "three": {
+     "drop": 3,
+     "gain": -2.947,
+     "held": null,
+     "held_drop": null,
+     "next_drop": null,
+     "next_price": null,
+     "ros": null
+    },
+    "week": {
+     "drop": 3,
+     "gain": 0.502,
+     "held": null,
+     "held_drop": null,
+     "next_drop": null,
+     "next_price": null,
+     "ros": null
+    }
+   },
+   "11": {
+    "from": "2026-10-29",
+    "three": {
+     "drop": 3,
+     "gain": 2.857,
+     "held": null,
+     "held_drop": null,
+     "next_drop": null,
+     "next_price": null,
+     "ros": null
+    },
+    "week": {
+     "drop": 3,
+     "gain": 0.58,
+     "held": null,
+     "held_drop": null,
+     "next_drop": null,
+     "next_price": null,
+     "ros": null
+    }
+   },
+   "12": {
+    "from": "2026-10-29",
+    "three": {
+     "drop": 3,
+     "gain": -2.947,
+     "held": null,
+     "held_drop": null,
+     "next_drop": null,
+     "next_price": null,
+     "ros": null
+    },
+    "week": {
+     "drop": 3,
+     "gain": 0.541,
+     "held": null,
+     "held_drop": null,
+     "next_drop": null,
+     "next_price": null,
+     "ros": null
+    }
+   }
+  },
+  "claim": null,
+  "cleared": [],
+  "horizons": {
+   "three": {
+    "base": 3.88,
+    "label": "weeks 2-4",
+    "weeks": [
+     2,
+     3,
+     4
+    ]
+   },
+   "week": {
+    "base": 0.685,
+    "label": "rest of week 1",
+    "weeks": [
+     1
+    ]
+   }
+  },
+  "keep_rule": {
+   "average": 0.0,
+   "best": null,
+   "floor": 0.0,
+   "held": [],
+   "players": []
+  },
+  "pending": [],
+  "plan": null,
+  "recommended": {
+   "three": {
+    "comebacks": {
+     "three": [],
+     "week": []
+    },
+    "gain": {
+     "three": 2.857,
+     "week": 0.58
+    },
+    "held": [],
+    "moves": [
+     {
+      "add": 11,
+      "decided_by": "three",
+      "drop": 3,
+      "from": "2026-10-29",
+      "held": null,
+      "held_drop": null,
+      "instead_keep": [],
+      "instead_without": [],
+      "marginal": {
+       "three": 2.857,
+       "week": 0.58
+      },
+      "price_keep": 2.857,
+      "price_without": 2.857,
+      "ros": null
+     }
+    ],
+    "ros": null,
+    "season_guard": null
+   },
+   "week": {
+    "comebacks": {
+     "three": [],
+     "week": []
+    },
+    "gain": {
+     "three": 2.857,
+     "week": 0.58
+    },
+    "held": [],
+    "moves": [
+     {
+      "add": 11,
+      "decided_by": "week",
+      "drop": 3,
+      "from": "2026-10-29",
+      "held": null,
+      "held_drop": null,
+      "instead_keep": [],
+      "instead_without": [
+       {
+        "add": 12,
+        "drop": 3,
+        "from": "2026-10-29",
+        "held": null,
+        "held_drop": null
+       }
+      ],
+      "marginal": {
+       "three": 2.857,
+       "week": 0.58
+      },
+      "price_keep": 0.58,
+      "price_without": 0.039,
+      "ros": null
+     }
+    ],
+    "ros": null,
+    "season_guard": null
+   }
+  },
+  "room": {
+   "eligible": [],
+   "held_open": {},
+   "open_spots": 0
+  },
+  "search": {
+   "min_gain": 0.01,
+   "pool": 30
+  },
+  "stash": [],
+  "system": {
+   "key": "bbm"
+  },
+  "unprojected": 0,
+  "week_plans": {
+   "floor": 0.1,
+   "judged": {
+    "floor": 0.1,
+    "playoff": false,
+    "set": {
+     "matchup": 0.3835,
+     "score": 1.523
+    },
+    "weight": 0.33
+   },
+   "limits": {
+    "beam": 8,
+    "exact": 8,
+    "plans": 5,
+    "steps": 4
+   },
+   "plans": [
+    {
+     "backs": [],
+     "matchup": 0.3835,
+     "ros": null,
+     "score": 1.523,
+     "source": "set",
+     "steps": [
+      {
+       "add": 11,
+       "after": [],
+       "basis": "drop",
+       "drop": 3,
+       "from": "2026-10-29",
+       "gain": {
+        "three": 2.857,
+        "week": 0.58
+       },
+       "held": null,
+       "held_drop": null,
+       "ros": null,
+       "score": 1.523
+      }
+     ],
+     "total": {
+      "three": 2.857,
+      "week": 0.58
+     }
+    },
+    {
+     "backs": [],
+     "matchup": 0.3646,
+     "ros": null,
+     "score": -0.432,
+     "source": "search",
+     "steps": [
+      {
+       "add": 12,
+       "after": [],
+       "basis": "drop",
+       "drop": 3,
+       "from": "2026-10-29",
+       "gain": {
+        "three": -2.947,
+        "week": 0.541
+       },
+       "held": null,
+       "held_drop": null,
+       "ros": null,
+       "score": -0.432
+      }
+     ],
+     "total": {
+      "three": -2.947,
+      "week": 0.541
+     }
+    },
+    {
+     "backs": [],
+     "matchup": 0.3459,
+     "ros": null,
+     "score": -0.471,
+     "source": "search",
+     "steps": [
+      {
+       "add": 10,
+       "after": [],
+       "basis": "drop",
+       "drop": 3,
+       "from": "2026-10-29",
+       "gain": {
+        "three": -2.947,
+        "week": 0.502
+       },
+       "held": null,
+       "held_drop": null,
+       "ros": null,
+       "score": -0.471
+      }
+     ],
+     "total": {
+      "three": -2.947,
+      "week": 0.502
+     }
+    }
+   ],
+   "queue": null
+  }
+ }
+}
