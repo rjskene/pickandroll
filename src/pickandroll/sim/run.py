@@ -470,6 +470,8 @@ class VariantResult:
     bracket_unread: str | None = None
     #: Active players the executor dropped when a cleared held player came back over the spots.
     forced_drops: int = 0
+    #: Held-slot moves the executor refused: the slot no longer accepted the player that morning.
+    held_refused: int = 0
 
 
 def _record(
@@ -612,6 +614,7 @@ def simulate(
                 state.gone,
                 setup.bracket_unread,
                 forced_drops=state.forced_drops,
+                held_refused=state.held_refused,
             )
         )
     return out
