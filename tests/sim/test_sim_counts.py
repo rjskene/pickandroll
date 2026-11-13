@@ -138,18 +138,21 @@ def test_a_refused_held_move_is_counted_for_its_seat():
 
 
 def test_the_counts_per_seat_sum_to_what_the_runner_counted_before():
-    """A forward run with held slots: the whole-state counters are the ones main gave at d6fee43
-    (executed, gone and forced drops of each variant), and the seats sum to them."""
+    """A forward run with held slots: the whole-state counters are the ones main gives at
+    0b2bacd (executed, gone, forced drops and refused held moves of each variant; the same as at
+    d6fee43, before the held-move fix, since no held move of this run is refused), and the seats
+    sum to them."""
     setup = make_setup(held_slots=("IL", "IL+"), seed=3, weeks=8)
     w = rn.forward_world(setup, inputs(), 11, 0, 0.25)
     a, b = arm("A", "exact"), arm("B", "surrogate")
     variants = [{**rn.opponents_of(setup, x, 1), 1: x.seat()} for x in (a, b)]
     results = rn.simulate(setup, w, variants, [a.execute_plan, b.execute_plan])
-    assert [(r.executed, r.gone, r.forced_drops) for r in results] == BEFORE
+    assert [(r.executed, r.gone, r.forced_drops, r.held_refused) for r in results] == BEFORE
     for r in results:
         assert sum(c["landed"] for c in r.counts.values()) == r.executed
         assert sum(c["gone"] for c in r.counts.values()) == r.gone
         assert sum(c["forced_drops"] for c in r.counts.values()) == r.forced_drops
+        assert sum(c["held_refused"] for c in r.counts.values()) == r.held_refused
         assert set(r.counts) == set(setup.teams) and set(r.counts[1]) == set(ct.METRICS)
 
 
@@ -164,5 +167,5 @@ def test_pooled_rows_are_the_mean_over_the_seats_that_have_each():
     assert ct.row_of({1: rows[0]}, []) is None
 
 
-#: The whole-state counters of the run above under main at d6fee43, before they were per seat.
-BEFORE = [(5, 1, 2), (4, 1, 2)]
+#: The whole-state counters of the run above under main at 0b2bacd, before they were per seat.
+BEFORE = [(5, 1, 2, 0), (4, 1, 2, 0)]
