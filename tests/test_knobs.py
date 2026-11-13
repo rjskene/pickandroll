@@ -37,8 +37,11 @@ def put_knobs(client, body) -> None:
 def test_the_hooked_knobs_are_every_knob_but_the_stash_threshold_and_the_faab_sizing():
     assert set(pg.DEFAULTS) == set(pg.LIVE_KNOBS)
     assert pg.HOOKED <= set(pg.LIVE_KNOBS)
-    # Recorded, never read: the Monday step never changes one.
+    # The Monday step never changes one: the stash threshold is read but never stepped (#373),
+    # the FAAB sizing read by nothing.
     assert set(pg.LIVE_KNOBS) - pg.HOOKED == {"stash_threshold", "faab_sizing"}
+    assert pg.READ_UNSTEPPED == {"stash_threshold"} and not pg.READ_UNSTEPPED & pg.HOOKED
+    assert pg.DEFAULTS["stash_threshold"] is None
     # The simulator's arms name each of KNOBS, and it is on hold: a new knob stays out of them.
     assert set(pg.LIVE_KNOBS) - set(pg.KNOBS) == {"three_weight"} and len(pg.KNOBS) == 9
     assert pg.DEFAULTS["system"] == "bbm" and pg.DEFAULTS["horizon_weight"] == "natural"
@@ -98,7 +101,12 @@ def test_a_value_out_of_its_bounds_is_refused_and_the_default_stays():
     ]
     assert pg.refused("blend", 0.75) is None and pg.refused("daily_cap", 3) is None
     assert pg.refused("daily_cap", True) == "daily_cap True is not a number"
-    assert pg.refused("stash_threshold", 0.3) is None
+    assert pg.refused("stash_threshold", 0.3) is None and pg.refused("stash_threshold", 0) is None
+    assert pg.refused("stash_threshold", None) is None
+    # A share of a value net of return (#373): a number, 0 or above, no maximum.
+    assert pg.refused("stash_threshold", -0.1) == "stash_threshold -0.1 is below its minimum 0.0"
+    assert pg.refused("stash_threshold", "high") == "stash_threshold 'high' is not a number"
+    assert pg.refused("stash_threshold", 50.0) is None
 
 
 # --------------------------------------------------------------------------- the blend

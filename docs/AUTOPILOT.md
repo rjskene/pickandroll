@@ -1242,7 +1242,7 @@ The details (#144, plan ruled on the issue 2026-10-23; docs/ADD_DROP.md "Scoreca
 | horizon weight | the strategy objective | even, natural, season |
 | the protection floor | the keep rule | the margin by which the best add must beat a player to unprotect him (#164); at or above the default, never below it (#150, ruled 2026-10-23) |
 | the streaming floors | the streaming plan (#136) | the margin by which a plan's week must beat the set's, in a categories and a points league |
-| the stash threshold | #124 | the margin by which the freed spot must beat the return |
+| the stash threshold | #124, read since #373 | the share of a returning player's value net of return by which the player who keeps his spot must beat it for him to leave; none (no test), or 0 and above, no maximum; read, never stepped |
 | the FAAB sizing | section 5 | the sizing rule only; no ceiling |
 | the daily move cap | section 2 | 1 to 3 |
 | `three_weight`, the three weeks' weight in a week plan's score, default 0.33 | section 2 (#332), logged with each decision | 0 to 1; no Monday rule moves it |
@@ -1289,8 +1289,10 @@ version, so a change is in force from the next solve. A route's named system win
 file's. The engine reads the hooked knobs, `season.progress.HOOKED`: the system and the blend
 weight (the moves solve), the horizon weight (marked recommended on the Strategy panel, never
 executed), the protection floor (the keep rule), the plan floors and the daily cap (the streaming
-plan). The stash threshold and the FAAB sizing are unhooked: recorded in the decision log as the
-file has them, read by nothing, and never changed by the Monday step.
+plan). The stash threshold is read but never stepped (`season.progress.READ_UNSTEPPED`, #373):
+the move model reads it (docs/ADD_DROP.md, "The stash threshold"), none in every league until the
+user rules on a value, and the Monday step never changes it. The FAAB sizing is unhooked: recorded
+in the decision log as the file has them, read by nothing, and never changed by the Monday step.
 
 **The system scored** (#152). Each decision log entry records `knobs.file_system`: the system the
 knob file had in force for its league when it was logged, beside the system the solve ran on
@@ -1339,8 +1341,9 @@ they were, and no rollout reaches it.
 
   Nothing reads the odds' calibration: that is the model's, not a knob's. A rule that clears is
   blocked when:
-  - its knob has no hook (`season.progress.HOOKED`), so the stash threshold and the FAAB sizing
-    never change;
+  - its knob is not one the step may step (`season.progress.HOOKED`): the stash threshold is read
+    but never stepped (`season.progress.READ_UNSTEPPED`, #373) and the FAAB sizing has no hook, so
+    neither changes;
   - the step would take the knob out of its bounds or under its minimum;
   - the knob, or the system's family (system and blend), was written in the last four weeks, by a
     change's Monday, its revert or its rollout;
@@ -1593,3 +1596,8 @@ either (`docs/OPS.md`).
 - 2026-10-29 (#225): the routines move to the droplet: systemd timers running `scripts/routine.py`,
   Playwright's Chromium with the extension loaded from the checkout, the soak in dry run with the
   Mac live, cut-over Monday 2026-11-02 after the soak, moved up from 11-09 on 2026-10-31 (`docs/OPS.md` §5).
+- 2026-11-13 (#373, the user's ruling "A" for the reader only; the plan ruled on the issue): the
+  move model reads the stash threshold, a share of a returning player's value net of return, on the
+  plain drop, a churn's held drop and the drop a comeback forces; none, the value in every league,
+  is the engine as before. It is read but never stepped: the Monday step never changes it, and a
+  value waits for the user's ruling after the season simulator has measured it (#172, its PR G).

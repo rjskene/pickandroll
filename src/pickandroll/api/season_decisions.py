@@ -110,7 +110,8 @@ def knobs(built: Built) -> dict[str, Any]:
     """The AUTOPILOT knobs (docs/AUTOPILOT.md, section 6) the solve ran with, every one of
     ``season.progress.LIVE_KNOBS`` whether the solve uses it or not (#152): the projection system and
     its blend weight, the strategy's recommended weight, the keep rule's protection floor, the
-    streaming plan's floors and moves a day, the stash threshold and the FAAB sizing; and beside
+    streaming plan's floors and moves a day, the stash threshold (read by the move model, never
+    stepped, #373) and the FAAB sizing (read by nothing); and beside
     them ``file_system``, the system the knob file had in force for the league, which a route
     naming another overrode (the scorecard projects each week on it)."""
     return {**{k: built.knobs.get(k) for k in pg.LIVE_KNOBS}, "file_system": built.file_system}

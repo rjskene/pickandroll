@@ -18,7 +18,8 @@ is not blocked decides, one change a Monday:
    toward Yahoo's, within its bounds.
 
 A sample counts only scored moves whose judging horizon is over (#143), as the scorecard compares
-them. A rule that clears is blocked when its knob is unhooked (``progress.HOOKED``), written in
+them. A rule that clears is blocked when its knob is not one the step may step (``progress.HOOKED``;
+the stash threshold is read but never stepped, ``progress.READ_UNSTEPPED``), written in
 the last four weeks (a change's Monday, or its revert or rollout) or still judged, frozen in all
 but one league it would reach, or when the step would leave its bounds; the next rule then has
 its say, and the note names the one passed over. The leagues a change reaches are the armed
@@ -206,6 +207,8 @@ def refused_change(
 ) -> str | None:
     """Why the step may not set ``knob`` to ``to`` in ``scope`` this Monday; None when it may.
     Every change the step makes passes here first."""
+    if knob in pg.READ_UNSTEPPED:
+        return f"{knob} is read but never stepped, so the step never changes it"
     if knob not in pg.HOOKED:
         return f"{knob} has no hook, so the step never changes it"
     if why := pg.refused(knob, to):
