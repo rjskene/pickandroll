@@ -5,8 +5,8 @@ from __future__ import annotations
 
 import pytest
 
-from pickandroll.season.sim import league as lg
 from pickandroll.season.state import SeasonSettings
+from pickandroll.sim import league as lg
 
 CATS = ("fg_pct", "ft_pct", "threes", "pts", "reb", "ast", "stl", "blk", "tov")
 

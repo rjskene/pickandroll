@@ -2,7 +2,7 @@
 
 A :class:`Setup` is a league as read once for a run: its calendar, pairings, teams, players,
 rosters, free-agent pool, the policy's projection on day one, the schedule, the roster slots and
-the rules; the readers (``api.season_sim``) build one from a season's parts or a replay's logs.
+the rules; the readers (``sim.readers``) build one from a season's parts or a replay's logs.
 A :class:`SimState` is what one arm holds on one day: rosters, the pool, the adds used this week,
 the moves landing tomorrow with the held-slot moves they need, and every week's totals so far.
 The world (``run.World``) is apart: truth, lines, availability and the shared beliefs belong to
@@ -17,9 +17,7 @@ from dataclasses import dataclass, field, replace
 from datetime import date, timedelta
 from typing import Any
 
-from ..calendar import Calendar, Week, monday_of
-from ..moves import HELD, Move
-from ..state import Player
+from .engine import HELD, Calendar, Move, Player, Week, monday_of
 from .league import LeagueSpec
 
 Rates = Mapping[str, float]
@@ -100,7 +98,7 @@ class Setup:
         return self.calendar.week_of(day)
 
     def starting_slots(self) -> tuple[str, ...]:
-        from ..weekly import starting_slots
+        from .engine import starting_slots
 
         return starting_slots(self.roster_slots)
 

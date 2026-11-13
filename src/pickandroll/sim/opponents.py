@@ -18,8 +18,8 @@ from typing import Any, Protocol
 
 import numpy as np
 
-from .. import moves as mv
 from . import policy
+from .engine import mv
 from .state import Setup, SimState
 
 KINDS = ("static", "market", "mirror", "seat")

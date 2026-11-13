@@ -36,13 +36,7 @@ from dataclasses import dataclass, replace
 from datetime import date, timedelta
 from typing import Any
 
-from .. import decisions as dl
-from .. import moves as mv
-from .. import strategy as sg
-from .. import stream as st
-from .. import weekly as wk
-from ..calendar import Week
-from ..progress import KNOBS
+from .engine import KNOBS, Week, dl, mv, sg, st, wk
 from .state import BENCH, Setup, SimState, add_totals
 
 #: The execution model every run's payload names (#172, the master's ruling on PR 2's plan).

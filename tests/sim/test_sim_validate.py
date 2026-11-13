@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from pickandroll.season.sim import validate as v
+from pickandroll.sim import validate as v
 
 
 def test_pit_counts_below_and_half_of_equal():

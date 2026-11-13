@@ -6,10 +6,10 @@ from __future__ import annotations
 import numpy as np
 
 from pickandroll.season import weekly as wk
-from pickandroll.season.sim import checks
-from pickandroll.season.sim import run as rn
-from pickandroll.season.sim import validate as vg
-from tests.sim_league import HAZARD, KNOBS, inputs, make_setup
+from pickandroll.sim import checks
+from pickandroll.sim import run as rn
+from pickandroll.sim import validate as vg
+from tests.sim.sim_league import HAZARD, KNOBS, inputs, make_setup
 
 
 def test_team_weeks_under_the_world_are_calibrated_against_the_world_itself():

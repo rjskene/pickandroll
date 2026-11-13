@@ -8,8 +8,8 @@ from datetime import date
 import numpy as np
 import pytest
 
-from pickandroll.season.sim import fit as f
-from tests.sim_fixtures import TRUE_MIXTURE, TRUE_PHI, rates_table, synthetic_lines
+from pickandroll.sim import fit as f
+from tests.sim.sim_fixtures import TRUE_MIXTURE, TRUE_PHI, rates_table, synthetic_lines
 
 
 def test_dispersion_recovers_the_residual_phi():

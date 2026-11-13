@@ -1,6 +1,6 @@
-"""The gates a verdict waits on (#172, PR 1), as pure functions on arrays; the script reads the
-recorded weeks, the box scores and the hold-out season and calls them with the season each is
-scored on, so the gates on the hold-out and on this season's recorded weeks stand side by side.
+"""The gates a verdict waits on (#172, PR 1), as pure functions on arrays; the commands (``cli``)
+read the recorded weeks, the box scores and the hold-out season and call them with the season each
+is scored on, so the gates on the hold-out and on this season's recorded weeks stand side by side.
 
 1. Team weeks: every team's weekly totals as probability integral transforms under the
    simulator's team-week distribution; no bucket of 20 points off by more than 5.

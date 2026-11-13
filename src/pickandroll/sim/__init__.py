@@ -10,8 +10,11 @@ league as a run starts it and one arm's position on a day; the policy (``policy`
 engine's own solve on that state, in three tiers, with the executor that lands its moves; the
 opponents (``opponents``) are the other seats' strategies; the runner (``run``) plays arms in
 lockstep through one world and pairs their outcomes; the checks (``checks``) draw what the gates
-(``validate``) score. Pure: no file reads, no network, no clock; the readers live in
-``sources.gamelogs``, ``api.season_sim`` and ``scripts/season_sim.py``.
+(``validate``) score. Those modules are pure: no file reads, no network, no clock. The readers
+are ``gamelogs`` (ESPN's game logs) and ``readers`` (everything else under ``data/``), the
+commands are ``cli`` (``python -m pickandroll.sim <command>``), and the in-season engine is
+reached through ``engine`` only. Nothing outside this package imports it
+(``tests/sim/test_boundary.py``).
 """
 
 from .fit import Fit, GameLine, HoldOutError, SeasonFit, fit_season, freeze, pool

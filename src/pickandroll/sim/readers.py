@@ -1,17 +1,16 @@
 """The season simulator's readers and writers (#172, PR 2b).
 
-The simulator's core (``season.sim``) is pure; everything here reads what it needs from
-``data/`` and writes what it leaves. A **setup** is one league as a run starts it, from the
-season view's recorded state (``api.seasons``) and the projection systems the moves route uses
-(``api.season_moves.system_rates``): rosters, pool, the shared projection, the schedule, the
-statuses and return dates read, the market view and rate, and the bracket as the settings page
-gave it (``BracketUnread``'s words when it did not). The **fit** is the newest frozen one under
-``data/autopilot/sim/fit/``, its hash checked against the file. A **replay** is a made-up league
-on a recorded season's game lines (``sources.gamelogs``), each scoring period dated from the
-season's first (:data:`PERIOD_ONE`). The **gates'** inputs come from the week records
-(``api.season_record``), the decision log (``api.season_decisions``) and the box-score cache.
-Every run's payload goes under ``data/autopilot/sim/runs/`` with the fit's hash and the hold-out
-named (the master's conditions on #172).
+The simulator's core (the other modules of ``pickandroll.sim``) is pure; everything here reads what
+it needs from ``data/`` and writes what it leaves. A **setup** is one league as a run starts it,
+from the season view's recorded state (``api.seasons``) and the projection systems the moves route
+uses (``api.season_moves.system_rates``): rosters, pool, the shared projection, the schedule, the
+statuses and return dates read, the market view and rate, and the bracket as the settings page gave
+it (``BracketUnread``'s words when it did not). The **fit** is the newest frozen one under
+``data/sim/fit/``, its hash checked against the file. A **replay** is a made-up league on a recorded
+season's game lines (``sim.gamelogs``), each scoring period dated from the season's first
+(:data:`PERIOD_ONE`). The **gates'** inputs come from the week records (``api.season_record``), the
+decision log (``api.season_decisions``) and the box-score cache. Every run's payload goes under
+``data/sim/runs/`` with the fit's hash and the hold-out named (the master's conditions on #172).
 """
 
 from __future__ import annotations
@@ -28,17 +27,16 @@ from typing import Any
 
 import pandas as pd
 
-from ..season import Season, SeasonSettings
-from ..season import moves as mv
-from ..season import weekly as wk
-from ..season.sim import league as lg
-from ..season.sim import run as rn
-from ..season.sim.state import Member, Setup, round_robin
-from ..sources import boxscores, gamelogs
-from . import season_decisions, season_moves, season_record, seasons
-from .season_scorecard import BOXSCORES_DIR
+from ..api import season_decisions, season_moves, season_record, seasons
+from ..api.season_scorecard import BOXSCORES_DIR
+from ..sources import boxscores
+from . import gamelogs
+from . import league as lg
+from . import run as rn
+from .engine import Season, SeasonSettings, mv, wk
+from .state import Member, Setup, round_robin
 
-SIM_DIR = Path("autopilot") / "sim"
+SIM_DIR = Path("sim")
 FIT_DIR = SIM_DIR / "fit"
 RUNS_DIR = SIM_DIR / "runs"
 LOGS_DIR = Path("external") / "espn" / "gamelogs"
@@ -200,7 +198,7 @@ def setup_of(
 def systems_tau(data_dir: Path, league: str, pool: int = TAU_POOL) -> dict[str, float]:
     """The spread of the two systems' disagreement over the league's top ``pool`` players by the
     shared value: the projection error's proxy until the residual fit of week six."""
-    from ..season.sim.fit import tau_from_systems
+    from .fit import tau_from_systems
 
     base, _ = seasons.base_settings(data_dir, league)
     parts = seasons.load_parts(data_dir, league)
@@ -237,7 +235,7 @@ def newest_fit(data_dir: Path) -> tuple[dict[str, Any], str, Path]:
 
 
 def code_sha(root: Path) -> str | None:
-    """The checkout's commit, for the payload (the script reads it, the core stays pure)."""
+    """The checkout's commit, for the payload (the commands read it, the core stays pure)."""
     try:
         out = subprocess.run(
             ["git", "rev-parse", "HEAD"], cwd=root, capture_output=True, text=True, check=True
@@ -454,7 +452,7 @@ def run_path(data_dir: Path, kind: str, name: str, started: datetime) -> Path:
 
 
 def write_run(data_dir: Path, payload: Mapping[str, Any]) -> Path:
-    """The payload under ``data/autopilot/sim/runs/``; the fit's hash and the hold-out must be
+    """The payload under ``data/sim/runs/``; the fit's hash and the hold-out must be
     in it (the master's conditions)."""
     for key in ("fit_sha", "hold_out"):
         if key not in payload:

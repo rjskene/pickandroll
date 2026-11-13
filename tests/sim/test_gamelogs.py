@@ -6,7 +6,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from pickandroll.sources import gamelogs as gl
+from pickandroll.sim import gamelogs as gl
 
 
 def entry(season, period, stats, team=7, split=gl.PER_GAME, source=0):

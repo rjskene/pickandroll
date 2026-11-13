@@ -1,5 +1,5 @@
 """Made-up leagues for the simulator's tests (#172, PR 2b): a small in-memory setup the policy,
-runner and checks run on, and a fixture data folder the readers and the script read. Every
+runner and checks run on, and a fixture data folder the readers and the commands read. Every
 player and team here is synthetic or from the anonymised season fixtures; the projection files
 are made up in Basketball Monster's CSV layout and carry no figure of theirs."""
 
@@ -15,15 +15,15 @@ import numpy as np
 
 from pickandroll.season import build_calendar
 from pickandroll.season import weekly as wk
-from pickandroll.season.sim import league as lg
-from pickandroll.season.sim import run as rn
-from pickandroll.season.sim import state as sst
-from pickandroll.season.sim.fit import Component, Hazard
+from pickandroll.sim import league as lg
+from pickandroll.sim import run as rn
+from pickandroll.sim import state as sst
+from pickandroll.sim.fit import Component, Hazard
 from pickandroll.sources.yahoo import pages, public
-from tests.sim_fixtures import synthetic_lines
-from tests.test_gamelogs import entry
+from tests.sim.sim_fixtures import synthetic_lines
+from tests.sim.test_gamelogs import entry
 
-FIXTURES = Path(__file__).parent / "fixtures" / "season"
+FIXTURES = Path(__file__).parents[1] / "fixtures" / "season"
 NINE = ("fg_pct", "ft_pct", "threes", "pts", "reb", "ast", "stl", "blk", "tov")
 PHI = {
     "pts": 1.5,

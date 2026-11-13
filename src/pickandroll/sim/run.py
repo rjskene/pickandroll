@@ -14,8 +14,8 @@ states agree share one solve (the lockstep of the design note); from the first d
 solves alone. :func:`paired` runs arm A and arm B for one seat and returns the paired difference
 of the season's outcomes, B less A; :func:`room` runs twelve seats under named arms rotated across
 paths.
-Pure but for the process pool: nothing here reads a file; the readers (``api.season_sim``) and the
-script bring the inputs and write the payload.
+Pure but for the process pool: nothing here reads a file; the readers (``sim.readers``) and the
+commands (``sim.cli``) bring the inputs and write the payload.
 """
 
 from __future__ import annotations
@@ -31,12 +31,10 @@ from typing import Any
 
 import numpy as np
 
-from .. import moves as mv
-from .. import weekly as wk
-from ..progress import KNOBS
 from . import league as lg
 from . import opponents as op
 from . import policy, world
+from .engine import KNOBS, mv, wk
 from .fit import Component, Hazard
 from .state import Member, Setup, initial, round_robin, snake_draft, weeks_from
 

@@ -1,26 +1,21 @@
-"""The simulator's script (#172, PR 1): the guard, the seasons argument, the fit command on a
-synthetic cache."""
+"""The simulator's commands (#172, PR 1; ``pickandroll.sim.cli``): the guard, the seasons
+argument, the fit command on a synthetic cache."""
 
 from __future__ import annotations
 
 import json
-import sys
 from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import pytest
 
-ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "scripts"))
-
-import season_sim as ss
-
-from tests.sim_fixtures import synthetic_lines
-from tests.test_gamelogs import body, entry, line
+from pickandroll.sim import cli as ss
+from tests.sim.sim_fixtures import synthetic_lines
+from tests.sim.test_gamelogs import body, entry, line
 
 MAC = ZoneInfo("America/Toronto")
-#: What the script's clock reads in every test here: a weekday morning outside the routines'
+#: What the commands' clock reads in every test here: a weekday morning outside the routines'
 #: window. Without it a suite run between 04:45 and 06:45 Mac clock has the guard refuse every
 #: command (one failed test and twelve errors on 2026-10-31).
 BUSINESS_HOURS = datetime(2026, 10, 27, 9, 0, tzinfo=MAC)
@@ -147,7 +142,7 @@ def test_describe_names_counts_and_no_figures():
 
 
 # --------------------------------------------------------------------------- PR 2b: the runs
-from tests.sim_league import LEAGUE, MY_TEAM, make_data_dir
+from tests.sim.sim_league import LEAGUE, MY_TEAM, make_data_dir
 
 KNOBS = {
     "system": "bbm",
@@ -192,7 +187,7 @@ def run_data(tmp_path_factory) -> Path:
 
 
 def _runs(data: Path) -> list[Path]:
-    return sorted((data / "autopilot" / "sim" / "runs").glob("*.json"))
+    return sorted((data / "sim" / "runs").glob("*.json"))
 
 
 def test_compare_pairs_the_arms_and_records_the_run(run_data: Path, capsys):
@@ -228,7 +223,7 @@ def test_compare_pairs_the_arms_and_records_the_run(run_data: Path, capsys):
     assert payload["kind"] == "compare" and payload["name"] == "first"
     assert (
         payload["fit_sha"]
-        == (data / "autopilot" / "sim" / "fit").glob("*/fit.sha256").__next__().read_text().strip()
+        == (data / "sim" / "fit").glob("*/fit.sha256").__next__().read_text().strip()
     )
     assert payload["hold_out"] == 2025 and payload["executions"] == "free_agents_next_day"
     assert payload["gap"]["systems"] == ["bbm", "yahoo"] and payload["refresh"] == "defaults"

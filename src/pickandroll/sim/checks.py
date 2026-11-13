@@ -5,7 +5,7 @@ the simulator many times over (gate 1, and the simulator's matchup odds of gate 
 engine's analytic odds), player-games missed a week under the hazard (gate 4), and the
 surrogate's set against the exact set on sampled league-days (gate 5). Gate 3's band is the
 share's distribution over sampled moves (:func:`share_band`); its rows wait on the scorecard's
-realized values (PR 3). The script reads the records and calls these with the season each
+realized values (PR 3). The commands (``cli``) read the records and call these with the season each
 is scored on.
 """
 
@@ -16,9 +16,9 @@ from datetime import date
 
 import numpy as np
 
-from .. import weekly as wk
 from . import league as lg
 from . import policy, world
+from .engine import wk
 from .fit import Hazard
 from .run import World
 from .state import Roster, Setup, SimState, initial

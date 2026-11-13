@@ -5,27 +5,24 @@ run's record."""
 from __future__ import annotations
 
 import json
-import sys
 from datetime import date, datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import pytest
 
-from pickandroll.api import season_sim as reader
 from pickandroll.season import weekly as wk
-from pickandroll.season.sim.state import initial
-from tests.sim_league import LEAGUE, MY_TEAM, TODAY, make_data_dir
+from pickandroll.sim import cli as ss
+from pickandroll.sim import readers as reader
+from pickandroll.sim.state import initial
+from tests.sim.sim_league import LEAGUE, MY_TEAM, TODAY, make_data_dir
 
-ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "scripts"))
-
-import season_sim as ss
+ROOT = Path(__file__).resolve().parents[2]
 
 
 @pytest.fixture(scope="module", autouse=True)
 def pinned_clock():
-    """The script's clock reads a weekday morning outside the routines' window, whatever the hour
+    """The commands' clock reads a weekday morning outside the routines' window, whatever the hour
     the suite runs at (see ``test_season_sim_script.BUSINESS_HOURS``)."""
     with pytest.MonkeyPatch.context() as mp:
         mp.setattr(

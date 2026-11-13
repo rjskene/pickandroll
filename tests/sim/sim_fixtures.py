@@ -7,7 +7,7 @@ from collections.abc import Mapping, Sequence
 
 import numpy as np
 
-from pickandroll.season.sim.fit import GameLine
+from pickandroll.sim.fit import GameLine
 
 #: Per-game rates the synthetic players are drawn around, by stat.
 BASE_RATES: Mapping[str, tuple[float, float]] = {

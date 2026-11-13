@@ -5,8 +5,8 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from pickandroll.season.sim import world as w
-from pickandroll.season.sim.fit import Component, Hazard
+from pickandroll.sim import world as w
+from pickandroll.sim.fit import Component, Hazard
 
 PHI = {
     "pts": 1.5,

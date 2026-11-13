@@ -12,9 +12,9 @@ import pytest
 
 from pickandroll.season import moves as mv
 from pickandroll.season import weekly as wk
-from pickandroll.season.sim import policy
-from pickandroll.season.sim.state import SimState, initial
-from tests.sim_league import KNOBS, make_setup
+from pickandroll.sim import policy
+from pickandroll.sim.state import SimState, initial
+from tests.sim.sim_league import KNOBS, make_setup
 
 
 def built_for(setup, team=1, state=None, knobs=KNOBS, status=None):

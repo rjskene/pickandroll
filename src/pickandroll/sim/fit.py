@@ -8,7 +8,7 @@ box-score residuals (:func:`tau_from_residuals`), and how fast the projection so
 rest-of-season figures close the gap to the realized rate (:func:`refresh_rate`). Seasons are
 fitted one at a time (:func:`fit_season`), compared (:func:`agree`) and pooled where they agree
 (:func:`pool`); :func:`freeze` writes the result as a plain payload with its hash, naming the
-hold-out season it never saw. Pure: the lines come in from ``sources.gamelogs``.
+hold-out season it never saw. Pure: the lines come in from ``sim.gamelogs``.
 
 Games under :data:`MIN_MINUTES` are dropped from the dispersion and minutes fits; each player's
 share of such games is kept in the payload so a gate failure can be read against it.
@@ -27,7 +27,7 @@ from typing import Any
 
 import numpy as np
 
-from ..weekly import COUNTING, PHI, STATS
+from .engine import COUNTING, PHI, STATS
 
 #: The stats a game line carries, in our names (``weekly.STATS``).
 LINE_STATS = STATS

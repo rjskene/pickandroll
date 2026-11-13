@@ -11,11 +11,11 @@ import pytest
 
 from pickandroll.season import moves as mv
 from pickandroll.season import weekly as wk
-from pickandroll.season.sim import opponents as op
-from pickandroll.season.sim import policy
-from pickandroll.season.sim import run as rn
-from pickandroll.season.sim.state import Member, initial
-from tests.sim_league import HAZARD, KNOBS, PHI, arm, inputs, make_setup
+from pickandroll.sim import opponents as op
+from pickandroll.sim import policy
+from pickandroll.sim import run as rn
+from pickandroll.sim.state import Member, initial
+from tests.sim.sim_league import HAZARD, KNOBS, PHI, arm, inputs, make_setup
 
 
 # --------------------------------------------------------------------------- the world

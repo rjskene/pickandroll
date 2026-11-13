@@ -1,20 +1,20 @@
 """SEASON SIM (#172): the season simulator's commands, for the terminal.
 
-    python scripts/season_sim.py fetch-logs --seasons 2022-2026   # ESPN's per-game logs, cached
-    python scripts/season_sim.py fit                              # the world's fit, frozen with a hash
-    python scripts/season_sim.py fit --dry-run                    # the fit printed, nothing written
-    python scripts/season_sim.py fit --refresh --tau residual --league <id>   # week six's re-freeze
-    python scripts/season_sim.py compare A.json B.json --leagues all --paths 100
-    python scripts/season_sim.py replay --season 2024 --standin prior --seats A.json B.json
-    python scripts/season_sim.py room --leagues all --seats A.json B.json --draft rosters
-    python scripts/season_sim.py validate --league all
+    python -m pickandroll.sim fetch-logs --seasons 2022-2026   # ESPN's per-game logs, cached
+    python -m pickandroll.sim fit                              # the world's fit, frozen with a hash
+    python -m pickandroll.sim fit --dry-run                    # the fit printed, nothing written
+    python -m pickandroll.sim fit --refresh --tau residual --league <id>   # week six's re-freeze
+    python -m pickandroll.sim compare A.json B.json --leagues all --paths 100
+    python -m pickandroll.sim replay --season 2024 --standin prior --seats A.json B.json
+    python -m pickandroll.sim room --leagues all --seats A.json B.json --draft rosters
+    python -m pickandroll.sim validate --league all
 
 ESPN's season id is the year the season ends in: 2025 is 2024-25, the hold-out. ``fetch-logs``
 makes one request a season through the same player view the draft-edge audit read, caches each
 under ``data/external/espn/gamelogs/`` (never committed) and never retries inside a run. ``fit``
 refuses the hold-out whatever the flags say (``--hold-out`` may only add a second season no
 fit sees), fits each cached season, pools the ones that agree and writes
-``data/autopilot/sim/fit/<date>/fit.json`` with ``fit.sha256`` beside it; the frozen fit's
+``data/sim/fit/<date>/fit.json`` with ``fit.sha256`` beside it; the frozen fit's
 figures stay under ``data/`` and are described in words anywhere public.
 
 ``compare`` plays each league's rest of the season from today many times over in the same
@@ -24,7 +24,7 @@ standard error: the verdict line is advisory (the design note's one-SE rule; no 
 promotion before PR 3). ``replay`` plays a made-up league on a recorded season's game lines, never the hold-out.
 ``room`` seats the arms given around one league's table, rotated across paths. ``validate`` runs
 the six gates on this season's recorded weeks and on the hold-out, side by side, and writes what
-each had to work with. Every run's payload goes under ``data/autopilot/sim/runs/`` with the code's
+each had to work with. Every run's payload goes under ``data/sim/runs/`` with the code's
 commit, the fit's hash, the hold-out, the spec files verbatim and the execution model.
 
 Every command runs through :func:`guard`: at low priority (``nice``), never when its span would
@@ -38,7 +38,6 @@ import argparse
 import json
 import os
 import platform
-import sys
 import time as clock
 import urllib.error
 import urllib.request
@@ -47,21 +46,21 @@ from datetime import UTC, date, datetime, time, timedelta
 from pathlib import Path
 from typing import Any
 
-ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "src"))
+from ..api import seasons as season_api
+from ..api.leagues import leagues as all_leagues
+from . import checks, gamelogs, policy
+from . import fit as fitmod
+from . import readers as reader
+from . import run as rn
+from . import validate as vg
+from .engine import wk
+from .state import snake_draft, weeks_from
 
-from pickandroll.api import season_sim as reader
-from pickandroll.api import seasons as season_api
-from pickandroll.api.leagues import leagues as all_leagues
-from pickandroll.season import weekly as wk
-from pickandroll.season.sim import checks, policy
-from pickandroll.season.sim import fit as fitmod
-from pickandroll.season.sim import run as rn
-from pickandroll.season.sim import validate as vg
-from pickandroll.season.sim.state import snake_draft, weeks_from
-from pickandroll.sources import gamelogs
-
+#: The repository: this file is ``src/pickandroll/sim/cli.py``.
+ROOT = Path(__file__).resolve().parents[3]
 API = os.environ.get("PICKANDROLL_API", "http://127.0.0.1:8000").rstrip("/")
+#: How the commands are run (argparse would otherwise name ``__main__.py``).
+PROG = "python -m pickandroll.sim"
 DATA = ROOT / "data"
 LOGS_DIR = reader.LOGS_DIR
 FIT_DIR = reader.FIT_DIR
@@ -246,8 +245,8 @@ def residual_inputs(
 ]:
     """The exports as per-game rates by ESPN id, oldest first, and the season's realized rates
     and games by ESPN id: the refresh fit's and the residual tau's input."""
-    from pickandroll.api.season_week import season_players
-    from pickandroll.season import Season
+    from ..api.season_week import season_players
+    from .engine import Season
 
     base, _ = season_api.base_settings(data, league)
     parts = season_api.load_parts(data, league)
@@ -1110,12 +1109,12 @@ def cmd_validate(args: argparse.Namespace) -> int:
 
 
 def policy_knobs(data: Path, league: str) -> dict[str, Any]:
-    from pickandroll.api.season_knobs import for_league
+    from ..api.season_knobs import for_league
 
     try:
         return policy.check_knobs(for_league(data, league))
     except (OSError, ValueError, KeyError):
-        from pickandroll.season.progress import DEFAULTS
+        from .engine import DEFAULTS
 
         return policy.check_knobs(dict(DEFAULTS))
 
@@ -1134,7 +1133,7 @@ def _run_args(p: argparse.ArgumentParser, paths: int = PATHS) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    ap = argparse.ArgumentParser(prog=PROG, description=__doc__.split("\n\n")[0])
     ap.add_argument("--data", type=Path, default=DATA, help="the data folder (default data/)")
     ap.add_argument("--rooms", type=int, default=None, help=argparse.SUPPRESS)
     sub = ap.add_subparsers(dest="command", required=True)
@@ -1202,7 +1201,3 @@ def main(argv: list[str] | None = None) -> int:
     va.set_defaults(func=cmd_validate)
     args = ap.parse_args(argv)
     return args.func(args)
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())

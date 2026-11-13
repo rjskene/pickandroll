@@ -20,9 +20,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
-from ..scorecard import FPTS, total, won
-from ..state import SeasonSettings
-from ..weekly import PCT
+from .engine import FPTS, PCT, SeasonSettings, total, won
 
 #: The tiebreak order the standings apply after win percentage.
 TIEBREAK = ("category_wins", "head_to_head")

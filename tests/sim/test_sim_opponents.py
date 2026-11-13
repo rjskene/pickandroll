@@ -7,10 +7,10 @@ from dataclasses import replace
 import numpy as np
 import pytest
 
-from pickandroll.season.sim import opponents as op
-from pickandroll.season.sim import policy
-from pickandroll.season.sim.state import SimState, initial
-from tests.sim_league import KNOBS, make_setup
+from pickandroll.sim import opponents as op
+from pickandroll.sim import policy
+from pickandroll.sim.state import SimState, initial
+from tests.sim.sim_league import KNOBS, make_setup
 
 
 def decide(strategy, setup, state, team=2, g=None):

@@ -28,7 +28,7 @@ from typing import Any
 
 import numpy as np
 
-from ..weekly import BINOMIAL, COUNTING, PCT, starters
+from .engine import BINOMIAL, COUNTING, PCT, starters
 from .fit import DISPERSED, Hazard
 
 #: The stream id of each use of the generator; append, never reorder.

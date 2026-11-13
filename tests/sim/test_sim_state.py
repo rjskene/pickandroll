@@ -5,9 +5,9 @@ from __future__ import annotations
 
 from datetime import date
 
-from pickandroll.season.sim import state as sst
-from pickandroll.season.sim.state import SimState, add_totals, initial, round_robin, snake_draft
-from tests.sim_league import make_setup
+from pickandroll.sim import state as sst
+from pickandroll.sim.state import SimState, add_totals, initial, round_robin, snake_draft
+from tests.sim.sim_league import make_setup
 
 
 def test_the_setup_knows_its_days_weeks_and_spots():

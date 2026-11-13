@@ -9,7 +9,20 @@ is proposed as the strategy lab. The design study is the master's note in the sc
 user's rulings of 2026-10-23 amended it (five seasons behind the fit, beliefs that refresh, no
 data mining, projections taken as given).
 
-## The world (`season/sim/world.py`)
+## Where it lives
+
+The simulator is its own package, `src/pickandroll/sim/`, beside the in-season engine
+(`src/pickandroll/season/`), not inside it. Its tests are in `tests/sim/`, this doc in `docs/sim/`
+and its fits and runs under `data/sim/` (local, as all of `data/`). The commands run as
+`python -m pickandroll.sim <command>`. The direction of imports is held by a test
+(`tests/sim/test_boundary.py`): nothing outside the package imports it; it reaches the engine
+through `sim/engine.py` only, the whole list of engine code it calls as library code (the
+engine's files are never edited from here); only `sim/readers.py`, `sim/gamelogs.py` and
+`sim/cli.py` import `pickandroll.sources`; and its imports from `pickandroll.api`, the live
+league's readers the commands use today, are an explicit list in the test that shrinks to empty
+when the simulator stops reading the live league.
+
+## The world (`sim/world.py`)
 
 Three layers on the real schedule, every draw seeded by `(seed, path, player, game, stream)` so
 two arms of a comparison see one world and a stream added later moves no other draw:
@@ -30,7 +43,7 @@ absence seen only `lag` days after it began with a noisy return date. `κ`, `σ_
 knobs passed in; their defaults stand until the refresh is fitted from the projection source's
 successive exports.
 
-## The fit (`season/sim/fit.py`, `sources/gamelogs.py`, `scripts/season_sim.py`)
+## The fit (`sim/fit.py`, `sim/gamelogs.py`, `sim/cli.py`)
 
 ESPN's player view serves per-game logs for whole seasons, one request a season (`fetch-logs`),
 cached under `data/external/espn/gamelogs/` and never committed. The fit (`fit`) estimates, per
@@ -40,16 +53,16 @@ and its run-length mixture (runs before a player's first game are dropped, a run
 his last is censored). Games under five minutes are dropped and each player's share of them is
 kept, so a gate failure can be read against it. Seasons are compared on the hazard and the
 minutes spread and pooled where they agree within a fifth; a season that disagrees is kept apart
-under its own id. The result is frozen as `data/autopilot/sim/fit/<date>/fit.json` with its
+under its own id. The result is frozen as `data/sim/fit/<date>/fit.json` with its
 SHA-256 beside it, naming every parameter and the hold-out season.
 
-**The hold-out** is 2024-25 (ESPN season id 2025): the script refuses to fit on it, and the gates
-run against it as well as against this season's recorded weeks. **No data mining**: the fit is
-made once and frozen; every comparison is one pre-registered A against B with its seed; the
+**The hold-out** is 2024-25 (ESPN season id 2025): the `fit` command refuses to fit on it, and
+the gates run against it as well as against this season's recorded weeks. **No data mining**: the
+fit is made once and frozen; every comparison is one pre-registered A against B with its seed; the
 simulator vetoes a change and never proposes one until four Mondays of passed gates and a ruling.
 The frozen fit's figures stay under `data/` and are described in words anywhere public.
 
-## The league (`season/sim/league.py`)
+## The league (`sim/league.py`)
 
 Weeks are scored as the record scores a real one: percentages from makes and attempts to Yahoo's
 three decimals, the lower turnovers winning, a tie half. Standings order by win percentage, then
@@ -68,7 +81,7 @@ read for them, one with divisions, or a tie-breaker the bracket does not play. N
 bracket it has assumed: until the read is on file a run writes no playoff odds and reports rank and
 category wins only.
 
-## The gates (`season/sim/validate.py`)
+## The gates (`sim/validate.py`)
 
 Before any verdict, on this season's recorded weeks and on the hold-out, side by side: (1) every
 team's weekly totals as probability integral transforms under the simulator's team-week
@@ -79,7 +92,7 @@ missed a team-week against the hazard, as randomized transforms in buckets; (5) 
 set equal to the exact set on four of five sampled league-days; (6) the fitted refresh inside the
 band the recorded week-to-week projection changes imply.
 
-## The state and the policy (`season/sim/state.py`, `season/sim/policy.py`)
+## The state and the policy (`sim/state.py`, `sim/policy.py`)
 
 A **setup** is one league as a run starts it: the calendar and pairings, the twelve rosters, the
 free agents, the shared projection, the schedule, the statuses and return dates read on day one,
@@ -114,7 +127,7 @@ Monday's count starts over only once it is in.
 Each day's starters are the most valuable set the slots hold among the players whose team plays
 and whom the policy has not heard are out; their lines are the week's totals.
 
-## The other seats (`season/sim/opponents.py`)
+## The other seats (`sim/opponents.py`)
 
 The ladder from the design note. **Static** makes no move. **Market** moves on a day with the
 recorded rate (adds per team-day over the transactions page's days) and takes the pool's best by
@@ -123,7 +136,7 @@ projection's per-game value with percent rostered breaking ties, since Yahoo's o
 the recorded state. **Mirror** runs the surrogate on the shared beliefs. **Seat** is a named arm
 in another seat: the equal room's opponent.
 
-## The runner (`season/sim/run.py`)
+## The runner (`sim/run.py`)
 
 One **world** a path: the projection with its error as the truth, each player's game days, his
 availability and lines, the beliefs refreshed weekly, and what the policy has heard of each
@@ -147,7 +160,7 @@ negative difference is B finishing higher. `room` seats the arms given around th
 `i` taking arm `(i + path) mod n` so every arm sits in every seat across paths. The process pool
 is the simulator's own (cores less two workers at `nice 10`; the API's pools are untouched).
 
-## The readers (`api/season_sim.py`) and the runs (`scripts/season_sim.py`)
+## The readers (`sim/readers.py`) and the runs (`sim/cli.py`)
 
 The core is pure; the readers bring the inputs. `setup_of` builds a league's setup from the
 recorded season state and the systems the moves route uses: the gap is `log(Basketball Monster)
@@ -160,6 +173,8 @@ players by value (the payload names which). A replay reads a season's log: every
 team in the schedule, his game days his own entries, played or not, so a trade or a team read later
 than the season moves nothing; scoring period `p` is the season's first period plus `p − 1` days,
 the first periods verified against ESPN's scoreboard on 2026-10-24 (named in every payload).
+
+Each command runs as `python -m pickandroll.sim <command>`:
 
 - `compare A.json B.json --leagues all --paths 100`: arm A against arm B in my seat, paired, per
   league, at shrinks 0, 0.25 and 0.5; the paired change in each outcome (B less A) with its
@@ -181,7 +196,7 @@ the first periods verified against ESPN's scoreboard on 2026-10-24 (named in eve
 
 An arm's spec file names its tier, every knob, its opponents and what it executes, and may name the
 fit it was written for (`fit_sha`; another fit on disk refuses the run). Every run writes
-`data/autopilot/sim/runs/<stamp>-<kind>-<name>.json` with the code's commit, the fit's hash and
+`data/sim/runs/<stamp>-<kind>-<name>.json` with the code's commit, the fit's hash and
 file, the hold-out, the spec files verbatim, the execution model, the gap's systems and clip, the
 refresh's source, `τ`'s source, the surrogate's pool and days, the period calendar's source, and
 the results. A run first times one task and estimates the whole; the guard then refuses a span that
@@ -214,7 +229,7 @@ real ones, in every arm alike (the comparison is paired, the bias shared).
 
 ## Runs
 
-Every command runs through the script's guard: low priority, never when its span touches 04:45
+Every command runs through the commands' guard: low priority, never when its span touches 04:45
 to 06:45 on the Mac's clock, never while a draft room is open on the API, and a run expected over
 an hour is announced to fantasyMASTER first. PR 3 brings the Monday hook, the knob file's field
 and the Progress card, after the user's rulings on the threshold, the block, the promotion and

@@ -18,7 +18,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from ..season.sim.fit import GameLine
+from .fit import GameLine
 
 #: The player view; ``{season}`` is ESPN's season id.
 KONA_URL = (
