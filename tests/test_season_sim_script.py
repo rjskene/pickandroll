@@ -222,7 +222,7 @@ def test_compare_pairs_the_arms_and_records_the_run(run_data: Path, capsys):
     assert _runs(data) == []
     assert ss.main([*args, *common, "--shrink", "0,0.5", "--name", "first"]) == 0
     out = capsys.readouterr().out
-    assert "verdict (one-SE, advisory)" in out
+    assert "verdict (one-SE, advisory)" in out and "playoff odds, B less A," in out
     (path,) = _runs(data)
     payload = json.loads(path.read_text())
     assert payload["kind"] == "compare" and payload["name"] == "first"
@@ -239,6 +239,7 @@ def test_compare_pairs_the_arms_and_records_the_run(run_data: Path, capsys):
     assert payload["leagues"][LEAGUE]["bracket"] == "read" and payload["leagues"][LEAGUE][
         "assumed_pairings"
     ] == [3]
+    assert payload["results"]["difference"] == "b less a"
     assert set(payload["results"]["by_shrink"]) == {"0.0", "0.5"}
     assert payload["results"]["by_shrink"]["0.0"]["made_playoffs"]["n"] == 1
     assert (

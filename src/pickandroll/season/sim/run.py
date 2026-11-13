@@ -12,7 +12,8 @@ hazard: the logs happened).
 moves decided yesterday land, each seat decides, the day is played and scored. Variants whose
 states agree share one solve (the lockstep of the design note); from the first divergence each
 solves alone. :func:`paired` runs arm A and arm B for one seat and returns the paired difference
-of the season's outcomes; :func:`room` runs twelve seats under named arms rotated across paths.
+of the season's outcomes, B less A; :func:`room` runs twelve seats under named arms rotated across
+paths.
 Pure but for the process pool: nothing here reads a file; the readers (``api.season_sim``) and the
 script bring the inputs and write the payload.
 """
@@ -47,8 +48,9 @@ METRICS = ("made_playoffs", "rank", "category_wins", "matchup_wins", "title")
 #: The verdict line's rule, advisory until PR 3 (the master's ruling on PR 2's plan).
 VERDICT_RULE = "one-SE"
 VERDICT_LINE = (
-    "advisory: a change passes when the paired change in playoff odds is not below zero by more "
-    "than one standard error at any shrink; no block and no promotion before PR 3"
+    "advisory: a change (arm B) passes when the paired change in playoff odds, B less A, is not "
+    "below zero by more than one standard error at any shrink; no block and no promotion before "
+    "PR 3"
 )
 #: How workers are counted when not given: the machine's cores less two.
 SPARE_CORES = 2
@@ -519,7 +521,9 @@ def opponents_of(setup: Setup, arm: Arm, me: int) -> dict[int, op.Strategy]:
 
 
 def paired(setup: Setup, w: World, a: Arm, b: Arm, me: int) -> dict[str, Any]:
-    """Arm A and arm B in seat ``me`` through one world: each outcome and their difference."""
+    """Arm A and arm B in seat ``me`` through one world: each outcome and their difference, B less
+    A (``b[k] - a[k]``, None where either is None). Positive is B ahead on every metric but
+    ``rank``, where lower is better and a negative difference is B finishing higher."""
     va = {**opponents_of(setup, a, me), me: a.seat()}
     vb = {**opponents_of(setup, b, me), me: b.seat()}
     ra, rb = simulate(setup, w, [va, vb], [a.execute_plan, b.execute_plan])
@@ -527,7 +531,7 @@ def paired(setup: Setup, w: World, a: Arm, b: Arm, me: int) -> dict[str, Any]:
     return {
         "a": ma,
         "b": mb,
-        "delta": {k: None if ma[k] is None or mb[k] is None else ma[k] - mb[k] for k in METRICS},
+        "delta": {k: None if ma[k] is None or mb[k] is None else mb[k] - ma[k] for k in METRICS},
         "solves": ra.solves + rb.solves,
         "shared": rb.shared,
         "executed": [ra.executed, rb.executed],
@@ -591,8 +595,9 @@ def aggregate(
 
 
 def verdict(by_shrink: Mapping[str, Mapping[str, Mapping[str, float | None]]]) -> dict[str, Any]:
-    """The advisory line: passes when the paired change in playoff odds is not below zero by
-    more than one SE at any shrink; None when a shrink has no SE."""
+    """The advisory line: passes when the paired change in playoff odds (B less A, as
+    :func:`paired` gives it) is not below zero by more than one SE at any shrink; None when a
+    shrink has no SE."""
     passes: bool | None = True
     for agg in by_shrink.values():
         d = agg.get("made_playoffs") or {}
