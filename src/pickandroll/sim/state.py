@@ -127,6 +127,9 @@ class SimState:
     #: Active players the executor had to drop when a cleared held player came back over the
     #: league's spots (``policy.land``): never an add, so neither executed nor gone.
     forced_drops: int = 0
+    #: Held-slot moves the executor did not make because the slot did not accept the player's
+    #: status on the morning they were to land (``policy.land``).
+    held_refused: int = 0
 
     def key(self) -> tuple[Any, ...]:
         """What a decision depends on: two arms with the same key share one solve."""

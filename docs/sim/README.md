@@ -119,6 +119,13 @@ player included (counted as a forced drop; the keep rule stays out of the execut
 churn's held drop goes first, on his own, the held-slot moves a set needs are made, and the adds
 land: a drop goes to the pool and the add takes his slot, an add that needs an active spot takes
 a bench slot or is gone when none is open, an add another team took first is gone and counted.
+A queued move is carried out against the day it lands: a held-slot move is made only while the
+slot has room and accepts the status the player has that morning (`moves.eligible`, the engine's
+own test). A player queued for IL while he was out whose status has cleared overnight stays
+active and the move is refused (counted in `held_refused`); it frees no spot, so an add that
+needed it meets the same check and is gone when no spot is open. The alternative, honouring the
+status of the day the move was decided and activating him the same morning (the add lands and
+the weakest active player is dropped), was not taken: it breaks the executor's one rule.
 Every add is a free agent landing the next day
 (`EXECUTIONS = "free_agents_next_day"`): no waiver clear dates, no bids, the caps the autopilot's.
 An add is charged to the week of the day it is made, as Yahoo charges a free agent, never the
