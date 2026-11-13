@@ -6,6 +6,7 @@
     python -m pickandroll.sim fit --refresh --tau residual --league <id>   # week six's re-freeze
     python -m pickandroll.sim compare A.json B.json --leagues all --paths 100
     python -m pickandroll.sim replay --season 2024 --standin prior --seats A.json B.json
+    python -m pickandroll.sim replay --season 2024 --seats A.json B.json --no-peek 2023-12-04
     python -m pickandroll.sim room --leagues all --seats A.json B.json --draft rosters
     python -m pickandroll.sim validate --league all
 
@@ -21,7 +22,9 @@ figures stay under ``data/`` and are described in words anywhere public.
 simulated worlds, once with arm A in my seat and once with arm B, at three shrinks of the
 projection error toward the market, and reports the paired difference, B less A, with its
 standard error: the verdict line is advisory (the design note's one-SE rule; no block and no
-promotion before PR 3). ``replay`` plays a made-up league on a recorded season's game lines, never the hold-out.
+promotion before PR 3). ``replay`` plays a made-up league on a recorded season's game lines,
+never the hold-out, its seats believing only the games already played; ``--no-peek`` checks one
+path of it against a season changed after a date and writes nothing.
 ``room`` seats the arms given around one league's table, rotated across paths. ``validate`` runs
 the six gates on this season's recorded weeks and on the hold-out, side by side, and writes what
 each had to work with. Every run's payload goes under ``data/sim/runs/`` with the code's
@@ -48,7 +51,7 @@ from typing import Any
 
 from ..api import seasons as season_api
 from ..api.leagues import leagues as all_leagues
-from . import checks, gamelogs, policy
+from . import checks, gamelogs, nopeek, policy, world
 from . import fit as fitmod
 from . import readers as reader
 from . import run as rn
@@ -588,29 +591,116 @@ def parse_standin(text: str) -> list[tuple[str, float]]:
     raise ValueError(f"stand-in {text!r}: prior or oracle:<spread,...>")
 
 
+def replay_setup_of(
+    season: int,
+    lines: Any,
+    members: Any,
+    scheduled: Any,
+    standin: tuple[str, float],
+    prior: Any,
+    seed: int,
+    path: int,
+) -> Any:
+    """A replay's league in one path: drafted on the stand-in (the prior season's rates, or the
+    replayed season's noised, per path)."""
+    kind, spread = standin
+    projection = prior if kind == "prior" else rn.oracle_standin(lines, spread, seed, path)
+    return rn.replay_setup(season, lines, members, projection, reader.PERIOD_ONE[season], scheduled)
+
+
 def task_replay(
     season: int,
     lines: Any,
     members: Any,
     scheduled: Any,
-    truth: Any,
     standin: tuple[str, float],
     prior: Any,
-    inputs: rn.WorldInputs,
+    lag: int,
+    weights: Mapping[str, float],
+    news_sd: float,
     arms: Mapping[str, rn.Arm],
     seats: Sequence[str],
     seed: int,
     path: int,
 ) -> dict[str, Any]:
-    kind, spread = standin
-    projection = prior if kind == "prior" else rn.oracle_standin(truth, spread, seed, path)
-    setup = rn.replay_setup(
-        season, lines, members, projection, reader.PERIOD_ONE[season], scheduled
-    )
-    w = rn.replay_world(setup, lines, truth, inputs.kappa, inputs.sigma_eta, inputs.lag, seed, path)
+    setup = replay_setup_of(season, lines, members, scheduled, standin, prior, seed, path)
+    w = rn.replay_world(setup, lines, lag, seed, path, weights, news_sd=news_sd)
     out = rn.room(setup, w, arms, seats, path)
-    out["standin"] = {"kind": kind, "spread": spread}
+    out["standin"] = {"kind": standin[0], "spread": standin[1]}
     return out
+
+
+#: The replay's version in its payload: 2 since its seats believe only the games played
+#: (#172, PR B1); a version 1 replay's figures came from seats that saw each season's rates.
+REPLAY_VERSION = 2
+BELIEF_RULE = (
+    "per stat, (w * the forecaster's figure + the sum of his lines dated before the day) / "
+    "(w + his games before the day), read every day"
+)
+NEWCOMER_RULE = (
+    "a player nobody projected enters the belief the day after his first recorded game, from "
+    "the mean projection over the projected players left undrafted"
+)
+
+
+def replay_notes(weights: fitmod.BeliefWeights, news_sd: float) -> dict[str, Any]:
+    """What a replay's seats knew, for its payload."""
+    return {
+        "replay_version": REPLAY_VERSION,
+        "belief": {
+            "kind": "causal",
+            "rule": BELIEF_RULE,
+            "weights": weights.payload(),
+            "weights_fitted_with": "the prior season's rates (the prior forecaster)",
+            "oracle": "an oracle stand-in uses the prior forecaster's weights",
+        },
+        "newcomer": NEWCOMER_RULE,
+        "pool": {
+            "league": "everyone the season's log lists with a scheduled game",
+            "draft": (
+                f"the projected players with a scheduled game in the season's first "
+                f"{rn.OPENING_DAYS} days"
+            ),
+            "projected": f"a stand-in projects the players with {rn.STANDIN_MIN_GAMES} games",
+        },
+        "news_sd_days": news_sd,
+        "refresh": "not used: a replay's seats believe the games played, not a weekly refresh",
+    }
+
+
+def no_peek(
+    season: int,
+    lines: Any,
+    members: Any,
+    scheduled: Any,
+    standin: tuple[str, float],
+    prior: Any,
+    lag: int,
+    weights: Mapping[str, float],
+    news_sd: float,
+    arms: Mapping[str, rn.Arm],
+    seats: Sequence[str],
+    seed: int,
+    day: date,
+) -> tuple[Any, int]:
+    """Path 0 of the replay on the recorded lines and on :func:`nopeek.perturb`'s, with one
+    league built before either: the first difference between their day records (None when
+    they never part) and the records compared."""
+    setup = replay_setup_of(season, lines, members, scheduled, standin, prior, seed, 0)
+    if day not in setup.days:
+        raise ValueError(f"{day} is not a day of the replayed season")
+    other = nopeek.perturb(lines, rn.game_days_of(setup), day, seed)
+    digests: list[dict[tuple[date, int], dict[str, str]]] = []
+    for these in (lines, other):
+        got: dict[tuple[date, int], dict[str, str]] = {}
+
+        def keep(r: rn.DayRecord, got: dict[tuple[date, int], dict[str, str]] = got) -> None:
+            got[(r.day, r.variant)] = nopeek.digest(r)
+
+        w = rn.replay_world(setup, these, lag, seed, 0, weights, news_sd=news_sd)
+        rn.room(setup, w, arms, seats, 0, on_day=keep)
+        digests.append(got)
+    return nopeek.first_difference(digests[0], digests[1]), len(digests[0])
 
 
 def cmd_replay(args: argparse.Namespace) -> int:
@@ -621,19 +711,23 @@ def cmd_replay(args: argparse.Namespace) -> int:
     if args.season == HOLD_OUT:
         print(f"refused: {HOLD_OUT} is the hold-out; it is scored by validate only")
         return 2
+    if args.news_sd < 0:
+        print("refused: --news-sd is a spread in days, not below zero")
+        return 2
     started = datetime.now(UTC)
     try:
+        day = date.fromisoformat(args.no_peek) if args.no_peek else None
         inputs, fit, sha, fit_path, tau_note = world_inputs(args.data, [], need_tau=False)
         specs = read_specs(args.seats)
         arms = {arm.name: arm for arm in arms_of(specs, sha)}
         standins = parse_standin(args.standin)
         lines, members, scheduled = reader.replay_lines(args.data, args.season)
-        truth = rn.realized_rates(lines)
         prior = (
             reader.prior_rates(args.data, args.season)
             if any(k == "prior" for k, _ in standins)
             else {}
         )
+        fitted = reader.belief_weights(args.data, args.season, HOLD_OUT)
     except (reader.SimReadError, ValueError, OSError, KeyError) as e:
         print(f"refused: {e}")
         return 2
@@ -641,6 +735,46 @@ def cmd_replay(args: argparse.Namespace) -> int:
         print("refused: a replay seats at least two arms")
         return 2
     seats = list(arms)
+    weights = dict(fitted.weights)
+    shown = ", ".join(f"{s} {weights[s]:g}" for s in wk.STATS if s in weights)
+    source = (
+        "the default" if fitted.default else "seasons " + ", ".join(str(t) for t in fitted.seasons)
+    )
+    print(f"belief weights ({source}): {shown}")
+    if day is not None:
+        t0 = clock.perf_counter()
+        try:
+            first, n = no_peek(
+                args.season,
+                lines,
+                members,
+                scheduled,
+                standins[0],
+                prior,
+                inputs.lag,
+                weights,
+                args.news_sd,
+                arms,
+                seats,
+                args.seed,
+                day,
+            )
+        except ValueError as e:
+            print(f"refused: {e}")
+            return 2
+        took = clock.perf_counter() - t0
+        print(f"no-peek check on {day}: {n} day records a run, {took:.1f}s, nothing written")
+        if first is not None and first[0] <= day:
+            print(
+                f"FAILED: the records part on {first[0]} (variant {first[1]}, "
+                f"{', '.join(first[2])}), at or before {day}"
+            )
+            return 1
+        if first is None:
+            print(f"agree through {day}; the runs never part (the change after it reached no seat)")
+        else:
+            print(f"agree through {day}; first difference on {first[0]} ({', '.join(first[2])})")
+        return 0
     workers = args.workers or rn.workers_default()
     tasks = [
         (
@@ -648,10 +782,11 @@ def cmd_replay(args: argparse.Namespace) -> int:
             lines,
             members,
             scheduled,
-            truth,
             standin,
             prior,
-            inputs,
+            inputs.lag,
+            weights,
+            args.news_sd,
             arms,
             seats,
             args.seed,
@@ -661,7 +796,7 @@ def cmd_replay(args: argparse.Namespace) -> int:
         for p in range(args.paths)
     ]
     t0 = clock.perf_counter()
-    first = task_replay(*tasks[0])
+    first_run = task_replay(*tasks[0])
     one = clock.perf_counter() - t0
     hours = (
         args.expected_hours
@@ -678,10 +813,10 @@ def cmd_replay(args: argparse.Namespace) -> int:
     if not ok:
         print(f"refused: {why}")
         return 2
-    results = [first, *rn.run_tasks(task_replay, tasks[1:], workers)]
+    results = [first_run, *rn.run_tasks(task_replay, tasks[1:], workers)]
     by_standin: dict[str, dict[str, list[dict[str, Any]]]] = {}
     for task, r in zip(tasks, results, strict=True):
-        key = f"{task[5][0]}:{task[5][1]:g}"
+        key = f"{task[4][0]}:{task[4][1]:g}"
         for arm, metrics in r["by_arm"].items():
             by_standin.setdefault(key, {}).setdefault(arm, []).append(metrics)
     payload = base_payload(
@@ -695,14 +830,15 @@ def cmd_replay(args: argparse.Namespace) -> int:
         tau_note,
         inputs,
     )
+    payload |= replay_notes(fitted, args.news_sd)
     payload |= {
         "season": args.season,
         "specs": {arm: spec for arm, spec in zip(seats, specs, strict=True)},
         "seats": seats,
         "rotation": "seat i takes arm (i + path) mod n",
-        "draft": "snake on the stand-in projection",
+        "draft": f"snake on the stand-in projection, over {payload['pool']['draft']}",
         "standins": [{"kind": k, "spread": s} for k, s in standins],
-        "players": len(members),
+        "players": sum(1 for k in members if scheduled.get(k) or lines.get(k)),
         "paths": args.paths,
         "seed": args.seed,
         "results": {
@@ -859,7 +995,7 @@ def gate_absences(
         lines, _, scheduled = reader.replay_lines(data, season)
     except reader.SimReadError as e:
         return not_run("absences", season, str(e))
-    kept = {k: v for k, v in scheduled.items() if len(lines.get(k, {})) >= rn.REPLAY_MIN_GAMES}
+    kept = {k: v for k, v in scheduled.items() if len(lines.get(k, {})) >= rn.GATE_MIN_GAMES}
     first = reader.PERIOD_ONE[season]
     last = max((d for days in kept.values() for d in days), default=first)
     weeks = [(w.start, w.end) for w in weeks_from(first, (last - first).days // 7 + 1).weeks]
@@ -875,6 +1011,26 @@ def gate_absences(
     return gate_dict(g)
 
 
+def hold_out_setup(
+    season: int, lines: Any, members: Any, scheduled: Any
+) -> tuple[Any, dict[int, Any]]:
+    """Gate 1's league: the players with :data:`run.GATE_MIN_GAMES` played games, every one of
+    them projected at his own realized rates and drafted (no opening-week rule), and their
+    lines. The gate's figures predate the replay's preseason pool and stay as they were."""
+    kept = {k: v for k, v in lines.items() if len(v) >= rn.GATE_MIN_GAMES}
+    truth = rn.realized_rates(kept)
+    setup = rn.replay_setup(
+        season,
+        kept,
+        {k: members[k] for k in kept if k in members},
+        truth,
+        reader.PERIOD_ONE[season],
+        {k: v for k, v in scheduled.items() if k in kept},
+        opening_days=None,
+    )
+    return setup, kept
+
+
 def gate_hold_out_team_weeks(
     data: Path, season: int, inputs: rn.WorldInputs, seed: int, paths: int = GATE_PATHS // 2
 ) -> dict[str, Any]:
@@ -885,8 +1041,7 @@ def gate_hold_out_team_weeks(
         lines, members, scheduled = reader.replay_lines(data, season)
     except reader.SimReadError as e:
         return not_run("team_weeks", season, str(e))
-    truth = rn.realized_rates(lines)
-    setup = rn.replay_setup(season, lines, members, truth, reader.PERIOD_ONE[season], scheduled)
+    setup, lines = hold_out_setup(season, lines, members, scheduled)
     exact = rn.WorldInputs(
         inputs.phi,
         inputs.phi_players,
@@ -900,7 +1055,7 @@ def gate_hold_out_team_weeks(
         inputs.refresh_from,
     )
     worlds = [rn.forward_world(setup, exact, seed, p, 0.0) for p in range(paths)]
-    real = rn.replay_world(setup, lines, truth, 0.0, 0.0, inputs.lag, seed, 0)
+    real = rn.replay_world(setup, lines, inputs.lag, seed, 0, belief="fixed")
     value = wk.per_game_values(setup.projection, setup.cats, setup.points)
     pits: list[float] = []
     team_weeks = 0
@@ -1177,6 +1332,18 @@ def main(argv: list[str] | None = None) -> int:
     re_.add_argument("--season", type=int, required=True, help=f"ESPN season id, never {HOLD_OUT}")
     re_.add_argument("--standin", default="prior", help="prior, or oracle:0.1,0.2,0.3")
     re_.add_argument("--seats", type=Path, nargs="+", required=True, help="the arms' spec files")
+    re_.add_argument(
+        "--news-sd",
+        type=float,
+        default=world.NEWS_SD_DAYS,
+        help=f"the told return date's spread in days (default {world.NEWS_SD_DAYS:g})",
+    )
+    re_.add_argument(
+        "--no-peek",
+        default=None,
+        metavar="YYYY-MM-DD",
+        help="check one path against a season changed after this date; writes nothing",
+    )
     _run_args(re_, paths=20)
     re_.set_defaults(func=cmd_replay)
     ro = sub.add_parser("room", help="the arms around one league's table, rotated across paths")

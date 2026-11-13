@@ -30,6 +30,7 @@ import pandas as pd
 from ..api import season_decisions, season_moves, season_record, seasons
 from ..api.season_scorecard import BOXSCORES_DIR
 from ..sources import boxscores
+from . import fit as fitmod
 from . import gamelogs
 from . import league as lg
 from . import run as rn
@@ -289,12 +290,38 @@ def replay_lines(
 
 
 def prior_rates(
-    data_dir: Path, season: int, min_games: int = rn.REPLAY_MIN_GAMES
+    data_dir: Path, season: int, min_games: int = rn.STANDIN_MIN_GAMES
 ) -> dict[int, dict[str, float]]:
-    """The prior season's per-game rates, the replay's first stand-in projection: a player new
-    to the league that season has none and sits out the pool."""
+    """The prior season's per-game rates, the replay's first stand-in projection, for the players
+    with ``min_games`` played games in the prior season: a player new to the league that season,
+    or who missed most of the last, has none and arrives by the newcomer's rule."""
     lines, _, _ = replay_lines(data_dir, season - 1)
     return {k: v for k, v in rn.realized_rates(lines).items() if len(lines[k]) >= min_games}
+
+
+def seasons_on_file(data_dir: Path, before: int) -> list[int]:
+    """The seasons whose log is cached and dated (:data:`PERIOD_ONE`), earlier than ``before``:
+    read from the file names, so no later season's file is opened."""
+    folder = data_dir / LOGS_DIR
+    out = []
+    for path in folder.glob("*.json") if folder.is_dir() else ():
+        if path.stem.isdigit() and int(path.stem) < before and int(path.stem) in PERIOD_ONE:
+            out.append(int(path.stem))
+    return sorted(out)
+
+
+def belief_weights(data_dir: Path, season: int, hold_out: int | None) -> fitmod.BeliefWeights:
+    """The causal belief's weights for a replay of ``season`` under the prior-season forecaster:
+    fitted on every season on file earlier than it whose prior season is on file too, neither of
+    them the hold-out; the default when none qualifies. The oracle stand-in takes these too."""
+    on_file = set(seasons_on_file(data_dir, season))
+    samples = []
+    for t in sorted(on_file):
+        if t - 1 not in on_file or hold_out in (t, t - 1):
+            continue
+        lines, _, _ = replay_lines(data_dir, t)
+        samples.append(fitmod.BeliefSample(t, t - 1, prior_rates(data_dir, t), lines))
+    return fitmod.belief_weights(samples, hold_out)
 
 
 # --------------------------------------------------------------------------- the gates' inputs
@@ -485,6 +512,7 @@ __all__ = [
     "RUNS_DIR",
     "SimReadError",
     "bbm_exports",
+    "belief_weights",
     "by_espn",
     "code_sha",
     "decisions",
@@ -503,6 +531,7 @@ __all__ = [
     "recorded_weeks",
     "replay_lines",
     "run_path",
+    "seasons_on_file",
     "settings_of",
     "setup_of",
     "systems_tau",

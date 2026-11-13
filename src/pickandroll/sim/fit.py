@@ -654,3 +654,94 @@ def freeze(
     }
     canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), allow_nan=False)
     return payload, hashlib.sha256(canonical.encode()).hexdigest()
+
+
+# --------------------------------------------------------------------------- the belief's weights
+#: The weights a replay's causal belief may give the forecaster, in games (``sim.belief``),
+#: written before any result (PR B1) and never moved after looking at one.
+W_GRID: tuple[float, ...] = (2, 4, 6, 10, 16, 25, 40, 65, 100)
+#: Every stat's weight when no season earlier than the replayed one qualifies.
+W_DEFAULT = 10.0
+
+
+@dataclass(frozen=True)
+class BeliefSample:
+    """One season the weights are fitted on: the forecaster's figures for it (read from
+    ``prior_season``, None when it reads none) and the season's recorded lines."""
+
+    season: int
+    prior_season: int | None
+    prior: Mapping[int, Mapping[str, float]]
+    lines: Mapping[int, Mapping[date, Mapping[str, float]]]
+
+
+@dataclass(frozen=True)
+class BeliefWeights:
+    """One weight per stat, the seasons it was fitted on and whether the default stood."""
+
+    weights: Mapping[str, float]
+    seasons: tuple[int, ...]
+    default: bool
+    #: Stats no projected player recorded a game of: they keep :data:`W_DEFAULT`.
+    unobserved: tuple[str, ...] = ()
+
+    def payload(self) -> dict[str, Any]:
+        return {
+            "weights": {s: float(w) for s, w in self.weights.items()},
+            "seasons": list(self.seasons),
+            "default": self.default,
+            "unobserved": list(self.unobserved),
+            "grid": list(W_GRID),
+            "default_weight": W_DEFAULT,
+        }
+
+
+def belief_weights(
+    samples: Sequence[BeliefSample],
+    hold_out: int | None,
+    grid: Sequence[float] = W_GRID,
+    stats: Sequence[str] = STATS,
+) -> BeliefWeights:
+    """Each stat's weight: the grid value whose belief best predicts each projected player's next
+    game, by least squared error summed over the samples' seasons, players and played games in
+    date order, ``(line_g − (w·prior + the sum of his earlier lines) / (w + g − 1))²`` for his
+    ``g``-th game; the larger value on a tie. No sample: every stat at :data:`W_DEFAULT`. A sample
+    that reads the hold-out, as its season or its forecaster's, is refused."""
+    check_hold_out(
+        [s.season for s in samples] + [s.prior_season for s in samples if s.prior_season],
+        hold_out,
+    )
+    if not samples:
+        return BeliefWeights(dict.fromkeys(stats, W_DEFAULT), (), True)
+    ws = np.asarray(sorted(float(w) for w in grid), dtype=float)
+    sse = {s: np.zeros(len(ws)) for s in stats}
+    seen = dict.fromkeys(stats, 0)
+    for sample in samples:
+        for k, prior in sample.prior.items():
+            by_day = sample.lines.get(k) or {}
+            if not by_day:
+                continue
+            days = sorted(by_day)
+            earlier = np.arange(len(days), dtype=float)  # games before the g-th: g − 1
+            for s in stats:
+                if s not in prior:
+                    continue
+                x = np.asarray([float(by_day[d].get(s, 0.0)) for d in days])
+                before = np.concatenate(([0.0], np.cumsum(x)[:-1]))
+                pred = (ws[:, None] * float(prior[s]) + before[None, :]) / (
+                    ws[:, None] + earlier[None, :]
+                )
+                sse[s] += ((x[None, :] - pred) ** 2).sum(axis=1)
+                seen[s] += len(days)
+    weights: dict[str, float] = {}
+    unobserved: list[str] = []
+    for s in stats:
+        if not seen[s]:
+            weights[s] = W_DEFAULT
+            unobserved.append(s)
+            continue
+        best = float(sse[s].min())
+        weights[s] = float(max(w for w, e in zip(ws, sse[s], strict=True) if e == best))
+    return BeliefWeights(
+        weights, tuple(sorted({s.season for s in samples})), False, tuple(unobserved)
+    )

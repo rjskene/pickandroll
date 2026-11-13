@@ -319,6 +319,15 @@ def test_replay_and_room_record_their_runs(run_data: Path):
         "source"
     ].startswith("not used")
     assert set(payload["results"]["prior:0"]) == {"A", "B"} and payload["draft"].startswith("snake")
+    # The seats believe only the games played: the payload names the belief, its weights and
+    # where they came from (no season before 2024 has its prior season on file: the default),
+    # the newcomer's rule, the pool and the news spread, and the weekly refresh as not used.
+    assert payload["replay_version"] == 2 and payload["belief"]["kind"] == "causal"
+    weights = payload["belief"]["weights"]
+    assert weights["default"] is True and weights["seasons"] == []
+    assert set(weights["weights"].values()) == {10.0} and weights["grid"][0] == 2
+    assert "undrafted" in payload["newcomer"] and "first 7 days" in payload["pool"]["draft"]
+    assert payload["news_sd_days"] == 2.0 and payload["refresh"].startswith("not used")
     assert (
         ss.main(
             [
@@ -379,6 +388,33 @@ def test_replay_and_room_record_their_runs(run_data: Path):
         and room["results"]["by_arm"]["A"]["rank"]["n"] == 1
     )
     assert len(_runs(data)) == before + 2
+
+
+def test_the_no_peek_check_agrees_through_its_date_and_writes_nothing(run_data: Path, capsys):
+    data = run_data
+    before = len(_runs(data))
+    args = [
+        "--data",
+        str(data),
+        "--rooms",
+        "0",
+        "replay",
+        "--season",
+        "2024",
+        "--seats",
+        str(data / "A.json"),
+        str(data / "B.json"),
+    ]
+    assert ss.main([*args, "--no-peek", "2023-11-06"]) == 0
+    out = capsys.readouterr().out
+    assert "belief weights (the default)" in out and "agree through 2023-11-06" in out
+    assert "nothing written" in out
+    assert ss.main([*args, "--no-peek", "2022-01-01"]) == 2  # not a day of the season
+    assert "not a day of the replayed season" in capsys.readouterr().out
+    assert ss.main([*args, "--no-peek", "the sixth"]) == 2
+    assert ss.main([*args, "--news-sd", "-1", "--dry-run"]) == 2
+    assert ss.main([*args, "--news-sd", "0", "--paths", "1", "--dry-run"]) == 0
+    assert len(_runs(data)) == before
 
 
 def test_validate_runs_the_gates_side_by_side(run_data: Path, capsys):
