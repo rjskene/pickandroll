@@ -83,8 +83,8 @@ test("the page checks, the mode and the same-day rule", () => {
   // Moves on dry_run with lineups live (#327): the row says live, under the lineup guard.
   assert.deepEqual(S.startActiveMode(row({ ...LIVE, guard: "lineups" })), { mode: "live", reason: null });
 
-  // One press a day (rulings on #215 and #214): the guard lifts only when the page's roster
-  // differs from the press's, players or held; the need rule's reasons never lift it alone.
+  // One press a day (rulings on #215 and #214): the guard lifts when the page's roster differs
+  // from the press's, players or held, or on an IL move since (#374); no other reason lifts it.
   const record = { day: DAY, roster: ROSTER, logged: true };
   assert.equal(S.sameDayProblem(null, row(), DAY), null);
   assert.equal(S.sameDayProblem({ ...record, day: "2026-10-26" }, row(), DAY), null);
@@ -92,11 +92,20 @@ test("the page checks, the mode and the same-day rule", () => {
   assert.match(S.sameDayProblem(record, row({ reasons: ["no_run"] }), DAY), /roster has not changed/);
   assert.equal(S.sameDayProblem(record, row({ reasons: ["no_run"], roster: { players: [2001, 2002, 2003, 2005], held: [2004] } }), DAY), null);
   assert.equal(S.sameDayProblem(record, row({ reasons: ["no_run"], roster: { players: ROSTER.players, held: [2003, 2004] } }), DAY), null);
-  // A move the press already ran after (#364): the roster is the one it ran on, never "not changed".
-  assert.match(S.sameDayProblem(record, row({ reasons: ["roster_changed"] }), DAY), /after today's move; the roster is the one it ran on/);
-  assert.match(S.sameDayProblem(record, row({ reasons: ["il_moved"] }), DAY), /after today's move; the roster is the one it ran on/);
-  assert.doesNotMatch(S.sameDayProblem(record, row({ reasons: ["il_moved"] }), DAY), /has not changed/);
+  // 224319 on 2026-11-13 (#374): a press at 05:30, an IL move at 09:15, and a row whose roster
+  // (the season state's) still lacks it: the IL move landed after the press, so the guard lifts.
+  const early = { ...record, trigger: "after_comeback", at: Date.parse("2026-11-13T11:30:00Z") };
+  assert.equal(S.sameDayProblem(early, row({ reasons: ["il_moved"] }), DAY), null);
+  // The press after the move: the server's row no longer carries il_moved, and the guard holds.
+  const after = { ...record, trigger: "il_moved", at: Date.parse("2026-11-13T15:17:02Z") };
+  assert.match(S.sameDayProblem(after, row({ reasons: [] }), DAY), /roster has not changed/);
+  // A roster change alone with the press's own roster holds it: the server and the page compare
+  // the same rosters; one that differs lifts it as before. No line says the press ran after a move.
+  assert.match(S.sameDayProblem(record, row({ reasons: ["roster_changed"] }), DAY), /roster has not changed/);
   assert.equal(S.sameDayProblem(record, row({ reasons: ["roster_changed"], roster: { players: [2001], held: [] } }), DAY), null);
+  for (const reasons of [["roster_changed"], ["lineup_set"], ["no_run"], []]) {
+    assert.doesNotMatch(S.sameDayProblem(record, row({ reasons }), DAY), /after today's move/);
+  }
   // An unknown roster never lifts it; the same roster in another order is the same roster.
   assert.match(S.sameDayProblem({ ...record, roster: null }, row({ reasons: ["no_run"] }), DAY), /ran in this league today/);
   assert.equal(S.rosterDiffers(ROSTER, { players: [2004, 2003, 2002, 2001], held: [2004] }), false);
@@ -556,6 +565,27 @@ test("the worker: one press on record at a time, kept until the API has its run,
   status = 200;
   assert.equal((await w.send({ op: "start_active_log", league: "100003", run: { ...run, mode: "dry_run", outcome: "would_start" } })).ok, true);
   assert.equal(w.local.has("start_active_press:100003"), false);
+});
+
+test("the worker takes a second press the day an IL move landed after the first, never two for one (#374)", async () => {
+  const w = loadWorker((f) => [200, f.url.endsWith("/due") ? due(LIVE) : { at: "x" }]);
+  const key = `start_active_press:${LEAGUE}`;
+  // 224319 on 2026-11-13: the 05:30 press, logged.
+  const first = { day: DAY, trigger: "after_comeback", reasons: ["lineup_set"], roster: ROSTER, page: `/nba/${LEAGUE}/${TEAM}` };
+  assert.equal((await w.send({ op: "start_active_pressing", league: LEAGUE, record: first })).ok, true);
+  const run = { day: DAY, mode: "live", trigger: "after_comeback", outcome: "started", reason: null, message: UPDATED };
+  assert.equal((await w.send({ op: "start_active_log", league: LEAGUE, run, pressed: true })).ok, true);
+  // The 09:15 IL move, on a row whose roster still lacks it: taken.
+  const moved = { ...first, trigger: "il_moved", reasons: ["il_moved"] };
+  assert.deepEqual(await w.send({ op: "start_active_pressing", league: LEAGUE, record: moved }), { ok: true, data: { kept: true } });
+  // While that press awaits its log, the same move presses nothing more.
+  const again = await w.send({ op: "start_active_pressing", league: LEAGUE, record: moved }, 8);
+  assert.deepEqual([again.ok, again.error], [false, "a press in this league awaits its log"]);
+  // Logged: the row after it carries no il_moved, and the day's press holds.
+  assert.equal((await w.send({ op: "start_active_log", league: LEAGUE, run: { ...run, trigger: "il_moved" }, pressed: true })).ok, true);
+  assert.equal(w.local.get(key).trigger, "il_moved");
+  const later = await w.send({ op: "start_active_pressing", league: LEAGUE, record: { ...first, trigger: "routine", reasons: [] } });
+  assert.match(later.error, /roster has not changed/);
 });
 
 test("a run the lineup guard answers for stops at the lineup brake, a moves league's does not (#327)", () => {
