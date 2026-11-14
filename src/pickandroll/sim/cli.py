@@ -551,8 +551,9 @@ SCALE_NOTE = (
     "swap on the key the arm executes, without the season term; gain is the median of their "
     "gains (expected category wins), ros the median of their ROS_w (season value above a dead "
     "spot times the games left, a bracket game counted playoff_weight times), ratio gain over "
-    "ros; each the mean over the paths that stand. A season_weight equal to ratio makes the "
-    "term about as loud as the odds gain. Null on the ranking tier and a static seat."
+    "ros; each the mean over the paths that stand. A season_weight of the ratio's size makes the "
+    "term about as loud as the odds gain; the ratio is signed, negative when the swaps best for "
+    "the odds lose season worth. Null on the ranking tier and a static seat."
 )
 
 

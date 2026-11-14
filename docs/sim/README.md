@@ -194,8 +194,9 @@ does not return this season is worth 0, one without a season value has none. A m
 the add's less the drop's (the add's alone without a drop; none when either has no value, and
 that move counts 0); a set's is the sum. The games are the schedule's and none is extrapolated: a
 league's schedule reaches the season's last day (the reader refuses one that does not). A replay's
-schedule is the season's log: a day with no entry has no game, and the synthetic logs end before
-the replay's calendar. So the unit is per-game value times games, the unit of the stash threshold
+schedule is the season's log: a day with no entry has no game (an off day for the whole league,
+and in the synthetic logs every day after the log ends, before the replay's calendar does), and
+there the engine's own figures extrapolate games the term does not count. So the unit is per-game value times games, the unit of the stash threshold
 (#373): at `playoff_weight` 1 a healthy player's `worth_w` is `moves.worth_from` and an absent
 one's `moves.net_of_return` wherever the schedule keys every day. The season guard's figure
 (`decisions.move_projection`'s season horizon) is also per-game value times games, but it counts
@@ -211,7 +212,8 @@ season guard, or the stream's spots.
 **The season scale.** On each path's first simulated day, in the arm's own seat, the payload takes
 the median over the arm's pool of each candidate's best single swap's gain on the executed key
 without the term, the median of the same swaps' `ROS_w` at the arm's `playoff_weight`, and their
-ratio: a `season_weight` near the ratio makes the term about as loud as the odds gain. It is
+ratio: a `season_weight` of the ratio's size makes the term about as loud as the odds gain. The
+ratio is signed: it is negative when the swaps best for the odds lose season worth. It is
 recorded per arm (`season_scale.by_arm`: the mean over paths of the two medians and of the ratio,
 and how many paths gave one) for compare, replay and room, at any `season_weight`, 0 included;
 null on the ranking tier and a static seat. It draws nothing, changes no outcome and is no
