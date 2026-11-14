@@ -973,11 +973,13 @@ def land(
     slot_counts: Mapping[str, int] | None = None,
     status: Mapping[int, str | None] | None = None,
     value: Mapping[int, float] | None = None,
+    values: Mapping[int, Mapping[int, float]] | None = None,
 ) -> SimState:
     """Yesterday's queued moves land, team by team in ``order``. First, given the day's ``status``
-    and ``value``, each team's cleared held players come back and the active roster is trimmed
-    to ``spots`` (:func:`_activate`; each player it sends counts in the team's ``forced_by``,
-    never in ``executed_by`` or ``gone_by``). Then a churn's held drop goes to the pool on his
+    and ``value`` (a team's own in ``values`` when it has one there: its seat's forecaster's),
+    each team's cleared held players come back and the active roster is trimmed to ``spots``
+    (:func:`_activate`; each player it sends counts in the team's ``forced_by``, never in
+    ``executed_by`` or ``gone_by``). Then a churn's held drop goes to the pool on his
     own, as the engine times it (#221), freeing his slot; then the held-slot moves it queued,
     each player to his held slot while the slot has room (``slot_counts``, the league's slots by
     kind) and, given ``status``, only if the slot accepts the status he has that morning
@@ -1000,8 +1002,9 @@ def land(
 
     for team in order:
         roster = rosters.setdefault(team, [])
-        if status is not None and value is not None:
-            left = _activate(roster, spots, status, value)
+        own = (values or {}).get(team, value)
+        if status is not None and own is not None:
+            left = _activate(roster, spots, status, own)
             pool.update(left)
             count(forced, team, len(left))
         moves = state.pending.get(team, ())
@@ -1101,10 +1104,12 @@ def score_day(
     value: Mapping[int, float],
     line: Callable[[int, date], Mapping[str, float] | None],
     starters: Mapping[int, Mapping[int, str]] | None = None,
+    values: Mapping[int, Mapping[int, float]] | None = None,
 ) -> SimState:
     """Every team's starters' lines added to the week's totals; a starter without a line (out at
     game time, unheard) adds nothing. ``starters`` is the day's lineup by team when it is already
-    set (:func:`starters_of` of the same state, status and value); else it is set here."""
+    set (:func:`starters_of` of the same state, status and value); else it is set here, on the
+    team's own value in ``values`` when it has one there (its seat's forecaster's)."""
     week = setup.week_of(day)
     if week is None:
         return state
@@ -1112,7 +1117,7 @@ def score_day(
         lineup = (
             starters[team]
             if starters is not None and team in starters
-            else starters_of(setup, state, team, day, status, value)
+            else starters_of(setup, state, team, day, status, (values or {}).get(team, value))
         )
         for k in lineup:
             ln = line(k, day)

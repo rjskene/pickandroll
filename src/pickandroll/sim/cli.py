@@ -1185,7 +1185,11 @@ def cmd_replay(args: argparse.Namespace) -> int:
         "specs": {arm: spec for arm, spec in zip(seats, specs, strict=True)},
         "seats": seats,
         "rotation": "seat i takes arm (i + path) mod n",
-        "draft": f"snake on the run's forecaster's projection, over {payload['pool']['draft']}",
+        "draft": (
+            f"snake on the run's forecaster's projection, over {payload['pool']['draft']}; an "
+            "arm on a forecaster of its own reads it from the season's first day, not at the "
+            "draft"
+        ),
         "forecasters": forecasters_block(named, fixed, lines, args.seed, args.shape),
         "oracle_shape": args.shape,
         "players": sum(1 for k in members if scheduled.get(k) or lines.get(k)),

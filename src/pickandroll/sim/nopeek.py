@@ -26,6 +26,10 @@ FLIP = 0.15
 SCALE = (0.5, 1.5)
 #: The record's fields a digest hashes, in order.
 FIELDS = ("beliefs", "status", "returns", "landed", "decisions", "queued", "starters", "state")
+#: The record's fields a digest hashes when they are not empty: the other forecasters' beliefs a
+#: variant's seats hold and which team holds which (#172, PR D1). A run whose seats all hold the
+#: run's forecaster digests as it did before them.
+HELD = ("held", "holds")
 
 
 def _rng(seed: int, player: int, day: date) -> np.random.Generator:
@@ -123,12 +127,19 @@ def canonical(x: Any) -> Any:
     return x
 
 
+def _hash(x: Any) -> str:
+    return hashlib.sha256(repr(canonical(x)).encode()).hexdigest()[:16]
+
+
 def digest(record: Any) -> dict[str, str]:
-    """A hash of each of the record's :data:`FIELDS`."""
-    return {
-        f: hashlib.sha256(repr(canonical(getattr(record, f))).encode()).hexdigest()[:16]
-        for f in FIELDS
-    }
+    """A hash of each of the record's :data:`FIELDS`, and of each of :data:`HELD` it has and is
+    not empty."""
+    out = {f: _hash(getattr(record, f)) for f in FIELDS}
+    for f in HELD:
+        x = getattr(record, f, None)
+        if x:
+            out[f] = _hash(x)
+    return out
 
 
 def first_difference(
@@ -141,7 +152,7 @@ def first_difference(
         da, db = a.get(key), b.get(key)
         if da is None or db is None:
             return (key[0], key[1], FIELDS)
-        fields = tuple(f for f in FIELDS if da.get(f) != db.get(f))
+        fields = tuple(f for f in (*FIELDS, *HELD) if da.get(f) != db.get(f))
         if fields:
             return (key[0], key[1], fields)
     return None
@@ -150,6 +161,7 @@ def first_difference(
 __all__ = [
     "FIELDS",
     "FLIP",
+    "HELD",
     "SCALE",
     "canonical",
     "digest",

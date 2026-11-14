@@ -420,6 +420,22 @@ The draft is a snake on the run's forecaster's values over the projected players
 game in the season's first seven days, as an opening-night roster shows; everyone else is on the
 wire. Who is projected is the forecaster's (above).
 
+**A belief for each seat (PR D1).** A replay's world holds a causal belief for each forecaster a
+seat names, each from its own projection with its own newcomer's prior (the mean of its own
+projected players left undrafted), at the same weights. A seat names its forecaster
+(`opponents.Seat.forecaster`, set from the arm's `forecaster`, which a run sets and a spec file
+does not name); None is the run's. Each day such a seat decides, sets its lineup, is charged its
+forced drops and is scored (the lineup's fallback) on its own forecaster's beliefs and per-game
+values; every other seat, the market, mirror and static rivals among them, on the run's. The label
+is part of the seat and so of the decision cache's key: two arms on different forecasters share no
+decision and both seasons are played in full, while the world's draws (lines, absences, news, the
+market's generator) stay common to them. A day record carries the other forecasters' beliefs a
+variant's seats hold and which team holds which (`held`, `holds`), and the no-peek digest hashes
+them when they are not empty, so a run whose seats all hold the run's forecaster records and
+digests as it did. The season scale reads the arm's own forecaster. The draft and the market's
+ranking stay the run's forecaster's: an arm on a forecaster of its own reads it from the season's
+first day. A drawn world (`compare`, `room`) answers every label with its one shared belief.
+
 **A newcomer.** A player nobody projected (a rookie, a player who missed most of the prior season)
 is on the wire from day one but in no belief, so no seat can add him, until the day after his first
 recorded game; from then his prior is the mean projection, stat by stat, over the projected players
