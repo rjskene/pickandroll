@@ -785,7 +785,9 @@ def scale_on(setup: Setup, w: World, arm: Arm, team: int) -> dict[str, Any] | No
     if built is None:
         return None
     s = policy.scale_of(built, arm.tier, arm.executes, arm.fields)
-    return None if s is None else {"gain": s.gain, "ros": s.ros, "ratio": s.ratio, "swaps": s.swaps}
+    if s is None:
+        return None
+    return {"gain": s.gain, "ros": s.ros, "ratio": s.ratio, "against": s.against, "swaps": s.swaps}
 
 
 def paired(setup: Setup, w: World, a: Arm, b: Arm, me: int) -> dict[str, Any]:

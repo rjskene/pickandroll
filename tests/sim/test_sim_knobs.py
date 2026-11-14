@@ -352,7 +352,8 @@ def test_the_season_scale_by_hand_and_no_outcome_changes_with_it(monkeypatch):
     assert s.swaps == len(rows)
     assert s.gain == pytest.approx(float(np.median([g for g, _ in rows])))
     assert s.ros == pytest.approx(float(np.median([r for _, r in rows])))
-    assert s.ratio == pytest.approx(s.gain / s.ros)
+    # Every season figure here is above 0, so the ratio's sizes are the medians themselves.
+    assert s.ratio == pytest.approx(s.gain / s.ros) and s.against == 0.0
     # The surrogate's pool is every candidate by value times games: a median over three.
     sur = policy.scale_of(built, "surrogate")
     every = mv.single_swaps(ev, policy.QUEUE_SET, policy._surrogate_pool(built, policy.Fields()))
@@ -373,6 +374,59 @@ def test_the_season_scale_by_hand_and_no_outcome_changes_with_it(monkeypatch):
     assert {k: v for k, v in with_scale.items() if k != "scale"} == {
         k: v for k, v in without.items() if k != "scale"
     }
+
+
+def test_the_scales_ratio_and_share_when_the_season_figures_straddle_zero(monkeypatch):
+    """PR C2: ``ratio`` is the median size of the gain over the median size of ``ROS_w`` over the
+    swaps that have one, 0 or more; ``against`` the share of them below 0; ``gain`` and ``ros``
+    stay the signed medians. The flip league's surrogate swaps, with the weak player's season
+    figure turned negative (the week's best swap costing season value) and then one removed."""
+    setup, weak, strong, _ = flip_setup()
+    built = policy.problem_of(setup, initial(setup), 1, KNOBS, setup.projection, {}, {})
+    ev = mv.Evaluator(built.problem)
+    every = mv.single_swaps(ev, policy.QUEUE_SET, policy._surrogate_pool(built, policy.Fields()))
+    best = {c: (g[0].gain, mv.Move(c, g[0].drop)) for c, g in every.items() if g}
+    assert len(best) == 3 and weak in best and strong in best
+    real = policy.SeasonFigure.move
+    other = next(c for c in best if c not in (weak, strong))
+
+    def straddling(self, m):
+        r = real(self, m)
+        return -r if m.add == weak else r
+
+    monkeypatch.setattr(policy.SeasonFigure, "move", straddling)
+    fig = policy.SeasonFigure(built, 1.0)
+    rows = [(g, fig.move(m)) for g, m in best.values()]
+    assert sum(1 for _, r in rows if r < 0) == 1 and sum(1 for _, r in rows if r > 0) == 2
+    s = policy.scale_of(built, "surrogate")
+    assert s.swaps == 3
+    assert s.gain == pytest.approx(float(np.median([g for g, _ in rows])))
+    assert s.ros == pytest.approx(float(np.median([r for _, r in rows])))
+    assert s.ratio == pytest.approx(
+        float(np.median([abs(g) for g, _ in rows]) / np.median([abs(r) for _, r in rows]))
+    )
+    assert s.ratio > 0 and s.against == pytest.approx(1 / 3)
+    # A swap without a season figure counts in the gain's median, not in the ratio or the share.
+
+    def one_unvalued(self, m):
+        return None if m.add == other else straddling(self, m)
+
+    monkeypatch.setattr(policy.SeasonFigure, "move", one_unvalued)
+    s = policy.scale_of(built, "surrogate")
+    valued = [(g, fig.move(m)) for c, (g, m) in best.items() if c != other]
+    assert s.gain == pytest.approx(float(np.median([g for g, _ in rows])))
+    assert s.ros == pytest.approx(float(np.median([r for _, r in valued])))
+    assert s.ratio == pytest.approx(
+        float(np.median([abs(g) for g, _ in valued]) / np.median([abs(r) for _, r in valued]))
+    )
+    assert s.against == pytest.approx(1 / 2)
+    # None with no season figure at all, or one within EPS of zero.
+    monkeypatch.setattr(policy.SeasonFigure, "move", lambda self, m: None)
+    s = policy.scale_of(built, "surrogate")
+    assert (s.ros, s.ratio, s.against) == (None, None, None) and s.gain is not None
+    monkeypatch.setattr(policy.SeasonFigure, "move", lambda self, m: 0.0)
+    s = policy.scale_of(built, "surrogate")
+    assert s.ratio is None and s.against == 0.0
 
 
 # --------------------------------------------------------------------------- the reads table

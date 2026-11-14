@@ -210,14 +210,17 @@ does not enter the ranking tier, the week plan (the streaming plan stays the eng
 season guard, or the stream's spots.
 
 **The season scale.** On each path's first simulated day, in the arm's own seat, the payload takes
-the median over the arm's pool of each candidate's best single swap's gain on the executed key
-without the term, the median of the same swaps' `ROS_w` at the arm's `playoff_weight`, and their
-ratio: a `season_weight` of the ratio's size makes the term about as loud as the odds gain. The
-ratio is signed: it is negative when the swaps best for the odds lose season worth. It is
-recorded per arm (`season_scale.by_arm`: the mean over paths of the two medians and of the ratio,
-and how many paths gave one) for compare, replay and room, at any `season_weight`, 0 included;
-null on the ranking tier and a static seat. It draws nothing, changes no outcome and is no
-part of a solve.
+each candidate's best single swap over the arm's pool on the executed key, without the term, and
+records four figures: `gain`, the median of their gains; `ros`, the median of their `ROS_w` at
+the arm's `playoff_weight` (both signed); `ratio`, the median size of the gain over the median
+size of `ROS_w`, over the swaps that have a `ROS_w`, 0 or more by construction: the
+`season_weight` at which the term is the week gain's size; and `against`, the share of those
+swaps whose `ROS_w` is below 0, where the week's best swap costs season value (PR C2: the ratio
+was the signed medians' quotient, which flips sign or blows up when the season figures straddle
+zero). It is recorded per arm (`season_scale.by_arm`: the mean over paths of each figure, and how
+many paths gave one) for compare, replay and room, at any `season_weight`, 0 included; null on
+the ranking tier and a static seat. A dry run prints the four. It draws nothing, changes no
+outcome and is no part of a solve.
 
 **What each knob reads.** `policy.reads(arm, shape)` says for each knob `read` (a different value
 can change what the seat queues in a league of that shape) or why not; a change that only alters

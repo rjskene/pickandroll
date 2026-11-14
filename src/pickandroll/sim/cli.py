@@ -516,7 +516,9 @@ def dry_run(key: Mapping[str, Any], first: Mapping[str, Any]) -> int:
     for arm, row in (first.get("scale") or {}).items():
         if row:
             shown = ", ".join(
-                f"{m} {row[m]:.4g}" for m in ("gain", "ros", "ratio") if row.get(m) is not None
+                f"{m} {row[m]:.4g}"
+                for m in ("gain", "ros", "ratio", "against")
+                if row.get(m) is not None
             )
             print(f"season scale, {arm}, the first task: {shown} over {row['swaps']} swaps")
     _, note = audited([key], [first])
@@ -548,12 +550,14 @@ def counts_of(rows: Sequence[Any]) -> dict[str, Any] | None:
 SCALE_NOTE = (
     "per arm: on the first simulated day of each path, for the arm's own seat (a replay's or a "
     "room's: its first seat in team order), over the arm's pool, each candidate's best single "
-    "swap on the key the arm executes, without the season term; gain is the median of their "
-    "gains (expected category wins), ros the median of their ROS_w (season value above a dead "
-    "spot times the games left, a bracket game counted playoff_weight times), ratio gain over "
-    "ros; each the mean over the paths that stand. A season_weight of the ratio's size makes the "
-    "term about as loud as the odds gain; the ratio is signed, negative when the swaps best for "
-    "the odds lose season worth. Null on the ranking tier and a static seat."
+    "swap on the key the arm executes, without the season term. gain: the median of their gains "
+    "on that key (expected category wins in a categories league). ros: the median of their "
+    "ROS_w (season value above a dead spot times the games left, a bracket game counted "
+    "playoff_weight times). ratio: the median size of the gain over the median size of ROS_w, "
+    "over the swaps that have a ROS_w, 0 or more: the season_weight at which the term is the "
+    "gain's size. against: the share of those swaps whose ROS_w is below 0, the week's best swap "
+    "costing season value. Each the mean over the paths that stand; null on the ranking tier and "
+    "a static seat."
 )
 
 
@@ -568,7 +572,13 @@ def scale_of(rows: Sequence[Mapping[str, Any] | None]) -> dict[str, Any] | None:
         vals = [float(r[k]) for r in have if r.get(k) is not None]
         return sum(vals) / len(vals) if vals else None
 
-    return {"gain": mean("gain"), "ros": mean("ros"), "ratio": mean("ratio"), "paths": len(have)}
+    return {
+        "gain": mean("gain"),
+        "ros": mean("ros"),
+        "ratio": mean("ratio"),
+        "against": mean("against"),
+        "paths": len(have),
+    }
 
 
 def reads_of(

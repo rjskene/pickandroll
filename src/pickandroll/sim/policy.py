@@ -682,14 +682,19 @@ def decide(
 # --------------------------------------------------------------------------- the season scale
 @dataclass(frozen=True)
 class Scale:
-    """The season scale on one seat's day (:func:`scale_of`): the median best single swap's gain
-    on the executed key without the term, the median of the same swaps' ``ROS_w``, and the first
-    over the second (None when the second is 0 or there is none), over ``swaps`` swaps."""
+    """The season scale on one seat's day (:func:`scale_of`), over ``swaps`` swaps (each
+    candidate's best single swap on the executed key, without the term): ``gain``, their gains'
+    median; ``ros``, the median of their ``ROS_w``; ``ratio``, the median ``|gain|`` over the
+    median ``|ROS_w|`` of the swaps that have a ``ROS_w`` (0 or more: the ``season_weight`` at
+    which the term is the week gain's size; None when none has one or the second is within
+    ``moves.EPS`` of 0); ``against``, the share of those swaps whose ``ROS_w`` is below 0 (the
+    week's best swap costs season value; None when none has one)."""
 
     gain: float | None
     ros: float | None
     ratio: float | None
     swaps: int
+    against: float | None = None
 
 
 def scale_of(
@@ -701,9 +706,10 @@ def scale_of(
     """The season scale (#172, PR C): over the arm's pool on ``built``'s day (the exact tier's
     best ``pool`` by single-swap gain above ``min_gain``, the weighted search's, the surrogate's
     best by value times games), each candidate's best single swap on the key the arm executes,
-    without the term. A ``season_weight`` equal to the ratio makes the term about as loud as the
-    odds gain. None on the ranking tier and a static seat, which hold no odds. It decides nothing,
-    draws nothing and is the same at any ``season_weight``."""
+    without the term (the ratio unsigned and the share against since PR C2). A
+    ``season_weight`` equal to the ratio makes the term about as loud as the odds gain. None on
+    the ranking tier and a static seat, which hold no odds. It decides nothing, draws nothing and
+    is the same at any ``season_weight``."""
     if tier not in ("exact", "surrogate"):
         return None
     ev = mv.Evaluator(built.problem)
@@ -719,11 +725,15 @@ def scale_of(
     figure = SeasonFigure(built, knob(built.knobs, "playoff_weight"))
     rows = [(g[0].gain, figure.move(mv.Move(c, g[0].drop))) for c, g in best.items() if g]
     gains = [x for x, _ in rows]
-    ros = [r for _, r in rows if r is not None]
+    valued = [(x, r) for x, r in rows if r is not None]
     gain = median(gains) if gains else None
-    season = median(ros) if ros else None
-    ratio = None if gain is None or season is None or abs(season) <= mv.EPS else gain / season
-    return Scale(gain, season, ratio, len(rows))
+    season = median(r for _, r in valued) if valued else None
+    ratio = against = None
+    if valued:
+        size = median(abs(r) for _, r in valued)
+        ratio = None if size <= mv.EPS else median(abs(x) for x, _ in valued) / size
+        against = sum(1 for _, r in valued if r < 0) / len(valued)
+    return Scale(gain, season, ratio, len(rows), against)
 
 
 # --------------------------------------------------------------------------- what each knob reads

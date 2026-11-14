@@ -226,6 +226,7 @@ def test_compare_pairs_the_arms_and_records_the_run(run_data: Path, capsys):
     dry = capsys.readouterr().out
     # The dry run prints the exact arm's season scale; the ranking arm has none.
     assert "season scale, a, the first task: gain " in dry and "season scale, b," not in dry
+    assert ", ratio " in dry and ", against " in dry
     assert ss.main([*args, *common, "--shrink", "0,0.5", "--name", "first"]) == 0
     out = capsys.readouterr().out
     assert "verdict (one-SE, advisory)" in out and "playoff odds, B less A," in out
