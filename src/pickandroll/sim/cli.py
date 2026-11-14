@@ -41,6 +41,7 @@ import argparse
 import json
 import os
 import platform
+import sys
 import time as clock
 import urllib.error
 import urllib.request
@@ -364,6 +365,21 @@ def world_inputs(
     return inputs, payload, sha, path, tau_note
 
 
+#: The commands whose outcome runs through the engine's evaluator (an exact tie there can fall
+#: either way with the process's hash seed).
+SIMULATING = ("compare", "replay", "room", "validate")
+HASH_SEED_NOTE = (
+    "PYTHONHASHSEED is unset: at an exact tie the outcome may differ between processes (an "
+    "order-dependent sum in the engine's evaluator); a run to be reproduced sets PYTHONHASHSEED=0"
+)
+
+
+def hash_seed() -> str:
+    """The process's ``PYTHONHASHSEED`` as the run record keeps it: its value, or ``"random"``
+    when it is unset (or empty, which Python reads as unset)."""
+    return os.environ.get("PYTHONHASHSEED") or "random"
+
+
 def base_payload(
     kind: str,
     name: str,
@@ -387,6 +403,7 @@ def base_payload(
         "host": platform.node(),
         "workers": workers,
         "nice": NICE,
+        "hash_seed": hash_seed(),
         "code_sha": reader.code_sha(ROOT),
         "fit_sha": sha,
         "fit_file": str(fit_path),
@@ -1649,4 +1666,7 @@ def main(argv: list[str] | None = None) -> int:
     va.add_argument("--system", default="bbm")
     va.set_defaults(func=cmd_validate)
     args = ap.parse_args(argv)
+    dry = getattr(args, "dry_run", False)
+    if args.command in SIMULATING and not dry and hash_seed() == "random":
+        print(HASH_SEED_NOTE, file=sys.stderr)
     return args.func(args)

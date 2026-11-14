@@ -290,6 +290,14 @@ negative difference is B finishing higher. `room` seats the arms given around th
 `i` taking arm `(i + path) mod n` so every arm sits in every seat across paths. The process pool
 is the simulator's own (cores less two workers at `nice 10`; the API's pools are untouched).
 
+**Determinism.** The same spec, seed and fit give the same outcomes in one process and across
+worker counts, except at an exact tie: there an order-dependent sum in the engine's evaluator can
+fall either way with the process's hash seed (a week plan whose gap over its set is 0.0 in one
+process and 1e-16 in another, against a plan floor of exactly 0, is taken in one and not the
+other). A real run sets `PYTHONHASHSEED=0`. The run record keeps the value (`hash_seed`, `"random"`
+when it is unset), and compare, replay, room and validate print one line on stderr when it is
+unset and the run is not a dry run.
+
 ## The readers (`sim/readers.py`) and the runs (`sim/cli.py`)
 
 The core is pure; the readers bring the inputs. `setup_of` builds a league's setup from the
