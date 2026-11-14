@@ -743,22 +743,23 @@ READ = "read"
 
 @dataclass(frozen=True)
 class Shape:
-    """What of a league decides which knobs a seat reads (#172, PR C): its scoring as the problem
-    reads it, whether it has held slots, whether its bracket is read. Later PRs add to it (F: the
-    waiver rule)."""
+    """What of a league and its run decides which knobs a seat reads (#172, PR C): its scoring
+    as the problem reads it, whether it has held slots, whether its bracket is read, and whether
+    the run names the two sources' stand-ins (PR D1: ``replay --bbm-as``, ``--yahoo-as``). Later
+    PRs add to it (F: the waiver rule)."""
 
     scoring: str = "categories"
     held: bool = False
     bracket: bool = True
+    standins: bool = False
 
     def label(self) -> str:
-        return ", ".join(
-            (
-                f"{self.scoring} league",
-                "held slots" if self.held else "no held slots",
-                "bracket read" if self.bracket else "no bracket read",
-            )
+        parts = (
+            f"{self.scoring} league",
+            "held slots" if self.held else "no held slots",
+            "bracket read" if self.bracket else "no bracket read",
         )
+        return ", ".join((*parts, "the two sources' stand-ins named") if self.standins else parts)
 
 
 def shape_of(setup: Setup) -> Shape:
@@ -782,8 +783,8 @@ class Configured(Protocol):
 
 #: What makes each knob and field read, for the refusal's message.
 WHEN_READ: Mapping[str, str] = {
-    "system": "a forecaster per arm (PR D)",
-    "blend": "a forecaster per arm and their mix (PR D)",
+    "system": "a run that names the two sources' stand-ins (replay --bbm-as, --yahoo-as)",
+    "blend": "a run that names the two sources' stand-ins, on an arm whose system is blend",
     "horizon_weight": "the exact tier executing weighted",
     "protection_floor": "a seat that moves: the exact, surrogate or ranking tier",
     "plan_floor_cats": "the exact tier drawing and executing the week plan in a categories league",
@@ -803,6 +804,8 @@ WHEN_READ: Mapping[str, str] = {
     "surrogate_days": "the surrogate tier",
 }
 STATIC = "a static seat makes no move"
+#: Why ``system`` and ``blend`` are not read on a run without the two sources' stand-ins.
+NO_STANDINS = "the run names no stand-ins for the two sources (--bbm-as, --yahoo-as)"
 
 
 def _odds(arm: Configured, mirrored: bool) -> bool:
@@ -846,8 +849,13 @@ def reads(arm: Configured, shape: Shape, mirrored: bool = False) -> dict[str, st
             why = READ
         out[name] = why
     out["three_weight"] = "it weighs the three weeks in the queue's score: the queue's rule, PR E"
-    out["system"] = "every seat shares the run's forecaster: a forecaster per arm, PR D"
-    out["blend"] = "every seat shares the run's forecaster: a forecaster per arm, PR D"
+    # The arm's own seat believes by its system once the run names the stand-ins; a mirror
+    # rival holds the run's forecaster, so nothing more is read through it.
+    if shape.standins:
+        out["system"] = READ
+        out["blend"] = READ if arm.knobs["system"] == "blend" else "the arm's system is not blend"
+    else:
+        out["system"] = out["blend"] = NO_STANDINS
     out["faab_sizing"] = "the world has no waivers and no budget: PR F"
     out["stash_threshold"] = "the engine reads it since #373; the simulator passes it in PR G"
     if odds:

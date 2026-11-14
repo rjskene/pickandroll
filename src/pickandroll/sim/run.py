@@ -848,9 +848,9 @@ def opponents_of(setup: Setup, arm: Arm, me: int) -> dict[int, op.Strategy]:
 def scale_on(setup: Setup, w: World, arm: Arm, team: int) -> dict[str, Any] | None:
     """The season scale (``policy.scale_of``) for ``arm`` in seat ``team`` on the path's first
     simulated day, on the state, beliefs (the arm's forecaster's) and statuses the seat decides
-    on there (yesterday's nothing landed, cleared held players back). None on the ranking tier and a static seat. It
-    reads the world's cached figures, draws nothing from a generator and decides nothing, so no
-    outcome and no solve count changes with it."""
+    on there (yesterday's nothing landed, cleared held players back). None on the ranking tier
+    and a static seat. It reads the world's cached figures, draws nothing from a generator and
+    decides nothing, so no outcome and no solve count changes with it."""
     if arm.tier not in ("exact", "surrogate"):
         return None
     di, day = next(
@@ -1083,8 +1083,8 @@ def replay_setup(
     bracket reseeded with the higher seed through a tie. Every player is his own team in the
     schedule (``p<id>``): his game days are his ``scheduled`` entries (played or not; the days
     he has a line for when none are given), so a trade or a team read later than the season
-    moves nothing. Every day of the calendar is a key of the schedule, an empty set when nobody plays:
-    no day is unread, so the engine extrapolates no game (#172, PR C2)."""
+    moves nothing. Every day of the calendar is a key of the schedule, an empty set when nobody
+    plays: no day is unread, so the engine extrapolates no game (#172, PR C2)."""
     schedule: dict[date, set[str]] = {}
     members: dict[int, Member] = {}
     game_days: dict[int, list[date]] = {}

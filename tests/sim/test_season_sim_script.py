@@ -651,7 +651,7 @@ def replays(run_data: Path) -> dict:
     for name, workers in (("one", "1"), ("again", "1"), ("two", "2")):
         with pytest.MonkeyPatch.context() as mp:
             if workers == "1":
-                out[f"{name}_tasks"] = _spy_tasks(mp, "task_replay", 13)
+                out[f"{name}_tasks"] = _spy_tasks(mp, "task_replay", 14)
             buf = io.StringIO()
             with contextlib.redirect_stdout(buf):
                 code = ss.main(_replay(data, "--paths", "3", "--seed", "5", "--workers", workers))
@@ -685,7 +685,7 @@ def test_a_breach_voids_its_path_and_only_its_path(run_data: Path, replays, caps
     data = run_data
     clean = replays["one_tasks"]
     with pytest.MonkeyPatch.context() as mp:
-        seen = _spy_tasks(mp, "task_replay", 13)
+        seen = _spy_tasks(mp, "task_replay", 14)
         _plant(mp, 1)
         code = ss.main(_replay(data, "--paths", "3", "--seed", "5", "--workers", "1"))
     out = capsys.readouterr().out

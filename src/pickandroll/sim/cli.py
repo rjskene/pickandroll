@@ -7,6 +7,7 @@
     python -m pickandroll.sim compare A.json B.json --leagues all --paths 100
     python -m pickandroll.sim replay --season 2024 --forecasters prior,espn --seats A.json B.json
     python -m pickandroll.sim replay --season 2024 --forecasters oracle:0.1 --shape minutes ...
+    python -m pickandroll.sim replay --season 2024 --bbm-as espn --yahoo-as marcel --seats ...
     python -m pickandroll.sim replay --season 2024 --seats A.json B.json --no-peek 2023-12-04
     python -m pickandroll.sim room --leagues all --seats A.json B.json --draft rosters
     python -m pickandroll.sim validate --league all
@@ -47,7 +48,7 @@ import time as clock
 import urllib.error
 import urllib.request
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime, time, timedelta
 from pathlib import Path
 from typing import Any
@@ -845,11 +846,71 @@ def fixed_of(data: Path, season: int, named: Sequence[fc.Forecaster]) -> Fixed:
 def projection_of(
     f: fc.Forecaster, fixed: Fixed, lines: Any, seed: int, path: int, shape: str
 ) -> Mapping[int, Mapping[str, float]]:
-    """A forecaster's projection on one path: an oracle's draw, any other's figures."""
+    """A forecaster's projection on one path: an oracle's draw (a stand-in's on its role's
+    stream), any other's figures."""
     if f.name == "oracle":
         assert f.spread is not None
-        return fc.oracle(lines, f.spread, seed, path, shape)
+        return fc.oracle(lines, f.spread, seed, path, shape, role=f.role)
     return fixed.rates[f.name]
+
+
+#: The two sources' stand-ins a run names: the first's (``bbm``) and the second's (``yahoo``).
+Sources = tuple[fc.Forecaster, fc.Forecaster]
+
+
+def sources_of(bbm: str | None, yahoo: str | None) -> Sources | None:
+    """The stand-ins ``--bbm-as`` and ``--yahoo-as`` name, None when neither is given. One
+    without the other, or the same forecaster for both, is refused by name."""
+    if bbm is None and yahoo is None:
+        return None
+    if bbm is None or yahoo is None:
+        given = "--bbm-as" if yahoo is None else "--yahoo-as"
+        raise ValueError(f"{given} without the other: a run names both sources' stand-ins or none")
+    first = fc.standin(fc.parse_one(bbm), "bbm")
+    second = fc.standin(fc.parse_one(yahoo), "yahoo")
+    if first.label == second.label:
+        raise ValueError(f"--bbm-as and --yahoo-as both name {first.label}: the two sources differ")
+    return first, second
+
+
+def believing(arms: Mapping[str, rn.Arm], sources: Sources | None) -> dict[str, rn.Arm]:
+    """The arms, each believing by its ``system`` when the run names the stand-ins: its
+    forecaster the label ``forecast.system_label`` gives; as they are otherwise."""
+    if sources is None:
+        return dict(arms)
+    first, second = sources
+    return {
+        name: replace(
+            arm,
+            forecaster=fc.system_label(
+                str(arm.knobs["system"]), arm.knobs["blend"], first.label, second.label
+            ),
+        )
+        for name, arm in arms.items()
+    }
+
+
+def forecasts_of(
+    sources: Sources | None,
+    fixed: Fixed,
+    lines: Any,
+    seed: int,
+    path: int,
+    shape: str,
+    arms: Mapping[str, rn.Arm],
+) -> dict[str, Mapping[int, Mapping[str, float]]]:
+    """The beliefs' projections the arms name on one path, by label: each arm's system on the
+    two stand-ins (``forecast.system_rates``); none without stand-ins."""
+    if sources is None:
+        return {}
+    first = projection_of(sources[0], fixed, lines, seed, path, shape)
+    second = projection_of(sources[1], fixed, lines, seed, path, shape)
+    out: dict[str, Mapping[int, Mapping[str, float]]] = {}
+    for arm in arms.values():
+        if arm.forecaster is not None and arm.forecaster not in out:
+            system, blend = str(arm.knobs["system"]), arm.knobs["blend"]
+            out[arm.forecaster] = fc.system_rates(system, blend, first, second)
+    return out
 
 
 def replay_setup_of(season: int, lines: Any, members: Any, scheduled: Any, projection: Any) -> Any:
@@ -865,6 +926,7 @@ def task_replay(
     forecaster: fc.Forecaster,
     fixed: Fixed,
     shape: str,
+    sources: Sources | None,
     lag: int,
     weights: Mapping[str, float],
     news_sd: float,
@@ -875,7 +937,17 @@ def task_replay(
 ) -> dict[str, Any]:
     projection = projection_of(forecaster, fixed, lines, seed, path, shape)
     setup = replay_setup_of(season, lines, members, scheduled, projection)
-    w = rn.replay_world(setup, lines, lag, seed, path, weights, news_sd=news_sd)
+    w = rn.replay_world(
+        setup,
+        lines,
+        lag,
+        seed,
+        path,
+        weights,
+        news_sd=news_sd,
+        label=forecaster.label,
+        forecasts=forecasts_of(sources, fixed, lines, seed, path, shape, arms),
+    )
     out = rn.room(setup, w, arms, seats, path)
     out["forecaster"] = forecaster.label
     return out
@@ -930,16 +1002,25 @@ def source_of(f: fc.Forecaster, fixed: Fixed, shape: str) -> str:
 
 
 def forecasters_block(
-    named: Sequence[fc.Forecaster], fixed: Fixed, lines: Any, seed: int, shape: str
+    named: Sequence[fc.Forecaster],
+    fixed: Fixed,
+    lines: Any,
+    seed: int,
+    shape: str,
+    sources: Sources | None = None,
 ) -> dict[str, Any]:
     """The payload's ``forecasters``: per label where its projection comes from, how many players
     it projects and how many of them played ``forecast.ERROR_MIN_GAMES`` games, its error
     against the replayed season (``forecast.error_of``; an oracle's on path 0, where it should
-    sit at its spread), ``espn``'s freeze check and the belief's weights. Never shown to a
-    seat."""
+    sit at its spread), ``espn``'s freeze check and the belief's weights; the two sources'
+    stand-ins among them, with the role each stands for. Never shown to a seat."""
     out: dict[str, Any] = {}
     played = {k: len(v) for k, v in lines.items()}
-    for f in named:
+    roles: dict[str, list[str]] = {}
+    for f in sources or ():
+        roles.setdefault(f.label, []).append(fc.ROLES[list(sources or ()).index(f)])
+    every = list(dict.fromkeys([*named, *(sources or ())]))
+    for f in every:
         rates = projection_of(f, fixed, lines, seed, 0, shape)
         e = fc.error_of(rates, lines)
         block: dict[str, Any] = {
@@ -954,8 +1035,67 @@ def forecasters_block(
             block["error"]["measured_on"] = "path 0: an oracle's error should sit at its spread"
         if f.name == "espn":
             block["freeze"] = fc.freeze_of(fixed.espn_games, played)
+        if f.label in roles:
+            block["stands_for"] = roles[f.label]
         out[f.label] = block
     return out
+
+
+SOURCES_NOTE = "the result is about two sources with these errors, not about the two real sources"
+ORACLE_SOURCES_NOTE = (
+    "an oracle stand-in draws from its role's own stream: two oracle stand-ins have independent "
+    "errors and neither shares the run's draws; two real sources' errors are correlated, so with "
+    "oracle stand-ins the mix's benefit is an upper bound"
+)
+BLEND_VALUE_NOTE = (
+    "the live blend values a player at the mix of the two systems' own per-game values; the "
+    "simulator values the mixed rates"
+)
+
+
+def sources_block(
+    sources: Sources | None,
+    arms: Mapping[str, rn.Arm],
+    fixed: Fixed,
+    lines: Any,
+    seed: int,
+    shape: str,
+) -> dict[str, Any] | None:
+    """The payload's ``sources``: the two stand-ins' labels, what the result is about, the
+    assumptions, and each system belief an arm holds with its error on path 0; None without
+    stand-ins."""
+    if sources is None:
+        return None
+    first, second = sources
+    forecasts = forecasts_of(sources, fixed, lines, seed, 0, shape, arms)
+    systems = {}
+    for arm in arms.values():
+        label = arm.forecaster
+        if label is None or label in systems:
+            continue
+        system = str(arm.knobs["system"])
+        e = fc.error_of(forecasts[label], lines)
+        systems[label] = {
+            "system": system,
+            "share": fc.share_of(system, arm.knobs["blend"]),
+            "projected": e["projected"],
+            "played": e["played"],
+            "error": {k: e[k] for k in ("min_games", "by_stat", "median_spread")},
+        }
+    return {
+        "bbm": first.label,
+        "yahoo": second.label,
+        "note": SOURCES_NOTE,
+        "oracle": ORACLE_SOURCES_NOTE if "oracle" in (first.name, second.name) else None,
+        "blend_value": BLEND_VALUE_NOTE,
+        "rule": (
+            "bbm: the first's forecast; yahoo: the second's line for every player it projects, "
+            "the first's for the rest; blend: for every player the second projects, share times "
+            "the second's plus the rest times the first's, stat by stat (the second's alone where "
+            "the first has none), the first's for everyone else"
+        ),
+        "systems": systems,
+    }
 
 
 def replay_notes(weights: fitmod.BeliefWeights, news_sd: float) -> dict[str, Any]:
@@ -1000,11 +1140,14 @@ def no_peek(
     seats: Sequence[str],
     seed: int,
     day: date,
+    label: str | None = None,
+    forecasts: Mapping[str, Any] | None = None,
 ) -> tuple[Any, int, list[dict[str, Any]]]:
     """Path 0 of the replay on the recorded lines and on :func:`nopeek.perturb`'s, with one
-    league built before either (on ``projection``, the run's forecaster's on path 0): the first
-    difference between their day records (None when they never part), the records compared and
-    the audit's breaches in either run."""
+    league built before either (on ``projection``, the run's forecaster's on path 0, ``label``;
+    ``forecasts`` the arms' other beliefs' projections): the first difference between their day
+    records (None when they never part), the records compared and the audit's breaches in
+    either run."""
     setup = replay_setup_of(season, lines, members, scheduled, projection)
     if day not in setup.days:
         raise ValueError(f"{day} is not a day of the replayed season")
@@ -1017,7 +1160,9 @@ def no_peek(
         def keep(r: rn.DayRecord, got: dict[tuple[date, int], dict[str, str]] = got) -> None:
             got[(r.day, r.variant)] = nopeek.digest(r)
 
-        w = rn.replay_world(setup, these, lag, seed, 0, weights, news_sd=news_sd)
+        w = rn.replay_world(
+            setup, these, lag, seed, 0, weights, news_sd=news_sd, label=label, forecasts=forecasts
+        )
         out = rn.room(setup, w, arms, seats, 0, on_day=keep)
         breaches += [{"run": run_, **b} for b in out["breaches"]]
         digests.append(got)
@@ -1044,11 +1189,12 @@ def cmd_replay(args: argparse.Namespace) -> int:
     try:
         day = date.fromisoformat(args.no_peek) if args.no_peek else None
         named = fc.parse(args.forecasters)
+        sources = sources_of(args.bbm_as, args.yahoo_as)
         inputs, fit, sha, fit_path, tau_note = world_inputs(args.data, [], need_tau=False)
         specs = read_specs(args.seats)
-        arms = {arm.name: arm for arm in arms_of(specs, sha)}
+        arms = believing({arm.name: arm for arm in arms_of(specs, sha)}, sources)
         lines, members, scheduled = reader.replay_lines(args.data, args.season)
-        fixed = fixed_of(args.data, args.season, named)
+        fixed = fixed_of(args.data, args.season, [*named, *(sources or ())])
         fitted = reader.belief_weights(args.data, args.season, HOLD_OUT)
     except (reader.SimReadError, ValueError, OSError, KeyError) as e:
         print(f"refused: {e}")
@@ -1059,7 +1205,10 @@ def cmd_replay(args: argparse.Namespace) -> int:
     seats = list(arms)
     first = projection_of(named[0], fixed, lines, args.seed, 0, args.shape)
     try:
-        shape = policy.shape_of(replay_setup_of(args.season, lines, members, scheduled, first))
+        shape = replace(
+            policy.shape_of(replay_setup_of(args.season, lines, members, scheduled, first)),
+            standins=sources is not None,
+        )
     except ValueError as e:
         print(f"refused: {e}")
         return 2
@@ -1089,6 +1238,8 @@ def cmd_replay(args: argparse.Namespace) -> int:
                 seats,
                 args.seed,
                 day,
+                named[0].label,
+                forecasts_of(sources, fixed, lines, args.seed, 0, args.shape, arms),
             )
         except ValueError as e:
             print(f"refused: {e}")
@@ -1123,6 +1274,7 @@ def cmd_replay(args: argparse.Namespace) -> int:
             f,
             fixed,
             args.shape,
+            sources,
             inputs.lag,
             weights,
             args.news_sd,
@@ -1190,8 +1342,10 @@ def cmd_replay(args: argparse.Namespace) -> int:
             "arm on a forecaster of its own reads it from the season's first day, not at the "
             "draft"
         ),
-        "forecasters": forecasters_block(named, fixed, lines, args.seed, args.shape),
+        "forecasters": forecasters_block(named, fixed, lines, args.seed, args.shape, sources),
         "oracle_shape": args.shape,
+        "sources": sources_block(sources, arms, fixed, lines, args.seed, args.shape),
+        "beliefs": {name: arm.forecaster or "the run's forecaster" for name, arm in arms.items()},
         "players": sum(1 for k in members if scheduled.get(k) or lines.get(k)),
         "paths": args.paths,
         "seed": args.seed,
@@ -1737,6 +1891,18 @@ def main(argv: list[str] | None = None) -> int:
         "the player's stats (default stat)",
     )
     re_.add_argument("--seats", type=Path, nargs="+", required=True, help="the arms' spec files")
+    re_.add_argument(
+        "--bbm-as",
+        default=None,
+        metavar="FORECASTER",
+        help="the forecaster standing in for the first live source (system bbm); with --yahoo-as",
+    )
+    re_.add_argument(
+        "--yahoo-as",
+        default=None,
+        metavar="FORECASTER",
+        help="the forecaster standing in for the second live source (system yahoo); with --bbm-as",
+    )
     re_.add_argument(
         "--news-sd",
         type=float,

@@ -225,8 +225,9 @@ outcome and is no part of a solve.
 **What each knob reads.** `policy.reads(arm, shape)` says for each knob `read` (a different value
 can change what the seat queues in a league of that shape) or why not; a change that only alters
 what is recorded, such as a plan drawn and not executed, is not read. The shape is the league's
-scoring, whether it has held slots and whether its bracket is read. A rival that mirrors the arm
-reads what the surrogate reads. As built:
+scoring, whether it has held slots, whether its bracket is read and whether the run names the two
+sources' stand-ins (below). A rival that mirrors the arm reads what the surrogate reads, but
+believes by the run's forecaster: `system` and `blend` are read by the arm's own seat only. As built:
 
 | knob or field | read by | otherwise, and the PR that makes it read |
 |---|---|---|
@@ -238,7 +239,8 @@ reads what the surrogate reads. As built:
 | `season_weight` | exact, surrogate | the ranking tier holds no odds |
 | `playoff_weight` | `season_weight` above 0 on exact or surrogate, bracket read | no term, or no bracket |
 | `three_weight` | nobody | the queue's rule, PR E |
-| `system`, `blend` | nobody | one forecaster for every seat; a forecaster per arm, PR D |
+| `system` | the arm's own seat, on a replay that names the two sources' stand-ins | a run without stand-ins |
+| `blend` | the same, when the arm's `system` is `blend` | no stand-ins, or another system |
 | `faab_sizing` | nobody | no waivers and no budget in the world, PR F |
 | `stash_threshold` | nobody | the engine reads it (#373); the simulator passes it, PR G |
 | `pool`, `min_gain`, `weeks_ahead` | exact, surrogate | the ranking tier |
@@ -325,7 +327,8 @@ Each command runs as `python -m pickandroll.sim <command>`:
   for each forecaster named (default `prior`); the hold-out is refused. `--shape stat|minutes`
   sets how an oracle's error is drawn (default `stat`). `--news-sd` sets the told return date's
   spread in days (default 2). `--no-peek YYYY-MM-DD` runs the no-peek check instead, on the first
-  forecaster named, and writes nothing.
+  forecaster named, and writes nothing. `--bbm-as espn --yahoo-as marcel` names the two live
+  sources' stand-ins, and each arm then believes by its `system` (below).
 - `room --leagues all --seats A.json B.json ... --draft rosters|snake`: the arms around one
   league's table from the recorded rosters or a snake redraft.
 - `validate --league all`: the six gates on this season's recorded weeks and on the hold-out, side
@@ -411,9 +414,9 @@ it, summed over his games in date order; a tie takes the larger weight. They are
 seasons on file earlier than the one replayed whose own prior season is on file, with the
 prior-season forecaster, never on the hold-out (a season whose prior season is the hold-out is
 skipped too). With no such season every stat takes 10. Every forecaster takes these weights, the
-prior forecaster's: no fit per forecaster is made, and the payload says so for each. The weights are computed once per command, from the logs alone, and the
-payload records them, the seasons they came from and whether the default stood; the frozen fit is
-not touched.
+prior forecaster's: no fit per forecaster is made, and the payload says so for each. The weights
+are computed once per command, from the logs alone, and the payload records them, the seasons
+they came from and whether the default stood; the frozen fit is not touched.
 
 **The league and the draft.** The league is everyone the season's log lists with a scheduled game.
 The draft is a snake on the run's forecaster's values over the projected players with a scheduled
@@ -435,6 +438,36 @@ them when they are not empty, so a run whose seats all hold the run's forecaster
 digests as it did. The season scale reads the arm's own forecaster. The draft and the market's
 ranking stay the run's forecaster's: an arm on a forecaster of its own reads it from the season's
 first day. A drawn world (`compare`, `room`) answers every label with its one shared belief.
+
+**The two sources' stand-ins (PR D1).** The live engine reads two projection systems, Basketball
+Monster and Yahoo, and an arm's `system` knob picks the one it believes (`blend`, a mix at the
+`blend` share). The simulator holds neither, so a replay may name a forecaster to stand in for
+each: `replay --bbm-as F --yahoo-as G`. It names both or neither, the two differ, and each must
+serve the season, else the run is refused by name before any path. With them named, each arm's
+seat believes by its `system`, the live rule restated in `sim/forecast.py` (`system_rates`):
+
+- `bbm`: the first stand-in's forecast.
+- `yahoo`: the second's line for every player it projects, the first's for the rest.
+- `blend`: for every player the second projects, `share · second + (1 − share) · first` stat by
+  stat (the second's alone where the first has none), the first's for everyone else; `share` is
+  the arm's `blend`, or the engine's default (`progress.BLEND`) when it is None.
+
+A mix passes through `consistent`. The belief's label names it: `espn`, `yahoo(marcel else
+espn)`, `blend:0.5(marcel with espn)`, and each label gets its own belief (above). The run's
+forecaster still drafts, runs the market and believes for every rival. With stand-ins named,
+`system` is read by the arm's own seat and `blend` when its system is `blend`; without, neither
+is, and two arms that differ only in them are the same seat. A rival never reads them: a mirror
+believes by the run's forecaster.
+
+Two things the payload states. The live blend values a player at the mix of the two systems' own
+per-game values; the simulator values the mixed rates, so the two are close and not the same. An
+oracle stand-in draws from its role's own keys on the `forecast` stream (labelled
+`oracle:0.2@bbm`, `oracle:0.2@yahoo`), so two oracle stand-ins have independent errors and
+neither shares the run's oracle's draws; two real sources' errors are correlated, so with oracle
+stand-ins the mix's benefit is an upper bound. The payload's `sources` block names the two
+stand-ins, the rule, each system's label and share, and that the result is about two sources
+with these errors, not about the two real sources; `beliefs` names each arm's label, and the
+`forecasters` block carries each stand-in, which role it stands for and its error.
 
 **A newcomer.** A player nobody projected (a rookie, a player who missed most of the prior season)
 is on the wire from day one but in no belief, so no seat can add him, until the day after his first

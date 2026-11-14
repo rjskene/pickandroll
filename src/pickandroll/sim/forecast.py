@@ -15,6 +15,13 @@ season. Four names:
 - ``oracle:σ``: the replayed season's realized rates noised on the log scale at ``σ``, a labelled
   look-ahead whose error is known (:func:`oracle`), in one of two :data:`SHAPES`.
 
+A **stand-in** is a forecaster named to stand for one of the two live sources (``replay --bbm-as``,
+``--yahoo-as``; :data:`ROLES`). An arm's seat then believes by its ``system`` knob: ``bbm`` the
+first's forecast, ``yahoo`` and ``blend`` the live rule on the two (:func:`system_rates`). An oracle
+named as a stand-in draws from its role's own stream, so two oracle stand-ins have independent
+errors and neither shares the run's draws; a real forecaster is the same forecast wherever it is
+named.
+
 Two diagnostics go to the payload and never to a seat: :func:`error_of`, the forecaster's error
 against the replayed season, and :func:`freeze_of`, for ``espn``. Pure: lines and figures come
 in; the readers bring them.
@@ -30,13 +37,22 @@ from statistics import median
 
 from . import world
 from .belief import consistent
-from .engine import STATS
+from .engine import BLEND, STATS
 
 Rates = Mapping[str, float]
 Lines = Mapping[int, Mapping[date, Mapping[str, float]]]
 
 #: The forecasters a run may name.
 NAMES = ("prior", "espn", "marcel", "oracle")
+#: The live sources a stand-in stands for, first and second: the system knob's ``bbm`` is the
+#: first, ``yahoo`` the second over the first, ``blend`` their mix.
+ROLES = ("bbm", "yahoo")
+#: The live systems an arm may name (``progress.KNOB_VALUES``).
+SYSTEMS = ("bbm", "yahoo", "blend")
+#: The generator key of each role's oracle draws on the ``forecast`` stream: a role's stat draws
+#: at ``2 · key`` and its player draw at ``2 · key + 1``. The run's oracle (key 0) draws its
+#: stats on the ``error`` stream, the first replays' draws, and its player draw at 0.
+ROLE_KEYS = {None: 0, "bbm": 1, "yahoo": 2}
 #: How an oracle's error is drawn: ``stat``, one draw a player and stat (the first replays'
 #: draws, bit for bit); ``minutes``, a share of it common to the player's counting stats.
 SHAPES = ("stat", "minutes")
@@ -72,15 +88,27 @@ class CannotServe(ValueError):
 # --------------------------------------------------------------------------- what a run names
 @dataclass(frozen=True)
 class Forecaster:
-    """A forecaster a run names: its name, an oracle's spread."""
+    """A forecaster a run names: its name, an oracle's spread and, for an oracle named as a
+    stand-in, its role (:data:`ROLES`)."""
 
     name: str
     spread: float | None = None
+    role: str | None = None
 
     @property
     def label(self) -> str:
-        """``prior``, ``espn``, ``marcel`` or ``oracle:σ``: the key of the payload's figures."""
-        return self.name if self.spread is None else f"{self.name}:{self.spread:g}"
+        """``prior``, ``espn``, ``marcel``, ``oracle:σ`` or a stand-in oracle's ``oracle:σ@role``:
+        the key of the payload's figures."""
+        base = self.name if self.spread is None else f"{self.name}:{self.spread:g}"
+        return base if self.role is None else f"{base}@{self.role}"
+
+
+def standin(f: Forecaster, role: str) -> Forecaster:
+    """``f`` named to stand for the live source ``role``: an oracle takes the role, and with it
+    a stream of its own; a real forecaster is the same forecast wherever it is named."""
+    if role not in ROLES:
+        raise ValueError(f"role {role!r}: one of {ROLES}")
+    return Forecaster(f.name, f.spread, role if f.name == "oracle" else None)
 
 
 @dataclass(frozen=True)
@@ -220,6 +248,7 @@ def oracle(
     path: int,
     shape: str = "stat",
     min_games: int = MIN_GAMES,
+    role: str | None = None,
 ) -> dict[int, dict[str, float]]:
     """The replayed season's realized rates noised on the log scale: a projection whose error is
     known, a labelled look-ahead. It projects only the players with ``min_games`` played games
@@ -228,22 +257,99 @@ def oracle(
     first replays' draws, bit for bit). ``minutes``: ``ε = σ · (√s · z_player + √(1 − s) ·
     z_stat)``, ``s`` :data:`MINUTES_SHARE`, ``z_stat`` the same draw and ``z_player`` one draw a
     player from the ``forecast`` stream, shared by every stat, makes and attempts included, so
-    the shared part leaves his percentages alone."""
+    the shared part leaves his percentages alone. ``role``: an oracle named as a stand-in for that
+    live source draws both from its own keys on the ``forecast`` stream (:data:`ROLE_KEYS`), so
+    its errors are independent of the run's oracle and of the other role's."""
     if shape not in SHAPES:
         raise ValueError(f"shape {shape!r}: one of {SHAPES}")
+    if role not in ROLE_KEYS:
+        raise ValueError(f"role {role!r}: one of {ROLES}")
     truth = realized_rates(lines, min_games)
     keys = sorted(truth)
     stats = list(STATS)
-    if shape == "stat":
-        eps = world.errors(seed, path, keys, stats, 0.0, {}, dict.fromkeys(stats, spread))
-    else:
+    key = ROLE_KEYS[role]
+    forecast = world.STREAMS["forecast"]
+    if role is None:
         z = world.errors(seed, path, keys, stats, 0.0, {}, dict.fromkeys(stats, 1.0))
+    else:
+        z = {
+            k: dict(
+                zip(stats, world.rng(seed, path, i, 2 * key, forecast).standard_normal(len(stats)))
+            )
+            for i, k in enumerate(keys)
+        }
+    if shape == "stat" and role is None:
+        eps = world.errors(seed, path, keys, stats, 0.0, {}, dict.fromkeys(stats, spread))
+    elif shape == "stat":
+        eps = {k: {s: spread * float(z[k][s]) for s in stats} for k in keys}
+    else:
         own, common = math.sqrt(1.0 - MINUTES_SHARE), math.sqrt(MINUTES_SHARE)
         eps = {}
         for i, k in enumerate(keys):
-            shared = world.rng(seed, path, i, 0, world.STREAMS["forecast"]).standard_normal()
-            eps[k] = {s: spread * (common * float(shared) + own * z[k][s]) for s in stats}
+            at = 0 if role is None else 2 * key + 1
+            shared = world.rng(seed, path, i, at, forecast).standard_normal()
+            eps[k] = {s: spread * (common * float(shared) + own * float(z[k][s])) for s in stats}
     return {k: consistent(v) for k, v in world.true_rates({k: truth[k] for k in keys}, eps).items()}
+
+
+# --------------------------------------------------------------------------- the two sources
+def share_of(system: str, blend: float | None) -> float | None:
+    """The second source's share in an arm's belief: ``blend`` (the engine's default
+    ``progress.BLEND`` when it is None) under the ``blend`` system, None under the others."""
+    if system != "blend":
+        return None
+    return BLEND if blend is None else float(blend)
+
+
+def system_label(system: str, blend: float | None, first: str, second: str) -> str:
+    """The label of the belief an arm with ``system`` holds when the run's stand-ins are
+    ``first`` (bbm) and ``second`` (yahoo): ``bbm`` is the first's own label."""
+    if system not in SYSTEMS:
+        raise ValueError(f"system {system!r}: one of {SYSTEMS}")
+    if system == "bbm":
+        return first
+    if system == "yahoo":
+        return f"yahoo({second} else {first})"
+    return f"blend:{share_of(system, blend):g}({second} with {first})"
+
+
+def system_rates(
+    system: str,
+    blend: float | None,
+    first: Mapping[int, Rates],
+    second: Mapping[int, Rates],
+) -> dict[int, dict[str, float]]:
+    """The live rule (``api.season_moves.system_rates``, restated): ``bbm`` the first source's
+    rates; ``yahoo`` the second's line for every player it projects and the first's for the
+    rest; ``blend``, for every player the second projects, ``share · second + (1 − share) ·
+    first`` stat by stat (a stat one of them lacks counted 0; the second's alone where the first
+    has no line), the first's for everyone else, ``share`` :func:`share_of`. A mix passes
+    through ``consistent``. One difference from the live route: it values a blended player at
+    the mix of the two systems' own per-game values, the simulator at the mixed rates."""
+    if system not in SYSTEMS:
+        raise ValueError(f"system {system!r}: one of {SYSTEMS}")
+    if system == "bbm":
+        # The first's forecast as it is: a real forecaster is the same forecast wherever it is
+        # named.
+        return {k: dict(v) for k, v in first.items()}
+    if system == "yahoo":
+        out = {**{k: dict(v) for k, v in first.items()}, **{k: dict(v) for k, v in second.items()}}
+    else:
+        w = share_of(system, blend)
+        assert w is not None
+        out = {k: dict(v) for k, v in first.items()}
+        for k, y in second.items():
+            b = first.get(k)
+            if b is None:
+                out[k] = dict(y)
+                continue
+            # The first's stats in its order, then any only the second has: an order that does
+            # not move with the hash seed.
+            out[k] = {
+                s: (1 - w) * float(b.get(s, 0.0)) + w * float(y.get(s, 0.0))
+                for s in dict.fromkeys([*b, *y])
+            }
+    return {k: consistent(v) for k, v in out.items()}
 
 
 # --------------------------------------------------------------------------- the diagnostics
@@ -319,7 +425,10 @@ __all__ = [
     "MINUTES_SHARE",
     "MIN_GAMES",
     "NAMES",
+    "ROLES",
+    "ROLE_KEYS",
     "SHAPES",
+    "SYSTEMS",
     "CannotServe",
     "Forecast",
     "Forecaster",
@@ -332,4 +441,8 @@ __all__ = [
     "parse_one",
     "prior",
     "realized_rates",
+    "share_of",
+    "standin",
+    "system_label",
+    "system_rates",
 ]
