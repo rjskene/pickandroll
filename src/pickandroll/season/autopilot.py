@@ -92,6 +92,9 @@ SEASON_COSTLY = "season-costly"
 READD = "the add is a player this queue drops today or dropped within the waiver days"
 BELOW_FLOOR = "below the noise floor"
 NO_ADDS = "no adds left this week"
+#: The week's adds when the transactions reads do not reach back to its start (#383): the count
+#: is only a floor, so no add of the week is placed on it.
+ADDS_UNREAD = "this week's adds are not fully read: the transactions reads do not reach its start"
 OVER_CAP = "over the day's cap"
 #: A churn (#221) is queued as one entry and executed in three steps (part 3): its held drop H on
 #: his own (the drop page, ``drop`` runs), then the IL move that frees an active spot when one is
@@ -282,6 +285,8 @@ class LeagueDay:
     #: The claims placed and not yet processed, earlier days' and today's: their adds and drops
     #: are spoken for.
     open_claims: Sequence[Mapping[str, Any]] = ()
+    #: The weeks whose adds the solve could not count in full (#383): their adds are held.
+    unread: frozenset[tuple[date, date]] = frozenset()
 
 
 def three_set(entry: Mapping[str, Any]) -> Mapping[str, Any] | None:
@@ -364,6 +369,8 @@ def queue_of(
             reason = LATER_STEP
         elif any(j not in ready for j in after):
             reason = EARLIER_HELD
+        elif week is not None and week in lg.unread:
+            reason = ADDS_UNREAD
         elif week is not None and left[week] is not None and left[week] <= 0:
             reason = NO_ADDS
         elif lg.done + queued >= lg.cap:

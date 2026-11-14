@@ -1,0 +1,2891 @@
+{
+ "start": "2026-11-09",
+ "end": "2026-11-15",
+ "today": "2026-11-14",
+ "cases": {
+  "wrapped": {
+   "team": 6,
+   "newest": [
+    {
+     "kind": "add",
+     "player": {
+      "yahoo_id": 10445,
+      "name": "Egor D\u00ebmin",
+      "nba_team": "BKN",
+      "positions": [
+       "PG",
+       "SG"
+      ]
+     },
+     "team_id": 1,
+     "team_name": null,
+     "detail": "$0 Waiver",
+     "when": "Nov 13, 4:14 am",
+     "group": 0
+    },
+    {
+     "kind": "add",
+     "player": {
+      "yahoo_id": 6396,
+      "name": "Patrick Williams",
+      "nba_team": "CHI",
+      "positions": [
+       "SF",
+       "PF"
+      ]
+     },
+     "team_id": 1,
+     "team_name": null,
+     "detail": "$0 Waiver",
+     "when": "Nov 13, 4:14 am",
+     "group": 1
+    },
+    {
+     "kind": "add",
+     "player": {
+      "yahoo_id": 5350,
+      "name": "Jerami Grant",
+      "nba_team": "MEM",
+      "positions": [
+       "SF",
+       "PF"
+      ]
+     },
+     "team_id": 9,
+     "team_name": null,
+     "detail": "$0 Waiver",
+     "when": "Nov 13, 4:14 am",
+     "group": 2
+    },
+    {
+     "kind": "drop",
+     "player": {
+      "yahoo_id": 4614,
+      "name": "DeMar DeRozan",
+      "nba_team": "DEN",
+      "positions": [
+       "SF",
+       "PF"
+      ]
+     },
+     "team_id": 9,
+     "team_name": null,
+     "detail": "To Waivers",
+     "when": "Nov 13, 4:14 am",
+     "group": 2
+    },
+    {
+     "kind": "add",
+     "player": {
+      "yahoo_id": 6742,
+      "name": "Karlo Matkovi\u0107",
+      "nba_team": "NOP",
+      "positions": [
+       "PF",
+       "C"
+      ]
+     },
+     "team_id": 6,
+     "team_name": null,
+     "detail": "$2 Waiver",
+     "when": "Nov 13, 4:14 am",
+     "group": 3
+    },
+    {
+     "kind": "add",
+     "player": {
+      "yahoo_id": 6057,
+      "name": "De'Anthony Melton",
+      "nba_team": "GSW",
+      "positions": [
+       "PG",
+       "SG"
+      ]
+     },
+     "team_id": 5,
+     "team_name": null,
+     "detail": "$5 Waiver",
+     "when": "Nov 13, 4:14 am",
+     "group": 4
+    },
+    {
+     "kind": "drop",
+     "player": {
+      "yahoo_id": 10607,
+      "name": "Trevon Brazile",
+      "nba_team": "DEN",
+      "positions": [
+       "PF"
+      ]
+     },
+     "team_id": 5,
+     "team_name": null,
+     "detail": "To Waivers",
+     "when": "Nov 13, 4:14 am",
+     "group": 4
+    },
+    {
+     "kind": "add",
+     "player": {
+      "yahoo_id": 10051,
+      "name": "Sidy Cissoko",
+      "nba_team": "POR",
+      "positions": [
+       "SF",
+       "PF"
+      ]
+     },
+     "team_id": 5,
+     "team_name": null,
+     "detail": "$0 Waiver",
+     "when": "Nov 12, 4:13 am",
+     "group": 5
+    },
+    {
+     "kind": "add",
+     "player": {
+      "yahoo_id": 6596,
+      "name": "Sandro Mamukelashvili",
+      "nba_team": "LAL",
+      "positions": [
+       "PF",
+       "C"
+      ]
+     },
+     "team_id": 11,
+     "team_name": null,
+     "detail": "$0 Waiver",
+     "when": "Nov 12, 4:13 am",
+     "group": 6
+    },
+    {
+     "kind": "drop",
+     "player": {
+      "yahoo_id": 5482,
+      "name": "Bobby Portis Jr.",
+      "nba_team": "MIA",
+      "positions": [
+       "PF",
+       "C"
+      ]
+     },
+     "team_id": 11,
+     "team_name": null,
+     "detail": "To Waivers",
+     "when": "Nov 12, 4:13 am",
+     "group": 6
+    },
+    {
+     "kind": "add",
+     "player": {
+      "yahoo_id": 4892,
+      "name": "Klay Thompson",
+      "nba_team": "MIA",
+      "positions": [
+       "SG",
+       "SF"
+      ]
+     },
+     "team_id": 11,
+     "team_name": null,
+     "detail": "$0 Waiver",
+     "when": "Nov 12, 4:13 am",
+     "group": 7
+    },
+    {
+     "kind": "drop",
+     "player": {
+      "yahoo_id": 6400,
+      "name": "Obi Toppin",
+      "nba_team": "IND",
+      "positions": [
+       "SF",
+       "PF"
+      ]
+     },
+     "team_id": 11,
+     "team_name": null,
+     "detail": "To Waivers",
+     "when": "Nov 12, 4:13 am",
+     "group": 7
+    },
+    {
+     "kind": "drop",
+     "player": {
+      "yahoo_id": 5747,
+      "name": "Derrick Jones Jr.",
+      "nba_team": "LAC",
+      "positions": [
+       "SF",
+       "PF"
+      ]
+     },
+     "team_id": 10,
+     "team_name": null,
+     "detail": "To Waivers",
+     "when": "Nov 11, 7:09 pm",
+     "group": 8
+    },
+    {
+     "kind": "drop",
+     "player": {
+      "yahoo_id": 10333,
+      "name": "Jamal Shead",
+      "nba_team": "TOR",
+      "positions": [
+       "PG"
+      ]
+     },
+     "team_id": 4,
+     "team_name": null,
+     "detail": "To Waivers",
+     "when": "Nov 11, 6:57 pm",
+     "group": 9
+    },
+    {
+     "kind": "add",
+     "player": {
+      "yahoo_id": 6019,
+      "name": "Collin Sexton",
+      "nba_team": "LAL",
+      "positions": [
+       "PG",
+       "SG"
+      ]
+     },
+     "team_id": 10,
+     "team_name": null,
+     "detail": "$0 Waiver",
+     "when": "Nov 11, 4:12 am",
+     "group": 10
+    },
+    {
+     "kind": "drop",
+     "player": {
+      "yahoo_id": 5840,
+      "name": "Kyle Kuzma",
+      "nba_team": "MIL",
+      "positions": [
+       "SF",
+       "PF"
+      ]
+     },
+     "team_id": 10,
+     "team_name": null,
+     "detail": "To Waivers",
+     "when": "Nov 11, 4:12 am",
+     "group": 10
+    },
+    {
+     "kind": "add",
+     "player": {
+      "yahoo_id": 6406,
+      "name": "Aaron Nesmith",
+      "nba_team": "IND",
+      "positions": [
+       "SG",
+       "SF"
+      ]
+     },
+     "team_id": 9,
+     "team_name": null,
+     "detail": "$0 Waiver",
+     "when": "Nov 11, 4:12 am",
+     "group": 11
+    },
+    {
+     "kind": "add",
+     "player": {
+      "yahoo_id": 6032,
+      "name": "Grayson Allen",
+      "nba_team": "CHA",
+      "positions": [
+       "SG",
+       "SF"
+      ]
+     },
+     "team_id": 1,
+     "team_name": null,
+     "detail": "$0 Waiver",
+     "when": "Nov 11, 4:12 am",
+     "group": 12
+    },
+    {
+     "kind": "drop",
+     "player": {
+      "yahoo_id": 6170,
+      "name": "Jaxson Hayes",
+      "nba_team": "UTA",
+      "positions": [
+       "C"
+      ]
+     },
+     "team_id": 1,
+     "team_name": null,
+     "detail": "To Waivers",
+     "when": "Nov 11, 4:12 am",
+     "group": 12
+    },
+    {
+     "kind": "add",
+     "player": {
+      "yahoo_id": 10288,
+      "name": "Reed Sheppard",
+      "nba_team": "HOU",
+      "positions": [
+       "PG",
+       "SG"
+      ]
+     },
+     "team_id": 6,
+     "team_name": null,
+     "detail": "$2 Waiver",
+     "when": "Nov 11, 4:12 am",
+     "group": 13
+    },
+    {
+     "kind": "drop",
+     "player": {
+      "yahoo_id": 10275,
+      "name": "Tristan da Silva",
+      "nba_team": "ORL",
+      "positions": [
+       "SF",
+       "PF"
+      ]
+     },
+     "team_id": 6,
+     "team_name": null,
+     "detail": "To Waivers",
+     "when": "Nov 11, 4:12 am",
+     "group": 13
+    },
+    {
+     "kind": "add",
+     "player": {
+      "yahoo_id": 5832,
+      "name": "John Collins",
+      "nba_team": "DET",
+      "positions": [
+       "PF",
+       "C"
+      ]
+     },
+     "team_id": 2,
+     "team_name": null,
+     "detail": "$17 Waiver",
+     "when": "Nov 11, 4:12 am",
+     "group": 14
+    },
+    {
+     "kind": "drop",
+     "player": {
+      "yahoo_id": 6572,
+      "name": "Santi Aldama",
+      "nba_team": "DAL",
+      "positions": [
+       "PF"
+      ]
+     },
+     "team_id": 2,
+     "team_name": null,
+     "detail": "To Waivers",
+     "when": "Nov 11, 4:12 am",
+     "group": 14
+    },
+    {
+     "kind": "add",
+     "player": {
+      "yahoo_id": 10333,
+      "name": "Jamal Shead",
+      "nba_team": "TOR",
+      "positions": [
+       "PG"
+      ]
+     },
+     "team_id": 4,
+     "team_name": null,
+     "detail": "$0 Waiver",
+     "when": "Nov 10, 4:12 am",
+     "group": 15
+    },
+    {
+     "kind": "add",
+     "player": {
+      "yahoo_id": 10617,
+      "name": "Meleek Thomas",
+      "nba_team": "CLE",
+      "positions": [
+       "SG"
+      ]
+     },
+     "team_id": 4,
+     "team_name": null,
+     "detail": "$0 Waiver",
+     "when": "Nov 10, 4:12 am",
+     "group": 16
+    },
+    {
+     "kind": "add",
+     "player": {
+      "yahoo_id": 5640,
+      "name": "Jakob Poeltl",
+      "nba_team": "TOR",
+      "positions": [
+       "C"
+      ]
+     },
+     "team_id": 2,
+     "team_name": null,
+     "detail": "$0 Waiver",
+     "when": "Nov 10, 4:12 am",
+     "group": 17
+    },
+    {
+     "kind": "drop",
+     "player": {
+      "yahoo_id": 10278,
+      "name": "Ja'Kobe Walter",
+      "nba_team": "TOR",
+      "positions": [
+       "PG",
+       "SG"
+      ]
+     },
+     "team_id": 2,
+     "team_name": null,
+     "detail": "To Waivers",
+     "when": "Nov 10, 4:12 am",
+     "group": 17
+    },
+    {
+     "kind": "add",
+     "player": {
+      "yahoo_id": 5840,
+      "name": "Kyle Kuzma",
+      "nba_team": "MIL",
+      "positions": [
+       "SF",
+       "PF"
+      ]
+     },
+     "team_id": 10,
+     "team_name": null,
+     "detail": "$0 Waiver",
+     "when": "Nov 10, 4:12 am",
+     "group": 18
+    },
+    {
+     "kind": "add",
+     "player": {
+      "yahoo_id": 10316,
+      "name": "Daniss Jenkins",
+      "nba_team": "DET",
+      "positions": [
+       "PG",
+       "SG"
+      ]
+     },
+     "team_id": 9,
+     "team_name": null,
+     "detail": "$0 Waiver",
+     "when": "Nov 10, 4:12 am",
+     "group": 19
+    },
+    {
+     "kind": "drop",
+     "player": {
+      "yahoo_id": 10327,
+      "name": "Cam Spencer",
+      "nba_team": "MEM",
+      "positions": [
+       "PG",
+       "SG"
+      ]
+     },
+     "team_id": 9,
+     "team_name": null,
+     "detail": "To Waivers",
+     "when": "Nov 10, 4:12 am",
+     "group": 19
+    },
+    {
+     "kind": "add",
+     "player": {
+      "yahoo_id": 6724,
+      "name": "Jaylin Williams",
+      "nba_team": "OKC",
+      "positions": [
+       "PF",
+       "C"
+      ]
+     },
+     "team_id": 6,
+     "team_name": null,
+     "detail": "$2 Waiver",
+     "when": "Nov 10, 4:12 am",
+     "group": 20
+    },
+    {
+     "kind": "drop",
+     "player": {
+      "yahoo_id": 5754,
+      "name": "Alex Caruso",
+      "nba_team": "OKC",
+      "positions": [
+       "SG",
+       "SF"
+      ]
+     },
+     "team_id": 8,
+     "team_name": null,
+     "detail": "To Waivers",
+     "when": "Nov 9, 6:50 pm",
+     "group": 21
+    },
+    {
+     "kind": "drop",
+     "player": {
+      "yahoo_id": 10588,
+      "name": "Mikel Brown Jr.",
+      "nba_team": "BKN",
+      "positions": [
+       "PG"
+      ]
+     },
+     "team_id": 4,
+     "team_name": null,
+     "detail": "To Waivers",
+     "when": "Nov 9, 5:30 pm",
+     "group": 22
+    },
+    {
+     "kind": "drop",
+     "player": {
+      "yahoo_id": 5465,
+      "name": "Mario Hezonja",
+      "nba_team": "CLE",
+      "positions": [
+       "SF",
+       "PF"
+      ]
+     },
+     "team_id": 5,
+     "team_name": null,
+     "detail": "To Waivers",
+     "when": "Nov 9, 9:58 am",
+     "group": 23
+    },
+    {
+     "kind": "drop",
+     "player": {
+      "yahoo_id": 10313,
+      "name": "Oso Ighodaro",
+      "nba_team": "PHX",
+      "positions": [
+       "C"
+      ]
+     },
+     "team_id": 6,
+     "team_name": null,
+     "detail": "To Waivers",
+     "when": "Nov 9, 6:31 am",
+     "group": 24
+    }
+   ],
+   "older": [
+    [
+     {
+      "kind": "add",
+      "player": {
+       "yahoo_id": 10051,
+       "name": "Sidy Cissoko",
+       "nba_team": "POR",
+       "positions": [
+        "SF",
+        "PF"
+       ]
+      },
+      "team_id": 5,
+      "team_name": null,
+      "detail": "$0 Waiver",
+      "when": "Nov 12, 4:13 am",
+      "group": 0
+     },
+     {
+      "kind": "add",
+      "player": {
+       "yahoo_id": 6596,
+       "name": "Sandro Mamukelashvili",
+       "nba_team": "LAL",
+       "positions": [
+        "PF",
+        "C"
+       ]
+      },
+      "team_id": 11,
+      "team_name": null,
+      "detail": "$0 Waiver",
+      "when": "Nov 12, 4:13 am",
+      "group": 1
+     },
+     {
+      "kind": "drop",
+      "player": {
+       "yahoo_id": 5482,
+       "name": "Bobby Portis Jr.",
+       "nba_team": "MIA",
+       "positions": [
+        "PF",
+        "C"
+       ]
+      },
+      "team_id": 11,
+      "team_name": null,
+      "detail": "To Waivers",
+      "when": "Nov 12, 4:13 am",
+      "group": 1
+     },
+     {
+      "kind": "add",
+      "player": {
+       "yahoo_id": 4892,
+       "name": "Klay Thompson",
+       "nba_team": "MIA",
+       "positions": [
+        "SG",
+        "SF"
+       ]
+      },
+      "team_id": 11,
+      "team_name": null,
+      "detail": "$0 Waiver",
+      "when": "Nov 12, 4:13 am",
+      "group": 2
+     },
+     {
+      "kind": "drop",
+      "player": {
+       "yahoo_id": 6400,
+       "name": "Obi Toppin",
+       "nba_team": "IND",
+       "positions": [
+        "SF",
+        "PF"
+       ]
+      },
+      "team_id": 11,
+      "team_name": null,
+      "detail": "To Waivers",
+      "when": "Nov 12, 4:13 am",
+      "group": 2
+     },
+     {
+      "kind": "drop",
+      "player": {
+       "yahoo_id": 5747,
+       "name": "Derrick Jones Jr.",
+       "nba_team": "LAC",
+       "positions": [
+        "SF",
+        "PF"
+       ]
+      },
+      "team_id": 10,
+      "team_name": null,
+      "detail": "To Waivers",
+      "when": "Nov 11, 7:09 pm",
+      "group": 3
+     },
+     {
+      "kind": "drop",
+      "player": {
+       "yahoo_id": 10333,
+       "name": "Jamal Shead",
+       "nba_team": "TOR",
+       "positions": [
+        "PG"
+       ]
+      },
+      "team_id": 4,
+      "team_name": null,
+      "detail": "To Waivers",
+      "when": "Nov 11, 6:57 pm",
+      "group": 4
+     },
+     {
+      "kind": "add",
+      "player": {
+       "yahoo_id": 6019,
+       "name": "Collin Sexton",
+       "nba_team": "LAL",
+       "positions": [
+        "PG",
+        "SG"
+       ]
+      },
+      "team_id": 10,
+      "team_name": null,
+      "detail": "$0 Waiver",
+      "when": "Nov 11, 4:12 am",
+      "group": 5
+     },
+     {
+      "kind": "drop",
+      "player": {
+       "yahoo_id": 5840,
+       "name": "Kyle Kuzma",
+       "nba_team": "MIL",
+       "positions": [
+        "SF",
+        "PF"
+       ]
+      },
+      "team_id": 10,
+      "team_name": null,
+      "detail": "To Waivers",
+      "when": "Nov 11, 4:12 am",
+      "group": 5
+     },
+     {
+      "kind": "add",
+      "player": {
+       "yahoo_id": 6406,
+       "name": "Aaron Nesmith",
+       "nba_team": "IND",
+       "positions": [
+        "SG",
+        "SF"
+       ]
+      },
+      "team_id": 9,
+      "team_name": null,
+      "detail": "$0 Waiver",
+      "when": "Nov 11, 4:12 am",
+      "group": 6
+     },
+     {
+      "kind": "add",
+      "player": {
+       "yahoo_id": 6032,
+       "name": "Grayson Allen",
+       "nba_team": "CHA",
+       "positions": [
+        "SG",
+        "SF"
+       ]
+      },
+      "team_id": 1,
+      "team_name": null,
+      "detail": "$0 Waiver",
+      "when": "Nov 11, 4:12 am",
+      "group": 7
+     },
+     {
+      "kind": "drop",
+      "player": {
+       "yahoo_id": 6170,
+       "name": "Jaxson Hayes",
+       "nba_team": "UTA",
+       "positions": [
+        "C"
+       ]
+      },
+      "team_id": 1,
+      "team_name": null,
+      "detail": "To Waivers",
+      "when": "Nov 11, 4:12 am",
+      "group": 7
+     },
+     {
+      "kind": "add",
+      "player": {
+       "yahoo_id": 10288,
+       "name": "Reed Sheppard",
+       "nba_team": "HOU",
+       "positions": [
+        "PG",
+        "SG"
+       ]
+      },
+      "team_id": 6,
+      "team_name": null,
+      "detail": "$2 Waiver",
+      "when": "Nov 11, 4:12 am",
+      "group": 8
+     },
+     {
+      "kind": "drop",
+      "player": {
+       "yahoo_id": 10275,
+       "name": "Tristan da Silva",
+       "nba_team": "ORL",
+       "positions": [
+        "SF",
+        "PF"
+       ]
+      },
+      "team_id": 6,
+      "team_name": null,
+      "detail": "To Waivers",
+      "when": "Nov 11, 4:12 am",
+      "group": 8
+     },
+     {
+      "kind": "add",
+      "player": {
+       "yahoo_id": 5832,
+       "name": "John Collins",
+       "nba_team": "DET",
+       "positions": [
+        "PF",
+        "C"
+       ]
+      },
+      "team_id": 2,
+      "team_name": null,
+      "detail": "$17 Waiver",
+      "when": "Nov 11, 4:12 am",
+      "group": 9
+     },
+     {
+      "kind": "drop",
+      "player": {
+       "yahoo_id": 6572,
+       "name": "Santi Aldama",
+       "nba_team": "DAL",
+       "positions": [
+        "PF"
+       ]
+      },
+      "team_id": 2,
+      "team_name": null,
+      "detail": "To Waivers",
+      "when": "Nov 11, 4:12 am",
+      "group": 9
+     },
+     {
+      "kind": "add",
+      "player": {
+       "yahoo_id": 10333,
+       "name": "Jamal Shead",
+       "nba_team": "TOR",
+       "positions": [
+        "PG"
+       ]
+      },
+      "team_id": 4,
+      "team_name": null,
+      "detail": "$0 Waiver",
+      "when": "Nov 10, 4:12 am",
+      "group": 10
+     },
+     {
+      "kind": "add",
+      "player": {
+       "yahoo_id": 10617,
+       "name": "Meleek Thomas",
+       "nba_team": "CLE",
+       "positions": [
+        "SG"
+       ]
+      },
+      "team_id": 4,
+      "team_name": null,
+      "detail": "$0 Waiver",
+      "when": "Nov 10, 4:12 am",
+      "group": 11
+     },
+     {
+      "kind": "add",
+      "player": {
+       "yahoo_id": 5640,
+       "name": "Jakob Poeltl",
+       "nba_team": "TOR",
+       "positions": [
+        "C"
+       ]
+      },
+      "team_id": 2,
+      "team_name": null,
+      "detail": "$0 Waiver",
+      "when": "Nov 10, 4:12 am",
+      "group": 12
+     },
+     {
+      "kind": "drop",
+      "player": {
+       "yahoo_id": 10278,
+       "name": "Ja'Kobe Walter",
+       "nba_team": "TOR",
+       "positions": [
+        "PG",
+        "SG"
+       ]
+      },
+      "team_id": 2,
+      "team_name": null,
+      "detail": "To Waivers",
+      "when": "Nov 10, 4:12 am",
+      "group": 12
+     },
+     {
+      "kind": "add",
+      "player": {
+       "yahoo_id": 5840,
+       "name": "Kyle Kuzma",
+       "nba_team": "MIL",
+       "positions": [
+        "SF",
+        "PF"
+       ]
+      },
+      "team_id": 10,
+      "team_name": null,
+      "detail": "$0 Waiver",
+      "when": "Nov 10, 4:12 am",
+      "group": 13
+     },
+     {
+      "kind": "add",
+      "player": {
+       "yahoo_id": 10316,
+       "name": "Daniss Jenkins",
+       "nba_team": "DET",
+       "positions": [
+        "PG",
+        "SG"
+       ]
+      },
+      "team_id": 9,
+      "team_name": null,
+      "detail": "$0 Waiver",
+      "when": "Nov 10, 4:12 am",
+      "group": 14
+     },
+     {
+      "kind": "drop",
+      "player": {
+       "yahoo_id": 10327,
+       "name": "Cam Spencer",
+       "nba_team": "MEM",
+       "positions": [
+        "PG",
+        "SG"
+       ]
+      },
+      "team_id": 9,
+      "team_name": null,
+      "detail": "To Waivers",
+      "when": "Nov 10, 4:12 am",
+      "group": 14
+     },
+     {
+      "kind": "add",
+      "player": {
+       "yahoo_id": 6724,
+       "name": "Jaylin Williams",
+       "nba_team": "OKC",
+       "positions": [
+        "PF",
+        "C"
+       ]
+      },
+      "team_id": 6,
+      "team_name": null,
+      "detail": "$2 Waiver",
+      "when": "Nov 10, 4:12 am",
+      "group": 15
+     },
+     {
+      "kind": "drop",
+      "player": {
+       "yahoo_id": 5754,
+       "name": "Alex Caruso",
+       "nba_team": "OKC",
+       "positions": [
+        "SG",
+        "SF"
+       ]
+      },
+      "team_id": 8,
+      "team_name": null,
+      "detail": "To Waivers",
+      "when": "Nov 9, 6:50 pm",
+      "group": 16
+     },
+     {
+      "kind": "drop",
+      "player": {
+       "yahoo_id": 10588,
+       "name": "Mikel Brown Jr.",
+       "nba_team": "BKN",
+       "positions": [
+        "PG"
+       ]
+      },
+      "team_id": 4,
+      "team_name": null,
+      "detail": "To Waivers",
+      "when": "Nov 9, 5:30 pm",
+      "group": 17
+     },
+     {
+      "kind": "drop",
+      "player": {
+       "yahoo_id": 5465,
+       "name": "Mario Hezonja",
+       "nba_team": "CLE",
+       "positions": [
+        "SF",
+        "PF"
+       ]
+      },
+      "team_id": 5,
+      "team_name": null,
+      "detail": "To Waivers",
+      "when": "Nov 9, 9:58 am",
+      "group": 18
+     },
+     {
+      "kind": "drop",
+      "player": {
+       "yahoo_id": 10313,
+       "name": "Oso Ighodaro",
+       "nba_team": "PHX",
+       "positions": [
+        "C"
+       ]
+      },
+      "team_id": 6,
+      "team_name": null,
+      "detail": "To Waivers",
+      "when": "Nov 9, 6:31 am",
+      "group": 19
+     },
+     {
+      "kind": "drop",
+      "player": {
+       "yahoo_id": 6499,
+       "name": "Naji Marshall",
+       "nba_team": "DAL",
+       "positions": [
+        "SG",
+        "SF",
+        "PF"
+       ]
+      },
+      "team_id": 3,
+      "team_name": null,
+      "detail": "To Waivers",
+      "when": "Nov 9, 4:35 am",
+      "group": 20
+     },
+     {
+      "kind": "add",
+      "player": {
+       "yahoo_id": 6170,
+       "name": "Jaxson Hayes",
+       "nba_team": "UTA",
+       "positions": [
+        "C"
+       ]
+      },
+      "team_id": 1,
+      "team_name": null,
+      "detail": "$0 Waiver",
+      "when": "Nov 9, 4:17 am",
+      "group": 21
+     },
+     {
+      "kind": "drop",
+      "player": {
+       "yahoo_id": 10572,
+       "name": "Morez Johnson Jr.",
+       "nba_team": "DAL",
+       "positions": [
+        "PF"
+       ]
+      },
+      "team_id": 1,
+      "team_name": null,
+      "detail": "To Waivers",
+      "when": "Nov 9, 4:17 am",
+      "group": 21
+     },
+     {
+      "kind": "add",
+      "player": {
+       "yahoo_id": 5069,
+       "name": "Draymond Green",
+       "nba_team": "GSW",
+       "positions": [
+        "PF",
+        "C"
+       ]
+      },
+      "team_id": 12,
+      "team_name": null,
+      "detail": "$0 Waiver",
+      "when": "Nov 9, 4:17 am",
+      "group": 22
+     },
+     {
+      "kind": "add",
+      "player": {
+       "yahoo_id": 10313,
+       "name": "Oso Ighodaro",
+       "nba_team": "PHX",
+       "positions": [
+        "C"
+       ]
+      },
+      "team_id": 6,
+      "team_name": null,
+      "detail": "$2 Waiver",
+      "when": "Nov 9, 4:17 am",
+      "group": 23
+     },
+     {
+      "kind": "drop",
+      "player": {
+       "yahoo_id": 10460,
+       "name": "Joan Beringer",
+       "nba_team": "MIN",
+       "positions": [
+        "PF",
+        "C"
+       ]
+      },
+      "team_id": 6,
+      "team_name": null,
+      "detail": "To Waivers",
+      "when": "Nov 9, 4:17 am",
+      "group": 23
+     },
+     {
+      "kind": "add",
+      "player": {
+       "yahoo_id": 10576,
+       "name": "Brayden Burries",
+       "nba_team": "MIL",
+       "positions": [
+        "SG"
+       ]
+      },
+      "team_id": 7,
+      "team_name": null,
+      "detail": "$4 Waiver",
+      "when": "Nov 9, 4:17 am",
+      "group": 24
+     },
+     {
+      "kind": "drop",
+      "player": {
+       "yahoo_id": 6208,
+       "name": "Matisse Thybulle",
+       "nba_team": "LAL",
+       "positions": [
+        "SG",
+        "SF"
+       ]
+      },
+      "team_id": 7,
+      "team_name": null,
+      "detail": "To Waivers",
+      "when": "Nov 9, 4:17 am",
+      "group": 24
+     }
+    ],
+    [
+     {
+      "kind": "drop",
+      "player": {
+       "yahoo_id": 5747,
+       "name": "Derrick Jones Jr.",
+       "nba_team": "LAC",
+       "positions": [
+        "SF",
+        "PF"
+       ]
+      },
+      "team_id": 10,
+      "team_name": null,
+      "detail": "To Waivers",
+      "when": "Nov 11, 7:09 pm",
+      "group": 0
+     },
+     {
+      "kind": "drop",
+      "player": {
+       "yahoo_id": 10333,
+       "name": "Jamal Shead",
+       "nba_team": "TOR",
+       "positions": [
+        "PG"
+       ]
+      },
+      "team_id": 4,
+      "team_name": null,
+      "detail": "To Waivers",
+      "when": "Nov 11, 6:57 pm",
+      "group": 1
+     },
+     {
+      "kind": "add",
+      "player": {
+       "yahoo_id": 6019,
+       "name": "Collin Sexton",
+       "nba_team": "LAL",
+       "positions": [
+        "PG",
+        "SG"
+       ]
+      },
+      "team_id": 10,
+      "team_name": null,
+      "detail": "$0 Waiver",
+      "when": "Nov 11, 4:12 am",
+      "group": 2
+     },
+     {
+      "kind": "drop",
+      "player": {
+       "yahoo_id": 5840,
+       "name": "Kyle Kuzma",
+       "nba_team": "MIL",
+       "positions": [
+        "SF",
+        "PF"
+       ]
+      },
+      "team_id": 10,
+      "team_name": null,
+      "detail": "To Waivers",
+      "when": "Nov 11, 4:12 am",
+      "group": 2
+     },
+     {
+      "kind": "add",
+      "player": {
+       "yahoo_id": 6406,
+       "name": "Aaron Nesmith",
+       "nba_team": "IND",
+       "positions": [
+        "SG",
+        "SF"
+       ]
+      },
+      "team_id": 9,
+      "team_name": null,
+      "detail": "$0 Waiver",
+      "when": "Nov 11, 4:12 am",
+      "group": 3
+     },
+     {
+      "kind": "add",
+      "player": {
+       "yahoo_id": 6032,
+       "name": "Grayson Allen",
+       "nba_team": "CHA",
+       "positions": [
+        "SG",
+        "SF"
+       ]
+      },
+      "team_id": 1,
+      "team_name": null,
+      "detail": "$0 Waiver",
+      "when": "Nov 11, 4:12 am",
+      "group": 4
+     },
+     {
+      "kind": "drop",
+      "player": {
+       "yahoo_id": 6170,
+       "name": "Jaxson Hayes",
+       "nba_team": "UTA",
+       "positions": [
+        "C"
+       ]
+      },
+      "team_id": 1,
+      "team_name": null,
+      "detail": "To Waivers",
+      "when": "Nov 11, 4:12 am",
+      "group": 4
+     },
+     {
+      "kind": "add",
+      "player": {
+       "yahoo_id": 10288,
+       "name": "Reed Sheppard",
+       "nba_team": "HOU",
+       "positions": [
+        "PG",
+        "SG"
+       ]
+      },
+      "team_id": 6,
+      "team_name": null,
+      "detail": "$2 Waiver",
+      "when": "Nov 11, 4:12 am",
+      "group": 5
+     },
+     {
+      "kind": "drop",
+      "player": {
+       "yahoo_id": 10275,
+       "name": "Tristan da Silva",
+       "nba_team": "ORL",
+       "positions": [
+        "SF",
+        "PF"
+       ]
+      },
+      "team_id": 6,
+      "team_name": null,
+      "detail": "To Waivers",
+      "when": "Nov 11, 4:12 am",
+      "group": 5
+     },
+     {
+      "kind": "add",
+      "player": {
+       "yahoo_id": 5832,
+       "name": "John Collins",
+       "nba_team": "DET",
+       "positions": [
+        "PF",
+        "C"
+       ]
+      },
+      "team_id": 2,
+      "team_name": null,
+      "detail": "$17 Waiver",
+      "when": "Nov 11, 4:12 am",
+      "group": 6
+     },
+     {
+      "kind": "drop",
+      "player": {
+       "yahoo_id": 6572,
+       "name": "Santi Aldama",
+       "nba_team": "DAL",
+       "positions": [
+        "PF"
+       ]
+      },
+      "team_id": 2,
+      "team_name": null,
+      "detail": "To Waivers",
+      "when": "Nov 11, 4:12 am",
+      "group": 6
+     },
+     {
+      "kind": "add",
+      "player": {
+       "yahoo_id": 10333,
+       "name": "Jamal Shead",
+       "nba_team": "TOR",
+       "positions": [
+        "PG"
+       ]
+      },
+      "team_id": 4,
+      "team_name": null,
+      "detail": "$0 Waiver",
+      "when": "Nov 10, 4:12 am",
+      "group": 7
+     },
+     {
+      "kind": "add",
+      "player": {
+       "yahoo_id": 10617,
+       "name": "Meleek Thomas",
+       "nba_team": "CLE",
+       "positions": [
+        "SG"
+       ]
+      },
+      "team_id": 4,
+      "team_name": null,
+      "detail": "$0 Waiver",
+      "when": "Nov 10, 4:12 am",
+      "group": 8
+     },
+     {
+      "kind": "add",
+      "player": {
+       "yahoo_id": 5640,
+       "name": "Jakob Poeltl",
+       "nba_team": "TOR",
+       "positions": [
+        "C"
+       ]
+      },
+      "team_id": 2,
+      "team_name": null,
+      "detail": "$0 Waiver",
+      "when": "Nov 10, 4:12 am",
+      "group": 9
+     },
+     {
+      "kind": "drop",
+      "player": {
+       "yahoo_id": 10278,
+       "name": "Ja'Kobe Walter",
+       "nba_team": "TOR",
+       "positions": [
+        "PG",
+        "SG"
+       ]
+      },
+      "team_id": 2,
+      "team_name": null,
+      "detail": "To Waivers",
+      "when": "Nov 10, 4:12 am",
+      "group": 9
+     },
+     {
+      "kind": "add",
+      "player": {
+       "yahoo_id": 5840,
+       "name": "Kyle Kuzma",
+       "nba_team": "MIL",
+       "positions": [
+        "SF",
+        "PF"
+       ]
+      },
+      "team_id": 10,
+      "team_name": null,
+      "detail": "$0 Waiver",
+      "when": "Nov 10, 4:12 am",
+      "group": 10
+     },
+     {
+      "kind": "add",
+      "player": {
+       "yahoo_id": 10316,
+       "name": "Daniss Jenkins",
+       "nba_team": "DET",
+       "positions": [
+        "PG",
+        "SG"
+       ]
+      },
+      "team_id": 9,
+      "team_name": null,
+      "detail": "$0 Waiver",
+      "when": "Nov 10, 4:12 am",
+      "group": 11
+     },
+     {
+      "kind": "drop",
+      "player": {
+       "yahoo_id": 10327,
+       "name": "Cam Spencer",
+       "nba_team": "MEM",
+       "positions": [
+        "PG",
+        "SG"
+       ]
+      },
+      "team_id": 9,
+      "team_name": null,
+      "detail": "To Waivers",
+      "when": "Nov 10, 4:12 am",
+      "group": 11
+     },
+     {
+      "kind": "add",
+      "player": {
+       "yahoo_id": 6724,
+       "name": "Jaylin Williams",
+       "nba_team": "OKC",
+       "positions": [
+        "PF",
+        "C"
+       ]
+      },
+      "team_id": 6,
+      "team_name": null,
+      "detail": "$2 Waiver",
+      "when": "Nov 10, 4:12 am",
+      "group": 12
+     },
+     {
+      "kind": "drop",
+      "player": {
+       "yahoo_id": 5754,
+       "name": "Alex Caruso",
+       "nba_team": "OKC",
+       "positions": [
+        "SG",
+        "SF"
+       ]
+      },
+      "team_id": 8,
+      "team_name": null,
+      "detail": "To Waivers",
+      "when": "Nov 9, 6:50 pm",
+      "group": 13
+     },
+     {
+      "kind": "drop",
+      "player": {
+       "yahoo_id": 10588,
+       "name": "Mikel Brown Jr.",
+       "nba_team": "BKN",
+       "positions": [
+        "PG"
+       ]
+      },
+      "team_id": 4,
+      "team_name": null,
+      "detail": "To Waivers",
+      "when": "Nov 9, 5:30 pm",
+      "group": 14
+     },
+     {
+      "kind": "drop",
+      "player": {
+       "yahoo_id": 5465,
+       "name": "Mario Hezonja",
+       "nba_team": "CLE",
+       "positions": [
+        "SF",
+        "PF"
+       ]
+      },
+      "team_id": 5,
+      "team_name": null,
+      "detail": "To Waivers",
+      "when": "Nov 9, 9:58 am",
+      "group": 15
+     },
+     {
+      "kind": "drop",
+      "player": {
+       "yahoo_id": 10313,
+       "name": "Oso Ighodaro",
+       "nba_team": "PHX",
+       "positions": [
+        "C"
+       ]
+      },
+      "team_id": 6,
+      "team_name": null,
+      "detail": "To Waivers",
+      "when": "Nov 9, 6:31 am",
+      "group": 16
+     },
+     {
+      "kind": "drop",
+      "player": {
+       "yahoo_id": 6499,
+       "name": "Naji Marshall",
+       "nba_team": "DAL",
+       "positions": [
+        "SG",
+        "SF",
+        "PF"
+       ]
+      },
+      "team_id": 3,
+      "team_name": null,
+      "detail": "To Waivers",
+      "when": "Nov 9, 4:35 am",
+      "group": 17
+     },
+     {
+      "kind": "add",
+      "player": {
+       "yahoo_id": 6170,
+       "name": "Jaxson Hayes",
+       "nba_team": "UTA",
+       "positions": [
+        "C"
+       ]
+      },
+      "team_id": 1,
+      "team_name": null,
+      "detail": "$0 Waiver",
+      "when": "Nov 9, 4:17 am",
+      "group": 18
+     },
+     {
+      "kind": "drop",
+      "player": {
+       "yahoo_id": 10572,
+       "name": "Morez Johnson Jr.",
+       "nba_team": "DAL",
+       "positions": [
+        "PF"
+       ]
+      },
+      "team_id": 1,
+      "team_name": null,
+      "detail": "To Waivers",
+      "when": "Nov 9, 4:17 am",
+      "group": 18
+     },
+     {
+      "kind": "add",
+      "player": {
+       "yahoo_id": 5069,
+       "name": "Draymond Green",
+       "nba_team": "GSW",
+       "positions": [
+        "PF",
+        "C"
+       ]
+      },
+      "team_id": 12,
+      "team_name": null,
+      "detail": "$0 Waiver",
+      "when": "Nov 9, 4:17 am",
+      "group": 19
+     },
+     {
+      "kind": "add",
+      "player": {
+       "yahoo_id": 10313,
+       "name": "Oso Ighodaro",
+       "nba_team": "PHX",
+       "positions": [
+        "C"
+       ]
+      },
+      "team_id": 6,
+      "team_name": null,
+      "detail": "$2 Waiver",
+      "when": "Nov 9, 4:17 am",
+      "group": 20
+     },
+     {
+      "kind": "drop",
+      "player": {
+       "yahoo_id": 10460,
+       "name": "Joan Beringer",
+       "nba_team": "MIN",
+       "positions": [
+        "PF",
+        "C"
+       ]
+      },
+      "team_id": 6,
+      "team_name": null,
+      "detail": "To Waivers",
+      "when": "Nov 9, 4:17 am",
+      "group": 20
+     },
+     {
+      "kind": "add",
+      "player": {
+       "yahoo_id": 10576,
+       "name": "Brayden Burries",
+       "nba_team": "MIL",
+       "positions": [
+        "SG"
+       ]
+      },
+      "team_id": 7,
+      "team_name": null,
+      "detail": "$4 Waiver",
+      "when": "Nov 9, 4:17 am",
+      "group": 21
+     },
+     {
+      "kind": "drop",
+      "player": {
+       "yahoo_id": 6208,
+       "name": "Matisse Thybulle",
+       "nba_team": "LAL",
+       "positions": [
+        "SG",
+        "SF"
+       ]
+      },
+      "team_id": 7,
+      "team_name": null,
+      "detail": "To Waivers",
+      "when": "Nov 9, 4:17 am",
+      "group": 21
+     },
+     {
+      "kind": "drop",
+      "player": {
+       "yahoo_id": 5832,
+       "name": "John Collins",
+       "nba_team": "DET",
+       "positions": [
+        "PF",
+        "C"
+       ]
+      },
+      "team_id": 12,
+      "team_name": null,
+      "detail": "To Waivers",
+      "when": "Nov 8, 5:10 pm",
+      "group": 22
+     },
+     {
+      "kind": "drop",
+      "player": {
+       "yahoo_id": 6032,
+       "name": "Grayson Allen",
+       "nba_team": "CHA",
+       "positions": [
+        "SG",
+        "SF"
+       ]
+      },
+      "team_id": 12,
+      "team_name": null,
+      "detail": "To Waivers",
+      "when": "Nov 8, 5:10 pm",
+      "group": 23
+     },
+     {
+      "kind": "drop",
+      "player": {
+       "yahoo_id": 6057,
+       "name": "De'Anthony Melton",
+       "nba_team": "GSW",
+       "positions": [
+        "PG",
+        "SG"
+       ]
+      },
+      "team_id": 4,
+      "team_name": null,
+      "detail": "To Waivers",
+      "when": "Nov 8, 3:39 pm",
+      "group": 24
+     }
+    ]
+   ]
+  },
+  "short": {
+   "team": 10,
+   "newest": [
+    {
+     "kind": "drop",
+     "player": {
+      "yahoo_id": 10476,
+      "name": "Ryan Kalkbrenner",
+      "nba_team": "CHA",
+      "positions": [
+       "C"
+      ]
+     },
+     "team_id": 4,
+     "team_name": null,
+     "detail": "To Waivers",
+     "when": "Nov 13, 5:18 pm",
+     "group": 0
+    },
+    {
+     "kind": "drop",
+     "player": {
+      "yahoo_id": 10296,
+      "name": "Zaccharie Risacher",
+      "nba_team": "DAL",
+      "positions": [
+       "SF",
+       "PF"
+      ]
+     },
+     "team_id": 10,
+     "team_name": null,
+     "detail": "To Waivers",
+     "when": "Nov 13, 6:35 am",
+     "group": 1
+    },
+    {
+     "kind": "add",
+     "player": {
+      "yahoo_id": 5069,
+      "name": "Draymond Green",
+      "nba_team": "GSW",
+      "positions": [
+       "PF",
+       "C"
+      ]
+     },
+     "team_id": 6,
+     "team_name": null,
+     "detail": "$0 Waiver",
+     "when": "Nov 13, 4:24 am",
+     "group": 2
+    },
+    {
+     "kind": "drop",
+     "player": {
+      "yahoo_id": 6030,
+      "name": "Kevin Huerter",
+      "nba_team": "DET",
+      "positions": [
+       "SG",
+       "SF"
+      ]
+     },
+     "team_id": 6,
+     "team_name": null,
+     "detail": "To Waivers",
+     "when": "Nov 13, 4:24 am",
+     "group": 2
+    },
+    {
+     "kind": "add",
+     "player": {
+      "yahoo_id": 5292,
+      "name": "Andrew Wiggins",
+      "nba_team": "MIA",
+      "positions": [
+       "SG",
+       "SF",
+       "PF"
+      ]
+     },
+     "team_id": 11,
+     "team_name": null,
+     "detail": "$0 Waiver",
+     "when": "Nov 13, 4:24 am",
+     "group": 3
+    },
+    {
+     "kind": "add",
+     "player": {
+      "yahoo_id": 6754,
+      "name": "Julian Champagnie",
+      "nba_team": "SAS",
+      "positions": [
+       "SF",
+       "PF"
+      ]
+     },
+     "team_id": 8,
+     "team_name": null,
+     "detail": "$0 Waiver",
+     "when": "Nov 13, 4:24 am",
+     "group": 4
+    },
+    {
+     "kind": "add",
+     "player": {
+      "yahoo_id": 10617,
+      "name": "Meleek Thomas",
+      "nba_team": "CLE",
+      "positions": [
+       "SG"
+      ]
+     },
+     "team_id": 11,
+     "team_name": null,
+     "detail": "$3 Waiver",
+     "when": "Nov 13, 4:24 am",
+     "group": 5
+    },
+    {
+     "kind": "add",
+     "player": {
+      "yahoo_id": 6057,
+      "name": "De'Anthony Melton",
+      "nba_team": "GSW",
+      "positions": [
+       "PG",
+       "SG"
+      ]
+     },
+     "team_id": 5,
+     "team_name": null,
+     "detail": "$5 Waiver",
+     "when": "Nov 13, 4:24 am",
+     "group": 6
+    },
+    {
+     "kind": "add",
+     "player": {
+      "yahoo_id": 10476,
+      "name": "Ryan Kalkbrenner",
+      "nba_team": "CHA",
+      "positions": [
+       "C"
+      ]
+     },
+     "team_id": 4,
+     "team_name": null,
+     "detail": "$0 Waiver",
+     "when": "Nov 12, 4:23 am",
+     "group": 7
+    },
+    {
+     "kind": "add",
+     "player": {
+      "yahoo_id": 10340,
+      "name": "Jaylen Wells",
+      "nba_team": "MEM",
+      "positions": [
+       "SG",
+       "SF"
+      ]
+     },
+     "team_id": 12,
+     "team_name": null,
+     "detail": "$0 Waiver",
+     "when": "Nov 12, 4:23 am",
+     "group": 8
+    },
+    {
+     "kind": "drop",
+     "player": {
+      "yahoo_id": 10333,
+      "name": "Jamal Shead",
+      "nba_team": "TOR",
+      "positions": [
+       "PG"
+      ]
+     },
+     "team_id": 12,
+     "team_name": null,
+     "detail": "To Waivers",
+     "when": "Nov 12, 4:23 am",
+     "group": 8
+    },
+    {
+     "kind": "add",
+     "player": {
+      "yahoo_id": 6030,
+      "name": "Kevin Huerter",
+      "nba_team": "DET",
+      "positions": [
+       "SG",
+       "SF"
+      ]
+     },
+     "team_id": 6,
+     "team_name": null,
+     "detail": "$0 Waiver",
+     "when": "Nov 12, 4:23 am",
+     "group": 9
+    },
+    {
+     "kind": "add",
+     "player": {
+      "yahoo_id": 6408,
+      "name": "Isaiah Stewart",
+      "nba_team": "MEM",
+      "positions": [
+       "PF",
+       "C"
+      ]
+     },
+     "team_id": 10,
+     "team_name": null,
+     "detail": "$2 Waiver",
+     "when": "Nov 12, 4:23 am",
+     "group": 10
+    },
+    {
+     "kind": "add",
+     "player": {
+      "yahoo_id": 10447,
+      "name": "Khaman Maluach",
+      "nba_team": "PHX",
+      "positions": [
+       "C"
+      ]
+     },
+     "team_id": 1,
+     "team_name": null,
+     "detail": "$3 Waiver",
+     "when": "Nov 12, 4:23 am",
+     "group": 11
+    },
+    {
+     "kind": "add",
+     "player": {
+      "yahoo_id": 10296,
+      "name": "Zaccharie Risacher",
+      "nba_team": "DAL",
+      "positions": [
+       "SF",
+       "PF"
+      ]
+     },
+     "team_id": 10,
+     "team_name": null,
+     "detail": "$3 Waiver",
+     "when": "Nov 12, 4:23 am",
+     "group": 12
+    },
+    {
+     "kind": "add",
+     "player": {
+      "yahoo_id": 10316,
+      "name": "Daniss Jenkins",
+      "nba_team": "DET",
+      "positions": [
+       "PG",
+       "SG"
+      ]
+     },
+     "team_id": 3,
+     "team_name": null,
+     "detail": "$11 Waiver",
+     "when": "Nov 12, 4:23 am",
+     "group": 13
+    },
+    {
+     "kind": "drop",
+     "player": {
+      "yahoo_id": 4614,
+      "name": "DeMar DeRozan",
+      "nba_team": "DEN",
+      "positions": [
+       "SF",
+       "PF"
+      ]
+     },
+     "team_id": 3,
+     "team_name": null,
+     "detail": "To Waivers",
+     "when": "Nov 12, 4:23 am",
+     "group": 13
+    },
+    {
+     "kind": "drop",
+     "player": {
+      "yahoo_id": 6412,
+      "name": "Precious Achiuwa",
+      "nba_team": "SAC",
+      "positions": [
+       "PF",
+       "C"
+      ]
+     },
+     "team_id": 2,
+     "team_name": null,
+     "detail": "To Waivers",
+     "when": "Nov 11, 5:53 pm",
+     "group": 14
+    },
+    {
+     "kind": "drop",
+     "player": {
+      "yahoo_id": 5754,
+      "name": "Alex Caruso",
+      "nba_team": "OKC",
+      "positions": [
+       "SG",
+       "SF"
+      ]
+     },
+     "team_id": 3,
+     "team_name": null,
+     "detail": "To Waivers",
+     "when": "Nov 11, 10:01 am",
+     "group": 15
+    },
+    {
+     "kind": "drop",
+     "player": {
+      "yahoo_id": 6616,
+      "name": "Jordan Goodwin",
+      "nba_team": "PHX",
+      "positions": [
+       "PG",
+       "SG"
+      ]
+     },
+     "team_id": 10,
+     "team_name": null,
+     "detail": "To Waivers",
+     "when": "Nov 11, 6:33 am",
+     "group": 16
+    },
+    {
+     "kind": "add",
+     "player": {
+      "yahoo_id": 10333,
+      "name": "Jamal Shead",
+      "nba_team": "TOR",
+      "positions": [
+       "PG"
+      ]
+     },
+     "team_id": 12,
+     "team_name": null,
+     "detail": "$2 Waiver",
+     "when": "Nov 11, 4:23 am",
+     "group": 17
+    },
+    {
+     "kind": "drop",
+     "player": {
+      "yahoo_id": 5858,
+      "name": "Dillon Brooks",
+      "nba_team": "PHX",
+      "positions": [
+       "SF",
+       "PF"
+      ]
+     },
+     "team_id": 12,
+     "team_name": null,
+     "detail": "To Waivers",
+     "when": "Nov 11, 4:23 am",
+     "group": 17
+    },
+    {
+     "kind": "drop",
+     "player": {
+      "yahoo_id": 5747,
+      "name": "Derrick Jones Jr.",
+      "nba_team": "LAC",
+      "positions": [
+       "SF",
+       "PF"
+      ]
+     },
+     "team_id": 6,
+     "team_name": null,
+     "detail": "To Waivers",
+     "when": "Nov 11, 4:04 am",
+     "group": 18
+    },
+    {
+     "kind": "drop",
+     "player": {
+      "yahoo_id": 6499,
+      "name": "Naji Marshall",
+      "nba_team": "DAL",
+      "positions": [
+       "SG",
+       "SF",
+       "PF"
+      ]
+     },
+     "team_id": 12,
+     "team_name": null,
+     "detail": "To Waivers",
+     "when": "Nov 10, 8:38 am",
+     "group": 19
+    },
+    {
+     "kind": "add",
+     "player": {
+      "yahoo_id": 5747,
+      "name": "Derrick Jones Jr.",
+      "nba_team": "LAC",
+      "positions": [
+       "SF",
+       "PF"
+      ]
+     },
+     "team_id": 6,
+     "team_name": null,
+     "detail": "$0 Waiver",
+     "when": "Nov 10, 4:23 am",
+     "group": 20
+    },
+    {
+     "kind": "add",
+     "player": {
+      "yahoo_id": 5840,
+      "name": "Kyle Kuzma",
+      "nba_team": "MIL",
+      "positions": [
+       "SF",
+       "PF"
+      ]
+     },
+     "team_id": 11,
+     "team_name": null,
+     "detail": "$1 Waiver",
+     "when": "Nov 10, 4:23 am",
+     "group": 21
+    },
+    {
+     "kind": "drop",
+     "player": {
+      "yahoo_id": 6572,
+      "name": "Santi Aldama",
+      "nba_team": "DAL",
+      "positions": [
+       "PF"
+      ]
+     },
+     "team_id": 11,
+     "team_name": null,
+     "detail": "To Waivers",
+     "when": "Nov 10, 4:23 am",
+     "group": 21
+    },
+    {
+     "kind": "add",
+     "player": {
+      "yahoo_id": 6267,
+      "name": "Max Strus",
+      "nba_team": "LAC",
+      "positions": [
+       "SF",
+       "PF"
+      ]
+     },
+     "team_id": 10,
+     "team_name": null,
+     "detail": "$1 Waiver",
+     "when": "Nov 10, 4:23 am",
+     "group": 22
+    },
+    {
+     "kind": "drop",
+     "player": {
+      "yahoo_id": 10460,
+      "name": "Joan Beringer",
+      "nba_team": "MIN",
+      "positions": [
+       "PF",
+       "C"
+      ]
+     },
+     "team_id": 10,
+     "team_name": null,
+     "detail": "To Waivers",
+     "when": "Nov 10, 4:23 am",
+     "group": 22
+    },
+    {
+     "kind": "add",
+     "player": {
+      "yahoo_id": 5640,
+      "name": "Jakob Poeltl",
+      "nba_team": "TOR",
+      "positions": [
+       "C"
+      ]
+     },
+     "team_id": 7,
+     "team_name": null,
+     "detail": "$6 Waiver",
+     "when": "Nov 10, 4:23 am",
+     "group": 23
+    },
+    {
+     "kind": "add",
+     "player": {
+      "yahoo_id": 6616,
+      "name": "Jordan Goodwin",
+      "nba_team": "PHX",
+      "positions": [
+       "PG",
+       "SG"
+      ]
+     },
+     "team_id": 10,
+     "team_name": null,
+     "detail": "$1 Waiver",
+     "when": "Nov 9, 4:27 am",
+     "group": 24
+    },
+    {
+     "kind": "drop",
+     "player": {
+      "yahoo_id": 5292,
+      "name": "Andrew Wiggins",
+      "nba_team": "MIA",
+      "positions": [
+       "SG",
+       "SF",
+       "PF"
+      ]
+     },
+     "team_id": 10,
+     "team_name": null,
+     "detail": "To Waivers",
+     "when": "Nov 9, 4:27 am",
+     "group": 24
+    }
+   ],
+   "older": [],
+   "covering": [
+    {
+     "kind": "add",
+     "player": {
+      "yahoo_id": 5069,
+      "name": "Draymond Green",
+      "nba_team": "GSW",
+      "positions": [
+       "PF",
+       "C"
+      ]
+     },
+     "team_id": 6,
+     "team_name": null,
+     "detail": "$0 Waiver",
+     "when": "Nov 13, 4:24 am",
+     "group": 0
+    },
+    {
+     "kind": "drop",
+     "player": {
+      "yahoo_id": 6030,
+      "name": "Kevin Huerter",
+      "nba_team": "DET",
+      "positions": [
+       "SG",
+       "SF"
+      ]
+     },
+     "team_id": 6,
+     "team_name": null,
+     "detail": "To Waivers",
+     "when": "Nov 13, 4:24 am",
+     "group": 0
+    },
+    {
+     "kind": "add",
+     "player": {
+      "yahoo_id": 5292,
+      "name": "Andrew Wiggins",
+      "nba_team": "MIA",
+      "positions": [
+       "SG",
+       "SF",
+       "PF"
+      ]
+     },
+     "team_id": 11,
+     "team_name": null,
+     "detail": "$0 Waiver",
+     "when": "Nov 13, 4:24 am",
+     "group": 1
+    },
+    {
+     "kind": "add",
+     "player": {
+      "yahoo_id": 6754,
+      "name": "Julian Champagnie",
+      "nba_team": "SAS",
+      "positions": [
+       "SF",
+       "PF"
+      ]
+     },
+     "team_id": 8,
+     "team_name": null,
+     "detail": "$0 Waiver",
+     "when": "Nov 13, 4:24 am",
+     "group": 2
+    },
+    {
+     "kind": "add",
+     "player": {
+      "yahoo_id": 10617,
+      "name": "Meleek Thomas",
+      "nba_team": "CLE",
+      "positions": [
+       "SG"
+      ]
+     },
+     "team_id": 11,
+     "team_name": null,
+     "detail": "$3 Waiver",
+     "when": "Nov 13, 4:24 am",
+     "group": 3
+    },
+    {
+     "kind": "add",
+     "player": {
+      "yahoo_id": 6057,
+      "name": "De'Anthony Melton",
+      "nba_team": "GSW",
+      "positions": [
+       "PG",
+       "SG"
+      ]
+     },
+     "team_id": 5,
+     "team_name": null,
+     "detail": "$5 Waiver",
+     "when": "Nov 13, 4:24 am",
+     "group": 4
+    },
+    {
+     "kind": "add",
+     "player": {
+      "yahoo_id": 10476,
+      "name": "Ryan Kalkbrenner",
+      "nba_team": "CHA",
+      "positions": [
+       "C"
+      ]
+     },
+     "team_id": 4,
+     "team_name": null,
+     "detail": "$0 Waiver",
+     "when": "Nov 12, 4:23 am",
+     "group": 5
+    },
+    {
+     "kind": "add",
+     "player": {
+      "yahoo_id": 10340,
+      "name": "Jaylen Wells",
+      "nba_team": "MEM",
+      "positions": [
+       "SG",
+       "SF"
+      ]
+     },
+     "team_id": 12,
+     "team_name": null,
+     "detail": "$0 Waiver",
+     "when": "Nov 12, 4:23 am",
+     "group": 6
+    },
+    {
+     "kind": "drop",
+     "player": {
+      "yahoo_id": 10333,
+      "name": "Jamal Shead",
+      "nba_team": "TOR",
+      "positions": [
+       "PG"
+      ]
+     },
+     "team_id": 12,
+     "team_name": null,
+     "detail": "To Waivers",
+     "when": "Nov 12, 4:23 am",
+     "group": 6
+    },
+    {
+     "kind": "add",
+     "player": {
+      "yahoo_id": 6030,
+      "name": "Kevin Huerter",
+      "nba_team": "DET",
+      "positions": [
+       "SG",
+       "SF"
+      ]
+     },
+     "team_id": 6,
+     "team_name": null,
+     "detail": "$0 Waiver",
+     "when": "Nov 12, 4:23 am",
+     "group": 7
+    },
+    {
+     "kind": "add",
+     "player": {
+      "yahoo_id": 6408,
+      "name": "Isaiah Stewart",
+      "nba_team": "MEM",
+      "positions": [
+       "PF",
+       "C"
+      ]
+     },
+     "team_id": 10,
+     "team_name": null,
+     "detail": "$2 Waiver",
+     "when": "Nov 12, 4:23 am",
+     "group": 8
+    },
+    {
+     "kind": "add",
+     "player": {
+      "yahoo_id": 10447,
+      "name": "Khaman Maluach",
+      "nba_team": "PHX",
+      "positions": [
+       "C"
+      ]
+     },
+     "team_id": 1,
+     "team_name": null,
+     "detail": "$3 Waiver",
+     "when": "Nov 12, 4:23 am",
+     "group": 9
+    },
+    {
+     "kind": "add",
+     "player": {
+      "yahoo_id": 10296,
+      "name": "Zaccharie Risacher",
+      "nba_team": "DAL",
+      "positions": [
+       "SF",
+       "PF"
+      ]
+     },
+     "team_id": 10,
+     "team_name": null,
+     "detail": "$3 Waiver",
+     "when": "Nov 12, 4:23 am",
+     "group": 10
+    },
+    {
+     "kind": "add",
+     "player": {
+      "yahoo_id": 10316,
+      "name": "Daniss Jenkins",
+      "nba_team": "DET",
+      "positions": [
+       "PG",
+       "SG"
+      ]
+     },
+     "team_id": 3,
+     "team_name": null,
+     "detail": "$11 Waiver",
+     "when": "Nov 12, 4:23 am",
+     "group": 11
+    },
+    {
+     "kind": "drop",
+     "player": {
+      "yahoo_id": 4614,
+      "name": "DeMar DeRozan",
+      "nba_team": "DEN",
+      "positions": [
+       "SF",
+       "PF"
+      ]
+     },
+     "team_id": 3,
+     "team_name": null,
+     "detail": "To Waivers",
+     "when": "Nov 12, 4:23 am",
+     "group": 11
+    },
+    {
+     "kind": "drop",
+     "player": {
+      "yahoo_id": 6412,
+      "name": "Precious Achiuwa",
+      "nba_team": "SAC",
+      "positions": [
+       "PF",
+       "C"
+      ]
+     },
+     "team_id": 2,
+     "team_name": null,
+     "detail": "To Waivers",
+     "when": "Nov 11, 5:53 pm",
+     "group": 12
+    },
+    {
+     "kind": "drop",
+     "player": {
+      "yahoo_id": 5754,
+      "name": "Alex Caruso",
+      "nba_team": "OKC",
+      "positions": [
+       "SG",
+       "SF"
+      ]
+     },
+     "team_id": 3,
+     "team_name": null,
+     "detail": "To Waivers",
+     "when": "Nov 11, 10:01 am",
+     "group": 13
+    },
+    {
+     "kind": "drop",
+     "player": {
+      "yahoo_id": 6616,
+      "name": "Jordan Goodwin",
+      "nba_team": "PHX",
+      "positions": [
+       "PG",
+       "SG"
+      ]
+     },
+     "team_id": 10,
+     "team_name": null,
+     "detail": "To Waivers",
+     "when": "Nov 11, 6:33 am",
+     "group": 14
+    },
+    {
+     "kind": "add",
+     "player": {
+      "yahoo_id": 10333,
+      "name": "Jamal Shead",
+      "nba_team": "TOR",
+      "positions": [
+       "PG"
+      ]
+     },
+     "team_id": 12,
+     "team_name": null,
+     "detail": "$2 Waiver",
+     "when": "Nov 11, 4:23 am",
+     "group": 15
+    },
+    {
+     "kind": "drop",
+     "player": {
+      "yahoo_id": 5858,
+      "name": "Dillon Brooks",
+      "nba_team": "PHX",
+      "positions": [
+       "SF",
+       "PF"
+      ]
+     },
+     "team_id": 12,
+     "team_name": null,
+     "detail": "To Waivers",
+     "when": "Nov 11, 4:23 am",
+     "group": 15
+    },
+    {
+     "kind": "drop",
+     "player": {
+      "yahoo_id": 5747,
+      "name": "Derrick Jones Jr.",
+      "nba_team": "LAC",
+      "positions": [
+       "SF",
+       "PF"
+      ]
+     },
+     "team_id": 6,
+     "team_name": null,
+     "detail": "To Waivers",
+     "when": "Nov 11, 4:04 am",
+     "group": 16
+    },
+    {
+     "kind": "drop",
+     "player": {
+      "yahoo_id": 6499,
+      "name": "Naji Marshall",
+      "nba_team": "DAL",
+      "positions": [
+       "SG",
+       "SF",
+       "PF"
+      ]
+     },
+     "team_id": 12,
+     "team_name": null,
+     "detail": "To Waivers",
+     "when": "Nov 10, 8:38 am",
+     "group": 17
+    },
+    {
+     "kind": "add",
+     "player": {
+      "yahoo_id": 5747,
+      "name": "Derrick Jones Jr.",
+      "nba_team": "LAC",
+      "positions": [
+       "SF",
+       "PF"
+      ]
+     },
+     "team_id": 6,
+     "team_name": null,
+     "detail": "$0 Waiver",
+     "when": "Nov 10, 4:23 am",
+     "group": 18
+    },
+    {
+     "kind": "add",
+     "player": {
+      "yahoo_id": 5840,
+      "name": "Kyle Kuzma",
+      "nba_team": "MIL",
+      "positions": [
+       "SF",
+       "PF"
+      ]
+     },
+     "team_id": 11,
+     "team_name": null,
+     "detail": "$1 Waiver",
+     "when": "Nov 10, 4:23 am",
+     "group": 19
+    },
+    {
+     "kind": "drop",
+     "player": {
+      "yahoo_id": 6572,
+      "name": "Santi Aldama",
+      "nba_team": "DAL",
+      "positions": [
+       "PF"
+      ]
+     },
+     "team_id": 11,
+     "team_name": null,
+     "detail": "To Waivers",
+     "when": "Nov 10, 4:23 am",
+     "group": 19
+    },
+    {
+     "kind": "add",
+     "player": {
+      "yahoo_id": 6267,
+      "name": "Max Strus",
+      "nba_team": "LAC",
+      "positions": [
+       "SF",
+       "PF"
+      ]
+     },
+     "team_id": 10,
+     "team_name": null,
+     "detail": "$1 Waiver",
+     "when": "Nov 10, 4:23 am",
+     "group": 20
+    },
+    {
+     "kind": "drop",
+     "player": {
+      "yahoo_id": 10460,
+      "name": "Joan Beringer",
+      "nba_team": "MIN",
+      "positions": [
+       "PF",
+       "C"
+      ]
+     },
+     "team_id": 10,
+     "team_name": null,
+     "detail": "To Waivers",
+     "when": "Nov 10, 4:23 am",
+     "group": 20
+    },
+    {
+     "kind": "add",
+     "player": {
+      "yahoo_id": 5640,
+      "name": "Jakob Poeltl",
+      "nba_team": "TOR",
+      "positions": [
+       "C"
+      ]
+     },
+     "team_id": 7,
+     "team_name": null,
+     "detail": "$6 Waiver",
+     "when": "Nov 10, 4:23 am",
+     "group": 21
+    },
+    {
+     "kind": "add",
+     "player": {
+      "yahoo_id": 6616,
+      "name": "Jordan Goodwin",
+      "nba_team": "PHX",
+      "positions": [
+       "PG",
+       "SG"
+      ]
+     },
+     "team_id": 10,
+     "team_name": null,
+     "detail": "$1 Waiver",
+     "when": "Nov 9, 4:27 am",
+     "group": 22
+    },
+    {
+     "kind": "drop",
+     "player": {
+      "yahoo_id": 5292,
+      "name": "Andrew Wiggins",
+      "nba_team": "MIA",
+      "positions": [
+       "SG",
+       "SF",
+       "PF"
+      ]
+     },
+     "team_id": 10,
+     "team_name": null,
+     "detail": "To Waivers",
+     "when": "Nov 9, 4:27 am",
+     "group": 22
+    },
+    {
+     "kind": "add",
+     "player": {
+      "yahoo_id": 10572,
+      "name": "Morez Johnson Jr.",
+      "nba_team": "DAL",
+      "positions": [
+       "PF"
+      ]
+     },
+     "team_id": 9,
+     "team_name": null,
+     "detail": "$12 Waiver",
+     "when": "Nov 9, 4:27 am",
+     "group": 23
+    },
+    {
+     "kind": "drop",
+     "player": {
+      "yahoo_id": 10289,
+      "name": "Yves Missi",
+      "nba_team": "NOP",
+      "positions": [
+       "C"
+      ]
+     },
+     "team_id": 9,
+     "team_name": null,
+     "detail": "To Waivers",
+     "when": "Nov 9, 4:27 am",
+     "group": 23
+    },
+    {
+     "kind": "add",
+     "player": {
+      "yahoo_id": 6171,
+      "name": "Rui Hachimura",
+      "nba_team": "LAC",
+      "positions": [
+       "SF",
+       "PF"
+      ]
+     },
+     "team_id": 4,
+     "team_name": null,
+     "detail": "$0 Waiver",
+     "when": "Nov 8, 4:21 am",
+     "group": 24
+    },
+    {
+     "kind": "drop",
+     "player": {
+      "yahoo_id": 6057,
+      "name": "De'Anthony Melton",
+      "nba_team": "GSW",
+      "positions": [
+       "PG",
+       "SG"
+      ]
+     },
+     "team_id": 4,
+     "team_name": null,
+     "detail": "To Waivers",
+     "when": "Nov 8, 4:21 am",
+     "group": 24
+    }
+   ]
+  }
+ }
+}

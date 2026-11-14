@@ -280,7 +280,10 @@ page, from PR 2:
   the keep rule protects (read from the engine, never re-solved, held players included, #221); a
   drop on a claim already placed and not yet processed (#332; a claim lost or lapsed frees him); a
   move flagged season-costly; an add the league dropped within the waiver days (or one the set
-  drops); below the noise floor; no adds left in the week of its clear date; over the day's cap.
+  drops); below the noise floor; the week of its clear date's adds not fully read (the solve's
+  `adds.complete` false: the transactions reads, joined, do not reach the week's start, so the
+  count is a floor and no add of the week is placed on it, #383); no adds left in the week of its
+  clear date; over the day's cap.
   The rest are queued by their gain
   on the three weeks after, highest first (a week plan's steps instead, below). The streaming
   plan stays a dashboard suggestion.

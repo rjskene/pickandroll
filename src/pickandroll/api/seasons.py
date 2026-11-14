@@ -118,7 +118,7 @@ import math
 import threading
 import time
 from collections import Counter
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from concurrent.futures import Executor, ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta, tzinfo
@@ -137,6 +137,7 @@ from ..season import (
     Part,
     Season,
     SeasonSettings,
+    Transaction,
     Week,
     build_calendar,
     lineup_key,
@@ -172,6 +173,7 @@ from . import (
     season_pretip,
     season_progress,
     season_queue,
+    season_reads,
     season_record,
     season_scorecard,
     season_status,
@@ -593,8 +595,10 @@ class SeasonService:
             return out
         # The landing grid's card (#108): the week's score, the adds left and the flags.
         today = nba_today(self.clock())
-        out |= _glance(season, today)
-        out["funds"] = self._funds(league, season, today)
+        week = season.current(today)
+        older = season_reads.older_reads(self.data_dir, league, week.start) if week else ()
+        out |= _glance(season, today, older)
+        out["funds"] = self._funds(league, season, today, older)
         if out["funds"] is not None:
             out["adds"] = out["funds"]["adds"]
         try:
@@ -605,7 +609,13 @@ class SeasonService:
             out["flags_error"] = f"{type(exc).__name__}: {exc}"
         return out
 
-    def _funds(self, league: str, season: Season, today: date) -> dict[str, Any] | None:
+    def _funds(
+        self,
+        league: str,
+        season: Season,
+        today: date,
+        older: Sequence[Sequence[Transaction]] = (),
+    ) -> dict[str, Any] | None:
         """The league's dollars and adds left (#333), the one count of the league list and the
         Queue: claims the transactions now settle are out, since the count already has them.
         None when the queue's files do not read."""
@@ -620,7 +630,8 @@ class SeasonService:
             return None
         claims = season_queue.pending(queues, league)
         settled = season_queue.resolutions(season, claims, today)
-        return season_queue.funds(season, [c for c in claims if c["id"] not in settled], today)
+        open_ = [c for c in claims if c["id"] not in settled]
+        return season_queue.funds(season, open_, today, older)
 
     def view(self, league: str) -> dict[str, Any]:
         base, is_public = self._base(league)
@@ -1485,6 +1496,7 @@ class SeasonService:
                 kept=frozenset(e["id"] for e in keep),
                 done=len(holding),
                 open_claims=open_claims,
+                unread=season_queue.unread_weeks(entry.get("adds")),
             )
             builds[league] = qa.queue_of(day, today, floor, typical, knobs.get("faab_sizing"))
             rows.append(
@@ -3669,8 +3681,11 @@ def _summary(
     }
 
 
-def _glance(season: Season, today: date) -> dict[str, Any]:
-    """My week at a glance: the score so far, mine first, and the adds left this week."""
+def _glance(
+    season: Season, today: date, older: Sequence[Sequence[Transaction]] = ()
+) -> dict[str, Any]:
+    """My week at a glance: the score so far, mine first, and the adds left this week (the
+    transactions page's ``older`` reads joined, #383)."""
     mine = season.settings.my_team_id
     matchup = season.matchup_of(mine)
     score = None
@@ -3681,7 +3696,7 @@ def _glance(season: Season, today: date) -> dict[str, Any]:
     adds = None
     if mine is not None and week is not None:
         limit = season.settings.max_weekly_adds
-        used = mv.adds_used(season.transactions, mine, week.start, week.end, today)
+        used = mv.adds_used(season.transactions, mine, week.start, week.end, today, older)
         adds = {
             "limit": limit,
             "used": used.count,
