@@ -374,7 +374,12 @@ def base_payload(
     workers: int,
     tau_note: Mapping[str, Any],
     inputs: rn.WorldInputs,
+    arms: Mapping[str, rn.Arm] | None = None,
 ) -> dict[str, Any]:
+    """The payload's common part. ``arms`` by their key in the payload (``a`` and ``b`` in a
+    comparison, the names in a replay or a room): each arm's fields and its surrogate's pool and
+    days; none (validate) for the live route's, the surrogate gate's."""
+    fields = {k: arm.fields for k, arm in (arms or {}).items()} or {"gate": policy.Fields()}
     return {
         "kind": kind,
         "name": name,
@@ -394,7 +399,11 @@ def base_payload(
         },
         "refresh": inputs.refresh_from,
         "tau": dict(tau_note),
-        "surrogate": {"pool": policy.POOL, "days": list(policy.SURROGATE_DAYS), "plan": "daily"},
+        "fields": {k: f.payload() for k, f in fields.items()},
+        "surrogate": {
+            k: {"pool": f.pool, "days": list(f.surrogate_days), "plan": "daily"}
+            for k, f in fields.items()
+        },
         "period_calendar": {
             "source": reader.PERIOD_SOURCE,
             "period_one": {str(k): v.isoformat() for k, v in reader.PERIOD_ONE.items()},
@@ -436,6 +445,7 @@ def setups_of(
 
 def league_note(setup: Any) -> dict[str, Any]:
     return {
+        "shape": policy.shape_of(setup).label(),
         "teams": len(setup.teams),
         "players": len(setup.players),
         "pool": len(setup.pool),
@@ -451,7 +461,7 @@ def league_note(setup: Any) -> dict[str, Any]:
 AUDIT_EXIT = 3
 #: What each mechanism count is, for the payload.
 COUNTS_NOTE = {
-    "landed": "moves landed",
+    "landed": "adds landed: a move's add on the roster the morning after (a swap's drop gone)",
     "gone": "moves lost: the add (or the drop) was gone, or no active spot was open",
     "adds_per_week": "adds charged to a week, its mean over the weeks played",
     "weeks_at_cap": "the share of weeks whose adds reached the league's cap",
@@ -496,12 +506,19 @@ def audit_exit(note: Mapping[str, Any]) -> int:
 
 
 def dry_run(key: Mapping[str, Any], first: Mapping[str, Any]) -> int:
-    """A dry run's one task: its counts by arm and its audit printed, nothing written. A breach in
-    it exits with :data:`AUDIT_EXIT` all the same: a dry run is a run the audit reads too."""
+    """A dry run's one task: its counts and season scale by arm and its audit printed, nothing
+    written. A breach in it exits with :data:`AUDIT_EXIT` all the same: a dry run is a run the
+    audit reads too."""
     for arm, row in (first.get("counts") or {}).items():
         if row:
             shown = ", ".join(f"{m} {row[m]:.4g}" for m in ct.METRICS if row.get(m) is not None)
             print(f"counts, {arm}, the first task: {shown}")
+    for arm, row in (first.get("scale") or {}).items():
+        if row:
+            shown = ", ".join(
+                f"{m} {row[m]:.4g}" for m in ("gain", "ros", "ratio") if row.get(m) is not None
+            )
+            print(f"season scale, {arm}, the first task: {shown} over {row['swaps']} swaps")
     _, note = audited([key], [first])
     print("dry run, nothing written")
     return audit_exit(note)
@@ -524,6 +541,68 @@ def counts_of(rows: Sequence[Any]) -> dict[str, Any] | None:
     """The counts of the paths that stand, pooled like the outcomes; None without a row."""
     have = [r for r in rows if r is not None]
     return rn.aggregate(have, ct.METRICS) if have else None
+
+
+# --------------------------------------------------------------------------- the knobs (PR C)
+#: What the payload's season scale is.
+SCALE_NOTE = (
+    "per arm: on the first simulated day of each path, for the arm's own seat (a replay's or a "
+    "room's: its first seat in team order), over the arm's pool, each candidate's best single "
+    "swap on the key the arm executes, without the season term; gain is the median of their "
+    "gains (expected category wins), ros the median of their ROS_w (season value above a dead "
+    "spot times the games left, a bracket game counted playoff_weight times), ratio gain over "
+    "ros; each the mean over the paths that stand. A season_weight equal to ratio makes the "
+    "term about as loud as the odds gain. Null on the ranking tier and a static seat."
+)
+
+
+def scale_of(rows: Sequence[Mapping[str, Any] | None]) -> dict[str, Any] | None:
+    """The season scale of the paths that stand: the mean of each figure over the paths that
+    have it, and the paths; None when no path has one (the ranking tier, a static seat)."""
+    have = [r for r in rows if r is not None]
+    if not have:
+        return None
+
+    def mean(k: str) -> float | None:
+        vals = [float(r[k]) for r in have if r.get(k) is not None]
+        return sum(vals) / len(vals) if vals else None
+
+    return {"gain": mean("gain"), "ros": mean("ros"), "ratio": mean("ratio"), "paths": len(have)}
+
+
+def reads_of(
+    arms: Mapping[str, rn.Arm], shapes: Sequence[policy.Shape], rivals: bool
+) -> dict[str, Any]:
+    """The reads table by arm and by each shape of the run: each knob and field ``read`` or the
+    reason it is not (``policy.reads``, ``policy.field_reads``)."""
+    out: dict[str, Any] = {}
+    for key, arm in arms.items():
+        mirror = rivals and rn.mirrored(arm)
+        out[key] = {
+            shape.label(): {
+                "knobs": policy.reads(arm, shape, mirror),
+                "fields": policy.field_reads(arm, mirror),
+            }
+            for shape in sorted(set(shapes), key=lambda s: s.label())
+        }
+    return out
+
+
+def same_seats(
+    arms: Mapping[str, rn.Arm], shapes: Sequence[policy.Shape], rivals: bool
+) -> str | None:
+    """Why the run is refused when two of ``arms`` are the same seat (``run.same_seat``), naming
+    each knob or field they differ in, why it is not read and what would make it read; None
+    when no two are."""
+    named = list(arms.items())
+    for i, (ka, a) in enumerate(named):
+        for kb, b in named[i + 1 :]:
+            same = rn.same_seat(a, b, shapes, rivals)
+            if same:
+                return (
+                    f"arms {ka} and {kb} are the same seat: they differ only in {'; '.join(same)}"
+                )
+    return None
 
 
 # --------------------------------------------------------------------------- compare
@@ -568,6 +647,11 @@ def cmd_compare(args: argparse.Namespace) -> int:
     if not setups:
         print(f"refused: no league to run ({skipped})")
         return 2
+    shapes = [policy.shape_of(s_) for s_ in setups.values()]
+    same = same_seats({a.name: a, b.name: b}, shapes, rivals=True)
+    if same:
+        print(f"refused: {same}")
+        return 2
     shrinks = [float(x) for x in args.shrink.split(",")] if args.shrink else list(rn.SHRINKS)
     workers = args.workers or rn.workers_default()
     tasks = [
@@ -605,8 +689,11 @@ def cmd_compare(args: argparse.Namespace) -> int:
     arms_by_shrink: dict[str, dict[str, list[dict[str, Any]]]] = {}
     by_league: dict[str, dict[str, list[dict[str, Any]]]] = {}
     counts_by_shrink: dict[str, dict[str, list[Any]]] = {}
+    scales: dict[str, list[Any]] = {"a": [], "b": []}
     for task, r in zip(tasks, results, strict=True):
         league, s = task[0].league, str(task[4])
+        for side in ("a", "b"):
+            scales[side].append(r["scale"][side])
         for side in ("a", "b", "rivals"):
             counts_by_shrink.setdefault(s, {}).setdefault(side, []).append(r["counts"][side])
         rows_by_shrink.setdefault(s, []).append(r["delta"])
@@ -624,6 +711,7 @@ def cmd_compare(args: argparse.Namespace) -> int:
         workers,
         tau_note,
         inputs,
+        {"a": a, "b": b},
     )
     payload |= {
         "specs": {"a": specs[0], "b": specs[1]},
@@ -656,6 +744,11 @@ def cmd_compare(args: argparse.Namespace) -> int:
             "gone": [sum(r["gone"][0] for r in results), sum(r["gone"][1] for r in results)],
         },
         "verdict": verdict_of(by_shrink, note),
+        "reads": reads_of({"a": a, "b": b}, shapes, rivals=True),
+        "season_scale": {
+            "note": SCALE_NOTE,
+            "by_arm": {side: scale_of(rows) for side, rows in scales.items()},
+        },
         "counts": {
             "note": COUNTS_NOTE,
             "rivals": "the seats other than mine, both arms' seasons, as one row",
@@ -841,6 +934,19 @@ def cmd_replay(args: argparse.Namespace) -> int:
         print("refused: a replay seats at least two arms")
         return 2
     seats = list(arms)
+    try:
+        shape = policy.shape_of(
+            replay_setup_of(
+                args.season, lines, members, scheduled, standins[0], prior, args.seed, 0
+            )
+        )
+    except ValueError as e:
+        print(f"refused: {e}")
+        return 2
+    same = same_seats(arms, [shape], rivals=False)
+    if same:
+        print(f"refused: {same}")
+        return 2
     weights = dict(fitted.weights)
     shown = ", ".join(f"{s} {weights[s]:g}" for s in wk.STATS if s in weights)
     source = (
@@ -935,8 +1041,11 @@ def cmd_replay(args: argparse.Namespace) -> int:
     results = [r for r, k in zip(results, keep, strict=True) if k]
     by_standin: dict[str, dict[str, list[dict[str, Any]]]] = {}
     counts_by_standin: dict[str, dict[str, list[Any]]] = {}
+    scales: dict[str, list[Any]] = {arm: [] for arm in seats}
     for task, r in zip(tasks, results, strict=True):
         key = f"{task[4][0]}:{task[4][1]:g}"
+        for arm, row in r["scale"].items():
+            scales[arm].append(row)
         for arm, metrics in r["by_arm"].items():
             by_standin.setdefault(key, {}).setdefault(arm, []).append(metrics)
         for arm, row in r["counts"].items():
@@ -951,6 +1060,7 @@ def cmd_replay(args: argparse.Namespace) -> int:
         workers,
         tau_note,
         inputs,
+        arms,
     )
     payload |= replay_notes(fitted, args.news_sd)
     payload |= {
@@ -968,6 +1078,12 @@ def cmd_replay(args: argparse.Namespace) -> int:
             for key, d in by_standin.items()
         },
         "solves": sum(r["solves"] for r in results),
+        "shape": shape.label(),
+        "reads": reads_of(arms, [shape], rivals=False),
+        "season_scale": {
+            "note": SCALE_NOTE,
+            "by_arm": {arm: scale_of(rows) for arm, rows in scales.items()},
+        },
         "counts": {
             "note": COUNTS_NOTE,
             "rivals": None,
@@ -1039,6 +1155,11 @@ def cmd_room(args: argparse.Namespace) -> int:
     if not setups:
         print(f"refused: no league to run ({skipped})")
         return 2
+    shapes = [policy.shape_of(s_) for s_ in setups.values()]
+    same = same_seats(arms, shapes, rivals=False)
+    if same:
+        print(f"refused: {same}")
+        return 2
     workers = args.workers or rn.workers_default()
     s = args.shrink
     tasks = [
@@ -1070,14 +1191,17 @@ def cmd_room(args: argparse.Namespace) -> int:
     by_arm: dict[str, list[dict[str, Any]]] = {}
     by_league: dict[str, dict[str, list[dict[str, Any]]]] = {}
     counts_by_arm: dict[str, list[Any]] = {}
+    scales: dict[str, list[Any]] = {arm: [] for arm in seats}
     for task, r in zip(tasks, results, strict=True):
+        for arm, row in r["scale"].items():
+            scales[arm].append(row)
         for arm, metrics in r["by_arm"].items():
             by_arm.setdefault(arm, []).append(metrics)
             by_league.setdefault(task[0].league, {}).setdefault(arm, []).append(metrics)
         for arm, row in r["counts"].items():
             counts_by_arm.setdefault(arm, []).append(row)
     payload = base_payload(
-        "room", args.name or "room", started, sha, fit_path, fit, workers, tau_note, inputs
+        "room", args.name or "room", started, sha, fit_path, fit, workers, tau_note, inputs, arms
     )
     payload |= {
         "specs": {arm: spec for arm, spec in zip(seats, specs, strict=True)},
@@ -1098,6 +1222,11 @@ def cmd_room(args: argparse.Namespace) -> int:
                 for league, d in by_league.items()
             },
             "solves": sum(r["solves"] for r in results),
+        },
+        "reads": reads_of(arms, shapes, rivals=False),
+        "season_scale": {
+            "note": SCALE_NOTE,
+            "by_arm": {arm: scale_of(rows) for arm, rows in scales.items()},
         },
         "counts": {
             "note": COUNTS_NOTE,
@@ -1406,14 +1535,14 @@ def cmd_validate(args: argparse.Namespace) -> int:
 
 
 def policy_knobs(data: Path, league: str) -> dict[str, Any]:
+    """A league's live knobs as its solves run with them, and the simulator's two at their
+    defaults; the twelve defaults (``policy.KNOB_DEFAULTS``) when the knob file cannot be read."""
     from ..api.season_knobs import for_league
 
     try:
-        return policy.check_knobs(for_league(data, league))
+        return policy.check_knobs({**policy.KNOB_DEFAULTS, **for_league(data, league)})
     except (OSError, ValueError, KeyError):
-        from .engine import DEFAULTS
-
-        return policy.check_knobs(dict(DEFAULTS))
+        return policy.check_knobs(dict(policy.KNOB_DEFAULTS))
 
 
 # --------------------------------------------------------------------------- main

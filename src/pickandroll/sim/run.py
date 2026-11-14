@@ -39,11 +39,13 @@ from . import counts as ct
 from . import league as lg
 from . import opponents as op
 from .belief import CausalBelief, consistent, newcomer_prior
-from .engine import KNOBS, Week, mv, wk
+from .engine import Week, mv, wk
 from .fit import W_DEFAULT, Component, Hazard
 from .state import Member, Setup, SimState, initial, round_robin, snake_draft, weeks_from
 
 Rates = Mapping[str, float]
+#: The knobs an arm names (``policy.KNOBS``: the ten live ones and the simulator's two).
+KNOBS = policy.KNOBS
 #: The shrinks a comparison runs at (the design note's axis).
 SHRINKS = (0.0, 0.25, 0.5)
 #: The metrics a path reports for a seat.
@@ -129,7 +131,8 @@ def inputs_of(payload: Mapping[str, Any], sha: str, tau: Mapping[str, float] | N
 # --------------------------------------------------------------------------- the arms
 @dataclass(frozen=True)
 class Arm:
-    """One arm of a comparison: a tier with its knobs, what it executes and its opponents."""
+    """One arm of a comparison: a tier with its knobs, what it executes, its opponents and its
+    fields (``policy.Fields``)."""
 
     name: str
     tier: str
@@ -138,14 +141,19 @@ class Arm:
     executes: str = policy.QUEUE_SET
     with_plan: bool = True
     execute_plan: bool = False
+    fields: policy.Fields = policy.DEFAULT_FIELDS
 
     def seat(self) -> op.Seat:
-        return op.Seat(self.name, self.tier, dict(self.knobs), self.executes, self.with_plan)
+        return op.Seat(
+            self.name, self.tier, dict(self.knobs), self.executes, self.with_plan, self.fields
+        )
 
 
 def arm_of(spec: Mapping[str, Any]) -> Arm:
-    """An arm from its spec file's JSON: ``name``, ``tier``, every knob, ``opponents``; a knob
-    missing or a tier unknown is refused."""
+    """An arm from its spec file's JSON: ``name``, ``tier``, every knob, ``opponents``, and the
+    four fields when it names them (``pool``, ``min_gain``, ``weeks_ahead``,
+    ``surrogate_days``; ``policy.fields_of``); a knob missing, unknown or out of the engine's
+    bounds, a field out of its own or a tier unknown is refused by name."""
     tier = str(spec.get("tier", ""))
     if tier not in (*policy.TIERS, "static"):
         raise ValueError(f"tier {tier!r}: one of {policy.TIERS} or static")
@@ -161,7 +169,54 @@ def arm_of(spec: Mapping[str, Any]) -> Arm:
         executes,
         bool(spec.get("with_plan", True)),
         bool(spec.get("execute_plan", False)),
+        policy.fields_of(spec),
     )
+
+
+def mirrored(arm: Arm) -> bool:
+    """Whether ``arm``'s rivals in a comparison are its mirror, the surrogate on its knobs and
+    fields: what the surrogate reads, the arm's run reads too."""
+    return str(arm.opponents.get("kind", "static")) == "mirror"
+
+
+def same_seat(
+    a: Arm, b: Arm, shapes: Sequence[policy.Shape], rivals: bool = True
+) -> list[str] | None:
+    """When arms ``a`` and ``b`` differ only in knobs and fields that neither reads in any of
+    ``shapes`` (``policy.reads``, ``policy.field_reads``; ``rivals``: whether the arms' rivals
+    play, as in a comparison, so a mirror reads), each such name with why it is not read and what
+    would make it read: the two are then the same seat, and a run of them a no-op by
+    construction. None when they differ in anything else, in a name one of them reads in some
+    shape, or in nothing at all (the same arm twice, a check that the difference is zero)."""
+
+    def identity(arm: Arm) -> tuple[Any, ...]:
+        return (
+            arm.tier,
+            arm.executes,
+            arm.with_plan,
+            arm.execute_plan,
+            sorted(arm.opponents.items()) if rivals else None,
+        )
+
+    if identity(a) != identity(b):
+        return None
+    names = [k for k in policy.KNOBS if a.knobs[k] != b.knobs[k]] + [
+        f for f in policy.FIELDS if getattr(a.fields, f) != getattr(b.fields, f)
+    ]
+    if not names:
+        return None
+    out = []
+    for name in names:
+        rows = []
+        for arm in (a, b):
+            mirror = rivals and mirrored(arm)
+            for shape in shapes:
+                table = policy.reads(arm, shape, mirror) | policy.field_reads(arm, mirror)
+                rows.append(table[name])
+        if policy.READ in rows:
+            return None
+        out.append(f"{name} ({rows[0]}; read by {policy.WHEN_READ[name]})")
+    return out
 
 
 def check_fit(spec: Mapping[str, Any], sha: str) -> None:
@@ -664,8 +719,49 @@ def _metrics(summary: Mapping[str, Any] | None) -> dict[str, float | None]:
 
 
 def opponents_of(setup: Setup, arm: Arm, me: int) -> dict[int, op.Strategy]:
-    other = op.of(arm.opponents, arm.knobs, setup.market_rate)
+    other = op.of(arm.opponents, arm.knobs, setup.market_rate, arm.fields)
     return {t: other for t in setup.teams if t != me}
+
+
+def scale_on(setup: Setup, w: World, arm: Arm, team: int) -> dict[str, Any] | None:
+    """The season scale (``policy.scale_of``) for ``arm`` in seat ``team`` on the path's first
+    simulated day, on the state, beliefs and statuses the seat decides on there (yesterday's
+    nothing landed, cleared held players back). None on the ranking tier and a static seat. It
+    reads the world's cached figures, draws nothing from a generator and decides nothing, so no
+    outcome and no solve count changes with it."""
+    if arm.tier not in ("exact", "surrogate"):
+        return None
+    di, day = next(
+        ((i, d) for i, d in enumerate(setup.days) if setup.week_of(d) is not None), (0, None)
+    )
+    if day is None:
+        return None
+    status, returns = w.status_on(day)
+    beliefs = w.beliefs_on(day)
+    points = dict(setup.points) if setup.scoring == "points" and setup.points else None
+    value = wk.per_game_values(beliefs, setup.cats, points)
+    state = policy.land(
+        initial(setup),
+        _rotation(setup.teams, di),
+        setup.spots(),
+        Counter(setup.roster_slots),
+        status,
+        value,
+    )
+    built = policy.problem_of(
+        setup,
+        replace(state, day=day),
+        team,
+        arm.knobs,
+        beliefs,
+        status,
+        returns,
+        arm.fields.weeks_ahead,
+    )
+    if built is None:
+        return None
+    s = policy.scale_of(built, arm.tier, arm.executes, arm.fields)
+    return None if s is None else {"gain": s.gain, "ros": s.ros, "ratio": s.ratio, "swaps": s.swaps}
 
 
 def paired(setup: Setup, w: World, a: Arm, b: Arm, me: int) -> dict[str, Any]:
@@ -674,6 +770,7 @@ def paired(setup: Setup, w: World, a: Arm, b: Arm, me: int) -> dict[str, Any]:
     ``rank``, where lower is better and a negative difference is B finishing higher."""
     va = {**opponents_of(setup, a, me), me: a.seat()}
     vb = {**opponents_of(setup, b, me), me: b.seat()}
+    scale = {"a": scale_on(setup, w, a, me), "b": scale_on(setup, w, b, me)}
     ra, rb = simulate(setup, w, [va, vb], [a.execute_plan, b.execute_plan])
     ma, mb = _metrics(ra.summaries.get(me)), _metrics(rb.summaries.get(me))
     rivals = [t for t in setup.teams if t != me]
@@ -697,6 +794,7 @@ def paired(setup: Setup, w: World, a: Arm, b: Arm, me: int) -> dict[str, Any]:
             ),
         },
         "breaches": [b.payload() for b in (*ra.breaches, *rb.breaches)],
+        "scale": scale,
     }
 
 
@@ -718,6 +816,11 @@ def room(
     seats this path. ``on_day`` is :func:`simulate`'s."""
     assigned = rotate(list(seats), setup.teams, path)
     variant = {t: arms[name].seat() for t, name in assigned.items()}
+    # The scale is each arm's in its first seat, in team order.
+    first = {
+        name: min(t for t, n in assigned.items() if n == name) for name in set(assigned.values())
+    }
+    scale = {name: scale_on(setup, w, arms[name], t) for name, t in sorted(first.items())}
     (r,) = simulate(setup, w, [variant], [any(arms[n].execute_plan for n in seats)], on_day=on_day)
     by_arm: dict[str, list[dict[str, float | None]]] = {}
     seats_of: dict[str, list[int]] = {}
@@ -738,6 +841,7 @@ def room(
         # Every seat is an arm's: a room has no rival seats.
         "counts": {name: ct.row_of(r.counts, ts) for name, ts in seats_of.items()},
         "breaches": [b.payload() for b in r.breaches],
+        "scale": scale,
     }
 
 
@@ -959,6 +1063,7 @@ __all__ = [
     "consistent",
     "forward_world",
     "inputs_of",
+    "mirrored",
     "oracle_standin",
     "paired",
     "realized_rates",
@@ -967,6 +1072,8 @@ __all__ = [
     "room",
     "rotate",
     "run_tasks",
+    "same_seat",
+    "scale_on",
     "simulate",
     "verdict",
 ]

@@ -159,6 +159,9 @@ KNOBS = {
     "stash_threshold": None,
     "faab_sizing": None,
     "daily_cap": 1,
+    "three_weight": 0.33,
+    "season_weight": 0.0,
+    "playoff_weight": 1.0,
 }
 
 
@@ -220,6 +223,9 @@ def test_compare_pairs_the_arms_and_records_the_run(run_data: Path, capsys):
     ]
     assert ss.main([*args, *common, "--shrink", "0", "--dry-run"]) == 0
     assert _runs(data) == []
+    dry = capsys.readouterr().out
+    # The dry run prints the exact arm's season scale; the ranking arm has none.
+    assert "season scale, a, the first task: gain " in dry and "season scale, b," not in dry
     assert ss.main([*args, *common, "--shrink", "0,0.5", "--name", "first"]) == 0
     out = capsys.readouterr().out
     assert "verdict (one-SE, advisory)" in out and "playoff odds, B less A," in out
@@ -245,7 +251,14 @@ def test_compare_pairs_the_arms_and_records_the_run(run_data: Path, capsys):
     assert (
         payload["verdict"]["rule"] == "one-SE" and payload["verdict"]["passes"] is None
     )  # one path: no SE
-    assert payload["surrogate"] == {"pool": 30, "days": [0, 3], "plan": "daily"}
+    # Each arm's own fields (PR C): the live route's figures at the defaults.
+    assert payload["surrogate"] == {s: {"pool": 30, "days": [0, 3], "plan": "daily"} for s in "ab"}
+    assert payload["fields"]["a"] == {
+        "pool": 30,
+        "min_gain": 0.01,
+        "weeks_ahead": 4,
+        "surrogate_days": [0, 3],
+    }
     assert "code_sha" in payload and "finished_at" in payload
     # A spec naming another fit is refused; so is a league without a seat of mine.
     (data / "C.json").write_text(

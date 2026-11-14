@@ -60,6 +60,9 @@ KNOBS: dict[str, Any] = {
     "stash_threshold": None,
     "faab_sizing": None,
     "daily_cap": 1,
+    "three_weight": 0.33,
+    "season_weight": 0.0,
+    "playoff_weight": 1.0,
 }
 NBA = ("AAA", "BBB", "CCC", "DDD", "EEE", "FFF")
 POSITIONS = (("PG",), ("SG",), ("SF",), ("PF",), ("C",), ("PG", "SG"), ("SF", "PF"), ("PF", "C"))

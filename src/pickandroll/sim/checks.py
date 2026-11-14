@@ -140,10 +140,12 @@ def surrogate_matches(
     team: int,
     days: Sequence[date],
     knobs: Mapping[str, object],
+    fields: policy.Fields = policy.DEFAULT_FIELDS,
 ) -> list[bool]:
     """On each of ``days``, from day one's rosters, whether the surrogate's set equals the exact
-    set (as sets of moves): gate 5's input. A world whose belief is read by day (a replay's
-    causal one) is read on each day; any other after the weeks since the start."""
+    set (as sets of moves), both with ``fields`` (an arm's; the live route's by default): gate
+    5's input. A world whose belief is read by day (a replay's causal one) is read on each day;
+    any other after the weeks since the start."""
     out = []
     base = initial(setup)
     week0 = setup.calendar.week_of(setup.start)
@@ -156,11 +158,13 @@ def surrogate_matches(
         )
         status, returns = w.status_on(day)
         state = SimState(day, base.rosters, base.pool, {})
-        built = policy.problem_of(setup, state, team, knobs, beliefs, status, returns)
+        built = policy.problem_of(
+            setup, state, team, knobs, beliefs, status, returns, fields.weeks_ahead
+        )
         if built is None:
             continue
-        exact = set(policy.exact(built, with_plan=False).moves)
-        surrogate = set(policy.surrogate(built).moves)
+        exact = set(policy.exact(built, with_plan=False, fields=fields).moves)
+        surrogate = set(policy.surrogate(built, fields).moves)
         out.append(exact == surrogate)
     return out
 

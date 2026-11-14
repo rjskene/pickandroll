@@ -3,8 +3,9 @@
 The ladder from the design note. **Static** makes no move. **Market** is the heuristic: each day
 with probability ``rate`` (adds per team-day, from the league's recorded transactions) it adds
 the pool's best by the market's view and drops its weakest by the same view, within the caps.
-**Mirror** runs the surrogate on the shared beliefs. **Seat** is the equal room's: a named arm
-in another seat, the same tiers the arm under test runs. Each strategy is pure given the world's
+**Mirror** runs the surrogate on the shared beliefs with the arm's knobs and fields (the arm
+whole: at the defaults nothing changes). **Seat** is the equal room's: a named arm in another
+seat, the same tiers the arm under test runs, with its fields. Each strategy is pure given the world's
 draws (``run.World`` passes the day's generator), so two arms of a comparison see the same
 opponents while their states agree.
 """
@@ -88,9 +89,10 @@ class Market:
 
 @dataclass(frozen=True)
 class Mirror:
-    """The surrogate on the shared beliefs, with the knobs given."""
+    """The surrogate on the shared beliefs, with the knobs and fields given (the arm's)."""
 
     knobs: Mapping[str, Any]
+    fields: policy.Fields = policy.DEFAULT_FIELDS
     kind: str = "mirror"
 
     def decide(
@@ -103,21 +105,24 @@ class Mirror:
         returns: Mapping[int, date],
         g: np.random.Generator,
     ) -> policy.Decision:
-        built = policy.problem_of(setup, state, team, self.knobs, beliefs, status, returns)
+        built = policy.problem_of(
+            setup, state, team, self.knobs, beliefs, status, returns, self.fields.weeks_ahead
+        )
         if built is None:
             return policy.NONE
-        return policy.decide(built, "surrogate")
+        return policy.decide(built, "surrogate", fields=self.fields)
 
 
 @dataclass(frozen=True)
 class Seat:
-    """An arm in a seat: its tier, knobs and what it executes."""
+    """An arm in a seat: its tier, knobs, what it executes and its fields."""
 
     name: str
     tier: str
     knobs: Mapping[str, Any]
     executes: str = policy.QUEUE_SET
     with_plan: bool = True
+    fields: policy.Fields = policy.DEFAULT_FIELDS
     kind: str = "seat"
 
     def decide(
@@ -132,16 +137,23 @@ class Seat:
     ) -> policy.Decision:
         if self.tier == "static":
             return policy.NONE
-        built = policy.problem_of(setup, state, team, self.knobs, beliefs, status, returns)
+        built = policy.problem_of(
+            setup, state, team, self.knobs, beliefs, status, returns, self.fields.weeks_ahead
+        )
         if built is None:
             return policy.NONE
-        return policy.decide(built, self.tier, self.executes, self.with_plan)
+        return policy.decide(built, self.tier, self.executes, self.with_plan, self.fields)
 
 
-def of(spec: Mapping[str, Any], knobs: Mapping[str, Any], market_rate: float) -> Strategy:
+def of(
+    spec: Mapping[str, Any],
+    knobs: Mapping[str, Any],
+    market_rate: float,
+    fields: policy.Fields = policy.DEFAULT_FIELDS,
+) -> Strategy:
     """An opponent from an arm's ``opponents`` block: ``{"kind": "static"}``,
     ``{"kind": "market", "rate": 0.1}`` (the recorded rate when none is given) or
-    ``{"kind": "mirror"}`` (the arm's own knobs)."""
+    ``{"kind": "mirror"}`` (the arm's own knobs and fields)."""
     kind = str(spec.get("kind", "static"))
     if kind == "static":
         return Static()
@@ -149,5 +161,5 @@ def of(spec: Mapping[str, Any], knobs: Mapping[str, Any], market_rate: float) ->
         rate = spec.get("rate")
         return Market(float(market_rate if rate is None else rate))
     if kind == "mirror":
-        return Mirror(dict(knobs))
+        return Mirror(dict(knobs), fields)
     raise ValueError(f"unknown opponent kind {kind!r}: one of {KINDS[:3]}")
