@@ -159,6 +159,9 @@ KNOBS = {
     "stash_threshold": None,
     "faab_sizing": None,
     "daily_cap": 1,
+    "three_weight": 0.33,
+    "season_weight": 0.0,
+    "playoff_weight": 1.0,
 }
 
 
@@ -220,6 +223,9 @@ def test_compare_pairs_the_arms_and_records_the_run(run_data: Path, capsys):
     ]
     assert ss.main([*args, *common, "--shrink", "0", "--dry-run"]) == 0
     assert _runs(data) == []
+    dry = capsys.readouterr().out
+    # The dry run prints the exact arm's season scale; the ranking arm has none.
+    assert "season scale, a, the first task: gain " in dry and "season scale, b," not in dry
     assert ss.main([*args, *common, "--shrink", "0,0.5", "--name", "first"]) == 0
     out = capsys.readouterr().out
     assert "verdict (one-SE, advisory)" in out and "playoff odds, B less A," in out
@@ -245,7 +251,14 @@ def test_compare_pairs_the_arms_and_records_the_run(run_data: Path, capsys):
     assert (
         payload["verdict"]["rule"] == "one-SE" and payload["verdict"]["passes"] is None
     )  # one path: no SE
-    assert payload["surrogate"] == {"pool": 30, "days": [0, 3], "plan": "daily"}
+    # Each arm's own fields (PR C): the live route's figures at the defaults.
+    assert payload["surrogate"] == {s: {"pool": 30, "days": [0, 3], "plan": "daily"} for s in "ab"}
+    assert payload["fields"]["a"] == {
+        "pool": 30,
+        "min_gain": 0.01,
+        "weeks_ahead": 4,
+        "surrogate_days": [0, 3],
+    }
     assert "code_sha" in payload and "finished_at" in payload
     # A spec naming another fit is refused; so is a league without a seat of mine.
     (data / "C.json").write_text(
@@ -720,3 +733,49 @@ def test_the_no_peek_check_gives_the_guard_its_span(run_data: Path, monkeypatch,
     assert not ok and "touches" in why
     earlier = datetime(2026, 10, 27, 4, 25, tzinfo=MAC)
     assert ss.touches_quiet_window(earlier, ss.NO_PEEK_HOURS) is False
+
+
+# --------------------------------------------------------------------------- a replay that moves (PR C)
+#: Players the moving replay's logs add beyond the fixture's: enough that its draft leaves
+#: projected players on the wire (``sim_league.make_data_dir``).
+WIRE = 120
+
+
+@pytest.fixture(scope="module")
+def wire_data(tmp_path_factory) -> Path:
+    """The fixture folder with :data:`WIRE` more players in its logs, fitted, and two arms: a
+    ranking seat (it moves without an evaluator, so a path is a few seconds) and a static one."""
+    data = make_data_dir(tmp_path_factory.mktemp("wire"), wire=WIRE)
+    assert ss.main(["--data", str(data), "--rooms", "0", "fit", "--seasons", "2023-2024"]) == 0
+    for name, tier in (("R", "ranking"), ("S", "static")):
+        spec = {"name": name, "tier": tier, "knobs": KNOBS, "opponents": {"kind": "market"}}
+        (data / f"{name}.json").write_text(json.dumps(spec))
+    return data
+
+
+def test_a_replay_with_a_wire_lands_moves_and_voids_nothing(wire_data: Path, capsys):
+    data = wire_data
+    args = [
+        "--data",
+        str(data),
+        "--rooms",
+        "0",
+        "replay",
+        "--season",
+        "2024",
+        "--seats",
+        str(data / "R.json"),
+        str(data / "S.json"),
+        "--paths",
+        "1",
+        "--workers",
+        "1",
+        "--seed",
+        "5",
+    ]
+    assert ss.main(args) == 0
+    payload = json.loads(_written(capsys.readouterr().out).read_text())
+    assert payload["audit"]["paths_voided"] == 0 and payload["audit"]["breaches"] == []
+    counts = payload["counts"]["by_standin"]["prior:0"]
+    assert counts["R"]["landed"]["mean"] >= 1 and counts["R"]["adds_per_week"]["mean"] > 0
+    assert counts["S"]["landed"]["mean"] == 0

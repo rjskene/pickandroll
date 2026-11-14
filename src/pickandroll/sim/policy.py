@@ -5,18 +5,28 @@ tiers that solve it, and the executor that lands what they decide.
 spans from the setup's calendar, the opponents projected with ``weekly.project_week`` from the
 shared beliefs, the candidates from the pool, the add limits from the league's rule and the adds
 used, the keep rule's inputs from the same beliefs, then the knobs. **Every knob comes in as a
-mapping of the nine names ``season.progress.KNOBS`` lists; a missing name raises; nothing here
-reads the knob file.** The season guard is ``moves.season_guard(ros)`` with ``ros`` the engine's
-own rest-of-season value of a move (``season.decisions.move_projection``) under the simulated
-world's beliefs, passed explicitly into every search.
+mapping of the twelve names of** :data:`KNOBS` **(the ten the live knob file takes,
+``season.progress.LIVE_KNOBS``, each within the engine's own bounds, and the simulator's two); a
+missing name raises; nothing here reads the knob file.** The season guard is
+``moves.season_guard(ros)`` with ``ros`` the engine's own rest-of-season value of a move
+(``season.decisions.move_projection``) under the simulated world's beliefs, passed explicitly into
+every search.
 
-Three tiers. **Exact** is the live moves route: single swaps over every candidate, the best
-``POOL`` by gain, the recommended set priced by re-solves on the horizon the autopilot queues
-(``three``), the week's streaming plan beside it; or, when the arm says ``executes: weighted``,
-the strategy route's weighted set under the horizon weight knob (its search, no program).
-**Surrogate** is the same evaluator on the ``POOL`` best candidates by value times games, the
-greedy search alone, solved on Monday and Thursday. **Ranking** swaps the pool's best by value
-times games for the roster's worst the keep rule does not keep, no evaluator.
+Three tiers, each with the arm's :class:`Fields` (the live route's figures by default). **Exact**
+is the live moves route: single swaps over every candidate, the best ``pool`` by gain, the
+recommended set priced by re-solves on the horizon the autopilot queues (``three``), the week's
+streaming plan beside it; or, when the arm says ``executes: weighted``, the strategy route's
+weighted set under the horizon weight knob (its search, no program). **Surrogate** is the same
+evaluator on the ``pool`` best candidates by value times games, the greedy search alone, solved
+on the ``surrogate_days`` (Monday and Thursday). **Ranking** swaps the pool's best by value times
+games for the roster's worst the keep rule does not keep, no evaluator.
+
+**The season term** (:class:`SeasonFigure`, :func:`seasoned`): at a ``season_weight`` above 0,
+the exact and the surrogate tiers rank and search on their odds value plus ``season_weight``
+times ``ROS_w``, the moves' season value above a dead spot times the games left, a bracket game
+counted ``playoff_weight`` times, on the key the arm executes and no other. At ``season_weight``
+0 the wrapper is not built and every search runs on the engine's values, as before the term.
+:func:`reads` says which knobs a seat reads in a league's :class:`Shape`.
 
 Executions are the autopilot's (``season.autopilot``): a decided move lands the next day, at
 most ``daily_cap`` a day and the league's adds a week, free agents only, never a kept player
@@ -32,13 +42,16 @@ clear dates and no bids: ``EXECUTIONS`` names that in every run's payload.
 
 from __future__ import annotations
 
+import math
+from bisect import bisect_left
 from collections import Counter
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import date, timedelta
-from typing import Any
+from statistics import median
+from typing import Any, Protocol
 
-from .engine import KNOBS, Week, dl, mv, sg, st, wk
+from .engine import DEFAULTS, LIVE_KNOBS, Week, dl, mv, refused, sg, st, wk
 from .state import BENCH, Setup, SimState, add_totals
 
 #: The execution model every run's payload names (#172, the master's ruling on PR 2's plan).
@@ -47,7 +60,8 @@ EXECUTIONS = "free_agents_next_day"
 #: week of the day it is made, as Yahoo charges a free-agent add (never the week it lands in).
 LANDS_AFTER = timedelta(1)
 #: The live moves route's figures (``api.season_moves``): the candidates the recommended set is
-#: searched among and the least gain a move must add.
+#: searched among and the least gain a move must add. They, the weeks ahead and the surrogate's
+#: days are the defaults of an arm's :class:`Fields` and are read nowhere else.
 POOL = 30
 MIN_GAIN = 0.01
 WEEKS_AHEAD = 4
@@ -63,6 +77,19 @@ SURROGATE_DAYS = (0, 3)
 DEFAULT_ABSENCE_DAYS = mv.SHORT_ABSENCE_DAYS
 
 
+#: The simulator's own knobs (#172, PR C): the season term's weight, and the weight of a game in
+#: the bracket's weeks inside it.
+SIM_KNOBS = ("season_weight", "playoff_weight")
+#: Every knob an arm names: the ten the live knob file takes, then the simulator's two.
+KNOBS = (*LIVE_KNOBS, *SIM_KNOBS)
+#: Each knob's default: the engine's own (``progress.DEFAULTS``), then no season term and a
+#: bracket game counted once. The fallback of a league without a knob file.
+KNOB_DEFAULTS: Mapping[str, Any] = {**DEFAULTS, "season_weight": 0.0, "playoff_weight": 1.0}
+#: The live knobs the engine takes None for: those whose own default is None (the blend weight,
+#: the stash threshold, the FAAB sizing).
+TAKES_NONE = frozenset(k for k in LIVE_KNOBS if DEFAULTS[k] is None)
+
+
 def knob(knobs: Mapping[str, Any], name: str) -> Any:
     """A knob by name; every one of ``KNOBS`` must be present (None is a value)."""
     if name not in KNOBS:
@@ -72,9 +99,106 @@ def knob(knobs: Mapping[str, Any], name: str) -> Any:
     return knobs[name]
 
 
+def knob_refused(name: str, value: Any) -> str | None:
+    """Why knob ``name`` may not take ``value``; None when it may. A live knob by the engine's
+    own check (``progress.refused``: its choices, a number, a whole one for a count, its minimum
+    and its maximum), and None only where the engine's default is None (:data:`TAKES_NONE`); the
+    simulator's two are numbers, 0 or more."""
+    if name in SIM_KNOBS:
+        if isinstance(value, bool) or not isinstance(value, int | float):
+            return f"{name} {value!r} is not a number"
+        if not math.isfinite(value):
+            return f"{name} {value!r} is not a finite number"
+        if value < 0:
+            return f"{name} {value} is below its minimum 0"
+        return None
+    if value is None:
+        return None if name in TAKES_NONE else f"{name} is None: the engine takes a value for it"
+    return refused(name, value)
+
+
 def check_knobs(knobs: Mapping[str, Any]) -> dict[str, Any]:
-    """The knobs as given, every name present."""
-    return {name: knob(knobs, name) for name in KNOBS}
+    """The twelve knobs as given, in :data:`KNOBS` order: every name present (an arm names every
+    knob explicitly; KeyError), no other name and every value allowed (:func:`knob_refused`;
+    ValueError). Each error names the knob and the reason."""
+    unknown = [k for k in knobs if k not in KNOBS]
+    if unknown:
+        raise ValueError(f"knob {unknown[0]!r} is not a knob: one of {', '.join(KNOBS)}")
+    out = {name: knob(knobs, name) for name in KNOBS}
+    for name, value in out.items():
+        why = knob_refused(name, value)
+        if why is not None:
+            raise ValueError(f"knob {name!r} refused: {why}")
+    return out
+
+
+# --------------------------------------------------------------------------- the arm's fields
+#: The arm's four fields beside its knobs, in the order the payload names them.
+FIELDS = ("pool", "min_gain", "weeks_ahead", "surrogate_days")
+
+
+@dataclass(frozen=True)
+class Fields:
+    """An arm's settings beside its knobs (#172, PR C), the live route's figures by default:
+    ``pool``, the candidates a search ranks and searches among; ``min_gain``, the least gain a
+    move must add on the key the arm executes (with the season term, on the combined figure);
+    ``weeks_ahead``, the weeks a problem looks ahead, this one included (the ``three`` horizon is
+    the ``weeks_ahead - 1`` after it, fewer near the season's end); ``surrogate_days``, the
+    weekdays the surrogate solves on (Monday 0). Part of a seat's ``repr``, so two seats that
+    differ in one never share a decision."""
+
+    pool: int = POOL
+    min_gain: float = MIN_GAIN
+    weeks_ahead: int = WEEKS_AHEAD
+    surrogate_days: tuple[int, ...] = SURROGATE_DAYS
+
+    def payload(self) -> dict[str, Any]:
+        return {
+            "pool": self.pool,
+            "min_gain": self.min_gain,
+            "weeks_ahead": self.weeks_ahead,
+            "surrogate_days": list(self.surrogate_days),
+        }
+
+
+DEFAULT_FIELDS = Fields()
+
+
+def _whole(x: Any) -> bool:
+    return isinstance(x, int) and not isinstance(x, bool)
+
+
+def fields_of(spec: Mapping[str, Any]) -> Fields:
+    """An arm's fields from its spec, each at its default when the spec names none; a bad value is
+    refused by name (ValueError): ``pool`` a whole number, 1 or more; ``min_gain`` a number, 0 or
+    more; ``weeks_ahead`` a whole number, 2 or more (the three weeks' set needs a later week);
+    ``surrogate_days`` a non-empty set of weekdays 0 to 6."""
+    pool = spec.get("pool", POOL)
+    if not _whole(pool) or pool < 1:
+        raise ValueError(f"pool {pool!r}: a whole number, 1 or more")
+    gain = spec.get("min_gain", MIN_GAIN)
+    if (
+        isinstance(gain, bool)
+        or not isinstance(gain, int | float)
+        or not math.isfinite(gain)
+        or gain < 0
+    ):
+        raise ValueError(f"min_gain {gain!r}: a number, 0 or more")
+    weeks = spec.get("weeks_ahead", WEEKS_AHEAD)
+    if not _whole(weeks) or weeks < 2:
+        raise ValueError(
+            f"weeks_ahead {weeks!r}: a whole number, 2 or more (the three weeks' set needs a "
+            "later week)"
+        )
+    days = spec.get("surrogate_days", SURROGATE_DAYS)
+    if (
+        isinstance(days, str | bytes)
+        or not isinstance(days, Sequence)
+        or not days
+        or not all(_whole(d) and 0 <= d <= 6 for d in days)
+    ):
+        raise ValueError(f"surrogate_days {days!r}: a non-empty set of weekdays, 0 (Monday) to 6")
+    return Fields(pool, float(gain), weeks, tuple(sorted(set(days))))
 
 
 @dataclass(frozen=True)
@@ -88,6 +212,9 @@ class Built:
     weeks_left: int
     knobs: Mapping[str, Any]
     team: int
+    #: The days of the bracket's weeks, whose games the season term counts ``playoff_weight``
+    #: times (:func:`bracket_days`).
+    bracket: frozenset[date] = frozenset()
 
 
 @dataclass(frozen=True)
@@ -114,6 +241,15 @@ def members_of(
 ) -> list[mv.Member]:
     """``(key, Player)`` for ``keys`` with the statuses the policy sees."""
     return [(k, setup.players[k].player(status.get(k))) for k in keys if k in setup.players]
+
+
+def bracket_days(setup: Setup) -> frozenset[date]:
+    """The days of the bracket's weeks (``spec.playoff_weeks`` on the calendar); none when the
+    bracket is not read."""
+    if setup.spec is None:
+        return frozenset()
+    weeks = set(setup.spec.playoff_weeks)
+    return frozenset(d for w in setup.calendar.weeks if w.number in weeks for d in w.days())
 
 
 def problem_of(
@@ -241,7 +377,7 @@ def problem_of(
     problem = replace(problem, kept=rule.kept)
     scorer = wk.scorer_of(beliefs, cats, points, pool_n)
     weeks_left = sum(1 for w in setup.calendar.weeks if w.number > this.number)
-    return Built(problem, rule, scorer, this, weeks_left, knobs, me)
+    return Built(problem, rule, scorer, this, weeks_left, knobs, me, bracket_days(setup))
 
 
 def ros_of(built: Built) -> Callable[[mv.Move], float | None]:
@@ -265,37 +401,188 @@ def guard_of(built: Built) -> mv.Allowed:
     return mv.season_guard(ros_of(built))
 
 
+# --------------------------------------------------------------------------- the season term
+class SeasonFigure:
+    """``ROS_w``, the season term's figure (#172, PR C), on one problem at one ``playoff_weight``.
+
+    ``worth_w(k)`` (:meth:`worth`) is a player's season value above a dead spot
+    (``problem.season_value[k] - problem.dead``, the keep rule's per-game figure) times his
+    team's games from the day he counts from to the season's last day, a game on a day of the
+    bracket's weeks counted ``playoff_weight`` times. He counts from the move's day, or from his
+    return when that is later, as the engine reads it (``moves.back_from``, as
+    ``moves.net_of_return`` and ``decisions.move_projection`` apply it); one who does not return
+    this season is worth 0, and one without a season value has none. The games are the
+    schedule's: a day it has no entry for has no game (a setup's schedule reaches the season's
+    last day), and nothing is extrapolated. So at ``playoff_weight`` 1 a healthy player's figure
+    is ``moves.worth_from`` and an absent one's ``moves.net_of_return``: the unit of the stash
+    threshold (#373), not a third one.
+
+    A move's (:meth:`move`) is the add's less the drop's on the day it counts from
+    (``moves.day_of``), the add's alone with no drop, and none when either has no season value;
+    a set's (:meth:`of`) is the sum over its moves, a move with none counting zero
+    (``moves.season_total``). The unit is a value times games, not expected category wins: the
+    season scale (:func:`scale_of`) says what size of ``season_weight`` makes the two alike."""
+
+    def __init__(self, built: Built, playoff_weight: float) -> None:
+        p = built.problem
+        self.problem = p
+        self.playoff_weight = float(playoff_weight)
+        self.bracket = built.bracket
+        self._players = {**dict(p.candidates), **dict(p.held), **dict(p.roster)}
+        self._games: dict[str, tuple[list[date], list[float]]] = {}
+        self._worth: dict[tuple[int, date], float | None] = {}
+
+    def games(self, nba_team: str | None, start: date) -> float:
+        """``nba_team``'s games on the schedule from ``start`` to the season's last day, a bracket
+        day's counted ``playoff_weight`` times."""
+        end = self.problem.season_end
+        if not nba_team or end is None or start > end:
+            return 0.0
+        if nba_team not in self._games:
+            days = sorted(
+                d for d, teams in self.problem.schedule.items() if d <= end and nba_team in teams
+            )
+            after = [0.0] * (len(days) + 1)
+            for i in range(len(days) - 1, -1, -1):
+                after[i] = after[i + 1] + (self.playoff_weight if days[i] in self.bracket else 1.0)
+            self._games[nba_team] = (days, after)
+        days, after = self._games[nba_team]
+        return after[bisect_left(days, start)]
+
+    def worth(self, key: int, day: date) -> float | None:
+        """``worth_w``: what ``key`` is worth from ``day`` (or his return) to the season's end."""
+        memo = (key, day)
+        if memo not in self._worth:
+            p = self.problem
+            value = p.season_value.get(key)
+            player = self._players.get(key)
+            out: float | None = None
+            if value is not None and player is not None:
+                back = mv.back_from(p, key, player)
+                out = (
+                    0.0
+                    if back is None
+                    else (value - p.dead) * self.games(player.nba_team, max(day, back))
+                )
+            self._worth[memo] = out
+        return self._worth[memo]
+
+    def move(self, m: mv.Move) -> float | None:
+        """``ROS_w`` of one move: the add's worth less the drop's, from the day it counts."""
+        day = mv.day_of(self.problem, m)
+        add = self.worth(m.add, day)
+        if m.drop is None:
+            return add
+        drop = self.worth(m.drop, day)
+        return None if add is None or drop is None else add - drop
+
+    def of(self, moves: Iterable[mv.Move]) -> float:
+        """``ROS_w`` of a set: its moves' summed, a move with none counting zero."""
+        return mv.season_total(self.move, moves)[0]
+
+
+class Seasoned:
+    """A search's values with the season term on the key the arm executes (#172, PR C): the
+    shape the engine's searches take (``moves.Valued``). On ``key`` a set's value is ``inner``'s
+    plus ``weight`` times its ``ROS_w`` (:class:`SeasonFigure`); every other key is ``inner``'s.
+    No moves have no term, so ``base`` is the inner's on every key (``moves.recommend`` reads a
+    gain for each)."""
+
+    def __init__(self, inner: mv.Valued, key: str, weight: float, figure: SeasonFigure) -> None:
+        self.inner = inner
+        self.problem = inner.problem
+        self.key = key
+        self.weight = float(weight)
+        self.figure = figure
+        self.base = dict(inner.base)
+
+    def value(self, key: str, moves: Iterable[mv.Move]) -> float:
+        moves = tuple(moves)
+        v = self.inner.value(key, moves)
+        return v + self.weight * self.figure.of(moves) if key == self.key else v
+
+    def gain(self, key: str, moves: Iterable[mv.Move]) -> float:
+        return self.value(key, moves) - self.base[key]
+
+
+def seasoned(built: Built, inner: mv.Valued, key: str) -> mv.Valued:
+    """``inner`` with the season term on ``key`` (:class:`Seasoned`) at the arm's
+    ``season_weight``; ``inner`` itself at ``season_weight`` 0, where the wrapper is not built and
+    the search is the engine's own."""
+    weight = float(knob(built.knobs, "season_weight"))
+    if weight == 0:
+        return inner
+    return Seasoned(inner, key, weight, SeasonFigure(built, knob(built.knobs, "playoff_weight")))
+
+
 # --------------------------------------------------------------------------- the tiers
 def _weight(knobs: Mapping[str, Any], weeks_left: int) -> float:
+    """The arm's λ on the frontier (``strategy.weights``): its ``horizon_weight``'s; with no week
+    after this one the frontier is this week's alone, and so is the weight, whatever the knob."""
     key = str(knob(knobs, "horizon_weight") or "natural")
-    for w in sg.weights(weeks_left):
+    frontier = sg.weights(weeks_left)
+    for w in frontier:
         if w.key == key:
             return w.lam
+    if len(frontier) == 1:
+        return frontier[0].lam
     raise KeyError(f"horizon weight {key!r} is not one of {sg.WEIGHT_KEYS}")
 
 
-def exact(built: Built, executes: str = QUEUE_SET, with_plan: bool = True) -> Decision:
+def _weighted_pool(ev: mv.Evaluator, fields: Fields) -> list[int]:
+    """The weighted search's candidates: the best ``pool`` by single-swap gain on each of the
+    week and the three weeks, taken in turn (``strategy.pool_of``)."""
+    swaps = {key: mv.single_swaps(ev, key) for key in HORIZONS}
+    gains = {key: {c: g[0].gain for c, g in swaps[key].items() if g} for key in HORIZONS}
+    return sg.pool_of(gains, fields.pool)
+
+
+def _three_pool(swaps: Mapping[int, Sequence[mv.SwapGain]], fields: Fields) -> list[int]:
+    """The recommended set's candidates: the best ``pool`` by single-swap gain above
+    ``min_gain``."""
+    ranked = sorted(
+        (c for c, g in swaps.items() if g and g[0].gain > fields.min_gain),
+        key=lambda c: -swaps[c][0].gain,
+    )
+    return ranked[: fields.pool]
+
+
+def exact(
+    built: Built,
+    executes: str = QUEUE_SET,
+    with_plan: bool = True,
+    fields: Fields = DEFAULT_FIELDS,
+) -> Decision:
     """The live moves route's set on ``QUEUE_SET`` (or the strategy route's weighted set), the
-    season guard on every search, the streaming plan beside."""
+    season guard on every search, the streaming plan beside. With a ``season_weight`` the single
+    swaps, the pool's ranking and the recommended set (or the weighted search) all take the
+    season term (:func:`seasoned`); the week's plan does not."""
     p = built.problem
     ev = mv.Evaluator(p)
     allowed = guard_of(built)
     solves = 0
     if executes == WEIGHTED:
-        swaps = {key: mv.single_swaps(ev, key) for key in HORIZONS}
-        gains = {key: {c: g[0].gain for c, g in swaps[key].items() if g} for key in HORIZONS}
-        pool = sg.pool_of(gains, POOL)
-        w = sg.Weighted(ev, _weight(built.knobs, built.weeks_left), built.weeks_left)
-        moves = mv.search(w, sg.WEIGHTED, pool, keep=p.kept, min_gain=MIN_GAIN, allowed=allowed)
+        pool = _weighted_pool(ev, fields)
+        w = seasoned(
+            built,
+            sg.Weighted(ev, _weight(built.knobs, built.weeks_left), built.weeks_left),
+            sg.WEIGHTED,
+        )
+        moves = mv.search(
+            w, sg.WEIGHTED, pool, keep=p.kept, min_gain=fields.min_gain, allowed=allowed
+        )
         held = tuple(mv.held_used(p, moves))
         solves += 1
     else:
-        swaps = mv.single_swaps(ev, QUEUE_SET)
-        ranked = sorted(
-            (c for c, g in swaps.items() if g and g[0].gain > MIN_GAIN),
-            key=lambda c: -swaps[c][0].gain,
+        scored = seasoned(built, ev, QUEUE_SET)
+        swaps = mv.single_swaps(scored, QUEUE_SET)
+        rec = mv.recommend(
+            scored,
+            QUEUE_SET,
+            _three_pool(swaps, fields),
+            min_gain=fields.min_gain,
+            allowed=allowed,
         )
-        rec = mv.recommend(ev, QUEUE_SET, ranked[:POOL], min_gain=MIN_GAIN, allowed=allowed)
         moves = tuple(pm.move for pm in rec.moves)
         held = tuple(rec.held)
         solves += 1
@@ -304,9 +591,9 @@ def exact(built: Built, executes: str = QUEUE_SET, with_plan: bool = True) -> De
         week_set = mv.search(
             ev,
             "week",
-            [c for c, _ in p.candidates][:POOL],
+            [c for c, _ in p.candidates][: fields.pool],
             keep=p.kept,
-            min_gain=MIN_GAIN,
+            min_gain=fields.min_gain,
             allowed=allowed,
         )
         planned = st.plan(ev, built.rule, week_set, p.value, allowed=allowed)
@@ -322,23 +609,30 @@ def _games(built: Built, member: mv.Member, from_day: date) -> int:
     return len(wk.game_days(member[1].nba_team, days, p.schedule))
 
 
-def surrogate(built: Built, pool: int = POOL) -> Decision:
-    """The same evaluator on the ``pool`` best candidates by value times games this week, the
-    greedy search alone on ``QUEUE_SET``, the season guard kept."""
+def _surrogate_pool(built: Built, fields: Fields) -> list[int]:
+    """The surrogate's candidates: the best ``pool`` by value times games this week."""
     p = built.problem
     start = p.first_day + timedelta(1)
     ranked = sorted(
         p.candidates,
         key=lambda m: (-p.value.get(m[0], 0.0) * max(1, _games(built, m, start)), m[0]),
     )
-    ev = mv.Evaluator(p)
+    return [k for k, _ in ranked[: fields.pool]]
+
+
+def surrogate(built: Built, fields: Fields = DEFAULT_FIELDS) -> Decision:
+    """The same evaluator on the ``pool`` best candidates by value times games this week, the
+    greedy search alone on ``QUEUE_SET`` (with the season term at a ``season_weight``), the
+    season guard kept."""
+    p = built.problem
+    ev = seasoned(built, mv.Evaluator(p), QUEUE_SET)
     allowed = guard_of(built)
     moves = mv.search(
         ev,
         QUEUE_SET,
-        [k for k, _ in ranked[:pool]],
+        _surrogate_pool(built, fields),
         keep=p.kept,
-        min_gain=MIN_GAIN,
+        min_gain=fields.min_gain,
         allowed=allowed,
     )
     return Decision(tuple(moves), tuple(mv.held_used(p, moves)), (), 1, "surrogate")
@@ -366,17 +660,227 @@ def ranking(built: Built) -> Decision:
     return Decision((move,), (), (), 0, "ranking")
 
 
-def decide(built: Built, tier: str, executes: str = QUEUE_SET, with_plan: bool = True) -> Decision:
+def decide(
+    built: Built,
+    tier: str,
+    executes: str = QUEUE_SET,
+    with_plan: bool = True,
+    fields: Fields = DEFAULT_FIELDS,
+) -> Decision:
     """The tier's decision on the day: the surrogate solves on its days only."""
     if tier == "exact":
-        return exact(built, executes, with_plan)
+        return exact(built, executes, with_plan, fields)
     if tier == "surrogate":
-        if built.problem.first_day.weekday() not in SURROGATE_DAYS:
+        if built.problem.first_day.weekday() not in fields.surrogate_days:
             return Decision(source="surrogate")
-        return surrogate(built)
+        return surrogate(built, fields)
     if tier == "ranking":
         return ranking(built)
     raise ValueError(f"unknown tier {tier!r}: one of {TIERS}")
+
+
+# --------------------------------------------------------------------------- the season scale
+@dataclass(frozen=True)
+class Scale:
+    """The season scale on one seat's day (:func:`scale_of`): the median best single swap's gain
+    on the executed key without the term, the median of the same swaps' ``ROS_w``, and the first
+    over the second (None when the second is 0 or there is none), over ``swaps`` swaps."""
+
+    gain: float | None
+    ros: float | None
+    ratio: float | None
+    swaps: int
+
+
+def scale_of(
+    built: Built,
+    tier: str,
+    executes: str = QUEUE_SET,
+    fields: Fields = DEFAULT_FIELDS,
+) -> Scale | None:
+    """The season scale (#172, PR C): over the arm's pool on ``built``'s day (the exact tier's
+    best ``pool`` by single-swap gain above ``min_gain``, the weighted search's, the surrogate's
+    best by value times games), each candidate's best single swap on the key the arm executes,
+    without the term. A ``season_weight`` equal to the ratio makes the term about as loud as the
+    odds gain. None on the ranking tier and a static seat, which hold no odds. It decides nothing,
+    draws nothing and is the same at any ``season_weight``."""
+    if tier not in ("exact", "surrogate"):
+        return None
+    ev = mv.Evaluator(built.problem)
+    if tier == "exact" and executes == WEIGHTED:
+        pool = _weighted_pool(ev, fields)
+        w = sg.Weighted(ev, _weight(built.knobs, built.weeks_left), built.weeks_left)
+        best = mv.single_swaps(w, sg.WEIGHTED, pool)
+    elif tier == "exact":
+        swaps = mv.single_swaps(ev, QUEUE_SET)
+        best = {c: swaps[c] for c in _three_pool(swaps, fields)}
+    else:
+        best = mv.single_swaps(ev, QUEUE_SET, _surrogate_pool(built, fields))
+    figure = SeasonFigure(built, knob(built.knobs, "playoff_weight"))
+    rows = [(g[0].gain, figure.move(mv.Move(c, g[0].drop))) for c, g in best.items() if g]
+    gains = [x for x, _ in rows]
+    ros = [r for _, r in rows if r is not None]
+    gain = median(gains) if gains else None
+    season = median(ros) if ros else None
+    ratio = None if gain is None or season is None or abs(season) <= mv.EPS else gain / season
+    return Scale(gain, season, ratio, len(rows))
+
+
+# --------------------------------------------------------------------------- what each knob reads
+#: A knob or field a seat reads: a different value can change what it queues.
+READ = "read"
+
+
+@dataclass(frozen=True)
+class Shape:
+    """What of a league decides which knobs a seat reads (#172, PR C): its scoring as the problem
+    reads it, whether it has held slots, whether its bracket is read. Later PRs add to it (F: the
+    waiver rule)."""
+
+    scoring: str = "categories"
+    held: bool = False
+    bracket: bool = True
+
+    def label(self) -> str:
+        return ", ".join(
+            (
+                f"{self.scoring} league",
+                "held slots" if self.held else "no held slots",
+                "bracket read" if self.bracket else "no bracket read",
+            )
+        )
+
+
+def shape_of(setup: Setup) -> Shape:
+    points = setup.scoring == "points" and bool(setup.points)
+    return Shape(
+        "points" if points else "categories",
+        any(s in mv.HELD for s in setup.roster_slots),
+        setup.spec is not None,
+    )
+
+
+class Configured(Protocol):
+    """What of an arm decides what it reads (``run.Arm`` has it)."""
+
+    tier: str
+    executes: str
+    with_plan: bool
+    execute_plan: bool
+    knobs: Mapping[str, Any]
+
+
+#: What makes each knob and field read, for the refusal's message.
+WHEN_READ: Mapping[str, str] = {
+    "system": "a forecaster per arm (PR D)",
+    "blend": "a forecaster per arm and their mix (PR D)",
+    "horizon_weight": "the exact tier executing weighted",
+    "protection_floor": "a seat that moves: the exact, surrogate or ranking tier",
+    "plan_floor_cats": "the exact tier drawing and executing the week plan in a categories league",
+    "plan_floor_points": "the exact tier drawing and executing the week plan in a points league",
+    "stash_threshold": "the simulator passing it to the engine (PR G)",
+    "faab_sizing": "waivers and FAAB in the world (PR F)",
+    "daily_cap": "the exact or the surrogate tier, which may queue more than one move a day",
+    "three_weight": "the queue's rule (PR E)",
+    "season_weight": "the exact or the surrogate tier",
+    "playoff_weight": (
+        "a season_weight above 0 on the exact or the surrogate tier, in a league whose bracket "
+        "is read"
+    ),
+    "pool": "the exact or the surrogate tier",
+    "min_gain": "the exact or the surrogate tier",
+    "weeks_ahead": "the exact or the surrogate tier",
+    "surrogate_days": "the surrogate tier",
+}
+STATIC = "a static seat makes no move"
+
+
+def _odds(arm: Configured, mirrored: bool) -> bool:
+    """Whether a search on odds reads the arm's knobs: its own tier's, or the mirror rivals'
+    (the surrogate on the arm's knobs and fields)."""
+    return arm.tier in ("exact", "surrogate") or mirrored
+
+
+def reads(arm: Configured, shape: Shape, mirrored: bool = False) -> dict[str, str]:
+    """For each of the twelve knobs, :data:`READ` when a different value can change what ``arm``'s
+    seat queues in a league of ``shape``, else the reason it cannot. A value that only changes
+    what is recorded (a plan drawn and not executed) is not read. ``mirrored``: the arm's rivals
+    are its mirror (``opponents.Mirror``), the surrogate on its knobs, so what the surrogate reads
+    is read too."""
+    odds = _odds(arm, mirrored)
+    moves = odds or arm.tier in TIERS
+    out: dict[str, str] = {}
+    out["protection_floor"] = READ if moves else STATIC
+    if odds:
+        out["daily_cap"] = READ
+    elif arm.tier == "ranking":
+        out["daily_cap"] = "the ranking tier queues one move a day, under any cap"
+    else:
+        out["daily_cap"] = STATIC
+    if arm.tier == "exact":
+        out["horizon_weight"] = (
+            READ if arm.executes == WEIGHTED else "the arm does not execute weighted"
+        )
+    else:
+        out["horizon_weight"] = "only the exact tier executing weighted reads it"
+    for name, scoring in (("plan_floor_cats", "categories"), ("plan_floor_points", "points")):
+        if arm.tier != "exact":
+            why = "only the exact tier draws a week plan"
+        elif not arm.with_plan:
+            why = "the arm draws no week plan"
+        elif not arm.execute_plan:
+            why = "the plan is drawn and not executed"
+        elif shape.scoring != scoring:
+            why = f"a {shape.scoring} league"
+        else:
+            why = READ
+        out[name] = why
+    out["three_weight"] = "it weighs the three weeks in the queue's score: the queue's rule, PR E"
+    out["system"] = "every seat shares the run's forecaster: a forecaster per arm, PR D"
+    out["blend"] = "every seat shares the run's forecaster: a forecaster per arm, PR D"
+    out["faab_sizing"] = "the world has no waivers and no budget: PR F"
+    out["stash_threshold"] = "the engine reads it since #373; the simulator passes it in PR G"
+    if odds:
+        out["season_weight"] = READ
+    elif arm.tier == "ranking":
+        out["season_weight"] = "the ranking tier ranks by value times games and holds no odds"
+    else:
+        out["season_weight"] = STATIC
+    if out["season_weight"] != READ:
+        out["playoff_weight"] = out["season_weight"]
+    elif not float(arm.knobs["season_weight"]) > 0:
+        out["playoff_weight"] = "season_weight is 0: there is no season term"
+    elif not shape.bracket:
+        out["playoff_weight"] = "the league has no bracket read"
+    else:
+        out["playoff_weight"] = READ
+    return {k: out[k] for k in KNOBS}
+
+
+def field_reads(arm: Configured, mirrored: bool = False) -> dict[str, str]:
+    """For each of the arm's four fields, :data:`READ` or the reason it is not, as
+    :func:`reads` (no field depends on the league's shape)."""
+    odds = _odds(arm, mirrored)
+    if odds:
+        out = dict.fromkeys(("pool", "min_gain", "weeks_ahead"), READ)
+    elif arm.tier == "ranking":
+        out = {
+            "pool": "the ranking tier takes the wire's best whatever its size",
+            "min_gain": "the ranking tier needs only a gain",
+            "weeks_ahead": (
+                "the ranking tier counts this week's games, and its keep rule is the same over "
+                "any two weeks or more"
+            ),
+        }
+    else:
+        out = dict.fromkeys(("pool", "min_gain", "weeks_ahead"), STATIC)
+    if arm.tier == "surrogate" or mirrored:
+        out["surrogate_days"] = READ
+    elif arm.tier in ("exact", "ranking"):
+        out["surrogate_days"] = f"the {arm.tier} tier decides every day"
+    else:
+        out["surrogate_days"] = STATIC
+    return {k: out[k] for k in FIELDS}
 
 
 # --------------------------------------------------------------------------- the executor

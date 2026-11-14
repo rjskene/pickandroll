@@ -132,6 +132,14 @@ def setup_of(
         raise SimReadError(f"league {league}: no calendar on file")
     if not season.rosters:
         raise SimReadError(f"league {league}: no rosters read")
+    end = max(w.end for w in season.calendar.weeks)
+    last = max(season.schedule, default=None)
+    if last is None or last < end:
+        # The season term counts the schedule's games to the season's last day and extrapolates
+        # none (policy.SeasonFigure), so the schedule must reach that day.
+        raise SimReadError(
+            f"league {league}: the schedule reaches {last}, not the season's last day {end}"
+        )
     rated = season_moves.system_rates(season, data_dir, system, blend)
     players = _members(rated.players)
     rosters = {

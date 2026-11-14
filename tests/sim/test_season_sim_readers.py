@@ -5,6 +5,7 @@ run's record."""
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from datetime import date, datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -81,6 +82,23 @@ def test_setup_refuses_a_league_without_a_recorded_season(data: Path):
     )
     with pytest.raises(reader.SimReadError):
         reader.setup_of(data, "200002", TODAY)
+
+
+def test_setup_refuses_a_schedule_that_stops_before_the_seasons_last_day(data: Path, monkeypatch):
+    """The season term counts the schedule's games to the season's last day and extrapolates
+    none (PR C), so a league whose schedule stops short is refused, naming both days."""
+    load = reader.seasons.load_parts
+
+    def short(data_dir, league):
+        parts = load(data_dir, league)
+        part = parts["schedule"]
+        days = part.data["days"]
+        cut = {d: t for d, t in days.items() if d < max(days)}
+        return {**parts, "schedule": replace(part, data={**part.data, "days": cut})}
+
+    monkeypatch.setattr(reader.seasons, "load_parts", short)
+    with pytest.raises(reader.SimReadError, match="the schedule reaches .*, not the season's last"):
+        reader.setup_of(data, LEAGUE, TODAY)
 
 
 def test_the_gap_the_market_view_and_the_systems_tau(data: Path):

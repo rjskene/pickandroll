@@ -111,12 +111,13 @@ The policy is the engine's own code on that state. `problem_of` builds the live 
 `MoveProblem` from the setup and the state, in memory, as `api.season_moves.build` builds it from
 the recorded season: the week against the pairing's opponent, three weeks against the field, the
 free agents landing tomorrow, the weekly add limit net of the adds made, the keep rule, the
-protection floor, the plan floor and the daily cap from the knobs (every one of the nine; a missing
-knob is refused). Three tiers decide on it. **Exact** is the live route: single swaps on every
-candidate, the recommended set on the three-week horizon with the season guard, the streaming plan
-beside it (or the strategy route's weighted set when the arm executes `weighted`). **Surrogate** is
-the same evaluator on the thirty best candidates by value times games this week, the greedy search
-alone, on Mondays and Thursdays only. **Ranking** swaps the pool's best for the roster's worst the
+protection floor, the plan floor and the daily cap from the knobs (every one of the twelve is
+checked against the engine's own bounds; a missing knob is refused, below **The knobs**). Three
+tiers decide on it. **Exact** is the live route: single swaps on every candidate, the recommended
+set on the three-week horizon with the season guard, the streaming plan beside it (or the strategy
+route's weighted set when the arm executes `weighted`). **Surrogate** is the same evaluator on the
+arm's `pool` (thirty by default) best candidates by value times games this week, the greedy search
+alone, on the arm's `surrogate_days` (Mondays and Thursdays by default). **Ranking** swaps the pool's best for the roster's worst the
 keep rule does not keep, when it gains, with no evaluator. The executor lands yesterday's queue
 team by team in a rotating order. First its return rule: a held player whose status no longer
 fits his slot comes back to the bench that morning and, while the active roster is then over the
@@ -139,6 +140,112 @@ week it lands in: one made on Sunday spends the ending week's adds and plays fro
 Monday's count starts over only once it is in.
 Each day's starters are the most valuable set the slots hold among the players whose team plays
 and whom the policy has not heard are out; their lines are the week's totals.
+
+## The knobs, the fields and the season term (`sim/policy.py`, PR C)
+
+**Twelve knobs.** An arm's spec names every knob: the engine's ten live ones
+(`season.progress.LIVE_KNOBS`, read through `sim/engine.py`) and the simulator's two.
+`policy.check_knobs` refuses a missing knob, a name that is not one, and a value outside the
+engine's own bounds (`progress.refused`), naming the knob and the reason:
+
+| knob | kind | bounds | default |
+|---|---|---|---|
+| `system` | choice | `bbm`, `yahoo`, `blend` | `bbm` |
+| `blend` | number or None | 0.25 to 0.75 | None |
+| `horizon_weight` | choice | `even`, `natural`, `season` | `natural` |
+| `protection_floor` | number | 0 or more | 0 |
+| `plan_floor_cats`, `plan_floor_points` | number | any | 0.10, 0.01 |
+| `stash_threshold` | number or None | 0 or more | None |
+| `faab_sizing` | any value or None | none (the engine checks nothing) | None |
+| `daily_cap` | whole number | 1 to 3 | 2 |
+| `three_weight` | number | 0 to 1 | 0.33 |
+| `season_weight` | number | 0 or more, finite | 0 |
+| `playoff_weight` | number | 0 or more, finite | 1 |
+
+None stays a value only where the engine's default is None (`blend`, `stash_threshold`,
+`faab_sizing`); anywhere else it is refused. `cli.policy_knobs` reads a league's knobs in force
+and adds the two simulator knobs at their defaults; a league without a knob file takes the twelve
+defaults (`policy.KNOB_DEFAULTS`).
+
+**Four fields.** An arm may also name four fields of its own, on the arm and on its seat
+(`policy.Fields`, in the seat's repr, so two seats that differ in one never share a solve):
+
+- `pool` (30, a whole number, 1 or more): the candidates the exact tier's recommended set and
+  week plan search, the weighted search's, and the surrogate's best by value times games;
+- `min_gain` (0.01, a number, 0 or more): the least gain a candidate or a set must make, on the key
+  the arm executes and with the season term when it is on, so it is the combined figure's;
+- `weeks_ahead` (4, a whole number, 2 or more): the weeks a problem looks ahead, this one included;
+  the "three weeks" horizon is the `weeks_ahead − 1` after it (fewer near the season's end), so a
+  gain on it, and what `min_gain` asks of one, grows with `weeks_ahead`;
+- `surrogate_days` (Monday and Thursday, a non-empty set of weekdays 0 to 6): the days the
+  surrogate solves.
+
+A mirror rival takes the arm whole, knobs and fields. Every payload records the four fields of
+every arm and, under `surrogate`, the surrogate's pool and days as the arm sets them; gate 5's
+check (`checks.surrogate_matches`) takes the arm's. Nothing in the engine that the moves route
+reaches assumes exactly three later weeks.
+
+**The season term.** At `season_weight` above 0 an arm's score on the key it executes gains
+`season_weight × ROS_w(moves)`. A player's `worth_w` is his season value above a dead spot (the
+keep rule's per-game figure, `season_value − dead`) times his team's games from the day he counts
+from to the season's last day, a game in one of the bracket's weeks counted `playoff_weight` times.
+He counts from the move's day, or from his return when that is later (`moves.back_from`); one who
+does not return this season is worth 0, one without a season value has none. A move's `ROS_w` is
+the add's less the drop's (the add's alone without a drop; none when either has no value, and
+that move counts 0); a set's is the sum. The games are the schedule's and none is extrapolated: a
+league's schedule reaches the season's last day (the reader refuses one that does not). A replay's
+schedule is the season's log: a day with no entry has no game (an off day for the whole league,
+and in the synthetic logs every day after the log ends, before the replay's calendar does), and
+there the engine's own figures extrapolate games the term does not count. So the unit is per-game value times games, the unit of the stash threshold
+(#373): at `playoff_weight` 1 a healthy player's `worth_w` is `moves.worth_from` and an absent
+one's `moves.net_of_return` wherever the schedule keys every day. The season guard's figure
+(`decisions.move_projection`'s season horizon) is also per-game value times games, but it counts
+every game once and extrapolates past the schedule read; the term does not touch it.
+
+The term is a wrapper (`policy.Seasoned`, the engine's evaluator shape) that adds it on the
+executed key only; at `season_weight` 0 it is never built, so every decision is the engine's as it
+was. It enters the exact tier's single swaps, the candidates' ranking for its set and the
+recommended set (`three`), the weighted search's key (`weighted`), and the surrogate's search. It
+does not enter the ranking tier, the week plan (the streaming plan stays the engine's, PR E), the
+season guard, or the stream's spots.
+
+**The season scale.** On each path's first simulated day, in the arm's own seat, the payload takes
+the median over the arm's pool of each candidate's best single swap's gain on the executed key
+without the term, the median of the same swaps' `ROS_w` at the arm's `playoff_weight`, and their
+ratio: a `season_weight` of the ratio's size makes the term about as loud as the odds gain. The
+ratio is signed: it is negative when the swaps best for the odds lose season worth. It is
+recorded per arm (`season_scale.by_arm`: the mean over paths of the two medians and of the ratio,
+and how many paths gave one) for compare, replay and room, at any `season_weight`, 0 included;
+null on the ranking tier and a static seat. It draws nothing, changes no outcome and is no
+part of a solve.
+
+**What each knob reads.** `policy.reads(arm, shape)` says for each knob `read` (a different value
+can change what the seat queues in a league of that shape) or why not; a change that only alters
+what is recorded, such as a plan drawn and not executed, is not read. The shape is the league's
+scoring, whether it has held slots and whether its bracket is read. A rival that mirrors the arm
+reads what the surrogate reads. As built:
+
+| knob or field | read by | otherwise, and the PR that makes it read |
+|---|---|---|
+| `protection_floor` | any seat that moves (exact, surrogate, ranking) | a static seat makes no move |
+| `daily_cap` | exact, surrogate | the ranking tier queues one move a day, under any cap |
+| `horizon_weight` | exact executing `weighted` | any other arm |
+| `plan_floor_cats` | exact drawing and executing the week plan, categories | any other arm or league |
+| `plan_floor_points` | the same, points | any other arm or league |
+| `season_weight` | exact, surrogate | the ranking tier holds no odds |
+| `playoff_weight` | `season_weight` above 0 on exact or surrogate, bracket read | no term, or no bracket |
+| `three_weight` | nobody | the queue's rule, PR E |
+| `system`, `blend` | nobody | one forecaster for every seat; a forecaster per arm, PR D |
+| `faab_sizing` | nobody | no waivers and no budget in the world, PR F |
+| `stash_threshold` | nobody | the engine reads it (#373); the simulator passes it, PR G |
+| `pool`, `min_gain`, `weeks_ahead` | exact, surrogate | the ranking tier |
+| `surrogate_days` | surrogate, or a mirror rival | the exact tier decides every day |
+
+Every compare, replay and room payload carries the table per arm per league shape (`reads`).
+Compare, replay and room refuse two arms that differ only in knobs and fields that neither reads
+in any shape of the run: they are the same seat, and the message names each such knob, why it is
+not read and what would read it. Two arms alike in everything are a check that the difference is
+zero and run.
 
 ## The other seats (`sim/opponents.py`)
 
@@ -214,12 +321,13 @@ Each command runs as `python -m pickandroll.sim <command>`:
   the first export and the fitted refresh from the exports on disk together, both hashes on the
   issue; until then `REFRESH_DEFAULTS` stand and every payload says `refresh: defaults`.
 
-An arm's spec file names its tier, every knob, its opponents and what it executes, and may name the
-fit it was written for (`fit_sha`; another fit on disk refuses the run). Every run writes
+An arm's spec file names its tier, every one of the twelve knobs, its opponents and what it
+executes, may name its four fields (their defaults otherwise) and may name the fit it was written
+for (`fit_sha`; another fit on disk refuses the run). Every run writes
 `data/sim/runs/<stamp>-<kind>-<name>.json` with the code's commit, the fit's hash and
 file, the hold-out, the spec files verbatim, the execution model, the gap's systems and clip, the
-refresh's source, `τ`'s source, the surrogate's pool and days, the period calendar's source, and
-the results. A run first times one task and estimates the whole; the guard then refuses a span that
+refresh's source, `τ`'s source, each arm's fields and its surrogate's pool and days, the reads
+table, the season scale, the period calendar's source, and the results. A run first times one task and estimates the whole; the guard then refuses a span that
 would touch 04:45-06:45 on the Mac's clock, a draft room open on the API, or a run over an hour
 not announced to fantasyMASTER (`--announced`).
 
