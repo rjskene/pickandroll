@@ -951,7 +951,8 @@ def replay_setup(
     with the higher seed through a tie. Every player is his own team in the schedule
     (``p<id>``): his game days are his ``scheduled`` entries (played or not; the days he has a
     line for when none are given), so a trade or a team read later than the season moves
-    nothing."""
+    nothing. Every day of the calendar is a key of the schedule, an empty set when nobody plays:
+    no day is unread, so the engine extrapolates no game (#172, PR C2)."""
     schedule: dict[date, set[str]] = {}
     members: dict[int, Member] = {}
     game_days: dict[int, list[date]] = {}
@@ -965,6 +966,12 @@ def replay_setup(
         for d in days:
             schedule.setdefault(d, set()).add(own)
     calendar = weeks_from(period_one, weeks)
+    # Every day of the calendar has a key, an empty set when nobody plays, as a fully read live
+    # schedule has: the engine counts a day without one as unread and extrapolates games over it
+    # (moves.games_ahead), games no log holds.
+    first, last = calendar.weeks[0].start, max(w.end for w in calendar.weeks)
+    for i in range((last - first).days + 1):
+        schedule.setdefault(first + timedelta(i), set())
     regular = tuple(range(1, weeks - playoff_weeks + 1))
     playoffs = tuple(range(weeks - playoff_weeks + 1, weeks + 1))
     ids = tuple(range(1, teams + 1))
