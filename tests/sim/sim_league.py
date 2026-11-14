@@ -15,6 +15,7 @@ import numpy as np
 
 from pickandroll.season import build_calendar
 from pickandroll.season import weekly as wk
+from pickandroll.sim import gamelogs as gl
 from pickandroll.sim import league as lg
 from pickandroll.sim import run as rn
 from pickandroll.sim import state as sst
@@ -262,9 +263,38 @@ def write_bbm_csv(path: Path, players: list[dict[str, Any]], seed: int) -> None:
             )
 
 
-def write_logs(data: Path, seasons: tuple[int, ...], players: list[dict[str, Any]]) -> None:
+#: A projection block's games when the logs carry blocks (:func:`write_logs`); every
+#: :data:`BLOCK_WITHOUT_GAMES`-th player's block has no games count.
+BLOCK_GAMES = 70
+BLOCK_WITHOUT_GAMES = 7
+
+
+def projection_block(season: int, i: int, entries: list[dict[str, Any]]) -> dict[str, Any]:
+    """A made-up stored projection for player ``i`` from his season's per-game ``entries``: his
+    played totals per game scaled by 1.05, over :data:`BLOCK_GAMES` games (no games count for
+    every :data:`BLOCK_WITHOUT_GAMES`-th player)."""
+    played = [e["stats"] for e in entries if e["stats"]]
+    totals: dict[str, float] = {}
+    for raw in played:
+        for k, v in raw.items():
+            totals[k] = totals.get(k, 0.0) + float(v)
+    n = max(1, len(played))
+    raw = {k: round(1.05 * v / n * BLOCK_GAMES, 3) for k, v in totals.items()}
+    if i % BLOCK_WITHOUT_GAMES:
+        raw[gl.GAMES_ID] = BLOCK_GAMES
+    return entry(season, 0, raw, split=gl.SEASON_TOTAL, source=gl.PROJECTED)
+
+
+def write_logs(
+    data: Path,
+    seasons: tuple[int, ...],
+    players: list[dict[str, Any]],
+    projection: bool = False,
+) -> None:
     """ESPN-shaped logs for ``seasons``: the fixture players under numeric ids (1000 + i), on six
-    pro teams, with their positions as eligible slots."""
+    pro teams, with their positions as eligible slots. ``projection``: each player's log also
+    carries a stored projection block (:func:`projection_block`), which no per-game reader
+    reads."""
     folder = data / "external" / "espn" / "gamelogs"
     folder.mkdir(parents=True, exist_ok=True)
     slots = {"PG": 0, "SG": 1, "SF": 2, "PF": 3, "C": 4}
@@ -295,6 +325,9 @@ def write_logs(data: Path, seasons: tuple[int, ...], players: list[dict[str, Any
             by_pid.setdefault(str(1000 + i), []).append(
                 entry(season, ln.period, raw, team=1 + i % 6)
             )
+        if projection:
+            for pid, stats in by_pid.items():
+                stats.append(projection_block(season, int(pid) - 1000, list(stats)))
         body = {
             "players": [
                 {
@@ -331,7 +364,10 @@ def wire_players(n: int) -> list[dict[str, Any]]:
 
 
 def make_data_dir(
-    tmp: Path, seasons: tuple[int, ...] = (2023, 2024, 2025, 2026), wire: int = 0
+    tmp: Path,
+    seasons: tuple[int, ...] = (2023, 2024, 2025, 2026),
+    wire: int = 0,
+    projection: bool = False,
 ) -> Path:
     """A data folder with one public league's recorded season (twelve six-man teams drawn from
     the anonymised fixtures), two made-up exports, ESPN ids, synthetic logs and no fit yet.
@@ -342,7 +378,8 @@ def make_data_dir(
     move. With ``wire`` 120 a replay of 2024 projects 191 of its 213 players (those with 20
     games in 2023), drafts 156 and leaves 35 projected free agents beside the newcomers. The
     first 93 players' lines are the same either way (they are drawn first), and ``wire`` 0 is
-    the folder as it always was."""
+    the folder as it always was. ``projection``: the logs carry stored projection blocks
+    (:func:`write_logs`), for the ``espn`` forecaster; without it they carry none."""
     data = tmp / "data"
     league_dir = data / "leagues" / LEAGUE
     season_dir = league_dir / "season"
@@ -499,7 +536,7 @@ def make_data_dir(
     (box / "ids.json").write_text(
         json.dumps({str(p["yahoo_id"]): str(1000 + i) for i, p in enumerate(players)})
     )
-    write_logs(data, seasons, players + wire_players(wire))
+    write_logs(data, seasons, players + wire_players(wire), projection)
     return data
 
 

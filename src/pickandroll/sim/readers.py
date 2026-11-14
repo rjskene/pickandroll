@@ -31,6 +31,7 @@ from ..api import season_decisions, season_moves, season_record, seasons
 from ..api.season_scorecard import BOXSCORES_DIR
 from ..sources import boxscores
 from . import fit as fitmod
+from . import forecast as fc
 from . import gamelogs
 from . import league as lg
 from . import run as rn
@@ -300,11 +301,49 @@ def replay_lines(
 def prior_rates(
     data_dir: Path, season: int, min_games: int = rn.STANDIN_MIN_GAMES
 ) -> dict[int, dict[str, float]]:
-    """The prior season's per-game rates, the replay's first stand-in projection, for the players
-    with ``min_games`` played games in the prior season: a player new to the league that season,
-    or who missed most of the last, has none and arrives by the newcomer's rule."""
+    """The ``prior`` forecaster (``forecast.prior``): the prior season's per-game rates, for the
+    players with ``min_games`` played games in the prior season: a player new to the league that
+    season, or who missed most of the last, has none and arrives by the newcomer's rule."""
     lines, _, _ = replay_lines(data_dir, season - 1)
-    return {k: v for k, v in rn.realized_rates(lines).items() if len(lines[k]) >= min_games}
+    return fc.prior(lines, min_games)
+
+
+def espn_rates(data_dir: Path, season: int) -> tuple[dict[int, dict[str, float]], dict[int, float]]:
+    """The ``espn`` forecaster (``forecast.espn``): ESPN's stored projection for ``season`` from
+    its cached log, per game, for every player whose block has games above zero, and those
+    games (the freeze check's, ``forecast.freeze_of``). Refused when the log or the blocks are
+    not on file."""
+    body = gamelogs.load_season(season, data_dir / LOGS_DIR)
+    if body is None:
+        raise SimReadError(f"espn: season {season} has no cached log under {data_dir / LOGS_DIR}")
+    totals = gamelogs.totals_of(body, season, gamelogs.PROJECTED)
+    rates = fc.espn(gamelogs.per_game(totals))
+    if not rates:
+        raise SimReadError(f"espn: season {season}'s log holds no projection block with games")
+    games = {int(pid): float(t["games"]) for pid, t in totals.items() if t.get("games", 0.0) > 0}
+    return rates, games
+
+
+def marcel_seasons(data_dir: Path, season: int) -> list[int]:
+    """The seasons ``marcel`` reads for ``season``: the one before it and back, while each is on
+    file (:func:`seasons_on_file`), up to ``len(forecast.MARCEL_WEIGHTS)``, most recent first."""
+    on_file = set(seasons_on_file(data_dir, season))
+    out: list[int] = []
+    for t in range(season - 1, season - 1 - len(fc.MARCEL_WEIGHTS), -1):
+        if t not in on_file:
+            break
+        out.append(t)
+    return out
+
+
+def marcel_rates(data_dir: Path, season: int) -> tuple[dict[int, dict[str, float]], list[int]]:
+    """The ``marcel`` forecaster (``forecast.marcel``) for ``season`` and the seasons it read;
+    refused when fewer than ``forecast.MARCEL_SEASONS`` earlier seasons are on file."""
+    read = marcel_seasons(data_dir, season)
+    try:
+        return fc.marcel([replay_lines(data_dir, t)[0] for t in read]), read
+    except fc.CannotServe as e:
+        raise SimReadError(f"season {season}: {e}") from None
 
 
 def seasons_on_file(data_dir: Path, before: int) -> list[int]:
@@ -321,7 +360,8 @@ def seasons_on_file(data_dir: Path, before: int) -> list[int]:
 def belief_weights(data_dir: Path, season: int, hold_out: int | None) -> fitmod.BeliefWeights:
     """The causal belief's weights for a replay of ``season`` under the prior-season forecaster:
     fitted on every season on file earlier than it whose prior season is on file too, neither of
-    them the hold-out; the default when none qualifies. The oracle stand-in takes these too."""
+    them the hold-out; the default when none qualifies. Every forecaster takes these (#172, PR D1:
+    no fit per forecaster)."""
     on_file = set(seasons_on_file(data_dir, season))
     samples = []
     for t in sorted(on_file):
@@ -525,9 +565,12 @@ __all__ = [
     "code_sha",
     "decisions",
     "espn_ids",
+    "espn_rates",
     "export_date",
     "fit_hash",
     "gap_of",
+    "marcel_rates",
+    "marcel_seasons",
     "market_rate",
     "market_view",
     "matchup_outcomes",

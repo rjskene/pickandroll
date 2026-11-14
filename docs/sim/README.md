@@ -225,8 +225,10 @@ outcome and is no part of a solve.
 **What each knob reads.** `policy.reads(arm, shape)` says for each knob `read` (a different value
 can change what the seat queues in a league of that shape) or why not; a change that only alters
 what is recorded, such as a plan drawn and not executed, is not read. The shape is the league's
-scoring, whether it has held slots and whether its bracket is read. A rival that mirrors the arm
-reads what the surrogate reads. As built:
+scoring, whether it has held slots, whether its bracket is read and whether the run names the two
+sources' stand-ins (below). A rival that mirrors the arm reads what the surrogate reads, but
+believes by the run's forecaster: `system` and `blend` are read by the arm's own seat only. As
+built:
 
 | knob or field | read by | otherwise, and the PR that makes it read |
 |---|---|---|
@@ -238,7 +240,8 @@ reads what the surrogate reads. As built:
 | `season_weight` | exact, surrogate | the ranking tier holds no odds |
 | `playoff_weight` | `season_weight` above 0 on exact or surrogate, bracket read | no term, or no bracket |
 | `three_weight` | nobody | the queue's rule, PR E |
-| `system`, `blend` | nobody | one forecaster for every seat; a forecaster per arm, PR D |
+| `system` | the arm's own seat, on a replay that names the two sources' stand-ins | a run without stand-ins |
+| `blend` | the same, when the arm's `system` is `blend` | no stand-ins, or another system |
 | `faab_sizing` | nobody | no waivers and no budget in the world, PR F |
 | `stash_threshold` | nobody | the engine reads it (#373); the simulator passes it, PR G |
 | `pool`, `min_gain`, `weeks_ahead` | exact, surrogate | the ranking tier |
@@ -320,10 +323,13 @@ Each command runs as `python -m pickandroll.sim <command>`:
   in playoff odds is not below zero by more than one SE at any shrink; no block and no promotion
   before PR 3. A league whose bracket is unread reports rank and category wins and no playoff
   odds.
-- `replay --season 2024 --standin prior|oracle:0.1,0.2,0.3 --seats A.json B.json`: a made-up
-  twelve-team league on a recorded season (below), the arms rotated across paths; the hold-out is
-  refused. `--news-sd` sets the told return date's spread in days (default 2). `--no-peek
-  YYYY-MM-DD` runs the no-peek check instead and writes nothing.
+- `replay --season 2024 --forecasters prior,espn,marcel,oracle:0.1 --seats A.json B.json`: a
+  made-up twelve-team league on a recorded season (below), the arms rotated across paths, once
+  for each forecaster named (default `prior`); the hold-out is refused. `--shape stat|minutes`
+  sets how an oracle's error is drawn (default `stat`). `--news-sd` sets the told return date's
+  spread in days (default 2). `--no-peek YYYY-MM-DD` runs the no-peek check instead, on the first
+  forecaster named, and writes nothing. `--bbm-as espn --yahoo-as marcel` names the two live
+  sources' stand-ins, and each arm then believes by its `system` (below).
 - `room --leagues all --seats A.json B.json ... --draft rosters|snake`: the arms around one
   league's table from the recorded rosters or a snake redraft.
 - `validate --league all`: the six gates on this season's recorded weeks and on the hold-out, side
@@ -342,36 +348,155 @@ table, the season scale, the period calendar's source, and the results. A run fi
 would touch 04:45-06:45 on the Mac's clock, a draft room open on the API, or a run over an hour
 not announced to fantasyMASTER (`--announced`).
 
+## The forecasters (`sim/forecast.py`, PR D1)
+
+A replay's **forecaster** is its projection source: the figure each projected player's belief
+starts from and the draft's ranking. A run names one or several (`--forecasters`, comma
+separated, in order) and plays every path once for each; the payload keys its results and counts
+by the forecaster's label. A forecaster that cannot serve the season refuses the run by name
+before any path. Four names:
+
+- `prior`: the prior season's per-game rates of the players with twenty played games in it. It
+  needs the prior season's log.
+- `espn`: ESPN's stored season projection for the replayed season, from the cached log's season
+  block (split 0, source 1), per game, for every player whose block has games above zero; a block
+  without a games count is left out. It needs that block in the log.
+- `marcel`: the seasons before the replayed one, back from the one just before while each is on
+  file, up to three, most recent first, weighted 5, 4 and 3 by recency (5 and 4 with two seasons,
+  not renormalized). Per player and stat, `(Σ wᵢ · totalᵢ + 100 · mean) / (Σ wᵢ · gamesᵢ + 100)`
+  over the seasons he played in, makes and attempts each a stat of their own; `mean` is the mean
+  per-game rate over the players with twenty games in the most recent season read. A player with
+  twenty games in at least one season read is projected. It needs two earlier seasons. The
+  constants are named in the module and not fitted. A replay of 2025-26 reads 2024-25's lines
+  here as preseason information, as `prior` does; the hold-out is never a replayed season.
+- `oracle:σ`: the replayed season's realized rates of the players with twenty played games,
+  noised on the log scale: a labelled look-ahead whose error is known. `--shape stat` (the
+  default) draws `ε = σ · z_stat` a player and stat, the draws the first replays used, bit for
+  bit. `--shape minutes` draws `ε = σ · (√0.7 · z_player + √0.3 · z_stat)`: `z_stat` the same
+  draw and `z_player` one draw a player from the world's `forecast` stream, shared by every stat,
+  makes and attempts included, so the shared part leaves his percentages alone.
+
+`espn`, `marcel` and the oracle pass their rates through `consistent` (makes within attempts,
+threes within field goals). `prior` stays as the first replays read it: a recorded season keeps
+those identities on its own.
+
+Two diagnostics go to the payload's `forecasters` block and never to a seat. **The error**
+(`error_of`): over the projected players with twenty played games in the replayed season, per
+stat, the mean and the spread of `log(realized rate / forecast rate)` where both are above zero,
+with the count; how many players the forecaster projects and how many of them played twenty; the
+median spread over the stats. An oracle's is measured on path 0 and should sit at its spread, a
+check of the draw. **The freeze check** (`freeze_of`, `espn` only, the replayed season only):
+ESPN updates its stored block through the season, so it may not be the preseason figure. Among
+the projected players who played thirty games or fewer, the check takes their count and the
+median of their projected games, and it counts the projected players whose projected games equal
+the games they played. A preseason projection cannot know who will miss the season, so a median
+below 50 means the block was updated in season: it is flagged, never refused.
+
 ## The replay: what a seat knows (`sim/belief.py`, `sim/nopeek.py`)
 
 A replay plays a made-up league on a season that happened, so its seats must know only what a
 manager could have known on each day. Before #172's PR B1 they did not: every seat's belief moved
 each week toward the season's realized rates, its whole-season average, and the draft and the pool
 took only players who went on to play twenty games. Replay figures from before it (payloads with
-no `replay_version`) are superseded; a replay now writes `replay_version: 2`.
+no `replay_version`) are superseded. A replay wrote `replay_version: 2` from then; it writes 3
+since a run names its forecasters (PR D1), its results and counts keyed by the forecaster's label
+(`prior`, `oracle:0.1`) where version 2 keyed them `prior:0`.
 
 **The belief.** On day `d`, stat by stat, a seat believes
 `(w · the forecaster's figure + the sum of his lines dated before d) / (w + his games before d)`,
 read every day. "Before" is strict: the line of a game played on `d` is in the belief of `d + 1`.
 Makes and attempts are shrunk as stats of their own and the percentages follow from them; the
-result keeps makes within attempts and threes within field goals. The forecaster is the stand-in:
-the prior season's per-game rates, or the oracle (below); each forecaster gets its own belief.
+result keeps makes within attempts and threes within field goals. The forecaster's figure is the
+run's forecaster's (`sim/forecast.py`, above); each forecaster gets its own belief.
 
 **The weights.** One `w` per stat, in games, from the grid 2, 4, 6, 10, 16, 25, 40, 65, 100,
 chosen by the least squared error of each projected player's next game against the belief before
 it, summed over his games in date order; a tie takes the larger weight. They are fitted on the
 seasons on file earlier than the one replayed whose own prior season is on file, with the
 prior-season forecaster, never on the hold-out (a season whose prior season is the hold-out is
-skipped too). With no such season every stat takes 10. The oracle stand-in uses the prior
-forecaster's weights. The weights are computed once per command, from the logs alone, and the
-payload records them, the seasons they came from and whether the default stood; the frozen fit is
-not touched.
+skipped too). With no such season every stat takes 10. Every forecaster takes these weights, the
+prior forecaster's: no fit per forecaster is made, and the payload says so for each. The weights
+are computed once per command, from the logs alone, and the payload records them, the seasons
+they came from and whether the default stood; the frozen fit is not touched.
 
 **The league and the draft.** The league is everyone the season's log lists with a scheduled game.
-The draft is a snake on the stand-in's values over the projected players with a scheduled game in
-the season's first seven days, as an opening-night roster shows; everyone else is on the wire. The
-prior forecaster projects the players with twenty played games in the prior season, the oracle
-those with twenty in the replayed season.
+The draft is a snake on the run's forecaster's values over the projected players with a scheduled
+game in the season's first seven days, as an opening-night roster shows; everyone else is on the
+wire. Who is projected is the forecaster's (above).
+
+**A belief for each seat (PR D1).** A replay's world holds a causal belief for each forecaster a
+seat names, each from its own projection with its own newcomer's prior (the mean of its own
+projected players left undrafted), at the same weights. A seat names its forecaster
+(`opponents.Seat.forecaster`, set from the arm's `forecaster`, which a run sets and a spec file
+does not name); None is the run's. Each day such a seat decides, sets its lineup, is charged its
+forced drops and is scored (the lineup's fallback) on its own forecaster's beliefs and per-game
+values; every other seat, the market, mirror and static rivals among them, on the run's. The label
+is part of the seat and so of the decision cache's key: two arms on different forecasters share no
+decision and both seasons are played in full, while the world's draws (lines, absences, news, the
+market's generator) stay common to them. A day record carries the other forecasters' beliefs a
+variant's seats hold and which team holds which (`held`, `holds`), and the no-peek digest hashes
+them when they are not empty, so a run whose seats all hold the run's forecaster records and
+digests as it did. The season scale reads the arm's own forecaster. The draft and the market's
+ranking stay the run's forecaster's: an arm on a forecaster of its own reads it from the season's
+first day. A drawn world (`compare`, `room`) answers every label with its one shared belief.
+
+**The two sources' stand-ins (PR D1).** The live engine reads two projection systems, Basketball
+Monster and Yahoo, and an arm's `system` knob picks the one it believes (`blend`, a mix at the
+`blend` share). The simulator holds neither, so a replay may name a forecaster to stand in for
+each: `replay --bbm-as F --yahoo-as G`. It names both or neither, the two differ, and each must
+serve the season, else the run is refused by name before any path. With them named, each arm's
+seat believes by its `system`. As modelled:
+
+- `bbm`: the first stand-in's forecast.
+- `yahoo`: a player on no roster that morning reads the second's line where the second projects
+  him and the first's elsewhere; every rostered player, the seat's own and every opponent's,
+  reads the first's.
+- `blend`: the same split; on the available side, for every player the second projects,
+  `share · second + (1 − share) · first` stat by stat (the second's alone where the first has
+  none), the first's for everyone else; `share` is the arm's `blend`, or the engine's default
+  (`progress.BLEND`) when it is None.
+
+The split is the live route's: there the second source's table holds the available players
+only, so an add is judged on the second source against a drop on the first. The available
+side's table is `forecast.system_rates` (a mix passes through `consistent`), believed causally
+like any forecaster; a `yahoo` or `blend` seat's day table (`run.split_beliefs`) takes the first
+stand-in's belief of every player on any roster of its own league that morning, held slots
+included, and that table's belief of every other player. The table follows the rosters: the
+forced drops at the landing are weighed on the rosters as they stand before anything lands, and
+the decision, the lineup, the day record and the score on the rosters after it, so a player
+dropped yesterday reads the available side today and one added yesterday the first's. The seat
+reads one table a day and its values are that table's. The world holds the first stand-in's
+belief whenever an arm's system is `yahoo` or `blend`, with or without a `bbm` arm (the run's
+own belief when the first stand-in is the run's forecaster).
+
+The belief's label names it: `espn`, `yahoo(marcel else espn)`, `blend:0.5(marcel with espn)`,
+and each label gets its own belief (above). The run's forecaster still drafts, runs the market
+and believes for every rival. With stand-ins named, `system` is read by the arm's own seat and
+`blend` when its system is `blend`; without, neither is, and two arms that differ only in them
+are the same seat. A rival never reads them: a mirror believes by the run's forecaster.
+
+What still differs from the live route (`forecast.LIVE_DIFFERENCES`, and the payload's
+`sources.differs`):
+
+1. The second stand-in is a season forecaster; the live second source is a line for the next
+   seven days, so it moves with the week's news and schedule.
+2. Live values each source on its own table (the second's holds only the available players, so
+   its values are scaled within the available pool) and a blended player at the mix of the two;
+   the simulator values the seat's one mixed table, under `yahoo` as under `blend`.
+3. Both stand-ins learn from the same played games at the same weights, so their beliefs close on
+   each other as the season goes, where the two live sources stay apart all year: a `system`
+   difference measured here is weighted to the early weeks.
+4. "Available" is "on no roster in the seat's own league that morning".
+
+An oracle stand-in draws from its role's own keys on the `forecast` stream (labelled
+`oracle:0.2@bbm`, `oracle:0.2@yahoo`), so two oracle stand-ins have independent errors and
+neither shares the run's oracle's draws; two real sources' errors are correlated, so with oracle
+stand-ins the mix's benefit is an upper bound. The payload's `sources` block names the two
+stand-ins, the rule as modelled, what still differs, each system's label, share and rostered
+side (the first stand-in's label for `yahoo` and `blend`, null for `bbm`) with the error of its
+table (the available side's for a split label), and that the result is about two sources with
+these errors, not about the two real sources; `beliefs` names each arm's label, and the
+`forecasters` block carries each stand-in, which role it stands for and its error.
 
 **A newcomer.** A player nobody projected (a rookie, a player who missed most of the prior season)
 is on the wire from day one but in no belief, so no seat can add him, until the day after his first
@@ -397,8 +522,9 @@ part, writes nothing, and exits non-zero on a difference at or before the date.
 - A player's game days are those of the team the log records him on, all season: the schedule of
   a player who was later traded is known from day one.
 - The prior forecaster knows no rookie and nobody who missed the prior season; they arrive by the
-  newcomer's rule. The oracle stand-in is a labelled look-ahead: its figures are the replayed
-  season's own realized rates, noised.
+  newcomer's rule. The oracle is a labelled look-ahead: its figures are the replayed season's own
+  realized rates, noised. `espn`'s stored block may have moved through the season (its freeze
+  check).
 - A replay reads no status on day one, so a drafted player out from opening night is heard to be
   out only `lag` days after his first missed game.
 
@@ -428,7 +554,7 @@ setup, the day and the same variant's day before; a later rule is one more entry
 
 A breach (path, day, variant, seat, rule, what was found) voids its path: the runner records it,
 the command leaves the task out of every aggregate (compare voids a league, shrink and path;
-replay a stand-in and path; room a league and path), lists every breach and the voided tasks in
+replay a forecaster and path; room a league and path), lists every breach and the voided tasks in
 the payload's `audit` block with the rules, writes the payload and exits 3. A dry run audits its
 one task and exits 3 on a breach too; the no-peek check prints the breaches of either season and
 exits 3 before it reads a difference. Nothing is repaired.

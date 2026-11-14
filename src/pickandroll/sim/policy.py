@@ -743,22 +743,23 @@ READ = "read"
 
 @dataclass(frozen=True)
 class Shape:
-    """What of a league decides which knobs a seat reads (#172, PR C): its scoring as the problem
-    reads it, whether it has held slots, whether its bracket is read. Later PRs add to it (F: the
-    waiver rule)."""
+    """What of a league and its run decides which knobs a seat reads (#172, PR C): its scoring
+    as the problem reads it, whether it has held slots, whether its bracket is read, and whether
+    the run names the two sources' stand-ins (PR D1: ``replay --bbm-as``, ``--yahoo-as``). Later
+    PRs add to it (F: the waiver rule)."""
 
     scoring: str = "categories"
     held: bool = False
     bracket: bool = True
+    standins: bool = False
 
     def label(self) -> str:
-        return ", ".join(
-            (
-                f"{self.scoring} league",
-                "held slots" if self.held else "no held slots",
-                "bracket read" if self.bracket else "no bracket read",
-            )
+        parts = (
+            f"{self.scoring} league",
+            "held slots" if self.held else "no held slots",
+            "bracket read" if self.bracket else "no bracket read",
         )
+        return ", ".join((*parts, "the two sources' stand-ins named") if self.standins else parts)
 
 
 def shape_of(setup: Setup) -> Shape:
@@ -782,8 +783,8 @@ class Configured(Protocol):
 
 #: What makes each knob and field read, for the refusal's message.
 WHEN_READ: Mapping[str, str] = {
-    "system": "a forecaster per arm (PR D)",
-    "blend": "a forecaster per arm and their mix (PR D)",
+    "system": "a run that names the two sources' stand-ins (replay --bbm-as, --yahoo-as)",
+    "blend": "a run that names the two sources' stand-ins, on an arm whose system is blend",
     "horizon_weight": "the exact tier executing weighted",
     "protection_floor": "a seat that moves: the exact, surrogate or ranking tier",
     "plan_floor_cats": "the exact tier drawing and executing the week plan in a categories league",
@@ -803,6 +804,8 @@ WHEN_READ: Mapping[str, str] = {
     "surrogate_days": "the surrogate tier",
 }
 STATIC = "a static seat makes no move"
+#: Why ``system`` and ``blend`` are not read on a run without the two sources' stand-ins.
+NO_STANDINS = "the run names no stand-ins for the two sources (--bbm-as, --yahoo-as)"
 
 
 def _odds(arm: Configured, mirrored: bool) -> bool:
@@ -846,8 +849,13 @@ def reads(arm: Configured, shape: Shape, mirrored: bool = False) -> dict[str, st
             why = READ
         out[name] = why
     out["three_weight"] = "it weighs the three weeks in the queue's score: the queue's rule, PR E"
-    out["system"] = "every seat shares the run's forecaster: a forecaster per arm, PR D"
-    out["blend"] = "every seat shares the run's forecaster: a forecaster per arm, PR D"
+    # The arm's own seat believes by its system once the run names the stand-ins; a mirror
+    # rival holds the run's forecaster, so nothing more is read through it.
+    if shape.standins:
+        out["system"] = READ
+        out["blend"] = READ if arm.knobs["system"] == "blend" else "the arm's system is not blend"
+    else:
+        out["system"] = out["blend"] = NO_STANDINS
     out["faab_sizing"] = "the world has no waivers and no budget: PR F"
     out["stash_threshold"] = "the engine reads it since #373; the simulator passes it in PR G"
     if odds:
@@ -973,11 +981,13 @@ def land(
     slot_counts: Mapping[str, int] | None = None,
     status: Mapping[int, str | None] | None = None,
     value: Mapping[int, float] | None = None,
+    values: Mapping[int, Mapping[int, float]] | None = None,
 ) -> SimState:
     """Yesterday's queued moves land, team by team in ``order``. First, given the day's ``status``
-    and ``value``, each team's cleared held players come back and the active roster is trimmed
-    to ``spots`` (:func:`_activate`; each player it sends counts in the team's ``forced_by``,
-    never in ``executed_by`` or ``gone_by``). Then a churn's held drop goes to the pool on his
+    and ``value`` (a team's own in ``values`` when it has one there: its seat's forecaster's),
+    each team's cleared held players come back and the active roster is trimmed to ``spots``
+    (:func:`_activate`; each player it sends counts in the team's ``forced_by``, never in
+    ``executed_by`` or ``gone_by``). Then a churn's held drop goes to the pool on his
     own, as the engine times it (#221), freeing his slot; then the held-slot moves it queued,
     each player to his held slot while the slot has room (``slot_counts``, the league's slots by
     kind) and, given ``status``, only if the slot accepts the status he has that morning
@@ -1000,8 +1010,9 @@ def land(
 
     for team in order:
         roster = rosters.setdefault(team, [])
-        if status is not None and value is not None:
-            left = _activate(roster, spots, status, value)
+        own = (values or {}).get(team, value)
+        if status is not None and own is not None:
+            left = _activate(roster, spots, status, own)
             pool.update(left)
             count(forced, team, len(left))
         moves = state.pending.get(team, ())
@@ -1101,10 +1112,12 @@ def score_day(
     value: Mapping[int, float],
     line: Callable[[int, date], Mapping[str, float] | None],
     starters: Mapping[int, Mapping[int, str]] | None = None,
+    values: Mapping[int, Mapping[int, float]] | None = None,
 ) -> SimState:
     """Every team's starters' lines added to the week's totals; a starter without a line (out at
     game time, unheard) adds nothing. ``starters`` is the day's lineup by team when it is already
-    set (:func:`starters_of` of the same state, status and value); else it is set here."""
+    set (:func:`starters_of` of the same state, status and value); else it is set here, on the
+    team's own value in ``values`` when it has one there (its seat's forecaster's)."""
     week = setup.week_of(day)
     if week is None:
         return state
@@ -1112,7 +1125,7 @@ def score_day(
         lineup = (
             starters[team]
             if starters is not None and team in starters
-            else starters_of(setup, state, team, day, status, value)
+            else starters_of(setup, state, team, day, status, (values or {}).get(team, value))
         )
         for k in lineup:
             ln = line(k, day)

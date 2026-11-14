@@ -115,7 +115,10 @@ class Mirror:
 
 @dataclass(frozen=True)
 class Seat:
-    """An arm in a seat: its tier, knobs, what it executes and its fields."""
+    """An arm in a seat: its tier, knobs, what it executes and its fields, and the forecaster it
+    believes by (#172, PR D1): a label the world holds, None for the run's. Static, market and
+    mirror seats hold the run's. The label is part of the seat, so of the runner's decision
+    cache's key: two seats on different forecasters share no decision."""
 
     name: str
     tier: str
@@ -123,6 +126,7 @@ class Seat:
     executes: str = policy.QUEUE_SET
     with_plan: bool = True
     fields: policy.Fields = policy.DEFAULT_FIELDS
+    forecaster: str | None = None
     kind: str = "seat"
 
     def decide(

@@ -41,6 +41,7 @@ from . import opponents as op
 from .belief import CausalBelief, consistent, newcomer_prior
 from .engine import Week, mv, wk
 from .fit import W_DEFAULT, Component, Hazard
+from .forecast import MIN_GAMES, realized_rates
 from .state import Member, Setup, SimState, initial, round_robin, snake_draft, weeks_from
 
 Rates = Mapping[str, float]
@@ -142,10 +143,19 @@ class Arm:
     with_plan: bool = True
     execute_plan: bool = False
     fields: policy.Fields = policy.DEFAULT_FIELDS
+    #: The forecaster the arm's seat believes by (#172, PR D1): a label the run's world holds,
+    #: None for the run's own. A run sets it; a spec file does not name it.
+    forecaster: str | None = None
 
     def seat(self) -> op.Seat:
         return op.Seat(
-            self.name, self.tier, dict(self.knobs), self.executes, self.with_plan, self.fields
+            self.name,
+            self.tier,
+            dict(self.knobs),
+            self.executes,
+            self.with_plan,
+            self.fields,
+            self.forecaster,
         )
 
 
@@ -220,6 +230,7 @@ def same_seat(
             arm.with_plan,
             arm.execute_plan,
             sorted(arm.opponents.items()) if rivals else None,
+            arm.forecaster,
         )
 
     if identity(a) != identity(b):
@@ -264,7 +275,11 @@ class World:
     ``belief`` is one of :data:`BELIEFS`: ``refresh`` moves the projection toward ``truth`` each
     week at ``kappa`` with noise ``sigma_eta``; ``causal`` reads ``causal`` (a
     :class:`belief.CausalBelief`) on each day; ``fixed`` is the projection all season. The told
-    return date's spread is ``news_sd`` days."""
+    return date's spread is ``news_sd`` days. ``label`` names the run's forecaster, whose belief
+    that is; a causal world may hold a belief for other forecasters too (``others``, by label),
+    which a seat names (``opponents.Seat.forecaster``; #172, PR D1). ``split`` maps a split
+    label (a ``yahoo`` or ``blend`` seat's) to its rostered side's label: such a seat reads that
+    label's belief for every rostered player and its own for the rest (:meth:`seat_beliefs`)."""
 
     def __init__(
         self,
@@ -282,11 +297,16 @@ class World:
         sigma_eta: float = 0.0,
         causal: CausalBelief | None = None,
         news_sd: float = world.NEWS_SD_DAYS,
+        label: str | None = None,
+        others: Mapping[str, CausalBelief] | None = None,
+        split: Mapping[str, str] | None = None,
     ) -> None:
         if belief not in BELIEFS:
             raise ValueError(f"belief {belief!r}: one of {BELIEFS}")
         if belief == "causal" and causal is None:
             raise ValueError("a causal belief needs its CausalBelief")
+        if others and belief != "causal":
+            raise ValueError("only a causal world holds a belief for each forecaster")
         self.setup = setup
         self.seed, self.path = seed, path
         self.truth = truth
@@ -298,6 +318,13 @@ class World:
         self.kind = kind
         self.belief = belief
         self.causal = causal
+        self.label = label
+        self.others = {k: v for k, v in (others or {}).items() if k != label}
+        self.split = dict(split or {})
+        for name, rostered in self.split.items():
+            for held in (name, rostered):
+                if held != label and held not in self.others:
+                    raise ValueError(f"forecaster {held!r}: the world holds no belief for it")
         self.news_sd = float(news_sd)
         self._avail: dict[int, np.ndarray] = {}
         self._absences: dict[int, list[world.Absence]] = {}
@@ -366,12 +393,35 @@ class World:
             self._weeks = out
         return self._weeks.get(day, 0)
 
-    def beliefs_on(self, day: date) -> Mapping[int, Rates]:
-        """The shared beliefs the seats decide on, on ``day``."""
+    def beliefs_on(self, day: date, label: str | None = None) -> Mapping[int, Rates]:
+        """The beliefs a seat decides on, on ``day``: the run's forecaster's (``label`` None or
+        the run's), or another forecaster's the world holds. A drawn world (``refresh``,
+        ``fixed``) answers every label with its one shared belief."""
         if self.belief == "causal":
+            if label is not None and label != self.label:
+                if label not in self.others:
+                    raise ValueError(f"forecaster {label!r}: the world holds no belief for it")
+                return self.others[label].on(day)
             assert self.causal is not None
             return self.causal.on(day)
         return self.beliefs(self.week_index(day))
+
+    def seat_beliefs(
+        self, day: date, label: str | None, rostered: frozenset[int]
+    ) -> Mapping[int, Rates]:
+        """What a seat holding ``label`` believes on ``day`` with ``rostered`` the players on any
+        roster that morning: :meth:`beliefs_on` for a plain label; for a split one
+        (:attr:`split`), its rostered side's belief of every rostered player and its own of
+        every other (:func:`split_beliefs`)."""
+        if label is None or label not in self.split:
+            return self.beliefs_on(day, label)
+        return split_beliefs(
+            self.beliefs_on(day, label), self.beliefs_on(day, self.split[label]), rostered
+        )
+
+    def own(self, label: str | None) -> str | None:
+        """``label`` as a seat holds it: None when it is the run's forecaster's."""
+        return None if label is None or label == self.label else label
 
     def status_on(self, day: date) -> tuple[dict[int, str | None], dict[int, date]]:
         """What the policy has heard by ``day``: ``O`` with the return date it was told for an
@@ -492,24 +542,32 @@ def replay_world(
     weights: Mapping[str, float] | None = None,
     belief: str = "causal",
     news_sd: float = world.NEWS_SD_DAYS,
+    label: str | None = None,
+    forecasts: Mapping[str, Mapping[int, Rates]] | None = None,
+    split: Mapping[str, str] | None = None,
 ) -> World:
     """A replay's world: the recorded lines are the truth of every game, a game day without a
     line an absence. The seats' belief is ``causal`` (the setup's projection updated with the
     games played before each day, at ``weights``, :data:`fit.W_DEFAULT` for a stat without one;
     a player nobody projected on the newcomer's prior once he has played) or ``fixed`` (the
-    projection all season, the hold-out gate's)."""
+    projection all season, the hold-out gate's). ``label`` names the run's forecaster, whose
+    projection the setup holds; ``forecasts`` are other forecasters' projections by label, each
+    believed the same way with its own newcomer's prior (the mean of its own projected players
+    left undrafted), for the seats that name them (#172, PR D1). ``split`` maps each split label
+    among them to its rostered side's label (:class:`World`)."""
     game_days = game_days_of(setup)
     causal = None
+    others: dict[str, CausalBelief] = {}
     if belief == "causal":
         w = {s: float((weights or {}).get(s, W_DEFAULT)) for s in wk.STATS}
-        undrafted = [k for k in setup.pool if k in setup.projection]
-        causal = CausalBelief(
-            setup.players,
-            setup.projection,
-            lines,
-            w,
-            newcomer_prior(setup.projection, undrafted),
-        )
+        causal = causal_belief(setup, setup.projection, lines, w)
+        others = {
+            name: causal_belief(setup, rates, lines, w)
+            for name, rates in (forecasts or {}).items()
+            if name != label
+        }
+    elif forecasts or split:
+        raise ValueError("only a causal world holds a belief for each forecaster")
 
     def available(player: int) -> np.ndarray:
         days = game_days.get(player, [])
@@ -533,6 +591,48 @@ def replay_world(
         belief=belief,
         causal=causal,
         news_sd=news_sd,
+        label=label,
+        others=others,
+        split=split,
+    )
+
+
+def rostered_of(state: SimState) -> frozenset[int]:
+    """The players on any roster of ``state``, held slots included."""
+    return frozenset(k for roster in state.rosters.values() for k, _ in roster)
+
+
+def split_beliefs(
+    system: Mapping[int, Rates], rostered_side: Mapping[int, Rates], rostered: frozenset[int]
+) -> dict[int, Rates]:
+    """A split seat's table (#172, PR D1): a player in ``rostered`` reads ``rostered_side``'s
+    belief of him, whatever it is (none when it has none); every other player ``system``'s.
+    In ``system``'s order, then the rostered players only ``rostered_side`` believes."""
+    out: dict[int, Rates] = {}
+    for k, v in system.items():
+        if k not in rostered:
+            out[k] = v
+        elif k in rostered_side:
+            out[k] = rostered_side[k]
+    for k, v in rostered_side.items():
+        if k in rostered and k not in out:
+            out[k] = v
+    return out
+
+
+def causal_belief(
+    setup: Setup,
+    projection: Mapping[int, Rates],
+    lines: Mapping[int, Mapping[date, Mapping[str, float]]],
+    weights: Mapping[str, float],
+) -> CausalBelief:
+    """The league's players believed from ``projection`` (its players outside the league left
+    out), a player it does not project on the newcomer's prior: the mean of its own projected
+    players left undrafted."""
+    projected = {k: v for k, v in projection.items() if k in setup.players}
+    undrafted = [k for k in setup.pool if k in projected]
+    return CausalBelief(
+        setup.players, projected, lines, weights, newcomer_prior(projected, undrafted)
     )
 
 
@@ -568,6 +668,8 @@ def _record(
     status: Mapping[int, str | None],
     returns: Mapping[int, date],
     starters: Mapping[int, Mapping[int, str]],
+    held: Mapping[str, Mapping[int, Rates]] | None = None,
+    holds: Mapping[int, str] | None = None,
 ) -> DayRecord:
     on = {t: {k for k, _ in r} for t, r in state.rosters.items()}
     return DayRecord(
@@ -581,6 +683,8 @@ def _record(
         {t: moves for t, moves in state.pending.items() if moves},
         dict(starters),
         state,
+        dict(held or {}),
+        dict(holds or {}),
     )
 
 
@@ -603,7 +707,8 @@ class DayRecord:
 
     day: date
     variant: int
-    #: The shared beliefs and what the seats have heard (statuses, told return dates).
+    #: The run's forecaster's beliefs and what the seats have heard (statuses, told return
+    #: dates).
     beliefs: Mapping[int, Rates]
     status: Mapping[int, str | None]
     returns: Mapping[int, date]
@@ -616,6 +721,56 @@ class DayRecord:
     starters: Mapping[int, Mapping[int, str]]
     #: The variant's state, the day's totals not yet added.
     state: SimState
+    #: The beliefs of every other forecaster a seat of the variant holds, by label (a split
+    #: label's the table its seat read that day, after the landing), and the label each such
+    #: team holds (#172, PR D1); both empty when every seat holds the run's.
+    held: Mapping[str, Mapping[int, Rates]] = field(default_factory=dict)
+    holds: Mapping[int, str] = field(default_factory=dict)
+
+
+def holds_of(w: World, variant: Mapping[int, op.Strategy]) -> dict[int, str]:
+    """The teams of ``variant`` whose seat names a forecaster other than the run's, with its
+    label (``opponents.Seat.forecaster``; a rival holds the run's)."""
+    out: dict[int, str] = {}
+    for team, strat in variant.items():
+        label = w.own(getattr(strat, "forecaster", None))
+        if label is not None:
+            out[team] = label
+    return out
+
+
+class _Tables:
+    """One day's beliefs and per-game values for the labels the seats hold: a plain label's
+    once for the day, a split label's (``World.split``) once for each set of rostered players
+    it is read on."""
+
+    def __init__(
+        self,
+        w: World,
+        day: date,
+        labels: Sequence[str],
+        cats: Sequence[str],
+        points: Mapping[str, float] | None,
+    ) -> None:
+        self.w, self.day, self.cats, self.points = w, day, cats, points
+        self.held = {label: w.beliefs_on(day, label) for label in labels}
+        self.value = {
+            label: wk.per_game_values(b, cats, points)
+            for label, b in self.held.items()
+            if label not in w.split
+        }
+        self._mixed: dict[tuple[str, frozenset[int]], tuple[dict[int, Rates], Any]] = {}
+
+    def of(self, label: str, state: SimState) -> tuple[Mapping[int, Rates], Mapping[int, float]]:
+        """The beliefs and values a seat holding ``label`` reads on ``state``'s rosters."""
+        if label not in self.w.split:
+            return self.held[label], self.value[label]
+        key = (label, rostered_of(state))
+        if key not in self._mixed:
+            first = self.w.beliefs_on(self.day, self.w.split[label])
+            table = split_beliefs(self.held[label], first, key[1])
+            self._mixed[key] = (table, wk.per_game_values(table, self.cats, self.points))
+        return self._mixed[key]
 
 
 def simulate(
@@ -629,7 +784,12 @@ def simulate(
     """Every variant (a strategy by seat) through one world in lockstep. Each day, after the
     lineup is set and before the day's lines are read, the audit (``sim.audit``: ``rules``, or
     :data:`audit.RULES`) reads every variant's day and its counts are tallied; ``on_day`` is
-    handed a :class:`DayRecord` for each variant and day at the same point."""
+    handed a :class:`DayRecord` for each variant and day at the same point. A seat that names
+    a forecaster (``opponents.Seat.forecaster``) decides, sets its lineup and is charged its
+    forced drops on that forecaster's beliefs and values; every other seat on the run's. A
+    split seat (``World.split``) reads its table on the rosters before the landing for the
+    forced drops, and on the rosters after it for the rest of the day. The world's draws are
+    common to all of them."""
     n = len(variants)
     states = [initial(setup) for _ in range(n)]
     solves = [0] * n
@@ -639,6 +799,8 @@ def simulate(
     spots, slot_counts = setup.spots(), Counter(setup.roster_slots)
     auditor = audit.Auditor(setup, rules, w.path)
     tallies = [ct.Tally(setup) for _ in range(n)]
+    holds = [holds_of(w, v) for v in variants]
+    labels = sorted({label for h in holds for label in h.values()})
     made: Week | None = None  # the week of the last simulated day, when yesterday's moves were made
     for di, day in enumerate(setup.days):
         week = setup.week_of(day)
@@ -648,17 +810,32 @@ def simulate(
         beliefs = w.beliefs_on(day)
         status, returns = w.status_on(day)
         value = wk.per_game_values(beliefs, setup.cats, points)
+        tables = _Tables(w, day, labels, setup.cats, points)
+        # A split seat's forced drops are weighed on the rosters before anything lands.
+        values = [
+            {t: tables.of(label, s)[1] for t, label in h.items()}
+            for h, s in zip(holds, states, strict=True)
+        ]
         # Yesterday's moves land first, cleared held players back and the held-slot moves made
         # before them: on a Monday they were made on Sunday and spend the ending week's adds, so
         # the week's count starts over only once they are in.
         order = _rotation(setup.teams, di)
         due = [s.pending for s in states]
         before = [s.executed_by for s in states]
-        states = [policy.land(s, order, spots, slot_counts, status, value) for s in states]
+        states = [
+            policy.land(s, order, spots, slot_counts, status, value, values[vi])
+            for vi, s in enumerate(states)
+        ]
         for vi, s in enumerate(states):
             tallies[vi].charge((made or week).number, before[vi], s.executed_by)
         if monday:
             states = [policy.new_week(s) for s in states]
+        # From here on, the day's rosters: yesterday's moves are in, today's land tomorrow.
+        seats = [
+            {t: tables.of(label, s) for t, label in h.items()}
+            for h, s in zip(holds, states, strict=True)
+        ]
+        values = [{t: tv[1] for t, tv in seat.items()} for seat in seats]
         cache: dict[tuple[Any, ...], policy.Decision] = {}
         lineups: list[dict[int, dict[int, str]]] = []
         for vi, state in enumerate(states):
@@ -674,7 +851,8 @@ def simulate(
                     shared[vi] += decision.solves
                 else:
                     g = w.market_rng(team, di)
-                    decision = strat.decide(setup, state, team, beliefs, status, returns, g)
+                    mine = seats[vi][team][0] if team in seats[vi] else beliefs
+                    decision = strat.decide(setup, state, team, mine, status, returns, g)
                     cache[key] = decision
                     solves[vi] += decision.solves
                 decided[team] = decision
@@ -683,17 +861,33 @@ def simulate(
                 )
             states[vi] = state
             lineup = {
-                t: policy.starters_of(setup, state, t, day, status, value) for t in setup.teams
+                t: policy.starters_of(setup, state, t, day, status, values[vi].get(t, value))
+                for t in setup.teams
             }
             lineups.append(lineup)
             auditor.check(audit.Day(day, vi, state, status, lineup))
             tallies[vi].day(week.number, state)
             if on_day is not None:
                 on_day(
-                    _record(setup, vi, state, due[vi], decided, beliefs, status, returns, lineup)
+                    _record(
+                        setup,
+                        vi,
+                        state,
+                        due[vi],
+                        decided,
+                        beliefs,
+                        status,
+                        returns,
+                        lineup,
+                        {
+                            label: seats[vi][t][0]
+                            for label, t in sorted({lb: t for t, lb in holds[vi].items()}.items())
+                        },
+                        holds[vi],
+                    )
                 )
         states = [
-            policy.score_day(setup, s, day, status, value, w.line, lineups[vi])
+            policy.score_day(setup, s, day, status, value, w.line, lineups[vi], values[vi])
             for vi, s in enumerate(states)
         ]
         for vi in range(n):
@@ -749,10 +943,10 @@ def opponents_of(setup: Setup, arm: Arm, me: int) -> dict[int, op.Strategy]:
 
 def scale_on(setup: Setup, w: World, arm: Arm, team: int) -> dict[str, Any] | None:
     """The season scale (``policy.scale_of``) for ``arm`` in seat ``team`` on the path's first
-    simulated day, on the state, beliefs and statuses the seat decides on there (yesterday's
-    nothing landed, cleared held players back). None on the ranking tier and a static seat. It
-    reads the world's cached figures, draws nothing from a generator and decides nothing, so no
-    outcome and no solve count changes with it."""
+    simulated day, on the state, beliefs (the arm's forecaster's) and statuses the seat decides
+    on there (yesterday's nothing landed, cleared held players back). None on the ranking tier
+    and a static seat. It reads the world's cached figures, draws nothing from a generator and
+    decides nothing, so no outcome and no solve count changes with it."""
     if arm.tier not in ("exact", "surrogate"):
         return None
     di, day = next(
@@ -761,17 +955,28 @@ def scale_on(setup: Setup, w: World, arm: Arm, team: int) -> dict[str, Any] | No
     if day is None:
         return None
     status, returns = w.status_on(day)
-    beliefs = w.beliefs_on(day)
+    first = initial(setup)
+    # A split seat's table follows the rosters: before the landing for it, after for the scale.
+    beliefs = w.seat_beliefs(day, w.own(arm.forecaster), rostered_of(first))
     points = dict(setup.points) if setup.scoring == "points" and setup.points else None
     value = wk.per_game_values(beliefs, setup.cats, points)
+    # Every other seat lands on the run's forecaster's values, as in the season.
+    rivals = (
+        value
+        if w.own(arm.forecaster) is None
+        else wk.per_game_values(w.beliefs_on(day), setup.cats, points)
+    )
     state = policy.land(
-        initial(setup),
+        first,
         _rotation(setup.teams, di),
         setup.spots(),
         Counter(setup.roster_slots),
         status,
-        value,
+        rivals,
+        {team: value},
     )
+    if w.own(arm.forecaster) in w.split:
+        beliefs = w.seat_beliefs(day, w.own(arm.forecaster), rostered_of(state))
     built = policy.problem_of(
         setup,
         replace(state, day=day),
@@ -944,9 +1149,10 @@ REPLAY_WEEKS = 22
 REPLAY_PLAYOFF_WEEKS = 3
 REPLAY_PLAYOFF_TEAMS = 6
 REPLAY_TEAMS = 12
-#: A stand-in forecaster projects a player with at least this many played games in the season
-#: it reads: the prior season for the prior-season forecaster, the replayed one for the oracle.
-STANDIN_MIN_GAMES = 20
+#: A forecaster built from lines projects a player with at least this many played games in the
+#: season it reads: the prior season for ``prior``, the replayed one for the oracle
+#: (``forecast.MIN_GAMES``).
+STANDIN_MIN_GAMES = MIN_GAMES
 #: The gates read the players with at least this many played games in the season.
 GATE_MIN_GAMES = 20
 #: A replay's draft takes the projected players with a scheduled game in the season's first this
@@ -958,7 +1164,7 @@ def replay_setup(
     season: int,
     lines: Mapping[int, Mapping[date, Mapping[str, float]]],
     players: Mapping[int, Member],
-    standin: Mapping[int, Rates],
+    projection: Mapping[int, Rates],
     period_one: date,
     scheduled: Mapping[int, Sequence[date]] | None = None,
     teams: int = REPLAY_TEAMS,
@@ -972,13 +1178,13 @@ def replay_setup(
     """A made-up league on a recorded season, from what is known before it starts. Its players
     are everyone ``players`` lists with a scheduled game, projected or not; ``teams`` seats
     snake-draft the projected ones with a scheduled game in the season's first ``opening_days``
-    days (from ``period_one``; None drafts every projected player) on the stand-in projection,
-    and everyone else is on the wire. A round robin over the regular weeks, the bracket reseeded
-    with the higher seed through a tie. Every player is his own team in the schedule
-    (``p<id>``): his game days are his ``scheduled`` entries (played or not; the days he has a
-    line for when none are given), so a trade or a team read later than the season moves
-    nothing. Every day of the calendar is a key of the schedule, an empty set when nobody plays:
-    no day is unread, so the engine extrapolates no game (#172, PR C2)."""
+    days (from ``period_one``; None drafts every projected player) on ``projection``, the run's
+    forecaster's, and everyone else is on the wire. A round robin over the regular weeks, the
+    bracket reseeded with the higher seed through a tie. Every player is his own team in the
+    schedule (``p<id>``): his game days are his ``scheduled`` entries (played or not; the days
+    he has a line for when none are given), so a trade or a team read later than the season
+    moves nothing. Every day of the calendar is a key of the schedule, an empty set when nobody
+    plays: no day is unread, so the engine extrapolates no game (#172, PR C2)."""
     schedule: dict[date, set[str]] = {}
     members: dict[int, Member] = {}
     game_days: dict[int, list[date]] = {}
@@ -1002,7 +1208,7 @@ def replay_setup(
     playoffs = tuple(range(weeks - playoff_weeks + 1, weeks + 1))
     ids = tuple(range(1, teams + 1))
     pairings = round_robin(ids, regular)
-    projected = [k for k in standin if k in members]
+    projected = [k for k in projection if k in members]
     opening = None if opening_days is None else period_one + timedelta(opening_days - 1)
     draftable = [
         k
@@ -1010,7 +1216,7 @@ def replay_setup(
         if opening is None or any(period_one <= d <= opening for d in game_days[k])
     ]
     points = None
-    value = wk.per_game_values({k: standin[k] for k in projected}, tuple(cats), points)
+    value = wk.per_game_values({k: projection[k] for k in projected}, tuple(cats), points)
     spots = sum(1 for s in slots if s not in mv.HELD)
     rosters = snake_draft(draftable, value, ids, spots)
     taken = {k for r in rosters.values() for k, _ in r}
@@ -1033,7 +1239,7 @@ def replay_setup(
         players=members,
         rosters=rosters,
         pool=tuple(k for k in members if k not in taken),
-        projection={k: dict(standin[k]) for k in projected},
+        projection={k: dict(projection[k]) for k in projected},
         schedule={d: frozenset(t) for d, t in schedule.items()},
         roster_slots=tuple(slots),
         cats=tuple(cats),
@@ -1041,40 +1247,6 @@ def replay_setup(
         market={k: value.get(k, 0.0) for k in projected},
         spec=spec,
     )
-
-
-def realized_rates(
-    lines: Mapping[int, Mapping[date, Mapping[str, float]]], min_games: int = 1
-) -> dict[int, dict[str, float]]:
-    """Each player's per-game rates over the games he played, for those with ``min_games``."""
-    out: dict[int, dict[str, float]] = {}
-    for k, by_day in lines.items():
-        n = len(by_day)
-        if not n or n < min_games:
-            continue
-        totals: dict[str, float] = {}
-        for ln in by_day.values():
-            for stat, x in ln.items():
-                totals[stat] = totals.get(stat, 0.0) + float(x)
-        out[k] = {stat: v / n for stat, v in totals.items() if stat in wk.STATS}
-    return out
-
-
-def oracle_standin(
-    lines: Mapping[int, Mapping[date, Mapping[str, float]]],
-    spread: float,
-    seed: int,
-    path: int,
-    min_games: int = STANDIN_MIN_GAMES,
-) -> dict[int, dict[str, float]]:
-    """The replayed season's realized rates noised on the log scale at ``spread`` per player and
-    stat: a stand-in projection whose error is known, a labelled look-ahead. It projects only the
-    players with ``min_games`` played games in the replayed season, a stated part of that
-    look-ahead; the others arrive by the newcomer's rule."""
-    truth = realized_rates(lines, min_games)
-    keys = sorted(truth)
-    eps = world.errors(seed, path, keys, list(wk.STATS), 0.0, {}, dict.fromkeys(wk.STATS, spread))
-    return {k: consistent(v) for k, v in world.true_rates({k: truth[k] for k in keys}, eps).items()}
 
 
 __all__ = [
@@ -1098,16 +1270,17 @@ __all__ = [
     "forward_world",
     "inputs_of",
     "mirrored",
-    "oracle_standin",
     "paired",
     "realized_rates",
     "replay_setup",
     "replay_world",
     "room",
+    "rostered_of",
     "rotate",
     "run_tasks",
     "same_seat",
     "scale_on",
     "simulate",
+    "split_beliefs",
     "verdict",
 ]

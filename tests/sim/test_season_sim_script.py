@@ -15,7 +15,10 @@ import pytest
 from pickandroll.sim import audit
 from pickandroll.sim import cli as ss
 from pickandroll.sim import counts as ct
+from pickandroll.sim import forecast as fc
+from pickandroll.sim import readers as reader
 from pickandroll.sim import run as rn
+from pickandroll.sim.engine import wk
 from tests.sim.sim_fixtures import synthetic_lines
 from tests.sim.test_gamelogs import body, entry, line
 
@@ -176,11 +179,7 @@ def test_the_guard_refuses_a_span_that_touches_the_window():
     assert ss.guard(expected_hours=0.5, now=evening, rooms=0, nice=None) == (True, "ok")
 
 
-def test_parse_standin_and_the_estimate():
-    assert ss.parse_standin("prior") == [("prior", 0.0)]
-    assert ss.parse_standin("oracle:0.1,0.3") == [("oracle", 0.1), ("oracle", 0.3)]
-    with pytest.raises(ValueError):
-        ss.parse_standin("gospel")
+def test_the_estimate():
     assert ss.estimate_hours(36.0, 100, 10) == pytest.approx(0.1)
 
 
@@ -317,7 +316,7 @@ def test_replay_and_room_record_their_runs(run_data: Path):
                 "replay",
                 "--season",
                 "2024",
-                "--standin",
+                "--forecasters",
                 "prior",
                 "--seats",
                 str(data / "A.json"),
@@ -334,14 +333,14 @@ def test_replay_and_room_record_their_runs(run_data: Path):
     assert (
         payload["kind"] == "replay" and payload["season"] == 2024 and payload["seats"] == ["A", "B"]
     )
-    assert payload["standins"] == [{"kind": "prior", "spread": 0.0}] and payload["tau"][
-        "source"
-    ].startswith("not used")
-    assert set(payload["results"]["prior:0"]) == {"A", "B"} and payload["draft"].startswith("snake")
+    assert list(payload["forecasters"]) == ["prior"] and payload["tau"]["source"].startswith(
+        "not used"
+    )
+    assert set(payload["results"]["prior"]) == {"A", "B"} and payload["draft"].startswith("snake")
     # The seats believe only the games played: the payload names the belief, its weights and
     # where they came from (no season before 2024 has its prior season on file: the default),
     # the newcomer's rule, the pool and the news spread, and the weekly refresh as not used.
-    assert payload["replay_version"] == 2 and payload["belief"]["kind"] == "causal"
+    assert payload["replay_version"] == 3 and payload["belief"]["kind"] == "causal"
     weights = payload["belief"]["weights"]
     assert weights["default"] is True and weights["seasons"] == []
     assert set(weights["weights"].values()) == {10.0} and weights["grid"][0] == 2
@@ -357,7 +356,7 @@ def test_replay_and_room_record_their_runs(run_data: Path):
                 "replay",
                 "--season",
                 "2024",
-                "--standin",
+                "--forecasters",
                 "oracle:0.2",
                 "--seats",
                 str(data / "A.json"),
@@ -407,6 +406,78 @@ def test_replay_and_room_record_their_runs(run_data: Path):
         and room["results"]["by_arm"]["A"]["rank"]["n"] == 1
     )
     assert len(_runs(data)) == before + 2
+
+
+# --------------------------------------------------------------------------- forecasters (PR D1)
+@pytest.fixture(scope="module")
+def blocks_data(tmp_path_factory) -> Path:
+    """The synthetic folder with ESPN's stored projection blocks in its logs, fitted, with the
+    two arms."""
+    data = make_data_dir(tmp_path_factory.mktemp("blocks"), projection=True)
+    assert ss.main(["--data", str(data), "--rooms", "0", "fit", "--seasons", "2023-2024"]) == 0
+    for name, tier in (("A", "exact"), ("B", "ranking")):
+        spec = {"name": name, "tier": tier, "knobs": KNOBS, "opponents": {"kind": "market"}}
+        (data / f"{name}.json").write_text(json.dumps(spec))
+    return data
+
+
+def test_the_forecasters_block_names_each_forecaster(blocks_data: Path):
+    named = fc.parse("prior,espn,marcel,oracle:0.2")
+    lines, _, _ = reader.replay_lines(blocks_data, 2026)
+    fixed = ss.fixed_of(blocks_data, 2026, named)
+    assert fixed.marcel_seasons == (2025, 2024, 2023)  # 2025 read as preseason information
+    block = ss.forecasters_block(named, fixed, lines, 5, "stat")
+    assert list(block) == ["prior", "espn", "marcel", "oracle:0.2"]
+    for label, b in block.items():
+        want = {"name", "source", "projected", "played", "error", "weights"}
+        assert set(b) == (want | {"freeze"} if label == "espn" else want), label
+        assert b["played"] <= b["projected"] and "prior forecaster" in b["weights"]
+        assert set(b["error"]["by_stat"]) == set(wk.STATS)
+    assert block["prior"]["projected"] == len(reader.prior_rates(blocks_data, 2026))
+    assert block["espn"]["projected"] == 79  # every seventh block has no games count
+    assert block["espn"]["freeze"]["median_projected_games"] == 70.0
+    assert block["espn"]["freeze"]["flagged"] is False
+    assert "2025, 2024, 2023" in block["marcel"]["source"]
+    # An oracle's error, measured on path 0, sits at its spread: a check of the draw.
+    oracle = block["oracle:0.2"]["error"]
+    assert oracle["measured_on"].startswith("path 0")
+    assert oracle["median_spread"] == pytest.approx(0.2, abs=0.04)
+    minutes = ss.forecasters_block(named[3:], fixed, lines, 5, "minutes")["oracle:0.2"]
+    assert "minutes shape" in minutes["source"]
+
+
+def test_a_replay_keys_its_figures_by_forecaster(blocks_data: Path, capsys):
+    data = blocks_data
+    base = ["--data", str(data), "--rooms", "0", "replay", "--seats"]
+    seats = [str(data / "A.json"), str(data / "B.json")]
+    run = [*base, *seats, "--season", "2024", "--paths", "1", "--workers", "1"]
+    assert ss.main([*run, "--forecasters", "espn,oracle:0.2"]) == 0
+    out = capsys.readouterr().out
+    assert "2 tasks (2 forecasters x 1 paths)" in out
+    payload = json.loads(_written(out).read_text())
+    assert payload["replay_version"] == 3 and payload["oracle_shape"] == "stat"
+    assert list(payload["forecasters"]) == ["espn", "oracle:0.2"]
+    assert set(payload["results"]) == {"espn", "oracle:0.2"}
+    assert set(payload["counts"]["by_forecaster"]) == {"espn", "oracle:0.2"}
+    assert set(payload["results"]["espn"]) == {"A", "B"}
+    assert "standins" not in payload and "prior forecaster" in payload["belief"]["forecasters"]
+    # A forecaster that cannot serve the season refuses the run by name, before any path.
+    for flags, why in (
+        (["--forecasters", "marcel"], "marcel needs 2 earlier seasons on file, it has 1"),
+        (["--forecasters", "prior", "--season", "2023"], "prior: season 2022: no cached log"),
+        (["--forecasters", "gospel"], "forecaster 'gospel'"),
+        (["--forecasters", "prior,prior"], "prior is named twice"),
+    ):
+        assert ss.main([*run, *flags]) == 2
+        assert why in capsys.readouterr().out
+
+
+def test_espn_cannot_serve_a_log_without_its_blocks(run_data: Path, capsys):
+    data = run_data
+    args = ["--data", str(data), "--rooms", "0", "replay", "--season", "2024"]
+    args += ["--forecasters", "espn", "--seats", str(data / "A.json"), str(data / "B.json")]
+    assert ss.main(args) == 2
+    assert "espn: season 2024's log holds no projection block" in capsys.readouterr().out
 
 
 def test_the_no_peek_check_agrees_through_its_date_and_writes_nothing(run_data: Path, capsys):
@@ -518,7 +589,7 @@ def _replay(data: Path, *extra: str) -> list[str]:
         "replay",
         "--season",
         "2024",
-        "--standin",
+        "--forecasters",
         "prior",
         "--seats",
         str(data / "A.json"),
@@ -580,7 +651,7 @@ def replays(run_data: Path) -> dict:
     for name, workers in (("one", "1"), ("again", "1"), ("two", "2")):
         with pytest.MonkeyPatch.context() as mp:
             if workers == "1":
-                out[f"{name}_tasks"] = _spy_tasks(mp, "task_replay", 12)
+                out[f"{name}_tasks"] = _spy_tasks(mp, "task_replay", 14)
             buf = io.StringIO()
             with contextlib.redirect_stdout(buf):
                 code = ss.main(_replay(data, "--paths", "3", "--seed", "5", "--workers", workers))
@@ -603,7 +674,7 @@ def test_a_replay_payload_carries_the_counts_and_the_audit(replays):
     p = replays["one"]
     assert p["audit"]["paths_voided"] == 0 and p["audit"]["breaches"] == []
     assert [r["name"] for r in p["audit"]["rules"]] == [r.name for r in audit.RULES]
-    counts = p["counts"]["by_standin"]["prior:0"]
+    counts = p["counts"]["by_forecaster"]["prior"]
     assert set(counts) == {"A", "B"} and p["counts"]["rivals"] is None
     assert set(counts["A"]) == set(ct.METRICS) and counts["A"]["landed"]["n"] == 3
     assert counts["A"]["starter_games"]["mean"] > 0
@@ -614,25 +685,25 @@ def test_a_breach_voids_its_path_and_only_its_path(run_data: Path, replays, caps
     data = run_data
     clean = replays["one_tasks"]
     with pytest.MonkeyPatch.context() as mp:
-        seen = _spy_tasks(mp, "task_replay", 12)
+        seen = _spy_tasks(mp, "task_replay", 14)
         _plant(mp, 1)
         code = ss.main(_replay(data, "--paths", "3", "--seed", "5", "--workers", "1"))
     out = capsys.readouterr().out
     assert code == ss.AUDIT_EXIT and "AUDIT: 1 breach(es) voided 1 path(s)" in out
     payload = json.loads(_written(out).read_text())  # written all the same
     note = payload["audit"]
-    assert note["paths_voided"] == 1 and note["voided"] == [{"standin": "prior:0", "path": 1}]
+    assert note["paths_voided"] == 1 and note["voided"] == [{"forecaster": "prior", "path": 1}]
     ((b),) = note["breaches"]
-    assert (b["standin"], b["path"], b["rule"], b["seat"]) == ("prior:0", 1, "planted", 1)
+    assert (b["forecaster"], b["path"], b["rule"], b["seat"]) == ("prior", 1, "planted", 1)
     # The paths that stand ran as they did without the breach, and only they are aggregated.
     for p in (0, 2):
         assert seen[p] == clean[p]
     for arm in ("A", "B"):
         want = rn.aggregate([clean[p]["by_arm"][arm] for p in (0, 2)])
-        assert payload["results"]["prior:0"][arm] == json.loads(json.dumps(want))
-        assert payload["results"]["prior:0"][arm]["made_playoffs"]["n"] == 2
+        assert payload["results"]["prior"][arm] == json.loads(json.dumps(want))
+        assert payload["results"]["prior"][arm]["made_playoffs"]["n"] == 2
         counts = ss.counts_of([clean[p]["counts"][arm] for p in (0, 2)])
-        assert payload["counts"]["by_standin"]["prior:0"][arm] == json.loads(json.dumps(counts))
+        assert payload["counts"]["by_forecaster"]["prior"][arm] == json.loads(json.dumps(counts))
 
 
 def test_compare_and_room_void_a_breached_path_and_carry_the_counts(run_data: Path, capsys):
@@ -777,7 +848,7 @@ def test_a_replay_with_a_wire_lands_moves_and_voids_nothing(wire_data: Path, cap
     assert ss.main(args) == 0
     payload = json.loads(_written(capsys.readouterr().out).read_text())
     assert payload["audit"]["paths_voided"] == 0 and payload["audit"]["breaches"] == []
-    counts = payload["counts"]["by_standin"]["prior:0"]
+    counts = payload["counts"]["by_forecaster"]["prior"]
     assert counts["R"]["landed"]["mean"] >= 1 and counts["R"]["adds_per_week"]["mean"] > 0
     assert counts["S"]["landed"]["mean"] == 0
 

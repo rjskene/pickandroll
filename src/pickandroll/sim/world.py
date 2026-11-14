@@ -41,6 +41,7 @@ STREAMS: Mapping[str, int] = {
     "refresh": 5,
     "news": 6,
     "market": 7,
+    "forecast": 8,
 }
 #: The spread of the return date the policy sees around the true one, in days.
 NEWS_SD_DAYS = 2.0
