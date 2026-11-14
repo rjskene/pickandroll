@@ -1249,9 +1249,10 @@ def test_the_moves_route_values_every_candidate_and_recommends_a_set(client):
     # The exports the moves rest on, by their pull time (#355): no week export in the fixture.
     assert m["exports"]["ros"]["file"] == "bbm_projections_2026-10-21.csv"
     assert m["exports"]["week_this"] is None and m["exports"]["week_next"] is None
-    # The weekly limit, net of my adds this week; the page does not reach back past Monday.
+    # The weekly limit, net of my adds this week; the page lists 7 transactions, fewer than a
+    # page's 25, so it is the league's whole list and the count is complete (#383).
     assert m["adds"]["limit"] == v["settings"]["max_weekly_adds"]
-    assert m["adds"]["complete"] is False
+    assert m["adds"]["complete"] is True
     assert m["adds"]["left"] == m["adds"]["limit"] - m["adds"]["used"]
     brooks = next(a for a in v["available"] if a["player"]["name"] == "Dillon Brooks")
     row = m["candidates"][str(brooks["player"]["yahoo_id"])]
