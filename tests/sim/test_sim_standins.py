@@ -1,7 +1,9 @@
 """The two sources' stand-ins (#172, PR D1): ``replay --bbm-as`` and ``--yahoo-as`` name the
 forecasters standing in for the two live sources, and an arm's seat believes by its ``system``
-knob, which is then read. The live rule by hand, the reads table, the flags' refusals, the oracle
-stand-ins' own draws, and a room of a ``bbm``, a ``yahoo`` and a ``blend`` arm."""
+knob, which is then read. The systems' tables by hand (a ``yahoo`` or ``blend`` seat reads
+them for the players on no roster only: ``test_sim_split.py``), the reads table, the flags'
+refusals, the oracle stand-ins' own draws, and a room of a ``bbm``, a ``yahoo`` and a ``blend``
+arm."""
 
 from __future__ import annotations
 
@@ -22,7 +24,7 @@ from tests.sim.sim_league import KNOBS, arm, make_data_dir
 from tests.sim.test_no_peek import SEED, WEIGHTS, recorded
 from tests.sim.test_sim_forecast import many_lines, oracle_lines
 
-# --------------------------------------------------------------------------- the live rule
+# --------------------------------------------------------------------------- the tables
 FIRST = {
     1: {"pts": 20.0, "reb": 4.0, "fgm": 5.0, "fga": 10.0},
     2: {"pts": 10.0, "reb": 8.0},
@@ -40,14 +42,14 @@ def test_bbm_is_the_first_sources_forecast_as_it_is():
     assert got == FIRST and got is not FIRST
 
 
-def test_yahoo_is_the_seconds_line_where_it_projects_and_the_firsts_elsewhere():
+def test_yahoos_table_is_the_seconds_line_where_it_projects_and_the_firsts_elsewhere():
     got = fc.system_rates("yahoo", None, FIRST, SECOND)
     assert got[1] == FIRST[1]  # the second has no line for 1
     assert got[2] == SECOND[2] and got[3] == SECOND[3]  # its line whole, not stat by stat
     assert got[4] == {"pts": 9.0, "fgm": 5.0, "fga": 5.0}  # through consistent
 
 
-def test_blend_mixes_stat_by_stat_where_the_second_projects():
+def test_blends_table_mixes_stat_by_stat_where_the_second_projects():
     got = fc.system_rates("blend", 0.25, FIRST, SECOND)
     assert got[1] == FIRST[1]
     # 2: a quarter of the second's and three quarters of the first's, a missing stat as 0.
@@ -255,9 +257,16 @@ def test_a_room_of_the_three_systems_names_each_arms_belief(systems_data: Path, 
     assert src["note"] == (
         "the result is about two sources with these errors, not about the two real sources"
     )
-    assert "upper bound" in src["oracle"] and "mixed rates" in src["blend_value"]
+    assert "upper bound" in src["oracle"] and src["differs"] == list(fc.LIVE_DIFFERENCES)
     assert set(src["systems"]) == set(p["beliefs"].values())
     assert src["systems"]["blend:0.25(oracle:0.2@yahoo with prior)"]["share"] == 0.25
+    # A yahoo or blend seat's rostered players read the first stand-in's line.
+    assert {x["system"]: x["rostered"] for x in src["systems"].values()} == {
+        "bbm": None,
+        "yahoo": "prior",
+        "blend": "prior",
+    }
+    assert src["rule"] == fc.SYSTEMS_RULE and "every rostered player" in src["rule"]
     assert p["forecasters"]["prior"]["stands_for"] == ["bbm"]
     assert p["forecasters"]["oracle:0.2@yahoo"]["stands_for"] == ["yahoo"]
     assert p["forecasters"]["oracle:0.2@yahoo"]["error"]["median_spread"] == pytest.approx(

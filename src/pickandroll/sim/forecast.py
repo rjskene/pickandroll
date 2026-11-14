@@ -17,10 +17,11 @@ season. Four names:
 
 A **stand-in** is a forecaster named to stand for one of the two live sources (``replay --bbm-as``,
 ``--yahoo-as``; :data:`ROLES`). An arm's seat then believes by its ``system`` knob: ``bbm`` the
-first's forecast, ``yahoo`` and ``blend`` the live rule on the two (:func:`system_rates`). An oracle
-named as a stand-in draws from its role's own stream, so two oracle stand-ins have independent
-errors and neither shares the run's draws; a real forecaster is the same forecast wherever it is
-named.
+first's forecast; ``yahoo`` and ``blend`` (:data:`SPLIT`) the first's belief for every player on
+a roster that morning and :func:`system_rates`' table for the rest (:data:`SYSTEMS_RULE`). What
+still differs from the live route is :data:`LIVE_DIFFERENCES`. An oracle named as a stand-in
+draws from its role's own stream, so two oracle stand-ins have independent errors and neither
+shares the run's draws; a real forecaster is the same forecast wherever it is named.
 
 Two diagnostics go to the payload and never to a seat: :func:`error_of`, the forecaster's error
 against the replayed season, and :func:`freeze_of`, for ``espn``. Pure: lines and figures come
@@ -49,6 +50,37 @@ NAMES = ("prior", "espn", "marcel", "oracle")
 ROLES = ("bbm", "yahoo")
 #: The live systems an arm may name (``progress.KNOB_VALUES``).
 SYSTEMS = ("bbm", "yahoo", "blend")
+#: The systems whose seat reads a split table: the first stand-in's belief for every player on
+#: a roster that morning, :func:`system_rates`' table for every other (``run.split_beliefs``).
+SPLIT = ("yahoo", "blend")
+#: The rule as modelled, for the payload.
+SYSTEMS_RULE = (
+    "bbm: the first's forecast; yahoo: a player on no roster that morning reads the second's "
+    "line where the second projects him and the first's elsewhere, and every rostered player "
+    "reads the first's; blend: the same split, the available side the mix of the two stat by "
+    "stat at the share where the second projects him (the second's alone where the first has "
+    "none)"
+)
+#: What still differs from the live route (``api.season_moves.system_rates``), one list for the
+#: README and the payload.
+LIVE_DIFFERENCES = (
+    (
+        "the second stand-in is a season forecaster; the live second source is a line for the "
+        "next seven days, so it moves with the week's news and schedule"
+    ),
+    (
+        "live values each source on its own table (the second's holds only the available "
+        "players, so its values are scaled within the available pool) and a blended player at "
+        "the mix of the two; the simulator values the seat's one mixed table, under yahoo as "
+        "under blend"
+    ),
+    (
+        "both stand-ins learn from the same played games at the same weights, so their beliefs "
+        "close on each other as the season goes, where the two live sources stay apart all "
+        "year: a system difference measured here is weighted to the early weeks"
+    ),
+    "available is on no roster in the seat's own league that morning",
+)
 #: The generator key of each role's oracle draws on the ``forecast`` stream: a role's stat draws
 #: at ``2 · key`` and its player draw at ``2 · key + 1``. The run's oracle (key 0) draws its
 #: stats on the ``error`` stream, the first replays' draws, and its player draw at 0.
@@ -319,13 +351,14 @@ def system_rates(
     first: Mapping[int, Rates],
     second: Mapping[int, Rates],
 ) -> dict[int, dict[str, float]]:
-    """The live rule (``api.season_moves.system_rates``, restated): ``bbm`` the first source's
-    rates; ``yahoo`` the second's line for every player it projects and the first's for the
-    rest; ``blend``, for every player the second projects, ``share · second + (1 − share) ·
-    first`` stat by stat (a stat one of them lacks counted 0; the second's alone where the first
-    has no line), the first's for everyone else, ``share`` :func:`share_of`. A mix passes
-    through ``consistent``. One difference from the live route: it values a blended player at
-    the mix of the two systems' own per-game values, the simulator at the mixed rates."""
+    """A system's table on the two stand-ins: ``bbm`` the first source's rates; ``yahoo`` the
+    second's line for every player it projects and the first's for the rest; ``blend``, for
+    every player the second projects, ``share · second + (1 − share) · first`` stat by stat (a
+    stat one of them lacks counted 0; the second's alone where the first has no line), the
+    first's for everyone else, ``share`` :func:`share_of`. A mix passes through
+    ``consistent``. A :data:`SPLIT` seat reads it for the players on no roster that morning
+    only, every rostered player on the first's belief (:data:`SYSTEMS_RULE`); what still
+    differs from the live route is :data:`LIVE_DIFFERENCES`."""
     if system not in SYSTEMS:
         raise ValueError(f"system {system!r}: one of {SYSTEMS}")
     if system == "bbm":
@@ -418,6 +451,7 @@ __all__ = [
     "ERROR_MIN_GAMES",
     "FREEZE_GAMES",
     "FREEZE_LINE",
+    "LIVE_DIFFERENCES",
     "MARCEL_MIN_GAMES",
     "MARCEL_REGRESS_GAMES",
     "MARCEL_SEASONS",
@@ -428,7 +462,9 @@ __all__ = [
     "ROLES",
     "ROLE_KEYS",
     "SHAPES",
+    "SPLIT",
     "SYSTEMS",
+    "SYSTEMS_RULE",
     "CannotServe",
     "Forecast",
     "Forecaster",

@@ -900,7 +900,9 @@ def forecasts_of(
     arms: Mapping[str, rn.Arm],
 ) -> dict[str, Mapping[int, Mapping[str, float]]]:
     """The beliefs' projections the arms name on one path, by label: each arm's system on the
-    two stand-ins (``forecast.system_rates``); none without stand-ins."""
+    two stand-ins (``forecast.system_rates``, a split label's available side), and the first
+    stand-in's own whenever an arm's label is split (:func:`splits_of`: its rostered side);
+    none without stand-ins."""
     if sources is None:
         return {}
     first = projection_of(sources[0], fixed, lines, seed, path, shape)
@@ -910,7 +912,22 @@ def forecasts_of(
         if arm.forecaster is not None and arm.forecaster not in out:
             system, blend = str(arm.knobs["system"]), arm.knobs["blend"]
             out[arm.forecaster] = fc.system_rates(system, blend, first, second)
+    if splits_of(sources, arms) and sources[0].label not in out:
+        out[sources[0].label] = first
     return out
+
+
+def splits_of(sources: Sources | None, arms: Mapping[str, rn.Arm]) -> dict[str, str]:
+    """Each split label the arms hold (``forecast.SPLIT``: a ``yahoo`` or ``blend`` seat's) and
+    its rostered side's label, the first stand-in's: a player on any roster that morning reads
+    the first's belief (``run.World.split``)."""
+    if sources is None:
+        return {}
+    return {
+        arm.forecaster: sources[0].label
+        for arm in arms.values()
+        if arm.forecaster is not None and str(arm.knobs["system"]) in fc.SPLIT
+    }
 
 
 def replay_setup_of(season: int, lines: Any, members: Any, scheduled: Any, projection: Any) -> Any:
@@ -947,6 +964,7 @@ def task_replay(
         news_sd=news_sd,
         label=forecaster.label,
         forecasts=forecasts_of(sources, fixed, lines, seed, path, shape, arms),
+        split=splits_of(sources, arms),
     )
     out = rn.room(setup, w, arms, seats, path)
     out["forecaster"] = forecaster.label
@@ -1047,10 +1065,6 @@ ORACLE_SOURCES_NOTE = (
     "errors and neither shares the run's draws; two real sources' errors are correlated, so with "
     "oracle stand-ins the mix's benefit is an upper bound"
 )
-BLEND_VALUE_NOTE = (
-    "the live blend values a player at the mix of the two systems' own per-game values; the "
-    "simulator values the mixed rates"
-)
 
 
 def sources_block(
@@ -1061,13 +1075,15 @@ def sources_block(
     seed: int,
     shape: str,
 ) -> dict[str, Any] | None:
-    """The payload's ``sources``: the two stand-ins' labels, what the result is about, the
-    assumptions, and each system belief an arm holds with its error on path 0; None without
-    stand-ins."""
+    """The payload's ``sources``: the two stand-ins' labels, what the result is about, the rule
+    as modelled and what still differs from the live route, and each system belief an arm holds
+    with its rostered side and the error of its table (a split label's: the available side's)
+    on path 0; None without stand-ins."""
     if sources is None:
         return None
     first, second = sources
     forecasts = forecasts_of(sources, fixed, lines, seed, 0, shape, arms)
+    split = splits_of(sources, arms)
     systems = {}
     for arm in arms.values():
         label = arm.forecaster
@@ -1078,6 +1094,7 @@ def sources_block(
         systems[label] = {
             "system": system,
             "share": fc.share_of(system, arm.knobs["blend"]),
+            "rostered": split.get(label),
             "projected": e["projected"],
             "played": e["played"],
             "error": {k: e[k] for k in ("min_games", "by_stat", "median_spread")},
@@ -1087,13 +1104,8 @@ def sources_block(
         "yahoo": second.label,
         "note": SOURCES_NOTE,
         "oracle": ORACLE_SOURCES_NOTE if "oracle" in (first.name, second.name) else None,
-        "blend_value": BLEND_VALUE_NOTE,
-        "rule": (
-            "bbm: the first's forecast; yahoo: the second's line for every player it projects, "
-            "the first's for the rest; blend: for every player the second projects, share times "
-            "the second's plus the rest times the first's, stat by stat (the second's alone where "
-            "the first has none), the first's for everyone else"
-        ),
+        "rule": fc.SYSTEMS_RULE,
+        "differs": list(fc.LIVE_DIFFERENCES),
         "systems": systems,
     }
 
@@ -1142,12 +1154,13 @@ def no_peek(
     day: date,
     label: str | None = None,
     forecasts: Mapping[str, Any] | None = None,
+    split: Mapping[str, str] | None = None,
 ) -> tuple[Any, int, list[dict[str, Any]]]:
     """Path 0 of the replay on the recorded lines and on :func:`nopeek.perturb`'s, with one
     league built before either (on ``projection``, the run's forecaster's on path 0, ``label``;
-    ``forecasts`` the arms' other beliefs' projections): the first difference between their day
-    records (None when they never part), the records compared and the audit's breaches in
-    either run."""
+    ``forecasts`` the arms' other beliefs' projections, ``split`` their split labels): the first
+    difference between their day records (None when they never part), the records compared and
+    the audit's breaches in either run."""
     setup = replay_setup_of(season, lines, members, scheduled, projection)
     if day not in setup.days:
         raise ValueError(f"{day} is not a day of the replayed season")
@@ -1161,7 +1174,16 @@ def no_peek(
             got[(r.day, r.variant)] = nopeek.digest(r)
 
         w = rn.replay_world(
-            setup, these, lag, seed, 0, weights, news_sd=news_sd, label=label, forecasts=forecasts
+            setup,
+            these,
+            lag,
+            seed,
+            0,
+            weights,
+            news_sd=news_sd,
+            label=label,
+            forecasts=forecasts,
+            split=split,
         )
         out = rn.room(setup, w, arms, seats, 0, on_day=keep)
         breaches += [{"run": run_, **b} for b in out["breaches"]]
@@ -1240,6 +1262,7 @@ def cmd_replay(args: argparse.Namespace) -> int:
                 day,
                 named[0].label,
                 forecasts_of(sources, fixed, lines, args.seed, 0, args.shape, arms),
+                splits_of(sources, arms),
             )
         except ValueError as e:
             print(f"refused: {e}")

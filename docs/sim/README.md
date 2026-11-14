@@ -227,7 +227,8 @@ can change what the seat queues in a league of that shape) or why not; a change 
 what is recorded, such as a plan drawn and not executed, is not read. The shape is the league's
 scoring, whether it has held slots, whether its bracket is read and whether the run names the two
 sources' stand-ins (below). A rival that mirrors the arm reads what the surrogate reads, but
-believes by the run's forecaster: `system` and `blend` are read by the arm's own seat only. As built:
+believes by the run's forecaster: `system` and `blend` are read by the arm's own seat only. As
+built:
 
 | knob or field | read by | otherwise, and the PR that makes it read |
 |---|---|---|
@@ -444,29 +445,57 @@ Monster and Yahoo, and an arm's `system` knob picks the one it believes (`blend`
 `blend` share). The simulator holds neither, so a replay may name a forecaster to stand in for
 each: `replay --bbm-as F --yahoo-as G`. It names both or neither, the two differ, and each must
 serve the season, else the run is refused by name before any path. With them named, each arm's
-seat believes by its `system`, the live rule restated in `sim/forecast.py` (`system_rates`):
+seat believes by its `system`. As modelled:
 
 - `bbm`: the first stand-in's forecast.
-- `yahoo`: the second's line for every player it projects, the first's for the rest.
-- `blend`: for every player the second projects, `share · second + (1 − share) · first` stat by
-  stat (the second's alone where the first has none), the first's for everyone else; `share` is
-  the arm's `blend`, or the engine's default (`progress.BLEND`) when it is None.
+- `yahoo`: a player on no roster that morning reads the second's line where the second projects
+  him and the first's elsewhere; every rostered player, the seat's own and every opponent's,
+  reads the first's.
+- `blend`: the same split; on the available side, for every player the second projects,
+  `share · second + (1 − share) · first` stat by stat (the second's alone where the first has
+  none), the first's for everyone else; `share` is the arm's `blend`, or the engine's default
+  (`progress.BLEND`) when it is None.
 
-A mix passes through `consistent`. The belief's label names it: `espn`, `yahoo(marcel else
-espn)`, `blend:0.5(marcel with espn)`, and each label gets its own belief (above). The run's
-forecaster still drafts, runs the market and believes for every rival. With stand-ins named,
-`system` is read by the arm's own seat and `blend` when its system is `blend`; without, neither
-is, and two arms that differ only in them are the same seat. A rival never reads them: a mirror
-believes by the run's forecaster.
+The split is the live route's: there the second source's table holds the available players
+only, so an add is judged on the second source against a drop on the first. The available
+side's table is `forecast.system_rates` (a mix passes through `consistent`), believed causally
+like any forecaster; a `yahoo` or `blend` seat's day table (`run.split_beliefs`) takes the first
+stand-in's belief of every player on any roster of its own league that morning, held slots
+included, and that table's belief of every other player. The table follows the rosters: the
+forced drops at the landing are weighed on the rosters as they stand before anything lands, and
+the decision, the lineup, the day record and the score on the rosters after it, so a player
+dropped yesterday reads the available side today and one added yesterday the first's. The seat
+reads one table a day and its values are that table's. The world holds the first stand-in's
+belief whenever an arm's system is `yahoo` or `blend`, with or without a `bbm` arm (the run's
+own belief when the first stand-in is the run's forecaster).
 
-Two things the payload states. The live blend values a player at the mix of the two systems' own
-per-game values; the simulator values the mixed rates, so the two are close and not the same. An
-oracle stand-in draws from its role's own keys on the `forecast` stream (labelled
+The belief's label names it: `espn`, `yahoo(marcel else espn)`, `blend:0.5(marcel with espn)`,
+and each label gets its own belief (above). The run's forecaster still drafts, runs the market
+and believes for every rival. With stand-ins named, `system` is read by the arm's own seat and
+`blend` when its system is `blend`; without, neither is, and two arms that differ only in them
+are the same seat. A rival never reads them: a mirror believes by the run's forecaster.
+
+What still differs from the live route (`forecast.LIVE_DIFFERENCES`, and the payload's
+`sources.differs`):
+
+1. The second stand-in is a season forecaster; the live second source is a line for the next
+   seven days, so it moves with the week's news and schedule.
+2. Live values each source on its own table (the second's holds only the available players, so
+   its values are scaled within the available pool) and a blended player at the mix of the two;
+   the simulator values the seat's one mixed table, under `yahoo` as under `blend`.
+3. Both stand-ins learn from the same played games at the same weights, so their beliefs close on
+   each other as the season goes, where the two live sources stay apart all year: a `system`
+   difference measured here is weighted to the early weeks.
+4. "Available" is "on no roster in the seat's own league that morning".
+
+An oracle stand-in draws from its role's own keys on the `forecast` stream (labelled
 `oracle:0.2@bbm`, `oracle:0.2@yahoo`), so two oracle stand-ins have independent errors and
 neither shares the run's oracle's draws; two real sources' errors are correlated, so with oracle
 stand-ins the mix's benefit is an upper bound. The payload's `sources` block names the two
-stand-ins, the rule, each system's label and share, and that the result is about two sources
-with these errors, not about the two real sources; `beliefs` names each arm's label, and the
+stand-ins, the rule as modelled, what still differs, each system's label, share and rostered
+side (the first stand-in's label for `yahoo` and `blend`, null for `bbm`) with the error of its
+table (the available side's for a split label), and that the result is about two sources with
+these errors, not about the two real sources; `beliefs` names each arm's label, and the
 `forecasters` block carries each stand-in, which role it stands for and its error.
 
 **A newcomer.** A player nobody projected (a rookie, a player who missed most of the prior season)
