@@ -149,11 +149,35 @@ class Arm:
         )
 
 
+#: The keys of an arm's spec file the simulator reads (:func:`arm_of`, :func:`check_fit`); any
+#: other is refused by name, so a misspelled field never leaves an arm at its default.
+SPEC_KEYS = (
+    "name",
+    "tier",
+    "knobs",
+    "opponents",
+    "executes",
+    "with_plan",
+    "execute_plan",
+    *policy.FIELDS,
+    "fit_sha",
+)
+
+
 def arm_of(spec: Mapping[str, Any]) -> Arm:
     """An arm from its spec file's JSON: ``name``, ``tier``, every knob, ``opponents``, and the
     four fields when it names them (``pool``, ``min_gain``, ``weeks_ahead``,
-    ``surrogate_days``; ``policy.fields_of``); a knob missing, unknown or out of the engine's
-    bounds, a field out of its own or a tier unknown is refused by name."""
+    ``surrogate_days``; ``policy.fields_of``); a key the simulator does not read
+    (:data:`SPEC_KEYS`, and ``opponents.SPEC_KEYS`` under ``opponents``), a knob missing,
+    unknown or out of the engine's bounds, a field out of its own or a tier unknown is refused
+    by name."""
+    unknown = [k for k in spec if k not in SPEC_KEYS]
+    if unknown:
+        raise ValueError(
+            f"spec key {unknown[0]!r} is not one the simulator reads: one of {SPEC_KEYS}"
+        )
+    opponents = dict(spec.get("opponents") or {"kind": "static"})
+    op.check_spec(opponents)
     tier = str(spec.get("tier", ""))
     if tier not in (*policy.TIERS, "static"):
         raise ValueError(f"tier {tier!r}: one of {policy.TIERS} or static")
@@ -165,7 +189,7 @@ def arm_of(spec: Mapping[str, Any]) -> Arm:
         str(spec.get("name") or "arm"),
         tier,
         knobs,
-        dict(spec.get("opponents") or {"kind": "static"}),
+        opponents,
         executes,
         bool(spec.get("with_plan", True)),
         bool(spec.get("execute_plan", False)),
@@ -1058,6 +1082,7 @@ __all__ = [
     "METRICS",
     "OPENING_DAYS",
     "SHRINKS",
+    "SPEC_KEYS",
     "STANDIN_MIN_GAMES",
     "Arm",
     "DayRecord",
