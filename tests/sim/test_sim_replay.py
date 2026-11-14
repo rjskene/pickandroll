@@ -174,11 +174,11 @@ def test_the_hold_out_gate_keeps_its_league_and_its_figures(tmp_path: Path):
 # --------------------------------------------------------------------------- the schedule (PR C2)
 @pytest.fixture(scope="module")
 def wire_league(tmp_path_factory):
-    """The wire fixture's replay of 2024 on the prior season's stand-in, path 0."""
+    """The wire fixture's replay of 2024 on the prior forecaster."""
     data = make_data_dir(tmp_path_factory.mktemp("wire"), wire=120)
     lines, members, scheduled = reader.replay_lines(data, 2024)
     prior = reader.prior_rates(data, 2024)
-    return cli.replay_setup_of(2024, lines, members, scheduled, ("prior", 0.0), prior, 5, 0)
+    return cli.replay_setup_of(2024, lines, members, scheduled, prior)
 
 
 def test_a_replays_schedule_keys_every_day_of_its_calendar(wire_league):

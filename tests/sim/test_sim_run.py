@@ -11,6 +11,7 @@ import pytest
 
 from pickandroll.season import moves as mv
 from pickandroll.season import weekly as wk
+from pickandroll.sim import forecast as fc
 from pickandroll.sim import opponents as op
 from pickandroll.sim import policy
 from pickandroll.sim import run as rn
@@ -393,10 +394,10 @@ def test_a_replay_league_is_drafted_on_the_stand_in_and_keyed_to_each_players_ga
         first + timedelta(60) in with_sched.schedule
         and "p1" in with_sched.schedule[first + timedelta(60)]
     )
-    noised = rn.oracle_standin(lines, 0.2, 1, 0)
+    noised = fc.oracle(lines, 0.2, 1, 0)
     assert set(noised) == set(truth) and noised[1]["pts"] != truth[1]["pts"]
     assert all(v["fgm"] <= v["fga"] for v in noised.values() if "fga" in v)
-    assert rn.oracle_standin(lines, 0.2, 1, 0) == noised
+    assert fc.oracle(lines, 0.2, 1, 0) == noised
 
 
 def test_simulate_runs_a_replay_league_end_to_end():

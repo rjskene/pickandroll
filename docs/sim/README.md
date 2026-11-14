@@ -320,10 +320,12 @@ Each command runs as `python -m pickandroll.sim <command>`:
   in playoff odds is not below zero by more than one SE at any shrink; no block and no promotion
   before PR 3. A league whose bracket is unread reports rank and category wins and no playoff
   odds.
-- `replay --season 2024 --standin prior|oracle:0.1,0.2,0.3 --seats A.json B.json`: a made-up
-  twelve-team league on a recorded season (below), the arms rotated across paths; the hold-out is
-  refused. `--news-sd` sets the told return date's spread in days (default 2). `--no-peek
-  YYYY-MM-DD` runs the no-peek check instead and writes nothing.
+- `replay --season 2024 --forecasters prior,espn,marcel,oracle:0.1 --seats A.json B.json`: a
+  made-up twelve-team league on a recorded season (below), the arms rotated across paths, once
+  for each forecaster named (default `prior`); the hold-out is refused. `--shape stat|minutes`
+  sets how an oracle's error is drawn (default `stat`). `--news-sd` sets the told return date's
+  spread in days (default 2). `--no-peek YYYY-MM-DD` runs the no-peek check instead, on the first
+  forecaster named, and writes nothing.
 - `room --leagues all --seats A.json B.json ... --draft rosters|snake`: the arms around one
   league's table from the recorded rosters or a snake redraft.
 - `validate --league all`: the six gates on this season's recorded weeks and on the hold-out, side
@@ -342,36 +344,81 @@ table, the season scale, the period calendar's source, and the results. A run fi
 would touch 04:45-06:45 on the Mac's clock, a draft room open on the API, or a run over an hour
 not announced to fantasyMASTER (`--announced`).
 
+## The forecasters (`sim/forecast.py`, PR D1)
+
+A replay's **forecaster** is its projection source: the figure each projected player's belief
+starts from and the draft's ranking. A run names one or several (`--forecasters`, comma
+separated, in order) and plays every path once for each; the payload keys its results and counts
+by the forecaster's label. A forecaster that cannot serve the season refuses the run by name
+before any path. Four names:
+
+- `prior`: the prior season's per-game rates of the players with twenty played games in it. It
+  needs the prior season's log.
+- `espn`: ESPN's stored season projection for the replayed season, from the cached log's season
+  block (split 0, source 1), per game, for every player whose block has games above zero; a block
+  without a games count is left out. It needs that block in the log.
+- `marcel`: the seasons before the replayed one, back from the one just before while each is on
+  file, up to three, most recent first, weighted 5, 4 and 3 by recency (5 and 4 with two seasons,
+  not renormalized). Per player and stat, `(Σ wᵢ · totalᵢ + 100 · mean) / (Σ wᵢ · gamesᵢ + 100)`
+  over the seasons he played in, makes and attempts each a stat of their own; `mean` is the mean
+  per-game rate over the players with twenty games in the most recent season read. A player with
+  twenty games in at least one season read is projected. It needs two earlier seasons. The
+  constants are named in the module and not fitted. A replay of 2025-26 reads 2024-25's lines
+  here as preseason information, as `prior` does; the hold-out is never a replayed season.
+- `oracle:σ`: the replayed season's realized rates of the players with twenty played games,
+  noised on the log scale: a labelled look-ahead whose error is known. `--shape stat` (the
+  default) draws `ε = σ · z_stat` a player and stat, the draws the first replays used, bit for
+  bit. `--shape minutes` draws `ε = σ · (√0.7 · z_player + √0.3 · z_stat)`: `z_stat` the same
+  draw and `z_player` one draw a player from the world's `forecast` stream, shared by every stat,
+  makes and attempts included, so the shared part leaves his percentages alone.
+
+`espn`, `marcel` and the oracle pass their rates through `consistent` (makes within attempts,
+threes within field goals). `prior` stays as the first replays read it: a recorded season keeps
+those identities on its own.
+
+Two diagnostics go to the payload's `forecasters` block and never to a seat. **The error**
+(`error_of`): over the projected players with twenty played games in the replayed season, per
+stat, the mean and the spread of `log(realized rate / forecast rate)` where both are above zero,
+with the count; how many players the forecaster projects and how many of them played twenty; the
+median spread over the stats. An oracle's is measured on path 0 and should sit at its spread, a
+check of the draw. **The freeze check** (`freeze_of`, `espn` only, the replayed season only):
+ESPN updates its stored block through the season, so it may not be the preseason figure. Among
+the projected players who played thirty games or fewer, the check takes their count and the
+median of their projected games, and it counts the projected players whose projected games equal
+the games they played. A preseason projection cannot know who will miss the season, so a median
+below 50 means the block was updated in season: it is flagged, never refused.
+
 ## The replay: what a seat knows (`sim/belief.py`, `sim/nopeek.py`)
 
 A replay plays a made-up league on a season that happened, so its seats must know only what a
 manager could have known on each day. Before #172's PR B1 they did not: every seat's belief moved
 each week toward the season's realized rates, its whole-season average, and the draft and the pool
 took only players who went on to play twenty games. Replay figures from before it (payloads with
-no `replay_version`) are superseded; a replay now writes `replay_version: 2`.
+no `replay_version`) are superseded. A replay wrote `replay_version: 2` from then; it writes 3
+since a run names its forecasters (PR D1), its results and counts keyed by the forecaster's label
+(`prior`, `oracle:0.1`) where version 2 keyed them `prior:0`.
 
 **The belief.** On day `d`, stat by stat, a seat believes
 `(w · the forecaster's figure + the sum of his lines dated before d) / (w + his games before d)`,
 read every day. "Before" is strict: the line of a game played on `d` is in the belief of `d + 1`.
 Makes and attempts are shrunk as stats of their own and the percentages follow from them; the
-result keeps makes within attempts and threes within field goals. The forecaster is the stand-in:
-the prior season's per-game rates, or the oracle (below); each forecaster gets its own belief.
+result keeps makes within attempts and threes within field goals. The forecaster's figure is the
+run's forecaster's (`sim/forecast.py`, above); each forecaster gets its own belief.
 
 **The weights.** One `w` per stat, in games, from the grid 2, 4, 6, 10, 16, 25, 40, 65, 100,
 chosen by the least squared error of each projected player's next game against the belief before
 it, summed over his games in date order; a tie takes the larger weight. They are fitted on the
 seasons on file earlier than the one replayed whose own prior season is on file, with the
 prior-season forecaster, never on the hold-out (a season whose prior season is the hold-out is
-skipped too). With no such season every stat takes 10. The oracle stand-in uses the prior
-forecaster's weights. The weights are computed once per command, from the logs alone, and the
+skipped too). With no such season every stat takes 10. Every forecaster takes these weights, the
+prior forecaster's: no fit per forecaster is made, and the payload says so for each. The weights are computed once per command, from the logs alone, and the
 payload records them, the seasons they came from and whether the default stood; the frozen fit is
 not touched.
 
 **The league and the draft.** The league is everyone the season's log lists with a scheduled game.
-The draft is a snake on the stand-in's values over the projected players with a scheduled game in
-the season's first seven days, as an opening-night roster shows; everyone else is on the wire. The
-prior forecaster projects the players with twenty played games in the prior season, the oracle
-those with twenty in the replayed season.
+The draft is a snake on the run's forecaster's values over the projected players with a scheduled
+game in the season's first seven days, as an opening-night roster shows; everyone else is on the
+wire. Who is projected is the forecaster's (above).
 
 **A newcomer.** A player nobody projected (a rookie, a player who missed most of the prior season)
 is on the wire from day one but in no belief, so no seat can add him, until the day after his first
@@ -397,8 +444,9 @@ part, writes nothing, and exits non-zero on a difference at or before the date.
 - A player's game days are those of the team the log records him on, all season: the schedule of
   a player who was later traded is known from day one.
 - The prior forecaster knows no rookie and nobody who missed the prior season; they arrive by the
-  newcomer's rule. The oracle stand-in is a labelled look-ahead: its figures are the replayed
-  season's own realized rates, noised.
+  newcomer's rule. The oracle is a labelled look-ahead: its figures are the replayed season's own
+  realized rates, noised. `espn`'s stored block may have moved through the season (its freeze
+  check).
 - A replay reads no status on day one, so a drafted player out from opening night is heard to be
   out only `lag` days after his first missed game.
 
@@ -428,7 +476,7 @@ setup, the day and the same variant's day before; a later rule is one more entry
 
 A breach (path, day, variant, seat, rule, what was found) voids its path: the runner records it,
 the command leaves the task out of every aggregate (compare voids a league, shrink and path;
-replay a stand-in and path; room a league and path), lists every breach and the voided tasks in
+replay a forecaster and path; room a league and path), lists every breach and the voided tasks in
 the payload's `audit` block with the rules, writes the payload and exits 3. A dry run audits its
 one task and exits 3 on a breach too; the no-peek check prints the breaches of either season and
 exits 3 before it reads a difference. Nothing is repaired.

@@ -41,6 +41,7 @@ from . import opponents as op
 from .belief import CausalBelief, consistent, newcomer_prior
 from .engine import Week, mv, wk
 from .fit import W_DEFAULT, Component, Hazard
+from .forecast import MIN_GAMES, realized_rates
 from .state import Member, Setup, SimState, initial, round_robin, snake_draft, weeks_from
 
 Rates = Mapping[str, float]
@@ -944,9 +945,10 @@ REPLAY_WEEKS = 22
 REPLAY_PLAYOFF_WEEKS = 3
 REPLAY_PLAYOFF_TEAMS = 6
 REPLAY_TEAMS = 12
-#: A stand-in forecaster projects a player with at least this many played games in the season
-#: it reads: the prior season for the prior-season forecaster, the replayed one for the oracle.
-STANDIN_MIN_GAMES = 20
+#: A forecaster built from lines projects a player with at least this many played games in the
+#: season it reads: the prior season for ``prior``, the replayed one for the oracle
+#: (``forecast.MIN_GAMES``).
+STANDIN_MIN_GAMES = MIN_GAMES
 #: The gates read the players with at least this many played games in the season.
 GATE_MIN_GAMES = 20
 #: A replay's draft takes the projected players with a scheduled game in the season's first this
@@ -958,7 +960,7 @@ def replay_setup(
     season: int,
     lines: Mapping[int, Mapping[date, Mapping[str, float]]],
     players: Mapping[int, Member],
-    standin: Mapping[int, Rates],
+    projection: Mapping[int, Rates],
     period_one: date,
     scheduled: Mapping[int, Sequence[date]] | None = None,
     teams: int = REPLAY_TEAMS,
@@ -972,12 +974,12 @@ def replay_setup(
     """A made-up league on a recorded season, from what is known before it starts. Its players
     are everyone ``players`` lists with a scheduled game, projected or not; ``teams`` seats
     snake-draft the projected ones with a scheduled game in the season's first ``opening_days``
-    days (from ``period_one``; None drafts every projected player) on the stand-in projection,
-    and everyone else is on the wire. A round robin over the regular weeks, the bracket reseeded
-    with the higher seed through a tie. Every player is his own team in the schedule
-    (``p<id>``): his game days are his ``scheduled`` entries (played or not; the days he has a
-    line for when none are given), so a trade or a team read later than the season moves
-    nothing. Every day of the calendar is a key of the schedule, an empty set when nobody plays:
+    days (from ``period_one``; None drafts every projected player) on ``projection``, the run's
+    forecaster's, and everyone else is on the wire. A round robin over the regular weeks, the
+    bracket reseeded with the higher seed through a tie. Every player is his own team in the
+    schedule (``p<id>``): his game days are his ``scheduled`` entries (played or not; the days
+    he has a line for when none are given), so a trade or a team read later than the season
+    moves nothing. Every day of the calendar is a key of the schedule, an empty set when nobody plays:
     no day is unread, so the engine extrapolates no game (#172, PR C2)."""
     schedule: dict[date, set[str]] = {}
     members: dict[int, Member] = {}
@@ -1002,7 +1004,7 @@ def replay_setup(
     playoffs = tuple(range(weeks - playoff_weeks + 1, weeks + 1))
     ids = tuple(range(1, teams + 1))
     pairings = round_robin(ids, regular)
-    projected = [k for k in standin if k in members]
+    projected = [k for k in projection if k in members]
     opening = None if opening_days is None else period_one + timedelta(opening_days - 1)
     draftable = [
         k
@@ -1010,7 +1012,7 @@ def replay_setup(
         if opening is None or any(period_one <= d <= opening for d in game_days[k])
     ]
     points = None
-    value = wk.per_game_values({k: standin[k] for k in projected}, tuple(cats), points)
+    value = wk.per_game_values({k: projection[k] for k in projected}, tuple(cats), points)
     spots = sum(1 for s in slots if s not in mv.HELD)
     rosters = snake_draft(draftable, value, ids, spots)
     taken = {k for r in rosters.values() for k, _ in r}
@@ -1033,7 +1035,7 @@ def replay_setup(
         players=members,
         rosters=rosters,
         pool=tuple(k for k in members if k not in taken),
-        projection={k: dict(standin[k]) for k in projected},
+        projection={k: dict(projection[k]) for k in projected},
         schedule={d: frozenset(t) for d, t in schedule.items()},
         roster_slots=tuple(slots),
         cats=tuple(cats),
@@ -1041,40 +1043,6 @@ def replay_setup(
         market={k: value.get(k, 0.0) for k in projected},
         spec=spec,
     )
-
-
-def realized_rates(
-    lines: Mapping[int, Mapping[date, Mapping[str, float]]], min_games: int = 1
-) -> dict[int, dict[str, float]]:
-    """Each player's per-game rates over the games he played, for those with ``min_games``."""
-    out: dict[int, dict[str, float]] = {}
-    for k, by_day in lines.items():
-        n = len(by_day)
-        if not n or n < min_games:
-            continue
-        totals: dict[str, float] = {}
-        for ln in by_day.values():
-            for stat, x in ln.items():
-                totals[stat] = totals.get(stat, 0.0) + float(x)
-        out[k] = {stat: v / n for stat, v in totals.items() if stat in wk.STATS}
-    return out
-
-
-def oracle_standin(
-    lines: Mapping[int, Mapping[date, Mapping[str, float]]],
-    spread: float,
-    seed: int,
-    path: int,
-    min_games: int = STANDIN_MIN_GAMES,
-) -> dict[int, dict[str, float]]:
-    """The replayed season's realized rates noised on the log scale at ``spread`` per player and
-    stat: a stand-in projection whose error is known, a labelled look-ahead. It projects only the
-    players with ``min_games`` played games in the replayed season, a stated part of that
-    look-ahead; the others arrive by the newcomer's rule."""
-    truth = realized_rates(lines, min_games)
-    keys = sorted(truth)
-    eps = world.errors(seed, path, keys, list(wk.STATS), 0.0, {}, dict.fromkeys(wk.STATS, spread))
-    return {k: consistent(v) for k, v in world.true_rates({k: truth[k] for k in keys}, eps).items()}
 
 
 __all__ = [
@@ -1098,7 +1066,6 @@ __all__ = [
     "forward_world",
     "inputs_of",
     "mirrored",
-    "oracle_standin",
     "paired",
     "realized_rates",
     "replay_setup",

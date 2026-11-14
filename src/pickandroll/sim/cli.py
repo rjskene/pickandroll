@@ -5,7 +5,8 @@
     python -m pickandroll.sim fit --dry-run                    # the fit printed, nothing written
     python -m pickandroll.sim fit --refresh --tau residual --league <id>   # week six's re-freeze
     python -m pickandroll.sim compare A.json B.json --leagues all --paths 100
-    python -m pickandroll.sim replay --season 2024 --standin prior --seats A.json B.json
+    python -m pickandroll.sim replay --season 2024 --forecasters prior,espn --seats A.json B.json
+    python -m pickandroll.sim replay --season 2024 --forecasters oracle:0.1 --shape minutes ...
     python -m pickandroll.sim replay --season 2024 --seats A.json B.json --no-peek 2023-12-04
     python -m pickandroll.sim room --leagues all --seats A.json B.json --draft rosters
     python -m pickandroll.sim validate --league all
@@ -46,6 +47,7 @@ import time as clock
 import urllib.error
 import urllib.request
 from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta
 from pathlib import Path
 from typing import Any
@@ -55,6 +57,7 @@ from ..api.leagues import leagues as all_leagues
 from . import audit, checks, gamelogs, nopeek, policy, world
 from . import counts as ct
 from . import fit as fitmod
+from . import forecast as fc
 from . import readers as reader
 from . import run as rn
 from . import validate as vg
@@ -802,29 +805,55 @@ def cmd_compare(args: argparse.Namespace) -> int:
 
 
 # --------------------------------------------------------------------------- replay
-def parse_standin(text: str) -> list[tuple[str, float]]:
-    """``prior`` or ``oracle:0.1,0.2,0.3``."""
-    if text == "prior":
-        return [("prior", 0.0)]
-    if text.startswith("oracle:"):
-        return [("oracle", float(x)) for x in text[len("oracle:") :].split(",") if x.strip()]
-    raise ValueError(f"stand-in {text!r}: prior or oracle:<spread,...>")
+@dataclass(frozen=True)
+class Fixed:
+    """What of a run's forecasters is the same on every path, read once before any path:
+    ``rates`` by name (``prior``, ``espn``, ``marcel``), ESPN's projected games (the freeze
+    check's) and the seasons ``marcel`` read. An oracle is drawn per path."""
+
+    rates: Mapping[str, Mapping[int, Mapping[str, float]]]
+    espn_games: Mapping[int, float]
+    marcel_seasons: tuple[int, ...] = ()
 
 
-def replay_setup_of(
-    season: int,
-    lines: Any,
-    members: Any,
-    scheduled: Any,
-    standin: tuple[str, float],
-    prior: Any,
-    seed: int,
-    path: int,
-) -> Any:
-    """A replay's league in one path: drafted on the stand-in (the prior season's rates, or the
-    replayed season's noised, per path)."""
-    kind, spread = standin
-    projection = prior if kind == "prior" else rn.oracle_standin(lines, spread, seed, path)
+def fixed_of(data: Path, season: int, named: Sequence[fc.Forecaster]) -> Fixed:
+    """The named forecasters' figures for a replay of ``season``; one that cannot serve the
+    season (no prior log, one earlier season for ``marcel``, no projection block) is refused by
+    name, before any path."""
+    names = {f.name for f in named}
+    rates: dict[str, Mapping[int, Mapping[str, float]]] = {}
+    games: Mapping[int, float] = {}
+    read: list[int] = []
+    for name in ("prior", "espn", "marcel"):
+        if name not in names:
+            continue
+        try:
+            if name == "prior":
+                rates[name] = reader.prior_rates(data, season)
+            elif name == "espn":
+                rates[name], games = reader.espn_rates(data, season)
+            else:
+                rates[name], read = reader.marcel_rates(data, season)
+        except reader.SimReadError as e:
+            message = str(e)
+            raise reader.SimReadError(
+                message if name in message else f"{name}: {message}"
+            ) from None
+    return Fixed(rates, games, tuple(read))
+
+
+def projection_of(
+    f: fc.Forecaster, fixed: Fixed, lines: Any, seed: int, path: int, shape: str
+) -> Mapping[int, Mapping[str, float]]:
+    """A forecaster's projection on one path: an oracle's draw, any other's figures."""
+    if f.name == "oracle":
+        assert f.spread is not None
+        return fc.oracle(lines, f.spread, seed, path, shape)
+    return fixed.rates[f.name]
+
+
+def replay_setup_of(season: int, lines: Any, members: Any, scheduled: Any, projection: Any) -> Any:
+    """A replay's league in one path, drafted on the run's forecaster's ``projection``."""
     return rn.replay_setup(season, lines, members, projection, reader.PERIOD_ONE[season], scheduled)
 
 
@@ -833,8 +862,9 @@ def task_replay(
     lines: Any,
     members: Any,
     scheduled: Any,
-    standin: tuple[str, float],
-    prior: Any,
+    forecaster: fc.Forecaster,
+    fixed: Fixed,
+    shape: str,
     lag: int,
     weights: Mapping[str, float],
     news_sd: float,
@@ -843,16 +873,19 @@ def task_replay(
     seed: int,
     path: int,
 ) -> dict[str, Any]:
-    setup = replay_setup_of(season, lines, members, scheduled, standin, prior, seed, path)
+    projection = projection_of(forecaster, fixed, lines, seed, path, shape)
+    setup = replay_setup_of(season, lines, members, scheduled, projection)
     w = rn.replay_world(setup, lines, lag, seed, path, weights, news_sd=news_sd)
     out = rn.room(setup, w, arms, seats, path)
-    out["standin"] = {"kind": standin[0], "spread": standin[1]}
+    out["forecaster"] = forecaster.label
     return out
 
 
-#: The replay's version in its payload: 2 since its seats believe only the games played
-#: (#172, PR B1); a version 1 replay's figures came from seats that saw each season's rates.
-REPLAY_VERSION = 2
+#: The replay's version in its payload: 3 since a run names its forecasters (#172, PR D1): its
+#: results and counts are keyed by the forecaster's label (``prior``, ``oracle:0.1``), where
+#: version 2 keyed them by kind and spread (``prior:0``); 2 since its seats believe only the
+#: games played (PR B1), a version 1 replay's seats having seen each season's rates.
+REPLAY_VERSION = 3
 BELIEF_RULE = (
     "per stat, (w * the forecaster's figure + the sum of his lines dated before the day) / "
     "(w + his games before the day), read every day"
@@ -861,6 +894,68 @@ NEWCOMER_RULE = (
     "a player nobody projected enters the belief the day after his first recorded game, from "
     "the mean projection over the projected players left undrafted"
 )
+#: Whose weights the belief takes, for each forecaster.
+WEIGHTS_NOTE = (
+    "the belief's weights fitted under the prior forecaster (readers.belief_weights), the same "
+    "for every forecaster: no fit per forecaster is made"
+)
+
+
+def source_of(f: fc.Forecaster, fixed: Fixed, shape: str) -> str:
+    """One sentence on where a forecaster's projection comes from."""
+    if f.name == "prior":
+        return (
+            f"the prior season's per-game rates of the players with {fc.MIN_GAMES} played games "
+            "in it"
+        )
+    if f.name == "espn":
+        return (
+            "ESPN's stored season projection for the replayed season, per game, for every "
+            "player whose block has games; ESPN updates it through the season (see freeze)"
+        )
+    if f.name == "marcel":
+        read = ", ".join(str(t) for t in fixed.marcel_seasons)
+        weights = ", ".join(f"{w:g}" for w in fc.MARCEL_WEIGHTS[: len(fixed.marcel_seasons)])
+        return (
+            f"the per-game lines of seasons {read} weighted {weights} by recency, regressed "
+            f"toward the mean of the players with {fc.MARCEL_MIN_GAMES} games in the latest by "
+            f"{fc.MARCEL_REGRESS_GAMES:g} games; a player with {fc.MARCEL_MIN_GAMES} games in "
+            "one of them is projected"
+        )
+    return (
+        f"the replayed season's realized rates of the players with {fc.MIN_GAMES} played games, "
+        f"noised on the log scale at {f.spread:g} per player and stat ({shape} shape): a "
+        "labelled look-ahead whose error is known"
+    )
+
+
+def forecasters_block(
+    named: Sequence[fc.Forecaster], fixed: Fixed, lines: Any, seed: int, shape: str
+) -> dict[str, Any]:
+    """The payload's ``forecasters``: per label where its projection comes from, how many players
+    it projects and how many of them played ``forecast.ERROR_MIN_GAMES`` games, its error
+    against the replayed season (``forecast.error_of``; an oracle's on path 0, where it should
+    sit at its spread), ``espn``'s freeze check and the belief's weights. Never shown to a
+    seat."""
+    out: dict[str, Any] = {}
+    played = {k: len(v) for k, v in lines.items()}
+    for f in named:
+        rates = projection_of(f, fixed, lines, seed, 0, shape)
+        e = fc.error_of(rates, lines)
+        block: dict[str, Any] = {
+            "name": f.name,
+            "source": source_of(f, fixed, shape),
+            "projected": e["projected"],
+            "played": e["played"],
+            "error": {k: e[k] for k in ("min_games", "by_stat", "median_spread")},
+            "weights": WEIGHTS_NOTE,
+        }
+        if f.name == "oracle":
+            block["error"]["measured_on"] = "path 0: an oracle's error should sit at its spread"
+        if f.name == "espn":
+            block["freeze"] = fc.freeze_of(fixed.espn_games, played)
+        out[f.label] = block
+    return out
 
 
 def replay_notes(weights: fitmod.BeliefWeights, news_sd: float) -> dict[str, Any]:
@@ -872,7 +967,7 @@ def replay_notes(weights: fitmod.BeliefWeights, news_sd: float) -> dict[str, Any
             "rule": BELIEF_RULE,
             "weights": weights.payload(),
             "weights_fitted_with": "the prior season's rates (the prior forecaster)",
-            "oracle": "an oracle stand-in uses the prior forecaster's weights",
+            "forecasters": WEIGHTS_NOTE,
         },
         "newcomer": NEWCOMER_RULE,
         "pool": {
@@ -881,7 +976,11 @@ def replay_notes(weights: fitmod.BeliefWeights, news_sd: float) -> dict[str, Any
                 f"the projected players with a scheduled game in the season's first "
                 f"{rn.OPENING_DAYS} days"
             ),
-            "projected": f"a stand-in projects the players with {rn.STANDIN_MIN_GAMES} games",
+            "projected": (
+                f"prior and an oracle project the players with {fc.MIN_GAMES} played games in "
+                "the season they read, espn every player whose block has games, marcel the "
+                f"players with {fc.MARCEL_MIN_GAMES} games in one of the seasons it reads"
+            ),
         },
         "news_sd_days": news_sd,
         "refresh": "not used: a replay's seats believe the games played, not a weekly refresh",
@@ -893,8 +992,7 @@ def no_peek(
     lines: Any,
     members: Any,
     scheduled: Any,
-    standin: tuple[str, float],
-    prior: Any,
+    projection: Any,
     lag: int,
     weights: Mapping[str, float],
     news_sd: float,
@@ -904,9 +1002,10 @@ def no_peek(
     day: date,
 ) -> tuple[Any, int, list[dict[str, Any]]]:
     """Path 0 of the replay on the recorded lines and on :func:`nopeek.perturb`'s, with one
-    league built before either: the first difference between their day records (None when
-    they never part), the records compared and the audit's breaches in either run."""
-    setup = replay_setup_of(season, lines, members, scheduled, standin, prior, seed, 0)
+    league built before either (on ``projection``, the run's forecaster's on path 0): the first
+    difference between their day records (None when they never part), the records compared and
+    the audit's breaches in either run."""
+    setup = replay_setup_of(season, lines, members, scheduled, projection)
     if day not in setup.days:
         raise ValueError(f"{day} is not a day of the replayed season")
     other = nopeek.perturb(lines, rn.game_days_of(setup), day, seed)
@@ -944,16 +1043,12 @@ def cmd_replay(args: argparse.Namespace) -> int:
     started = datetime.now(UTC)
     try:
         day = date.fromisoformat(args.no_peek) if args.no_peek else None
+        named = fc.parse(args.forecasters)
         inputs, fit, sha, fit_path, tau_note = world_inputs(args.data, [], need_tau=False)
         specs = read_specs(args.seats)
         arms = {arm.name: arm for arm in arms_of(specs, sha)}
-        standins = parse_standin(args.standin)
         lines, members, scheduled = reader.replay_lines(args.data, args.season)
-        prior = (
-            reader.prior_rates(args.data, args.season)
-            if any(k == "prior" for k, _ in standins)
-            else {}
-        )
+        fixed = fixed_of(args.data, args.season, named)
         fitted = reader.belief_weights(args.data, args.season, HOLD_OUT)
     except (reader.SimReadError, ValueError, OSError, KeyError) as e:
         print(f"refused: {e}")
@@ -962,12 +1057,9 @@ def cmd_replay(args: argparse.Namespace) -> int:
         print("refused: a replay seats at least two arms")
         return 2
     seats = list(arms)
+    first = projection_of(named[0], fixed, lines, args.seed, 0, args.shape)
     try:
-        shape = policy.shape_of(
-            replay_setup_of(
-                args.season, lines, members, scheduled, standins[0], prior, args.seed, 0
-            )
-        )
+        shape = policy.shape_of(replay_setup_of(args.season, lines, members, scheduled, first))
     except ValueError as e:
         print(f"refused: {e}")
         return 2
@@ -984,13 +1076,12 @@ def cmd_replay(args: argparse.Namespace) -> int:
     if day is not None:
         t0 = clock.perf_counter()
         try:
-            first, n, breaches = no_peek(
+            found, n, breaches = no_peek(
                 args.season,
                 lines,
                 members,
                 scheduled,
-                standins[0],
-                prior,
+                first,
                 inputs.lag,
                 weights,
                 args.news_sd,
@@ -1011,16 +1102,16 @@ def cmd_replay(args: argparse.Namespace) -> int:
         if breaches:
             print(f"AUDIT: {len(breaches)} breach(es); the check does not stand")
             return AUDIT_EXIT
-        if first is not None and first[0] <= day:
+        if found is not None and found[0] <= day:
             print(
-                f"FAILED: the records part on {first[0]} (variant {first[1]}, "
-                f"{', '.join(first[2])}), at or before {day}"
+                f"FAILED: the records part on {found[0]} (variant {found[1]}, "
+                f"{', '.join(found[2])}), at or before {day}"
             )
             return 1
-        if first is None:
+        if found is None:
             print(f"agree through {day}; the runs never part (the change after it reached no seat)")
         else:
-            print(f"agree through {day}; first difference on {first[0]} ({', '.join(first[2])})")
+            print(f"agree through {day}; first difference on {found[0]} ({', '.join(found[2])})")
         return 0
     workers = args.workers or rn.workers_default()
     tasks = [
@@ -1029,8 +1120,9 @@ def cmd_replay(args: argparse.Namespace) -> int:
             lines,
             members,
             scheduled,
-            standin,
-            prior,
+            f,
+            fixed,
+            args.shape,
             inputs.lag,
             weights,
             args.news_sd,
@@ -1039,9 +1131,10 @@ def cmd_replay(args: argparse.Namespace) -> int:
             args.seed,
             p,
         )
-        for standin in standins
+        for f in named
         for p in range(args.paths)
     ]
+    keys = [{"forecaster": f.label, "path": p} for f in named for p in range(args.paths)]
     t0 = clock.perf_counter()
     first_run = task_replay(*tasks[0])
     one = clock.perf_counter() - t0
@@ -1051,33 +1144,29 @@ def cmd_replay(args: argparse.Namespace) -> int:
         else estimate_hours(one, len(tasks), workers)
     )
     print(
-        f"{len(tasks)} tasks ({len(standins)} stand-ins x {args.paths} paths), one took {one:.1f}s, about {hours:.2f} h on {workers} workers"
+        f"{len(tasks)} tasks ({len(named)} forecasters x {args.paths} paths), one took {one:.1f}s, about {hours:.2f} h on {workers} workers"
     )
     if args.dry_run:
-        return dry_run(
-            {"standin": f"{tasks[0][4][0]}:{tasks[0][4][1]:g}", "path": tasks[0][12]}, first_run
-        )
+        return dry_run(keys[0], first_run)
     ok, why = guard(hours, rooms=args.rooms, announced=args.announced)
     if not ok:
         print(f"refused: {why}")
         return 2
     results = [first_run, *rn.run_tasks(task_replay, tasks[1:], workers)]
-    keep, note = audited(
-        [{"standin": f"{t[4][0]}:{t[4][1]:g}", "path": t[12]} for t in tasks], results
-    )
-    tasks = [t for t, k in zip(tasks, keep, strict=True) if k]
-    results = [r for r, k in zip(results, keep, strict=True) if k]
-    by_standin: dict[str, dict[str, list[dict[str, Any]]]] = {}
-    counts_by_standin: dict[str, dict[str, list[Any]]] = {}
+    keep, note = audited(keys, results)
+    keys = [k for k, ok_ in zip(keys, keep, strict=True) if ok_]
+    results = [r for r, ok_ in zip(results, keep, strict=True) if ok_]
+    by_label: dict[str, dict[str, list[dict[str, Any]]]] = {}
+    counts_by_label: dict[str, dict[str, list[Any]]] = {}
     scales: dict[str, list[Any]] = {arm: [] for arm in seats}
-    for task, r in zip(tasks, results, strict=True):
-        key = f"{task[4][0]}:{task[4][1]:g}"
+    for key, r in zip(keys, results, strict=True):
+        label = key["forecaster"]
         for arm, row in r["scale"].items():
             scales[arm].append(row)
         for arm, metrics in r["by_arm"].items():
-            by_standin.setdefault(key, {}).setdefault(arm, []).append(metrics)
+            by_label.setdefault(label, {}).setdefault(arm, []).append(metrics)
         for arm, row in r["counts"].items():
-            counts_by_standin.setdefault(key, {}).setdefault(arm, []).append(row)
+            counts_by_label.setdefault(label, {}).setdefault(arm, []).append(row)
     payload = base_payload(
         "replay",
         args.name or f"replay-{args.season}",
@@ -1096,14 +1185,15 @@ def cmd_replay(args: argparse.Namespace) -> int:
         "specs": {arm: spec for arm, spec in zip(seats, specs, strict=True)},
         "seats": seats,
         "rotation": "seat i takes arm (i + path) mod n",
-        "draft": f"snake on the stand-in projection, over {payload['pool']['draft']}",
-        "standins": [{"kind": k, "spread": s} for k, s in standins],
+        "draft": f"snake on the run's forecaster's projection, over {payload['pool']['draft']}",
+        "forecasters": forecasters_block(named, fixed, lines, args.seed, args.shape),
+        "oracle_shape": args.shape,
         "players": sum(1 for k in members if scheduled.get(k) or lines.get(k)),
         "paths": args.paths,
         "seed": args.seed,
         "results": {
-            key: {arm: rn.aggregate(rows) for arm, rows in d.items()}
-            for key, d in by_standin.items()
+            label: {arm: rn.aggregate(rows) for arm, rows in d.items()}
+            for label, d in by_label.items()
         },
         "solves": sum(r["solves"] for r in results),
         "shape": shape.label(),
@@ -1115,19 +1205,19 @@ def cmd_replay(args: argparse.Namespace) -> int:
         "counts": {
             "note": COUNTS_NOTE,
             "rivals": None,
-            "by_standin": {
-                key: {arm: counts_of(rows) for arm, rows in d.items()}
-                for key, d in counts_by_standin.items()
+            "by_forecaster": {
+                label: {arm: counts_of(rows) for arm, rows in d.items()}
+                for label, d in counts_by_label.items()
             },
         },
         "audit": note,
     }
     path = finish(payload, args.data, False)
-    for key, d in payload["results"].items():
+    for label, d in payload["results"].items():
         for arm, agg in d.items():
             m = agg["made_playoffs"]
             print(
-                f"{key} {arm}: playoff odds {m['mean']:.3f} (SE {m['se'] if m['se'] is None else round(m['se'], 3)}) over {m['n']} paths"
+                f"{label} {arm}: playoff odds {m['mean']:.3f} (SE {m['se'] if m['se'] is None else round(m['se'], 3)}) over {m['n']} paths"
             )
     print(f"written: {path}")
     return audit_exit(note)
@@ -1629,7 +1719,19 @@ def main(argv: list[str] | None = None) -> int:
     co.set_defaults(func=cmd_compare)
     re_ = sub.add_parser("replay", help="a made-up league on a recorded season's lines")
     re_.add_argument("--season", type=int, required=True, help=f"ESPN season id, never {HOLD_OUT}")
-    re_.add_argument("--standin", default="prior", help="prior, or oracle:0.1,0.2,0.3")
+    re_.add_argument(
+        "--forecasters",
+        default="prior",
+        help="the run's forecasters, comma separated: prior, espn, marcel, oracle:<spread> "
+        "(default prior)",
+    )
+    re_.add_argument(
+        "--shape",
+        choices=fc.SHAPES,
+        default="stat",
+        help="an oracle's error: stat, a draw a player and stat; minutes, a share of it common to "
+        "the player's stats (default stat)",
+    )
     re_.add_argument("--seats", type=Path, nargs="+", required=True, help="the arms' spec files")
     re_.add_argument(
         "--news-sd",
