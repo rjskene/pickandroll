@@ -145,6 +145,20 @@ class Seat:
         return policy.decide(built, self.tier, self.executes, self.with_plan, self.fields)
 
 
+#: The keys of an arm's ``opponents`` block the simulator reads (:func:`of`); any other is
+#: refused by name (:func:`check_spec`).
+SPEC_KEYS = ("kind", "rate")
+
+
+def check_spec(spec: Mapping[str, Any]) -> None:
+    """Refuse an ``opponents`` block's key the simulator does not read, by name."""
+    unknown = [k for k in spec if k not in SPEC_KEYS]
+    if unknown:
+        raise ValueError(
+            f"opponents key {unknown[0]!r} is not one the simulator reads: one of {SPEC_KEYS}"
+        )
+
+
 def of(
     spec: Mapping[str, Any],
     knobs: Mapping[str, Any],

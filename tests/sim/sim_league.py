@@ -50,6 +50,9 @@ HAZARD = Hazard(
     censored_share=0.1,
     leading=0,
 )
+#: The twelve knobs the tests' arms start from. The plan floors sit at 0, where a plan whose gap
+#: over its set is a float's noise is taken or not with the process's hash seed: the usual leagues
+#: here draw no plan, so it never shows, but a test that reads a plan floor sets it away from 0.
 KNOBS: dict[str, Any] = {
     "system": "bbm",
     "blend": None,

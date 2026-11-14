@@ -15,7 +15,7 @@ from pickandroll.sim import cli, policy, world
 from pickandroll.sim import readers as reader
 from pickandroll.sim import run as rn
 from pickandroll.sim.belief import newcomer_prior, shrunk
-from pickandroll.sim.engine import wk
+from pickandroll.sim.engine import mv, wk
 from pickandroll.sim.state import Member, initial, snake_draft
 from tests.sim.sim_league import KNOBS, inputs, make_data_dir
 
@@ -169,3 +169,51 @@ def test_the_hold_out_gate_keeps_its_league_and_its_figures(tmp_path: Path):
     a = cli.gate_absences(data, 2025, inputs(), 3)
     assert a["detail"]["n"] == 574
     assert [b["count"] for b in a["detail"]["buckets"]] == [76, 65, 76, 144, 213]
+
+
+# --------------------------------------------------------------------------- the schedule (PR C2)
+@pytest.fixture(scope="module")
+def wire_league(tmp_path_factory):
+    """The wire fixture's replay of 2024 on the prior season's stand-in, path 0."""
+    data = make_data_dir(tmp_path_factory.mktemp("wire"), wire=120)
+    lines, members, scheduled = reader.replay_lines(data, 2024)
+    prior = reader.prior_rates(data, 2024)
+    return cli.replay_setup_of(2024, lines, members, scheduled, ("prior", 0.0), prior, 5, 0)
+
+
+def test_a_replays_schedule_keys_every_day_of_its_calendar(wire_league):
+    """Every day of the calendar is a key, an empty set when nobody plays, so the engine reads
+    every day and extrapolates no game (``moves.games_ahead``'s unread days are none)."""
+    setup = wire_league
+    days = setup.days
+    assert days[0] == setup.calendar.weeks[0].start and all(d in setup.schedule for d in days)
+    # The synthetic logs end weeks before the replay's calendar: those days are keyed, empty.
+    last_game = max(d for d, teams in setup.schedule.items() if teams)
+    assert last_game < setup.season_end and setup.schedule[setup.season_end] == frozenset()
+    built = policy.problem_of(setup, initial(setup), 1, KNOBS, setup.projection, {}, {})
+    teams = sorted({m.nba_team for m in setup.players.values()})
+    assert len(teams) == len(setup.players)  # every player is his own team
+    for day in days:
+        for team in teams:
+            assert mv.games_ahead(built.problem, team, day)[1] == 0.0
+
+
+def test_on_a_replay_the_season_figure_is_the_engines_at_playoff_weight_one(wire_league):
+    """PR C's two invariants on a replay setup: a healthy player's ``worth_w`` is
+    ``moves.worth_from`` and an absent one's ``moves.net_of_return``."""
+    setup = wire_league
+    state = initial(setup)
+    day = setup.start
+    out = state.active(1)[0]
+    back = day + timedelta(12)
+    built = policy.problem_of(setup, state, 1, KNOBS, setup.projection, {out: "O"}, {out: back})
+    p = built.problem
+    fig = policy.SeasonFigure(built, 1.0)
+    tomorrow = day + timedelta(1)
+    healthy = [k for k, _ in p.roster if k != out] + [k for k, _ in p.candidates][:5]
+    assert len(healthy) > 5
+    for k in healthy:
+        assert fig.worth(k, tomorrow) == pytest.approx(mv.worth_from(p, k, tomorrow))
+    player = dict(p.roster)[out]
+    assert fig.worth(out, tomorrow) == pytest.approx(mv.net_of_return(p, out, player))
+    assert fig.worth(out, tomorrow) != 0.0

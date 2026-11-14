@@ -6,7 +6,7 @@ from __future__ import annotations
 import contextlib
 import io
 import json
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -147,7 +147,7 @@ def test_describe_names_counts_and_no_figures():
 
 
 # --------------------------------------------------------------------------- PR 2b: the runs
-from tests.sim.sim_league import LEAGUE, MY_TEAM, make_data_dir
+from tests.sim.sim_league import LEAGUE, MY_TEAM, inputs, make_data_dir
 
 KNOBS = {
     "system": "bbm",
@@ -226,6 +226,7 @@ def test_compare_pairs_the_arms_and_records_the_run(run_data: Path, capsys):
     dry = capsys.readouterr().out
     # The dry run prints the exact arm's season scale; the ranking arm has none.
     assert "season scale, a, the first task: gain " in dry and "season scale, b," not in dry
+    assert ", ratio " in dry and ", against " in dry
     assert ss.main([*args, *common, "--shrink", "0,0.5", "--name", "first"]) == 0
     out = capsys.readouterr().out
     assert "verdict (one-SE, advisory)" in out and "playoff odds, B less A," in out
@@ -779,3 +780,42 @@ def test_a_replay_with_a_wire_lands_moves_and_voids_nothing(wire_data: Path, cap
     counts = payload["counts"]["by_standin"]["prior:0"]
     assert counts["R"]["landed"]["mean"] >= 1 and counts["R"]["adds_per_week"]["mean"] > 0
     assert counts["S"]["landed"]["mean"] == 0
+
+
+# --------------------------------------------------------------------------- the hash seed (PR C2)
+def test_the_run_record_keeps_the_hash_seed(monkeypatch):
+    """``hash_seed`` is a record field like ``host`` and ``workers``: the process's
+    ``PYTHONHASHSEED``, or ``"random"`` when it is unset (or empty)."""
+
+    def payload() -> dict:
+        return ss.base_payload(
+            "replay", "x", datetime.now(UTC), "0" * 64, Path("fit.json"), {}, 1, {}, inputs()
+        )
+
+    monkeypatch.setenv("PYTHONHASHSEED", "0")
+    assert ss.hash_seed() == "0" and payload()["hash_seed"] == "0"
+    monkeypatch.setenv("PYTHONHASHSEED", "")
+    assert payload()["hash_seed"] == "random"
+    monkeypatch.delenv("PYTHONHASHSEED")
+    assert payload()["hash_seed"] == "random"
+
+
+def test_a_simulating_run_without_a_hash_seed_says_so_on_stderr(
+    run_data: Path, monkeypatch, capsys
+):
+    """One line on stderr when the hash seed is unset and the command simulates and is not a
+    dry run; none when it is set, or on a dry run. The hold-out replay is refused right after,
+    so the line is all the run does."""
+    a = str(run_data / "A.json")
+    argv = ["--data", str(run_data), "--rooms", "0", "replay", "--season", "2025", "--seats", a]
+    monkeypatch.delenv("PYTHONHASHSEED", raising=False)
+    assert ss.main(argv) == 2
+    err = capsys.readouterr().err
+    assert err.count("\n") == 1 and "PYTHONHASHSEED is unset" in err
+    assert "PYTHONHASHSEED=0" in err
+    assert ss.main([*argv, "--dry-run"]) == 2
+    assert capsys.readouterr().err == ""
+    monkeypatch.setenv("PYTHONHASHSEED", "0")
+    assert ss.main(argv) == 2
+    assert capsys.readouterr().err == ""
+    assert set(ss.SIMULATING) == {"compare", "replay", "room", "validate"}

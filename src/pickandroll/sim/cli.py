@@ -41,6 +41,7 @@ import argparse
 import json
 import os
 import platform
+import sys
 import time as clock
 import urllib.error
 import urllib.request
@@ -364,6 +365,21 @@ def world_inputs(
     return inputs, payload, sha, path, tau_note
 
 
+#: The commands whose outcome runs through the engine's evaluator (an exact tie there can fall
+#: either way with the process's hash seed).
+SIMULATING = ("compare", "replay", "room", "validate")
+HASH_SEED_NOTE = (
+    "PYTHONHASHSEED is unset: at an exact tie the outcome may differ between processes (an "
+    "order-dependent sum in the engine's evaluator); a run to be reproduced sets PYTHONHASHSEED=0"
+)
+
+
+def hash_seed() -> str:
+    """The process's ``PYTHONHASHSEED`` as the run record keeps it: its value, or ``"random"``
+    when it is unset (or empty, which Python reads as unset)."""
+    return os.environ.get("PYTHONHASHSEED") or "random"
+
+
 def base_payload(
     kind: str,
     name: str,
@@ -387,6 +403,7 @@ def base_payload(
         "host": platform.node(),
         "workers": workers,
         "nice": NICE,
+        "hash_seed": hash_seed(),
         "code_sha": reader.code_sha(ROOT),
         "fit_sha": sha,
         "fit_file": str(fit_path),
@@ -516,7 +533,9 @@ def dry_run(key: Mapping[str, Any], first: Mapping[str, Any]) -> int:
     for arm, row in (first.get("scale") or {}).items():
         if row:
             shown = ", ".join(
-                f"{m} {row[m]:.4g}" for m in ("gain", "ros", "ratio") if row.get(m) is not None
+                f"{m} {row[m]:.4g}"
+                for m in ("gain", "ros", "ratio", "against")
+                if row.get(m) is not None
             )
             print(f"season scale, {arm}, the first task: {shown} over {row['swaps']} swaps")
     _, note = audited([key], [first])
@@ -548,12 +567,14 @@ def counts_of(rows: Sequence[Any]) -> dict[str, Any] | None:
 SCALE_NOTE = (
     "per arm: on the first simulated day of each path, for the arm's own seat (a replay's or a "
     "room's: its first seat in team order), over the arm's pool, each candidate's best single "
-    "swap on the key the arm executes, without the season term; gain is the median of their "
-    "gains (expected category wins), ros the median of their ROS_w (season value above a dead "
-    "spot times the games left, a bracket game counted playoff_weight times), ratio gain over "
-    "ros; each the mean over the paths that stand. A season_weight of the ratio's size makes the "
-    "term about as loud as the odds gain; the ratio is signed, negative when the swaps best for "
-    "the odds lose season worth. Null on the ranking tier and a static seat."
+    "swap on the key the arm executes, without the season term. gain: the median of their gains "
+    "on that key (expected category wins in a categories league). ros: the median of their "
+    "ROS_w (season value above a dead spot times the games left, a bracket game counted "
+    "playoff_weight times). ratio: the median size of the gain over the median size of ROS_w, "
+    "over the swaps that have a ROS_w, 0 or more: the season_weight at which the term is the "
+    "gain's size. against: the share of those swaps whose ROS_w is below 0, the week's best swap "
+    "costing season value. Each the mean over the paths that stand; null on the ranking tier and "
+    "a static seat."
 )
 
 
@@ -568,7 +589,13 @@ def scale_of(rows: Sequence[Mapping[str, Any] | None]) -> dict[str, Any] | None:
         vals = [float(r[k]) for r in have if r.get(k) is not None]
         return sum(vals) / len(vals) if vals else None
 
-    return {"gain": mean("gain"), "ros": mean("ros"), "ratio": mean("ratio"), "paths": len(have)}
+    return {
+        "gain": mean("gain"),
+        "ros": mean("ros"),
+        "ratio": mean("ratio"),
+        "against": mean("against"),
+        "paths": len(have),
+    }
 
 
 def reads_of(
@@ -1639,4 +1666,7 @@ def main(argv: list[str] | None = None) -> int:
     va.add_argument("--system", default="bbm")
     va.set_defaults(func=cmd_validate)
     args = ap.parse_args(argv)
+    dry = getattr(args, "dry_run", False)
+    if args.command in SIMULATING and not dry and hash_seed() == "random":
+        print(HASH_SEED_NOTE, file=sys.stderr)
     return args.func(args)
