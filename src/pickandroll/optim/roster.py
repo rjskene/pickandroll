@@ -386,11 +386,11 @@ def punt_scan(
             solutions[i] = _solve_fixed(job)
             report(i, solutions[i], i + 1)
     else:
-        from concurrent.futures import ProcessPoolExecutor, as_completed
+        from concurrent.futures import as_completed
 
-        from .pool import orphan_guard
+        from . import pool as pools
 
-        with ProcessPoolExecutor(max_workers=workers, initializer=orphan_guard) as pool:
+        with pools.process_pool(workers) as pool:
             futures = {pool.submit(_solve_fixed, job): i for i, job in enumerate(jobs)}
             for done, future in enumerate(as_completed(futures), start=1):
                 i = futures[future]
