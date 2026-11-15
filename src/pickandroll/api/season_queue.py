@@ -41,12 +41,12 @@ import json
 import os
 import re
 import threading
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from ..season import Season
+from ..season import Season, Transaction
 from ..season import autopilot as qa
 from ..season import moves as mv
 from ..season import progress as pg
@@ -337,13 +337,28 @@ def adds_left(
     return out
 
 
-def funds(season: Season, claims: Iterable[Mapping[str, Any]], today: date) -> dict[str, Any]:
+def unread_weeks(adds: Mapping[str, Any] | None) -> frozenset[tuple[date, date]]:
+    """The week whose adds the solve counted only as a floor (#383): its first week, when the
+    league has a weekly limit and the transactions reads did not reach back to the week's start.
+    An entry logged before the count said so holds nothing."""
+    weeks = _weeks(adds)
+    if not adds or adds.get("limit") is None or adds.get("complete") is not False or not weeks:
+        return frozenset()
+    return frozenset({weeks[0][:2]})
+
+
+def funds(
+    season: Season,
+    claims: Iterable[Mapping[str, Any]],
+    today: date,
+    older: Sequence[Sequence[Transaction]] = (),
+) -> dict[str, Any]:
     """What my team has left, as the league list and the Queue both show it (#333). ``claims`` are
     the open ones, placed and not yet processed. ``dollars`` is the budget the league's page read,
     ``bids`` what those claims would spend of it; a standard-waivers league has no dollars and
     shows its waiver ``priority`` of ``teams``. ``adds`` is this week's count by the rule of
-    :func:`adds_left`: the limit less the adds the transactions page shows, less the claims that
-    clear this week; None without my team or the week."""
+    :func:`adds_left`: the limit less the adds the transactions page shows (its ``older`` reads
+    joined, #383), less the claims that clear this week; None without my team or the week."""
     s = season.settings
     mine = s.my_team_id
     open_ = list(claims)
@@ -352,7 +367,7 @@ def funds(season: Season, claims: Iterable[Mapping[str, Any]], today: date) -> d
     week = season.current(today)
     adds = None
     if mine is not None and week is not None:
-        used = mv.adds_used(season.transactions, mine, week.start, week.end, today)
+        used = mv.adds_used(season.transactions, mine, week.start, week.end, today, older)
         read = None if s.max_weekly_adds is None else max(0, s.max_weekly_adds - used.count)
         span = (week.start, week.end)
         weeks = {"weeks": [{"start": str(span[0]), "end": str(span[1]), "adds": read}]}

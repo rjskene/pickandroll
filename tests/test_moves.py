@@ -521,8 +521,14 @@ def test_adds_this_week_are_counted_from_the_transactions_page():
     today = date(2026, 10, 28)
     used = mv.adds_used(rows, 3, WEEKS[0][0], WEEKS[0][6], today)
     assert used == mv.AddsUsed(2, True)
-    # The page does not reach back past Monday: the count is a floor.
-    assert mv.adds_used(rows[:4], 3, WEEKS[0][0], WEEKS[0][6], today) == mv.AddsUsed(1, False)
+    # A full page that does not reach back past Monday: the count is a floor.
+    full = rows[:4] + [
+        Transaction("add", p(100 + g), 5, None, "Free Agent", "Oct 27, 3:00 am", g)
+        for g in range(3, mv.PAGE_TRANSACTIONS)
+    ]
+    assert mv.adds_used(full, 3, WEEKS[0][0], WEEKS[0][6], today) == mv.AddsUsed(1, False)
+    # A read shorter than a page is the league's whole list (#383): the count is complete.
+    assert mv.adds_used(rows[:4], 3, WEEKS[0][0], WEEKS[0][6], today) == mv.AddsUsed(1, True)
     assert mv.adds_used([], 3, WEEKS[0][0], WEEKS[0][6], today) == mv.AddsUsed(0, True)
     # A December date read in January belongs to the year before.
     assert mv.when_date("Dec 30, 1:00 pm", date(2027, 1, 2)) == date(2026, 12, 30)

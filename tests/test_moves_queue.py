@@ -720,7 +720,8 @@ def test_the_funds_take_a_placed_claim_from_the_adds_and_show_its_bid():
     s = funded([transaction("add", 201, 4, "Oct 20, 4:15 am")])
     out = season_queue.funds(s, [open_claim(101, 7), open_claim(102, 5)], DAY)
     assert (out["dollars"], out["bids"], out["priority"]) == (88.0, 12, None)
-    assert out["adds"] == {"limit": 4, "used": 1, "complete": False, "pending": 2, "left": 1}
+    # One transaction read is the league's whole list, so the count is complete (#383).
+    assert out["adds"] == {"limit": 4, "used": 1, "complete": True, "pending": 2, "left": 1}
 
 
 def test_the_funds_count_a_claim_in_the_week_it_clears_and_a_struck_bid_as_nothing():

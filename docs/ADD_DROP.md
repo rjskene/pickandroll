@@ -429,8 +429,13 @@ keep rule").
   Moves card repeats.
 
 Add limit: k is the league's weekly limit minus the adds already made this week, counted from
-the transactions page; when that page does not reach back to the week's start the payload says
-the count is unknown and uses the full limit.
+the transactions page. The page lists the newest 25 transactions, so a busy league's newest read
+stops reaching the week's start; the count then joins the league's stored reads of the page since
+the day before the week (`season/snapshots`, `api.season_reads`, #383), each transaction (an add
+and its drop) once, a read joining only when it shares a transaction with those joined so far.
+A read listing fewer than 25 is the league's whole list. When the joined reads still do not reach
+back past the week's start, the payload's `complete` is false and its count is a floor: the
+solve uses it as read, and the Queue holds the week's adds (AUTOPILOT §2).
 
 Waiver claims (resolved 2026-10-21): the first version prices free agents and lists waiver
 players with their clear dates without pricing the claim. Priority cost and FAAB bids come
@@ -728,7 +733,8 @@ docs/AUTOPILOT.md section 2, the bid in section 5.
   engine's build of the day (`Built.rule`, the same rule the solve ran under); the breakout
   flags; each available player's `FA` or `W` and clear date; my team's FAAB budget; my drops
   within the waiver days from the transactions page; the adds left per week from the entry's
-  `adds`, less the claims placed and not processed.
+  `adds`, less the claims placed and not processed, and its first week held when `adds.complete`
+  is false (#383).
 - **The scored floor's spread** pools the public leagues' scorecard rows of group `scored` whose
   judging horizon is complete (`season_scorecard.compared_move`, the rows the Monday summary
   compares; a week plan's steps one difference, `compared_units`, #221), by scoring, and never

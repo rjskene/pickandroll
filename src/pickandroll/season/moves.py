@@ -1601,6 +1601,11 @@ def when_date(when: str | None, today: date) -> date | None:
     return None
 
 
+#: The transactions Yahoo's transactions page lists, newest first (an add and its drop one): a
+#: read with fewer is the league's whole list (#383; 314 of 380 stored reads list 25, none more).
+PAGE_TRANSACTIONS = 25
+
+
 @dataclass(frozen=True)
 class AddsUsed:
     count: int
@@ -1610,18 +1615,64 @@ class AddsUsed:
 
 
 def adds_used(
-    transactions: Sequence[Transaction], team_id: int, start: date, end: date, today: date
+    transactions: Sequence[Transaction],
+    team_id: int,
+    start: date,
+    end: date,
+    today: date,
+    older: Sequence[Sequence[Transaction]] = (),
 ) -> AddsUsed:
     """My adds in the week ``start``..``end``, from the league's transactions page (newest
-    first, as far back as the page reaches)."""
-    dates = [when_date(t.when, today) for t in transactions]
-    groups = {
-        t.group
-        for t, d in zip(transactions, dates, strict=True)
-        if t.kind == "add" and t.team_id == team_id and d is not None and start <= d <= end
+    first, as far back as the page reaches) and the ``older`` reads of it, newest first (#383).
+
+    A page lists a fixed number of rows, so once the newest read no longer reaches the week's
+    start the older reads fill the gap: their rows join by transaction (a group, an add and its
+    drop, once however many reads list it), and a read joins only when it shares a transaction
+    with those already joined, so the joined rows run without a gap from the newest back. The
+    count is complete when they reach back past the week's start, or when a joined read lists
+    fewer than :data:`PAGE_TRANSACTIONS` (the league's whole list); otherwise it is a floor."""
+    if not transactions:
+        return AddsUsed(0, True)
+    joined: dict[tuple[object, ...], tuple[Transaction, ...]] = {}
+    earliest: date | None = None
+    whole = False
+    for i, read in enumerate((transactions, *older)):
+        groups = _groups(read)
+        if i and not joined.keys() & groups.keys():
+            continue
+        joined |= groups
+        whole = len({t.group for t in read}) < PAGE_TRANSACTIONS
+        dates = [d for t in read if (d := when_date(t.when, today)) is not None]
+        if dates:
+            earliest = min(dates) if earliest is None else min(earliest, *dates)
+        if whole or (earliest is not None and earliest < start):
+            break
+    adds = {
+        key
+        for key, rows in joined.items()
+        for t in rows
+        if t.kind == "add"
+        and t.team_id == team_id
+        and (d := when_date(t.when, today)) is not None
+        and start <= d <= end
     }
-    known = [d for d in dates if d is not None]
-    return AddsUsed(len(groups), not transactions or (bool(known) and min(known) < start))
+    return AddsUsed(len(adds), whole or (earliest is not None and earliest < start))
+
+
+def _groups(read: Sequence[Transaction]) -> dict[tuple[object, ...], tuple[Transaction, ...]]:
+    """A read's transactions by what they are, not by their place on the page: the team, the
+    time as printed and the rows' kinds and players."""
+    by_group: dict[int, list[Transaction]] = {}
+    for t in read:
+        by_group.setdefault(t.group, []).append(t)
+    return {
+        (
+            rows[0].team_id,
+            rows[0].when,
+            tuple(sorted((t.kind, t.player.yahoo_id, t.team_id or 0) for t in rows)),
+        ): tuple(rows)
+        for rows in by_group.values()
+    }
 
 
 # --------------------------------------------------------------------------- standard waivers

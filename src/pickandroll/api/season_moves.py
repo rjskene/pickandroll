@@ -64,7 +64,7 @@ from ..season import stream as st
 from ..season import weekly as wk
 from ..sources.injuries import Listed
 from ..sources.matching import match_players
-from . import season_cantcut, season_flags
+from . import season_cantcut, season_flags, season_reads
 from . import season_week as sw
 
 #: The weeks the moves look at: this week and the three after it.
@@ -226,12 +226,18 @@ def espn_returns(data_dir: Path, members: list[mv.Member]) -> dict[int, date]:
 
 
 def add_limits(
-    season: Season, team: int, ahead: list[sw.Span], today: date
+    season: Season, team: int, ahead: list[sw.Span], today: date, data_dir: Path | None = None
 ) -> tuple[mv.AddsUsed, tuple[mv.AddLimit, ...]]:
-    """The adds ``team`` made this week and each week's add limit, this week's net of them."""
+    """The adds ``team`` made this week and each week's add limit, this week's net of them: the
+    newest transactions read joined by the league's stored reads under ``data_dir`` (#383)."""
     limit = season.settings.max_weekly_adds
     this = ahead[0].week
-    used = mv.adds_used(season.transactions, team, this.start, this.end, today)
+    older = (
+        season_reads.older_reads(data_dir, season.settings.league, this.start)
+        if data_dir is not None
+        else ()
+    )
+    used = mv.adds_used(season.transactions, team, this.start, this.end, today, older)
     limits = tuple(
         mv.AddLimit(
             sp.week.start,
@@ -338,7 +344,7 @@ def build(
     this = ahead[0].week
     # The adds are counted from the first week a move can take effect in: the next one when
     # this week is over (a claim placed on Sunday clears on Monday, #209).
-    used, limits = add_limits(season, mine, ahead[1:] if over else ahead, today)
+    used, limits = add_limits(season, mine, ahead[1:] if over else ahead, today, data_dir)
     claims = frozenset(
         a.player.yahoo_id for a in pool if a.player.yahoo_id in rates and a.availability == "W"
     )

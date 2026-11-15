@@ -143,7 +143,7 @@ def build(
         for a in season.available
         if a.player.yahoo_id not in rostered and a.player.yahoo_id in rates
     )
-    _, limits = season_moves.add_limits(season, mine, ahead[1:] if over else ahead, today)
+    _, limits = season_moves.add_limits(season, mine, ahead[1:] if over else ahead, today, data_dir)
     this = ahead[0].week
     horizons = {
         "week": {
