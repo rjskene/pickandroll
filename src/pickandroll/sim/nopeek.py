@@ -36,10 +36,18 @@ def _rng(seed: int, player: int, day: date) -> np.random.Generator:
     return np.random.default_rng([int(seed), int(player), day.toordinal()])
 
 
+def _scale(g: np.random.Generator) -> float:
+    """A factor in :data:`SCALE` from one ``random()`` draw, as ``g.uniform(*SCALE)`` takes it,
+    with the arithmetic in Python: it rounds the multiply and the add apart on every machine,
+    where numpy's compiled ``uniform`` fuses them on arm64 and not on x86-64."""
+    lo, hi = SCALE
+    return lo + (hi - lo) * float(g.random())
+
+
 def _redrawn(line: Mapping[str, float], g: np.random.Generator) -> dict[str, float]:
     """``line`` with every stat scaled and rounded, makes within attempts, threes within field
     goals, points from the makes when the line has them."""
-    out = {s: float(round(float(x) * g.uniform(*SCALE))) for s, x in sorted(line.items())}
+    out = {s: float(round(float(x) * _scale(g))) for s, x in sorted(line.items())}
     if "fgm" in out and "fga" in out:
         out["fgm"] = min(out["fgm"], out["fga"])
     if "ftm" in out and "fta" in out:

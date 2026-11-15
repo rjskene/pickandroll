@@ -21,6 +21,7 @@ from pickandroll.sim import opponents as op
 from pickandroll.sim import run as rn
 from pickandroll.sim.engine import wk
 from pickandroll.sim.state import initial
+from tests.sim.draws import between
 from tests.sim.sim_league import KNOBS, arm, make_setup
 from tests.sim.test_no_peek import DAYS, SEED, WEIGHTS, recorded
 
@@ -33,7 +34,7 @@ def other_forecast(setup) -> dict[int, dict[str, float]]:
     forecaster ranks the players differently."""
     g = np.random.default_rng(11)
     return {
-        k: {s: v * float(g.uniform(0.5, 1.6)) for s, v in rates.items()}
+        k: {s: v * between(g, 0.5, 1.6) for s, v in rates.items()}
         for k, rates in sorted(setup.projection.items())
     }
 
