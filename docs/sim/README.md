@@ -163,9 +163,8 @@ engine's own bounds (`progress.refused`), naming the knob and the reason:
 | `playoff_weight` | number | 0 or more, finite | 1 |
 
 None stays a value only where the engine's default is None (`blend`, `stash_threshold`,
-`faab_sizing`); anywhere else it is refused. `cli.policy_knobs` reads a league's knobs in force
-and adds the two simulator knobs at their defaults; a league without a knob file takes the twelve
-defaults (`policy.KNOB_DEFAULTS`).
+`faab_sizing`); anywhere else it is refused. Gate 5 runs at the twelve defaults
+(`policy.KNOB_DEFAULTS`); no knob file is read.
 
 **Four fields.** An arm may also name four fields of its own, on the arm and on its seat
 (`policy.Fields`, in the seat's repr, so two seats that differ in one never share a solve):
@@ -403,8 +402,11 @@ Each command runs as `python -m pickandroll.sim <command>`:
   no-peek check add no line. Refusing the season inside a search set is PR H's.
 - `room --leagues all --seats A.json B.json ... --draft rosters|snake`: the arms around one
   league's table from the recorded rosters or a snake redraft.
-- `validate --league all`: the six gates on this season's recorded weeks and on the hold-out, side
-  by side (below).
+- `validate --league all --season 2024 --forecaster prior`: gate 5 on a replay of the season
+  named (default the latest replayable season on file; the hold-out is refused as the replay
+  refuses it, the confirmation season because a gate needs no look at it), drafted on the
+  forecaster named (default `prior`), and the other gates on this season's recorded weeks and on
+  the hold-out (below).
 - `fit --refresh --tau residual --league <id>`: week six's one re-freeze, the residual `τ` against
   the first export and the fitted refresh from the exports on disk together, both hashes on the
   issue; until then `REFRESH_DEFAULTS` stand and every payload says `refresh: defaults`.
@@ -685,7 +687,16 @@ without its inputs is **not run** and says why, never passed.
   once the recorder has weeks.
 - Gate 4 on the hold-out and on this season's log: each player's season under the hazard drawn
   once a path and split into his weeks, so an absence that began one week is still missed the next.
-- Gate 5 on the league's setup: the surrogate's set against the exact set on five league-days.
+- Gate 5 on a replay: the league, the belief's weights and the world built as `replay` builds
+  them for the season and forecaster named (`cli.read_season`, `replay_setup_of`,
+  `run.replay_world` at the label's own weights), path 0. For three seats, the first, the middle
+  (the lower of two) and the last of the draft order, on the season's first simulated day and the
+  3rd, 7th, 10th and 14th days after it (`GATE_DAYS`), from day one's rosters and on the day's
+  belief, whether the surrogate's set equals the exact set: fifteen league-days. A seat passes
+  with four matches of five, one gate row a seat, and the gate passes when every seat does. The
+  knobs are `policy.KNOB_DEFAULTS` and the fields `policy.DEFAULT_FIELDS`, both in the payload's
+  `surrogate_gate` block with the season, the forecaster, the seats, the days and the label's
+  weights; no knob file is read.
 - Gate 6 once two exports and players with ten or more games exist; gate 3 is not run: it needs
   the scorecard's realized rows, which the simulator does not read.
 

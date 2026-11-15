@@ -69,12 +69,12 @@ def test_a_missing_knob_is_refused_by_name_and_none_stays_where_the_engine_takes
     assert policy.check_knobs({**KNOBS, "stash_threshold": 0.1})["stash_threshold"] == 0.1
 
 
-def test_an_arm_spec_is_refused_on_a_bad_knob_and_policy_knobs_adds_the_two(tmp_path):
+def test_an_arm_spec_is_refused_on_a_bad_knob_and_the_twelve_defaults_pass():
     spec = {"name": "A", "tier": "exact", "knobs": {**KNOBS, "daily_cap": 9}}
     with pytest.raises(ValueError, match="daily_cap 9 is above its maximum 3"):
         rn.arm_of(spec)
-    # No knob file: the twelve defaults.
-    assert ss.policy_knobs(tmp_path, "100001") == dict(policy.KNOB_DEFAULTS)
+    # Gate 5 runs at the twelve defaults, which pass the engine's bounds as they are.
+    assert policy.check_knobs(dict(policy.KNOB_DEFAULTS)) == dict(policy.KNOB_DEFAULTS)
 
 
 # --------------------------------------------------------------------------- the four fields

@@ -6,13 +6,13 @@ from __future__ import annotations
 import contextlib
 import io
 import json
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import pytest
 
-from pickandroll.sim import audit
+from pickandroll.sim import audit, policy
 from pickandroll.sim import cli as ss
 from pickandroll.sim import counts as ct
 from pickandroll.sim import forecast as fc
@@ -567,7 +567,11 @@ def test_validate_runs_the_gates_side_by_side(run_data: Path, capsys):
         and "no recorded week" in by[("team_weeks", LEAGUE)]["detail"]["reason"]
     )
     assert by[("realized_share", LEAGUE)]["passed"] is None
-    assert by[("surrogate", LEAGUE)]["detail"]["days"][0] == "2026-10-21"
+    # Gate 5 on a replay of the latest replayable season on file, one row a seat.
+    rows = [g for g in payload["gates"] if g["name"] == "surrogate"]
+    assert [(g["season"], g["detail"]["seat"]) for g in rows] == [(2024, 1), (2024, 6), (2024, 12)]
+    assert payload["surrogate_gate"]["season"] == 2024
+    assert payload["surrogate_gate"]["forecaster"] == "prior"
     assert ("belief_refresh", LEAGUE) in by
     assert "realized_share" in payload["not_run"]
 
@@ -864,6 +868,35 @@ def test_a_replay_with_a_wire_lands_moves_and_voids_nothing(wire_data: Path, cap
     counts = payload["counts"]["by_season"]["2024"]["prior"]
     assert counts["R"]["landed"]["mean"] >= 1 and counts["R"]["adds_per_week"]["mean"] > 0
     assert counts["S"]["landed"]["mean"] == 0
+
+
+def test_gate_five_runs_on_a_replay_of_the_season_named(wire_data: Path, capsys):
+    """Gate 5 on a replay (PR D3): the league, the weights and the world are the replay's for the
+    season and forecaster named; three seats of the draft order on five league-days each, at the
+    knobs' and the fields' defaults. The hold-out, the confirmation season, a season with no log
+    and a forecaster that cannot serve the season are refused before any solve."""
+    rows, block = ss.gate_surrogate(wire_data, 2024, fc.parse_one("prior"), 1, 1)
+    assert [r["detail"]["seat"] for r in rows] == [1, 6, 12] == block["seats"]
+    assert all(r["name"] == "surrogate" and r["season"] == 2024 for r in rows)
+    assert all(r["detail"]["of"] == 5 and r["detail"]["needed"] == 4 for r in rows)
+    # The surrogate matches the exact tier on the synthetic replay, seat by seat.
+    assert all(r["passed"] for r in rows), [r["detail"] for r in rows]
+    days = [date.fromisoformat(d) for d in block["days"]]
+    assert [(d - days[0]).days for d in days] == list(ss.GATE_DAYS)
+    assert block["knobs"] == dict(policy.KNOB_DEFAULTS)
+    assert block["fields"] == policy.DEFAULT_FIELDS.payload()
+    assert block["forecaster"] == "prior" and block["weights"]["source"] == "the default"
+    assert ss.gate_season(wire_data) == 2024
+    base = ["--data", str(wire_data), "--rooms", "0", "validate", "--league", LEAGUE]
+    for flags, why in (
+        (["--season", "2025"], "2025 is the hold-out"),
+        (["--season", "2026"], "2026 is the confirmation season; a gate needs no look at it"),
+        (["--season", "2019"], "season 2019 has no log on file"),
+        (["--forecaster", "marcel"], "marcel needs 2 earlier seasons on file, it has 1"),
+        (["--forecaster", "gospel"], "forecaster 'gospel'"),
+    ):
+        assert ss.main([*base, *flags, "--dry-run"]) == 2
+        assert why in capsys.readouterr().out
 
 
 # --------------------------------------------------------------------------- the hash seed (PR C2)

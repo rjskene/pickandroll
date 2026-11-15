@@ -10,7 +10,7 @@
     python -m pickandroll.sim replay --seasons 2024 --bbm-as espn --yahoo-as marcel --seats ...
     python -m pickandroll.sim replay --seasons 2024 --seats A.json B.json --no-peek 2023-12-04
     python -m pickandroll.sim room --leagues all --seats A.json B.json --draft rosters
-    python -m pickandroll.sim validate --league all
+    python -m pickandroll.sim validate --league all --season 2024 --forecaster prior
 
 ESPN's season id is the year the season ends in: 2025 is 2024-25, the hold-out. ``fetch-logs``
 makes one request a season through the same player view the draft-edge audit read, caches each
@@ -30,8 +30,8 @@ each season and forecaster that serves it (a cell); a written replay that names 
 confirmation season adds a line to its ledger; ``--no-peek`` checks one path of one season
 against it changed after a date and writes nothing.
 ``room`` seats the arms given around one league's table, rotated across paths. ``validate`` runs
-the six gates on this season's recorded weeks and on the hold-out, side by side, and writes what
-each had to work with. Every run's payload goes under ``data/sim/runs/`` with the code's
+gate 5 on a replay of a recorded season (``--season``, ``--forecaster``) and the other gates on
+this season's recorded weeks and on the hold-out, and writes what each had to work with. Every run's payload goes under ``data/sim/runs/`` with the code's
 commit, the fit's hash, the hold-out, the spec files verbatim and the execution model.
 
 Every command runs through :func:`guard`: at low priority (``nice``), never when its span would
@@ -106,7 +106,8 @@ THIS_SEASON = 2026
 PATHS = 100
 #: The paths a gate's samples are drawn over.
 GATE_PATHS = 200
-#: The league-days gate 5 samples: today and these offsets.
+#: The league-days gate 5 samples: the replay's first simulated day and these days after it,
+#: for each of :func:`gate_seats`.
 GATE_DAYS = (0, 3, 7, 10, 14)
 EXECUTIONS = policy.EXECUTIONS
 
@@ -2406,19 +2407,88 @@ def gate_recorded_weeks(
     return out
 
 
+#: The forecaster gate 5's replay is drafted on and believes by, when ``--forecaster`` names none.
+GATE_FORECASTER = "prior"
+#: An oracle's error shape in gate 5's replay (a run of ``replay`` sets it with ``--shape``).
+GATE_SHAPE = "stat"
+
+
+def gate_seats(teams: Sequence[int]) -> tuple[int, ...]:
+    """Gate 5's seats: the first, the middle (the lower of two) and the last of the draft order."""
+    return tuple(dict.fromkeys((teams[0], teams[(len(teams) - 1) // 2], teams[-1])))
+
+
+def gate_season(data: Path) -> int | None:
+    """The latest season a replay can play that a gate may look at: a cached, dated log, neither
+    the hold-out nor the confirmation season. None when there is none."""
+    on_file = reader.seasons_on_file(data, max(reader.PERIOD_ONE) + 1)
+    return max((t for t in on_file if t not in (HOLD_OUT, CONFIRMATION)), default=None)
+
+
+def season_refused(data: Path, season: int) -> str | None:
+    """Why gate 5 may not replay ``season``: the hold-out (refused as the replay refuses it), the
+    confirmation season (a gate needs no look at it), or a season with no dated log on file."""
+    if season == HOLD_OUT:
+        return f"{HOLD_OUT} is the hold-out; it is scored by validate only"
+    if season == CONFIRMATION:
+        return f"{CONFIRMATION} is the confirmation season; a gate needs no look at it"
+    if season not in reader.PERIOD_ONE or not (data / LOGS_DIR / f"{season}.json").is_file():
+        return f"season {season} has no log on file under {data / LOGS_DIR}"
+    return None
+
+
 def gate_surrogate(
-    setup: Any, inputs: rn.WorldInputs, me: int, knobs: Mapping[str, Any], seed: int
-) -> dict[str, Any]:
-    w = rn.forward_world(setup, inputs, seed, 0, 0.0)
-    days = [
-        setup.start + timedelta(d)
-        for d in GATE_DAYS
-        if setup.start + timedelta(d) <= setup.season_end
-    ]
-    matches = checks.surrogate_matches(setup, w, me, days, knobs)
-    g = vg.surrogate_gate(matches, season=setup.league)
-    g.detail.update({"days": [d.isoformat() for d in days]})
-    return gate_dict(g)
+    data: Path, season: int, f: fc.Forecaster, lag: int, seed: int
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Gate 5 on a replay (#172, PR D3): the league, the belief's weights and the world built as
+    ``replay`` builds them for ``season`` and forecaster ``f`` (:func:`read_season`,
+    :func:`replay_setup_of`, ``run.replay_world`` at the label's own weights), path 0; on each of
+    the :data:`GATE_DAYS` after the first simulated day, for each of :func:`gate_seats`, whether
+    the surrogate's set equals the exact set from day one's rosters (``checks.surrogate_matches``),
+    at the knobs' defaults (``policy.KNOB_DEFAULTS``) and the fields' (``policy.DEFAULT_FIELDS``).
+    One gate row a seat, and the block that names what the gate ran on. Refused
+    (``readers.SimReadError``) when ``f`` cannot serve the season."""
+    r = read_season(data, season, [f], None, {}, seed, GATE_SHAPE)
+    if not r.served:
+        raise reader.SimReadError(f"{f.label} cannot serve {season}: {r.skipped[f.label]}")
+    projection = projection_of(f, r.fixed, r.lines, seed, 0, GATE_SHAPE)
+    setup = replay_setup_of(season, r.lines, r.members, r.scheduled, projection)
+    w = rn.replay_world(
+        setup, r.lines, lag, seed, 0, r.weights[f.label], label=f.label, weights_of=r.weights
+    )
+    first = rn.first_day(setup)
+    days = (
+        []
+        if first is None
+        else [first + timedelta(d) for d in GATE_DAYS if first + timedelta(d) <= setup.season_end]
+    )
+    knobs = policy.check_knobs(dict(policy.KNOB_DEFAULTS))
+    fields = policy.DEFAULT_FIELDS
+    seats = gate_seats(setup.teams)
+    rows = []
+    for seat in seats:
+        matches = checks.surrogate_matches(setup, w, seat, days, knobs, fields)
+        g = vg.surrogate_gate(matches, season=season)
+        g.detail.update({"seat": seat, "days": [d.isoformat() for d in days]})
+        rows.append(gate_dict(g))
+    block = {
+        "season": season,
+        "forecaster": f.label,
+        "shape": GATE_SHAPE,
+        "seats": list(seats),
+        "seats_rule": "the first, the middle and the last of the draft order",
+        "days": [d.isoformat() for d in days],
+        "path": 0,
+        "knobs": knobs,
+        "fields": fields.payload(),
+        "weights": r.fits[f.label].payload(),
+        "rule": (
+            f"a seat passes when the surrogate's set equals the exact set on "
+            f"{vg.SURROGATE_NEEDED} of its {vg.SURROGATE_OF} league-days; the gate passes when "
+            "every seat does"
+        ),
+    }
+    return rows, block
 
 
 def gate_refresh(
@@ -2473,28 +2543,38 @@ def cmd_validate(args: argparse.Namespace) -> int:
     started = datetime.now(UTC)
     today = today_of(args)
     leagues = league_ids(args.league, args.data)
+    season = args.season if args.season is not None else gate_season(args.data)
+    if season is None:
+        print(f"refused: no replayable season on file under {args.data / LOGS_DIR}")
+        return 2
+    why = season_refused(args.data, season)
+    if why:
+        print(f"refused: {why}")
+        return 2
     try:
+        forecaster = fc.parse_one(args.forecaster)
         inputs, fit, sha, fit_path, tau_note = world_inputs(args.data, leagues)
     except (reader.SimReadError, ValueError, OSError) as e:
         print(f"refused: {e}")
         return 2
+    t0 = clock.perf_counter()
+    try:
+        surrogate, block = gate_surrogate(args.data, season, forecaster, inputs.lag, args.seed)
+    except (reader.SimReadError, ValueError, OSError, KeyError) as e:
+        print(f"refused: {e}")
+        return 2
+    took = clock.perf_counter() - t0
     gates: list[dict[str, Any]] = []
     gates.append(gate_hold_out_team_weeks(args.data, HOLD_OUT, inputs, args.seed))
-    for season in (HOLD_OUT, THIS_SEASON):
-        gates.append(gate_absences(args.data, season, inputs, args.seed))
+    for logged in (HOLD_OUT, THIS_SEASON):
+        gates.append(gate_absences(args.data, logged, inputs, args.seed))
     setups, skipped = setups_of(args.data, leagues, today, args.system)
     for league, setup in setups.items():
         gates += gate_recorded_weeks(args.data, league, setup, inputs, args.seed)
         gates.append(
             not_run("realized_share", league, "the simulator reads no scorecard's realized rows")
         )
-        me = reader.settings_of(args.data, league).my_team_id
-        if me is not None and me in setup.teams:
-            gates.append(
-                gate_surrogate(setup, inputs, me, policy_knobs(args.data, league), args.seed)
-            )
-        else:
-            gates.append(not_run("surrogate", league, "no team of mine"))
+    gates += surrogate
     if leagues:
         gates.append(gate_refresh(args.data, leagues[0], inputs, fit))
     payload = base_payload(
@@ -2505,6 +2585,7 @@ def cmd_validate(args: argparse.Namespace) -> int:
         "leagues": {league: league_note(s_) for league, s_ in setups.items()},
         "skipped": skipped,
         "seed": args.seed,
+        "surrogate_gate": block,
         "gates": gates,
         "passed": all(g["passed"] for g in gates if g["passed"] is not None)
         and any(g["passed"] is not None for g in gates),
@@ -2515,25 +2596,22 @@ def cmd_validate(args: argparse.Namespace) -> int:
         print(f"league {league} skipped: {why}")
     for g in gates:
         state = "not run" if g["passed"] is None else "passed" if g["passed"] else "FAILED"
-        extra = (
-            f" ({g['detail'].get('reason')})"
-            if g["passed"] is None
-            else f" {g['detail'].get('worst', '')}"
-        )
+        d = g["detail"]
+        if g["passed"] is None:
+            extra = f" ({d.get('reason')})"
+        elif g["name"] == "surrogate":
+            extra = f" seat {d['seat']}: {d['matched']} of {d['of']} league-days"
+        else:
+            extra = f" {d.get('worst', '')}"
         print(f"{g['name']:16} {g['season']!s:12} {state}{extra}")
+    days = len(block["days"]) * len(block["seats"])
+    print(
+        f"gate 5 on a replay of {block['season']} drafted on {block['forecaster']}: {days} "
+        "league-days "
+        f"({len(block['seats'])} seats x {len(block['days'])} days) in {took:.1f}s"
+    )
     print(f"written: {path}" if path else "dry run, nothing written")
     return 0
-
-
-def policy_knobs(data: Path, league: str) -> dict[str, Any]:
-    """A league's live knobs as its solves run with them, and the simulator's two at their
-    defaults; the twelve defaults (``policy.KNOB_DEFAULTS``) when the knob file cannot be read."""
-    from ..api.season_knobs import for_league
-
-    try:
-        return policy.check_knobs({**policy.KNOB_DEFAULTS, **for_league(data, league)})
-    except (OSError, ValueError, KeyError):
-        return policy.check_knobs(dict(policy.KNOB_DEFAULTS))
 
 
 # --------------------------------------------------------------------------- main
@@ -2660,6 +2738,18 @@ def main(argv: list[str] | None = None) -> int:
     ro.set_defaults(func=cmd_room)
     va = sub.add_parser("validate", help="the six gates on the recorded weeks and the hold-out")
     va.add_argument("--league", default="all", help="league ids, comma separated, or all")
+    va.add_argument(
+        "--season",
+        type=int,
+        default=None,
+        help="gate 5's replayed season, an ESPN season id (default the latest replayable on file; "
+        f"never {HOLD_OUT} or {CONFIRMATION})",
+    )
+    va.add_argument(
+        "--forecaster",
+        default=GATE_FORECASTER,
+        help=f"gate 5's replay's forecaster (default {GATE_FORECASTER})",
+    )
     va.add_argument("--seed", type=int, default=1)
     va.add_argument("--name", default=None)
     va.add_argument("--dry-run", action="store_true", help="print the gates, write nothing")

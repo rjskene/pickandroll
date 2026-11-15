@@ -28,7 +28,6 @@ SIM = SRC / "pickandroll" / "sim"
 #: a listed pair the code no longer has: the list is a ledger, kept exact.
 API_TIES = {
     ("pickandroll.sim.cli", "pickandroll.api.leagues"),
-    ("pickandroll.sim.cli", "pickandroll.api.season_knobs"),
     ("pickandroll.sim.cli", "pickandroll.api.season_week"),
     ("pickandroll.sim.cli", "pickandroll.api.seasons"),
     ("pickandroll.sim.readers", "pickandroll.api.season_decisions"),
@@ -138,7 +137,7 @@ def test_the_walker_sees_the_simulators_real_imports():
         "pickandroll.sim.readers"
     ]
     assert "pickandroll.sim.engine" in t["pickandroll.sim.policy"]
-    assert "pickandroll.api.season_knobs" in t["pickandroll.sim.cli"]  # inside a function
+    assert "pickandroll.api.season_week" in t["pickandroll.sim.cli"]  # inside a function
 
 
 def test_nothing_outside_the_simulator_imports_it():
