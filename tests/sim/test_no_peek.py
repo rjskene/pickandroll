@@ -31,8 +31,15 @@ SEED = 7
 
 def recorded():
     """A small season: forty players every other day, a tenth of their games missed, each a
-    level of his own; a stand-in that misses every level by a little; one player nobody
-    projected who arrives in week two."""
+    level and a shooting of his own; a stand-in that misses every level by a little; one player
+    nobody projected who arrives in week two.
+
+    Each player's two percentages are his own, so both percentage columns of the per-game value
+    have a real spread. (With every player shooting alike, the columns held rounding noise only,
+    which the value divides by its own spread: a last bit then reordered the draft.) Every number
+    comes from ``rng.random()``, whole-number draws and Python arithmetic, never ``uniform`` or
+    ``exp``, whose last bit can differ between machines. ``test_sim_draws.py`` pins this league's
+    digest: an edit here re-pins it."""
     rng = np.random.default_rng(3)
     players = {
         k: Member(k, f"P{k}", "x", ("PG", "SG") if k % 2 else ("C", "PF")) for k in range(1, 42)
@@ -43,14 +50,16 @@ def recorded():
     standin = {}
     for k, days in scheduled.items():
         level = between(rng, 0.5, 1.6)
+        fg = between(rng, 0.40, 0.55)
+        ft = between(rng, 0.65, 0.90)
         lines[k] = {}
         for d in days:
             if rng.random() < 0.1:
                 continue
             fga = float(rng.poisson(9 * level))
             fta = float(rng.poisson(3 * level))
-            fgm = float(min(fga, rng.poisson(0.47 * fga)))
-            ftm = float(min(fta, rng.poisson(0.78 * fta)))
+            fgm = float(min(fga, rng.poisson(fg * fga)))
+            ftm = float(min(fta, rng.poisson(ft * fta)))
             threes = float(min(fgm, rng.poisson(1.2 * level)))
             lines[k][d] = {
                 "pts": 2 * fgm + threes + ftm,
@@ -66,7 +75,7 @@ def recorded():
                 "fta": fta,
             }
         if k != 41:
-            miss = float(np.exp(0.15 * rng.standard_normal()))
+            miss = between(rng, 0.85, 1.15)
             standin[k] = {
                 "pts": 9.0 * level * miss,
                 "threes": 1.2 * level,
@@ -75,9 +84,9 @@ def recorded():
                 "stl": 1.0 * level,
                 "blk": 0.7 * level,
                 "tov": 1.8 * level,
-                "fgm": 4.2 * level,
+                "fgm": fg * 9 * level,
                 "fga": 9 * level,
-                "ftm": 2.3 * level,
+                "ftm": ft * 3 * level,
                 "fta": 3 * level,
             }
     setup = rn.replay_setup(

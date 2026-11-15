@@ -12,13 +12,22 @@ same one ``random()`` draw with the arithmetic in Python, which rounds each step
 from __future__ import annotations
 
 import ast
+import hashlib
+import json
+import math
+from datetime import date
 from fractions import Fraction
 from pathlib import Path
 
 import numpy as np
 
 from pickandroll.sim import nopeek
+from pickandroll.sim.engine import wk
 from tests.sim.draws import between
+from tests.sim.sim_fixtures import rates_table
+from tests.sim.sim_league import NINE, make_setup
+from tests.sim.test_no_peek import recorded
+from tests.sim.test_sim_replay import league as replay_league
 
 ROOT = Path(__file__).resolve().parents[2]
 TREES = (ROOT / "src" / "pickandroll" / "sim", ROOT / "tests" / "sim")
@@ -99,3 +108,99 @@ def test_the_no_peek_scale_draws_in_its_range_from_one_random_draw():
         x = nopeek._scale(g)
         assert lo <= x < hi
         assert x == lo + (hi - lo) * float(h.random())
+
+
+# --------------------------------------------------------------------------- the value's columns
+#: A column whose spread is below this share of its size holds rounding noise, not players. The
+#: noise of a column summed over n players is at most about n·2⁻⁵³ of its size, under 1e-13 for
+#: the few hundred players these leagues hold; a real column's spread is a few hundredths of its
+#: size or more. 1e-6 sits seven orders above the one and four below the other.
+NOISE = 1e-6
+
+
+def columns(projection) -> dict[str, tuple[float, float]]:
+    """Each category's column of the engine's per-game value over every projected player, as
+    ``wk._columns`` builds it: its spread before the engine's guard takes a spread of exactly 0
+    as 1, and its size (a percentage's mean makes, a counting stat's mean size)."""
+    keys = list(projection)
+    assert len(keys) <= 156  # the value's pool is every player
+    out = {}
+    for cat, p, mean, _ in wk._columns(projection, keys, NINE):
+        col = wk._column(cat, p)
+        xs = [col(projection[k]) for k in keys]
+        sd = math.sqrt(sum((x - mean) ** 2 for x in xs) / len(xs))
+        if cat in wk.PCT:
+            made = wk.PCT[cat][0]
+            size = sum(abs(float(projection[k].get(made, 0.0))) for k in keys) / len(keys)
+        else:
+            size = sum(abs(x) for x in xs) / len(xs)
+        out[cat] = (sd, size)
+    return out
+
+
+def made_up_projections() -> dict[str, dict]:
+    """The projections of the made-up leagues the tests build from in-memory builders. The
+    replay leagues built from :func:`sim_league.write_logs` take their projection from whole-
+    number lines (makes rounded game by game), so their percentages differ between players by
+    whole makes, never by a last bit."""
+    out = {"recorded": recorded()[0].projection}
+    for name, kw in {
+        "make_setup": {},
+        "make_setup(seed 5)": {"seed": 5},
+        "make_setup(6x4, pool 20)": {"teams": 6, "spots": 4, "pool": 20},
+    }.items():
+        out[name] = make_setup(**kw).projection
+    out["replay.league"] = replay_league()[0].projection
+    out["rates_table"] = rates_table(5, [f"p{i:03d}" for i in range(40)])
+    return out
+
+
+def test_no_value_column_of_a_made_up_league_is_rounding_noise():
+    noisy = {}
+    for name, projection in made_up_projections().items():
+        for cat, (sd, size) in columns(projection).items():
+            if sd != 0.0 and sd < NOISE * size:
+                noisy[f"{name}.{cat}"] = (sd, size)
+    assert noisy == {}, f"a column holds only rounding noise, scaled up by the value: {noisy}"
+
+
+def test_the_noise_reader_finds_main_s_shooting():
+    """Not vacuous: a league whose players all shoot alike, as ``recorded()`` had them (makes
+    4.2 and 2.3 times the level, attempts 9 and 3 times it), has both percentage columns noisy;
+    one whose makes are an exact power-of-two share is flat."""
+    levels = [0.5 + 1.1 * i / 39 for i in range(40)]
+    alike = {
+        k: {"fgm": 4.2 * x, "fga": 9 * x, "ftm": 2.3 * x, "fta": 3 * x}
+        for k, x in enumerate(levels)
+    }
+    got = columns(alike)
+    for cat in ("fg_pct", "ft_pct"):
+        sd, size = got[cat]
+        assert 0.0 < sd < NOISE * size
+    flat = {k: {"fgm": 4.0 * x, "fga": 8.0 * x} for k, x in enumerate(levels)}
+    assert columns(flat)["fg_pct"][0] == 0.0
+
+
+#: SHA-256 of ``recorded()``'s stand-in projection and lines, every number written as float hex.
+#: The same on every machine; an edit to ``recorded()`` re-pins it.
+RECORDED = "55953c05288a514788fad4bffaad8da0011898fcf000a7f0c79b3b7f5165240e"
+
+
+def digest(x) -> str:
+    def canon(v):
+        if isinstance(v, float):
+            return v.hex()
+        if isinstance(v, date):
+            return v.isoformat()
+        if isinstance(v, dict):
+            return [[canon(k), canon(w)] for k, w in sorted(v.items())]
+        return v
+
+    return hashlib.sha256(json.dumps(canon(x)).encode()).hexdigest()
+
+
+def test_recorded_is_the_same_league_on_every_machine():
+    """``recorded()``'s numbers, pinned: a machine that rounds a draw otherwise holds another
+    league, and fails here before any test that plays it. An edit to the fixture re-pins it."""
+    setup, lines = recorded()
+    assert digest({"projection": setup.projection, "lines": lines}) == RECORDED
