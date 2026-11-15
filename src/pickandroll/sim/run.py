@@ -1035,14 +1035,22 @@ def scale_on(setup: Setup, w: World, arm: Arm, team: int) -> dict[str, Any] | No
     return {"gain": s.gain, "ros": s.ros, "ratio": s.ratio, "against": s.against, "swaps": s.swaps}
 
 
-def paired(setup: Setup, w: World, a: Arm, b: Arm, me: int) -> dict[str, Any]:
+def paired(
+    setup: Setup,
+    w: World,
+    a: Arm,
+    b: Arm,
+    me: int,
+    on_day: Callable[[DayRecord], None] | None = None,
+) -> dict[str, Any]:
     """Arm A and arm B in seat ``me`` through one world: each outcome and their difference, B less
     A (``b[k] - a[k]``, None where either is None). Positive is B ahead on every metric but
-    ``rank``, where lower is better and a negative difference is B finishing higher."""
+    ``rank``, where lower is better and a negative difference is B finishing higher. ``on_day`` is
+    :func:`simulate`'s: A's season is variant 0, B's variant 1."""
     va = {**opponents_of(setup, a, me), me: a.seat()}
     vb = {**opponents_of(setup, b, me), me: b.seat()}
     scale = {"a": scale_on(setup, w, a, me), "b": scale_on(setup, w, b, me)}
-    ra, rb = simulate(setup, w, [va, vb], [a.execute_plan, b.execute_plan])
+    ra, rb = simulate(setup, w, [va, vb], [a.execute_plan, b.execute_plan], on_day=on_day)
     ma, mb = _metrics(ra.summaries.get(me)), _metrics(rb.summaries.get(me))
     rivals = [t for t in setup.teams if t != me]
     return {
@@ -1050,6 +1058,7 @@ def paired(setup: Setup, w: World, a: Arm, b: Arm, me: int) -> dict[str, Any]:
         "b": mb,
         "delta": {k: None if ma[k] is None or mb[k] is None else mb[k] - ma[k] for k in METRICS},
         "solves": ra.solves + rb.solves,
+        "solves_by_arm": [ra.solves, rb.solves],
         "shared": rb.shared,
         "executed": [ra.executed, rb.executed],
         "gone": [ra.gone, rb.gone],

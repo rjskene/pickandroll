@@ -555,10 +555,23 @@ def dry_run(key: Mapping[str, Any], first: Mapping[str, Any]) -> int:
                 if row.get(m) is not None
             )
             print(f"season scale, {arm}, the first task: {shown} over {row['swaps']} swaps")
-    for label, row in (first.get("unprojected") or {}).items():
+    unprojected = first.get("unprojected") or {}
+    by_side = unprojected if "delta" in first else {"": unprojected}
+    for side, rows in by_side.items():
+        for label, row in rows.items():
+            whose = f"arm {side.upper()}'s " if side else ""
+            print(
+                f"unprojected, {whose}{label}, the first task: {row['seats']} on its seats' "
+                f"rosters, {row['all']} on all"
+            )
+    if "delta" in first and "seat" in first:
+        shown = {
+            side: ", ".join(f"{m} {v:g}" for m, v in first[side].items() if v is not None)
+            for side in ("a", "b", "delta")
+        }
         print(
-            f"unprojected, {label}, the first task: {row['seats']} on its seats' rosters, "
-            f"{row['all']} on all"
+            f"pair, the first task: seat {first['seat']}; A {shown['a']}; B {shown['b']}; "
+            f"B less A {shown['delta']}"
         )
     _, note = audited([key], [first])
     print("dry run, nothing written")
@@ -993,6 +1006,68 @@ def task_replay(
     return out
 
 
+def seat_of(setup: Any, path: int) -> int:
+    """The paired design's seat on ``path``: ``setup.teams[path mod len(teams)]``, so over a
+    multiple of the seats every seat is taken equally often (#172, PR D2)."""
+    return setup.teams[path % len(setup.teams)]
+
+
+def paths_for_pair(paths: int, teams: int = rn.REPLAY_TEAMS) -> int:
+    """``paths`` rounded up to a multiple of the league's ``teams``."""
+    return -(-max(1, paths) // teams) * teams
+
+
+def task_paired(
+    season: int,
+    lines: Any,
+    members: Any,
+    scheduled: Any,
+    forecaster: fc.Forecaster,
+    fixed: Fixed,
+    shape: str,
+    sources: Sources | None,
+    lag: int,
+    weights: Mapping[str, Mapping[str, float]],
+    news_sd: float,
+    arms: Mapping[str, rn.Arm],
+    pair: Sequence[str],
+    seed: int,
+    path: int,
+) -> dict[str, Any]:
+    """One task of the paired design on a replay (#172, PR D2): the league drafted on the cell's
+    forecaster, arm A in seat :func:`seat_of` in one season and arm B in the same seat in a
+    second, through one world (``run.paired``); every other seat is each arm's rivals, on the
+    run's forecaster. ``pair`` names the two arms' keys in ``arms`` (``a`` and ``b``)."""
+    projection = projection_of(forecaster, fixed, lines, seed, path, shape)
+    setup = replay_setup_of(season, lines, members, scheduled, projection)
+    w = rn.replay_world(
+        setup,
+        lines,
+        lag,
+        seed,
+        path,
+        weights[forecaster.label],
+        news_sd=news_sd,
+        label=forecaster.label,
+        forecasts=forecasts_of(sources, fixed, lines, seed, path, shape, arms),
+        split=splits_of(sources, arms),
+        weights_of=weights,
+    )
+    me = seat_of(setup, path)
+    a, b = (arms[k] for k in pair)
+    unprojected = {
+        k: rn.unprojected(
+            setup, w, {t: arms[k].forecaster if t == me else None for t in setup.teams}
+        )
+        for k in pair
+    }
+    out = rn.paired(setup, w, a, b, me)
+    out["seat"] = me
+    out["forecaster"] = forecaster.label
+    out["unprojected"] = unprojected
+    return out
+
+
 #: The replay's version in its payload: 4 since a run names several seasons (#172, PR D2): what
 #: is one season's (results, counts, the season scale, the forecasters, the sources, the
 #: weights, the players, the shape, the unprojected count) is keyed by season, and each label's
@@ -1260,12 +1335,15 @@ def no_peek(
     forecasts: Mapping[str, Any] | None = None,
     split: Mapping[str, str] | None = None,
     weights_of: Mapping[str, Mapping[str, float]] | None = None,
+    paired: bool = False,
 ) -> tuple[Any, int, list[dict[str, Any]]]:
     """Path 0 of the replay on the recorded lines and on :func:`nopeek.perturb`'s, with one
     league built before either (on ``projection``, the run's forecaster's on path 0, ``label``,
     believed at ``weights``; ``forecasts`` the arms' other beliefs' projections, at their own
     ``weights_of``; ``split`` their split labels): the first difference between their day records
-    (None when they never part), the records compared and the audit's breaches in either run."""
+    (None when they never part), the records compared and the audit's breaches in either run.
+    ``paired``: the design the run names is the pair (``arms`` ``a`` and ``b``), path 0's seat
+    taken by each arm in its own season, and both seasons' day records are compared."""
     setup = replay_setup_of(season, lines, members, scheduled, projection)
     if day not in setup.days:
         raise ValueError(f"{day} is not a day of the replayed season")
@@ -1291,7 +1369,10 @@ def no_peek(
             split=split,
             weights_of=weights_of,
         )
-        out = rn.room(setup, w, arms, seats, 0, on_day=keep)
+        if paired:
+            out = rn.paired(setup, w, arms["a"], arms["b"], seat_of(setup, 0), on_day=keep)
+        else:
+            out = rn.room(setup, w, arms, seats, 0, on_day=keep)
         breaches += [{"run": run_, **b} for b in out["breaches"]]
         digests.append(got)
     return nopeek.first_difference(digests[0], digests[1]), len(digests[0]), breaches
@@ -1452,17 +1533,28 @@ def cmd_replay(args: argparse.Namespace) -> int:
     if args.news_sd < 0:
         print("refused: --news-sd is a spread in days, not below zero")
         return 2
+    if (args.seats is None) == (args.arms is None):
+        print(
+            "refused: a replay names --seats (a room) or --arms (a pair), never both and never "
+            "neither"
+        )
+        return 2
+    if args.arms is not None and len(args.arms) != 2:
+        print(f"refused: --arms names exactly two spec files, A and B, not {len(args.arms)}")
+        return 2
+    paired = args.arms is not None
     started = datetime.now(UTC)
     try:
         day = date.fromisoformat(args.no_peek) if args.no_peek else None
         named = fc.parse(args.forecasters)
         sources = sources_of(args.bbm_as, args.yahoo_as)
         inputs, fit, sha, fit_path, tau_note = world_inputs(args.data, [], need_tau=False)
-        specs = read_specs(args.seats)
-        arms = believing({arm.name: arm for arm in arms_of(specs, sha)}, sources)
-        reads = [
-            read_season(args.data, t, named, sources, arms, args.seed, args.shape) for t in seasons
-        ]
+        specs = read_specs(args.arms if paired else args.seats)
+        made = arms_of(specs, sha)
+        arms = believing(
+            dict(zip(PAIR, made, strict=True)) if paired else {arm.name: arm for arm in made},
+            sources,
+        )
     except (reader.SimReadError, ValueError, OSError, KeyError) as e:
         print(f"refused: {e}")
         return 2
@@ -1470,13 +1562,29 @@ def cmd_replay(args: argparse.Namespace) -> int:
         print("refused: a replay seats at least two arms")
         return 2
     seats = list(arms)
+    if paired:
+        for key, arm in arms.items():
+            if str(arm.opponents.get("kind", "static")) == "market" and "rate" not in arm.opponents:
+                print(
+                    f"refused: arm {key.upper()} ({arm.name}) has market rivals without a rate: a "
+                    "replay records no market rate, so they would never move; name "
+                    "opponents.rate"
+                )
+                return 2
+    try:
+        reads = [
+            read_season(args.data, t, named, sources, arms, args.seed, args.shape) for t in seasons
+        ]
+    except (reader.SimReadError, ValueError, OSError, KeyError) as e:
+        print(f"refused: {e}")
+        return 2
     for line_ in cells_lines(reads, named):
         print(line_)
     if not any(r.served for r in reads):
         print("refused: no cell is left: no forecaster named serves any season named")
         return 2
     shapes = [r.shape for r in reads if r.shape is not None]
-    same = same_seats(arms, shapes, rivals=False)
+    same = same_seats(arms, shapes, rivals=paired)
     if same:
         print(f"refused: {same}")
         return 2
@@ -1514,6 +1622,7 @@ def cmd_replay(args: argparse.Namespace) -> int:
                 forecasts_of(sources, r.fixed, r.lines, args.seed, 0, args.shape, arms),
                 splits_of(sources, arms),
                 r.weights,
+                paired,
             )
         except ValueError as e:
             print(f"refused: {e}")
@@ -1540,6 +1649,14 @@ def cmd_replay(args: argparse.Namespace) -> int:
         return 0
     workers = args.workers or rn.workers_default()
     paths = args.paths
+    if paired:
+        paths = paths_for_pair(args.paths)
+        if paths != args.paths:
+            print(
+                f"--paths {args.paths} rounded up to {paths}, a multiple of the league's "
+                f"{rn.REPLAY_TEAMS} seats, so every seat is taken equally often in every cell"
+            )
+    task = task_paired if paired else task_replay
     tasks = [
         (
             r.season,
@@ -1554,7 +1671,7 @@ def cmd_replay(args: argparse.Namespace) -> int:
             r.weights,
             args.news_sd,
             arms,
-            seats,
+            PAIR if paired else seats,
             args.seed,
             p,
         )
@@ -1570,7 +1687,7 @@ def cmd_replay(args: argparse.Namespace) -> int:
     ]
     cells = sum(len(r.served) for r in reads)
     t0 = clock.perf_counter()
-    first_run = task_replay(*tasks[0])
+    first_run = task(*tasks[0])
     one = clock.perf_counter() - t0
     hours = (
         args.expected_hours
@@ -1586,7 +1703,7 @@ def cmd_replay(args: argparse.Namespace) -> int:
     if not ok:
         print(f"refused: {why}")
         return 2
-    results = [first_run, *rn.run_tasks(task_replay, tasks[1:], workers)]
+    results = [first_run, *rn.run_tasks(task, tasks[1:], workers)]
     keep, note = audited(keys, results)
     keys = [k for k, ok_ in zip(keys, keep, strict=True) if ok_]
     results = [r for r, ok_ in zip(results, keep, strict=True) if ok_]
@@ -1604,7 +1721,7 @@ def cmd_replay(args: argparse.Namespace) -> int:
             }
             for r in reads
         },
-        "design": "room",
+        "design": "paired" if paired else "room",
         "specs": dict(zip(seats, specs, strict=True)),
         "draft": (
             f"snake on the run's forecaster's projection, over {payload['pool']['draft']}; an "
@@ -1633,11 +1750,14 @@ def cmd_replay(args: argparse.Namespace) -> int:
         "seed": args.seed,
         "solves": sum(res["solves"] for res in results),
         "shape": {str(r.season): r.shape.label() for r in reads if r.shape is not None},
-        "reads": reads_of(arms, shapes, rivals=False),
+        "reads": reads_of(arms, shapes, rivals=paired),
         "audit": note,
         "confirmation": None,
     }
-    payload |= room_blocks(keys, results, seats)
+    if paired:
+        payload |= paired_blocks(keys, results, arms, paths)
+    else:
+        payload |= room_blocks(keys, results, seats)
     look = None
     if CONFIRMATION in seasons:
         look, ledger = reader.append_look(
@@ -1662,6 +1782,15 @@ def cmd_replay(args: argparse.Namespace) -> int:
     path = finish(payload, args.data, False)
     for t, by_label in payload["results"].items():
         for label, d in by_label.items():
+            if paired:
+                m = d["difference"]["made_playoffs"]
+                mean = "n/a" if m["mean"] is None else f"{100 * m['mean']:+.1f} pp"
+                se = "n/a" if m["se"] is None else f"{100 * m['se']:.1f} pp"
+                print(
+                    f"{t} {label}: playoff odds, B less A, {mean} (SE {se}) over {m['n']} "
+                    f"paths ({d['distinct']} distinct)"
+                )
+                continue
             for arm, agg in d.items():
                 m = agg["made_playoffs"]
                 print(
@@ -1724,6 +1853,115 @@ def room_blocks(
             "by_season": {
                 t: {label: unprojected_of(rows) for label, rows in d.items()}
                 for t, d in unprojected.items()
+            },
+        },
+    }
+
+
+#: The paired design's two arms, A and B, as the payload keys them.
+PAIR = ("a", "b")
+SEAT_RULE = (
+    "path p puts arm A in seat teams[p mod 12] in one season and arm B in the same seat in a "
+    "second, through one world; the paths are a multiple of the twelve seats, so every seat is "
+    "taken equally often in every cell"
+)
+RIVALS_NOTE = (
+    "the eleven other seats are each arm's opponents block and believe the run's forecaster, "
+    "whatever the arm believes; until PR D4 a market rival's view is the run's forecaster's "
+    "draft-day ranking, the same all season"
+)
+DISTINCT_NOTE = (
+    "paths repeat when nothing is drawn (the season's games are the same on every path): two "
+    "paths are one when their seat, both arms' metrics and both arms' mechanism counts (the "
+    "moves landed among them) agree; an SE over repeated paths is over copies"
+)
+
+
+def distinct(rows: Sequence[Mapping[str, Any]]) -> int:
+    """How many of a cell's paired paths are distinct, by the seat, both arms' metrics and both
+    arms' mechanism counts (:data:`DISTINCT_NOTE`)."""
+    return len(
+        {
+            json.dumps(
+                [r["seat"], r["a"], r["b"], r["counts"]["a"], r["counts"]["b"]],
+                sort_keys=True,
+                default=str,
+            )
+            for r in rows
+        }
+    )
+
+
+def paired_blocks(
+    keys: Sequence[Mapping[str, Any]],
+    results: Sequence[Mapping[str, Any]],
+    arms: Mapping[str, rn.Arm],
+    paths: int,
+) -> dict[str, Any]:
+    """The pair's figures, keyed by season and then by forecaster: each arm's outcomes, the
+    difference (B less A) over the paths that stand with how many are distinct, the counts by
+    arm and for the rivals, each arm's season scale by season, the unprojected count by cell and
+    arm, the seat rule and each path's seat, and the rivals each arm faced."""
+    rows: dict[str, dict[str, list[Mapping[str, Any]]]] = {}
+    scales: dict[str, dict[str, list[Any]]] = {}
+    for key, res in zip(keys, results, strict=True):
+        t, label = str(key["season"]), key["forecaster"]
+        rows.setdefault(t, {}).setdefault(label, []).append(res)
+        for side in PAIR:
+            scales.setdefault(t, {}).setdefault(side, []).append(res["scale"][side])
+
+    def cell(rs: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+        return {
+            "a": rn.aggregate([r["a"] for r in rs]),
+            "b": rn.aggregate([r["b"] for r in rs]),
+            "difference": rn.aggregate([r["delta"] for r in rs]),
+            "paths": len(rs),
+            "distinct": distinct(rs),
+        }
+
+    return {
+        "arms": {side: arms[side].name for side in PAIR},
+        "seat": {
+            "rule": SEAT_RULE,
+            "by_path": [p % rn.REPLAY_TEAMS + 1 for p in range(paths)],
+        },
+        "rivals": {
+            **{side: dict(arms[side].opponents) for side in PAIR},
+            "note": RIVALS_NOTE,
+        },
+        "distinct_note": DISTINCT_NOTE,
+        "difference": "b less a",
+        "results": {t: {label: cell(rs) for label, rs in d.items()} for t, d in rows.items()},
+        "season_scale": {
+            "note": SCALE_NOTE,
+            "by_season": {
+                t: {side: scale_of(rs) for side, rs in d.items()} for t, d in scales.items()
+            },
+        },
+        "counts": {
+            "note": COUNTS_NOTE,
+            "rivals": "the seats other than the pair's, both arms' seasons, as one row",
+            "by_season": {
+                t: {
+                    label: {
+                        side: counts_of([r["counts"][side] for r in rs])
+                        for side in (*PAIR, "rivals")
+                    }
+                    for label, rs in d.items()
+                }
+                for t, d in rows.items()
+            },
+        },
+        "unprojected": {
+            "note": UNPROJECTED_NOTE,
+            "by_season": {
+                t: {
+                    label: {
+                        side: unprojected_of([r["unprojected"][side] for r in rs]) for side in PAIR
+                    }
+                    for label, rs in d.items()
+                }
+                for t, d in rows.items()
             },
         },
     }
@@ -2242,7 +2480,17 @@ def main(argv: list[str] | None = None) -> int:
         help="an oracle's error: stat, a draw a player and stat; minutes, a share of it common to "
         "the player's stats (default stat)",
     )
-    re_.add_argument("--seats", type=Path, nargs="+", required=True, help="the arms' spec files")
+    re_.add_argument(
+        "--seats", type=Path, nargs="+", default=None, help="a room: the arms' spec files"
+    )
+    re_.add_argument(
+        "--arms",
+        type=Path,
+        nargs="+",
+        default=None,
+        metavar="SPEC",
+        help="the paired design: arm A's and arm B's spec files, B less A",
+    )
     re_.add_argument(
         "--bbm-as",
         default=None,

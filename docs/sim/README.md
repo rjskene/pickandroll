@@ -344,6 +344,27 @@ Each command runs as `python -m pickandroll.sim <command>`:
   (`replay_version` 4) keys by season what is one season's: the forecasters, the sources, the
   weights, the players, the shape, the results, the counts, the season scale and the unprojected
   count; `cells` says which were served and why the others were not.
+- `replay --seasons 2022,2023,2024 --arms A.json B.json`: the paired design on a replay
+  (`compare`'s, on a recorded season's world). A run names `--seats` (a room, as above) or
+  `--arms` (exactly two spec files), never both and never neither. Each task drafts the league
+  on its cell's forecaster as a room does, then puts arm A in seat `teams[path mod 12]` in one
+  season and arm B in the same seat in a second, through one world in lockstep
+  (`run.paired`), each arm believing by its own label; the eleven other seats are each arm's
+  `opponents` block and believe the run's forecaster, whatever the arm believes. `--paths` is
+  rounded up to a multiple of the league's twelve seats, and the command says so (20 becomes
+  24), so every seat is taken equally often in every cell. A replay records no market rate, so
+  a `market` rival without a `rate` would never move: it is refused by name, and until PR D4 a
+  market rival's view is the run's forecaster's draft-day ranking. A pair that is one seat by
+  construction is refused as `compare` refuses it; the same arm twice stays allowed (a check that
+  the difference is zero). `--no-peek` checks the design the run names: with `--arms` it
+  compares both arms' seasons' day records on path 0. The payload (`design: paired`) carries the
+  seat rule and each path's seat, and per cell each arm's outcomes, the `difference` (B less A)
+  with its standard error over the paths, the count of paths and how many are distinct (by the
+  seat, both arms' metrics and their mechanism counts: the season's games are the same on every
+  path, so paths repeat when nothing is drawn, and an SE over repeats is over copies), the
+  counts by arm and for the rivals, each arm's season scale, the unprojected count by arm, and
+  the rivals each arm faced with the line that they believe the run's forecaster. A dry run
+  prints its first task's pair.
 - **The confirmation season's ledger.** The confirmation season (2025-26, ESPN id 2026,
   `cli.CONFIRMATION`) is looked at sparingly: a written replay that names it appends one line to
   `data/sim/confirmation-looks.jsonl` (when it started, the run's name, the design, the seasons,
