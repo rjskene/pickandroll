@@ -341,7 +341,10 @@ def test_replay_and_room_record_their_runs(run_data: Path):
     # where they came from (no season before 2024 has its prior season on file: the default),
     # the newcomer's rule, the pool and the news spread, and the weekly refresh as not used.
     assert payload["replay_version"] == 3 and payload["belief"]["kind"] == "causal"
-    weights = payload["belief"]["weights"]
+    weights = payload["belief"]["weights"]["prior"]
+    assert weights["source"] == "the default" and weights["left_out"] == {
+        "2023": "prior: season 2022 is not on file"
+    }
     assert weights["default"] is True and weights["seasons"] == []
     assert set(weights["weights"].values()) == {10.0} and weights["grid"][0] == 2
     assert "undrafted" in payload["newcomer"] and "first 7 days" in payload["pool"]["draft"]
@@ -426,12 +429,13 @@ def test_the_forecasters_block_names_each_forecaster(blocks_data: Path):
     lines, _, _ = reader.replay_lines(blocks_data, 2026)
     fixed = ss.fixed_of(blocks_data, 2026, named)
     assert fixed.marcel_seasons == (2025, 2024, 2023)  # 2025 read as preseason information
-    block = ss.forecasters_block(named, fixed, lines, 5, "stat")
+    fits = reader.label_weights(blocks_data, 2026, ss.HOLD_OUT, named, 5, "stat")
+    block = ss.forecasters_block(named, fixed, lines, 5, "stat", weights=fits)
     assert list(block) == ["prior", "espn", "marcel", "oracle:0.2"]
     for label, b in block.items():
         want = {"name", "source", "projected", "played", "error", "weights"}
         assert set(b) == (want | {"freeze"} if label == "espn" else want), label
-        assert b["played"] <= b["projected"] and "prior forecaster" in b["weights"]
+        assert b["played"] <= b["projected"] and b["weights"] == fits[label].payload()
         assert set(b["error"]["by_stat"]) == set(wk.STATS)
     assert block["prior"]["projected"] == len(reader.prior_rates(blocks_data, 2026))
     assert block["espn"]["projected"] == 79  # every seventh block has no games count
@@ -460,7 +464,8 @@ def test_a_replay_keys_its_figures_by_forecaster(blocks_data: Path, capsys):
     assert set(payload["results"]) == {"espn", "oracle:0.2"}
     assert set(payload["counts"]["by_forecaster"]) == {"espn", "oracle:0.2"}
     assert set(payload["results"]["espn"]) == {"A", "B"}
-    assert "standins" not in payload and "prior forecaster" in payload["belief"]["forecasters"]
+    assert "standins" not in payload and set(payload["belief"]["weights"]) == {"espn", "oracle:0.2"}
+    assert "own projection" in payload["belief"]["weights_rule"]
     # A forecaster that cannot serve the season refuses the run by name, before any path.
     for flags, why in (
         (["--forecasters", "marcel"], "marcel needs 2 earlier seasons on file, it has 1"),
@@ -497,7 +502,7 @@ def test_the_no_peek_check_agrees_through_its_date_and_writes_nothing(run_data: 
     ]
     assert ss.main([*args, "--no-peek", "2023-11-06"]) == 0
     out = capsys.readouterr().out
-    assert "belief weights (the default)" in out and "agree through 2023-11-06" in out
+    assert "belief weights, prior (the default)" in out and "agree through 2023-11-06" in out
     assert "nothing written" in out
     assert ss.main([*args, "--no-peek", "2022-01-01"]) == 2  # not a day of the season
     assert "not a day of the replayed season" in capsys.readouterr().out

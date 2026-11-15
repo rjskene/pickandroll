@@ -36,6 +36,8 @@ from dataclasses import dataclass
 from datetime import date
 from statistics import median
 
+import numpy as np
+
 from . import world
 from .belief import consistent
 from .engine import BLEND, STATS
@@ -75,9 +77,9 @@ LIVE_DIFFERENCES = (
         "under blend"
     ),
     (
-        "both stand-ins learn from the same played games at the same weights, so their beliefs "
-        "close on each other as the season goes, where the two live sources stay apart all "
-        "year: a system difference measured here is weighted to the early weeks"
+        "both stand-ins learn from the same played games (each at its own weights), so their "
+        "beliefs close on each other as the season goes, where the two live sources stay apart "
+        "all year: a system difference measured here is weighted to the early weeks"
     ),
     "available is on no roster in the seat's own league that morning",
 )
@@ -85,6 +87,12 @@ LIVE_DIFFERENCES = (
 #: at ``2 · key`` and its player draw at ``2 · key + 1``. The run's oracle (key 0) draws its
 #: stats on the ``error`` stream, the first replays' draws, and its player draw at 0.
 ROLE_KEYS = {None: 0, "bbm": 1, "yahoo": 2}
+#: The generator key of each oracle's draw of an earlier season for a fit of the belief's weights
+#: (#172, PR D2; ``readers.label_weights``) on the ``forecast`` stream, appended after
+#: :data:`ROLE_KEYS` (never reordered): one for the run's oracle and one for each role, the stat
+#: draws at ``2 · key`` and the player draw at ``2 · key + 1``, with the fitted season as a last
+#: key. No path of any run draws at these keys, so a fit shares no draw with a path.
+FIT_KEYS = {None: 3, "bbm": 4, "yahoo": 5}
 #: How an oracle's error is drawn: ``stat``, one draw a player and stat (the first replays'
 #: draws, bit for bit); ``minutes``, a share of it common to the player's counting stats.
 SHAPES = ("stat", "minutes")
@@ -281,6 +289,7 @@ def oracle(
     shape: str = "stat",
     min_games: int = MIN_GAMES,
     role: str | None = None,
+    fit_season: int | None = None,
 ) -> dict[int, dict[str, float]]:
     """The replayed season's realized rates noised on the log scale: a projection whose error is
     known, a labelled look-ahead. It projects only the players with ``min_games`` played games
@@ -291,7 +300,10 @@ def oracle(
     player from the ``forecast`` stream, shared by every stat, makes and attempts included, so
     the shared part leaves his percentages alone. ``role``: an oracle named as a stand-in for that
     live source draws both from its own keys on the ``forecast`` stream (:data:`ROLE_KEYS`), so
-    its errors are independent of the run's oracle and of the other role's."""
+    its errors are independent of the run's oracle and of the other role's. ``fit_season``: the
+    draw of an earlier season (``lines`` are its) for a fit of the belief's weights, at the
+    oracle's own fit keys (:data:`FIT_KEYS`) with that season as a last key, so it shares no draw
+    with any path."""
     if shape not in SHAPES:
         raise ValueError(f"shape {shape!r}: one of {SHAPES}")
     if role not in ROLE_KEYS:
@@ -299,18 +311,25 @@ def oracle(
     truth = realized_rates(lines, min_games)
     keys = sorted(truth)
     stats = list(STATS)
-    key = ROLE_KEYS[role]
+    key = ROLE_KEYS[role] if fit_season is None else FIT_KEYS[role]
     forecast = world.STREAMS["forecast"]
-    if role is None:
+    # The run's own oracle on a path draws its stats on the error stream (the first replays'
+    # draws); a role's, and every fit's, on its keys of the forecast stream.
+    first = role is None and fit_season is None
+
+    def gen(i: int, at: int) -> np.random.Generator:
+        if fit_season is None:
+            return world.rng(seed, path, i, at, forecast)
+        return world.rng(seed, path, i, at, forecast, fit_season)
+
+    if first:
         z = world.errors(seed, path, keys, stats, 0.0, {}, dict.fromkeys(stats, 1.0))
     else:
         z = {
-            k: dict(
-                zip(stats, world.rng(seed, path, i, 2 * key, forecast).standard_normal(len(stats)))
-            )
+            k: dict(zip(stats, gen(i, 2 * key).standard_normal(len(stats))))
             for i, k in enumerate(keys)
         }
-    if shape == "stat" and role is None:
+    if shape == "stat" and first:
         eps = world.errors(seed, path, keys, stats, 0.0, {}, dict.fromkeys(stats, spread))
     elif shape == "stat":
         eps = {k: {s: spread * float(z[k][s]) for s in stats} for k in keys}
@@ -318,8 +337,8 @@ def oracle(
         own, common = math.sqrt(1.0 - MINUTES_SHARE), math.sqrt(MINUTES_SHARE)
         eps = {}
         for i, k in enumerate(keys):
-            at = 0 if role is None else 2 * key + 1
-            shared = world.rng(seed, path, i, at, forecast).standard_normal()
+            at = 0 if first else 2 * key + 1
+            shared = gen(i, at).standard_normal()
             eps[k] = {s: spread * (common * float(shared) + own * float(z[k][s])) for s in stats}
     return {k: consistent(v) for k, v in world.true_rates({k: truth[k] for k in keys}, eps).items()}
 
@@ -343,6 +362,22 @@ def system_label(system: str, blend: float | None, first: str, second: str) -> s
     if system == "yahoo":
         return f"yahoo({second} else {first})"
     return f"blend:{share_of(system, blend):g}({second} with {first})"
+
+
+@dataclass(frozen=True)
+class SystemBelief:
+    """The belief an arm with ``system`` holds when the run's stand-ins are ``first`` (bbm) and
+    ``second`` (yahoo), as a fit of its weights reads it (#172, PR D2): :func:`system_rates` on
+    the two stand-ins' projections. A ``bbm`` seat's belief is the first's own forecaster."""
+
+    system: str
+    blend: float | None
+    first: Forecaster
+    second: Forecaster
+
+    @property
+    def label(self) -> str:
+        return system_label(self.system, self.blend, self.first.label, self.second.label)
 
 
 def system_rates(
@@ -449,6 +484,7 @@ def freeze_of(projected_games: Mapping[int, float], actual_games: Mapping[int, i
 
 __all__ = [
     "ERROR_MIN_GAMES",
+    "FIT_KEYS",
     "FREEZE_GAMES",
     "FREEZE_LINE",
     "LIVE_DIFFERENCES",
@@ -468,6 +504,7 @@ __all__ = [
     "CannotServe",
     "Forecast",
     "Forecaster",
+    "SystemBelief",
     "error_of",
     "espn",
     "freeze_of",

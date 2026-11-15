@@ -360,8 +360,8 @@ def seasons_on_file(data_dir: Path, before: int) -> list[int]:
 def belief_weights(data_dir: Path, season: int, hold_out: int | None) -> fitmod.BeliefWeights:
     """The causal belief's weights for a replay of ``season`` under the prior-season forecaster:
     fitted on every season on file earlier than it whose prior season is on file too, neither of
-    them the hold-out; the default when none qualifies. Every forecaster takes these (#172, PR D1:
-    no fit per forecaster)."""
+    them the hold-out; the default when none qualifies. Since #172's PR D2 these are the prior
+    label's own weights and every other label's fallback (:func:`label_weights`)."""
     on_file = set(seasons_on_file(data_dir, season))
     samples = []
     for t in sorted(on_file):
@@ -370,6 +370,144 @@ def belief_weights(data_dir: Path, season: int, hold_out: int | None) -> fitmod.
         lines, _, _ = replay_lines(data_dir, t)
         samples.append(fitmod.BeliefSample(t, t - 1, prior_rates(data_dir, t), lines))
     return fitmod.belief_weights(samples, hold_out)
+
+
+# --------------------------------------------------------------------------- each label's weights
+#: A belief a replay's seats may hold, as its weights' fit reads it (#172, PR D2): a forecaster,
+#: or an arm's system on the two stand-ins.
+BeliefLabel = fc.Forecaster | fc.SystemBelief
+
+
+class _Seasons:
+    """The recorded seasons a fit of the belief's weights reads, each read once: its lines, and
+    each forecaster's projection of it with the seasons that projection read, or why there is
+    none. A season's file is opened only once the hold-out is ruled out of what it would read."""
+
+    def __init__(self, data_dir: Path, before: int, hold_out: int | None, seed: int, shape: str):
+        self.data_dir, self.hold_out, self.seed, self.shape = data_dir, hold_out, seed, shape
+        self.on_file = seasons_on_file(data_dir, before)
+        self._lines: dict[int, dict[int, dict[date, dict[str, float]]]] = {}
+        self._made: dict[tuple[int, str], tuple[Mapping[int, Any], tuple[int, ...]] | str] = {}
+
+    def lines(self, t: int) -> dict[int, dict[date, dict[str, float]]]:
+        if t not in self._lines:
+            self._lines[t] = replay_lines(self.data_dir, t)[0]
+        return self._lines[t]
+
+    def reads(self, t: int, f: fc.Forecaster) -> tuple[int, ...] | str:
+        """The seasons ``f``'s projection of ``t`` reads, from the file names alone; why it
+        cannot serve ``t`` when it cannot."""
+        if f.name == "prior":
+            return (t - 1,) if t - 1 in self.on_file else f"prior: season {t - 1} is not on file"
+        if f.name == "marcel":
+            read = tuple(marcel_seasons(self.data_dir, t))
+            if len(read) < fc.MARCEL_SEASONS:
+                return (
+                    f"marcel needs {fc.MARCEL_SEASONS} earlier seasons on file, it has {len(read)}"
+                )
+            return read
+        return (t,)
+
+    def projection(
+        self, t: int, f: fc.Forecaster
+    ) -> tuple[Mapping[int, Any], tuple[int, ...]] | str:
+        """``f``'s projection of season ``t`` and the seasons it read, or why it gives no sample:
+        it cannot serve ``t``, it would read the hold-out, or (``espn``) the projection fails the
+        freeze check, having seen part of its own season."""
+        key = (t, f.label)
+        if key in self._made:
+            return self._made[key]
+        reads = self.reads(t, f)
+        made: tuple[Mapping[int, Any], tuple[int, ...]] | str
+        if isinstance(reads, str):
+            made = reads
+        elif self.hold_out is not None and self.hold_out in (t, *reads):
+            made = f"{f.label}: its projection of {t} would read the hold-out {self.hold_out}"
+        else:
+            try:
+                if f.name == "prior":
+                    made = (prior_rates(self.data_dir, t), reads)
+                elif f.name == "espn":
+                    rates, games = espn_rates(self.data_dir, t)
+                    played = {k: len(v) for k, v in self.lines(t).items()}
+                    freeze = fc.freeze_of(games, played)
+                    made = (
+                        f"espn: the projection of {t} fails the freeze check (median projected "
+                        f"games {freeze['median_projected_games']:g} below {fc.FREEZE_LINE:g})"
+                        if freeze["flagged"]
+                        else (rates, reads)
+                    )
+                elif f.name == "marcel":
+                    rates, read = marcel_rates(self.data_dir, t)
+                    made = (rates, tuple(read))
+                else:
+                    assert f.spread is not None
+                    rates = fc.oracle(
+                        self.lines(t), f.spread, self.seed, 0, self.shape, role=f.role, fit_season=t
+                    )
+                    made = (rates, reads)
+            except (SimReadError, fc.CannotServe) as e:
+                made = str(e) if f.name in str(e) else f"{f.name}: {e}"
+        self._made[key] = made
+        return made
+
+    def sample(self, t: int, label: BeliefLabel) -> fitmod.BeliefSample | str:
+        """The label's sample of season ``t``, or why there is none."""
+        if t == self.hold_out:
+            return f"{t} is the hold-out"
+        if isinstance(label, fc.SystemBelief):
+            first = self.projection(t, label.first)
+            if isinstance(first, str):
+                return f"the first stand-in cannot serve it ({first})"
+            second = self.projection(t, label.second)
+            if isinstance(second, str):
+                return f"the second stand-in cannot serve it ({second})"
+            rates = fc.system_rates(label.system, label.blend, first[0], second[0])
+            read = tuple(sorted({*first[1], *second[1]}))
+            return fitmod.BeliefSample(t, None, rates, self.lines(t), read)
+        made = self.projection(t, label)
+        if isinstance(made, str):
+            return made
+        rates, read = made
+        prior_season = t - 1 if label.name == "prior" else None
+        return fitmod.BeliefSample(t, prior_season, rates, self.lines(t), read)
+
+
+def label_weights(
+    data_dir: Path,
+    season: int,
+    hold_out: int | None,
+    labels: Sequence[BeliefLabel],
+    seed: int,
+    shape: str,
+    prior: fitmod.BeliefWeights | None = None,
+) -> dict[str, fitmod.LabelWeights]:
+    """Each belief label's weights for a replay of ``season`` (#172, PR D2), by label: fitted on
+    the label's own projection of every season on file earlier than it that the label can serve
+    (``prior`` as :func:`belief_weights`; ``espn`` the season's stored projection, none where it
+    fails the freeze check; ``marcel`` where two earlier seasons are on file; an oracle a draw of
+    the season at its spread and ``shape`` on its fit keys, ``seed`` the run's; a system label
+    ``forecast.system_rates`` on the two stand-ins' projections, where both serve the season).
+    No sample's season, nor any season its projection read, is the hold-out. A label with no
+    sample takes ``prior`` (the prior forecaster's, :func:`belief_weights` when not given) when
+    those were fitted, else the default (``fit.label_weights``)."""
+    seasons = _Seasons(data_dir, season, hold_out, seed, shape)
+    if prior is None:
+        prior = belief_weights(data_dir, season, hold_out)
+    out: dict[str, fitmod.LabelWeights] = {}
+    for label in labels:
+        if label.label in out:
+            continue
+        samples: list[fitmod.BeliefSample] = []
+        left_out: dict[int, str] = {}
+        for t in seasons.on_file:
+            got = seasons.sample(t, label)
+            if isinstance(got, str):
+                left_out[t] = got
+            else:
+                samples.append(got)
+        out[label.label] = fitmod.label_weights(label.label, samples, hold_out, prior, left_out)
+    return out
 
 
 # --------------------------------------------------------------------------- the gates' inputs

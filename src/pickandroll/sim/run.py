@@ -546,6 +546,7 @@ def replay_world(
     label: str | None = None,
     forecasts: Mapping[str, Mapping[int, Rates]] | None = None,
     split: Mapping[str, str] | None = None,
+    weights_of: Mapping[str, Mapping[str, float]] | None = None,
 ) -> World:
     """A replay's world: the recorded lines are the truth of every game, a game day without a
     line an absence. The seats' belief is ``causal`` (the setup's projection updated with the
@@ -554,16 +555,22 @@ def replay_world(
     projection all season, the hold-out gate's). ``label`` names the run's forecaster, whose
     projection the setup holds; ``forecasts`` are other forecasters' projections by label, each
     believed the same way with its own newcomer's prior (the mean of its own projected players
-    left undrafted), for the seats that name them (#172, PR D1). ``split`` maps each split label
-    among them to its rostered side's label (:class:`World`)."""
+    left undrafted), for the seats that name them (#172, PR D1), at its own weights in
+    ``weights_of`` (by label; ``weights`` for a label it does not name; PR D2). ``split`` maps
+    each split label among them to its rostered side's label (:class:`World`)."""
     game_days = game_days_of(setup)
     causal = None
     others: dict[str, CausalBelief] = {}
     if belief == "causal":
         w = {s: float((weights or {}).get(s, W_DEFAULT)) for s in wk.STATS}
+
+        def own(name: str) -> dict[str, float]:
+            given = (weights_of or {}).get(name)
+            return w if given is None else {s: float(given.get(s, W_DEFAULT)) for s in wk.STATS}
+
         causal = causal_belief(setup, setup.projection, lines, w)
         others = {
-            name: causal_belief(setup, rates, lines, w)
+            name: causal_belief(setup, rates, lines, own(name))
             for name, rates in (forecasts or {}).items()
             if name != label
         }
@@ -635,6 +642,38 @@ def causal_belief(
     return CausalBelief(
         setup.players, projected, lines, weights, newcomer_prior(projected, undrafted)
     )
+
+
+def first_day(setup: Setup) -> date | None:
+    """The first simulated day: the first of the setup's days inside a week."""
+    return next((d for d in setup.days if setup.week_of(d) is not None), None)
+
+
+def unprojected(
+    setup: Setup, w: World, held: Mapping[int, str | None]
+) -> dict[str, dict[str, int]]:
+    """For each belief label a seat holds (``held``, by team; None for the run's forecaster's),
+    the drafted players its table has no line for on the first simulated day (a split label's:
+    its rostered side's, which every drafted player reads), counted on the rosters of the seats
+    that hold it (``seats``) and on every roster (``all``): a seat values such a player at zero
+    until he plays (#172, PR D2). Zero for the run's own label, whose projection the draft read.
+    It reads the world's beliefs on that day and draws nothing."""
+    day = first_day(setup)
+    labels = {t: lb if lb is not None else w.label for t, lb in held.items()}
+    out: dict[str, dict[str, int]] = {}
+    if day is None:
+        return out
+    rostered = rostered_of(initial(setup))
+    for label in dict.fromkeys(labels.values()):
+        table = w.seat_beliefs(day, w.own(label), rostered)
+        missing = {
+            t: sum(1 for k, _ in setup.rosters.get(t, ()) if k not in table) for t in setup.teams
+        }
+        out[str(label)] = {
+            "seats": sum(missing[t] for t, lb in labels.items() if lb == label),
+            "all": sum(missing.values()),
+        }
+    return out
 
 
 # --------------------------------------------------------------------------- the day loop
@@ -1292,5 +1331,6 @@ __all__ = [
     "scale_on",
     "simulate",
     "split_beliefs",
+    "unprojected",
     "verdict",
 ]

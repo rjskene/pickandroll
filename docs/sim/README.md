@@ -414,13 +414,38 @@ run's forecaster's (`sim/forecast.py`, above); each forecaster gets its own beli
 
 **The weights.** One `w` per stat, in games, from the grid 2, 4, 6, 10, 16, 25, 40, 65, 100,
 chosen by the least squared error of each projected player's next game against the belief before
-it, summed over his games in date order; a tie takes the larger weight. They are fitted on the
-seasons on file earlier than the one replayed whose own prior season is on file, with the
-prior-season forecaster, never on the hold-out (a season whose prior season is the hold-out is
-skipped too). With no such season every stat takes 10. Every forecaster takes these weights, the
-prior forecaster's: no fit per forecaster is made, and the payload says so for each. The weights
-are computed once per command, from the logs alone, and the payload records them, the seasons
-they came from and whether the default stood; the frozen fit is not touched.
+it, summed over his games in date order; a tie takes the larger weight. Since PR D2 each belief
+label (each of the run's forecasters, each system label an arm holds, and the first stand-in's
+when a label is split) gets its own weights, fitted on that label's own projection of every
+season on file earlier than the one replayed that the label can serve (`readers.label_weights`):
+
+- `prior`: the season before's rates, as before PR D2 and bit for bit;
+- `espn`: the season's stored projection; a season whose projection fails the freeze check gives
+  no sample, its projection having seen part of its own season;
+- `marcel`: its projection of the season, where two seasons before it are on file;
+- an oracle: a draw of the season at the label's spread and shape, on keys of its own on the
+  `forecast` stream (`forecast.FIT_KEYS`, one for the run's oracle and one for each role, the
+  fitted season a last key), so no path of any run shares a draw with it;
+- a system label: the system's table (`forecast.system_rates`) on the two stand-ins' projections
+  of the season, where both serve it.
+
+A sample names every season its projection read (`prior` the season before, `espn` and an
+oracle the season itself, `marcel` the seasons it read, a system label its two stand-ins'
+together); the fit refuses one whose season or whose read seasons hold the hold-out, and the
+reader never makes one or opens what it would read. A label with no sample takes the prior
+forecaster's weights for this replay when those were fitted, else 10 for every stat. Each label's
+record (`belief.weights`, by label) says which of the three it is (`own`, `the prior
+forecaster's`, `the default`), the seasons fitted on and, for each earlier season that gave no
+sample, why; the command prints one line a label. The weights are computed once per command,
+from the logs alone; the frozen fit is not touched.
+
+**What a belief does not project.** A seat whose belief has no line for a drafted player values
+him at zero until he plays. For each belief label an arm holds, each path counts the drafted
+players its table has no line for on the first day (a split label: its rostered side's), on the
+rosters of the seats that hold the label and on all twelve; the payload's `unprojected` block
+gives the mean and the largest over paths. The run's own label counts zero by construction (the
+draft read its projection). When stand-ins are named and none of the run's forecasters is the
+first stand-in, the command prints a line saying a seat can hold such players.
 
 **The league and the draft.** The league is everyone the season's log lists with a scheduled game.
 The draft is a snake on the run's forecaster's values over the projected players with a scheduled
@@ -429,7 +454,7 @@ wire. Who is projected is the forecaster's (above).
 
 **A belief for each seat (PR D1).** A replay's world holds a causal belief for each forecaster a
 seat names, each from its own projection with its own newcomer's prior (the mean of its own
-projected players left undrafted), at the same weights. A seat names its forecaster
+projected players left undrafted), at its own weights (above). A seat names its forecaster
 (`opponents.Seat.forecaster`, set from the arm's `forecaster`, which a run sets and a spec file
 does not name); None is the run's. Each day such a seat decides, sets its lineup, is charged its
 forced drops and is scored (the lineup's fallback) on its own forecaster's beliefs and per-game
@@ -486,9 +511,9 @@ What still differs from the live route (`forecast.LIVE_DIFFERENCES`, and the pay
 2. Live values each source on its own table (the second's holds only the available players, so
    its values are scaled within the available pool) and a blended player at the mix of the two;
    the simulator values the seat's one mixed table, under `yahoo` as under `blend`.
-3. Both stand-ins learn from the same played games at the same weights, so their beliefs close on
-   each other as the season goes, where the two live sources stay apart all year: a `system`
-   difference measured here is weighted to the early weeks.
+3. Both stand-ins learn from the same played games (each at its own weights since PR D2), so
+   their beliefs close on each other as the season goes, where the two live sources stay apart
+   all year: a `system` difference measured here is weighted to the early weeks.
 4. "Available" is "on no roster in the seat's own league that morning".
 
 An oracle stand-in draws from its role's own keys on the `forecast` stream (labelled
