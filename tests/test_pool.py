@@ -101,3 +101,96 @@ def test_the_api_shutdown_terminates_the_pools(monkeypatch, tmp_path):
     with TestClient(create_app(SessionStore(), data_dir=tmp_path)):
         assert calls == []
     assert calls == [True]
+
+
+#: A small HiGHS model, solved through PuLP as every solve in the package is. It lives in a
+#: module of its own so a spawned worker can import it.
+HIGHS_JOB = """
+import pulp
+
+
+def solve():
+    model = pulp.LpProblem("knapsack", pulp.LpMaximize)
+    xs = [pulp.LpVariable(f"x{i}", cat="Binary") for i in range(40)]
+    model += pulp.lpSum((i % 7 + 1) * x for i, x in enumerate(xs))
+    model += pulp.lpSum((i % 5 + 2) * x for i, x in enumerate(xs)) <= 40
+    model.solve(pulp.HiGHS(msg=False))
+    return pulp.LpStatus[model.status]
+"""
+
+#: Seconds the whole check may take before it counts as hung (a solve takes milliseconds).
+HANG_LIMIT = 90
+
+
+def test_every_pool_solves_after_the_parent_has_solved_even_where_fork_is_the_default(tmp_path):
+    """#385: on Linux a forked worker of a process whose HiGHS already solved in another thread
+    spins forever. The check makes ``fork`` the default, as on Linux, solves in a thread of the
+    parent, then solves through each pool under a hard time limit."""
+    (tmp_path / "highs_job.py").write_text(HIGHS_JOB)
+    script = textwrap.dedent(
+        """
+        import multiprocessing, threading
+        multiprocessing.set_start_method("fork", force=True)
+        import highs_job
+        from pickandroll.optim.pool import background_pool, process_pool, shared_pool
+        parent = threading.Thread(target=highs_job.solve)
+        parent.start()
+        parent.join()
+        for name, pool in (
+            ("shared", shared_pool(2)),
+            ("background", background_pool()),
+            ("process", process_pool(2)),
+        ):
+            method = pool._mp_context.get_start_method()
+            print(name, method, pool.submit(highs_job.solve).result(), flush=True)
+        """
+    )
+    env = {**os.environ, "PYTHONPATH": os.pathsep.join([str(SRC), str(tmp_path)])}
+    proc = subprocess.Popen(
+        [sys.executable, "-c", script],
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        start_new_session=True,
+    )
+    try:
+        out, err = proc.communicate(timeout=HANG_LIMIT)
+    except subprocess.TimeoutExpired:
+        os.killpg(proc.pid, 9)
+        proc.communicate()
+        pytest.fail(f"a pool's solve hung past {HANG_LIMIT} s")
+    assert proc.returncode == 0, err
+    assert out.split("\n")[:3] == [
+        "shared spawn Optimal",
+        "background spawn Optimal",
+        "process spawn Optimal",
+    ]
+
+
+def test_the_punt_sweep_starts_its_pool_by_spawn(monkeypatch, pool):
+    from pickandroll.optim import RosterProblem, roster
+    from pickandroll.optim import pool as pools
+    from pickandroll.projections import zscores
+    from pickandroll.projections.schema import split_positions
+
+    made: list[str] = []
+    real = pools.process_pool
+
+    class Spy:
+        def __init__(self, workers):
+            self.inner = real(workers)
+            made.append(self.inner._mp_context.get_start_method())
+
+        def __enter__(self):
+            return self.inner.__enter__()
+
+        def __exit__(self, *exc):
+            return self.inner.__exit__(*exc)
+
+    monkeypatch.setattr(pools, "process_pool", Spy)
+    positions = {pid: split_positions(v) for pid, v in pool["positions"].items()}
+    problem = RosterProblem(z=zscores(pool), positions=positions, raw=pool, punt=None, max_punts=1)
+    scan = roster.punt_scan(problem, workers=2)
+    assert made == ["spawn"]
+    assert len(scan.solutions) == len(roster.punt_sets(problem.cats, problem.max_punts))
