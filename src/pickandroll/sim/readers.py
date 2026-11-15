@@ -339,28 +339,6 @@ def label_weights(
     return out
 
 
-# --------------------------------------------------------------------------- gate 4's input
-def missed_games(
-    lines: Mapping[int, Mapping[date, Mapping[str, float]]],
-    schedule: Mapping[int, Sequence[date]],
-    weeks: Sequence[tuple[date, date]],
-) -> dict[int, list[tuple[int, int]]]:
-    """Each player's weeks in order, ``(missed, scheduled)`` a week: of his scheduled games in
-    the week, those without a line (gate 4's observations; a week he has no game in is left
-    out)."""
-    out: dict[int, list[tuple[int, int]]] = {}
-    for k, days in schedule.items():
-        played = lines.get(k, {})
-        rows = []
-        for start, end in weeks:
-            scheduled = [d for d in days if start <= d <= end]
-            if scheduled:
-                rows.append((sum(1 for d in scheduled if d not in played), len(scheduled)))
-        if rows:
-            out[k] = rows
-    return out
-
-
 # --------------------------------------------------------------------------- the run's record
 def run_path(data_dir: Path, kind: str, name: str, started: datetime) -> Path:
     stamp = started.astimezone(UTC).strftime("%Y%m%dT%H%M%SZ")
@@ -412,7 +390,6 @@ __all__ = [
     "fit_hash",
     "marcel_rates",
     "marcel_seasons",
-    "missed_games",
     "newest_fit",
     "period_date",
     "prior_rates",

@@ -1,7 +1,7 @@
 """Made-up leagues for the simulator's tests (#172, PR 2b): a small in-memory setup the policy,
-runner and checks run on, and a fixture data folder the readers and the commands read: synthetic
-game logs only. Every player and team here is synthetic or from the anonymised season
-fixtures."""
+runner and checks run on, a made-up recorded season it replays (PR D3: the simulator has no
+drawn world), and a fixture data folder the readers and the commands read: synthetic game logs
+only. Every player and team here is synthetic or from the anonymised season fixtures."""
 
 from __future__ import annotations
 
@@ -15,41 +15,16 @@ import numpy as np
 from pickandroll.season import weekly as wk
 from pickandroll.sim import gamelogs as gl
 from pickandroll.sim import league as lg
+from pickandroll.sim import policy
 from pickandroll.sim import run as rn
 from pickandroll.sim import state as sst
-from pickandroll.sim.fit import Component, Hazard
 from pickandroll.sources.yahoo import public
 from tests.sim.draws import between
-from tests.sim.sim_fixtures import synthetic_lines
+from tests.sim.sim_fixtures import run_length, synthetic_lines
 from tests.sim.test_gamelogs import entry
 
 FIXTURES = Path(__file__).parents[1] / "fixtures" / "season"
 NINE = ("fg_pct", "ft_pct", "threes", "pts", "reb", "ast", "stl", "blk", "tov")
-PHI = {
-    "pts": 1.5,
-    "reb": 1.5,
-    "ast": 1.2,
-    "fga": 1.4,
-    "fta": 1.8,
-    "threes": 1.1,
-    "stl": 1.0,
-    "blk": 1.0,
-    "tov": 1.0,
-}
-HAZARD = Hazard(
-    0.05,
-    (
-        Component(1, 3, 0.7, {1: 0.5, 2: 0.3, 3: 0.2}),
-        Component(4, 15, 0.25, {5: 0.5, 10: 0.5}),
-        Component(16, None, 0.05, {20: 1.0}),
-    ),
-    runs=100,
-    played=1000,
-    players=20,
-    censored=2,
-    censored_share=0.1,
-    leading=0,
-)
 #: The twelve knobs the tests' arms start from. The plan floors sit at 0, where a plan whose gap
 #: over its set is a float's noise is taken or not with the process's hash seed: the usual leagues
 #: here draw no plan, so it never shows, but a test that reads a plan floor sets it away from 0.
@@ -140,7 +115,6 @@ def make_setup(
         2**rounds - playoff_teams,
     )
     return sst.Setup(
-        league="made-up",
         start=cal.weeks[0].start,
         calendar=cal,
         pairings=pairings,
@@ -161,10 +135,79 @@ def make_setup(
     )
 
 
-def inputs(tau: float = 0.1, kappa: float = 0.1, sigma_eta: float = 0.05, lag: int = 1):
-    return rn.WorldInputs(
-        PHI, {}, 0.2, HAZARD, dict.fromkeys(wk.STATS, tau), kappa, sigma_eta, lag, "fit-sha"
-    )
+# --------------------------------------------------------------------------- a recorded season
+#: A made-up recorded season's chance of a new absence after a played game.
+ABSENCE_HAZARD = 0.12
+
+
+def _out_through(setup: sst.Setup, player: int, days: list[date]) -> int:
+    """The last game index the player misses by the status read on day one; -1 when in."""
+    s = setup.statuses.get(player)
+    if s is None or not days:
+        return -1
+    if s in wk.OUT_ALL:
+        return len(days) - 1
+    if s in wk.OUT_THIS_WEEK:
+        ret = setup.returns.get(player) or setup.start + timedelta(policy.DEFAULT_ABSENCE_DAYS)
+        return sum(1 for d in days if d < ret) - 1
+    return -1
+
+
+def _count(g: np.random.Generator, rate: float) -> int:
+    """A whole count around ``rate``: ``rate`` times a :func:`between` draw from 0.4 to 1.6,
+    rounded. Python's arithmetic on one ``random()`` draw, so alike on every machine (no
+    ``poisson``, whose draws rest on the machine's ``exp`` and ``log``)."""
+    return round(rate * between(g, 0.4, 1.6))
+
+
+def recorded_lines(
+    setup: sst.Setup, seed: int = 11, hazard: float = ABSENCE_HAZARD
+) -> dict[int, dict[date, dict[str, float]]]:
+    """A made-up recorded season for ``setup``: each player's whole-number line on each of his
+    team's game days (``run.game_days_of``) around his projection (:func:`_count`; the makes no
+    more than the attempts, the threes no more than the field goals made, the points from the
+    three), a new absence after a played game with chance ``hazard`` for
+    ``sim_fixtures.run_length`` games, and the status read on day one kept (out all season, or
+    out until his return date or the default absence). Each player's draws are his own
+    (``[seed, player]``)."""
+    out: dict[int, dict[date, dict[str, float]]] = {}
+    for k, days in rn.game_days_of(setup).items():
+        r = setup.projection.get(k)
+        if r is None:
+            continue
+        g = np.random.default_rng([seed, k])
+        out_until = _out_through(setup, k, days)
+        played: dict[date, dict[str, float]] = {}
+        for i, day in enumerate(days):
+            if i <= out_until:
+                continue
+            fga = _count(g, r["fga"])
+            fgm = min(fga, _count(g, r["fgm"]))
+            fta = _count(g, r["fta"])
+            ftm = min(fta, _count(g, r["ftm"]))
+            threes = min(fgm, _count(g, r["threes"]))
+            line = {
+                "fga": fga,
+                "fgm": fgm,
+                "fta": fta,
+                "ftm": ftm,
+                "threes": threes,
+                "pts": 2 * fgm + threes + ftm,
+                **{s: _count(g, r[s]) for s in ("reb", "ast", "stl", "blk", "tov")},
+            }
+            played[day] = {s: float(line[s]) for s in wk.STATS}
+            if g.random() < hazard:
+                out_until = i + run_length(g)
+        out[k] = played
+    return out
+
+
+def replay_of(
+    setup: sst.Setup, seed: int, path: int, lag: int = 1, season: int = 11, **kw: Any
+) -> rn.World:
+    """A replay world on ``setup``'s made-up recorded season (:func:`recorded_lines` at
+    ``season``, its seed): path ``path`` of seed ``seed``, the absences heard ``lag`` days on."""
+    return rn.replay_world(setup, recorded_lines(setup, season), lag, seed, path, **kw)
 
 
 def arm(name: str = "A", tier: str = "exact", opponents: str = "market", **knobs: Any) -> rn.Arm:
@@ -304,13 +347,13 @@ def make_data_dir(
 
 
 __all__ = [
-    "HAZARD",
+    "ABSENCE_HAZARD",
     "KNOBS",
     "NINE",
-    "PHI",
     "arm",
-    "inputs",
     "make_data_dir",
     "make_setup",
     "rates",
+    "recorded_lines",
+    "replay_of",
 ]

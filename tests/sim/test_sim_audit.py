@@ -13,7 +13,7 @@ from pickandroll.sim import audit, policy
 from pickandroll.sim import run as rn
 from pickandroll.sim.engine import mv, wk
 from pickandroll.sim.state import initial
-from tests.sim.sim_league import arm, inputs, make_setup, rates
+from tests.sim.sim_league import arm, make_setup, rates, replay_of
 
 
 def league():
@@ -200,9 +200,9 @@ def test_lineup_finds_each_kind_of_bad_start(base):
 
 
 # --------------------------------------------------------------------------- whole runs
-def test_a_clean_forward_run_with_seats_that_move_breaks_no_rule():
+def test_a_clean_paired_run_with_seats_that_move_breaks_no_rule():
     setup = make_setup()
-    w = rn.forward_world(setup, inputs(), 11, 0, 0.25)
+    w = replay_of(setup, 11, 0)
     out = rn.paired(setup, w, arm("A", "exact"), arm("B", "ranking"), me=1)
     assert out["breaches"] == []
     assert out["counts"]["a"]["landed"] + out["counts"]["b"]["landed"] > 0  # the seats moved
@@ -228,23 +228,24 @@ def test_a_clean_replay_with_seats_that_move_breaks_no_rule():
 
 
 def test_the_held_slot_paths_void_no_path():
-    """The 18 paths of a league with IL and IL+ on which the audit first found players placed in
-    IL the morning their status had cleared (fixed in the executor, #378): no breach on any of
-    them, and the refused held moves counted."""
+    """18 paths of leagues with IL and IL+, the kind on which the audit first found players
+    placed in IL the morning their status had cleared (fixed in the executor, #378), each a
+    replay of its league's made-up recorded season: no breach on any of them, and the refused
+    held moves counted."""
     refused = 0.0
     for seed in (3, 5, 8):
         setup = make_setup(held_slots=("IL", "IL+"), seed=seed, weeks=8)
         for path in range(6):
-            w = rn.forward_world(setup, inputs(), 11, path, 0.25)
+            w = replay_of(setup, 11, path)
             out = rn.paired(setup, w, arm("A", "exact"), arm("B", "surrogate"), me=1)
             assert out["breaches"] == [], (seed, path, out["breaches"])
             refused += out["counts"]["a"]["held_refused"] + out["counts"]["b"]["held_refused"]
-    assert refused > 0  # not vacuous: these are the paths whose held moves were refused
+    assert refused > 0  # not vacuous: held moves are refused on these paths
 
 
 def test_the_audit_runs_without_a_hook_and_its_rules_can_be_added_to():
     setup = make_setup(teams=2, spots=3, pool=4, weeks=2, playoff_weeks=1)
-    w = rn.forward_world(setup, inputs(), 2, 0, 0.0)
+    w = replay_of(setup, 2, 0)
     seen = []
 
     def every(setup_, today, before):

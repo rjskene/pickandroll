@@ -22,18 +22,9 @@ from pickandroll.season.moves import HELD, Move
 from pickandroll.season.progress import BLEND, DEFAULTS, LIVE_KNOBS, refused
 from pickandroll.season.scorecard import FPTS, total, won
 from pickandroll.season.state import Player, SeasonSettings
-from pickandroll.season.weekly import (
-    BINOMIAL,
-    COUNTING,
-    PCT,
-    PHI,
-    STATS,
-    starters,
-    starting_slots,
-)
+from pickandroll.season.weekly import COUNTING, PCT, PHI, STATS, starting_slots
 
 __all__ = [
-    "BINOMIAL",
     "BLEND",
     "COUNTING",
     "DEFAULTS",
@@ -54,7 +45,6 @@ __all__ = [
     "refused",
     "sg",
     "st",
-    "starters",
     "starting_slots",
     "total",
     "wk",

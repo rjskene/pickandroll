@@ -64,9 +64,6 @@ def test_a_replays_lines_members_and_schedule(data: Path):
     assert all(set(ln) <= set(wk.STATS) for ln in lines[pid].values())
     prior = reader.prior_rates(data, 2025)
     assert set(prior) <= set(members) and all("pts" in r for r in prior.values())
-    weeks = [(date(2023, 10, 23), date(2023, 10, 29)), (date(2023, 10, 30), date(2023, 11, 5))]
-    missed = reader.missed_games(lines, scheduled, weeks)
-    assert all(0 <= m <= n for rows in missed.values() for m, n in rows)
     with pytest.raises(reader.SimReadError):
         reader.replay_lines(data, 2020)
 

@@ -24,10 +24,9 @@ forecaster that serves it (a cell): the arms rotated around the table (``--seats
 paired in one seat (``--arms``, B less A, with a verdict by forecaster and season); a written
 replay that names the confirmation season adds a line to its ledger; ``--no-peek`` checks one
 path of one season against it changed after a date and writes nothing. ``validate`` runs gate 5
-on a replay of a recorded season (``--season``, ``--forecaster``) and gates 1 and 4 on the
-hold-out and the cached logs, and writes what each had to work with. Every run's payload goes
-under ``data/sim/runs/`` with the code's commit, the fit's hash, the hold-out, the spec files
-verbatim and the execution model.
+on a replay of a recorded season (``--season``, ``--forecaster``) and writes what it had to work
+with. Every run's payload goes under ``data/sim/runs/`` with the code's commit, the fit's hash,
+the hold-out, the spec files verbatim and the execution model.
 
 Every command runs through :func:`guard`: at low priority (``nice``), never when its span would
 touch 04:45-06:45 in the machine's local time (the routines' window), never while a draft room is
@@ -60,7 +59,6 @@ from . import readers as reader
 from . import run as rn
 from . import validate as vg
 from .engine import wk
-from .state import weeks_from
 
 #: The repository: this file is ``src/pickandroll/sim/cli.py``.
 ROOT = Path(__file__).resolve().parents[3]
@@ -93,9 +91,6 @@ CONFIRMATION_NOTE = (
 #: The five seasons on disk, ESPN ids (2022 is 2021-22), and the ones a fit may see.
 SEASONS = (2022, 2023, 2024, 2025, 2026)
 FIT_SEASONS = ",".join(str(s) for s in SEASONS if s != HOLD_OUT)
-THIS_SEASON = 2026
-#: The paths a gate's samples are drawn over.
-GATE_PATHS = 200
 #: The league-days gate 5 samples: the replay's first simulated day and these days after it,
 #: for each of :func:`gate_seats`.
 GATE_DAYS = (0, 3, 7, 10, 14)
@@ -271,17 +266,11 @@ def read_specs(paths: Sequence[Path]) -> list[dict[str, Any]]:
     return [json.loads(Path(p).read_text()) for p in paths]
 
 
-def world_inputs(data: Path) -> tuple[rn.WorldInputs, dict[str, Any], str, Path, dict[str, Any]]:
-    """The frozen fit's inputs; tau from the fit where it has one, else none, and the payload
-    says so: a replay's truth is the recorded lines."""
+def world_inputs(data: Path) -> tuple[rn.WorldInputs, dict[str, Any], str, Path]:
+    """The newest frozen fit, read for the lag and its hash (``run.inputs_of``), with its
+    payload, hash and file."""
     payload, sha, path = reader.newest_fit(data)
-    tau_note: dict[str, Any] = {"source": "fit"}
-    tau = None
-    if not payload.get("tau"):
-        tau = dict.fromkeys(wk.STATS, 0.0)
-        tau_note = {"source": "not used: the replay's truth is the recorded lines"}
-    inputs = rn.inputs_of(payload, sha, tau)
-    return inputs, payload, sha, path, tau_note
+    return rn.inputs_of(payload, sha), payload, sha, path
 
 
 #: The commands whose outcome runs through the engine's evaluator (an exact tie there can fall
@@ -307,8 +296,6 @@ def base_payload(
     fit_path: Path,
     fit: Mapping[str, Any],
     workers: int,
-    tau_note: Mapping[str, Any],
-    inputs: rn.WorldInputs,
     arms: Mapping[str, rn.Arm] | None = None,
 ) -> dict[str, Any]:
     """The payload's common part. ``arms`` by their key in the payload (``a`` and ``b`` in a
@@ -328,8 +315,6 @@ def base_payload(
         "fit_file": str(fit_path),
         "hold_out": fit.get("hold_out", HOLD_OUT),
         "executions": EXECUTIONS,
-        "refresh": inputs.refresh_from,
-        "tau": dict(tau_note),
         "fields": {k: f.payload() for k, f in fields.items()},
         "surrogate": {
             k: {"pool": f.pool, "days": list(f.surrogate_days), "plan": "daily"}
@@ -759,7 +744,8 @@ def task_paired(
 
 
 #: The replay's version in its payload: 5 since the standalone cut (#172, PR D3): the payload
-#: names nothing of a live league (its ``gap`` block is gone), its figures as they were; 4 since
+#: names nothing of a live league or a drawn world (its ``gap``, ``refresh`` and ``tau`` are
+#: gone), its figures as they were; 4 since
 #: a run names several seasons (PR D2): what
 #: is one season's (results, counts, the season scale, the forecasters, the sources, the
 #: weights, the players, the shape, the unprojected count) is keyed by season, and each label's
@@ -769,8 +755,8 @@ def task_paired(
 #: replay's seats having seen each season's rates.
 REPLAY_VERSION = 5
 REPLAY_VERSION_WHY = (
-    "5: the standalone cut: the payload names nothing of a live league (no gap block); the "
-    "figures are version 4's"
+    "5: the standalone cut: the payload names nothing of a live league or a drawn world (no gap, "
+    "refresh or tau); the figures are version 4's"
 )
 BELIEF_RULE = (
     "per stat, (w * the forecaster's figure + the sum of his lines dated before the day) / "
@@ -958,7 +944,6 @@ def replay_notes(
             ),
         },
         "news_sd_days": news_sd,
-        "refresh": "not used: a replay's seats believe the games played, not a weekly refresh",
     }
 
 
@@ -1205,7 +1190,7 @@ def cmd_replay(args: argparse.Namespace) -> int:
         print("refused: --seasons names no season")
         return 2
     if HOLD_OUT in seasons:
-        print(f"refused: {HOLD_OUT} is the hold-out; it is scored by validate only")
+        print(f"refused: {HOLD_OUT} is the hold-out; no run plays it")
         return 2
     twice = [t for t in dict.fromkeys(seasons) if seasons.count(t) > 1]
     if twice:
@@ -1240,7 +1225,7 @@ def cmd_replay(args: argparse.Namespace) -> int:
         day = date.fromisoformat(args.no_peek) if args.no_peek else None
         named = fc.parse(args.forecasters)
         sources = sources_of(args.bbm_as, args.yahoo_as)
-        inputs, fit, sha, fit_path, tau_note = world_inputs(args.data)
+        inputs, fit, sha, fit_path = world_inputs(args.data)
         specs = read_specs(args.arms if paired else args.seats)
         made = arms_of(specs, sha)
         arms = believing(
@@ -1400,9 +1385,7 @@ def cmd_replay(args: argparse.Namespace) -> int:
     keys = [k for k, ok_ in zip(keys, keep, strict=True) if ok_]
     results = [r for r, ok_ in zip(results, keep, strict=True) if ok_]
     run_name = args.name or "replay-" + "-".join(str(t) for t in seasons)
-    payload = base_payload(
-        "replay", run_name, started, sha, fit_path, fit, workers, tau_note, inputs, arms
-    )
+    payload = base_payload("replay", run_name, started, sha, fit_path, fit, workers, arms)
     payload |= replay_notes({str(r.season): r.fits for r in reads}, args.news_sd)
     payload |= {
         "seasons": seasons,
@@ -1788,109 +1771,6 @@ def gate_dict(g: vg.Gate) -> dict[str, Any]:
     return {"name": g.name, "passed": g.passed, "season": g.season, "detail": g.detail}
 
 
-def not_run(name: str, season: Any, reason: str) -> dict[str, Any]:
-    return {
-        "name": name,
-        "passed": None,
-        "season": season,
-        "detail": {"reason": reason, "run": False},
-    }
-
-
-def gate_absences(
-    data: Path, season: int, inputs: rn.WorldInputs, seed: int, paths: int = GATE_PATHS
-) -> dict[str, Any]:
-    """Gate 4 on a cached season: player-games missed a player-week against the hazard."""
-    try:
-        lines, _, scheduled = reader.replay_lines(data, season)
-    except reader.SimReadError as e:
-        return not_run("absences", season, str(e))
-    kept = {k: v for k, v in scheduled.items() if len(lines.get(k, {})) >= rn.GATE_MIN_GAMES}
-    first = reader.PERIOD_ONE[season]
-    last = max((d for days in kept.values() for d in days), default=first)
-    weeks = [(w.start, w.end) for w in weeks_from(first, (last - first).days // 7 + 1).weeks]
-    by_player = reader.missed_games(lines, kept, weeks)
-    if not by_player:
-        return not_run("absences", season, "no player-week with a scheduled game")
-    players = sorted(by_player)
-    missed = [m for k in players for m, _ in by_player[k]]
-    sizes = [[n for _, n in by_player[k]] for k in players]
-    samples = checks.missed_samples(inputs.hazard, sizes, paths, seed)
-    g = vg.absence_gate(missed, samples, season=season, seed=seed)
-    g.detail.update({"player_weeks": len(missed), "players": len(players), "paths": paths})
-    return gate_dict(g)
-
-
-def hold_out_setup(
-    season: int, lines: Any, members: Any, scheduled: Any
-) -> tuple[Any, dict[int, Any]]:
-    """Gate 1's league: the players with :data:`run.GATE_MIN_GAMES` played games, every one of
-    them projected at his own realized rates and drafted (no opening-week rule), and their
-    lines. The gate's figures predate the replay's preseason pool and stay as they were."""
-    kept = {k: v for k, v in lines.items() if len(v) >= rn.GATE_MIN_GAMES}
-    truth = rn.realized_rates(kept)
-    setup = rn.replay_setup(
-        season,
-        kept,
-        {k: members[k] for k in kept if k in members},
-        truth,
-        reader.PERIOD_ONE[season],
-        {k: v for k, v in scheduled.items() if k in kept},
-        opening_days=None,
-    )
-    return setup, kept
-
-
-def gate_hold_out_team_weeks(
-    data: Path, season: int, inputs: rn.WorldInputs, seed: int, paths: int = GATE_PATHS // 2
-) -> dict[str, Any]:
-    """Gate 1 on the hold-out: made-up teams' realized weekly totals (their players' recorded
-    lines) as transforms under the simulator's team-week distribution centred on the players'
-    own realized rates (the game-noise and absence layers alone)."""
-    try:
-        lines, members, scheduled = reader.replay_lines(data, season)
-    except reader.SimReadError as e:
-        return not_run("team_weeks", season, str(e))
-    setup, lines = hold_out_setup(season, lines, members, scheduled)
-    exact = rn.WorldInputs(
-        inputs.phi,
-        inputs.phi_players,
-        inputs.sigma,
-        inputs.hazard,
-        dict.fromkeys(wk.STATS, 0.0),
-        0.0,
-        0.0,
-        inputs.lag,
-        inputs.sha,
-        inputs.refresh_from,
-    )
-    worlds = [rn.forward_world(setup, exact, seed, p, 0.0) for p in range(paths)]
-    real = rn.replay_world(setup, lines, inputs.lag, seed, 0, belief="fixed")
-    value = wk.per_game_values(setup.projection, setup.cats, setup.points)
-    pits: list[float] = []
-    team_weeks = 0
-    for week in setup.spec.regular_weeks if setup.spec else ():
-        days = setup.calendar.week(week).days()
-        for team in setup.teams:
-            roster = setup.rosters[team]
-            realized = checks.team_week(setup, real, roster, days, value)
-            if not realized:
-                continue
-            samples = checks.team_week_samples(setup, lambda p: worlds[p], roster, days, paths)
-            pits += checks.transforms(realized, samples)
-            team_weeks += 1
-    g = vg.bucket_gate(pits, season=season, name="team_weeks")
-    g.detail.update(
-        {
-            "team_weeks": team_weeks,
-            "paths": paths,
-            "teams": "snake-drafted on the realized rates",
-            "layers": "game noise and absences",
-        }
-    )
-    return gate_dict(g)
-
-
 #: The forecaster gate 5's replay is drafted on and believes by, when ``--forecaster`` names none.
 GATE_FORECASTER = "prior"
 #: An oracle's error shape in gate 5's replay (a run of ``replay`` sets it with ``--shape``).
@@ -1913,7 +1793,7 @@ def season_refused(data: Path, season: int) -> str | None:
     """Why gate 5 may not replay ``season``: the hold-out (refused as the replay refuses it), the
     confirmation season (a gate needs no look at it), or a season with no dated log on file."""
     if season == HOLD_OUT:
-        return f"{HOLD_OUT} is the hold-out; it is scored by validate only"
+        return f"{HOLD_OUT} is the hold-out; no run plays it"
     if season == CONFIRMATION:
         return f"{CONFIRMATION} is the confirmation season; a gate needs no look at it"
     if season not in reader.PERIOD_ONE or not (data / LOGS_DIR / f"{season}.json").is_file():
@@ -1991,7 +1871,7 @@ def cmd_validate(args: argparse.Namespace) -> int:
         return 2
     try:
         forecaster = fc.parse_one(args.forecaster)
-        inputs, fit, sha, fit_path, tau_note = world_inputs(args.data)
+        inputs, fit, sha, fit_path = world_inputs(args.data)
     except (reader.SimReadError, ValueError, OSError) as e:
         print(f"refused: {e}")
         return 2
@@ -2002,33 +1882,22 @@ def cmd_validate(args: argparse.Namespace) -> int:
         print(f"refused: {e}")
         return 2
     took = clock.perf_counter() - t0
-    gates: list[dict[str, Any]] = []
-    gates.append(gate_hold_out_team_weeks(args.data, HOLD_OUT, inputs, args.seed))
-    for logged in (HOLD_OUT, THIS_SEASON):
-        gates.append(gate_absences(args.data, logged, inputs, args.seed))
-    gates += surrogate
-    payload = base_payload(
-        "validate", args.name or "validate", started, sha, fit_path, fit, 1, tau_note, inputs
-    )
+    gates = surrogate
+    payload = base_payload("validate", args.name or "validate", started, sha, fit_path, fit, 1)
     payload |= {
         "seed": args.seed,
         "surrogate_gate": block,
         "gates": gates,
-        "passed": all(g["passed"] for g in gates if g["passed"] is not None)
-        and any(g["passed"] is not None for g in gates),
-        "not_run": [g["name"] for g in gates if g["passed"] is None],
+        "passed": all(g["passed"] for g in gates) and bool(gates),
     }
     path = finish(payload, args.data, args.dry_run)
     for g in gates:
-        state = "not run" if g["passed"] is None else "passed" if g["passed"] else "FAILED"
         d = g["detail"]
-        if g["passed"] is None:
-            extra = f" ({d.get('reason')})"
-        elif g["name"] == "surrogate":
-            extra = f" seat {d['seat']}: {d['matched']} of {d['of']} league-days"
-        else:
-            extra = f" {d.get('worst', '')}"
-        print(f"{g['name']:16} {g['season']!s:12} {state}{extra}")
+        state = "passed" if g["passed"] else "FAILED"
+        print(
+            f"{g['name']:16} {g['season']!s:12} {state} seat {d['seat']}: "
+            f"{d['matched']} of {d['of']} league-days"
+        )
     days = len(block["days"]) * len(block["seats"])
     print(
         f"gate 5 on a replay of {block['season']} drafted on {block['forecaster']}: {days} "
@@ -2128,9 +1997,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     _run_args(re_, paths=20)
     re_.set_defaults(func=cmd_replay)
-    va = sub.add_parser(
-        "validate", help="gate 5 on a replay, and gates 1 and 4 on the hold-out and the logs"
-    )
+    va = sub.add_parser("validate", help="gate 5: the surrogate against the exact set on a replay")
     va.add_argument(
         "--season",
         type=int,
@@ -2145,7 +2012,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     va.add_argument("--seed", type=int, default=1)
     va.add_argument("--name", default=None)
-    va.add_argument("--dry-run", action="store_true", help="print the gates, write nothing")
+    va.add_argument("--dry-run", action="store_true", help="run the gate, write nothing")
     va.set_defaults(func=cmd_validate)
     args = ap.parse_args(argv)
     dry = getattr(args, "dry_run", False)

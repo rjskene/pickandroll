@@ -1,103 +1,16 @@
-"""What the gates are fed (#172, PR 2b): samples drawn from a world, pure.
-
-The gates in ``validate`` are functions on arrays. These build the arrays: a team's week under
-the simulator many times over (gate 1), player-games missed a week under the hazard (gate 4), and
-the surrogate's set against the exact set on sampled league-days (gate 5). The commands (``cli``)
-read the logs and call these with the season each is scored on.
+"""What gate 5 is fed (#172, PR 2b; on a replay since PR D3), pure: the surrogate's set against
+the exact set on sampled league-days of a world. ``validate.surrogate_gate`` scores the list and
+the command (``cli.gate_surrogate``) builds the replay it runs on.
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from datetime import date
 
-import numpy as np
-
-from . import policy, world
-from .engine import wk
-from .fit import Hazard
+from . import policy
 from .run import World
-from .state import Roster, Setup, SimState, initial
-
-#: The counting categories a team-week transform is read on (percentages are ratios of two).
-COUNTING = ("pts", "threes", "reb", "ast", "stl", "blk", "tov")
-
-
-def team_week(
-    setup: Setup, w: World, roster: Roster, days: Sequence[date], value: Mapping[int, float]
-) -> dict[str, float]:
-    """One team's week in one world: each day's best starters among those playing and not
-    heard out, their lines summed."""
-    totals: dict[str, float] = {}
-    slots = setup.starting_slots()
-    for day in days:
-        status, _ = w.status_on(day)
-        playing = [
-            (k, setup.players[k].positions)
-            for k, slot in roster
-            if slot not in policy.mv.HELD
-            and k in setup.players
-            and setup.players[k].nba_team in setup.schedule.get(day, frozenset())
-            and status.get(k) not in wk.OUT_ALL
-            and status.get(k) not in wk.OUT_THIS_WEEK
-        ]
-        for k in wk.starters(playing, slots, value):
-            ln = w.line(k, day)
-            if ln:
-                for stat, x in ln.items():
-                    if stat != "minutes_factor":
-                        totals[stat] = totals.get(stat, 0.0) + float(x)
-    return totals
-
-
-def team_week_samples(
-    setup: Setup,
-    worlds: Callable[[int], World],
-    roster: Roster,
-    days: Sequence[date],
-    paths: int,
-) -> list[dict[str, float]]:
-    """``paths`` draws of a team's week, one a world."""
-    value = wk.per_game_values(setup.projection, setup.cats, setup.points)
-    return [team_week(setup, worlds(p), roster, days, value) for p in range(paths)]
-
-
-def transforms(
-    realized: Mapping[str, float],
-    samples: Sequence[Mapping[str, float]],
-    stats: Sequence[str] = COUNTING,
-) -> list[float]:
-    """Where each realized counting total falls among the samples (gate 1's input)."""
-    from .validate import pit
-
-    out = []
-    for stat in stats:
-        if stat in realized:
-            out.append(pit(float(realized[stat]), [float(s.get(stat, 0.0)) for s in samples]))
-    return out
-
-
-def missed_samples(
-    hazard: Hazard, scheduled: Sequence[Sequence[int]], paths: int, seed: int
-) -> np.ndarray:
-    """``scheduled[i]`` is one player's games a week over his season, in order; each path draws
-    his whole season's availability under the hazard once and splits it into those weeks, so an
-    absence that began in one week is still missed in the next (as it is in the logs). The rows
-    are the player-weeks in order, flattened: gate 4's samples."""
-    rows = sum(len(weeks) for weeks in scheduled)
-    out = np.zeros((rows, paths), dtype=int)
-    row = 0
-    for i, weeks in enumerate(scheduled):
-        sizes = [int(n) for n in weeks]
-        total = sum(sizes)
-        for p in range(paths):
-            ok, _ = world.absences(seed, p, i, total, hazard)
-            start = 0
-            for j, n in enumerate(sizes):
-                out[row + j, p] = n - int(ok[start : start + n].sum())
-                start += n
-        row += len(sizes)
-    return out
+from .state import Setup, SimState, initial
 
 
 def surrogate_matches(
@@ -109,19 +22,14 @@ def surrogate_matches(
     fields: policy.Fields = policy.DEFAULT_FIELDS,
 ) -> list[bool]:
     """On each of ``days``, from day one's rosters, whether the surrogate's set equals the exact
-    set (as sets of moves), both with ``fields`` (an arm's; the live route's by default): gate
-    5's input. A world whose belief is read by day (a replay's causal one) is read on each day;
-    any other after the weeks since the start."""
+    set (as sets of moves), both with ``fields`` (an arm's; the live route's by default), on the
+    day's belief: gate 5's input. A day outside the calendar's weeks is left out."""
     out = []
     base = initial(setup)
-    week0 = setup.calendar.week_of(setup.start)
     for day in days:
-        week = setup.calendar.week_of(day)
-        if week is None or week0 is None:
+        if setup.calendar.week_of(day) is None:
             continue
-        beliefs = (
-            w.beliefs_on(day) if w.belief == "causal" else w.beliefs(week.number - week0.number)
-        )
+        beliefs = w.beliefs_on(day)
         status, returns = w.status_on(day)
         state = SimState(day, base.rosters, base.pool, {})
         built = policy.problem_of(
@@ -136,10 +44,5 @@ def surrogate_matches(
 
 
 __all__ = [
-    "COUNTING",
-    "missed_samples",
     "surrogate_matches",
-    "team_week",
-    "team_week_samples",
-    "transforms",
 ]

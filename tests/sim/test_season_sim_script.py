@@ -155,7 +155,7 @@ def test_describe_names_counts_and_no_figures():
 
 
 # --------------------------------------------------------------------------- PR 2b: the runs
-from tests.sim.sim_league import inputs, make_data_dir
+from tests.sim.sim_league import make_data_dir
 
 KNOBS = {
     "system": "bbm",
@@ -269,14 +269,14 @@ def test_a_replay_records_its_run(run_data: Path):
         and payload["seasons"] == [2024]
         and payload["seats"] == ["A", "B"]
     )
-    assert list(payload["forecasters"]["2024"]) == ["prior"] and payload["tau"][
-        "source"
-    ].startswith("not used")
+    assert list(payload["forecasters"]["2024"]) == ["prior"]
+    # Nothing of the drawn world is recorded (PR D3): no tau, no refresh, no gap.
+    assert not {"tau", "refresh", "gap"} & set(payload)
     assert set(payload["results"]["2024"]["prior"]) == {"A", "B"}
     assert payload["draft"].startswith("snake") and payload["confirmation"] is None
     # The seats believe only the games played: the payload names the belief, its weights and
     # where they came from (no season before 2024 has its prior season on file: the default),
-    # the newcomer's rule, the pool and the news spread, and the weekly refresh as not used.
+    # the newcomer's rule, the pool and the news spread.
     assert payload["replay_version"] == 5 and payload["belief"]["kind"] == "causal"
     weights = payload["belief"]["weights"]["2024"]["prior"]
     assert weights["source"] == "the default" and weights["left_out"] == {
@@ -285,7 +285,7 @@ def test_a_replay_records_its_run(run_data: Path):
     assert weights["default"] is True and weights["seasons"] == []
     assert set(weights["weights"].values()) == {10.0} and weights["grid"][0] == 2
     assert "undrafted" in payload["newcomer"] and "first 7 days" in payload["pool"]["draft"]
-    assert payload["news_sd_days"] == 2.0 and payload["refresh"].startswith("not used")
+    assert payload["news_sd_days"] == 2.0
     # What every run records: the fit's hash, the hold-out, the execution model, the specs
     # verbatim, the period calendar, each arm's fields and surrogate, the commit and the times.
     fit_sha = next((data / "sim" / "fit").glob("*/fit.sha256")).read_text().strip()
@@ -440,51 +440,24 @@ def test_the_no_peek_check_agrees_through_its_date_and_writes_nothing(run_data: 
     assert len(_runs(data)) == before
 
 
-def test_validate_runs_the_gates_side_by_side(run_data: Path, capsys):
+def test_validate_is_gate_five_on_a_replay(run_data: Path, capsys):
     data = run_data
-    assert (
-        ss.main(
-            [
-                "--data",
-                str(data),
-                "--rooms",
-                "0",
-                "validate",
-                "--dry-run",
-            ]
-        )
-        == 0
-    )
+    assert ss.main(["--data", str(data), "--rooms", "0", "validate", "--dry-run"]) == 0
     out = capsys.readouterr().out
-    assert "team_weeks" in out and "absences" in out and "surrogate" in out
-    assert (
-        ss.main(
-            [
-                "--data",
-                str(data),
-                "--rooms",
-                "0",
-                "validate",
-            ]
-        )
-        == 0
-    )
+    assert "surrogate" in out and "gate 5 on a replay of 2024" in out
+    assert "team_weeks" not in out and "absences" not in out
+    assert ss.main(["--data", str(data), "--rooms", "0", "validate"]) == 0
     payload = json.loads(_runs(data)[-1].read_text())
     assert payload["kind"] == "validate" and payload["hold_out"] == 2025
-    by = {(g["name"], str(g["season"])): g for g in payload["gates"]}
-    assert by[("team_weeks", "2025")]["detail"]["layers"] == "game noise and absences"
-    assert (
-        by[("absences", "2025")]["passed"] is not None
-        and by[("absences", "2026")]["detail"]["players"] > 0
-    )
     # Gate 5 on a replay of the latest replayable season on file, one row a seat.
     rows = [g for g in payload["gates"] if g["name"] == "surrogate"]
     assert [(g["season"], g["detail"]["seat"]) for g in rows] == [(2024, 1), (2024, 6), (2024, 12)]
     assert payload["surrogate_gate"]["season"] == 2024
     assert payload["surrogate_gate"]["forecaster"] == "prior"
-    # No league's gate (PR D3): gates 1, 4 and 5 are the run, each one run.
-    assert {g["name"] for g in payload["gates"]} == {"team_weeks", "absences", "surrogate"}
-    assert payload["not_run"] == [] and not {"today", "leagues", "skipped"} & set(payload)
+    # Gate 5 alone (PR D3): the drawn world's gates 1 and 4 went with it, and nothing is listed
+    # as not run.
+    assert payload["gates"] == rows and payload["passed"] == all(g["passed"] for g in rows)
+    assert not {"not_run", "today", "leagues", "skipped", "gap", "refresh", "tau"} & set(payload)
 
 
 # --------------------------------------------------------------------------- the audit (PR B2)
@@ -781,9 +754,7 @@ def test_the_run_record_keeps_the_hash_seed(monkeypatch):
     ``PYTHONHASHSEED``, or ``"random"`` when it is unset (or empty)."""
 
     def payload() -> dict:
-        return ss.base_payload(
-            "replay", "x", datetime.now(UTC), "0" * 64, Path("fit.json"), {}, 1, {}, inputs()
-        )
+        return ss.base_payload("replay", "x", datetime.now(UTC), "0" * 64, Path("fit.json"), {}, 1)
 
     monkeypatch.setenv("PYTHONHASHSEED", "0")
     assert ss.hash_seed() == "0" and payload()["hash_seed"] == "0"

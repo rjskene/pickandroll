@@ -18,7 +18,7 @@ from pickandroll.sim import engine, policy
 from pickandroll.sim import opponents as op
 from pickandroll.sim import run as rn
 from pickandroll.sim.state import Member, initial
-from tests.sim.sim_league import KNOBS, arm, inputs, make_setup, rates
+from tests.sim.sim_league import KNOBS, arm, make_setup, rates, replay_of
 
 
 # --------------------------------------------------------------------------- the twelve knobs
@@ -124,7 +124,7 @@ def test_two_seats_that_differ_only_in_pool_decide_apart_inside_one_run():
     search the best candidate, the seat with thirty takes a set of two adds. The decision cache
     is keyed on the seat's ``repr``, which carries the fields, so the two share no solve."""
     setup = make_setup(seed=3)
-    w = rn.forward_world(setup, inputs(), 1, 0, 0.0)
+    w = replay_of(setup, 1, 0)
     knobs = {**KNOBS, "daily_cap": 3}
     wide = op.Seat("W", "exact", knobs, with_plan=False)
     narrow = op.Seat("W", "exact", knobs, with_plan=False, fields=policy.Fields(pool=1))
@@ -365,12 +365,12 @@ def test_the_season_scale_by_hand_and_no_outcome_changes_with_it(monkeypatch):
     assert policy.scale_of(heavy, "exact") == s
     # A run's outcomes are the same with the scale and without it.
     setup = make_setup(seed=5)
-    w = rn.forward_world(setup, inputs(), 2, 0, 0.0)
+    w = replay_of(setup, 2, 0)
     a, b = arm("A", "exact"), arm("B", "surrogate")
     with_scale = rn.paired(setup, w, a, b, 1)
     assert with_scale["scale"]["a"]["swaps"] > 0 and with_scale["scale"]["b"] is not None
     monkeypatch.setattr(rn, "scale_on", lambda *args: None)
-    without = rn.paired(setup, rn.forward_world(setup, inputs(), 2, 0, 0.0), a, b, 1)
+    without = rn.paired(setup, replay_of(setup, 2, 0), a, b, 1)
     assert {k: v for k, v in with_scale.items() if k != "scale"} == {
         k: v for k, v in without.items() if k != "scale"
     }
@@ -618,7 +618,9 @@ def test_the_reads_table_against_behaviour(case):
     gives different records on the case built for it."""
     name, tier, executes, with_plan, execute_plan, base, (va, vb), me, league = case
     setup = LEAGUES[league]()
-    w = rn.forward_world(setup, inputs(), 7, 0, 0.0)
+    # The made-up season of seed 1: on it every read case parts (horizon_weight on a weighted
+    # arm parts on some seasons only; seasons 1 and 6 of 1 to 8 part every case).
+    w = replay_of(setup, 7, 0, season=1)
     knobs = {**KNOBS, "daily_cap": 3, **base}
     a = rn.Arm(
         "A", tier, {**knobs, name: va}, {"kind": "static"}, executes, with_plan, execute_plan
