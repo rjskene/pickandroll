@@ -1291,7 +1291,8 @@ def replay_verdict(
         for label in read_rows:
             p = rows[label]["pooled"]["made_playoffs"]
             if p["mean"] is None or p["mean"] <= 0:
-                failed.append(f"{label} pooled: {p['mean']:+.4f} is not above zero")
+                shown = "no mean" if p["mean"] is None else f"{p['mean']:+.4f}"
+                failed.append(f"{label} pooled: {shown} is not above zero")
         passes = not failed
     return {
         "rule": REPLAY_VERDICT_RULE,

@@ -4,9 +4,9 @@ The gates in ``validate`` are functions on arrays. These build the arrays: a tea
 the simulator many times over (gate 1, and the simulator's matchup odds of gate 2 beside the
 engine's analytic odds), player-games missed a week under the hazard (gate 4), and the
 surrogate's set against the exact set on sampled league-days (gate 5). Gate 3's band is the
-share's distribution over sampled moves (:func:`share_band`); its rows wait on the scorecard's
-realized values (PR 3). The commands (``cli``) read the records and call these with the season each
-is scored on.
+share's distribution over sampled moves (:func:`share_band`); its rows would need the scorecard's
+realized values, which the simulator does not read. The commands (``cli``) read the records and
+call these with the season each is scored on.
 """
 
 from __future__ import annotations

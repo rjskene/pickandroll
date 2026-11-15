@@ -323,8 +323,8 @@ Each command runs as `python -m pickandroll.sim <command>`:
 - `compare A.json B.json --leagues all --paths 100`: arm A against arm B in my seat, paired, per
   league, at shrinks 0, 0.25 and 0.5; the paired change in each outcome (B less A) with its
   standard error; the verdict line is **advisory**: a change (arm B) passes when its paired change
-  in playoff odds is not below zero by more than one SE at any shrink; no block and no promotion
-  before PR 3. A league whose bracket is unread reports rank and category wins and no playoff
+  in playoff odds is not below zero by more than one SE at any shrink; no block and no
+  promotion. A league whose bracket is unread reports rank and category wins and no playoff
   odds.
 - `replay --seasons 2022,2023,2024 --forecasters prior,espn,marcel,oracle:0.1 --seats A.json
   B.json`: a made-up twelve-team league on each recorded season named (below), the arms rotated
@@ -415,17 +415,21 @@ for (`fit_sha`; another fit on disk refuses the run). Every run writes
 `data/sim/runs/<stamp>-<kind>-<name>.json` with the code's commit, the fit's hash and
 file, the hold-out, the spec files verbatim, the execution model, the gap's systems and clip, the
 refresh's source, `τ`'s source, each arm's fields and its surrogate's pool and days, the reads
-table, the season scale, the period calendar's source, and the results. A run first times one task and estimates the whole; the guard then refuses a span that
-would touch 04:45-06:45 on the Mac's clock, a draft room open on the API, or a run over an hour
-not announced to fantasyMASTER (`--announced`).
+table, the season scale, the period calendar's source, and the results. A run first times one
+task and estimates the whole; the guard then refuses a span that would touch 04:45-06:45 in the
+machine's local time, a draft room open on the API, or a run over an hour without `--announced`
+(such a run is announced on the tracker and starts on the user's word).
 
 ## The forecasters (`sim/forecast.py`, PR D1)
 
 A replay's **forecaster** is its projection source: the figure each projected player's belief
 starts from and the draft's ranking. A run names one or several (`--forecasters`, comma
-separated, in order) and plays every path once for each; the payload keys its results and counts
-by the forecaster's label. A forecaster that cannot serve the season refuses the run by name
-before any path. Four names:
+separated, in order) for one or several seasons (`--seasons`); a **cell** is a season under one
+forecaster, and every path is played once in each cell served. A forecaster that cannot serve a
+season leaves that cell skipped, by name and with the reader's reason, before any path; a run
+with no cell left is refused, and so is a run whose stand-in (`--bbm-as`, `--yahoo-as`) cannot
+serve a season named. The payload keys its results and counts by season, then by the
+forecaster's label. Four names:
 
 - `prior`: the prior season's per-game rates of the players with twenty played games in it. It
   needs the prior season's log.
@@ -682,8 +686,8 @@ without its inputs is **not run** and says why, never passed.
 - Gate 4 on the hold-out and on this season's log: each player's season under the hazard drawn
   once a path and split into his weeks, so an absence that began one week is still missed the next.
 - Gate 5 on the league's setup: the surrogate's set against the exact set on five league-days.
-- Gate 6 once two exports and players with ten or more games exist; gate 3 waits on the scorecard's
-  realized rows (PR 3).
+- Gate 6 once two exports and players with ten or more games exist; gate 3 is not run: it needs
+  the scorecard's realized rows, which the simulator does not read.
 
 **First reading of the hold-out (2024-25, the frozen fit of 2026-10-24).** Gate 4 passes on all
 players with twenty or more games. Gate 1 fails: realized team-weeks sit above the simulator's
@@ -696,7 +700,8 @@ real ones, in every arm alike (the comparison is paired, the bias shared).
 ## Runs
 
 Every command runs through the commands' guard: low priority, never when its span touches 04:45
-to 06:45 on the Mac's clock, never while a draft room is open on the API, and a run expected over
-an hour is announced to fantasyMASTER first. The no-peek check runs two seasons before it can time one, so
+to 06:45 in the machine's local time, never while a draft room is open on the API, and a run
+expected over an hour is announced on the tracker and starts on the user's word (`--announced`
+says that has happened). The no-peek check runs two seasons before it can time one, so
 the guard gives it a span of a quarter of an hour (`NO_PEEK_HOURS`) and refuses it when that span
 touches the window.

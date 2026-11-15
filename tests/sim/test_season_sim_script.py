@@ -24,7 +24,7 @@ from tests.sim.test_gamelogs import body, entry, line
 
 MAC = ZoneInfo("America/Toronto")
 #: What the commands' clock reads in every test here: a weekday morning outside the routines'
-#: window. Without it a suite run between 04:45 and 06:45 Mac clock has the guard refuse every
+#: window. Without it a suite run between 04:45 and 06:45 local time has the guard refuse every
 #: command (one failed test and twelve errors on 2026-10-31).
 BUSINESS_HOURS = datetime(2026, 10, 27, 9, 0, tzinfo=MAC)
 
@@ -44,7 +44,7 @@ def test_guard_refuses_the_quiet_window_rooms_and_unannounced_long_runs():
     ok, why = ss.guard(now=busy, rooms=2, nice=None)
     assert not ok and "room" in why
     ok, why = ss.guard(expected_hours=6, now=busy, rooms=0, nice=None)
-    assert not ok and "fantasyMASTER" in why
+    assert not ok and "announced on the tracker" in why and "--announced" in why
     assert ss.guard(expected_hours=6, now=busy, rooms=0, announced=True, nice=None) == (True, "ok")
     lowered: list[int] = []
     assert ss.guard(now=busy, rooms=0, nice=lowered.append) == (True, "ok")

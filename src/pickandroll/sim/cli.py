@@ -24,7 +24,7 @@ figures stay under ``data/`` and are described in words anywhere public.
 simulated worlds, once with arm A in my seat and once with arm B, at three shrinks of the
 projection error toward the market, and reports the paired difference, B less A, with its
 standard error: the verdict line is advisory (the design note's one-SE rule; no block and no
-promotion before PR 3). ``replay`` plays a made-up league on one or several recorded seasons'
+promotion). ``replay`` plays a made-up league on one or several recorded seasons'
 game lines, never the hold-out, its seats believing only the games already played, once for
 each season and forecaster that serves it (a cell); a written replay that names the
 confirmation season adds a line to its ledger; ``--no-peek`` checks one path of one season
@@ -35,8 +35,9 @@ each had to work with. Every run's payload goes under ``data/sim/runs/`` with th
 commit, the fit's hash, the hold-out, the spec files verbatim and the execution model.
 
 Every command runs through :func:`guard`: at low priority (``nice``), never when its span would
-touch 04:45-06:45 on the Mac's clock (the routines' window), never while a draft room is open on
-the API, and a run expected over an hour is for the session to announce to fantasyMASTER first.
+touch 04:45-06:45 in the machine's local time (the routines' window), never while a draft room is
+open on the API, and a run expected over an hour is announced on the tracker and starts on the
+user's word (``--announced`` says that has happened).
 """
 
 from __future__ import annotations
@@ -76,10 +77,11 @@ PROG = "python -m pickandroll.sim"
 DATA = ROOT / "data"
 LOGS_DIR = reader.LOGS_DIR
 FIT_DIR = reader.FIT_DIR
-#: The routines' window on the Mac's clock: no run's span touches it.
+#: The routines' window, in the machine's local time: no run's span touches it.
 QUIET_FROM = time(4, 45)
 QUIET_TO = time(6, 45)
-#: Runs expected to take longer are announced to fantasyMASTER before they start.
+#: A run expected to take longer is announced on the tracker and starts on the user's word;
+#: ``--announced`` says that has happened.
 ANNOUNCE_HOURS = 1.0
 NICE = 10
 TIMEOUT = 60
@@ -137,7 +139,7 @@ def touches_quiet_window(start: datetime, hours: float) -> bool:
 
 
 def now_local() -> datetime:
-    """The guard's clock, the Mac's local time. A seam the tests pin: a suite run inside the
+    """The guard's clock, the machine's local time. A seam the tests pin: a suite run inside the
     routines' window must not have every command refused for the hour it runs at."""
     return datetime.now().astimezone()
 
@@ -155,15 +157,18 @@ def guard(
     if touches_quiet_window(now, expected_hours):
         return False, (
             f"a run of about {expected_hours:g} h from now touches the routines' window "
-            f"({QUIET_FROM:%H:%M}-{QUIET_TO:%H:%M} Mac clock)"
+            f"({QUIET_FROM:%H:%M}-{QUIET_TO:%H:%M} local time)"
             if expected_hours
-            else f"inside the routines' window ({QUIET_FROM:%H:%M}-{QUIET_TO:%H:%M} Mac clock)"
+            else f"inside the routines' window ({QUIET_FROM:%H:%M}-{QUIET_TO:%H:%M} local time)"
         )
     open_rooms = rooms_open() if rooms is None else rooms
     if open_rooms:
         return False, f"{open_rooms} draft room(s) open on the API"
     if expected_hours > ANNOUNCE_HOURS and not announced:
-        return False, f"a run of about {expected_hours:g} h is announced to fantasyMASTER first"
+        return False, (
+            f"a run of about {expected_hours:g} h is announced on the tracker and starts on the "
+            "user's word; --announced says that has happened"
+        )
     if nice is not None:
         try:
             nice(NICE)
@@ -2481,7 +2486,7 @@ def cmd_validate(args: argparse.Namespace) -> int:
     for league, setup in setups.items():
         gates += gate_recorded_weeks(args.data, league, setup, inputs, args.seed)
         gates.append(
-            not_run("realized_share", league, "the scorecard's realized rows are read in PR 3")
+            not_run("realized_share", league, "the simulator reads no scorecard's realized rows")
         )
         me = reader.settings_of(args.data, league).my_team_id
         if me is not None and me in setup.teams:
