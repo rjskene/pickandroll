@@ -5,10 +5,10 @@
     python -m pickandroll.sim fit --dry-run                    # the fit printed, nothing written
     python -m pickandroll.sim fit --refresh --tau residual --league <id>   # week six's re-freeze
     python -m pickandroll.sim compare A.json B.json --leagues all --paths 100
-    python -m pickandroll.sim replay --season 2024 --forecasters prior,espn --seats A.json B.json
-    python -m pickandroll.sim replay --season 2024 --forecasters oracle:0.1 --shape minutes ...
-    python -m pickandroll.sim replay --season 2024 --bbm-as espn --yahoo-as marcel --seats ...
-    python -m pickandroll.sim replay --season 2024 --seats A.json B.json --no-peek 2023-12-04
+    python -m pickandroll.sim replay --seasons 2022-2024 --forecasters prior,espn --seats A.json B.json
+    python -m pickandroll.sim replay --seasons 2024 --forecasters oracle:0.1 --shape minutes ...
+    python -m pickandroll.sim replay --seasons 2024 --bbm-as espn --yahoo-as marcel --seats ...
+    python -m pickandroll.sim replay --seasons 2024 --seats A.json B.json --no-peek 2023-12-04
     python -m pickandroll.sim room --leagues all --seats A.json B.json --draft rosters
     python -m pickandroll.sim validate --league all
 
@@ -24,9 +24,11 @@ figures stay under ``data/`` and are described in words anywhere public.
 simulated worlds, once with arm A in my seat and once with arm B, at three shrinks of the
 projection error toward the market, and reports the paired difference, B less A, with its
 standard error: the verdict line is advisory (the design note's one-SE rule; no block and no
-promotion before PR 3). ``replay`` plays a made-up league on a recorded season's game lines,
-never the hold-out, its seats believing only the games already played; ``--no-peek`` checks one
-path of it against a season changed after a date and writes nothing.
+promotion before PR 3). ``replay`` plays a made-up league on one or several recorded seasons'
+game lines, never the hold-out, its seats believing only the games already played, once for
+each season and forecaster that serves it (a cell); a written replay that names the
+confirmation season adds a line to its ledger; ``--no-peek`` checks one path of one season
+against it changed after a date and writes nothing.
 ``room`` seats the arms given around one league's table, rotated across paths. ``validate`` runs
 the six gates on this season's recorded weeks and on the hold-out, side by side, and writes what
 each had to work with. Every run's payload goes under ``data/sim/runs/`` with the code's
@@ -40,6 +42,7 @@ the API, and a run expected over an hour is for the session to announce to fanta
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import platform
@@ -82,6 +85,16 @@ NICE = 10
 TIMEOUT = 60
 #: The hold-out season (#172): 2024-25, in no fit, never a replay's or a comparison's target.
 HOLD_OUT = 2025
+#: The confirmation season (2025-26, ESPN id 2026): a written replay that names it is a look, one
+#: line in the ledger (``readers.append_look``; #172, PR D2). Refusing it inside a search set is
+#: PR H's.
+CONFIRMATION = 2026
+CONFIRMATION_NOTE = (
+    "the confirmation season is looked at sparingly: every written replay that names it appends "
+    "one line to the ledger (when, the run's name, the design, the seasons, the forecasters, a "
+    "hash of each spec, the fit's hash, the code's commit), and this run is the look its number "
+    "names; a dry run and a no-peek check add none"
+)
 #: The five seasons on disk, ESPN ids (2022 is 2021-22), and the ones a fit may see.
 SEASONS = (2022, 2023, 2024, 2025, 2026)
 FIT_SEASONS = ",".join(str(s) for s in SEASONS if s != HOLD_OUT)
@@ -542,6 +555,24 @@ def dry_run(key: Mapping[str, Any], first: Mapping[str, Any]) -> int:
                 if row.get(m) is not None
             )
             print(f"season scale, {arm}, the first task: {shown} over {row['swaps']} swaps")
+    unprojected = first.get("unprojected") or {}
+    by_side = unprojected if "delta" in first else {"": unprojected}
+    for side, rows in by_side.items():
+        for label, row in rows.items():
+            whose = f"arm {side.upper()}'s " if side else ""
+            print(
+                f"unprojected, {whose}{label}, the first task: {row['seats']} on its seats' "
+                f"rosters, {row['all']} on all"
+            )
+    if "delta" in first and "seat" in first:
+        shown = {
+            side: ", ".join(f"{m} {v:g}" for m, v in first[side].items() if v is not None)
+            for side in ("a", "b", "delta")
+        }
+        print(
+            f"pair, the first task: seat {first['seat']}; A {shown['a']}; B {shown['b']}; "
+            f"B less A {shown['delta']}"
+        )
     _, note = audited([key], [first])
     print("dry run, nothing written")
     return audit_exit(note)
@@ -945,7 +976,7 @@ def task_replay(
     shape: str,
     sources: Sources | None,
     lag: int,
-    weights: Mapping[str, float],
+    weights: Mapping[str, Mapping[str, float]],
     news_sd: float,
     arms: Mapping[str, rn.Arm],
     seats: Sequence[str],
@@ -960,22 +991,95 @@ def task_replay(
         lag,
         seed,
         path,
-        weights,
+        weights[forecaster.label],
         news_sd=news_sd,
         label=forecaster.label,
         forecasts=forecasts_of(sources, fixed, lines, seed, path, shape, arms),
         split=splits_of(sources, arms),
+        weights_of=weights,
     )
+    held = {t: arms[name].forecaster for t, name in rn.rotate(seats, setup.teams, path).items()}
+    unprojected = rn.unprojected(setup, w, held)
     out = rn.room(setup, w, arms, seats, path)
     out["forecaster"] = forecaster.label
+    out["unprojected"] = unprojected
     return out
 
 
-#: The replay's version in its payload: 3 since a run names its forecasters (#172, PR D1): its
-#: results and counts are keyed by the forecaster's label (``prior``, ``oracle:0.1``), where
-#: version 2 keyed them by kind and spread (``prior:0``); 2 since its seats believe only the
-#: games played (PR B1), a version 1 replay's seats having seen each season's rates.
-REPLAY_VERSION = 3
+def seat_of(setup: Any, path: int) -> int:
+    """The paired design's seat on ``path``: ``setup.teams[path mod len(teams)]``, so over a
+    multiple of the seats every seat is taken equally often (#172, PR D2)."""
+    return setup.teams[path % len(setup.teams)]
+
+
+def paths_for_pair(paths: int, teams: int = rn.REPLAY_TEAMS) -> int:
+    """``paths`` rounded up to a multiple of the league's ``teams``."""
+    return -(-max(1, paths) // teams) * teams
+
+
+def task_paired(
+    season: int,
+    lines: Any,
+    members: Any,
+    scheduled: Any,
+    forecaster: fc.Forecaster,
+    fixed: Fixed,
+    shape: str,
+    sources: Sources | None,
+    lag: int,
+    weights: Mapping[str, Mapping[str, float]],
+    news_sd: float,
+    arms: Mapping[str, rn.Arm],
+    pair: Sequence[str],
+    seed: int,
+    path: int,
+) -> dict[str, Any]:
+    """One task of the paired design on a replay (#172, PR D2): the league drafted on the cell's
+    forecaster, arm A in seat :func:`seat_of` in one season and arm B in the same seat in a
+    second, through one world (``run.paired``); every other seat is each arm's rivals, on the
+    run's forecaster. ``pair`` names the two arms' keys in ``arms`` (``a`` and ``b``)."""
+    projection = projection_of(forecaster, fixed, lines, seed, path, shape)
+    setup = replay_setup_of(season, lines, members, scheduled, projection)
+    w = rn.replay_world(
+        setup,
+        lines,
+        lag,
+        seed,
+        path,
+        weights[forecaster.label],
+        news_sd=news_sd,
+        label=forecaster.label,
+        forecasts=forecasts_of(sources, fixed, lines, seed, path, shape, arms),
+        split=splits_of(sources, arms),
+        weights_of=weights,
+    )
+    me = seat_of(setup, path)
+    a, b = (arms[k] for k in pair)
+    unprojected = {
+        k: rn.unprojected(
+            setup, w, {t: arms[k].forecaster if t == me else None for t in setup.teams}
+        )
+        for k in pair
+    }
+    out = rn.paired(setup, w, a, b, me)
+    out["seat"] = me
+    out["forecaster"] = forecaster.label
+    out["unprojected"] = unprojected
+    return out
+
+
+#: The replay's version in its payload: 4 since a run names several seasons (#172, PR D2): what
+#: is one season's (results, counts, the season scale, the forecasters, the sources, the
+#: weights, the players, the shape, the unprojected count) is keyed by season, and each label's
+#: weights are its own; 3 since a run names its forecasters (PR D1): its results and counts are
+#: keyed by the forecaster's label (``prior``, ``oracle:0.1``), where version 2 keyed them by kind
+#: and spread (``prior:0``); 2 since its seats believe only the games played (PR B1), a version 1
+#: replay's seats having seen each season's rates.
+REPLAY_VERSION = 4
+REPLAY_VERSION_WHY = (
+    "4: a run names several seasons (--seasons) and what is one season's is keyed by season; each "
+    "belief label's weights are its own"
+)
 BELIEF_RULE = (
     "per stat, (w * the forecaster's figure + the sum of his lines dated before the day) / "
     "(w + his games before the day), read every day"
@@ -984,10 +1088,30 @@ NEWCOMER_RULE = (
     "a player nobody projected enters the belief the day after his first recorded game, from "
     "the mean projection over the projected players left undrafted"
 )
-#: Whose weights the belief takes, for each forecaster.
-WEIGHTS_NOTE = (
-    "the belief's weights fitted under the prior forecaster (readers.belief_weights), the same "
-    "for every forecaster: no fit per forecaster is made"
+#: Whose weights each belief takes (#172, PR D2: each label's own).
+WEIGHTS_RULE = (
+    "each belief label's weights are fitted on that label's own projection of the seasons on "
+    "file earlier than the replayed one (readers.label_weights): prior the season before's "
+    "rates; espn the season's stored projection, none where it fails the freeze check; marcel "
+    "where two earlier seasons are on file; an oracle a draw of the season at its spread and "
+    "shape, on keys of its own; a system label the system's table on the two stand-ins' "
+    "projections, where both serve the season. No sample's season, nor any season its "
+    "projection read, is the hold-out. A label with no sample takes the prior forecaster's "
+    "weights when those were fitted, else the default; each label's record says which"
+)
+#: What the unprojected count is (#172, PR D2).
+UNPROJECTED_NOTE = (
+    "per belief label an arm holds: the drafted players its table has no line for on the first "
+    "day (a split label: its rostered side's table), on the rosters of the seats that hold it "
+    "(seats) and on all twelve (all); a seat values such a player at zero until he plays. The "
+    "mean and the largest over the paths that stand. Zero by construction for the run's own "
+    "label, whose projection the draft read"
+)
+#: The printed line when a seat can hold drafted players its belief does not project.
+UNPROJECTED_WARNING = (
+    "note: no forecaster of the run is the first stand-in, so a seat can hold drafted players "
+    "its belief does not project (it values them at zero until they play); the payload counts "
+    "them under unprojected"
 )
 
 
@@ -1026,12 +1150,14 @@ def forecasters_block(
     seed: int,
     shape: str,
     sources: Sources | None = None,
+    weights: Mapping[str, fitmod.LabelWeights] | None = None,
 ) -> dict[str, Any]:
     """The payload's ``forecasters``: per label where its projection comes from, how many players
     it projects and how many of them played ``forecast.ERROR_MIN_GAMES`` games, its error
     against the replayed season (``forecast.error_of``; an oracle's on path 0, where it should
-    sit at its spread), ``espn``'s freeze check and the belief's weights; the two sources'
-    stand-ins among them, with the role each stands for. Never shown to a seat."""
+    sit at its spread), ``espn``'s freeze check and its belief's weights (``weights``, by label);
+    the two sources' stand-ins among them, with the role each stands for. Never shown to a
+    seat."""
     out: dict[str, Any] = {}
     played = {k: len(v) for k, v in lines.items()}
     roles: dict[str, list[str]] = {}
@@ -1047,7 +1173,7 @@ def forecasters_block(
             "projected": e["projected"],
             "played": e["played"],
             "error": {k: e[k] for k in ("min_games", "by_stat", "median_spread")},
-            "weights": WEIGHTS_NOTE,
+            "weights": weights[f.label].payload() if weights and f.label in weights else None,
         }
         if f.name == "oracle":
             block["error"]["measured_on"] = "path 0: an oracle's error should sit at its spread"
@@ -1110,16 +1236,21 @@ def sources_block(
     }
 
 
-def replay_notes(weights: fitmod.BeliefWeights, news_sd: float) -> dict[str, Any]:
-    """What a replay's seats knew, for its payload."""
+def replay_notes(
+    weights: Mapping[str, Mapping[str, fitmod.LabelWeights]], news_sd: float
+) -> dict[str, Any]:
+    """What a replay's seats knew, for its payload: ``weights`` by season, then by belief label."""
     return {
         "replay_version": REPLAY_VERSION,
+        "replay_version_why": REPLAY_VERSION_WHY,
         "belief": {
             "kind": "causal",
             "rule": BELIEF_RULE,
-            "weights": weights.payload(),
-            "weights_fitted_with": "the prior season's rates (the prior forecaster)",
-            "forecasters": WEIGHTS_NOTE,
+            "weights": {
+                t: {label: lw.payload() for label, lw in by_label.items()}
+                for t, by_label in weights.items()
+            },
+            "weights_rule": WEIGHTS_RULE,
         },
         "newcomer": NEWCOMER_RULE,
         "pool": {
@@ -1139,6 +1270,54 @@ def replay_notes(weights: fitmod.BeliefWeights, news_sd: float) -> dict[str, Any
     }
 
 
+def belief_labels(
+    named: Sequence[fc.Forecaster], sources: Sources | None, arms: Mapping[str, rn.Arm]
+) -> dict[str, reader.BeliefLabel]:
+    """Every belief label a replay holds, by label, as its weights' fit reads it: each of the
+    run's forecasters, each system label the arms hold (a ``bbm`` seat's is the first stand-in's
+    own) and the first stand-in's whenever a label is split (#172, PR D2)."""
+    out: dict[str, reader.BeliefLabel] = {f.label: f for f in named}
+    if sources is None:
+        return out
+    first, second = sources
+    for arm in arms.values():
+        system = str(arm.knobs["system"])
+        label: reader.BeliefLabel = (
+            first if system == "bbm" else fc.SystemBelief(system, arm.knobs["blend"], first, second)
+        )
+        out.setdefault(label.label, label)
+    if splits_of(sources, arms):
+        out.setdefault(first.label, first)
+    return out
+
+
+def weights_lines(weights: Mapping[str, fitmod.LabelWeights]) -> list[str]:
+    """One printed line a belief label: its weights and where they come from."""
+    out = []
+    for label, lw in weights.items():
+        shown = ", ".join(
+            f"{s} {lw.weights.weights[s]:g}" for s in wk.STATS if s in lw.weights.weights
+        )
+        seasons = ", ".join(str(t) for t in lw.weights.seasons)
+        source = lw.source if not seasons else f"{lw.source}, seasons {seasons}"
+        out.append(f"belief weights, {label} ({source}): {shown}")
+    return out
+
+
+def unprojected_of(rows: Sequence[Mapping[str, Mapping[str, int]]]) -> dict[str, Any]:
+    """The unprojected count of the paths that stand, by label: the mean and the largest over
+    paths of each count (:func:`run.unprojected`)."""
+    labels = list(dict.fromkeys(label for r in rows for label in r))
+    out: dict[str, Any] = {}
+    for label in labels:
+        have = [r[label] for r in rows if label in r]
+        out[label] = {
+            k: {"mean": sum(x[k] for x in have) / len(have), "max": max(x[k] for x in have)}
+            for k in ("seats", "all")
+        }
+    return out
+
+
 def no_peek(
     season: int,
     lines: Any,
@@ -1155,12 +1334,16 @@ def no_peek(
     label: str | None = None,
     forecasts: Mapping[str, Any] | None = None,
     split: Mapping[str, str] | None = None,
+    weights_of: Mapping[str, Mapping[str, float]] | None = None,
+    paired: bool = False,
 ) -> tuple[Any, int, list[dict[str, Any]]]:
     """Path 0 of the replay on the recorded lines and on :func:`nopeek.perturb`'s, with one
-    league built before either (on ``projection``, the run's forecaster's on path 0, ``label``;
-    ``forecasts`` the arms' other beliefs' projections, ``split`` their split labels): the first
-    difference between their day records (None when they never part), the records compared and
-    the audit's breaches in either run."""
+    league built before either (on ``projection``, the run's forecaster's on path 0, ``label``,
+    believed at ``weights``; ``forecasts`` the arms' other beliefs' projections, at their own
+    ``weights_of``; ``split`` their split labels): the first difference between their day records
+    (None when they never part), the records compared and the audit's breaches in either run.
+    ``paired``: the design the run names is the pair (``arms`` ``a`` and ``b``), path 0's seat
+    taken by each arm in its own season, and both seasons' day records are compared."""
     setup = replay_setup_of(season, lines, members, scheduled, projection)
     if day not in setup.days:
         raise ValueError(f"{day} is not a day of the replayed season")
@@ -1184,8 +1367,12 @@ def no_peek(
             label=label,
             forecasts=forecasts,
             split=split,
+            weights_of=weights_of,
         )
-        out = rn.room(setup, w, arms, seats, 0, on_day=keep)
+        if paired:
+            out = rn.paired(setup, w, arms["a"], arms["b"], seat_of(setup, 0), on_day=keep)
+        else:
+            out = rn.room(setup, w, arms, seats, 0, on_day=keep)
         breaches += [{"run": run_, **b} for b in out["breaches"]]
         digests.append(got)
     return nopeek.first_difference(digests[0], digests[1]), len(digests[0]), breaches
@@ -1196,28 +1383,178 @@ def no_peek(
 NO_PEEK_HOURS = 0.25
 
 
+@dataclass(frozen=True)
+class SeasonRead:
+    """What a replay reads for one of its seasons before any path (#172, PR D2): the season's
+    lines, members and schedule, the figures of the forecasters that serve it and of the
+    stand-ins (:class:`Fixed`), the run's forecasters that serve it (its cells) and why each
+    other cannot, each belief label's weights, the league's shape, and the seconds the weights'
+    fits took."""
+
+    season: int
+    lines: Any
+    members: Any
+    scheduled: Any
+    fixed: Fixed
+    served: tuple[fc.Forecaster, ...]
+    skipped: Mapping[str, str]
+    fits: Mapping[str, fitmod.LabelWeights]
+    shape: policy.Shape | None
+    fit_seconds: float
+
+    @property
+    def weights(self) -> dict[str, dict[str, float]]:
+        return {label: dict(lw.weights.weights) for label, lw in self.fits.items()}
+
+
+def cells_of(
+    data: Path, season: int, named: Sequence[fc.Forecaster]
+) -> tuple[Fixed, list[fc.Forecaster], dict[str, str]]:
+    """The run's forecasters for one season: the figures of those that serve it, those that do
+    (in order), and the reader's reason for each that does not (#172, PR D2)."""
+    rates: dict[str, Mapping[int, Mapping[str, float]]] = {}
+    games: Mapping[int, float] = {}
+    read: tuple[int, ...] = ()
+    served: list[fc.Forecaster] = []
+    skipped: dict[str, str] = {}
+    for f in named:
+        try:
+            one = fixed_of(data, season, [f])
+        except reader.SimReadError as e:
+            skipped[f.label] = str(e).removeprefix(f"season {season}: ")
+            continue
+        served.append(f)
+        rates.update(one.rates)
+        games = one.espn_games or games
+        read = one.marcel_seasons or read
+    return Fixed(rates, games, read), served, skipped
+
+
+def read_season(
+    data: Path,
+    season: int,
+    named: Sequence[fc.Forecaster],
+    sources: Sources | None,
+    arms: Mapping[str, rn.Arm],
+    seed: int,
+    shape: str,
+) -> SeasonRead:
+    """Everything a replay reads for ``season`` before any path. A forecaster that cannot serve
+    it leaves its cell skipped; a stand-in that cannot refuses the run by name
+    (``readers.SimReadError``): a system label cannot be built there."""
+    lines, members, scheduled = reader.replay_lines(data, season)
+    fixed, served, skipped = cells_of(data, season, named)
+    if sources is not None:
+        try:
+            standins = fixed_of(data, season, list(sources))
+        except reader.SimReadError as e:
+            why = str(e).removeprefix(f"season {season}: ")
+            raise reader.SimReadError(f"a stand-in cannot serve season {season}: {why}") from None
+        fixed = Fixed(
+            {**fixed.rates, **standins.rates},
+            fixed.espn_games or standins.espn_games,
+            fixed.marcel_seasons or standins.marcel_seasons,
+        )
+    fits: dict[str, fitmod.LabelWeights] = {}
+    league = None
+    took = 0.0
+    if served:
+        t0 = clock.perf_counter()
+        fits = reader.label_weights(
+            data,
+            season,
+            HOLD_OUT,
+            list(belief_labels(served, sources, arms).values()),
+            seed,
+            shape,
+            prior=reader.belief_weights(data, season, HOLD_OUT),
+        )
+        took = clock.perf_counter() - t0
+        first = projection_of(served[0], fixed, lines, seed, 0, shape)
+        league = replace(
+            policy.shape_of(replay_setup_of(season, lines, members, scheduled, first)),
+            standins=sources is not None,
+        )
+    return SeasonRead(
+        season, lines, members, scheduled, fixed, tuple(served), skipped, fits, league, took
+    )
+
+
+def cells_lines(reads: Sequence[SeasonRead], named: Sequence[fc.Forecaster]) -> list[str]:
+    """The cells as a small table, seasons across and forecasters down, and the reason for each
+    skipped cell under it."""
+    width = max(len(f.label) for f in named)
+    out = ["cells (seasons across, forecasters down):"]
+    out.append("  " + " " * width + "".join(f"  {r.season:>7}" for r in reads))
+    for f in named:
+        row = "".join(f"  {'skipped' if f.label in r.skipped else 'served':>7}" for r in reads)
+        out.append(f"  {f.label:<{width}}{row}")
+    for r in reads:
+        for label, why in r.skipped.items():
+            out.append(f"skipped: {label} in {r.season}: {why}")
+    return out
+
+
+def spec_hash(spec: Mapping[str, Any]) -> str:
+    return hashlib.sha256(json.dumps(spec, sort_keys=True).encode()).hexdigest()
+
+
 def cmd_replay(args: argparse.Namespace) -> int:
     ok, why = guard(NO_PEEK_HOURS if args.no_peek else 0.0, rooms=args.rooms)
     if not ok:
         print(f"refused: {why}")
         return 2
-    if args.season == HOLD_OUT:
+    try:
+        seasons = parse_seasons(args.seasons)
+    except ValueError:
+        print(f"refused: --seasons {args.seasons!r}: ESPN season ids, e.g. 2022,2024 or 2022-2024")
+        return 2
+    if not seasons:
+        print("refused: --seasons names no season")
+        return 2
+    if HOLD_OUT in seasons:
         print(f"refused: {HOLD_OUT} is the hold-out; it is scored by validate only")
+        return 2
+    twice = [t for t in dict.fromkeys(seasons) if seasons.count(t) > 1]
+    if twice:
+        print(f"refused: --seasons names {twice[0]} twice")
+        return 2
+    missing = [
+        t
+        for t in seasons
+        if t not in reader.PERIOD_ONE or not (args.data / LOGS_DIR / f"{t}.json").is_file()
+    ]
+    if missing:
+        print(f"refused: season {missing[0]} has no log on file under {args.data / LOGS_DIR}")
+        return 2
+    if args.no_peek and len(seasons) > 1:
+        print(f"refused: --no-peek checks one season; --seasons names {len(seasons)}")
         return 2
     if args.news_sd < 0:
         print("refused: --news-sd is a spread in days, not below zero")
         return 2
+    if (args.seats is None) == (args.arms is None):
+        print(
+            "refused: a replay names --seats (a room) or --arms (a pair), never both and never "
+            "neither"
+        )
+        return 2
+    if args.arms is not None and len(args.arms) != 2:
+        print(f"refused: --arms names exactly two spec files, A and B, not {len(args.arms)}")
+        return 2
+    paired = args.arms is not None
     started = datetime.now(UTC)
     try:
         day = date.fromisoformat(args.no_peek) if args.no_peek else None
         named = fc.parse(args.forecasters)
         sources = sources_of(args.bbm_as, args.yahoo_as)
         inputs, fit, sha, fit_path, tau_note = world_inputs(args.data, [], need_tau=False)
-        specs = read_specs(args.seats)
-        arms = believing({arm.name: arm for arm in arms_of(specs, sha)}, sources)
-        lines, members, scheduled = reader.replay_lines(args.data, args.season)
-        fixed = fixed_of(args.data, args.season, [*named, *(sources or ())])
-        fitted = reader.belief_weights(args.data, args.season, HOLD_OUT)
+        specs = read_specs(args.arms if paired else args.seats)
+        made = arms_of(specs, sha)
+        arms = believing(
+            dict(zip(PAIR, made, strict=True)) if paired else {arm.name: arm for arm in made},
+            sources,
+        )
     except (reader.SimReadError, ValueError, OSError, KeyError) as e:
         print(f"refused: {e}")
         return 2
@@ -1225,44 +1562,67 @@ def cmd_replay(args: argparse.Namespace) -> int:
         print("refused: a replay seats at least two arms")
         return 2
     seats = list(arms)
-    first = projection_of(named[0], fixed, lines, args.seed, 0, args.shape)
+    if paired:
+        for key, arm in arms.items():
+            if str(arm.opponents.get("kind", "static")) == "market" and "rate" not in arm.opponents:
+                print(
+                    f"refused: arm {key.upper()} ({arm.name}) has market rivals without a rate: a "
+                    "replay records no market rate, so they would never move; name "
+                    "opponents.rate"
+                )
+                return 2
     try:
-        shape = replace(
-            policy.shape_of(replay_setup_of(args.season, lines, members, scheduled, first)),
-            standins=sources is not None,
-        )
-    except ValueError as e:
+        reads = [
+            read_season(args.data, t, named, sources, arms, args.seed, args.shape) for t in seasons
+        ]
+    except (reader.SimReadError, ValueError, OSError, KeyError) as e:
         print(f"refused: {e}")
         return 2
-    same = same_seats(arms, [shape], rivals=False)
+    for line_ in cells_lines(reads, named):
+        print(line_)
+    if not any(r.served for r in reads):
+        print("refused: no cell is left: no forecaster named serves any season named")
+        return 2
+    shapes = [r.shape for r in reads if r.shape is not None]
+    same = same_seats(arms, shapes, rivals=paired)
     if same:
         print(f"refused: {same}")
         return 2
-    weights = dict(fitted.weights)
-    shown = ", ".join(f"{s} {weights[s]:g}" for s in wk.STATS if s in weights)
-    source = (
-        "the default" if fitted.default else "seasons " + ", ".join(str(t) for t in fitted.seasons)
+    for r in reads:
+        for line_ in weights_lines(r.fits):
+            print(line_.replace("belief weights, ", f"belief weights, {r.season}, ", 1))
+    print(
+        "belief weights fitted in "
+        + ", ".join(f"{r.fit_seconds:.1f}s for {r.season}" for r in reads)
     )
-    print(f"belief weights ({source}): {shown}")
+    if sources is not None and all(f.label != sources[0].label for f in named):
+        print(UNPROJECTED_WARNING)
     if day is not None:
+        (r,) = reads
+        if not r.served:
+            print(f"refused: no forecaster named serves {r.season}")
+            return 2
+        f0 = r.served[0]
         t0 = clock.perf_counter()
         try:
             found, n, breaches = no_peek(
-                args.season,
-                lines,
-                members,
-                scheduled,
-                first,
+                r.season,
+                r.lines,
+                r.members,
+                r.scheduled,
+                projection_of(f0, r.fixed, r.lines, args.seed, 0, args.shape),
                 inputs.lag,
-                weights,
+                r.weights[f0.label],
                 args.news_sd,
                 arms,
                 seats,
                 args.seed,
                 day,
-                named[0].label,
-                forecasts_of(sources, fixed, lines, args.seed, 0, args.shape, arms),
+                f0.label,
+                forecasts_of(sources, r.fixed, r.lines, args.seed, 0, args.shape, arms),
                 splits_of(sources, arms),
+                r.weights,
+                paired,
             )
         except ValueError as e:
             print(f"refused: {e}")
@@ -1288,30 +1648,46 @@ def cmd_replay(args: argparse.Namespace) -> int:
             print(f"agree through {day}; first difference on {found[0]} ({', '.join(found[2])})")
         return 0
     workers = args.workers or rn.workers_default()
+    paths = args.paths
+    if paired:
+        paths = paths_for_pair(args.paths)
+        if paths != args.paths:
+            print(
+                f"--paths {args.paths} rounded up to {paths}, a multiple of the league's "
+                f"{rn.REPLAY_TEAMS} seats, so every seat is taken equally often in every cell"
+            )
+    task = task_paired if paired else task_replay
     tasks = [
         (
-            args.season,
-            lines,
-            members,
-            scheduled,
+            r.season,
+            r.lines,
+            r.members,
+            r.scheduled,
             f,
-            fixed,
+            r.fixed,
             args.shape,
             sources,
             inputs.lag,
-            weights,
+            r.weights,
             args.news_sd,
             arms,
-            seats,
+            PAIR if paired else seats,
             args.seed,
             p,
         )
-        for f in named
-        for p in range(args.paths)
+        for r in reads
+        for f in r.served
+        for p in range(paths)
     ]
-    keys = [{"forecaster": f.label, "path": p} for f in named for p in range(args.paths)]
+    keys = [
+        {"season": r.season, "forecaster": f.label, "path": p}
+        for r in reads
+        for f in r.served
+        for p in range(paths)
+    ]
+    cells = sum(len(r.served) for r in reads)
     t0 = clock.perf_counter()
-    first_run = task_replay(*tasks[0])
+    first_run = task(*tasks[0])
     one = clock.perf_counter() - t0
     hours = (
         args.expected_hours
@@ -1319,7 +1695,7 @@ def cmd_replay(args: argparse.Namespace) -> int:
         else estimate_hours(one, len(tasks), workers)
     )
     print(
-        f"{len(tasks)} tasks ({len(named)} forecasters x {args.paths} paths), one took {one:.1f}s, about {hours:.2f} h on {workers} workers"
+        f"{len(tasks)} tasks ({cells} cells x {paths} paths), one took {one:.1f}s, about {hours:.2f} h on {workers} workers"
     )
     if args.dry_run:
         return dry_run(keys[0], first_run)
@@ -1327,81 +1703,392 @@ def cmd_replay(args: argparse.Namespace) -> int:
     if not ok:
         print(f"refused: {why}")
         return 2
-    results = [first_run, *rn.run_tasks(task_replay, tasks[1:], workers)]
+    results = [first_run, *rn.run_tasks(task, tasks[1:], workers)]
     keep, note = audited(keys, results)
     keys = [k for k, ok_ in zip(keys, keep, strict=True) if ok_]
     results = [r for r, ok_ in zip(results, keep, strict=True) if ok_]
-    by_label: dict[str, dict[str, list[dict[str, Any]]]] = {}
-    counts_by_label: dict[str, dict[str, list[Any]]] = {}
-    scales: dict[str, list[Any]] = {arm: [] for arm in seats}
-    for key, r in zip(keys, results, strict=True):
-        label = key["forecaster"]
-        for arm, row in r["scale"].items():
-            scales[arm].append(row)
-        for arm, metrics in r["by_arm"].items():
-            by_label.setdefault(label, {}).setdefault(arm, []).append(metrics)
-        for arm, row in r["counts"].items():
-            counts_by_label.setdefault(label, {}).setdefault(arm, []).append(row)
+    run_name = args.name or "replay-" + "-".join(str(t) for t in seasons)
     payload = base_payload(
-        "replay",
-        args.name or f"replay-{args.season}",
-        started,
-        sha,
-        fit_path,
-        fit,
-        workers,
-        tau_note,
-        inputs,
-        arms,
+        "replay", run_name, started, sha, fit_path, fit, workers, tau_note, inputs, arms
     )
-    payload |= replay_notes(fitted, args.news_sd)
+    payload |= replay_notes({str(r.season): r.fits for r in reads}, args.news_sd)
     payload |= {
-        "season": args.season,
-        "specs": {arm: spec for arm, spec in zip(seats, specs, strict=True)},
-        "seats": seats,
-        "rotation": "seat i takes arm (i + path) mod n",
+        "seasons": seasons,
+        "cells": {
+            str(r.season): {
+                f.label: {"served": f.label not in r.skipped, "reason": r.skipped.get(f.label)}
+                for f in named
+            }
+            for r in reads
+        },
+        "design": "paired" if paired else "room",
+        "specs": dict(zip(seats, specs, strict=True)),
         "draft": (
             f"snake on the run's forecaster's projection, over {payload['pool']['draft']}; an "
             "arm on a forecaster of its own reads it from the season's first day, not at the "
             "draft"
         ),
-        "forecasters": forecasters_block(named, fixed, lines, args.seed, args.shape, sources),
-        "oracle_shape": args.shape,
-        "sources": sources_block(sources, arms, fixed, lines, args.seed, args.shape),
-        "beliefs": {name: arm.forecaster or "the run's forecaster" for name, arm in arms.items()},
-        "players": sum(1 for k in members if scheduled.get(k) or lines.get(k)),
-        "paths": args.paths,
-        "seed": args.seed,
-        "results": {
-            label: {arm: rn.aggregate(rows) for arm, rows in d.items()}
-            for label, d in by_label.items()
+        "forecasters": {
+            str(r.season): forecasters_block(
+                r.served, r.fixed, r.lines, args.seed, args.shape, sources, r.fits
+            )
+            for r in reads
         },
-        "solves": sum(r["solves"] for r in results),
-        "shape": shape.label(),
-        "reads": reads_of(arms, [shape], rivals=False),
+        "oracle_shape": args.shape,
+        "sources": None
+        if sources is None
+        else {
+            str(r.season): sources_block(sources, arms, r.fixed, r.lines, args.seed, args.shape)
+            for r in reads
+        },
+        "beliefs": {name: arm.forecaster or "the run's forecaster" for name, arm in arms.items()},
+        "players": {
+            str(r.season): sum(1 for k in r.members if r.scheduled.get(k) or r.lines.get(k))
+            for r in reads
+        },
+        "paths": paths,
+        "seed": args.seed,
+        "solves": sum(res["solves"] for res in results),
+        "shape": {str(r.season): r.shape.label() for r in reads if r.shape is not None},
+        "reads": reads_of(arms, shapes, rivals=paired),
+        "audit": note,
+        "confirmation": None,
+    }
+    if paired:
+        payload |= paired_blocks(keys, results, arms, paths)
+        payload["verdict"] = verdict_block(payload, named, seasons, sources, note)
+    else:
+        payload |= room_blocks(keys, results, seats)
+        if sources is not None:
+            payload["result_is"] = ROOM_RESULT
+    look = None
+    if CONFIRMATION in seasons:
+        look, ledger = reader.append_look(
+            args.data,
+            {
+                "started_at": payload["started_at"],
+                "name": run_name,
+                "design": payload["design"],
+                "seasons": seasons,
+                "forecasters": [f.label for f in named],
+                "specs": {arm: spec_hash(spec) for arm, spec in zip(seats, specs, strict=True)},
+                "fit_sha": sha,
+                "code_sha": payload["code_sha"],
+            },
+        )
+        payload["confirmation"] = {
+            "season": CONFIRMATION,
+            "look": look,
+            "ledger": str(ledger),
+            "note": CONFIRMATION_NOTE,
+        }
+    path = finish(payload, args.data, False)
+    if paired:
+        for line_ in verdict_lines(payload["verdict"]):
+            print(line_)
+    room_results = {} if paired else payload["results"]
+    for t, by_label in room_results.items():
+        for label, d in by_label.items():
+            for arm, agg in d.items():
+                m = agg["made_playoffs"]
+                print(
+                    f"{t} {label} {arm}: playoff odds {m['mean']:.3f} (SE {m['se'] if m['se'] is None else round(m['se'], 3)}) over {m['n']} paths"
+                )
+    if look is not None:
+        print(f"confirmation season {CONFIRMATION}: look {look}, appended to {ledger}")
+    print(f"written: {path}")
+    return audit_exit(note)
+
+
+#: Whose result a ``system`` difference is, by design (#172, PR D2).
+PAIR_RESULT = (
+    "under --arms a system difference is the one seat's, against rivals on the run's forecaster"
+)
+ROOM_RESULT = (
+    "under --seats a system difference is a room's result: an arm's outcome moves with the seats "
+    "it shares the room with"
+)
+SE_NOTE = (
+    "the SE in a cell is over its paths (the seat and the draws: told return dates, market "
+    "rivals' draws, an oracle's draw), not over the season's own chance: one recorded season is "
+    "one draw of the world; the SE in the pooled column is over the season means, the seasons "
+    "the clusters"
+)
+FADES_NOTE = (
+    "both stand-ins learn from the same played games, so a system difference fades through the "
+    "season, where the live sources stay apart all year"
+)
+
+
+def verdict_block(
+    payload: Mapping[str, Any],
+    named: Sequence[fc.Forecaster],
+    seasons: Sequence[int],
+    sources: Sources | None,
+    note: Mapping[str, Any],
+) -> dict[str, Any]:
+    """The pair's verdict by forecaster and season (``run.replay_verdict``) from its payload's
+    figures, with the sentences its text says every time: what each SE is over, how many paths
+    of each cell are distinct when fewer than all, the rivals and whom they believe, and with
+    stand-ins named that a system difference fades and whose result it is."""
+    ts = [str(t) for t in seasons]
+    results = payload["results"]
+    cells = {
+        f.label: {t: (results.get(t) or {}).get(f.label, {}).get("difference") for t in ts}
+        for f in named
+    }
+    frozen = {
+        label: [
+            t
+            for t in ts
+            if ((payload["forecasters"].get(t) or {}).get(label) or {})
+            .get("freeze", {})
+            .get("flagged")
+        ]
+        for label in cells
+    }
+    v = rn.replay_verdict(
+        cells,
+        ts,
+        yardsticks=[f.label for f in named if f.name == "oracle"],
+        frozen=frozen,
+        voided=int(note["paths_voided"]),
+    )
+    repeats = [
+        f"{t} {label}: {c['distinct']} of {c['paths']} paths distinct"
+        for t, by_label in results.items()
+        for label, c in by_label.items()
+        if c["distinct"] < c["paths"]
+    ]
+    rivals = payload["rivals"]
+    notes = [
+        SE_NOTE,
+        *(["distinct paths: " + "; ".join(repeats)] if repeats else []),
+        (
+            f"rivals: arm A's {json.dumps(rivals['a'], sort_keys=True)}, arm B's "
+            f"{json.dumps(rivals['b'], sort_keys=True)}; they believe the run's forecaster"
+        ),
+    ]
+    if sources is not None:
+        notes += [FADES_NOTE, PAIR_RESULT]
+    return v | {"notes": notes}
+
+
+def verdict_lines(v: Mapping[str, Any]) -> list[str]:
+    """The verdict as printed: the table (one row a forecaster, one column a season and the
+    pooled column, each figure in points of playoff odds with its SE, "n/a" for a skipped cell),
+    the marks under it, the notes, then the verdict's line."""
+
+    def pp(mean: Any, se: Any) -> str:
+        if mean is None:
+            return "n/a"
+        return f"{100 * mean:+.1f} ({'n/a' if se is None else f'{100 * se:.1f}'})"
+
+    seasons = list(v["seasons"])
+    width = max([len("forecaster"), *(len(x) + 4 for x in v["rows"])])
+    out = ["playoff odds, B less A, in points (SE):"]
+    out.append(
+        f"  {'forecaster':<{width}}"
+        + "".join(f"  {t:>14}" for t in seasons)
+        + "  "
+        + f"{'pooled':>14}"
+    )
+    used: set[str] = set()
+    for label, row in v["rows"].items():
+        name = label + (" [y]" if row["mark"] else "")
+        if row["mark"]:
+            used.add(row["mark"])
+        figures = []
+        for t in seasons:
+            c = row["cells"][t]
+            text = pp(c["mean"], c["se"]) if c["mark"] != rn.SKIPPED else "n/a"
+            if c["mark"] == rn.FREEZE:
+                text += " [f]"
+            if c["mark"]:
+                used.add(c["mark"])
+            figures.append(f"  {text:>14}")
+        p = row["pooled"]["made_playoffs"]
+        out.append(f"  {name:<{width}}" + "".join(figures) + f"  {pp(p['mean'], p['se']):>14}")
+    for label, row in v["rows"].items():
+        p = row["pooled"]["made_playoffs"]
+        if p["seasons"] < p["of"] or p["seasons"] == 1:
+            out.append(f"  {label} pooled: {p['note']}")
+    tags = {rn.YARDSTICK: "[y]", rn.FREEZE: "[f]", rn.SKIPPED: "n/a"}
+    for mark in (rn.YARDSTICK, rn.FREEZE, rn.SKIPPED):
+        if mark in used:
+            out.append(f"  {tags[mark]} {v['marks'][mark]}")
+    out += [f"note: {n}" for n in v["notes"]]
+    if v["passes"] is None:
+        verdict = v["why"]
+    else:
+        verdict = "holds" if v["passes"] else "does not hold: " + "; ".join(v["failed"])
+    out.append(f"verdict ({v['rule']}, advisory): {verdict}")
+    return out
+
+
+def room_blocks(
+    keys: Sequence[Mapping[str, Any]], results: Sequence[Mapping[str, Any]], seats: Sequence[str]
+) -> dict[str, Any]:
+    """A room's figures, keyed by season and then by forecaster: each arm's outcomes and counts
+    pooled over its seats and the paths that stand, each arm's season scale by season, the
+    unprojected count by cell."""
+    by_cell: dict[str, dict[str, dict[str, list[dict[str, Any]]]]] = {}
+    counts_by_cell: dict[str, dict[str, dict[str, list[Any]]]] = {}
+    unprojected: dict[str, dict[str, list[Any]]] = {}
+    scales: dict[str, dict[str, list[Any]]] = {}
+    for key, res in zip(keys, results, strict=True):
+        t, label = str(key["season"]), key["forecaster"]
+        for arm, row in res["scale"].items():
+            scales.setdefault(t, {}).setdefault(arm, []).append(row)
+        for arm, metrics in res["by_arm"].items():
+            by_cell.setdefault(t, {}).setdefault(label, {}).setdefault(arm, []).append(metrics)
+        for arm, row in res["counts"].items():
+            counts_by_cell.setdefault(t, {}).setdefault(label, {}).setdefault(arm, []).append(row)
+        unprojected.setdefault(t, {}).setdefault(label, []).append(res["unprojected"])
+    return {
+        "seats": list(seats),
+        "rotation": "seat i takes arm (i + path) mod n",
+        "results": {
+            t: {
+                label: {arm: rn.aggregate(rows) for arm, rows in d.items()}
+                for label, d in by_label.items()
+            }
+            for t, by_label in by_cell.items()
+        },
         "season_scale": {
             "note": SCALE_NOTE,
-            "by_arm": {arm: scale_of(rows) for arm, rows in scales.items()},
+            "by_season": {
+                t: {arm: scale_of(rows) for arm, rows in d.items()} for t, d in scales.items()
+            },
         },
         "counts": {
             "note": COUNTS_NOTE,
             "rivals": None,
-            "by_forecaster": {
-                label: {arm: counts_of(rows) for arm, rows in d.items()}
-                for label, d in counts_by_label.items()
+            "by_season": {
+                t: {
+                    label: {arm: counts_of(rows) for arm, rows in d.items()}
+                    for label, d in by_label.items()
+                }
+                for t, by_label in counts_by_cell.items()
             },
         },
-        "audit": note,
+        "unprojected": {
+            "note": UNPROJECTED_NOTE,
+            "by_season": {
+                t: {label: unprojected_of(rows) for label, rows in d.items()}
+                for t, d in unprojected.items()
+            },
+        },
     }
-    path = finish(payload, args.data, False)
-    for label, d in payload["results"].items():
-        for arm, agg in d.items():
-            m = agg["made_playoffs"]
-            print(
-                f"{label} {arm}: playoff odds {m['mean']:.3f} (SE {m['se'] if m['se'] is None else round(m['se'], 3)}) over {m['n']} paths"
+
+
+#: The paired design's two arms, A and B, as the payload keys them.
+PAIR = ("a", "b")
+SEAT_RULE = (
+    "path p puts arm A in seat teams[p mod 12] in one season and arm B in the same seat in a "
+    "second, through one world; the paths are a multiple of the twelve seats, so every seat is "
+    "taken equally often in every cell"
+)
+RIVALS_NOTE = (
+    "the eleven other seats are each arm's opponents block and believe the run's forecaster, "
+    "whatever the arm believes; until PR D4 a market rival's view is the run's forecaster's "
+    "draft-day ranking, the same all season"
+)
+DISTINCT_NOTE = (
+    "paths repeat when nothing is drawn (the season's games are the same on every path): two "
+    "paths are one when their seat, both arms' metrics and both arms' mechanism counts (the "
+    "moves landed among them) agree; an SE over repeated paths is over copies"
+)
+
+
+def distinct(rows: Sequence[Mapping[str, Any]]) -> int:
+    """How many of a cell's paired paths are distinct, by the seat, both arms' metrics and both
+    arms' mechanism counts (:data:`DISTINCT_NOTE`)."""
+    return len(
+        {
+            json.dumps(
+                [r["seat"], r["a"], r["b"], r["counts"]["a"], r["counts"]["b"]],
+                sort_keys=True,
+                default=str,
             )
-    print(f"written: {path}")
-    return audit_exit(note)
+            for r in rows
+        }
+    )
+
+
+def paired_blocks(
+    keys: Sequence[Mapping[str, Any]],
+    results: Sequence[Mapping[str, Any]],
+    arms: Mapping[str, rn.Arm],
+    paths: int,
+) -> dict[str, Any]:
+    """The pair's figures, keyed by season and then by forecaster: each arm's outcomes, the
+    difference (B less A) over the paths that stand with how many are distinct, the counts by
+    arm and for the rivals, each arm's season scale by season, the unprojected count by cell and
+    arm, the seat rule and each path's seat, and the rivals each arm faced."""
+    rows: dict[str, dict[str, list[Mapping[str, Any]]]] = {}
+    scales: dict[str, dict[str, list[Any]]] = {}
+    for key, res in zip(keys, results, strict=True):
+        t, label = str(key["season"]), key["forecaster"]
+        rows.setdefault(t, {}).setdefault(label, []).append(res)
+        for side in PAIR:
+            scales.setdefault(t, {}).setdefault(side, []).append(res["scale"][side])
+
+    def cell(rs: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+        return {
+            "a": rn.aggregate([r["a"] for r in rs]),
+            "b": rn.aggregate([r["b"] for r in rs]),
+            "difference": rn.aggregate([r["delta"] for r in rs]),
+            "paths": len(rs),
+            "distinct": distinct(rs),
+        }
+
+    return {
+        "arms": {side: arms[side].name for side in PAIR},
+        "seat": {
+            "rule": SEAT_RULE,
+            "by_path": [p % rn.REPLAY_TEAMS + 1 for p in range(paths)],
+        },
+        "rivals": {
+            **{side: dict(arms[side].opponents) for side in PAIR},
+            "note": RIVALS_NOTE,
+        },
+        "distinct_note": DISTINCT_NOTE,
+        "difference": "b less a",
+        "results": {t: {label: cell(rs) for label, rs in d.items()} for t, d in rows.items()},
+        "season_scale": {
+            "note": SCALE_NOTE,
+            "by_season": {
+                t: {side: scale_of(rs) for side, rs in d.items()} for t, d in scales.items()
+            },
+        },
+        "counts": {
+            "note": COUNTS_NOTE,
+            "rivals": "the seats other than the pair's, both arms' seasons, as one row",
+            "by_season": {
+                t: {
+                    label: {
+                        side: counts_of([r["counts"][side] for r in rs])
+                        for side in (*PAIR, "rivals")
+                    }
+                    for label, rs in d.items()
+                }
+                for t, d in rows.items()
+            },
+        },
+        "unprojected": {
+            "note": UNPROJECTED_NOTE,
+            "by_season": {
+                t: {
+                    label: {
+                        side: unprojected_of([r["unprojected"][side] for r in rs]) for side in PAIR
+                    }
+                    for label, rs in d.items()
+                }
+                for t, d in rows.items()
+            },
+        },
+    }
 
 
 # --------------------------------------------------------------------------- room
@@ -1899,7 +2586,11 @@ def main(argv: list[str] | None = None) -> int:
     _run_args(co)
     co.set_defaults(func=cmd_compare)
     re_ = sub.add_parser("replay", help="a made-up league on a recorded season's lines")
-    re_.add_argument("--season", type=int, required=True, help=f"ESPN season id, never {HOLD_OUT}")
+    re_.add_argument(
+        "--seasons",
+        required=True,
+        help=f"ESPN season ids, e.g. 2024 or 2022,2023,2024 or 2022-2024; never {HOLD_OUT}",
+    )
     re_.add_argument(
         "--forecasters",
         default="prior",
@@ -1913,7 +2604,17 @@ def main(argv: list[str] | None = None) -> int:
         help="an oracle's error: stat, a draw a player and stat; minutes, a share of it common to "
         "the player's stats (default stat)",
     )
-    re_.add_argument("--seats", type=Path, nargs="+", required=True, help="the arms' spec files")
+    re_.add_argument(
+        "--seats", type=Path, nargs="+", default=None, help="a room: the arms' spec files"
+    )
+    re_.add_argument(
+        "--arms",
+        type=Path,
+        nargs="+",
+        default=None,
+        metavar="SPEC",
+        help="the paired design: arm A's and arm B's spec files, B less A",
+    )
     re_.add_argument(
         "--bbm-as",
         default=None,
@@ -1936,7 +2637,7 @@ def main(argv: list[str] | None = None) -> int:
         "--no-peek",
         default=None,
         metavar="YYYY-MM-DD",
-        help="check one path against a season changed after this date; writes nothing",
+        help="check one path of one season against it changed after this date; writes nothing",
     )
     _run_args(re_, paths=20)
     re_.set_defaults(func=cmd_replay)
