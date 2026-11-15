@@ -108,27 +108,30 @@ def get_moves(client):
 
 
 def test_the_route_stops_the_solve_of_a_client_that_went_and_waits_for_it(client, monkeypatch):
-    # A solve that runs until its budget is out; 5 s bounds it should the stop never come.
-    put_settings(client.data_dir, {"moves_budget_s": 5})
+    # A solve that runs until its budget is out. The budget is far longer than the test, so
+    # only the client's going can end it; no assertion rests on how fast the machine is (#386).
+    put_settings(client.data_dir, {"moves_budget_s": 600})
     monkeypatch.setattr(seasons, "CLIENT_POLL_S", 0.01)
     real = season_moves.moves_payload
     running = threading.Event()
+    ends: list[bool] = []
 
     def held(built, budget=None):
         running.set()
-        while not budget.out():
+        give_up = time.monotonic() + 60  # a stop that never comes fails, never hangs
+        while not budget.out() and time.monotonic() < give_up:
             time.sleep(0.01)
+        ends.append(budget.stopped)
         running.clear()
         return real(built, budget)
 
     monkeypatch.setattr(season_moves, "moves_payload", held)
     route, gone = get_moves(client), Client(stays=2)
-    began = time.monotonic()
     with pytest.raises(HTTPException) as caught:
         asyncio.run(route(gone, league=LEAGUE, system=None, source=None))
-    # Stopped at the client's going, not the budget's end; nothing left computing.
+    # Stopped by the client's going, not the budget's end; nothing left computing.
     assert caught.value.status_code == 499 and gone.looks == 3
-    assert time.monotonic() - began < 4 and not running.is_set()
+    assert ends == [True] and not running.is_set()
     assert logged(client) == []
     # A client that stays gets the answer and its entry.
     monkeypatch.setattr(season_moves, "moves_payload", real)
