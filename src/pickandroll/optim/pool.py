@@ -9,14 +9,21 @@ Callers that need to run in-process pass ``workers=1`` and never touch it.
 Every worker watches its parent and exits once the parent is gone (#241): a killed API or an
 interrupted test run would otherwise leave its workers behind with PPID 1, waiting forever on
 a queue nobody writes to.
+
+Every pool starts its workers by ``spawn``, on every platform (#385). Linux's default, ``fork``,
+copies a process whose HiGHS has already solved in another thread, and a solve in such a worker
+never finishes: it spins at full CPU and the pool waits forever. macOS spawns by default, so the
+Mac and the droplet now start workers the same way.
 """
 
 from __future__ import annotations
 
 import atexit
+import multiprocessing
 import os
 import threading
 import time
+from collections.abc import Callable
 from concurrent.futures import ProcessPoolExecutor
 
 _POOL: ProcessPoolExecutor | None = None
@@ -30,6 +37,8 @@ BACKGROUND_NICE = 10
 LIVE_CORES = 6
 #: Seconds between a worker's looks at its parent.
 PARENT_POLL_SECONDS = 1.0
+#: How every pool starts its workers (#385): a fresh interpreter, never a fork of this one.
+START_METHOD = "spawn"
 
 
 def _exit_with(parent: int) -> None:
@@ -46,6 +55,18 @@ def orphan_guard() -> None:
     ).start()
 
 
+def process_pool(
+    max_workers: int | None, initializer: Callable[[], None] | None = None
+) -> ProcessPoolExecutor:
+    """A process pool whose workers start by :data:`START_METHOD` and watch their parent
+    (``initializer`` defaults to :func:`orphan_guard`; one passed in should call it too)."""
+    return ProcessPoolExecutor(
+        max_workers=max_workers,
+        mp_context=multiprocessing.get_context(START_METHOD),
+        initializer=initializer or orphan_guard,
+    )
+
+
 def shared_pool(workers: int | None = None) -> ProcessPoolExecutor:
     """The shared pool, sized on first use (``workers`` or all but one core)."""
     global _POOL, _SIZE
@@ -53,7 +74,7 @@ def shared_pool(workers: int | None = None) -> ProcessPoolExecutor:
     if _POOL is None or (_SIZE is not None and size > _SIZE):
         if _POOL is not None:
             _POOL.shutdown(wait=False, cancel_futures=True)
-        _POOL = ProcessPoolExecutor(max_workers=size, initializer=orphan_guard)
+        _POOL = process_pool(size)
         _SIZE = size
     return _POOL
 
@@ -75,9 +96,7 @@ def background_pool() -> ProcessPoolExecutor:
     OS gives it the rest first."""
     global _BACKGROUND
     if _BACKGROUND is None:
-        _BACKGROUND = ProcessPoolExecutor(
-            max_workers=background_size(), initializer=_lower_priority
-        )
+        _BACKGROUND = process_pool(background_size(), initializer=_lower_priority)
     return _BACKGROUND
 
 
