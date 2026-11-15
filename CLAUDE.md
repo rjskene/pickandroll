@@ -14,16 +14,26 @@ The ownership map for traded picks and the draft-night dashboard fixes are merge
 
 ## Roles
 
-Four Claude Desktop sessions share this checkout and reach each other with `ListAgents` / `SendMessage`.
+Three Claude Desktop sessions share this checkout and reach each other with `ListAgents` / `SendMessage`.
+The season simulator's three sessions run on the droplet as unix user `pnrsim`, in a clone of their own
+(user, 2026-11-13); they are the second table.
 
 | session | does | does not |
 |---|---|---|
-| **fantasyMASTER** | analysis, plans, metrics, spot checks, reviews and merges PRs, answers design questions | implement |
+| **fantasyMASTER** | analysis, plans, metrics, spot checks, reviews and merges PRs, answers design questions; sends pnrsimLEAD updates on #172 (a merge that changes what the simulator calls, a ruling about the simulator, a change on the droplet) | implement; review, merge or direct the simulator's PRs |
 | **fantasyEMISSARY** | implements, tests, hill-climbs `docs/YAHOO_SYNC.md`; owns #8, #9, #10; directs the drone | merge its own PRs |
 | **fantasyMOCK** (the drone) | runs Yahoo mock drafts from the user's Chrome on instruction from the emissary or the master; posts the scorecard of every mock on #11 | change code |
-| **fantasySIMIMP** | implements the season simulator (SEASON SIM, the design note at `~/code/pickandroll-scratch/master/season-sim/DESIGN.md`), in its own worktrees and PRs; started 2026-10-23 so the master stays on the non-simulator work | merge its own PRs; touch non-simulator code or the emissary's files |
 
-The user may talk to any of the three. A session that receives a decision from the user relays it to the others
+On the droplet, as `pnrsim` (SEASON SIM, tracker #172; interactive sessions in tmux with Remote Control on):
+
+| session | does | does not |
+|---|---|---|
+| **pnrsimLEAD** | leads the season simulator: plans, briefs, review; merges simulator PRs whose diff stays inside `src/pickandroll/sim/`, `tests/sim/` and `docs/sim/`, pinned to the head sha with the gates green; directs pnrsimBUILD and pnrsimEXPLAIN; posts a main-moved comment on #172 after each merge | build the PRs it merges; touch a file outside the simulator's folders, the live checkout, the routines, the API or the emissary's files |
+| **pnrsimBUILD** | builds the simulator's PRs one at a time on pnrsimLEAD's brief, in its own worktrees; reports and stops after each | merge; touch non-simulator code |
+| **pnrsimEXPLAIN** | edits the simulator's explainer page on pnrsimLEAD's brief | touch the repo |
+
+The user may talk to any session, and rules on the simulator's design directly (since 2026-11-06). A session
+that receives a decision from the user relays it to the others
 when it affects their work. Report outcomes faithfully: a failed test, a lost pick or a skipped step is stated
 as such, with the evidence.
 
@@ -92,12 +102,33 @@ Limits:
 - One fix PR per failure.
 - If the same failure comes back after its fix is deployed, stop and ask the user instead of layering fixes.
 
+## The simulator's sessions on the droplet (user, 2026-11-13)
+
+The season simulator is standalone (user, 2026-11-07) and is built from the droplet by three sessions under
+the unix user `pnrsim`: their own clone (`~pnrsim/pickandroll`), venv and worktrees, and a `data/` that holds
+only the frozen fit and the ESPN game logs.
+
+- `pnrsim` cannot read `~pickandroll`, and holds no league sign-in, cookie, league file or subscriber export.
+  Its `gh` and Claude sign-ins are the user's steps.
+- Its sessions never run `ops/vm/update.sh`, never touch a unit or a timer, and never write to the API. The
+  simulator's guard asks the API one read-only question (`GET /rooms`).
+- A heavy job (the suite, a replay) starts only outside the quiet windows above and while no routine is
+  running, at low priority, one at a time, under the user slice's CPU and memory limits.
+- A real run over an hour is announced on #172 and starts only on the user's word.
+- The 2024-25 hold-out is never replayed, fitted or tuned on.
+- A simulator merge moves `main`, so the master's next deploy carries it. `tests/sim/test_boundary.py` keeps
+  it inert for the live code: nothing outside `src/pickandroll/sim/` imports the simulator.
+
 ## Workflow
 
 - Branch per issue off `main`: `feat/yahoo-sync-<issue>`, in a git worktree under `.claude/worktrees/<name>` inside this
   repo (gitignored, the pipeline plugin's convention), never as a sibling folder of `~/code/pickandroll`. The checkout itself stays on `main`. Conventional-commit titles with scope `yahoo-sync`.
   One PR per issue with `Closes #N`; the master reviews and merges. Only the master commits straight to
-  `main`, and only docs.
+  `main`, and only docs. One exception (user, 2026-11-13): a simulator PR whose diff stays inside
+  `src/pickandroll/sim/`, `tests/sim/` and `docs/sim/` is reviewed and merged by pnrsimLEAD, pinned to its
+  head sha, with the suite, ruff and `tests/sim/test_boundary.py` green on a branch that holds `origin/main`.
+  pnrsimLEAD never merges a PR it built. A simulator PR that touches any other file is the master's to merge,
+  and a change the simulator needs in the engine is asked on #172 (the master files it and briefs the emissary).
 - Python: `.venv/bin/python -m pytest` and `.venv/bin/ruff check src tests` green before any PR. **In a worktree**
   the editable install resolves `pickandroll` to `~/code/pickandroll/src`, so run
   `PYTHONPATH=src ~/code/pickandroll/.venv/bin/python -m pytest` from the worktree root, or you test main's code.
@@ -112,7 +143,12 @@ Limits:
   2026-10-06). Draft night runs `pickandroll-api-draft` (same port, no `--reload`) on a frozen checkout.
 - Core packages `src/pickandroll/{projections,draft,optim,availability}` stay free of I/O.
 - Keeping up with `main` (user, 2026-10-23): after every merge the master posts a "main moved" note to each
-  building session (fantasyEMISSARY, fantasySIMIMP) with the new sha, the PR and the files it touched. A session
+  building session on the Mac (fantasyEMISSARY) with the new sha, the PR and the files it touched. The
+  simulator's sessions read `main` themselves at the start of each turn; what git cannot carry (a merge that
+  changes what the simulator calls, a ruling about the simulator, a change on the droplet) the master posts
+  on #172 as a comment opening `to pnrsimLEAD:`, and pnrsimLEAD posts one opening `to fantasyMASTER:` after
+  each of its merges (sha, PR, files). A one-line `SendMessage` may follow as a wake-up; the comment is the
+  record. A session
   with an open branch then runs `git fetch origin && git merge origin/main` in its worktree (merge, never rebase:
   force pushes are blocked), re-runs its gates and pushes; a session about to cut a worktree cuts it from the new
   main. Before opening any PR a session fetches and merges `origin/main` itself, and the PR body names the main it
