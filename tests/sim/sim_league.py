@@ -21,6 +21,7 @@ from pickandroll.sim import run as rn
 from pickandroll.sim import state as sst
 from pickandroll.sim.fit import Component, Hazard
 from pickandroll.sources.yahoo import pages, public
+from tests.sim.draws import between
 from tests.sim.sim_fixtures import synthetic_lines
 from tests.sim.test_gamelogs import entry
 
@@ -119,7 +120,7 @@ def make_setup(
     projection = {}
     for k in range(1, n + 1):
         players[k] = sst.Member(k, f"P{k}", NBA[k % len(NBA)], POSITIONS[k % len(POSITIONS)])
-        projection[k] = rates(float(rng.uniform(0.6, 1.4)))
+        projection[k] = rates(between(rng, 0.6, 1.4))
     cal = sst.weeks_from(MONDAY, weeks)
     regular = tuple(range(1, weeks - playoff_weeks + 1))
     ids = tuple(range(1, teams + 1))
@@ -229,7 +230,7 @@ def write_bbm_csv(path: Path, players: list[dict[str, Any]], seed: int) -> None:
         w.writerow(cols)
         for i, p in enumerate(players):
             first, _, last = p["name"].partition(" ")
-            level = float(rng.uniform(0.6, 1.4))
+            level = between(rng, 0.6, 1.4)
             g = 70
             fga = round(8 * level * g)
             fgm = round(0.47 * fga)

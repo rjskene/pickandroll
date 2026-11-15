@@ -291,7 +291,10 @@ A**: arm B's outcome less arm A's, path by path, so a positive difference is wha
 in playoff odds, category wins, matchup wins and titles; rank is better when lower, so there a
 negative difference is B finishing higher. `room` seats the arms given around the table, seat
 `i` taking arm `(i + path) mod n` so every arm sits in every seat across paths. The process pool
-is the simulator's own (cores less two workers at `nice 10`; the API's pools are untouched).
+is the simulator's own (cores less two workers at `nice 10`; the API's pools are untouched). Its
+workers start by `spawn` on every machine: Linux's default, `fork`, copies a parent that has
+already solved (each command runs its first task in the parent), and a HiGHS solve in such a
+worker can spin for ever; a spawned worker is a fresh process, as on macOS by default.
 
 **Determinism.** The same spec, seed and fit give the same outcomes in one process and across
 worker counts, except at an exact tie: there an order-dependent sum in the engine's evaluator can

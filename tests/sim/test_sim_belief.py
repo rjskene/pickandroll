@@ -14,6 +14,7 @@ from pickandroll.sim import readers as reader
 from pickandroll.sim import run as rn
 from pickandroll.sim.belief import CausalBelief, consistent, newcomer_prior, shrunk
 from pickandroll.sim.engine import STATS
+from tests.sim.draws import between
 from tests.sim.sim_league import inputs, make_data_dir, make_setup
 
 D1 = date(2024, 10, 22)
@@ -159,7 +160,7 @@ def test_a_forward_world_counts_its_refreshes_by_monday_as_the_day_loop_did():
 # --------------------------------------------------------------------------- the weights
 def season_of(rng: np.random.Generator, players: int = 60, games: int = 40):
     """Players' true points rates and their lines: Poisson games around each rate."""
-    rate = {k: float(rng.uniform(5.0, 25.0)) for k in range(players)}
+    rate = {k: between(rng, 5.0, 25.0) for k in range(players)}
     lines = {
         k: {D1 + timedelta(2 * g): {"pts": float(rng.poisson(r))} for g in range(games)}
         for k, r in rate.items()

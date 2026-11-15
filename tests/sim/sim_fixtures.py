@@ -8,6 +8,7 @@ from collections.abc import Mapping, Sequence
 import numpy as np
 
 from pickandroll.sim.fit import GameLine
+from tests.sim.draws import between
 
 #: Per-game rates the synthetic players are drawn around, by stat.
 BASE_RATES: Mapping[str, tuple[float, float]] = {
@@ -73,7 +74,7 @@ def synthetic_lines(
     out: list[GameLine] = []
     for i in range(players):
         pid = f"{prefix}{i:03d}"
-        rates = {s: float(rng.uniform(lo, hi)) for s, (lo, hi) in BASE_RATES.items()}
+        rates = {s: between(rng, lo, hi) for s, (lo, hi) in BASE_RATES.items()}
         out_until = -1
         shorts = 0
         for g in range(games):
@@ -96,7 +97,4 @@ def rates_table(
     seed: int, players: Sequence[str], stats: Sequence[str] = tuple(BASE_RATES)
 ) -> dict[str, dict[str, float]]:
     rng = np.random.default_rng(seed)
-    return {
-        p: {s: float(rng.uniform(*BASE_RATES[s])) for s in stats if s in BASE_RATES}
-        for p in players
-    }
+    return {p: {s: between(rng, *BASE_RATES[s]) for s in stats if s in BASE_RATES} for p in players}

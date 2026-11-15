@@ -16,6 +16,7 @@ from pickandroll.sim import opponents as op
 from pickandroll.sim import policy
 from pickandroll.sim import run as rn
 from pickandroll.sim.state import Member, initial
+from tests.sim.draws import between
 from tests.sim.sim_league import HAZARD, KNOBS, PHI, arm, inputs, make_setup
 
 
@@ -408,7 +409,7 @@ def test_simulate_runs_a_replay_league_end_to_end():
     }
     lines = {}
     for k in players:
-        level = float(rng.uniform(0.6, 1.4))
+        level = between(rng, 0.6, 1.4)
         lines[k] = {
             first + timedelta(i): {
                 "pts": 10 * level,
