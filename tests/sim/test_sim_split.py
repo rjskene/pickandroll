@@ -22,6 +22,7 @@ from pickandroll.sim import opponents as op
 from pickandroll.sim import run as rn
 from pickandroll.sim.belief import consistent
 from pickandroll.sim.engine import wk
+from tests.sim.draws import between
 from tests.sim.sim_league import arm
 from tests.sim.test_no_peek import DAYS, SEED, WEIGHTS, recorded
 
@@ -36,7 +37,7 @@ def second_of(projection) -> dict[int, dict[str, float]]:
     g = np.random.default_rng(11)
     out = {}
     for k, rates in sorted(projection.items()):
-        scale = float(g.uniform(0.5, 1.6))
+        scale = between(g, 0.5, 1.6)
         if g.random() < 0.2:
             continue
         out[k] = {s: v * scale for s, v in rates.items()}

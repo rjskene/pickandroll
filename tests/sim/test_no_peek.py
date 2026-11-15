@@ -20,6 +20,7 @@ from pickandroll.sim import nopeek
 from pickandroll.sim import run as rn
 from pickandroll.sim.engine import wk
 from pickandroll.sim.state import Member
+from tests.sim.draws import between
 from tests.sim.sim_league import arm
 
 FIRST = date(2024, 10, 22)  # a Tuesday; the calendar starts on the Monday before
@@ -41,7 +42,7 @@ def recorded():
     lines: dict[int, dict[date, dict[str, float]]] = {}
     standin = {}
     for k, days in scheduled.items():
-        level = float(rng.uniform(0.5, 1.6))
+        level = between(rng, 0.5, 1.6)
         lines[k] = {}
         for d in days:
             if rng.random() < 0.1:
