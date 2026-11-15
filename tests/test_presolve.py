@@ -453,10 +453,23 @@ def test_a_capped_branch_is_priced_not_served(room):
     client, store, _ = room
     sid = _attach(client)["session_id"]
     session = store.get(sid)
-    _until(lambda: _solver(client, sid)["presolve"]["solved"] >= ONE_AWAY)
-    for entry in session.solver.book.entries.values():
-        entry.solution = replace(entry.solution, time_limited=True)
+    book = session.solver.book
     likely = likely_next(session.state, None)
+
+    def picked_solved() -> bool:
+        # #386: the other branches may still be solving on a slow machine; the one the pick
+        # lands on must be solved before it is capped.
+        with book.lock:
+            return any(
+                [p[2] for p in e.branch.picks] == [likely[0]] and e.solution is not None
+                for e in book.entries.values()
+            )
+
+    _until(lambda: _solver(client, sid)["presolve"]["solved"] >= ONE_AWAY and picked_solved())
+    with book.lock:
+        for entry in book.entries.values():
+            if entry.solution is not None:
+                entry.solution = replace(entry.solution, time_limited=True)
     _pick(client, 1, session.room.ids.yid(likely[0]))
     plan = client.get("/rooms/p1/plan", params={"wait": 20}).json()
     assert plan["fresh"] and _solver(client, sid)["presolve"]["hits"] == 1

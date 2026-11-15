@@ -628,9 +628,14 @@ DEFAULT_TABLE = "yahoo_history/survival_by_adp_adjusted.csv"
 NO_SURVIVAL = {"projection_file": SAMPLE, "num_teams": 4, "my_position": 2, "solve_ahead": False}
 
 
+#: How long ``_settled`` waits for a survival simulation (#386): headroom for a loaded
+#: machine, since it returns as soon as the survival is built.
+SETTLE_WAIT_S = 600
+
+
 def _settled(client, sid):
     """The session once its survival is no longer building."""
-    deadline = time.time() + 120
+    deadline = time.time() + SETTLE_WAIT_S
     s = client.get(f"/sessions/{sid}").json()
     while s["survival"]["status"] == "building" and time.time() < deadline:
         time.sleep(0.2)

@@ -556,6 +556,11 @@ def test_the_curve_pools_the_other_formats_rosters_at_their_weight(tmp_path):
     assert only.drafts == 0.5 and only.curve.mu[CATS[0]] == pytest.approx(half.curve.mu[CATS[0]])
 
 
+#: How long the test waits for the simulation run (#386). It finishes in about 19 s alone; the
+#: wait is headroom for a loaded machine, and a poll returns as soon as the run lands.
+RUN_WAIT_S = 600
+
+
 def test_a_league_tables_session_runs_the_simulation_for_its_curve(tmp_path):
     """Beside the shared table the session runs the simulation for its curve alone: the table
     stays the survival, the run's curve becomes the prior the rosters blend toward (the flat
@@ -583,7 +588,7 @@ def test_a_league_tables_session_runs_the_simulation_for_its_curve(tmp_path):
         s = poll(
             lambda: client.get(url).json(),
             lambda s: s["survival"]["curve_run"]["status"] != "building",
-            timeout=60,
+            timeout=RUN_WAIT_S,
         )
         assert s["survival"]["curve_run"]["status"] == "ready", s["survival"]["curve_run"]
         assert (s["survival"]["status"], s["availability_source"]) == ("ready", "league")
@@ -592,7 +597,7 @@ def test_a_league_tables_session_runs_the_simulation_for_its_curve(tmp_path):
         s = poll(
             lambda: client.get(url).json(),
             lambda s: s["curve_fit"]["blend"]["prior_status"] != "static",
-            timeout=5,
+            timeout=RUN_WAIT_S,
         )
         assert s["curve_fit"]["blend"]["prior_status"] == "ready"
         prior = s["curve_fit"]["blend"]["prior"]

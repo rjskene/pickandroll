@@ -11,6 +11,7 @@ import importlib.util
 import json
 import os
 import plistlib
+import shutil
 import socket
 import socketserver
 import subprocess
@@ -352,11 +353,26 @@ def test_update_restarts_on_request_and_fails_when_the_api_does_not_answer(updat
     assert done.returncode == 1 and "api: restarted, GET /seasons 503" in done.stdout
 
 
-def test_update_says_when_npm_is_missing(update) -> None:
+#: What update.sh and the fakes run besides the fakes themselves (npm is not among them).
+UPDATE_TOOLS = ("bash", "git", "awk", "tr", "id", "dirname", "seq", "sleep")
+
+
+def test_update_says_when_npm_is_missing(update, tmp_path: Path) -> None:
+    """npm is made absent, not assumed absent from the host's /usr/bin (#386: the droplet has
+    one): the PATH holds the fakes and a stand-in for each tool the script needs, nothing else."""
     repo, _seed, _log, env = update
     bin_dir = Path(env["PATH"].split(os.pathsep)[0])
-    (bin_dir / "npm").unlink()  # and the real one is off this PATH
-    env = {**env, "PATH": f"{bin_dir}{os.pathsep}/usr/bin:/bin"}
+    (bin_dir / "npm").unlink()
+    tools = tmp_path / "tools"
+    tools.mkdir()
+    bash = shutil.which("bash")
+    for name in UPDATE_TOOLS:
+        real = shutil.which(name)
+        assert bash and real, f"{name} is needed on the host to run update.sh"
+        (tools / name).write_text(f'#!{bash}\nexec {real} "$@"\n')
+        (tools / name).chmod(0o755)
+    env = {**env, "PATH": f"{bin_dir}{os.pathsep}{tools}"}
+    assert shutil.which("npm", path=env["PATH"]) is None
     done = run(VM / "update.sh", env)
     assert done.returncode == 0, done.stdout + done.stderr
     assert "dashboard: npm is missing, not built (the API serves none)" in done.stdout
