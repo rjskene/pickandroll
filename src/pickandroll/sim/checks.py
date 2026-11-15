@@ -1,12 +1,9 @@
 """What the gates are fed (#172, PR 2b): samples drawn from a world, pure.
 
 The gates in ``validate`` are functions on arrays. These build the arrays: a team's week under
-the simulator many times over (gate 1, and the simulator's matchup odds of gate 2 beside the
-engine's analytic odds), player-games missed a week under the hazard (gate 4), and the
-surrogate's set against the exact set on sampled league-days (gate 5). Gate 3's band is the
-share's distribution over sampled moves (:func:`share_band`); its rows would need the scorecard's
-realized values, which the simulator does not read. The commands (``cli``) read the records and
-call these with the season each is scored on.
+the simulator many times over (gate 1), player-games missed a week under the hazard (gate 4), and
+the surrogate's set against the exact set on sampled league-days (gate 5). The commands (``cli``)
+read the logs and call these with the season each is scored on.
 """
 
 from __future__ import annotations
@@ -16,7 +13,6 @@ from datetime import date
 
 import numpy as np
 
-from . import league as lg
 from . import policy, world
 from .engine import wk
 from .fit import Hazard
@@ -81,36 +77,6 @@ def transforms(
     return out
 
 
-def simulated_odds(
-    mine: Sequence[Mapping[str, float]],
-    theirs: Sequence[Mapping[str, float]],
-    spec: lg.LeagueSpec,
-) -> float:
-    """The share of paired samples in which I win the week (a tie half)."""
-    if not mine or not theirs:
-        return 0.5
-    wins = 0.0
-    for a, b in zip(mine, theirs, strict=True):
-        r = lg.week_result(dict(a), dict(b), spec)
-        wins += 1.0 if r.won > r.lost else 0.5 if r.won == r.lost else 0.0
-    return wins / len(mine)
-
-
-def engine_odds(
-    setup: Setup, beliefs: Mapping[int, wk.Rates], me: Roster, other: Roster, days: Sequence[date]
-) -> float:
-    """The engine's analytic odds of my week against ``other`` on the same beliefs."""
-    value = wk.per_game_values(beliefs, setup.cats, setup.points)
-    slots = setup.starting_slots()
-
-    def project(roster: Roster) -> wk.TeamWeek:
-        members = [(k, setup.players[k].player()) for k, _ in roster if k in setup.players]
-        return wk.project_week(members, beliefs, days, setup.schedule, slots, value, True)
-
-    odds = wk.category_odds(project(me), project(other), setup.cats)
-    return float(wk.matchup_won(odds))
-
-
 def missed_samples(
     hazard: Hazard, scheduled: Sequence[Sequence[int]], paths: int, seed: int
 ) -> np.ndarray:
@@ -169,23 +135,9 @@ def surrogate_matches(
     return out
 
 
-def share_band(
-    projected: Sequence[float], realized_samples: Sequence[Sequence[float]]
-) -> list[float]:
-    """The share (realized over projected, summed over the moves) in each sampled path: gate
-    3's samples, given each move's projected value and its realized value a path."""
-    total = sum(projected)
-    if total <= 0 or not realized_samples:
-        return []
-    return [sum(path) / total for path in zip(*realized_samples, strict=True)]
-
-
 __all__ = [
     "COUNTING",
-    "engine_odds",
     "missed_samples",
-    "share_band",
-    "simulated_odds",
     "surrogate_matches",
     "team_week",
     "team_week_samples",

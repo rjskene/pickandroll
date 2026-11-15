@@ -1,11 +1,10 @@
 """Made-up leagues for the simulator's tests (#172, PR 2b): a small in-memory setup the policy,
-runner and checks run on, and a fixture data folder the readers and the commands read. Every
-player and team here is synthetic or from the anonymised season fixtures; the projection files
-are made up in Basketball Monster's CSV layout and carry no figure of theirs."""
+runner and checks run on, and a fixture data folder the readers and the commands read: synthetic
+game logs only. Every player and team here is synthetic or from the anonymised season
+fixtures."""
 
 from __future__ import annotations
 
-import csv
 import json
 from datetime import date, timedelta
 from pathlib import Path
@@ -13,14 +12,13 @@ from typing import Any
 
 import numpy as np
 
-from pickandroll.season import build_calendar
 from pickandroll.season import weekly as wk
 from pickandroll.sim import gamelogs as gl
 from pickandroll.sim import league as lg
 from pickandroll.sim import run as rn
 from pickandroll.sim import state as sst
 from pickandroll.sim.fit import Component, Hazard
-from pickandroll.sources.yahoo import pages, public
+from pickandroll.sources.yahoo import public
 from tests.sim.draws import between
 from tests.sim.sim_fixtures import synthetic_lines
 from tests.sim.test_gamelogs import entry
@@ -174,94 +172,12 @@ def arm(name: str = "A", tier: str = "exact", opponents: str = "market", **knobs
 
 
 # --------------------------------------------------------------------------- a data folder
-LEAGUE = "100001"
-MY_TEAM = 4
-ROSTER = ["PG", "SG", "G", "C", "Util", "BN"]
-YAHOO_CATS = ["FG%", "FT%", "3PTM", "PTS", "REB", "AST", "ST", "BLK", "TO"]
-TODAY = date(2026, 10, 21)
-#: The fixture league's calendar: six weeks from the Monday before opening night.
-SEASON_FIRST = date(2026, 10, 20)
-SEASON_END = date(2026, 11, 29)
-PLAYOFF_WEEKS = [5, 6]
-EXPORT_DATES = ("2026-10-19", "2026-10-22")
-
-
 def fixture(name: str) -> str:
     return (FIXTURES / name).read_text()
 
 
 def fixture_players() -> list[dict[str, Any]]:
     return public.players_from_v3(json.loads(fixture("players.json")))
-
-
-def _part(key: str, data: Any, at: str = "2026-10-21T18:00:00+00:00") -> dict[str, Any]:
-    return {key: {"fetched_at": at, "source": "public", "data": data}}
-
-
-def write_bbm_csv(path: Path, players: list[dict[str, Any]], seed: int) -> None:
-    """A made-up rest-of-season export in the CSV layout: season totals over 70 games."""
-    rng = np.random.default_rng(seed)
-    cols = [
-        "player_id",
-        "last_name",
-        "first_name",
-        "games",
-        "minutes",
-        "field_goals_attempted",
-        "field_goals",
-        "free_throws_attempted",
-        "free_throws",
-        "threes",
-        "threes_attempted",
-        "offensive_rebounds",
-        "defensive_rebounds",
-        "assists",
-        "blocks",
-        "steals",
-        "turnovers",
-        "fouls",
-        "technicals",
-        "double_doubles",
-        "triple_doubles",
-        "comments",
-    ]
-    with path.open("w", newline="") as f:
-        w = csv.writer(f)
-        w.writerow(cols)
-        for i, p in enumerate(players):
-            first, _, last = p["name"].partition(" ")
-            level = between(rng, 0.6, 1.4)
-            g = 70
-            fga = round(8 * level * g)
-            fgm = round(0.47 * fga)
-            fta = round(2.5 * level * g)
-            ftm = round(0.78 * fta)
-            w.writerow(
-                [
-                    1000 + i,
-                    last,
-                    first,
-                    g,
-                    round(28 * level * g),
-                    fga,
-                    fgm,
-                    fta,
-                    ftm,
-                    round(1.2 * level * g),
-                    round(3.2 * level * g),
-                    round(1.0 * level * g),
-                    round(4.0 * level * g),
-                    round(3.0 * level * g),
-                    round(0.8 * level * g),
-                    round(1.0 * level * g),
-                    round(2.0 * level * g),
-                    0,
-                    0,
-                    0,
-                    0,
-                    "",
-                ]
-            )
 
 
 #: A projection block's games when the logs carry blocks (:func:`write_logs`); every
@@ -370,8 +286,8 @@ def make_data_dir(
     wire: int = 0,
     projection: bool = False,
 ) -> Path:
-    """A data folder with one public league's recorded season (twelve six-man teams drawn from
-    the anonymised fixtures), two made-up exports, ESPN ids, synthetic logs and no fit yet.
+    """A data folder with synthetic logs of the anonymised fixtures' 93 players and no fit yet: no
+    league's state, export or id file (the simulator reads none since PR D3).
 
     ``wire`` made-up players join the logs after the fixture's (:func:`wire_players`), and
     nowhere else. The fixture's 93 are fewer than a replay's twelve seats take (thirteen
@@ -382,173 +298,16 @@ def make_data_dir(
     the folder as it always was. ``projection``: the logs carry stored projection blocks
     (:func:`write_logs`), for the ``espn`` forecaster; without it they carry none."""
     data = tmp / "data"
-    league_dir = data / "leagues" / LEAGUE
-    season_dir = league_dir / "season"
-    season_dir.mkdir(parents=True)
-    (league_dir / "settings.json").write_text(
-        json.dumps(
-            {
-                "league_id": LEAGUE,
-                "scoring": "categories",
-                "num_teams": 12,
-                "roster": ROSTER,
-                "my_team_id": MY_TEAM,
-                "categories": YAHOO_CATS,
-                "public": True,
-            }
-        )
-    )
-    players = fixture_players()
-    league = pages.parse_league_page(fixture("league.html"))
-    teams = [int(t["team_id"]) for t in league["teams"]]
-    parts: dict[str, Any] = {}
-    parts |= _part(
-        "settings",
-        {
-            "name": "Test League 100001",
-            "current_week": 1,
-            "max_weekly_adds": 4,
-            "playoff_teams": 4,
-            "playoff_weeks": PLAYOFF_WEEKS,
-            "playoff_tiebreak": "Higher seed wins",
-            "playoff_reseeding": True,
-            "divisions": False,
-        },
-    )
-    parts |= _part("players", players)
-    parts |= _part("league", league)
-    rng = np.random.default_rng(11)
-    order = list(range(len(players)))
-    rng.shuffle(order)
-    spots = len(ROSTER)
-    used = 0
-    for t in teams:
-        mine = [players[order[used + j]] for j in range(spots)]
-        used += spots
-        mine[0] = {**mine[0], "status": "O", "status_full": "Out"} if t == MY_TEAM else mine[0]
-        parts |= _part(
-            f"roster/{t}",
-            {
-                "team_id": t,
-                "name": f"Team {t}",
-                "week": 1,
-                "spots": [{"slot": s, "player": p} for s, p in zip(ROSTER, mine, strict=True)],
-            },
-        )
-    left = [players[i] for i in order[used:]]
-    parts |= _part(
-        "available",
-        {
-            "rows": [
-                {
-                    "player": p,
-                    "availability": "FA",
-                    "clears": None,
-                    "pct_rostered": 40.0 - i,
-                    "pct_rostered_change": 0.0,
-                    "pct_started": 10.0,
-                    "pct_started_change": 0.0,
-                    "adds": 10,
-                    "drops": 5,
-                }
-                for i, p in enumerate(left)
-            ]
-        },
-    )
-    cal = build_calendar(SEASON_FIRST, SEASON_END)
-    parts |= _part("calendar", cal.to_dict())
-    nba = sorted({p["nba_team"] for p in players if p["nba_team"]})
-    days = [
-        cal.weeks[0].start + timedelta(i) for i in range((SEASON_END - cal.weeks[0].start).days + 1)
-    ]
-    parts |= _part(
-        "schedule",
-        {
-            "days": {
-                d.isoformat(): [t for j, t in enumerate(nba) if (i + j) % 2 == 0]
-                for i, d in enumerate(days)
-            }
-        },
-    )
-    regular = [w.number for w in cal.weeks if w.number not in PLAYOFF_WEEKS]
-    rr = sst.round_robin(tuple(teams), regular)
-    for w in regular:
-        if w in (1, 3):
-            continue  # week 1 is the league page's; week 3 is left unread (assumed)
-        parts |= _part(
-            f"pairings/{w}", {"week": w, "matchups": [{"teams": list(p)} for p in rr[w]]}
-        )
-    parts |= _part("matchup/1/4-10", pages.parse_matchup_page(fixture("matchup.html")))
-    parts |= _part(
-        "transactions",
-        {
-            "rows": [
-                {
-                    "kind": "add",
-                    "player": left[0],
-                    "team_id": 4,
-                    "team_name": "Team 4",
-                    "detail": "Free Agent",
-                    "when": "Oct 20, 3:57 am",
-                    "group": 1,
-                },
-                {
-                    "kind": "drop",
-                    "player": left[1],
-                    "team_id": 4,
-                    "team_name": "Team 4",
-                    "detail": "To Waivers",
-                    "when": "Oct 20, 3:57 am",
-                    "group": 1,
-                },
-                {
-                    "kind": "add",
-                    "player": left[2],
-                    "team_id": 7,
-                    "team_name": "Team 7",
-                    "detail": "Free Agent",
-                    "when": "Oct 19, 1:10 pm",
-                    "group": 2,
-                },
-            ]
-        },
-    )
-    # Yahoo's seven-day view of the available players: made-up totals over three games.
-    parts |= _part(
-        "yahoo_week",
-        {
-            "rows": [
-                {
-                    "player": p,
-                    "gp": 3,
-                    "seen_at": "2026-10-21T18:00:00+00:00",
-                    **{s: round(3 * x * (1.1 - 0.01 * i), 1) for s, x in rates(1.0).items()},
-                }
-                for i, p in enumerate(left)
-            ]
-        },
-    )
-    (season_dir / "state.json").write_text(json.dumps({"league": LEAGUE, "parts": parts}))
-    for i, d in enumerate(EXPORT_DATES):
-        write_bbm_csv(data / f"bbm_projections_{d}.csv", players, seed=30 + i)
-    (data / "aliases.json").write_text("{}")
-    box = data / "boxscores"
-    box.mkdir()
-    (box / "ids.json").write_text(
-        json.dumps({str(p["yahoo_id"]): str(1000 + i) for i, p in enumerate(players)})
-    )
-    write_logs(data, seasons, players + wire_players(wire), projection)
+    data.mkdir(parents=True)
+    write_logs(data, seasons, fixture_players() + wire_players(wire), projection)
     return data
 
 
 __all__ = [
     "HAZARD",
     "KNOBS",
-    "LEAGUE",
-    "MY_TEAM",
     "NINE",
     "PHI",
-    "TODAY",
     "arm",
     "inputs",
     "make_data_dir",

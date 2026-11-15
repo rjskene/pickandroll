@@ -317,8 +317,8 @@ def test_the_worlds_inputs_come_from_the_frozen_fit():
     )
 
 
-# --------------------------------------------------------------------------- the aggregate and verdict
-def test_aggregate_and_the_advisory_verdict():
+# --------------------------------------------------------------------------- the aggregate
+def test_aggregate_takes_each_metrics_mean_se_and_count():
     rows = [
         {"made_playoffs": 1.0, "rank": 2.0},
         {"made_playoffs": 0.0, "rank": 4.0},
@@ -328,16 +328,6 @@ def test_aggregate_and_the_advisory_verdict():
     assert agg["made_playoffs"]["mean"] == 0.5 and agg["made_playoffs"]["n"] == 2
     assert agg["made_playoffs"]["se"] == pytest.approx(0.5)
     assert agg["rank"]["n"] == 3 and agg["title"] == {"mean": None, "se": None, "n": 0}
-    good = {
-        "0.0": {"made_playoffs": {"mean": 0.01, "se": 0.02}},
-        "0.5": {"made_playoffs": {"mean": -0.01, "se": 0.02}},
-    }
-    assert rn.verdict(good)["passes"] is True
-    bad = {**good, "0.25": {"made_playoffs": {"mean": -0.05, "se": 0.01}}}
-    assert rn.verdict(bad)["passes"] is False
-    unknown = {**good, "0.25": {"made_playoffs": {"mean": None, "se": None}}}
-    assert rn.verdict(unknown)["passes"] is None
-    assert rn.verdict(good)["rule"] == "one-SE" and "advisory" in rn.verdict(good)["line"]
 
 
 # --------------------------------------------------------------------------- a replay's league

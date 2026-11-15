@@ -1,13 +1,17 @@
-# SEASON SIM: a forward Monte Carlo season simulator for the in-season engine
+# SEASON SIM: a standalone whole-season simulator
 
-Tracker #172. The engine's knobs are judged today by a two-week live A/B on the Monday scorecard
-(#152). The simulator gives them a season-level instrument: it plays the rest of the season many
-times from each league's state today, once for the knob set in force and once for the change, in
-the same simulated worlds, and reports the paired difference. Phase 1 is the forward run; a
-five-season replay on real game lines is the out-of-sample check; an equal room of twelve engines
-is proposed as the strategy lab. The design study is the master's note in the scratch repo; the
-user's rulings of 2026-10-23 amended it (five seasons behind the fit, beliefs that refresh, no
-data mining, projections taken as given).
+Tracker #172. The simulator plays whole fantasy seasons, from the draft to the final, on recorded
+NBA seasons: a made-up twelve-team league is drafted on a forecaster's projection and played
+through a recorded season's game lines, the engine's own code deciding each seat's moves, and the
+league scores the weeks, the standings and the bracket. It is standalone (the user's ruling of
+2026-11-07): it reads no live league, writes no knob file and is no part of a live decision. A
+**path** in a replay varies only in its seats (which arm sits where), in the told return dates
+of the absences, in a market rival's draw and in an oracle forecaster's draw; the season's games
+are the same on every path. A run is a **room** (the arms rotated around the table, `--seats`) or
+a **pair** (arm A and arm B in one seat in two seasons through one world, B less A, `--arms`),
+on one or several recorded seasons and forecasters. The design study is the master's note in the
+scratch repo; the user's rulings of 2026-10-23 amended it (five seasons behind the fit, no data
+mining, projections taken as given), and those of 2026-11-07 made it standalone and whole-season.
 
 ## Where it lives
 
@@ -18,9 +22,9 @@ and its fits and runs under `data/sim/` (local, as all of `data/`). The commands
 (`tests/sim/test_boundary.py`): nothing outside the package imports it; it reaches the engine
 through `sim/engine.py` only, the whole list of engine code it calls as library code (the
 engine's files are never edited from here); only `sim/readers.py`, `sim/gamelogs.py` and
-`sim/cli.py` import `pickandroll.sources`; and its imports from `pickandroll.api`, the live
-league's readers the commands use today, are an explicit list in the test that shrinks to empty
-when the simulator stops reading the live league. The same test reads the core (`world`, `state`,
+`sim/cli.py` may import `pickandroll.sources`, and since the standalone cut none does; and the
+simulator imports nothing from `pickandroll.api`: the test's list of such imports (`API_TIES`)
+is empty, and a new one fails it. The same test reads the core (`world`, `state`,
 `league`, `opponents`, `policy`, `run`, `fit`, `checks`, `validate`, `engine`, `belief`, `nopeek`,
 `audit`, `counts`) for any way to a file, a process or the network: none of them imports
 `pathlib`, `io`, `shutil`, `tempfile`, `socket`, `ssl`, `urllib`, `http`, `requests`, `httpx`,
@@ -62,11 +66,11 @@ minutes spread and pooled where they agree within a fifth; a season that disagre
 under its own id. The result is frozen as `data/sim/fit/<date>/fit.json` with its
 SHA-256 beside it, naming every parameter and the hold-out season.
 
-**The hold-out** is 2024-25 (ESPN season id 2025): the `fit` command refuses to fit on it, and
-the gates run against it as well as against this season's recorded weeks. **No data mining**: the
-fit is made once and frozen; every comparison is one pre-registered A against B with its seed; the
-simulator vetoes a change and never proposes one until four Mondays of passed gates and a ruling.
-The frozen fit's figures stay under `data/` and are described in words anywhere public.
+**The hold-out** is 2024-25 (ESPN season id 2025): the `fit` command refuses to fit on it, a
+replay refuses to play it, and the gates run against it. **No data mining**: the fit is made once
+and frozen; every comparison is one pre-registered A against B with its seed; the simulator never
+proposes a change and writes no knob file. The frozen fit's figures stay under `data/` and are
+described in words anywhere public.
 
 ## The league (`sim/league.py`)
 
@@ -77,39 +81,33 @@ the regular season's rule). The bracket seeds the top `playoff_teams` with the b
 need (`2^rounds − playoff_teams`), reseeds each round or plays the fixed bracket as the league
 does, and sends the higher seed through a tie. A points league scores on the weighted points.
 
-The bracket's rules come from the league's settings page, which prints `Playoff Tie-Breaker`,
-`Playoff Reseeding` and `Divisions` beside the playoff weeks. The page reaches the season view the
-way every page does: the API's own read for a public league, the user's Chrome posting the page
-through the extension's league reader for the private one; `parse_settings_page` keeps the three
-rows and `SeasonSettings` carries them, None until read. `LeagueSpec.from_settings` builds the
-simulator's spec from those settings and refuses (`BracketUnread`) a league whose page has not been
-read for them, one with divisions, or a tie-breaker the bracket does not play. No run trusts a
-bracket it has assumed: until the read is on file a run writes no playoff odds and reports rank and
-category wins only.
+A replay's league is made up, so its bracket is the replay's own: the top six of twelve over the
+last three weeks, the byes the rounds need, reseeded, the higher seed through a tie
+(`run.replay_setup`). `LeagueSpec.from_settings` builds a spec from a league's settings and
+refuses (`BracketUnread`) one with divisions or a tie-breaker the bracket does not play; since the
+standalone cut no command reads a league's settings, and a run without a spec writes no playoff
+odds and reports rank and category wins only.
 
 ## The gates (`sim/validate.py`)
 
-Before any verdict, on this season's recorded weeks and on the hold-out, side by side: (1) every
-team's weekly totals as probability integral transforms under the simulator's team-week
-distribution, no bucket of twenty points off by more than five; (2) the simulator's matchup odds
-scored by Brier beside the engine's, not worse by more than a hundredth; (3) the scorecard's
-realized share inside the simulator's central 80% band for the same moves; (4) player-games
-missed a team-week against the hazard, as randomized transforms in buckets; (5) the surrogate's
-set equal to the exact set on four of five sampled league-days; (6) the fitted refresh inside the
-band the recorded week-to-week projection changes imply.
+On the hold-out, on the cached logs and on a replay: (1) every team's weekly totals as
+probability integral transforms under the simulator's team-week distribution, no bucket of twenty
+points off by more than five; (4) player-games missed a team-week against the hazard, as
+randomized transforms in buckets; (5) the surrogate's set equal to the exact set on four of five
+sampled league-days. Gates 2, 3 and 6 read a live league's recorded weeks, scorecard and exports
+and went with the standalone cut (**What was removed and when**).
 
 ## The state and the policy (`sim/state.py`, `sim/policy.py`)
 
 A **setup** is one league as a run starts it: the calendar and pairings, the twelve rosters, the
-free agents, the shared projection, the schedule, the statuses and return dates read on day one,
-the gap between the two systems, the market's view and rate, and the bracket as the settings page
-gave it. A **state** is one arm's position on a day: rosters, pool, adds used this week, the moves
+free agents, the shared projection, the schedule, the statuses and return dates on day one, the
+market's view and rate, and the bracket. A **state** is one arm's position on a day: rosters, pool, adds used this week, the moves
 queued to land tomorrow and every week's totals so far. Beliefs, truth, lines, absences and news
 belong to the world and are shared by every arm; two arms whose states agree share one solve.
 
 The policy is the engine's own code on that state. `problem_of` builds the live moves route's
 `MoveProblem` from the setup and the state, in memory, as `api.season_moves.build` builds it from
-the recorded season: the week against the pairing's opponent, three weeks against the field, the
+a live league's recorded season: the week against the pairing's opponent, three weeks against the field, the
 free agents landing tomorrow, the weekly add limit net of the adds made, the keep rule, the
 protection floor, the plan floor and the daily cap from the knobs (every one of the twelve is
 checked against the engine's own bounds; a missing knob is refused, below **The knobs**). Three
@@ -217,7 +215,7 @@ size of `ROS_w`, over the swaps that have a `ROS_w`, 0 or more by construction: 
 swaps whose `ROS_w` is below 0, where the week's best swap costs season value (PR C2: the ratio
 was the signed medians' quotient, which flips sign or blows up when the season figures straddle
 zero). It is recorded per arm (`season_scale.by_arm`: the mean over paths of each figure, and how
-many paths gave one) for compare, replay and room, at any `season_weight`, 0 included; null on
+many paths gave one) for every replay, at any `season_weight`, 0 included; null on
 the ranking tier and a static seat. A dry run prints the four. It draws nothing, changes no
 outcome and is no part of a solve.
 
@@ -246,8 +244,8 @@ built:
 | `pool`, `min_gain`, `weeks_ahead` | exact, surrogate | the ranking tier |
 | `surrogate_days` | surrogate, or a mirror rival | the exact tier decides every day |
 
-Every compare, replay and room payload carries the table per arm per league shape (`reads`).
-Compare, replay and room refuse two arms that differ only in knobs and fields that neither reads
+Every replay payload carries the table per arm per league shape (`reads`). A replay refuses
+two arms that differ only in knobs and fields that neither reads
 in any shape of the run: they are the same seat, and the message names each such knob, why it is
 not read and what would read it. Two arms alike in everything are a check that the difference is
 zero and run.
@@ -255,10 +253,9 @@ zero and run.
 ## The other seats (`sim/opponents.py`)
 
 The ladder from the design note. **Static** makes no move. **Market** moves on a day with the
-recorded rate (adds per team-day over the transactions page's days) and takes the pool's best by
-the market's view for its weakest by the same view, within the caps; the view is the shared
-projection's per-game value with percent rostered breaking ties, since Yahoo's own rank is not in
-the recorded state. **Mirror** runs the surrogate on the shared beliefs. **Seat** is a named arm
+setup's rate (a replay records none, so a market rival names its `rate`) and takes the pool's best
+by the market's view for its weakest by the same view, within the caps; on a replay the view is
+the run's forecaster's draft-day ranking. **Mirror** runs the surrogate on the shared beliefs. **Seat** is a named arm
 in another seat: the equal room's opponent.
 
 ## The runner (`sim/run.py`)
@@ -284,7 +281,7 @@ lands (a held player whose status has cleared comes back to the bench first and 
 trimmed to the league's spots, then a churn's held drop, the held-slot moves and the adds, an add
 with no active spot gone), Monday resets the adds, each seat decides (a decision cached by team
 and state, so arms in lockstep solve once), the day is played and scored; the season is then
-scored by the league. `paired` runs arm A and arm B in my seat and returns each outcome (playoff
+scored by the league. `paired` runs arm A and arm B in one seat and returns each outcome (playoff
 odds, rank, category wins, matchup wins, title) and their difference. **The difference is B less
 A**: arm B's outcome less arm A's, path by path, so a positive difference is what B gains over A
 in playoff odds, category wins, matchup wins and titles; rank is better when lower, so there a
@@ -300,31 +297,20 @@ worker counts, except at an exact tie: there an order-dependent sum in the engin
 fall either way with the process's hash seed (a week plan whose gap over its set is 0.0 in one
 process and 1e-16 in another, against a plan floor of exactly 0, is taken in one and not the
 other). A real run sets `PYTHONHASHSEED=0`. The run record keeps the value (`hash_seed`, `"random"`
-when it is unset), and compare, replay, room and validate print one line on stderr when it is
-unset and the run is not a dry run.
+when it is unset), and replay and validate print one line on stderr when it is unset and the
+run is not a dry run.
 
 ## The readers (`sim/readers.py`) and the runs (`sim/cli.py`)
 
-The core is pure; the readers bring the inputs. `setup_of` builds a league's setup from the
-recorded season state and the systems the moves route uses: the gap is `log(Basketball Monster)
-− log(Yahoo)` per player and stat, zero where either is missing, clipped to ±1; a regular week
-whose pairings were not read is filled by a round robin and named in the payload
-(`assumed_pairings`); the bracket comes from `LeagueSpec.from_settings`, or its refusal's words. The
-newest frozen fit is read with its hash checked against the file; `τ` comes from the fit when the
-residual fit of week six is in it, else from the two systems' spread over the league's top 156
-players by value (the payload names which). A replay reads a season's log: every player is his own
+The core is pure; the readers bring the inputs, from ESPN's cached logs and the frozen fit
+only. The newest frozen fit is read with its hash checked against the file. A replay reads a
+season's log: every player is his own
 team in the schedule, his game days his own entries, played or not, so a trade or a team read later
 than the season moves nothing; scoring period `p` is the season's first period plus `p − 1` days,
 the first periods verified against ESPN's scoreboard on 2026-10-24 (named in every payload).
 
 Each command runs as `python -m pickandroll.sim <command>`:
 
-- `compare A.json B.json --leagues all --paths 100`: arm A against arm B in my seat, paired, per
-  league, at shrinks 0, 0.25 and 0.5; the paired change in each outcome (B less A) with its
-  standard error; the verdict line is **advisory**: a change (arm B) passes when its paired change
-  in playoff odds is not below zero by more than one SE at any shrink; no block and no
-  promotion. A league whose bracket is unread reports rank and category wins and no playoff
-  odds.
 - `replay --seasons 2022,2023,2024 --forecasters prior,espn,marcel,oracle:0.1 --seats A.json
   B.json`: a made-up twelve-team league on each recorded season named (below), the arms rotated
   across paths, once for each season and forecaster that serves it (a **cell**; default
@@ -340,11 +326,11 @@ Each command runs as `python -m pickandroll.sim <command>`:
   days (default 2). `--no-peek YYYY-MM-DD` runs the no-peek check instead, on one season only and
   its first served forecaster, and writes nothing. `--bbm-as espn --yahoo-as marcel` names the
   two live sources' stand-ins, and each arm then believes by its `system` (below). The payload
-  (`replay_version` 4) keys by season what is one season's: the forecasters, the sources, the
+  (`replay_version` 5) keys by season what is one season's: the forecasters, the sources, the
   weights, the players, the shape, the results, the counts, the season scale and the unprojected
   count; `cells` says which were served and why the others were not.
-- `replay --seasons 2022,2023,2024 --arms A.json B.json`: the paired design on a replay
-  (`compare`'s, on a recorded season's world). A run names `--seats` (a room, as above) or
+- `replay --seasons 2022,2023,2024 --arms A.json B.json`: the paired design on a replay, arm A
+  and arm B in one seat through one recorded season's world. A run names `--seats` (a room, as above) or
   `--arms` (exactly two spec files), never both and never neither. Each task drafts the league
   on its cell's forecaster as a room does, then puts arm A in seat `teams[path mod 12]` in one
   season and arm B in the same seat in a second, through one world in lockstep
@@ -354,7 +340,8 @@ Each command runs as `python -m pickandroll.sim <command>`:
   24), so every seat is taken equally often in every cell. A replay records no market rate, so
   a `market` rival without a `rate` would never move: it is refused by name, and until PR D4 a
   market rival's view is the run's forecaster's draft-day ranking. A pair that is one seat by
-  construction is refused as `compare` refuses it; the same arm twice stays allowed (a check that
+  construction is refused by name, the knobs and fields it differs in listed with why none is
+  read (**What each knob reads**); the same arm twice stays allowed (a check that
   the difference is zero). `--no-peek` checks the design the run names: with `--arms` it
   compares both arms' seasons' day records on path 0. The payload (`design: paired`) carries the
   seat rule and each path's seat, and per cell each arm's outcomes, the `difference` (B less A)
@@ -400,23 +387,17 @@ Each command runs as `python -m pickandroll.sim <command>`:
   the forecasters, a hash of each spec, the fit's hash, the code's commit), and its payload
   (`confirmation`) and its last printed lines say "look n", n the line's number. A dry run and a
   no-peek check add no line. Refusing the season inside a search set is PR H's.
-- `room --leagues all --seats A.json B.json ... --draft rosters|snake`: the arms around one
-  league's table from the recorded rosters or a snake redraft.
-- `validate --league all --season 2024 --forecaster prior`: gate 5 on a replay of the season
-  named (default the latest replayable season on file; the hold-out is refused as the replay
-  refuses it, the confirmation season because a gate needs no look at it), drafted on the
-  forecaster named (default `prior`), and the other gates on this season's recorded weeks and on
-  the hold-out (below).
-- `fit --refresh --tau residual --league <id>`: week six's one re-freeze, the residual `τ` against
-  the first export and the fitted refresh from the exports on disk together, both hashes on the
-  issue; until then `REFRESH_DEFAULTS` stand and every payload says `refresh: defaults`.
+- `validate --season 2024 --forecaster prior`: gate 5 on a replay of the season named (default
+  the latest replayable season on file; the hold-out is refused as the replay refuses it, the
+  confirmation season because a gate needs no look at it), drafted on the forecaster named
+  (default `prior`), and gates 1 and 4 on the hold-out and the cached logs (below).
 
 An arm's spec file names its tier, every one of the twelve knobs, its opponents and what it
 executes, may name its four fields (their defaults otherwise) and may name the fit it was written
 for (`fit_sha`; another fit on disk refuses the run). Every run writes
 `data/sim/runs/<stamp>-<kind>-<name>.json` with the code's commit, the fit's hash and
-file, the hold-out, the spec files verbatim, the execution model, the gap's systems and clip, the
-refresh's source, `τ`'s source, each arm's fields and its surrogate's pool and days, the reads
+file, the hold-out, the spec files verbatim, the execution model, the refresh's source, `τ`'s
+source, each arm's fields and its surrogate's pool and days, the reads
 table, the season scale, the period calendar's source, and the results. A run first times one
 task and estimates the whole; the guard then refuses a span that would touch 04:45-06:45 in the
 machine's local time, a draft room open on the API, or a run over an hour without `--announced`
@@ -541,7 +522,7 @@ variant's seats hold and which team holds which (`held`, `holds`), and the no-pe
 them when they are not empty, so a run whose seats all hold the run's forecaster records and
 digests as it did. The season scale reads the arm's own forecaster. The draft and the market's
 ranking stay the run's forecaster's: an arm on a forecaster of its own reads it from the season's
-first day. A drawn world (`compare`, `room`) answers every label with its one shared belief.
+first day. A drawn world (gate 1's) answers every label with its one shared belief.
 
 **The two sources' stand-ins (PR D1).** The live engine reads two projection systems, Basketball
 Monster and Yahoo, and an arm's `system` knob picks the one it believes (`blend`, a mix at the
@@ -634,7 +615,7 @@ part, writes nothing, and exits non-zero on a difference at or before the date.
 ## The audit and the counts (`sim/audit.py`, `sim/counts.py`)
 
 The policy decides and the world checks. On every simulated day of every run of every command
-(compare, replay, room and the no-peek check, dry runs too), for each variant and every seat, the
+(a replay and the no-peek check, dry runs too), for each variant and every seat, the
 rivals' included, the audit reads the day at the point the day record is taken: yesterday's queue
 landed, the day's moves queued, the lineup set, the day's lines not yet read. No hook is needed;
 `simulate` runs it. Its rules are a list (`audit.RULES`), each named, each a function of the
@@ -656,14 +637,14 @@ setup, the day and the same variant's day before; a later rule is one more entry
   changes nobody's starters that day.
 
 A breach (path, day, variant, seat, rule, what was found) voids its path: the runner records it,
-the command leaves the task out of every aggregate (compare voids a league, shrink and path;
-replay a forecaster and path; room a league and path), lists every breach and the voided tasks in
+the command leaves the task out of every aggregate (a replay voids a season, forecaster and
+path), lists every breach and the voided tasks in
 the payload's `audit` block with the rules, writes the payload and exits 3. A dry run audits its
 one task and exits 3 on a breach too; the no-peek check prints the breaches of either season and
 exits 3 before it reads a difference. Nothing is repaired.
 
 **The counts.** An edge that comes from an artefact (four adds a week against rivals who never
-move) shows in what happened, so every compare, replay and room payload carries, per arm and
+move) shows in what happened, so every replay payload carries, per arm and
 pooled like the outcomes (a seat's season, the mean over the arm's seats a path, then over the
 paths that stand): the moves landed; the moves lost because the add or the drop was gone or no
 active spot was open; the adds charged to each week, their mean and the share of weeks at the cap
@@ -683,9 +664,7 @@ without its inputs is **not run** and says why, never passed.
   recorded lines) as transforms under the simulator's team-week distribution centred on the
   players' own realized rates, the game-noise and absence layers alone. It keeps its own league:
   the players with twenty played games, all drafted on their realized rates, a `fixed` belief.
-  Gates 1 and 2 on this season's recorded weeks, the current rosters standing in for the week's,
-  once the recorder has weeks.
-- Gate 4 on the hold-out and on this season's log: each player's season under the hazard drawn
+- Gate 4 on the hold-out and on the 2025-26 log: each player's season under the hazard drawn
   once a path and split into his weeks, so an absence that began one week is still missed the next.
 - Gate 5 on a replay: the league, the belief's weights and the world built as `replay` builds
   them for the season and forecaster named (`cli.read_season`, `replay_setup_of`,
@@ -697,16 +676,12 @@ without its inputs is **not run** and says why, never passed.
   knobs are `policy.KNOB_DEFAULTS` and the fields `policy.DEFAULT_FIELDS`, both in the payload's
   `surrogate_gate` block with the season, the forecaster, the seats, the days and the label's
   weights; no knob file is read.
-- Gate 6 once two exports and players with ten or more games exist; gate 3 is not run: it needs
-  the scorecard's realized rows, which the simulator does not read.
 
 **First reading of the hold-out (2024-25, the frozen fit of 2026-10-24).** Gate 4 passes on all
 players with twenty or more games. Gate 1 fails: realized team-weeks sit above the simulator's
 distribution. Read apart by population, the pooled hazard over-predicts the games the top 156
 players by value miss and under-predicts the rest's: the drafted population is healthier than the
-pool the hazard was fitted on. The hazard wants conditioning on minutes or on the rostered
-population at the week-six re-freeze; until then a forward run's teams miss a few more games than
-real ones, in every arm alike (the comparison is paired, the bias shared).
+pool the hazard was fitted on. A replay plays the recorded absences and reads no hazard.
 
 ## Runs
 
@@ -716,3 +691,22 @@ expected over an hour is announced on the tracker and starts on the user's word 
 says that has happened). The no-peek check runs two seasons before it can time one, so
 the guard gives it a span of a quarter of an hour (`NO_PEEK_HOURS`) and refuses it when that span
 touches the window.
+
+## What was removed and when
+
+The simulator began as a forward run from each live league's state today, meant to sit beside the
+Monday scorecard. The user's ruling of 2026-11-07 made it standalone and whole-season, and PR D3
+(#172) removed what only a live league could feed:
+
+- `compare` (arm A against arm B in my seat in each league, at three shrinks of the projection
+  error, with its one-SE line) and `room` (the arms around a league's recorded table). The paired
+  design and the room both live on in `replay` (`--arms`, `--seats`).
+- `validate --league`, gate 2 (the matchup odds against the engine's), gate 1's rows on a
+  league's recorded weeks, gate 3's not-run line (the scorecard's realized share) and gate 6
+  (the fitted refresh against the exports); gate 5 moved onto a replay of a recorded season.
+- `fit --tau residual`, `--refresh` and `--league` (week six's re-freeze from the exports), and
+  `--today` and `--system` from every command.
+- The readers of a league's recorded state, settings, week records, decisions, exports, the two
+  systems' gap and spread, and the ESPN ids; every import from `pickandroll.api` and from
+  `pickandroll.sources`. The run record's `gap`, `today`, `system`, `leagues` and `skipped` keys
+  went with them, and `replay_version` is 5 (a replay's figures are version 4's).

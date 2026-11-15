@@ -52,13 +52,6 @@ KNOBS = policy.KNOBS
 SHRINKS = (0.0, 0.25, 0.5)
 #: The metrics a path reports for a seat.
 METRICS = ("made_playoffs", "rank", "category_wins", "matchup_wins", "title")
-#: The verdict line's rule, advisory until PR 3 (the master's ruling on PR 2's plan).
-VERDICT_RULE = "one-SE"
-VERDICT_LINE = (
-    "advisory: a change (arm B) passes when the paired change in playoff odds, B less A, is not "
-    "below zero by more than one standard error at any shrink; no block and no promotion before "
-    "PR 3"
-)
 #: How workers are counted when not given: the machine's cores less two.
 SPARE_CORES = 2
 NICE = 10
@@ -1149,22 +1142,6 @@ def aggregate(
     return out
 
 
-def verdict(by_shrink: Mapping[str, Mapping[str, Mapping[str, float | None]]]) -> dict[str, Any]:
-    """The advisory line: passes when the paired change in playoff odds (B less A, as
-    :func:`paired` gives it) is not below zero by more than one SE at any shrink; None when a
-    shrink has no SE."""
-    passes: bool | None = True
-    for agg in by_shrink.values():
-        d = agg.get("made_playoffs") or {}
-        mean, se = d.get("mean"), d.get("se")
-        if mean is None or se is None:
-            passes = None
-            break
-        if mean < -se:
-            passes = False
-    return {"rule": VERDICT_RULE, "line": VERDICT_LINE, "passes": passes}
-
-
 # --------------------------------------------------------------------------- a replay's verdict
 #: The replay's advisory rule on the paired design (#172, PR D2; ruled 2026-11-07: there is no
 #: grand figure across forecasters).
@@ -1485,5 +1462,4 @@ __all__ = [
     "simulate",
     "split_beliefs",
     "unprojected",
-    "verdict",
 ]
