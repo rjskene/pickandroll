@@ -667,12 +667,16 @@ W_DEFAULT = 10.0
 @dataclass(frozen=True)
 class BeliefSample:
     """One season the weights are fitted on: the forecaster's figures for it (read from
-    ``prior_season``, None when it reads none) and the season's recorded lines."""
+    ``prior_season``, None when it reads none) and the season's recorded lines. ``read``: every
+    season the figures' projection read (#172, PR D2: ``prior`` the season before, ``espn`` and an
+    oracle the season itself, ``marcel`` the seasons it read, a system label its two stand-ins'
+    together)."""
 
     season: int
     prior_season: int | None
     prior: Mapping[int, Mapping[str, float]]
     lines: Mapping[int, Mapping[date, Mapping[str, float]]]
+    read: tuple[int, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -706,9 +710,12 @@ def belief_weights(
     game, by least squared error summed over the samples' seasons, players and played games in
     date order, ``(line_g − (w·prior + the sum of his earlier lines) / (w + g − 1))²`` for his
     ``g``-th game; the larger value on a tie. No sample: every stat at :data:`W_DEFAULT`. A sample
-    that reads the hold-out, as its season or its forecaster's, is refused."""
+    that reads the hold-out, as its season, its forecaster's or any season its projection read,
+    is refused."""
     check_hold_out(
-        [s.season for s in samples] + [s.prior_season for s in samples if s.prior_season],
+        [s.season for s in samples]
+        + [s.prior_season for s in samples if s.prior_season]
+        + [t for s in samples for t in s.read],
         hold_out,
     )
     if not samples:
@@ -745,3 +752,47 @@ def belief_weights(
     return BeliefWeights(
         weights, tuple(sorted({s.season for s in samples})), False, tuple(unobserved)
     )
+
+
+#: Where a belief label's weights come from (#172, PR D2): its own fit, the prior forecaster's
+#: when it has no sample and those were fitted, else the default.
+OWN = "own"
+PRIOR_FORECASTER = "the prior forecaster's"
+DEFAULT = "the default"
+
+
+@dataclass(frozen=True)
+class LabelWeights:
+    """The weights a belief label's causal belief takes in a replay, where they come from
+    (:data:`OWN`, :data:`PRIOR_FORECASTER` or :data:`DEFAULT`) and, for each season on file
+    earlier than the replayed one that gave the label no sample, why."""
+
+    label: str
+    weights: BeliefWeights
+    source: str
+    left_out: Mapping[int, str]
+
+    def payload(self) -> dict[str, Any]:
+        return {
+            "source": self.source,
+            **self.weights.payload(),
+            "left_out": {str(t): why for t, why in sorted(self.left_out.items())},
+        }
+
+
+def label_weights(
+    label: str,
+    samples: Sequence[BeliefSample],
+    hold_out: int | None,
+    prior: BeliefWeights,
+    left_out: Mapping[int, str] | None = None,
+) -> LabelWeights:
+    """A belief label's weights: fitted on its own ``samples`` (:func:`belief_weights`, which
+    refuses one that read the hold-out); with none, ``prior`` (the prior forecaster's for this
+    replay) when those were fitted, else the default."""
+    own = belief_weights(samples, hold_out)
+    if not own.default:
+        return LabelWeights(label, own, OWN, dict(left_out or {}))
+    if not prior.default:
+        return LabelWeights(label, prior, PRIOR_FORECASTER, dict(left_out or {}))
+    return LabelWeights(label, own, DEFAULT, dict(left_out or {}))

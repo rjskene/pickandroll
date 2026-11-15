@@ -14,7 +14,6 @@ from __future__ import annotations
 import ast
 import hashlib
 import json
-import math
 from datetime import date
 from fractions import Fraction
 from pathlib import Path
@@ -119,22 +118,18 @@ NOISE = 1e-6
 
 
 def columns(projection) -> dict[str, tuple[float, float]]:
-    """Each category's column of the engine's per-game value over every projected player, as
-    ``wk._columns`` builds it: its spread before the engine's guard takes a spread of exactly 0
-    as 1, and its size (a percentage's mean makes, a counting stat's mean size)."""
+    """Each category's column of the engine's per-game value, as the engine's public scorer
+    (``wk.scorer_of``) reports it: its spread over the pool the engine chooses, after the guard
+    that takes a spread of exactly 0 as 1 (so an exactly flat column reads 1.0 and a noise column
+    reads the noise), and its size over the projection (a percentage's mean makes, a counting
+    stat's mean size)."""
     keys = list(projection)
-    assert len(keys) <= 156  # the value's pool is every player
+    scorer = wk.scorer_of(projection, NINE)["cats"]
     out = {}
-    for cat, p, mean, _ in wk._columns(projection, keys, NINE):
-        col = wk._column(cat, p)
-        xs = [col(projection[k]) for k in keys]
-        sd = math.sqrt(sum((x - mean) ** 2 for x in xs) / len(xs))
-        if cat in wk.PCT:
-            made = wk.PCT[cat][0]
-            size = sum(abs(float(projection[k].get(made, 0.0))) for k in keys) / len(keys)
-        else:
-            size = sum(abs(x) for x in xs) / len(xs)
-        out[cat] = (sd, size)
+    for cat, c in scorer.items():
+        stat = wk.PCT[cat][0] if cat in wk.PCT else cat
+        size = sum(abs(float(projection[k].get(stat, 0.0))) for k in keys) / len(keys)
+        out[cat] = (c["sd"], size)
     return out
 
 
@@ -159,7 +154,7 @@ def test_no_value_column_of_a_made_up_league_is_rounding_noise():
     noisy = {}
     for name, projection in made_up_projections().items():
         for cat, (sd, size) in columns(projection).items():
-            if sd != 0.0 and sd < NOISE * size:
+            if sd < NOISE * size:
                 noisy[f"{name}.{cat}"] = (sd, size)
     assert noisy == {}, f"a column holds only rounding noise, scaled up by the value: {noisy}"
 
@@ -167,7 +162,8 @@ def test_no_value_column_of_a_made_up_league_is_rounding_noise():
 def test_the_noise_reader_finds_main_s_shooting():
     """Not vacuous: a league whose players all shoot alike, as ``recorded()`` had them (makes
     4.2 and 2.3 times the level, attempts 9 and 3 times it), has both percentage columns noisy;
-    one whose makes are an exact power-of-two share is flat."""
+    one whose makes are an exact power-of-two share is flat, which the engine's guard reads as a
+    spread of 1, and is not flagged."""
     levels = [0.5 + 1.1 * i / 39 for i in range(40)]
     alike = {
         k: {"fgm": 4.2 * x, "fga": 9 * x, "ftm": 2.3 * x, "fta": 3 * x}
@@ -178,7 +174,8 @@ def test_the_noise_reader_finds_main_s_shooting():
         sd, size = got[cat]
         assert 0.0 < sd < NOISE * size
     flat = {k: {"fgm": 4.0 * x, "fga": 8.0 * x} for k, x in enumerate(levels)}
-    assert columns(flat)["fg_pct"][0] == 0.0
+    sd, size = columns(flat)["fg_pct"]
+    assert sd == 1.0 and not sd < NOISE * size
 
 
 #: SHA-256 of ``recorded()``'s stand-in projection and lines, every number written as float hex.

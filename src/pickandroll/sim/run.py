@@ -546,6 +546,7 @@ def replay_world(
     label: str | None = None,
     forecasts: Mapping[str, Mapping[int, Rates]] | None = None,
     split: Mapping[str, str] | None = None,
+    weights_of: Mapping[str, Mapping[str, float]] | None = None,
 ) -> World:
     """A replay's world: the recorded lines are the truth of every game, a game day without a
     line an absence. The seats' belief is ``causal`` (the setup's projection updated with the
@@ -554,16 +555,22 @@ def replay_world(
     projection all season, the hold-out gate's). ``label`` names the run's forecaster, whose
     projection the setup holds; ``forecasts`` are other forecasters' projections by label, each
     believed the same way with its own newcomer's prior (the mean of its own projected players
-    left undrafted), for the seats that name them (#172, PR D1). ``split`` maps each split label
-    among them to its rostered side's label (:class:`World`)."""
+    left undrafted), for the seats that name them (#172, PR D1), at its own weights in
+    ``weights_of`` (by label; ``weights`` for a label it does not name; PR D2). ``split`` maps
+    each split label among them to its rostered side's label (:class:`World`)."""
     game_days = game_days_of(setup)
     causal = None
     others: dict[str, CausalBelief] = {}
     if belief == "causal":
         w = {s: float((weights or {}).get(s, W_DEFAULT)) for s in wk.STATS}
+
+        def own(name: str) -> dict[str, float]:
+            given = (weights_of or {}).get(name)
+            return w if given is None else {s: float(given.get(s, W_DEFAULT)) for s in wk.STATS}
+
         causal = causal_belief(setup, setup.projection, lines, w)
         others = {
-            name: causal_belief(setup, rates, lines, w)
+            name: causal_belief(setup, rates, lines, own(name))
             for name, rates in (forecasts or {}).items()
             if name != label
         }
@@ -635,6 +642,38 @@ def causal_belief(
     return CausalBelief(
         setup.players, projected, lines, weights, newcomer_prior(projected, undrafted)
     )
+
+
+def first_day(setup: Setup) -> date | None:
+    """The first simulated day: the first of the setup's days inside a week."""
+    return next((d for d in setup.days if setup.week_of(d) is not None), None)
+
+
+def unprojected(
+    setup: Setup, w: World, held: Mapping[int, str | None]
+) -> dict[str, dict[str, int]]:
+    """For each belief label a seat holds (``held``, by team; None for the run's forecaster's),
+    the drafted players its table has no line for on the first simulated day (a split label's:
+    its rostered side's, which every drafted player reads), counted on the rosters of the seats
+    that hold it (``seats``) and on every roster (``all``): a seat values such a player at zero
+    until he plays (#172, PR D2). Zero for the run's own label, whose projection the draft read.
+    It reads the world's beliefs on that day and draws nothing."""
+    day = first_day(setup)
+    labels = {t: lb if lb is not None else w.label for t, lb in held.items()}
+    out: dict[str, dict[str, int]] = {}
+    if day is None:
+        return out
+    rostered = rostered_of(initial(setup))
+    for label in dict.fromkeys(labels.values()):
+        table = w.seat_beliefs(day, w.own(label), rostered)
+        missing = {
+            t: sum(1 for k, _ in setup.rosters.get(t, ()) if k not in table) for t in setup.teams
+        }
+        out[str(label)] = {
+            "seats": sum(missing[t] for t, lb in labels.items() if lb == label),
+            "all": sum(missing.values()),
+        }
+    return out
 
 
 # --------------------------------------------------------------------------- the day loop
@@ -996,14 +1035,22 @@ def scale_on(setup: Setup, w: World, arm: Arm, team: int) -> dict[str, Any] | No
     return {"gain": s.gain, "ros": s.ros, "ratio": s.ratio, "against": s.against, "swaps": s.swaps}
 
 
-def paired(setup: Setup, w: World, a: Arm, b: Arm, me: int) -> dict[str, Any]:
+def paired(
+    setup: Setup,
+    w: World,
+    a: Arm,
+    b: Arm,
+    me: int,
+    on_day: Callable[[DayRecord], None] | None = None,
+) -> dict[str, Any]:
     """Arm A and arm B in seat ``me`` through one world: each outcome and their difference, B less
     A (``b[k] - a[k]``, None where either is None). Positive is B ahead on every metric but
-    ``rank``, where lower is better and a negative difference is B finishing higher."""
+    ``rank``, where lower is better and a negative difference is B finishing higher. ``on_day`` is
+    :func:`simulate`'s: A's season is variant 0, B's variant 1."""
     va = {**opponents_of(setup, a, me), me: a.seat()}
     vb = {**opponents_of(setup, b, me), me: b.seat()}
     scale = {"a": scale_on(setup, w, a, me), "b": scale_on(setup, w, b, me)}
-    ra, rb = simulate(setup, w, [va, vb], [a.execute_plan, b.execute_plan])
+    ra, rb = simulate(setup, w, [va, vb], [a.execute_plan, b.execute_plan], on_day=on_day)
     ma, mb = _metrics(ra.summaries.get(me)), _metrics(rb.summaries.get(me))
     rivals = [t for t in setup.teams if t != me]
     return {
@@ -1011,6 +1058,7 @@ def paired(setup: Setup, w: World, a: Arm, b: Arm, me: int) -> dict[str, Any]:
         "b": mb,
         "delta": {k: None if ma[k] is None or mb[k] is None else mb[k] - ma[k] for k in METRICS},
         "solves": ra.solves + rb.solves,
+        "solves_by_arm": [ra.solves, rb.solves],
         "shared": rb.shared,
         "executed": [ra.executed, rb.executed],
         "gone": [ra.gone, rb.gone],
@@ -1115,6 +1163,147 @@ def verdict(by_shrink: Mapping[str, Mapping[str, Mapping[str, float | None]]]) -
         if mean < -se:
             passes = False
     return {"rule": VERDICT_RULE, "line": VERDICT_LINE, "passes": passes}
+
+
+# --------------------------------------------------------------------------- a replay's verdict
+#: The replay's advisory rule on the paired design (#172, PR D2; ruled 2026-11-07: there is no
+#: grand figure across forecasters).
+REPLAY_VERDICT_RULE = "one-SE in every cell, pooled above zero"
+REPLAY_VERDICT_LINE = (
+    "advisory: holds when the paired change in playoff odds (B less A) is not below zero by more "
+    "than one SE in every cell the rule reads, and every forecaster's pooled change (the mean of "
+    "its season means) is above zero; no grand figure across forecasters, no block and no "
+    "promotion: the simulator never writes a live knob file"
+)
+#: The marks a replay's verdict table carries: a row the rule does not rest on, and a cell left
+#: out of its forecaster's pooled figure and of the rule.
+YARDSTICK = "yardstick"
+FREEZE = "freeze"
+SKIPPED = "skipped"
+MARKS = {
+    YARDSTICK: "an oracle is a labelled look-ahead, a yardstick: shown, not read by the rule",
+    FREEZE: (
+        "espn's stored projection of this season fails the freeze check: shown, left out of "
+        "espn's pooled figure and of the rule"
+    ),
+    SKIPPED: "n/a: the forecaster cannot serve this season",
+}
+
+
+def pool_seasons(means: Sequence[float], of: int) -> dict[str, Any]:
+    """One forecaster's pooled change over its seasons: the mean of the season means, with the SE
+    taken from those means (the seasons are the clusters); with one season, that season's mean
+    and no SE, and it says so. ``of``: the seasons the run names, so the figure says "over k of
+    n" when a cell was skipped or left out."""
+    k = len(means)
+    if k == 0:
+        return {"mean": None, "se": None, "seasons": 0, "of": of, "note": "no season"}
+    mean = sum(means) / k
+    se = math.sqrt(sum((x - mean) ** 2 for x in means) / (k - 1)) / math.sqrt(k) if k > 1 else None
+    note = f"over {k} of {of} seasons" if k < of else f"over {k} seasons"
+    if k == 1:
+        note += ": that season's mean, no SE (it needs two seasons)"
+    return {"mean": mean, "se": se, "seasons": k, "of": of, "note": note}
+
+
+def replay_verdict(
+    cells: Mapping[str, Mapping[str, Mapping[str, Mapping[str, float | int | None]] | None]],
+    seasons: Sequence[str],
+    yardsticks: Sequence[str] = (),
+    frozen: Mapping[str, Sequence[str]] | None = None,
+    voided: int = 0,
+    metrics: Sequence[str] = METRICS,
+) -> dict[str, Any]:
+    """The verdict of a replay's paired design, by forecaster and season (#172, PR D2): pure, on
+    the figures alone. ``cells`` maps each forecaster's label to each season's paired change
+    (:func:`aggregate` of the paths' ``delta``, B less A; None for a skipped cell);
+    ``yardsticks`` are the labels the rule does not rest on (an oracle's); ``frozen`` maps a
+    label to the seasons left out of its pooled figure and of the rule (an ``espn`` season that
+    fails the freeze check). Each row carries its cells' playoff change with their marks and its
+    pooled change in every metric (:func:`pool_seasons`). The rule (:data:`REPLAY_VERDICT_LINE`)
+    holds when no cell it reads has its change in playoff odds below zero by more than one SE
+    and every forecaster it reads has a pooled change above zero; ``passes`` is None, with the
+    reason, when the audit voided a path, a cell the rule reads has no SE, or no forecaster is
+    left for the rule to rest on."""
+    frozen = frozen or {}
+    rows: dict[str, Any] = {}
+    read_cells: list[tuple[str, str, Mapping[str, float | int | None]]] = []
+    read_rows: list[str] = []
+    for label, by_season in cells.items():
+        yardstick = label in yardsticks
+        row_cells: dict[str, Any] = {}
+        kept: dict[str, Mapping[str, Mapping[str, float | int | None]]] = {}
+        for t in seasons:
+            agg = by_season.get(t)
+            if agg is None:
+                row_cells[t] = {"mean": None, "se": None, "n": 0, "mark": SKIPPED}
+                continue
+            m = agg.get("made_playoffs") or {}
+            mark = FREEZE if t in frozen.get(label, ()) else None
+            row_cells[t] = {"mean": m.get("mean"), "se": m.get("se"), "n": m.get("n"), "mark": mark}
+            if mark is None:
+                kept[t] = agg
+                if not yardstick:
+                    read_cells.append((label, t, m))
+        pooled = {
+            k: pool_seasons(
+                [
+                    float(mean)
+                    for agg in kept.values()
+                    if (mean := (agg.get(k) or {}).get("mean")) is not None
+                ],
+                len(seasons),
+            )
+            for k in metrics
+        }
+        rows[label] = {
+            "mark": YARDSTICK if yardstick else None,
+            "cells": row_cells,
+            "pooled": pooled,
+        }
+        if not yardstick and kept:
+            read_rows.append(label)
+    passes: bool | None
+    why: str | None = None
+    failed: list[str] = []
+    no_se = [
+        f"{t} {label}" for label, t, m in read_cells if m.get("se") is None or m.get("mean") is None
+    ]
+    if voided:
+        passes, why = None, f"no verdict: the audit voided {voided} path(s)"
+    elif not read_rows:
+        passes, why = (
+            None,
+            (
+                "no verdict: no forecaster the rule may rest on (an oracle is a yardstick, and a "
+                "season that fails the freeze check is left out)"
+            ),
+        )
+    elif no_se:
+        passes, why = None, f"no verdict: no SE in the cell(s) {', '.join(no_se)} (one path?)"
+    else:
+        for label, t, m in read_cells:
+            mean, se = float(m["mean"] or 0.0), float(m["se"] or 0.0)
+            if mean < -se:
+                failed.append(
+                    f"{t} {label}: {mean:+.4f} is below zero by more than its SE {se:.4f}"
+                )
+        for label in read_rows:
+            p = rows[label]["pooled"]["made_playoffs"]
+            if p["mean"] is None or p["mean"] <= 0:
+                failed.append(f"{label} pooled: {p['mean']:+.4f} is not above zero")
+        passes = not failed
+    return {
+        "rule": REPLAY_VERDICT_RULE,
+        "line": REPLAY_VERDICT_LINE,
+        "seasons": list(seasons),
+        "rows": rows,
+        "marks": dict(MARKS),
+        "read": read_rows,
+        "passes": passes,
+        "why": why,
+        "failed": failed,
+    }
 
 
 # --------------------------------------------------------------------------- the pool
@@ -1281,8 +1470,10 @@ __all__ = [
     "inputs_of",
     "mirrored",
     "paired",
+    "pool_seasons",
     "realized_rates",
     "replay_setup",
+    "replay_verdict",
     "replay_world",
     "room",
     "rostered_of",
@@ -1292,5 +1483,6 @@ __all__ = [
     "scale_on",
     "simulate",
     "split_beliefs",
+    "unprojected",
     "verdict",
 ]

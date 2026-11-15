@@ -297,7 +297,7 @@ def test_replay_and_room_record_their_runs(run_data: Path):
                 "--rooms",
                 "0",
                 "replay",
-                "--season",
+                "--seasons",
                 "2025",
                 "--seats",
                 str(data / "A.json"),
@@ -314,7 +314,7 @@ def test_replay_and_room_record_their_runs(run_data: Path):
                 "--rooms",
                 "0",
                 "replay",
-                "--season",
+                "--seasons",
                 "2024",
                 "--forecasters",
                 "prior",
@@ -331,17 +331,23 @@ def test_replay_and_room_record_their_runs(run_data: Path):
     )
     payload = json.loads(_runs(data)[-1].read_text())
     assert (
-        payload["kind"] == "replay" and payload["season"] == 2024 and payload["seats"] == ["A", "B"]
+        payload["kind"] == "replay"
+        and payload["seasons"] == [2024]
+        and payload["seats"] == ["A", "B"]
     )
-    assert list(payload["forecasters"]) == ["prior"] and payload["tau"]["source"].startswith(
-        "not used"
-    )
-    assert set(payload["results"]["prior"]) == {"A", "B"} and payload["draft"].startswith("snake")
+    assert list(payload["forecasters"]["2024"]) == ["prior"] and payload["tau"][
+        "source"
+    ].startswith("not used")
+    assert set(payload["results"]["2024"]["prior"]) == {"A", "B"}
+    assert payload["draft"].startswith("snake") and payload["confirmation"] is None
     # The seats believe only the games played: the payload names the belief, its weights and
     # where they came from (no season before 2024 has its prior season on file: the default),
     # the newcomer's rule, the pool and the news spread, and the weekly refresh as not used.
-    assert payload["replay_version"] == 3 and payload["belief"]["kind"] == "causal"
-    weights = payload["belief"]["weights"]
+    assert payload["replay_version"] == 4 and payload["belief"]["kind"] == "causal"
+    weights = payload["belief"]["weights"]["2024"]["prior"]
+    assert weights["source"] == "the default" and weights["left_out"] == {
+        "2023": "prior: season 2022 is not on file"
+    }
     assert weights["default"] is True and weights["seasons"] == []
     assert set(weights["weights"].values()) == {10.0} and weights["grid"][0] == 2
     assert "undrafted" in payload["newcomer"] and "first 7 days" in payload["pool"]["draft"]
@@ -354,7 +360,7 @@ def test_replay_and_room_record_their_runs(run_data: Path):
                 "--rooms",
                 "0",
                 "replay",
-                "--season",
+                "--seasons",
                 "2024",
                 "--forecasters",
                 "oracle:0.2",
@@ -426,12 +432,13 @@ def test_the_forecasters_block_names_each_forecaster(blocks_data: Path):
     lines, _, _ = reader.replay_lines(blocks_data, 2026)
     fixed = ss.fixed_of(blocks_data, 2026, named)
     assert fixed.marcel_seasons == (2025, 2024, 2023)  # 2025 read as preseason information
-    block = ss.forecasters_block(named, fixed, lines, 5, "stat")
+    fits = reader.label_weights(blocks_data, 2026, ss.HOLD_OUT, named, 5, "stat")
+    block = ss.forecasters_block(named, fixed, lines, 5, "stat", weights=fits)
     assert list(block) == ["prior", "espn", "marcel", "oracle:0.2"]
     for label, b in block.items():
         want = {"name", "source", "projected", "played", "error", "weights"}
         assert set(b) == (want | {"freeze"} if label == "espn" else want), label
-        assert b["played"] <= b["projected"] and "prior forecaster" in b["weights"]
+        assert b["played"] <= b["projected"] and b["weights"] == fits[label].payload()
         assert set(b["error"]["by_stat"]) == set(wk.STATS)
     assert block["prior"]["projected"] == len(reader.prior_rates(blocks_data, 2026))
     assert block["espn"]["projected"] == 79  # every seventh block has no games count
@@ -450,21 +457,24 @@ def test_a_replay_keys_its_figures_by_forecaster(blocks_data: Path, capsys):
     data = blocks_data
     base = ["--data", str(data), "--rooms", "0", "replay", "--seats"]
     seats = [str(data / "A.json"), str(data / "B.json")]
-    run = [*base, *seats, "--season", "2024", "--paths", "1", "--workers", "1"]
+    run = [*base, *seats, "--seasons", "2024", "--paths", "1", "--workers", "1"]
     assert ss.main([*run, "--forecasters", "espn,oracle:0.2"]) == 0
     out = capsys.readouterr().out
-    assert "2 tasks (2 forecasters x 1 paths)" in out
+    assert "2 tasks (2 cells x 1 paths)" in out
     payload = json.loads(_written(out).read_text())
-    assert payload["replay_version"] == 3 and payload["oracle_shape"] == "stat"
-    assert list(payload["forecasters"]) == ["espn", "oracle:0.2"]
-    assert set(payload["results"]) == {"espn", "oracle:0.2"}
-    assert set(payload["counts"]["by_forecaster"]) == {"espn", "oracle:0.2"}
-    assert set(payload["results"]["espn"]) == {"A", "B"}
-    assert "standins" not in payload and "prior forecaster" in payload["belief"]["forecasters"]
-    # A forecaster that cannot serve the season refuses the run by name, before any path.
+    assert payload["replay_version"] == 4 and payload["oracle_shape"] == "stat"
+    assert list(payload["forecasters"]["2024"]) == ["espn", "oracle:0.2"]
+    assert set(payload["results"]["2024"]) == {"espn", "oracle:0.2"}
+    assert set(payload["counts"]["by_season"]["2024"]) == {"espn", "oracle:0.2"}
+    assert set(payload["results"]["2024"]["espn"]) == {"A", "B"}
+    assert "standins" not in payload
+    assert set(payload["belief"]["weights"]["2024"]) == {"espn", "oracle:0.2"}
+    assert "own projection" in payload["belief"]["weights_rule"]
+    # A forecaster that cannot serve the season leaves its cell skipped by name, and a run with
+    # no cell left is refused before any path.
     for flags, why in (
         (["--forecasters", "marcel"], "marcel needs 2 earlier seasons on file, it has 1"),
-        (["--forecasters", "prior", "--season", "2023"], "prior: season 2022: no cached log"),
+        (["--forecasters", "prior", "--seasons", "2023"], "prior: season 2022: no cached log"),
         (["--forecasters", "gospel"], "forecaster 'gospel'"),
         (["--forecasters", "prior,prior"], "prior is named twice"),
     ):
@@ -474,7 +484,7 @@ def test_a_replay_keys_its_figures_by_forecaster(blocks_data: Path, capsys):
 
 def test_espn_cannot_serve_a_log_without_its_blocks(run_data: Path, capsys):
     data = run_data
-    args = ["--data", str(data), "--rooms", "0", "replay", "--season", "2024"]
+    args = ["--data", str(data), "--rooms", "0", "replay", "--seasons", "2024"]
     args += ["--forecasters", "espn", "--seats", str(data / "A.json"), str(data / "B.json")]
     assert ss.main(args) == 2
     assert "espn: season 2024's log holds no projection block" in capsys.readouterr().out
@@ -489,7 +499,7 @@ def test_the_no_peek_check_agrees_through_its_date_and_writes_nothing(run_data: 
         "--rooms",
         "0",
         "replay",
-        "--season",
+        "--seasons",
         "2024",
         "--seats",
         str(data / "A.json"),
@@ -497,7 +507,7 @@ def test_the_no_peek_check_agrees_through_its_date_and_writes_nothing(run_data: 
     ]
     assert ss.main([*args, "--no-peek", "2023-11-06"]) == 0
     out = capsys.readouterr().out
-    assert "belief weights (the default)" in out and "agree through 2023-11-06" in out
+    assert "belief weights, 2024, prior (the default)" in out and "agree through 2023-11-06" in out
     assert "nothing written" in out
     assert ss.main([*args, "--no-peek", "2022-01-01"]) == 2  # not a day of the season
     assert "not a day of the replayed season" in capsys.readouterr().out
@@ -587,7 +597,7 @@ def _replay(data: Path, *extra: str) -> list[str]:
         "--rooms",
         "0",
         "replay",
-        "--season",
+        "--seasons",
         "2024",
         "--forecasters",
         "prior",
@@ -674,7 +684,7 @@ def test_a_replay_payload_carries_the_counts_and_the_audit(replays):
     p = replays["one"]
     assert p["audit"]["paths_voided"] == 0 and p["audit"]["breaches"] == []
     assert [r["name"] for r in p["audit"]["rules"]] == [r.name for r in audit.RULES]
-    counts = p["counts"]["by_forecaster"]["prior"]
+    counts = p["counts"]["by_season"]["2024"]["prior"]
     assert set(counts) == {"A", "B"} and p["counts"]["rivals"] is None
     assert set(counts["A"]) == set(ct.METRICS) and counts["A"]["landed"]["n"] == 3
     assert counts["A"]["starter_games"]["mean"] > 0
@@ -692,7 +702,8 @@ def test_a_breach_voids_its_path_and_only_its_path(run_data: Path, replays, caps
     assert code == ss.AUDIT_EXIT and "AUDIT: 1 breach(es) voided 1 path(s)" in out
     payload = json.loads(_written(out).read_text())  # written all the same
     note = payload["audit"]
-    assert note["paths_voided"] == 1 and note["voided"] == [{"forecaster": "prior", "path": 1}]
+    assert note["paths_voided"] == 1
+    assert note["voided"] == [{"season": 2024, "forecaster": "prior", "path": 1}]
     ((b),) = note["breaches"]
     assert (b["forecaster"], b["path"], b["rule"], b["seat"]) == ("prior", 1, "planted", 1)
     # The paths that stand ran as they did without the breach, and only they are aggregated.
@@ -700,10 +711,12 @@ def test_a_breach_voids_its_path_and_only_its_path(run_data: Path, replays, caps
         assert seen[p] == clean[p]
     for arm in ("A", "B"):
         want = rn.aggregate([clean[p]["by_arm"][arm] for p in (0, 2)])
-        assert payload["results"]["prior"][arm] == json.loads(json.dumps(want))
-        assert payload["results"]["prior"][arm]["made_playoffs"]["n"] == 2
+        assert payload["results"]["2024"]["prior"][arm] == json.loads(json.dumps(want))
+        assert payload["results"]["2024"]["prior"][arm]["made_playoffs"]["n"] == 2
         counts = ss.counts_of([clean[p]["counts"][arm] for p in (0, 2)])
-        assert payload["counts"]["by_forecaster"]["prior"][arm] == json.loads(json.dumps(counts))
+        assert payload["counts"]["by_season"]["2024"]["prior"][arm] == json.loads(
+            json.dumps(counts)
+        )
 
 
 def test_compare_and_room_void_a_breached_path_and_carry_the_counts(run_data: Path, capsys):
@@ -833,7 +846,7 @@ def test_a_replay_with_a_wire_lands_moves_and_voids_nothing(wire_data: Path, cap
         "--rooms",
         "0",
         "replay",
-        "--season",
+        "--seasons",
         "2024",
         "--seats",
         str(data / "R.json"),
@@ -848,7 +861,7 @@ def test_a_replay_with_a_wire_lands_moves_and_voids_nothing(wire_data: Path, cap
     assert ss.main(args) == 0
     payload = json.loads(_written(capsys.readouterr().out).read_text())
     assert payload["audit"]["paths_voided"] == 0 and payload["audit"]["breaches"] == []
-    counts = payload["counts"]["by_forecaster"]["prior"]
+    counts = payload["counts"]["by_season"]["2024"]["prior"]
     assert counts["R"]["landed"]["mean"] >= 1 and counts["R"]["adds_per_week"]["mean"] > 0
     assert counts["S"]["landed"]["mean"] == 0
 
@@ -878,7 +891,7 @@ def test_a_simulating_run_without_a_hash_seed_says_so_on_stderr(
     dry run; none when it is set, or on a dry run. The hold-out replay is refused right after,
     so the line is all the run does."""
     a = str(run_data / "A.json")
-    argv = ["--data", str(run_data), "--rooms", "0", "replay", "--season", "2025", "--seats", a]
+    argv = ["--data", str(run_data), "--rooms", "0", "replay", "--seasons", "2025", "--seats", a]
     monkeypatch.delenv("PYTHONHASHSEED", raising=False)
     assert ss.main(argv) == 2
     err = capsys.readouterr().err
