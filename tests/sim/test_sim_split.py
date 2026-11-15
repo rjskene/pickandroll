@@ -21,7 +21,8 @@ from pickandroll.sim import nopeek, policy
 from pickandroll.sim import opponents as op
 from pickandroll.sim import run as rn
 from pickandroll.sim.belief import consistent
-from pickandroll.sim.engine import wk
+from pickandroll.sim.engine import mv, wk
+from tests.sim.draws import between
 from tests.sim.sim_league import arm
 from tests.sim.test_no_peek import DAYS, SEED, WEIGHTS, recorded
 
@@ -36,7 +37,7 @@ def second_of(projection) -> dict[int, dict[str, float]]:
     g = np.random.default_rng(11)
     out = {}
     for k, rates in sorted(projection.items()):
-        scale = float(g.uniform(0.5, 1.6))
+        scale = between(g, 0.5, 1.6)
         if g.random() < 0.2:
             continue
         out[k] = {s: v * scale for s, v in rates.items()}
@@ -174,7 +175,14 @@ def test_the_table_follows_the_rosters_yesterdays_moves_in(season):
 def test_the_forced_drops_are_weighed_on_the_rosters_before_the_landing(season, monkeypatch):
     """At the landing the seat's values are its table on the rosters as they stood before
     anything landed; from there on, on the rosters after it. The two differ on a day a move
-    lands."""
+    lands.
+
+    The test makes its own landing, so it holds on any path the season takes: on its first day
+    the seat queues a swap of a free agent for one of its players, both with a first's line
+    and a system's line that differ, the free agent not the one the market wants that day. The
+    next morning the swap lands, the free agent's line in the table turns from the system's to
+    the first's and the dropped player's the other way, and the values before and after it
+    differ."""
     setup, lines, first, second = season
     arms = armed(("Y", "yahoo", None))
     label = arms["Y"].forecaster
@@ -183,6 +191,24 @@ def test_the_forced_drops_are_weighed_on_the_rosters_before_the_landing(season, 
     landed: dict[date, tuple] = {}
     real = policy.land
     day = [None]
+    scripted: list[tuple[date, mv.Move]] = []
+    decide = op.Seat.decide
+
+    def own_landing(self, setup_, state, team, beliefs, status, returns, g):
+        if team != 1 or scripted:
+            return decide(self, setup_, state, team, beliefs, status, returns, g)
+        firsts, system = w.beliefs_on(state.day, FIRST), w.beliefs_on(state.day, label)
+
+        def apart(k):
+            return k in firsts and k in system and firsts[k] != system[k]
+
+        wanted = max(
+            (k for k in state.pool if k in setup.market), key=lambda k: (setup.market[k], -k)
+        )
+        add = min(k for k in state.pool if apart(k) and k != wanted)
+        drop = min(k for k in state.active(1) if apart(k))
+        scripted.append((state.day, mv.Move(add, drop)))
+        return policy.Decision((mv.Move(add, drop),), (), (), 0, "test")
 
     def land(state, order, spots=None, slot_counts=None, status=None, value=None, values=None):
         d = day[0]
@@ -200,8 +226,11 @@ def test_the_forced_drops_are_weighed_on_the_rosters_before_the_landing(season, 
 
     monkeypatch.setattr(policy, "land", land)
     monkeypatch.setattr(w, "status_on", status_on)
-    records, _ = run(setup, w, variant_of(setup, arms, {1: "Y"}))
-    apart = 0
+    monkeypatch.setattr(op.Seat, "decide", own_landing)
+    records, res = run(setup, w, variant_of(setup, arms, {1: "Y"}))
+    assert res.breaches == ()
+    ((queued_on, move),) = scripted
+    apart, ours = 0, None
     for r in records:
         before, rostered = landed[r.day]
         after = wk.per_game_values(r.held[label], setup.cats, points)
@@ -209,6 +238,10 @@ def test_the_forced_drops_are_weighed_on_the_rosters_before_the_landing(season, 
             apart += before != after
         else:
             assert before == after
+        if move in r.landed.get(1, ()):
+            ours = (r.day, before != after)
+    # The seat's own swap landed the morning after it was queued, and moved the values.
+    assert ours == (records[[r.day for r in records].index(queued_on) + 1].day, True)
     assert apart > 0
 
 

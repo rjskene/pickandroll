@@ -24,6 +24,7 @@ commands (``sim.cli``) bring the inputs and write the payload.
 from __future__ import annotations
 
 import math
+import multiprocessing
 import os
 from collections import Counter
 from collections.abc import Callable, Mapping, Sequence
@@ -1132,11 +1133,20 @@ def run_tasks(
     fn: Callable[..., Any], tasks: Sequence[tuple[Any, ...]], workers: int | None = None
 ) -> list[Any]:
     """``fn`` over ``tasks`` in a process pool of the simulator's own (never the engine's), each
-    worker at low priority; one worker runs them in this process (tests, smoke runs)."""
+    worker at low priority, the results in the tasks' order; one worker runs them in this process
+    (tests, smoke runs).
+
+    The workers start by ``spawn`` on every machine. Python's default is ``fork`` on Linux, and a
+    forked worker inherits the solver's state from a parent that has already solved (the
+    commands run their first task in the parent): a HiGHS solve in it can spin for ever. A
+    spawned worker is a fresh process, as it is by default on macOS, so the two machines run
+    alike."""
     n = workers or workers_default()
     if n <= 1 or len(tasks) <= 1:
         return [fn(*t) for t in tasks]
-    with ProcessPoolExecutor(max_workers=n, initializer=_lower_priority) as pool:
+    with ProcessPoolExecutor(
+        max_workers=n, initializer=_lower_priority, mp_context=multiprocessing.get_context("spawn")
+    ) as pool:
         return list(pool.map(fn, *zip(*tasks, strict=True)))
 
 
