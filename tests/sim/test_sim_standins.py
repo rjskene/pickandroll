@@ -276,6 +276,7 @@ def test_a_room_of_the_three_systems_names_each_arms_belief(systems_data: Path, 
     assert reads["system"] == policy.READ and reads["blend"] == "the arm's system is not blend"
     assert p["reads"]["blend"][shape]["knobs"]["blend"] == policy.READ
     assert set(p["results"]["2024"]) == {"prior"}  # the stand-ins add no task
+    assert p["result_is"] == ss.ROOM_RESULT and "verdict" not in p  # a room gets no verdict
 
 
 def test_the_no_peek_check_holds_on_the_room_of_the_three_systems(systems_data: Path, capsys):

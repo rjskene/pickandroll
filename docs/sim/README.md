@@ -365,6 +365,36 @@ Each command runs as `python -m pickandroll.sim <command>`:
   counts by arm and for the rivals, each arm's season scale, the unprojected count by arm, and
   the rivals each arm faced with the line that they believe the run's forecaster. A dry run
   prints its first task's pair.
+- **The pair's verdict, by forecaster and season** (`run.replay_verdict`, pure; `--arms` only, a
+  room compares levels and gets none). Per cell, the paired change in every metric with its SE
+  over the paths. Per forecaster, the pooled change: the mean of its season means, with the SE
+  taken from those means (the seasons are the clusters); with one season it is that season's
+  mean, without an SE, and says so, and it says "over k of n seasons" when a cell was skipped
+  or left out. Two kinds of figure are shown and marked but not read by the rule: an oracle's
+  row (`[y]`, a labelled yardstick) and an `espn` season whose projection fails the freeze check
+  (`[f]`, left out of `espn`'s pooled figure too). The advisory rule (ruled 2026-11-07: no grand
+  figure across forecasters) holds when the change in playoff odds is not below zero by more
+  than one SE in any cell the rule reads and every forecaster's pooled change is above zero; it
+  gives no verdict, with the reason, when the audit voided a path, a cell it reads has no SE, or
+  no forecaster is left for it to rest on. No block and no promotion: the simulator never
+  writes a live knob file. The command prints the table (a row a forecaster, a column a season
+  and the pooled column, each figure in points with its SE, "n/a" for a skipped cell, the marks
+  under it), then the notes and the verdict's line; the payload's `verdict` carries the same
+  and every metric's pooled figure. The notes say, every time, what each SE is over (in a cell:
+  the paths, that is the seats and the draws, not the season's own chance, one recorded season
+  being one draw of the world; in the pooled column: the seasons), how many paths of each cell
+  are distinct when fewer than all, and against which rivals, who believe the run's forecaster;
+  with stand-ins named, that both stand-ins learn from the same played games, so a `system`
+  difference fades through the season while the live sources stay apart all year, and that
+  under `--arms` it is the one seat's result against rivals on the run's forecaster. Under
+  `--seats` it is a room's result (an arm's outcome moves with the seats it shares the room
+  with), and a room's payload with stand-ins carries that line (`result_is`).
+- **Guidance for a `system` comparison**: run it with the run's forecaster equal to the first
+  stand-in (`--forecasters prior --bbm-as prior --yahoo-as espn`). The draft then reads the
+  first stand-in's projection, a `bbm` seat believes it and a `yahoo` or `blend` seat reads it
+  for every rostered player, so no seat holds a drafted player its belief does not project (the
+  unprojected count is zero for every arm); with another run's forecaster a seat can, and the
+  command says so.
 - **The confirmation season's ledger.** The confirmation season (2025-26, ESPN id 2026,
   `cli.CONFIRMATION`) is looked at sparingly: a written replay that names it appends one line to
   `data/sim/confirmation-looks.jsonl` (when it started, the run's name, the design, the seasons,

@@ -1165,6 +1165,147 @@ def verdict(by_shrink: Mapping[str, Mapping[str, Mapping[str, float | None]]]) -
     return {"rule": VERDICT_RULE, "line": VERDICT_LINE, "passes": passes}
 
 
+# --------------------------------------------------------------------------- a replay's verdict
+#: The replay's advisory rule on the paired design (#172, PR D2; ruled 2026-11-07: there is no
+#: grand figure across forecasters).
+REPLAY_VERDICT_RULE = "one-SE in every cell, pooled above zero"
+REPLAY_VERDICT_LINE = (
+    "advisory: holds when the paired change in playoff odds (B less A) is not below zero by more "
+    "than one SE in every cell the rule reads, and every forecaster's pooled change (the mean of "
+    "its season means) is above zero; no grand figure across forecasters, no block and no "
+    "promotion: the simulator never writes a live knob file"
+)
+#: The marks a replay's verdict table carries: a row the rule does not rest on, and a cell left
+#: out of its forecaster's pooled figure and of the rule.
+YARDSTICK = "yardstick"
+FREEZE = "freeze"
+SKIPPED = "skipped"
+MARKS = {
+    YARDSTICK: "an oracle is a labelled look-ahead, a yardstick: shown, not read by the rule",
+    FREEZE: (
+        "espn's stored projection of this season fails the freeze check: shown, left out of "
+        "espn's pooled figure and of the rule"
+    ),
+    SKIPPED: "n/a: the forecaster cannot serve this season",
+}
+
+
+def pool_seasons(means: Sequence[float], of: int) -> dict[str, Any]:
+    """One forecaster's pooled change over its seasons: the mean of the season means, with the SE
+    taken from those means (the seasons are the clusters); with one season, that season's mean
+    and no SE, and it says so. ``of``: the seasons the run names, so the figure says "over k of
+    n" when a cell was skipped or left out."""
+    k = len(means)
+    if k == 0:
+        return {"mean": None, "se": None, "seasons": 0, "of": of, "note": "no season"}
+    mean = sum(means) / k
+    se = math.sqrt(sum((x - mean) ** 2 for x in means) / (k - 1)) / math.sqrt(k) if k > 1 else None
+    note = f"over {k} of {of} seasons" if k < of else f"over {k} seasons"
+    if k == 1:
+        note += ": that season's mean, no SE (it needs two seasons)"
+    return {"mean": mean, "se": se, "seasons": k, "of": of, "note": note}
+
+
+def replay_verdict(
+    cells: Mapping[str, Mapping[str, Mapping[str, Mapping[str, float | int | None]] | None]],
+    seasons: Sequence[str],
+    yardsticks: Sequence[str] = (),
+    frozen: Mapping[str, Sequence[str]] | None = None,
+    voided: int = 0,
+    metrics: Sequence[str] = METRICS,
+) -> dict[str, Any]:
+    """The verdict of a replay's paired design, by forecaster and season (#172, PR D2): pure, on
+    the figures alone. ``cells`` maps each forecaster's label to each season's paired change
+    (:func:`aggregate` of the paths' ``delta``, B less A; None for a skipped cell);
+    ``yardsticks`` are the labels the rule does not rest on (an oracle's); ``frozen`` maps a
+    label to the seasons left out of its pooled figure and of the rule (an ``espn`` season that
+    fails the freeze check). Each row carries its cells' playoff change with their marks and its
+    pooled change in every metric (:func:`pool_seasons`). The rule (:data:`REPLAY_VERDICT_LINE`)
+    holds when no cell it reads has its change in playoff odds below zero by more than one SE
+    and every forecaster it reads has a pooled change above zero; ``passes`` is None, with the
+    reason, when the audit voided a path, a cell the rule reads has no SE, or no forecaster is
+    left for the rule to rest on."""
+    frozen = frozen or {}
+    rows: dict[str, Any] = {}
+    read_cells: list[tuple[str, str, Mapping[str, float | int | None]]] = []
+    read_rows: list[str] = []
+    for label, by_season in cells.items():
+        yardstick = label in yardsticks
+        row_cells: dict[str, Any] = {}
+        kept: dict[str, Mapping[str, Mapping[str, float | int | None]]] = {}
+        for t in seasons:
+            agg = by_season.get(t)
+            if agg is None:
+                row_cells[t] = {"mean": None, "se": None, "n": 0, "mark": SKIPPED}
+                continue
+            m = agg.get("made_playoffs") or {}
+            mark = FREEZE if t in frozen.get(label, ()) else None
+            row_cells[t] = {"mean": m.get("mean"), "se": m.get("se"), "n": m.get("n"), "mark": mark}
+            if mark is None:
+                kept[t] = agg
+                if not yardstick:
+                    read_cells.append((label, t, m))
+        pooled = {
+            k: pool_seasons(
+                [
+                    float(mean)
+                    for agg in kept.values()
+                    if (mean := (agg.get(k) or {}).get("mean")) is not None
+                ],
+                len(seasons),
+            )
+            for k in metrics
+        }
+        rows[label] = {
+            "mark": YARDSTICK if yardstick else None,
+            "cells": row_cells,
+            "pooled": pooled,
+        }
+        if not yardstick and kept:
+            read_rows.append(label)
+    passes: bool | None
+    why: str | None = None
+    failed: list[str] = []
+    no_se = [
+        f"{t} {label}" for label, t, m in read_cells if m.get("se") is None or m.get("mean") is None
+    ]
+    if voided:
+        passes, why = None, f"no verdict: the audit voided {voided} path(s)"
+    elif not read_rows:
+        passes, why = (
+            None,
+            (
+                "no verdict: no forecaster the rule may rest on (an oracle is a yardstick, and a "
+                "season that fails the freeze check is left out)"
+            ),
+        )
+    elif no_se:
+        passes, why = None, f"no verdict: no SE in the cell(s) {', '.join(no_se)} (one path?)"
+    else:
+        for label, t, m in read_cells:
+            mean, se = float(m["mean"] or 0.0), float(m["se"] or 0.0)
+            if mean < -se:
+                failed.append(
+                    f"{t} {label}: {mean:+.4f} is below zero by more than its SE {se:.4f}"
+                )
+        for label in read_rows:
+            p = rows[label]["pooled"]["made_playoffs"]
+            if p["mean"] is None or p["mean"] <= 0:
+                failed.append(f"{label} pooled: {p['mean']:+.4f} is not above zero")
+        passes = not failed
+    return {
+        "rule": REPLAY_VERDICT_RULE,
+        "line": REPLAY_VERDICT_LINE,
+        "seasons": list(seasons),
+        "rows": rows,
+        "marks": dict(MARKS),
+        "read": read_rows,
+        "passes": passes,
+        "why": why,
+        "failed": failed,
+    }
+
+
 # --------------------------------------------------------------------------- the pool
 def workers_default() -> int:
     return max(1, (os.cpu_count() or 2) - SPARE_CORES)
@@ -1329,8 +1470,10 @@ __all__ = [
     "inputs_of",
     "mirrored",
     "paired",
+    "pool_seasons",
     "realized_rates",
     "replay_setup",
+    "replay_verdict",
     "replay_world",
     "room",
     "rostered_of",

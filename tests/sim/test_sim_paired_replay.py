@@ -177,6 +177,10 @@ def test_the_same_seed_twice_gives_the_same_payload(data: Path):
     assert one["rivals"]["a"] == {"kind": "static"} and "run's forecaster" in one["rivals"]["note"]
     assert set(one["unprojected"]["by_season"]["2024"]["prior"]) == {"a", "b"}
     assert one["arms"] == {"a": "S", "b": "S"} and set(one["specs"]) == {"a", "b"}
+    # The verdict reads the one cell: a change of exactly zero is not above zero.
+    v = one["verdict"]
+    assert v["passes"] is False and v["failed"] == ["prior pooled: +0.0000 is not above zero"]
+    assert v["rows"]["prior"]["cells"]["2024"]["se"] == 0.0 and "SE in a cell" in v["notes"][0]
 
 
 def test_the_no_peek_check_on_the_pair(data: Path, monkeypatch):

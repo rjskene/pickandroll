@@ -1756,8 +1756,11 @@ def cmd_replay(args: argparse.Namespace) -> int:
     }
     if paired:
         payload |= paired_blocks(keys, results, arms, paths)
+        payload["verdict"] = verdict_block(payload, named, seasons, sources, note)
     else:
         payload |= room_blocks(keys, results, seats)
+        if sources is not None:
+            payload["result_is"] = ROOM_RESULT
     look = None
     if CONFIRMATION in seasons:
         look, ledger = reader.append_look(
@@ -1780,17 +1783,12 @@ def cmd_replay(args: argparse.Namespace) -> int:
             "note": CONFIRMATION_NOTE,
         }
     path = finish(payload, args.data, False)
-    for t, by_label in payload["results"].items():
+    if paired:
+        for line_ in verdict_lines(payload["verdict"]):
+            print(line_)
+    room_results = {} if paired else payload["results"]
+    for t, by_label in room_results.items():
         for label, d in by_label.items():
-            if paired:
-                m = d["difference"]["made_playoffs"]
-                mean = "n/a" if m["mean"] is None else f"{100 * m['mean']:+.1f} pp"
-                se = "n/a" if m["se"] is None else f"{100 * m['se']:.1f} pp"
-                print(
-                    f"{t} {label}: playoff odds, B less A, {mean} (SE {se}) over {m['n']} "
-                    f"paths ({d['distinct']} distinct)"
-                )
-                continue
             for arm, agg in d.items():
                 m = agg["made_playoffs"]
                 print(
@@ -1800,6 +1798,132 @@ def cmd_replay(args: argparse.Namespace) -> int:
         print(f"confirmation season {CONFIRMATION}: look {look}, appended to {ledger}")
     print(f"written: {path}")
     return audit_exit(note)
+
+
+#: Whose result a ``system`` difference is, by design (#172, PR D2).
+PAIR_RESULT = (
+    "under --arms a system difference is the one seat's, against rivals on the run's forecaster"
+)
+ROOM_RESULT = (
+    "under --seats a system difference is a room's result: an arm's outcome moves with the seats "
+    "it shares the room with"
+)
+SE_NOTE = (
+    "the SE in a cell is over its paths (the seat and the draws: told return dates, market "
+    "rivals' draws, an oracle's draw), not over the season's own chance: one recorded season is "
+    "one draw of the world; the SE in the pooled column is over the season means, the seasons "
+    "the clusters"
+)
+FADES_NOTE = (
+    "both stand-ins learn from the same played games, so a system difference fades through the "
+    "season, where the live sources stay apart all year"
+)
+
+
+def verdict_block(
+    payload: Mapping[str, Any],
+    named: Sequence[fc.Forecaster],
+    seasons: Sequence[int],
+    sources: Sources | None,
+    note: Mapping[str, Any],
+) -> dict[str, Any]:
+    """The pair's verdict by forecaster and season (``run.replay_verdict``) from its payload's
+    figures, with the sentences its text says every time: what each SE is over, how many paths
+    of each cell are distinct when fewer than all, the rivals and whom they believe, and with
+    stand-ins named that a system difference fades and whose result it is."""
+    ts = [str(t) for t in seasons]
+    results = payload["results"]
+    cells = {
+        f.label: {t: (results.get(t) or {}).get(f.label, {}).get("difference") for t in ts}
+        for f in named
+    }
+    frozen = {
+        label: [
+            t
+            for t in ts
+            if ((payload["forecasters"].get(t) or {}).get(label) or {})
+            .get("freeze", {})
+            .get("flagged")
+        ]
+        for label in cells
+    }
+    v = rn.replay_verdict(
+        cells,
+        ts,
+        yardsticks=[f.label for f in named if f.name == "oracle"],
+        frozen=frozen,
+        voided=int(note["paths_voided"]),
+    )
+    repeats = [
+        f"{t} {label}: {c['distinct']} of {c['paths']} paths distinct"
+        for t, by_label in results.items()
+        for label, c in by_label.items()
+        if c["distinct"] < c["paths"]
+    ]
+    rivals = payload["rivals"]
+    notes = [
+        SE_NOTE,
+        *(["distinct paths: " + "; ".join(repeats)] if repeats else []),
+        (
+            f"rivals: arm A's {json.dumps(rivals['a'], sort_keys=True)}, arm B's "
+            f"{json.dumps(rivals['b'], sort_keys=True)}; they believe the run's forecaster"
+        ),
+    ]
+    if sources is not None:
+        notes += [FADES_NOTE, PAIR_RESULT]
+    return v | {"notes": notes}
+
+
+def verdict_lines(v: Mapping[str, Any]) -> list[str]:
+    """The verdict as printed: the table (one row a forecaster, one column a season and the
+    pooled column, each figure in points of playoff odds with its SE, "n/a" for a skipped cell),
+    the marks under it, the notes, then the verdict's line."""
+
+    def pp(mean: Any, se: Any) -> str:
+        if mean is None:
+            return "n/a"
+        return f"{100 * mean:+.1f} ({'n/a' if se is None else f'{100 * se:.1f}'})"
+
+    seasons = list(v["seasons"])
+    width = max([len("forecaster"), *(len(x) + 4 for x in v["rows"])])
+    out = ["playoff odds, B less A, in points (SE):"]
+    out.append(
+        f"  {'forecaster':<{width}}"
+        + "".join(f"  {t:>14}" for t in seasons)
+        + "  "
+        + f"{'pooled':>14}"
+    )
+    used: set[str] = set()
+    for label, row in v["rows"].items():
+        name = label + (" [y]" if row["mark"] else "")
+        if row["mark"]:
+            used.add(row["mark"])
+        figures = []
+        for t in seasons:
+            c = row["cells"][t]
+            text = pp(c["mean"], c["se"]) if c["mark"] != rn.SKIPPED else "n/a"
+            if c["mark"] == rn.FREEZE:
+                text += " [f]"
+            if c["mark"]:
+                used.add(c["mark"])
+            figures.append(f"  {text:>14}")
+        p = row["pooled"]["made_playoffs"]
+        out.append(f"  {name:<{width}}" + "".join(figures) + f"  {pp(p['mean'], p['se']):>14}")
+    for label, row in v["rows"].items():
+        p = row["pooled"]["made_playoffs"]
+        if p["seasons"] < p["of"] or p["seasons"] == 1:
+            out.append(f"  {label} pooled: {p['note']}")
+    tags = {rn.YARDSTICK: "[y]", rn.FREEZE: "[f]", rn.SKIPPED: "n/a"}
+    for mark in (rn.YARDSTICK, rn.FREEZE, rn.SKIPPED):
+        if mark in used:
+            out.append(f"  {tags[mark]} {v['marks'][mark]}")
+    out += [f"note: {n}" for n in v["notes"]]
+    if v["passes"] is None:
+        verdict = v["why"]
+    else:
+        verdict = "holds" if v["passes"] else "does not hold: " + "; ".join(v["failed"])
+    out.append(f"verdict ({v['rule']}, advisory): {verdict}")
+    return out
 
 
 def room_blocks(
