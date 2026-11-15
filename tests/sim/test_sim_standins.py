@@ -229,7 +229,7 @@ def run_args(data: Path, *extra: str) -> list[str]:
         "--rooms",
         "0",
         "replay",
-        "--season",
+        "--seasons",
         "2024",
         "--seats",
         *seats,
@@ -252,7 +252,7 @@ def test_a_room_of_the_three_systems_names_each_arms_belief(systems_data: Path, 
         "yahoo": "yahoo(oracle:0.2@yahoo else prior)",
         "blend": "blend:0.25(oracle:0.2@yahoo with prior)",
     }
-    src = p["sources"]
+    src = p["sources"]["2024"]
     assert (src["bbm"], src["yahoo"]) == ("prior", "oracle:0.2@yahoo")
     assert src["note"] == (
         "the result is about two sources with these errors, not about the two real sources"
@@ -267,16 +267,15 @@ def test_a_room_of_the_three_systems_names_each_arms_belief(systems_data: Path, 
         "blend": "prior",
     }
     assert src["rule"] == fc.SYSTEMS_RULE and "every rostered player" in src["rule"]
-    assert p["forecasters"]["prior"]["stands_for"] == ["bbm"]
-    assert p["forecasters"]["oracle:0.2@yahoo"]["stands_for"] == ["yahoo"]
-    assert p["forecasters"]["oracle:0.2@yahoo"]["error"]["median_spread"] == pytest.approx(
-        0.2, abs=0.05
-    )
-    assert "stand-ins named" in p["shape"]
-    reads = p["reads"]["bbm"][p["shape"]]["knobs"]
+    forecasters, shape = p["forecasters"]["2024"], p["shape"]["2024"]
+    assert forecasters["prior"]["stands_for"] == ["bbm"]
+    assert forecasters["oracle:0.2@yahoo"]["stands_for"] == ["yahoo"]
+    assert forecasters["oracle:0.2@yahoo"]["error"]["median_spread"] == pytest.approx(0.2, abs=0.05)
+    assert "stand-ins named" in shape
+    reads = p["reads"]["bbm"][shape]["knobs"]
     assert reads["system"] == policy.READ and reads["blend"] == "the arm's system is not blend"
-    assert p["reads"]["blend"][p["shape"]]["knobs"]["blend"] == policy.READ
-    assert set(p["results"]) == {"prior"}  # the stand-ins add no task
+    assert p["reads"]["blend"][shape]["knobs"]["blend"] == policy.READ
+    assert set(p["results"]["2024"]) == {"prior"}  # the stand-ins add no task
 
 
 def test_the_no_peek_check_holds_on_the_room_of_the_three_systems(systems_data: Path, capsys):

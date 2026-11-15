@@ -41,6 +41,8 @@ from .state import Member, Setup, round_robin
 SIM_DIR = Path("sim")
 FIT_DIR = SIM_DIR / "fit"
 RUNS_DIR = SIM_DIR / "runs"
+#: The confirmation season's ledger (#172, PR D2): one JSON line a written run that names it.
+LEDGER = SIM_DIR / "confirmation-looks.jsonl"
 LOGS_DIR = Path("external") / "espn" / "gamelogs"
 #: The two systems the gap is read between, in order: ``log(first) − log(second)``.
 GAP_SYSTEMS = ("bbm", "yahoo")
@@ -679,6 +681,19 @@ def write_run(data_dir: Path, payload: Mapping[str, Any]) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=1, sort_keys=True, default=str))
     return path
+
+
+def append_look(data_dir: Path, record: Mapping[str, Any]) -> tuple[int, Path]:
+    """One line for a written run that names the confirmation season, appended to the ledger
+    (:data:`LEDGER`) as ``{"look": n, **record}``: ``n`` the line's number, and the ledger's
+    path. Lines are only ever appended."""
+    path = data_dir / LEDGER
+    path.parent.mkdir(parents=True, exist_ok=True)
+    before = path.read_text().splitlines() if path.exists() else []
+    n = 1 + sum(1 for line in before if line.strip())
+    with path.open("a") as f:
+        f.write(json.dumps({"look": n, **record}, sort_keys=True, default=str) + "\n")
+    return n, path
 
 
 def settings_of(data_dir: Path, league: str) -> SeasonSettings:

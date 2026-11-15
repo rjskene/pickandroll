@@ -326,13 +326,30 @@ Each command runs as `python -m pickandroll.sim <command>`:
   in playoff odds is not below zero by more than one SE at any shrink; no block and no promotion
   before PR 3. A league whose bracket is unread reports rank and category wins and no playoff
   odds.
-- `replay --season 2024 --forecasters prior,espn,marcel,oracle:0.1 --seats A.json B.json`: a
-  made-up twelve-team league on a recorded season (below), the arms rotated across paths, once
-  for each forecaster named (default `prior`); the hold-out is refused. `--shape stat|minutes`
-  sets how an oracle's error is drawn (default `stat`). `--news-sd` sets the told return date's
-  spread in days (default 2). `--no-peek YYYY-MM-DD` runs the no-peek check instead, on the first
-  forecaster named, and writes nothing. `--bbm-as espn --yahoo-as marcel` names the two live
-  sources' stand-ins, and each arm then believes by its `system` (below).
+- `replay --seasons 2022,2023,2024 --forecasters prior,espn,marcel,oracle:0.1 --seats A.json
+  B.json`: a made-up twelve-team league on each recorded season named (below), the arms rotated
+  across paths, once for each season and forecaster that serves it (a **cell**; default
+  forecaster `prior`). The hold-out anywhere in the list, a season named twice or a season with
+  no log on file is refused by name before anything runs. Before any path each season is read on
+  its own (its lines, the forecasters' figures, each label's weights, the league's shape) and the
+  cells are printed as a table, seasons across and forecasters down: a forecaster that cannot
+  serve a season leaves that cell skipped, with the reader's reason; a stand-in that cannot serve
+  a season refuses the run by name (a system label cannot be built there); a run with no cell
+  left is refused. The tasks are the served cells by the paths, and the estimate counts them;
+  `--dry-run` runs the first task of the first served cell. `--shape stat|minutes` sets how an
+  oracle's error is drawn (default `stat`). `--news-sd` sets the told return date's spread in
+  days (default 2). `--no-peek YYYY-MM-DD` runs the no-peek check instead, on one season only and
+  its first served forecaster, and writes nothing. `--bbm-as espn --yahoo-as marcel` names the
+  two live sources' stand-ins, and each arm then believes by its `system` (below). The payload
+  (`replay_version` 4) keys by season what is one season's: the forecasters, the sources, the
+  weights, the players, the shape, the results, the counts, the season scale and the unprojected
+  count; `cells` says which were served and why the others were not.
+- **The confirmation season's ledger.** The confirmation season (2025-26, ESPN id 2026,
+  `cli.CONFIRMATION`) is looked at sparingly: a written replay that names it appends one line to
+  `data/sim/confirmation-looks.jsonl` (when it started, the run's name, the design, the seasons,
+  the forecasters, a hash of each spec, the fit's hash, the code's commit), and its payload
+  (`confirmation`) and its last printed lines say "look n", n the line's number. A dry run and a
+  no-peek check add no line. Refusing the season inside a search set is PR H's.
 - `room --leagues all --seats A.json B.json ... --draft rosters|snake`: the arms around one
   league's table from the recorded rosters or a snake redraft.
 - `validate --league all`: the six gates on this season's recorded weeks and on the hold-out, side
@@ -401,9 +418,10 @@ A replay plays a made-up league on a season that happened, so its seats must kno
 manager could have known on each day. Before #172's PR B1 they did not: every seat's belief moved
 each week toward the season's realized rates, its whole-season average, and the draft and the pool
 took only players who went on to play twenty games. Replay figures from before it (payloads with
-no `replay_version`) are superseded. A replay wrote `replay_version: 2` from then; it writes 3
-since a run names its forecasters (PR D1), its results and counts keyed by the forecaster's label
-(`prior`, `oracle:0.1`) where version 2 keyed them `prior:0`.
+no `replay_version`) are superseded. A replay wrote `replay_version: 2` from then; 3 since a run
+names its forecasters (PR D1), its results and counts keyed by the forecaster's label (`prior`,
+`oracle:0.1`) where version 2 keyed them `prior:0`; it writes 4 since a run names several seasons
+(PR D2), what is one season's keyed by season.
 
 **The belief.** On day `d`, stat by stat, a seat believes
 `(w · the forecaster's figure + the sum of his lines dated before d) / (w + his games before d)`,
