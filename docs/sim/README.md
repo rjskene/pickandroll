@@ -24,9 +24,11 @@ through `sim/engine.py` only, the whole list of engine code it calls as library 
 engine's files are never edited from here); only `sim/readers.py`, `sim/gamelogs.py` and
 `sim/cli.py` may import `pickandroll.sources`, and since the standalone cut none does; and the
 simulator imports nothing from `pickandroll.api`: the test's list of such imports (`API_TIES`)
-is empty, and a new one fails it. The same test reads the core (`world`, `state`,
-`league`, `opponents`, `policy`, `run`, `fit`, `checks`, `validate`, `engine`, `belief`, `nopeek`,
-`audit`, `counts`) for any way to a file, a process or the network: none of them imports
+is empty, and a new one fails it. Nothing under `tests/sim/` imports `pickandroll.api` or
+`pickandroll.sources` either (PR D4a2): the made-up league parses its own players fixture. The
+same test reads the core (`world`, `state`, `league`, `opponents`, `policy`, `run`, `fit`,
+`checks`, `validate`, `engine`, `belief`, `nopeek`, `audit`, `counts`, `forecast`, `adp`) for any
+way to a file, a process or the network: none of them imports
 `pathlib`, `io`, `shutil`, `tempfile`, `socket`, `ssl`, `urllib`, `http`, `requests`, `httpx`,
 `subprocess`, `sqlite3` or `pickle`, none calls `open`, and only `run.py` uses `os`, for the
 worker count and the workers' priority. The policy and the opponents reach nothing of `run.py`,

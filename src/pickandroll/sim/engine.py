@@ -3,11 +3,11 @@
 
 The simulator plays the engine's own library code as the seat's policy and scores its weeks with
 the engine's rules, so this file is the whole list of engine code the simulator calls. The engine
-is called as library code and never edited from here: its files are fantasyEMISSARY's, and a
-change the simulator seems to need in them goes through the master. Every other module of the
-simulator imports these names from ``.engine``; ``tests/sim/test_boundary.py`` holds the rule.
-The aliases are the ones the simulator's modules used before the move, so call sites and the
-tests' patch targets read as they did.
+is called as library code and never edited from here: its files are not the simulator's to edit,
+and a change the simulator needs in them is asked for on the tracker (#172). Every other module of
+the simulator imports these names from ``.engine``; ``tests/sim/test_boundary.py`` holds the
+rule. The aliases are the ones the simulator's modules used before the move, so call sites and
+the tests' patch targets read as they did.
 """
 
 from __future__ import annotations

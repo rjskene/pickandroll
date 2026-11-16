@@ -50,21 +50,16 @@ def errors(
     path: int,
     players: Sequence[str],
     stats: Sequence[str],
-    s: float,
-    gap: Mapping[str, Mapping[str, float]],
     tau: Mapping[str, float],
 ) -> dict[str, dict[str, float]]:
-    """The persistent error ``ε`` of every player and stat in this path: normal with mean
-    ``−s·gap`` (the gap between the policy's system and the market view, zero when unknown) and
-    spread ``tau[stat]``."""
+    """The error ``ε`` of every player and stat in this path: normal with mean zero and spread
+    ``tau[stat]``. (Its shrunk mean, ``−s·gap``, went with the drawn world: every caller passed
+    zero, PR D4a2.)"""
     out: dict[str, dict[str, float]] = {}
     for i, p in enumerate(players):
         g = rng(seed, path, i, 0, STREAMS["error"])
         draws = g.standard_normal(len(stats))
-        out[p] = {
-            stat: float(-s * gap.get(p, {}).get(stat, 0.0) + tau.get(stat, 0.0) * z)
-            for stat, z in zip(stats, draws)
-        }
+        out[p] = {stat: float(tau.get(stat, 0.0) * z) for stat, z in zip(stats, draws)}
     return out
 
 
