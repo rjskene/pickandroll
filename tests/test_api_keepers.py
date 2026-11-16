@@ -419,6 +419,51 @@ def test_survival_build_gets_the_keepers_with_my_seat(client, monkeypatch):
     assert seen == [[Keeper(2, 2, a), Keeper(1, 1, b)]]
 
 
+def test_a_stopped_api_ends_a_survival_build_waiting_on_the_pool(store, monkeypatch):
+    """#401: the survival build waits on the shared pool in the solver's thread. The lifespan's
+    end terminates the pool's workers, and the build's wait ends within seconds with a failure
+    reported, so the stopped API never hangs on the thread."""
+    import importlib
+    import threading
+
+    from pickandroll.optim import pool as pools
+
+    if not (DATA / SAMPLE).exists():
+        pytest.skip("no Basketball Monster sample export in data/")
+    app_module = importlib.import_module("pickandroll.api.app")
+    started = threading.Event()
+    ended: dict = {}
+
+    def stalled(*args, **kwargs):
+        # The build's wait on the shared pool, with a job that outlasts the test.
+        started.set()
+        try:
+            for future in pools.completed([pools.shared_pool(1).submit(time.sleep, 60)]):
+                future.result()
+        except Exception as exc:
+            ended["raised"] = exc
+            raise
+        finally:
+            ended["at"] = time.monotonic()
+
+    monkeypatch.setattr(app_module, "simulate_league", stalled)
+    with TestClient(create_app(store, data_dir=DATA)) as client:
+        s = create(client, survival="simulate", survival_sims=10, fit_curve=False)
+        assert started.wait(60)
+        time.sleep(0.5)
+        stopping = time.monotonic()
+    deadline = stopping + 10
+    while "at" not in ended and time.monotonic() < deadline:
+        time.sleep(0.1)
+    assert "at" in ended, "the build's wait outlived the API by ten seconds"
+    assert isinstance(ended["raised"], pools.PoolStopped)
+    assert ended["at"] - stopping < 10
+    deadline = time.monotonic() + 5
+    while store.sessions[s["id"]].survival["status"] == "building" and time.monotonic() < deadline:
+        time.sleep(0.1)
+    assert store.sessions[s["id"]].survival["status"] == "failed"
+
+
 def yahoo_client(fake, store):
     from pickandroll.sources.yahoo import YahooLeague
 

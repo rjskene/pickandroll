@@ -44,7 +44,7 @@ import pulp
 
 from ..projections.schema import NINE_CAT, Cat
 from .objective import CategoryCurve, curve_objective
-from .pool import shared_pool
+from .pool import completed, shared_pool
 from .roster import Slot, _safe, yahoo_default_slots
 
 
@@ -438,11 +438,9 @@ def horizon_pick_pool(
             c, sol = _solve_forced(job)
             collect(c, sol, done)
     else:
-        from concurrent.futures import as_completed
-
         pool = shared_pool(workers)
         futures = [pool.submit(_solve_forced, job) for job in jobs]
-        for done, future in enumerate(as_completed(futures), start=1):
+        for done, future in enumerate(completed(futures), start=1):
             c, sol = future.result()
             collect(c, sol, done)
 
@@ -499,11 +497,9 @@ def scenarios_if_gone(
             gone, sol = _solve_blocked(job)
             collect(gone, sol, done)
     else:
-        from concurrent.futures import as_completed
-
         pool = shared_pool(workers)
         futures = {pool.submit(_solve_blocked, job): job[1] for job in jobs}
-        for done, future in enumerate(as_completed(futures), start=1):
+        for done, future in enumerate(completed(futures), start=1):
             gone, sol = future.result()
             collect(gone, sol, done)
     order = {p: i for i, p in enumerate(players)}
