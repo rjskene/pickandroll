@@ -955,19 +955,24 @@ def _activate(
 ) -> list[int]:
     """A team's held players whose status no longer fits their slot (``moves.is_cleared``) come
     back to the bench; then, while the active roster is over ``spots``, its least valuable active
-    player by ``value`` leaves, as the engine charges a cleared player (``moves.comebacks``), the
-    keep rule apart (the executor does not see it). The players who left."""
+    player by ``value`` leaves, as the engine charges a cleared player (``moves.comebacks``), a
+    tie broken as the engine breaks it. Two things apart, which the executor does not see: the
+    keep rule (``problem.kept``) and the day's choice of an activation's drop
+    (``moves.choose_activation``, #360, which the simulator never calls), so the engine's plan
+    can charge another player than the one who leaves (PR G's to finish). The players who
+    left."""
     for i, (k, slot) in enumerate(roster):
         if slot in mv.HELD and mv.is_cleared(status.get(k), slot):
             roster[i] = (k, BENCH)
     out: list[int] = []
     # The keep rule stays out of the executor: the engine's ``comebacks`` never sends a kept
     # player while another can go, but the executor sees no problem and no rule, only the day's
-    # values. The whole active roster is weighed, the returning player included.
+    # values. The whole active roster is weighed, the returning player included. A tie on value
+    # breaks as the engine's does, by the id as text (#172, PR D4c: 10 before 9).
     while spots is not None and _active_count(roster) > spots:
         weakest = min(
             (k for k, slot in roster if slot not in mv.HELD),
-            key=lambda k: (value.get(k, 0.0), k),
+            key=lambda k: (value.get(k, 0.0), str(k)),
         )
         roster.remove(next(x for x in roster if x[0] == weakest))
         out.append(weakest)

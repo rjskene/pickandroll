@@ -336,6 +336,8 @@ class LeagueRules:
                 raise ValueError(f"points table: {', '.join(unknown)} is no stat of a line")
             if not stats or stats != sorted(set(stats), key=STATS.index):
                 raise ValueError(f"points table {self.points!r}: each stat once, in STATS order")
+            if not any(w for _, w in self.points):
+                raise ValueError("a points table that scores nothing: every week would tie")
         for kind in self.held:
             if kind not in HELD_MOST:
                 raise ValueError(f"held slot {kind!r} is not one of {', '.join(HELD_MOST)}")
@@ -420,8 +422,8 @@ def parse_held(text: str) -> tuple[str, ...]:
 
 def parse_points(text: str) -> tuple[tuple[str, float], ...]:
     """A points table ``replay --points`` names (#172, PR D4c), as ``pts=1,reb=1.2,...``: each
-    key a stat of a line (the engine's ``STATS``), each value a finite number. The table is what
-    is named: a stat left out scores nothing. In ``STATS`` order."""
+    key a stat of a line (the engine's ``STATS``), each value a finite number, not every one zero.
+    The table is what is named: a stat left out scores nothing. In ``STATS`` order."""
     table: dict[str, float] = {}
     for key, value in _pairs(text, "--points"):
         if key not in STATS:
@@ -433,6 +435,8 @@ def parse_points(text: str) -> tuple[tuple[str, float], ...]:
         if not math.isfinite(w):
             raise ValueError(f"--points {key}={value}: points per unit are a finite number")
         table[key] = w
+    if not any(table.values()):
+        raise ValueError(f"--points {text!r}: every weight is zero, so every week would tie")
     return tuple((s, table[s]) for s in STATS if s in table)
 
 

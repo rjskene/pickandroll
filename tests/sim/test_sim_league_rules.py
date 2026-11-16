@@ -85,6 +85,7 @@ def test_a_points_table_is_what_it_names_in_the_engine_s_order():
         ("", "names nothing"),
         ("pts=1,pts=2", "pts is named twice"),
         ("pts", "is not KEY=VALUE"),
+        ("pts=0,reb=0", "every weight is zero, so every week would tie"),
     ],
 )
 def test_a_points_table_with_a_key_or_a_value_it_cannot_read_is_refused_in_words(text, says):
@@ -105,6 +106,7 @@ def test_a_points_table_with_a_key_or_a_value_it_cannot_read_is_refused_in_words
         ({"scoring": "points", "points": ()}, "each stat once"),
         ({"scoring": "points", "points": (("reb", 1.0), ("pts", 1.0))}, "in STATS order"),
         ({"scoring": "points", "points": (("fpts", 1.0),)}, "fpts is no stat of a line"),
+        ({"scoring": "points", "points": (("pts", 0.0),)}, "a points table that scores nothing"),
         ({"held": ("IL+", "IL")}, "IL first, then IL+"),
         ({"held": ("IL", "IL", "IL")}, "at most 2 IL"),
         ({"held": ("NA",)}, "is not one of IL, IL+"),
