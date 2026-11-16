@@ -388,11 +388,22 @@ def no_build(*_args, **_kw):
     raise RuntimeError("the build failed")
 
 
+def no_spot_left(client) -> None:
+    """The league's settings page with one bench slot fewer than the fixture's, from the next
+    refresh on: a player moved from the active roster to the IL leaves no active spot open."""
+    page = client.fake.settings_page
+    assert page.count("BN, BN, BN,") == 1
+    client.fake.settings_page = page.replace("BN, BN, BN,", "BN, BN,")
+
+
 def cleared_on_the_il(client) -> tuple[int, int]:
-    """A live league whose bench player sits cleared on the IL: his id and the engine's drop."""
+    """A live league whose bench player sits cleared on the IL: their id and the engine's drop.
+    The league has one bench slot fewer than the fixture's, so the move leaves no active spot
+    open and the comeback needs a drop (#403: with a spot open it needs none)."""
     lineup_league(client)
     roster = client.get(f"/seasons/{LEAGUE}").json()["roster"]
     him = next(s["player"] for s in roster if s["slot"] == "BN")
+    no_spot_left(client)
     client.fake.team_pages[4] = moved(fixture("team4.html"), {him["name"]: "IL"})
     assert client.post(f"/seasons/{LEAGUE}/refresh", params={"wait": True}).status_code == 202
     live_league(client)
@@ -477,7 +488,9 @@ def test_after_the_drop_the_returned_player_starts_and_no_slot_stays_empty(clien
     him = next(s for s in roster if s["slot"] != "BN" and s["player"]["yahoo_id"] in playing)
     back, slot = him["player"]["yahoo_id"], him["slot"]
 
-    # He sits on the IL, cleared; the engine names the drop, who starts in the slot he left.
+    # They sit on the IL, cleared, with no spot open (#403); the engine names the drop, who
+    # starts in the slot they left.
+    no_spot_left(client)
     refresh(moved(html, {names[back]: "IL"}))
     [alert] = [
         a

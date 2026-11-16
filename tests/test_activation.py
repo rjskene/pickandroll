@@ -54,6 +54,24 @@ def test_the_old_rule_drops_the_streamer_the_plan_keeps():
     assert (c.player, c.drop) == (BACK, STREAMER)  # the lowest per-game value
 
 
+def test_a_cleared_player_with_an_open_active_spot_takes_it_and_drops_no_one():
+    """#403, the master's ruling R1: a comeback needs a drop only with no room (#318). With an
+    active spot open the cleared player takes it, whatever the activation names, and the payload
+    the lineup executor reads says no drop."""
+    full = league()
+    room = replace(full, roster=tuple(m for m in full.roster if m[0] != WEAK))
+    assert room.spots - len(room.roster) == 1
+    assert mv.comebacks(room, "week", ()) == []
+    assert mv.comebacks(replace(room, activation={BACK: STREAMER}), "week", ()) == []
+    [c] = season_moves.cleared_payload(room)
+    assert (c["player"], c["slot"], c["drop"]) == (BACK, "IL", None)
+    # An add that takes the open spot leaves none: the comeback sends someone again.
+    [back] = mv.comebacks(room, "week", [mv.Move(11)])
+    assert back.player == BACK and back.drop is not None
+    # The full roster still sends one, as before.
+    assert [c.player for c in mv.comebacks(full, "week", ())] == [BACK]
+
+
 def test_the_activation_on_the_plans_score_keeps_the_streamer_to_his_step():
     p = league()
     chosen = mv.choose_activation(p, SCORE, None, PLAN)

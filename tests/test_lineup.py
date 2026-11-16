@@ -450,7 +450,9 @@ def test_a_player_held_now_but_benched_on_an_earlier_days_page_leaves_the_lineup
 
 
 def test_a_held_player_whose_status_cleared_is_the_first_thing_said(client):
-    """Paul Reed (healthy) sits in an IL slot: Yahoo refuses every add until he is activated."""
+    """Paul Reed (healthy) sits in an IL slot: Yahoo refuses every add until they are activated.
+    Moved there from the active roster, Reed leaves an active spot open, so the activation drops
+    no one (#403: a comeback needs a drop only with no room)."""
     client.fake.team_pages[4] = moved(fixture("team4.html"), {"Paul Reed": "IL"})
     lineup_league(client)
     v = client.get(f"/seasons/{LEAGUE}").json()
@@ -458,7 +460,7 @@ def test_a_held_player_whose_status_cleared_is_the_first_thing_said(client):
     m = client.get(f"/seasons/{LEAGUE}/moves").json()
     [cleared] = m["cleared"]
     assert (cleared["player"], cleared["slot"], cleared["status"]) == (reed, "IL", None)
-    assert cleared["from"] == "2026-10-21" and cleared["drop"] is not None
+    assert cleared["from"] == "2026-10-21" and cleared["drop"] is None
     alerts = client.get(f"/seasons/{LEAGUE}/lineup").json()["alerts"]
     assert alerts[0]["kind"] == "cleared" and alerts[0]["player"] == reed
     held = client.get(f"/seasons/{LEAGUE}/lineup").json()["held"]
@@ -466,12 +468,9 @@ def test_a_held_player_whose_status_cleared_is_the_first_thing_said(client):
     # The digest says so first, names only.
     d = client.get("/flags/digest").json()
     [row] = [x for x in d["lineups"] if x["league"] == LEAGUE]
-    drop = next(
-        s["player"]["name"] for s in v["roster"] if s["player"]["yahoo_id"] == cleared["drop"]
-    )
     assert row["cleared_line"] == (
         f"- League {LEAGUE}: Paul Reed sits in IL with no status and blocks every add until"
-        f" activated; the activation would drop {drop}"
+        " activated; an active spot is open for them"
     )
     section = d["markdown"][d["markdown"].index("### Lineups") :]
     assert section.splitlines()[2] == row["cleared_line"]
@@ -489,7 +488,7 @@ def test_the_cleared_line_names_the_player_his_slot_status_and_the_drop():
     )
     alerts[1] = {**alerts[1], "drop": None}
     assert season_lineup.cleared_line("9", {"players": players, "alerts": alerts}).endswith(
-        "until activated; an active spot is open for him"
+        "until activated; an active spot is open for them"
     )
     assert season_lineup.cleared_line("9", {"players": players, "alerts": alerts[:1]}) is None
 
