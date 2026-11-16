@@ -26,6 +26,7 @@ def test_an_oracles_error_is_drawn_alike_and_the_streams_keep_their_numbers():
         "news": 6,
         "market": 7,
         "forecast": 8,
+        "draft": 9,
     }
 
 

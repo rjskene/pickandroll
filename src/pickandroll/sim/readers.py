@@ -19,9 +19,9 @@ from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from . import adp, gamelogs
 from . import fit as fitmod
 from . import forecast as fc
-from . import gamelogs
 from . import run as rn
 from .engine import wk
 from .state import Member
@@ -125,6 +125,23 @@ def replay_lines(
             pid, str(p.get("fullName") or pid), None if team is None else str(team), positions
         )
     return lines, members, {k: sorted(v) for k, v in scheduled.items()}
+
+
+def adp_table(data_dir: Path, season: int, hold_out: int | None) -> tuple[adp.Table, str]:
+    """The table of average draft positions in ``season``'s own log (``adp.espn_table``) and the
+    log file's hash (#172, PR D4a). The hold-out is refused before its log is opened; a season
+    with no log, or a log whose players all carry one figure, is refused by name."""
+    if season == hold_out:
+        raise SimReadError(f"{hold_out} is the hold-out; no run plays it")
+    path = data_dir / LOGS_DIR / f"{season}.json"
+    if not path.is_file():
+        raise SimReadError(f"season {season}: no cached log under {data_dir / LOGS_DIR}")
+    raw = path.read_bytes()
+    try:
+        table = adp.espn_table(json.loads(raw).get("body") or {})
+    except adp.NoTable as e:
+        raise SimReadError(f"season {season} has no draft table: {e}") from None
+    return table, hashlib.sha256(raw).hexdigest()
 
 
 def prior_rates(

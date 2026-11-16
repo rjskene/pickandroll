@@ -5,8 +5,9 @@ Every draw is seeded by ``(seed, path, player, game, stream)`` through :func:`rn
 simulator keys by seed and pick, so two arms of a pair see one world and a stream added later
 moves no other draw. A replay's truth is the recorded lines (``run.replay_world``); what is drawn
 on a path is the told return date of an absence (the ``news`` stream, :data:`NEWS_SD_DAYS`), a
-market rival's moves (``market``) and an oracle's error (:func:`errors` and :func:`true_rates`
-on the ``error`` and ``forecast`` streams). The drawn world of game noise, a hazard and a weekly
+market rival's moves (``market``), an oracle's error (:func:`errors` and :func:`true_rates`
+on the ``error`` and ``forecast`` streams) and a rival's draft board under a table of average
+draft positions (``draft``, PR D4a). The drawn world of game noise, a hazard and a weekly
 refresh went with the standalone cut (PR D3); its streams keep their numbers. Pure.
 """
 
@@ -29,6 +30,7 @@ STREAMS: Mapping[str, int] = {
     "news": 6,
     "market": 7,
     "forecast": 8,
+    "draft": 9,
 }
 #: The spread of the return date the policy sees around the true one, in days.
 NEWS_SD_DAYS = 2.0

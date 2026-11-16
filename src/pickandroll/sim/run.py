@@ -33,7 +33,7 @@ from typing import Any
 
 import numpy as np
 
-from . import audit, policy, world
+from . import adp, audit, policy, world
 from . import counts as ct
 from . import league as lg
 from . import opponents as op
@@ -41,7 +41,16 @@ from .belief import CausalBelief, newcomer_prior
 from .engine import Week, mv, wk
 from .fit import W_DEFAULT
 from .forecast import MIN_GAMES, realized_rates
-from .state import Member, Setup, SimState, initial, round_robin, snake_draft, weeks_from
+from .state import (
+    Member,
+    Setup,
+    SimState,
+    board_draft,
+    initial,
+    round_robin,
+    snake_draft,
+    weeks_from,
+)
 
 Rates = Mapping[str, float]
 #: The knobs an arm names (``policy.KNOBS``: the ten live ones and the simulator's two).
@@ -873,6 +882,38 @@ def paired(
     vb = {**opponents_of(setup, b, me), me: b.seat()}
     scale = {"a": scale_on(setup, w, a, me), "b": scale_on(setup, w, b, me)}
     ra, rb = simulate(setup, w, [va, vb], [a.execute_plan, b.execute_plan], on_day=on_day)
+    return _pair_result(setup, ra, rb, me, scale)
+
+
+def paired_apart(
+    setup_a: Setup,
+    w_a: World,
+    setup_b: Setup,
+    w_b: World,
+    a: Arm,
+    b: Arm,
+    me: int,
+    on_day: Callable[[DayRecord], None] | None = None,
+) -> dict[str, Any]:
+    """Arm A and arm B in seat ``me``, each in a league of its own drafted apart (#172, PR D4a):
+    A's season on ``setup_a`` through ``w_a``, B's on ``setup_b`` through ``w_b``, the two worlds
+    on one ``(seed, path)`` so their draws stay common. The keys :func:`paired` returns, with
+    nothing shared between the two (``shared`` is B's own). ``on_day`` gets A's days as variant 0
+    and B's as variant 1."""
+    va = {**opponents_of(setup_a, a, me), me: a.seat()}
+    vb = {**opponents_of(setup_b, b, me), me: b.seat()}
+    scale = {"a": scale_on(setup_a, w_a, a, me), "b": scale_on(setup_b, w_b, b, me)}
+    (ra,) = simulate(setup_a, w_a, [va], [a.execute_plan], on_day=on_day)
+    second = None if on_day is None else (lambda r: on_day(replace(r, variant=1)))
+    (rb,) = simulate(setup_b, w_b, [vb], [b.execute_plan], on_day=second)
+    rb = replace(rb, breaches=tuple(replace(x, variant=1) for x in rb.breaches))
+    return _pair_result(setup_a, ra, rb, me, scale)
+
+
+def _pair_result(
+    setup: Setup, ra: VariantResult, rb: VariantResult, me: int, scale: dict[str, Any]
+) -> dict[str, Any]:
+    """A pair's task result from its two seasons (:func:`paired`, :func:`paired_apart`)."""
     ma, mb = _metrics(ra.summaries.get(me)), _metrics(rb.summaries.get(me))
     rivals = [t for t in setup.teams if t != me]
     return {
@@ -1178,6 +1219,7 @@ def replay_setup(
     playoff_teams: int = REPLAY_PLAYOFF_TEAMS,
     cats: Sequence[str] = ("fg_pct", "ft_pct", "threes", "pts", "reb", "ast", "stl", "blk", "tov"),
     opening_days: int | None = OPENING_DAYS,
+    draft: adp.Draft | None = None,
 ) -> Setup:
     """A made-up league on a recorded season, from what is known before it starts. Its players
     are everyone ``players`` lists with a scheduled game, projected or not; ``teams`` seats
@@ -1188,7 +1230,13 @@ def replay_setup(
     schedule (``p<id>``): his game days are his ``scheduled`` entries (played or not; the days
     he has a line for when none are given), so a trade or a team read later than the season
     moves nothing. Every day of the calendar is a key of the schedule, an empty set when nobody
-    plays: no day is unread, so the engine extrapolates no game (#172, PR C2)."""
+    plays: no day is unread, so the engine extrapolates no game (#172, PR C2).
+
+    ``draft`` (#172, PR D4a): the league is drafted on a table of average draft positions
+    instead (:func:`draft_boards`, ``state.board_draft``): every member with a game in the
+    opening days who is projected or listed can be drafted, each seat takes the best player
+    left on its own board, and the market's view is the table's (``adp.market_view``). None is
+    the draft on ``projection`` alone, as before."""
     schedule: dict[date, set[str]] = {}
     members: dict[int, Member] = {}
     game_days: dict[int, list[date]] = {}
@@ -1214,15 +1262,27 @@ def replay_setup(
     pairings = round_robin(ids, regular)
     projected = [k for k in projection if k in members]
     opening = None if opening_days is None else period_one + timedelta(opening_days - 1)
-    draftable = [
-        k
-        for k in projected
-        if opening is None or any(period_one <= d <= opening for d in game_days[k])
-    ]
     points = None
     value = wk.per_game_values({k: projection[k] for k in projected}, tuple(cats), points)
     spots = sum(1 for s in slots if s not in mv.HELD)
-    rosters = snake_draft(draftable, value, ids, spots)
+    if draft is None:
+        draftable = [
+            k
+            for k in projected
+            if opening is None or any(period_one <= d <= opening for d in game_days[k])
+        ]
+        rosters = snake_draft(draftable, value, ids, spots)
+        market = {k: value.get(k, 0.0) for k in projected}
+    else:
+        draftable = [
+            k
+            for k in members
+            if (k in projection or k in draft.picks)
+            and (opening is None or any(period_one <= d <= opening for d in game_days[k]))
+        ]
+        boards = draft_boards(draft, draftable, value, ids, members, cats)
+        rosters = board_draft(boards, ids, spots)
+        market = adp.market_view(draft.picks, value, list(members))
     taken = {k for r in rosters.values() for k, _ in r}
     spec = lg.LeagueSpec(
         ids,
@@ -1247,9 +1307,40 @@ def replay_setup(
         roster_slots=tuple(slots),
         cats=tuple(cats),
         max_weekly_adds=4,
-        market={k: value.get(k, 0.0) for k in projected},
+        market=market,
         spec=spec,
     )
+
+
+def draft_boards(
+    draft: adp.Draft,
+    draftable: Sequence[int],
+    value: Mapping[int, float],
+    teams: Sequence[int],
+    players: Mapping[int, Member],
+    cats: Sequence[str],
+) -> dict[int, list[int]]:
+    """Each seat's board under ``draft`` (#172, PR D4a): a seat ``draft.seats`` names drafts on
+    its own forecaster's per-game values on draft day (over the league's ``players`` it
+    projects, as the run's ``value`` is over the run's), every other seat on a rival's board
+    (``adp.rival_board``) drawn from its own generator on the path's ``(seed, path)`` and the
+    ``draft`` stream, so two leagues on one path meet the same rivals' boards."""
+    out: dict[int, list[int]] = {}
+    for t in teams:
+        own = draft.seats.get(t)
+        if own is None:
+            g = world.rng(draft.seed, draft.path, t, 0, world.STREAMS["draft"])
+            out[t] = adp.rival_board(draft.picks, draftable, value, draft.spread, g)
+        else:
+            mine = wk.per_game_values({k: own[k] for k in own if k in players}, tuple(cats), None)
+            out[t] = adp.seat_board(mine, draftable)
+    return out
+
+
+def drafted_unprojected(setup: Setup) -> int:
+    """The drafted players the run's forecaster does not project (#172, PR D4a): a rival on a
+    table can draft them; under the draft on the projection, none."""
+    return sum(1 for r in setup.rosters.values() for k, _ in r if k not in setup.projection)
 
 
 __all__ = [
@@ -1266,9 +1357,12 @@ __all__ = [
     "aggregate",
     "arm_of",
     "check_fit",
+    "draft_boards",
+    "drafted_unprojected",
     "inputs_of",
     "mirrored",
     "paired",
+    "paired_apart",
     "pool_seasons",
     "realized_rates",
     "replay_setup",

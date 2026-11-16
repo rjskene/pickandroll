@@ -51,7 +51,7 @@ from datetime import UTC, date, datetime, time, timedelta
 from pathlib import Path
 from typing import Any
 
-from . import audit, checks, gamelogs, nopeek, policy, world
+from . import adp, audit, checks, gamelogs, nopeek, policy, world
 from . import counts as ct
 from . import fit as fitmod
 from . import forecast as fc
@@ -420,6 +420,12 @@ def dry_run(key: Mapping[str, Any], first: Mapping[str, Any]) -> int:
                 f"unprojected, {whose}{label}, the first task: {row['seats']} on its seats' "
                 f"rosters, {row['all']} on all"
             )
+    if "drafted_unprojected" in first:
+        print(
+            f"draft market, the first task: {first['drafts']} draft(s), "
+            f"{', '.join(str(n) for n in first['drafted_unprojected'])} drafted player(s) the "
+            "run's forecaster does not project"
+        )
     if "delta" in first and "seat" in first:
         shown = {
             side: ", ".join(f"{m} {v:g}" for m, v in first[side].items() if v is not None)
@@ -636,9 +642,35 @@ def splits_of(sources: Sources | None, arms: Mapping[str, rn.Arm]) -> dict[str, 
     }
 
 
-def replay_setup_of(season: int, lines: Any, members: Any, scheduled: Any, projection: Any) -> Any:
-    """A replay's league in one path, drafted on the run's forecaster's ``projection``."""
-    return rn.replay_setup(season, lines, members, projection, reader.PERIOD_ONE[season], scheduled)
+def replay_setup_of(
+    season: int,
+    lines: Any,
+    members: Any,
+    scheduled: Any,
+    projection: Any,
+    draft: adp.Draft | None = None,
+) -> Any:
+    """A replay's league in one path, drafted on the run's forecaster's ``projection``, or on a
+    table of average draft positions (``draft``, #172, PR D4a)."""
+    return rn.replay_setup(
+        season, lines, members, projection, reader.PERIOD_ONE[season], scheduled, draft=draft
+    )
+
+
+#: A season's market under ``--adp espn`` (#172, PR D4a): its table's listed players' average
+#: picks and the rivals' spread; None under ``--adp none``.
+Market = tuple[Mapping[int, float], adp.Spread] | None
+#: The replay's seats as ``run.replay_setup`` numbers them.
+REPLAY_IDS = tuple(range(1, rn.REPLAY_TEAMS + 1))
+
+
+def own_projection(
+    label: str | None, forecaster: fc.Forecaster, projection: Any, forecasts: Mapping[str, Any]
+) -> Any:
+    """The projection a seat holding ``label`` drafts on: the run's forecaster's for None or its
+    label, else that label's (``forecasts_of``'s, for a ``system`` or ``blend`` seat its
+    stand-in belief on day one)."""
+    return projection if label is None or label == forecaster.label else forecasts[label]
 
 
 def task_replay(
@@ -657,9 +689,20 @@ def task_replay(
     seats: Sequence[str],
     seed: int,
     path: int,
+    market: Market = None,
 ) -> dict[str, Any]:
+    """One task of the room on a replay. Under a ``market`` (#172, PR D4a) every seat holds an
+    arm, so every seat drafts on its arm's own board and no board is a rival's."""
     projection = projection_of(forecaster, fixed, lines, seed, path, shape)
-    setup = replay_setup_of(season, lines, members, scheduled, projection)
+    forecasts = forecasts_of(sources, fixed, lines, seed, path, shape, arms)
+    draft = None
+    if market is not None:
+        own = {
+            t: own_projection(arms[name].forecaster, forecaster, projection, forecasts)
+            for t, name in rn.rotate(seats, REPLAY_IDS, path).items()
+        }
+        draft = adp.Draft(market[0], market[1], seed, path, own)
+    setup = replay_setup_of(season, lines, members, scheduled, projection, draft)
     w = rn.replay_world(
         setup,
         lines,
@@ -669,7 +712,7 @@ def task_replay(
         weights[forecaster.label],
         news_sd=news_sd,
         label=forecaster.label,
-        forecasts=forecasts_of(sources, fixed, lines, seed, path, shape, arms),
+        forecasts=forecasts,
         split=splits_of(sources, arms),
         weights_of=weights,
     )
@@ -678,6 +721,9 @@ def task_replay(
     out = rn.room(setup, w, arms, seats, path)
     out["forecaster"] = forecaster.label
     out["unprojected"] = unprojected
+    if market is not None:
+        out["drafts"] = 1
+        out["drafted_unprojected"] = [rn.drafted_unprojected(setup)]
     return out
 
 
@@ -708,38 +754,75 @@ def task_paired(
     pair: Sequence[str],
     seed: int,
     path: int,
+    market: Market = None,
 ) -> dict[str, Any]:
     """One task of the paired design on a replay (#172, PR D2): the league drafted on the cell's
     forecaster, arm A in seat :func:`seat_of` in one season and arm B in the same seat in a
     second, through one world (``run.paired``); every other seat is each arm's rivals, on the
-    run's forecaster. ``pair`` names the two arms' keys in ``arms`` (``a`` and ``b``)."""
+    run's forecaster. ``pair`` names the two arms' keys in ``arms`` (``a`` and ``b``).
+
+    Under a ``market`` (#172, PR D4a) the arm's seat drafts on the arm's own board and the other
+    eleven on rivals' boards. When the two arms' draft-day beliefs are one label there is one
+    draft and one league, as before; when they differ each arm's season is its own league from
+    the draft on (``run.paired_apart``): two setups and two worlds on the same ``(seed, path)``,
+    so the world's draws and the rivals' boards stay common."""
     projection = projection_of(forecaster, fixed, lines, seed, path, shape)
-    setup = replay_setup_of(season, lines, members, scheduled, projection)
-    w = rn.replay_world(
-        setup,
-        lines,
-        lag,
-        seed,
-        path,
-        weights[forecaster.label],
-        news_sd=news_sd,
-        label=forecaster.label,
-        forecasts=forecasts_of(sources, fixed, lines, seed, path, shape, arms),
-        split=splits_of(sources, arms),
-        weights_of=weights,
-    )
-    me = seat_of(setup, path)
+    forecasts = forecasts_of(sources, fixed, lines, seed, path, shape, arms)
+
+    def world_of(setup: Any) -> rn.World:
+        return rn.replay_world(
+            setup,
+            lines,
+            lag,
+            seed,
+            path,
+            weights[forecaster.label],
+            news_sd=news_sd,
+            label=forecaster.label,
+            forecasts=forecasts,
+            split=splits_of(sources, arms),
+            weights_of=weights,
+        )
+
     a, b = (arms[k] for k in pair)
+    if market is None:
+        setup = replay_setup_of(season, lines, members, scheduled, projection)
+        setups = {k: setup for k in pair}
+    else:
+        me = REPLAY_IDS[path % len(REPLAY_IDS)]
+        labels = {k: arms[k].forecaster or forecaster.label for k in pair}
+        setups = {}
+        for k in pair:
+            same = next((setups[j] for j in setups if labels[j] == labels[k]), None)
+            if same is not None:
+                setups[k] = same
+                continue
+            own = own_projection(labels[k], forecaster, projection, forecasts)
+            draft = adp.Draft(market[0], market[1], seed, path, {me: own})
+            setups[k] = replay_setup_of(season, lines, members, scheduled, projection, draft)
+    sa, sb = (setups[k] for k in pair)
+    worlds = {id(sa): world_of(sa)} if sa is sb else {id(sa): world_of(sa), id(sb): world_of(sb)}
+    me = seat_of(sa, path)
     unprojected = {
         k: rn.unprojected(
-            setup, w, {t: arms[k].forecaster if t == me else None for t in setup.teams}
+            setups[k],
+            worlds[id(setups[k])],
+            {t: arms[k].forecaster if t == me else None for t in setups[k].teams},
         )
         for k in pair
     }
-    out = rn.paired(setup, w, a, b, me)
+    if sa is sb:
+        out = rn.paired(sa, worlds[id(sa)], a, b, me)
+    else:
+        out = rn.paired_apart(sa, worlds[id(sa)], sb, worlds[id(sb)], a, b, me)
     out["seat"] = me
     out["forecaster"] = forecaster.label
     out["unprojected"] = unprojected
+    if market is not None:
+        out["drafts"] = 1 if sa is sb else 2
+        out["drafted_unprojected"] = [
+            rn.drafted_unprojected(x) for x in ([sa] if sa is sb else [sa, sb])
+        ]
     return out
 
 
@@ -753,10 +836,38 @@ def task_paired(
 #: keyed by the forecaster's label (``prior``, ``oracle:0.1``), where version 2 keyed them by kind
 #: and spread (``prior:0``); 2 since its seats believe only the games played (PR B1), a version 1
 #: replay's seats having seen each season's rates.
-REPLAY_VERSION = 5
+REPLAY_VERSION = 6
 REPLAY_VERSION_WHY = (
-    "5: the standalone cut: the payload names nothing of a live league or a drawn world (no gap, "
-    "refresh or tau); the figures are version 4's"
+    "6: the draft market (--adp): the payload names what the league was drafted on (adp); "
+    "with --adp none the figures are version 5's"
+)
+#: What a replay under a table drafts on (#172, PR D4a), for its payload.
+ADP_RIVAL = (
+    "a rival seat's board: each listed player's average pick plus a normal draw at base + "
+    "growth x pick picks, no bias, one draw a listed player; the players the table does not list "
+    "below every listed one, by the run's forecaster's draft-day value"
+)
+ADP_SEAT = (
+    "an arm's seat's board: its own forecaster's per-game value on draft day (a system or blend "
+    "seat's stand-in belief); a player it does not project is not on it"
+)
+ADP_MARKET = (
+    "the market's view: the negative of a listed player's average pick, the unlisted below by "
+    "the run's forecaster's draft-day value; the preseason's, never refreshed"
+)
+ADP_POOL = (
+    "the players with a scheduled game in the season's first {days} days that the run's "
+    "forecaster projects or the table lists"
+)
+ADP_LIMIT = (
+    "the arm's seat drafts on per-game value alone, with no regard for the games a player is "
+    "expected to miss or for where the room would take him, so it can finish near the top or "
+    "near the bottom of the room on every path, the paired change in playoff odds then zero with "
+    "no spread; how it should draft is open with the user"
+)
+ADP_APART = (
+    "the two arms' draft-day beliefs differ, so each arm's season is a league of its own from "
+    "the draft on, on the same (seed, path) and the same rivals' boards: the pair shares no draft"
 )
 BELIEF_RULE = (
     "per stat, (w * the forecaster's figure + the sum of his lines dated before the day) / "
@@ -1220,6 +1331,31 @@ def cmd_replay(args: argparse.Namespace) -> int:
         print(f"refused: --arms names exactly two spec files, A and B, not {len(args.arms)}")
         return 2
     paired = args.arms is not None
+    spread = None
+    if args.adp == "none" and args.adp_spread is not None:
+        print(
+            "refused: --adp-spread is the spread of a table's rivals; --adp none drafts on the "
+            "run's forecaster and reads none"
+        )
+        return 2
+    if args.adp != "none":
+        if args.adp_spread is None:
+            print(
+                f"refused: --adp {args.adp} names its rivals' spread, --adp-spread "
+                "<base>,<growth>: it is given, never fitted here"
+            )
+            return 2
+        try:
+            spread = adp.parse_spread(args.adp_spread)
+        except ValueError as e:
+            print(f"refused: {e}")
+            return 2
+        if args.no_peek:
+            print(
+                f"refused: --no-peek checks the draft on the run's forecaster; with --adp "
+                f"{args.adp} it is not built"
+            )
+            return 2
     started = datetime.now(UTC)
     try:
         day = date.fromisoformat(args.no_peek) if args.no_peek else None
@@ -1248,6 +1384,13 @@ def cmd_replay(args: argparse.Namespace) -> int:
                     "opponents.rate"
                 )
                 return 2
+    tables: dict[int, tuple[adp.Table, str]] = {}
+    if spread is not None:
+        try:
+            tables = {t: reader.adp_table(args.data, t, HOLD_OUT) for t in seasons}
+        except reader.SimReadError as e:
+            print(f"refused: --adp {args.adp}: {e}")
+            return 2
     try:
         reads = [
             read_season(args.data, t, named, sources, arms, args.seed, args.shape) for t in seasons
@@ -1257,6 +1400,12 @@ def cmd_replay(args: argparse.Namespace) -> int:
         return 2
     for line_ in cells_lines(reads, named):
         print(line_)
+    for t, (table, sha) in tables.items():
+        print(
+            f"draft market, {t}: {args.adp} table, {len(table.picks)} listed, "
+            f"{table.at_ceiling} at the ceiling, log {sha[:12]}; spread {spread.base:g},"
+            f"{spread.growth:g} given"
+        )
     if not any(r.served for r in reads):
         print("refused: no cell is left: no forecaster named serves any season named")
         return 2
@@ -1351,6 +1500,7 @@ def cmd_replay(args: argparse.Namespace) -> int:
             PAIR if paired else seats,
             args.seed,
             p,
+            *(() if spread is None else ((tables[r.season][0].picks, spread),)),
         )
         for r in reads
         for f in r.served
@@ -1402,7 +1552,13 @@ def cmd_replay(args: argparse.Namespace) -> int:
             f"snake on the run's forecaster's projection, over {payload['pool']['draft']}; an "
             "arm on a forecaster of its own reads it from the season's first day, not at the "
             "draft"
+        )
+        if spread is None
+        else (
+            "snake in which each seat takes the best player left on its own board (adp): the "
+            "rivals' on the season's table, an arm's seat's on its own forecaster"
         ),
+        "adp": adp_block(args.adp, spread, tables, keys, results, paired),
         "forecasters": {
             str(r.season): forecasters_block(
                 r.served, r.fixed, r.lines, args.seed, args.shape, sources, r.fits
@@ -1429,6 +1585,8 @@ def cmd_replay(args: argparse.Namespace) -> int:
         "audit": note,
         "confirmation": None,
     }
+    if spread is not None:
+        payload["pool"]["draft"] = ADP_POOL.format(days=rn.OPENING_DAYS)
     if paired:
         payload |= paired_blocks(keys, results, arms, paths)
         payload["verdict"] = verdict_block(payload, named, seasons, sources, note)
@@ -1598,6 +1756,58 @@ def verdict_lines(v: Mapping[str, Any]) -> list[str]:
     else:
         verdict = "holds" if v["passes"] else "does not hold: " + "; ".join(v["failed"])
     out.append(f"verdict ({v['rule']}, advisory): {verdict}")
+    return out
+
+
+def adp_block(
+    source: str,
+    spread: adp.Spread | None,
+    tables: Mapping[int, tuple[adp.Table, str]],
+    keys: Sequence[Mapping[str, Any]],
+    results: Sequence[Mapping[str, Any]],
+    paired: bool,
+) -> dict[str, Any]:
+    """What a replay's league was drafted on (#172, PR D4a): the source and, under a table, the
+    given spread, the rules, and per season the table in counts (no figure: they stay in the
+    log), the log's hash, and the drafted players the run's forecaster does not project, over
+    the drafts of the paths that stand."""
+    if spread is None:
+        return {"source": source}
+    drafted: dict[str, list[int]] = {}
+    drafts: dict[str, set[int]] = {}
+    for key, res in zip(keys, results, strict=True):
+        t = str(key["season"])
+        drafted.setdefault(t, []).extend(res["drafted_unprojected"])
+        drafts.setdefault(t, set()).add(res["drafts"])
+    seasons = {}
+    for season, (table, sha) in tables.items():
+        t = str(season)
+        got = drafted.get(t, [])
+        seasons[t] = {
+            **table.payload(),
+            "log_sha256": sha,
+            "drafted_unprojected": {
+                "drafts": len(got),
+                "total": sum(got),
+                "mean": sum(got) / len(got) if got else None,
+                "max": max(got, default=None),
+            },
+        }
+        if paired:
+            seasons[t]["drafts_per_path"] = sorted(drafts.get(t, set()))
+    out: dict[str, Any] = {
+        "source": source,
+        "spread": spread.payload(),
+        "rival": ADP_RIVAL,
+        "seat": ADP_SEAT,
+        "market": ADP_MARKET,
+        "pool": ADP_POOL.format(days=rn.OPENING_DAYS),
+        "limit": ADP_LIMIT,
+        "seasons": seasons,
+    }
+    if paired:
+        apart = any(2 in v for v in drafts.values())
+        out["pair"] = ADP_APART if apart else "one draft and one league, shared by both arms"
     return out
 
 
@@ -1982,6 +2192,20 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         metavar="FORECASTER",
         help="the forecaster standing in for the second live source (system yahoo); with --bbm-as",
+    )
+    re_.add_argument(
+        "--adp",
+        choices=adp.SOURCES,
+        default="none",
+        help="what the rivals draft on: none, the run's forecaster as before; espn, the average "
+        "draft position in the season's own log (default none)",
+    )
+    re_.add_argument(
+        "--adp-spread",
+        default=None,
+        metavar="BASE,GROWTH",
+        help="with --adp espn: a rival's error about the table, a normal draw at base + growth x "
+        "pick picks; given, never fitted here",
     )
     re_.add_argument(
         "--news-sd",

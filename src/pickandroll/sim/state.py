@@ -244,3 +244,27 @@ def snake_draft(
             out[t].append((ranked[i], BENCH))
             i += 1
     return {t: tuple(r) for t, r in out.items()}
+
+
+def board_draft(
+    boards: Mapping[int, Sequence[int]], teams: Sequence[int], spots: int
+) -> dict[int, Roster]:
+    """A snake in which every seat takes the best player left on its own board (#172, PR D4a),
+    ``spots`` players each, everyone on the bench. A seat whose board has no one left takes no
+    one at that pick. Every seat on one board is :func:`snake_draft` on that board's order."""
+    taken: set[int] = set()
+    at = dict.fromkeys(teams, 0)
+    out: dict[int, list[tuple[int, str]]] = {t: [] for t in teams}
+    order = list(teams)
+    for rnd in range(spots):
+        for t in order if rnd % 2 == 0 else order[::-1]:
+            board = boards.get(t, ())
+            i = at[t]
+            while i < len(board) and board[i] in taken:
+                i += 1
+            if i < len(board):
+                taken.add(board[i])
+                out[t].append((board[i], BENCH))
+                i += 1
+            at[t] = i
+    return {t: tuple(r) for t, r in out.items()}
