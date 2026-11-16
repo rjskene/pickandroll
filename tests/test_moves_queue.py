@@ -38,12 +38,13 @@ def client(tmp_path):
 
 # --------------------------------------------------------------------------- the bid
 def test_the_bid_is_the_gain_over_the_typical_times_the_flag_and_the_sizing():
-    assert qa.bid_of(0.12, TYPICAL, 100, None, None, "W").amount == 1
-    assert qa.bid_of(0.12, TYPICAL, 100, None, None, "W").reason == "$1: a routine stream"
-    # Rounded half up, never below a dollar.
+    # Rounded half up: 2.5 typicals bid $3, 1.5 bid $2.
     assert qa.bid_of(0.25, TYPICAL, 100, None, None, "W").amount == 3
-    assert qa.bid_of(0.01, TYPICAL, 100, None, None, "W").amount == 1
-    # Doubled for a breakout flag, tripled for a strong one; a player only watched is routine.
+    assert qa.bid_of(0.75, (0.5, "the median"), 100, None, None, "W").amount == 2
+    bid = qa.bid_of(0.16, TYPICAL, 100, None, None, "W")
+    assert (bid.amount, bid.base) == (2, 2)
+    assert bid.reason == "$2: gain 2x the typical (the plan floor until 10 moves)"
+    # Doubled for a breakout flag, tripled for a strong one; a player only watched is unflagged.
     assert qa.bid_of(0.3, TYPICAL, 100, "add", None, "W").amount == 6
     assert qa.bid_of(0.3, TYPICAL, 100, "must-add", None, "W").amount == 9
     assert qa.bid_of(0.3, TYPICAL, 100, "watch", None, "W").amount == 3
@@ -53,12 +54,48 @@ def test_the_bid_is_the_gain_over_the_typical_times_the_flag_and_the_sizing():
         "$5: gain 3x the typical (the plan floor until 10 moves), x3 for a strong breakout flag,"
         " x0.5 FAAB sizing"
     )
+    # A sizing above 1 scales a bid above a routine stream's.
+    bid = qa.bid_of(0.2, TYPICAL, 100, None, 1.5, "W")
+    assert (bid.amount, bid.base) == (3, 2) and bid.reason.endswith(", x1.5 FAAB sizing")
     # Clamped to the budget left and nothing else; a free agent is added for $0.
     bid = qa.bid_of(2.0, TYPICAL, 7.6, "add", None, "W")
     assert bid.amount == 7 and bid.reason.endswith(", clamped to the $7 left")
-    assert qa.bid_of(0.5, TYPICAL, 0, None, None, "W").amount == 0
-    assert qa.bid_of(2.0, TYPICAL, 100, "must-add", None, "FA").amount == 0
+    bid = qa.bid_of(0.5, TYPICAL, 0, None, None, "W")
+    assert bid.amount == 0 and bid.reason.endswith(", clamped to the $0 left")
+    bid = qa.bid_of(2.0, TYPICAL, 100, "must-add", None, "FA")
+    assert (bid.amount, bid.reason) == (0, "$0: a free agent is added at once")
     assert qa.bid_of(0.5, TYPICAL, None, None, None, "W").amount == 5
+
+
+def test_a_routine_stream_bids_nothing_and_a_flagged_claim_bids_as_before():
+    """The user's ruling of 2026-11-15 (#391): a claim whose gain rounds to one typical or less,
+    with no breakout flag, bids $0; a flagged one keeps its floor of one typical."""
+    for gain in (0.14, 0.12, 0.1, 0.05, 0.01, 0.0, -0.2):
+        bid = qa.bid_of(gain, TYPICAL, 100, None, None, "W")
+        assert (bid.amount, bid.reason) == (0, "$0: a routine stream"), gain
+        assert bid.base <= 1 and bid.factor == 1
+    # A player only watched is no flag, and neither the sizing nor the budget lifts a routine bid.
+    assert qa.bid_of(0.12, TYPICAL, 100, "watch", None, "W").amount == 0
+    assert qa.bid_of(0.12, TYPICAL, 100, None, 3.0, "W").amount == 0
+    assert qa.bid_of(0.12, TYPICAL, None, None, None, "W").amount == 0
+    assert qa.bid_of(0.12, TYPICAL, 0, None, None, "W").reason == "$0: a routine stream"
+    # No typical yet (0 or below) reads as one typical: routine.
+    assert qa.bid_of(0.3, (0.0, "none"), 100, None, None, "W").amount == 0
+    # A breakout flag bids its factor at the least, as before the ruling.
+    for gain in (0.12, 0.01, -0.2):
+        assert qa.bid_of(gain, TYPICAL, 100, "add", None, "W").amount == 2
+        assert qa.bid_of(gain, TYPICAL, 100, "must-add", None, "W").amount == 3
+    bid = qa.bid_of(0.01, TYPICAL, 100, "add", None, "W")
+    assert bid.base == 1
+    assert (
+        bid.reason
+        == "$2: gain 1x the typical (the plan floor until 10 moves), x2 for a breakout flag"
+    )
+    # A free agent is untouched (a standard-waivers league's claim never reaches bid_of).
+    assert (
+        qa.bid_of(0.12, TYPICAL, 100, None, None, "FA").reason
+        == "$0: a free agent is added at once"
+    )
 
 
 def test_the_typical_gain_is_the_plan_floor_until_ten_moves_then_the_median():
@@ -795,7 +832,12 @@ def test_the_build_reads_the_days_solve_and_never_solves(client):
     assert all(e["set"] == "three" and e["knobs"] == logged["knobs"] for e in q["entries"])
     on = [e for e in q["entries"] if e["queued"]]
     assert [e["rank"] for e in on] == [1, 2] and row["queued"] == 2
-    assert all(e["availability"] == "W" and e["bid"]["amount"] >= 1 for e in on)
+    assert all(e["availability"] == "W" for e in on)
+    # The flagged claim bids its factor, the routine stream $0 (#391).
+    assert [(e["bid"]["amount"], e["bid"]["reason"]) for e in on] == [
+        (2, "$2: gain 1x the typical (the plan floor until 10 moves), x2 for a breakout flag"),
+        (0, "$0: a routine stream"),
+    ]
     # Queued at 13:00 Central, after the day's execute time: a full hour from now.
     assert {e["executes_at"] for e in on} == {(NOW + timedelta(hours=1)).isoformat()}
     assert q["built"] == [NOW.isoformat(), NOW.isoformat()]
@@ -911,6 +953,29 @@ def test_the_due_entries_wait_for_the_window_and_the_mode(client):
     client.put(f"/leagues/{LEAGUE}/moves", json={"mode": "off"})
     assert client.get(url).json()["reason"] == qa.OFF
     assert client.get(f"/seasons/{PRIVATE}/autopilot/moves/due").json()["reason"] == qa.PRIVATE
+
+
+def test_a_routine_streams_zero_bid_is_due_as_a_struck_bid_is(client):
+    """#391: a $0 from :func:`bid_of` reaches the extension as a struck bid does, ``bid_placed``
+    0, the one field the extension types into Yahoo's bid; striking it changes nothing."""
+    q = queued(client)
+    flagged, routine = [e for e in q["entries"] if e["queued"]]
+    assert (routine["bid"]["amount"], routine["bid"]["reason"]) == (0, "$0: a routine stream")
+    assert not routine["bid_struck"] and qa.effective_bid(routine) == 0
+    url = f"/seasons/{LEAGUE}/autopilot/moves/due"
+    client.app.state.seasons.clock = lambda: NOW + timedelta(hours=1)
+    d = client.get(url).json()
+    assert [(e["id"], e["bid_placed"]) for e in d["entries"]] == [
+        (flagged["id"], 2),
+        (routine["id"], 0),
+    ]
+    # The flagged claim's bid struck: the same $0 the routine stream carries unstruck.
+    assert strike(client, flagged["id"], bid_only=True).status_code == 200
+    d = client.get(url).json()
+    assert [e["bid_placed"] for e in d["entries"]] == [0, 0]
+    # Striking the routine stream's bid leaves its claim at $0.
+    assert strike(client, routine["id"], bid_only=True).status_code == 200
+    assert [e["bid_placed"] for e in client.get(url).json()["entries"]] == [0, 0]
 
 
 def test_the_due_route_holds_a_later_step_and_the_pass_record_says_what_it_waits_for(client):

@@ -1090,6 +1090,43 @@ test("a claim's bid is read off the pending box's line: its add and drop by the 
   assert.deepEqual(X.landedBid(null, 3), { bid: 3, bid_link: 3 });
 });
 
+test("a routine stream's $0 bid takes the struck bid's path: the checks, the form, Yahoo's bid field and the landed bid (#391)", async () => {
+  // The queue's $0 (bid_of, "$0: a routine stream") and a struck $3 bid reach the extension as
+  // the same bid_placed: 0, the one field it reads for the bid.
+  const routine = entry({ bid: 0, bid_placed: 0 });
+  const struck = entry({ bid_placed: 0, bid_struck: true });
+  const live = due({ mode: "live", live: { ok: true, reason: null } });
+  const lineOf = (e) => {
+    const page = X.readAddPage(rawPage(), e.from);
+    const check = X.pageCheck(e, page, live);
+    return [check, X.moveCheck(e, check, page, live, READ_AT)];
+  };
+  const [check, line] = lineOf(routine);
+  assert.deepEqual(check, { outcome: "would_claim", reason: null });
+  assert.deepEqual(lineOf(struck), [check, line]);
+  // Inside the page's "between $0 and $100", typed as 0 and read back.
+  assert.deepEqual(X.readAddPage(rawPage(), routine.from).bid_min, 0);
+  assert.equal(line.controls.would_fill.faab, 0);
+  assert.equal(line.bid, 0);
+  const typed = async (e) => {
+    const v = claimDoc();
+    assert.equal(await X.fillClaim(v.doc, e, { wait: v.wait }), null);
+    return v.touched;
+  };
+  const touched = await typed(routine);
+  assert.deepEqual(touched, ["click drop button 2005", "set faab 0", "event input", "event change", "click final"]);
+  assert.deepEqual(await typed(struck), touched);
+  // Yahoo's pending line shows no "Bid $" for a $0 claim: read as $0, the queue's own bid.
+  const lines = F.parse(BOX.replace('<span class="Fw-b">Bid $1</span>', ""))
+    .querySelectorAll('a[href*="viewwaiver"]')
+    .map((a) => ({ href: a.getAttribute("href"), text: a.textContent }));
+  const seen = { path: `/nba/${LEAGUE}/${TEAM}`, heading: null, ...X.landedBid(X.pendingBid(lines, { add: 10279, drop: null }), 0) };
+  assert.deepEqual([seen.bid, seen.bid_link], [0, undefined]);
+  const record = { day: DAY, trigger: "routine", line, league: LEAGUE, tab: 7, at: READ_AT };
+  const run = X.landedPass(record, { outcome: "claimed", message: "claim submitted" }, seen);
+  assert.deepEqual([run.outcome, run.entries[0].outcome, run.entries[0].reason, run.entries[0].bid], ["claimed", "claimed", null, 0]);
+});
+
 test("the landed page reads the claim's bid off the pending box first, the link's text second, and the run keeps a disagreement (#239)", async () => {
   const landedOn = async (dom, over) => {
     const e = entry({ drop: null, basis: "open" });
