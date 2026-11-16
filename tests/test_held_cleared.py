@@ -141,6 +141,30 @@ def test_the_due_route_names_a_held_player_cleared_in_his_newest_read(client):
     assert (x["player"], x["status"], x["league"]) == (held, "Q", LEAGUE)
 
 
+def test_a_fresh_team_page_post_over_a_read_of_o_names_the_held_player_at_once(client):
+    """#403: the pass's fresh read of my team page (the extension's post, here as its part) says
+    Q where the stored read of the morning said O: the due route the add page asks next names
+    the held player, so the claim is skipped with the cleared reason and never submitted."""
+    queued(client)
+    client.app.state.seasons.clock = lambda: NOW + timedelta(hours=1)
+    held = 6406
+    hold(client, held, "O")
+    assert client.get(DUE).json()["held_cleared"] == []
+    path = client.data_dir / "leagues" / LEAGUE / "season" / "state.json"
+    roster = json.loads(path.read_text())["parts"]["roster/4"]["data"]
+    for sp in roster["spots"]:
+        if sp["player"]["yahoo_id"] == held:
+            sp["player"]["status"] = "Q"
+    fresh = (NOW + timedelta(minutes=50)).isoformat()
+    r = client.post(
+        f"/seasons/{LEAGUE}/snapshot",
+        json={"parts": [{"key": "roster/4", "fetched_at": fresh, "data": roster}]},
+    )
+    assert r.status_code == 200 and r.json()["accepted"] == ["roster/4"]
+    [x] = client.get(DUE).json()["held_cleared"]
+    assert (x["player"], x["slot"], x["status"], x["league"]) == (held, "IL", "Q", LEAGUE)
+
+
 # --------------------------------------------------------------------------- a claim re-judged (#345)
 def test_a_build_rejudges_the_placed_claims_once_a_held_player_clears_and_says_cancel_by_hand(
     client, monkeypatch

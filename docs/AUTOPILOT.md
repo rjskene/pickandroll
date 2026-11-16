@@ -523,9 +523,28 @@ page, from PR 2:
     (`roster/…` or `lineup/…` parts) in any league's stored state, this league's own when it is
     the newest: the NBA's status is the same in every league, and on 2026-11-07 223259's last read
     (05:28 CST) still said O while 31153's at 09:15 CST said Q. While one is listed every claim skips
-    with "<id> sits on IL with status Q: Yahoo refuses every claim until he leaves it (Error 845)",
-    and the skip stays due. The limit: a player read in no league since his status changed is
-    judged on the stale read. Each item is `{player, slot, status, read_at, league}`: the newest
+    with "<id> sits on IL with status Q: Yahoo refuses every claim until they leave it (Error 845)",
+    and the skip stays due. The limit: a player read in no league since their status changed is
+    judged on the stale read. Since #403 (extension 0.11.14) each pass reads it fresh:
+    - **A fresh read before the claims.** The morning, late and evening passes open my team page
+      in each league with something due, with no fragment, before its first page (step
+      `fresh_reads`, eight seconds a page). The extension posts it as `roster/<team>`, the step
+      checks that the read landed (`GET /seasons/<id>`, `fetched`), and the pass asks the due
+      route again. Its IL moves, held drops and claims are then judged on that read. On 2026-11-16
+      two of four claims at the 09:15 pass went into Yahoo's refusal: Fox (251146) and Reaves
+      (223259) had gone to IL the night before as O and cleared by the morning, after the 05:18
+      read. A read that did not land fails the step, and the pass goes on with the read it had.
+    - **A blocked roster is read as such.** Yahoo's Error #845 ("Player … is in a IL position on
+      your roster, but no longer qualifies for that position") on the drop's tick or the landing,
+      or a landing on the claim form's own path headed "Subscribe in the app", logs the claim
+      `failed` with "blocked roster: <player> sits on IL …". The held player is named from #845's
+      words, else from the due route's `held_cleared` read after the landing (on my team page the
+      page is posted first). The form's `disabled_add` marker is no sign of it: it is on every
+      claim form read since 2026-10-24, the claims that went in included.
+    - **The moves step counts its claims.** "4 pages opened in 4 leagues: 2 claimed, 2 failed":
+      the pass's own runs (its trigger, from its start) by outcome. A failed claim fails the step,
+      so the watchdog and the slate reports see it; skips alone never do, and the steps after it
+      run either way. Each item is `{player, slot, status, read_at, league}`: the newest
     read's time and league, this league's when its own read is the newest (the scan covers every
     league, this one included), null only when no team-page read of him is stored.
   - **A placed claim judged again when a held player clears (#345, PR 1).** A claim keeps its place
