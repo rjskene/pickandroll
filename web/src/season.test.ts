@@ -98,6 +98,8 @@ import {
   setSummary,
   toggleExpanded,
   placeLabel,
+  myRecordLabel,
+  myRecordTone,
   scoreLabel,
   matchupOddsCell,
   cellTitle,
@@ -1333,6 +1335,15 @@ test("a league card reads its score mine first, its place, its adds and its flag
   assert.equal(scoreLabel(card("1", { score: null })), "no score yet");
   assert.equal(placeLabel(card("1", { my_team: { team_id: 4, name: "Team 4", record: "0-0-0", rank: 2 } })), "2nd of 12");
   assert.equal(placeLabel(card("1")), "no place yet");
+  // My record beside the place, as Yahoo writes it; muted until there is one (#392).
+  const mine = { team_id: 4, name: "Team 4", record: "10-17-0", rank: 2 };
+  assert.equal(myRecordLabel(card("1", { my_team: mine })), "10-17-0");
+  assert.equal(myRecordTone(card("1", { my_team: mine })), "");
+  assert.equal(myRecordLabel(card("1", { my_team: { ...mine, record: "2-1-0" } })), "2-1-0");
+  for (const none of [card("1"), card("1", { my_team: { ...mine, record: null } }), card("1", { my_team: { ...mine, record: "" } })]) {
+    assert.equal(myRecordLabel(none), "no record yet");
+    assert.equal(myRecordTone(none), "muted");
+  }
   assert.equal(addsLeft({ limit: 4, used: 1, complete: true, left: 3 }), "3 of 4 adds left");
   assert.equal(addsLeft({ limit: 4, used: 0, complete: false, left: 4 }), "at most 4 of 4 adds left");
   assert.equal(addsLeft({ limit: null, used: 0, complete: true, left: null }), "no add limit");
