@@ -6,8 +6,9 @@ always finishes the report."""
 from __future__ import annotations
 
 import contextlib
+from collections import Counter
 from collections.abc import Callable, Mapping, Sequence
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 from .api import Unreachable
@@ -18,6 +19,7 @@ from .steps import (
     MOVES_WAIT_S,
     PRIVATE_LEAGUE,
     SOLVE_TIMEOUT_S,
+    YAHOO,
     Abort,
     Context,
     MovesPlan,
@@ -158,6 +160,7 @@ def browser_pass(
     failed: list[str] = []
     stayed: list[str] = []
     pages = 0
+    began = ctx.now()
     for o in openings:
         if hard_stop and not before(ctx.now(), hard_stop):
             unopened.append(o.entry or o.league)
@@ -187,6 +190,12 @@ def browser_pass(
             pages += 1
             stayed.append(o.entry)
     summary = f"{pages} pages opened in {len(opened)} leagues"
+    # A moves pass counts its claims' outcomes (#403): one with a failed claim never reads "ok".
+    counts = (
+        claim_counts(ctx, opened, record[1], began) if record and record[0] == "moves" else None
+    )
+    if counts is not None:
+        summary += f": {counts.words}"
     if stayed:
         summary += ", add pages opened by the pass after an IL stay: " + ", ".join(stayed[:15])
     if failed:
@@ -198,11 +207,136 @@ def browser_pass(
         summary += f", stopped at {hard_stop} with {len(unopened)} entries unopened: {shown}"
     pass_done(ctx, pass_id, summary)
     detail = summary + ("" if pass_id else "; no pass record" if record else "")
-    status = ctx.report.failed if failed else ctx.report.ok
+    status = ctx.report.failed if failed or (counts and counts.failed) else ctx.report.ok
     status(
-        name, detail, plan=plan, pass_id=pass_id, unopened=unopened, failed=failed, stayed=stayed
+        name,
+        detail,
+        plan=plan,
+        pass_id=pass_id,
+        unopened=unopened,
+        failed=failed,
+        stayed=stayed,
+        **({"outcomes": dict(counts.outcomes)} if counts is not None else {}),
     )
     return opened
+
+
+#: How a moves pass's step names its claims' outcomes (#403), in this order; any other outcome
+#: is named as logged.
+CLAIM_WORDS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("claimed", ("claimed", "added")),
+    ("failed", ("failed",)),
+    ("skipped", ("skipped",)),
+    ("gone", ("gone",)),
+    ("would claim", ("would_claim",)),
+)
+
+
+class ClaimCounts:
+    """The outcomes of the claims a moves pass logged (#403): ``outcomes`` by the log's word,
+    ``unread`` the leagues whose log did not answer."""
+
+    def __init__(self, outcomes: Counter[str], unread: list[str]):
+        self.outcomes, self.unread = outcomes, unread
+
+    @property
+    def failed(self) -> int:
+        return self.outcomes.get("failed", 0)
+
+    @property
+    def words(self) -> str:
+        known = {o for _, outs in CLAIM_WORDS for o in outs}
+        parts = [
+            f"{n} {word}"
+            for word, outs in CLAIM_WORDS
+            if (n := sum(self.outcomes.get(o, 0) for o in outs))
+        ]
+        parts += [f"{n} {o}" for o, n in sorted(self.outcomes.items()) if o not in known]
+        text = ", ".join(parts) or "no claim logged"
+        if self.unread:
+            text += f" (the log of {', '.join(self.unread)} not read)"
+        return text
+
+
+def claim_counts(
+    ctx: Context, leagues: Sequence[str], trigger: str, since: datetime
+) -> ClaimCounts:
+    """The claims the pass logged in ``leagues`` (``GET /seasons/<id>/autopilot/moves``,
+    ``today``): its trigger's runs from ``since`` on, counted by outcome."""
+    outcomes: Counter[str] = Counter()
+    unread: list[str] = []
+    for league in leagues:
+        code, body, _ = ctx.get(f"/seasons/{league}/autopilot/moves", 60)
+        if code != 200 or not isinstance(body, dict):
+            unread.append(league)
+            continue
+        for r in body.get("today") or []:
+            if isinstance(r, dict) and r.get("trigger") == trigger and _from(r.get("at"), since):
+                outcomes[str(r.get("outcome"))] += 1
+    return ClaimCounts(outcomes, unread)
+
+
+#: How long the fresh read waits on my team page (#403): the extension posts it within seconds.
+FRESH_READ_WAIT_S = 8.0
+
+
+def fresh_reads(ctx: Context, plan: MovesPlan, hard_stop: str | None = None) -> bool:
+    """Before a pass's claims (#403): my team page in each league with something due, opened
+    read-only so the extension posts it. The read carries every held player's status as it is
+    now, so the pass plans again on it and the claims are judged on it (the #341 guard): a held
+    player whose status cleared after the morning's read skips the claim, never submitting into
+    Yahoo's refusal. Answers whether any read landed. A read that did not land (no
+    ``roster/<team>`` read since the step began) fails the step; the pass goes on with the read
+    it had."""
+    name = "fresh_reads"
+    pages = [(league, plan.teams[league]) for league in plan.leagues if league in plan.teams]
+    unnamed = [league for league in plan.leagues if league not in plan.teams]
+    if not pages:
+        if plan.leagues:
+            ctx.report.skipped(
+                name, "no due answer named my team: the claims go on the read stored"
+            )
+        return False
+    browser = ready_browser(ctx, name, "yahoo", f"{len(pages)} team pages would be read")
+    if browser is None:
+        return False
+    began = ctx.now()
+    landed: list[str] = []
+    unread: list[str] = []
+    failed: list[str] = []
+    late: list[str] = []
+    for league, team in pages:
+        if hard_stop and not before(ctx.now(), hard_stop):
+            late.append(league)
+            continue
+        if open_page(ctx, browser, f"{YAHOO}/nba/{league}/{team}", FRESH_READ_WAIT_S) is None:
+            failed.append(league)
+            continue
+        (landed if read_since(ctx, league, team, began) else unread).append(league)
+    detail = f"{len(landed)} of {len(pages)} team pages read"
+    if unread:
+        detail += f"; opened, no read landed: {', '.join(unread)}"
+    if failed:
+        detail += f"; failed to open: {', '.join(failed)}"
+    if late:
+        detail += f"; not opened, past {hard_stop}: {', '.join(late)}"
+    if unnamed:
+        detail += f"; no team named: {', '.join(unnamed)}"
+    status = ctx.report.failed if unread or failed else ctx.report.ok
+    status(name, detail, landed=landed, unread=unread, failed=failed, late=late)
+    return bool(landed)
+
+
+def read_since(ctx: Context, league: str, team: int, since: datetime) -> bool:
+    """Whether the league's stored read of my team page (``roster/<team>``) is from ``since`` on."""
+    code, body, _ = ctx.get(f"/seasons/{league}", 60)
+    fetched = body.get("fetched") if code == 200 and isinstance(body, dict) else None
+    entry = fetched.get(f"roster/{team}") if isinstance(fetched, dict) else None
+    try:
+        at = datetime.fromisoformat(str((entry or {}).get("at")))
+    except ValueError:
+        return False
+    return (at if at.tzinfo else at.replace(tzinfo=UTC)) >= since
 
 
 def on_team_page(landed: str, url: str) -> bool:
@@ -310,6 +444,8 @@ def morning(ctx: Context, api: str) -> None:
     stop_check(ctx)
     pub = public_leagues(seasons(ctx))
     plan = moves_plan(ctx, pub, "pickandroll-moves", "pickandroll-il")
+    if fresh_reads(ctx, plan):
+        plan = moves_plan(ctx, pub, "pickandroll-moves", "pickandroll-il")
     _report_plan(ctx, plan)
     opened = browser_pass(ctx, "moves", plan.openings, ("moves", "routine", plan.entries))
     sa = start_active_plan(ctx, "pickandroll-start-active", only=opened)
@@ -329,6 +465,8 @@ def late(ctx: Context, api: str) -> None:
         lineups = lineup_plan(ctx, pub, tomorrow=False, fragment=LATE_LINEUP_FRAGMENT)
         opened = browser_pass(ctx, "lineup", lineups, ("lineup", "routine_late", None))
     plan = moves_plan(ctx, pub, "pickandroll-moves-late", "pickandroll-il-late")
+    if fresh_reads(ctx, plan):
+        plan = moves_plan(ctx, pub, "pickandroll-moves-late", "pickandroll-il-late")
     _report_plan(ctx, plan)
     opened_moves = browser_pass(
         ctx, "moves", plan.openings, ("moves", "routine_late", plan.entries)
@@ -374,6 +512,8 @@ def evening_pass(ctx: Context, api: str) -> None:
         idle=str(ctx.notes.get("cancel") or "no claim to cancel"),
     )
     plan = moves_plan(ctx, pub, "pickandroll-moves-evening", "pickandroll-il-evening")
+    if fresh_reads(ctx, plan, EVENING_HARD_STOP):
+        plan = moves_plan(ctx, pub, "pickandroll-moves-evening", "pickandroll-il-evening")
     _report_plan(ctx, plan)
     opened = browser_pass(
         ctx, "moves", plan.openings, ("moves", "routine_evening", plan.entries), EVENING_HARD_STOP

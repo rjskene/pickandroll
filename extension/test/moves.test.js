@@ -757,6 +757,16 @@ test("in a live league Yahoo's alert on the drop's tick is the entry's failure, 
   assert.match(v.strip.textContent, /^pickandroll moves: live · failed: Yahoo answered the drop's tick: "This player cannot be dropped\." \(\d\d:\d\d\)$/);
 });
 
+test("Error #845 on the drop's tick is a blocked roster naming the held player (#403): no bid, no final click", async () => {
+  // 2026-11-16, 251146: the player went to IL the night before and cleared by the morning.
+  const said = "Player De'Aaron Fox is in a IL position on your roster, but no longer qualifies for that position. Please edit your lineup to resolve this issue.";
+  const v = await visitAdd({ answer: worker(LIVE), dom: addDom({ step: { reply: said } }) });
+  assert.deepEqual(v.touched, ["click drop button 2005"]);
+  const line = sentOf(v, "moves_log")[0].run.entries[0];
+  assert.equal(line.outcome, "failed");
+  assert.equal(line.reason, `blocked roster: De'Aaron Fox sits on IL and no longer qualifies for it (Error 845); Yahoo answered the drop's tick: "${said}"`);
+});
+
 test("a live league with the guard refusing, a failed check, a free-agent add or no record: nothing is touched", async () => {
   // The guard refusing now: a dry run that says why.
   let v = await visitAdd({ answer: worker({ mode: "live", live: { ok: false, reason: "a dry run on 7 days first: 3 so far" } }) });
@@ -1298,7 +1308,8 @@ test("a landing on the claim form's own path is no placement; my team page's pen
   const action = `/nba/${LEAGUE}/${TEAM}/addplayer`;
   // 2026-11-07: a refused claim stayed on the form's action path under "Subscribe in the app".
   const stayed = X.readLanded({ path: action, heading: "Subscribe in the app", form: false, notes: [], errors: [], action });
-  assert.deepEqual(stayed, { outcome: "failed", message: null, reason: `Yahoo stayed on the claim form (${action}, "Subscribe in the app"): not placed`, stayed: true });
+  // A held player blocks the roster there (#403): failed, and read as such.
+  assert.deepEqual(stayed, { outcome: "failed", message: null, reason: `blocked roster: Yahoo stayed on the claim form (${action}, "Subscribe in the app"): not placed`, stayed: true, blocked: true, named: false });
   // Yahoo's words there are kept; a sign of placement still wins.
   assert.equal(X.readLanded({ path: action, heading: null, notes: ["You have reached the maximum number of adds."], errors: [], action }).reason, `Yahoo stayed on the claim form (${action}, "no heading"): not placed: "You have reached the maximum number of adds."`);
   assert.equal(X.readLanded({ path: action, heading: "Team page", notes: ["You have successfully created a waiver claim for A"], errors: [], action }).outcome, "claimed");
@@ -1318,7 +1329,9 @@ test("a landing on the claim form's own path is no placement; my team page's pen
   assert.deepEqual(X.settleLanded(stayed, { bid_box: 1 }, [{ href: "x", text: "y" }]), placed);
   assert.deepEqual(X.settleLanded(null, { bid_box: 0 }, []), placed);
   assert.deepEqual(X.settleLanded(null, { claim: true, bid_box: null }, null), placed);
-  assert.deepEqual(X.settleLanded(stayed, { bid_box: null }, []), { outcome: "failed", message: null, reason: `not among Yahoo's pending transactions; ${stayed.reason}` });
+  assert.deepEqual(X.settleLanded(stayed, { bid_box: null }, []), { outcome: "failed", message: null, reason: `${stayed.reason}; not among Yahoo's pending transactions`, blocked: true, named: false });
+  const other = X.readLanded({ path: action, heading: "Team", notes: ["You have reached the maximum number of adds."], errors: [], action });
+  assert.equal(X.settleLanded(other, { bid_box: null }, []).reason, `not among Yahoo's pending transactions; ${other.reason}`);
   assert.deepEqual(X.settleLanded(null, { bid_box: null }, [{ href: "x", text: "y" }]), { outcome: "failed", message: null, reason: "not among Yahoo's pending transactions" });
   assert.equal(X.settleLanded(stayed, { bid_box: null }, null), stayed);
   assert.equal(X.settleLanded(null, { bid_box: null }, null), null);
@@ -1342,23 +1355,30 @@ test("the claim form's landing goes to my team page to settle, and the pending b
   assert.deepEqual(settle.seen, { path: action, heading: "Subscribe in the app", form: false, notes: [], errors: [], bid: null });
   assert.deepEqual([settle.answer.outcome, settle.answer.stayed], ["failed", true]);
   // The second read, on my team page: the claim's line in the box is claimed, the first read kept.
-  const second = async (add, box) => {
-    const w = await visitAdd({ answer: worker(LIVE, {}, { landing: landing(add, settle) }), dom: landedDom({ box }), url: `${SITE}/nba/${LEAGUE}/${TEAM}` });
-    assert.deepEqual([...ops(w).slice(0, 2), w.assigned], ["moves_landed", "moves_log", []]);
-    return sentOf(w, "moves_log")[0].run;
+  // A blocked roster (#403) posts my team page and asks the due route who holds it before the log.
+  const second = async (add, box, d = LIVE) => {
+    const w = await visitAdd({ answer: worker(d, {}, { landing: landing(add, settle) }), dom: landedDom({ box }), url: `${SITE}/nba/${LEAGUE}/${TEAM}` });
+    const run = sentOf(w, "moves_log")[0].run;
+    const before = run.outcome === "failed" ? ["moves_landed", "season_page", "moves_due", "moves_log"] : ["moves_landed", "moves_log"];
+    assert.deepEqual([ops(w).slice(0, before.length), w.assigned], [before, []]);
+    return run;
   };
   let run = await second(10279, F.parse(BOX));
   assert.deepEqual([run.outcome, run.entries[0].message, run.entries[0].controls.landed.bid, run.entries[0].controls.landed.first], ["claimed", "the claim shows among the pending transactions", 1, settle.seen]);
-  // The box shown without it: failed, the first read's reason beside.
+  // The box shown without it: failed, the blocked roster first, the box's word beside.
   run = await second(5471, F.parse(BOX));
-  assert.deepEqual([run.outcome, run.reason], ["failed", `not among Yahoo's pending transactions; ${settle.answer.reason}`]);
+  assert.deepEqual([run.outcome, run.reason], ["failed", `${settle.answer.reason}; not among Yahoo's pending transactions`]);
   // No box: the first read's answer stands (failed, ruling (3)).
   run = await second(5471, null);
   assert.deepEqual([run.outcome, run.reason], ["failed", settle.answer.reason]);
+  // The due route read after the post names the held player (2026-11-16: 6606 on IL, now Q).
+  const held = { player: 6606, slot: "IL", status: "Q", read_at: "2026-11-16T15:15:30Z", league: LEAGUE };
+  run = await second(5471, null, { ...LIVE, held_cleared: [held] });
+  assert.equal(run.reason, `blocked roster: 6606 sits on IL with status Q (Error 845); Yahoo stayed on the claim form (${action}, "Subscribe in the app"): not placed`);
   // A worker that cannot keep the read: the form's answer is logged where it stands.
   const refusing = (msg, sent) => (msg.op === "moves_settling" ? { ok: false, error: "no submit of this claim on record" } : worker(LIVE, {}, { landing: landing(10279) })(msg, sent));
   v = await visitAdd({ answer: refusing, dom: landedDom({ heading: "Subscribe in the app" }), url: `${SITE}${action}` });
-  assert.deepEqual([ops(v).slice(0, 3), v.assigned], [["moves_landed", "moves_settling", "moves_log"], []]);
+  assert.deepEqual([ops(v).slice(0, 4), v.assigned], [["moves_landed", "moves_settling", "moves_due", "moves_log"], []]);
   assert.equal(sentOf(v, "moves_log")[0].run.outcome, "failed");
 });
 
@@ -1382,6 +1402,30 @@ test("an answer not recognised on another page is settled on my team page too; a
   assert.match(run.entries[0].reason, /Yahoo's answer was not read/);
 });
 
+test("a blocked roster is read from Error #845's words and the app-subscribe landing, never from disabled_add (#403)", () => {
+  const action = `/nba/${LEAGUE}/${TEAM}/addplayer`;
+  const said = "Player Austin Reaves is in an IL+ position on your roster but no longer qualifies for that position.";
+  assert.deepEqual(X.blockedBy(["x", said]), { player: "Austin Reaves", slot: "IL+" });
+  assert.equal(X.blockedBy(["You have reached the maximum number of adds."]), null);
+  // #845 among the errors of any landing: failed, the held player named.
+  const landed = X.readLanded({ path: `/nba/${LEAGUE}/${TEAM}`, heading: "Team", notes: [], errors: [said] });
+  assert.deepEqual(landed, { outcome: "failed", message: said, reason: `blocked roster: Austin Reaves sits on IL+ and no longer qualifies for it (Error 845); Yahoo answered: "${said}"`, blocked: true, named: true });
+  // On the form's own path with #845's words: named from them.
+  const stayed = X.readLanded({ path: action, heading: "Add Player", notes: [said], errors: [], action });
+  assert.deepEqual([stayed.blocked, stayed.named, stayed.reason.startsWith("blocked roster: Austin Reaves sits on IL+")], [true, true, true]);
+  // Another refusal on the form's path is no blocked roster.
+  const other = X.readLanded({ path: action, heading: "Add Player", notes: ["You have reached the maximum number of adds."], errors: [], action });
+  assert.equal(other.blocked, undefined);
+  // The held player named from the due route's held_cleared; an answer already named, or none, stays.
+  const unnamed = X.readLanded({ path: action, heading: "Subscribe in the app", notes: [], errors: [], action });
+  const held = [{ player: 6606, slot: "IL", status: "Q" }];
+  assert.equal(X.namedBlock(unnamed, held).reason, `blocked roster: 6606 sits on IL with status Q (Error 845); Yahoo stayed on the claim form (${action}, "Subscribe in the app"): not placed`);
+  assert.equal(X.namedBlock(unnamed, []), unnamed);
+  assert.equal(X.namedBlock(landed, held), landed);
+  assert.equal(X.namedBlock(other, held), other);
+  assert.equal(X.namedBlock(null, held), null);
+});
+
 test("the worker keeps a landing's first read on the submit's record, its time unchanged (#341)", async () => {
   const w = loadWorker(() => [200, { at: "x" }]);
   const record = { day: DAY, trigger: "routine", line: { id: entry().id, add: ADD, drop: 2005, outcome: "would_claim" } };
@@ -1400,7 +1444,7 @@ test("a player cleared to play sitting on IL or IL+ in any league's newest read 
   const held = (over = {}) => ({ player: 10460, slot: "IL", status: "Q", read_at: "2026-11-07T15:15:19Z", league: "31153", ...over });
   assert.equal(checkOn(rawPage(), due({ held_cleared: [] })).outcome, "would_claim");
   assert.equal(checkOn(rawPage(), due()).outcome, "would_claim");
-  assert.deepEqual(checkOn(rawPage(), due({ held_cleared: [held()] })), { outcome: "skipped", reason: "10460 sits on IL with status Q: Yahoo refuses every claim until he leaves it (Error 845)" });
-  assert.equal(X.clearedWords([held({ slot: "IL+", status: null }), held({ player: 5765 })]), "10460 sits on IL+ with no status (and 1 more): Yahoo refuses every claim until he leaves it (Error 845)");
+  assert.deepEqual(checkOn(rawPage(), due({ held_cleared: [held()] })), { outcome: "skipped", reason: "10460 sits on IL with status Q: Yahoo refuses every claim until they leave it (Error 845)" });
+  assert.equal(X.clearedWords([held({ slot: "IL+", status: null }), held({ player: 5765 })]), "10460 sits on IL+ with no status (and 1 more): Yahoo refuses every claim until they leave it (Error 845)");
   assert.equal(X.clearedWords(undefined), null);
 });

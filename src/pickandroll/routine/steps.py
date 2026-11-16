@@ -603,6 +603,9 @@ class MovesPlan:
     entries: list[str]
     leagues: list[str]
     reasons: dict[str, str]
+    #: My team's id in each league of ``leagues`` whose due answer names it: where the pass's
+    #: fresh read opens (#403).
+    teams: dict[str, int] = field(default_factory=dict)
 
 
 def moves_plan(ctx: Context, leagues: Sequence[str], fragment: str, il_fragment: str) -> MovesPlan:
@@ -614,6 +617,7 @@ def moves_plan(ctx: Context, leagues: Sequence[str], fragment: str, il_fragment:
     entries: list[str] = []
     opened: list[str] = []
     reasons: dict[str, str] = {}
+    teams: dict[str, int] = {}
     for league in leagues:
         code, body, _ = ctx.get(f"/seasons/{league}/autopilot/moves/due", 120)
         if code != 200 or not isinstance(body, dict):
@@ -667,9 +671,12 @@ def moves_plan(ctx: Context, leagues: Sequence[str], fragment: str, il_fragment:
             opened.append(league)
             openings.extend(league_openings)
             entries.extend(o.entry for o in league_openings if o.entry)
+            team = body.get("team")
+            if isinstance(team, int) and not isinstance(team, bool):
+                teams[league] = team
         else:
             reasons[league] = "no page passed the checks"
-    return MovesPlan(openings, entries, opened, reasons)
+    return MovesPlan(openings, entries, opened, reasons, teams)
 
 
 def plan_lines(openings: Sequence[Opening]) -> list[str]:
