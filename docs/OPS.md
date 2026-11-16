@@ -54,6 +54,22 @@ under the room guard). The lighter update after a merge is `ops/vm/update.sh` (Â
 fast-forward of `main` under the room and routine guards, the dashboard rebuilt when `web/`
 changed, the API restarted when `src/` or `pyproject.toml` changed, nothing else touched.
 
+The routine guard (#398) refuses, exit 3, naming what holds it:
+
+- while any `pickandroll-routine@*.service` is `active`, `activating`, `deactivating` or
+  `reloading`. The routines are oneshot units: one that runs is `activating` (sub-state
+  `start`), so a list of `active` units alone never shows it. Inactive and failed units hold
+  nothing;
+- when a routine timer fires within the next 10 minutes (`PICKANDROLL_UPDATE_SOON`, 600 s), from
+  its `NextElapseUSecRealtime` (`systemctl show --timestamp=unix`), with the time in Central. A
+  timer with no next run holds nothing; one whose next run is not read in seconds holds the
+  deploy. The pre-tip check's timer fires every five minutes from 09:00 to 20:55 and is left out
+  of this check, else no daytime deploy could run; a pre-tip check that runs is held by the
+  unit check.
+
+On 2026-11-15 a deploy at 21:04 CT passed the old `--state=active` guard and restarted the API
+four minutes into the 21:00 evening build.
+
 `update.sh` copies no unit: a merge that adds a timer reaches systemd only by hand. The pre-tip
 check's (#355, `pickandroll-routine@pretip.timer`, every five minutes 09:00 to 20:55 Central)
 goes in once, by the user, after the `update.sh` that pulls it:

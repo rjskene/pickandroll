@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # update.sh: the guarded fast-forward of the routine host after a merge (docs/OPS.md §2a),
-# lighter than install.sh (no venv, unit or timer work). Refused under a live draft room or
-# while a routine unit runs. Then: main fast-forwarded; the dashboard rebuilt from web/ when
+# lighter than install.sh (no venv, unit or timer work). Refused under a live draft room, while
+# a routine unit runs (activating included, #398) or when a routine timer fires within 10 min.
+# Then: main fast-forwarded; the dashboard rebuilt from web/ when
 # web/ changed in the pull or its build is missing (served by the API under /app, built with
 # --base=/app/ and the API at the page's own origin); the API restarted when src/ or
 # pyproject.toml changed (or --restart). Prints what it did. Exit 3 when a guard holds, 1 when
@@ -27,11 +28,32 @@ if [ -n "$rooms" ] && [ "$rooms" != "[]" ]; then
   say "refused: $api/rooms answers $rooms (a draft room is live); run again when it answers []"
   exit 3
 fi
-active=$(systemctl --user list-units 'pickandroll-routine@*.service' --state=active --no-legend --plain 2>/dev/null | awk '{print $1}' | tr '\n' ' ')
-if [ -n "${active// /}" ]; then
-  say "refused: a routine runs (${active% }); run again when it ends"
+# A routine is a oneshot: while it runs it is "activating", never "active" (#398). Any state but
+# at rest (inactive or failed) holds the deploy.
+busy=$(systemctl --user list-units 'pickandroll-routine@*.service' --state=active,activating,deactivating,reloading --no-legend --plain 2>/dev/null | awk '{printf "%s%s %s", sep, $1, $3; sep=", "}')
+if [ -n "$busy" ]; then
+  say "refused: a routine runs ($busy); run again when it ends"
   exit 3
 fi
+# Nor just before one (#398): a routine timer due within $soon s holds it, so the API is never
+# restarted under a routine that starts mid-deploy. The pre-tip check's timer fires every five
+# minutes through the day and is left out of this; a pre-tip check that runs is held above.
+soon=${PICKANDROLL_UPDATE_SOON:-600}
+now=$(date +%s)
+clock() { TZ=America/Chicago date -d "@$1" +%H:%M 2>/dev/null || TZ=America/Chicago date -r "$1" +%H:%M; }
+for timer in $(systemctl --user list-units 'pickandroll-routine@*.timer' --all --no-legend --plain 2>/dev/null | awk '{print $1}'); do
+  case $timer in pickandroll-routine@pretip.timer) continue ;; esac
+  next=$(systemctl --user show "$timer" -p NextElapseUSecRealtime --value --timestamp=unix 2>/dev/null) || next="?"
+  case $next in
+    ""|n/a) continue ;;
+    @[0-9]*) left=$(( ${next#@} - now )) ;;
+    *) say "refused: the next run of $timer was not read ($next); run again once systemd answers"; exit 3 ;;
+  esac
+  if [ "$left" -ge 0 ] && [ "$left" -le "$soon" ]; then
+    say "refused: $timer fires at $(clock "${next#@}") CT, in $(( (left + 59) / 60 )) min; run again after its routine ends"
+    exit 3
+  fi
+done
 
 # 2. main, fast-forward only (the checkout stays on main; a diverged checkout is a stop)
 before=$(git -C "$repo" rev-parse HEAD)
