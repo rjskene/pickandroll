@@ -15,6 +15,8 @@ import {
   isStale,
   matchupOddsCell,
   placeLabel,
+  myRecordLabel,
+  myRecordTone,
   placeTone,
   refreshNote,
   roomNote,
@@ -141,7 +143,15 @@ export function LeagueBlock(props: BlockProps) {
         ) : (
           <span />
         )}
-        <span className={placeTone(s)}>{placeLabel(s)}</span>
+        {/* My record in a column of its own (#392); under 1640 px and on a phone it moves under the
+            place, in the place's cell, and its column goes. */}
+        <span className="lt-place">
+          <span className={placeTone(s)}>{placeLabel(s)}</span>
+          <span className={`lt-rec-under ${myRecordTone(s)}`}>{myRecordLabel(s)}</span>
+        </span>
+        <span className={`lt-rec ${myRecordTone(s)}`} title="my season's record, W-L-T as Yahoo writes it">
+          {myRecordLabel(s)}
+        </span>
         <span className={s.adds?.limit == null ? "muted" : ""} title={s.funds ? fundsNote(s.funds) : s.adds ? addsNote(s.adds) : undefined}>
           {s.funds ? fundsLabel(s.funds) : addsLeft(s.adds)}
         </span>
