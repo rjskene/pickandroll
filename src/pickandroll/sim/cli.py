@@ -859,6 +859,12 @@ ADP_POOL = (
     "the players with a scheduled game in the season's first {days} days that the run's "
     "forecaster projects or the table lists"
 )
+ADP_LIMIT = (
+    "the arm's seat drafts on per-game value alone, with no regard for the games a player is "
+    "expected to miss or for where the room would take him, so it can finish near the top or "
+    "near the bottom of the room on every path, the paired change in playoff odds then zero with "
+    "no spread; how it should draft is open with the user"
+)
 ADP_APART = (
     "the two arms' draft-day beliefs differ, so each arm's season is a league of its own from "
     "the draft on, on the same (seed, path) and the same rivals' boards: the pair shares no draft"
@@ -1796,6 +1802,7 @@ def adp_block(
         "seat": ADP_SEAT,
         "market": ADP_MARKET,
         "pool": ADP_POOL.format(days=rn.OPENING_DAYS),
+        "limit": ADP_LIMIT,
         "seasons": seasons,
     }
     if paired:

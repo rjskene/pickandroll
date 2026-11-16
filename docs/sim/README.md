@@ -698,8 +698,17 @@ in the log. A dry run prints each season's table in counts and the first task's 
 
 **Its limits.** The rivals' error is one spread for every rival, given and not fitted; nobody
 reaches for a position, a need or a run on a category. The market's view is the preseason's and
-never refreshed. And the table pools drafts of every scoring (above), so it is not a nine-category
-league's.
+never refreshed. The table pools drafts of every scoring (above), so it is not a nine-category
+league's. And the figure is the season's average as the log holds it, so the few drafts held after
+the season began are pooled in: it is not strictly a preseason figure.
+
+The arm's seat drafts on per-game value alone, with no regard for the games a player is expected to
+miss or for where the room would take him; a market prices both. On the logs on file the effect ran
+both ways by forecaster: under `espn` the seat's rosters held clearly more players who then barely
+played than a rival's, under `prior` it ran the other way or nearly even. So the seat can finish
+near the top or near the bottom of the room on every path. The paired change in playoff odds is
+then zero with no spread, and the advisory verdict cannot hold in that cell; rank and category wins
+still separate two arms. How the arm's seat should draft is open with the user.
 
 ## The audit and the counts (`sim/audit.py`, `sim/counts.py`)
 

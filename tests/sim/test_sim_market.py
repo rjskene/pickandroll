@@ -364,6 +364,7 @@ def test_a_replay_on_a_table_records_it_in_counts(pair_data):
     # A room's every seat drafts on its arm's board: no rival drafts a player nobody projects.
     assert season["drafted_unprojected"] == {"drafts": 1, "total": 0, "mean": 0.0, "max": 0}
     assert "pair" not in block and p["pool"]["draft"] == block["pool"]
+    assert block["limit"] == ss.ADP_LIMIT and "open with the user" in block["limit"]
     assert p["draft"].startswith("snake in which each seat takes the best player left")
     # No figure of the table is in the payload: only counts and the log's hash.
     assert not any(str(x) in json.dumps(block) for x in table.picks.values() if x != int(x))
@@ -399,6 +400,8 @@ def test_a_pair_on_one_belief_records_its_one_draft():
     table = adp.Table("espn", {1: 2.0, 2: 5.0}, 9.0, 4, 0, 6)
     block = ss.adp_block("espn", SPREAD, {2024: (table, "ab")}, keys, results, paired=True)
     assert block["pair"] == "one draft and one league, shared by both arms"
+    assert block["limit"] == ss.ADP_LIMIT
+    assert ss.adp_block("none", None, {}, keys, results, paired=True) == {"source": "none"}
     assert block["seasons"]["2024"] == {
         **table.payload(),
         "log_sha256": "ab",
