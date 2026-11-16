@@ -14,9 +14,9 @@ import pytest
 
 from pickandroll.sim import cli as ss
 from pickandroll.sim import forecast as fc
+from pickandroll.sim import policy, shapes
 from pickandroll.sim import readers as reader
 from pickandroll.sim import run as rn
-from pickandroll.sim import shapes
 from tests.sim.sim_league import make_data_dir
 
 #: The grid's seventy-two shapes in their order, as a digest of their payloads: the order is part
@@ -155,6 +155,14 @@ def test_the_made_up_folder_without_a_wire_is_short_under_the_fixed_shape(tmp_pa
     (x,) = ss.short_drafts([r], shapes.FIXED_GRID, 1, "stat", None, {}, {})
     assert (x["need"], x["holds"], x["board"]) == (156, 85, "pool")
     assert sum(len(v) for v in _setup(r, shapes.FIXED).rosters.values()) == 85
+
+
+def test_no_axis_of_the_grid_changes_what_a_seat_reads(wire_read):
+    """What decides which knobs a seat reads (``policy.Shape``: the scoring, held slots, the
+    bracket) is one for every shape of the grid, so a run on it has one reads table."""
+    _, r, _ = wire_read
+    want = policy.shape_of(_setup(r, shapes.FIXED))
+    assert {policy.shape_of(_setup(r, x)) for x in shapes.FULL.shapes} == {want}
 
 
 def test_the_fixed_shape_s_league_is_the_league_before(wire_read):

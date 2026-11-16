@@ -1,17 +1,18 @@
 # SEASON SIM: a standalone whole-season simulator
 
 Tracker #172. The simulator plays whole fantasy seasons, from the draft to the final, on recorded
-NBA seasons: a made-up twelve-team league is drafted on a forecaster's projection and played
-through a recorded season's game lines, the engine's own code deciding each seat's moves, and the
-league scores the weeks, the standings and the bracket. It is standalone (the user's ruling of
-2026-11-07): it reads no live league, writes no knob file and is no part of a live decision. A
-**path** in a replay varies only in its seats (which arm sits where), in the told return dates
-of the absences, in a market rival's draw and in an oracle forecaster's draw; the season's games
-are the same on every path. A run is a **room** (the arms rotated around the table, `--seats`) or
-a **pair** (arm A and arm B in one seat in two seasons through one world, B less A, `--arms`),
-on one or several recorded seasons and forecasters. The design study is the master's note in the
-scratch repo; the user's rulings of 2026-10-23 amended it (five seasons behind the fit, no data
-mining, projections taken as given), and those of 2026-11-07 made it standalone and whole-season.
+NBA seasons: a made-up league (twelve teams by default, or a grid of league shapes) is drafted on a
+forecaster's projection and played through a recorded season's game lines, the engine's own code
+deciding each seat's moves, and the league scores the weeks, the standings and the bracket. It is
+standalone (the user's ruling of 2026-11-07): it reads no live league, writes no knob file and is no
+part of a live decision. A **path** in a replay varies only in its seats (which arm sits where), in
+the told return dates of the absences, in a market rival's draw and in an oracle forecaster's draw;
+the season's games are the same on every path. A run is a **room** (the arms rotated around the
+table, `--seats`) or a **pair** (arm A and arm B in one seat in two seasons through one world, B
+less A, `--arms`), on one or several recorded seasons and forecasters. The design study is the
+master's note in the scratch repo; the user's rulings of 2026-10-23 amended it (five seasons behind
+the fit, no data mining, projections taken as given), and those of 2026-11-07 made it standalone and
+whole-season.
 
 ## Where it lives
 
@@ -87,12 +88,13 @@ the regular season's rule). The bracket seeds the top `playoff_teams` with the b
 need (`2^rounds − playoff_teams`), reseeds each round or plays the fixed bracket as the league
 does, and sends the higher seed through a tie. A points league scores on the weighted points.
 
-A replay's league is made up, so its bracket is the replay's own: the top six of twelve over the
-last three weeks, the byes the rounds need, reseeded, the higher seed through a tie
-(`run.replay_setup`). `LeagueSpec.from_settings` builds a spec from a league's settings and
-refuses (`BracketUnread`) one with divisions or a tie-breaker the bracket does not play; since the
-standalone cut no command reads a league's settings, and a run without a spec writes no playoff
-odds and reports rank and category wins only.
+A replay's league is made up, so its bracket is the replay's own: on the fixed shape the top six of
+twelve over the last three weeks (a league shape names its own, **The league shapes**), the byes the
+rounds need, reseeded, the higher seed through a tie (`run.replay_setup`).
+`LeagueSpec.from_settings` builds a spec from a league's settings and refuses (`BracketUnread`) one
+with divisions or a tie-breaker the bracket does not play; since the standalone cut no command reads
+a league's settings, and a run without a spec writes no playoff odds and reports rank and category
+wins only.
 
 ## The gates (`sim/validate.py`)
 
@@ -104,7 +106,7 @@ exports (**What was removed and when**).
 
 ## The state and the policy (`sim/state.py`, `sim/policy.py`)
 
-A **setup** is one league as a run starts it: the calendar and pairings, the twelve rosters, the
+A **setup** is one league as a run starts it: the calendar and pairings, the rosters, the
 free agents, the shared projection, the schedule, the statuses and return dates on day one, the
 market's view and rate, and the bracket. A **state** is one arm's position on a day: rosters, pool,
 adds used this week, the moves queued to land tomorrow and every week's totals so far. Beliefs,
@@ -314,47 +316,49 @@ in every payload).
 Each command runs as `python -m pickandroll.sim <command>`:
 
 - `replay --seasons 2022,2023,2024 --forecasters prior,espn,marcel,oracle:0.1 --seats A.json
-  B.json`: a made-up twelve-team league on each recorded season named (below), the arms rotated
-  across paths, once for each season and forecaster that serves it (a **cell**; default
-  forecaster `prior`). The hold-out anywhere in the list, a season named twice or a season with
-  no log on file is refused by name before anything runs. Before any path each season is read on
-  its own (its lines, the forecasters' figures, each label's weights, the league's shape) and the
-  cells are printed as a table, seasons across and forecasters down: a forecaster that cannot
-  serve a season leaves that cell skipped, with the reader's reason; a stand-in that cannot serve
-  a season refuses the run by name (a system label cannot be built there); a run with no cell
-  left is refused. The tasks are the served cells by the paths, and the estimate counts them;
-  `--dry-run` runs the first task of the first served cell. `--shape stat|minutes` sets how an
-  oracle's error is drawn (default `stat`). `--news-sd` sets the told return date's spread in
-  days (default 2). `--no-peek YYYY-MM-DD` runs the no-peek check instead, on one season only and
-  its first served forecaster, and writes nothing. `--bbm-as espn --yahoo-as marcel` names the
-  two live sources' stand-ins, and each arm then believes by its `system` (below). `--adp espn
-  --adp-spread <base>,<growth>` drafts the league on the season's table of average draft
-  positions instead ("The draft market"); `--adp none` is the default. The payload
-  (`replay_version` 6) keys by season what is one season's: the forecasters, the sources, the
-  weights, the players, the shape, the results, the counts, the season scale and the unprojected
-  count; `cells` says which were served and why the others were not, and `adp` what the league
-  was drafted on.
+  B.json`: a made-up league on each recorded season named (below; twelve teams by default, "The
+  league shapes"), the arms rotated across paths, once for each season and forecaster that serves it
+  (a **cell**; default forecaster `prior`). The hold-out anywhere in the list, a season named twice
+  or a season with no log on file is refused by name before anything runs. Before any path each
+  season is read on its own (its lines, the forecasters' figures, each label's weights, the league's
+  shape) and the cells are printed as a table, seasons across and forecasters down: a forecaster
+  that cannot serve a season leaves that cell skipped, with the reader's reason; a stand-in that
+  cannot serve a season refuses the run by name (a system label cannot be built there); a run with
+  no cell left is refused. The tasks are the served cells by the paths, and the estimate counts
+  them; `--dry-run` runs one task of the first served cell (path 0; on a grid the timed one, "The
+  league shapes"). `--shape stat|minutes` sets how an oracle's error is drawn (default `stat`).
+  `--news-sd` sets the told return date's spread in days (default 2). `--no-peek YYYY-MM-DD` runs
+  the no-peek check instead, on one season only and its first served forecaster, and writes nothing.
+  `--bbm-as espn --yahoo-as marcel` names the two live sources' stand-ins, and each arm then
+  believes by its `system` (below). `--adp espn --adp-spread <base>,<growth>` drafts the league on
+  the season's table of average draft positions instead ("The draft market"); `--adp none` is the
+  default. `--grid full` visits the grid of league shapes and `--league` names one ("The league
+  shapes"). The payload (`replay_version` 7) keys by season what is one season's: the forecasters,
+  the sources, the weights, the players, the shape, the results, the counts, the season scale and
+  the unprojected count; `cells` says which were served and why the others were not, and `adp` what
+  the league was drafted on, and `league` the league shapes the paths played.
 - `replay --seasons 2022,2023,2024 --arms A.json B.json`: the paired design on a replay, arm A and
   arm B in one seat through one recorded season's world. A run names `--seats` (a room, as above) or
   `--arms` (exactly two spec files), never both and never neither. Each task drafts the league on
-  its cell's forecaster as a room does, then puts arm A in seat `teams[path mod 12]` in one season
-  and arm B in the same seat in a second, through one world in lockstep (`run.paired`), each arm
-  believing by its own label; the eleven other seats are each arm's `opponents` block and believe
-  the run's forecaster, whatever the arm believes. `--paths` is rounded up to a multiple of the
-  league's twelve seats, and the command says so (20 becomes 24), so every seat is taken equally
-  often in every cell. A replay records no market rate, so a `market` rival without a `rate` would
-  never move: it is refused by name. A market rival's view is the run's forecaster's draft-day
-  ranking, or under `--adp espn` the season's table (PR D4a, "The draft market"). A pair that is one seat by construction is refused by name, the knobs and
-  fields it differs in listed with why none is read (**What each knob reads**); the same arm twice
-  stays allowed (a check that the difference is zero). `--no-peek` checks the design the run names:
-  with `--arms` it compares both arms' seasons' day records on path 0. The payload (`design:
-  paired`) carries the seat rule and each path's seat, and per cell each arm's outcomes, the
-  `difference` (B less A) with its standard error over the paths, the count of paths and how many
-  are distinct (by the seat, both arms' metrics and their mechanism counts: the season's games are
-  the same on every path, so paths repeat when nothing is drawn, and an SE over repeats is over
-  copies), the counts by arm and for the rivals, each arm's season scale, the unprojected count by
-  arm, and the rivals each arm faced with the line that they believe the run's forecaster. A dry run
-  prints its first task's pair.
+  its cell's forecaster as a room does, then puts arm A in seat `teams[path mod 12]` (on a league
+  shape, `teams[turn mod n]`) in one season and arm B in the same seat in a second, through one
+  world in lockstep (`run.paired`), each arm believing by its own label; the other seats (eleven on
+  the fixed shape) are each arm's `opponents` block and believe the run's forecaster, whatever the
+  arm believes. `--paths` is rounded up to a multiple of the league's seats (twelve on the fixed
+  shape; on a grid, of its shapes), and the command says so (20 becomes 24), so every seat is taken
+  equally often in every cell. A replay records no market rate, so a `market` rival without a `rate`
+  would never move: it is refused by name. A market rival's view is the run's forecaster's draft-day
+  ranking, or under `--adp espn` the season's table (PR D4a, "The draft market"). A pair that is one
+  seat by construction is refused by name, the knobs and fields it differs in listed with why none
+  is read (**What each knob reads**); the same arm twice stays allowed (a check that the difference
+  is zero). `--no-peek` checks the design the run names: with `--arms` it compares both arms'
+  seasons' day records on path 0. The payload (`design: paired`) carries the seat rule and each
+  path's seat, and per cell each arm's outcomes, the `difference` (B less A) with its standard error
+  over the paths, the count of paths and how many are distinct (by the seat, both arms' metrics and
+  their mechanism counts: the season's games are the same on every path, so paths repeat when
+  nothing is drawn, and an SE over repeats is over copies), the counts by arm and for the rivals,
+  each arm's season scale, the unprojected count by arm, and the rivals each arm faced with the line
+  that they believe the run's forecaster. A dry run prints its first task's pair.
 - **The pair's verdict, by forecaster and season** (`run.replay_verdict`, pure; `--arms` only, a
   room compares levels and gets none). Per cell, the paired change in every metric with its SE
   over the paths. Per forecaster, the pooled change: the mean of its season means, with the SE
@@ -722,6 +726,84 @@ played than a rival's, under `prior` it ran the other way or nearly even. So the
 near the top or near the bottom of the room on every path. The paired change in playoff odds is
 then zero with no spread, and the advisory verdict cannot hold in that cell; rank and category wins
 still separate two arms. How the arm's seat should draft is open with the user.
+
+## The league shapes (`sim/shapes.py`, PR D4b)
+
+Every league a policy was judged in had twelve teams, thirteen slots, four adds a week and six
+playoff teams over three weeks, so a result could hold only there. The user's ruling of
+2026-11-06 has a league generator vary the team count, the roster slots, the weekly add limit
+and the playoff format over modest ranges, and the ruling of 2026-11-07 makes the add limit a
+parameter with the rest and sets the grid.
+
+- **A league shape** (`LeagueShape`): the team count, the roster slots, the weekly add limit (or
+  none) and the playoff format (how many teams, over how many weeks). Every shape scores the nine
+  categories. The season stays 22 weeks; the playoffs are its last weeks and the regular season
+  is what they leave. (The name `shape` is taken twice already: `replay --shape` is the oracle's
+  error shape and `policy.Shape` decides which knobs a seat reads.)
+- **The fixed shape**, the default (`replay --grid fixed`): the league before, twelve teams, the
+  thirteen slots, four adds a week, six playoff teams over three weeks. On it nothing moves: a
+  replay's record equals the one before PR D4b key for key, apart from the added `league` block,
+  the version and its reason, and what names the run.
+- **The grid** (`replay --grid full`): ten, twelve or fourteen teams; the thirteen slots or
+  fifteen (two more bench); two, three or four adds a week or no limit; four playoff teams over
+  two weeks, six over three or eight over three. Seventy-two shapes, in the order of
+  `itertools.product(playoffs, adds, slots, teams)`, the team count fastest. The order is part of
+  the record and is never changed (a test pins it).
+- **One shape for a run** (`--league teams=10,slots=15,adds=none,playoffs=4/2`): each value one of
+  the grid's, a key left out the fixed shape's; refused with `--grid full`. A pair's paths round
+  up to that shape's team count. It is for the tests, a real look and a question about one shape.
+
+**The visit rule** (`shapes.visit`, a pure function of the path and the grid). With N shapes, path
+`i` plays shape `c = i mod N` in round `j = i div N`. Inside a round each team count's 24 shapes
+take 24 turns in a row, each at its place `x = (16·p + 9·y) mod 24`, where `p` is the playoff
+format's index and `y = 2·a + r` with `a` and `r` the adds' and the slots' indices: so `x mod 3` is
+the playoff format and `x mod 8` is `y`. The turn is `24·j + (x + 5·j) mod 24`, the pair's seat is
+`teams[turn mod n]` and the room's rotation is by the turn. Both arms of a pair share the shape, the
+seat and the world, and the world's draws stay on `(seed, path)`: the turn decides seats only. On
+one shape the turn is the path, so the fixed shape's seats are as before.
+
+What it balances: at every whole round each shape is played once, a team count's seats are taken
+within one visit of even (a room's seats and arms too), and a shape moves to a new seat each
+round for at least five rounds. The places keep each axis's values near even draft positions;
+the grid's own order in their place would put one playoff format on the first picks and another
+on the last, and a test keeps that as the reason. The tie is small, not zero: the team count
+itself sits 24 turns over 10 or 14 seats, the slots ride the seat's parity at an odd number of
+rounds, and the adds keep a small tie that does not shrink with more rounds.
+
+**A run on the grid.** `--grid full` rounds `--paths` up to a multiple of 72 (100 becomes 144), for
+a pair and for a room. One round is one path a shape: it can say how the grid as a whole treats two
+arms, and next to nothing about one shape. The verdict does not change: per forecaster and season
+over all the run's paths, pooled as before, and on the grid those paths vary the league as well as
+the seat and the draft. A pair on a grid adds the **by-axis table** (`by_axis`): for each cell, each
+axis and each of its values, the paired change's mean, standard error and paths for every metric. No
+verdict reads it; it is a description, not a test, the paths behind a value are few, and an axis's
+values sit on nearly but not exactly even seats. The dry run times one path on the grid's largest
+draft (fourteen teams of fifteen) with no add limit, so its estimate errs long; a full-grid run on
+real seasons is far over an hour, and the guard's rule stands: it is announced and starts on the
+user's word. `validate` stays on the fixed shape and says so.
+
+**A draft that cannot be filled.** A draft takes the teams times the slots that are not held.
+`cli.short_drafts` finds each draft of the run's shapes that may not fill: the season's draftable
+players on the cell's forecaster are fewer, or under a table an arm's seat's own board (the
+players its forecaster projects) is. Rivals could take every player on that board, so it is held
+to the whole draft's need, and a draft refused on it might have filled; the pool's and a rival's
+board are exact. A run that names a shape (`--grid full`, `--league`) is refused on any of them,
+by name, before any path. On the fixed shape a short draft is played as it always was (the
+made-up folder's 85 projected players fill seven or eight spots a seat; the pins rest on it),
+and the run prints it and records it (`league.short_draft`).
+
+**What a run records.** The `league` block: the grid's name, its axes, its shapes in order, the
+visit rule in a sentence, each path's shape index and turn, and the short drafts. A pair's
+`seat.by_path` is each path's seat (on the fixed shape, as before). The knob reads table is one
+per arm, as before: no axis of the grid changes what a seat reads (`policy.Shape`), and a test
+says so.
+
+**Not yet.** Points leagues and held slots are a later PR's (D4c). The ruling of 2026-11-07
+makes the market rivals' add rate a parameter of the league shape, with a default written as a
+number; it is not one yet. As a working default, open with the user, the rate stays what the
+arm's file names (`{"kind": "market", "rate": ...}`), and a market block with no rate never
+adds: the default was to come from a live league's record, the box holds no league, and a
+measured figure does not go in the code.
 
 ## The audit and the counts (`sim/audit.py`, `sim/counts.py`)
 

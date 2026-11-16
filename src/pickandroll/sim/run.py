@@ -13,8 +13,8 @@ moves decided yesterday land, each seat decides on the day's beliefs, the lineup
 is played and scored; a hook is handed each day's :class:`DayRecord`. Variants whose
 states agree share one solve (the lockstep of the design note); from the first divergence each
 solves alone. :func:`paired` runs arm A and arm B for one seat and returns the paired difference
-of the season's outcomes, B less A; :func:`room` runs twelve seats under named arms rotated across
-paths.
+of the season's outcomes, B less A; :func:`room` runs a league's seats under named arms rotated
+across paths.
 Pure but for the process pool: nothing here reads a file; the readers (``sim.readers``) and the
 commands (``sim.cli``) bring the inputs and write the payload.
 """
@@ -941,10 +941,11 @@ def _pair_result(
     }
 
 
-def rotate(arms: Sequence[str], teams: Sequence[int], path: int) -> dict[int, str]:
-    """Seat ``i`` gets arm ``(i + path) mod n``: across paths every arm sits in every seat."""
+def rotate(arms: Sequence[str], teams: Sequence[int], turn: int) -> dict[int, str]:
+    """Seat ``i`` gets arm ``(i + turn) mod n``: across paths every arm sits in every seat (the
+    path's turn, ``shapes.visit``; the path itself on one league shape)."""
     n = len(arms)
-    return {t: arms[(i + path) % n] for i, t in enumerate(teams)}
+    return {t: arms[(i + turn) % n] for i, t in enumerate(teams)}
 
 
 def room(

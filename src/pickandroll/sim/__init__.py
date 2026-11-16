@@ -1,8 +1,9 @@
 """SEASON SIM (#172): a standalone whole-season simulator.
 
-A replay drafts a made-up twelve-team league on a forecaster's projection (``forecast``) and plays
-it through a recorded season's game lines (``gamelogs``), from the draft to the final; the
-recorded lines are the truth and each seat believes only the games already played (``belief``).
+A replay drafts a made-up league (twelve teams, or a grid of league shapes: ``shapes``) on a
+forecaster's projection (``forecast``) and plays it through a recorded season's game lines
+(``gamelogs``), from the draft to the final; the recorded lines are the truth and each seat
+believes only the games already played (``belief``).
 The league (``league``) scores weeks, standings and the bracket. The state (``state``) is a league
 as a run starts it and one arm's position on a day; the policy (``policy``) is the engine's own
 solve on that state, in three tiers, with the executor that lands its moves; the opponents
