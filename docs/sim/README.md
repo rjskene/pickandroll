@@ -610,6 +610,32 @@ part, writes nothing, and exits non-zero on a difference at or before the date.
 - A replay reads no status on day one, so a drafted player out from opening night is heard to be
   out only `lag` days after his first missed game.
 
+## The draft market (`sim/adp.py`, PR D4a)
+
+**The table.** ESPN's season logs, the files a replay already reads, carry each player's average
+draft position over ESPN's drafts (`player.ownership.averageDraftPosition`). A season's table is
+read from its own log, by ESPN's ids, so it needs no request, no file of its own and no matching of
+names. Three things were settled on the logs on file before anything was built on the figure:
+
+- **It is that season's own draft position.** Players in their first season on file carry
+  figures off the ceiling, so it is no earlier season's draft. Players in their last season on
+  file do too, so it is no later season's; this was checked where a later log is on file (the
+  hold-out's log was not opened for it). And the order agrees with the season's own stored
+  projection at least as well as with another season's.
+- **An undrafted player carries the ceiling:** the figure the most players share, at the top of
+  the range, with an auction value of about nothing and, nearly always, almost no ownership. Such
+  a player is not listed; every listed player sits ahead of him. A few players carry figures a
+  little past the ceiling (drafted late somewhere); they are listed.
+- **Whose drafts:** `ownership.leagueType` is one value for every player of every season, so the
+  figure pools ESPN's drafts whatever their scoring. Its order sits close to both of ESPN's own
+  preseason ranks, the points one and the categories one, nearer one in one season and the other
+  in the next. So this market is ESPN's public drafts, not a nine-category league's: a limit.
+
+A log whose players all carry one and the same figure holds no table, and a run that asks for it
+is refused by name before any path. The confirmation season's log is such a log today. The hold-out
+is refused before its log is opened. The table's counts (players, listed, at the ceiling, with no
+figure) and the log's hash are what a run records of it; the figures stay in the log.
+
 ## The audit and the counts (`sim/audit.py`, `sim/counts.py`)
 
 The policy decides and the world checks. On every simulated day of every run of every command

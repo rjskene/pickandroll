@@ -245,16 +245,38 @@ def projection_block(season: int, i: int, entries: list[dict[str, Any]]) -> dict
     return entry(season, 0, raw, split=gl.SEASON_TOTAL, source=gl.PROJECTED)
 
 
+#: The made-up logs' draft positions (#172, PR D4a): a player's figure is a :func:`between` draw
+#: from 1 to :data:`ADP_TOP` on a generator of its own (no line's draw moves); a draw past
+#: :data:`ADP_CEILING` is an undrafted player, who carries the ceiling itself, the figure the most
+#: players share. A season in ``flat_adp`` carries the ceiling for everyone: no table.
+ADP_TOP = 200.0
+ADP_CEILING = 150.0
+
+
+def draft_positions(season: int, pids: list[int], flat: bool = False) -> dict[int, float]:
+    """The made-up average draft position of each of ``pids`` in ``season``'s log."""
+    if flat:
+        return dict.fromkeys(pids, ADP_CEILING)
+    g = np.random.default_rng([300, season])
+    out = {}
+    for k in sorted(pids):
+        x = between(g, 1.0, ADP_TOP)
+        out[k] = min(x, ADP_CEILING)
+    return out
+
+
 def write_logs(
     data: Path,
     seasons: tuple[int, ...],
     players: list[dict[str, Any]],
     projection: bool = False,
+    flat_adp: tuple[int, ...] = (),
 ) -> None:
     """ESPN-shaped logs for ``seasons``: the fixture players under numeric ids (1000 + i), on six
-    pro teams, with their positions as eligible slots. ``projection``: each player's log also
-    carries a stored projection block (:func:`projection_block`), which no per-game reader
-    reads."""
+    pro teams, with their positions as eligible slots and a made-up average draft position
+    (:func:`draft_positions`; one figure for everyone in a season of ``flat_adp``), which no
+    reader reads but the draft table's. ``projection``: each player's log also carries a stored
+    projection block (:func:`projection_block`), which no per-game reader reads."""
     folder = data / "external" / "espn" / "gamelogs"
     folder.mkdir(parents=True, exist_ok=True)
     slots = {"PG": 0, "SG": 1, "SF": 2, "PF": 3, "C": 4}
@@ -288,6 +310,7 @@ def write_logs(
         if projection:
             for pid, stats in by_pid.items():
                 stats.append(projection_block(season, int(pid) - 1000, list(stats)))
+        adp = draft_positions(season, [int(pid) for pid in by_pid], season in flat_adp)
         body = {
             "players": [
                 {
@@ -301,6 +324,7 @@ def write_logs(
                             slots[p] for p in players[int(pid) - 1000]["positions"] if p in slots
                         ]
                         + [11, 12],
+                        "ownership": {"averageDraftPosition": adp[int(pid)], "leagueType": 0},
                         "stats": stats,
                     }
                 }
@@ -328,6 +352,7 @@ def make_data_dir(
     seasons: tuple[int, ...] = (2023, 2024, 2025, 2026),
     wire: int = 0,
     projection: bool = False,
+    flat_adp: tuple[int, ...] = (2026,),
 ) -> Path:
     """A data folder with synthetic logs of the anonymised fixtures' 93 players and no fit yet: no
     league's state, export or id file (the simulator reads none since PR D3).
@@ -339,18 +364,23 @@ def make_data_dir(
     games in 2023), drafts 156 and leaves 35 projected free agents beside the newcomers. The
     first 93 players' lines are the same either way (they are drawn first), and ``wire`` 0 is
     the folder as it always was. ``projection``: the logs carry stored projection blocks
-    (:func:`write_logs`), for the ``espn`` forecaster; without it they carry none."""
+    (:func:`write_logs`), for the ``espn`` forecaster; without it they carry none. Every log
+    carries made-up draft positions but a season of ``flat_adp`` (the confirmation season by
+    default, as on the box), whose players all carry one figure (#172, PR D4a)."""
     data = tmp / "data"
     data.mkdir(parents=True)
-    write_logs(data, seasons, fixture_players() + wire_players(wire), projection)
+    write_logs(data, seasons, fixture_players() + wire_players(wire), projection, flat_adp)
     return data
 
 
 __all__ = [
     "ABSENCE_HAZARD",
+    "ADP_CEILING",
+    "ADP_TOP",
     "KNOBS",
     "NINE",
     "arm",
+    "draft_positions",
     "make_data_dir",
     "make_setup",
     "rates",
