@@ -246,6 +246,7 @@ CORE = (
     "counts",
     "forecast",
     "adp",
+    "shapes",
 )
 #: What the core never imports: files, processes, the network, stores on disk.
 NO_IO = {

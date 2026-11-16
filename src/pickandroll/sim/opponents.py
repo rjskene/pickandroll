@@ -1,4 +1,4 @@
-"""The other eleven seats (#172, PR 2b): what each opponent does on a day.
+"""The seats no arm holds (#172, PR 2b): what each opponent does on a day.
 
 The ladder from the design note. **Static** makes no move. **Market** is the heuristic: each day
 with probability ``rate`` (adds per team-day: the arm's ``opponents.rate``, else the setup's,

@@ -51,14 +51,14 @@ from datetime import UTC, date, datetime, time, timedelta
 from pathlib import Path
 from typing import Any
 
-from . import adp, audit, checks, gamelogs, nopeek, policy, world
+from . import adp, audit, checks, gamelogs, nopeek, policy, shapes, world
 from . import counts as ct
 from . import fit as fitmod
 from . import forecast as fc
 from . import readers as reader
 from . import run as rn
 from . import validate as vg
-from .engine import wk
+from .engine import mv, wk
 
 #: The repository: this file is ``src/pickandroll/sim/cli.py``.
 ROOT = Path(__file__).resolve().parents[3]
@@ -649,19 +649,101 @@ def replay_setup_of(
     scheduled: Any,
     projection: Any,
     draft: adp.Draft | None = None,
+    league: shapes.LeagueShape = shapes.FIXED,
 ) -> Any:
     """A replay's league in one path, drafted on the run's forecaster's ``projection``, or on a
-    table of average draft positions (``draft``, #172, PR D4a)."""
+    table of average draft positions (``draft``, #172, PR D4a), in the path's league shape
+    (``league``, #172, PR D4b; the fixed shape by default)."""
     return rn.replay_setup(
-        season, lines, members, projection, reader.PERIOD_ONE[season], scheduled, draft=draft
+        season,
+        lines,
+        members,
+        projection,
+        reader.PERIOD_ONE[season],
+        scheduled,
+        draft=draft,
+        **league.setup_args(),
+    )
+
+
+def spots_of(league: shapes.LeagueShape) -> int:
+    """The roster spots a league shape's draft fills: its slots that are not held."""
+    return sum(1 for s in league.slots if s not in mv.HELD)
+
+
+def short_drafts(
+    reads: Sequence[Any],
+    grid: shapes.Grid,
+    seed: int,
+    oracle_shape: str,
+    sources: Sources | None,
+    arms: Mapping[str, rn.Arm],
+    picks: Mapping[int, Mapping[int, float]],
+) -> list[dict[str, Any]]:
+    """Every draft of ``grid``'s league shapes that may not fill (#172, PR D4b), one record a
+    season, forecaster, team count with roster size, and board: the draft takes teams times the
+    slots that are not held (``need``), and a board holds fewer (``holds``). The board is the
+    pool, the season's draftable players on the cell's forecaster (``run.draftable_of``),
+    which every seat drafts from without a table and every rival's board is under one; or,
+    under a table (``picks``, by season), an arm's seat's own board, its forecaster's draftable
+    players. Rivals could take every player on that board, so it is held to the whole draft's
+    need, and a draft refused on it might have filled. Read on path 0: a forecaster projects
+    the same players on every path. Empty when every draft fills. A run that names a league
+    shape is refused on any record; under the fixed shape they are noted (:func:`short_line`)."""
+    out: list[dict[str, Any]] = []
+    sizes = sorted({(x.teams, spots_of(x)) for x in grid.shapes})
+    for r in reads:
+        days = rn.league_days(r.lines, r.members, r.scheduled)
+        table = picks.get(r.season)
+        for f in r.served:
+            projection = projection_of(f, r.fixed, r.lines, seed, 0, oracle_shape)
+            pool = rn.draftable_of(
+                days, days, projection, reader.PERIOD_ONE[r.season], rn.OPENING_DAYS, table
+            )
+            boards: dict[str | None, int] = {None: len(pool)}
+            if table is not None:
+                forecasts = forecasts_of(sources, r.fixed, r.lines, seed, 0, oracle_shape, arms)
+                for key, arm in arms.items():
+                    own = own_projection(arm.forecaster, f.label, projection, forecasts)
+                    boards[key] = sum(1 for k in pool if k in own)
+            for teams, spots in sizes:
+                for board, n in boards.items():
+                    if n < teams * spots:
+                        out.append(
+                            {
+                                "season": r.season,
+                                "forecaster": f.label,
+                                "teams": teams,
+                                "spots": spots,
+                                "need": teams * spots,
+                                "board": "pool" if board is None else board,
+                                "holds": n,
+                            }
+                        )
+    return out
+
+
+def short_line(x: Mapping[str, Any]) -> str:
+    """One of :func:`short_drafts`' records in words."""
+    head = (
+        f"{x['season']} on {x['forecaster']}: the draft of {x['teams']} teams of {x['spots']} "
+        f"spots takes {x['need']} players"
+    )
+    if x["board"] == "pool":
+        return f"{head} and the season has {x['holds']} draftable"
+    arm = x["board"].upper() if x["board"] in PAIR else x["board"]
+    return (
+        f"{head} and arm {arm}'s seat's own board holds {x['holds']} (rivals could take them "
+        "all, so the board is held to the whole draft; the draft might have filled)"
     )
 
 
 #: A season's market under ``--adp espn`` (#172, PR D4a): its table's listed players' average
 #: picks and the rivals' spread; None under ``--adp none``.
 Market = tuple[Mapping[int, float], adp.Spread] | None
-#: The replay's seats as ``run.replay_setup`` numbers them.
-REPLAY_IDS = tuple(range(1, rn.REPLAY_TEAMS + 1))
+#: The fixed shape's seats as ``run.replay_setup`` numbers them (a league shape's are its
+#: ``ids``).
+REPLAY_IDS = shapes.FIXED.ids
 
 
 def own_projection(
@@ -682,14 +764,16 @@ def room_draft(
     forecasts: Mapping[str, Any],
     seed: int,
     path: int,
+    league: shapes.LeagueShape = shapes.FIXED,
 ) -> adp.Draft | None:
     """A room's draft under a ``market`` on one path (#172, PR D4a): every seat holds an arm, so
-    every seat drafts on its arm's own board. None without a market."""
+    every seat drafts on its arm's own board. None without a market. The seats are the path's
+    league shape's (#172, PR D4b)."""
     if market is None:
         return None
     own = {
         t: own_projection(arms[name].forecaster, run_label, projection, forecasts)
-        for t, name in rn.rotate(seats, REPLAY_IDS, path).items()
+        for t, name in rn.rotate(seats, league.ids, path).items()
     }
     return adp.Draft(market[0], market[1], seed, path, own)
 
@@ -707,15 +791,17 @@ def pair_setups(
     forecasts: Mapping[str, Any],
     seed: int,
     path: int,
+    league: shapes.LeagueShape = shapes.FIXED,
 ) -> dict[str, Any]:
-    """The pair's league on one path, by arm (#172, PR D4a): one league drafted on the run's
-    forecaster without a ``market``. Under one, the arm's seat drafts on the arm's own board and
-    the other eleven on rivals' boards: arms whose draft-day beliefs are one label share one
-    league (the same object), arms on two labels get one each."""
+    """The pair's league on one path, by arm (#172, PR D4a), in the path's league shape (#172,
+    PR D4b): one league drafted on the run's forecaster without a ``market``. Under one, the
+    arm's seat drafts on the arm's own board and every other seat on a rival's board: arms whose
+    draft-day beliefs are one label share one league (the same object), arms on two labels get
+    one each."""
     if market is None:
-        setup = replay_setup_of(season, lines, members, scheduled, projection)
+        setup = replay_setup_of(season, lines, members, scheduled, projection, None, league)
         return dict.fromkeys(pair, setup)
-    me = REPLAY_IDS[path % len(REPLAY_IDS)]
+    me = league.ids[path % league.teams]
     labels = {k: arms[k].forecaster or run_label for k in pair}
     setups: dict[str, Any] = {}
     for k in pair:
@@ -725,7 +811,7 @@ def pair_setups(
             continue
         own = own_projection(labels[k], run_label, projection, forecasts)
         draft = adp.Draft(market[0], market[1], seed, path, {me: own})
-        setups[k] = replay_setup_of(season, lines, members, scheduled, projection, draft)
+        setups[k] = replay_setup_of(season, lines, members, scheduled, projection, draft, league)
     return setups
 
 
