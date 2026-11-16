@@ -24,7 +24,7 @@ from pickandroll.sim import nopeek
 from pickandroll.sim.engine import wk
 from tests.sim.draws import between
 from tests.sim.sim_fixtures import rates_table
-from tests.sim.sim_league import NINE, make_setup
+from tests.sim.sim_league import NINE, make_setup, recorded_lines
 from tests.sim.test_no_peek import recorded
 from tests.sim.test_sim_replay import league as replay_league
 
@@ -201,3 +201,17 @@ def test_recorded_is_the_same_league_on_every_machine():
     league, and fails here before any test that plays it. An edit to the fixture re-pins it."""
     setup, lines = recorded()
     assert digest({"projection": setup.projection, "lines": lines}) == RECORDED
+
+
+#: SHA-256 of ``sim_league.recorded_lines`` on the counts test's league (``make_setup`` with IL and
+#: IL+, seed 3, eight weeks; the season's seed 11), every number as float hex. The same on every
+#: machine; an edit to the builder re-pins it.
+RECORDED_SEASON = "190c9ea65955f62f2b94fa3df088f86bab24ab9a236a9e416f1b13e208361988"
+
+
+def test_the_made_up_recorded_season_is_the_same_on_every_machine():
+    """The made-up recorded season the runner's tests replay (PR D3), pinned: it draws with
+    ``between``, ``random`` and ``integers``, never ``poisson`` or ``uniform``, so a machine that
+    held another season would fail here before any test that pins a run on it."""
+    setup = make_setup(held_slots=("IL", "IL+"), seed=3, weeks=8)
+    assert digest(recorded_lines(setup, 11)) == RECORDED_SEASON

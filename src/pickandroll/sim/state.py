@@ -2,11 +2,11 @@
 
 A :class:`Setup` is a league as read once for a run: its calendar, pairings, teams, players,
 rosters, free-agent pool, the policy's projection on day one, the schedule, the roster slots and
-the rules; the readers (``sim.readers``) build one from a season's parts or a replay's logs.
-A :class:`SimState` is what one arm holds on one day: rosters, the pool, the adds used this week,
-the moves landing tomorrow with the held-slot moves they need, and every week's totals so far.
-The world (``run.World``) is apart: truth, lines, availability and the shared beliefs belong to
-the path, never to an arm, so two arms of a comparison see one world. Pure: frozen dataclasses,
+the rules; ``run.replay_setup`` drafts one on a recorded season's logs. A :class:`SimState` is
+what one arm holds on one day: rosters, the pool, the adds used this week, the moves landing
+tomorrow with the held-slot moves they need, and every week's totals so far. The world
+(``run.World``) is apart: lines, availability and the beliefs belong to the path, never to an
+arm, so two arms of a pair see one world. Pure: frozen dataclasses,
 advanced by ``replace``.
 """
 
@@ -45,7 +45,6 @@ class Member:
 class Setup:
     """A league as a run starts it."""
 
-    league: str
     #: The first simulated day.
     start: date
     calendar: Calendar
@@ -67,22 +66,17 @@ class Setup:
     #: Statuses and return dates as read on day one, by player.
     statuses: Mapping[int, str] = field(default_factory=dict)
     returns: Mapping[int, date] = field(default_factory=dict)
-    #: The gap between the policy's system and the market view, per player and stat (log scale).
-    gap: Mapping[int, Mapping[str, float]] = field(default_factory=dict)
-    #: The market's view of each player, higher better: the shared projection's per-game value,
-    #: percent rostered breaking ties.
+    #: The market's view of each player, higher better: the shared projection's per-game value
+    #: (a replay's: the run's forecaster's, on draft day).
     market: Mapping[int, float] = field(default_factory=dict)
-    #: The rate at which an opponent moves: adds per team-day over the recorded days.
+    #: The rate at which a market rival moves when its arm names none: adds per team-day (a
+    #: replay records none: zero).
     market_rate: float = 0.0
     #: The adds each team made this week before day one.
     adds_used: Mapping[int, int] = field(default_factory=dict)
-    #: ESPN ids by player, for the fit's per-player figures; empty when unmatched.
-    espn_ids: Mapping[int, str] = field(default_factory=dict)
     #: The bracket as read, or why it is not trusted (``league.BracketUnread``'s words).
     spec: LeagueSpec | None = None
     bracket_unread: str | None = None
-    #: Regular weeks whose pairings were not read and were filled by a round robin.
-    assumed_pairings: tuple[int, ...] = ()
 
     @property
     def season_end(self) -> date:
@@ -249,4 +243,28 @@ def snake_draft(
                 break
             out[t].append((ranked[i], BENCH))
             i += 1
+    return {t: tuple(r) for t, r in out.items()}
+
+
+def board_draft(
+    boards: Mapping[int, Sequence[int]], teams: Sequence[int], spots: int
+) -> dict[int, Roster]:
+    """A snake in which every seat takes the best player left on its own board (#172, PR D4a),
+    ``spots`` players each, everyone on the bench. A seat whose board has no one left takes no
+    one at that pick. Every seat on one board is :func:`snake_draft` on that board's order."""
+    taken: set[int] = set()
+    at = dict.fromkeys(teams, 0)
+    out: dict[int, list[tuple[int, str]]] = {t: [] for t in teams}
+    order = list(teams)
+    for rnd in range(spots):
+        for t in order if rnd % 2 == 0 else order[::-1]:
+            board = boards.get(t, ())
+            i = at[t]
+            while i < len(board) and board[i] in taken:
+                i += 1
+            if i < len(board):
+                taken.add(board[i])
+                out[t].append((board[i], BENCH))
+                i += 1
+            at[t] = i
     return {t: tuple(r) for t, r in out.items()}

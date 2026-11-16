@@ -1,11 +1,10 @@
 """Made-up leagues for the simulator's tests (#172, PR 2b): a small in-memory setup the policy,
-runner and checks run on, and a fixture data folder the readers and the commands read. Every
-player and team here is synthetic or from the anonymised season fixtures; the projection files
-are made up in Basketball Monster's CSV layout and carry no figure of theirs."""
+runner and checks run on, a made-up recorded season it replays (PR D3: the simulator has no
+drawn world), and a fixture data folder the readers and the commands read: synthetic game logs
+only. Every player and team here is synthetic or from the anonymised season fixtures."""
 
 from __future__ import annotations
 
-import csv
 import json
 from datetime import date, timedelta
 from pathlib import Path
@@ -13,45 +12,19 @@ from typing import Any
 
 import numpy as np
 
-from pickandroll.season import build_calendar
 from pickandroll.season import weekly as wk
 from pickandroll.sim import gamelogs as gl
 from pickandroll.sim import league as lg
+from pickandroll.sim import policy
 from pickandroll.sim import run as rn
 from pickandroll.sim import state as sst
-from pickandroll.sim.fit import Component, Hazard
-from pickandroll.sources.yahoo import pages, public
+from pickandroll.sources.yahoo import public
 from tests.sim.draws import between
-from tests.sim.sim_fixtures import synthetic_lines
+from tests.sim.sim_fixtures import run_length, synthetic_lines
 from tests.sim.test_gamelogs import entry
 
 FIXTURES = Path(__file__).parents[1] / "fixtures" / "season"
 NINE = ("fg_pct", "ft_pct", "threes", "pts", "reb", "ast", "stl", "blk", "tov")
-PHI = {
-    "pts": 1.5,
-    "reb": 1.5,
-    "ast": 1.2,
-    "fga": 1.4,
-    "fta": 1.8,
-    "threes": 1.1,
-    "stl": 1.0,
-    "blk": 1.0,
-    "tov": 1.0,
-}
-HAZARD = Hazard(
-    0.05,
-    (
-        Component(1, 3, 0.7, {1: 0.5, 2: 0.3, 3: 0.2}),
-        Component(4, 15, 0.25, {5: 0.5, 10: 0.5}),
-        Component(16, None, 0.05, {20: 1.0}),
-    ),
-    runs=100,
-    played=1000,
-    players=20,
-    censored=2,
-    censored_share=0.1,
-    leading=0,
-)
 #: The twelve knobs the tests' arms start from. The plan floors sit at 0, where a plan whose gap
 #: over its set is a float's noise is taken or not with the process's hash seed: the usual leagues
 #: here draw no plan, so it never shows, but a test that reads a plan floor sets it away from 0.
@@ -142,7 +115,6 @@ def make_setup(
         2**rounds - playoff_teams,
     )
     return sst.Setup(
-        league="made-up",
         start=cal.weeks[0].start,
         calendar=cal,
         pairings=pairings,
@@ -163,10 +135,79 @@ def make_setup(
     )
 
 
-def inputs(tau: float = 0.1, kappa: float = 0.1, sigma_eta: float = 0.05, lag: int = 1):
-    return rn.WorldInputs(
-        PHI, {}, 0.2, HAZARD, dict.fromkeys(wk.STATS, tau), kappa, sigma_eta, lag, "fit-sha"
-    )
+# --------------------------------------------------------------------------- a recorded season
+#: A made-up recorded season's chance of a new absence after a played game.
+ABSENCE_HAZARD = 0.12
+
+
+def _out_through(setup: sst.Setup, player: int, days: list[date]) -> int:
+    """The last game index the player misses by the status read on day one; -1 when in."""
+    s = setup.statuses.get(player)
+    if s is None or not days:
+        return -1
+    if s in wk.OUT_ALL:
+        return len(days) - 1
+    if s in wk.OUT_THIS_WEEK:
+        ret = setup.returns.get(player) or setup.start + timedelta(policy.DEFAULT_ABSENCE_DAYS)
+        return sum(1 for d in days if d < ret) - 1
+    return -1
+
+
+def _count(g: np.random.Generator, rate: float) -> int:
+    """A whole count around ``rate``: ``rate`` times a :func:`between` draw from 0.4 to 1.6,
+    rounded. Python's arithmetic on one ``random()`` draw, so alike on every machine (no
+    ``poisson``, whose draws rest on the machine's ``exp`` and ``log``)."""
+    return round(rate * between(g, 0.4, 1.6))
+
+
+def recorded_lines(
+    setup: sst.Setup, seed: int = 11, hazard: float = ABSENCE_HAZARD
+) -> dict[int, dict[date, dict[str, float]]]:
+    """A made-up recorded season for ``setup``: each player's whole-number line on each of his
+    team's game days (``run.game_days_of``) around his projection (:func:`_count`; the makes no
+    more than the attempts, the threes no more than the field goals made, the points from the
+    three), a new absence after a played game with chance ``hazard`` for
+    ``sim_fixtures.run_length`` games, and the status read on day one kept (out all season, or
+    out until his return date or the default absence). Each player's draws are his own
+    (``[seed, player]``)."""
+    out: dict[int, dict[date, dict[str, float]]] = {}
+    for k, days in rn.game_days_of(setup).items():
+        r = setup.projection.get(k)
+        if r is None:
+            continue
+        g = np.random.default_rng([seed, k])
+        out_until = _out_through(setup, k, days)
+        played: dict[date, dict[str, float]] = {}
+        for i, day in enumerate(days):
+            if i <= out_until:
+                continue
+            fga = _count(g, r["fga"])
+            fgm = min(fga, _count(g, r["fgm"]))
+            fta = _count(g, r["fta"])
+            ftm = min(fta, _count(g, r["ftm"]))
+            threes = min(fgm, _count(g, r["threes"]))
+            line = {
+                "fga": fga,
+                "fgm": fgm,
+                "fta": fta,
+                "ftm": ftm,
+                "threes": threes,
+                "pts": 2 * fgm + threes + ftm,
+                **{s: _count(g, r[s]) for s in ("reb", "ast", "stl", "blk", "tov")},
+            }
+            played[day] = {s: float(line[s]) for s in wk.STATS}
+            if g.random() < hazard:
+                out_until = i + run_length(g)
+        out[k] = played
+    return out
+
+
+def replay_of(
+    setup: sst.Setup, seed: int, path: int, lag: int = 1, season: int = 11, **kw: Any
+) -> rn.World:
+    """A replay world on ``setup``'s made-up recorded season (:func:`recorded_lines` at
+    ``season``, its seed): path ``path`` of seed ``seed``, the absences heard ``lag`` days on."""
+    return rn.replay_world(setup, recorded_lines(setup, season), lag, seed, path, **kw)
 
 
 def arm(name: str = "A", tier: str = "exact", opponents: str = "market", **knobs: Any) -> rn.Arm:
@@ -174,94 +215,12 @@ def arm(name: str = "A", tier: str = "exact", opponents: str = "market", **knobs
 
 
 # --------------------------------------------------------------------------- a data folder
-LEAGUE = "100001"
-MY_TEAM = 4
-ROSTER = ["PG", "SG", "G", "C", "Util", "BN"]
-YAHOO_CATS = ["FG%", "FT%", "3PTM", "PTS", "REB", "AST", "ST", "BLK", "TO"]
-TODAY = date(2026, 10, 21)
-#: The fixture league's calendar: six weeks from the Monday before opening night.
-SEASON_FIRST = date(2026, 10, 20)
-SEASON_END = date(2026, 11, 29)
-PLAYOFF_WEEKS = [5, 6]
-EXPORT_DATES = ("2026-10-19", "2026-10-22")
-
-
 def fixture(name: str) -> str:
     return (FIXTURES / name).read_text()
 
 
 def fixture_players() -> list[dict[str, Any]]:
     return public.players_from_v3(json.loads(fixture("players.json")))
-
-
-def _part(key: str, data: Any, at: str = "2026-10-21T18:00:00+00:00") -> dict[str, Any]:
-    return {key: {"fetched_at": at, "source": "public", "data": data}}
-
-
-def write_bbm_csv(path: Path, players: list[dict[str, Any]], seed: int) -> None:
-    """A made-up rest-of-season export in the CSV layout: season totals over 70 games."""
-    rng = np.random.default_rng(seed)
-    cols = [
-        "player_id",
-        "last_name",
-        "first_name",
-        "games",
-        "minutes",
-        "field_goals_attempted",
-        "field_goals",
-        "free_throws_attempted",
-        "free_throws",
-        "threes",
-        "threes_attempted",
-        "offensive_rebounds",
-        "defensive_rebounds",
-        "assists",
-        "blocks",
-        "steals",
-        "turnovers",
-        "fouls",
-        "technicals",
-        "double_doubles",
-        "triple_doubles",
-        "comments",
-    ]
-    with path.open("w", newline="") as f:
-        w = csv.writer(f)
-        w.writerow(cols)
-        for i, p in enumerate(players):
-            first, _, last = p["name"].partition(" ")
-            level = between(rng, 0.6, 1.4)
-            g = 70
-            fga = round(8 * level * g)
-            fgm = round(0.47 * fga)
-            fta = round(2.5 * level * g)
-            ftm = round(0.78 * fta)
-            w.writerow(
-                [
-                    1000 + i,
-                    last,
-                    first,
-                    g,
-                    round(28 * level * g),
-                    fga,
-                    fgm,
-                    fta,
-                    ftm,
-                    round(1.2 * level * g),
-                    round(3.2 * level * g),
-                    round(1.0 * level * g),
-                    round(4.0 * level * g),
-                    round(3.0 * level * g),
-                    round(0.8 * level * g),
-                    round(1.0 * level * g),
-                    round(2.0 * level * g),
-                    0,
-                    0,
-                    0,
-                    0,
-                    "",
-                ]
-            )
 
 
 #: A projection block's games when the logs carry blocks (:func:`write_logs`); every
@@ -286,16 +245,38 @@ def projection_block(season: int, i: int, entries: list[dict[str, Any]]) -> dict
     return entry(season, 0, raw, split=gl.SEASON_TOTAL, source=gl.PROJECTED)
 
 
+#: The made-up logs' draft positions (#172, PR D4a): a player's figure is a :func:`between` draw
+#: from 1 to :data:`ADP_TOP` on a generator of its own (no line's draw moves); a draw past
+#: :data:`ADP_CEILING` is an undrafted player, who carries the ceiling itself, the figure the most
+#: players share. A season in ``flat_adp`` carries the ceiling for everyone: no table.
+ADP_TOP = 200.0
+ADP_CEILING = 150.0
+
+
+def draft_positions(season: int, pids: list[int], flat: bool = False) -> dict[int, float]:
+    """The made-up average draft position of each of ``pids`` in ``season``'s log."""
+    if flat:
+        return dict.fromkeys(pids, ADP_CEILING)
+    g = np.random.default_rng([300, season])
+    out = {}
+    for k in sorted(pids):
+        x = between(g, 1.0, ADP_TOP)
+        out[k] = min(x, ADP_CEILING)
+    return out
+
+
 def write_logs(
     data: Path,
     seasons: tuple[int, ...],
     players: list[dict[str, Any]],
     projection: bool = False,
+    flat_adp: tuple[int, ...] = (),
 ) -> None:
     """ESPN-shaped logs for ``seasons``: the fixture players under numeric ids (1000 + i), on six
-    pro teams, with their positions as eligible slots. ``projection``: each player's log also
-    carries a stored projection block (:func:`projection_block`), which no per-game reader
-    reads."""
+    pro teams, with their positions as eligible slots and a made-up average draft position
+    (:func:`draft_positions`; one figure for everyone in a season of ``flat_adp``), which no
+    reader reads but the draft table's. ``projection``: each player's log also carries a stored
+    projection block (:func:`projection_block`), which no per-game reader reads."""
     folder = data / "external" / "espn" / "gamelogs"
     folder.mkdir(parents=True, exist_ok=True)
     slots = {"PG": 0, "SG": 1, "SF": 2, "PF": 3, "C": 4}
@@ -329,6 +310,7 @@ def write_logs(
         if projection:
             for pid, stats in by_pid.items():
                 stats.append(projection_block(season, int(pid) - 1000, list(stats)))
+        adp = draft_positions(season, [int(pid) for pid in by_pid], season in flat_adp)
         body = {
             "players": [
                 {
@@ -342,6 +324,7 @@ def write_logs(
                             slots[p] for p in players[int(pid) - 1000]["positions"] if p in slots
                         ]
                         + [11, 12],
+                        "ownership": {"averageDraftPosition": adp[int(pid)], "leagueType": 0},
                         "stats": stats,
                     }
                 }
@@ -369,9 +352,10 @@ def make_data_dir(
     seasons: tuple[int, ...] = (2023, 2024, 2025, 2026),
     wire: int = 0,
     projection: bool = False,
+    flat_adp: tuple[int, ...] = (2026,),
 ) -> Path:
-    """A data folder with one public league's recorded season (twelve six-man teams drawn from
-    the anonymised fixtures), two made-up exports, ESPN ids, synthetic logs and no fit yet.
+    """A data folder with synthetic logs of the anonymised fixtures' 93 players and no fit yet: no
+    league's state, export or id file (the simulator reads none since PR D3).
 
     ``wire`` made-up players join the logs after the fixture's (:func:`wire_players`), and
     nowhere else. The fixture's 93 are fewer than a replay's twelve seats take (thirteen
@@ -380,178 +364,26 @@ def make_data_dir(
     games in 2023), drafts 156 and leaves 35 projected free agents beside the newcomers. The
     first 93 players' lines are the same either way (they are drawn first), and ``wire`` 0 is
     the folder as it always was. ``projection``: the logs carry stored projection blocks
-    (:func:`write_logs`), for the ``espn`` forecaster; without it they carry none."""
+    (:func:`write_logs`), for the ``espn`` forecaster; without it they carry none. Every log
+    carries made-up draft positions but a season of ``flat_adp`` (the confirmation season by
+    default, as on the box), whose players all carry one figure (#172, PR D4a)."""
     data = tmp / "data"
-    league_dir = data / "leagues" / LEAGUE
-    season_dir = league_dir / "season"
-    season_dir.mkdir(parents=True)
-    (league_dir / "settings.json").write_text(
-        json.dumps(
-            {
-                "league_id": LEAGUE,
-                "scoring": "categories",
-                "num_teams": 12,
-                "roster": ROSTER,
-                "my_team_id": MY_TEAM,
-                "categories": YAHOO_CATS,
-                "public": True,
-            }
-        )
-    )
-    players = fixture_players()
-    league = pages.parse_league_page(fixture("league.html"))
-    teams = [int(t["team_id"]) for t in league["teams"]]
-    parts: dict[str, Any] = {}
-    parts |= _part(
-        "settings",
-        {
-            "name": "Test League 100001",
-            "current_week": 1,
-            "max_weekly_adds": 4,
-            "playoff_teams": 4,
-            "playoff_weeks": PLAYOFF_WEEKS,
-            "playoff_tiebreak": "Higher seed wins",
-            "playoff_reseeding": True,
-            "divisions": False,
-        },
-    )
-    parts |= _part("players", players)
-    parts |= _part("league", league)
-    rng = np.random.default_rng(11)
-    order = list(range(len(players)))
-    rng.shuffle(order)
-    spots = len(ROSTER)
-    used = 0
-    for t in teams:
-        mine = [players[order[used + j]] for j in range(spots)]
-        used += spots
-        mine[0] = {**mine[0], "status": "O", "status_full": "Out"} if t == MY_TEAM else mine[0]
-        parts |= _part(
-            f"roster/{t}",
-            {
-                "team_id": t,
-                "name": f"Team {t}",
-                "week": 1,
-                "spots": [{"slot": s, "player": p} for s, p in zip(ROSTER, mine, strict=True)],
-            },
-        )
-    left = [players[i] for i in order[used:]]
-    parts |= _part(
-        "available",
-        {
-            "rows": [
-                {
-                    "player": p,
-                    "availability": "FA",
-                    "clears": None,
-                    "pct_rostered": 40.0 - i,
-                    "pct_rostered_change": 0.0,
-                    "pct_started": 10.0,
-                    "pct_started_change": 0.0,
-                    "adds": 10,
-                    "drops": 5,
-                }
-                for i, p in enumerate(left)
-            ]
-        },
-    )
-    cal = build_calendar(SEASON_FIRST, SEASON_END)
-    parts |= _part("calendar", cal.to_dict())
-    nba = sorted({p["nba_team"] for p in players if p["nba_team"]})
-    days = [
-        cal.weeks[0].start + timedelta(i) for i in range((SEASON_END - cal.weeks[0].start).days + 1)
-    ]
-    parts |= _part(
-        "schedule",
-        {
-            "days": {
-                d.isoformat(): [t for j, t in enumerate(nba) if (i + j) % 2 == 0]
-                for i, d in enumerate(days)
-            }
-        },
-    )
-    regular = [w.number for w in cal.weeks if w.number not in PLAYOFF_WEEKS]
-    rr = sst.round_robin(tuple(teams), regular)
-    for w in regular:
-        if w in (1, 3):
-            continue  # week 1 is the league page's; week 3 is left unread (assumed)
-        parts |= _part(
-            f"pairings/{w}", {"week": w, "matchups": [{"teams": list(p)} for p in rr[w]]}
-        )
-    parts |= _part("matchup/1/4-10", pages.parse_matchup_page(fixture("matchup.html")))
-    parts |= _part(
-        "transactions",
-        {
-            "rows": [
-                {
-                    "kind": "add",
-                    "player": left[0],
-                    "team_id": 4,
-                    "team_name": "Team 4",
-                    "detail": "Free Agent",
-                    "when": "Oct 20, 3:57 am",
-                    "group": 1,
-                },
-                {
-                    "kind": "drop",
-                    "player": left[1],
-                    "team_id": 4,
-                    "team_name": "Team 4",
-                    "detail": "To Waivers",
-                    "when": "Oct 20, 3:57 am",
-                    "group": 1,
-                },
-                {
-                    "kind": "add",
-                    "player": left[2],
-                    "team_id": 7,
-                    "team_name": "Team 7",
-                    "detail": "Free Agent",
-                    "when": "Oct 19, 1:10 pm",
-                    "group": 2,
-                },
-            ]
-        },
-    )
-    # Yahoo's seven-day view of the available players: made-up totals over three games.
-    parts |= _part(
-        "yahoo_week",
-        {
-            "rows": [
-                {
-                    "player": p,
-                    "gp": 3,
-                    "seen_at": "2026-10-21T18:00:00+00:00",
-                    **{s: round(3 * x * (1.1 - 0.01 * i), 1) for s, x in rates(1.0).items()},
-                }
-                for i, p in enumerate(left)
-            ]
-        },
-    )
-    (season_dir / "state.json").write_text(json.dumps({"league": LEAGUE, "parts": parts}))
-    for i, d in enumerate(EXPORT_DATES):
-        write_bbm_csv(data / f"bbm_projections_{d}.csv", players, seed=30 + i)
-    (data / "aliases.json").write_text("{}")
-    box = data / "boxscores"
-    box.mkdir()
-    (box / "ids.json").write_text(
-        json.dumps({str(p["yahoo_id"]): str(1000 + i) for i, p in enumerate(players)})
-    )
-    write_logs(data, seasons, players + wire_players(wire), projection)
+    data.mkdir(parents=True)
+    write_logs(data, seasons, fixture_players() + wire_players(wire), projection, flat_adp)
     return data
 
 
 __all__ = [
-    "HAZARD",
+    "ABSENCE_HAZARD",
+    "ADP_CEILING",
+    "ADP_TOP",
     "KNOBS",
-    "LEAGUE",
-    "MY_TEAM",
     "NINE",
-    "PHI",
-    "TODAY",
     "arm",
-    "inputs",
+    "draft_positions",
     "make_data_dir",
     "make_setup",
     "rates",
+    "recorded_lines",
+    "replay_of",
 ]

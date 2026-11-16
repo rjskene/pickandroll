@@ -15,7 +15,7 @@ from pickandroll.season import weekly as wk
 from pickandroll.sim import policy
 from pickandroll.sim import run as rn
 from pickandroll.sim.state import initial
-from tests.sim.sim_league import arm, inputs, make_setup
+from tests.sim.sim_league import arm, make_setup, replay_of
 
 
 def queued_for(kind: str = "IL"):
@@ -90,9 +90,9 @@ def test_without_statuses_the_executor_is_unchanged():
 
 
 def test_no_held_slot_ever_holds_a_player_it_does_not_accept():
-    """Every day record of 18 paths of a league with IL and IL+, my seat exact against
-    surrogate (the paths the audit found the breach on): each held player fits his slot under
-    the status heard that day. On main two of these paths had a player in IL with no status."""
+    """Every day record of 18 paths of leagues with IL and IL+, my seat exact against
+    surrogate, each a replay of its league's made-up recorded season (the leagues the audit
+    found the breach on): each held player fits his slot under the status heard that day."""
     found, refused = [], 0
     for seed in (3, 5, 8):
         setup = make_setup(held_slots=("IL", "IL+"), seed=seed, weeks=8)
@@ -106,7 +106,7 @@ def test_no_held_slot_ever_holds_a_player_it_does_not_accept():
                         if slot in mv.HELD and not mv.eligible(r.status.get(k), slot):
                             found.append((seed, path, r.day, r.variant, team, k, slot))
 
-            w = rn.forward_world(setup, inputs(), 11, path, 0.25)
+            w = replay_of(setup, 11, path)
             results = rn.simulate(setup, w, variants, [a.execute_plan, b.execute_plan], check)
             refused += sum(r.held_refused for r in results)
     assert found == []

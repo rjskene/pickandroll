@@ -1,7 +1,8 @@
 """The other eleven seats (#172, PR 2b): what each opponent does on a day.
 
 The ladder from the design note. **Static** makes no move. **Market** is the heuristic: each day
-with probability ``rate`` (adds per team-day, from the league's recorded transactions) it adds
+with probability ``rate`` (adds per team-day: the arm's ``opponents.rate``, else the setup's,
+which a replay leaves at zero) it adds
 the pool's best by the market's view and drops its weakest by the same view, within the caps.
 **Mirror** runs the surrogate on the shared beliefs with the arm's knobs and fields (the arm
 whole: at the defaults nothing changes). **Seat** is the equal room's: a named arm in another
@@ -170,7 +171,7 @@ def of(
     fields: policy.Fields = policy.DEFAULT_FIELDS,
 ) -> Strategy:
     """An opponent from an arm's ``opponents`` block: ``{"kind": "static"}``,
-    ``{"kind": "market", "rate": 0.1}`` (the recorded rate when none is given) or
+    ``{"kind": "market", "rate": 0.1}`` (the setup's ``market_rate`` when none is given) or
     ``{"kind": "mirror"}`` (the arm's own knobs and fields)."""
     kind = str(spec.get("kind", "static"))
     if kind == "static":

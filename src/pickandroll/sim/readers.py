@@ -1,42 +1,30 @@
 """The season simulator's readers and writers (#172, PR 2b).
 
 The simulator's core (the other modules of ``pickandroll.sim``) is pure; everything here reads what
-it needs from ``data/`` and writes what it leaves. A **setup** is one league as a run starts it,
-from the season view's recorded state (``api.seasons``) and the projection systems the moves route
-uses (``api.season_moves.system_rates``): rosters, pool, the shared projection, the schedule, the
-statuses and return dates read, the market view and rate, and the bracket as the settings page gave
-it (``BracketUnread``'s words when it did not). The **fit** is the newest frozen one under
+it needs from ``data/`` and writes what it leaves. The **fit** is the newest frozen one under
 ``data/sim/fit/``, its hash checked against the file. A **replay** is a made-up league on a recorded
 season's game lines (``sim.gamelogs``), each scoring period dated from the season's first
-(:data:`PERIOD_ONE`). The **gates'** inputs come from the week records (``api.season_record``), the
-decision log (``api.season_decisions``) and the box-score cache. Every run's payload goes under
-``data/sim/runs/`` with the fit's hash and the hold-out named (the master's conditions on #172).
+(:data:`PERIOD_ONE`); the forecasters' figures and each belief label's weights are read from the
+same logs. Every run's payload goes under ``data/sim/runs/`` with the fit's hash and the hold-out
+named (the master's conditions on #172). Nothing here reads a live league (#172, PR D3).
 """
 
 from __future__ import annotations
 
 import hashlib
 import json
-import math
-import re
 import subprocess
 from collections.abc import Mapping, Sequence
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-import pandas as pd
-
-from ..api import season_decisions, season_moves, season_record, seasons
-from ..api.season_scorecard import BOXSCORES_DIR
-from ..sources import boxscores
+from . import adp, gamelogs
 from . import fit as fitmod
 from . import forecast as fc
-from . import gamelogs
-from . import league as lg
 from . import run as rn
-from .engine import Season, SeasonSettings, mv, wk
-from .state import Member, Setup, round_robin
+from .engine import wk
+from .state import Member
 
 SIM_DIR = Path("sim")
 FIT_DIR = SIM_DIR / "fit"
@@ -44,15 +32,6 @@ RUNS_DIR = SIM_DIR / "runs"
 #: The confirmation season's ledger (#172, PR D2): one JSON line a written run that names it.
 LEDGER = SIM_DIR / "confirmation-looks.jsonl"
 LOGS_DIR = Path("external") / "espn" / "gamelogs"
-#: The two systems the gap is read between, in order: ``log(first) − log(second)``.
-GAP_SYSTEMS = ("bbm", "yahoo")
-GAP_CLIP = 1.0
-#: Percent rostered breaks ties in the market view at this weight (a point of it is a ten
-#: thousandth of value: never more than the value itself).
-PCT_WEIGHT = 1e-4
-#: The players the systems' tau is read over: the rostered population, as the top of the pool
-#: by the shared value stands in for the minutes floor until per-game minutes are on file.
-TAU_POOL = 156
 #: The first scoring period's date, by ESPN season id (the year the season ends in): period
 #: ``p`` is this date plus ``p − 1`` days. Verified against ESPN's scoreboard event ids on
 #: 2026-10-24, three games a season; 2023's period 1 is the day before opening night.
@@ -71,158 +50,6 @@ ESPN_SLOTS: Mapping[int, str] = {0: "PG", 1: "SG", 2: "SF", 3: "PF", 4: "C", 5: 
 
 class SimReadError(ValueError):
     """What a run needs is not on disk, or not trusted."""
-
-
-# --------------------------------------------------------------------------- the setup
-def gap_of(
-    first: Mapping[int, wk.Rates], second: Mapping[int, wk.Rates], clip: float = GAP_CLIP
-) -> dict[int, dict[str, float]]:
-    """``log(first) − log(second)`` per player and stat, zero where either is missing or not
-    positive, clipped to ``±clip``."""
-    out: dict[int, dict[str, float]] = {}
-    for k, a in first.items():
-        b = second.get(k)
-        if b is None:
-            continue
-        row = {}
-        for stat in wk.STATS:
-            x, y = float(a.get(stat, 0.0)), float(b.get(stat, 0.0))
-            row[stat] = max(-clip, min(clip, math.log(x / y))) if x > 0 and y > 0 else 0.0
-        out[k] = row
-    return out
-
-
-def market_view(season: Season, value: Mapping[int, float]) -> dict[int, float]:
-    """The market's ranking: the shared projection's per-game value, percent rostered breaking
-    ties (Yahoo's own rank is not in the recorded state; the deviation is named in the docs)."""
-    pct = {a.player.yahoo_id: float(a.pct_rostered or 0.0) for a in season.available}
-    return {k: float(v) + PCT_WEIGHT * pct.get(k, 0.0) for k, v in value.items()}
-
-
-def market_rate(season: Season, today: date) -> float:
-    """Adds per team-day over the days the transactions page reaches."""
-    adds = [t for t in season.transactions if t.kind == "add"]
-    days = [mv.when_date(t.when, today) for t in adds]
-    known = [d for d in days if d is not None]
-    if not known:
-        return 0.0
-    span = (max(known) - min(known)).days + 1
-    teams = max(1, len(season.rosters) or season.settings.num_teams)
-    groups = {t.group for t, d in zip(adds, days, strict=True) if d is not None}
-    return len(groups) / (span * teams)
-
-
-def _members(players: Mapping[int, Any]) -> dict[int, Member]:
-    return {k: Member(k, p.name, p.nba_team, tuple(p.positions)) for k, p in players.items()}
-
-
-def setup_of(
-    data_dir: Path,
-    league: str,
-    today: date,
-    system: str = "bbm",
-    blend: float | None = None,
-    tiebreak: tuple[str, ...] = lg.TIEBREAK,
-) -> Setup:
-    """``league`` as a run starts it on ``today``, from the recorded season state."""
-    base, _ = seasons.base_settings(data_dir, league)
-    parts = seasons.load_parts(data_dir, league)
-    if not parts:
-        raise SimReadError(f"league {league}: no season state recorded")
-    season = Season.from_parts(base, parts)
-    s = season.settings
-    if season.calendar is None:
-        raise SimReadError(f"league {league}: no calendar on file")
-    if not season.rosters:
-        raise SimReadError(f"league {league}: no rosters read")
-    end = max(w.end for w in season.calendar.weeks)
-    last = max(season.schedule, default=None)
-    if last is None or last < end:
-        # The season term counts the schedule's games to the season's last day and extrapolates
-        # none (policy.SeasonFigure), so the schedule must reach that day.
-        raise SimReadError(
-            f"league {league}: the schedule reaches {last}, not the season's last day {end}"
-        )
-    rated = season_moves.system_rates(season, data_dir, system, blend)
-    players = _members(rated.players)
-    rosters = {
-        t: tuple((sp.player.yahoo_id, sp.slot) for sp in spots)
-        for t, spots in season.rosters.items()
-    }
-    teams = tuple(sorted(rosters))
-    on_roster = {k for r in rosters.values() for k, _ in r}
-    pool = tuple(
-        a.player.yahoo_id
-        for a in season.available
-        if a.player.yahoo_id not in on_roster and a.player.yahoo_id in rated.rates
-    )
-    statuses = {k: p.status for k, p in rated.players.items() if p.status}
-    out_members = [(k, p) for k, p in rated.players.items() if p.status in wk.OUT_THIS_WEEK]
-    returns = season_moves.espn_returns(data_dir, out_members)
-    this = season.calendar.week_of(today)
-    adds_used = {}
-    if this is not None:
-        for t in teams:
-            adds_used[t] = mv.adds_used(season.transactions, t, this.start, this.end, today).count
-    regular = [w.number for w in season.calendar.weeks if w.number not in set(s.playoff_weeks)]
-    pairings = {w: tuple(ps) for w, ps in season.pairings.items() if ps}
-    assumed = tuple(w for w in regular if w not in pairings)
-    if assumed:
-        pairings |= round_robin(teams, assumed)
-    spec: lg.LeagueSpec | None = None
-    unread: str | None = None
-    try:
-        spec = lg.LeagueSpec.from_settings(s, teams, pairings, tiebreak)
-    except lg.BracketUnread as e:
-        unread = str(e)
-    espn_ids = {
-        k: v for k, v in boxscores.load_ids(data_dir / BOXSCORES_DIR).items() if k in players
-    }
-    return Setup(
-        league=str(league),
-        start=today,
-        calendar=season.calendar,
-        pairings=pairings,
-        teams=teams,
-        players=players,
-        rosters=rosters,
-        pool=pool,
-        projection={k: dict(v) for k, v in rated.rates.items() if k in players},
-        schedule=season.schedule,
-        roster_slots=tuple(s.roster),
-        cats=tuple(s.cats),
-        scoring=s.scoring,
-        points=dict(s.points) if s.points else None,
-        max_weekly_adds=s.max_weekly_adds,
-        statuses=statuses,
-        returns=returns,
-        gap=gap_of(rated.bbm.rates, rated.yahoo.rates),
-        market=market_view(season, rated.value),
-        market_rate=market_rate(season, today),
-        adds_used=adds_used,
-        espn_ids=espn_ids,
-        spec=spec,
-        bracket_unread=unread,
-        assumed_pairings=assumed,
-    )
-
-
-def systems_tau(data_dir: Path, league: str, pool: int = TAU_POOL) -> dict[str, float]:
-    """The spread of the two systems' disagreement over the league's top ``pool`` players by the
-    shared value: the projection error's proxy until the residual fit of week six."""
-    from .fit import tau_from_systems
-
-    base, _ = seasons.base_settings(data_dir, league)
-    parts = seasons.load_parts(data_dir, league)
-    if not parts:
-        return {}
-    season = Season.from_parts(base, parts)
-    rated = season_moves.system_rates(season, data_dir, "bbm")
-    both = [k for k in rated.bbm.rates if k in rated.yahoo.rates]
-    top = sorted(both, key=lambda k: -rated.value.get(k, 0.0))[:pool]
-    a = {str(k): rated.bbm.rates[k] for k in top}
-    b = {str(k): rated.yahoo.rates[k] for k in top}
-    return tau_from_systems(a, b, dict.fromkeys(a, 30.0))
 
 
 # --------------------------------------------------------------------------- the fit
@@ -298,6 +125,23 @@ def replay_lines(
             pid, str(p.get("fullName") or pid), None if team is None else str(team), positions
         )
     return lines, members, {k: sorted(v) for k, v in scheduled.items()}
+
+
+def adp_table(data_dir: Path, season: int, hold_out: int | None) -> tuple[adp.Table, str]:
+    """The table of average draft positions in ``season``'s own log (``adp.espn_table``) and the
+    log file's hash (#172, PR D4a). The hold-out is refused before its log is opened; a season
+    with no log, or a log whose players all carry one figure, is refused by name."""
+    if season == hold_out:
+        raise SimReadError(f"{hold_out} is the hold-out; no run plays it")
+    path = data_dir / LOGS_DIR / f"{season}.json"
+    if not path.is_file():
+        raise SimReadError(f"season {season}: no cached log under {data_dir / LOGS_DIR}")
+    raw = path.read_bytes()
+    try:
+        table = adp.espn_table(json.loads(raw).get("body") or {})
+    except adp.NoTable as e:
+        raise SimReadError(f"season {season} has no draft table: {e}") from None
+    return table, hashlib.sha256(raw).hexdigest()
 
 
 def prior_rates(
@@ -512,153 +356,6 @@ def label_weights(
     return out
 
 
-# --------------------------------------------------------------------------- the gates' inputs
-def recorded_weeks(data_dir: Path, league: str) -> list[dict[str, Any]]:
-    """The league's week records with a scored week in them."""
-    folder = seasons.season_dir(data_dir, league)
-    return [r for r in season_record.records(folder) if (r.get("teams") or {})]
-
-
-def team_week_totals(record: Mapping[str, Any]) -> dict[int, dict[str, float]]:
-    return {
-        int(t): {k: float(v) for k, v in (row.get("totals") or {}).items()}
-        for t, row in (record.get("teams") or {}).items()
-        if row.get("totals")
-    }
-
-
-def matchup_outcomes(record: Mapping[str, Any]) -> list[tuple[int, int, float | None]]:
-    """``(a, b, a's share)`` of each matchup: 1 won, 0 lost, 0.5 tied, None unscored."""
-    out = []
-    for m in record.get("matchups") or []:
-        a, b = (int(t) for t in m["teams"])
-        winner = m.get("winner")
-        share = None if m.get("score") is None else 0.5 if winner is None else float(winner == a)
-        out.append((a, b, share))
-    return out
-
-
-def decisions(data_dir: Path, league: str, to: date | None = None) -> list[dict[str, Any]]:
-    return season_decisions.load(seasons.season_dir(data_dir, league), to)
-
-
-def missed_games(
-    lines: Mapping[int, Mapping[date, Mapping[str, float]]],
-    schedule: Mapping[int, Sequence[date]],
-    weeks: Sequence[tuple[date, date]],
-) -> dict[int, list[tuple[int, int]]]:
-    """Each player's weeks in order, ``(missed, scheduled)`` a week: of his scheduled games in
-    the week, those without a line (gate 4's observations; a week he has no game in is left
-    out)."""
-    out: dict[int, list[tuple[int, int]]] = {}
-    for k, days in schedule.items():
-        played = lines.get(k, {})
-        rows = []
-        for start, end in weeks:
-            scheduled = [d for d in days if start <= d <= end]
-            if scheduled:
-                rows.append((sum(1 for d in scheduled if d not in played), len(scheduled)))
-        if rows:
-            out[k] = rows
-    return out
-
-
-def team_days(
-    lines: Mapping[int, Mapping[date, Mapping[str, float]]], members: Mapping[int, Member]
-) -> dict[int, list[date]]:
-    """Each player's team's game days in a recorded season: a team played on a day any of its
-    players has a line."""
-    by_team: dict[str, set[date]] = {}
-    for k, by_day in lines.items():
-        team = members[k].nba_team if k in members else None
-        if team:
-            by_team.setdefault(team, set()).update(by_day)
-    return {
-        k: sorted(by_team.get(m.nba_team or "", ()))
-        for k, m in members.items()
-        if m.nba_team in by_team
-    }
-
-
-# --------------------------------------------------------------------------- the exports
-#: Basketball Monster's rest-of-season exports by date in the file name, oldest first; several
-#: a day keep the last.
-EXPORTS = "bbm_projections_*.csv"
-_EXPORT_DATE = re.compile(r"bbm_projections_(\d{4}-\d{2}-\d{2})(?:T(\d{6}))?\.csv$")
-
-
-def export_date(path: Path) -> tuple[date, str] | None:
-    m = _EXPORT_DATE.match(path.name)
-    if m is None:
-        return None
-    return date.fromisoformat(m.group(1)), m.group(2) or ""
-
-
-def _per_game(row: Mapping[str, Any]) -> dict[str, float] | None:
-    games = float(row.get("games") or 0.0)
-    if games <= 0:
-        return None
-    return {s: float(row.get(s) or 0.0) / games for s in wk.STATS}
-
-
-def bbm_exports(
-    data_dir: Path, players: Mapping[int, Any]
-) -> list[tuple[date, dict[int, dict[str, float]]]]:
-    """Every rest-of-season export as per-game rates by Yahoo id, by date, oldest first: the
-    refresh fit's and the residual tau's input."""
-    from ..sources.bbm import load_bbm
-    from ..sources.matching import load_aliases, match_players
-
-    dated: dict[date, Path] = {}
-    for path in data_dir.glob(EXPORTS):
-        d = export_date(path)
-        if d is not None and (
-            d[0] not in dated or d[1] >= (export_date(dated[d[0]]) or (d[0], ""))[1]
-        ):
-            dated[d[0]] = path
-    if not dated:
-        return []
-    yahoo = pd.DataFrame(
-        {
-            "name": [p.name for p in players.values()],
-            "team": [p.nba_team or "" for p in players.values()],
-        },
-        index=[str(k) for k in players],
-    )
-    aliases = load_aliases(data_dir / "aliases.json")
-    out = []
-    for d, path in sorted(dated.items()):
-        df = load_bbm(path).df
-        mapping = match_players(yahoo, df, aliases).mapping
-        rates = {}
-        for yid, pid in mapping.items():
-            r = _per_game(df.loc[pid])
-            if r is not None:
-                rates[int(yid)] = r
-        out.append((d, rates))
-    return out
-
-
-def realized_by_espn(
-    data_dir: Path, season: int
-) -> tuple[dict[str, dict[str, float]], dict[str, int]]:
-    """A season's realized per-game rates and played games by ESPN id, from the cached log."""
-    lines, _, _ = replay_lines(data_dir, season)
-    return (
-        {str(k): v for k, v in rn.realized_rates(lines).items()},
-        {str(k): len(v) for k, v in lines.items()},
-    )
-
-
-def by_espn(table: Mapping[int, Any], ids: Mapping[int, str]) -> dict[str, Any]:
-    """A table by Yahoo id re-keyed by ESPN id where the player is matched."""
-    return {ids[k]: v for k, v in table.items() if k in ids}
-
-
-def espn_ids(data_dir: Path) -> dict[int, str]:
-    return boxscores.load_ids(data_dir / BOXSCORES_DIR)
-
-
 # --------------------------------------------------------------------------- the run's record
 def run_path(data_dir: Path, kind: str, name: str, started: datetime) -> Path:
     stamp = started.astimezone(UTC).strftime("%Y%m%dT%H%M%SZ")
@@ -696,50 +393,25 @@ def append_look(data_dir: Path, record: Mapping[str, Any]) -> tuple[int, Path]:
     return n, path
 
 
-def settings_of(data_dir: Path, league: str) -> SeasonSettings:
-    base, _ = seasons.base_settings(data_dir, league)
-    parts = seasons.load_parts(data_dir, league)
-    return Season.from_parts(base, parts).settings if parts else base
-
-
 __all__ = [
     "ESPN_POSITIONS",
     "ESPN_SLOTS",
     "FIT_DIR",
-    "GAP_CLIP",
-    "GAP_SYSTEMS",
     "PERIOD_ONE",
     "PERIOD_SOURCE",
     "RUNS_DIR",
     "SimReadError",
-    "bbm_exports",
     "belief_weights",
-    "by_espn",
     "code_sha",
-    "decisions",
-    "espn_ids",
     "espn_rates",
-    "export_date",
     "fit_hash",
-    "gap_of",
     "marcel_rates",
     "marcel_seasons",
-    "market_rate",
-    "market_view",
-    "matchup_outcomes",
-    "missed_games",
     "newest_fit",
     "period_date",
     "prior_rates",
-    "realized_by_espn",
-    "recorded_weeks",
     "replay_lines",
     "run_path",
     "seasons_on_file",
-    "settings_of",
-    "setup_of",
-    "systems_tau",
-    "team_days",
-    "team_week_totals",
     "write_run",
 ]
