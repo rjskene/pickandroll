@@ -1981,6 +1981,15 @@ def gate_dict(g: vg.Gate) -> dict[str, Any]:
     return {"name": g.name, "passed": g.passed, "season": g.season, "detail": g.detail}
 
 
+#: What each seat's row of gate 5 records beside its count (#172, PR D4a2).
+GATE_RECORDS = (
+    "per seat and sampled day (detail.records): the exact tier's set and the surrogate's, the add "
+    "and the drop by id; whether they are equal (the gate's input); and each set's worth by the "
+    "exact tier's own objective on that day's problem, the value one evaluator of the exact "
+    "tier's gives it on the key it searches (three weeks, with the season term at a "
+    "season_weight), beside standing still's; a day left out says why. The worths do not enter "
+    "the gate's rule"
+)
 #: The forecaster gate 5's replay is drafted on and believes by, when ``--forecaster`` names none.
 GATE_FORECASTER = "prior"
 #: An oracle's error shape in gate 5's replay (a run of ``replay`` sets it with ``--shape``).
@@ -2041,9 +2050,10 @@ def gate_surrogate(
     seats = gate_seats(setup.teams)
     rows = []
     for seat in seats:
-        matches = checks.surrogate_matches(setup, w, seat, days, knobs, fields)
+        records = checks.surrogate_records(setup, w, seat, days, knobs, fields)
+        matches = [r["equal"] for r in records if r["left_out"] is None]
         g = vg.surrogate_gate(matches, season=season)
-        g.detail.update({"seat": seat, "days": [d.isoformat() for d in days]})
+        g.detail.update({"seat": seat, "days": [d.isoformat() for d in days], "records": records})
         rows.append(gate_dict(g))
     block = {
         "season": season,
@@ -2061,8 +2071,21 @@ def gate_surrogate(
             f"{vg.SURROGATE_NEEDED} of its {vg.SURROGATE_OF} league-days; the gate passes when "
             "every seat does"
         ),
+        "records": GATE_RECORDS,
     }
     return rows, block
+
+
+def record_line(seat: int, r: Mapping[str, Any]) -> str:
+    """One printed line of gate 5's record, a seat and a day: equal or not and the two sets'
+    worths to four decimals, or why the day is left out. No player is named."""
+    if r["left_out"] is not None:
+        return f"seat {seat}, {r['day']}: left out, {r['left_out']}"
+    worth = r["worth"]
+    return (
+        f"seat {seat}, {r['day']}: {'equal' if r['equal'] else 'differ'}; worth, exact "
+        f"{worth['exact']:.4f}, surrogate {worth['surrogate']:.4f}"
+    )
 
 
 def cmd_validate(args: argparse.Namespace) -> int:
@@ -2108,6 +2131,8 @@ def cmd_validate(args: argparse.Namespace) -> int:
             f"{g['name']:16} {g['season']!s:12} {state} seat {d['seat']}: "
             f"{d['matched']} of {d['of']} league-days"
         )
+        for r in d.get("records", ()):
+            print("  " + record_line(d["seat"], r))
     days = len(block["days"]) * len(block["seats"])
     print(
         f"gate 5 on a replay of {block['season']} drafted on {block['forecaster']}: {days} "
