@@ -18,8 +18,10 @@ import subprocess
 import sys
 import threading
 import time
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -257,11 +259,36 @@ case "$*" in
 esac
 """,
     )
+    # The units as ``FAKE_UNITS`` lines ("unit load active sub"), answered by the state asked for
+    # as systemd does, ``FAKE_UNITS_LATER`` from the second ask on when set; the timers' next runs
+    # as ``FAKE_NEXT`` lines ("timer <next>": systemd 255's printed date, the @epoch form, or a
+    # bad answer), each listed and shown on its own.
     fake(
         bin_dir,
         "systemctl",
         f"""echo "systemctl $*" >> "{log}"
-case "$*" in *list-units*) printf '%s\\n' "${{FAKE_ACTIVE:-}}" ;; esac
+case "$*" in
+  *list-units*.service*)
+    asked=$(( $(cat "{log}.units" 2>/dev/null || echo 0) + 1 ))
+    echo "$asked" > "{log}.units"
+    units=${{FAKE_UNITS:-}}
+    if [ "$asked" -ge 2 ] && [ -n "${{FAKE_UNITS_LATER:-}}" ]; then units=$FAKE_UNITS_LATER; fi
+    states=$(printf '%s\\n' "$@" | sed -n 's/^--state=//p' | tr ',' ' ')
+    printf '%s\\n' "$units" | while read -r unit load active sub; do
+      [ -n "$unit" ] || continue
+      for s in $states; do
+        if [ "$s" = "$active" ]; then echo "$unit $load $active $sub description"; fi
+      done
+    done ;;
+  *list-units*.timer*)
+    printf '%s\\n' "${{FAKE_NEXT:-}}" | while read -r timer next; do
+      if [ -n "$timer" ]; then echo "$timer loaded active waiting description"; fi
+    done ;;
+  *show*)
+    printf '%s\\n' "${{FAKE_NEXT:-}}" | while read -r timer next; do
+      case "$*" in *" $timer "*) echo "$next" ;; esac
+    done ;;
+esac
 """,
     )
     fake(
@@ -292,12 +319,135 @@ def test_update_refuses_under_a_live_room_or_a_running_routine(update) -> None:
     repo, _seed, log, env = update
     done = run(VM / "update.sh", {**env, "FAKE_ROOMS": '[{"id": "r1"}]'})
     assert done.returncode == 3 and "refused: http://127.0.0.1:8000/rooms answers" in done.stdout
-    done = run(VM / "update.sh", {**env, "FAKE_ACTIVE": "pickandroll-routine@morning.service"})
+    done = run(
+        VM / "update.sh",
+        {**env, "FAKE_UNITS": "pickandroll-routine@morning.service loaded active exited"},
+    )
     assert done.returncode == 3
-    assert "refused: a routine runs (pickandroll-routine@morning.service)" in done.stdout
+    assert "refused: a routine runs (pickandroll-routine@morning.service active)" in done.stdout
     assert "npm" not in log.read_text() and "restart" not in log.read_text()
     assert not (repo / "web" / "dist").exists()
     assert run(VM / "update.sh", env, "--bogus").returncode == 2
+
+
+def pulled(log: Path) -> bool:
+    return "npm" in log.read_text() or "restart" in log.read_text()
+
+
+@pytest.mark.parametrize("state", ["activating", "deactivating", "reloading"])
+def test_update_refuses_while_a_oneshot_routine_runs(update, state: str) -> None:
+    """#398: a oneshot routine that runs is ``activating``, not ``active``: the guard asks for
+    every state but at rest, names the unit and its state, and never pulls."""
+    repo, _seed, log, env = update
+    before = git(repo, "rev-parse", "HEAD")
+    units = "\n".join(
+        [
+            f"pickandroll-routine@evening-build.service loaded {state} start",
+            "pickandroll-routine@daily.service loaded inactive dead",
+            "pickandroll-routine@late.service loaded failed failed",
+        ]
+    )
+    done = run(VM / "update.sh", {**env, "FAKE_UNITS": units})
+    assert done.returncode == 3, done.stdout + done.stderr
+    assert done.stdout.strip() == (
+        f"refused: a routine runs (pickandroll-routine@evening-build.service {state});"
+        " run again when it ends"
+    )
+    assert "--state=active,activating,deactivating,reloading" in log.read_text()
+    assert not pulled(log) and git(repo, "rev-parse", "HEAD") == before
+
+
+def test_update_keeps_the_api_when_a_routine_starts_during_the_pull(update) -> None:
+    """#398: a routine at rest at the guard but running by the restart (a pre-tip slate's run that
+    started during the pull or the build): main and the dashboard stay as pulled, the API is not
+    restarted, and the exit is 3 with what to run."""
+    repo, seed, log, env = update
+    after = move_origin(seed, "src/x.py", "x = 2\n")
+    done = run(
+        VM / "update.sh",
+        {
+            **env,
+            "FAKE_UNITS": "pickandroll-routine@daily.service loaded inactive dead",
+            "FAKE_UNITS_LATER": "pickandroll-routine@pretip.service loaded activating start",
+        },
+    )
+    assert done.returncode == 3, done.stdout + done.stderr
+    assert done.stdout.strip().splitlines()[-1] == (
+        "api: not restarted: a routine runs (pickandroll-routine@pretip.service activating);"
+        " run update.sh --restart when it ends"
+    )
+    assert git(repo, "rev-parse", "HEAD") == after
+    assert (repo / "web" / "dist" / "index.html").exists()
+    assert "restart pickandroll-api.service" not in log.read_text()
+    # Asked twice: at the guard and before the restart.
+    assert log.read_text().count("list-units pickandroll-routine@*.service") == 2
+
+
+def test_update_goes_on_past_routines_at_rest(update) -> None:
+    """Inactive and failed routine units hold nothing."""
+    _repo, _seed, _log, env = update
+    units = (
+        "pickandroll-routine@daily.service loaded inactive dead\n"
+        "pickandroll-routine@late.service loaded failed failed"
+    )
+    done = run(VM / "update.sh", {**env, "FAKE_UNITS": units})
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert "refused" not in done.stdout
+
+
+def printed(epoch: int) -> str:
+    """A timer's next run as systemd 255's ``show -p NextElapseUSecRealtime --value`` prints it on
+    the droplet (its zone is UTC), whatever ``--timestamp`` asks."""
+    return datetime.fromtimestamp(epoch, UTC).strftime("%a %Y-%m-%d %H:%M:%S UTC")
+
+
+def test_update_refuses_when_a_routine_timer_fires_within_ten_minutes(update) -> None:
+    """#398: a timer due within 10 min holds the deploy, named with its time; one due later, one
+    with no next run and the pre-tip check's five-minute timer do not; an unreadable next run
+    holds it too."""
+    repo, _seed, log, env = update
+    before = git(repo, "rev-parse", "HEAD")
+    now = int(time.time())
+    soon = now + 5 * 60
+    done = run(
+        VM / "update.sh",
+        {
+            **env,
+            "FAKE_NEXT": "\n".join(
+                [
+                    f"pickandroll-routine@pretip.timer {printed(now + 60)}",
+                    f"pickandroll-routine@daily.timer {printed(now + 7 * 3600)}",
+                    "pickandroll-routine@monday.timer n/a",
+                    f"pickandroll-routine@evening-pass.timer {printed(soon)}",
+                ]
+            ),
+        },
+    )
+    assert done.returncode == 3, done.stdout + done.stderr
+    at = datetime.fromtimestamp(soon, ZoneInfo("America/Chicago")).strftime("%H:%M")
+    assert done.stdout.strip() == (
+        f"refused: pickandroll-routine@evening-pass.timer fires at {at} CT, in 5 min;"
+        " run again after its routine ends"
+    )
+    assert not pulled(log) and git(repo, "rev-parse", "HEAD") == before
+    # Due in 11 minutes, or only the pre-tip check's soon: the deploy goes on.
+    for timers in (
+        f"pickandroll-routine@evening-pass.timer {printed(now + 11 * 60)}",
+        f"pickandroll-routine@pretip.timer {printed(now + 60)}",
+    ):
+        done = run(VM / "update.sh", {**env, "FAKE_NEXT": timers})
+        assert done.returncode == 0, done.stdout + done.stderr
+    # The @epoch form some systemd versions answer is read as well.
+    done = run(VM / "update.sh", {**env, "FAKE_NEXT": f"pickandroll-routine@late.timer @{soon}"})
+    assert done.returncode == 3
+    assert "refused: pickandroll-routine@late.timer fires at" in done.stdout
+    # A next run that is not a date: held, and the timer named.
+    done = run(VM / "update.sh", {**env, "FAKE_NEXT": "pickandroll-routine@late.timer soon"})
+    assert done.returncode == 3
+    assert done.stdout.strip() == (
+        "refused: the next run of pickandroll-routine@late.timer was not read (soon);"
+        " run again once systemd answers"
+    )
 
 
 def test_update_builds_a_missing_dashboard_and_leaves_the_api_when_nothing_changed(update) -> None:
@@ -354,7 +504,7 @@ def test_update_restarts_on_request_and_fails_when_the_api_does_not_answer(updat
 
 
 #: What update.sh and the fakes run besides the fakes themselves (npm is not among them).
-UPDATE_TOOLS = ("bash", "git", "awk", "tr", "id", "dirname", "seq", "sleep")
+UPDATE_TOOLS = ("bash", "git", "awk", "tr", "id", "dirname", "seq", "sleep", "date", "sed")
 
 
 def test_update_says_when_npm_is_missing(update, tmp_path: Path) -> None:
