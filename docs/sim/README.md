@@ -258,7 +258,8 @@ zero and run.
 The ladder from the design note. **Static** makes no move. **Market** moves on a day with the
 setup's rate (a replay records none, so a market rival names its `rate`) and takes the pool's best
 by the market's view for its weakest by the same view, within the caps; on a replay the view is the
-run's forecaster's draft-day ranking. **Mirror** runs the surrogate on the shared beliefs. **Seat**
+run's forecaster's draft-day ranking, or under a table of average draft positions the table's
+(PR D4a). **Mirror** runs the surrogate on the shared beliefs. **Seat**
 is a named arm in another seat: the equal room's opponent.
 
 ## The runner (`sim/run.py`)
@@ -504,7 +505,8 @@ first stand-in, the command prints a line saying a seat can hold such players.
 **The league and the draft.** The league is everyone the season's log lists with a scheduled game.
 The draft is a snake on the run's forecaster's values over the projected players with a scheduled
 game in the season's first seven days, as an opening-night roster shows; everyone else is on the
-wire. Who is projected is the forecaster's (above).
+wire. Who is projected is the forecaster's (above). Under a table of average draft positions
+(`--adp espn`, PR D4a) the seats draft on boards instead ("The draft market", below).
 
 **A belief for each seat (PR D1).** A replay's world holds a causal belief for each forecaster a
 seat names, each from its own projection with its own newcomer's prior (the mean of its own
@@ -518,9 +520,9 @@ decision and both seasons are played in full, while the world's draws (lines, ab
 market's generator) stay common to them. A day record carries the other forecasters' beliefs a
 variant's seats hold and which team holds which (`held`, `holds`), and the no-peek digest hashes
 them when they are not empty, so a run whose seats all hold the run's forecaster records and
-digests as it did. The season scale reads the arm's own forecaster. The draft and the market's
-ranking stay the run's forecaster's: an arm on a forecaster of its own reads it from the season's
-first day.
+digests as it did. The season scale reads the arm's own forecaster. Under `--adp none` the draft
+and the market's ranking stay the run's forecaster's: an arm on a forecaster of its own reads it
+from the season's first day. Under a table its seat drafts on it (PR D4a, "The draft market").
 
 **The two sources' stand-ins (PR D1).** The live engine reads two projection systems, Basketball
 Monster and Yahoo, and an arm's `system` knob picks the one it believes (`blend`, a mix at the
@@ -635,6 +637,42 @@ A log whose players all carry one and the same figure holds no table, and a run 
 is refused by name before any path. The confirmation season's log is such a log today. The hold-out
 is refused before its log is opened. The table's counts (players, listed, at the ceiling, with no
 figure) and the log's hash are what a run records of it; the figures stay in the log.
+
+**The draft on a table** (`replay --adp espn --adp-spread <base>,<growth>`). Every seat picks, in
+the snake, the best player left on its own board:
+
+- **A rival's board.** A listed player's place is his average pick plus a normal draw at
+  `base + growth × pick` picks, with no bias; one draw for every listed player of the table, in
+  the order of his pick, drafted or not. The players the table does not list sit below every
+  listed one, by the run's forecaster's value. Each seat draws its board from a generator of its
+  own on the path's `(seed, path)` and the `draft` stream (appended to `world.STREAMS`, so no
+  other stream moved): two arms' seasons on a path meet the same rivals' boards.
+- **An arm's seat's board** is its own forecaster's per-game value on draft day: the run's
+  forecaster's when the arm names none, a `system` or `blend` seat's stand-in belief as the run
+  builds it for the first day. A player that forecaster does not project is not on it: the seat
+  cannot value him and never drafts him.
+- **Who can be drafted:** every member with a game in the season's first seven days who is
+  projected by the run's forecaster or listed by the table. So a rival may draft a player the
+  run's forecaster does not project (a rookie under `prior`), who is then valued at zero by the
+  seats on that forecaster until he plays.
+- **The spread is given, not fitted here.** `--adp espn` without `--adp-spread` is refused, and
+  both figures are at least zero. No default sits in the code.
+- **The market's view** (what a `market` rival ranks its adds and drops by) is the table's: a
+  listed player's view is the negative of his average pick, and an unlisted one sits below every
+  listed one, by the run's forecaster's value. It is the preseason's and does not refresh through
+  the season: a limit.
+- **The room** (`--seats`): every seat holds an arm, so every seat drafts on its arm's own board
+  and no board is a rival's. The table reaches a room only through the market's view.
+- **The pair** (`--arms`): the arm's seat drafts on the arm's board and the other eleven on rivals'
+  boards. When arm A's and arm B's draft-day beliefs are one label, there is one draft and one
+  league, and the pair shares what it always shared. When they differ, each arm's season is its
+  own league from the draft on: two setups and two worlds on the same `(seed, path)`, so the
+  world's draws and the rivals' boards stay common. The world's newcomer prior reads who went
+  undrafted, so one world cannot serve two drafts. The seat still rotates with the path.
+- `--no-peek` checks the draft on the run's forecaster, so it is refused with `--adp espn`.
+
+`--adp none`, the default, is the draft as it was: a snake on the run's forecaster's values, the
+market's view the same values.
 
 ## The audit and the counts (`sim/audit.py`, `sim/counts.py`)
 
