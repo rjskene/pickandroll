@@ -316,7 +316,8 @@
     }
     // Live, a run that ends before any step logs as live; one that goes on sets the steps. A
     // comeback the steps offered and this visit did not run is under the run's skipped (#346).
-    const rest = PR.comebackDone(steps, PR.comebackWhy({ mode: mode.mode, trigger, chained }));
+    // A moves pass's comeback-only run (#403) sets no lineup step: the day's lineup is its own runs'.
+    const rest = PR.onlyComebacks(PR.comebackDone(steps, PR.comebackWhy({ mode: mode.mode, trigger, chained })), trigger);
     const end = mode.mode === "live" ? PR.runEnd({ steps: rest, postedAt, controls, problem }) : null;
     let run;
     let clicked = false;
@@ -520,6 +521,13 @@
           }
         }
       }
+    }
+    // A blocked roster names its held player (#403): on my team page the page is posted first, so
+    // the due route's ``held_cleared`` reads this page.
+    if (answer && answer.blocked && !answer.named) {
+      if (page && page.kind === "team") await post();
+      const d = await send({ op: "moves_due", league });
+      if (d && d.ok && d.data) answer = PR.namedBlock(answer, d.data.held_cleared);
     }
     const run = PR.landedPass(record, answer, seen, extensionVersion());
     const logged = await send({ op: "moves_log", league, run });

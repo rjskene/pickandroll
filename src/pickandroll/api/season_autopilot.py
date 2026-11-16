@@ -507,7 +507,8 @@ class LineupRun(BaseModel):
 
     day: date
     mode: Literal["dry_run", "live"]
-    trigger: Literal["routine", "routine_late", "panel"]
+    #: ``routine_moves``: a moves pass's comeback alone, before its claims (#403).
+    trigger: Literal["routine", "routine_late", "panel", "routine_moves"]
     outcome: Literal["would_set", "nothing_to_do", "skipped", "set", "failed", "stopped"]
     reason: str | None = None
     #: The team page's path and date.
@@ -925,7 +926,8 @@ class DropRun(BaseModel):
 
     day: date
     mode: Literal["dry_run", "live"]
-    trigger: Literal["routine", "routine_late", "panel", "routine_evening"]
+    #: ``routine_moves``: a moves pass's comeback drop (#403).
+    trigger: Literal["routine", "routine_late", "panel", "routine_evening", "routine_moves"]
     outcome: Literal["would_drop", "dropped", "skipped", "failed", "unconfirmed", "stopped"]
     reason: str | None = None
     #: The queue entry the drop serves; null only in a run that says it stopped.

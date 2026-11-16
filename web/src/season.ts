@@ -651,6 +651,7 @@ const RUN_OUTCOME: Record<LineupRunLog["outcome"], string> = {
 const TRIGGER: Record<LineupRunLog["trigger"] | StartActiveRunLog["trigger"], string> = {
   routine: "routine",
   routine_late: "late routine",
+  routine_moves: "moves pass's comeback",
   routine_evening: "evening routine",
   routine_daily: "daily routine",
   panel: "side panel",

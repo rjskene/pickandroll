@@ -1311,7 +1311,7 @@ export interface LineupRunLog {
   /** The day the run set (or would have set). */
   day: string;
   mode: "dry_run" | "live";
-  trigger: "routine" | "routine_late" | "panel";
+  trigger: "routine" | "routine_late" | "panel" | "routine_moves";
   outcome: "would_set" | "nothing_to_do" | "skipped" | "set" | "failed" | "stopped";
   reason: string | null;
   steps: LineupStepLog[];

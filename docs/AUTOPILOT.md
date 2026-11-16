@@ -523,11 +523,50 @@ page, from PR 2:
     (`roster/…` or `lineup/…` parts) in any league's stored state, this league's own when it is
     the newest: the NBA's status is the same in every league, and on 2026-11-07 223259's last read
     (05:28 CST) still said O while 31153's at 09:15 CST said Q. While one is listed every claim skips
-    with "<id> sits on IL with status Q: Yahoo refuses every claim until he leaves it (Error 845)",
-    and the skip stays due. The limit: a player read in no league since his status changed is
+    with "<id> sits on IL with status Q: Yahoo refuses every claim until they leave it (Error 845)",
+    and the skip stays due. The limit: a player read in no league since their status changed is
     judged on the stale read. Each item is `{player, slot, status, read_at, league}`: the newest
     read's time and league, this league's when its own read is the newest (the scan covers every
-    league, this one included), null only when no team-page read of him is stored.
+    league, this one included), null only when no team-page read of them is stored. Since #403
+    (extension 0.11.14) each pass reads it fresh:
+    - **A fresh read before the claims.** The morning, late and evening passes open my team page
+      in each league with something due, with no fragment, before its first page (step
+      `fresh_reads`, eight seconds a page). The extension posts it as `roster/<team>`, the step
+      checks that the read landed (`GET /seasons/<id>`, `fetched`), and the pass asks the due
+      route again. Its IL moves, held drops and claims are then judged on that read. On 2026-11-16
+      two of four claims at the 09:15 pass went into Yahoo's refusal: Fox (251146) and Reaves
+      (223259) had gone to IL the night before as O and cleared by the morning, after the 05:18
+      read. A read that did not land fails the step, and the pass goes on with the read it had.
+    - **A blocked roster is read as such.** Yahoo's Error #845 ("Player … is in a IL position on
+      your roster, but no longer qualifies for that position") on the drop's tick or the landing,
+      or a landing on the claim form's own path headed "Subscribe in the app", logs the claim
+      `failed` with "blocked roster: <player> sits on IL …". The held player is named from #845's
+      words, else from the due route's `held_cleared` read after the landing (on my team page the
+      page is posted first). The form's `disabled_add` marker is no sign of it: it is on every
+      claim form read since 2026-10-24, the claims that went in included.
+    - **The moves step counts its claims.** "4 pages opened in 4 leagues: 2 claimed, 2 failed":
+      the pass's own runs (its trigger, from its start) by outcome. A failed claim fails the step,
+      so the watchdog and the slate reports see it; skips alone never do, and the steps after it
+      run either way.
+    - **The comeback before the claims (#403 PR 2, extension 0.11.15).** A fresh read that still
+      names a cleared player blocks every claim in that league until the player leaves the IL. So
+      the morning and late passes run that league's comeback first (step `comebacks`). The step
+      reads today's `lineup/steps`. When the lineup executor is live and the day is open, and the
+      steps hold a comeback or a return, it opens my team page on `#pickandroll-lineup-moves`:
+      two minutes a chain, or thirty seconds for a return alone. The pass then asks the due route
+      again.
+      - The fragment's trigger is `routine_moves`, and its run sets the comeback alone: the drop,
+        the move and Start Active (`-drop-comeback-moves`, `-start-active-comeback-moves`,
+        `-lineup-moves-chain`). The day's lineup steps go under `skipped`. The day's lineup stays
+        with the daily's, the late pass's and pre-tip's own runs, and none of them is refused
+        after it. Nor is a second `routine_moves` run on the same day, since it sets only a player
+        still cleared on IL.
+      - The same gates hold as for the lineup passes' chains (below).
+      - The evening pass runs no comeback: by 21:00 the drop's game or the player's has begun,
+        and Yahoo's lock refuses both.
+      - Since #403 a cleared player takes an open active spot before anyone is dropped. A
+        comeback needs a drop only on a full roster (#318), so a roster with room shows a return,
+        not a chain.
   - **A placed claim judged again when a held player clears (#345, PR 1).** A claim keeps its place
     until Yahoo settles it, and his comeback then dropped the least valuable active player (by
     per-game value until #360 PR 3, below), the claim's add included (31153, 2026-11-09: a $2 claim won at 04:17 and its add dropped by the
@@ -1046,7 +1085,8 @@ In the model's terms, carried by #124:
   the IL (Error #845). While the roster is over its size Yahoo also refuses his move (Error #160:
   the first live run, 2026-11-05, moved first and was refused in all four leagues), so the drop comes
   first. A comeback that needs a drop (`cleared` alert with a `drop`, `comebacks` on the steps route,
-  each with its `stage`) is run by the routines' two lineup passes, daily and late, in a public
+  each with its `stage`) is run by the routines' two lineup passes, daily and late, and by the
+  morning and late moves passes before their claims (#403, above), in a public
   league whose moves switch is live under its guard; the private league never runs one, and STOP or
   the browser's brake hold it. A lineup page with a chain stays open two minutes a chain. In order:
   1. **The drop.** The engine's `drop` on the drop page, with the chain's fragment: the solve's
@@ -1068,6 +1108,7 @@ In the model's terms, carried by #124:
   4. **The lineup.** The pass's own lineup run on today's dated page, the one the routine opens,
      since only its post writes the lineup the steps read: the rebuilt recommendation starts the
      returned player if he has a game and belongs, and fills the slot the drop left.
+     A moves pass's chain (`routine_moves`, #403) ends at the press: its run sets no lineup.
 - Every gate of the drop holds on the steps, before its first click: the moves switch and its guard,
   STOP, the private league, the lineup live under its own guard, the keep rule read (an unreadable
   one runs no comeback and logs no drop), the drop not protected ("no legal drop"; the engine's keep
