@@ -67,6 +67,11 @@ The routine guard (#398) refuses, exit 3, naming what holds it:
   of this check, else no daytime deploy could run; a pre-tip check that runs is held by the
   unit check.
 
+The unit check runs again right before the API's restart: a routine that started during the pull
+or the dashboard's build (a pre-tip slate's run) keeps the API. Main and the dashboard stay as
+pulled, update.sh prints `api: not restarted: a routine runs (<unit> <state>); run update.sh
+--restart when it ends` and exits 3, so the run never reads as a clean deploy.
+
 On 2026-11-15 a deploy at 21:04 CT passed the old `--state=active` guard and restarted the API
 four minutes into the 21:00 evening build.
 

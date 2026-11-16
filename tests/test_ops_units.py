@@ -260,16 +260,20 @@ esac
 """,
     )
     # The units as ``FAKE_UNITS`` lines ("unit load active sub"), answered by the state asked for
-    # as systemd does; the timers' next runs as ``FAKE_NEXT`` lines ("timer @epoch", or a bad
-    # answer), each listed and shown on its own.
+    # as systemd does, ``FAKE_UNITS_LATER`` from the second ask on when set; the timers' next runs
+    # as ``FAKE_NEXT`` lines ("timer @epoch", or a bad answer), each listed and shown on its own.
     fake(
         bin_dir,
         "systemctl",
         f"""echo "systemctl $*" >> "{log}"
 case "$*" in
   *list-units*.service*)
+    asked=$(( $(cat "{log}.units" 2>/dev/null || echo 0) + 1 ))
+    echo "$asked" > "{log}.units"
+    units=${{FAKE_UNITS:-}}
+    if [ "$asked" -ge 2 ] && [ -n "${{FAKE_UNITS_LATER:-}}" ]; then units=$FAKE_UNITS_LATER; fi
     states=$(printf '%s\\n' "$@" | sed -n 's/^--state=//p' | tr ',' ' ')
-    printf '%s\\n' "${{FAKE_UNITS:-}}" | while read -r unit load active sub; do
+    printf '%s\\n' "$units" | while read -r unit load active sub; do
       [ -n "$unit" ] || continue
       for s in $states; do
         if [ "$s" = "$active" ]; then echo "$unit $load $active $sub description"; fi
@@ -351,6 +355,32 @@ def test_update_refuses_while_a_oneshot_routine_runs(update, state: str) -> None
     )
     assert "--state=active,activating,deactivating,reloading" in log.read_text()
     assert not pulled(log) and git(repo, "rev-parse", "HEAD") == before
+
+
+def test_update_keeps_the_api_when_a_routine_starts_during_the_pull(update) -> None:
+    """#398: a routine at rest at the guard but running by the restart (a pre-tip slate's run that
+    started during the pull or the build): main and the dashboard stay as pulled, the API is not
+    restarted, and the exit is 3 with what to run."""
+    repo, seed, log, env = update
+    after = move_origin(seed, "src/x.py", "x = 2\n")
+    done = run(
+        VM / "update.sh",
+        {
+            **env,
+            "FAKE_UNITS": "pickandroll-routine@daily.service loaded inactive dead",
+            "FAKE_UNITS_LATER": "pickandroll-routine@pretip.service loaded activating start",
+        },
+    )
+    assert done.returncode == 3, done.stdout + done.stderr
+    assert done.stdout.strip().splitlines()[-1] == (
+        "api: not restarted: a routine runs (pickandroll-routine@pretip.service activating);"
+        " run update.sh --restart when it ends"
+    )
+    assert git(repo, "rev-parse", "HEAD") == after
+    assert (repo / "web" / "dist" / "index.html").exists()
+    assert "restart pickandroll-api.service" not in log.read_text()
+    # Asked twice: at the guard and before the restart.
+    assert log.read_text().count("list-units pickandroll-routine@*.service") == 2
 
 
 def test_update_goes_on_past_routines_at_rest(update) -> None:

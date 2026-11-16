@@ -29,8 +29,11 @@ if [ -n "$rooms" ] && [ "$rooms" != "[]" ]; then
   exit 3
 fi
 # A routine is a oneshot: while it runs it is "activating", never "active" (#398). Any state but
-# at rest (inactive or failed) holds the deploy.
-busy=$(systemctl --user list-units 'pickandroll-routine@*.service' --state=active,activating,deactivating,reloading --no-legend --plain 2>/dev/null | awk '{printf "%s%s %s", sep, $1, $3; sep=", "}')
+# at rest (inactive or failed) holds the deploy. Asked again before the API's restart (step 4).
+routines_busy() {
+  systemctl --user list-units 'pickandroll-routine@*.service' --state=active,activating,deactivating,reloading --no-legend --plain 2>/dev/null | awk '{printf "%s%s %s", sep, $1, $3; sep=", "}'
+}
+busy=$(routines_busy)
 if [ -n "$busy" ]; then
   say "refused: a routine runs ($busy); run again when it ends"
   exit 3
@@ -73,8 +76,15 @@ else
   say "dashboard: unchanged"
 fi
 
-# 4. the API, restarted only on a code change (the room guard above covers it)
+# 4. the API, restarted only on a code change (the room guard above covers it). A routine that
+# started during the pull or the build (a pre-tip slate's run, #398) keeps the API: main and the
+# dashboard stay as pulled, and the exit is 3, not a clean deploy.
 if [ "$restart" = 1 ] || changed src pyproject.toml; then
+  busy=$(routines_busy)
+  if [ -n "$busy" ]; then
+    say "api: not restarted: a routine runs ($busy); run update.sh --restart when it ends"
+    exit 3
+  fi
   systemctl --user restart pickandroll-api.service
   for _ in $(seq 1 30); do
     curl -s --max-time 3 "$api/seasons" >/dev/null 2>&1 && break
