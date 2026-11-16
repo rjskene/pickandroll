@@ -29,12 +29,15 @@
     // drop comes first, and only such a page takes it: its items are the steps', not the due's.
     "pickandroll-drop-comeback": "routine",
     "pickandroll-drop-comeback-late": "routine_late",
+    "pickandroll-drop-comeback-moves": "routine_moves",
   };
   const DROP_THEN = {
     routine: { il: "pickandroll-il", moves: "pickandroll-moves" },
     routine_late: { il: "pickandroll-il-late", moves: "pickandroll-moves-late" },
     routine_evening: { il: "pickandroll-il-evening", moves: "pickandroll-moves-evening" },
     panel: { il: "pickandroll-il-panel", moves: "pickandroll-moves-panel" },
+    // A moves pass's comeback drop (#403) goes back to its chain, never on to an entry.
+    routine_moves: { il: "pickandroll-il", moves: "pickandroll-moves" },
   };
   /** Yahoo's drop page (step 0c): the form, its stage, the row's button and the attribute naming
    * its player, the row's name link, and the confirm's submit. */

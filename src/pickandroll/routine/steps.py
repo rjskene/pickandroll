@@ -606,6 +606,9 @@ class MovesPlan:
     #: My team's id in each league of ``leagues`` whose due answer names it: where the pass's
     #: fresh read opens (#403).
     teams: dict[str, int] = field(default_factory=dict)
+    #: The leagues whose due answer names a player of mine on IL or IL+ whose status no longer
+    #: fits (``held_cleared``): Yahoo refuses every claim there until they leave it (#403).
+    cleared: list[str] = field(default_factory=list)
 
 
 def moves_plan(ctx: Context, leagues: Sequence[str], fragment: str, il_fragment: str) -> MovesPlan:
@@ -618,11 +621,14 @@ def moves_plan(ctx: Context, leagues: Sequence[str], fragment: str, il_fragment:
     opened: list[str] = []
     reasons: dict[str, str] = {}
     teams: dict[str, int] = {}
+    cleared: list[str] = []
     for league in leagues:
         code, body, _ = ctx.get(f"/seasons/{league}/autopilot/moves/due", 120)
         if code != 200 or not isinstance(body, dict):
             reasons[league] = f"due route answered {code}"
             continue
+        if body.get("held_cleared") and not body.get("stop"):
+            cleared.append(league)
         # A placed claim's IL move (#364) is due with no entry due.
         if (
             body.get("mode") == "off"
@@ -676,7 +682,40 @@ def moves_plan(ctx: Context, leagues: Sequence[str], fragment: str, il_fragment:
                 teams[league] = team
         else:
             reasons[league] = "no page passed the checks"
-    return MovesPlan(openings, entries, opened, reasons, teams)
+    return MovesPlan(openings, entries, opened, reasons, teams, cleared)
+
+
+def comeback_plan(ctx: Context, leagues: Sequence[str], fragment: str) -> list[Opening]:
+    """A moves pass's comebacks (#403): in each league whose due answer named a cleared player,
+    today's ``lineup/steps`` when the lineup executor is live and the day open, with a comeback
+    (its drop, the move, the press) or a return that needs no drop; the league's own team page
+    with the pass's comeback-only fragment, the chain's wait per comeback. The day's lineup stays
+    with its own runs: the extension sets the comeback alone on this fragment."""
+    out: list[Opening] = []
+    skipped: list[str] = []
+    for league in leagues:
+        code, body, _ = ctx.get(f"/seasons/{league}/lineup/steps", 120)
+        if code != 200 or not isinstance(body, dict):
+            skipped.append(f"{league} ({code})")
+            continue
+        if body.get("mode") != "live":
+            skipped.append(f"{league}: lineups {body.get('mode') or 'off'}, not live")
+            continue
+        if not body.get("open"):
+            skipped.append(f"{league}: the day is locked")
+            continue
+        chains = len(body.get("comebacks") or ())
+        if not chains and not body.get("returns"):
+            skipped.append(f"{league}: no comeback or return in today's steps")
+            continue
+        page = body.get("page")
+        if not league_page_ok(league, page):
+            skipped.append(f"{league}: page not the league's own ({page!r})")
+            continue
+        wait = COMEBACK_WAIT_S * chains if chains else LINEUP_WAIT_S
+        out.append(Opening(league, "comeback", f"{page}#{fragment}", wait, date=body.get("date")))
+    ctx.notes["comeback_skipped"] = skipped
+    return out
 
 
 def plan_lines(openings: Sequence[Opening]) -> list[str]:

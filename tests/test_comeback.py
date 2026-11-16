@@ -787,6 +787,12 @@ def test_the_press_of_a_chain_is_a_trigger_of_its_own():
     assert "after_comeback" in ap.StartActiveRun.model_fields["trigger"].annotation.__args__
 
 
+def test_a_moves_pass_comeback_is_a_lineup_and_drop_trigger_of_its_own():
+    """#403: the morning and late moves passes run the comeback alone under ``routine_moves``."""
+    for model in (ap.LineupRun, ap.DropRun):
+        assert "routine_moves" in model.model_fields["trigger"].annotation.__args__
+
+
 def test_the_lineup_log_takes_a_comeback_move_and_ends_its_pending_drop(client):
     benched_thursday(client)
     dry_runs(client, days=7, checked=2)
