@@ -3,8 +3,10 @@
 A **league shape** (:class:`LeagueShape`) is a league's team count, its roster slots, its weekly
 add limit and its playoff format: what the user's ruling of 2026-11-06 lets a league generator
 vary ("team count, roster slots, weekly add limit and playoff format, over modest ranges"), with
-the weekly add limit a parameter beside the rest (2026-11-07). Every shape scores the nine
-categories and holds no held slot: points leagues and held slots are a later PR's (D4c).
+the weekly add limit a parameter beside the rest (2026-11-07). A shape says nothing of how a
+league scores or what it holds: those are the run's **league rules** (:class:`LeagueRules`, PR
+D4c), the scoring (categories or points, with a points league's table) and the held slots, one
+set for every path of a run and never an axis of a grid.
 
 - :data:`FIXED` is the league every replay played in before PR D4b: twelve teams, the thirteen
   slots of :data:`SLOTS`, four adds a week, six playoff teams over three weeks. It is the
@@ -17,7 +19,9 @@ categories and holds no held slot: points leagues and held slots are a later PR'
 
 The name ``shape`` is taken twice already in the simulator (``replay --shape``, the oracle's error
 shape, and ``policy.Shape``, what decides which knobs a seat reads): this module's thing is a
-league shape, ``LeagueShape`` in code. Pure: no I/O.
+league shape, ``LeagueShape`` in code. ``rules`` is taken too (the audit's rules, a run's
+``audit.rules``): the league's are ``LeagueRules``, ``league_rules`` where they are passed, and
+the ``rules`` key of a run's ``league`` block. Pure: no I/O.
 """
 
 from __future__ import annotations
@@ -28,6 +32,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from functools import cached_property
 from typing import Any
+
+from .engine import HELD, STATS
 
 #: The thirteen roster slots of the fixed shape: the private league's without held slots.
 SLOTS = ("PG", "SG", "G", "SF", "PF", "F", "C", "C", "Util", "Util", "BN", "BN", "BN")
@@ -270,21 +276,188 @@ def axis_values(shape: LeagueShape) -> Mapping[str, Any]:
     }
 
 
+# --------------------------------------------------------------------------- the league rules
+#: How a league may score (#172, PR D4c): the nine categories, or points on a table.
+SCORINGS = ("categories", "points")
+#: The held slots the league rules may hold, each with the most of it (the all-knobs plan, 3c:
+#: ``IL`` 0 to 2, ``IL+`` 0 or 1), in the order the roster lists them after the bench.
+HELD_MOST: Mapping[str, int] = {"IL": 2, "IL+": 1}
+#: ESPN's default scoring for head-to-head points leagues, a stat's points per unit (ESPN's
+#: article "ESPN Fantasy's default points-league scoring explained"): a platform's published
+#: default, not a league's setting and not a measured figure. The working default table of a
+#: points run (``replay --scoring points`` without ``--points``); the user may replace it.
+POINTS_DEFAULT: tuple[tuple[str, float], ...] = (
+    ("pts", 1.0),
+    ("threes", 1.0),
+    ("reb", 1.0),
+    ("ast", 2.0),
+    ("stl", 4.0),
+    ("blk", 4.0),
+    ("tov", -2.0),
+    ("fgm", 2.0),
+    ("fga", -1.0),
+    ("ftm", 1.0),
+    ("fta", -1.0),
+)
+
+
+def _number(x: float) -> str:
+    return f"{x:g}"
+
+
+_WORDS = {1: "one", 2: "two"}
+
+
+@dataclass(frozen=True)
+class LeagueRules:
+    """How a run's league scores and what it holds (#172, PR D4c): ``scoring`` (one of
+    :data:`SCORINGS`), a points league's ``points`` table (stat and points per unit, in the
+    order of the engine's ``STATS``; None in a categories league) and the ``held`` slots, in the
+    roster's order after the bench (``IL`` up to twice, then ``IL+`` up to once). One set for
+    every path of a run; :data:`PLAIN` is today's league. ValueError, in words, on anything
+    else."""
+
+    scoring: str = "categories"
+    points: tuple[tuple[str, float], ...] | None = None
+    held: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        if self.scoring not in SCORINGS:
+            raise ValueError(f"scoring {self.scoring!r} is not one of {', '.join(SCORINGS)}")
+        if (self.scoring == "points") != (self.points is not None):
+            raise ValueError(
+                "a points league scores on a table and a categories league has none: "
+                f"scoring {self.scoring!r} with table {self.points!r}"
+            )
+        if self.points is not None:
+            stats = [s for s, _ in self.points]
+            unknown = [s for s in stats if s not in STATS]
+            if unknown:
+                raise ValueError(f"points table: {', '.join(unknown)} is no stat of a line")
+            if not stats or stats != sorted(set(stats), key=STATS.index):
+                raise ValueError(f"points table {self.points!r}: each stat once, in STATS order")
+        for kind in self.held:
+            if kind not in HELD_MOST:
+                raise ValueError(f"held slot {kind!r} is not one of {', '.join(HELD_MOST)}")
+        if list(self.held) != sorted(self.held, key=list(HELD_MOST).index):
+            raise ValueError(f"held slots {self.held!r}: IL first, then IL+")
+        for kind, most in HELD_MOST.items():
+            if self.held.count(kind) > most:
+                raise ValueError(f"held slots {self.held!r}: at most {most} {kind}")
+
+    @property
+    def table(self) -> dict[str, float] | None:
+        """The points table as the engine reads one (``Setup.points``, ``LeagueSpec.points``)."""
+        return None if self.points is None else dict(self.points)
+
+    def label(self) -> str:
+        if self.points is None:
+            scoring = "the nine categories"
+        elif self.points == POINTS_DEFAULT:
+            scoring = "points on ESPN's default table"
+        else:
+            scoring = "points on the table " + ", ".join(
+                f"{s} {_number(w)}" for s, w in self.points
+            )
+        counts = [(self.held.count(k), k) for k in HELD_MOST if self.held.count(k)]
+        held = (
+            " and ".join(f"{_WORDS[n]} {k} slot{'s' if n > 1 else ''}" for n, k in counts)
+            or "no held slot"
+        )
+        return f"{scoring}, {held}"
+
+    def payload(self) -> dict[str, Any]:
+        return {"scoring": self.scoring, "points": self.table, "held": list(self.held)}
+
+    def slots(self, roster: tuple[str, ...]) -> tuple[str, ...]:
+        """A league shape's ``roster`` with the held slots after it (the draft takes the active
+        spots only, so a held slot starts the season empty)."""
+        return (*roster, *self.held)
+
+
+#: Today's league rules, and the default: the nine categories, no held slot.
+PLAIN = LeagueRules()
+
+
+def _pairs(text: str, flag: str) -> list[tuple[str, str]]:
+    """``KEY=VALUE`` pairs of ``text``, a key named once; ValueError, in words, otherwise."""
+    out: list[tuple[str, str]] = []
+    for part in (x.strip() for x in text.split(",") if x.strip()):
+        key, eq, value = part.partition("=")
+        key, value = key.strip(), value.strip()
+        if not eq or not key or not value:
+            raise ValueError(f"{flag} {text!r}: {part!r} is not KEY=VALUE")
+        if key in {k for k, _ in out}:
+            raise ValueError(f"{flag} {text!r}: {key} is named twice")
+        out.append((key, value))
+    if not out:
+        raise ValueError(f"{flag} {text!r}: names nothing")
+    return out
+
+
+def parse_held(text: str) -> tuple[str, ...]:
+    """The held slots ``replay --held`` names (#172, PR D4c), as ``IL=2,IL+=1``: each key one of
+    :data:`HELD_MOST`'s (``NA`` and any other refused), each count a whole number from zero to
+    that slot's most; a slot left out holds none. In the roster's order."""
+    counts = dict.fromkeys(HELD_MOST, 0)
+    for key, value in _pairs(text, "--held"):
+        kind = next((k for k in HELD_MOST if k.lower() == key.lower()), None)
+        if kind is None:
+            known = ", ".join(sorted(HELD))
+            raise ValueError(
+                f"--held {key}: the held slots a league may hold here are "
+                f"{', '.join(HELD_MOST)} (the engine knows {known}; the plan names these two)"
+            )
+        try:
+            n = int(value)
+        except ValueError:
+            raise ValueError(f"--held {key}={value}: a count is a whole number") from None
+        if not 0 <= n <= HELD_MOST[kind]:
+            raise ValueError(f"--held {key}={value}: {kind} is 0 to {HELD_MOST[kind]}")
+        counts[kind] = n
+    return tuple(k for k, n in counts.items() for _ in range(n))
+
+
+def parse_points(text: str) -> tuple[tuple[str, float], ...]:
+    """A points table ``replay --points`` names (#172, PR D4c), as ``pts=1,reb=1.2,...``: each
+    key a stat of a line (the engine's ``STATS``), each value a finite number. The table is what
+    is named: a stat left out scores nothing. In ``STATS`` order."""
+    table: dict[str, float] = {}
+    for key, value in _pairs(text, "--points"):
+        if key not in STATS:
+            raise ValueError(f"--points {key}: the stats of a line are {', '.join(STATS)}")
+        try:
+            w = float(value)
+        except ValueError:
+            raise ValueError(f"--points {key}={value}: points per unit are a number") from None
+        if not math.isfinite(w):
+            raise ValueError(f"--points {key}={value}: points per unit are a finite number")
+        table[key] = w
+    return tuple((s, table[s]) for s in STATS if s in table)
+
+
 __all__ = [
     "FIXED",
     "FIXED_GRID",
     "FULL",
+    "HELD_MOST",
     "LEAGUE_KEYS",
+    "PLAIN",
+    "POINTS_DEFAULT",
+    "SCORINGS",
     "SLOTS",
     "STRIDE",
     "VISIT_RULE",
     "WIDE_SLOTS",
     "Grid",
+    "LeagueRules",
     "LeagueShape",
     "Visit",
     "axis_values",
     "one",
+    "parse_held",
     "parse_league",
+    "parse_points",
     "place",
     "round_up",
     "visit",
