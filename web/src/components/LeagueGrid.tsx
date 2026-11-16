@@ -126,6 +126,9 @@ export default function LeagueGrid({ landing, onOpen }: { landing: LandingOrder;
                 Win
               </span>
               <span className="k">Place</span>
+              <span className="k lt-rec" title="my season's record, W-L-T as Yahoo writes it">
+                Record
+              </span>
               <span className="k">Left</span>
               <span className="k">Flags</span>
               <span className="k">Best move</span>

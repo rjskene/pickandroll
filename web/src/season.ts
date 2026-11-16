@@ -2233,6 +2233,17 @@ export function placeLabel(s: Pick<SeasonSummary, "my_team" | "num_teams">): str
   return rank != null ? `${ordinal(rank)} of ${s.num_teams}` : "no place yet";
 }
 
+/** My season's record as Yahoo writes it, W-L-T ("10-17-0" in a categories league, where every
+ * category counts; "2-1-0" where a week is one result), or "no record yet" (#392). */
+export function myRecordLabel(s: Pick<SeasonSummary, "my_team">): string {
+  return s.my_team?.record || "no record yet";
+}
+
+/** The record cell's tone: muted until Yahoo shows a record (#392). */
+export function myRecordTone(s: Pick<SeasonSummary, "my_team">): "muted" | "" {
+  return s.my_team?.record ? "" : "muted";
+}
+
 /** "3 of 4 adds left" ("at most" when the transactions page may not reach the week's start). */
 export function addsLeft(a: SeasonSummary["adds"]): string {
   if (!a) return "";
