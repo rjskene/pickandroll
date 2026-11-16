@@ -29,6 +29,8 @@
     // My plain team page between a comeback's move and the pass's lineup run (#318).
     "pickandroll-start-active-comeback": "after_comeback",
     "pickandroll-start-active-comeback-late": "after_comeback",
+    // A moves pass's comeback-only chain (#403): the press ends it.
+    "pickandroll-start-active-comeback-moves": "after_comeback",
   };
   const AFTER_LINEUP_FRAGMENT = "pickandroll-start-active-after-lineup";
   /** Yahoo's control (step 0): the button in its React root, the dialog it opens and the Rest of

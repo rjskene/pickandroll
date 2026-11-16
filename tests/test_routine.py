@@ -991,3 +991,117 @@ def test_skipped_claims_alone_leave_the_moves_step_ok(tmp_path):
     )
     moves = run("morning", ctx, "http://api").find("moves")
     assert moves.status == "ok" and moves.detail.endswith(": 2 skipped")
+
+
+# --------------------------------------------------------------------------- #403: the comebacks
+STEPS_LIVE = {
+    "mode": "live",
+    "open": True,
+    "date": "2026-11-16",
+    "page": f"{YAHOO}/nba/252098/2?date=2026-11-16",
+    "comebacks": [{"player": 5, "drop": 9}],
+}
+
+
+def cleared_answers(clock, steps=None):
+    """:func:`fresh_answers` with a cleared player on IL in 252098: Yahoo refuses its claims
+    until the comeback; the due route names them until a comeback page opened."""
+    answers, asked = fresh_answers(clock)
+    due = answers[("GET", "/seasons/252098/autopilot/moves/due")]
+    back: list[int] = []
+
+    def cleared_due(body):
+        code, out = due(body)
+        return code, {**out, "held_cleared": [] if back else [{"player": 5, "slot": "IL"}]}
+
+    answers[("GET", "/seasons/252098/autopilot/moves/due")] = cleared_due
+    answers[("GET", "/seasons/252098/lineup/steps")] = (200, steps or STEPS_LIVE)
+    return answers, asked, back
+
+
+def test_a_morning_pass_sets_a_cleared_players_comeback_alone_before_its_claims(tmp_path):
+    """#403: a cleared player on IL blocks every claim in the league (Error 845): after the fresh
+    read the pass opens the team page on the comeback-only fragment, the chain's wait, then asks
+    the due route again and places its claims on that answer."""
+    clock = Clock("2026-11-16 09:15")
+    answers, asked, back = cleared_answers(clock)
+
+    def land(url):
+        if url.endswith("#pickandroll-lineup-moves"):
+            back.append(1)
+        return url
+
+    browser = FakeBrowser(clock=clock, land=land)
+    ctx = make_ctx(FakeAPI(answers), clock, tmp_path, routine="morning", browser=browser)
+    report = run("morning", ctx, "http://api")
+    assert browser.opened[:3] == [
+        (f"{YAHOO}/nba/252098/2", 8.0),
+        (f"{YAHOO}/nba/252098/2?date=2026-11-16#pickandroll-lineup-moves", 120.0),
+        (f"{YAHOO}/nba/252098/addplayer?apid=111#pickandroll-moves", 12.0),
+    ]
+    assert len(asked) == 3  # first, on the fresh read, after the comeback
+    assert report.find("comebacks").status == "ok"
+    names = [s.name for s in report.steps]
+    assert names.index("fresh_reads") < names.index("comebacks") < names.index("moves")
+
+
+def test_a_return_needing_no_drop_gets_a_lineup_wait_and_a_league_not_live_none(tmp_path):
+    clock = Clock("2026-11-16 09:15")
+    returns = {**STEPS_LIVE, "comebacks": [], "returns": [{"player": 5}]}
+    answers, _, _ = cleared_answers(clock, returns)
+    browser = FakeBrowser(clock=clock)
+    ctx = make_ctx(FakeAPI(answers), clock, tmp_path, routine="morning", browser=browser)
+    run("morning", ctx, "http://api")
+    assert (f"{returns['page']}#pickandroll-lineup-moves", LINEUP_WAIT_S) in browser.opened
+
+    for steps, why in [
+        ({**STEPS_LIVE, "mode": "dry_run"}, "252098: lineups dry_run, not live"),
+        ({**STEPS_LIVE, "open": False}, "252098: the day is locked"),
+        ({**STEPS_LIVE, "comebacks": []}, "252098: no comeback or return in today's steps"),
+        ({**STEPS_LIVE, "page": f"{YAHOO}/nba/999/2"}, "252098: page not the league's own"),
+    ]:
+        answers, asked, _ = cleared_answers(clock, steps)
+        browser = FakeBrowser(clock=clock)
+        ctx = make_ctx(FakeAPI(answers), clock, tmp_path, routine="morning", browser=browser)
+        report = run("morning", ctx, "http://api")
+        step = report.find("comebacks")
+        assert step.status == "skipped" and step.detail.startswith(why), step.detail
+        assert not any("#pickandroll-lineup-moves" in u for u, _ in browser.opened)
+        assert len(asked) == 2  # nothing opened: the plan on the fresh read stands
+
+
+def test_no_cleared_player_asks_for_no_lineup_steps(tmp_path):
+    clock = Clock("2026-11-16 09:15")
+    answers, _ = fresh_answers(clock)
+    api = FakeAPI(answers)
+    report = run(
+        "morning",
+        make_ctx(api, clock, tmp_path, routine="morning", browser=FakeBrowser(clock=clock)),
+        "http://api",
+    )
+    assert not any(p.endswith("/lineup/steps") for p in api.paths())
+    step = report.find("comebacks")
+    assert step.status == "skipped" and step.detail == "no cleared player blocks a claim"
+
+
+def test_the_late_pass_sets_the_comeback_and_the_evening_pass_never_does(tmp_path):
+    """#403 Option A: by the evening the drop's or the player's game has begun (Yahoo's lock), so
+    only the morning and late passes open the comeback."""
+    clock = Clock("2026-11-16 15:02")
+    answers, _, _ = cleared_answers(clock)
+    answers[("GET", "/seasons/252098/autopilot")] = (200, {"today": []})
+    answers[("GET", "/seasons/230585/autopilot")] = (200, {"today": []})
+    answers[("GET", "/seasons/status")] = (200, {"leagues": []})
+    browser = FakeBrowser(clock=clock)
+    ctx = make_ctx(FakeAPI(answers), clock, tmp_path, routine="late", browser=browser)
+    report = run("late", ctx, "http://api")
+    assert report.find("comebacks").status == "ok"
+    assert any(u.endswith("#pickandroll-lineup-moves") for u, _ in browser.opened)
+
+    clock = Clock("2026-11-16 22:31")
+    answers, _, _ = cleared_answers(clock)
+    browser = FakeBrowser(clock=clock)
+    ctx = make_ctx(FakeAPI(answers), clock, tmp_path, routine="evening-pass", browser=browser)
+    report = run("evening-pass", ctx, "http://api")
+    assert report.find("comebacks") is None
+    assert not any("#pickandroll-lineup-moves" in u for u, _ in browser.opened)

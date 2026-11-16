@@ -619,7 +619,8 @@ def comebacks(problem: MoveProblem, key: str, moves: Iterable[Move]) -> list[Com
     """The deferred drops of ``moves`` over horizon ``key``: each held-slot move whose player
     comes back inside it sends the least valuable active player then, him included; each held
     player whose status cleared (:func:`cleared`) does so on the first day, moves or none, unless
-    ``problem.activation`` names his drop (#360) and that player is still active; and
+    the set leaves an active spot open for them (#403: a comeback needs a drop only with no room,
+    #318) or ``problem.activation`` names their drop (#360) and that player is still active; and
     each held player not dropped who comes back inside it (:func:`returning`) does so on his
     day back, unless the set leaves an active spot open for him (#221). A returning player the
     stash threshold keeps is not sent while another can go (:func:`guarded_pool`, #373)."""
@@ -648,9 +649,11 @@ def comebacks(problem: MoveProblem, key: str, moves: Iterable[Move]) -> list[Com
     for day, k, slot, back in sorted(backs):
         if back:
             active.append(k)
-            if spare > 0:
-                spare -= 1
-                continue
+        # A cleared or returning player takes an open active spot before anyone is sent (#221,
+        # #403): only a held-slot move's return always sends one.
+        if (back or k in now) and spare > 0:
+            spare -= 1
+            continue
         # Today's activation is the day's decision (#360), while its drop is still there to send.
         chosen = problem.activation.get(k) if k in now and not back else None
         if chosen is not None and chosen in active and chosen not in problem.pending:

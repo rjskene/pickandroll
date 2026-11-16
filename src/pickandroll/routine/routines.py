@@ -30,6 +30,7 @@ from .steps import (
     api_check,
     cancel_plan,
     claim_page_plan,
+    comeback_plan,
     digest,
     export_all,
     lineup_pages,
@@ -439,12 +440,31 @@ def daily(ctx: Context, api: str) -> None:
     post_digest(ctx, digest(ctx))
 
 
+#: The comeback-only fragment a moves pass opens (#403): the extension's ``routine_moves`` trigger.
+COMEBACK_FRAGMENT = "pickandroll-lineup-moves"
+
+
+def comebacks(ctx: Context, plan: MovesPlan) -> bool:
+    """Before a morning or late pass's claims (#403): in the leagues where a cleared player on IL
+    or IL+ blocks every claim, the lineup executor's comeback alone (its drop, the move, Start
+    Active) on the league's own team page. True when a page opened, so the pass asks for its due
+    entries again. No evening chain: the drop's or the player's game has begun by then."""
+    if not plan.cleared:
+        ctx.report.skipped("comebacks", "no cleared player blocks a claim")
+        return False
+    openings = comeback_plan(ctx, plan.cleared, COMEBACK_FRAGMENT)
+    idle = "; ".join(ctx.notes.get("comeback_skipped") or []) or "no comeback to set"
+    return bool(browser_pass(ctx, "comebacks", openings, idle=idle))
+
+
 def morning(ctx: Context, api: str) -> None:
     api_check(ctx)
     stop_check(ctx)
     pub = public_leagues(seasons(ctx))
     plan = moves_plan(ctx, pub, "pickandroll-moves", "pickandroll-il")
     if fresh_reads(ctx, plan):
+        plan = moves_plan(ctx, pub, "pickandroll-moves", "pickandroll-il")
+    if comebacks(ctx, plan):
         plan = moves_plan(ctx, pub, "pickandroll-moves", "pickandroll-il")
     _report_plan(ctx, plan)
     opened = browser_pass(ctx, "moves", plan.openings, ("moves", "routine", plan.entries))
@@ -466,6 +486,8 @@ def late(ctx: Context, api: str) -> None:
         opened = browser_pass(ctx, "lineup", lineups, ("lineup", "routine_late", None))
     plan = moves_plan(ctx, pub, "pickandroll-moves-late", "pickandroll-il-late")
     if fresh_reads(ctx, plan):
+        plan = moves_plan(ctx, pub, "pickandroll-moves-late", "pickandroll-il-late")
+    if comebacks(ctx, plan):
         plan = moves_plan(ctx, pub, "pickandroll-moves-late", "pickandroll-il-late")
     _report_plan(ctx, plan)
     opened_moves = browser_pass(

@@ -362,7 +362,7 @@ test("a refused run is not kept as the last one", async () => {
 
 test("only the live run clicks; no field is set and nothing submitted; the reader loads the executor's library", () => {
   const manifest = JSON.parse(fs.readFileSync(path.join(DIR, "manifest.json"), "utf8"));
-  assert.equal(manifest.version, "0.11.14");
+  assert.equal(manifest.version, "0.11.15");
   const reader = manifest.content_scripts.find((c) => c.js.includes("league.js"));
   assert.deepEqual(reader.js, ["lib/league.js", "lib/lineup.js", "lib/moves.js", "lib/startactive.js", "lib/ilmove.js", "lib/drop.js", "lib/claimread.js", "lib/cancel.js", "league.js"]);
   // The moves executor's live claim (``fillClaim``, #171 PR 3) and Start Active's presses
@@ -1104,6 +1104,70 @@ test("the chain's fragments are ones each page starts from, its alert recorder i
   }
   assert.equal(X.comebackOnward("#pickandroll-drop"), null);
   assert.equal(X.comebackLineupFragment("#pickandroll-start-active"), null);
+});
+
+test("a moves pass's comeback chain (#403) is its own trigger, ends at the press and sets no lineup step", () => {
+  const D = require("../lib/drop.js");
+  const S = require("../lib/startactive.js");
+  const R = require("../addpage.js");
+  const trigger = "routine_moves";
+  const hash = (url) => url.slice(url.indexOf("#"));
+  assert.equal(X.triggerOf("#pickandroll-lineup-moves"), trigger);
+  const drop = hash(X.comebackDropUrl({ drop_page: DROP_PAGE }, trigger));
+  assert.equal(drop, "#pickandroll-drop-comeback-moves");
+  assert.equal(D.dropTriggerOf(drop), trigger);
+  assert.ok(R.DROP_FRAGMENTS.includes(drop.slice(1)));
+  const press = hash(X.comebackPress(BACK_PAGE, trigger));
+  assert.equal(S.startActiveTriggerOf(press), "after_comeback");
+  assert.ok(R.START_ACTIVE_FRAGMENTS.includes(press.slice(1)));
+  // The press ends the chain: no lineup run after it.
+  assert.equal(X.comebackLineupFragment(press), null);
+  // After a landed drop the move runs on the chain's own page; a step that did not land ends it.
+  assert.equal(X.comebackMoveOf(trigger), "pickandroll-lineup-moves");
+  assert.equal(`#${X.comebackOnward(drop)}`, "#pickandroll-lineup-moves-chain");
+  assert.equal(X.triggerOf("#pickandroll-lineup-moves-chain"), trigger);
+  const steps = { comebacks: [COMEBACK], drop_page: DROP_PAGE, back: BACK_PAGE };
+  assert.equal(X.comebackOf(steps, trigger, "live").player, 1013);
+  // Its runs set the returns alone: the lineup steps go under skipped, the target with them.
+  const day = { steps: [swap(1011, "BN", "SF", 1004, 0)], target: { 1011: "SF" }, returns: [COMEBACK], skipped: [{ reason: "x", players: [9], steps: [] }, { reason: "c", players: [1], comeback: true, steps: [] }] };
+  const only = X.onlyComebacks(day, trigger);
+  assert.deepEqual([only.steps, only.target, only.returns], [[], {}, [COMEBACK]]);
+  assert.deepEqual(only.skipped.map((g) => g.reason), ["c", "a moves pass's run sets the comeback alone: the day's lineup is its own runs'"]);
+  assert.deepEqual(only.skipped[1].steps, day.steps);
+  assert.equal(X.onlyComebacks(day, "routine"), day);
+  assert.deepEqual([X.comebackOnly(trigger), X.comebackOnly("routine"), X.comebackOnly("panel")], [true, false, false]);
+});
+
+test("a moves pass's run again with no cleared player left changes nothing (#403)", async () => {
+  // The day's steps hold a lineup change and no comeback or return: the daily's run would set it.
+  const answer = () => comebackWorker({ comebacks: [], returns: [] });
+  const daily = swapDom({ after: 0 });
+  await visitPage({ hash: "#pickandroll-lineup", answer: answer(), swap: daily });
+  assert.notDeepEqual(daily.touched, []);
+  // The moves pass's comeback-only run clicks nothing, claims no run of the day and logs why.
+  const roster = swapDom({ after: 0 });
+  const v = await visitPage({ hash: "#pickandroll-lineup-moves", answer: answer(), swap: roster });
+  assert.deepEqual([v.assigned, roster.touched], [[], []]);
+  assert.equal(v.sent.find((m) => m.op === "lineup_setting"), undefined);
+  const { run } = v.sent.find((m) => m.op === "lineup_log");
+  assert.deepEqual([run.trigger, run.outcome, run.steps], ["routine_moves", "nothing_to_do", []]);
+  assert.deepEqual(run.skipped.map((g) => g.reason), ["a moves pass's run sets the comeback alone: the day's lineup is its own runs'"]);
+});
+
+test("a moves pass's comeback leaves the daily's run of the day and the pre-tip pass's run after it (#403)", async () => {
+  const p = passWorker("2026-11-16T15:15:00Z");
+  // The daily set today at 05:xx; the 09:15 pass's comeback sets its move: allowed.
+  await p.set("2026-11-16");
+  await p.set("2026-11-16", "routine_moves");
+  // The daily's own run of the day stays the only routine one: a second is still refused.
+  assert.equal((await p.put("2026-11-16")).error, ALREADY);
+  // The late pass's comeback at 15:00 (another player cleared since: a comeback-only run sets
+  // only a player still on IL), then the pre-tip pass's run at its slate: all set.
+  p.clock.at = Date.parse("2026-11-16T21:00:00Z");
+  await p.set("2026-11-16", "routine_moves");
+  p.clock.at = Date.parse("2026-11-16T23:30:00Z");
+  await p.set("2026-11-16", "routine_late");
+  assert.equal((await p.put("2026-11-16", "routine_late")).error, ALREADY);
 });
 
 test("only a routine's live lineup run takes a comeback, the first of them, alone", () => {

@@ -316,7 +316,8 @@
     }
     // Live, a run that ends before any step logs as live; one that goes on sets the steps. A
     // comeback the steps offered and this visit did not run is under the run's skipped (#346).
-    const rest = PR.comebackDone(steps, PR.comebackWhy({ mode: mode.mode, trigger, chained }));
+    // A moves pass's comeback-only run (#403) sets no lineup step: the day's lineup is its own runs'.
+    const rest = PR.onlyComebacks(PR.comebackDone(steps, PR.comebackWhy({ mode: mode.mode, trigger, chained })), trigger);
     const end = mode.mode === "live" ? PR.runEnd({ steps: rest, postedAt, controls, problem }) : null;
     let run;
     let clicked = false;

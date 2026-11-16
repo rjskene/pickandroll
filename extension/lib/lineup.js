@@ -23,6 +23,11 @@
     // After a comeback's step that did not land (#318): the pass's run, no comeback in it.
     "pickandroll-lineup-chain": "routine",
     "pickandroll-lineup-late-chain": "routine_late",
+    // A moves pass's comeback (#403), alone: the morning's and the late pass's, before their
+    // claims. Its own trigger, since the daily's run (``routine``) and the pre-tip pass's
+    // (``routine_late``) own the day's lineup and the worker sets a day once a pass.
+    "pickandroll-lineup-moves": "routine_moves",
+    "pickandroll-lineup-moves-chain": "routine_moves",
   };
   /** The slot codes the API's steps use. */
   const SLOT_CODES = new Set(["PG", "SG", "G", "SF", "PF", "F", "C", "Util", "BN", "IL", "IL+", "NA"]);
@@ -609,7 +614,24 @@
   const COMEBACK_CHAIN = {
     routine: { drop: "pickandroll-drop-comeback", press: "pickandroll-start-active-comeback", lineup: "pickandroll-lineup", chain: "pickandroll-lineup-chain" },
     routine_late: { drop: "pickandroll-drop-comeback-late", press: "pickandroll-start-active-comeback-late", lineup: "pickandroll-lineup-late", chain: "pickandroll-lineup-late-chain" },
+    // A moves pass's (#403): the comeback alone (``only``), its return or drop then move, then the
+    // press; no lineup run after it, and no lineup step in its runs.
+    routine_moves: { drop: "pickandroll-drop-comeback-moves", press: "pickandroll-start-active-comeback-moves", lineup: "pickandroll-lineup-moves", chain: "pickandroll-lineup-moves-chain", only: true },
   };
+
+  /** Whether ``trigger``'s runs set the comeback alone (#403): a moves pass's. */
+  function comebackOnly(trigger) {
+    return Boolean(COMEBACK_CHAIN[trigger] && COMEBACK_CHAIN[trigger].only);
+  }
+
+  /** The steps a comeback-only run sets (#403): the returns that need no drop and the comebacks,
+   * never a lineup step; the day's lineup is its own runs'. Any other trigger's, as they are. */
+  function onlyComebacks(steps, trigger) {
+    if (!comebackOnly(trigger)) return steps;
+    const why = "a moves pass's run sets the comeback alone: the day's lineup is its own runs'";
+    const left = (steps.steps || []).length ? [{ reason: why, players: [], steps: steps.steps }] : [];
+    return { ...steps, steps: [], target: {}, skipped: [...(steps.skipped || []).filter((s) => s.comeback), ...left] };
+  }
 
   /** The comeback this visit runs (#318): the first of the steps', on a routine's live run. */
   function comebackOf(steps, trigger, mode) {
@@ -695,11 +717,12 @@
     return chain ? chain.chain : null;
   }
 
-  /** The fragment of the pass's lineup run after the press, from the press's fragment. */
+  /** The fragment of the pass's lineup run after the press, from the press's fragment; none
+   * after a comeback-only chain's press (#403), which ends the chain. */
   function comebackLineupFragment(hash) {
     const name = String(hash || "").replace(/^#/, "");
     const chain = Object.values(COMEBACK_CHAIN).find((c) => c.press === name);
-    return chain ? chain.lineup : null;
+    return chain && !chain.only ? chain.lineup : null;
   }
 
   /** A live run on record whose log never came, as the next visit logs it: clicked, its answer not
@@ -777,7 +800,7 @@
     failed: "failed",
     stopped: "stopped by STOP",
   };
-  const TRIGGER_WORDS = { routine: "routine", routine_late: "late routine", panel: "side panel" };
+  const TRIGGER_WORDS = { routine: "routine", routine_late: "late routine", routine_moves: "moves pass's comeback", panel: "side panel" };
 
   /** The panel's line for the league's last run from this browser (the worker keeps it): "2026-10-24
    * · side panel: would set 2 moves, 3 min ago". ``when`` is its age in words. */
@@ -790,6 +813,8 @@
   }
 
   return {
+    comebackOnly,
+    onlyComebacks,
     LINEUP_TRIGGERS,
     triggerOf,
     slotOf,
