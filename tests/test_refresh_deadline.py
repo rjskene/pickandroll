@@ -41,11 +41,30 @@ def slow_players(client, seconds: float) -> None:
     client.app.state.seasons.fetch_factory = lambda: fetch
 
 
+def deadline_at_players(client, deadline: float, seconds: float) -> None:
+    """The job's ``deadline`` counts from its first players page, which answers after ``seconds``
+    (#396): the reads before it run with no deadline, so a slow host cannot end the job at its
+    settings page before it reaches the players, whatever those reads take."""
+    fake = client.fake
+    service = client.app.state.seasons
+
+    def fetch(url: str) -> str:
+        if "/players" in url:
+            job = service.jobs[LEAGUE]
+            if job.deadline is None:
+                job._began, job.deadline = time.monotonic(), deadline
+            time.sleep(seconds)
+        return fake(url)
+
+    service.fetch_factory = lambda: fetch
+
+
 def test_a_refresh_past_its_deadline_ends_failed_with_where_it_was_and_the_next_one_starts(
     client, monkeypatch
 ):
-    monkeypatch.setattr(season_api, "REFRESH_DEADLINE", 0.2)
-    slow_players(client, 0.3)
+    # No deadline until the first players page; then 0.2 s from it, and that page takes 0.3 s.
+    monkeypatch.setattr(season_api, "REFRESH_DEADLINE", None)
+    deadline_at_players(client, 0.2, 0.3)
     r = client.post(f"/seasons/{LEAGUE}/refresh", params={"wait": True})
     assert r.status_code == 502
     error = r.json()["detail"]
