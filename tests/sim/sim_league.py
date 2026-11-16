@@ -18,7 +18,6 @@ from pickandroll.sim import league as lg
 from pickandroll.sim import policy
 from pickandroll.sim import run as rn
 from pickandroll.sim import state as sst
-from pickandroll.sources.yahoo import public
 from tests.sim.draws import between
 from tests.sim.sim_fixtures import run_length, synthetic_lines
 from tests.sim.test_gamelogs import entry
@@ -220,7 +219,19 @@ def fixture(name: str) -> str:
 
 
 def fixture_players() -> list[dict[str, Any]]:
-    return public.players_from_v3(json.loads(fixture("players.json")))
+    """The made-up league's players, read from the season fixture's player list in its order:
+    each row's name (first and last, else its ``name``) and positions; a row with no name or no
+    id is skipped. Parsed here, not by a source's reader: nothing under ``tests/sim/`` imports
+    ``pickandroll.sources`` (``test_boundary.py``)."""
+    service = json.loads(fixture("players.json")).get("service") or {}
+    out = []
+    for p in service.get("player_list") or []:
+        name = " ".join(x for x in (p.get("fname"), p.get("lname")) if x).strip() or p.get("name")
+        if not name or p.get("id") is None:
+            continue
+        positions = [x for x in (p.get("display_pos") or "").split(",") if x]
+        out.append({"name": name, "positions": positions})
+    return out
 
 
 #: A projection block's games when the logs carry blocks (:func:`write_logs`); every
