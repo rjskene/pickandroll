@@ -44,16 +44,27 @@ fi
 soon=${PICKANDROLL_UPDATE_SOON:-600}
 now=$(date +%s)
 clock() { TZ=America/Chicago date -d "@$1" +%H:%M 2>/dev/null || TZ=America/Chicago date -r "$1" +%H:%M; }
+# systemd 255 prints the next run as a date ("Tue 2026-11-17 11:00:00 UTC") whatever
+# --timestamp says; older and newer ones may answer "@<unix>". GNU date reads the date; BSD date
+# (the Mac's tests) reads only a UTC one. Anything else is not read, and holds the deploy.
+epoch() {
+  date -d "$1" +%s 2>/dev/null && return
+  case $1 in *" UTC") date -ju -f "%a %Y-%m-%d %H:%M:%S" "${1% UTC}" +%s 2>/dev/null ;; *) return 1 ;; esac
+}
 for timer in $(systemctl --user list-units 'pickandroll-routine@*.timer' --all --no-legend --plain 2>/dev/null | awk '{print $1}'); do
   case $timer in pickandroll-routine@pretip.timer) continue ;; esac
   next=$(systemctl --user show "$timer" -p NextElapseUSecRealtime --value --timestamp=unix 2>/dev/null) || next="?"
   case $next in
     ""|n/a) continue ;;
-    @[0-9]*) left=$(( ${next#@} - now )) ;;
-    *) say "refused: the next run of $timer was not read ($next); run again once systemd answers"; exit 3 ;;
+    @[0-9]*) at=${next#@} ;;
+    *) at=$(epoch "$next") || at="" ;;
   esac
+  case $at in
+    ""|*[!0-9]*) say "refused: the next run of $timer was not read ($next); run again once systemd answers"; exit 3 ;;
+  esac
+  left=$(( at - now ))
   if [ "$left" -ge 0 ] && [ "$left" -le "$soon" ]; then
-    say "refused: $timer fires at $(clock "${next#@}") CT, in $(( (left + 59) / 60 )) min; run again after its routine ends"
+    say "refused: $timer fires at $(clock "$at") CT, in $(( (left + 59) / 60 )) min; run again after its routine ends"
     exit 3
   fi
 done

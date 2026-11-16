@@ -18,7 +18,7 @@ import subprocess
 import sys
 import threading
 import time
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -261,7 +261,8 @@ esac
     )
     # The units as ``FAKE_UNITS`` lines ("unit load active sub"), answered by the state asked for
     # as systemd does, ``FAKE_UNITS_LATER`` from the second ask on when set; the timers' next runs
-    # as ``FAKE_NEXT`` lines ("timer @epoch", or a bad answer), each listed and shown on its own.
+    # as ``FAKE_NEXT`` lines ("timer <next>": systemd 255's printed date, the @epoch form, or a
+    # bad answer), each listed and shown on its own.
     fake(
         bin_dir,
         "systemctl",
@@ -284,7 +285,6 @@ case "$*" in
       if [ -n "$timer" ]; then echo "$timer loaded active waiting description"; fi
     done ;;
   *show*)
-    case "$*" in *--timestamp=unix*) ;; *) exit 1 ;; esac
     printf '%s\\n' "${{FAKE_NEXT:-}}" | while read -r timer next; do
       case "$*" in *" $timer "*) echo "$next" ;; esac
     done ;;
@@ -395,6 +395,12 @@ def test_update_goes_on_past_routines_at_rest(update) -> None:
     assert "refused" not in done.stdout
 
 
+def printed(epoch: int) -> str:
+    """A timer's next run as systemd 255's ``show -p NextElapseUSecRealtime --value`` prints it on
+    the droplet (its zone is UTC), whatever ``--timestamp`` asks."""
+    return datetime.fromtimestamp(epoch, UTC).strftime("%a %Y-%m-%d %H:%M:%S UTC")
+
+
 def test_update_refuses_when_a_routine_timer_fires_within_ten_minutes(update) -> None:
     """#398: a timer due within 10 min holds the deploy, named with its time; one due later, one
     with no next run and the pre-tip check's five-minute timer do not; an unreadable next run
@@ -409,10 +415,10 @@ def test_update_refuses_when_a_routine_timer_fires_within_ten_minutes(update) ->
             **env,
             "FAKE_NEXT": "\n".join(
                 [
-                    f"pickandroll-routine@pretip.timer @{now + 60}",
-                    f"pickandroll-routine@daily.timer @{now + 7 * 3600}",
+                    f"pickandroll-routine@pretip.timer {printed(now + 60)}",
+                    f"pickandroll-routine@daily.timer {printed(now + 7 * 3600)}",
                     "pickandroll-routine@monday.timer n/a",
-                    f"pickandroll-routine@evening-pass.timer @{soon}",
+                    f"pickandroll-routine@evening-pass.timer {printed(soon)}",
                 ]
             ),
         },
@@ -426,18 +432,22 @@ def test_update_refuses_when_a_routine_timer_fires_within_ten_minutes(update) ->
     assert not pulled(log) and git(repo, "rev-parse", "HEAD") == before
     # Due in 11 minutes, or only the pre-tip check's soon: the deploy goes on.
     for timers in (
-        f"pickandroll-routine@evening-pass.timer @{now + 11 * 60}",
-        f"pickandroll-routine@pretip.timer @{now + 60}",
+        f"pickandroll-routine@evening-pass.timer {printed(now + 11 * 60)}",
+        f"pickandroll-routine@pretip.timer {printed(now + 60)}",
     ):
         done = run(VM / "update.sh", {**env, "FAKE_NEXT": timers})
         assert done.returncode == 0, done.stdout + done.stderr
-    # A next run systemd does not answer in seconds: held, and the timer named.
-    done = run(
-        VM / "update.sh",
-        {**env, "FAKE_NEXT": "pickandroll-routine@late.timer Sun 2026-11-15 22:40:00 CST"},
-    )
+    # The @epoch form some systemd versions answer is read as well.
+    done = run(VM / "update.sh", {**env, "FAKE_NEXT": f"pickandroll-routine@late.timer @{soon}"})
     assert done.returncode == 3
-    assert "refused: the next run of pickandroll-routine@late.timer was not read" in done.stdout
+    assert "refused: pickandroll-routine@late.timer fires at" in done.stdout
+    # A next run that is not a date: held, and the timer named.
+    done = run(VM / "update.sh", {**env, "FAKE_NEXT": "pickandroll-routine@late.timer soon"})
+    assert done.returncode == 3
+    assert done.stdout.strip() == (
+        "refused: the next run of pickandroll-routine@late.timer was not read (soon);"
+        " run again once systemd answers"
+    )
 
 
 def test_update_builds_a_missing_dashboard_and_leaves_the_api_when_nothing_changed(update) -> None:
