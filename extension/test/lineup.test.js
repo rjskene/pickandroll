@@ -1138,6 +1138,22 @@ test("a moves pass's comeback chain (#403) is its own trigger, ends at the press
   assert.deepEqual([X.comebackOnly(trigger), X.comebackOnly("routine"), X.comebackOnly("panel")], [true, false, false]);
 });
 
+test("a moves pass's run again with no cleared player left changes nothing (#403)", async () => {
+  // The day's steps hold a lineup change and no comeback or return: the daily's run would set it.
+  const answer = () => comebackWorker({ comebacks: [], returns: [] });
+  const daily = swapDom({ after: 0 });
+  await visitPage({ hash: "#pickandroll-lineup", answer: answer(), swap: daily });
+  assert.notDeepEqual(daily.touched, []);
+  // The moves pass's comeback-only run clicks nothing, claims no run of the day and logs why.
+  const roster = swapDom({ after: 0 });
+  const v = await visitPage({ hash: "#pickandroll-lineup-moves", answer: answer(), swap: roster });
+  assert.deepEqual([v.assigned, roster.touched], [[], []]);
+  assert.equal(v.sent.find((m) => m.op === "lineup_setting"), undefined);
+  const { run } = v.sent.find((m) => m.op === "lineup_log");
+  assert.deepEqual([run.trigger, run.outcome, run.steps], ["routine_moves", "nothing_to_do", []]);
+  assert.deepEqual(run.skipped.map((g) => g.reason), ["a moves pass's run sets the comeback alone: the day's lineup is its own runs'"]);
+});
+
 test("a moves pass's comeback leaves the daily's run of the day and the pre-tip pass's run after it (#403)", async () => {
   const p = passWorker("2026-11-16T15:15:00Z");
   // The daily set today at 05:xx; the 09:15 pass's comeback sets its move: allowed.
