@@ -1,7 +1,7 @@
 import { useMemo } from "react";
 import { useMutation, useQuery, useQueryClient, type UseMutationResult } from "@tanstack/react-query";
 import { api, type LineupMode, type MovesView, type QueueEntry, type QueuePayload, type SeasonView } from "../api";
-import { bidLabel, ilLine, movesExecutorText, movesLiveText, passLine, passTitle, playersById, queueFlagWord, queueFloorLine, queueGain, queueMoveText, queuePlanLine, queueStateLine, queueStateText, queueStateTone, startActiveLine } from "../season";
+import { bidLabel, bidStrikable, ilLine, movesExecutorText, movesLiveText, passLine, passTitle, playersById, queueFlagWord, queueFloorLine, queueGain, queueMoveText, queuePlanLine, queueStateLine, queueStateText, queueStateTone, startActiveLine } from "../season";
 import ModeSwitch from "./ModeSwitch";
 import { useNow } from "./YahooSync";
 
@@ -87,7 +87,7 @@ export default function QueueCard({ league, s }: { league: string; s: SeasonView
 export type Strike = UseMutationResult<QueuePayload, Error, { id: string; bid_only: boolean; undo: boolean }>;
 
 /** The user's veto on a queued entry: strike it or undo, and for a waiver claim strike its bid
- * (a $0 claim) or bid it back; gone once the entry has an outcome. The Queue card and the Queue
+ * (a $0 claim) or bid it back, a bid above $0 only (#391); gone once the entry has an outcome. The Queue card and the Queue
  * screen (#194) both render it. */
 export function Veto({ e, strike }: { e: QueueEntry; strike: Strike }) {
   if (e.outcome) return null;
@@ -96,7 +96,7 @@ export function Veto({ e, strike }: { e: QueueEntry; strike: Strike }) {
       <button className="small" disabled={strike.isPending} onClick={() => strike.mutate({ id: e.id, bid_only: false, undo: e.struck })} title={e.struck ? "queue it again" : "veto this move: it is not executed"}>
         {e.struck ? "undo" : "strike"}
       </button>
-      {!e.struck && e.availability !== "FA" && e.bid != null && (
+      {bidStrikable(e) && (
         <>
           {" "}
           <button className="small" disabled={strike.isPending} onClick={() => strike.mutate({ id: e.id, bid_only: true, undo: e.bid_struck })} title={e.bid_struck ? "bid the queue's amount again" : "keep the claim, for $0"}>

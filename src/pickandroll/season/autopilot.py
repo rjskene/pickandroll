@@ -81,6 +81,8 @@ SUNDAY = 6
 #: The bid's factor for a breakout flag (``season.flags.LEVELS``): doubled for one, tripled for a
 #: strong one; a player only watched is a routine stream.
 FLAG_FACTOR: Mapping[str, int] = {"add": 2, "must-add": 3}
+#: A claim whose gain rounds to one typical or less, with no breakout flag: it bids $0 (#391).
+ROUTINE = "a routine stream"
 FREE_AGENT = "FA"
 
 PRIVATE = "the private league is never touched"
@@ -224,28 +226,31 @@ def bid_of(
     sizing: float | None,
     availability: str | None,
 ) -> Bid:
-    """A claim's bid (section 5, the ruling's point 3): ``max(1, round(gain / typical))`` dollars,
-    doubled for a breakout flag and tripled for a strong one, times the FAAB sizing knob (1.0
-    while unhooked), clamped to the budget left and nothing else. A free agent is added for $0."""
+    """A claim's bid (section 5, the ruling's point 3): ``round(gain / typical)`` typicals (the
+    base), doubled for a breakout flag and tripled for a strong one, times the FAAB sizing knob
+    (1.0 while unhooked), clamped to the budget left and nothing else. A routine stream, a base of
+    1 or less with no breakout flag, bids $0 (user, 2026-11-15, #391); a flagged claim's base is
+    at least 1, as before. A free agent is added for $0."""
     size = 1.0 if sizing is None else float(sizing)
     if availability == FREE_AGENT:
         return Bid(0, "$0: a free agent is added at once", 0, 1, size)
     value, source = typical
-    base = max(1, _half_up(gain / value)) if value > 0 else 1
+    base = _half_up(gain / value) if value > 0 else 1
     factor = FLAG_FACTOR.get(flag or "", 1)
+    if base <= 1 and factor == 1:
+        return Bid(0, f"$0: {ROUTINE}", base, factor, size)
+    # A flagged claim bids as before the ruling: at least one typical, so never below its factor.
+    base = max(1, base)
     amount = _half_up(base * factor * size)
     left = None if budget is None else max(0, math.floor(budget))
     clamped = left is not None and amount > left
     if left is not None:
         amount = min(amount, left)
-    if base == 1 and factor == 1 and size == 1.0:
-        why = "a routine stream"
-    else:
-        why = f"gain {base}x the typical ({source})"
-        if factor > 1:
-            why += f", x{factor} for a {'strong ' if factor == 3 else ''}breakout flag"
-        if size != 1.0:
-            why += f", x{size:g} FAAB sizing"
+    why = f"gain {base}x the typical ({source})"
+    if factor > 1:
+        why += f", x{factor} for a {'strong ' if factor == 3 else ''}breakout flag"
+    if size != 1.0:
+        why += f", x{size:g} FAAB sizing"
     if clamped:
         why += f", clamped to the ${left} left"
     return Bid(amount, f"${amount}: {why}", base, factor, size)

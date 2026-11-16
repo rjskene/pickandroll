@@ -859,13 +859,21 @@ export function passTally(t: PassTally | null | undefined): string {
   return [...parts.filter(([n]) => n).map(([n, w]) => `${n} ${w}`), clock ? `last pass ${clock}` : null].filter(Boolean).join(" · ");
 }
 
-/** "$2 claim", "$0 claim (the $2 bid struck)", "free agent, $0". */
+/** "$2 claim", "$0 claim (the $2 bid struck)", "free agent, $0"; a routine stream's "$0 claim"
+ * (#391), its reason in the hover. */
 export function bidLabel(e: Pick<QueueEntry, "availability" | "bid" | "bid_struck">): string {
   // A standard-waivers league bids nothing (#261): a claim goes by waiver priority.
   if (e.bid == null) return e.availability === "FA" ? "free agent" : "";
   if (e.availability === "FA") return "free agent, $0";
-  if (e.bid_struck) return `$0 claim (the $${e.bid.amount} bid struck)`;
+  if (e.bid_struck && e.bid.amount > 0) return `$0 claim (the $${e.bid.amount} bid struck)`;
   return `$${e.bid.amount} claim`;
+}
+
+/** Whether a queued entry offers "strike bid" (or "bid back"): a waiver claim with a bid above
+ * $0, or one already struck. A routine stream's $0 bid (#391) has nothing to strike. */
+export function bidStrikable(e: Pick<QueueEntry, "availability" | "bid" | "bid_struck" | "struck">): boolean {
+  if (e.struck || e.availability === "FA" || e.bid == null) return false;
+  return e.bid_struck || e.bid.amount > 0;
 }
 
 /** "Brooks for Reed", "Brooks after Hurt to IL", "Brooks (free: open spot)": the move in words,
@@ -886,7 +894,7 @@ export function queueFloorLine(r: Pick<QueueLeague, "floor" | "typical" | "scori
     f.scored == null
       ? `; the scorecard's spread joins it once ${f.needs} moves are scored (${f.moves} so far)`
       : ` and the scorecard's spread of ${f.scored.toFixed(1)} in value units over ${f.moves} moves`;
-  return `Floor: a gain of ${f.plan} ${units} over the three weeks${scored}. Bids scale by a typical gain of ${r.typical.value} (${r.typical.from}).`;
+  return `Floor: a gain of ${f.plan} ${units} over the three weeks${scored}. Bids scale by a typical gain of ${r.typical.value} (${r.typical.from}); a routine stream, one typical or less with no breakout flag, bids $0.`;
 }
 
 const PASS_OUTCOME: Record<MovesPassLog["outcome"], string> = {

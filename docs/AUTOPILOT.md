@@ -1139,18 +1139,29 @@ The default rule, until the user sets another or the hill-climb tunes it within 
 
 - a free agent (cleared waivers) is added at once for $0;
 - a claim's bid scales with the move's projected gain relative to the week's typical
-  recommended gain: $1 for a routine stream, more for a flagged breakout or a move that lifts
-  the week's odds by a lot;
+  recommended gain: $0 for a routine stream (user, 2026-11-15, #391), more for a flagged
+  breakout or a move that lifts the week's odds by a lot;
 - no ceiling (user, 2026-10-22: valuable waiver pickups early in a season-long league are
   rare); the bid is sized to the move's value and the budget left, and the hill-climb may tune
   the sizing;
 - the bid and its reason go in the queue, so a veto can strike the bid, not only the move.
 
-As built (#171, the ruling's point 3): `max(1, round(gain / typical))` dollars, doubled for a
-breakout flag and tripled for a strong one, times `faab_sizing` (1.0 while it is unset), clamped
-to the budget left and nothing else; a struck bid is a $0 claim. `typical` is the fortnight's
-median gain on the three weeks after of the armed leagues' recommended moves, per scoring, or
-the plan floor until ten such moves exist.
+As built (#171, the ruling's point 3; #391): the base is `round(gain / typical)`, half up. A
+claim whose base is 1 or less with no breakout flag is a routine stream and bids $0, with the
+reason "$0: a routine stream"; neither `faab_sizing` nor the budget lifts it. Any other claim
+bids the base (at least 1 for a flagged claim, as before #391), doubled for a breakout flag and
+tripled for a strong one, times `faab_sizing` (1.0 while it is unset), clamped to the budget
+left and nothing else. A struck bid is a $0 claim, and a routine stream's $0 takes the same
+path: the due entry's `bid_placed` is 0, the extension types 0 into Yahoo's bid field (inside
+the page's "between $0 and $N"), and the landed reader takes a pending line with no "Bid $" as
+$0. The Queue shows it as a "$0 claim" with its reason on hover, and offers no "strike bid" on
+a $0 bid. `typical` is the fortnight's median gain on the three weeks after of the armed
+leagues' recommended moves, per scoring, or the plan floor until ten such moves exist.
+
+Why $0 (user, 2026-11-15): in the public leagues every available player is on waivers, so every
+add is a claim, and the stored transactions reads show other teams winning 47% of their waiver
+adds at $0. A $1 floor on every routine stream spent budget the season needs later; the cost of
+$0 is losing a contested routine stream, the lowest-value move, to a $1 bidder.
 
 A standard-waivers league (#261: no FAAB, claims decided by waiver priority) bids nothing: its
 queue entries carry `bid: null`, and a waiver add carries `claim: "priority"`. The odds of the
