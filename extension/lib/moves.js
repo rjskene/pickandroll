@@ -276,14 +276,54 @@
   }
 
   /** Why no claim goes in while a player of mine sits on IL or IL+ with a status that no longer
-   * fits it (``due.held_cleared``, his newest read in any league, #341): Yahoo refuses every
-   * claim then (Error 845) until his comeback moves him. Null when there is none. */
+   * fits it (``due.held_cleared``, their newest read in any league, #341): Yahoo refuses every
+   * claim then (Error 845) until their comeback moves them. Null when there is none. */
   function clearedWords(cleared) {
+    const held = heldWords(cleared);
+    return held ? `${held}: Yahoo refuses every claim until they leave it (Error 845)` : null;
+  }
+
+  /** "10460 sits on IL with status Q (and 1 more)": the first of ``cleared``, null for none. */
+  function heldWords(cleared) {
     const list = Array.isArray(cleared) ? cleared : [];
     if (!list.length) return null;
     const [c] = list;
     const more = list.length > 1 ? ` (and ${list.length - 1} more)` : "";
-    return `${c.player} sits on ${c.slot} with ${c.status ? `status ${c.status}` : "no status"}${more}: Yahoo refuses every claim until he leaves it (Error 845)`;
+    return `${c.player} sits on ${c.slot} with ${c.status ? `status ${c.status}` : "no status"}${more}`;
+  }
+
+  /** A held player blocks the roster (#403): Yahoo's Error #845 names them ("Player De'Aaron Fox
+   * is in a IL position on your roster, but no longer qualifies for that position"), and a claim
+   * refused for it stays on the form's own path under "Subscribe in the app" with no words
+   * (2026-11-07, 2026-11-16). The claim form's ``disabled_add`` marker is no sign of it: it is on
+   * every form read since 2026-10-24, the claims that went in included. */
+  const BLOCKED = "blocked roster";
+  const BLOCKED_845 = /\bPlayer (.+?) is in an? (IL\+?|NA) position on your roster,? but no longer qualifies/i;
+  const BLOCKED_HEADING = /^\s*subscribe in the app\s*$/i;
+
+  /** The held player Error #845 names in ``texts``, ``{player, slot}``, or null. */
+  function blockedBy(texts) {
+    for (const t of texts || []) {
+      const m = BLOCKED_845.exec(String(t || ""));
+      if (m) return { player: m[1].trim(), slot: m[2].toUpperCase() };
+    }
+    return null;
+  }
+
+  /** ``reason`` as a blocked roster's, the held player named when ``by`` names them. */
+  function blockedReason(reason, by) {
+    const who = by ? `${by.player} sits on ${by.slot} and no longer qualifies for it (Error 845); ` : "";
+    return `${BLOCKED}: ${who}${reason}`;
+  }
+
+  /** A blocked roster's answer that names no held player, named from ``cleared`` (the due route's
+   * ``held_cleared``, read after the landing): the answer as it was otherwise. */
+  function namedBlock(answer, cleared) {
+    if (!answer || !answer.blocked || answer.named) return answer;
+    const held = heldWords(cleared);
+    if (!held) return answer;
+    const rest = String(answer.reason || "").replace(`${BLOCKED}: `, "");
+    return { ...answer, reason: `${BLOCKED}: ${held} (Error 845); ${rest}`, named: true };
   }
 
   /** The claim the form would carry for ``entry``: its action and the fields this pass would
@@ -487,7 +527,11 @@
       await wait(every);
       s = signs();
     }
-    if (yahoo().length) return { outcome: "failed", reason: `Yahoo answered the drop's tick: "${yahoo()[0]}"` };
+    if (yahoo().length) {
+      const said = `Yahoo answered the drop's tick: "${yahoo()[0]}"`;
+      const by = blockedBy([yahoo()[0]]);
+      return by ? { outcome: "failed", reason: blockedReason(said, by), blocked: true, named: true } : { outcome: "failed", reason: said };
+    }
     const missing = [!s.final && "the final button is not there", !s.shown && "the submit is still hidden", !s.picked && "the form does not carry the drop alone"].filter(Boolean);
     if (missing.length) return skip(`Yahoo's claim step did not come back within ${Math.round(cap / 1000)} s: ${missing.join("; ")}`);
     const [bid] = named(BID_FIELD);
@@ -544,9 +588,17 @@
     if (onClaimForm(raw.path, raw.action)) {
       const said = [...errors, ...notes].find((x) => WORDS.test(x)) || null;
       const where = `${pathOnly(raw.path)}, "${raw.heading || "no heading"}"`;
-      return { outcome: "failed", message: said, reason: `Yahoo stayed on the claim form (${where}): not placed${said ? `: "${said}"` : ""}`, stayed: true };
+      const reason = `Yahoo stayed on the claim form (${where}): not placed${said ? `: "${said}"` : ""}`;
+      // A held player blocks the roster (#403): Error #845's words, or the app-subscribe heading.
+      const by = blockedBy([...errors, ...notes]);
+      if (by || BLOCKED_HEADING.test(raw.heading || "")) return { outcome: "failed", message: said, reason: blockedReason(reason, by), stayed: true, blocked: true, named: Boolean(by) };
+      return { outcome: "failed", message: said, reason, stayed: true };
     }
-    if (errors.length) return { outcome: "failed", message: errors[0] };
+    if (errors.length) {
+      const by = blockedBy(errors);
+      if (by) return { outcome: "failed", message: errors[0], reason: blockedReason(`Yahoo answered: "${errors[0]}"`, by), blocked: true, named: true };
+      return { outcome: "failed", message: errors[0] };
+    }
     const said = notes.filter((x) => WORDS.test(x));
     if (raw.form && said.length) return { outcome: "failed", message: said[0] };
     if (raw.pending && !raw.form) return { outcome: "claimed", message: "the add shows among the pending claims" };
@@ -582,7 +634,10 @@
     if (raw.claim || raw.bid_box != null) return { outcome: "claimed", message: "the claim shows among the pending transactions" };
     if (Array.isArray(lines)) {
       const why = "not among Yahoo's pending transactions";
-      return { outcome: "failed", message: first ? first.message : null, reason: first && first.reason ? `${why}; ${first.reason}` : why };
+      // A blocked roster's answer keeps its sign, and leads with it (#403).
+      const blocked = first && first.blocked ? { blocked: true, named: first.named } : {};
+      const reason = !first || !first.reason ? why : first.blocked ? `${first.reason}; ${why}` : `${why}; ${first.reason}`;
+      return { outcome: "failed", message: first ? first.message : null, reason, ...blocked };
     }
     return first;
   }
@@ -768,6 +823,11 @@
     entryProblem,
     pageCheck,
     clearedWords,
+    heldWords,
+    BLOCKED,
+    blockedBy,
+    blockedReason,
+    namedBlock,
     wouldFill,
     moveCheck,
     passMode,

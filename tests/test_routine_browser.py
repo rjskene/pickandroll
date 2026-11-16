@@ -1056,7 +1056,8 @@ def test_a_pass_with_a_browser_names_a_page_that_failed_twice(tmp_path):
     # The scripted browser lands where it is sent, so the IL tab stays and the pass opens e2's
     # add page itself; e1's add page fails twice.
     assert moves.status == "failed" and moves.detail.startswith(
-        "2 pages opened in 1 leagues, add pages opened by the pass after an IL stay: e2, "
+        "2 pages opened in 1 leagues: 1 would claim, add pages opened by the pass after an IL"
+        " stay: e2, "
         "1 failed to open: e1"
     )
     assert moves.data["failed"] == ["e1"] and moves.data["stayed"] == ["e2"]

@@ -485,7 +485,7 @@ def test_morning_with_a_browser_opens_the_pages_and_keeps_the_pass_record(tmp_pa
         {"league": "252098", "entry": "e2"},
         {"league": "252098", "entry": "e1"},
     ]
-    assert passes[-1] == ("done", {"summary": "2 pages opened in 1 leagues"})
+    assert passes[-1] == ("done", {"summary": "2 pages opened in 1 leagues: 1 would claim"})
     assert report.find("moves").status == "ok"
     assert (
         report.find("check").status == "ok"
@@ -531,7 +531,8 @@ def test_an_il_opening_that_stays_on_the_team_page_gets_its_add_page_opened_by_t
         {"league": "252098", "entry": "e1"},
     ]
     assert passes[-1] == {
-        "summary": "3 pages opened in 1 leagues, add pages opened by the pass after an IL stay: e2"
+        "summary": "3 pages opened in 1 leagues: 1 would claim,"
+        " add pages opened by the pass after an IL stay: e2"
     }
     assert ctx.notes["il_stayed"] == ["e2"]
     step = report.find("moves")
@@ -877,3 +878,116 @@ def test_the_daily_without_a_comeback_drop_solves_nothing_again(tmp_path):
     assert api.paths().count("/seasons/252098/moves") == 1
     step = report.find("resolve_comebacks")
     assert step.status == "skipped" and "no comeback dropped a player" in step.detail
+
+
+# --------------------------------------------------------------------------- #403: read fresh, count
+def fresh_answers(clock, read_at=None, today=None):
+    """A morning with one live league: its due names my team (2) and two entries; asked again
+    after the fresh read of my team page, it names one (the read judged the other)."""
+    asked: list[int] = []
+
+    def due(_body):
+        asked.append(1)
+        entries = [{"id": "e1", "page": "/nba/252098/addplayer?apid=111"}]
+        if len(asked) == 1:
+            entries.append({"id": "e2", "page": "/nba/252098/addplayer?apid=222"})
+        return 200, {"mode": "live", "stop": False, "team": 2, "entries": entries}
+
+    answers = base_answers(
+        {
+            ("GET", "/seasons/252098/autopilot/moves/due"): due,
+            ("GET", "/seasons/230585/autopilot/moves/due"): (
+                200,
+                {"mode": "off", "entries": [], "reason": "mode off"},
+            ),
+            ("GET", "/seasons/252098"): lambda _b: (
+                200,
+                {"fetched": {"roster/2": {"at": read_at or clock().isoformat(), "source": "x"}}},
+            ),
+            ("POST", "/autopilot/passes"): lambda _b: (200, {"id": "p"}),
+            ("POST", "/autopilot/passes/p/opening"): lambda _b: (200, {}),
+            ("POST", "/autopilot/passes/p/done"): lambda _b: (200, {}),
+            ("GET", "/seasons/252098/autopilot/moves"): (200, {"today": today or []}),
+        }
+    )
+    return answers, asked
+
+
+def test_a_pass_reads_my_team_page_first_and_plans_again_on_that_read(tmp_path):
+    """#403: before its claims the pass opens my team page with no fragment (the extension posts
+    it), checks that the read landed, and asks the due route again: the claims go on that read."""
+    clock = Clock("2026-11-16 09:15")
+    answers, asked = fresh_answers(clock)
+    browser = FakeBrowser(clock=clock)
+    ctx = make_ctx(FakeAPI(answers), clock, tmp_path, routine="morning", browser=browser)
+    report = run("morning", ctx, "http://api")
+    assert [u for u, _ in browser.opened] == [
+        f"{YAHOO}/nba/252098/2",
+        f"{YAHOO}/nba/252098/addplayer?apid=111#pickandroll-moves",
+    ]
+    assert browser.opened[0][1] == 8.0
+    assert len(asked) == 2
+    step = report.find("fresh_reads")
+    assert step.status == "ok" and step.detail == "1 of 1 team pages read"
+    assert report.find("due").data["entries"] == ["e1"]
+
+
+def test_a_fresh_read_that_did_not_land_fails_its_step_and_the_pass_goes_on(tmp_path):
+    clock = Clock("2026-11-16 09:15")
+    # The stored read is the daily's, 05:18 CT: the page opened, its post never came.
+    answers, asked = fresh_answers(clock, read_at="2026-11-16T11:18:00+00:00")
+    browser = FakeBrowser(clock=clock)
+    ctx = make_ctx(FakeAPI(answers), clock, tmp_path, routine="morning", browser=browser)
+    report = run("morning", ctx, "http://api")
+    step = report.find("fresh_reads")
+    assert step.status == "failed"
+    assert step.detail == "0 of 1 team pages read; opened, no read landed: 252098"
+    assert len(asked) == 1  # no read to plan again on: the first plan stands
+    assert report.find("moves") is not None and len(browser.opened) == 3
+
+
+def test_a_pass_without_a_team_named_reads_nothing_fresh(tmp_path):
+    clock = Clock("2026-10-29 07:50")
+    ctx = make_ctx(FakeAPI(due_answers()), clock, tmp_path, routine="morning")
+    plan = moves_plan(ctx, PUBLIC, "pickandroll-moves", "pickandroll-il")
+    assert plan.teams == {}
+    from pickandroll.routine.routines import fresh_reads
+
+    assert fresh_reads(ctx, plan) is False
+    assert ctx.report.find("fresh_reads").status == "skipped"
+
+
+def test_the_moves_step_counts_its_claims_and_fails_on_a_failed_one(tmp_path):
+    """#403: the step names the pass's claims by outcome (its trigger, from the pass's start), so
+    a pass with a failed claim never reads plain "ok"; the steps after it still run."""
+    clock = Clock("2026-11-16 09:15")
+    later = "2026-11-16T15:20:00+00:00"
+    today = [
+        {"trigger": "routine", "outcome": "claimed", "at": later},
+        {"trigger": "routine", "outcome": "failed", "at": later, "reason": "blocked roster"},
+        {"trigger": "routine", "outcome": "skipped", "at": later},
+        {"trigger": "routine_late", "outcome": "failed", "at": later},
+        {"trigger": "routine", "outcome": "failed", "at": "2026-11-16T13:00:00+00:00"},
+    ]
+    answers, _ = fresh_answers(clock, today=today)
+    ctx = make_ctx(
+        FakeAPI(answers), clock, tmp_path, routine="morning", browser=FakeBrowser(clock=clock)
+    )
+    report = run("morning", ctx, "http://api")
+    moves = report.find("moves")
+    assert moves.status == "failed"
+    assert moves.detail == "1 pages opened in 1 leagues: 1 claimed, 1 failed, 1 skipped"
+    assert moves.data["outcomes"] == {"claimed": 1, "failed": 1, "skipped": 1}
+    assert report.find("check") is not None
+
+
+def test_skipped_claims_alone_leave_the_moves_step_ok(tmp_path):
+    clock = Clock("2026-11-16 09:15")
+    later = "2026-11-16T15:20:00+00:00"
+    today = [{"trigger": "routine", "outcome": "skipped", "at": later}] * 2
+    answers, _ = fresh_answers(clock, today=today)
+    ctx = make_ctx(
+        FakeAPI(answers), clock, tmp_path, routine="morning", browser=FakeBrowser(clock=clock)
+    )
+    moves = run("morning", ctx, "http://api").find("moves")
+    assert moves.status == "ok" and moves.detail.endswith(": 2 skipped")

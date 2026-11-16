@@ -521,6 +521,13 @@
         }
       }
     }
+    // A blocked roster names its held player (#403): on my team page the page is posted first, so
+    // the due route's ``held_cleared`` reads this page.
+    if (answer && answer.blocked && !answer.named) {
+      if (page && page.kind === "team") await post();
+      const d = await send({ op: "moves_due", league });
+      if (d && d.ok && d.data) answer = PR.namedBlock(answer, d.data.held_cleared);
+    }
     const run = PR.landedPass(record, answer, seen, extensionVersion());
     const logged = await send({ op: "moves_log", league, run });
     if (!logged || !logged.ok) {
