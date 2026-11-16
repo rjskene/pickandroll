@@ -502,21 +502,21 @@ const categoryOdds: Formula = (() => {
 
 const bid: Formula = (() => {
   const I = { g: 0.42, t: 0.15, f: 2, s: 1.0, B: 40 };
-  const base = Math.max(1, halfUp(I.g / I.t));
+  const base = halfUp(I.g / I.t);
   const amount = halfUp(I.f * I.s * base);
   const gbar = v("ḡ");
   return {
     id: "bid",
     name: "A FAAB claim's bid",
-    what: "The move's gain in multiples of the typical gain, at least $1, scaled by the flag, clamped to the budget",
+    what: "The move's gain in multiples of the typical gain, scaled by the flag, clamped to the budget; a routine stream bids $0",
     lines: [
-      [v("m"), "=", "max", par(["1", ",", "round", par(frac(v("g"), gbar))])],
+      [v("m"), "=", "round", par(frac(v("g"), gbar))],
       [v("b"), "=", "min", par(["⌊", v("B"), "⌋", ",", "round", par([v("f"), "·", v("s"), "·", v("m")])])],
     ],
     vars: [
       { sym: v("g"), meaning: "the move's gain on the judging horizon, in expected categories won" },
       { sym: gbar, meaning: "the typical gain: the fortnight's median recommended move, or the plan floor at first" },
-      { sym: v("m"), meaning: "the gain in typical gains, rounded, at least 1" },
+      { sym: v("m"), meaning: "the gain in typical gains, rounded; 1 or less with no flag is a routine stream, bid $0" },
       { sym: v("f"), meaning: "the flag factor: 1, or 2 for a breakout flag, 3 for a strong one" },
       { sym: v("s"), meaning: "the FAAB sizing knob, 1.0 while unset; the hill-climb may tune it" },
       { sym: v("B"), meaning: "the budget left, in dollars" },
@@ -532,11 +532,11 @@ const bid: Formula = (() => {
     ],
     steps: [
       step("the gain in typicals", frac(fmt(I.g, 2), fmt(I.t, 2)), 2.8, dp(1)),
-      step("rounded, at least one", ["max", "(", "1", ",", "round", "(", fmt(I.g / I.t, 1), ")", ")"], 3, dp(0)),
+      step("rounded: above 1, so not a routine stream", ["round", "(", fmt(I.g / I.t, 1), ")"], 3, dp(0)),
       step("times the flag and the knob", ["round", "(", fmt(I.f), "·", fmt(I.s, 1), "·", fmt(base), ")"], 6, "usd"),
       step("clamped to the budget", ["min", "(", fmt(I.B), ",", fmt(amount), ")"], 6, "usd"),
     ],
-    check: () => [I.g / I.t, Math.max(1, halfUp(I.g / I.t)), halfUp(I.f * I.s * Math.max(1, halfUp(I.g / I.t))), Math.min(Math.floor(I.B), amount)],
+    check: () => [I.g / I.t, halfUp(I.g / I.t), halfUp(I.f * I.s * halfUp(I.g / I.t)), Math.min(Math.floor(I.B), amount)],
     source: "season/autopilot.py · bid_of; docs/AUTOPILOT.md",
   };
 })();

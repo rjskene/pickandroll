@@ -139,6 +139,7 @@ import {
   benchPlaying,
   executorText,
   bidLabel,
+  bidStrikable,
   claimLine,
   claimTitle,
   countdownLabel,
@@ -1873,9 +1874,19 @@ test("the Queue card says what the moves executor does, each entry's state and b
   // A standard-waivers league's entry carries no bid (#261): the bid column is empty.
   assert.equal(bidLabel({ ...e, bid: null }), "");
   assert.equal(bidLabel({ ...e, bid: null, availability: "FA" }), "free agent");
+  // A routine stream bids $0 (#391): a $0 claim, and no bid to strike.
+  const routine = { ...e, bid: { ...e.bid!, amount: 0, reason: "$0: a routine stream" } };
+  assert.equal(bidLabel(routine), "$0 claim");
+  assert.equal(bidLabel({ ...routine, bid_struck: true }), "$0 claim");
+  assert.equal(bidStrikable({ ...routine, struck: false }), false);
+  assert.equal(bidStrikable({ ...routine, struck: false, bid_struck: true }), true);
+  assert.equal(bidStrikable({ ...e, struck: false }), true);
+  assert.equal(bidStrikable({ ...e, struck: true }), false);
+  assert.equal(bidStrikable({ ...e, struck: false, availability: "FA" }), false);
+  assert.equal(bidStrikable({ ...e, struck: false, bid: null }), false);
   assert.equal(
     queueFloorLine({ scoring: "categories", floor, typical: { value: 0.1, from: "the plan floor until 10 moves" } }),
-    "Floor: a gain of 0.1 expected categories over the three weeks; the scorecard's spread joins it once 20 moves are scored (3 so far). Bids scale by a typical gain of 0.1 (the plan floor until 10 moves).",
+    "Floor: a gain of 0.1 expected categories over the three weeks; the scorecard's spread joins it once 20 moves are scored (3 so far). Bids scale by a typical gain of 0.1 (the plan floor until 10 moves); a routine stream, one typical or less with no breakout flag, bids $0.",
   );
   assert.ok(queueFloorLine({ scoring: "points", floor: { ...floor, scored: 41.25, moves: 22, applies: "plan and scored" }, typical: { value: 0.02, from: "the fortnight's median" } }).includes("0.1 points over the three weeks and the scorecard's spread of 41.3 in value units over 22 moves"));
   const pass: MovesPassLog = {
