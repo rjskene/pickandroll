@@ -15,7 +15,7 @@ import pytest
 
 from pickandroll.sim import run as rn
 from pickandroll.sim.state import Setup, SimState
-from tests.sim.sim_league import arm, inputs, make_setup, rates
+from tests.sim.sim_league import arm, make_setup, rates, replay_of
 
 
 class Spy:
@@ -73,12 +73,12 @@ def worlds(setup: Setup) -> dict[str, rn.World]:
         for k in setup.players
     }
     return {
-        "forward": rn.forward_world(setup, inputs(), 11, 0, 0.25),
+        "recorded": replay_of(setup, 11, 0),
         "replay": rn.replay_world(setup, lines, 1, 11, 0),
     }
 
 
-@pytest.mark.parametrize("kind", ["forward", "replay"])
+@pytest.mark.parametrize("kind", ["recorded", "replay"])
 def test_every_decide_is_handed_the_problems_inputs_and_nothing_else(kind):
     setup = make_setup(statuses={1: "O"}, held_slots=("IL",))
     w = worlds(setup)[kind]

@@ -1,14 +1,12 @@
 """The runner (#172, PR 2b): one world a path, arms in lockstep, the paired difference.
 
-A :class:`World` is one path of one league: the truth (the projection with its persistent error),
-each player's game days, availability and lines, the shared beliefs and what the policy has heard
-of each absence. Every draw comes from ``world.rng(seed, path, player, game, stream)`` and never
-from an arm, so a roster change in one arm reshuffles nothing for any player: common random
-numbers. :func:`forward_world` builds it from a setup and the frozen fit's figures, its beliefs
-refreshed weekly toward the drawn truth; :func:`replay_world` from a season's recorded lines,
-which are then the truth (no game noise, no hazard: the logs happened), its seats believing only
-the games already played (``sim.belief``) in a league drawn from what was known before the
-season (:func:`replay_setup`).
+A :class:`World` is one path of one league on a recorded season: each player's game days, his
+availability and lines (the recorded lines are the truth: no game noise, no hazard, the logs
+happened), the beliefs and what the policy has heard of each absence. :func:`replay_world` builds
+it from a season's recorded lines, its seats believing only the games already played
+(``sim.belief``) in a league drawn from what was known before the season (:func:`replay_setup`).
+Every draw comes from ``world.rng(seed, path, player, game, stream)`` and never from an arm, so a
+roster change in one arm reshuffles nothing for any player: common random numbers.
 
 :func:`simulate` advances several variants of one league through the same world day by day: the
 moves decided yesterday land, each seat decides on the day's beliefs, the lineup is set, the day
@@ -39,26 +37,17 @@ from . import audit, policy, world
 from . import counts as ct
 from . import league as lg
 from . import opponents as op
-from .belief import CausalBelief, consistent, newcomer_prior
+from .belief import CausalBelief, newcomer_prior
 from .engine import Week, mv, wk
-from .fit import W_DEFAULT, Component, Hazard
+from .fit import W_DEFAULT
 from .forecast import MIN_GAMES, realized_rates
 from .state import Member, Setup, SimState, initial, round_robin, snake_draft, weeks_from
 
 Rates = Mapping[str, float]
 #: The knobs an arm names (``policy.KNOBS``: the ten live ones and the simulator's two).
 KNOBS = policy.KNOBS
-#: The shrinks a comparison runs at (the design note's axis).
-SHRINKS = (0.0, 0.25, 0.5)
 #: The metrics a path reports for a seat.
 METRICS = ("made_playoffs", "rank", "category_wins", "matchup_wins", "title")
-#: The verdict line's rule, advisory until PR 3 (the master's ruling on PR 2's plan).
-VERDICT_RULE = "one-SE"
-VERDICT_LINE = (
-    "advisory: a change (arm B) passes when the paired change in playoff odds, B less A, is not "
-    "below zero by more than one standard error at any shrink; no block and no promotion before "
-    "PR 3"
-)
 #: How workers are counted when not given: the machine's cores less two.
 SPARE_CORES = 2
 NICE = 10
@@ -67,67 +56,20 @@ NICE = 10
 # --------------------------------------------------------------------------- the inputs
 @dataclass(frozen=True)
 class WorldInputs:
-    """The frozen fit's figures the world draws with, and the beliefs' refresh."""
+    """What a run reads of the frozen fit: the days before an absence is heard (``lag``) and the
+    fit's hash."""
 
-    phi: Mapping[str, float]
-    phi_players: Mapping[str, Mapping[str, float]]
-    sigma: float
-    hazard: Hazard
-    tau: Mapping[str, float]
-    kappa: float
-    sigma_eta: float
     lag: int
     sha: str
-    refresh_from: str = "defaults"
 
 
-def hazard_of(d: Mapping[str, Any]) -> Hazard:
-    """The hazard back from the frozen payload's dict."""
-    return Hazard(
-        float(d["rate"]),
-        tuple(
-            Component(
-                int(c["lo"]),
-                None if c.get("hi") is None else int(c["hi"]),
-                float(c["weight"]),
-                {int(k): float(v) for k, v in (c.get("lengths") or {}).items()},
-            )
-            for c in d.get("components") or []
-        ),
-        int(d.get("runs", 0)),
-        int(d.get("played", 0)),
-        int(d.get("players", 0)),
-        int(d.get("censored", 0)),
-        float(d.get("censored_share", 0.0)),
-        int(d.get("leading", 0)),
-    )
-
-
-def inputs_of(payload: Mapping[str, Any], sha: str, tau: Mapping[str, float] | None) -> WorldInputs:
-    """The world's inputs from a frozen fit; ``tau`` from the payload when it has one (the
-    residual fit of week six), else the one given (the systems' spread); none at all is refused:
-    at ``tau = 0`` the simulator restates the engine's beliefs."""
-    t = payload.get("tau") or tau
-    if not t:
-        raise ValueError("no tau: the fit has no residual tau and none was given")
+def inputs_of(payload: Mapping[str, Any], sha: str) -> WorldInputs:
+    """A run's inputs from a frozen fit: the lag of a fitted refresh when the fit has one, else the
+    refresh's defaults' (one day), and the hash. Nothing else of the fit is read, so a fit with or
+    without a ``tau`` loads alike."""
     refresh = payload.get("refresh") or {}
     defaults = (payload.get("parameters") or {}).get("refresh_defaults") or {}
-    fitted = bool(refresh.get("fitted"))
-    return WorldInputs(
-        phi={k: float(v) for k, v in (payload["dispersion"]["pooled"] or {}).items()},
-        phi_players={
-            str(p): {k: float(v) for k, v in d.items()}
-            for p, d in (payload["dispersion"].get("players") or {}).items()
-        },
-        sigma=float(payload["minutes"]["sigma"]),
-        hazard=hazard_of(payload["hazard"]),
-        tau={k: float(v) for k, v in t.items()},
-        kappa=float(refresh["kappa"] if fitted else defaults.get("kappa", 0.10)),
-        sigma_eta=float(refresh["sigma_eta"] if fitted else defaults.get("sigma_eta", 0.05)),
-        lag=int(refresh.get("lag", defaults.get("lag", 1))),
-        sha=sha,
-        refresh_from="fitted" if fitted else "defaults",
-    )
+    return WorldInputs(lag=int(refresh.get("lag", defaults.get("lag", 1))), sha=sha)
 
 
 # --------------------------------------------------------------------------- the arms
@@ -265,19 +207,12 @@ def check_fit(spec: Mapping[str, Any], sha: str) -> None:
 
 
 # --------------------------------------------------------------------------- the world
-#: How a world's seats believe: the drawn world's weekly refresh toward its truth, a replay's
-#: causal belief from the games already played (``sim.belief``), or the projection all season.
-BELIEFS = ("refresh", "causal", "fixed")
-
-
 class World:
-    """One path of one league: truth, lines, availability, beliefs and news.
+    """One path of one league on a recorded season: lines, availability, beliefs and news.
 
-    ``belief`` is one of :data:`BELIEFS`: ``refresh`` moves the projection toward ``truth`` each
-    week at ``kappa`` with noise ``sigma_eta``; ``causal`` reads ``causal`` (a
-    :class:`belief.CausalBelief`) on each day; ``fixed`` is the projection all season. The told
+    The seats believe ``causal`` (a :class:`belief.CausalBelief`), read on each day. The told
     return date's spread is ``news_sd`` days. ``label`` names the run's forecaster, whose belief
-    that is; a causal world may hold a belief for other forecasters too (``others``, by label),
+    that is; a world may hold a belief for other forecasters too (``others``, by label),
     which a seat names (``opponents.Seat.forecaster``; #172, PR D1). ``split`` maps a split
     label (a ``yahoo`` or ``blend`` seat's) to its rostered side's label: such a seat reads that
     label's belief for every rostered player and its own for the rest (:meth:`seat_beliefs`)."""
@@ -287,37 +222,23 @@ class World:
         setup: Setup,
         seed: int,
         path: int,
-        truth: Mapping[int, Rates],
         game_days: Mapping[int, Sequence[date]],
         available: Callable[[int], np.ndarray],
         line: Callable[[int, int], Mapping[str, float] | None],
         lag: int,
-        kind: str,
-        belief: str = "refresh",
-        kappa: float = 0.0,
-        sigma_eta: float = 0.0,
-        causal: CausalBelief | None = None,
+        causal: CausalBelief,
         news_sd: float = world.NEWS_SD_DAYS,
         label: str | None = None,
         others: Mapping[str, CausalBelief] | None = None,
         split: Mapping[str, str] | None = None,
     ) -> None:
-        if belief not in BELIEFS:
-            raise ValueError(f"belief {belief!r}: one of {BELIEFS}")
-        if belief == "causal" and causal is None:
-            raise ValueError("a causal belief needs its CausalBelief")
-        if others and belief != "causal":
-            raise ValueError("only a causal world holds a belief for each forecaster")
         self.setup = setup
         self.seed, self.path = seed, path
-        self.truth = truth
         self.game_days = {k: list(v) for k, v in game_days.items()}
         self._index = {k: {d: i for i, d in enumerate(v)} for k, v in self.game_days.items()}
         self._available = available
         self._line = line
-        self.kappa, self.sigma_eta, self.lag = kappa, sigma_eta, lag
-        self.kind = kind
-        self.belief = belief
+        self.lag = lag
         self.causal = causal
         self.label = label
         self.others = {k: v for k, v in (others or {}).items() if k != label}
@@ -330,9 +251,7 @@ class World:
         self._avail: dict[int, np.ndarray] = {}
         self._absences: dict[int, list[world.Absence]] = {}
         self._lines: dict[tuple[int, date], Mapping[str, float] | None] = {}
-        self._beliefs: dict[int, Mapping[int, Rates]] = {0: dict(setup.projection)}
         self._status: dict[date, tuple[dict[int, str | None], dict[int, date]]] = {}
-        self._weeks: dict[date, int] | None = None
 
     def available(self, player: int) -> np.ndarray:
         if player not in self._avail:
@@ -366,46 +285,14 @@ class World:
                 self._lines[key] = self._line(player, i)
         return self._lines[key]
 
-    def beliefs(self, week: int) -> Mapping[int, Rates]:
-        """The shared beliefs after ``week`` weekly refreshes (0: the projection); the projection
-        itself for a ``fixed`` world. A ``causal`` belief is read by day (:meth:`beliefs_on`)."""
-        if self.belief == "causal":
-            raise ValueError("a causal belief is read by day: beliefs_on")
-        if self.belief == "fixed":
-            return self._beliefs[0]
-        if week not in self._beliefs:
-            prev = self.beliefs(week - 1)
-            self._beliefs[week] = world.refresh(
-                prev, self.truth, self.kappa, self.sigma_eta, self.seed, self.path, week
-            )
-        return self._beliefs[week]
-
-    def week_index(self, day: date) -> int:
-        """The weekly refreshes behind ``day``: one for every Monday after the first simulated
-        day, counted over the days a week holds, as the day loop counts them."""
-        if self._weeks is None:
-            index, out = 0, {}
-            for d in self.setup.days:
-                if self.setup.week_of(d) is None:
-                    continue
-                if d.weekday() == 0 and d != self.setup.start:
-                    index += 1
-                out[d] = index
-            self._weeks = out
-        return self._weeks.get(day, 0)
-
     def beliefs_on(self, day: date, label: str | None = None) -> Mapping[int, Rates]:
         """The beliefs a seat decides on, on ``day``: the run's forecaster's (``label`` None or
-        the run's), or another forecaster's the world holds. A drawn world (``refresh``,
-        ``fixed``) answers every label with its one shared belief."""
-        if self.belief == "causal":
-            if label is not None and label != self.label:
-                if label not in self.others:
-                    raise ValueError(f"forecaster {label!r}: the world holds no belief for it")
-                return self.others[label].on(day)
-            assert self.causal is not None
-            return self.causal.on(day)
-        return self.beliefs(self.week_index(day))
+        the run's), or another forecaster's the world holds."""
+        if label is not None and label != self.label:
+            if label not in self.others:
+                raise ValueError(f"forecaster {label!r}: the world holds no belief for it")
+            return self.others[label].on(day)
+        return self.causal.on(day)
 
     def seat_beliefs(
         self, day: date, label: str | None, rostered: frozenset[int]
@@ -478,62 +365,6 @@ def game_days_of(setup: Setup) -> dict[int, list[date]]:
     return {k: list(by_team.get(m.nba_team or "", [])) for k, m in setup.players.items()}
 
 
-def _out_through(setup: Setup, player: int, days: Sequence[date]) -> int:
-    """The game index the player is out through from the status read on day one; -1 when in."""
-    s = setup.statuses.get(player)
-    if s is None or not days:
-        return -1
-    if s in wk.OUT_ALL:
-        return len(days) - 1
-    if s in wk.OUT_THIS_WEEK:
-        ret = setup.returns.get(player) or setup.start + timedelta(policy.DEFAULT_ABSENCE_DAYS)
-        return max(-1, sum(1 for d in days if d < ret) - 1)
-    return -1
-
-
-def forward_world(setup: Setup, inputs: WorldInputs, seed: int, path: int, s: float) -> World:
-    """The forward Monte Carlo's world: the projection with its error as the truth, lines and
-    availability from the fit."""
-    keys = sorted(setup.projection)
-    stats = list(wk.STATS)
-    eps = world.errors(seed, path, keys, stats, s, setup.gap, inputs.tau)
-    truth = {
-        k: consistent(v)
-        for k, v in world.true_rates({k: setup.projection[k] for k in keys}, eps).items()
-    }
-    game_days = game_days_of(setup)
-
-    def available(player: int) -> np.ndarray:
-        days = game_days.get(player, [])
-        ok, _ = world.absences(
-            seed, path, player, len(days), inputs.hazard, _out_through(setup, player, days)
-        )
-        return ok
-
-    def line(player: int, game: int) -> Mapping[str, float] | None:
-        rates = truth.get(player)
-        if rates is None:
-            return None
-        espn = setup.espn_ids.get(player)
-        phi = {**inputs.phi, **inputs.phi_players.get(espn or "", {})}
-        return world.game_line(seed, path, player, game, rates, phi, inputs.sigma)
-
-    return World(
-        setup,
-        seed,
-        path,
-        truth,
-        game_days,
-        available,
-        line,
-        inputs.lag,
-        "forward",
-        belief="refresh",
-        kappa=inputs.kappa,
-        sigma_eta=inputs.sigma_eta,
-    )
-
-
 def replay_world(
     setup: Setup,
     lines: Mapping[int, Mapping[date, Mapping[str, float]]],
@@ -541,7 +372,6 @@ def replay_world(
     seed: int,
     path: int,
     weights: Mapping[str, float] | None = None,
-    belief: str = "causal",
     news_sd: float = world.NEWS_SD_DAYS,
     label: str | None = None,
     forecasts: Mapping[str, Mapping[int, Rates]] | None = None,
@@ -549,33 +379,28 @@ def replay_world(
     weights_of: Mapping[str, Mapping[str, float]] | None = None,
 ) -> World:
     """A replay's world: the recorded lines are the truth of every game, a game day without a
-    line an absence. The seats' belief is ``causal`` (the setup's projection updated with the
-    games played before each day, at ``weights``, :data:`fit.W_DEFAULT` for a stat without one;
-    a player nobody projected on the newcomer's prior once he has played) or ``fixed`` (the
-    projection all season, the hold-out gate's). ``label`` names the run's forecaster, whose
-    projection the setup holds; ``forecasts`` are other forecasters' projections by label, each
-    believed the same way with its own newcomer's prior (the mean of its own projected players
-    left undrafted), for the seats that name them (#172, PR D1), at its own weights in
-    ``weights_of`` (by label; ``weights`` for a label it does not name; PR D2). ``split`` maps
-    each split label among them to its rostered side's label (:class:`World`)."""
+    line an absence. The seats' belief is causal: the setup's projection updated with the games
+    played before each day, at ``weights``, :data:`fit.W_DEFAULT` for a stat without one; a
+    player nobody projected on the newcomer's prior once he has played. ``label`` names the
+    run's forecaster, whose projection the setup holds; ``forecasts`` are other forecasters'
+    projections by label, each believed the same way with its own newcomer's prior (the mean of
+    its own projected players left undrafted), for the seats that name them (#172, PR D1), at
+    its own weights in ``weights_of`` (by label; ``weights`` for a label it does not name; PR
+    D2). ``split`` maps each split label among them to its rostered side's label
+    (:class:`World`)."""
     game_days = game_days_of(setup)
-    causal = None
-    others: dict[str, CausalBelief] = {}
-    if belief == "causal":
-        w = {s: float((weights or {}).get(s, W_DEFAULT)) for s in wk.STATS}
+    w = {s: float((weights or {}).get(s, W_DEFAULT)) for s in wk.STATS}
 
-        def own(name: str) -> dict[str, float]:
-            given = (weights_of or {}).get(name)
-            return w if given is None else {s: float(given.get(s, W_DEFAULT)) for s in wk.STATS}
+    def own(name: str) -> dict[str, float]:
+        given = (weights_of or {}).get(name)
+        return w if given is None else {s: float(given.get(s, W_DEFAULT)) for s in wk.STATS}
 
-        causal = causal_belief(setup, setup.projection, lines, w)
-        others = {
-            name: causal_belief(setup, rates, lines, own(name))
-            for name, rates in (forecasts or {}).items()
-            if name != label
-        }
-    elif forecasts or split:
-        raise ValueError("only a causal world holds a belief for each forecaster")
+    causal = causal_belief(setup, setup.projection, lines, w)
+    others = {
+        name: causal_belief(setup, rates, lines, own(name))
+        for name, rates in (forecasts or {}).items()
+        if name != label
+    }
 
     def available(player: int) -> np.ndarray:
         days = game_days.get(player, [])
@@ -590,14 +415,11 @@ def replay_world(
         setup,
         seed,
         path,
-        {},
         game_days,
         available,
         line,
         lag,
-        "replay",
-        belief=belief,
-        causal=causal,
+        causal,
         news_sd=news_sd,
         label=label,
         others=others,
@@ -1149,22 +971,6 @@ def aggregate(
     return out
 
 
-def verdict(by_shrink: Mapping[str, Mapping[str, Mapping[str, float | None]]]) -> dict[str, Any]:
-    """The advisory line: passes when the paired change in playoff odds (B less A, as
-    :func:`paired` gives it) is not below zero by more than one SE at any shrink; None when a
-    shrink has no SE."""
-    passes: bool | None = True
-    for agg in by_shrink.values():
-        d = agg.get("made_playoffs") or {}
-        mean, se = d.get("mean"), d.get("se")
-        if mean is None or se is None:
-            passes = None
-            break
-        if mean < -se:
-            passes = False
-    return {"rule": VERDICT_RULE, "line": VERDICT_LINE, "passes": passes}
-
-
 # --------------------------------------------------------------------------- a replay's verdict
 #: The replay's advisory rule on the paired design (#172, PR D2; ruled 2026-11-07: there is no
 #: grand figure across forecasters).
@@ -1291,7 +1097,8 @@ def replay_verdict(
         for label in read_rows:
             p = rows[label]["pooled"]["made_playoffs"]
             if p["mean"] is None or p["mean"] <= 0:
-                failed.append(f"{label} pooled: {p['mean']:+.4f} is not above zero")
+                shown = "no mean" if p["mean"] is None else f"{p['mean']:+.4f}"
+                failed.append(f"{label} pooled: {shown} is not above zero")
         passes = not failed
     return {
         "rule": REPLAY_VERDICT_RULE,
@@ -1352,8 +1159,6 @@ REPLAY_TEAMS = 12
 #: season it reads: the prior season for ``prior``, the replayed one for the oracle
 #: (``forecast.MIN_GAMES``).
 STANDIN_MIN_GAMES = MIN_GAMES
-#: The gates read the players with at least this many played games in the season.
-GATE_MIN_GAMES = 20
 #: A replay's draft takes the projected players with a scheduled game in the season's first this
 #: many days: an opening-night roster is known before a draft.
 OPENING_DAYS = 7
@@ -1430,7 +1235,6 @@ def replay_setup(
         2 ** math.ceil(math.log2(playoff_teams)) - playoff_teams,
     )
     return Setup(
-        league=f"replay-{season}",
         start=calendar.weeks[0].start,
         calendar=calendar,
         pairings=pairings,
@@ -1449,12 +1253,9 @@ def replay_setup(
 
 
 __all__ = [
-    "BELIEFS",
-    "GATE_MIN_GAMES",
     "KNOBS",
     "METRICS",
     "OPENING_DAYS",
-    "SHRINKS",
     "SPEC_KEYS",
     "STANDIN_MIN_GAMES",
     "Arm",
@@ -1465,8 +1266,6 @@ __all__ = [
     "aggregate",
     "arm_of",
     "check_fit",
-    "consistent",
-    "forward_world",
     "inputs_of",
     "mirrored",
     "paired",
@@ -1484,5 +1283,4 @@ __all__ = [
     "simulate",
     "split_beliefs",
     "unprojected",
-    "verdict",
 ]

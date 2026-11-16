@@ -7,7 +7,8 @@ files themselves (no import is executed, no network, no data).
    through that one door.
 3. Inside the simulator only ``readers.py``, ``gamelogs.py`` and ``cli.py`` import
    ``pickandroll.sources``.
-4. The simulator's imports from ``pickandroll.api`` are exactly the pairs in :data:`API_TIES`.
+4. The simulator's imports from ``pickandroll.api`` are exactly the pairs in :data:`API_TIES`:
+   none since the standalone cut (PR D3).
 
 Relative and absolute forms count alike, and so do imports inside a function and
 ``importlib.import_module`` or ``__import__`` with a literal name.
@@ -22,21 +23,11 @@ ROOT = Path(__file__).resolve().parents[2]
 SRC = ROOT / "src"
 SIM = SRC / "pickandroll" / "sim"
 
-#: The simulator's imports from the live API, as (simulator module, API module). Each is a tie
-#: to the live league (its recorded state, its knob file, its settings) that PR D's standalone
-#: cut removes; the list is empty after PR D. A pair not listed here fails the test, and so does
-#: a listed pair the code no longer has: the list is a ledger, kept exact.
-API_TIES = {
-    ("pickandroll.sim.cli", "pickandroll.api.leagues"),
-    ("pickandroll.sim.cli", "pickandroll.api.season_knobs"),
-    ("pickandroll.sim.cli", "pickandroll.api.season_week"),
-    ("pickandroll.sim.cli", "pickandroll.api.seasons"),
-    ("pickandroll.sim.readers", "pickandroll.api.season_decisions"),
-    ("pickandroll.sim.readers", "pickandroll.api.season_moves"),
-    ("pickandroll.sim.readers", "pickandroll.api.season_record"),
-    ("pickandroll.sim.readers", "pickandroll.api.season_scorecard"),
-    ("pickandroll.sim.readers", "pickandroll.api.seasons"),
-}
+#: The simulator's imports from the live API, as (simulator module, API module). Each was a tie
+#: to a live league (its recorded state, its knob file, its settings); the standalone cut (PR
+#: D3) removed the last of them, and the list is empty. A pair not listed here fails the test,
+#: and so does a listed pair the code no longer has: the list is a ledger, kept exact.
+API_TIES: set[tuple[str, str]] = set()
 
 
 def module_of(path: Path, src: Path = SRC) -> str:
@@ -131,14 +122,19 @@ def test_the_walker_reads_every_form_of_import(tmp_path):
 
 
 def test_the_walker_sees_the_simulators_real_imports():
-    """Not vacuous: the door, the readers' function-level imports and the commands' own."""
+    """Not vacuous: the door, the policy's import of it, and an import inside a method of the
+    real tree (``Setup.starting_slots``), read from that method's source alone."""
     t = sim_table()
     assert {"pickandroll.season.moves", "pickandroll.season.weekly"} <= t["pickandroll.sim.engine"]
-    assert {"pickandroll.sources.bbm", "pickandroll.sources.matching"} <= t[
-        "pickandroll.sim.readers"
-    ]
     assert "pickandroll.sim.engine" in t["pickandroll.sim.policy"]
-    assert "pickandroll.api.season_knobs" in t["pickandroll.sim.cli"]  # inside a function
+    (method,) = [
+        n
+        for n in ast.walk(ast.parse((SIM / "state.py").read_text()))
+        if isinstance(n, ast.FunctionDef) and n.name == "starting_slots"
+    ]
+    assert imports_of(ast.unparse(method), "pickandroll.sim.state", False) == {
+        "pickandroll.sim.engine"
+    }
 
 
 def test_nothing_outside_the_simulator_imports_it():

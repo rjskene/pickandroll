@@ -88,17 +88,6 @@ def test_the_world_holds_a_belief_for_each_forecaster(season):
     assert w.others[OTHER].newcomer != w.causal.newcomer
     with pytest.raises(ValueError, match="holds no belief"):
         w.beliefs_on(day, "elsewhere")
-    with pytest.raises(ValueError, match="only a causal world"):
-        rn.replay_world(setup, lines, 1, SEED, 0, belief="fixed", forecasts={OTHER: other})
-
-
-def test_a_drawn_world_answers_every_label_with_its_one_belief():
-    from tests.sim.sim_league import inputs
-
-    setup = make_setup()
-    w = rn.forward_world(setup, inputs(), 1, 0, 0.0)
-    day = setup.days[3]
-    assert w.beliefs_on(day, OTHER) is w.beliefs_on(day)
 
 
 # --------------------------------------------------------------------------- the seats
