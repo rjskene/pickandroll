@@ -765,15 +765,18 @@ def room_draft(
     seed: int,
     path: int,
     league: shapes.LeagueShape = shapes.FIXED,
+    turn: int | None = None,
 ) -> adp.Draft | None:
     """A room's draft under a ``market`` on one path (#172, PR D4a): every seat holds an arm, so
     every seat drafts on its arm's own board. None without a market. The seats are the path's
-    league shape's (#172, PR D4b)."""
+    league shape's and the arms are rotated by its ``turn`` (#172, PR D4b; the path's on one
+    shape); the rivals' draws stay on the path."""
     if market is None:
         return None
+    rotation = path if turn is None else turn
     own = {
         t: own_projection(arms[name].forecaster, run_label, projection, forecasts)
-        for t, name in rn.rotate(seats, league.ids, path).items()
+        for t, name in rn.rotate(seats, league.ids, rotation).items()
     }
     return adp.Draft(market[0], market[1], seed, path, own)
 
@@ -792,16 +795,18 @@ def pair_setups(
     seed: int,
     path: int,
     league: shapes.LeagueShape = shapes.FIXED,
+    turn: int | None = None,
 ) -> dict[str, Any]:
     """The pair's league on one path, by arm (#172, PR D4a), in the path's league shape (#172,
     PR D4b): one league drafted on the run's forecaster without a ``market``. Under one, the
     arm's seat drafts on the arm's own board and every other seat on a rival's board: arms whose
     draft-day beliefs are one label share one league (the same object), arms on two labels get
-    one each."""
+    one each. The arm's seat is the shape's ``teams[turn mod n]`` (the path's turn; the path
+    itself on one shape)."""
     if market is None:
         setup = replay_setup_of(season, lines, members, scheduled, projection, None, league)
         return dict.fromkeys(pair, setup)
-    me = league.ids[path % league.teams]
+    me = league.ids[(path if turn is None else turn) % league.teams]
     labels = {k: arms[k].forecaster or run_label for k in pair}
     setups: dict[str, Any] = {}
     for k in pair:
@@ -832,13 +837,19 @@ def task_replay(
     seed: int,
     path: int,
     market: Market = None,
+    grid: shapes.Grid = shapes.FIXED_GRID,
 ) -> dict[str, Any]:
     """One task of the room on a replay. Under a ``market`` (#172, PR D4a) every seat holds an
-    arm, so every seat drafts on its arm's own board and no board is a rival's."""
+    arm, so every seat drafts on its arm's own board and no board is a rival's. The path plays
+    its league shape on ``grid`` with the arms rotated by its turn (``shapes.visit``, #172, PR
+    D4b); the world's draws stay on ``(seed, path)``."""
+    v = shapes.visit(path, grid)
     projection = projection_of(forecaster, fixed, lines, seed, path, shape)
     forecasts = forecasts_of(sources, fixed, lines, seed, path, shape, arms)
-    draft = room_draft(market, arms, seats, forecaster.label, projection, forecasts, seed, path)
-    setup = replay_setup_of(season, lines, members, scheduled, projection, draft)
+    draft = room_draft(
+        market, arms, seats, forecaster.label, projection, forecasts, seed, path, v.shape, v.turn
+    )
+    setup = replay_setup_of(season, lines, members, scheduled, projection, draft, v.shape)
     w = rn.replay_world(
         setup,
         lines,
@@ -852,11 +863,12 @@ def task_replay(
         split=splits_of(sources, arms),
         weights_of=weights,
     )
-    held = {t: arms[name].forecaster for t, name in rn.rotate(seats, setup.teams, path).items()}
+    held = {t: arms[name].forecaster for t, name in rn.rotate(seats, setup.teams, v.turn).items()}
     unprojected = rn.unprojected(setup, w, held)
-    out = rn.room(setup, w, arms, seats, path)
+    out = rn.room(setup, w, arms, seats, v.turn)
     out["forecaster"] = forecaster.label
     out["unprojected"] = unprojected
+    out["league"] = {"shape": v.index, "turn": v.turn}
     if market is not None:
         out["drafts"] = 1
         out["drafted_unprojected"] = [rn.drafted_unprojected(setup)]
@@ -891,6 +903,7 @@ def task_paired(
     seed: int,
     path: int,
     market: Market = None,
+    grid: shapes.Grid = shapes.FIXED_GRID,
 ) -> dict[str, Any]:
     """One task of the paired design on a replay (#172, PR D2): the league drafted on the cell's
     forecaster, arm A in seat :func:`seat_of` in one season and arm B in the same seat in a
@@ -901,7 +914,11 @@ def task_paired(
     eleven on rivals' boards. When the two arms' draft-day beliefs are one label there is one
     draft and one league, as before; when they differ each arm's season is its own league from
     the draft on (``run.paired_apart``): two setups and two worlds on the same ``(seed, path)``,
-    so the world's draws and the rivals' boards stay common."""
+    so the world's draws and the rivals' boards stay common.
+
+    The path plays its league shape on ``grid``, and the seat is the shape's ``teams[turn mod
+    n]`` (``shapes.visit``, #172, PR D4b): both arms hold one shape and one seat."""
+    v = shapes.visit(path, grid)
     projection = projection_of(forecaster, fixed, lines, seed, path, shape)
     forecasts = forecasts_of(sources, fixed, lines, seed, path, shape, arms)
 
@@ -934,10 +951,12 @@ def task_paired(
         forecasts,
         seed,
         path,
+        v.shape,
+        v.turn,
     )
     sa, sb = (setups[k] for k in pair)
     worlds = {id(sa): world_of(sa)} if sa is sb else {id(sa): world_of(sa), id(sb): world_of(sb)}
-    me = seat_of(sa, path)
+    me = seat_of(sa, v.turn)
     unprojected = {
         k: rn.unprojected(
             setups[k],
@@ -953,6 +972,7 @@ def task_paired(
     out["seat"] = me
     out["forecaster"] = forecaster.label
     out["unprojected"] = unprojected
+    out["league"] = {"shape": v.index, "turn": v.turn}
     if market is not None:
         out["drafts"] = 1 if sa is sb else 2
         out["drafted_unprojected"] = [
@@ -1260,6 +1280,7 @@ def no_peek(
     weights_of: Mapping[str, Mapping[str, float]] | None = None,
     paired: bool = False,
     market: Market = None,
+    league: shapes.LeagueShape = shapes.FIXED,
 ) -> tuple[Any, int, list[dict[str, Any]]]:
     """Path 0 of the replay on the recorded lines and on :func:`nopeek.perturb`'s, with one
     league built before either (on ``projection``, the run's forecaster's on path 0, ``label``,
@@ -1274,7 +1295,10 @@ def no_peek(
     both built before either world, and both leagues' seasons are compared (``run.paired_apart``,
     B's days as variant 1). The leagues are built once, before either world, so the check is
     about the season's decisions; that the draft reads nothing of the season rests on what it is
-    built from (the table, the forecasters' draft-day figures, the opening days' schedule)."""
+    built from (the table, the forecasters' draft-day figures, the opening days' schedule).
+
+    The league is path 0's shape (``league``, #172, PR D4b): the grid's first under ``--grid
+    full``, the shape named under ``--league``; path 0's turn is 0 on any grid."""
     pinned = forecasts or {}
     if paired:
         setups = pair_setups(
@@ -1290,11 +1314,14 @@ def no_peek(
             pinned,
             seed,
             0,
+            league,
         )
         setup, second = setups["a"], setups["b"]
     else:
-        draft = room_draft(market, arms, seats, label, projection, pinned, seed, 0)
-        setup = second = replay_setup_of(season, lines, members, scheduled, projection, draft)
+        draft = room_draft(market, arms, seats, label, projection, pinned, seed, 0, league)
+        setup = second = replay_setup_of(
+            season, lines, members, scheduled, projection, draft, league
+        )
     if day not in setup.days:
         raise ValueError(f"{day} is not a day of the replayed season")
     other = nopeek.perturb(lines, rn.game_days_of(setup), day, seed)

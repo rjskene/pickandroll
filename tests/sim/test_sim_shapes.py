@@ -165,3 +165,123 @@ def test_the_fixed_shape_s_league_is_the_league_before(wire_read):
     before = rn.replay_setup(2024, r.lines, r.members, projection, period_one, r.scheduled)
     assert _setup(r, shapes.FIXED) == before
     assert before.max_weekly_adds == 4
+
+
+# --------------------------------------------------------------------------- the visit rule
+ROUNDS = (1, 2, 3, 5, 7)
+
+
+def _turns(rule, rounds: int) -> list[tuple[int, int]]:
+    """(shape index, turn) for every path of ``rounds`` rounds of the full grid."""
+    return [rule(p) for p in range(72 * rounds)]
+
+
+def _rule(p: int) -> tuple[int, int]:
+    v = shapes.visit(p, shapes.FULL)
+    return v.index, v.turn
+
+
+def _grid_order(p: int) -> tuple[int, int]:
+    """The rule with the grid's own order where the place stands (the brief's first rule)."""
+    c, j = p % 72, p // 72
+    return c, 24 * j + (c // 3 + shapes.STRIDE * j) % 24
+
+
+def test_on_one_shape_the_turn_is_the_path():
+    assert [shapes.visit(p, shapes.FIXED_GRID).turn for p in range(500)] == list(range(500))
+    assert {shapes.visit(p, shapes.FIXED_GRID).shape for p in range(500)} == {shapes.FIXED}
+    league = shapes.one("league", shapes.FULL.shapes[5])
+    assert [shapes.visit(p, league).turn for p in range(50)] == list(range(50))
+
+
+def test_a_shape_s_place_is_one_to_one_with_its_playoffs_every_third_turn():
+    g = shapes.FULL
+    places = {}
+    for p in range(3):
+        for a in range(4):
+            for s in range(2):
+                x = shapes.place(g, p, a, s)
+                assert x % 3 == p and x % 8 == 2 * a + s
+                assert x == (16 * p + 9 * (2 * a + s)) % 24
+                places[(p, a, s)] = x
+    assert sorted(places.values()) == list(range(24))
+
+
+@pytest.mark.parametrize("rounds", ROUNDS)
+def test_every_shape_once_a_round_and_a_team_count_s_seats_within_one(rounds):
+    got = _turns(_rule, rounds)
+    assert sorted(c for c, _ in got) == sorted(list(range(72)) * rounds)
+    for n in (10, 12, 14):
+        seats = [t % n for c, t in got if shapes.FULL.shapes[c].teams == n]
+        counts = [seats.count(i) for i in range(n)]
+        assert max(counts) - min(counts) <= 1
+        # A room of 2, 3, 4, 5 or 12 arms: every seat and arm within one visit of even.
+        for arms in (2, 3, 4, 5, 12):
+            cells = {}
+            for c, t in got:
+                if shapes.FULL.shapes[c].teams == n:
+                    for i in range(n):
+                        cells[(i, (i + t) % arms)] = cells.get((i, (i + t) % arms), 0) + 1
+            filled = [cells.get((i, a), 0) for i in range(n) for a in range(arms)]
+            assert max(filled) - min(filled) <= 1
+
+
+def test_a_shape_sees_a_new_seat_each_round_for_five_rounds():
+    for c, x in enumerate(shapes.FULL.shapes):
+        seats = [shapes.visit(72 * j + c, shapes.FULL).turn % x.teams for j in range(5)]
+        assert shapes.visit(72 * 4 + c, shapes.FULL).shape == x
+        assert len(set(seats)) == 5, (c, seats)
+
+
+def _largest_gap(rule, rounds: int) -> float:
+    """The largest gap, between two values of one axis, in mean draft position (0 the first
+    pick, 1 the last) over ``rounds`` rounds."""
+    worst = 0.0
+    for axis in ("playoffs", "weekly_adds", "slots", "teams"):
+        pos: dict[object, list[float]] = {}
+        for c, t in _turns(rule, rounds):
+            x = shapes.FULL.shapes[c]
+            pos.setdefault(shapes.axis_values(x)[axis], []).append((t % x.teams) / (x.teams - 1))
+        means = [sum(v) / len(v) for v in pos.values()]
+        worst = max(worst, max(means) - min(means))
+    return worst
+
+
+def test_no_axis_s_value_drafts_from_one_end_of_the_order():
+    """The places keep each axis's values near even draft positions: the largest gap is under a
+    tenth at one round and under a twentieth at two and three. The grid's own order in their
+    place fails at one round (one playoff format would draft from the first picks and another
+    from the last): that is why the rule has places."""
+    assert _largest_gap(_rule, 1) < 0.1
+    assert _largest_gap(_rule, 2) < 0.05 and _largest_gap(_rule, 3) < 0.05
+    assert _largest_gap(_grid_order, 1) > 0.2
+    early = sorted(
+        t % 12
+        for c, t in _turns(_grid_order, 1)
+        if shapes.FULL.shapes[c].teams == 12 and shapes.FULL.shapes[c].playoff_teams == 4
+    )
+    assert early == list(range(8))
+
+
+def test_the_paths_round_up_to_the_grid():
+    assert shapes.round_up(100, shapes.FULL, True) == 144
+    assert shapes.round_up(100, shapes.FULL, False) == 144
+    assert shapes.round_up(144, shapes.FULL, True) == 144
+    assert [shapes.round_up(n, shapes.FIXED_GRID, True) for n in (1, 12, 20)] == [12, 12, 24]
+    assert shapes.round_up(5, shapes.FIXED_GRID, False) == 5
+    league = shapes.one("league", shapes.FULL.shapes[0])
+    assert shapes.round_up(12, league, True) == 20
+
+
+def test_a_small_grid_is_visited_by_the_same_rule():
+    """A test's grid of few shapes: every shape once a round, its team count's seats within one."""
+    small = shapes.Grid("small", (4, 6), (shapes.SLOTS,), (2, None), ((2, 1),))
+    assert len(small.shapes) == 4 and small.per_round == 2
+    got = [shapes.visit(p, small) for p in range(12)]
+    assert [v.index for v in got] == [0, 1, 2, 3] * 3
+    for n in (4, 6):
+        seats = [v.turn % n for v in got if v.shape.teams == n]
+        counts = [seats.count(i) for i in range(n)]
+        assert max(counts) - min(counts) <= 1
+    with pytest.raises(ValueError, match="share a factor"):
+        shapes.Grid("bad", (4,), (shapes.SLOTS, shapes.WIDE_SLOTS), (2, None), ((2, 1), (4, 2)))

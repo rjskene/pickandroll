@@ -23,6 +23,7 @@ league shape, ``LeagueShape`` in code. Pure: no I/O.
 from __future__ import annotations
 
 import itertools
+import math
 from collections.abc import Mapping
 from dataclasses import dataclass
 from functools import cached_property
@@ -89,6 +90,20 @@ class Grid:
     adds: tuple[int | None, ...]
     playoffs: tuple[tuple[int, int], ...]
 
+    def __post_init__(self) -> None:
+        # The visit rule places a shape by its playoff format modulo their count and by its adds
+        # and slots modulo theirs (:func:`place`): the two counts must share no factor.
+        if math.gcd(len(self.playoffs), len(self.adds) * len(self.rosters)) != 1:
+            raise ValueError(
+                f"grid {self.name!r}: {len(self.playoffs)} playoff formats and "
+                f"{len(self.adds) * len(self.rosters)} adds-and-slots pairs share a factor"
+            )
+
+    @property
+    def per_round(self) -> int:
+        """The shapes of one team count: the turns a team count takes each round."""
+        return len(self.playoffs) * len(self.adds) * len(self.rosters)
+
     @cached_property
     def shapes(self) -> tuple[LeagueShape, ...]:
         return tuple(
@@ -140,6 +155,71 @@ FULL = Grid(
 )
 
 
+# --------------------------------------------------------------------------- the visit rule
+#: How far a shape's place moves each round: a new seat each round (#172, PR D4b).
+STRIDE = 5
+#: The visit rule in a sentence, for a run's record.
+VISIT_RULE = (
+    "path p plays shape c = p mod N of the grid's N in round j = p div N; inside a round a team "
+    "count's shapes take a run of consecutive turns, each at its place s (s mod the playoff "
+    "formats' count is its playoff format, s mod the adds-and-slots pairs' count is y = "
+    "slots' count x adds + slots, by index; on the full grid s = (16p + 9y) mod 24), and "
+    "turn = K j + (s + 5 j) mod K for K a team count's shapes; the pair's seat is teams[turn mod "
+    "n] and the room's rotation is by the turn; the world's draws stay on (seed, path)"
+)
+
+
+@dataclass(frozen=True)
+class Visit:
+    """What a path plays (:func:`visit`): its league shape, the shape's index in the grid, and
+    its turn, which decides its seats."""
+
+    shape: LeagueShape
+    index: int
+    turn: int
+
+
+def place(grid: Grid, p: int, a: int, s: int) -> int:
+    """A shape's place inside its team count's run of turns: the one ``x`` in 0 to
+    ``grid.per_round`` - 1 with ``x mod P = p`` and ``x mod (A S) = y``, ``y = S a + s`` (``P``,
+    ``A`` and ``S`` the counts of the playoff formats, adds and slots; ``p``, ``a`` and ``s`` the
+    shape's indices). On the full grid ``(16 p + 9 y) mod 24``. So the playoff formats take every
+    P-th turn and the adds and slots the turn's remainder by A S: no axis's value drafts from
+    one end of the order (the grid's own order would put one playoff format on the first picks
+    and another on the last)."""
+    big, small = len(grid.adds) * len(grid.rosters), len(grid.playoffs)
+    y = len(grid.rosters) * a + s
+    return next(x for x in range(grid.per_round) if x % small == p and x % big == y)
+
+
+def visit(path: int, grid: Grid) -> Visit:
+    """The league shape and the turn of ``path`` on ``grid`` (#172, PR D4b), a pure function of
+    the two. With ``N`` shapes, ``c = path mod N`` and round ``j = path div N``: the shape is
+    the grid's ``c``-th, and ``turn = K j + (place + 5 j) mod K``, ``K`` a team count's shapes
+    (:func:`place`). Each round a team count's shapes take ``K`` consecutive turns, so its seats
+    are taken as evenly as the paths allow, and the stride moves a shape to a new seat each
+    round. A grid of one shape gives ``turn = path``: the fixed shape's seats are as before."""
+    n, k = len(grid.shapes), grid.per_round
+    c, j = path % n, path // n
+    p, rest = divmod(c // len(grid.teams), len(grid.adds) * len(grid.rosters))
+    a, s = divmod(rest, len(grid.rosters))
+    return Visit(grid.shapes[c], c, k * j + (place(grid, p, a, s) + STRIDE * j) % k)
+
+
+def round_up(paths: int, grid: Grid, paired: bool) -> int:
+    """A run's paths on ``grid``: a multiple of its shapes when it has more than one (every shape
+    once a round), else for a pair a multiple of the shape's teams (every seat equally often),
+    else as given."""
+    paths = max(1, paths)
+    if len(grid.shapes) > 1:
+        step = len(grid.shapes)
+    elif paired:
+        step = grid.shapes[0].teams
+    else:
+        return paths
+    return -(-paths // step) * step
+
+
 def axis_values(shape: LeagueShape) -> Mapping[str, Any]:
     """The shape's value on each axis, as :meth:`Grid.axes` names them."""
     return {
@@ -155,9 +235,15 @@ __all__ = [
     "FIXED_GRID",
     "FULL",
     "SLOTS",
+    "STRIDE",
+    "VISIT_RULE",
     "WIDE_SLOTS",
     "Grid",
     "LeagueShape",
+    "Visit",
     "axis_values",
     "one",
+    "place",
+    "round_up",
+    "visit",
 ]

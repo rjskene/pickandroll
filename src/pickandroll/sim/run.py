@@ -952,12 +952,13 @@ def room(
     w: World,
     arms: Mapping[str, Arm],
     seats: Sequence[str],
-    path: int,
+    turn: int,
     on_day: Callable[[DayRecord], None] | None = None,
 ) -> dict[str, Any]:
-    """The league's seats under named arms, rotated by ``path``; each arm's outcomes pooled over
-    its seats this path. ``on_day`` is :func:`simulate`'s."""
-    assigned = rotate(list(seats), setup.teams, path)
+    """The league's seats under named arms, rotated by ``turn`` (the path's turn,
+    ``shapes.visit``; the path itself on one league shape); each arm's outcomes pooled over its
+    seats this path. ``on_day`` is :func:`simulate`'s."""
+    assigned = rotate(list(seats), setup.teams, turn)
     variant = {t: arms[name].seat() for t, name in assigned.items()}
     # The scale is each arm's in its first seat, in team order.
     first = {
