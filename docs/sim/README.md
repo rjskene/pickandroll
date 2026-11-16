@@ -784,6 +784,18 @@ run.
   knobs are `policy.KNOB_DEFAULTS` and the fields `policy.DEFAULT_FIELDS`, both in the payload's
   `surrogate_gate` block with the season, the forecaster, the seats, the days and the label's
   weights; no knob file is read.
+- What gate 5 compared (PR D4a2, `checks.surrogate_records`): each seat's row carries, in
+  `detail.records`, a record for each sampled day.
+  - It holds the exact tier's set and the surrogate's set as moves (the add and the drop, by
+    id), and whether they are equal, which is what the gate counts.
+  - It holds each set's worth by the exact tier's own objective: one evaluator of the exact
+    tier's, on the key it searches (`QUEUE_SET`), with the season term when the knobs carry
+    one, scores both sets on that day's problem, beside the worth of standing still.
+  - A day left out says why instead: outside the calendar's weeks, or no problem built.
+
+  `validate` prints a line for each seat and day: equal or not, and the two worths to four
+  decimals. It names no player. The worths do not enter the gate's rule: a seat still passes on
+  its matches alone, and `validate`'s exit code is what it was.
 
 ## Runs
 
