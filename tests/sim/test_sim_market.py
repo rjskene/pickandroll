@@ -14,6 +14,7 @@ import numpy as np
 import pytest
 
 from pickandroll.sim import adp, opponents, world
+from pickandroll.sim import belief as bf
 from pickandroll.sim import cli as ss
 from pickandroll.sim import readers as reader
 from pickandroll.sim import run as rn
@@ -289,7 +290,6 @@ def test_the_market_flags_are_refused_by_name(pair_data, capsys):
         (["--adp-spread", "1,0"], "--adp none drafts on the run's forecaster"),
         (["--adp", "espn", "--adp-spread", "1"], "two figures"),
         (["--adp", "espn", "--adp-spread=-1,0"], "at least zero"),
-        (["--adp", "espn", "--adp-spread", "1,0", "--no-peek", "2023-11-01"], "--no-peek"),
     ]
     for extra, words in cases:
         assert ss.main([*base, *seats, *extra]) == 2
@@ -408,3 +408,83 @@ def test_a_pair_on_one_belief_records_its_one_draft():
         "drafted_unprojected": {"drafts": 2, "total": 4, "mean": 2.0, "max": 3},
         "drafts_per_path": [1],
     }
+
+
+# --------------------------------------------------------------------------- the no-peek check
+#: A day of the made-up season's second week: the check's day.
+NO_PEEK_DAY = "2023-11-06"
+TABLE = ("--adp", "espn", "--adp-spread", "2,0.1")
+
+
+def _no_peek(data: Path, *extra: str) -> tuple[int, str]:
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        code = ss.main(
+            [
+                "--data",
+                str(data),
+                "--rooms",
+                "0",
+                "replay",
+                "--seasons",
+                "2024",
+                *extra,
+                *TABLE,
+                "--no-peek",
+                NO_PEEK_DAY,
+            ]
+        )
+    return code, buf.getvalue()
+
+
+def test_the_no_peek_check_under_a_table_holds_for_a_room_and_a_pair_on_one_belief(pair_data):
+    room = ("--seats", str(pair_data / "A.json"), str(pair_data / "C.json"))
+    code, out = _no_peek(pair_data, *room)
+    assert code == 0 and f"agree through {NO_PEEK_DAY}" in out, out
+    assert "refused" not in out
+    pair = ("--arms", str(pair_data / "A.json"), str(pair_data / "C.json"))
+    code, out = _no_peek(pair_data, *pair, "--bbm-as", "prior", "--yahoo-as", "oracle:0.2")
+    assert code == 0 and f"agree through {NO_PEEK_DAY}" in out, out
+
+
+def _two_beliefs(pair_data, monkeypatch):
+    calls = []
+    real = rn.paired_apart
+
+    def spy(sa, wa, sb, wb, a, b, me, on_day=None):
+        seen = set()
+
+        def keep(r):
+            seen.add(r.variant)
+            on_day(r)
+
+        out = real(sa, wa, sb, wb, a, b, me, keep)
+        calls.append((sa is not sb, seen))
+        return out
+
+    monkeypatch.setattr(rn, "paired_apart", spy)
+    pair = ("--arms", str(pair_data / "A.json"), str(pair_data / "B.json"))
+    code, out = _no_peek(pair_data, *pair, "--bbm-as", "prior", "--yahoo-as", "oracle:0.2")
+    return code, out, calls
+
+
+def test_the_no_peek_check_under_a_table_compares_both_leagues_of_a_pair_on_two_beliefs(
+    pair_data, monkeypatch
+):
+    code, out, calls = _two_beliefs(pair_data, monkeypatch)
+    assert code == 0 and f"agree through {NO_PEEK_DAY}" in out, out
+    # Two leagues, on the recorded lines and on the changed ones, both arms' days compared.
+    assert calls == [(True, {0, 1}), (True, {0, 1})]
+
+
+def test_the_no_peek_check_under_a_table_catches_a_belief_that_reads_the_days_own_line(
+    pair_data, monkeypatch
+):
+    monkeypatch.setattr(
+        bf.CausalBelief,
+        "games_before",
+        lambda self, player, d: sum(1 for x in self._dates.get(player, []) if x <= d),
+    )
+    code, out, calls = _two_beliefs(pair_data, monkeypatch)
+    assert code == 1 and f"FAILED: the records part on {NO_PEEK_DAY}" in out, out
+    assert "beliefs" in out and len(calls) == 2

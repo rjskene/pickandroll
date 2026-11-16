@@ -24,9 +24,11 @@ through `sim/engine.py` only, the whole list of engine code it calls as library 
 engine's files are never edited from here); only `sim/readers.py`, `sim/gamelogs.py` and
 `sim/cli.py` may import `pickandroll.sources`, and since the standalone cut none does; and the
 simulator imports nothing from `pickandroll.api`: the test's list of such imports (`API_TIES`)
-is empty, and a new one fails it. The same test reads the core (`world`, `state`,
-`league`, `opponents`, `policy`, `run`, `fit`, `checks`, `validate`, `engine`, `belief`, `nopeek`,
-`audit`, `counts`) for any way to a file, a process or the network: none of them imports
+is empty, and a new one fails it. Nothing under `tests/sim/` imports `pickandroll.api` or
+`pickandroll.sources` either (PR D4a2): the made-up league parses its own players fixture. The
+same test reads the core (`world`, `state`, `league`, `opponents`, `policy`, `run`, `fit`,
+`checks`, `validate`, `engine`, `belief`, `nopeek`, `audit`, `counts`, `forecast`, `adp`) for any
+way to a file, a process or the network: none of them imports
 `pathlib`, `io`, `shutil`, `tempfile`, `socket`, `ssl`, `urllib`, `http`, `requests`, `httpx`,
 `subprocess`, `sqlite3` or `pickle`, none calls `open`, and only `run.py` uses `os`, for the
 worker count and the workers' priority. The policy and the opponents reach nothing of `run.py`,
@@ -602,6 +604,14 @@ real log: it builds the second season from the first by a seeded change with exa
 agreement, runs one path of each, prints whether they agree through the date and where they first
 part, writes nothing, and exits non-zero on a difference at or before the date.
 
+Under a table of average draft positions (`--adp espn`, PR D4a2) the check's league is drafted
+as the run's path 0 drafts it, and a pair whose two arms draft apart has two leagues, both built
+before either world, both leagues' seasons compared. What the check shows, and what it does not:
+the league is built once, before either world, so the check is about the season's decisions never
+reading a later line. That the draft reads nothing of the season rests on what it is built from
+(the table, the forecasters' draft-day figures and the schedule of the opening days), not on the
+check.
+
 **What a replay still assumes.**
 
 - The date a seat is told for a return is the true one, the day after the last missed game, plus a
@@ -673,14 +683,17 @@ the snake, the best player left on its own board:
   own league from the draft on: two setups and two worlds on the same `(seed, path)`, so the
   world's draws and the rivals' boards stay common. The world's newcomer prior reads who went
   undrafted, so one world cannot serve two drafts. The seat still rotates with the path.
-- `--no-peek` checks the draft on the run's forecaster, so it is refused with `--adp espn`.
+- `--no-peek` under a table (PR D4a2) builds the league as the run's path 0 drafts it: the table,
+  the spread and the seats' own boards; a pair whose arms draft apart has its two leagues, both
+  built before either world, and both leagues' seasons are compared ("The no-peek check", above).
 
 `--adp none`, the default, is the draft as it was: a snake on the run's forecaster's values, the
 market's view the same values. It is there so that a run before PR D4a can be run again and
 compared: what the market changes is read against it.
 
 **What a run records.** The payload's `adp` block names the source. Under a table it adds the
-spread as given, the rules above in words, and per season the table in counts (the players the
+spread as given, the rules above in words, the limit of the seat's draft rule in words (`limit`,
+"Its limits" below), and per season the table in counts (the players the
 log lists, those listed, those at the ceiling, those with no figure), the log's hash, and the
 drafted players the run's forecaster does not project over the drafts of the paths that stand.
 A pair also says whether its two arms shared one draft or each drafted apart. The figures stay
@@ -771,6 +784,18 @@ run.
   knobs are `policy.KNOB_DEFAULTS` and the fields `policy.DEFAULT_FIELDS`, both in the payload's
   `surrogate_gate` block with the season, the forecaster, the seats, the days and the label's
   weights; no knob file is read.
+- What gate 5 compared (PR D4a2, `checks.surrogate_records`): each seat's row carries, in
+  `detail.records`, a record for each sampled day.
+  - It holds the exact tier's set and the surrogate's set as moves (the add and the drop, by
+    id), and whether they are equal, which is what the gate counts.
+  - It holds each set's worth by the exact tier's own objective: one evaluator of the exact
+    tier's, on the key it searches (`QUEUE_SET`), with the season term when the knobs carry
+    one, scores both sets on that day's problem, beside the worth of standing still.
+  - A day left out says why instead: outside the calendar's weeks, or no problem built.
+
+  `validate` prints a line for each seat and day: equal or not, and the two worths to four
+  decimals. It names no player. The worths do not enter the gate's rule: a seat still passes on
+  its matches alone, and `validate`'s exit code is what it was.
 
 ## Runs
 

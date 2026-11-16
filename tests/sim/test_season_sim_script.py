@@ -12,7 +12,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from pickandroll.sim import audit, policy
+from pickandroll.sim import audit, checks, policy
 from pickandroll.sim import cli as ss
 from pickandroll.sim import counts as ct
 from pickandroll.sim import forecast as fc
@@ -717,6 +717,79 @@ def test_a_replay_with_a_wire_lands_moves_and_voids_nothing(wire_data: Path, cap
     counts = payload["counts"]["by_season"]["2024"]["prior"]
     assert counts["R"]["landed"]["mean"] >= 1 and counts["R"]["adds_per_week"]["mean"] > 0
     assert counts["S"]["landed"]["mean"] == 0
+
+
+#: What ``checks.surrogate_matches`` returned on main before PR D4a2 on gate 5's replay of the
+#: made-up season with a wire (seed 1, lag 1, path 0), by seat: one day differs for two seats.
+WIRE_MATCHES = {
+    1: [True, True, True, False, True],
+    6: [True, True, True, True, True],
+    12: [True, True, True, False, True],
+}
+
+
+@pytest.fixture(scope="module")
+def wire_validate(wire_data: Path) -> tuple[dict, str]:
+    """One ``validate`` of the season with a wire, for the tests of what gate 5 records and
+    prints (PR D4a2): the payload it wrote and what it printed."""
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        code = ss.main(["--data", str(wire_data), "--rooms", "0", "validate", "--season", "2024"])
+    out = buf.getvalue()
+    assert code == 0, out
+    return json.loads(_written(out).read_text()), out
+
+
+def test_gate_five_records_what_it_compared(wire_data: Path, wire_validate):
+    """Gate 5's row carries, a seat and a day, the two sets and their worth by the exact tier's
+    own objective (PR D4a2); its answers are what they were before."""
+    payload, _ = wire_validate
+    rows, block = payload["gates"], payload["surrogate_gate"]
+    differ = 0
+    for r in rows:
+        d = r["detail"]
+        records = d["records"]
+        assert [x["day"] for x in records] == block["days"] == d["days"]
+        assert [x["equal"] for x in records] == WIRE_MATCHES[d["seat"]]
+        assert d["matched"] == sum(WIRE_MATCHES[d["seat"]])
+        for x in records:
+            worth = x["worth"]
+            if x["equal"]:
+                assert x["exact"] == x["surrogate"] and worth["exact"] == worth["surrogate"]
+            else:
+                # Two sets, two worths, by the one evaluator; which is larger is not asserted.
+                differ += 1
+                assert x["exact"] != x["surrogate"]
+                assert isinstance(worth["exact"], float) and isinstance(worth["surrogate"], float)
+    assert differ == 2  # not vacuous: the made-up season has differing days
+    assert "records" in block and "worth" in block["records"]
+    # ``surrogate_matches`` itself, on the same replay, returns what it did.
+    r = ss.read_season(wire_data, 2024, [fc.parse_one("prior")], None, {}, 1, ss.GATE_SHAPE)
+    f = fc.parse_one("prior")
+    setup = ss.replay_setup_of(
+        2024, r.lines, r.members, r.scheduled, ss.projection_of(f, r.fixed, r.lines, 1, 0, "stat")
+    )
+    w = rn.replay_world(
+        setup, r.lines, 1, 1, 0, r.weights["prior"], label="prior", weights_of=r.weights
+    )
+    # Each day is solved from day one's rosters, so the differing day alone answers as it did in
+    # the five: both its answers, for the two seats that differ and one that does not.
+    day = date.fromisoformat(block["days"][3])
+    knobs = policy.check_knobs(dict(policy.KNOB_DEFAULTS))
+    for seat, matches in WIRE_MATCHES.items():
+        assert checks.surrogate_matches(setup, w, seat, [day], knobs) == [matches[3]]
+
+
+def test_validate_prints_each_seat_days_record_and_names_no_player(wire_data: Path, wire_validate):
+    payload, out = wire_validate
+    rows = payload["gates"]
+    assert all(len(g["detail"]["records"]) == g["detail"]["of"] for g in rows)
+    lines = [x for x in out.splitlines() if x.startswith("  seat ")]
+    assert len(lines) == sum(len(g["detail"]["records"]) for g in rows)
+    assert all(("equal;" in x or "differ;" in x) and "worth, exact " in x for x in lines)
+    _, members, _ = reader.replay_lines(wire_data, 2024)
+    names = {m.name for m in members.values() if m.name}
+    assert names and not any(n in out for n in names)
 
 
 def test_gate_five_runs_on_a_replay_of_the_season_named(wire_data: Path, capsys):

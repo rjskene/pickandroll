@@ -323,14 +323,14 @@ def oracle(
         return world.rng(seed, path, i, at, forecast, fit_season)
 
     if first:
-        z = world.errors(seed, path, keys, stats, 0.0, {}, dict.fromkeys(stats, 1.0))
+        z = world.errors(seed, path, keys, stats, dict.fromkeys(stats, 1.0))
     else:
         z = {
             k: dict(zip(stats, gen(i, 2 * key).standard_normal(len(stats))))
             for i, k in enumerate(keys)
         }
     if shape == "stat" and first:
-        eps = world.errors(seed, path, keys, stats, 0.0, {}, dict.fromkeys(stats, spread))
+        eps = world.errors(seed, path, keys, stats, dict.fromkeys(stats, spread))
     elif shape == "stat":
         eps = {k: {s: spread * float(z[k][s]) for s in stats} for k in keys}
     else:

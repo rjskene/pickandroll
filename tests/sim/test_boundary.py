@@ -9,6 +9,8 @@ files themselves (no import is executed, no network, no data).
    ``pickandroll.sources``.
 4. The simulator's imports from ``pickandroll.api`` are exactly the pairs in :data:`API_TIES`:
    none since the standalone cut (PR D3).
+5. Nothing under ``tests/sim/`` imports ``pickandroll.api`` or ``pickandroll.sources`` (PR D4a2):
+   the simulator's tests stand on its own code and made-up data.
 
 Relative and absolute forms count alike, and so do imports inside a function and
 ``importlib.import_module`` or ``__import__`` with a literal name.
@@ -22,6 +24,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 SRC = ROOT / "src"
 SIM = SRC / "pickandroll" / "sim"
+TESTS = Path(__file__).resolve().parent
 
 #: The simulator's imports from the live API, as (simulator module, API module). Each was a tie
 #: to a live league (its recorded state, its knob file, its settings); the standalone cut (PR
@@ -180,6 +183,46 @@ def test_the_ties_to_the_live_api_are_exactly_the_ledger():
     }
     assert found - API_TIES == set(), f"a new tie to the live API: {sorted(found - API_TIES)}"
     assert API_TIES - found == set(), f"a tie the code no longer has: {sorted(API_TIES - found)}"
+
+
+#: What no test of the simulator imports (PR D4a2): the live API and the sources' readers.
+TESTS_NEVER = ("pickandroll.api", "pickandroll.sources")
+
+
+def outward_imports(files: list[Path], root: Path = TESTS) -> set[tuple[str, str]]:
+    """Each (test file, module) among ``files`` (under ``root``) that imports one of
+    :data:`TESTS_NEVER`, read as the walker reads the simulator's own files."""
+    out = set()
+    for p in files:
+        module = "tests.sim." + ".".join(p.relative_to(root).with_suffix("").parts)
+        for i in imports_of(p.read_text(), module, p.name == "__init__.py"):
+            if any(within(i, x) for x in TESTS_NEVER):
+                out.add((str(p.relative_to(root)), i))
+    return out
+
+
+def test_no_test_of_the_simulator_imports_the_api_or_the_sources():
+    files = sorted(TESTS.rglob("*.py"))
+    assert len(files) > 10
+    found = outward_imports(files)
+    assert found == set(), f"a test of the simulator imports the live code: {sorted(found)}"
+
+
+def test_the_tests_rule_fails_on_a_test_that_imports_the_sources(tmp_path):
+    for name, source in (
+        ("test_fine.py", "from pickandroll.sim import run\nfrom tests.sim.draws import between\n"),
+        ("test_reader.py", "from pickandroll.sources.yahoo import public\n"),
+        ("test_later.py", "def f():\n    import pickandroll.api.app\n"),
+        ("helpers/deep.py", "import importlib\nimportlib.import_module('pickandroll.sources')\n"),
+    ):
+        (tmp_path / name).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / name).write_text(source)
+    found = outward_imports(sorted(tmp_path.rglob("*.py")), tmp_path)
+    assert found == {
+        ("test_reader.py", "pickandroll.sources.yahoo.public"),
+        ("test_later.py", "pickandroll.api.app"),
+        ("helpers/deep.py", "pickandroll.sources"),
+    }
 
 
 # --------------------------------------------------------------------------- the core (PR B2)
