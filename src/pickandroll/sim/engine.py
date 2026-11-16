@@ -12,7 +12,6 @@ tests' patch targets read as they did.
 
 from __future__ import annotations
 
-from pickandroll.season import Season
 from pickandroll.season import decisions as dl
 from pickandroll.season import moves as mv
 from pickandroll.season import strategy as sg
@@ -20,27 +19,17 @@ from pickandroll.season import stream as st
 from pickandroll.season import weekly as wk
 from pickandroll.season.calendar import Calendar, Week, monday_of
 from pickandroll.season.moves import HELD, Move
-from pickandroll.season.progress import BLEND, DEFAULTS, KNOBS, LIVE_KNOBS, refused
+from pickandroll.season.progress import BLEND, DEFAULTS, LIVE_KNOBS, refused
 from pickandroll.season.scorecard import FPTS, total, won
 from pickandroll.season.state import Player, SeasonSettings
-from pickandroll.season.weekly import (
-    BINOMIAL,
-    COUNTING,
-    PCT,
-    PHI,
-    STATS,
-    starters,
-    starting_slots,
-)
+from pickandroll.season.weekly import COUNTING, PCT, PHI, STATS, starting_slots
 
 __all__ = [
-    "BINOMIAL",
     "BLEND",
     "COUNTING",
     "DEFAULTS",
     "FPTS",
     "HELD",
-    "KNOBS",
     "LIVE_KNOBS",
     "PCT",
     "PHI",
@@ -48,7 +37,6 @@ __all__ = [
     "Calendar",
     "Move",
     "Player",
-    "Season",
     "SeasonSettings",
     "Week",
     "dl",
@@ -57,7 +45,6 @@ __all__ = [
     "refused",
     "sg",
     "st",
-    "starters",
     "starting_slots",
     "total",
     "wk",

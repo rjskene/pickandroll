@@ -1,5 +1,6 @@
-"""The runner (#172, PR 2b): one world a path, common random numbers, arms in lockstep, the
-paired difference, the room's rotation, a replay's league, the payload's verdict."""
+"""The runner (#172, PR 2b): a replay's world, common random numbers, arms in lockstep, the
+paired difference, the room's rotation, a replay's league. The worlds are replays of a made-up
+recorded season (``sim_league.replay_of``; PR D3)."""
 
 from __future__ import annotations
 
@@ -17,72 +18,37 @@ from pickandroll.sim import policy
 from pickandroll.sim import run as rn
 from pickandroll.sim.state import Member, initial
 from tests.sim.draws import between
-from tests.sim.sim_league import HAZARD, KNOBS, PHI, arm, inputs, make_setup
+from tests.sim.sim_league import KNOBS, arm, make_setup, replay_of
 
 
 # --------------------------------------------------------------------------- the world
-def test_the_world_draws_once_a_path_whatever_the_arm_does():
-    setup = make_setup()
-    w = rn.forward_world(setup, inputs(), 7, 0, 0.0)
-    k = setup.pool[0]
-    day = next(d for d in setup.days if setup.players[k].nba_team in setup.schedule[d])
-    first = w.line(k, day)
-    again = rn.forward_world(setup, inputs(), 7, 0, 0.0).line(k, day)
-    assert first == again
-    other = rn.forward_world(setup, inputs(), 7, 1, 0.0).line(k, day)
-    assert other != first
-    # A day his team does not play has no line; the truth is the projection at tau 0, s 0.
-    off = next(d for d in setup.days if setup.players[k].nba_team not in setup.schedule[d])
-    assert w.line(k, off) is None
-    flat = rn.forward_world(setup, inputs(tau=0.0), 7, 0, 0.0)
-    assert flat.truth[k] == pytest.approx(rn.consistent(setup.projection[k]))
-    assert w.kind == "forward"
-
-
-def test_the_error_shrinks_toward_the_market_by_the_gap():
-    setup = make_setup()
-    gap = {k: dict.fromkeys(wk.STATS, 0.5) for k in setup.projection}
-    with_gap = replace(setup, gap=gap)
-    k = setup.pool[0]
-    plain = rn.forward_world(with_gap, inputs(tau=0.0), 1, 0, 0.0).truth[k]["pts"]
-    shrunk = rn.forward_world(with_gap, inputs(tau=0.0), 1, 0, 0.5).truth[k]["pts"]
-    assert shrunk == pytest.approx(plain * np.exp(-0.25))
-
-
-def test_beliefs_refresh_weekly_and_are_shared():
-    setup = make_setup()
-    w = rn.forward_world(setup, inputs(tau=0.3, kappa=0.5, sigma_eta=0.0), 2, 0, 0.0)
-    k = setup.pool[0]
-    b0, b1, b4 = w.beliefs(0), w.beliefs(1), w.beliefs(4)
-    assert b0[k] == setup.projection[k]
-    truth = w.truth[k]["pts"]
-    assert abs(b1[k]["pts"] - truth) < abs(b0[k]["pts"] - truth) or truth == b0[k]["pts"]
-    assert abs(b4[k]["pts"] - truth) <= abs(b1[k]["pts"] - truth) + 1e-9
-    assert w.beliefs(1) is b1  # cached
-
-
 def test_news_of_an_absence_arrives_after_the_lag_and_day_one_statuses_stand():
     out = 1
     setup = make_setup(statuses={out: "O"})
     setup = replace(setup, returns={out: setup.start + timedelta(3)})
-    w = rn.forward_world(setup, inputs(lag=2), 3, 0, 0.0)
+    w = replay_of(setup, 3, 0, lag=2)
     status, returns = w.status_on(setup.start)
     assert status[out] == "O" and returns[out] == setup.start + timedelta(3)
     later, _ = w.status_on(setup.start + timedelta(3))
     assert out not in later
-    # A simulated absence is heard ``lag`` days after it began, never before.
+    # An absence in the recorded season is heard ``lag`` days after it began, never before,
+    # with a told return no earlier than the day it is heard.
+    heard = 0
     for k in setup.players:
-        for a in w.absences(k):
-            if a.start == 0:
-                continue
+        if k in setup.statuses:
+            continue
+        for i, a in enumerate(w.absences(k)):
             began = w.game_days[k][a.start]
-            s0, _ = w.status_on(began)
-            s1, r1 = w.status_on(began + timedelta(2))
-            if began + timedelta(2) <= setup.season_end and k not in setup.statuses:
-                assert s0.get(k) != "O" or k in setup.statuses
-                if began + timedelta(2) <= r1.get(k, began):
-                    assert s1.get(k) == "O"
-            break
+            on = began + timedelta(2)
+            if on > setup.season_end:
+                continue
+            if i == 0:
+                assert w.status_on(began)[0].get(k) is None
+                assert w.status_on(began + timedelta(1))[0].get(k) is None
+            s1, r1 = w.status_on(on)
+            assert s1.get(k) == "O" and r1[k] >= on
+            heard += 1
+    assert heard > 0
 
 
 def test_a_replay_world_plays_the_recorded_lines():
@@ -95,13 +61,18 @@ def test_a_replay_world_plays_the_recorded_lines():
     assert w.line(k, days[1]) is None  # a game day without a line: he sat out
     assert w.line(k, days[2]) == {"pts": 9.0}
     assert list(w.available(k)[:3]) == [True, False, True]
-    assert w.kind == "replay" and w.belief == "causal" and w.truth == {}
+    # A day his team does not play has no line either.
+    off = next(d for d in setup.days if setup.players[k].nba_team not in setup.schedule[d])
+    assert w.line(k, off) is None
+    # The seats read the causal belief: on the first day, the projection itself.
+    assert w.beliefs_on(days[0]) == w.causal.on(days[0])
+    assert w.beliefs_on(days[0])[k] == pytest.approx(setup.projection[k])
 
 
 # --------------------------------------------------------------------------- lockstep and pairing
 def test_the_same_arm_twice_shares_every_solve_and_differs_by_nothing():
     setup = make_setup()
-    w = rn.forward_world(setup, inputs(), 11, 0, 0.25)
+    w = replay_of(setup, 11, 0)
     a = arm("A", "exact")
     out = rn.paired(setup, w, a, a, me=1)
     assert all(v == 0 for v in out["delta"].values())
@@ -111,7 +82,7 @@ def test_the_same_arm_twice_shares_every_solve_and_differs_by_nothing():
 
 def test_two_arms_diverge_and_the_pairing_reports_both():
     setup = make_setup()
-    w = rn.forward_world(setup, inputs(), 11, 0, 0.25)
+    w = replay_of(setup, 11, 0)
     out = rn.paired(setup, w, arm("A", "exact"), arm("B", "ranking"), me=1)
     assert set(out["a"]) == set(rn.METRICS) == set(out["delta"])
     assert out["a"]["rank"] in {1.0, 2.0, 3.0, 4.0}
@@ -124,10 +95,10 @@ def test_two_arms_diverge_and_the_pairing_reports_both():
 
 
 def test_the_paired_difference_is_b_less_a_on_every_metric():
-    # Seed 1 at shrink 0.25 parts the two arms on all five metrics, so a reversed sign fails
+    # Path 0 of seed 2 parts the two arms on all five metrics, so a reversed sign fails
     # each of them: A less B would equal B less A only where the arms agree.
     setup = make_setup()
-    w = rn.forward_world(setup, inputs(), 1, 0, 0.25)
+    w = replay_of(setup, 2, 0)
     out = rn.paired(setup, w, arm("A", "exact"), arm("B", "ranking"), me=1)
     a, b, delta = out["a"], out["b"], out["delta"]
     assert all(a[k] is not None and b[k] is not None for k in rn.METRICS)
@@ -141,7 +112,7 @@ def test_the_paired_difference_is_b_less_a_on_every_metric():
 
 def test_common_random_numbers_a_roster_change_moves_no_other_players_line():
     setup = make_setup()
-    w = rn.forward_world(setup, inputs(), 5, 0, 0.0)
+    w = replay_of(setup, 5, 0)
     me = 1
     day = setup.start + timedelta(8)
     static = {t: op.Static() for t in setup.teams}
@@ -150,7 +121,7 @@ def test_common_random_numbers_a_roster_change_moves_no_other_players_line():
     (rq, rb) = rn.simulate(setup, w, [quiet, busy])
     assert rb.executed >= rq.executed == 0
     k = next(k for k in setup.pool if setup.players[k].nba_team in setup.schedule[day])
-    assert w.line(k, day) == rn.forward_world(setup, inputs(), 5, 0, 0.0).line(k, day)
+    assert w.line(k, day) == replay_of(setup, 5, 0).line(k, day)
 
 
 @dataclass(frozen=True)
@@ -173,7 +144,7 @@ def test_an_add_made_on_sunday_spends_the_ending_week_not_mondays():
     setup = make_setup(weeks=2, playoff_weeks=1, max_weekly_adds=1, bracket=False)
     sunday = setup.calendar.weeks[0].end
     setup = replace(setup, start=sunday)
-    w = rn.forward_world(setup, inputs(), 5, 0, 0.0)
+    w = replay_of(setup, 5, 0)
     static = {t: op.Static() for t in setup.teams}
     (both,) = rn.simulate(setup, w, [{**static, 1: OnDays((6, 0))}])
     assert both.executed == 2 and both.gone == 0
@@ -216,7 +187,7 @@ def test_held_slot_moves_land_and_a_returned_player_is_activated_in_a_run():
         statuses={hurt: "O", occupant: "O"},
         returns={hurt: back, occupant: back_occ},
     )
-    w = rn.forward_world(setup, inputs(), 11, 0, 0.0)
+    w = replay_of(setup, 11, 0)
     seat = Stasher()
     static = {t: op.Static() for t in setup.teams}
     (res,) = rn.simulate(setup, w, [{**static, 1: seat}])
@@ -225,7 +196,7 @@ def test_held_slot_moves_land_and_a_returned_player_is_activated_in_a_run():
     stashed = [day for day, _, held, _ in seat.seen if (hurt, "IL") in held]
     assert stashed and min(stashed) < back
     # No held player whose status has cleared is ever seen still in his slot (he may be stashed
-    # again later, when the hazard puts him out again).
+    # again later, when his recorded season has him out again).
     assert all(status.get(k) == "O" for _, _, held, status in seat.seen for k, _ in held)
     # The occupant, the best player here, is active from the morning of his return.
     assert all(occupant in active for day, active, _, _ in seat.seen if day == back_occ)
@@ -237,7 +208,7 @@ def test_the_room_rotates_arms_across_paths_and_pools_by_arm():
     arms = {"A": arm("A", "ranking"), "B": arm("B", "surrogate")}
     assert rn.rotate(["A", "B"], (1, 2, 3, 4), 0) == {1: "A", 2: "B", 3: "A", 4: "B"}
     assert rn.rotate(["A", "B"], (1, 2, 3, 4), 1) == {1: "B", 2: "A", 3: "B", 4: "A"}
-    w = rn.forward_world(setup, inputs(), 9, 1, 0.0)
+    w = replay_of(setup, 9, 1)
     out = rn.room(setup, w, arms, ["A", "B"], 1)
     assert out["seats"] == {"1": "B", "2": "A", "3": "B", "4": "A"}
     assert set(out["by_arm"]) == {"A", "B"}
@@ -268,57 +239,27 @@ def test_an_arm_comes_from_its_spec_and_a_bad_one_is_refused():
 
 
 def test_the_worlds_inputs_come_from_the_frozen_fit():
+    """A run reads the frozen fit's lag and its hash, nothing else: a fit with or without a
+    ``tau`` or a fitted refresh loads, the fitted lag before the defaults', 1 without either."""
     payload = {
-        "dispersion": {"pooled": PHI, "players": {"1001": {"pts": 2.0}}},
+        "dispersion": {"pooled": {"pts": 1.5}, "players": {}},
         "minutes": {"sigma": 0.2},
-        "hazard": {
-            "rate": HAZARD.rate,
-            "components": [
-                {
-                    "lo": c.lo,
-                    "hi": c.hi,
-                    "weight": c.weight,
-                    "lengths": {str(k): v for k, v in c.lengths.items()},
-                }
-                for c in HAZARD.components
-            ],
-            "runs": 100,
-            "played": 1000,
-            "players": 20,
-        },
         "tau": None,
         "refresh": None,
-        "parameters": {"refresh_defaults": {"kappa": 0.1, "sigma_eta": 0.05, "lag": 1}},
+        "parameters": {"refresh_defaults": {"kappa": 0.1, "sigma_eta": 0.05, "lag": 3}},
     }
-    with pytest.raises(ValueError):
-        rn.inputs_of(payload, "sha", None)
-    got = rn.inputs_of(payload, "sha", {"pts": 0.2})
-    assert got.hazard.rate == HAZARD.rate and got.hazard.components[0].lengths == {
-        1: 0.5,
-        2: 0.3,
-        3: 0.2,
-    }
-    assert got.phi_players["1001"] == {"pts": 2.0}
-    assert got.kappa == 0.1 and got.refresh_from == "defaults" and got.sha == "sha"
+    got = rn.inputs_of(payload, "sha")
+    assert got == rn.WorldInputs(3, "sha")
     fitted = rn.inputs_of(
-        {
-            **payload,
-            "tau": {"pts": 0.3},
-            "refresh": {"kappa": 0.2, "sigma_eta": 0.1, "fitted": True, "lag": 2},
-        },
+        {**payload, "tau": {"pts": 0.3}, "refresh": {"kappa": 0.2, "fitted": True, "lag": 2}},
         "sha",
-        None,
     )
-    assert (
-        fitted.tau == {"pts": 0.3}
-        and fitted.kappa == 0.2
-        and fitted.lag == 2
-        and fitted.refresh_from == "fitted"
-    )
+    assert fitted == rn.WorldInputs(2, "sha")
+    assert rn.inputs_of({}, "other") == rn.WorldInputs(1, "other")
 
 
-# --------------------------------------------------------------------------- the aggregate and verdict
-def test_aggregate_and_the_advisory_verdict():
+# --------------------------------------------------------------------------- the aggregate
+def test_aggregate_takes_each_metrics_mean_se_and_count():
     rows = [
         {"made_playoffs": 1.0, "rank": 2.0},
         {"made_playoffs": 0.0, "rank": 4.0},
@@ -328,16 +269,6 @@ def test_aggregate_and_the_advisory_verdict():
     assert agg["made_playoffs"]["mean"] == 0.5 and agg["made_playoffs"]["n"] == 2
     assert agg["made_playoffs"]["se"] == pytest.approx(0.5)
     assert agg["rank"]["n"] == 3 and agg["title"] == {"mean": None, "se": None, "n": 0}
-    good = {
-        "0.0": {"made_playoffs": {"mean": 0.01, "se": 0.02}},
-        "0.5": {"made_playoffs": {"mean": -0.01, "se": 0.02}},
-    }
-    assert rn.verdict(good)["passes"] is True
-    bad = {**good, "0.25": {"made_playoffs": {"mean": -0.05, "se": 0.01}}}
-    assert rn.verdict(bad)["passes"] is False
-    unknown = {**good, "0.25": {"made_playoffs": {"mean": None, "se": None}}}
-    assert rn.verdict(unknown)["passes"] is None
-    assert rn.verdict(good)["rule"] == "one-SE" and "advisory" in rn.verdict(good)["line"]
 
 
 # --------------------------------------------------------------------------- a replay's league

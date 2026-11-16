@@ -1,13 +1,11 @@
 """A replay's league and what its seats hear (#172, PR B1): everyone the log lists is in the
 league, the draft takes the projected players an opening-week roster shows, a player nobody
-projected is believed once he has played, the told return date's spread is a parameter, and the
-hold-out gate's inputs are the ones it had before."""
+projected is believed once he has played, and the told return date's spread is a parameter."""
 
 from __future__ import annotations
 
 from dataclasses import replace
 from datetime import date, timedelta
-from pathlib import Path
 
 import pytest
 
@@ -16,8 +14,8 @@ from pickandroll.sim import readers as reader
 from pickandroll.sim import run as rn
 from pickandroll.sim.belief import newcomer_prior, shrunk
 from pickandroll.sim.engine import mv, wk
-from pickandroll.sim.state import Member, initial, snake_draft
-from tests.sim.sim_league import KNOBS, inputs, make_data_dir
+from pickandroll.sim.state import Member, initial
+from tests.sim.sim_league import KNOBS, make_data_dir
 
 FIRST = date(2024, 10, 22)
 SLOTS = ("PG", "C", "Util", "BN")
@@ -144,31 +142,6 @@ def test_the_told_return_date_spread_is_a_parameter_and_zero_tells_the_true_day(
             assert r2[k] == max(heard, days[a.end] + timedelta(1 + noise))
             told_any += 1
     assert told_any == 10
-
-
-# --------------------------------------------------------------------------- the hold-out gate
-def test_the_hold_out_gate_keeps_its_league_and_its_figures(tmp_path: Path):
-    """Gate 1 still reads the players with 20 played games, every one drafted on his own realized
-    rates and believed at them all season; its figures on the synthetic data are the ones the
-    code before the causal belief gave (checked against main at cde02bd)."""
-    data = make_data_dir(tmp_path)
-    lines, members, scheduled = reader.replay_lines(data, 2025)
-    setup, kept = cli.hold_out_setup(2025, lines, members, scheduled)
-    full = {k for k, v in lines.items() if len(v) >= rn.GATE_MIN_GAMES}
-    assert set(setup.players) == set(kept) == full and len(full) == 82
-    truth = rn.realized_rates({k: lines[k] for k in full})
-    assert setup.projection == {k: dict(v) for k, v in truth.items()}
-    value = wk.per_game_values(truth, setup.cats, None)
-    want = snake_draft(list(truth), value, setup.teams, setup.spots())
-    assert setup.rosters == want and setup.pool == ()
-    w = rn.replay_world(setup, kept, 1, 3, 0, belief="fixed")
-    assert all(w.beliefs_on(d) == setup.projection for d in setup.days[::9])
-    g = cli.gate_hold_out_team_weeks(data, 2025, inputs(), 3, paths=4)
-    assert g["detail"]["n"] == 588 and g["detail"]["team_weeks"] == 84
-    assert [b["count"] for b in g["detail"]["buckets"]] == [286, 160, 64, 50, 28]
-    a = cli.gate_absences(data, 2025, inputs(), 3)
-    assert a["detail"]["n"] == 574
-    assert [b["count"] for b in a["detail"]["buckets"]] == [76, 65, 76, 144, 213]
 
 
 # --------------------------------------------------------------------------- the schedule (PR C2)

@@ -15,7 +15,7 @@ from pickandroll.sim import run as rn
 from pickandroll.sim.belief import CausalBelief, consistent, newcomer_prior, shrunk
 from pickandroll.sim.engine import STATS
 from tests.sim.draws import between
-from tests.sim.sim_league import inputs, make_data_dir, make_setup
+from tests.sim.sim_league import make_data_dir, make_setup
 
 D1 = date(2024, 10, 22)
 D2 = D1 + timedelta(2)
@@ -119,13 +119,12 @@ def test_a_player_nobody_projected_is_believed_from_the_day_after_his_first_game
     assert alone.of(9, D3) is None
 
 
-def test_the_replay_world_reads_the_causal_belief_by_day_and_the_gate_a_fixed_one():
+def test_the_replay_world_reads_the_causal_belief_by_day():
     setup = make_setup(teams=2, spots=3, pool=2, weeks=2, playoff_weeks=1)
     k = setup.pool[0]
     days = [d for d in setup.days if setup.players[k].nba_team in setup.schedule[d]]
     lines = {k: {days[0]: {"pts": 40.0}}}
     w = rn.replay_world(setup, lines, 1, 1, 0, {"pts": 4.0})
-    assert w.belief == "causal"
     before, after = w.beliefs_on(days[0]), w.beliefs_on(days[0] + timedelta(1))
     assert before[k] == consistent(setup.projection[k])
     p = setup.projection[k]["pts"]
@@ -134,27 +133,6 @@ def test_the_replay_world_reads_the_causal_belief_by_day_and_the_gate_a_fixed_on
     assert after[k]["reb"] == pytest.approx(
         fitmod.W_DEFAULT * setup.projection[k]["reb"] / (fitmod.W_DEFAULT + 1)
     )
-    with pytest.raises(ValueError, match="by day"):
-        w.beliefs(0)
-    fixed = rn.replay_world(setup, lines, 1, 1, 0, belief="fixed")
-    assert fixed.causal is None
-    assert all(fixed.beliefs_on(d) == setup.projection for d in setup.days)
-    with pytest.raises(ValueError, match="belief"):
-        rn.replay_world(setup, lines, 1, 1, 0, belief="refreshed")
-
-
-def test_a_forward_world_counts_its_refreshes_by_monday_as_the_day_loop_did():
-    setup = make_setup()
-    w = rn.forward_world(setup, inputs(), 1, 0, 0.0)
-    count, seen = 0, {}
-    for d in setup.days:
-        if setup.week_of(d) is None:
-            continue
-        if d.weekday() == 0 and d != setup.start:
-            count += 1
-        seen[d] = count
-    assert {d: w.week_index(d) for d in seen} == seen
-    assert w.beliefs_on(setup.days[-1]) is w.beliefs(seen[setup.days[-1]])
 
 
 # --------------------------------------------------------------------------- the weights
