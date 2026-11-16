@@ -401,17 +401,28 @@ class RefreshJob:
         :data:`WAIT_MARGIN` before the deadline (#180)."""
         return self.deadline is None or self.elapsed() + seconds + WAIT_MARGIN <= self.deadline
 
-    def end(self, status: str, error: str | None = None, **fields: Any) -> bool:
+    def end(
+        self,
+        status: str,
+        error: str | None = None,
+        log: Callable[[RefreshJob], None] | None = None,
+        **fields: Any,
+    ) -> bool:
         """End the job once: the first end sets ``status``, ``error``, ``fields`` and the time
         and says so; a later one (a stalled worker's, after the deadline ended its job) changes
-        nothing."""
+        nothing. The first end calls ``log`` with the ended job before it wakes whoever waits on
+        it (#396): a waiter, and a reader of the refresh log after it, always find the end line."""
         with self._ending:
             if self.finished_at is not None:
                 return False
             for name, value in fields.items():
                 setattr(self, name, value)
             self.status, self.error, self.finished_at = status, error, datetime.now(UTC)
-            self._ended.set()
+            try:
+                if log is not None:
+                    log(self)
+            finally:
+                self._ended.set()
             return True
 
     def wait(self, timeout: float) -> bool:
@@ -3184,8 +3195,8 @@ class SeasonService:
         """End ``job`` failed when it is running past its deadline (#166), its worker perhaps
         still in a read: logged, and the light and the next refresh see it ended."""
         running = job is not None and job.status == "running"
-        if running and job.overdue() and job.end("failed", job.late()):
-            log_refresh(self.data_dir, job)
+        if running and job.overdue():
+            job.end("failed", job.late(), log=self._log_refresh)
 
     def run_refresh(self, job: RefreshJob) -> RefreshJob:
         league = job.league
@@ -3272,9 +3283,11 @@ class SeasonService:
                     "retry_after": limited.retry_after,
                     "held": len(kept.earlier),
                 }
-            if job.end(status, error, resumed=len(hold.taken), **done):
-                log_refresh(self.data_dir, job)
+            job.end(status, error, log=self._log_refresh, resumed=len(hold.taken), **done)
         return job
+
+    def _log_refresh(self, job: RefreshJob) -> None:
+        log_refresh(self.data_dir, job)
 
     def _limited(self, job: RefreshJob, hold: Hold, exc: public.RateLimited) -> str:
         """The error of a refresh Yahoo's rate limit ended: the answer, where the job got to and

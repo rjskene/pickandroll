@@ -181,3 +181,48 @@ def test_the_status_light_reads_a_job_past_its_deadline_failed(client, monkeypat
     service.jobs[LEAGUE] = quiet
     service.expire(quiet)
     assert quiet.status == "running" and not quiet.overdue()
+
+
+def test_a_job_logs_its_end_before_it_wakes_its_waiter():
+    """#396: the first end writes the log line, then wakes whoever waits on the job, so a reader
+    of the refresh log after the wake always finds the end. A later end logs nothing, and a log
+    that raises still wakes the waiter."""
+    job = season_api.RefreshJob(LEAGUE)
+    seen = []
+
+    def log(ended: season_api.RefreshJob) -> None:
+        # Not woken yet, and the job already carries its end.
+        seen.append((ended.wait(0), ended.status, ended.error, ended.finished_at is not None))
+
+    assert job.end("failed", "stopped", log=log, rate_limited=True)
+    assert seen == [(False, "failed", "stopped", True)] and job.rate_limited
+    assert job.wait(0)
+    # A stalled worker's later end changes nothing and logs nothing.
+    assert not job.end("done", log=log)
+    assert len(seen) == 1 and job.status == "failed"
+
+    broken = season_api.RefreshJob(LEAGUE)
+
+    def fails(ended: season_api.RefreshJob) -> None:
+        raise RuntimeError("the log broke")
+
+    with pytest.raises(RuntimeError):
+        broken.end("done", log=fails)
+    assert broken.wait(0) and broken.status == "done"
+
+
+def test_a_waiter_woken_by_the_end_reads_the_end_line(client):
+    """The route's waiter and the refresh log (#396): woken by the job's end, a reader finds the
+    end line already written, from another thread, every time."""
+    service = client.app.state.seasons
+    for _ in range(50):
+        job = season_api.RefreshJob(LEAGUE)
+        service.jobs[LEAGUE] = job
+        season_api.log_refresh(client.data_dir, job)
+        ender = threading.Thread(
+            target=job.end, args=("done",), kwargs={"log": service._log_refresh}
+        )
+        ender.start()
+        assert job.wait(5)
+        assert logged(client)[-1]["status"] == "done"
+        ender.join()
