@@ -325,10 +325,13 @@ Each command runs as `python -m pickandroll.sim <command>`:
   oracle's error is drawn (default `stat`). `--news-sd` sets the told return date's spread in
   days (default 2). `--no-peek YYYY-MM-DD` runs the no-peek check instead, on one season only and
   its first served forecaster, and writes nothing. `--bbm-as espn --yahoo-as marcel` names the
-  two live sources' stand-ins, and each arm then believes by its `system` (below). The payload
-  (`replay_version` 5) keys by season what is one season's: the forecasters, the sources, the
+  two live sources' stand-ins, and each arm then believes by its `system` (below). `--adp espn
+  --adp-spread <base>,<growth>` drafts the league on the season's table of average draft
+  positions instead ("The draft market"); `--adp none` is the default. The payload
+  (`replay_version` 6) keys by season what is one season's: the forecasters, the sources, the
   weights, the players, the shape, the results, the counts, the season scale and the unprojected
-  count; `cells` says which were served and why the others were not.
+  count; `cells` says which were served and why the others were not, and `adp` what the league
+  was drafted on.
 - `replay --seasons 2022,2023,2024 --arms A.json B.json`: the paired design on a replay, arm A and
   arm B in one seat through one recorded season's world. A run names `--seats` (a room, as above) or
   `--arms` (exactly two spec files), never both and never neither. Each task drafts the league on
@@ -338,8 +341,8 @@ Each command runs as `python -m pickandroll.sim <command>`:
   the run's forecaster, whatever the arm believes. `--paths` is rounded up to a multiple of the
   league's twelve seats, and the command says so (20 becomes 24), so every seat is taken equally
   often in every cell. A replay records no market rate, so a `market` rival without a `rate` would
-  never move: it is refused by name, and until PR D4 a market rival's view is the run's forecaster's
-  draft-day ranking. A pair that is one seat by construction is refused by name, the knobs and
+  never move: it is refused by name. A market rival's view is the run's forecaster's draft-day
+  ranking, or under `--adp espn` the season's table (PR D4a, "The draft market"). A pair that is one seat by construction is refused by name, the knobs and
   fields it differs in listed with why none is read (**What each knob reads**); the same arm twice
   stays allowed (a check that the difference is zero). `--no-peek` checks the design the run names:
   with `--arms` it compares both arms' seasons' day records on path 0. The payload (`design:
@@ -458,7 +461,8 @@ took only players who went on to play twenty games. Replay figures from before i
 no `replay_version`) are superseded. A replay wrote `replay_version: 2` from then; 3 since a run
 names its forecasters (PR D1), its results and counts keyed by the forecaster's label (`prior`,
 `oracle:0.1`) where version 2 keyed them `prior:0`; it writes 4 since a run names several seasons
-(PR D2), what is one season's keyed by season.
+(PR D2), what is one season's keyed by season; 5 since the standalone cut (PR D3), its figures
+version 4's; and 6 since the draft market (PR D4a), its figures version 5's under `--adp none`.
 
 **The belief.** On day `d`, stat by stat, a seat believes
 `(w · the forecaster's figure + the sum of his lines dated before d) / (w + his games before d)`,
@@ -672,7 +676,30 @@ the snake, the best player left on its own board:
 - `--no-peek` checks the draft on the run's forecaster, so it is refused with `--adp espn`.
 
 `--adp none`, the default, is the draft as it was: a snake on the run's forecaster's values, the
-market's view the same values.
+market's view the same values. It is there so that a run before PR D4a can be run again and
+compared: what the market changes is read against it.
+
+**What a run records.** The payload's `adp` block names the source. Under a table it adds the
+spread as given, the rules above in words, and per season the table in counts (the players the
+log lists, those listed, those at the ceiling, those with no figure), the log's hash, and the
+drafted players the run's forecaster does not project over the drafts of the paths that stand.
+A pair also says whether its two arms shared one draft or each drafted apart. The figures stay
+in the log. A dry run prints each season's table in counts and the first task's drafts.
+
+**The two rules.**
+
+1. With `--adp none`, nothing moves: a replay's record equals the record before PR D4a key for
+   key, apart from the added `adp` block, the version and its reason, and what names the run (its
+   sha, times, host, path and name). Every pin the replay's tests held before stands unedited
+   but the version's.
+2. The tables are data. No player's name, no average draft position and no count measured on a
+   real log goes into the code, the tests, these docs, a PR or an issue: the tests draw made-up
+   positions (`tests/sim/sim_league.py`), and public text says in words what a real log shows.
+
+**Its limits.** The rivals' error is one spread for every rival, given and not fitted; nobody
+reaches for a position, a need or a run on a category. The market's view is the preseason's and
+never refreshed. And the table pools drafts of every scoring (above), so it is not a nine-category
+league's.
 
 ## The audit and the counts (`sim/audit.py`, `sim/counts.py`)
 

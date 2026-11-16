@@ -6,8 +6,9 @@ from __future__ import annotations
 import contextlib
 import io
 import json
-from datetime import timedelta
+from datetime import datetime, timedelta
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import numpy as np
 import pytest
@@ -21,6 +22,20 @@ from pickandroll.sim.engine import mv
 from tests.sim.sim_league import KNOBS, make_data_dir
 
 CATS = ("fg_pct", "ft_pct", "threes", "pts", "reb", "ast", "stl", "blk", "tov")
+#: The commands' clock in every test here: a weekday morning outside the routines' window, so
+#: the guard lets a run through whenever the suite runs.
+BUSINESS_HOURS = datetime(2026, 10, 27, 9, 0, tzinfo=ZoneInfo("America/Chicago"))
+#: What two runs of one replay differ in by construction: when they ran.
+WHEN = ("started_at", "finished_at")
+
+
+@pytest.fixture(scope="module", autouse=True)
+def pinned_clock():
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(ss, "now_local", lambda: BUSINESS_HOURS)
+        yield
+
+
 SPREAD = adp.Spread(2.0, 0.1)
 FLAT = adp.Spread(0.0, 0.0)
 
@@ -189,6 +204,7 @@ def pair_data(tmp_path_factory) -> Path:
         ("A", "bbm", "ranking"),
         ("B", "yahoo", "ranking"),
         ("C", "bbm", "static"),
+        ("D", "yahoo", "static"),
     ):
         spec = {
             "name": name,
@@ -284,3 +300,108 @@ def test_the_market_flags_are_refused_by_name(pair_data, capsys):
     assert ss.main([*flat, "--adp", "espn", "--adp-spread", "1,0", "--dry-run"]) == 2
     out = capsys.readouterr().out
     assert "refused: --adp espn: season 2026 has no draft table" in out and "tasks" not in out
+
+
+# --------------------------------------------------------------------------- the payload
+def _run(data: Path, *extra: str) -> dict:
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        code = ss.main(
+            [
+                "--data",
+                str(data),
+                "--rooms",
+                "0",
+                "replay",
+                "--seasons",
+                "2024",
+                "--paths",
+                "1",
+                "--seed",
+                "5",
+                "--workers",
+                "1",
+                *extra,
+            ]
+        )
+    out = buf.getvalue()
+    assert code == 0, out
+    (line_,) = [x for x in out.splitlines() if x.startswith("written: ")]
+    return json.loads(Path(line_.removeprefix("written: ")).read_text())
+
+
+def _as_written(payload: dict) -> str:
+    return json.dumps(
+        {k: v for k, v in payload.items() if k not in WHEN}, indent=1, sort_keys=True, default=str
+    )
+
+
+def test_a_replay_with_adp_none_named_is_the_replay_with_nothing_named(pair_data):
+    seats = ["--seats", str(pair_data / "A.json"), str(pair_data / "C.json")]
+    named = _run(pair_data, *seats, "--name", "same", "--adp", "none")
+    plain = _run(pair_data, *seats, "--name", "same")
+    assert _as_written(named) == _as_written(plain)
+    assert plain["replay_version"] == 6 and plain["adp"] == {"source": "none"}
+    assert plain["draft"].startswith("snake on the run's forecaster's projection")
+
+
+def test_a_replay_on_a_table_records_it_in_counts(pair_data):
+    seats = ["--seats", str(pair_data / "A.json"), str(pair_data / "C.json")]
+    p = _run(pair_data, *seats, "--adp", "espn", "--adp-spread", "2,0.1")
+    block = p["adp"]
+    assert block["source"] == "espn" and block["spread"] == {
+        "base": 2.0,
+        "growth": 0.1,
+        "given": "on the command line",
+    }
+    table, sha = reader.adp_table(pair_data, 2024, 2025)
+    season = block["seasons"]["2024"]
+    assert season == {
+        **table.payload(),
+        "log_sha256": sha,
+        "drafted_unprojected": season["drafted_unprojected"],
+    }
+    # A room's every seat drafts on its arm's board: no rival drafts a player nobody projects.
+    assert season["drafted_unprojected"] == {"drafts": 1, "total": 0, "mean": 0.0, "max": 0}
+    assert "pair" not in block and p["pool"]["draft"] == block["pool"]
+    assert p["draft"].startswith("snake in which each seat takes the best player left")
+    # No figure of the table is in the payload: only counts and the log's hash.
+    assert not any(str(x) in json.dumps(block) for x in table.picks.values() if x != int(x))
+
+
+def test_a_pair_on_two_beliefs_records_that_it_shares_no_draft(pair_data):
+    p = _run(
+        pair_data,
+        "--arms",
+        str(pair_data / "C.json"),
+        str(pair_data / "D.json"),
+        "--bbm-as",
+        "prior",
+        "--yahoo-as",
+        "oracle:0.2",
+        "--adp",
+        "espn",
+        "--adp-spread",
+        "2,0.1",
+    )
+    season = p["adp"]["seasons"]["2024"]
+    assert p["adp"]["pair"].endswith("the pair shares no draft")
+    assert season["drafts_per_path"] == [2]
+    assert season["drafted_unprojected"]["drafts"] == 2 * p["paths"]
+    # Every metric has a difference over the paths.
+    diff = p["results"]["2024"]["prior"]["difference"]
+    assert all(diff[m]["n"] == p["paths"] for m in rn.METRICS)
+
+
+def test_a_pair_on_one_belief_records_its_one_draft():
+    keys = [{"season": 2024, "forecaster": "prior", "path": p} for p in range(2)]
+    results = [{"drafts": 1, "drafted_unprojected": [n]} for n in (3, 1)]
+    table = adp.Table("espn", {1: 2.0, 2: 5.0}, 9.0, 4, 0, 6)
+    block = ss.adp_block("espn", SPREAD, {2024: (table, "ab")}, keys, results, paired=True)
+    assert block["pair"] == "one draft and one league, shared by both arms"
+    assert block["seasons"]["2024"] == {
+        **table.payload(),
+        "log_sha256": "ab",
+        "drafted_unprojected": {"drafts": 2, "total": 4, "mean": 2.0, "max": 3},
+        "drafts_per_path": [1],
+    }

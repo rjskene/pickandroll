@@ -420,6 +420,12 @@ def dry_run(key: Mapping[str, Any], first: Mapping[str, Any]) -> int:
                 f"unprojected, {whose}{label}, the first task: {row['seats']} on its seats' "
                 f"rosters, {row['all']} on all"
             )
+    if "drafted_unprojected" in first:
+        print(
+            f"draft market, the first task: {first['drafts']} draft(s), "
+            f"{', '.join(str(n) for n in first['drafted_unprojected'])} drafted player(s) the "
+            "run's forecaster does not project"
+        )
     if "delta" in first and "seat" in first:
         shown = {
             side: ", ".join(f"{m} {v:g}" for m, v in first[side].items() if v is not None)
@@ -830,10 +836,32 @@ def task_paired(
 #: keyed by the forecaster's label (``prior``, ``oracle:0.1``), where version 2 keyed them by kind
 #: and spread (``prior:0``); 2 since its seats believe only the games played (PR B1), a version 1
 #: replay's seats having seen each season's rates.
-REPLAY_VERSION = 5
+REPLAY_VERSION = 6
 REPLAY_VERSION_WHY = (
-    "5: the standalone cut: the payload names nothing of a live league or a drawn world (no gap, "
-    "refresh or tau); the figures are version 4's"
+    "6: the draft market (--adp): the payload names what the league was drafted on (adp); "
+    "with --adp none the figures are version 5's"
+)
+#: What a replay under a table drafts on (#172, PR D4a), for its payload.
+ADP_RIVAL = (
+    "a rival seat's board: each listed player's average pick plus a normal draw at base + "
+    "growth x pick picks, no bias, one draw a listed player; the players the table does not list "
+    "below every listed one, by the run's forecaster's draft-day value"
+)
+ADP_SEAT = (
+    "an arm's seat's board: its own forecaster's per-game value on draft day (a system or blend "
+    "seat's stand-in belief); a player it does not project is not on it"
+)
+ADP_MARKET = (
+    "the market's view: the negative of a listed player's average pick, the unlisted below by "
+    "the run's forecaster's draft-day value; the preseason's, never refreshed"
+)
+ADP_POOL = (
+    "the players with a scheduled game in the season's first {days} days that the run's "
+    "forecaster projects or the table lists"
+)
+ADP_APART = (
+    "the two arms' draft-day beliefs differ, so each arm's season is a league of its own from "
+    "the draft on, on the same (seed, path) and the same rivals' boards: the pair shares no draft"
 )
 BELIEF_RULE = (
     "per stat, (w * the forecaster's figure + the sum of his lines dated before the day) / "
@@ -1366,6 +1394,12 @@ def cmd_replay(args: argparse.Namespace) -> int:
         return 2
     for line_ in cells_lines(reads, named):
         print(line_)
+    for t, (table, sha) in tables.items():
+        print(
+            f"draft market, {t}: {args.adp} table, {len(table.picks)} listed, "
+            f"{table.at_ceiling} at the ceiling, log {sha[:12]}; spread {spread.base:g},"
+            f"{spread.growth:g} given"
+        )
     if not any(r.served for r in reads):
         print("refused: no cell is left: no forecaster named serves any season named")
         return 2
@@ -1512,7 +1546,13 @@ def cmd_replay(args: argparse.Namespace) -> int:
             f"snake on the run's forecaster's projection, over {payload['pool']['draft']}; an "
             "arm on a forecaster of its own reads it from the season's first day, not at the "
             "draft"
+        )
+        if spread is None
+        else (
+            "snake in which each seat takes the best player left on its own board (adp): the "
+            "rivals' on the season's table, an arm's seat's on its own forecaster"
         ),
+        "adp": adp_block(args.adp, spread, tables, keys, results, paired),
         "forecasters": {
             str(r.season): forecasters_block(
                 r.served, r.fixed, r.lines, args.seed, args.shape, sources, r.fits
@@ -1539,6 +1579,8 @@ def cmd_replay(args: argparse.Namespace) -> int:
         "audit": note,
         "confirmation": None,
     }
+    if spread is not None:
+        payload["pool"]["draft"] = ADP_POOL.format(days=rn.OPENING_DAYS)
     if paired:
         payload |= paired_blocks(keys, results, arms, paths)
         payload["verdict"] = verdict_block(payload, named, seasons, sources, note)
@@ -1708,6 +1750,57 @@ def verdict_lines(v: Mapping[str, Any]) -> list[str]:
     else:
         verdict = "holds" if v["passes"] else "does not hold: " + "; ".join(v["failed"])
     out.append(f"verdict ({v['rule']}, advisory): {verdict}")
+    return out
+
+
+def adp_block(
+    source: str,
+    spread: adp.Spread | None,
+    tables: Mapping[int, tuple[adp.Table, str]],
+    keys: Sequence[Mapping[str, Any]],
+    results: Sequence[Mapping[str, Any]],
+    paired: bool,
+) -> dict[str, Any]:
+    """What a replay's league was drafted on (#172, PR D4a): the source and, under a table, the
+    given spread, the rules, and per season the table in counts (no figure: they stay in the
+    log), the log's hash, and the drafted players the run's forecaster does not project, over
+    the drafts of the paths that stand."""
+    if spread is None:
+        return {"source": source}
+    drafted: dict[str, list[int]] = {}
+    drafts: dict[str, set[int]] = {}
+    for key, res in zip(keys, results, strict=True):
+        t = str(key["season"])
+        drafted.setdefault(t, []).extend(res["drafted_unprojected"])
+        drafts.setdefault(t, set()).add(res["drafts"])
+    seasons = {}
+    for season, (table, sha) in tables.items():
+        t = str(season)
+        got = drafted.get(t, [])
+        seasons[t] = {
+            **table.payload(),
+            "log_sha256": sha,
+            "drafted_unprojected": {
+                "drafts": len(got),
+                "total": sum(got),
+                "mean": sum(got) / len(got) if got else None,
+                "max": max(got, default=None),
+            },
+        }
+        if paired:
+            seasons[t]["drafts_per_path"] = sorted(drafts.get(t, set()))
+    out: dict[str, Any] = {
+        "source": source,
+        "spread": spread.payload(),
+        "rival": ADP_RIVAL,
+        "seat": ADP_SEAT,
+        "market": ADP_MARKET,
+        "pool": ADP_POOL.format(days=rn.OPENING_DAYS),
+        "seasons": seasons,
+    }
+    if paired:
+        apart = any(2 in v for v in drafts.values())
+        out["pair"] = ADP_APART if apart else "one draft and one league, shared by both arms"
     return out
 
 
