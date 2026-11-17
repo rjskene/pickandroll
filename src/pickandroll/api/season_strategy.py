@@ -38,6 +38,7 @@ from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from typing import Any
 
+from ..optim import pool as pools
 from ..optim.pool import background_pool
 from ..season import moves as mv
 from ..season import strategy as st
@@ -281,7 +282,7 @@ class Run:
         for w in self.weights:
             self._step(f"linear program: {w.label}")
             if w.key in futures:
-                milp = futures[w.key].result()
+                milp = pools.result(futures[w.key])
             else:
                 milp = st.solve_milp(p, curves, pool, w.lam, wl, keep, searched[w.key])
             if self.cancelled:

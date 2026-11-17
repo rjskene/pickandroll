@@ -14,6 +14,11 @@ Every pool starts its workers by ``spawn``, on every platform (#385). Linux's de
 copies a process whose HiGHS has already solved in another thread, and a solve in such a worker
 never finishes: it spins at full CPU and the pool waits forever. macOS spawns by default, so the
 Mac and the droplet now start workers the same way.
+
+Every wait on a pool goes through :func:`completed` (#401): it waits in short slices and stops
+once :func:`shutdown_pool` has run. A terminated worker's running future is not always resolved
+(the pool's management thread can exit first), and a bare ``as_completed`` then waited forever:
+the solver thread never returned and held the stopped API up.
 """
 
 from __future__ import annotations
@@ -23,8 +28,8 @@ import multiprocessing
 import os
 import threading
 import time
-from collections.abc import Callable
-from concurrent.futures import ProcessPoolExecutor
+from collections.abc import Callable, Iterable, Iterator
+from concurrent.futures import FIRST_COMPLETED, Future, ProcessPoolExecutor, wait
 
 _POOL: ProcessPoolExecutor | None = None
 _SIZE: int | None = None
@@ -39,6 +44,15 @@ LIVE_CORES = 6
 PARENT_POLL_SECONDS = 1.0
 #: How every pool starts its workers (#385): a fresh interpreter, never a fork of this one.
 START_METHOD = "spawn"
+#: Seconds a wait on a pool waits before it looks at the stop again (#401).
+WAIT_SLICE_SECONDS = 0.5
+#: How many times :func:`shutdown_pool` has run: a wait begun before a shutdown stops (#401).
+_SHUTDOWNS = 0
+_SHUTDOWNS_LOCK = threading.Lock()
+
+
+class PoolStopped(RuntimeError):
+    """The pools were shut down while a caller waited on them (#401)."""
 
 
 def _exit_with(parent: int) -> None:
@@ -100,6 +114,31 @@ def background_pool() -> ProcessPoolExecutor:
     return _BACKGROUND
 
 
+def completed(futures: Iterable[Future]) -> Iterator[Future]:
+    """``as_completed`` that a shutdown ends (#401): each future as it finishes, the wait taken in
+    slices of :data:`WAIT_SLICE_SECONDS`. Once :func:`shutdown_pool` has run since the call, the
+    futures still waiting are cancelled and :class:`PoolStopped` is raised, so the caller reports
+    a failure as for any other. Nothing else changes: every future comes, as it finishes."""
+    return _completed(set(futures), _SHUTDOWNS)
+
+
+def result(future: Future):
+    """One future's result, waited on as :func:`completed` waits: a shutdown ends it (#401)."""
+    for done in completed([future]):
+        return done.result()
+    raise PoolStopped("no future to wait on")  # unreachable: one future always comes
+
+
+def _completed(pending: set[Future], began: int) -> Iterator[Future]:
+    while pending:
+        if _SHUTDOWNS != began:
+            for future in pending:
+                future.cancel()
+            raise PoolStopped(f"the process pools were shut down with {len(pending)} jobs waiting")
+        done, pending = wait(pending, timeout=WAIT_SLICE_SECONDS, return_when=FIRST_COMPLETED)
+        yield from done
+
+
 def _close(pool: ProcessPoolExecutor, terminate: bool) -> None:
     workers = list((getattr(pool, "_processes", None) or {}).values())
     pool.shutdown(wait=False, cancel_futures=True)
@@ -112,8 +151,11 @@ def _close(pool: ProcessPoolExecutor, terminate: bool) -> None:
 
 def shutdown_pool(terminate: bool = False) -> None:
     """Close both pools. ``terminate`` also stops the workers mid-solve and waits for them (the
-    API's shutdown, the test session's end); the default lets a running solve finish."""
-    global _POOL, _SIZE, _BACKGROUND
+    API's shutdown, the test session's end); the default lets a running solve finish. Every
+    wait on them (:func:`completed`) stops first, so no thread waits on a pool that is gone."""
+    global _POOL, _SIZE, _BACKGROUND, _SHUTDOWNS
+    with _SHUTDOWNS_LOCK:
+        _SHUTDOWNS += 1
     if _POOL is not None:
         _close(_POOL, terminate)
         _POOL = None
