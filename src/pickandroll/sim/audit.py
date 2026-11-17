@@ -126,13 +126,17 @@ def weekly_adds(setup: Setup, today: Day, before: Day | None) -> Found:
 
 def lands_next_day(setup: Setup, today: Day, before: Day | None) -> Found:
     """A move decided on day d lands no earlier than d + 1: every player who joined a roster
-    today is the add of a move the same team queued on the day before (the setup's rosters and
-    no queue on the first day)."""
+    today is the add of a move the same team queued on the day before, or of a claim it had
+    open the day before whose player clears today (a claim lands on its clear date, never the
+    day it is made; #172, PR Fa); the setup's rosters and no queue on the first day."""
     was = _rosters_before(setup, before)
     queued = {} if before is None else before.state.pending
+    claims = {} if before is None else before.state.claims
     for team, roster in sorted(today.state.rosters.items()):
         had = {k for k, _ in was.get(team, ())}
-        due = {m.add for m in queued.get(team, ())}
+        due = {m.add for m in queued.get(team, ())} | {
+            c.move.add for c in claims.get(team, ()) if c.clears <= today.day
+        }
         for k, _ in roster:
             if k not in had and k not in due:
                 yield team, f"player {k} joined without a move queued the day before"

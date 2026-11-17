@@ -673,6 +673,12 @@ def simulate(
     holds = [holds_of(w, v) for v in variants]
     labels = sorted({label for h in holds for label in h.values()})
     made: Week | None = None  # the week of the last simulated day, when yesterday's moves were made
+    waiting = setup.waiting
+
+    def waiver_of(day: date) -> tuple[date, int] | None:
+        """Today and the waiver days, for the players who leave a roster this morning."""
+        return (day, setup.waiver_days) if waiting else None
+
     for di, day in enumerate(setup.days):
         week = setup.week_of(day)
         if week is None:
@@ -689,12 +695,19 @@ def simulate(
         ]
         # Yesterday's moves land first, cleared held players back and the held-slot moves made
         # before them: on a Monday they were made on Sunday and spend the ending week's adds, so
-        # the week's count starts over only once they are in.
+        # the week's count starts over only once they are in. In a waiver league the claims on
+        # the players clearing today are decided before anything else lands (PR Fa), each won
+        # one charged to the same week as yesterday's moves: the week of the day before.
         order = _rotation(setup.teams, di)
         due = [s.pending for s in states]
         before = [s.executed_by for s in states]
+        if waiting:
+            states = [
+                policy.clear_waivers(s, day, spots, slot_counts, status, setup.waiver_days)
+                for s in states
+            ]
         states = [
-            policy.land(s, order, spots, slot_counts, status, value, values[vi])
+            policy.land(s, order, spots, slot_counts, status, value, values[vi], waiver_of(day))
             for vi, s in enumerate(states)
         ]
         for vi, s in enumerate(states):
@@ -728,7 +741,14 @@ def simulate(
                     solves[vi] += decision.solves
                 decided[team] = decision
                 state = policy.queue(
-                    state, team, decision, _cap(strat), setup.max_weekly_adds, plans[vi], spots
+                    state,
+                    team,
+                    decision,
+                    _cap(strat),
+                    setup.max_weekly_adds,
+                    plans[vi],
+                    spots,
+                    setup,
                 )
             states[vi] = state
             lineup = {
@@ -1228,6 +1248,8 @@ def replay_setup(
     weekly_adds: int | None = REPLAY_WEEKLY_ADDS,
     scoring: str = "categories",
     points: Mapping[str, float] | None = None,
+    waivers: str = "none",
+    waiver_days: int = shapes.WAIVER_DAYS,
 ) -> Setup:
     """A made-up league on a recorded season, from what is known before it starts. Its players
     are everyone ``players`` lists with a scheduled game, projected or not; ``teams`` seats
@@ -1256,7 +1278,9 @@ def replay_setup(
     a table too, the setup's categories are fantasy points alone and the standings break a tie
     on points for (``league.TIEBREAK_POINTS``); the default is the nine categories. The held
     slots arrive in ``slots`` after the bench: the draft takes the active spots only, so a held
-    slot starts the season empty."""
+    slot starts the season empty. The waivers (PR Fa, ``shapes.WAIVERS``): ``waivers`` and a
+    dropped player's ``waiver_days``; the first priority order is the reverse of the draft's
+    (``state.initial``)."""
     if (scoring == "points") != bool(points):
         raise ValueError(f"scoring {scoring!r} with points {points!r}: a points league has a table")
     schedule: dict[date, set[str]] = {}
@@ -1329,6 +1353,8 @@ def replay_setup(
         spec=spec,
         scoring="points" if table else "categories",
         points=table,
+        waivers=waivers,
+        waiver_days=waiver_days,
     )
 
 
