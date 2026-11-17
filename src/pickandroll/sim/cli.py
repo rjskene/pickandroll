@@ -298,10 +298,12 @@ def base_payload(
     fit: Mapping[str, Any],
     workers: int,
     arms: Mapping[str, rn.Arm] | None = None,
+    executions: str = EXECUTIONS,
 ) -> dict[str, Any]:
     """The payload's common part. ``arms`` by their key in the payload (``a`` and ``b`` in a
     pair, the names in a room): each arm's fields and its surrogate's pool and days; none
-    (validate) for the live route's, the surrogate gate's."""
+    (validate) for the live route's, the surrogate gate's. ``executions``, the run's execution
+    model (``policy.executions_of`` its waivers, PR Fa)."""
     fields = {k: arm.fields for k, arm in (arms or {}).items()} or {"gate": policy.Fields()}
     return {
         "kind": kind,
@@ -315,7 +317,7 @@ def base_payload(
         "fit_sha": sha,
         "fit_file": str(fit_path),
         "hold_out": fit.get("hold_out", HOLD_OUT),
-        "executions": EXECUTIONS,
+        "executions": executions,
         "fields": {k: f.payload() for k, f in fields.items()},
         "surrogate": {
             k: {"pool": f.pool, "days": list(f.surrogate_days), "plan": "daily"}
@@ -363,16 +365,35 @@ COUNTS_NOTE = {
     "starter_games": "games the day's starters played",
     "pooling": "a seat's season, the mean over the arm's seats a path, then over paths",
 }
+#: What each claim count is (PR Fa): a waiver run's only, beside :data:`COUNTS_NOTE`.
+CLAIMS_NOTE = {
+    "claims_placed": "waiver claims placed",
+    "claims_won": "claims won: the seat had the best priority among the claims open that morning",
+    "claims_lost": "claims lost: a team with better priority took the player",
+    "claims_failed": "claims won the roster could not take (the drop gone, no spot open)",
+    "claims_behind": "claims decided with a team ahead of the seat in the order",
+    "claims_behind_lost": "of those, the claims lost",
+}
+
+
+def counts_note(waivers: str = "none") -> dict[str, str]:
+    """The counts' note for a run under ``waivers``: :data:`COUNTS_NOTE`, and the claims' too in
+    a waiver run."""
+    return COUNTS_NOTE if waivers == "none" else {**COUNTS_NOTE, **CLAIMS_NOTE}
 
 
 def audited(
-    keys: Sequence[Mapping[str, Any]], results: Sequence[Mapping[str, Any]]
+    keys: Sequence[Mapping[str, Any]],
+    results: Sequence[Mapping[str, Any]],
+    rules: Sequence[audit.Rule] | None = None,
 ) -> tuple[list[bool], dict[str, Any]]:
     """Which tasks stand and the payload's audit block. A task with a breach is a voided path: it
-    is left out of every aggregate, and each breach is listed with the task it voids."""
+    is left out of every aggregate, and each breach is listed with the task it voids. ``rules``,
+    the rules the run was held to (``audit.rules_of`` its waivers; :data:`audit.RULES` by
+    default)."""
     keep = [not r.get("breaches") for r in results]
     return keep, {
-        "rules": audit.names(),
+        "rules": audit.names(rules),
         "breaches": [
             {**key, **b}
             for key, r in zip(keys, results, strict=True)
@@ -396,13 +417,19 @@ def audit_exit(note: Mapping[str, Any]) -> int:
     return AUDIT_EXIT
 
 
-def dry_run(key: Mapping[str, Any], first: Mapping[str, Any]) -> int:
+def dry_run(
+    key: Mapping[str, Any],
+    first: Mapping[str, Any],
+    rules: Sequence[audit.Rule] | None = None,
+) -> int:
     """A dry run's one task: its counts and season scale by arm and its audit printed, nothing
     written. A breach in it exits with :data:`AUDIT_EXIT` all the same: a dry run is a run the
-    audit reads too."""
+    audit reads too (``rules``, as :func:`audited`)."""
     for arm, row in (first.get("counts") or {}).items():
         if row:
-            shown = ", ".join(f"{m} {row[m]:.4g}" for m in ct.METRICS if row.get(m) is not None)
+            shown = ", ".join(
+                f"{m} {row[m]:.4g}" for m in ct.metrics_in([row]) if row.get(m) is not None
+            )
             print(f"counts, {arm}, the first task: {shown}")
     for arm, row in (first.get("scale") or {}).items():
         if row:
@@ -436,7 +463,7 @@ def dry_run(key: Mapping[str, Any], first: Mapping[str, Any]) -> int:
             f"pair, the first task: seat {first['seat']}; A {shown['a']}; B {shown['b']}; "
             f"B less A {shown['delta']}"
         )
-    _, note = audited([key], [first])
+    _, note = audited([key], [first], rules)
     print("dry run, nothing written")
     return audit_exit(note)
 
@@ -444,7 +471,7 @@ def dry_run(key: Mapping[str, Any], first: Mapping[str, Any]) -> int:
 def counts_of(rows: Sequence[Any]) -> dict[str, Any] | None:
     """The counts of the paths that stand, pooled like the outcomes; None without a row."""
     have = [r for r in rows if r is not None]
-    return rn.aggregate(have, ct.METRICS) if have else None
+    return rn.aggregate(have, ct.metrics_in(have)) if have else None
 
 
 # --------------------------------------------------------------------------- the knobs (PR C)
@@ -461,6 +488,20 @@ SCALE_NOTE = (
     "costing season value. Each the mean over the paths that stand; null on the ranking tier and "
     "a static seat."
 )
+
+
+#: What the season scale's gain is in a points league (#172, PR Fa: D4c's points runs).
+SCALE_NOTE_POINTS = (
+    " In this points league the gain is in expected matchups won on the week's fantasy points: "
+    "each week's chance of outscoring the opponent (a later week's the mean over the field), "
+    "summed over the key's weeks."
+)
+
+
+def scale_note(scoring: str = "categories") -> str:
+    """The season scale's note for a run that scores by ``scoring``: a points run's says what
+    the gain is there; a categories run's is :data:`SCALE_NOTE` as it was."""
+    return SCALE_NOTE + SCALE_NOTE_POINTS if scoring == "points" else SCALE_NOTE
 
 
 def scale_of(rows: Sequence[Mapping[str, Any] | None]) -> dict[str, Any] | None:
@@ -657,7 +698,7 @@ def replay_setup_of(
     table of average draft positions (``draft``, #172, PR D4a), in the path's league shape
     (``league``, #172, PR D4b; the fixed shape by default) under the run's league rules
     (``league_rules``, PR D4c: the scoring, a points table and the held slots after the
-    shape's bench; today's by default)."""
+    shape's bench; PR Fa: the waivers; today's by default)."""
     args = league.setup_args()
     return rn.replay_setup(
         season,
@@ -670,6 +711,8 @@ def replay_setup_of(
         **{**args, "slots": league_rules.slots(args["slots"])},
         scoring=league_rules.scoring,
         points=league_rules.table,
+        waivers=league_rules.waivers,
+        waiver_days=league_rules.waiver_days,
     )
 
 
@@ -1004,7 +1047,8 @@ def task_paired(
     return out
 
 
-#: The replay's version in its payload: 8 since the league rules (#172, PR D4c), 7 since the
+#: The replay's version in its payload: 9 since the waivers (#172, PR Fa), 8 since the league
+#: rules (PR D4c), 7 since the
 #: league generator (PR D4b), 6 since the draft market (PR D4a), each as its reason says; 5
 #: since the standalone cut (PR D3): the payload
 #: names nothing of a live league or a drawn world (its ``gap``, ``refresh`` and ``tau`` are
@@ -1016,11 +1060,12 @@ def task_paired(
 #: keyed by the forecaster's label (``prior``, ``oracle:0.1``), where version 2 keyed them by kind
 #: and spread (``prior:0``); 2 since its seats believe only the games played (PR B1), a version 1
 #: replay's seats having seen each season's rates.
-REPLAY_VERSION = 8
+REPLAY_VERSION = 9
 REPLAY_VERSION_WHY = (
-    "8: the league rules (--scoring, --points, --held): the league block names the run's "
-    "scoring, its points table and its held slots (league.rules), one set for every path; with "
-    "nothing named, the nine categories and no held slot, the figures are version 7's"
+    "9: the waivers (--waivers, --waiver-days): with --waivers priority a dropped player waits "
+    "his waiver days and a claim on him is decided by rolling waiver priority, the league block's "
+    "rules name the waivers and the wait, the audit holds two rules more and the counts count "
+    "the claims; with nothing named, no waivers, the figures are version 8's"
 )
 #: What a replay under a table drafts on (#172, PR D4a), for its payload.
 ADP_RIVAL = (
@@ -1602,7 +1647,8 @@ def cmd_replay(args: argparse.Namespace) -> int:
                 else shapes.POINTS_DEFAULT
             )
         held = shapes.parse_held(args.held) if args.held is not None else ()
-        league_rules = shapes.LeagueRules(args.scoring, table, held)
+        waivers, waiver_days = shapes.parse_waivers(args.waivers, args.waiver_days)
+        league_rules = shapes.LeagueRules(args.scoring, table, held, waivers, waiver_days)
     except ValueError as e:
         print(f"refused: {e}")
         return 2
@@ -1852,19 +1898,30 @@ def cmd_replay(args: argparse.Namespace) -> int:
             f"the task timed is path {slow}, on the grid's largest draft with its loosest add "
             f"limit ({visits[slow].shape.label()}): the estimate errs long"
         )
+    rules = audit.rules_of(league_rules.waivers)
     if args.dry_run:
-        return dry_run(keys[slow], first_run)
+        return dry_run(keys[slow], first_run, rules)
     ok, why = guard(hours, rooms=args.rooms, announced=args.announced)
     if not ok:
         print(f"refused: {why}")
         return 2
     rest = rn.run_tasks(task, tasks[:slow] + tasks[slow + 1 :], workers)
     results = [*rest[:slow], first_run, *rest[slow:]]
-    keep, note = audited(keys, results)
+    keep, note = audited(keys, results, rules)
     keys = [k for k, ok_ in zip(keys, keep, strict=True) if ok_]
     results = [r for r, ok_ in zip(results, keep, strict=True) if ok_]
     run_name = args.name or "replay-" + "-".join(str(t) for t in seasons)
-    payload = base_payload("replay", run_name, started, sha, fit_path, fit, workers, arms)
+    payload = base_payload(
+        "replay",
+        run_name,
+        started,
+        sha,
+        fit_path,
+        fit,
+        workers,
+        arms,
+        policy.executions_of(league_rules.waivers),
+    )
     payload |= replay_notes({str(r.season): r.fits for r in reads}, args.news_sd)
     payload |= {
         "seasons": seasons,
@@ -1918,10 +1975,14 @@ def cmd_replay(args: argparse.Namespace) -> int:
     if spread is not None:
         payload["pool"]["draft"] = ADP_POOL.format(days=rn.OPENING_DAYS)
     if paired:
-        payload |= paired_blocks(keys, results, arms, paths, grid)
+        payload |= paired_blocks(
+            keys, results, arms, paths, grid, league_rules.scoring, league_rules.waivers
+        )
         payload["verdict"] = verdict_block(payload, named, seasons, sources, note)
     else:
-        payload |= room_blocks(keys, results, seats, grid)
+        payload |= room_blocks(
+            keys, results, seats, grid, league_rules.scoring, league_rules.waivers
+        )
         if sources is not None:
             payload["result_is"] = ROOM_RESULT
     look = None
@@ -2146,10 +2207,13 @@ def room_blocks(
     results: Sequence[Mapping[str, Any]],
     seats: Sequence[str],
     grid: shapes.Grid = shapes.FIXED_GRID,
+    scoring: str = "categories",
+    waivers: str = "none",
 ) -> dict[str, Any]:
     """A room's figures, keyed by season and then by forecaster: each arm's outcomes and counts
-    pooled over its seats and the paths that stand, each arm's season scale by season, the
-    unprojected count by cell."""
+    pooled over its seats and the paths that stand (the counts' note the run's ``waivers``',
+    :func:`counts_note`), each arm's season scale by season (its note the run's ``scoring``'s,
+    :func:`scale_note`), the unprojected count by cell."""
     by_cell: dict[str, dict[str, dict[str, list[dict[str, Any]]]]] = {}
     counts_by_cell: dict[str, dict[str, dict[str, list[Any]]]] = {}
     unprojected: dict[str, dict[str, list[Any]]] = {}
@@ -2174,13 +2238,13 @@ def room_blocks(
             for t, by_label in by_cell.items()
         },
         "season_scale": {
-            "note": SCALE_NOTE,
+            "note": scale_note(scoring),
             "by_season": {
                 t: {arm: scale_of(rows) for arm, rows in d.items()} for t, d in scales.items()
             },
         },
         "counts": {
-            "note": COUNTS_NOTE,
+            "note": counts_note(waivers),
             "rivals": None,
             "by_season": {
                 t: {
@@ -2337,12 +2401,15 @@ def paired_blocks(
     arms: Mapping[str, rn.Arm],
     paths: int,
     grid: shapes.Grid = shapes.FIXED_GRID,
+    scoring: str = "categories",
+    waivers: str = "none",
 ) -> dict[str, Any]:
     """The pair's figures, keyed by season and then by forecaster: each arm's outcomes, the
-    difference (B less A) over the paths that stand with how many are distinct, the counts by
-    arm and for the rivals, each arm's season scale by season, the unprojected count by cell and
-    arm, the seat rule and each path's seat, and the rivals each arm faced. On a grid of more
-    than one league shape, the by-axis table (:func:`by_axis`, #172, PR D4b)."""
+    difference (B less A) over the paths that stand with how many are distinct, the counts by arm
+    and for the rivals (their note the run's ``waivers``', :func:`counts_note`), each arm's season
+    scale by season (its note the run's ``scoring``'s, :func:`scale_note`), the unprojected count by
+    cell and arm, the seat rule and each path's seat, and the rivals each arm faced. On a grid of
+    more than one league shape, the by-axis table (:func:`by_axis`, #172, PR D4b)."""
     rows: dict[str, dict[str, list[Mapping[str, Any]]]] = {}
     scales: dict[str, dict[str, list[Any]]] = {}
     for key, res in zip(keys, results, strict=True):
@@ -2378,13 +2445,13 @@ def paired_blocks(
         "difference": "b less a",
         "results": {t: {label: cell(rs) for label, rs in d.items()} for t, d in rows.items()},
         "season_scale": {
-            "note": SCALE_NOTE,
+            "note": scale_note(scoring),
             "by_season": {
                 t: {side: scale_of(rs) for side, rs in d.items()} for t, d in scales.items()
             },
         },
         "counts": {
-            "note": COUNTS_NOTE,
+            "note": counts_note(waivers),
             "rivals": "the seats other than the pair's, both arms' seasons, as one row",
             "by_season": {
                 t: {
@@ -2709,6 +2776,21 @@ def main(argv: list[str] | None = None) -> int:
         metavar="IL=N,IL+=N",
         help="the held slots after the bench, on every path, as IL=2,IL+=1: IL 0 to 2, IL+ 0 or 1 "
         "(default none)",
+    )
+    re_.add_argument(
+        "--waivers",
+        default="none",
+        metavar="KIND",
+        help="how a dropped player is added back, on every path: none, a free agent the next "
+        "morning; priority, he waits --waiver-days and a claim on him goes by rolling waiver "
+        "priority (default none)",
+    )
+    re_.add_argument(
+        "--waiver-days",
+        default=None,
+        metavar="N",
+        help=f"with --waivers priority: the days a dropped player waits, 1 to 7 (default "
+        f"{shapes.WAIVER_DAYS})",
     )
     re_.add_argument(
         "--news-sd",

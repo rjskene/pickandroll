@@ -3,7 +3,8 @@
 The ladder from the design note. **Static** makes no move. **Market** is the heuristic: each day
 with probability ``rate`` (adds per team-day: the arm's ``opponents.rate``, else the setup's,
 which a replay leaves at zero) it adds
-the pool's best by the market's view and drops its weakest by the same view, within the caps.
+the pool's best by the market's view and drops its weakest by the same view, within the caps (in
+a waiver league the best it may add and the weakest it may drop, :class:`Market`).
 **Mirror** runs the surrogate on the shared beliefs with the arm's knobs and fields (the arm
 whole: at the defaults nothing changes). **Seat** is the equal room's: a named arm in another
 seat, the same tiers the arm under test runs, with its fields. Each strategy is pure given the world's
@@ -56,7 +57,13 @@ class Static:
 class Market:
     """The market heuristic. ``rate`` is the chance of a move on a day; the view is the setup's
     ``market`` ranking (the shared projection's per-game value, percent rostered breaking
-    ties)."""
+    ties).
+
+    In a waiver league (#172, PR Fa) its pick is the best player it may add, not one it already
+    claims and not its own drop still waiting, and its drop the weakest it may drop, not one an
+    open claim of its takes: the executor would refuse either (``ALREADY_CLAIMED``, ``READD``,
+    ``DROP_CLAIMED``), and the rival would idle while its claim waits. Without waivers it has no
+    claim and nobody waits, so its pick is the pool's best and its weakest, as before."""
 
     rate: float
     kind: str = "market"
@@ -77,8 +84,12 @@ class Market:
         if limit is not None and state.adds_used.get(team, 0) >= limit:
             return policy.NONE
         view = setup.market
-        pool = [k for k in state.pool if k in view]
-        roster = [k for k in state.active(team) if k in view]
+        mine = state.claims.get(team, ())
+        claimed = {c.move.add for c in mine}
+        promised = {c.move.drop for c in mine if c.move.drop is not None}
+        own = {k for k, w in state.waivers.items() if w.by == team}
+        pool = [k for k in state.pool if k in view and k not in claimed and k not in own]
+        roster = [k for k in state.active(team) if k in view and k not in promised]
         if not pool or not roster:
             return policy.NONE
         add = max(pool, key=lambda k: (view[k], -k))

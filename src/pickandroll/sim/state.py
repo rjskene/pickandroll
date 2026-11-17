@@ -4,7 +4,9 @@ A :class:`Setup` is a league as read once for a run: its calendar, pairings, tea
 rosters, free-agent pool, the policy's projection on day one, the schedule, the roster slots and
 the rules; ``run.replay_setup`` drafts one on a recorded season's logs. A :class:`SimState` is
 what one arm holds on one day: rosters, the pool, the adds used this week, the moves landing
-tomorrow with the held-slot moves they need, and every week's totals so far. The world
+tomorrow with the held-slot moves they need, and every week's totals so far; in a waiver league
+(PR Fa) also the players on waivers, the claims placed and not yet decided, and the waiver
+priority. The world
 (``run.World``) is apart: lines, availability and the beliefs belong to the path, never to an
 arm, so two arms of a pair see one world. Pure: frozen dataclasses,
 advanced by ``replace``.
@@ -39,6 +41,59 @@ class Member:
 
     def player(self, status: str | None = None) -> Player:
         return Player(self.key, self.name, self.nba_team, self.positions, status=status)
+
+
+#: A claim's outcome on its clear morning (#172, PR Fa): it went to its team, it went to a team
+#: with better priority, or its team was first and its roster could not take the player.
+WON, LOST, FAILED = "won", "lost", "failed"
+#: A seat's claim counts, as :attr:`SimState.claim_counts` keeps them: placed, won, lost to a
+#: better priority, failed (won and not taken), and of those decided, how many had a team ahead
+#: of theirs in the order when their player was decided and how many of those were lost.
+CLAIM_COUNTS = ("placed", WON, LOST, FAILED, "behind", "behind_lost")
+
+
+@dataclass(frozen=True)
+class Waiting:
+    """A player on waivers (#172, PR Fa): the morning his claims are decided (his clear date: the
+    morning he left a roster plus the league's waiver days) and the team that dropped him."""
+
+    clears: date
+    by: int
+
+
+@dataclass(frozen=True)
+class Claim:
+    """A waiver claim placed and not yet decided (#172, PR Fa): its move (the add on waivers; the
+    drop, made only if the claim is won, or None for an open spot), the day it was placed, its
+    add's clear date (the morning it is decided), the week its add is charged to (the week of the
+    day before it lands, so the plan's and the world's weeks agree; None outside the calendar),
+    the held-slot moves it needs, made only if it is won, and whether its drop is a held player
+    (a churn, #221), who leaves on his own the morning after the claim is placed."""
+
+    move: Move
+    placed: date
+    clears: date
+    week: int | None
+    held: tuple[tuple[int, str], ...] = ()
+    churn: bool = False
+
+    @property
+    def needs_spot(self) -> bool:
+        """Whether its add takes an active spot of its own: no drop, or a churn's held drop."""
+        return self.move.drop is None or self.churn
+
+
+@dataclass(frozen=True)
+class Resolved:
+    """One claim decided on a clear morning (#172, PR Fa): the team, the add, the drop, the
+    outcome (:data:`WON`, :data:`LOST`, :data:`FAILED`) and whether a team stood ahead of the
+    claim's team in the order when its player was decided."""
+
+    team: int
+    add: int
+    drop: int | None
+    outcome: str
+    behind: bool
 
 
 @dataclass(frozen=True)
@@ -77,6 +132,16 @@ class Setup:
     #: The bracket as read, or why it is not trusted (``league.BracketUnread``'s words).
     spec: LeagueSpec | None = None
     bracket_unread: str | None = None
+    #: How dropped players are added back (#172, PR Fa, ``shapes.WAIVERS``): ``none``, every add a
+    #: free agent the next morning; ``priority``, a dropped player waits ``waiver_days`` and a
+    #: claim on him goes by rolling waiver priority.
+    waivers: str = "none"
+    waiver_days: int = 2
+
+    @property
+    def waiting(self) -> bool:
+        """Whether a dropped player waits: the league has waivers."""
+        return self.waivers != "none"
 
     @property
     def season_end(self) -> date:
@@ -126,6 +191,17 @@ class SimState:
     #: Held-slot moves the executor did not make because the slot did not accept the player's
     #: status on the morning they were to land (``policy.land``), by team.
     held_refused_by: Mapping[int, int] = field(default_factory=dict)
+    #: A waiver league's (#172, PR Fa; all empty without waivers): the players on waivers, by
+    #: player; the claims placed and not yet decided, by team in the order placed; the held
+    #: players churn claims drop, leaving on their own tomorrow morning, by team; the waiver
+    #: priority, best first; the claims decided this morning, in the order decided; and each
+    #: team's claim counts (:data:`CLAIM_COUNTS`).
+    waivers: Mapping[int, Waiting] = field(default_factory=dict)
+    claims: Mapping[int, tuple[Claim, ...]] = field(default_factory=dict)
+    pending_drops: Mapping[int, tuple[int, ...]] = field(default_factory=dict)
+    priority: tuple[int, ...] = ()
+    resolved: tuple[Resolved, ...] = ()
+    claim_counts: Mapping[int, Mapping[str, int]] = field(default_factory=dict)
 
     @property
     def executed(self) -> int:
@@ -148,14 +224,24 @@ class SimState:
         return sum(self.held_refused_by.values())
 
     def key(self) -> tuple[Any, ...]:
-        """What a decision depends on: two arms with the same key share one solve."""
-        return (
+        """What a decision depends on: two arms with the same key share one solve. In a waiver
+        league also who is on waivers until when, the claims placed and the churns' held drops
+        due (#172, PR Fa); the priority is read by no decision."""
+        base = (
             self.day,
             tuple(sorted((t, tuple(sorted(r))) for t, r in self.rosters.items())),
             tuple(sorted(self.pool)),
             tuple(sorted(self.adds_used.items())),
             tuple(sorted((t, m) for t, m in self.pending.items() if m)),
             tuple(sorted((t, h) for t, h in self.pending_held.items() if h)),
+        )
+        if not (self.waivers or any(self.claims.values()) or any(self.pending_drops.values())):
+            return base
+        return (
+            *base,
+            tuple(sorted(self.waivers.items())),
+            tuple(sorted((t, c) for t, c in self.claims.items() if c)),
+            tuple(sorted((t, d) for t, d in self.pending_drops.items() if d)),
         )
 
     def active(self, team: int) -> tuple[int, ...]:
@@ -172,13 +258,17 @@ class SimState:
 
 
 def initial(setup: Setup) -> SimState:
-    """Day one's state from the setup."""
+    """Day one's state from the setup. In a waiver league the first priority order is the
+    reverse of the draft's (#172, PR Fa): the seat that picks last in the first round claims
+    first (``snake_draft`` and ``board_draft`` take the seats in team order). Nobody is on
+    waivers: the draft's leftovers are free agents."""
     taken = {k for r in setup.rosters.values() for k, _ in r}
     return SimState(
         setup.start,
         {t: tuple(r) for t, r in setup.rosters.items()},
         frozenset(k for k in setup.pool if k not in taken),
         dict(setup.adds_used),
+        priority=tuple(reversed(setup.teams)) if setup.waiting else (),
     )
 
 

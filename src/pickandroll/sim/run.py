@@ -42,7 +42,9 @@ from .engine import FPTS, Week, mv, wk
 from .fit import W_DEFAULT
 from .forecast import MIN_GAMES, realized_rates
 from .state import (
+    Claim,
     Member,
+    Resolved,
     Setup,
     SimState,
     board_draft,
@@ -556,6 +558,12 @@ def _record(
         state,
         dict(held or {}),
         dict(holds or {}),
+        {
+            t: placed
+            for t, cs in state.claims.items()
+            if (placed := tuple(c for c in cs if c.placed == state.day))
+        },
+        state.resolved,
     )
 
 
@@ -597,6 +605,10 @@ class DayRecord:
     #: team holds (#172, PR D1); both empty when every seat holds the run's.
     held: Mapping[str, Mapping[int, Rates]] = field(default_factory=dict)
     holds: Mapping[int, str] = field(default_factory=dict)
+    #: A waiver league's (PR Fa): the claims each team placed today, and this morning's claims
+    #: decided, in the order decided; both empty without waivers.
+    claims: Mapping[int, tuple[Claim, ...]] = field(default_factory=dict)
+    cleared: tuple[Resolved, ...] = ()
 
 
 def holds_of(w: World, variant: Mapping[int, op.Strategy]) -> dict[int, str]:
@@ -652,15 +664,14 @@ def simulate(
     on_day: Callable[[DayRecord], None] | None = None,
     rules: Sequence[audit.Rule] | None = None,
 ) -> list[VariantResult]:
-    """Every variant (a strategy by seat) through one world in lockstep. Each day, after the
-    lineup is set and before the day's lines are read, the audit (``sim.audit``: ``rules``, or
-    :data:`audit.RULES`) reads every variant's day and its counts are tallied; ``on_day`` is
-    handed a :class:`DayRecord` for each variant and day at the same point. A seat that names
-    a forecaster (``opponents.Seat.forecaster``) decides, sets its lineup and is charged its
-    forced drops on that forecaster's beliefs and values; every other seat on the run's. A
-    split seat (``World.split``) reads its table on the rosters before the landing for the
-    forced drops, and on the rosters after it for the rest of the day. The world's draws are
-    common to all of them."""
+    """Every variant (a strategy by seat) through one world in lockstep. Each day, after the lineup
+    is set and before the day's lines are read, the audit (``sim.audit``: ``rules``, or the setup's,
+    ``audit.rules_of``) reads every variant's day and its counts are tallied; ``on_day`` is handed a
+    :class:`DayRecord` for each variant and day at the same point. A seat that names a forecaster
+    (``opponents.Seat.forecaster``) decides, sets its lineup and is charged its forced drops on that
+    forecaster's beliefs and values; every other seat on the run's. A split seat (``World.split``)
+    reads its table on the rosters before the landing for the forced drops, and on the rosters after
+    it for the rest of the day. The world's draws are common to all of them."""
     n = len(variants)
     states = [initial(setup) for _ in range(n)]
     solves = [0] * n
@@ -673,6 +684,8 @@ def simulate(
     holds = [holds_of(w, v) for v in variants]
     labels = sorted({label for h in holds for label in h.values()})
     made: Week | None = None  # the week of the last simulated day, when yesterday's moves were made
+    waiting = setup.waiting
+
     for di, day in enumerate(setup.days):
         week = setup.week_of(day)
         if week is None:
@@ -689,12 +702,21 @@ def simulate(
         ]
         # Yesterday's moves land first, cleared held players back and the held-slot moves made
         # before them: on a Monday they were made on Sunday and spend the ending week's adds, so
-        # the week's count starts over only once they are in.
+        # the week's count starts over only once they are in. In a waiver league the claims on
+        # the players clearing today are decided before anything else lands (PR Fa), each won
+        # one charged to the same week as yesterday's moves: the week of the day before.
         order = _rotation(setup.teams, di)
         due = [s.pending for s in states]
         before = [s.executed_by for s in states]
+        # Who leaves a roster this morning waits from today (a waiver league's only).
+        waiver = {"waiver": (day, setup.waiver_days)} if waiting else {}
+        if waiting:
+            states = [
+                policy.clear_waivers(s, day, spots, slot_counts, status, setup.waiver_days)
+                for s in states
+            ]
         states = [
-            policy.land(s, order, spots, slot_counts, status, value, values[vi])
+            policy.land(s, order, spots, slot_counts, status, value, values[vi], **waiver)
             for vi, s in enumerate(states)
         ]
         for vi, s in enumerate(states):
@@ -728,7 +750,14 @@ def simulate(
                     solves[vi] += decision.solves
                 decided[team] = decision
                 state = policy.queue(
-                    state, team, decision, _cap(strat), setup.max_weekly_adds, plans[vi], spots
+                    state,
+                    team,
+                    decision,
+                    _cap(strat),
+                    setup.max_weekly_adds,
+                    plans[vi],
+                    spots,
+                    setup,
                 )
             states[vi] = state
             lineup = {
@@ -1228,6 +1257,8 @@ def replay_setup(
     weekly_adds: int | None = REPLAY_WEEKLY_ADDS,
     scoring: str = "categories",
     points: Mapping[str, float] | None = None,
+    waivers: str = "none",
+    waiver_days: int = shapes.WAIVER_DAYS,
 ) -> Setup:
     """A made-up league on a recorded season, from what is known before it starts. Its players
     are everyone ``players`` lists with a scheduled game, projected or not; ``teams`` seats
@@ -1256,7 +1287,9 @@ def replay_setup(
     a table too, the setup's categories are fantasy points alone and the standings break a tie
     on points for (``league.TIEBREAK_POINTS``); the default is the nine categories. The held
     slots arrive in ``slots`` after the bench: the draft takes the active spots only, so a held
-    slot starts the season empty."""
+    slot starts the season empty. The waivers (PR Fa, ``shapes.WAIVERS``): ``waivers`` and a
+    dropped player's ``waiver_days``; the first priority order is the reverse of the draft's
+    (``state.initial``)."""
     if (scoring == "points") != bool(points):
         raise ValueError(f"scoring {scoring!r} with points {points!r}: a points league has a table")
     schedule: dict[date, set[str]] = {}
@@ -1329,6 +1362,8 @@ def replay_setup(
         spec=spec,
         scoring="points" if table else "categories",
         points=table,
+        waivers=waivers,
+        waiver_days=waiver_days,
     )
 
 

@@ -5,9 +5,13 @@ them. For each seat over one variant's season: the moves landed, the moves lost 
 player (or the drop) was gone, the adds charged to each week (their mean and the share of weeks
 at the league's cap), the drops forced by a returning held player, the held-slot stints and the
 days they lasted, the held-slot moves refused because the slot no longer accepted the player the
-morning they landed, and the starters' games played. The landing counters live on the state
-(``SimState.executed_by``, ``gone_by``, ``forced_by``, ``held_refused_by``); the rest is tallied
-here from the days the audit reads and the day's lines once they are scored. Pure.
+morning they landed, and the starters' games played. In a waiver league (PR Fa) also the claims
+placed, won, lost to a better priority and failed (won and not taken), and of those decided, how
+many had a team ahead of the seat's when their player was decided and how many of those were
+lost: a waiver run's only, so a run without waivers counts as before. The landing and claim
+counters live on the state (``SimState.executed_by``, ``gone_by``, ``forced_by``,
+``held_refused_by``, ``claim_counts``); the rest is tallied here from the days the audit reads
+and the day's lines once they are scored. Pure.
 """
 
 from __future__ import annotations
@@ -31,6 +35,16 @@ METRICS = (
     "held_days",
     "starter_games",
 )
+#: The claim counts (PR Fa), a waiver run's only, after :data:`METRICS`, by metric: the key each
+#: reads in ``SimState.claim_counts``. A run without waivers has none, so its counts are as before.
+CLAIMS = {
+    "claims_placed": "placed",
+    "claims_won": "won",
+    "claims_lost": "lost",
+    "claims_failed": "failed",
+    "claims_behind": "behind",
+    "claims_behind_lost": "behind_lost",
+}
 
 
 class Tally:
@@ -39,6 +53,7 @@ class Tally:
     def __init__(self, setup: Setup) -> None:
         self.teams = tuple(setup.teams)
         self.limit = setup.max_weekly_adds
+        self.waiting = setup.waiting
         first = setup.week_of(setup.start)
         #: Adds charged to each week, by team; the adds made before day one count in its week.
         self.adds: dict[int, dict[int, int]] = {t: {} for t in self.teams}
@@ -101,13 +116,22 @@ class Tally:
                 "held_days": float(self.held_days[t]),
                 "starter_games": float(self.games[t]),
             }
+            if self.waiting:
+                claims = state.claim_counts.get(t, {})
+                out[t] |= {m: float(claims.get(key, 0)) for m, key in CLAIMS.items()}
         return out
+
+
+def metrics_in(rows: Sequence[Mapping[str, Any]]) -> tuple[str, ...]:
+    """The counts ``rows`` hold, in the payload's order: :data:`METRICS`, then the claim counts
+    when a row has them (a waiver run's)."""
+    return (*METRICS, *(m for m in CLAIMS if any(m in r for r in rows)))
 
 
 def pooled(rows: Sequence[Mapping[str, float | None]]) -> dict[str, float | None]:
     """Seats' counts pooled: the mean of each over the seats that have it."""
     out: dict[str, float | None] = {}
-    for m in METRICS:
+    for m in metrics_in(rows):
         vals = [r[m] for r in rows if r.get(m) is not None]
         out[m] = sum(vals) / len(vals) if vals else None  # type: ignore[arg-type]
     return out
@@ -119,4 +143,4 @@ def row_of(counts: Mapping[Any, Mapping[str, float | None]], seats: Sequence[Any
     return pooled(rows) if rows else None
 
 
-__all__ = ["METRICS", "Tally", "pooled", "row_of"]
+__all__ = ["CLAIMS", "METRICS", "Tally", "metrics_in", "pooled", "row_of"]

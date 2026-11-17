@@ -135,3 +135,78 @@ def test_the_rules_label_and_payload_say_the_scoring_the_table_and_the_held_slot
     assert held.slots(shapes.SLOTS) == (*shapes.SLOTS, "IL+")
     # Hashable: one set of rules for a whole run, a key like a league shape.
     assert len({full, own, held, shapes.PLAIN, shapes.LeagueRules()}) == 4
+
+
+# --------------------------------------------------------------------------- the waivers (PR Fa)
+def test_the_default_rules_have_no_waivers_and_record_as_before():
+    plain = shapes.PLAIN
+    assert (plain.waivers, plain.waiver_days, plain.waiting) == ("none", 2, False)
+    # A league without waivers records the three keys of PR D4c and labels as it did.
+    assert set(plain.payload()) == {"scoring", "points", "held"}
+    assert shapes.LeagueRules(held=("IL",)) == shapes.LeagueRules(
+        "categories", None, ("IL",), "none", 2
+    )
+
+
+def test_a_waiver_league_says_its_wait_in_the_label_and_the_payload():
+    priority = shapes.LeagueRules(waivers="priority")
+    assert priority.waiting and priority.waiver_days == shapes.WAIVER_DAYS == 2
+    assert priority.label() == "the nine categories, no held slot, waivers by priority after 2 days"
+    assert priority.payload() == {
+        "scoring": "categories",
+        "points": None,
+        "held": [],
+        "waivers": "priority",
+        "waiver_days": 2,
+    }
+    one = shapes.LeagueRules("points", shapes.POINTS_DEFAULT, ("IL",), "priority", 1)
+    assert one.label() == (
+        "points on ESPN's default table, one IL slot, waivers by priority after 1 day"
+    )
+    assert one.payload()["waiver_days"] == 1
+    # Hashable and told apart by the wait.
+    assert len({priority, one, shapes.LeagueRules(waivers="priority", waiver_days=3)}) == 3
+
+
+def test_the_waivers_flags_parse_to_the_kind_and_the_wait():
+    assert shapes.parse_waivers("none") == ("none", 2)
+    assert shapes.parse_waivers("priority") == ("priority", 2)
+    assert shapes.parse_waivers("Priority", "3") == ("priority", 3)
+    assert shapes.parse_waivers("priority", "7") == ("priority", 7)
+    assert shapes.parse_waivers("priority", "1") == ("priority", 1)
+
+
+@pytest.mark.parametrize(
+    ("waivers", "days", "says"),
+    [
+        ("faab", None, "--waivers faab: a budget and sealed bids are PR Fb's"),
+        ("bids", None, "--waivers bids: one of none, priority"),
+        ("priority", "0", "--waiver-days 0: a dropped player waits 1 to 7 days"),
+        ("priority", "8", "--waiver-days 8: a dropped player waits 1 to 7 days"),
+        ("priority", "two", "--waiver-days two: a whole number of days"),
+        ("none", "2", "--waiver-days 2: a dropped player's wait is a waiver league's"),
+        ("none", "3", "it is read only with --waivers priority"),
+    ],
+)
+def test_a_waiver_flag_out_of_the_plan_is_refused_in_words(waivers, days, says):
+    with pytest.raises(ValueError) as e:
+        shapes.parse_waivers(waivers, days)
+    assert says in str(e.value)
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "says"),
+    [
+        ({"waivers": "faab"}, "waivers faab: a budget and sealed bids are PR Fb's"),
+        ({"waivers": "rolling"}, "waivers 'rolling' is not one of none, priority"),
+        ({"waivers": "priority", "waiver_days": 0}, "a dropped player waits 1 to 7 days"),
+        ({"waivers": "priority", "waiver_days": 8}, "a dropped player waits 1 to 7 days"),
+        ({"waivers": "priority", "waiver_days": 2.0}, "a whole number of days"),
+        ({"waivers": "priority", "waiver_days": True}, "a whole number of days"),
+        ({"waiver_days": 3}, "waiver days 3 with waivers none: a wait is a waiver league's"),
+    ],
+)
+def test_waiver_rules_out_of_the_plan_are_refused_in_words(kwargs, says):
+    with pytest.raises(ValueError) as e:
+        shapes.LeagueRules(**kwargs)
+    assert says in str(e.value)

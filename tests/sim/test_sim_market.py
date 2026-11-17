@@ -341,7 +341,7 @@ def test_a_replay_with_adp_none_named_is_the_replay_with_nothing_named(pair_data
     named = _run(pair_data, *seats, "--name", "same", "--adp", "none")
     plain = _run(pair_data, *seats, "--name", "same")
     assert _as_written(named) == _as_written(plain)
-    assert plain["replay_version"] == 8 and plain["adp"] == {"source": "none"}
+    assert plain["replay_version"] == 9 and plain["adp"] == {"source": "none"}
     assert plain["draft"].startswith("snake on the run's forecaster's projection")
 
 
