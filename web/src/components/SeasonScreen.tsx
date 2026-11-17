@@ -47,6 +47,7 @@ import {
   flagTag,
   flagTitle,
   forText,
+  baseLabel,
   minGainText,
   moveGain,
   rankedLine,
@@ -1095,7 +1096,7 @@ function Recommended({ h, m, s, name, onPick }: { h: MoveHorizon; m: MovesPayloa
   const returns = comebackText([set.comebacks?.week, set.comebacks?.three], name);
   return (
     <div className="block">
-      <span className="k" title={`${info.base.toFixed(2)} ${m.measure === "matchup" ? "win odds summed over the weeks" : "expected categories"} without a move${info.from ? `, from ${dayLabel(info.from)}` : ""}`}>
+      <span className="k" title={`${baseLabel(info.base, m.measure, info.weeks.length)} without a move${info.from ? `, from ${dayLabel(info.from)}` : ""}`}>
         Recommended for {horizonName(m, h)}
         {set.moves.length > 0 && ` · ${moveGain(set.gain[h], m.measure)} (${GAIN_SHORT[o]} ${moveGain(set.gain[o], m.measure)}${set.ros ? ` · ROS ${rosLabel(set.ros, s.scoring)}` : ""})`}
       </span>
@@ -1490,7 +1491,14 @@ function MoveDrawer({
       {d && (
         <>
           <div className="block">
-            <span className="k" title="expected categories won this week: each category's odds of winning it, summed, the week so far included">
+            <span
+              className="k"
+              title={
+                m?.measure === "matchup"
+                  ? "the odds of winning this week's matchup, the week so far included"
+                  : "expected categories won this week: each category's odds of winning it, summed, the week so far included"
+              }
+            >
               {cap(horizonName(m, "week"))} · {valueMove(d.horizons.week.before, d.horizons.week.after, m?.measure)} ({moveGain(d.horizons.week.gain, m?.measure)})
             </span>
             <WeekCats cats={cats} before={d.horizons.week.cats.before} after={d.horizons.week.cats.after} />
@@ -1501,8 +1509,15 @@ function MoveDrawer({
             )}
           </div>
           <div className="block">
-            <span className="k" title="expected categories won over the three weeks: each week's odds of winning each category against the other teams, averaged over them, summed over the categories and the weeks">
-              {cap(horizonName(m, "three"))} · {valueMove(d.horizons.three.before, d.horizons.three.after, m?.measure)} ({moveGain(d.horizons.three.gain, m?.measure)})
+            <span
+              className="k"
+              title={
+                m?.measure === "matchup"
+                  ? "the odds of winning the matchup in each of the three weeks against the other teams, averaged over them and then over the weeks; the gain is the weeks' odds summed"
+                  : "expected categories won over the three weeks: each week's odds of winning each category against the other teams, averaged over them, summed over the categories and the weeks"
+              }
+            >
+              {cap(horizonName(m, "three"))} · {valueMove(d.horizons.three.before, d.horizons.three.after, m?.measure, weeksOf(d.horizons.three))} ({moveGain(d.horizons.three.gain, m?.measure)})
               {weeksOf(d.horizons.three) > 1 &&
                 m?.measure !== "matchup" &&
                 ` · a week ${(d.horizons.three.before / weeksOf(d.horizons.three)).toFixed(2)} → ${(d.horizons.three.after / weeksOf(d.horizons.three)).toFixed(2)}`}

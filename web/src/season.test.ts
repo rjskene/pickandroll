@@ -256,6 +256,7 @@ import {
   NO_FILTER,
   ordinal,
   formatLabel,
+  baseLabel,
   measureOf,
   measureWords,
   minGainText,
@@ -2576,6 +2577,13 @@ test("a one-win league's move gains read as points of win odds, the others as be
   assert.equal(valueMove(4.1, 4.32, "categories"), "expected categories won 4.10 → 4.32");
   assert.equal(valueMove(0.52, 0.55, "matchup"), `win odds ${oddsLabel(0.52)} → ${oddsLabel(0.55)}`);
   assert.equal(valueMove(1.5, 1.62, "matchup", 3), `win odds a week ${oddsLabel(0.5)} → ${oddsLabel(0.54)}`);
+  // A three-week value is the weeks' odds summed: printed as a week's, never as "150%".
+  assert.equal(valueMove(1.5, 1.6, "matchup", 3), `win odds a week ${oddsLabel(0.5)} → ${oddsLabel(1.6 / 3)}`);
+  assert.ok(!valueMove(1.5, 1.6, "matchup", 3).includes("150%"));
+  assert.equal(valueMove(0.5, 0.53, "matchup", 0), `win odds ${oddsLabel(0.5)} → ${oddsLabel(0.53)}`);
+  assert.equal(baseLabel(1.5, "matchup", 3), `win odds ${oddsLabel(0.5)} a week`);
+  assert.equal(baseLabel(0.52, "matchup", 1), `win odds ${oddsLabel(0.52)}`);
+  assert.equal(baseLabel(4.1, "categories", 3), "4.10 expected categories");
   assert.equal(minGainText(0.01, "categories"), "No move adds more than 0.01 expected categories.");
   assert.equal(minGainText(0.01, "matchup"), "No move adds more than 1 pt of win odds.");
 });

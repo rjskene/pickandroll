@@ -1345,6 +1345,14 @@ export function valueMove(before: number, after: number, measure: MoveMeasure | 
   return `${n > 1 ? "win odds a week" : "win odds"} ${oddsLabel(before / n)} → ${oddsLabel(after / n)}`;
 }
 
+/** A horizon's value with no move, for a title (#397): "4.10 expected categories" or, in a one-win
+ * league, "win odds 50% a week", the odds summed over ``weeks`` averaged back to one. */
+export function baseLabel(base: number, measure: MoveMeasure | null | undefined, weeks = 1): string {
+  if (measure !== "matchup") return `${base.toFixed(2)} expected categories`;
+  const n = Math.max(1, weeks);
+  return `win odds ${oddsLabel(base / n)}${n > 1 ? " a week" : ""}`;
+}
+
 /** "No move adds more than 0.01 expected categories." or "… 1 pt of win odds." (#397). */
 export function minGainText(min: number, measure: MoveMeasure | null | undefined): string {
   if (measure !== "matchup") return `No move adds more than ${min} expected categories.`;
