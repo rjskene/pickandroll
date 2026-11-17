@@ -242,14 +242,14 @@ built:
 | `protection_floor` | any seat that moves (exact, surrogate, ranking) | a static seat makes no move |
 | `daily_cap` | exact, surrogate | the ranking tier queues one move a day, under any cap |
 | `horizon_weight` | exact executing `weighted` | any other arm |
-| `plan_floor_cats` | exact drawing and executing the week plan, categories | any other arm or league |
+| `plan_floor_cats` | exact drawing and executing the week plan, categories; in a FAAB run any exact or surrogate seat and a mirror rival, categories (the typical gain until ten moves, PR Fb) | any other arm or league |
 | `plan_floor_points` | the same, points | any other arm or league |
 | `season_weight` | exact, surrogate | the ranking tier holds no odds |
 | `playoff_weight` | `season_weight` above 0 on exact or surrogate, bracket read | no term, or no bracket |
 | `three_weight` | nobody | the queue's rule, PR E |
 | `system` | the arm's own seat, on a replay that names the two sources' stand-ins | a run without stand-ins |
 | `blend` | the same, when the arm's `system` is `blend` | no stand-ins, or another system |
-| `faab_sizing` | nobody | no budget in the world: no waivers, or waivers by priority without bids, PR Fb |
+| `faab_sizing` | in a FAAB run (PR Fb), a seat that bids by the live rule: exact, surrogate, a mirror rival | no budget in the world (no waivers, or waivers by priority); the ranking tier holds no gain in the engine's units and bids $0 |
 | `stash_threshold` | nobody | the engine reads it (#373); the simulator passes it, PR G |
 | `pool`, `min_gain`, `weeks_ahead` | exact, surrogate | the ranking tier |
 | `surrogate_days` | surrogate, or a mirror rival | the exact tier decides every day |
@@ -265,7 +265,8 @@ the run's, one set for every path. In a points run (`--scoring points`) `plan_fl
 that differ only in knobs and fields that neither reads in the run: they are the same seat, and
 the message names each such knob, why it is not read and what would read it (a pair that
 differs only on `plan_floor_points` is refused in a categories run and runs in a points run on
-an arm that executes the plan). Two arms alike in everything are a check that the difference is
+an arm that executes the plan; a pair that differs only on `faab_sizing` is refused without
+`--waivers faab` and runs with it, PR Fb). Two arms alike in everything are a check that the difference is
 zero and run.
 
 ## The other seats (`sim/opponents.py`)
@@ -344,8 +345,9 @@ Each command runs as `python -m pickandroll.sim <command>`:
   believes by its `system` (below). `--adp espn --adp-spread <base>,<growth>` drafts the league on
   the season's table of average draft positions instead ("The draft market"); `--adp none` is the
   default. `--grid full` visits the grid of league shapes and `--league` names one, and
-  `--scoring points` (with `--points`), `--held` and `--waivers` (with `--waiver-days`) set the
-  run's league rules ("The league shapes"). The payload (`replay_version` 9) keys by season what is one season's: the forecasters,
+  `--scoring points` (with `--points`), `--held` and `--waivers` (with `--waiver-days`, and under
+  `faab` `--budget` and `--rival-scale`) set the run's league rules ("The league shapes"). The
+  payload (`replay_version` 10) keys by season what is one season's: the forecasters,
   the sources, the weights, the players, the shape, the results, the counts, the season scale and
   the unprojected count; `cells` says which were served and why the others were not, and `adp` what
   the league was drafted on, and `league` the league shapes the paths played and the league rules.
@@ -483,7 +485,8 @@ names its forecasters (PR D1), its results and counts keyed by the forecaster's 
 version 4's; 6 since the draft market (PR D4a), its figures version 5's under `--adp none`; 7
 since the league shapes (PR D4b), its figures version 6's on the fixed shape; and 8 since the
 league rules (PR D4c), its figures version 7's with nothing named (the nine categories, no held
-slot); 9 since the waivers (PR Fa), its figures version 8's with nothing named (no waivers).
+slot); 9 since the waivers (PR Fa), its figures version 8's with nothing named (no waivers); 10
+since FAAB (PR Fb), its figures version 9's with nothing named and by priority.
 
 **The belief.** On day `d`, stat by stat, a seat believes
 `(w · the forecaster's figure + the sum of his lines dated before d) / (w + his games before d)`,
@@ -546,7 +549,8 @@ market's generator) stay common to them. A day record carries the other forecast
 variant's seats hold and which team holds which (`held`, `holds`), and the no-peek digest hashes
 them when they are not empty, so a run whose seats all hold the run's forecaster records and
 digests as it did. A waiver league's record carries the claims each team placed that day and the
-morning's claims decided (`claims`, `cleared`, PR Fa), hashed the same way when not empty. The season scale reads the arm's own forecaster. Under `--adp none` the draft
+morning's claims decided (`claims`, `cleared`, PR Fa), hashed the same way when not empty; in a
+FAAB league each claim and each decision carries its bid (PR Fb), so a bid is part of the day. The season scale reads the arm's own forecaster. Under `--adp none` the draft
 and the market's ranking stay the run's forecaster's: an arm on a forecaster of its own reads it
 from the season's first day. Under a table its seat drafts on it (PR D4a, "The draft market").
 
@@ -812,8 +816,10 @@ and the run prints it and records it (`league.short_draft`).
 **What a run records.** The `league` block: the grid's name, its axes, its shapes in order, the
 visit rule in a sentence, each path's shape index and turn, the short drafts, and the league
 rules (`rules`: the scoring, the points table or null, the held slots, and in a waiver run the
-waivers and the wait; a points run adds `points_note`, what its metrics are, and its season
-scale's note says what the gain is there). A pair's
+waivers and the wait, and in a FAAB run the budget and the rivals' bid scale; a points run adds
+`points_note`, what its metrics are, and its season scale's note says what the gain is there; a
+FAAB run adds `faab_note`, how the bids are made, and that the live rule's flags are not
+modelled). A pair's
 `seat.by_path` is each path's seat (on the fixed shape, as before). The knob reads table is one
 per arm, as before: no axis of the grid changes what a seat reads (`policy.Shape`), and a test
 says so.
@@ -845,12 +851,17 @@ read in one kind only (a run that asks about `plan_floor_points` is a points run
   is refused. The draft takes the active spots only, so a held slot starts the season empty; a
   short draft's rule is unchanged, and under points the draftable players are the same players
   in another order.
-- **The waivers** (`--waivers none|priority`, default `none`; `--waiver-days N`, 1 to 7, default
-  2, named only with `priority`; `faab` is refused, PR Fb's). Below, "The waivers".
+- **The waivers** (`--waivers none|priority|faab`, default `none`; `--waiver-days N`, 1 to 7,
+  default 2, named only with `priority` or `faab`). Below, "The waivers".
+- **The budget and the rivals' bids** (PR Fb, named only with `--waivers faab`): `--budget`, the
+  whole dollars each team starts with, 1 to 1000, default 100; `--rival-scale`, what a market
+  rival's bid is multiplied by, above 0, default 1. Both are the run's settings, never axes of
+  the grid. Below, "FAAB".
 - **The default** (`shapes.PLAIN`): the nine categories, no held slot, no waivers. With nothing
   named nothing moves: a replay's record equals the one before PR D4c key for key, apart from
   `league.rules`, the version and its reason (the claim counts and the waivers' keys in
-  `league.rules` are a waiver run's only, PR Fa). A run that names rules prints one line with
+  `league.rules` are a waiver run's only, PR Fa; the bid counts, the budget's keys and
+  `faab_note` a FAAB run's, PR Fb, and a run by priority records as it did before). A run that names rules prints one line with
   them, and the no-peek check and the dry run say them too. `validate` takes none of the three:
   it plays the fixed shape, the nine categories and no held slot, and says so.
 
@@ -917,7 +928,7 @@ What the waivers do not model, each plainly:
    lands the next morning, and it shares them with the claims.
 2. **The first order is the draft's reverse**, and a league that sets its own (last season's
    standings, a continual list) is not read. A failed claim keeps its team's place.
-3. **No budget and no bids** (`faab`): PR Fb's, with `faab_sizing`.
+3. **A budget and bids** are FAAB's, below.
 4. **Rivals claim on their own rules.** A market rival claims the market's best when he waits.
    Its pick is the best player it may add, not one it already claims and not its own drop still
    waiting, and its drop the weakest it may drop, not one an open claim of its takes: the
@@ -926,6 +937,72 @@ What the waivers do not model, each plainly:
    before. No rival is fitted to a league's claims.
 5. **Waivers run at one clear time, the morning.** Game-time waivers (a player locked until his
    game ends) and a clear time read from a league are not modelled.
+6. `validate` plays the fixed league without waivers.
+
+**FAAB** (`--waivers faab`, `policy.clear_waivers`, `policy.queue`, PR Fb). The wait, the claims and
+the executor's claim rules are as by priority. Each team starts the season with the budget
+(`--budget`, default $100), and its dollars left are on the state (`SimState.dollars`). A free
+agent costs nothing: only a claim carries a bid. A bid is sealed when its claim is placed and
+clamped then to its team's dollars left that day; the bids of its claims still open are not taken
+out, as the live queue clamps to the budget the league reports (`season_queue.budget_of` returns
+the team's FAAB balance as Yahoo gives it, and nothing there subtracts the bids in flight). On the
+clear morning the claims are decided one at a time: the highest bid first, a tie by waiver priority
+(best first), a team's own claims in the order placed. A claim whose player is gone is lost; one
+whose roster cannot take him (its drop gone, no active spot open) or whose team's dollars left are
+below its bid fails, and the player goes to the next; otherwise it is won, the team pays exactly
+its bid and the claim is made as by priority. The order rolls (the winner to the back) only when
+the win broke a tie, another claim on him open with the same bid. That is a working default: a
+league may set it otherwise (rolling on every win, or never). The payload names the model
+(`executions`: `free_agents_next_day_claims_by_sealed_bids`).
+
+Who bids, and how:
+
+- **The seat on the exact or the surrogate tier, and a mirror rival,** bid as the live queue bids:
+  `autopilot.bid_of`, called through `sim/engine.py` with `typical_gain` and their constants, never
+  copied. Its six inputs:
+
+  | input | here | live |
+  |---|---|---|
+  | `gain` | the move's own gain on the judging horizon from the seat's own solve: the set's value less the set without it (`policy.gains_of`), on the engine's evaluator without the season term; a week-plan step's week increment (`stream.step_gains`) | the logged gain on `three` (`marginal`, the same difference); a plan step's score, its week increment plus the queue's weight times its three weeks' increment (`plans.step_score`) |
+  | `typical` | `typical_gain` over the gains of the moves the seat recommended in the last 14 days, today's included: the plan floor until ten | `typical_gain` over `season_queue.recent_gains`, the last 14 days' recommended three weeks' sets, today's included |
+  | `budget` | the seat's dollars left that day | `season_queue.budget_of`, the league's FAAB balance |
+  | `flag` | none: the live rule's flags are not modelled, and the payload says so | the day's flag on the player |
+  | `sizing` | the arm's `faab_sizing` | the knob |
+  | `availability` | `W` for a claim; a free agent places none | the player's mark (`W`, or `FA`, which bids $0) |
+
+  The simulator has no queue weight (`three_weight` is PR E's), so a step's score is its week
+  increment, live's score at weight zero. The decision carries what its claims bid on
+  (`policy.Basis`): the bid is set in the queue on the state's dollars that day, so two arms
+  still share a decision while their states agree.
+- **The ranking tier** holds no gain in the engine's units (it ranks by per-game value) and bids
+  $0. Its claims go by priority among the $0 bids.
+- **A market rival** bids by an assumed form, not a fit (no league is on the box):
+  `round(rival_scale × gain ÷ typical × noise)` whole dollars, half up, clamped to its dollars
+  left, where `gain` is its move's gain on its own view (the add's market value less the drop's),
+  `typical` the median of every market rival's moves' gains in the 14 days before today (pooled
+  over the rivals, today's left out, so the order the rivals decide in moves nothing), its own
+  gain until there are ten (a bid of `rival_scale × noise`), and `noise` uniform on [0.5, 1.5) from
+  the path's draw for its team and day, drawn after the pick (so nothing else it draws moves). The
+  form's parameters sit in one place (`policy.RivalBids`), so a fit replaces them and not the
+  world. `--rival-scale` sweeps it: a result whose sign flips across 0.5, 1 and 2 depends on how
+  the league bids, which the simulator does not know.
+- **A static seat** never claims.
+
+In a FAAB run `faab_sizing` is read by a seat that bids, and the plan floor of the league's scoring
+by the same seats (the typical gain until ten moves). The audit holds the bids to three rules in
+place of `claim_priority` and the counts count the dollars (below).
+
+What FAAB does not model, each plainly:
+
+1. **The rivals' bids are assumed**, their form and their typical gain alike; the next PR fits
+   them. The counts of what the seat paid above the next bid and fell short by are the world's
+   knowledge of every bid: no seat reads them.
+2. **Flags are not modelled**: live, a flagged player's bid is raised by its flag's factor; here
+   no player is flagged.
+3. **Only a dropped player waiting his days is bid on.** A free agent lands the next morning at
+   $0, contested by the day's rotation.
+4. **The order rolls only on a tie** (above), the first order the draft's reverse.
+5. **No pacing, cap or shading** on the seat's bid: the bid policy family is PR F2's.
 6. `validate` plays the fixed league without waivers.
 
 **Not yet.** The ruling of 2026-11-07
@@ -969,6 +1046,18 @@ reads only the six, and the payload lists the rules it read):
   then last, every lost claim's player to another team, and the order after the morning the
   state's.
 
+A FAAB league is held to the wait and three rules in place of `claim_priority`, a run by priority's
+rule only (`audit.BID_RULES`, PR Fb):
+
+- `budget_floor`: no team's dollars go below zero.
+- `bid_paid`: a won claim costs exactly its bid as placed, and nothing else moves the dollars:
+  each team's dollars left are the day before's (the budget on day one) less its won bids.
+- `bid_order`: each player went to the highest bid among the claims open on him that could be
+  taken, a tie to the better priority: every claim on a won player that stood ahead of the winner
+  (a higher bid, or the same bid and a better place in the day before's order) failed; every lost
+  claim's player went to another team on a bid at least its own; the order rolls only on a win
+  that broke a tie, and the order after the morning is the state's.
+
 A breach (path, day, variant, seat, rule, what was found) voids its path: the runner records it,
 the command leaves the task out of every aggregate (a replay voids a season, forecaster and
 path), lists every breach and the voided tasks in
@@ -986,7 +1075,14 @@ held-slot moves refused because the slot no longer accepted the player the morni
 held-slot stints and their days; and the starters' games played. In a waiver league only (a run
 without waivers has no such keys, so its counts are as before PR Fa): the claims placed, won, lost
 to a better priority and failed, and of those decided, how many had a team ahead of the seat's
-when their player was decided and how many of those were lost. A pair (`--arms`) adds the rivals'
+when their player was decided and how many of those were lost. In a FAAB league only (PR Fb; a
+run by priority has none, so its counts are as before), after those: the dollars spent and the
+dollars left at the season's end; the claims won at $0, lost to a higher bid, lost on a tie and
+won with no other claim on the player that morning; the dollars won claims paid above the next
+bid that could have been taken (the whole bid when there was none); and the dollars lost claims
+fell short of the winning bid by. A claim is "behind" there when another claim on its player was
+decided before it (the winner's, or one that failed). These counts are the world's knowledge of
+every bid, not the seat's: no decision reads them. A pair (`--arms`) adds the rivals'
 seats as one row, both arms' seasons pooled. The landing counters are per seat on the state
 (`SimState.executed_by`, `gone_by`, `forced_by`, `held_refused_by`, their sums the whole-state
 counters); the rest is tallied by `sim/counts.py`.

@@ -102,7 +102,7 @@ def test_league_rules_out_of_the_plan_are_refused_by_name_before_any_path(wire: 
 
 
 def test_with_nothing_named_nothing_moves(wire: Path):
-    """Rule 1: ``--scoring categories`` named and nothing named give one payload, version 9, its
+    """Rule 1: ``--scoring categories`` named and nothing named give one payload, version 10, its
     league block naming today's rules; no line names them."""
     room = ("--seats", *spec(wire, "R", "S"), "--paths", "1")
     runs, outs = [], []
@@ -115,7 +115,7 @@ def test_with_nothing_named_nothing_moves(wire: Path):
     assert {k: v for k, v in one.items() if k not in WHEN} == {
         k: v for k, v in two.items() if k not in WHEN
     }
-    assert one["replay_version"] == 9
+    assert one["replay_version"] == 10
     assert one["league"]["rules"] == {"scoring": "categories", "points": None, "held": []}
     assert "points_note" not in one["league"]
     assert all("league rules" not in out for out in outs)
@@ -321,6 +321,12 @@ def test_waivers_out_of_the_plan_are_refused_by_name_before_any_path(wire: Path)
         (("--waivers", "priority", "--waiver-days", "0"), "--waiver-days 0: a dropped player"),
         (("--waivers", "priority", "--waiver-days", "8"), "--waiver-days 8: a dropped player"),
         (("--waivers", "priority", "--waiver-days", "two"), "--waiver-days two: a whole number"),
+        # PR Fb: a budget and the rivals' scale are a FAAB league's.
+        (("--budget", "50"), "--budget 50: a budget and the rivals' bids are a FAAB league's"),
+        (("--rival-scale", "2"), "--rival-scale 2: a budget and the rivals' bids are a FAAB"),
+        (("--waivers", "priority", "--budget", "50"), "--budget 50: a budget and the rivals'"),
+        (("--waivers", "faab", "--budget", "0"), "--budget 0: a team starts with 1 to 1000"),
+        (("--waivers", "faab", "--rival-scale", "0"), "--rival-scale 0: a number above 0"),
     ):
         code, out = replay(wire, *room, *flags)
         assert code == 2 and f"refused: {why}" in out, out
@@ -350,7 +356,7 @@ def test_a_waiver_run_records_its_rules_its_audit_and_its_claims(wire: Path):
     assert f"league rules, on every path: {rules.label()}" in out
     assert rules.label().endswith(", waivers by priority after 3 days")
     p = written(out)
-    assert p["replay_version"] == 9
+    assert p["replay_version"] == 10
     assert p["league"]["rules"] == {
         "scoring": "points",
         "points": dict(shapes.POINTS_DEFAULT),
@@ -366,3 +372,64 @@ def test_a_waiver_run_records_its_rules_its_audit_and_its_claims(wire: Path):
         assert all(row[m]["mean"] is not None for m in ct.CLAIMS), row
     assert p["season_scale"]["note"] == ss.scale_note("points") != ss.SCALE_NOTE
     assert ss.scale_note("categories") == ss.SCALE_NOTE
+
+
+def test_a_faab_run_records_its_rules_its_audit_and_its_bids(wire: Path):
+    """``--waivers faab --budget 50 --rival-scale 2`` (PR Fb): the league block's rules name the
+    budget and the scale and its note says how the bids are made, the execution model has a
+    name of its own, the audit holds the wait and the three bid rules in place of
+    ``claim_priority``, and the counts count the dollars and the bids after the claims."""
+    room = ("--seats", *spec(wire, "R", "S"), "--paths", "1")
+    faab = ("--waivers", "faab", "--budget", "50", "--rival-scale", "2")
+    code, out = replay(wire, *room, *faab)
+    assert code == 0, out
+    rules = shapes.LeagueRules(waivers="faab", budget=50, rival_scale=2.0)
+    assert f"league rules, on every path: {rules.label()}" in out
+    p = written(out)
+    assert p["replay_version"] == ss.REPLAY_VERSION == 10
+    assert p["league"]["rules"] == {
+        "scoring": "categories",
+        "points": None,
+        "held": [],
+        "waivers": "faab",
+        "waiver_days": shapes.WAIVER_DAYS,
+        "budget": 50,
+        "rival_scale": 2.0,
+    }
+    assert p["league"]["faab_note"] == ss.FAAB_NOTE and "flags are not modelled" in ss.FAAB_NOTE
+    assert p["executions"] == policy.EXECUTIONS_FAAB
+    names = [r["name"] for r in p["audit"]["rules"]]
+    assert names[-4:] == ["waiver_wait", "budget_floor", "bid_paid", "bid_order"]
+    assert "claim_priority" not in names and p["audit"]["paths_voided"] == 0
+    assert set(p["counts"]["note"]) == {*ct.METRICS, *ct.CLAIMS, *ct.BIDS, "pooling"}
+    for row in p["counts"]["by_season"]["2024"]["prior"].values():
+        assert set(ct.BIDS) <= set(row), row
+        assert row["dollars_spent"]["mean"] + row["dollars_left"]["mean"] == 50, row
+    # By priority the league block has no note (its rules and counts are pinned by
+    # ``test_a_waiver_run_records_its_rules_its_audit_and_its_claims``).
+    priority = shapes.LeagueRules(waivers="priority")
+    by_priority = ss.league_block(shapes.FIXED_GRID, [], [], priority)
+    assert "faab_note" not in by_priority and "budget" not in by_priority["rules"]
+
+
+def test_a_pair_that_differs_only_on_faab_sizing_is_one_seat_without_faab_and_two_with_it(
+    wire: Path,
+):
+    """Two surrogate arms that differ only on ``faab_sizing`` (PR Fb): the same seat in a run
+    without waivers or by priority, refused by name with what would make it read; two seats in
+    a FAAB run, where a seat that bids reads it. Read as the run reads it (``read_season``,
+    ``same_seats``), before any path."""
+    for name, sizing in (("G", None), ("H", 2.0)):
+        body = {"name": name, "tier": "surrogate", "knobs": {**KNOBS, "faab_sizing": sizing}}
+        (wire / f"{name}.json").write_text(json.dumps({**body, "opponents": {"kind": "static"}}))
+    code, out = replay(wire, "--arms", *spec(wire, "G", "H"), "--paths", "1", "--dry-run")
+    assert code == 2, out
+    assert "refused: arms a and b are the same seat: they differ only in faab_sizing (" in out
+    arms = {k: rn.arm_of(json.loads((wire / f"{n}.json").read_text())) for k, n in (("a", "G"), ("b", "H"))}  # fmt: skip
+    for waivers in ("none", "priority", "faab"):
+        league_rules = shapes.LeagueRules(waivers=waivers)
+        r = ss.read_season(wire, 2024, fc.parse("prior"), None, arms, 5, "stat", league_rules)
+        assert r.shape.waivers == waivers
+        read = policy.reads(arms["a"], r.shape, False)["faab_sizing"] == policy.READ
+        assert read == (waivers == "faab")
+        assert (ss.same_seats(arms, [r.shape], rivals=True) is None) == read

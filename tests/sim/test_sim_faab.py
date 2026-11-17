@@ -13,11 +13,12 @@ import pytest
 
 from pickandroll.season import autopilot as qa
 from pickandroll.season import moves as mv
+from pickandroll.sim import audit, policy
+from pickandroll.sim import counts as ct
 from pickandroll.sim import opponents as op
-from pickandroll.sim import policy
 from pickandroll.sim import run as rn
 from pickandroll.sim.state import FAILED, LOST, WON, Claim, Resolved, SimState, Waiting, initial
-from tests.sim.sim_league import KNOBS, make_setup
+from tests.sim.sim_league import KNOBS, arm, make_setup, recorded_lines
 
 DAY = timedelta(1)
 
@@ -323,6 +324,9 @@ def test_the_exact_and_the_surrogate_tier_bid_on_their_moves_own_gains_and_ranki
     sur = policy.surrogate(b)
     assert sur.basis is not None and sur.basis.gains == policy.gains_of(ev, "three", sur.moves)
     assert policy.ranking(b).basis is None
+    # A plan's steps each carry a gain, in the plan's order.
+    planned = policy.exact(b, with_plan=True)
+    assert planned.basis is not None and len(planned.basis.plan) == len(planned.plan)
     # By priority no tier carries a basis, and the decision is the same.
     p = built_on(replace(setup, waivers="priority"), faab_sizing=0.5, plan_floor_cats=0.25)
     assert not p.bids
@@ -349,3 +353,129 @@ def test_a_seat_that_bids_reads_faab_sizing_and_its_plan_floor_in_a_faab_league(
     for waivers in ("none", "priority"):
         shape = policy.Shape(waivers=waivers)
         assert policy.reads(rn.Arm("X", "exact", KNOBS, {}), shape)["faab_sizing"] != policy.READ
+
+
+# --------------------------------------------------------------------------- the audit and the counts
+def day_of(state: SimState) -> audit.Day:
+    return audit.Day(state.day, 0, state, {}, {})
+
+
+def found(rule, setup, today: SimState, before: SimState | None) -> list:
+    return list(rule(setup, day_of(today), None if before is None else day_of(before)))
+
+
+def morning(bid2: int = 7, bid3: int = 5):
+    """``two_on_x``'s morning as the audit reads it: the day before with the claims open, the
+    clear morning after."""
+    setup, s, out, x, a2, a3, clears = two_on_x(bid2, bid3)
+    return setup, replace(s, day=clears - DAY), replace(out, day=clears), x, a2, a3
+
+
+def test_a_faab_run_is_held_to_the_wait_and_the_bid_rules_in_place_of_claim_priority():
+    assert [r.name for r in audit.rules_of("faab")] == [
+        *(r.name for r in audit.RULES),
+        "waiver_wait",
+        "budget_floor",
+        "bid_paid",
+        "bid_order",
+    ]
+    assert audit.Auditor(league()).rules == audit.rules_of("faab")
+    for bids in ((7, 5), (5, 5), (0, 0)):
+        setup, before, after, *_ = morning(*bids)
+        for rule in audit.rules_of("faab"):
+            assert found(rule.check, setup, after, before) == [], (bids, rule.name)
+
+
+def test_budget_floor_catches_dollars_below_zero():
+    setup, before, after, *_ = morning()
+    assert found(
+        audit.budget_floor, setup, replace(after, dollars={**after.dollars, 4: -1}), before
+    ) == [(4, "dollars left -1, below zero")]
+
+
+def test_bid_paid_catches_a_win_that_paid_other_than_its_bid_and_dollars_that_moved_alone():
+    setup, before, after, x, *_ = morning()
+    cheap = tuple(replace(r, bid=3) if r.outcome == WON else r for r in after.resolved)
+    assert (2, f"won claim on player {x} paid 3, placed at 7") in found(
+        audit.bid_paid, setup, replace(after, resolved=cheap), before
+    )
+    # The loser charged as well; a team that made no claim charged.
+    for team in (3, 1):
+        moved = replace(after, dollars={**after.dollars, team: after.dollars[team] - 2})
+        assert found(audit.bid_paid, setup, moved, before) == [
+            (team, f"dollars left {after.dollars[team] - 2}, expected {after.dollars[team]}")
+        ]
+    # On day one the budget stands for the day before.
+    assert found(audit.bid_paid, setup, before, None) == []
+    assert found(audit.bid_paid, setup, replace(before, dollars={**before.dollars, 1: 90}), None)
+
+
+def test_bid_order_catches_a_lower_bid_that_won_an_order_rolled_without_a_tie_and_one_left():
+    setup, before, after, x, a2, a3 = morning()
+    # Team 3's $5 took x though team 2's $7 stood ahead of it and did not fail.
+    low = (Resolved(3, x, a3, WON, False, 5), Resolved(2, x, a2, LOST, True, 7))
+    breaches = found(audit.bid_order, setup, replace(after, resolved=low), before)
+    assert (3, f"claim on player {x} won by team 3 at 5 with team 2 ahead at 7") in breaches
+    assert (2, f"claim on player {x} lost to no higher or equal bid") in breaches
+    # A win without a tie rolled the order.
+    rolled = replace(after, priority=(4, 3, 1, 2))
+    assert found(audit.bid_order, setup, rolled, before) == [
+        (None, "priority after the morning (4, 3, 1, 2), expected (4, 3, 2, 1)")
+    ]
+    # A tie's winner left in its place.
+    setup, before, tied, *_ = morning(5, 5)
+    assert found(audit.bid_order, setup, replace(tied, priority=before.priority), before) == [
+        (None, "priority after the morning (4, 3, 2, 1), expected (4, 2, 1, 3)")
+    ]
+
+
+def test_a_faab_run_s_counts_carry_the_dollars_and_the_bids_after_the_claims():
+    setup, _, out, *_ = two_on_x(7, 5)
+    rows = ct.Tally(setup).rows(out)
+    assert list(rows[2])[-len(ct.BIDS) :] == list(ct.BIDS)
+    assert {m: rows[2][m] for m in ct.BIDS} == {
+        "dollars_spent": 7.0,
+        "dollars_left": 93.0,
+        "claims_won_free": 0.0,
+        "claims_lost_bid": 0.0,
+        "claims_lost_tie": 0.0,
+        "claims_won_alone": 0.0,
+        "bid_over_next": 2.0,
+        "bid_short": 0.0,
+    }
+    assert (rows[3]["claims_lost_bid"], rows[3]["bid_short"], rows[3]["dollars_left"]) == (
+        1,
+        2,
+        100,
+    )
+    assert ct.metrics_in(list(rows.values())) == (*ct.METRICS, *ct.CLAIMS, *ct.BIDS)
+    # By priority: the claims' counts and no bid count.
+    prio = ct.Tally(replace(setup, waivers="priority")).rows(replace(out, dollars={}))
+    assert ct.metrics_in(list(prio.values())) == (*ct.METRICS, *ct.CLAIMS)
+
+
+#: The made-up league's seed and path on which a surrogate seat among market rivals wins a claim
+#: it paid for (``test_a_surrogate_seat_wins_a_claim_it_paid_for``, which says how it was found).
+PAID_PATH = (1, 0)
+
+
+def test_a_surrogate_seat_wins_a_claim_it_paid_for():
+    """The test that catches a seat that never bids above $0: a six-week made-up league of four
+    seats and twelve free agents, waivers by FAAB, the surrogate in seat 1 (at the engine's
+    categories plan floor, 0.1, its typical gain until ten moves) among market rivals at a rate
+    of 0.3 a day. The seat wins a claim and pays for it, every team's dollars are its budget
+    less what its won claims bid, and the audit finds nothing. PAID_PATH is the first of seeds 1
+    and 2 and paths 0 and 1, tried in that order, on which the seat wins a claim above $0."""
+    setup = league(pool=12)
+    u = arm("U", "surrogate", opponents="market", plan_floor_cats=0.1)
+    w = rn.replay_world(setup, recorded_lines(setup, 11), 1, *PAID_PATH)
+    seen: list = []
+    variant = {**{t: op.Market(0.3) for t in setup.teams}, 1: u.seat()}
+    (result,) = rn.simulate(setup, w, [variant], on_day=lambda r: seen.append(r.state))
+    assert result.breaches == ()
+    won = [r for s in seen for r in s.resolved if r.outcome == WON]
+    assert any(r.bid for r in won if r.team == 1), won
+    for t in setup.teams:
+        paid = sum(r.bid for r in won if r.team == t)
+        assert seen[-1].dollars[t] == setup.budget - paid
+        assert result.counts[t]["dollars_spent"] == paid

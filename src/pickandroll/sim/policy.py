@@ -301,8 +301,9 @@ class Basis:
     or :data:`MARKET`. ``gains`` is each move's gain the bid scales on, in the order of the
     decision's moves: for the live rule the move's own gain on the judging horizon, the set's
     value less the set without it (the live queue's ``gain``, the logged ``marginal`` on
-    ``three``); for the market the move's gain on its view. ``plan`` is the same for the plan's
-    steps, each on the week (a step's bid scales on the week when it has no score, as live).
+    ``three``); for the market the move's gain on its view. ``plan`` is each of the plan's steps'
+    gain, in the order of its steps: its week increment, live's step score with no queue weight
+    (:func:`basis_of`).
     ``sizing`` is the seat's ``faab_sizing`` and ``floor`` its plan floor, the typical gain until
     ten moves (live); ``noise`` the market's draw by move, for each of its moves that is a claim
     (an empty tuple when none is)."""
@@ -345,21 +346,23 @@ def basis_of(
     built: Built,
     ev: mv.Evaluator,
     moves: Sequence[mv.Move],
-    plan: Sequence[mv.Move] = (),
-    planned: Sequence[mv.Move] = (),
+    planned: Any = None,
 ) -> Basis | None:
-    """The live rule's basis for a decision of ``moves`` (and the plan's steps ``plan``, out of
-    the plan's whole set ``planned``) in a FAAB league; None elsewhere. The gains are the
-    engine's own, on its plain evaluator: the season term is the simulator's and live bids
-    without it."""
+    """The live rule's basis for a decision of ``moves`` (and the week plan ``planned``, a
+    ``stream.Plan``, when the decision carries one) in a FAAB league; None elsewhere. A move of
+    the set bids on its own gain on the judging horizon (:func:`gains_of`, the live queue's
+    ``marginal``); a plan step on its score, which live is its week increment plus the queue's
+    weight times its three weeks' increment (``plans.step_score``): the simulator has no such
+    weight (``three_weight`` is PR E's), so its week increment (``stream.step_gains``). The gains
+    are the engine's own, on its plain evaluator: the season term is the simulator's and live
+    bids without it."""
     if not built.bids:
         return None
-    steps = gains_of(ev, "week", planned) if plan else ()
-    by_step = dict(zip(planned, steps, strict=False))
+    steps = () if planned is None else tuple(g["week"] for g in st.step_gains(ev, planned))
     return Basis(
         LIVE,
         gains_of(ev, QUEUE_SET, moves),
-        tuple(by_step.get(m, 0.0) for m in plan),
+        steps,
         knob(built.knobs, "faab_sizing"),
         float(built.problem.plan_floor),
     )
@@ -817,7 +820,7 @@ def exact(
         held = tuple(rec.held)
         solves += 1
     plan: tuple[mv.Move, ...] = ()
-    whole: tuple[mv.Move, ...] = ()
+    taken = None
     if with_plan:
         week_set = mv.search(
             ev,
@@ -829,9 +832,9 @@ def exact(
         )
         planned = st.plan(ev, built.rule, week_set, p.value, allowed=allowed)
         if planned is not None and st.recommended(ev, planned):
-            plan, whole = planned.steps, planned.moves
+            plan, taken = planned.steps, planned
         solves += 1
-    basis = basis_of(built, ev, moves, plan, whole)
+    basis = basis_of(built, ev, moves, taken)
     return Decision(tuple(moves), held, plan, solves, "exact", basis)
 
 
@@ -1028,14 +1031,8 @@ WHEN_READ: Mapping[str, str] = {
     "blend": "a run that names the two sources' stand-ins, on an arm whose system is blend",
     "horizon_weight": "the exact tier executing weighted",
     "protection_floor": "a seat that moves: the exact, surrogate or ranking tier",
-    "plan_floor_cats": (
-        "the exact tier drawing and executing the week plan in a categories league, or a seat "
-        "that bids in a categories FAAB league (the typical gain until ten moves)"
-    ),
-    "plan_floor_points": (
-        "the exact tier drawing and executing the week plan in a points league, or a seat that "
-        "bids in a points FAAB league (the typical gain until ten moves)"
-    ),
+    "plan_floor_cats": "the exact tier drawing and executing the week plan in a categories league",
+    "plan_floor_points": "the exact tier drawing and executing the week plan in a points league",
     "stash_threshold": "the simulator passing it to the engine (PR G)",
     "faab_sizing": "a seat that bids in a FAAB league: the exact or the surrogate tier (PR Fb)",
     "daily_cap": "the exact or the surrogate tier, which may queue more than one move a day",
@@ -1113,9 +1110,9 @@ def reads(arm: Configured, shape: Shape, mirrored: bool = False) -> dict[str, st
     if bids:
         out["faab_sizing"] = READ
     elif shape.waivers == "none":
-        out["faab_sizing"] = "the world has no waivers and no budget"
+        out["faab_sizing"] = "the world has no waivers and no budget: PR F"
     elif shape.waivers != "faab":
-        out["faab_sizing"] = f"waivers by {shape.waivers} carry no budget and no bid"
+        out["faab_sizing"] = f"waivers by {shape.waivers} carry no budget and no bid: PR Fb"
     elif arm.tier == "ranking":
         out["faab_sizing"] = "the ranking tier holds no gain in the engine's units: it bids $0"
     else:

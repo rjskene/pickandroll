@@ -7,7 +7,8 @@ the day's lines are scored. Each rule in :data:`RULES` is named and is a functio
 the day (:class:`Day`) and the same variant's day before (None on the first day, when the
 setup's rosters stand for it). It returns what it found, one ``(seat, what)`` a breach. A later
 PR adds a rule by adding to the list. A waiver league is held to :data:`WAIVER_RULES` too (PR
-Fa, :func:`rules_of`): a run without waivers reads only :data:`RULES`.
+Fa, :func:`rules_of`): a run without waivers reads only :data:`RULES`. A FAAB league (PR Fb) is
+held to the wait and :data:`BID_RULES` instead: its claims go by bid, not by priority alone.
 
 A breach voids its path: the runner records it (:class:`Breach`), the commands leave the path out
 of every aggregate, list the breaches in the payload and exit non-zero after writing. Nothing is
@@ -239,6 +240,90 @@ def claim_priority(setup: Setup, today: Day, before: Day | None) -> Found:
         yield None, f"priority after the morning {today.state.priority}, expected {tuple(order)}"
 
 
+def budget_floor(setup: Setup, today: Day, before: Day | None) -> Found:
+    """No team's dollars go below zero (PR Fb)."""
+    for team, left in sorted(today.state.dollars.items()):
+        if left < 0:
+            yield team, f"dollars left {left}, below zero"
+
+
+def _placed(before: Day | None) -> dict[tuple[int, int], int]:
+    """The bids of the claims open the day before, by team and add."""
+    if before is None:
+        return {}
+    return {(t, c.move.add): c.bid for t, cs in before.state.claims.items() for c in cs}
+
+
+def bid_paid(setup: Setup, today: Day, before: Day | None) -> Found:
+    """A won claim costs exactly its bid, and nothing else moves the dollars (PR Fb): each team's
+    dollars left are the day before's (the budget on the first day) less the bids, as placed, of
+    the claims it won this morning."""
+    was = dict.fromkeys(setup.teams, setup.budget) if before is None else dict(before.state.dollars)
+    bids = _placed(before)
+    paid: Counter[int] = Counter()
+    for r in today.state.resolved:
+        if r.outcome != WON:
+            continue
+        bid = bids.get((r.team, r.add))
+        if bid is None or r.bid != bid:
+            yield r.team, f"won claim on player {r.add} paid {r.bid}, placed at {bid}"
+        paid[r.team] += int(r.bid or 0)
+    for team in sorted(set(was) | set(today.state.dollars)):
+        expected = was.get(team, setup.budget) - paid[team]
+        if today.state.dollars.get(team) != expected:
+            yield team, f"dollars left {today.state.dollars.get(team)}, expected {expected}"
+
+
+def bid_order(setup: Setup, today: Day, before: Day | None) -> Found:
+    """Each player went to the highest bid among the claims open on him that morning that could
+    be taken, a tie to the better priority (PR Fb): the morning's decisions (``state.resolved``)
+    replayed on the day before's claims and order. Every claim on a won player that stood ahead
+    of the winner (a higher bid, or the same bid and a better place in the order then) failed;
+    every lost claim's player went to another team on a bid at least its own; the order rolls
+    only on a win that broke a tie (another claim on him open with the same bid); the order
+    after the morning is the state's; every winner holds its player."""
+    if before is None or not today.state.resolved:
+        return
+    order = list(before.state.priority)
+    bids = _placed(before)
+    log = today.state.resolved
+    won = {r.add: r for r in log if r.outcome == WON}
+    on: dict[int, list[int]] = {}
+    for team, add in bids:
+        on.setdefault(add, []).append(team)
+    failed: set[tuple[int, int]] = set()
+    for r in log:
+        if r.outcome == FAILED:
+            failed.add((r.team, r.add))
+            continue
+        if r.outcome == LOST:
+            w = won.get(r.add)
+            if w is None or w.team == r.team or int(w.bid or 0) < int(r.bid or 0):
+                yield r.team, f"claim on player {r.add} lost to no higher or equal bid"
+            continue
+        if r.outcome != WON:
+            yield r.team, f"claim on player {r.add} decided as {r.outcome!r}"
+            continue
+        bid = int(r.bid or 0)
+        rivals = [t for t in on.get(r.add, ()) if t != r.team]
+        for t in rivals:
+            other = bids[(t, r.add)]
+            ahead = other > bid or (
+                other == bid and t in order and order.index(t) < order.index(r.team)
+            )
+            if ahead and (t, r.add) not in failed:
+                what = f"claim on player {r.add} won by team {r.team} at {bid}"
+                yield r.team, f"{what} with team {t} ahead at {other}"
+        if any(bids[(t, r.add)] == bid and (t, r.add) not in failed for t in rivals):
+            if r.team in order:
+                order.remove(r.team)
+            order.append(r.team)
+        if r.add not in {k for k, _ in today.state.rosters.get(r.team, ())}:
+            yield r.team, f"won claim on player {r.add} not on its roster"
+    if tuple(order) != tuple(today.state.priority):
+        yield None, f"priority after the morning {today.state.priority}, expected {tuple(order)}"
+
+
 #: The rules every day of every run is held to, in the order they are read.
 RULES: tuple[Rule, ...] = (
     Rule(
@@ -261,12 +346,28 @@ WAIVER_RULES: tuple[Rule, ...] = (
         "each contested claim to the best priority that morning, the winner then last",
     ),
 )
+#: A FAAB league's rules besides the wait (PR Fb), in place of ``claim_priority``, a priority
+#: run's rule.
+BID_RULES: tuple[Rule, ...] = (
+    Rule("budget_floor", budget_floor, "no team's dollars below zero"),
+    Rule("bid_paid", bid_paid, "a won claim costs exactly its bid, and nothing else moves dollars"),
+    Rule(
+        "bid_order",
+        bid_order,
+        "each player to the highest bid that could be taken, a tie to the better priority",
+    ),
+)
 
 
 def rules_of(waivers: str = "none") -> tuple[Rule, ...]:
     """The rules a run under ``waivers`` (``shapes.WAIVERS``) is held to: :data:`RULES`, and
-    :data:`WAIVER_RULES` after them in a waiver league."""
-    return RULES if waivers == "none" else (*RULES, *WAIVER_RULES)
+    after them :data:`WAIVER_RULES` in a league by priority, or the wait and :data:`BID_RULES` in
+    a FAAB league."""
+    if waivers == "none":
+        return RULES
+    if waivers == "faab":
+        return (*RULES, WAIVER_RULES[0], *BID_RULES)
+    return (*RULES, *WAIVER_RULES)
 
 
 class Auditor:
@@ -299,6 +400,7 @@ def names(rules: Sequence[Rule] | None = None) -> list[dict[str, str]]:
 
 
 __all__ = [
+    "BID_RULES",
     "OUT",
     "RULES",
     "WAIVER_RULES",
@@ -306,6 +408,9 @@ __all__ = [
     "Breach",
     "Day",
     "Rule",
+    "bid_order",
+    "bid_paid",
+    "budget_floor",
     "claim_priority",
     "held_kind",
     "lands_next_day",

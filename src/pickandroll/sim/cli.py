@@ -376,10 +376,37 @@ CLAIMS_NOTE = {
 }
 
 
+#: What the claim counts are in a FAAB run (PR Fb), where a bid decides first: the notes of
+#: :data:`CLAIMS_NOTE` it says otherwise.
+FAAB_CLAIMS_NOTE = {
+    "claims_won": "claims won: the highest bid that could be taken, a tie to the better priority",
+    "claims_lost": "claims lost: another claim took the player, on a higher or an equal bid",
+    "claims_behind": "claims decided with a claim on the player ahead of it (the winner's, or one "
+    "that failed)",
+}
+#: What each bid count is (PR Fb): a FAAB run's only, after the claims'. The world knows every
+#: bid, so these are exact; no decision reads them.
+BIDS_NOTE = {
+    "dollars_spent": "dollars paid for won claims over the season",
+    "dollars_left": "dollars left at the season's end",
+    "claims_won_free": "claims won at $0",
+    "claims_lost_bid": "claims lost to a higher bid",
+    "claims_lost_tie": "claims lost on a tie, to a better priority",
+    "claims_won_alone": "claims won with no other claim on the player that morning",
+    "bid_over_next": "dollars won claims paid above the next bid that could have been taken (the "
+    "whole bid when there was none): the world's knowledge, not the seat's",
+    "bid_short": "dollars lost claims fell short of the winning bid by: the world's knowledge",
+}
+
+
 def counts_note(waivers: str = "none") -> dict[str, str]:
-    """The counts' note for a run under ``waivers``: :data:`COUNTS_NOTE`, and the claims' too in
-    a waiver run."""
-    return COUNTS_NOTE if waivers == "none" else {**COUNTS_NOTE, **CLAIMS_NOTE}
+    """The counts' note for a run under ``waivers``: :data:`COUNTS_NOTE`, the claims' too in a
+    waiver run, and in a FAAB run the bids' with the claims' said for bids."""
+    if waivers == "none":
+        return COUNTS_NOTE
+    if waivers == "faab":
+        return {**COUNTS_NOTE, **CLAIMS_NOTE, **FAAB_CLAIMS_NOTE, **BIDS_NOTE}
+    return {**COUNTS_NOTE, **CLAIMS_NOTE}
 
 
 def audited(
@@ -1050,8 +1077,8 @@ def task_paired(
     return out
 
 
-#: The replay's version in its payload: 9 since the waivers (#172, PR Fa), 8 since the league
-#: rules (PR D4c), 7 since the
+#: The replay's version in its payload: 10 since FAAB (#172, PR Fb), 9 since the waivers (PR
+#: Fa), 8 since the league rules (PR D4c), 7 since the
 #: league generator (PR D4b), 6 since the draft market (PR D4a), each as its reason says; 5
 #: since the standalone cut (PR D3): the payload
 #: names nothing of a live league or a drawn world (its ``gap``, ``refresh`` and ``tau`` are
@@ -1063,12 +1090,14 @@ def task_paired(
 #: keyed by the forecaster's label (``prior``, ``oracle:0.1``), where version 2 keyed them by kind
 #: and spread (``prior:0``); 2 since its seats believe only the games played (PR B1), a version 1
 #: replay's seats having seen each season's rates.
-REPLAY_VERSION = 9
+REPLAY_VERSION = 10
 REPLAY_VERSION_WHY = (
-    "9: the waivers (--waivers, --waiver-days): with --waivers priority a dropped player waits "
-    "his waiver days and a claim on him is decided by rolling waiver priority, the league block's "
-    "rules name the waivers and the wait, the audit holds two rules more and the counts count "
-    "the claims; with nothing named, no waivers, the figures are version 8's"
+    "10: FAAB (--waivers faab, --budget, --rival-scale): a claim carries a sealed bid from its "
+    "team's budget, the highest bid takes the player and pays it, a tie to the better priority; "
+    "the seat bids by the live rule, a market rival by an assumed form; the league block's rules "
+    "name the budget and the rivals' scale, the audit holds three rules more and the counts "
+    "count the dollars and the bids; with nothing named, and by priority, the figures are "
+    "version 9's"
 )
 #: What a replay under a table drafts on (#172, PR D4a), for its payload.
 ADP_RIVAL = (
@@ -1651,7 +1680,10 @@ def cmd_replay(args: argparse.Namespace) -> int:
             )
         held = shapes.parse_held(args.held) if args.held is not None else ()
         waivers, waiver_days = shapes.parse_waivers(args.waivers, args.waiver_days)
-        league_rules = shapes.LeagueRules(args.scoring, table, held, waivers, waiver_days)
+        budget, scale = shapes.parse_budget(waivers, args.budget, args.rival_scale)
+        league_rules = shapes.LeagueRules(
+            args.scoring, table, held, waivers, waiver_days, budget, scale
+        )
     except ValueError as e:
         print(f"refused: {e}")
         return 2
@@ -2317,6 +2349,26 @@ POINTS_NOTE = (
 )
 
 
+#: How a FAAB league's bids are made (#172, PR Fb), in a FAAB run's league block.
+FAAB_NOTE = (
+    "a claim's sealed bid is set when it is placed, clamped to its team's dollars left that day "
+    "(open bids not taken out); the clear morning decides the claims highest bid first, a tie "
+    "by waiver priority, the winner paying exactly its bid, a claim its team can no longer pay "
+    "failing; the order rolls only when a win broke a tie, a working default (a league may set "
+    "it otherwise); only a dropped player waiting his days is bid on, a free agent costs $0. "
+    "The seat on the exact or the surrogate tier, and a mirror rival, bid by the live rule "
+    "(autopilot.bid_of) on the move's own gain on the judging horizon over the typical gain of "
+    "the moves it recommended in the fortnight (the plan floor until ten), its faab_sizing, and "
+    "no flag: the live rule's flags are not modelled. The ranking tier bids $0. A market rival "
+    "bids round(rival_scale x gain / typical x noise) on its own view, the typical over every "
+    f"market rival's moves of the {policy.RIVAL_BIDS.days} days before (its own gain until "
+    f"{policy.RIVAL_BIDS.least}), the noise uniform on [{policy.RIVAL_BIDS.noise[0]:g}, "
+    f"{policy.RIVAL_BIDS.noise[1]:g}): an assumed form, not a fit, so a result that flips sign "
+    "across rival_scale 0.5, 1 and 2 depends on the league. A static seat never claims. The bid "
+    "counts are the world's knowledge of every bid; no seat reads them"
+)
+
+
 def league_block(
     grid: shapes.Grid,
     visits: Sequence[shapes.Visit],
@@ -2326,7 +2378,7 @@ def league_block(
     """A replay's league (#172, PR D4b): the grid named, its shapes in order, the visit rule,
     each path's shape index and turn, and the drafts that may not fill; and the run's league
     rules (PR D4c: the scoring, the points table or null, the held slots), with what a points
-    league's metrics are in a points run."""
+    league's metrics are in a points run, and in a FAAB run how the bids are made (PR Fb)."""
     return {
         "grid": grid.name,
         "axes": {k: list(v) for k, v in grid.axes().items()},
@@ -2337,6 +2389,7 @@ def league_block(
         "note": LEAGUE_NOTE,
         "rules": league_rules.payload(),
         **({"points_note": POINTS_NOTE} if league_rules.scoring == "points" else {}),
+        **({"faab_note": FAAB_NOTE} if league_rules.bidding else {}),
     }
 
 
@@ -2786,14 +2839,29 @@ def main(argv: list[str] | None = None) -> int:
         metavar="KIND",
         help="how a dropped player is added back, on every path: none, a free agent the next "
         "morning; priority, he waits --waiver-days and a claim on him goes by rolling waiver "
-        "priority (default none)",
+        "priority; faab, he waits and a claim carries a sealed bid from the team's budget, the "
+        "highest bid first, a tie by priority (default none)",
     )
     re_.add_argument(
         "--waiver-days",
         default=None,
         metavar="N",
-        help=f"with --waivers priority: the days a dropped player waits, 1 to 7 (default "
+        help=f"with --waivers priority or faab: the days a dropped player waits, 1 to 7 (default "
         f"{shapes.WAIVER_DAYS})",
+    )
+    re_.add_argument(
+        "--budget",
+        default=None,
+        metavar="DOLLARS",
+        help=f"with --waivers faab: the whole dollars each team starts with, 1 to 1000 (default "
+        f"{shapes.BUDGET})",
+    )
+    re_.add_argument(
+        "--rival-scale",
+        default=None,
+        metavar="X",
+        help="with --waivers faab: what a market rival's bid is multiplied by, above 0, an "
+        "assumption to sweep (default 1)",
     )
     re_.add_argument(
         "--news-sd",
