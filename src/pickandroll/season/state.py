@@ -85,6 +85,28 @@ def _opt_date(v: Any) -> date | None:
     return date.fromisoformat(v) if v else None
 
 
+#: A head-to-head categories league's two formats (#397): every category counts in the
+#: standings (a 5-4 week adds five wins and four losses), or the week is one result (one win a
+#: matchup, whatever its margin).
+EACH_CATEGORY = "each_category"
+ONE_WIN = "one_win"
+#: Where a league's format was read: Yahoo's settings (v3 or the settings page), or the standings.
+H2H_SETTINGS = "settings"
+H2H_STANDINGS = "standings"
+
+
+def h2h_from_standings(records: Iterable[tuple[int, int, int]], weeks_played: int) -> str | None:
+    """A categories league's format from its standings (#397): each team's wins, losses and
+    ties sum to the weeks played in a one-win league, and to more in one where every category
+    counts. None before a week is played, without a record, or when the sums say neither."""
+    sums = [w + lo + t for w, lo, t in records]
+    if weeks_played < 1 or not sums:
+        return None
+    if any(x > weeks_played for x in sums):
+        return EACH_CATEGORY
+    return ONE_WIN if all(x == weeks_played for x in sums) else None
+
+
 #: The settings page's waiver, acquisition and trade fields (#261), each filling what the v3
 #: settings read left None (:meth:`SeasonSettings.with_slots`).
 PAGE_RULES = (
@@ -97,6 +119,9 @@ PAGE_RULES = (
     "trade_ratify",
     "trade_review_days",
 )
+#: Every field a settings page read gives: one parsed before a field existed is read again
+#: (#316), as the scoring type was before #397.
+PAGE_FIELDS = (*PAGE_RULES, "scoring_type")
 
 
 @dataclass(frozen=True)
@@ -140,7 +165,7 @@ class SeasonSettings:
     #: Where the held slots of ``roster`` come from: :data:`SLOTS_PAGE`, or :data:`SLOTS_ROSTERS`
     #: (the most any read roster fills: a lower bound); None before the season is read.
     held_from: str | None = None
-    #: Whether the stored settings page gives every field of :data:`PAGE_RULES`: a page parsed
+    #: Whether the stored settings page gives every field of :data:`PAGE_FIELDS`: a page parsed
     #: before a field existed is read again (#316).
     page_rules_read: bool = False
     #: Whether an injured player can be added straight to an injury slot.
@@ -151,6 +176,17 @@ class SeasonSettings:
     playoff_tiebreak: str | None = None
     playoff_reseeding: bool | None = None
     divisions: bool | None = None
+    #: A categories league's head-to-head format (#397): :data:`EACH_CATEGORY` or
+    #: :data:`ONE_WIN`, None for a points league or not known; read from (``h2h_from``) Yahoo's
+    #: settings, else the standings. ``scoring_type`` is the settings page's as printed.
+    h2h: str | None = None
+    h2h_from: str | None = None
+    scoring_type: str | None = None
+
+    @property
+    def one_win(self) -> bool:
+        """Whether a week is one result in the standings (#397)."""
+        return self.h2h == ONE_WIN
 
     @property
     def first_playoff_week(self) -> int | None:
@@ -213,6 +249,9 @@ class SeasonSettings:
             playoff_tiebreak=d.get("playoff_tiebreak") or None,
             playoff_reseeding=_opt_bool(d.get("playoff_reseeding")),
             divisions=_opt_bool(d.get("divisions")),
+            h2h=d.get("h2h") or None,
+            h2h_from=d.get("h2h_from") or None,
+            scoring_type=d.get("scoring_type") or None,
         )
 
     def merged(self, read: Mapping[str, Any]) -> SeasonSettings:
@@ -220,6 +259,8 @@ class SeasonSettings:
         folder's own scoring, categories, roster and team id win."""
         keep = {"league", "scoring", "cats", "roster", "num_teams", "my_team_id", "points"}
         fields = {k: v for k, v in read.items() if k not in keep and v is not None}
+        if fields.get("h2h"):
+            fields["h2h_from"] = H2H_SETTINGS
         return SeasonSettings.from_dict({**self.to_dict(), **fields})
 
     def with_slots(
@@ -241,16 +282,20 @@ class SeasonSettings:
                 for k in PAGE_RULES
                 if getattr(self, k) is None and page.get(k) is not None
             }
+            # The page's format fills what v3 left None (#397).
+            if self.h2h is None and page.get("h2h"):
+                rules |= {"h2h": page["h2h"], "h2h_from": H2H_SETTINGS}
             return replace(
                 self,
                 **rules,
+                scoring_type=page.get("scoring_type") or self.scoring_type,
                 roster=tuple(str(x) for x in page.get("roster") or self.roster),
                 playoff_weeks=tuple(int(w) for w in page.get("playoff_weeks") or ()),
                 lineup_deadline=page.get("lineup_deadline"),
                 lineup_changes=page.get("lineup_changes") if read else changes,
                 lineup_from=page.get("lineup_from") if read else effective,
                 held_from=SLOTS_PAGE,
-                page_rules_read=all(k in page for k in PAGE_RULES),
+                page_rules_read=all(k in page for k in PAGE_FIELDS),
                 injured_add_to_slot=page.get("injured_add_to_slot"),
                 playoff_tiebreak=page.get("playoff_tiebreak") or None,
                 playoff_reseeding=_opt_bool(page.get("playoff_reseeding")),
@@ -650,6 +695,13 @@ class Season:
         settings = settings.with_slots(
             _data(parts, "league_settings"), ([s.slot for s in r] for r in rosters.values())
         )
+        if settings.h2h is None and settings.scoring != "points" and settings.current_week:
+            # No settings say it: the standings do (#397). Weeks before this one are played.
+            played = settings.current_week - (settings.start_week or 1)
+            records = [(t.wins, t.losses or 0, t.ties or 0) for t in teams if t.wins is not None]
+            found = h2h_from_standings(records, played)
+            if found:
+                settings = replace(settings, h2h=found, h2h_from=H2H_STANDINGS)
         lineups: dict[int, dict[date, tuple[RosterSpot, ...]]] = {}
         for key, part in parts.items():
             if key.startswith("lineup/"):

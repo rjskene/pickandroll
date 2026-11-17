@@ -450,13 +450,33 @@ The two kinds of league (#261) run under different rules, and each league's own 
   overnight run.
 - **The pinned private league (31822)** has no v3 read. Its rules come from its settings page,
   which the daily opens while the route's `needs` lists it: until a stored read holds every
-  field of `PAGE_RULES`, so a part parsed before a field existed catches up (#316). The page is
+  field of `PAGE_FIELDS` (the rules and the scoring type), so a part parsed before a field existed catches up (#316). The page is
   not read on an interval, so a rule the league changes later is not picked up:
   - post-draft players are free agents (`free_agents`), so an add before a player's game plays
     that night;
   - waivers of 1 day, a continual rolling list decided by waiver priority, with no FAAB;
   - 5 adds a week, no season cap;
   - trades reviewed by league vote within 1 day.
+
+**The head-to-head format (#397, the user's ruling 2026-11-15).** Yahoo runs categories
+leagues in two formats:
+- **Each category counts.** This is the nine public leagues: a 5-4 week adds five wins and
+  four losses to the standings.
+- **One win a matchup.** This is the private league: a week is one result, so a 5-4 win counts
+  the same as a 9-0.
+
+Each league's format is stored as `h2h` (`each_category` or `one_win`), with `h2h_from` saying
+where it was read:
+- From Yahoo's settings (`settings`). v3's `scoring_type` is `head` or `headone`. The settings
+  page's "Scoring Type" row (`Head-to-Head - Categories`, or a one-win wording) is kept as
+  printed in `scoring_type`.
+- Else from the standings (`standings`). In a one-win league every team's wins, losses and ties
+  sum to the weeks played; in a league where each category counts they sum to more.
+
+A stored settings page parsed before the scoring type existed is listed in `needs` again (it is
+part of `PAGE_FIELDS`). The league page and the landing label the format as "H2H categories",
+"H2H one win" or "H2H points". The format changes no recommendation yet: judging a one-win
+league's moves and lineups on matchup odds is #397's second part.
 
 `pages.parse_settings_page` reads the waiver, acquisition and trade rows, and
 `SeasonSettings.with_slots` merges them: a field the v3 read set wins, and a field it left None

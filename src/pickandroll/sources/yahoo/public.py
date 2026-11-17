@@ -27,6 +27,8 @@ from datetime import UTC, date, datetime
 from typing import Any, Protocol
 
 from ...season.state import (
+    EACH_CATEGORY,
+    ONE_WIN,
     PUBLIC,
     YAHOO_WEEK,
     Part,
@@ -387,6 +389,10 @@ def transactions_url(league: str) -> str:
 
 
 # --------------------------------------------------------------------------- v3 json
+#: Yahoo's API scoring types of a head-to-head categories league, by format (#397).
+V3_H2H = {"head": EACH_CATEGORY, "headone": ONE_WIN}
+
+
 def settings_from_v3(body: Any) -> dict[str, Any] | None:
     """The season fields of Yahoo's public settings response, or None when Yahoo serves no
     public league under the id (private, dissolved or deleted)."""
@@ -409,6 +415,9 @@ def settings_from_v3(body: Any) -> dict[str, Any] | None:
         "trade_ratify": s.get("trade_ratify_type") or None,
         "trade_review_days": s.get("trade_reject_time"),
         "playoff_teams": s.get("num_playoff_teams"),
+        # Yahoo's API names the head-to-head formats ``head`` and ``headone`` (#397); a read
+        # without the field leaves the settings page or the standings to say.
+        "h2h": V3_H2H.get(str(s.get("scoring_type") or svc.get("scoring_type") or "")),
     }
 
 
