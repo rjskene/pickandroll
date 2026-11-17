@@ -219,14 +219,21 @@ def _refresh(ctx: Context, league: str) -> tuple[int, float]:
 
 
 def solve_all(
-    ctx: Context, leagues: Sequence[str], name: str = "solve", timeout: float = SOLVE_TIMEOUT_S
+    ctx: Context,
+    leagues: Sequence[str],
+    name: str = "solve",
+    timeout: float = SOLVE_TIMEOUT_S,
+    why: Mapping[str, Sequence[str]] | None = None,
 ) -> dict[str, int]:
     """``GET /seasons/<id>/moves`` per league, one at a time: each writes the day's decision-log
     entry (#125); nothing is posted or changed by it. The detail names the leagues whose search
-    the budget cut (#306) or stopped on a cycle (#364), from each answer's ``search``."""
+    the budget cut (#306) or stopped on a cycle (#364), from each answer's ``search``, and, for a
+    re-solve, each league's reasons (``why``, #415)."""
     left_out = [k for k in leagues if k in ctx.skip_solve]
     leagues = [k for k in leagues if k not in ctx.skip_solve]
     note = f"; left out by --skip-solve: {', '.join(left_out)}" if left_out else ""
+    if why:
+        note += "; " + resolved_because(why)
     if ctx.dry_run:
         ctx.report.skipped(name, f"dry run: would solve {len(leagues)} leagues{note}")
         return {}
@@ -339,21 +346,101 @@ def comeback_touched(ctx: Context, leagues: Sequence[str], since: datetime) -> l
     return out
 
 
+#: The held slots (#214): a lineup step into or out of one changes the roster's open spots.
+IL_SLOTS = frozenset({"IL", "IL+"})
+#: The reasons a league is solved again before the daily's queue (#415), as the detail names them.
+COMEBACK_DROP = "comeback drop"
+IL_RETURNS = "IL returns"
+IL_MOVES = "IL moves"
+
+
+def il_crossings(run: Mapping[str, Any]) -> list[str]:
+    """What a lineup run's ``set`` steps did across the IL line (#415): :data:`IL_RETURNS` for a
+    player out of IL or IL+ to an active or bench slot (a spot the solve counted as open is
+    filled), :data:`IL_MOVES` for one into IL or IL+ (a spot opens that the solve did not see).
+    A step between IL and IL+, or between two active slots, crosses nothing."""
+    out: list[str] = []
+    for s in run.get("steps") or []:
+        if not isinstance(s, dict) or s.get("outcome") != "set":
+            continue
+        held_from = str(s.get("from_slot")) in IL_SLOTS
+        held_to = str(s.get("to_slot")) in IL_SLOTS
+        if held_from and not held_to and IL_RETURNS not in out:
+            out.append(IL_RETURNS)
+        elif held_to and not held_from and IL_MOVES not in out:
+            out.append(IL_MOVES)
+    return out
+
+
+def _since(at: Any, since: datetime) -> bool:
+    when = _when(at)
+    return when is not None and (when.tzinfo is None or when >= since)
+
+
+def lineup_touched(ctx: Context, leagues: Sequence[str], since: datetime) -> dict[str, list[str]]:
+    """The leagues among ``leagues`` whose live lineup run since ``since`` set a step across the
+    IL line (#415), with what it did (:func:`il_crossings`): a return from IL with no drop fills
+    a spot the solve counted as open, so its queue would place an open-spot add on a full
+    roster. Read from ``GET /seasons/<id>/autopilot``'s ``today``; a dry run, a step not ``set``
+    and a run before ``since`` count for nothing. A league whose route does not answer is not
+    counted: its earlier solve stands."""
+    out: dict[str, list[str]] = {}
+    for league in leagues:
+        try:
+            code, body, _ = ctx.get(f"/seasons/{league}/autopilot", 60)
+        except Unreachable:
+            continue
+        if code != 200 or not isinstance(body, dict):
+            continue
+        found: list[str] = []
+        for r in body.get("today") or []:
+            if isinstance(r, dict) and r.get("mode") == "live" and _since(r.get("at"), since):
+                found += [k for k in il_crossings(r) if k not in found]
+        if found:
+            out[league] = found
+    return out
+
+
+def resolved_because(why: Mapping[str, Sequence[str]]) -> str:
+    """The detail's words for a re-solve (#415): the leagues by their reasons, in the order the
+    leagues came, e.g. ``re-solved 224319, 251146 (IL returns)``."""
+    groups: dict[str, list[str]] = {}
+    for league, reasons in why.items():
+        groups.setdefault(", ".join(reasons), []).append(league)
+    return "; ".join(f"re-solved {', '.join(ls)} ({r})" for r, ls in groups.items())
+
+
 def resolve_comebacks(ctx: Context, leagues: Sequence[str], since: datetime) -> None:
-    """The daily's re-solve before its queue (#360, the issue's third ask): only the leagues a
-    comeback dropped a player in since ``since`` (:func:`comeback_touched`), so the queue is built
-    from a solve that saw the roster the comeback left; nothing when none did."""
+    """The daily's re-solve before its queue: only the leagues whose roster the passes changed
+    since ``since``, so the queue is built from a solve that saw it; nothing when none did.
+
+    - A comeback dropped a player (#360, :func:`comeback_touched`).
+    - A live lineup step crossed the IL line (#415, :func:`lineup_touched`): a return from IL
+      with no drop fills a spot the solve counted as open, a move to IL opens one.
+
+    The detail names each league's reason."""
     name = "resolve_comebacks"
     if ctx.dry_run:
         ctx.report.skipped(
-            name, "dry run: would re-solve the leagues a comeback dropped a player in"
+            name,
+            "dry run: would re-solve the leagues a comeback dropped a player in or a lineup "
+            "step moved a player across the IL line in",
         )
         return
-    touched = comeback_touched(ctx, leagues, since)
-    if not touched:
-        ctx.report.skipped(name, "no comeback dropped a player: the solve stands")
+    dropped = set(comeback_touched(ctx, leagues, since))
+    crossed = lineup_touched(ctx, leagues, since)
+    why = {
+        k: ([COMEBACK_DROP] if k in dropped else []) + crossed.get(k, [])
+        for k in leagues
+        if k in dropped or k in crossed
+    }
+    if not why:
+        ctx.report.skipped(
+            name,
+            "no comeback dropped a player and no lineup step crossed the IL line: the solve stands",
+        )
         return
-    solve_all(ctx, touched, name=name, timeout=120)
+    solve_all(ctx, list(why), name=name, timeout=120, why=why)
 
 
 def status_check(ctx: Context, leagues: Sequence[str]) -> None:
