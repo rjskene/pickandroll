@@ -59,7 +59,7 @@ from . import forecast as fc
 from . import readers as reader
 from . import run as rn
 from . import validate as vg
-from .engine import mv, wk
+from .engine import EACH_CATEGORY, mv, wk
 
 #: The repository: this file is ``src/pickandroll/sim/cli.py``.
 ROOT = Path(__file__).resolve().parents[3]
@@ -726,7 +726,7 @@ def replay_setup_of(
     (``league``, #172, PR D4b; the fixed shape by default) under the run's league rules
     (``league_rules``, PR D4c: the scoring, a points table and the held slots after the
     shape's bench; PR Fa: the waivers; PR Fb: a FAAB league's budget and the rivals' bid
-    scale; today's by default)."""
+    scale; the format PR: a categories league's head-to-head format; today's by default)."""
     args = league.setup_args()
     return rn.replay_setup(
         season,
@@ -743,6 +743,7 @@ def replay_setup_of(
         waiver_days=league_rules.waiver_days,
         budget=league_rules.budget,
         rival_scale=league_rules.rival_scale,
+        h2h=league_rules.h2h,
     )
 
 
@@ -1077,8 +1078,8 @@ def task_paired(
     return out
 
 
-#: The replay's version in its payload: 10 since FAAB (#172, PR Fb), 9 since the waivers (PR
-#: Fa), 8 since the league rules (PR D4c), 7 since the
+#: The replay's version in its payload: 11 since the head-to-head format (#172, the format PR),
+#: 10 since FAAB (PR Fb), 9 since the waivers (PR Fa), 8 since the league rules (PR D4c), 7 since the
 #: league generator (PR D4b), 6 since the draft market (PR D4a), each as its reason says; 5
 #: since the standalone cut (PR D3): the payload
 #: names nothing of a live league or a drawn world (its ``gap``, ``refresh`` and ``tau`` are
@@ -1090,8 +1091,13 @@ def task_paired(
 #: keyed by the forecaster's label (``prior``, ``oracle:0.1``), where version 2 keyed them by kind
 #: and spread (``prior:0``); 2 since its seats believe only the games played (PR B1), a version 1
 #: replay's seats having seen each season's rates.
-REPLAY_VERSION = 10
+REPLAY_VERSION = 11
 REPLAY_VERSION_WHY = (
+    "11: the head-to-head format (--h2h): a categories league counts one win per matchup (the "
+    "default, as before) or every category, whose standings order the teams by the category "
+    "percentage, then head to head; the league block's rules name the format; the counts, every "
+    "week's result and the playoffs are played as before in either format; with nothing named, "
+    "the figures are version 10's. "
     "10: FAAB (--waivers faab, --budget, --rival-scale): a claim carries a sealed bid from its "
     "team's budget, the highest bid takes the player and pays it, a tie to the better priority; "
     "the seat bids by the live rule, a market rival by an assumed form; the league block's rules "
@@ -1681,8 +1687,9 @@ def cmd_replay(args: argparse.Namespace) -> int:
         held = shapes.parse_held(args.held) if args.held is not None else ()
         waivers, waiver_days = shapes.parse_waivers(args.waivers, args.waiver_days)
         budget, scale = shapes.parse_budget(waivers, args.budget, args.rival_scale)
+        h2h = shapes.parse_h2h(args.scoring, args.h2h)
         league_rules = shapes.LeagueRules(
-            args.scoring, table, held, waivers, waiver_days, budget, scale
+            args.scoring, table, held, waivers, waiver_days, budget, scale, h2h
         )
     except ValueError as e:
         print(f"refused: {e}")
@@ -2349,6 +2356,19 @@ POINTS_NOTE = (
 )
 
 
+#: How a league that counts every category ranks its teams (#172, the format PR), in such a run's
+#: league block; a run of the default format, one win per matchup, has none, as before.
+H2H_NOTE = (
+    "each category of each regular week is a win, a loss or a tie, and the standings order the "
+    "teams by the category percentage (category wins, a tie half, over the categories played), "
+    "then head to head (the weeks' results between the tied teams), then the team's number, a "
+    "working default (a league may break a tie otherwise); matchup_wins, category_wins and the "
+    "record are the weeks' results as in the default format, only the rank and what rests on it "
+    "read the format; a playoff matchup goes to the side with more categories, the higher seed "
+    "through a tie, as in the default"
+)
+
+
 #: How a FAAB league's bids are made (#172, PR Fb), in a FAAB run's league block.
 FAAB_NOTE = (
     "a claim's sealed bid is set when it is placed, clamped to its team's dollars left that day "
@@ -2378,7 +2398,8 @@ def league_block(
     """A replay's league (#172, PR D4b): the grid named, its shapes in order, the visit rule,
     each path's shape index and turn, and the drafts that may not fill; and the run's league
     rules (PR D4c: the scoring, the points table or null, the held slots), with what a points
-    league's metrics are in a points run, and in a FAAB run how the bids are made (PR Fb)."""
+    league's metrics are in a points run, in a FAAB run how the bids are made (PR Fb), and in a
+    run that counts every category how its standings rank (the format PR)."""
     return {
         "grid": grid.name,
         "axes": {k: list(v) for k, v in grid.axes().items()},
@@ -2390,6 +2411,7 @@ def league_block(
         "rules": league_rules.payload(),
         **({"points_note": POINTS_NOTE} if league_rules.scoring == "points" else {}),
         **({"faab_note": FAAB_NOTE} if league_rules.bidding else {}),
+        **({"h2h_note": H2H_NOTE} if league_rules.h2h == EACH_CATEGORY else {}),
     }
 
 
@@ -2862,6 +2884,15 @@ def main(argv: list[str] | None = None) -> int:
         metavar="X",
         help="with --waivers faab: what a market rival's bid is multiplied by, above 0, an "
         "assumption to sweep (default 1)",
+    )
+    re_.add_argument(
+        "--h2h",
+        default=None,
+        metavar="FORMAT",
+        help="a categories league's head-to-head format, on every path: one_win, a week is one "
+        "result, won by the side with more categories; each_category, each category of a week "
+        "is a result and the standings rank by the category percentage; not with --scoring "
+        "points (default one_win)",
     )
     re_.add_argument(
         "--news-sd",

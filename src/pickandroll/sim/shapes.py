@@ -7,7 +7,8 @@ the weekly add limit a parameter beside the rest (2026-11-07). A shape says noth
 league scores, what it holds or how it waives: those are the run's **league rules**
 (:class:`LeagueRules`, PR D4c), the scoring (categories or points, with a points league's table)
 and the held slots, and since PR Fa the waivers (none, or a dropped player's wait and claims by
-priority), one set for every path of a run and never an axis of a grid.
+priority), since the format PR a categories league's head-to-head format (one win per matchup,
+or every category), one set for every path of a run and never an axis of a grid.
 
 - :data:`FIXED` is the league every replay played in before PR D4b: twelve teams, the thirteen
   slots of :data:`SLOTS`, four adds a week, six playoff teams over three weeks. It is the
@@ -34,7 +35,7 @@ from dataclasses import dataclass
 from functools import cached_property
 from typing import Any
 
-from .engine import HELD, STATS
+from .engine import EACH_CATEGORY, HELD, ONE_WIN, STATS
 
 #: The thirteen roster slots of the fixed shape: the private league's without held slots.
 SLOTS = ("PG", "SG", "G", "SF", "PF", "F", "C", "C", "Util", "Util", "BN", "BN", "BN")
@@ -302,6 +303,19 @@ POINTS_DEFAULT: tuple[tuple[str, float], ...] = (
 )
 
 
+#: A categories league's head-to-head format (#172, the format PR; the user's ruling of
+#: 2026-11-17, #172 comment 6956804083), by the engine's own words (``season.state``): ``one_win``,
+#: a week is one result in the standings, won by the side with more categories (the default);
+#: ``each_category``, each category of each week is a win, a loss or a tie. A points league's
+#: week is one result already and names none.
+H2H = (ONE_WIN, EACH_CATEGORY)
+#: Each format in words, for the label.
+H2H_WORDS: Mapping[str, str] = {
+    ONE_WIN: "one win per matchup",
+    EACH_CATEGORY: "every category counted",
+}
+
+
 #: How a league's dropped players are added back (#172, PR Fa, PR Fb): ``none``, every add a free
 #: agent who lands the next morning, as before the waivers; ``priority``, a dropped player waits his
 #: waiver days and a claim on him goes by rolling waiver priority; ``faab``, he waits as with
@@ -343,8 +357,10 @@ class LeagueRules:
     the ``waivers`` (one of :data:`WAIVERS`) with a dropped player's ``waiver_days`` (a whole
     number from 1 to 7, named only with waivers), and in a FAAB league the ``budget`` each team
     starts with (whole dollars, 1 to 1000) and the ``rival_scale`` a market rival's bid is
-    multiplied by (above 0), both named only with ``faab``. One set for every path of a run, never
-    a grid axis; :data:`PLAIN` is today's league. ValueError, in words, on anything else."""
+    multiplied by (above 0), both named only with ``faab``; a categories league's head-to-head
+    format ``h2h`` (one of :data:`H2H`, ``one_win`` by default; a points league holds the default
+    and names none). One set for every path of a run, never a grid axis; :data:`PLAIN` is today's
+    league. ValueError, in words, on anything else."""
 
     scoring: str = "categories"
     points: tuple[tuple[str, float], ...] | None = None
@@ -353,10 +369,21 @@ class LeagueRules:
     waiver_days: int = WAIVER_DAYS
     budget: int = BUDGET
     rival_scale: float = RIVAL_SCALE
+    h2h: str = ONE_WIN
 
     def __post_init__(self) -> None:
         self._check_scoring()
         self._check_waivers()
+        self._check_h2h()
+
+    def _check_h2h(self) -> None:
+        if self.h2h not in H2H:
+            raise ValueError(f"head-to-head format {self.h2h!r} is not one of {', '.join(H2H)}")
+        if self.points is not None and self.h2h != ONE_WIN:
+            raise ValueError(
+                f"head-to-head format {self.h2h} with scoring points: a points league's week is "
+                "one result already, a format is a categories league's"
+            )
 
     def _check_waivers(self) -> None:
         if self.waivers not in WAIVERS:
@@ -435,6 +462,10 @@ class LeagueRules:
             " and ".join(f"{_WORDS[n]} {k} slot{'s' if n > 1 else ''}" for n, k in counts)
             or "no held slot"
         )
+        # The default format goes unsaid, as a league without waivers says none: the label of
+        # today's league stays what it was. A league that counts every category says so.
+        if self.h2h != ONE_WIN:
+            scoring = f"{scoring}, {H2H_WORDS[self.h2h]}"
         if not self.waiting:
             return f"{scoring}, {held}"
         days = f"{self.waiver_days} day{'s' if self.waiver_days > 1 else ''}"
@@ -455,16 +486,25 @@ class LeagueRules:
         """Whether a claim carries a bid from its team's budget: a FAAB league (PR Fb)."""
         return self.waivers == FAAB
 
+    @property
+    def one_win(self) -> bool:
+        """Whether a week is one result in the standings and a seat weighs the matchup's odds: a
+        categories league of the ``one_win`` format (a points league's measure is its own)."""
+        return self.points is None and self.h2h == ONE_WIN
+
     def payload(self) -> dict[str, Any]:
-        """The record's ``league.rules``: the scoring, the table and the held slots, in a waiver
-        league its waivers and waiver days, and in a FAAB league its budget and the rivals' bid
-        scale (a league without waivers records the three keys it did before PR Fa, and one by
-        priority the five it did before PR Fb)."""
+        """The record's ``league.rules``: the scoring, the table and the held slots, in a
+        categories league its head-to-head format (the format PR), in a waiver league its waivers
+        and waiver days, and in a FAAB league its budget and the rivals' bid scale (a league
+        without waivers records the keys it did before PR Fa, and one by priority those it did
+        before PR Fb, the format's beside them)."""
         out: dict[str, Any] = {
             "scoring": self.scoring,
             "points": self.table,
             "held": list(self.held),
         }
+        if self.points is None:
+            out["h2h"] = self.h2h
         if self.waiting:
             out |= {"waivers": self.waivers, "waiver_days": self.waiver_days}
         if self.bidding:
@@ -564,6 +604,24 @@ def parse_waivers(waivers: str, days: str | None = None) -> tuple[str, int]:
     return kind, n
 
 
+def parse_h2h(scoring: str, h2h: str | None) -> str:
+    """The head-to-head format ``replay --h2h`` and ``validate --h2h`` name (#172, the format
+    PR): ``one_win`` (the default when not named) or ``each_category``, named only in a categories
+    league (``scoring`` as ``replay --scoring`` gives it): a points league's week is one result
+    already. ValueError, in words, on anything else."""
+    if h2h is None:
+        return ONE_WIN
+    if scoring == "points":
+        raise ValueError(
+            f"--h2h {h2h}: a points league's week is one result already; the format is read only "
+            "with --scoring categories"
+        )
+    kind = h2h.strip().lower()
+    if kind not in H2H:
+        raise ValueError(f"--h2h {h2h}: one of {', '.join(H2H)}")
+    return kind
+
+
 def parse_budget(waivers: str, budget: str | None, scale: str | None) -> tuple[int, float]:
     """The budget and the rivals' bid scale ``replay --budget`` and ``--rival-scale`` name
     (#172, PR Fb), each read only with ``--waivers faab`` (``waivers`` as :func:`parse_waivers`
@@ -602,6 +660,8 @@ __all__ = [
     "FIXED",
     "FIXED_GRID",
     "FULL",
+    "H2H",
+    "H2H_WORDS",
     "HELD_MOST",
     "LEAGUE_KEYS",
     "PLAIN",
@@ -622,6 +682,7 @@ __all__ = [
     "axis_values",
     "one",
     "parse_budget",
+    "parse_h2h",
     "parse_held",
     "parse_league",
     "parse_points",

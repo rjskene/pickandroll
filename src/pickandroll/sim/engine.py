@@ -13,6 +13,11 @@ From the moves executor's queue (``season.autopilot``) the simulator takes the c
 (#172, PR Fb): ``bid_of``, ``typical_gain`` and the constants they need (the fortnight the typical
 gain is over and the moves it needs), so a seat in a FAAB league bids by the live rule itself,
 never a copy of it.
+
+From the league's settings (``season.state``) the simulator takes the two names of a categories
+league's head-to-head format (#172, the format PR): ``ONE_WIN``, a week one result in the
+standings, and ``EACH_CATEGORY``, each category of a week a result, so a run's format is named by
+the engine's own words.
 """
 
 from __future__ import annotations
@@ -27,16 +32,18 @@ from pickandroll.season.calendar import Calendar, Week, monday_of
 from pickandroll.season.moves import HELD, Move
 from pickandroll.season.progress import BLEND, DEFAULTS, LIVE_KNOBS, refused
 from pickandroll.season.scorecard import FPTS, total, won
-from pickandroll.season.state import Player, SeasonSettings
+from pickandroll.season.state import EACH_CATEGORY, ONE_WIN, Player, SeasonSettings
 from pickandroll.season.weekly import COUNTING, PCT, PHI, STATS, starting_slots
 
 __all__ = [
     "BLEND",
     "COUNTING",
     "DEFAULTS",
+    "EACH_CATEGORY",
     "FPTS",
     "HELD",
     "LIVE_KNOBS",
+    "ONE_WIN",
     "PCT",
     "PHI",
     "STATS",

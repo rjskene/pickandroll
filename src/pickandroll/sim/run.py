@@ -38,7 +38,7 @@ from . import counts as ct
 from . import league as lg
 from . import opponents as op
 from .belief import CausalBelief, newcomer_prior
-from .engine import FPTS, Week, mv, wk
+from .engine import EACH_CATEGORY, FPTS, ONE_WIN, Week, mv, wk
 from .fit import W_DEFAULT
 from .forecast import MIN_GAMES, realized_rates
 from .state import (
@@ -1267,6 +1267,7 @@ def replay_setup(
     waiver_days: int = shapes.WAIVER_DAYS,
     budget: int = shapes.BUDGET,
     rival_scale: float = shapes.RIVAL_SCALE,
+    h2h: str = ONE_WIN,
 ) -> Setup:
     """A made-up league on a recorded season, from what is known before it starts. Its players
     are everyone ``players`` lists with a scheduled game, projected or not; ``teams`` seats
@@ -1298,9 +1299,14 @@ def replay_setup(
     slot starts the season empty. The waivers (PR Fa, ``shapes.WAIVERS``): ``waivers`` and a
     dropped player's ``waiver_days``; the first priority order is the reverse of the draft's
     (``state.initial``). A FAAB league's (PR Fb): every team's ``budget`` and the
-    ``rival_scale`` a market rival's bid is multiplied by."""
+    ``rival_scale`` a market rival's bid is multiplied by. A categories league's head-to-head
+    format (the format PR, ``shapes.H2H``): ``h2h`` ``each_category`` orders the standings by
+    the category percentage, then head to head (``league.TIEBREAK_EACH``); the default counts
+    one win per matchup, as before. A points league names none."""
     if (scoring == "points") != bool(points):
         raise ValueError(f"scoring {scoring!r} with points {points!r}: a points league has a table")
+    if h2h not in shapes.H2H or (points and h2h != ONE_WIN):
+        raise ValueError(f"head-to-head format {h2h!r} with scoring {scoring!r}")
     schedule: dict[date, set[str]] = {}
     members: dict[int, Member] = {}
     game_days = league_days(lines, players, scheduled)
@@ -1352,7 +1358,8 @@ def replay_setup(
         table,
         playoff_teams,
         2 ** math.ceil(math.log2(playoff_teams)) - playoff_teams,
-        lg.TIEBREAK_POINTS if table else lg.TIEBREAK,
+        lg.TIEBREAK_POINTS if table else lg.TIEBREAK_EACH if h2h == EACH_CATEGORY else lg.TIEBREAK,
+        h2h=h2h,
     )
     return Setup(
         start=calendar.weeks[0].start,
@@ -1375,6 +1382,7 @@ def replay_setup(
         waiver_days=waiver_days,
         budget=budget,
         rival_scale=rival_scale,
+        h2h=h2h,
     )
 
 

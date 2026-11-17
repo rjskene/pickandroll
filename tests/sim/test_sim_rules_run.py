@@ -102,7 +102,7 @@ def test_league_rules_out_of_the_plan_are_refused_by_name_before_any_path(wire: 
 
 
 def test_with_nothing_named_nothing_moves(wire: Path):
-    """Rule 1: ``--scoring categories`` named and nothing named give one payload, version 10, its
+    """Rule 1: ``--scoring categories`` named and nothing named give one payload, version 11, its
     league block naming today's rules; no line names them."""
     room = ("--seats", *spec(wire, "R", "S"), "--paths", "1")
     runs, outs = [], []
@@ -115,8 +115,13 @@ def test_with_nothing_named_nothing_moves(wire: Path):
     assert {k: v for k, v in one.items() if k not in WHEN} == {
         k: v for k, v in two.items() if k not in WHEN
     }
-    assert one["replay_version"] == 10
-    assert one["league"]["rules"] == {"scoring": "categories", "points": None, "held": []}
+    assert one["replay_version"] == 11
+    assert one["league"]["rules"] == {
+        "scoring": "categories",
+        "points": None,
+        "held": [],
+        "h2h": "one_win",
+    }
     assert "points_note" not in one["league"]
     assert all("league rules" not in out for out in outs)
 
@@ -169,7 +174,12 @@ def test_a_run_with_a_held_slot_drafts_the_active_spots_and_records_it(wire: Pat
     assert code == 0, out
     assert "league rules, on every path: the nine categories, one IL slot" in out
     p = written(out)
-    assert p["league"]["rules"] == {"scoring": "categories", "points": None, "held": ["IL"]}
+    assert p["league"]["rules"] == {
+        "scoring": "categories",
+        "points": None,
+        "held": ["IL"],
+        "h2h": "one_win",
+    }
     assert p["audit"]["paths_voided"] == 0 and p["audit"]["breaches"] == []
     assert len(setups) == 2  # the run's read of what its seats read, then the path
     for played in setups:
@@ -356,7 +366,7 @@ def test_a_waiver_run_records_its_rules_its_audit_and_its_claims(wire: Path):
     assert f"league rules, on every path: {rules.label()}" in out
     assert rules.label().endswith(", waivers by priority after 3 days")
     p = written(out)
-    assert p["replay_version"] == 10
+    assert p["replay_version"] == 11
     assert p["league"]["rules"] == {
         "scoring": "points",
         "points": dict(shapes.POINTS_DEFAULT),
@@ -386,11 +396,12 @@ def test_a_faab_run_records_its_rules_its_audit_and_its_bids(wire: Path):
     rules = shapes.LeagueRules(waivers="faab", budget=50, rival_scale=2.0)
     assert f"league rules, on every path: {rules.label()}" in out
     p = written(out)
-    assert p["replay_version"] == ss.REPLAY_VERSION == 10
+    assert p["replay_version"] == ss.REPLAY_VERSION == 11
     assert p["league"]["rules"] == {
         "scoring": "categories",
         "points": None,
         "held": [],
+        "h2h": "one_win",
         "waivers": "faab",
         "waiver_days": shapes.WAIVER_DAYS,
         "budget": 50,
