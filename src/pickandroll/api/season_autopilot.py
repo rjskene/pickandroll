@@ -1979,7 +1979,9 @@ def cancel_due(
             {
                 "entry": e["id"],
                 "add": e.get("add"),
-                "drop": e.get("drop"),
+                # As Yahoo holds the claim, whose id names its drop: none for a churn whose
+                # held drop landed (#411).
+                "drop": qa.claim_drop(e),
                 "bid": e.get("bid_placed"),
                 "reason": reason,
                 "verdict_at": at,
