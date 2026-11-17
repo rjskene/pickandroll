@@ -651,10 +651,14 @@ def replay_setup_of(
     projection: Any,
     draft: adp.Draft | None = None,
     league: shapes.LeagueShape = shapes.FIXED,
+    league_rules: shapes.LeagueRules = shapes.PLAIN,
 ) -> Any:
     """A replay's league in one path, drafted on the run's forecaster's ``projection``, or on a
     table of average draft positions (``draft``, #172, PR D4a), in the path's league shape
-    (``league``, #172, PR D4b; the fixed shape by default)."""
+    (``league``, #172, PR D4b; the fixed shape by default) under the run's league rules
+    (``league_rules``, PR D4c: the scoring, a points table and the held slots after the
+    shape's bench; today's by default)."""
+    args = league.setup_args()
     return rn.replay_setup(
         season,
         lines,
@@ -663,7 +667,9 @@ def replay_setup_of(
         reader.PERIOD_ONE[season],
         scheduled,
         draft=draft,
-        **league.setup_args(),
+        **{**args, "slots": league_rules.slots(args["slots"])},
+        scoring=league_rules.scoring,
+        points=league_rules.table,
     )
 
 
@@ -800,15 +806,19 @@ def pair_setups(
     path: int,
     league: shapes.LeagueShape = shapes.FIXED,
     turn: int | None = None,
+    league_rules: shapes.LeagueRules = shapes.PLAIN,
 ) -> dict[str, Any]:
     """The pair's league on one path, by arm (#172, PR D4a), in the path's league shape (#172,
-    PR D4b): one league drafted on the run's forecaster without a ``market``. Under one, the
+    PR D4b) under the run's league rules (PR D4c): one league drafted on the run's forecaster
+    without a ``market``. Under one, the
     arm's seat drafts on the arm's own board and every other seat on a rival's board: arms whose
     draft-day beliefs are one label share one league (the same object), arms on two labels get
     one each. The arm's seat is the shape's ``teams[turn mod n]`` (the path's turn; the path
     itself on one shape)."""
     if market is None:
-        setup = replay_setup_of(season, lines, members, scheduled, projection, None, league)
+        setup = replay_setup_of(
+            season, lines, members, scheduled, projection, None, league, league_rules
+        )
         return dict.fromkeys(pair, setup)
     me = league.ids[(path if turn is None else turn) % league.teams]
     labels = {k: arms[k].forecaster or run_label for k in pair}
@@ -820,7 +830,9 @@ def pair_setups(
             continue
         own = own_projection(labels[k], run_label, projection, forecasts)
         draft = adp.Draft(market[0], market[1], seed, path, {me: own})
-        setups[k] = replay_setup_of(season, lines, members, scheduled, projection, draft, league)
+        setups[k] = replay_setup_of(
+            season, lines, members, scheduled, projection, draft, league, league_rules
+        )
     return setups
 
 
@@ -842,18 +854,22 @@ def task_replay(
     path: int,
     market: Market = None,
     grid: shapes.Grid = shapes.FIXED_GRID,
+    league_rules: shapes.LeagueRules = shapes.PLAIN,
 ) -> dict[str, Any]:
     """One task of the room on a replay. Under a ``market`` (#172, PR D4a) every seat holds an
     arm, so every seat drafts on its arm's own board and no board is a rival's. The path plays
     its league shape on ``grid`` with the arms rotated by its turn (``shapes.visit``, #172, PR
-    D4b); the world's draws stay on ``(seed, path)``."""
+    D4b), under the run's ``league_rules`` (PR D4c); the world's draws stay on ``(seed,
+    path)``."""
     v = shapes.visit(path, grid)
     projection = projection_of(forecaster, fixed, lines, seed, path, shape)
     forecasts = forecasts_of(sources, fixed, lines, seed, path, shape, arms)
     draft = room_draft(
         market, arms, seats, forecaster.label, projection, forecasts, seed, path, v.shape, v.turn
     )
-    setup = replay_setup_of(season, lines, members, scheduled, projection, draft, v.shape)
+    setup = replay_setup_of(
+        season, lines, members, scheduled, projection, draft, v.shape, league_rules
+    )
     w = rn.replay_world(
         setup,
         lines,
@@ -908,6 +924,7 @@ def task_paired(
     path: int,
     market: Market = None,
     grid: shapes.Grid = shapes.FIXED_GRID,
+    league_rules: shapes.LeagueRules = shapes.PLAIN,
 ) -> dict[str, Any]:
     """One task of the paired design on a replay (#172, PR D2): the league drafted on the cell's
     forecaster, arm A in seat :func:`seat_of` in one season and arm B in the same seat in a
@@ -921,7 +938,8 @@ def task_paired(
     so the world's draws and the rivals' boards stay common.
 
     The path plays its league shape on ``grid``, and the seat is the shape's ``teams[turn mod
-    n]`` (``shapes.visit``, #172, PR D4b): both arms hold one shape and one seat."""
+    n]`` (``shapes.visit``, #172, PR D4b): both arms hold one shape and one seat. Every path
+    plays the run's ``league_rules`` (PR D4c)."""
     v = shapes.visit(path, grid)
     projection = projection_of(forecaster, fixed, lines, seed, path, shape)
     forecasts = forecasts_of(sources, fixed, lines, seed, path, shape, arms)
@@ -957,6 +975,7 @@ def task_paired(
         path,
         v.shape,
         v.turn,
+        league_rules,
     )
     sa, sb = (setups[k] for k in pair)
     worlds = {id(sa): world_of(sa)} if sa is sb else {id(sa): world_of(sa), id(sb): world_of(sb)}
@@ -985,7 +1004,9 @@ def task_paired(
     return out
 
 
-#: The replay's version in its payload: 5 since the standalone cut (#172, PR D3): the payload
+#: The replay's version in its payload: 8 since the league rules (#172, PR D4c), 7 since the
+#: league generator (PR D4b), 6 since the draft market (PR D4a), each as its reason says; 5
+#: since the standalone cut (PR D3): the payload
 #: names nothing of a live league or a drawn world (its ``gap``, ``refresh`` and ``tau`` are
 #: gone), its figures as they were; 4 since
 #: a run names several seasons (PR D2): what
@@ -995,11 +1016,11 @@ def task_paired(
 #: keyed by the forecaster's label (``prior``, ``oracle:0.1``), where version 2 keyed them by kind
 #: and spread (``prior:0``); 2 since its seats believe only the games played (PR B1), a version 1
 #: replay's seats having seen each season's rates.
-REPLAY_VERSION = 7
+REPLAY_VERSION = 8
 REPLAY_VERSION_WHY = (
-    "7: the league generator (--grid, --league): the payload names the grid, its league shapes "
-    "in order, the visit rule and each path's shape and turn (league), and a paired run on a "
-    "grid has a by-axis table; with --grid fixed the figures are version 6's"
+    "8: the league rules (--scoring, --points, --held): the league block names the run's "
+    "scoring, its points table and its held slots (league.rules), one set for every path; with "
+    "nothing named, the nine categories and no held slot, the figures are version 7's"
 )
 #: What a replay under a table drafts on (#172, PR D4a), for its payload.
 ADP_RIVAL = (
@@ -1296,6 +1317,7 @@ def no_peek(
     paired: bool = False,
     market: Market = None,
     league: shapes.LeagueShape = shapes.FIXED,
+    league_rules: shapes.LeagueRules = shapes.PLAIN,
 ) -> tuple[Any, int, list[dict[str, Any]]]:
     """Path 0 of the replay on the recorded lines and on :func:`nopeek.perturb`'s, with one
     league built before either (on ``projection``, the run's forecaster's on path 0, ``label``,
@@ -1313,7 +1335,8 @@ def no_peek(
     built from (the table, the forecasters' draft-day figures, the opening days' schedule).
 
     The league is path 0's shape (``league``, #172, PR D4b): the grid's first under ``--grid
-    full``, the shape named under ``--league``; path 0's turn is 0 on any grid."""
+    full``, the shape named under ``--league``; path 0's turn is 0 on any grid), under the
+    run's league rules (``league_rules``, PR D4c)."""
     pinned = forecasts or {}
     if paired:
         setups = pair_setups(
@@ -1330,12 +1353,14 @@ def no_peek(
             seed,
             0,
             league,
+            None,
+            league_rules,
         )
         setup, second = setups["a"], setups["b"]
     else:
         draft = room_draft(market, arms, seats, label, projection, pinned, seed, 0, league)
         setup = second = replay_setup_of(
-            season, lines, members, scheduled, projection, draft, league
+            season, lines, members, scheduled, projection, draft, league, league_rules
         )
     if day not in setup.days:
         raise ValueError(f"{day} is not a day of the replayed season")
@@ -1437,10 +1462,13 @@ def read_season(
     arms: Mapping[str, rn.Arm],
     seed: int,
     shape: str,
+    league_rules: shapes.LeagueRules = shapes.PLAIN,
 ) -> SeasonRead:
     """Everything a replay reads for ``season`` before any path. A forecaster that cannot serve
     it leaves its cell skipped; a stand-in that cannot refuses the run by name
-    (``readers.SimReadError``): a system label cannot be built there."""
+    (``readers.SimReadError``): a system label cannot be built there. The run's policy shape
+    (what its seats read) is read on a league under the run's ``league_rules`` (PR D4c): its
+    scoring and its held slots, which no league shape moves."""
     lines, members, scheduled = reader.replay_lines(data, season)
     fixed, served, skipped = cells_of(data, season, named)
     if sources is not None:
@@ -1471,7 +1499,11 @@ def read_season(
         took = clock.perf_counter() - t0
         first = projection_of(served[0], fixed, lines, seed, 0, shape)
         league = replace(
-            policy.shape_of(replay_setup_of(season, lines, members, scheduled, first)),
+            policy.shape_of(
+                replay_setup_of(
+                    season, lines, members, scheduled, first, None, shapes.FIXED, league_rules
+                )
+            ),
             standins=sources is not None,
         )
     return SeasonRead(
@@ -1558,6 +1590,22 @@ def cmd_replay(args: argparse.Namespace) -> int:
         print(f"refused: {e}")
         return 2
     named_shape = args.league is not None or args.grid != "fixed"
+    if args.points is not None and args.scoring != "points":
+        print("refused: --points is a points league's table; it is read only with --scoring points")
+        return 2
+    try:
+        table = None
+        if args.scoring == "points":
+            table = (
+                shapes.parse_points(args.points)
+                if args.points is not None
+                else shapes.POINTS_DEFAULT
+            )
+        held = shapes.parse_held(args.held) if args.held is not None else ()
+        league_rules = shapes.LeagueRules(args.scoring, table, held)
+    except ValueError as e:
+        print(f"refused: {e}")
+        return 2
     spread = None
     if args.adp == "none" and args.adp_spread is not None:
         print(
@@ -1614,7 +1662,8 @@ def cmd_replay(args: argparse.Namespace) -> int:
             return 2
     try:
         reads = [
-            read_season(args.data, t, named, sources, arms, args.seed, args.shape) for t in seasons
+            read_season(args.data, t, named, sources, arms, args.seed, args.shape, league_rules)
+            for t in seasons
         ]
     except (reader.SimReadError, ValueError, OSError, KeyError) as e:
         print(f"refused: {e}")
@@ -1630,6 +1679,8 @@ def cmd_replay(args: argparse.Namespace) -> int:
     if not any(r.served for r in reads):
         print("refused: no cell is left: no forecaster named serves any season named")
         return 2
+    if league_rules != shapes.PLAIN:
+        print(f"league rules, on every path: {league_rules.label()}")
     short = short_drafts(
         reads,
         grid,
@@ -1673,7 +1724,8 @@ def cmd_replay(args: argparse.Namespace) -> int:
             return 2
         f0 = r.served[0]
         first = shapes.visit(0, grid).shape
-        print(f"no-peek check's league: path 0's, {first.label()}")
+        rules_ = "" if league_rules == shapes.PLAIN else f"; {league_rules.label()}"
+        print(f"no-peek check's league: path 0's, {first.label()}{rules_}")
         t0 = clock.perf_counter()
         try:
             found, n, breaches = no_peek(
@@ -1696,6 +1748,7 @@ def cmd_replay(args: argparse.Namespace) -> int:
                 paired,
                 None if spread is None else (tables[r.season][0].picks, spread),
                 first,
+                league_rules,
             )
         except ValueError as e:
             print(f"refused: {e}")
@@ -1759,6 +1812,7 @@ def cmd_replay(args: argparse.Namespace) -> int:
             p,
             None if spread is None else (tables[r.season][0].picks, spread),
             grid,
+            league_rules,
         )
         for r in reads
         for f in r.served
@@ -1859,7 +1913,7 @@ def cmd_replay(args: argparse.Namespace) -> int:
         "reads": reads_of(arms, shapes_read, rivals=paired),
         "audit": note,
         "confirmation": None,
-        "league": league_block(grid, visits, short),
+        "league": league_block(grid, visits, short, league_rules),
     }
     if spread is not None:
         payload["pool"]["draft"] = ADP_POOL.format(days=rn.OPENING_DAYS)
@@ -2187,11 +2241,25 @@ LEAGUE_NOTE = (
 )
 
 
+#: What a points league's metrics are (#172, PR D4c), in a points run's league block.
+POINTS_NOTE = (
+    "a points league's week is one result, a win, a tie or a loss on the week's fantasy points, "
+    "so category_wins is its matchup wins again (a tie half) and equals matchup_wins; a tie on "
+    "win percentage in the standings goes to points for, then head to head; the bracket's tied "
+    "week to the higher seed"
+)
+
+
 def league_block(
-    grid: shapes.Grid, visits: Sequence[shapes.Visit], short: Sequence[Mapping[str, Any]]
+    grid: shapes.Grid,
+    visits: Sequence[shapes.Visit],
+    short: Sequence[Mapping[str, Any]],
+    league_rules: shapes.LeagueRules = shapes.PLAIN,
 ) -> dict[str, Any]:
     """A replay's league (#172, PR D4b): the grid named, its shapes in order, the visit rule,
-    each path's shape index and turn, and the drafts that may not fill."""
+    each path's shape index and turn, and the drafts that may not fill; and the run's league
+    rules (PR D4c: the scoring, the points table or null, the held slots), with what a points
+    league's metrics are in a points run."""
     return {
         "grid": grid.name,
         "axes": {k: list(v) for k, v in grid.axes().items()},
@@ -2200,6 +2268,8 @@ def league_block(
         "by_path": [{"shape": v.index, "turn": v.turn} for v in visits],
         "short_draft": list(short),
         "note": LEAGUE_NOTE,
+        "rules": league_rules.payload(),
+        **({"points_note": POINTS_NOTE} if league_rules.scoring == "points" else {}),
     }
 
 
@@ -2439,6 +2509,7 @@ def gate_surrogate(
         ),
         "records": GATE_RECORDS,
         "league": f"the fixed league shape ({shapes.FIXED.label()}); gate 5 is not run on a grid",
+        "rules": shapes.PLAIN.payload(),
     }
     return rows, block
 
@@ -2506,7 +2577,10 @@ def cmd_validate(args: argparse.Namespace) -> int:
         "league-days "
         f"({len(block['seats'])} seats x {len(block['days'])} days) in {took:.1f}s"
     )
-    print(f"gate 5 plays the fixed league shape: {shapes.FIXED.label()}")
+    print(
+        f"gate 5 plays the fixed league shape: {shapes.FIXED.label()}, under "
+        f"{shapes.PLAIN.label()} (validate takes no --scoring, --points or --held)"
+    )
     print(f"written: {path}" if path else "dry run, nothing written")
     return 0
 
@@ -2614,6 +2688,27 @@ def main(argv: list[str] | None = None) -> int:
         metavar="KEY=VALUE,...",
         help="one league shape for the whole run, as teams=10,slots=15,adds=none,playoffs=4/2: "
         "each a value of the grid's, a key left out the fixed shape's; not with --grid full",
+    )
+    re_.add_argument(
+        "--scoring",
+        choices=shapes.SCORINGS,
+        default="categories",
+        help="how the run's league scores, on every path: categories, the nine; points, on "
+        "--points or ESPN's default table (default categories)",
+    )
+    re_.add_argument(
+        "--points",
+        default=None,
+        metavar="STAT=W,...",
+        help="with --scoring points: the table, a stat's points per unit, as pts=1,reb=1.2; a "
+        "stat left out scores nothing (default ESPN's default table)",
+    )
+    re_.add_argument(
+        "--held",
+        default=None,
+        metavar="IL=N,IL+=N",
+        help="the held slots after the bench, on every path, as IL=2,IL+=1: IL 0 to 2, IL+ 0 or 1 "
+        "(default none)",
     )
     re_.add_argument(
         "--news-sd",

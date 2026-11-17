@@ -86,7 +86,10 @@ three decimals, the lower turnovers winning, a tie half. Standings order by win 
 a parameterised tiebreak (total category wins, then head to head; the settings page does not print
 the regular season's rule). The bracket seeds the top `playoff_teams` with the byes the rounds
 need (`2^rounds − playoff_teams`), reseeds each round or plays the fixed bracket as the league
-does, and sends the higher seed through a tie. A points league scores on the weighted points.
+does, and sends the higher seed through a tie. A points league scores on the weighted points: a
+week is one result on its fantasy points, which the week's result and the standings keep (points
+for), and a tie on win percentage goes to points for, then head to head (`TIEBREAK_POINTS`, PR
+D4c): its category wins are its wins again, so the team's number would decide it otherwise.
 
 A replay's league is made up, so its bracket is the replay's own: on the fixed shape the top six of
 twelve over the last three weeks (a league shape names its own, **The league shapes**), the byes the
@@ -251,10 +254,14 @@ built:
 | `pool`, `min_gain`, `weeks_ahead` | exact, surrogate | the ranking tier |
 | `surrogate_days` | surrogate, or a mirror rival | the exact tier decides every day |
 
-Every replay payload carries the table per arm per league shape (`reads`). A replay refuses
-two arms that differ only in knobs and fields that neither reads
-in any shape of the run: they are the same seat, and the message names each such knob, why it is
-not read and what would read it. Two arms alike in everything are a check that the difference is
+Every replay payload carries the table, one per arm (`reads`): no league shape moves what a seat
+reads, and the league rules (the scoring and the held slots, "The league shapes") are the run's,
+one set for every path. In a points run (`--scoring points`) `plan_floor_points` is read where
+`plan_floor_cats` was, and `plan_floor_cats` is not, with the reason. A replay refuses two arms
+that differ only in knobs and fields that neither reads in the run: they are the same seat, and
+the message names each such knob, why it is not read and what would read it (a pair that
+differs only on `plan_floor_points` is refused in a categories run and runs in a points run on
+an arm that executes the plan). Two arms alike in everything are a check that the difference is
 zero and run.
 
 ## The other seats (`sim/opponents.py`)
@@ -332,11 +339,12 @@ Each command runs as `python -m pickandroll.sim <command>`:
   `--bbm-as espn --yahoo-as marcel` names the two live sources' stand-ins, and each arm then
   believes by its `system` (below). `--adp espn --adp-spread <base>,<growth>` drafts the league on
   the season's table of average draft positions instead ("The draft market"); `--adp none` is the
-  default. `--grid full` visits the grid of league shapes and `--league` names one ("The league
-  shapes"). The payload (`replay_version` 7) keys by season what is one season's: the forecasters,
+  default. `--grid full` visits the grid of league shapes and `--league` names one, and
+  `--scoring points` (with `--points`) and `--held` set the run's league rules ("The league
+  shapes"). The payload (`replay_version` 8) keys by season what is one season's: the forecasters,
   the sources, the weights, the players, the shape, the results, the counts, the season scale and
   the unprojected count; `cells` says which were served and why the others were not, and `adp` what
-  the league was drafted on, and `league` the league shapes the paths played.
+  the league was drafted on, and `league` the league shapes the paths played and the league rules.
 - `replay --seasons 2022,2023,2024 --arms A.json B.json`: the paired design on a replay, arm A and
   arm B in one seat through one recorded season's world. A run names `--seats` (a room, as above) or
   `--arms` (exactly two spec files), never both and never neither. Each task drafts the league on
@@ -468,7 +476,10 @@ no `replay_version`) are superseded. A replay wrote `replay_version: 2` from the
 names its forecasters (PR D1), its results and counts keyed by the forecaster's label (`prior`,
 `oracle:0.1`) where version 2 keyed them `prior:0`; it writes 4 since a run names several seasons
 (PR D2), what is one season's keyed by season; 5 since the standalone cut (PR D3), its figures
-version 4's; and 6 since the draft market (PR D4a), its figures version 5's under `--adp none`.
+version 4's; 6 since the draft market (PR D4a), its figures version 5's under `--adp none`; 7
+since the league shapes (PR D4b), its figures version 6's on the fixed shape; and 8 since the
+league rules (PR D4c), its figures version 7's with nothing named (the nine categories, no held
+slot).
 
 **The belief.** On day `d`, stat by stat, a seat believes
 `(w · the forecaster's figure + the sum of his lines dated before d) / (w + his games before d)`,
@@ -736,10 +747,11 @@ and the playoff format over modest ranges, and the ruling of 2026-11-07 makes th
 parameter with the rest and sets the grid.
 
 - **A league shape** (`LeagueShape`): the team count, the roster slots, the weekly add limit (or
-  none) and the playoff format (how many teams, over how many weeks). Every shape scores the nine
-  categories. The season stays 22 weeks; the playoffs are its last weeks and the regular season
-  is what they leave. (The name `shape` is taken twice already: `replay --shape` is the oracle's
-  error shape and `policy.Shape` decides which knobs a seat reads.)
+  none) and the playoff format (how many teams, over how many weeks). A shape says nothing of the
+  scoring or the held slots: those are the run's league rules (below). The season stays 22
+  weeks; the playoffs are its last weeks and the regular season is what they leave. (The name
+  `shape` is taken twice already: `replay --shape` is the oracle's error shape and `policy.Shape`
+  decides which knobs a seat reads.)
 - **The fixed shape**, the default (`replay --grid fixed`): the league before, twelve teams, the
   thirteen slots, four adds a week, six playoff teams over three weeks. On it nothing moves: a
   replay's record equals the one before PR D4b key for key, apart from the added `league` block,
@@ -793,12 +805,76 @@ made-up folder's 85 projected players fill seven or eight spots a seat; the pins
 and the run prints it and records it (`league.short_draft`).
 
 **What a run records.** The `league` block: the grid's name, its axes, its shapes in order, the
-visit rule in a sentence, each path's shape index and turn, and the short drafts. A pair's
+visit rule in a sentence, each path's shape index and turn, the short drafts, and the league
+rules (`rules`: the scoring, the points table or null, the held slots; a points run adds
+`points_note`, what its metrics are). A pair's
 `seat.by_path` is each path's seat (on the fixed shape, as before). The knob reads table is one
 per arm, as before: no axis of the grid changes what a seat reads (`policy.Shape`), and a test
 says so.
 
-**Not yet.** Points leagues and held slots are a later PR's (D4c). The ruling of 2026-11-07
+**The league rules** (`shapes.LeagueRules`, PR D4c). How the run's league scores and what it
+holds: one set for every path of a run, never an axis of the grid. The grid is the user's ruling
+and its order is part of every record; as axes they would multiply it by twelve (two scorings,
+six sets of held slots); a week in a points league and one in a categories league are different
+quantities, and one verdict pooled over both would mix them; and the knobs they exist for are
+read in one kind only (a run that asks about `plan_floor_points` is a points run).
+
+- **The scoring** (`--scoring categories|points`, default `categories`). A points league scores a
+  line on its table, a stat's points per unit (`--points pts=1,reb=1.2,...`: each key a stat of a
+  line, a stat left out scoring nothing; a table that scores nothing is refused). Without
+  `--points` the table is ESPN's published default for head-to-head points leagues: points 1,
+  threes 1, field goals made 2 and attempted −1, free throws made 1 and attempted −1, rebounds 1,
+  assists 2, steals 4, blocks 4, turnovers −2. It is a platform's default, a working default the
+  user may replace. The draft values players by fantasy points (each seat's own board under a
+  table too), a week is one result on the week's points, and the standings break a tie on points
+  for ("The league"). A seat that weighs its moves (the exact and the surrogate tiers, a mirror
+  rival) reads a week as the live build does: its odds are on fantasy points alone, each
+  opponent's projected week carries its fantasy points and their spread, and the week so far is
+  each side's score, the sum the standings count. PR 2b's move problem gave the opponents' weeks
+  no table, a gap only a points league reaches: every week looked won and no move gained, so
+  those seats stood still until PR D4c filled it. No new metric: `category_wins` is the week's
+  one result (a win, a half, nothing), so it equals `matchup_wins`; the verdict's rule is
+  untouched.
+- **The held slots** (`--held IL=2,IL+=1`): `IL` 0 to 2 and `IL+` 0 or 1, after the bench; `NA`
+  is refused. The draft takes the active spots only, so a held slot starts the season empty; a
+  short draft's rule is unchanged, and under points the draftable players are the same players
+  in another order.
+- **The default** (`shapes.PLAIN`): the nine categories, no held slot. With nothing named nothing
+  moves: a replay's record equals the one before PR D4c key for key, apart from `league.rules`,
+  the version and its reason. A run that names rules prints one line with them, and the no-peek
+  check and the dry run say them too. `validate` takes none of the three: it plays the fixed
+  shape, the nine categories and no held slot, and says so.
+
+What a replay with them does not model, each plainly:
+
+1. **A replay hears one status, `O`.** An absence is heard its lag after it begins and until its
+   told return. `IL` and `IL+` both accept `O`, so in a replay an `IL+` slot is one more `IL`
+   slot. Nothing is ever heard as questionable or game-time.
+2. **Every absence is heard that way**, a single missed game too, so a held stint can be a day
+   long. The counts (`held_stints`, `held_days`, `forced_drops`, `held_refused`) say how many and
+   how long.
+3. **Who uses a held slot:** a seat on the exact or the surrogate tier, and a mirror rival. The
+   ranking tier queues one plain swap and never holds a player. A `market` rival swaps on the
+   market's view and reads no status, so it never holds one either; a static rival makes no
+   move. A league of market rivals with held slots is one where only the arm's seat uses them;
+   no rule for the rivals is built here.
+4. **Gate five has never seen such a league.** `validate` plays the fixed shape, nine categories,
+   no held slot. What the surrogate tier does in a points league or with held slots rests on a
+   gate that did not test it.
+5. `stash_threshold` is unread until PR G, and waivers are PR F's: a dropped player is on the
+   wire the next morning, held or not.
+6. The points table is the run's, and the default a platform's; a league's own table is given
+   with `--points`.
+7. **What the executor does not see.** When a cleared held player comes back over the spots, the
+   executor (`policy._activate`) drops the least valuable active player by the day's per-game
+   values, him included, a tie broken by the id as text as the engine breaks it. The engine's
+   plan (`moves.comebacks`) can charge another player, in two ways: the keep rule (it never sends
+   a kept player while another can go), and the day's choice of an activation's drop
+   (`moves.choose_activation`, #360), which the simulator never calls, so the engine falls to its
+   weakest. On such a morning the seat's queue was planned on one roster and lands on another.
+   The held player's return is PR G's to finish, with `stash_threshold`.
+
+**Not yet.** The ruling of 2026-11-07
 makes the market rivals' add rate a parameter of the league shape, with a default written as a
 number; it is not one yet. As a working default, open with the user, the rate stays what the
 arm's file names (`{"kind": "market", "rate": ...}`), and a market block with no rate never
