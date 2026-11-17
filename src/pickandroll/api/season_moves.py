@@ -462,14 +462,14 @@ def pending_claims(
     off it (Yahoo voids the claim), or its add is no longer on waivers in the pool (lost to
     another team, or a free agent again after it failed). ``mine`` is my roster, held slots
     included; ``pool`` the league's available players by id. Its clear day is the entry's, else
-    the pool's."""
+    the pool's. A churn whose held drop landed is an open-spot claim (#411,
+    ``autopilot.claim_drop``): Yahoo holds it with no drop, so its H off my roster settles nothing."""
     mine = set(mine)
     out: dict[int, mv.Pending] = {}
     for c in claims:
         if c.get("outcome") != qa.CLAIMED or c.get("resolved") or c.get("add") is None:
             continue
-        add, drop = int(c["add"]), c.get("drop")
-        drop = None if drop is None else int(drop)
+        add, drop = int(c["add"]), qa.claim_drop(c)
         a = pool.get(add)
         if add in mine or (drop is not None and drop not in mine) or a is None:
             continue
@@ -1628,8 +1628,8 @@ def rejudge_claims(
         return folds[key]
 
     def move_of(c: Mapping[str, Any]) -> mv.Move:
-        drop = c.get("drop")
-        return mv.Move(int(c["add"]), None if drop is None else int(drop))
+        # The claim as Yahoo holds it: a churn whose held drop landed has no drop (#411).
+        return mv.Move(int(c["add"]), qa.claim_drop(c))
 
     def pending_of(c: Mapping[str, Any]) -> mv.Pending | None:
         m = move_of(c)
@@ -1637,7 +1637,7 @@ def rejudge_claims(
 
     # The room: the no-drop claims by their own gain, with the claims that drop someone made.
     with_drop = [c for c in built.pending if c.drop is not None]
-    open_spot = [c for c in claims if pending_of(c) is not None and c.get("drop") is None]
+    open_spot = [c for c in claims if pending_of(c) is not None and qa.claim_drop(c) is None]
     alone: dict[str, float] = {}
     roomless: set[str] = set()
     for c in open_spot:

@@ -569,6 +569,16 @@ def drop_outcome(e: Mapping[str, Any]) -> str | None:
     return (e.get("drop_run") or {}).get("outcome")
 
 
+def claim_drop(e: Mapping[str, Any]) -> int | None:
+    """The drop a placed claim carries at Yahoo (#411): none for a churn whose held drop landed,
+    since its claim then goes in on the add page with no drop (#221 part 3, the due list's); else
+    the entry's own drop. A churn before its drop run keeps H: its claim is not placed yet."""
+    if churn_drop(e) is not None and drop_outcome(e) == DROPPED:
+        return None
+    drop = e.get("drop")
+    return None if drop is None else int(drop)
+
+
 def waits(e: Mapping[str, Any], by_id: Mapping[str, Mapping[str, Any]]) -> dict[str, Any] | None:
     """What a week plan's step waits for (#221 part 2, the ruling's third condition): the first
     of its earlier steps (``after``) not landed, with its step and add, and the line the Queue
