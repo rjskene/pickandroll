@@ -605,8 +605,11 @@ page, from PR 2:
     and in every set. A claim the read says Yahoo's run already settled is not pending: its add
     is on my roster (it landed, so it is never counted twice; the 05:00 daily reads an hour after
     the run, before the build marks the entry won), its drop is off it (Yahoo voids it), or its
-    add is no longer on waivers (lost, or a free agent again after it failed). The solve's
-    answer lists them (`pending`: add, drop, the day he joins) and so does its decision entry;
+    add is no longer on waivers (lost, or a free agent again after it failed). A churn whose held
+    drop landed is read as Yahoo holds it, an open-spot claim with no drop (#411,
+    `autopilot.claim_drop`, as the due list placed it): its H off my roster settles nothing, the
+    fold gives its add the spot, the re-judge judges it as a no-drop claim, and its cancel names
+    the no-drop claim's id. The solve's answer lists them (`pending`: add, drop, the day he joins) and so does its decision entry;
     the solve is kept per claims pending by their content, so a queue write that changes no
     claim never solves again. The lineup, the Matchup and the Season views keep Yahoo's roster
     as read (`Built.real`): the lineup can start only my players. The re-judge judges each claim
