@@ -37,8 +37,11 @@ def test_with_no_threshold_every_payload_is_mains_snapshot(name):
     snap = json.loads(SNAPSHOT.read_text())
     p = cases()[name]
     assert p.stash_threshold is None
-    assert payload(p) == snap[name]
-    assert payload(at(p, None)) == snap[name]
+    for out in (payload(p), payload(at(p, None))):
+        # The one key added since (#397): these leagues are categories leagues, not one-win, and
+        # every other byte of the answer is still main's.
+        assert out.pop("measure") == mv.CATEGORIES
+        assert out == snap[name]
 
 
 def test_the_knob_reaches_the_problem_as_a_number_or_none():
