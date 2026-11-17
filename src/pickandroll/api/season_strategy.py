@@ -22,6 +22,10 @@ stamp). GET never solves: with no such run it says ``not_solved``. POST starts a
 the one with the same settings; ``?wait=true`` answers once it is done. A GET during a run shows
 the points filling in.
 
+A league whose standings count one win per matchup is still valued here on expected categories
+(#397): the Moves panel ranks it on the matchup odds, this panel does not. Its pool is ranked
+from the Moves panel's single-move gains, which in such a league are the odds.
+
 ``program_only`` is option B of #110, kept as a small switch while the user decides between the
 two: the linear program's set stands wherever it solved to the gap, and the search's set is only
 its fallback where a solve hit the time limit or failed. Nothing else changes; the program's
@@ -34,7 +38,7 @@ import threading
 import time
 from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime
 from typing import Any
 
@@ -101,7 +105,9 @@ class Run:
         on_solved: Callable[[Run], None] | None = None,
     ) -> None:
         self.key = key
-        self.built = built
+        # The panel values its sets on expected categories in every league: a one-win league's
+        # matchup odds (#397) rank the Moves panel, not this one (the master's ruling).
+        self.built = replace(built, problem=replace(built.problem, one_win=False))
         self.prepare = prepare
         self.settings = settings
         self.workers = workers

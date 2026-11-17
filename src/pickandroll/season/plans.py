@@ -31,9 +31,11 @@ The queue (:func:`for_queue`, the user's ruling of 2026-11-06) weighs this week 
 score is its week gain plus ``three_weight`` times its three-week gain, and the plan with the
 highest score leads when it keeps the rules and beats the three weeks' set by the plan floor on
 that score. Standings count each category as a win, so expected categories (points in a points
-league) are the measure and the matchup odds a headline beside them. In a playoff week a matchup
-decides who advances: the score is the matchup odds, the floor :data:`PLAYOFF_FLOOR`, and the
-three weeks do not count.
+league) are the measure and the matchup odds a headline beside them. In a league whose standings
+count one win per matchup (#397) the evaluator's values are the matchup odds themselves, so the
+score is the week's odds plus ``three_weight`` times the three weeks' odds summed, on the floor
+``stream.PLAN_FLOOR_ODDS``. In a playoff week a matchup decides who advances: the score is the
+matchup odds, the floor :data:`PLAYOFF_FLOOR`, and the three weeks do not count.
 
 A weekly add and a claim are not spent on a step that gives the plan nothing (:func:`trimmed`, the
 master's ruling of 2026-11-06): the plan that leads loses, lowest first, each step whose removal
@@ -70,8 +72,8 @@ QUEUE_PLAN = "week_plan"
 #: (docs/AUTOPILOT.md section 6). The Monday step never moves it.
 THREE_WEIGHT = 0.33
 #: What a plan must beat the three weeks' set by on the matchup odds in a playoff week: 3
-#: percentage points.
-PLAYOFF_FLOOR = 0.03
+#: percentage points, the one-win league's floor in every week too (``stream.PLAN_FLOOR_ODDS``).
+PLAYOFF_FLOOR = st.PLAN_FLOOR_ODDS
 #: A step of the plan the queue takes comes out when it costs less than this share of the floor.
 TRIM_SHARE = 0.5
 

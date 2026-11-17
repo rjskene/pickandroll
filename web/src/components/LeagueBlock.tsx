@@ -10,7 +10,8 @@ import {
   bestLine,
   bestNamer,
   flagCounts,
-  gainLabel,
+  measureOf,
+  moveGain,
   isRefreshing,
   isStale,
   matchupOddsCell,
@@ -223,14 +224,14 @@ function BestCells({ s, best, lookError, solving, solveError }: BlockProps) {
   if (!best) return one("looking for a solved move…", "dim");
   if (best.status === "not_solved") return one("not solved yet", "dim");
   if (!best.move) return one(bestLine(best), "dim", `over ${best.label}`);
-  const unit = s.scoring === "points" ? "matchups won" : "categories won";
+  const unit = s.scoring === "points" ? "matchups won" : measureOf(s) === "matchup" ? "points of win odds" : "categories won";
   return (
     <>
       <span className="lt-move" title={`over ${best.label}`}>
         {bestLine(best)}
       </span>
-      <span className="good lt-gain" title={`expected ${unit} the move adds over ${best.label}`}>
-        {gainLabel(best.move.gain)}
+      <span className="good lt-gain" title={`${measureOf(s) === "matchup" ? "" : "expected "}${unit} the move adds over ${best.label}`}>
+        {moveGain(best.move.gain, measureOf(s))}
       </span>
     </>
   );
@@ -306,7 +307,7 @@ function SetLines({ s, best, lookError, solving, solveError }: BlockProps) {
               return (
                 <div key={`${m.add}-${m.drop}`} className="lt-line">
                   <span>{line.text}</span>
-                  <span className="good">{gainLabel(m.gain)}</span>
+                  <span className="good">{moveGain(m.gain, measureOf(s))}</span>
                   <span className="muted" title={line.basis.title}>
                     {line.kind}
                   </span>
@@ -319,7 +320,7 @@ function SetLines({ s, best, lookError, solving, solveError }: BlockProps) {
         <div className="lt-lines">
           <div className="lt-line">
             <span>{bestLine(best)}</span>
-            <span className="good">{gainLabel(best.move.gain)}</span>
+            <span className="good">{moveGain(best.move.gain, measureOf(s))}</span>
             <span className="dim">the best of them</span>
           </div>
         </div>

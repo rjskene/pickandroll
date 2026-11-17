@@ -167,7 +167,8 @@ def recommended(
     begun: Collection[str] = (),
 ) -> Recommended:
     """``span``'s recommended lineup (#314): on this week's days against a named opponent whose
-    roster is read, the most expected categories won (``season.lineup.win_starters``), anchored
+    roster is read, the most expected categories won (``season.lineup.win_starters``), or the
+    best matchup odds in a one-win league (#397), anchored
     on Yahoo's lineup as read and with today's players of the ``begun`` teams where Yahoo has
     them. Any other week, an unread matchup and a points league rank by the general value, and a
     league whose lineups change weekly keeps its one lineup."""
@@ -213,6 +214,7 @@ def recommended(
         },
         locked={today: locked} if locked is not None else None,
         started=Counter(k for lineup in done.values() for k in lineup),
+        one_win=s.one_win,
     )
     crowded = [d for d in ahead if sum(d in v for v in playing.values()) > len(by_value[d])]
     return Recommended(
