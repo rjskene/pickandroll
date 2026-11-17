@@ -445,7 +445,7 @@ def cleared_line(league: str, lineup: Mapping[str, Any]) -> str | None:
         then = (
             f"the activation would drop {names.get(a['drop'], str(a['drop']))}"
             if a["drop"] is not None
-            else "an active spot is open for him"
+            else "an active spot is open for them"
         )
         parts.append(
             f"{who} sits in {a['slot']} {status} and blocks every add until activated; {then}"

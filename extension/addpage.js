@@ -31,6 +31,7 @@
     "pickandroll-start-active-after-lineup",
     "pickandroll-start-active-comeback",
     "pickandroll-start-active-comeback-late",
+    "pickandroll-start-active-comeback-moves",
   ];
   /** The IL move's (lib/ilmove.js ``IL_TRIGGERS``, #214, 0.9.1). */
   const IL_FRAGMENTS = [
@@ -47,6 +48,7 @@
     "pickandroll-drop-panel",
     "pickandroll-drop-comeback",
     "pickandroll-drop-comeback-late",
+    "pickandroll-drop-comeback-moves",
   ];
   /** The claim's cancel (lib/cancel.js ``CANCEL_TRIGGERS``, #345 PR 2, 0.11.11). */
   const CANCEL_FRAGMENTS = ["pickandroll-claim-cancel"];

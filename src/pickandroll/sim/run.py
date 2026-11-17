@@ -13,8 +13,8 @@ moves decided yesterday land, each seat decides on the day's beliefs, the lineup
 is played and scored; a hook is handed each day's :class:`DayRecord`. Variants whose
 states agree share one solve (the lockstep of the design note); from the first divergence each
 solves alone. :func:`paired` runs arm A and arm B for one seat and returns the paired difference
-of the season's outcomes, B less A; :func:`room` runs twelve seats under named arms rotated across
-paths.
+of the season's outcomes, B less A; :func:`room` runs a league's seats under named arms rotated
+across paths.
 Pure but for the process pool: nothing here reads a file; the readers (``sim.readers``) and the
 commands (``sim.cli``) bring the inputs and write the payload.
 """
@@ -33,7 +33,7 @@ from typing import Any
 
 import numpy as np
 
-from . import adp, audit, policy, world
+from . import adp, audit, policy, shapes, world
 from . import counts as ct
 from . import league as lg
 from . import opponents as op
@@ -941,10 +941,11 @@ def _pair_result(
     }
 
 
-def rotate(arms: Sequence[str], teams: Sequence[int], path: int) -> dict[int, str]:
-    """Seat ``i`` gets arm ``(i + path) mod n``: across paths every arm sits in every seat."""
+def rotate(arms: Sequence[str], teams: Sequence[int], turn: int) -> dict[int, str]:
+    """Seat ``i`` gets arm ``(i + turn) mod n``: across paths every arm sits in every seat (the
+    path's turn, ``shapes.visit``; the path itself on one league shape)."""
     n = len(arms)
-    return {t: arms[(i + path) % n] for i, t in enumerate(teams)}
+    return {t: arms[(i + turn) % n] for i, t in enumerate(teams)}
 
 
 def room(
@@ -952,12 +953,13 @@ def room(
     w: World,
     arms: Mapping[str, Arm],
     seats: Sequence[str],
-    path: int,
+    turn: int,
     on_day: Callable[[DayRecord], None] | None = None,
 ) -> dict[str, Any]:
-    """Twelve seats under named arms, rotated by ``path``; each arm's outcomes pooled over its
+    """The league's seats under named arms, rotated by ``turn`` (the path's turn,
+    ``shapes.visit``; the path itself on one league shape); each arm's outcomes pooled over its
     seats this path. ``on_day`` is :func:`simulate`'s."""
-    assigned = rotate(list(seats), setup.teams, path)
+    assigned = rotate(list(seats), setup.teams, turn)
     variant = {t: arms[name].seat() for t, name in assigned.items()}
     # The scale is each arm's in its first seat, in team order.
     first = {
@@ -1190,12 +1192,15 @@ def run_tasks(
 # --------------------------------------------------------------------------- a replay's league
 #: ESPN's eligible slot ids that are a position (the combinations, UTIL, bench and IR are not).
 ESPN_POSITIONS: Mapping[int, str] = {0: "PG", 1: "SG", 2: "SF", 3: "PF", 4: "C", 5: "G", 6: "F"}
-#: The roster a replay's seats fill: the private league's shape without held slots.
-REPLAY_SLOTS = ("PG", "SG", "G", "SF", "PF", "F", "C", "C", "Util", "Util", "BN", "BN", "BN")
+#: The fixed league shape's parts (``shapes.FIXED``, #172, PR D4b), by their old names: the
+#: roster a replay's seats fill (the private league's shape without held slots), its playoffs,
+#: its team count and its weekly add limit. A path's league is its shape's (``shapes.visit``).
+REPLAY_SLOTS = shapes.FIXED.slots
 REPLAY_WEEKS = 22
-REPLAY_PLAYOFF_WEEKS = 3
-REPLAY_PLAYOFF_TEAMS = 6
-REPLAY_TEAMS = 12
+REPLAY_PLAYOFF_WEEKS = shapes.FIXED.playoff_weeks
+REPLAY_PLAYOFF_TEAMS = shapes.FIXED.playoff_teams
+REPLAY_TEAMS = shapes.FIXED.teams
+REPLAY_WEEKLY_ADDS = shapes.FIXED.weekly_adds
 #: A forecaster built from lines projects a player with at least this many played games in the
 #: season it reads: the prior season for ``prior``, the replayed one for the oracle
 #: (``forecast.MIN_GAMES``).
@@ -1220,6 +1225,7 @@ def replay_setup(
     cats: Sequence[str] = ("fg_pct", "ft_pct", "threes", "pts", "reb", "ast", "stl", "blk", "tov"),
     opening_days: int | None = OPENING_DAYS,
     draft: adp.Draft | None = None,
+    weekly_adds: int | None = REPLAY_WEEKLY_ADDS,
 ) -> Setup:
     """A made-up league on a recorded season, from what is known before it starts. Its players
     are everyone ``players`` lists with a scheduled game, projected or not; ``teams`` seats
@@ -1236,17 +1242,19 @@ def replay_setup(
     instead (:func:`draft_boards`, ``state.board_draft``): every member with a game in the
     opening days who is projected or listed can be drafted, each seat takes the best player
     left on its own board, and the market's view is the table's (``adp.market_view``). None is
-    the draft on ``projection`` alone, as before."""
+    the draft on ``projection`` alone, as before.
+
+    A league shape (#172, PR D4b) is passed as its keywords (``shapes.LeagueShape.setup_args``):
+    ``teams``, ``slots``, ``weekly_adds`` (None: no limit), ``playoff_teams`` and
+    ``playoff_weeks``; the defaults are the fixed shape's. The season stays ``weeks`` long and the
+    regular season is what the playoffs leave."""
     schedule: dict[date, set[str]] = {}
     members: dict[int, Member] = {}
-    game_days: dict[int, list[date]] = {}
-    for k, m in players.items():
-        days = list((scheduled or {}).get(k) or list(lines.get(k, {})))
-        if not days:
-            continue
+    game_days = league_days(lines, players, scheduled)
+    for k, days in game_days.items():
+        m = players[k]
         own = f"p{k}"
         members[k] = Member(k, m.name, own, m.positions)
-        game_days[k] = days
         for d in days:
             schedule.setdefault(d, set()).add(own)
     calendar = weeks_from(period_one, weeks)
@@ -1261,25 +1269,21 @@ def replay_setup(
     ids = tuple(range(1, teams + 1))
     pairings = round_robin(ids, regular)
     projected = [k for k in projection if k in members]
-    opening = None if opening_days is None else period_one + timedelta(opening_days - 1)
     points = None
     value = wk.per_game_values({k: projection[k] for k in projected}, tuple(cats), points)
     spots = sum(1 for s in slots if s not in mv.HELD)
+    draftable = draftable_of(
+        members,
+        game_days,
+        projection,
+        period_one,
+        opening_days,
+        None if draft is None else draft.picks,
+    )
     if draft is None:
-        draftable = [
-            k
-            for k in projected
-            if opening is None or any(period_one <= d <= opening for d in game_days[k])
-        ]
         rosters = snake_draft(draftable, value, ids, spots)
         market = {k: value.get(k, 0.0) for k in projected}
     else:
-        draftable = [
-            k
-            for k in members
-            if (k in projection or k in draft.picks)
-            and (opening is None or any(period_one <= d <= opening for d in game_days[k]))
-        ]
         boards = draft_boards(draft, draftable, value, ids, members, cats)
         rosters = board_draft(boards, ids, spots)
         market = adp.market_view(draft.picks, value, list(members))
@@ -1306,10 +1310,48 @@ def replay_setup(
         schedule={d: frozenset(t) for d, t in schedule.items()},
         roster_slots=tuple(slots),
         cats=tuple(cats),
-        max_weekly_adds=4,
+        max_weekly_adds=weekly_adds,
         market=market,
         spec=spec,
     )
+
+
+def league_days(
+    lines: Mapping[int, Mapping[date, Any]],
+    players: Mapping[int, Any],
+    scheduled: Mapping[int, Sequence[date]] | None = None,
+) -> dict[int, list[date]]:
+    """A replay's league's members and their game days (:func:`replay_setup`): everyone
+    ``players`` lists with a scheduled game (the days he has a line for when none are given), in
+    ``players``' order."""
+    out: dict[int, list[date]] = {}
+    for k in players:
+        days = list((scheduled or {}).get(k) or list(lines.get(k, {})))
+        if days:
+            out[k] = days
+    return out
+
+
+def draftable_of(
+    members: Mapping[int, Any],
+    game_days: Mapping[int, Sequence[date]],
+    projection: Mapping[int, Any],
+    period_one: date,
+    opening_days: int | None = OPENING_DAYS,
+    picks: Mapping[int, float] | None = None,
+) -> list[int]:
+    """Who a replay's draft can take (:func:`replay_setup`): the league's members with a game in
+    the season's first ``opening_days`` days (from ``period_one``; None: any game) who are
+    projected, or, under a table (``picks``), projected or listed: in ``projection``'s order
+    without a table and in ``members``' under one, as each draft has always read them."""
+    opening = None if opening_days is None else period_one + timedelta(opening_days - 1)
+
+    def opens(k: int) -> bool:
+        return opening is None or any(period_one <= d <= opening for d in game_days.get(k, ()))
+
+    if picks is None:
+        return [k for k in projection if k in members and opens(k)]
+    return [k for k in members if (k in projection or k in picks) and opens(k)]
 
 
 def draft_boards(
@@ -1358,8 +1400,10 @@ __all__ = [
     "arm_of",
     "check_fit",
     "draft_boards",
+    "draftable_of",
     "drafted_unprojected",
     "inputs_of",
+    "league_days",
     "mirrored",
     "paired",
     "paired_apart",
