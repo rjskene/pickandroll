@@ -15,7 +15,8 @@ import {
   checkingNow,
   commonMode,
   dayLabel,
-  gainLabel,
+  measureOf,
+  moveGain,
   keptLines,
   liveSplit,
   MODE_WORDS,
@@ -431,7 +432,7 @@ function Suggestions({ s, title, onOpen }: { s: SeasonSummary; title: string; on
                   return (
                     <div key={`${m.add}-${m.drop}`} className="lt-line">
                       <span>{line.text}</span>
-                      <span className="good">{gainLabel(m.gain)}</span>
+                      <span className="good">{moveGain(m.gain, measureOf(s))}</span>
                       <span className="muted" title={line.basis.title}>
                         {line.kind}
                       </span>
@@ -445,7 +446,7 @@ function Suggestions({ s, title, onOpen }: { s: SeasonSummary; title: string; on
               <div className="lt-lines">
                 <div className="lt-line">
                   <span>{bestLine(best)}</span>
-                  <span className="good">{gainLabel(best.move.gain)}</span>
+                  <span className="good">{moveGain(best.move.gain, measureOf(s))}</span>
                   <span className="dim">the best of them</span>
                 </div>
               </div>

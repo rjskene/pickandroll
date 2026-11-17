@@ -475,8 +475,42 @@ where it was read:
 
 A stored settings page parsed before the scoring type existed is listed in `needs` again (it is
 part of `PAGE_FIELDS`). The league page and the landing label the format as "H2H categories",
-"H2H one win" or "H2H points". The format changes no recommendation yet: judging a one-win
-league's moves and lineups on matchup odds is #397's second part.
+"H2H one win" or "H2H points".
+
+**A one-win league is judged on matchup odds (#397's second part).** In a one-win league a 5-4
+week counts the same as a 9-0, so a week's value is the odds of winning the matchup
+(`weekly.matchup_won`), not its expected categories. The move problem carries the format
+(`MoveProblem.one_win`, from `SeasonSettings.one_win`). The evaluator's `value` for each week is
+then the matchup odds, averaged over the week's opponents (this week's one, or the field's), and
+summed over the horizon's weeks as before. Everything that ranks on the evaluator ranks on the odds,
+with no second path:
+- the single moves, the search and the recommended sets;
+- the streaming plan and the week plans;
+- the queue's score (the week plus `three_weight` × the three weeks, the same 0.33);
+- a cleared player's drop (#360);
+- the waits between a plan's steps.
+
+What changes with it:
+- **The floors.** The plan floor is 3 percentage points of odds (`stream.PLAN_FLOOR_ODDS`, the
+  playoff week's floor). The categories knob `plan_floor_cats` does not apply there. `min_gain`
+  stays 0.01, a point of odds.
+- **The crowded-day lineup (#314)** ranks a day's sets on the odds, with a near-tie of
+  `lineup.TIE_ODDS` (below).
+- **The app.** The moves answer names its `measure` (`matchup`, `categories` or `points`). In a
+  one-win league the Moves card, the league's row on the landing and its suggestions in Queue
+  Central show each gain as points of win odds ("+2.1 pts win odds"). The card says the moves are
+  ranked on matchup odds, and the move drawer shows the odds before and after.
+
+What does not change:
+- The season guard, the keep rule, the stash threshold and the weekly add rules, which rest on
+  per-game values.
+- The matchup odds a playoff week already used.
+- The Strategy panel and trades, which still value expected categories. The Strategy panel's pool
+  is ranked from the Moves card's single-move gains, which in a one-win league are odds.
+
+A league where each category counts, or whose format is not known (`h2h` None), is valued exactly
+as before. The private league stays suggestions only: nothing here places a move or sets a lineup
+there.
 
 `pages.parse_settings_page` reads the waiver, acquisition and trade rows, and
 `SeasonSettings.with_slots` merges them: a field the v3 read set wins, and a field it left None
@@ -662,7 +696,10 @@ out, any of the Moves card's four weeks.
   an earlier day as chosen, a later one as its anchor: Yahoo's starters as read, topped up by
   value, or the value set on a day not read. A set replaces its anchor only by a gain of `TIE`
   (0.015 expected categories), so the daily and late passes do not re-set Yahoo on noise; that
-  figure rests on one snapshot and simulated noise. Today, a player whose game began (the
+  figure rests on one snapshot and simulated noise. In a one-win league (#397) the sets rank on
+  the odds of winning the matchup instead, and the near-tie is `TIE_ODDS` (0.005, half a point of
+  odds): `TIE` converted at about a third, the share of a category's change that reaches the
+  matchup when the category is likely to decide the week (0.3 to 0.5, the thin end). Today, a player whose game began (the
   schedule copy's tip-offs) stays where Yahoo has him, on or off the lineup, and his slot with
   him. Later weeks, an unread matchup, points leagues and weekly leagues rank by value. The
   Matchup and Season views' week ranks a crowded day's recommended starters first (`recommended`,
@@ -1124,7 +1161,9 @@ The streaming plan turns over a weak spot; a week plan orders the week's moves o
 - **The queue's plan** (the user's ruling of 2026-11-06, #332). A set's or plan's score is its
   week gain plus `three_weight` times its three-week gain (`plans.score`; the knob, default 0.33,
   0 to 1, never moved by the Monday step), in expected categories, points in a points league:
-  standings count each category as a win, and the matchup odds are a headline beside it. The
+  standings count each category as a win, and the matchup odds are a headline beside it. In a
+  one-win league (#397) the gains are the matchup odds themselves, the week's plus `three_weight`
+  times the three weeks' summed, and the floor is 3 percentage points. The
   queue takes the plan with the highest score among those that keep the rules (`plans.valid`, so
   plan 1 over the step limit or the daily cap never does), pass the season guard and beat the
   three weeks' set by the plan floor on the score (`plans.for_queue`), else the set. From

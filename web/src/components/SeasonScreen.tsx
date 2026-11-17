@@ -47,7 +47,10 @@ import {
   flagTag,
   flagTitle,
   forText,
-  gainLabel,
+  minGainText,
+  moveGain,
+  rankedLine,
+  valueMove,
   gainTone,
   guardSteps,
   HORIZON_LABEL,
@@ -888,7 +891,7 @@ function Waivers({
                     </td>
                     {(["week", "three"] as const).map((h) => (
                       <td key={h} className={`num ${gainTone(cand?.[h]?.gain, minGain)}`}>
-                        {gainLabel(cand?.[h]?.gain)}
+                        {moveGain(cand?.[h]?.gain, m?.measure)}
                       </td>
                     ))}
                     <td className={`num ${rosTone(best?.ros, s.scoring)}`} title={best ? rosTitle(best.ros, { add: id, drop: best.drop }, name, s.scoring) : undefined}>
@@ -1018,6 +1021,7 @@ function Moves({
           {c.drop == null ? "" : c.drop === c.player ? ", and he is the one to drop" : `; activating him drops ${name(c.drop)}`}.
         </p>
       ))}
+      {rankedLine(m.measure) && <p className="muted small">{rankedLine(m.measure)}</p>}
       {reasons.map((r) => (
         <p key={r} className="accent small">
           {cap(r)}.
@@ -1091,12 +1095,12 @@ function Recommended({ h, m, s, name, onPick }: { h: MoveHorizon; m: MovesPayloa
   const returns = comebackText([set.comebacks?.week, set.comebacks?.three], name);
   return (
     <div className="block">
-      <span className="k" title={`${info.base.toFixed(2)} expected categories without a move${info.from ? `, from ${dayLabel(info.from)}` : ""}`}>
+      <span className="k" title={`${info.base.toFixed(2)} ${m.measure === "matchup" ? "win odds summed over the weeks" : "expected categories"} without a move${info.from ? `, from ${dayLabel(info.from)}` : ""}`}>
         Recommended for {horizonName(m, h)}
-        {set.moves.length > 0 && ` · ${gainLabel(set.gain[h])} (${GAIN_SHORT[o]} ${gainLabel(set.gain[o])}${set.ros ? ` · ROS ${rosLabel(set.ros, s.scoring)}` : ""})`}
+        {set.moves.length > 0 && ` · ${moveGain(set.gain[h], m.measure)} (${GAIN_SHORT[o]} ${moveGain(set.gain[o], m.measure)}${set.ros ? ` · ROS ${rosLabel(set.ros, s.scoring)}` : ""})`}
       </span>
       {set.moves.length === 0 ? (
-        <p className="muted small">No move adds more than {m.search.min_gain} expected categories.</p>
+        <p className="muted small">{minGainText(m.search.min_gain, m.measure)}</p>
       ) : (
         <table className="season-table">
           <thead>
@@ -1129,8 +1133,8 @@ function Recommended({ h, m, s, name, onPick }: { h: MoveHorizon; m: MovesPayloa
                 </td>
                 <BasisCell x={x} name={name} />
                 <td className="dim">{dayLabel(x.from)}</td>
-                <td className={`num ${gainTone(x.marginal[h], m.search.min_gain)}`}>{gainLabel(x.marginal[h])}</td>
-                <td className="num dim">{gainLabel(x.marginal[o])}</td>
+                <td className={`num ${gainTone(x.marginal[h], m.search.min_gain)}`}>{moveGain(x.marginal[h], m.measure)}</td>
+                <td className="num dim">{moveGain(x.marginal[o], m.measure)}</td>
                 <td className={`num ${rosTone(x.ros, s.scoring) || "dim"}`} title={rosTitle(x.ros, x, name, s.scoring)}>
                   {rosLabel(x.ros, s.scoring)}
                 </td>
@@ -1197,7 +1201,7 @@ function PlanBlock({ m, s, name }: { m: MovesPayload; s: SeasonView; name: Namer
         className="k"
         title={`a dated sequence of adds and drops that turns the weakest spots over inside the week; recommended when its week beats the set's by more than the floor, ${plan.floor} ${s.scoring === "points" ? "of the matchup's win odds" : "expected categories"}`}
       >
-        Streaming plan for {horizonName(m, "week")} · {gainLabel(plan.gain.week)} on the set ({GAIN_SHORT.three} {gainLabel(plan.gain.three)})
+        Streaming plan for {horizonName(m, "week")} · {moveGain(plan.gain.week, m.measure)} on the set ({GAIN_SHORT.three} {moveGain(plan.gain.three, m.measure)})
         {ros && ` · ${ros}`}
       </span>
       <table className="season-table">
@@ -1225,8 +1229,8 @@ function PlanBlock({ m, s, name }: { m: MovesPayload; s: SeasonView; name: Namer
                 {name(x.add)} <FlagTag f={flagOf(s, x.add)} cfg={s.flag_config} />
               </td>
               <td className="wrap">{name(x.drop)}</td>
-              <td className={`num ${gainTone(x.marginal.week, m.search.min_gain)}`}>{gainLabel(x.marginal.week)}</td>
-              <td className="num dim">{gainLabel(x.marginal.three)}</td>
+              <td className={`num ${gainTone(x.marginal.week, m.search.min_gain)}`}>{moveGain(x.marginal.week, m.measure)}</td>
+              <td className="num dim">{moveGain(x.marginal.three, m.measure)}</td>
               <td className={`num ${rosTone(x.ros, s.scoring) || "dim"}`} title={planStepRosTitle(x, name, s.scoring)}>
                 {rosLabel(x.ros, s.scoring)}
               </td>
@@ -1314,8 +1318,8 @@ function WeekPlanTable({ w, m, s, name }: { w: WeekPlan; m: MovesPayload; s: Sea
                   <td className="wrap" title={basis.title}>
                     {basis.cell}
                   </td>
-                  <td className={`num ${gainTone(x.gain.week, m.search.min_gain)}`}>{gainLabel(x.gain.week)}</td>
-                  <td className="num dim">{gainLabel(x.gain.three)}</td>
+                  <td className={`num ${gainTone(x.gain.week, m.search.min_gain)}`}>{moveGain(x.gain.week, m.measure)}</td>
+                  <td className="num dim">{moveGain(x.gain.three, m.measure)}</td>
                   <td className={`num ${rosTone(x.ros, s.scoring) || "dim"}`}>{rosLabel(x.ros, s.scoring)}</td>
                 </tr>
               );
@@ -1487,7 +1491,7 @@ function MoveDrawer({
         <>
           <div className="block">
             <span className="k" title="expected categories won this week: each category's odds of winning it, summed, the week so far included">
-              {cap(horizonName(m, "week"))} · expected categories won {d.horizons.week.before.toFixed(2)} → {d.horizons.week.after.toFixed(2)} ({gainLabel(d.horizons.week.gain)})
+              {cap(horizonName(m, "week"))} · {valueMove(d.horizons.week.before, d.horizons.week.after, m?.measure)} ({moveGain(d.horizons.week.gain, m?.measure)})
             </span>
             <WeekCats cats={cats} before={d.horizons.week.cats.before} after={d.horizons.week.cats.after} />
             {d.horizons.week.matchup?.before != null && (
@@ -1498,8 +1502,9 @@ function MoveDrawer({
           </div>
           <div className="block">
             <span className="k" title="expected categories won over the three weeks: each week's odds of winning each category against the other teams, averaged over them, summed over the categories and the weeks">
-              {cap(horizonName(m, "three"))} · expected categories won {d.horizons.three.before.toFixed(2)} → {d.horizons.three.after.toFixed(2)} ({gainLabel(d.horizons.three.gain)})
+              {cap(horizonName(m, "three"))} · {valueMove(d.horizons.three.before, d.horizons.three.after, m?.measure)} ({moveGain(d.horizons.three.gain, m?.measure)})
               {weeksOf(d.horizons.three) > 1 &&
+                m?.measure !== "matchup" &&
                 ` · a week ${(d.horizons.three.before / weeksOf(d.horizons.three)).toFixed(2)} → ${(d.horizons.three.after / weeksOf(d.horizons.three)).toFixed(2)}`}
             </span>
             <FieldCats cats={cats} weeks={weeksOf(d.horizons.three)} before={d.horizons.three.cats.before} after={d.horizons.three.cats.after} />
@@ -1546,11 +1551,11 @@ function MoveDrawer({
                         </span>
                       )}
                     </BasisCell>
-                    <td className={`num ${gainTone(x.week, min)}`}>{gainLabel(x.week)}</td>
+                    <td className={`num ${gainTone(x.week, min)}`}>{moveGain(x.week, m?.measure)}</td>
                     <td className={`num ${oddsPointsTone(x.matchup)}`} title={MATCHUP_CHANGE_TITLE}>
                       {oddsPoints(x.matchup)}
                     </td>
-                    <td className={`num ${gainTone(x.three, min)}`}>{gainLabel(x.three)}</td>
+                    <td className={`num ${gainTone(x.three, min)}`}>{moveGain(x.three, m?.measure)}</td>
                     <td className={`num ${rosTone(x.ros, s.scoring)}`} title={rosTitle(x.ros, { add: picked.add, drop: x.drop }, name, s.scoring)}>
                       {rosLabel(x.ros, s.scoring)}
                     </td>
@@ -1584,11 +1589,11 @@ function MoveDrawer({
                   {d.adds.map((x) => (
                     <tr key={x.add} className="pick" onClick={() => onPick({ add: x.add, drop: picked.drop })}>
                       <td>{name(x.add)}</td>
-                      <td className={`num ${gainTone(x.week, min)}`}>{gainLabel(x.week)}</td>
+                      <td className={`num ${gainTone(x.week, min)}`}>{moveGain(x.week, m?.measure)}</td>
                       <td className={`num ${oddsPointsTone(x.matchup)}`} title={MATCHUP_CHANGE_TITLE}>
                         {oddsPoints(x.matchup)}
                       </td>
-                      <td className={`num ${gainTone(x.three, min)}`}>{gainLabel(x.three)}</td>
+                      <td className={`num ${gainTone(x.three, min)}`}>{moveGain(x.three, m?.measure)}</td>
                       <td className={`num ${rosTone(x.ros, s.scoring)}`} title={rosTitle(x.ros, { add: x.add, drop: picked.drop }, name, s.scoring)}>
                         {rosLabel(x.ros, s.scoring)}
                       </td>

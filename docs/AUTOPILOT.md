@@ -299,7 +299,9 @@ page, from PR 2:
   improves this week goes in even when it does little for the three weeks after. A set's or
   plan's score is its week gain plus `three_weight` times its three-week gain, in expected
   categories (points in a points league), because standings count each category as a win; the
-  matchup odds are a headline beside it. When the day's solve logged a week plan for the queue
+  matchup odds are a headline beside it. In a league whose standings count one win per matchup
+  (#397) the gains are the matchup odds themselves, with the same weights and a plan floor of 3
+  percentage points (docs/ADD_DROP.md, "A one-win league is judged on matchup odds"). When the day's solve logged a week plan for the queue
   (the set `week_plan`, docs/ADD_DROP.md "Week plans": the plan with the highest score that keeps
   the rules, passes the season guard on its total and beats the three weeks' set by the plan
   floor on the score; from `Season.first_playoff_week` on, the plan with the best matchup odds
@@ -340,7 +342,10 @@ page, from PR 2:
   scored, also the scorecard's spread (the standard deviation of realized less projected value of
   the public leagues' scored moves, by scoring) against the move's value on its judging horizon,
   in the scorer's units. The scored floor never lets a move through below the plan floor: a move
-  clears both, and the entry names both figures and which one stopped it.
+  clears both, and the entry names both figures and which one stopped it. Both are in expected
+  categories (points in a points league). A one-win league's gains are odds (#397), but its
+  floor here is left as it is: the only one-win league is the private one, which is suggestions
+  only and never enters the queue (the master's ruling on #397).
 - **The veto window and the execute time.** An entry executes at the later of an hour after it was
   queued and the day's execute time (07:00 Central until the user sets another on the landing
   page's Queue line, `PUT /autopilot/queue/settings`; the day's entries not executed are timed

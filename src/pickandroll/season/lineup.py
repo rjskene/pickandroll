@@ -9,7 +9,8 @@ it loses are the difference. Two lineups that start the same players in other sl
 same and are not a difference.
 
 On a crowded day of the current week against a named opponent, the set is the largest one with
-the most expected categories won this week (:func:`win_starters`, #314); a near-tie keeps
+the most expected categories won this week (:func:`win_starters`, #314), or in a league whose
+standings count one win per matchup the best odds of winning it (#397); a near-tie keeps
 Yahoo's starters. Every other day, week and league ranks by the general per-game value.
 
 A league whose lineups change weekly sets one lineup for the week (:func:`weekly_lineup`): the
@@ -51,6 +52,11 @@ BENCH = "BN"
 #: read off one snapshot of ten leagues (11 crowded days) with simulated noise on the rates,
 #: where it kept 95% of the gain and flipped under 4% of the re-runs. Revisit with real passes.
 TIE = 0.015
+#: The same near-tie in a one-win league (#397), whose days rank on the matchup's win odds: half a
+#: percentage point. It converts :data:`TIE`: a category's change moves the matchup by that change
+#: times the chance the category decides the week, about 0.3 to 0.5, so 0.015 categories is about
+#: 0.005 to 0.0075 of odds; the thin end (the master's ruling on #397).
+TIE_ODDS = 0.005
 
 
 @dataclass(frozen=True)
@@ -155,9 +161,11 @@ def win_starters[K: Hashable](
     yahoo: Mapping[date, Collection[K]] | None = None,
     locked: Mapping[date, Locked[K]] | None = None,
     started: Mapping[K, int] | None = None,
+    one_win: bool = False,
 ) -> dict[date, dict[K, str]]:
     """Each of ``days``' starters by slot, for the most expected categories won this week against
-    ``theirs`` (the opponent's finals). ``yahoo`` is a day's starters as read, ``locked`` its
+    ``theirs`` (the opponent's finals), or with ``one_win`` (#397) the best odds of winning the
+    matchup (``weekly.matchup_won``). ``yahoo`` is a day's starters as read, ``locked`` its
     players whose game began, ``started`` the starts counted on the week's other days.
 
     Category odds do not add up across players (two players strong in one close category, a
@@ -165,7 +173,7 @@ def win_starters[K: Hashable](
     legal sets rather than a greedy on a gain per player; the surplus is small (at most a few
     hundred sets). Days run in order: an earlier day counts as chosen, a later one as its anchor,
     the largest set that keeps the most of Yahoo's starters as read, then by ``value``. A set
-    replaces its anchor only by a gain of ``TIE``. The categories count ``theirs`` as given, so
+    replaces its anchor only by a gain of ``TIE`` (``TIE_ODDS`` on the odds). The categories count ``theirs`` as given, so
     nothing here depends on the projection these starters go on to feed.
 
     A locked player is out of the search: one on the lineup holds his slot, one off it stays off.
@@ -176,9 +184,11 @@ def win_starters[K: Hashable](
     counts = Counter({k: 0 for k, _ in roster})
     counts.update(started or {})
 
+    won, tie = (wk.matchup_won, TIE_ODDS) if one_win else (wk.expected_won, TIE)
+
     def expected() -> float:
         week = wk.team_week({k: wk.PlayerWeek(n, n) for k, n in counts.items()}, rates, None)
-        return wk.expected_won(wk.odds_of(wk.finals(week, so_far, cats), theirs, cats))
+        return won(wk.odds_of(wk.finals(week, so_far, cats), theirs, cats))
 
     def add(keys: Collection[K], by: int) -> None:
         for k in keys:
@@ -214,7 +224,7 @@ def win_starters[K: Hashable](
         add(anchor, -1)
         scored = {s: score(s) for s in sets}
         best = max(sets, key=lambda s: (scored[s], sorted(map(str, s))))
-        picks[day] = best if scored[best] - scored[anchor] >= TIE else anchor
+        picks[day] = best if scored[best] - scored[anchor] >= tie else anchor
         add(picks[day], 1)
 
     out: dict[date, dict[K, str]] = {}

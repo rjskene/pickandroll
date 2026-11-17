@@ -256,6 +256,12 @@ import {
   NO_FILTER,
   ordinal,
   formatLabel,
+  measureOf,
+  measureWords,
+  minGainText,
+  moveGain,
+  rankedLine,
+  valueMove,
   pctLabel,
   playersById,
   playsPosition,
@@ -2547,4 +2553,29 @@ test("a league's format names a one-win league and keeps the others (#397)", () 
   assert.equal(formatLabel({ scoring: "categories", h2h: null }), "H2H categories");
   assert.equal(formatLabel({ scoring: "categories" }), "H2H categories");
   assert.equal(formatLabel({ scoring: "points", h2h: null }), "H2H points");
+});
+
+test("a one-win league's move gains read as points of win odds, the others as before (#397)", () => {
+  const one = { scoring: "categories", h2h: "one_win" } as const;
+  assert.equal(measureOf(one), "matchup");
+  assert.equal(measureOf({ scoring: "categories", h2h: "each_category" }), "categories");
+  assert.equal(measureOf({ scoring: "categories", h2h: null }), "categories");
+  assert.equal(measureOf({ scoring: "points", h2h: null }), "points");
+  // The moves' own answer wins over the summary's.
+  assert.equal(measureOf(one, { measure: "categories" }), "categories");
+  assert.equal(moveGain(0.0213, "matchup"), "+2.1 pts win odds");
+  assert.equal(moveGain(-0.005, "matchup"), "−0.5 pts win odds");
+  assert.equal(moveGain(null, "matchup"), "");
+  for (const m of ["categories", "points", undefined] as const) assert.equal(moveGain(0.4213, m), gainLabel(0.4213));
+  assert.equal(measureWords("matchup"), "points of win odds");
+  assert.equal(measureWords("categories"), "expected categories");
+  assert.match(rankedLine("matchup") ?? "", /^Ranked on matchup odds: one win a week\./);
+  assert.ok(!/optimal/i.test(rankedLine("matchup") ?? ""));
+  assert.equal(rankedLine("categories"), null);
+  assert.equal(rankedLine(undefined), null);
+  assert.equal(valueMove(4.1, 4.32, "categories"), "expected categories won 4.10 → 4.32");
+  assert.equal(valueMove(0.52, 0.55, "matchup"), `win odds ${oddsLabel(0.52)} → ${oddsLabel(0.55)}`);
+  assert.equal(valueMove(1.5, 1.62, "matchup", 3), `win odds a week ${oddsLabel(0.5)} → ${oddsLabel(0.54)}`);
+  assert.equal(minGainText(0.01, "categories"), "No move adds more than 0.01 expected categories.");
+  assert.equal(minGainText(0.01, "matchup"), "No move adds more than 1 pt of win odds.");
 });
