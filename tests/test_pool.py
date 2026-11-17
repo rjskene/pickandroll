@@ -253,7 +253,9 @@ def test_a_wait_on_the_shared_pool_ends_when_a_terminating_shutdown_stops_its_wo
     """#401: the API's shutdown terminates the workers mid-solve; the thread waiting on them
     (the survival build's, a pricing round's) ends within a few seconds, never waits forever."""
     pool = pools.shared_pool(1)
-    futures = [pool.submit(time.sleep, 60), pool.submit(time.sleep, 60)]
+    # One runs; the pool moves one more to its call queue and marks it running, so it can never
+    # be cancelled (``EXTRA_QUEUED_CALLS``); the third still waits in the pool's own queue.
+    futures = [pool.submit(time.sleep, 60) for _ in range(3)]
     thread, out = waiting(lambda: list(pools.completed(futures)))
     time.sleep(1.0)
     stopped = time.monotonic()
@@ -262,4 +264,4 @@ def test_a_wait_on_the_shared_pool_ends_when_a_terminating_shutdown_stops_its_wo
     assert not thread.is_alive()
     assert isinstance(out["raised"], pools.PoolStopped)
     assert out["ended"] - stopped < STOP_BOUND
-    assert futures[1].cancelled()
+    assert futures[2].cancelled()
