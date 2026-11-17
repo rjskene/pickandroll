@@ -50,7 +50,18 @@ on his own before the claim (which is why the engine offers a churn on a claim o
 player is worth nothing net of his return). A claim is charged to the week of the day before it
 lands. The executor mirrors the autopilot's claim rules (:func:`queue`). The problem is built as the
 live build builds it: each candidate on waivers effective on his clear date and among ``claims``,
-and the seat's own claims in flight folded in (``moves.with_pending``). Fb adds the budget and bids.
+and the seat's own claims in flight folded in (``moves.with_pending``).
+
+**FAAB** (PR Fb, a league whose ``waivers`` is ``faab``): the waiting and the claims are as by
+priority, but each claim carries a sealed bid from its team's budget, set when it is placed and
+clamped to the dollars left that day (:func:`queue`), and the morning decides the claims highest
+bid first, a tie by waiver priority, the winner paying exactly its bid; a claim its team can no
+longer pay fails; the order rolls only when a win broke a tie (:func:`clear_waivers`). A seat on
+the exact or the surrogate tier, and a mirror rival, bids by the live rule (``autopilot.bid_of``
+through the door, :func:`live_bid`) on its move's own gain on the judging horizon and the typical
+gain of the moves it recommended over the fortnight (:class:`Basis`); the ranking tier holds no
+gain in the engine's units and bids $0; a market rival bids by an assumed form
+(:func:`rival_bid`); a static seat never claims.
 ``EXECUTIONS`` names the model in every run's payload.
 """
 
@@ -65,7 +76,21 @@ from datetime import date, timedelta
 from statistics import median
 from typing import Any, Protocol
 
-from .engine import DEFAULTS, LIVE_KNOBS, Week, dl, mv, refused, sg, st, wk
+from .engine import (
+    DEFAULTS,
+    LIVE_KNOBS,
+    TYPICAL_DAYS,
+    TYPICAL_MIN,
+    Week,
+    bid_of,
+    dl,
+    mv,
+    refused,
+    sg,
+    st,
+    typical_gain,
+    wk,
+)
 from .league import fpts
 from .state import (
     BENCH,
@@ -85,12 +110,17 @@ EXECUTIONS = "free_agents_next_day"
 #: A waiver league's (#172, PR Fa): a free agent's add the next morning, a dropped player's after
 #: his waiver days by a claim, the claims decided by rolling waiver priority.
 EXECUTIONS_PRIORITY = "free_agents_next_day_claims_by_priority"
+#: A FAAB league's (#172, PR Fb): as by priority, but each claim carries a sealed bid from its
+#: team's budget, and the claims are decided highest bid first, a tie by waiver priority.
+EXECUTIONS_FAAB = "free_agents_next_day_claims_by_sealed_bids"
 
 
 def executions_of(waivers: str) -> str:
     """The execution model a run's payload names under ``waivers`` (``shapes.WAIVERS``): the
-    name it always had without waivers, a name of its own with them."""
-    return EXECUTIONS if waivers == "none" else EXECUTIONS_PRIORITY
+    name it always had without waivers, a name of its own for each kind of waivers."""
+    if waivers == "none":
+        return EXECUTIONS
+    return EXECUTIONS_FAAB if waivers == "faab" else EXECUTIONS_PRIORITY
 
 
 #: A decided move lands this long after it is made: it takes effect then, and is charged to the
@@ -252,6 +282,37 @@ class Built:
     #: The days of the bracket's weeks, whose games the season term counts ``playoff_weight``
     #: times (:func:`bracket_days`).
     bracket: frozenset[date] = frozenset()
+    #: Whether a claim carries a bid: a FAAB league (PR Fb). The tiers that bid then give their
+    #: decision a :class:`Basis`.
+    bids: bool = False
+
+
+#: How a decision's claims bid in a FAAB league (#172, PR Fb): by the live rule
+#: (``autopilot.bid_of``: a seat on the exact or the surrogate tier, a mirror rival), or by the
+#: market's assumed rule (:func:`rival_bid`). A decision without a basis bids $0.
+LIVE, MARKET = "live", "market"
+#: Yahoo's mark of a player on waivers: the availability ``bid_of`` is told for a claim.
+WAIVER_MARK = "W"
+
+
+@dataclass(frozen=True)
+class Basis:
+    """What a decision's claims bid on in a FAAB league (#172, PR Fb). ``rule`` is :data:`LIVE`
+    or :data:`MARKET`. ``gains`` is each move's gain the bid scales on, in the order of the
+    decision's moves: for the live rule the move's own gain on the judging horizon, the set's
+    value less the set without it (the live queue's ``gain``, the logged ``marginal`` on
+    ``three``); for the market the move's gain on its view. ``plan`` is the same for the plan's
+    steps, each on the week (a step's bid scales on the week when it has no score, as live).
+    ``sizing`` is the seat's ``faab_sizing`` and ``floor`` its plan floor, the typical gain until
+    ten moves (live); ``noise`` the market's draw by move, for each of its moves that is a claim
+    (an empty tuple when none is)."""
+
+    rule: str
+    gains: tuple[float, ...]
+    plan: tuple[float, ...] = ()
+    sizing: float | None = None
+    floor: float = 0.0
+    noise: tuple[float, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -265,9 +326,97 @@ class Decision:
     plan: tuple[mv.Move, ...] = ()
     solves: int = 0
     source: str = "none"
+    #: What its claims bid on in a FAAB league (PR Fb); None elsewhere, and for a tier that
+    #: holds no gain in the engine's units (ranking), whose claims bid $0.
+    basis: Basis | None = None
 
 
 NONE = Decision()
+
+
+def gains_of(ev: mv.Valued, key: str, moves: Sequence[mv.Move]) -> tuple[float, ...]:
+    """Each move's own gain to ``moves`` on horizon ``key``: the set's value less the set
+    without it (``moves.PricedMove.marginal``, which the live queue bids on)."""
+    whole = ev.value(key, moves)
+    return tuple(whole - ev.value(key, [x for x in moves if x != m]) for m in moves)
+
+
+def basis_of(
+    built: Built,
+    ev: mv.Evaluator,
+    moves: Sequence[mv.Move],
+    plan: Sequence[mv.Move] = (),
+    planned: Sequence[mv.Move] = (),
+) -> Basis | None:
+    """The live rule's basis for a decision of ``moves`` (and the plan's steps ``plan``, out of
+    the plan's whole set ``planned``) in a FAAB league; None elsewhere. The gains are the
+    engine's own, on its plain evaluator: the season term is the simulator's and live bids
+    without it."""
+    if not built.bids:
+        return None
+    steps = gains_of(ev, "week", planned) if plan else ()
+    by_step = dict(zip(planned, steps, strict=False))
+    return Basis(
+        LIVE,
+        gains_of(ev, QUEUE_SET, moves),
+        tuple(by_step.get(m, 0.0) for m in plan),
+        knob(built.knobs, "faab_sizing"),
+        float(built.problem.plan_floor),
+    )
+
+
+#: The market rivals' bid (#172, PR Fb): an assumption, not a fact, and nothing fitted (no league
+#: is on the box). Its parameters are here alone, so a fit replaces them and not the world:
+#: ``noise``, the range of the uniform draw a bid is multiplied by (its mean 1), and the fortnight
+#: and the count of moves the typical gain needs, as the seat's (``autopilot.TYPICAL_DAYS``,
+#: ``TYPICAL_MIN``).
+@dataclass(frozen=True)
+class RivalBids:
+    noise: tuple[float, float] = (0.5, 1.5)
+    days: int = TYPICAL_DAYS
+    least: int = TYPICAL_MIN
+
+
+RIVAL_BIDS = RivalBids()
+
+
+def _half_up(x: float) -> int:
+    return math.floor(x + 0.5)
+
+
+def market_noise(g: Any, params: RivalBids = RIVAL_BIDS) -> float:
+    """A market rival's bid noise, from the path's draw for its team and day."""
+    lo, hi = params.noise
+    return lo + (hi - lo) * float(g.random())
+
+
+def market_typical(
+    recent: Sequence[tuple[date, float]], day: date, gain: float, params: RivalBids = RIVAL_BIDS
+) -> float:
+    """The typical gain a market rival's bid scales by: the median gain on the view of every
+    market rival's moves of the fortnight before ``day`` (pooled: one rival moves too seldom to
+    have ten), and the move's own ``gain`` until ``params.least`` such moves exist."""
+    since = day - timedelta(params.days)
+    gains = [x for d, x in recent if since < d < day]
+    return float(median(gains)) if len(gains) >= params.least else gain
+
+
+def rival_bid(gain: float, typical: float, dollars: int, scale: float, noise: float) -> int:
+    """A market rival's bid: ``round(scale x gain / typical x noise)`` whole dollars (half up,
+    as ``bid_of`` rounds), at least 0 and at most its ``dollars`` left."""
+    ratio = gain / typical if typical > 0 else 1.0
+    return max(0, min(int(dollars), _half_up(scale * ratio * noise)))
+
+
+def live_bid(
+    gain: float, gains: Sequence[float], floor: float, dollars: int, sizing: float | None
+) -> int:
+    """A seat's bid by the live rule: ``autopilot.bid_of`` on the move's ``gain``, the typical
+    gain of the seat's fortnight (``autopilot.typical_gain`` of ``gains``, the plan ``floor``
+    until ten), its ``dollars`` left, no breakout flag (flags are not modelled), its FAAB
+    ``sizing`` and a claim's mark."""
+    typical = typical_gain(list(gains), floor)
+    return bid_of(gain, typical, dollars, None, sizing, WAIVER_MARK).amount
 
 
 # --------------------------------------------------------------------------- the problem
@@ -434,7 +583,9 @@ def problem_of(
     problem = replace(problem, kept=rule.kept | problem.pending)
     scorer = wk.scorer_of(beliefs, cats, points, pool_n)
     weeks_left = sum(1 for w in setup.calendar.weeks if w.number > this.number)
-    return Built(problem, rule, scorer, this, weeks_left, knobs, me, bracket_days(setup))
+    return Built(
+        problem, rule, scorer, this, weeks_left, knobs, me, bracket_days(setup), setup.bidding
+    )
 
 
 def pending_of(
@@ -666,6 +817,7 @@ def exact(
         held = tuple(rec.held)
         solves += 1
     plan: tuple[mv.Move, ...] = ()
+    whole: tuple[mv.Move, ...] = ()
     if with_plan:
         week_set = mv.search(
             ev,
@@ -677,9 +829,10 @@ def exact(
         )
         planned = st.plan(ev, built.rule, week_set, p.value, allowed=allowed)
         if planned is not None and st.recommended(ev, planned):
-            plan = planned.steps
+            plan, whole = planned.steps, planned.moves
         solves += 1
-    return Decision(tuple(moves), held, plan, solves, "exact")
+    basis = basis_of(built, ev, moves, plan, whole)
+    return Decision(tuple(moves), held, plan, solves, "exact", basis)
 
 
 def _games(built: Built, member: mv.Member, from_day: date) -> int:
@@ -704,7 +857,8 @@ def surrogate(built: Built, fields: Fields = DEFAULT_FIELDS) -> Decision:
     greedy search alone on ``QUEUE_SET`` (with the season term at a ``season_weight``), the
     season guard kept."""
     p = built.problem
-    ev = seasoned(built, mv.Evaluator(p), QUEUE_SET)
+    plain = mv.Evaluator(p)
+    ev = seasoned(built, plain, QUEUE_SET)
     allowed = guard_of(built)
     moves = mv.search(
         ev,
@@ -714,7 +868,8 @@ def surrogate(built: Built, fields: Fields = DEFAULT_FIELDS) -> Decision:
         min_gain=fields.min_gain,
         allowed=allowed,
     )
-    return Decision(tuple(moves), tuple(mv.held_used(p, moves)), (), 1, "surrogate")
+    basis = basis_of(built, plain, moves)
+    return Decision(tuple(moves), tuple(mv.held_used(p, moves)), (), 1, "surrogate", basis)
 
 
 def ranking(built: Built) -> Decision:
@@ -825,7 +980,8 @@ class Shape:
     """What of a league and its run decides which knobs a seat reads (#172, PR C): its scoring
     as the problem reads it, whether it has held slots, whether its bracket is read, whether
     the run names the two sources' stand-ins (PR D1: ``replay --bbm-as``, ``--yahoo-as``) and
-    its waivers (PR Fa, ``shapes.WAIVERS``). Fb adds the budget."""
+    its waivers (PR Fa, ``shapes.WAIVERS``; in a FAAB league a seat that bids reads its FAAB
+    sizing and its plan floor, PR Fb)."""
 
     scoring: str = "categories"
     held: bool = False
@@ -872,10 +1028,16 @@ WHEN_READ: Mapping[str, str] = {
     "blend": "a run that names the two sources' stand-ins, on an arm whose system is blend",
     "horizon_weight": "the exact tier executing weighted",
     "protection_floor": "a seat that moves: the exact, surrogate or ranking tier",
-    "plan_floor_cats": "the exact tier drawing and executing the week plan in a categories league",
-    "plan_floor_points": "the exact tier drawing and executing the week plan in a points league",
+    "plan_floor_cats": (
+        "the exact tier drawing and executing the week plan in a categories league, or a seat "
+        "that bids in a categories FAAB league (the typical gain until ten moves)"
+    ),
+    "plan_floor_points": (
+        "the exact tier drawing and executing the week plan in a points league, or a seat that "
+        "bids in a points FAAB league (the typical gain until ten moves)"
+    ),
     "stash_threshold": "the simulator passing it to the engine (PR G)",
-    "faab_sizing": "waivers and FAAB in the world (PR F)",
+    "faab_sizing": "a seat that bids in a FAAB league: the exact or the surrogate tier (PR Fb)",
     "daily_cap": "the exact or the surrogate tier, which may queue more than one move a day",
     "three_weight": "the queue's rule (PR E)",
     "season_weight": "the exact or the surrogate tier",
@@ -921,8 +1083,15 @@ def reads(arm: Configured, shape: Shape, mirrored: bool = False) -> dict[str, st
         )
     else:
         out["horizon_weight"] = "only the exact tier executing weighted reads it"
+    # A seat bids by the live rule in a FAAB league on the exact or the surrogate tier, and so
+    # does a mirror rival on the arm's knobs (PR Fb): its bid scales by the typical gain, which is
+    # the plan floor until ten moves. The ranking tier holds no gain in the engine's units, so its
+    # claims bid $0 and it reads neither.
+    bids = shape.waivers == "faab" and odds
     for name, scoring in (("plan_floor_cats", "categories"), ("plan_floor_points", "points")):
-        if arm.tier != "exact":
+        if bids and shape.scoring == scoring:
+            why = READ
+        elif arm.tier != "exact":
             why = "only the exact tier draws a week plan"
         elif not arm.with_plan:
             why = "the arm draws no week plan"
@@ -941,11 +1110,16 @@ def reads(arm: Configured, shape: Shape, mirrored: bool = False) -> dict[str, st
         out["blend"] = READ if arm.knobs["system"] == "blend" else "the arm's system is not blend"
     else:
         out["system"] = out["blend"] = NO_STANDINS
-    out["faab_sizing"] = (
-        "the world has no waivers and no budget: PR F"
-        if shape.waivers == "none"
-        else f"waivers by {shape.waivers} carry no budget and no bid: PR Fb"
-    )
+    if bids:
+        out["faab_sizing"] = READ
+    elif shape.waivers == "none":
+        out["faab_sizing"] = "the world has no waivers and no budget"
+    elif shape.waivers != "faab":
+        out["faab_sizing"] = f"waivers by {shape.waivers} carry no budget and no bid"
+    elif arm.tier == "ranking":
+        out["faab_sizing"] = "the ranking tier holds no gain in the engine's units: it bids $0"
+    else:
+        out["faab_sizing"] = STATIC
     out["stash_threshold"] = "the engine reads it since #373; the simulator passes it in PR G"
     if odds:
         out["season_weight"] = READ
@@ -1033,13 +1207,27 @@ def queue(
     claims in flight charged to it. The spots open today are net of the claims in flight that
     will take one; a claim that needs a spot beyond them takes the next of the decision's
     held-slot moves, made only if it is won; a churn's claim's held drop leaves on his own
-    tomorrow morning (``pending_drops``)."""
+    tomorrow morning (``pending_drops``).
+
+    In a FAAB league (``setup.bidding``, PR Fb) each claim placed carries its sealed bid, set now
+    on the team's dollars left today (open bids are not taken out, as live clamps to the budget
+    Yahoo reports): by the live rule for a decision whose :class:`Basis` says so (:func:`live_bid`
+    on the typical gain of the moves the seat recommended over the fortnight, today's
+    counted, as the live queue), by the market's rule for a market rival (:func:`rival_bid` on
+    the market rivals' typical gain over the fortnight before today), and $0 for a decision
+    without a basis. A free agent's add carries no bid."""
     tomorrow = state.day + timedelta(1)
     moves = list(decision.moves)
+    basis = decision.basis if setup is not None and setup.bidding else None
+    scaled = list(basis.gains) if basis is not None else [0.0] * len(moves)
     if execute_plan:
-        moves += [
-            m for m in decision.plan if m.day is None or m.day <= due_by(state, m.add, tomorrow)
+        due = [
+            (m, j)
+            for j, m in enumerate(decision.plan)
+            if m.day is None or m.day <= due_by(state, m.add, tomorrow)
         ]
+        moves += [m for m, _ in due]
+        scaled += [basis.plan[j] if basis is not None and basis.plan else 0.0 for _, j in due]
     waiting = setup is not None and setup.waiting
     used = int(state.adds_used.get(team, 0))
     mine = state.claims.get(team, ()) if waiting else ()
@@ -1059,7 +1247,34 @@ def queue(
             n += used + len(kept)
         return n
 
-    for m in moves:
+    recent, market_recent = state.recent, state.market_recent
+    dollars = int(state.dollars.get(team, 0))
+    gains: list[float] = []
+    if basis is not None and basis.rule == LIVE:
+        # The seat's fortnight, today's recommended moves counted (the live queue's typical gain
+        # is over the days ``today - TYPICAL_DAYS < day <= today``).
+        since = state.day - timedelta(TYPICAL_DAYS)
+        own = tuple((d, x) for d, x in state.recent.get(team, ()) if d > since)
+        own += tuple((state.day, x) for x in basis.gains)
+        recent = {**state.recent, team: own}
+        gains = [x for _, x in own]
+    elif basis is not None and basis.rule == MARKET:
+        since = state.day - timedelta(RIVAL_BIDS.days)
+        market_recent = tuple((d, x) for d, x in state.market_recent if d > since)
+        market_recent += tuple((state.day, x) for x in basis.gains)
+
+    def bid(i: int) -> int:
+        """The sealed bid of the claim of ``moves[i]``."""
+        assert setup is not None
+        if basis is None:
+            return 0
+        gain = scaled[i]
+        if basis.rule == LIVE:
+            return live_bid(gain, gains, basis.floor, dollars, basis.sizing)
+        typical = market_typical(state.market_recent, state.day, gain)
+        return rival_bid(gain, typical, dollars, setup.rival_scale, basis.noise[i])
+
+    for i, m in enumerate(moves):
         if len(kept) + len(placed) >= max(0, daily_cap):
             break
         wait = state.waivers.get(m.add) if waiting else None
@@ -1090,7 +1305,9 @@ def queue(
         if m.drop is not None:
             claimed_drops.add(m.drop)
         churn = m.drop is not None and m.drop in held_keys
-        placed.append(Claim(mv.Move(m.add, m.drop), state.day, wait.clears, number, (), churn))
+        placed.append(
+            Claim(mv.Move(m.add, m.drop), state.day, wait.clears, number, (), churn, bid(i))
+        )
     pending = dict(state.pending)
     pending[team] = tuple(kept)
     need = sum(1 for m in kept if m.drop is None or m.drop in held_keys)
@@ -1129,6 +1346,8 @@ def queue(
         claims=claims,
         pending_drops=drops,
         claim_counts=counts,
+        recent=recent,
+        market_recent=market_recent,
     )
 
 
@@ -1299,6 +1518,7 @@ def clear_waivers(
     slot_counts: Mapping[str, int] | None,
     status: Mapping[int, str | None],
     waiver_days: int,
+    bidding: bool = False,
 ) -> SimState:
     """The morning of ``day`` in a waiver league (#172, PR Fa), before anything else lands: the
     claims on every player whose clear date has come are decided by rolling priority. The team
@@ -1317,7 +1537,16 @@ def clear_waivers(
     who went to nobody is a free agent from this morning. A player who leaves a roster here goes
     on waivers until ``day`` plus ``waiver_days``. ``resolved`` is this morning's decisions in
     the order made, each with whether a team stood ahead of its team in the order when its
-    player was decided; the claim counts (``state.CLAIM_COUNTS``) follow."""
+    player was decided; the claim counts (``state.CLAIM_COUNTS``) follow.
+
+    In a FAAB league (``bidding``, PR Fb) the claims on the players clearing this morning go one
+    at a time, the highest bid first, a tie by waiver priority (best first) and a team's own by
+    the order it placed them: a claim whose player is gone is lost; one whose team's dollars left
+    are below its bid, or whose roster cannot take the player, fails; else it is won, its team
+    pays exactly its bid, and the claim is made as above. The order rolls only when the win broke
+    a tie (another claim open on the player with the same bid): the winner goes to the back. A
+    claim decided after another on its player failed counts as behind; a lost one always does.
+    The bid counts (``state.BID_COUNTS``) follow."""
     clearing = {k for k, w in state.waivers.items() if w.clears <= day}
     if not clearing:
         return replace(state, resolved=()) if state.resolved else state
@@ -1361,19 +1590,9 @@ def clear_waivers(
             return None
         return made
 
-    while True:
-        team = next((t for t in order if open_.get(t)), None)
-        if team is None:
-            break
-        c = open_[team].pop(0)
+    def make(team: int, c: Claim, made: list[tuple[int, str]]) -> None:
+        """``team`` wins ``c``: its held-slot moves that can be made, its drop, its add."""
         add, drop = c.move.add, c.move.drop
-        behind = order.index(team) > 0
-        made = takes(team, c)
-        if made is None:
-            log.append(Resolved(team, add, drop, FAILED, behind))
-            tally(team, FAILED, behind)
-            gone[team] = gone.get(team, 0) + 1
-            continue
         roster = rosters[team]
         for k, slot in c.held:
             i = next((i for i, (pk, s) in enumerate(roster) if pk == k and s not in mv.HELD), None)
@@ -1393,6 +1612,22 @@ def clear_waivers(
         waivers.pop(add, None)
         adds_used[team] = adds_used.get(team, 0) + 1
         executed[team] = executed.get(team, 0) + 1
+
+    dollars = dict(state.dollars)
+    while not bidding:
+        team = next((t for t in order if open_.get(t)), None)
+        if team is None:
+            break
+        c = open_[team].pop(0)
+        add, drop = c.move.add, c.move.drop
+        behind = order.index(team) > 0
+        made = takes(team, c)
+        if made is None:
+            log.append(Resolved(team, add, drop, FAILED, behind))
+            tally(team, FAILED, behind)
+            gone[team] = gone.get(team, 0) + 1
+            continue
+        make(team, c, made)
         log.append(Resolved(team, add, drop, WON, behind))
         tally(team, WON, behind)
         # Every other claim on him is lost: a team ahead of each, the winner.
@@ -1403,6 +1638,61 @@ def clear_waivers(
                 tally(t, LOST, True)
         order.remove(team)
         order.append(team)
+
+    def bump(team: int, key: str, n: int = 1) -> None:
+        own = counts.setdefault(team, {})
+        own[key] = own.get(key, 0) + n
+
+    def rank(team: int, c: Claim) -> tuple[int, int, int]:
+        """A claim's place in the morning's line: its bid, its team's priority, its order."""
+        return (c.bid, -order.index(team), -open_[team].index(c))
+
+    # Each player's claims this morning, before any is decided: a win with no other is alone.
+    bidders = Counter(c.move.add for cs in open_.values() for c in cs)
+    tried: set[int] = set()  # the players a claim on whom has failed this morning
+    while bidding:
+        line = [(t, c) for t, cs in open_.items() for c in cs]
+        if not line:
+            break
+        team, c = max(line, key=lambda tc: rank(*tc))
+        add, drop = c.move.add, c.move.drop
+        behind = add in tried
+        made = takes(team, c) if dollars.get(team, 0) >= c.bid else None
+        if made is None:
+            open_[team].remove(c)
+            log.append(Resolved(team, add, drop, FAILED, behind, c.bid))
+            tally(team, FAILED, behind)
+            gone[team] = gone.get(team, 0) + 1
+            tried.add(add)
+            continue
+        others = sorted(
+            ((t, x) for t, cs in open_.items() for x in cs if x.move.add == add and x is not c),
+            key=lambda tx: rank(*tx),
+            reverse=True,
+        )
+        # The next bid on him that could have been taken: its team could pay it and take him.
+        after = next(
+            (x.bid for t, x in others if dollars.get(t, 0) >= x.bid and takes(t, x) is not None),
+            None,
+        )
+        tie = any(x.bid == c.bid for _, x in others)
+        open_[team].remove(c)
+        make(team, c, made)
+        dollars[team] = dollars.get(team, 0) - c.bid
+        log.append(Resolved(team, add, drop, WON, behind, c.bid))
+        tally(team, WON, behind)
+        bump(team, "won_free", int(c.bid == 0))
+        bump(team, "alone", int(bidders[add] == 1))
+        bump(team, "over", c.bid - (after or 0))
+        for t, lost in others:
+            open_[t].remove(lost)
+            log.append(Resolved(t, add, lost.move.drop, LOST, True, lost.bid))
+            tally(t, LOST, True)
+            bump(t, "lost_tie" if lost.bid == c.bid else "lost_bid")
+            bump(t, "short", c.bid - lost.bid)
+        if tie:
+            order.remove(team)
+            order.append(team)
     for k in clearing:
         waivers.pop(k, None)  # nobody took him: a free agent from this morning
     return replace(
@@ -1418,6 +1708,7 @@ def clear_waivers(
         priority=tuple(order),
         resolved=tuple(log),
         claim_counts=counts,
+        dollars=dollars,
     )
 
 

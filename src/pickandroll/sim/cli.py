@@ -698,7 +698,8 @@ def replay_setup_of(
     table of average draft positions (``draft``, #172, PR D4a), in the path's league shape
     (``league``, #172, PR D4b; the fixed shape by default) under the run's league rules
     (``league_rules``, PR D4c: the scoring, a points table and the held slots after the
-    shape's bench; PR Fa: the waivers; today's by default)."""
+    shape's bench; PR Fa: the waivers; PR Fb: a FAAB league's budget and the rivals' bid
+    scale; today's by default)."""
     args = league.setup_args()
     return rn.replay_setup(
         season,
@@ -713,6 +714,8 @@ def replay_setup_of(
         points=league_rules.table,
         waivers=league_rules.waivers,
         waiver_days=league_rules.waiver_days,
+        budget=league_rules.budget,
+        rival_scale=league_rules.rival_scale,
     )
 
 
