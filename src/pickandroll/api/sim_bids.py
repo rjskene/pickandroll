@@ -6,7 +6,10 @@ hand on the droplet's live checkout (``scripts/sim_bids.py``) from what is alrea
 never calls Yahoo:
 
 - the league's stored reads, ``season/snapshots/*.json``: the transactions page, the league page
-  (each team's dollars left) and the available players (percent rostered);
+  (each team's dollars left) and the available players (percent rostered). Only the public reads
+  of the transactions page count (:data:`TIMES_FROM`): the extension's read prints the times in
+  the user's profile zone (Pacific), so its claims would land three hours early under a second
+  key;
 - the autopilot queue files, ``autopilot/queue/*.json``: my claims, for my bid on a claim I lost.
 
 A row is one winning waiver claim: the winner's ``add`` row whose detail is ``$N Waiver``, kept
@@ -64,6 +67,9 @@ COLUMNS = (
 RIVAL, WON, LOST = "", "won", "lost"
 #: How old a read of the available players may be and still give a claim's percent rostered.
 PCT_SPAN = timedelta(days=1)
+#: The transactions reads whose times are the league's zone (America/New_York): the public
+#: reads. The extension's prints the user's profile zone, so its reads are left out.
+TIMES_FROM = "public"
 #: How long after my claim was placed its winner's row may come (a claim waits two days).
 LOST_SPAN = timedelta(days=4)
 
@@ -164,7 +170,7 @@ def read_league(paths: Iterable[Path]) -> LeagueReads:
             continue
         tx = parts.get("transactions") or {}
         at = _when(tx.get("fetched_at"))
-        if at is not None:
+        if at is not None and tx.get("source") == TIMES_FROM:
             out.reads.append(at)
             for w in wins_of((tx.get("data") or {}).get("rows") or [], at):
                 out.wins.setdefault((w.at, w.player, w.team), w)
@@ -360,6 +366,10 @@ def build(data_dir: Path, sha: str, now: datetime, out_dir: Path | None = None) 
                 " each read keeps about 25 transactions, so the table is a lower bound"
             ),
             "at: the page's time in America/New_York, its year from the read's fetched_at",
+            (
+                "transactions: the public reads only; the extension's reads print the user's"
+                " profile zone (Pacific) and are left out (reads in the meta count public ones)"
+            ),
             "faab_budget: the most dollars any team had at the league's first stored read",
             "winner_faab_left: the latest league read before the claim (read about twice a day)",
             (
@@ -368,7 +378,9 @@ def build(data_dir: Path, sha: str, now: datetime, out_dir: Path | None = None) 
             ),
             (
                 "ours: empty for a rival's win, 'won' for mine, 'lost' for my lost claim beside"
-                " the rival's winning row (amount = the winning price, our_bid = my bid)"
+                " the rival's winning row (amount = the winning price, our_bid = my bid); a"
+                " 'lost' row repeats a rival's win already in the table, so drop ours == 'lost'"
+                " before counting the wins"
             ),
         ],
     }

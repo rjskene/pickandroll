@@ -47,12 +47,13 @@ def _snapshot(
     rows=None,
     faab=None,
     available=None,
+    source="public",
 ) -> None:
     folder = data_dir / "leagues" / league / "season" / "snapshots"
     folder.mkdir(parents=True, exist_ok=True)
     parts: dict = {}
     if rows is not None:
-        parts["transactions"] = {"fetched_at": fetched_at, "data": {"rows": rows}}
+        parts["transactions"] = {"fetched_at": fetched_at, "source": source, "data": {"rows": rows}}
     if faab is not None:
         parts["league"] = {
             "fetched_at": fetched_at,
@@ -73,8 +74,8 @@ def _snapshot(
                 ]
             },
         }
-    (folder / f"{stamp}-public.json").write_text(
-        json.dumps({"received_at": fetched_at, "source": "public", "parts": parts})
+    (folder / f"{stamp}-{source}.json").write_text(
+        json.dumps({"received_at": fetched_at, "source": source, "parts": parts})
     )
 
 
@@ -113,6 +114,32 @@ def test_overlapping_reads_give_each_claim_once_and_only_waiver_adds(tmp_path):
     assert rows[0]["at"] == "2026-11-14T04:17:00-05:00"
     assert meta["leagues"]["224319"]["rows"] == 2
     assert meta["leagues"]["224319"]["reads"] == 2
+
+
+def test_an_extension_read_in_the_profile_zone_is_not_counted(tmp_path):
+    # 251146, 2026-10-26: the extension's read prints the user's Pacific time, three hours
+    # before the public read's Eastern time for the same claim; only the public one counts.
+    _settings(tmp_path, "251146")
+    _snapshot(
+        tmp_path,
+        "251146",
+        "20261026T120000Z",
+        "2026-10-26T12:00:00+00:00",
+        [_row("add", 10275, 1, "$2 Waiver", "Oct 26, 4:23 am", 0)],
+    )
+    _snapshot(
+        tmp_path,
+        "251146",
+        "20261026T130000Z",
+        "2026-10-26T13:00:00+00:00",
+        [_row("add", 10275, 1, "$2 Waiver", "Oct 26, 1:23 am", 0)],
+        faab={1: 98},
+        source="extension",
+    )
+    meta, rows, _ = _build(tmp_path)
+    assert [(r["player"], r["at"]) for r in rows] == [("10275", "2026-10-26T04:23:00-04:00")]
+    assert meta["leagues"]["251146"]["reads"] == 1
+    assert any("extension" in n for n in meta["notes"])
 
 
 def test_the_year_comes_from_the_read_across_the_year_turn():
