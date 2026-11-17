@@ -328,9 +328,11 @@ def test_a_surrogate_seat_places_a_claim_and_wins_one():
     """The test that catches a seat that never claims: a six-week made-up league of four seats
     and twelve free agents with waivers by priority, the surrogate in seat 1 among market rivals
     at a rate of 0.3 a day. Every seat drops players onto the wire; the surrogate claims one and
-    wins it, and the audit finds nothing. CLAIM_PATH is the first of seeds 1 and 2 and paths 0
-    and 1, tried in that order, on which the seat both places and wins a claim (on seed 1 path
-    0 its one claim is lost)."""
+    wins it, and the audit finds nothing. CLAIM_PATH was found when the seat weighed expected
+    categories: the first of seeds 1 and 2 and paths 0 and 1, tried in that order, on which the
+    seat both places and wins a claim (on seed 1 path 0 its one claim was lost). Since the
+    format PR the seat weighs the matchup's odds in this one-win league, and it places and wins
+    a claim on three of the four, this one among them."""
     setup = league(pool=12)
     u = arm("U", "surrogate", opponents="market")
     w = rn.replay_world(setup, recorded_lines(setup, 11), 1, *CLAIM_PATH)

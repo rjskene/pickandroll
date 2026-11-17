@@ -12,13 +12,13 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from pickandroll.sim import audit, checks, policy
+from pickandroll.sim import audit, checks, policy, shapes
 from pickandroll.sim import cli as ss
 from pickandroll.sim import counts as ct
 from pickandroll.sim import forecast as fc
 from pickandroll.sim import readers as reader
 from pickandroll.sim import run as rn
-from pickandroll.sim.engine import wk
+from pickandroll.sim.engine import EACH_CATEGORY, wk
 from tests.sim.sim_fixtures import synthetic_lines
 from tests.sim.test_gamelogs import body, entry, line
 
@@ -720,7 +720,10 @@ def test_a_replay_with_a_wire_lands_moves_and_voids_nothing(wire_data: Path, cap
 
 
 #: What ``checks.surrogate_matches`` returned on main before PR D4a2 on gate 5's replay of the
-#: made-up season with a wire (seed 1, lag 1, path 0), by seat: one day differs for two seats.
+#: made-up season with a wire (seed 1, lag 1, path 0), by seat: one day differs for two seats. The
+#: seats then weighed expected categories, as they do in a league that counts every category, so
+#: the tests below name that format (the format PR); under the default, one win per matchup, the
+#: two tiers agree on every day (``test_sim_format``).
 WIRE_MATCHES = {
     1: [True, True, True, False, True],
     6: [True, True, True, True, True],
@@ -730,11 +733,12 @@ WIRE_MATCHES = {
 
 @pytest.fixture(scope="module")
 def wire_validate(wire_data: Path) -> tuple[dict, str]:
-    """One ``validate`` of the season with a wire, for the tests of what gate 5 records and
-    prints (PR D4a2): the payload it wrote and what it printed."""
+    """One ``validate --h2h each_category`` of the season with a wire, for the tests of what gate
+    5 records and prints (PR D4a2): the payload it wrote and what it printed."""
+    argv = ["--data", str(wire_data), "--rooms", "0", "validate", "--season", "2024"]
     buf = io.StringIO()
     with contextlib.redirect_stdout(buf):
-        code = ss.main(["--data", str(wire_data), "--rooms", "0", "validate", "--season", "2024"])
+        code = ss.main([*argv, "--h2h", EACH_CATEGORY])
     out = buf.getvalue()
     assert code == 0, out
     return json.loads(_written(out).read_text()), out
@@ -763,11 +767,14 @@ def test_gate_five_records_what_it_compared(wire_data: Path, wire_validate):
                 assert isinstance(worth["exact"], float) and isinstance(worth["surrogate"], float)
     assert differ == 2  # not vacuous: the made-up season has differing days
     assert "records" in block and "worth" in block["records"]
-    # ``surrogate_matches`` itself, on the same replay, returns what it did.
-    r = ss.read_season(wire_data, 2024, [fc.parse_one("prior")], None, {}, 1, ss.GATE_SHAPE)
+    # ``surrogate_matches`` itself, on the same replay in the same format, returns what it did.
+    rules = shapes.LeagueRules(h2h=EACH_CATEGORY)
+    assert block["rules"] == rules.payload()
+    r = ss.read_season(wire_data, 2024, [fc.parse_one("prior")], None, {}, 1, ss.GATE_SHAPE, rules)
     f = fc.parse_one("prior")
+    projection = ss.projection_of(f, r.fixed, r.lines, 1, 0, "stat")
     setup = ss.replay_setup_of(
-        2024, r.lines, r.members, r.scheduled, ss.projection_of(f, r.fixed, r.lines, 1, 0, "stat")
+        2024, r.lines, r.members, r.scheduled, projection, league_rules=rules
     )
     w = rn.replay_world(
         setup, r.lines, 1, 1, 0, r.weights["prior"], label="prior", weights_of=r.weights

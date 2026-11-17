@@ -17,6 +17,7 @@ from pickandroll.sim import cli as ss
 from pickandroll.sim import engine, policy
 from pickandroll.sim import opponents as op
 from pickandroll.sim import run as rn
+from pickandroll.sim.engine import EACH_CATEGORY
 from pickandroll.sim.state import Member, initial
 from tests.sim.sim_league import KNOBS, arm, make_setup, rates, replay_of
 
@@ -454,18 +455,23 @@ def test_the_tripwire_every_live_knob_has_a_row_in_every_shape():
 def test_the_reads_table_as_built():
     cats = policy.Shape()
     exact = rn.Arm("E", "exact", KNOBS, {}, execute_plan=True)
-    read = {k for k, v in policy.reads(exact, cats).items() if v == policy.READ}
-    assert read == {"protection_floor", "daily_cap", "plan_floor_cats", "season_weight"}
     heavy = replace(exact, knobs={**KNOBS, "season_weight": 0.5}, executes=policy.WEIGHTED)
-    read = {k for k, v in policy.reads(heavy, cats).items() if v == policy.READ}
-    assert read == {
-        "protection_floor",
-        "daily_cap",
-        "horizon_weight",
-        "plan_floor_cats",
-        "season_weight",
-        "playoff_weight",
-    }
+    # In a one-win league (the default) the plan floor is the engine's own and nobody reads
+    # plan_floor_cats (the format PR); where every category counts, the exact tier executing the
+    # plan reads it.
+    for shape, floor in ((cats, set()), (policy.Shape(h2h=EACH_CATEGORY), {"plan_floor_cats"})):
+        read = {k for k, v in policy.reads(exact, shape).items() if v == policy.READ}
+        assert read == {"protection_floor", "daily_cap", "season_weight", *floor}
+        read = {k for k, v in policy.reads(heavy, shape).items() if v == policy.READ}
+        assert read == {
+            "protection_floor",
+            "daily_cap",
+            "horizon_weight",
+            "season_weight",
+            "playoff_weight",
+            *floor,
+        }
+    assert policy.reads(exact, cats)["plan_floor_cats"] == policy.ONE_WIN_FLOOR
     no_bracket = policy.reads(heavy, policy.Shape(bracket=False))
     assert no_bracket["playoff_weight"] == "the league has no bracket read"
     points = policy.reads(heavy, policy.Shape("points"))

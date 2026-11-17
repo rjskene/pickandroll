@@ -6,6 +6,7 @@ only. Every player and team here is synthetic or from the anonymised season fixt
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from datetime import date, timedelta
 from pathlib import Path
 from typing import Any
@@ -18,6 +19,7 @@ from pickandroll.sim import league as lg
 from pickandroll.sim import policy
 from pickandroll.sim import run as rn
 from pickandroll.sim import state as sst
+from pickandroll.sim.engine import EACH_CATEGORY
 from tests.sim.draws import between
 from tests.sim.sim_fixtures import run_length, synthetic_lines
 from tests.sim.test_gamelogs import entry
@@ -132,6 +134,15 @@ def make_setup(
         spec=spec if bracket else None,
         bracket_unread=None if bracket else "the settings page has not been read",
     )
+
+
+def every_category(setup: sst.Setup) -> sst.Setup:
+    """``setup`` counting every category (the format PR), as ``run.replay_setup`` builds one under
+    ``--h2h each_category``: its seats weigh expected categories and its standings order the
+    teams by the category percentage, then head to head. ``make_setup`` keeps the default, one
+    win per matchup."""
+    spec = setup.spec and replace(setup.spec, h2h=EACH_CATEGORY, tiebreak=lg.TIEBREAK_EACH)
+    return replace(setup, h2h=EACH_CATEGORY, spec=spec)
 
 
 # --------------------------------------------------------------------------- a recorded season

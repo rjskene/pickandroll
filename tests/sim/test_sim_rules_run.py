@@ -21,7 +21,7 @@ from pickandroll.sim import forecast as fc
 from pickandroll.sim import league as lg
 from pickandroll.sim import policy, shapes
 from pickandroll.sim import run as rn
-from pickandroll.sim.engine import mv
+from pickandroll.sim.engine import EACH_CATEGORY, mv
 from tests.sim.sim_league import KNOBS, POSITIONS, arm, make_data_dir
 from tests.sim.test_sim_points import PERIOD_ONE, made_up_season
 
@@ -226,7 +226,9 @@ def test_a_surrogate_seat_holds_a_player_in_il_and_takes_him_back():
     hears its player out, holds him in IL with an add into the spot that frees, and takes him
     back when he returns, the weakest player sent; the audit finds nothing. HELD_PATH is the
     first of seeds 1 to 3 and paths 0 and 1, tried in that order, on which the seat holds a
-    player (two of the six do not: its players are out on days it does not decide)."""
+    player (when it was found two of the six did not: its players are out on days it does not
+    decide; since the format PR, the seat weighing the matchup's odds, three of the six do
+    not)."""
     setup, lines, out = absent_season(shapes.LeagueRules(held=("IL",)))
     assert all(slot not in mv.HELD for r in setup.rosters.values() for _, slot in r)
     u = arm("U", "surrogate", opponents="static")
@@ -271,7 +273,9 @@ def test_a_surrogate_seat_in_a_points_league_adds_and_holds():
 def test_the_reads_table_and_the_refusal_follow_the_run_s_scoring(wire: Path):
     """Two exact arms that execute the plan and differ only on ``plan_floor_points``: the same
     seat in a categories run, refused by name with what would make it read; two seats in a
-    points run, where the knob is read and ``plan_floor_cats`` is not. The points side is read
+    points run, where the knob is read and ``plan_floor_cats`` is not. In a categories run
+    ``plan_floor_cats`` is read where every category counts, and in a one-win run nobody reads it
+    (the format PR: the plan floor is the engine's own). The points side is read
     as the run reads it (``read_season``, ``same_seats``), before any path: a dry run would time
     a path of two exact arms."""
     code, out = replay(wire, "--arms", *spec(wire, "E", "F"), "--paths", "1", "--dry-run")
@@ -283,15 +287,16 @@ def test_the_reads_table_and_the_refusal_follow_the_run_s_scoring(wire: Path):
     )
     arms = {k: rn.arm_of(json.loads((wire / f"{n}.json").read_text())) for k, n in (("a", "E"), ("b", "F"))}  # fmt: skip
     points = shapes.LeagueRules("points", shapes.POINTS_DEFAULT)
-    for league_rules, read, unread in (
-        (shapes.PLAIN, "plan_floor_cats", "plan_floor_points"),
-        (points, "plan_floor_points", "plan_floor_cats"),
+    each = shapes.LeagueRules(h2h=EACH_CATEGORY)
+    for league_rules, floors in (
+        (shapes.PLAIN, (policy.ONE_WIN_FLOOR, "a categories league")),
+        (each, (policy.READ, "a categories league")),
+        (points, ("a points league", policy.READ)),
     ):
         r = ss.read_season(wire, 2024, fc.parse("prior"), None, arms, 5, "stat", league_rules)
-        assert r.shape.scoring == league_rules.scoring
+        assert (r.shape.scoring, r.shape.h2h) == (league_rules.scoring, league_rules.h2h)
         table = policy.reads(arms["a"], r.shape, False)
-        assert table[read] == policy.READ
-        assert table[unread] == f"a {league_rules.scoring} league"
+        assert (table["plan_floor_cats"], table["plan_floor_points"]) == floors
         same = ss.same_seats(arms, [r.shape], rivals=True)
         assert (same is None) == (league_rules is points)
 
@@ -381,7 +386,8 @@ def test_a_waiver_run_records_its_rules_its_audit_and_its_claims(wire: Path):
     for row in p["counts"]["by_season"]["2024"]["prior"].values():
         assert all(row[m]["mean"] is not None for m in ct.CLAIMS), row
     assert p["season_scale"]["note"] == ss.scale_note("points") != ss.SCALE_NOTE
-    assert ss.scale_note("categories") == ss.SCALE_NOTE
+    assert ss.scale_note("categories", EACH_CATEGORY) == ss.SCALE_NOTE
+    assert ss.scale_note("categories") == ss.SCALE_NOTE + ss.SCALE_NOTE_ONE_WIN
 
 
 def test_a_faab_run_records_its_rules_its_audit_and_its_bids(wire: Path):

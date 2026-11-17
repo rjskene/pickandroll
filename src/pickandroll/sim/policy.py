@@ -63,6 +63,16 @@ gain of the moves it recommended over the fortnight (:class:`Basis`); the rankin
 gain in the engine's units and bids $0; a market rival bids by an assumed form
 (:func:`rival_bid`); a static seat never claims.
 ``EXECUTIONS`` names the model in every run's payload.
+
+**The head-to-head format** (the format PR, ``Setup.h2h``). In a categories league that counts one
+win per matchup (the default) the problem says so (``MoveProblem.one_win``, as the live build
+passes ``SeasonSettings.one_win``), so every tier that weighs (exact, surrogate, a mirror rival)
+values a week as the matchup's win odds (``weekly.matchup_won``) through the engine's own
+``Evaluator``, the exact tier executing ``weighted`` too; the plan's floor is then the engine's
+own (``stream.floor_of``: ``PLAN_FLOOR_ODDS``), so ``plan_floor_cats`` is read by nobody, and a
+seat that bids scales by that floor until ten moves. A league that counts every category, and a
+points league, are valued as before. The ranking tier, a market rival and a static seat read no
+odds and do not change. :func:`measure_of` names the measure for the record.
 """
 
 from __future__ import annotations
@@ -79,6 +89,7 @@ from typing import Any, Protocol
 from .engine import (
     DEFAULTS,
     LIVE_KNOBS,
+    ONE_WIN,
     TYPICAL_DAYS,
     TYPICAL_MIN,
     Week,
@@ -355,7 +366,9 @@ def basis_of(
     its score, the week increment plus the queue's weight (``plans.THREE_WEIGHT``) times its
     three weeks' increment (``plans.step_score``): the simulator has no queue weight until PR E. The gains
     are the engine's own, on its plain evaluator: the season term is the simulator's and live
-    bids without it."""
+    bids without it. The typical gain until ten moves is the problem's plan floor as the engine
+    reads it (``stream.floor_of``): the knob, or in a one-win league the engine's own floor in
+    the matchup's odds (the format PR; live has no rule here, its one-win league never queues)."""
     if not built.bids:
         return None
     steps = () if planned is None else tuple(g["week"] for g in st.step_gains(ev, planned))
@@ -364,7 +377,7 @@ def basis_of(
         gains_of(ev, QUEUE_SET, moves),
         steps,
         knob(built.knobs, "faab_sizing"),
-        float(built.problem.plan_floor),
+        float(st.floor_of(built.problem)),
     )
 
 
@@ -561,6 +574,10 @@ def problem_of(
         returns={k: d for k, d in returns.items() if k in dict(roster) or k in held_slots},
         held_slots=held_slots,
         claims=claims,
+        # A one-win league's moves rank on the matchup's odds (#397), as the live build passes
+        # ``SeasonSettings.one_win`` (the format PR); a points league and one that counts every
+        # category pass nothing.
+        one_win=setup.one_win,
     )
     season_value = wk.per_game_values(beliefs, cats, points, pool_n)
     dead = wk.line_value(beliefs, cats, points, pool_n)({})
@@ -984,13 +1001,21 @@ class Shape:
     as the problem reads it, whether it has held slots, whether its bracket is read, whether
     the run names the two sources' stand-ins (PR D1: ``replay --bbm-as``, ``--yahoo-as``) and
     its waivers (PR Fa, ``shapes.WAIVERS``; in a FAAB league a seat that bids reads its FAAB
-    sizing and its plan floor, PR Fb)."""
+    sizing and its plan floor, PR Fb), and a categories league's head-to-head format (the format
+    PR: in a one-win league the plan floor is the engine's own). The format is the run's, one a
+    run, and the label leaves it out: the record names it in ``league.rules.h2h``."""
 
     scoring: str = "categories"
     held: bool = False
     bracket: bool = True
     standins: bool = False
     waivers: str = "none"
+    h2h: str = ONE_WIN
+
+    @property
+    def one_win(self) -> bool:
+        """Whether a week is one result and a seat that weighs weighs the matchup's odds."""
+        return self.scoring == "categories" and self.h2h == ONE_WIN
 
     def label(self) -> str:
         parts = (
@@ -1012,7 +1037,23 @@ def shape_of(setup: Setup) -> Shape:
         any(s in mv.HELD for s in setup.roster_slots),
         setup.spec is not None,
         waivers=setup.waivers,
+        h2h=setup.h2h,
     )
+
+
+def measure(points: bool, one_win: bool) -> str:
+    """What a seat that weighs weighs a week in (``moves.measure_of`` of the problem
+    :func:`problem_of` builds, the format PR): the matchup's odds in a one-win league, expected
+    matchups won on the points in a points league, expected categories won in one that counts
+    every category. The record names it once, even when no seat of the run weighs."""
+    if one_win and not points:
+        return mv.MATCHUP
+    return mv.POINTS if points else mv.CATEGORIES
+
+
+def measure_of(setup: Setup) -> str:
+    """:func:`measure` of ``setup``'s league."""
+    return measure(setup.scoring == "points" and bool(setup.points), setup.one_win)
 
 
 class Configured(Protocol):
@@ -1038,6 +1079,19 @@ WHEN_READ_FAAB: Mapping[str, str] = {
         "rival), its typical gain until ten moves"
     ),
 }
+
+#: What else limits where a knob is read (the format PR), said in the refusal's message after
+#: :data:`WHEN_READ`'s words and :data:`WHEN_READ_FAAB`'s: the categories plan floor is read only
+#: where the league counts every category.
+WHEN_READ_H2H: Mapping[str, str] = {
+    "plan_floor_cats": "either only in a league that counts every category (--h2h each_category)",
+}
+#: Why ``plan_floor_cats`` is not read in a one-win league by a seat that would read it in one
+#: that counts every category (the format PR).
+ONE_WIN_FLOOR = (
+    "a one-win league's plan floor is the engine's own, stream.PLAN_FLOOR_ODDS in the matchup's "
+    "odds"
+)
 
 #: What makes each knob and field read, for the refusal's message.
 WHEN_READ: Mapping[str, str] = {
@@ -1112,6 +1166,10 @@ def reads(arm: Configured, shape: Shape, mirrored: bool = False) -> dict[str, st
             why = f"a {shape.scoring} league"
         else:
             why = READ
+        # In a one-win league the engine's floor is its own and the knob reaches nothing (the
+        # format PR); a seat that would not read it anyway keeps its reason.
+        if why == READ and name == "plan_floor_cats" and shape.one_win:
+            why = ONE_WIN_FLOOR
         out[name] = why
     out["three_weight"] = "it weighs the three weeks in the queue's score: the queue's rule, PR E"
     # The arm's own seat believes by its system once the run names the stand-ins; a mirror

@@ -15,7 +15,7 @@ from pickandroll.season import weekly as wk
 from pickandroll.sim import policy
 from pickandroll.sim import run as rn
 from pickandroll.sim.state import initial
-from tests.sim.sim_league import arm, make_setup, replay_of
+from tests.sim.sim_league import arm, every_category, make_setup, replay_of
 
 
 def queued_for(kind: str = "IL"):
@@ -95,7 +95,9 @@ def test_no_held_slot_ever_holds_a_player_it_does_not_accept():
     found the breach on): each held player fits his slot under the status heard that day."""
     found, refused = [], 0
     for seed in (3, 5, 8):
-        setup = make_setup(held_slots=("IL", "IL+"), seed=seed, weeks=8)
+        # Every category counted (the format PR): the executor reads no format, and the refusal
+        # needs seats that move often, as these do on expected categories.
+        setup = every_category(make_setup(held_slots=("IL", "IL+"), seed=seed, weeks=8))
         a, b = arm("A", "exact"), arm("B", "surrogate")
         variants = [{**rn.opponents_of(setup, x, 1), 1: x.seat()} for x in (a, b)]
         for path in range(6):

@@ -93,7 +93,10 @@ class LeagueSpec:
         bracket's rules from the settings page. Refuses (:class:`BracketUnread`) a league whose
         settings page has not been read for the playoff tie-breaker and reseeding, one with
         divisions (not played), a tie-breaker not in :data:`TIEBREAKS`, or playoff weeks that
-        do not make a bracket of the playoff teams."""
+        do not make a bracket of the playoff teams. The head-to-head format is not read: the
+        spec holds the default, one win per matchup, whatever ``settings.h2h`` says, and the
+        ``tiebreak`` the caller passes; a replay's league names its own format (``replay
+        --h2h``, the format PR)."""
         unread = [
             k for k in ("playoff_tiebreak", "playoff_reseeding") if getattr(settings, k) is None
         ]
