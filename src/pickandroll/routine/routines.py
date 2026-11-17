@@ -433,8 +433,9 @@ def daily(ctx: Context, api: str) -> None:
     touched = sorted(set(opened) | set(opened_lineups))
     if touched:
         pass_check(ctx, touched, ["lineup", "moves"], "routine")
-    # A comeback's drop changed the roster after the solve (#360): those leagues are solved
-    # again, and only those, before the queue is built from the solve.
+    # A comeback's drop (#360) or a live lineup step across the IL line (#415) changed the
+    # roster after the solve: those leagues are solved again, and only those, before the queue
+    # is built from the solve.
     resolve_comebacks(ctx, touched, passes_from)
     queue_build(ctx)
     post_digest(ctx, digest(ctx))

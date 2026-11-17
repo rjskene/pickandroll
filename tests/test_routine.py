@@ -880,6 +880,196 @@ def test_the_daily_without_a_comeback_drop_solves_nothing_again(tmp_path):
     assert step.status == "skipped" and "no comeback dropped a player" in step.detail
 
 
+# --------------------------------------------------------------------------- IL crossings before the queue (#415)
+def _lineup_run(at, *steps, mode="live", outcome="set"):
+    return {"at": at, "mode": mode, "trigger": "routine", "outcome": outcome, "steps": list(steps)}
+
+
+def _il_step(from_slot="IL", to_slot="BN", outcome="set", kind="return", drop=None, player=6581):
+    return {
+        "player": player,
+        "from_slot": from_slot,
+        "to_slot": to_slot,
+        "kind": kind,
+        "drop": drop,
+        "outcome": outcome,
+    }
+
+
+def _lineup_route(*runs):
+    return (200, {"today": list(runs)})
+
+
+def test_lineup_touched_counts_a_live_set_step_across_the_il_line_since_the_passes(tmp_path):
+    from pickandroll.routine.steps import lineup_touched
+
+    since = datetime.fromisoformat("2026-11-17 05:30").replace(tzinfo=CENTRAL)
+    api = FakeAPI(
+        {
+            # 2026-11-17: two returns from IL to the bench with no drop.
+            ("GET", "/seasons/224319/autopilot"): _lineup_route(
+                _lineup_run(
+                    "2026-11-17T05:32:00-06:00",
+                    _il_step(),
+                    _il_step(player=6408),
+                )
+            ),
+            # A return from IL+ to an active slot, and a move into IL: both said.
+            ("GET", "/seasons/251146/autopilot"): _lineup_route(
+                _lineup_run(
+                    "2026-11-17T05:36:00-06:00",
+                    _il_step("IL+", "UTIL", player=5767),
+                    _il_step("BN", "IL", kind="swap", player=10333),
+                )
+            ),
+            # Crosses nothing: a swap between active slots, a step between IL and IL+, a step
+            # not set, a dry run, a run before the passes began.
+            ("GET", "/seasons/252098/autopilot"): _lineup_route(
+                _lineup_run("2026-11-17T05:33:00-06:00", _il_step("PG", "BN", kind="swap")),
+                _lineup_run("2026-11-17T05:33:00-06:00", _il_step("IL", "IL+", kind="swap")),
+                _lineup_run(
+                    "2026-11-17T05:34:00-06:00",
+                    _il_step(outcome="failed"),
+                    _il_step(outcome="skipped"),
+                    outcome="failed",
+                ),
+                _lineup_run(
+                    "2026-11-17T05:35:00-06:00",
+                    _il_step(outcome="would_set"),
+                    mode="dry_run",
+                    outcome="would_set",
+                ),
+                _lineup_run("2026-11-17T05:10:00-06:00", _il_step()),
+            ),
+            # A route that does not answer leaves the earlier solve standing.
+            ("GET", "/seasons/223259/autopilot"): (500, {}),
+        }
+    )
+    ctx = make_ctx(api, Clock("2026-11-17 05:45"), tmp_path)
+    leagues = ["224319", "251146", "252098", "223259"]
+    assert lineup_touched(ctx, leagues, since) == {
+        "224319": ["IL returns"],
+        "251146": ["IL returns", "IL moves"],
+    }
+
+
+def test_resolved_because_groups_the_leagues_by_their_reasons():
+    from pickandroll.routine.steps import resolved_because
+
+    assert resolved_because({"224319": ["IL returns"], "251146": ["IL returns"]}) == (
+        "re-solved 224319, 251146 (IL returns)"
+    )
+    assert resolved_because(
+        {"252098": ["comeback drop"], "224319": ["IL returns"], "230585": ["comeback drop"]}
+    ) == ("re-solved 252098, 230585 (comeback drop); re-solved 224319 (IL returns)")
+
+
+def _daily_opening_public(monkeypatch):
+    from pickandroll.routine import routines
+
+    def opened(ctx, name, plan, *a, **kw):
+        ctx.report.ok(name, "opened")
+        return list(PUBLIC)
+
+    monkeypatch.setattr(routines, "browser_pass", opened)
+    monkeypatch.setattr(routines, "pass_check", lambda *a, **kw: None)
+
+
+def test_the_daily_solves_again_a_league_whose_lineup_returned_a_player_from_il(
+    tmp_path, monkeypatch
+):
+    # 2026-11-17: the lineup pass returned a player from IL to the bench with no drop after the
+    # solve; that league is solved again before the queue, the other is not.
+    _daily_opening_public(monkeypatch)
+    api = FakeAPI(
+        base_answers(
+            {
+                ("GET", "/seasons/252098/autopilot"): _lineup_route(
+                    _lineup_run("2026-10-29T05:40:00-05:00", _il_step())
+                ),
+                ("GET", "/seasons/230585/autopilot"): _lineup_route(
+                    _lineup_run("2026-10-29T05:40:00-05:00", _il_step("PG", "BN", kind="swap"))
+                ),
+            }
+        )
+    )
+    report = run("daily", make_ctx(api, Clock("2026-10-29 05:01"), tmp_path), "http://api")
+    calls = api.paths()
+    build = calls.index("/autopilot/queue/build")
+    solves = [i for i, p in enumerate(calls) if p == "/seasons/252098/moves"]
+    assert len(solves) == 2 and solves[1] < build
+    assert calls.count("/seasons/230585/moves") == 1
+    step = report.find("resolve_comebacks")
+    assert step.status == "ok"
+    assert step.detail.startswith("1 leagues solved")
+    assert "re-solved 252098 (IL returns)" in step.detail
+
+
+def test_the_daily_solves_again_a_league_whose_lineup_moved_a_player_to_il(tmp_path, monkeypatch):
+    _daily_opening_public(monkeypatch)
+    api = FakeAPI(
+        base_answers(
+            {
+                ("GET", "/seasons/230585/autopilot"): _lineup_route(
+                    _lineup_run("2026-10-29T05:40:00-05:00", _il_step("BN", "IL+", kind="swap"))
+                ),
+            }
+        )
+    )
+    report = run("daily", make_ctx(api, Clock("2026-10-29 05:01"), tmp_path), "http://api")
+    calls = api.paths()
+    solves = [i for i, p in enumerate(calls) if p == "/seasons/230585/moves"]
+    assert len(solves) == 2 and solves[1] < calls.index("/autopilot/queue/build")
+    assert calls.count("/seasons/252098/moves") == 1
+    assert "re-solved 230585 (IL moves)" in report.find("resolve_comebacks").detail
+
+
+@pytest.mark.parametrize(
+    "lineup",
+    [
+        _lineup_run(
+            "2026-10-29T05:40:00-05:00",
+            _il_step(outcome="would_set"),
+            mode="dry_run",
+            outcome="would_set",
+        ),
+        _lineup_run("2026-10-29T05:40:00-05:00", _il_step(outcome="failed"), outcome="failed"),
+        _lineup_run("2026-10-29T04:40:00-05:00", _il_step()),
+    ],
+    ids=["dry-run", "not-set", "before-the-passes"],
+)
+def test_the_daily_does_not_solve_again_on_a_lineup_run_that_changed_nothing(
+    tmp_path, monkeypatch, lineup
+):
+    _daily_opening_public(monkeypatch)
+    api = FakeAPI(base_answers({("GET", "/seasons/252098/autopilot"): _lineup_route(lineup)}))
+    report = run("daily", make_ctx(api, Clock("2026-10-29 05:01"), tmp_path), "http://api")
+    assert api.paths().count("/seasons/252098/moves") == 1
+    step = report.find("resolve_comebacks")
+    assert step.status == "skipped" and "no lineup step crossed the IL line" in step.detail
+
+
+def test_the_daily_names_both_reasons_when_a_comeback_dropped_and_returned(tmp_path, monkeypatch):
+    # A comeback (#360): its drop, then its return from IL; one re-solve, both reasons named.
+    _daily_opening_public(monkeypatch)
+    api = FakeAPI(
+        base_answers(
+            {
+                ("GET", "/seasons/252098/autopilot/moves"): _moves_route(
+                    _drop_run("2026-10-29T05:40:00-05:00")
+                ),
+                ("GET", "/seasons/252098/autopilot"): _lineup_route(
+                    _lineup_run("2026-10-29T05:41:00-05:00", _il_step(drop=10333))
+                ),
+            }
+        )
+    )
+    report = run("daily", make_ctx(api, Clock("2026-10-29 05:01"), tmp_path), "http://api")
+    assert api.paths().count("/seasons/252098/moves") == 2
+    detail = report.find("resolve_comebacks").detail
+    assert "re-solved 252098 (comeback drop, IL returns)" in detail
+
+
 # --------------------------------------------------------------------------- #403: read fresh, count
 def fresh_answers(clock, read_at=None, today=None):
     """A morning with one live league: its due names my team (2) and two entries; asked again
