@@ -664,15 +664,14 @@ def simulate(
     on_day: Callable[[DayRecord], None] | None = None,
     rules: Sequence[audit.Rule] | None = None,
 ) -> list[VariantResult]:
-    """Every variant (a strategy by seat) through one world in lockstep. Each day, after the
-    lineup is set and before the day's lines are read, the audit (``sim.audit``: ``rules``, or
-    the setup's, ``audit.rules_of``) reads every variant's day and its counts are tallied; ``on_day`` is
-    handed a :class:`DayRecord` for each variant and day at the same point. A seat that names
-    a forecaster (``opponents.Seat.forecaster``) decides, sets its lineup and is charged its
-    forced drops on that forecaster's beliefs and values; every other seat on the run's. A
-    split seat (``World.split``) reads its table on the rosters before the landing for the
-    forced drops, and on the rosters after it for the rest of the day. The world's draws are
-    common to all of them."""
+    """Every variant (a strategy by seat) through one world in lockstep. Each day, after the lineup
+    is set and before the day's lines are read, the audit (``sim.audit``: ``rules``, or the setup's,
+    ``audit.rules_of``) reads every variant's day and its counts are tallied; ``on_day`` is handed a
+    :class:`DayRecord` for each variant and day at the same point. A seat that names a forecaster
+    (``opponents.Seat.forecaster``) decides, sets its lineup and is charged its forced drops on that
+    forecaster's beliefs and values; every other seat on the run's. A split seat (``World.split``)
+    reads its table on the rosters before the landing for the forced drops, and on the rosters after
+    it for the rest of the day. The world's draws are common to all of them."""
     n = len(variants)
     states = [initial(setup) for _ in range(n)]
     solves = [0] * n
@@ -686,10 +685,6 @@ def simulate(
     labels = sorted({label for h in holds for label in h.values()})
     made: Week | None = None  # the week of the last simulated day, when yesterday's moves were made
     waiting = setup.waiting
-
-    def waiver_of(day: date) -> tuple[date, int] | None:
-        """Today and the waiver days, for the players who leave a roster this morning."""
-        return (day, setup.waiver_days) if waiting else None
 
     for di, day in enumerate(setup.days):
         week = setup.week_of(day)
@@ -713,13 +708,15 @@ def simulate(
         order = _rotation(setup.teams, di)
         due = [s.pending for s in states]
         before = [s.executed_by for s in states]
+        # Who leaves a roster this morning waits from today (a waiver league's only).
+        waiver = {"waiver": (day, setup.waiver_days)} if waiting else {}
         if waiting:
             states = [
                 policy.clear_waivers(s, day, spots, slot_counts, status, setup.waiver_days)
                 for s in states
             ]
         states = [
-            policy.land(s, order, spots, slot_counts, status, value, values[vi], waiver_of(day))
+            policy.land(s, order, spots, slot_counts, status, value, values[vi], **waiver)
             for vi, s in enumerate(states)
         ]
         for vi, s in enumerate(states):

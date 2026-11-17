@@ -849,9 +849,10 @@ read in one kind only (a run that asks about `plan_floor_points` is a points run
   2, named only with `priority`; `faab` is refused, PR Fb's). Below, "The waivers".
 - **The default** (`shapes.PLAIN`): the nine categories, no held slot, no waivers. With nothing
   named nothing moves: a replay's record equals the one before PR D4c key for key, apart from
-  `league.rules`, the version and its reason (and since PR Fa the counts' claim keys, null). A run that names rules prints one line with them, and the no-peek
-  check and the dry run say them too. `validate` takes none of the three: it plays the fixed
-  shape, the nine categories and no held slot, and says so.
+  `league.rules`, the version and its reason (the claim counts and the waivers' keys in
+  `league.rules` are a waiver run's only, PR Fa). A run that names rules prints one line with
+  them, and the no-peek check and the dry run say them too. `validate` takes none of the three:
+  it plays the fixed shape, the nine categories and no held slot, and says so.
 
 What a replay with them does not model, each plainly:
 
@@ -976,10 +977,10 @@ landed; the moves lost because the add or the drop was gone or no active spot wa
 charged to each week, their mean and the share of weeks at the cap (an add counts in the week it was
 made, the adds made before day one in week one); the drops forced by a returning held player; the
 held-slot moves refused because the slot no longer accepted the player the morning they landed; the
-held-slot stints and their days; and the starters' games played. In a waiver league (null
-without): the claims placed, won, lost to a better priority and failed, and of those decided, how
-many had a team ahead of the seat's when their player was decided and how many of those were
-lost. A pair (`--arms`) adds the rivals'
+held-slot stints and their days; and the starters' games played. In a waiver league only (a run
+without waivers has no such keys, so its counts are as before PR Fa): the claims placed, won, lost
+to a better priority and failed, and of those decided, how many had a team ahead of the seat's
+when their player was decided and how many of those were lost. A pair (`--arms`) adds the rivals'
 seats as one row, both arms' seasons pooled. The landing counters are per seat on the state
 (`SimState.executed_by`, `gone_by`, `forced_by`, `held_refused_by`, their sums the whole-state
 counters); the rest is tallied by `sim/counts.py`.

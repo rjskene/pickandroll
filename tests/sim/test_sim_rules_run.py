@@ -362,6 +362,7 @@ def test_a_waiver_run_records_its_rules_its_audit_and_its_claims(wire: Path):
     assert p["executions"] == policy.EXECUTIONS_PRIORITY
     assert [r["name"] for r in p["audit"]["rules"]][-2:] == ["waiver_wait", "claim_priority"]
     assert p["audit"]["paths_voided"] == 0
+    assert set(p["counts"]["note"]) == {*ct.METRICS, *ct.CLAIMS, "pooling"}
     for row in p["counts"]["by_season"]["2024"]["prior"].values():
         assert all(row[m]["mean"] is not None for m in ct.CLAIMS), row
     assert p["season_scale"]["note"] == ss.scale_note("points") != ss.SCALE_NOTE

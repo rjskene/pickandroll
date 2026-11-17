@@ -363,14 +363,23 @@ COUNTS_NOTE = {
     "held_stints": "players placed in (or starting the run in) a held slot",
     "held_days": "days spent in a held slot",
     "starter_games": "games the day's starters played",
-    "claims_placed": "waiver claims placed (a waiver league's; null without waivers)",
+    "pooling": "a seat's season, the mean over the arm's seats a path, then over paths",
+}
+#: What each claim count is (PR Fa): a waiver run's only, beside :data:`COUNTS_NOTE`.
+CLAIMS_NOTE = {
+    "claims_placed": "waiver claims placed",
     "claims_won": "claims won: the seat had the best priority among the claims open that morning",
     "claims_lost": "claims lost: a team with better priority took the player",
     "claims_failed": "claims won the roster could not take (the drop gone, no spot open)",
     "claims_behind": "claims decided with a team ahead of the seat in the order",
     "claims_behind_lost": "of those, the claims lost",
-    "pooling": "a seat's season, the mean over the arm's seats a path, then over paths",
 }
+
+
+def counts_note(waivers: str = "none") -> dict[str, str]:
+    """The counts' note for a run under ``waivers``: :data:`COUNTS_NOTE`, and the claims' too in
+    a waiver run."""
+    return COUNTS_NOTE if waivers == "none" else {**COUNTS_NOTE, **CLAIMS_NOTE}
 
 
 def audited(
@@ -418,7 +427,9 @@ def dry_run(
     audit reads too (``rules``, as :func:`audited`)."""
     for arm, row in (first.get("counts") or {}).items():
         if row:
-            shown = ", ".join(f"{m} {row[m]:.4g}" for m in ct.METRICS if row.get(m) is not None)
+            shown = ", ".join(
+                f"{m} {row[m]:.4g}" for m in ct.metrics_in([row]) if row.get(m) is not None
+            )
             print(f"counts, {arm}, the first task: {shown}")
     for arm, row in (first.get("scale") or {}).items():
         if row:
@@ -460,7 +471,7 @@ def dry_run(
 def counts_of(rows: Sequence[Any]) -> dict[str, Any] | None:
     """The counts of the paths that stand, pooled like the outcomes; None without a row."""
     have = [r for r in rows if r is not None]
-    return rn.aggregate(have, ct.METRICS) if have else None
+    return rn.aggregate(have, ct.metrics_in(have)) if have else None
 
 
 # --------------------------------------------------------------------------- the knobs (PR C)
@@ -1964,10 +1975,14 @@ def cmd_replay(args: argparse.Namespace) -> int:
     if spread is not None:
         payload["pool"]["draft"] = ADP_POOL.format(days=rn.OPENING_DAYS)
     if paired:
-        payload |= paired_blocks(keys, results, arms, paths, grid, league_rules.scoring)
+        payload |= paired_blocks(
+            keys, results, arms, paths, grid, league_rules.scoring, league_rules.waivers
+        )
         payload["verdict"] = verdict_block(payload, named, seasons, sources, note)
     else:
-        payload |= room_blocks(keys, results, seats, grid, league_rules.scoring)
+        payload |= room_blocks(
+            keys, results, seats, grid, league_rules.scoring, league_rules.waivers
+        )
         if sources is not None:
             payload["result_is"] = ROOM_RESULT
     look = None
@@ -2193,10 +2208,12 @@ def room_blocks(
     seats: Sequence[str],
     grid: shapes.Grid = shapes.FIXED_GRID,
     scoring: str = "categories",
+    waivers: str = "none",
 ) -> dict[str, Any]:
     """A room's figures, keyed by season and then by forecaster: each arm's outcomes and counts
-    pooled over its seats and the paths that stand, each arm's season scale by season (its note
-    the run's ``scoring``'s, :func:`scale_note`), the unprojected count by cell."""
+    pooled over its seats and the paths that stand (the counts' note the run's ``waivers``',
+    :func:`counts_note`), each arm's season scale by season (its note the run's ``scoring``'s,
+    :func:`scale_note`), the unprojected count by cell."""
     by_cell: dict[str, dict[str, dict[str, list[dict[str, Any]]]]] = {}
     counts_by_cell: dict[str, dict[str, dict[str, list[Any]]]] = {}
     unprojected: dict[str, dict[str, list[Any]]] = {}
@@ -2227,7 +2244,7 @@ def room_blocks(
             },
         },
         "counts": {
-            "note": COUNTS_NOTE,
+            "note": counts_note(waivers),
             "rivals": None,
             "by_season": {
                 t: {
@@ -2385,13 +2402,14 @@ def paired_blocks(
     paths: int,
     grid: shapes.Grid = shapes.FIXED_GRID,
     scoring: str = "categories",
+    waivers: str = "none",
 ) -> dict[str, Any]:
     """The pair's figures, keyed by season and then by forecaster: each arm's outcomes, the
-    difference (B less A) over the paths that stand with how many are distinct, the counts by
-    arm and for the rivals, each arm's season scale by season (its note the run's ``scoring``'s,
-    :func:`scale_note`), the unprojected count by cell and
-    arm, the seat rule and each path's seat, and the rivals each arm faced. On a grid of more
-    than one league shape, the by-axis table (:func:`by_axis`, #172, PR D4b)."""
+    difference (B less A) over the paths that stand with how many are distinct, the counts by arm
+    and for the rivals (their note the run's ``waivers``', :func:`counts_note`), each arm's season
+    scale by season (its note the run's ``scoring``'s, :func:`scale_note`), the unprojected count by
+    cell and arm, the seat rule and each path's seat, and the rivals each arm faced. On a grid of
+    more than one league shape, the by-axis table (:func:`by_axis`, #172, PR D4b)."""
     rows: dict[str, dict[str, list[Mapping[str, Any]]]] = {}
     scales: dict[str, dict[str, list[Any]]] = {}
     for key, res in zip(keys, results, strict=True):
@@ -2433,7 +2451,7 @@ def paired_blocks(
             },
         },
         "counts": {
-            "note": COUNTS_NOTE,
+            "note": counts_note(waivers),
             "rivals": "the seats other than the pair's, both arms' seasons, as one row",
             "by_season": {
                 t: {

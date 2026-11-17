@@ -28,15 +28,15 @@ counted ``playoff_weight`` times, on the key the arm executes and no other. At `
 0 the wrapper is not built and every search runs on the engine's values, as before the term.
 :func:`reads` says which knobs a seat reads in a league's :class:`Shape`.
 
-Executions are the autopilot's (``season.autopilot``): a decided move lands the next day, at
-most ``daily_cap`` a day and the league's adds a week, never a kept player dropped; in a league
-without waivers every add is a free agent. The executor keeps the roster as Yahoo would: a held player whose status has cleared
-comes back to the bench the next morning and, over the league's spots, the least valuable active
-player leaves (the engine's rule for a cleared player); the held-slot moves a set needs are made
-before its adds land, each only while its slot has room and accepts the player's status on the
-morning it lands (``moves.eligible``: a move is carried out against the day it lands, as an add
-another team took is); an add that needs an active spot (no drop, a churn's held drop, #221, or
-a held move refused) takes a bench slot and is gone when none is open.
+Executions are the autopilot's (``season.autopilot``): a decided move lands the next day, at most
+``daily_cap`` a day and the league's adds a week, never a kept player dropped; in a league without
+waivers every add is a free agent. The executor keeps the roster as Yahoo would: a held player whose
+status has cleared comes back to the bench the next morning and, over the league's spots, the least
+valuable active player leaves (the engine's rule for a cleared player); the held-slot moves a set
+needs are made before its adds land, each only while its slot has room and accepts the player's
+status on the morning it lands (``moves.eligible``: a move is carried out against the day it lands,
+as an add another team took is); an add that needs an active spot (no drop, a churn's held drop,
+#221, or a held move refused) takes a bench slot and is gone when none is open.
 
 **Waivers** (PR Fa, a league whose ``waivers`` is ``priority``): a player who leaves a roster on
 the morning of day ``d`` waits until his clear date, ``d`` plus the league's waiver days; an add

@@ -400,7 +400,7 @@ def test_weekly_adds_counts_a_claim_in_flight_in_the_week_it_is_charged_to():
 def test_the_counts_count_a_waiver_league_s_claims_and_none_without_waivers():
     setup, _, after, _, _ = contested()
     rows = ct.Tally(setup).rows(after)
-    assert list(rows[1]) == list(ct.METRICS)
+    assert list(rows[1]) == [*ct.METRICS, *ct.CLAIMS]
     assert {m: rows[2][m] for m in ct.CLAIMS} == {
         "claims_placed": 0.0,
         "claims_won": 0.0,
@@ -411,8 +411,11 @@ def test_the_counts_count_a_waiver_league_s_claims_and_none_without_waivers():
     }
     assert rows[3]["claims_won"] == 1.0 and rows[4]["claims_won"] == 1.0
     assert rows[4]["claims_behind"] == 0.0
+    assert ct.metrics_in(list(rows.values())) == (*ct.METRICS, *ct.CLAIMS)
+    assert list(ct.pooled(list(rows.values()))) == [*ct.METRICS, *ct.CLAIMS]
     plain = ct.Tally(make_setup(teams=4)).rows(initial(make_setup(teams=4)))
-    assert all(plain[1][m] is None for m in ct.CLAIMS)
+    assert list(plain[1]) == list(ct.METRICS)
+    assert ct.metrics_in(list(plain.values())) == ct.METRICS
 
 
 def test_a_waiver_run_s_days_do_not_depend_on_what_comes_after():
