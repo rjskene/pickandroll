@@ -4,9 +4,10 @@ A **league shape** (:class:`LeagueShape`) is a league's team count, its roster s
 add limit and its playoff format: what the user's ruling of 2026-11-06 lets a league generator
 vary ("team count, roster slots, weekly add limit and playoff format, over modest ranges"), with
 the weekly add limit a parameter beside the rest (2026-11-07). A shape says nothing of how a
-league scores or what it holds: those are the run's **league rules** (:class:`LeagueRules`, PR
-D4c), the scoring (categories or points, with a points league's table) and the held slots, one
-set for every path of a run and never an axis of a grid.
+league scores, what it holds or how it waives: those are the run's **league rules**
+(:class:`LeagueRules`, PR D4c), the scoring (categories or points, with a points league's table)
+and the held slots, and since PR Fa the waivers (none, or a dropped player's wait and claims by
+priority), one set for every path of a run and never an axis of a grid.
 
 - :data:`FIXED` is the league every replay played in before PR D4b: twelve teams, the thirteen
   slots of :data:`SLOTS`, four adds a week, six playoff teams over three weeks. It is the
@@ -301,8 +302,25 @@ POINTS_DEFAULT: tuple[tuple[str, float], ...] = (
 )
 
 
+#: How a league's dropped players are added back (#172, PR Fa): ``none``, every add a free agent
+#: who lands the next morning, as before the waivers; ``priority``, a dropped player waits his
+#: waiver days and a claim on him goes by rolling waiver priority. A FAAB league's budget and
+#: sealed bids are PR Fb's, refused by name until then.
+WAIVERS = ("none", "priority")
+#: The waiver kind PR Fb brings, refused by name here.
+FAAB = "faab"
+#: The whole days a dropped player waits by default, and the fewest and most a run may name
+#: (the all-knobs plan, 3d: ``waiver_days``, default 2).
+WAIVER_DAYS = 2
+WAIVER_DAYS_RANGE = (1, 7)
+
+
 def _number(x: float) -> str:
     return f"{x:g}"
+
+
+def _whole(x: Any) -> bool:
+    return isinstance(x, int) and not isinstance(x, bool)
 
 
 _WORDS = {1: "one", 2: "two"}
@@ -310,18 +328,44 @@ _WORDS = {1: "one", 2: "two"}
 
 @dataclass(frozen=True)
 class LeagueRules:
-    """How a run's league scores and what it holds (#172, PR D4c): ``scoring`` (one of
-    :data:`SCORINGS`), a points league's ``points`` table (stat and points per unit, in the
-    order of the engine's ``STATS``; None in a categories league) and the ``held`` slots, in the
-    roster's order after the bench (``IL`` up to twice, then ``IL+`` up to once). One set for
-    every path of a run; :data:`PLAIN` is today's league. ValueError, in words, on anything
-    else."""
+    """How a run's league scores, what it holds and how it waives (#172, PR D4c, PR Fa):
+    ``scoring`` (one of :data:`SCORINGS`), a points league's ``points`` table (stat and points
+    per unit, in the order of the engine's ``STATS``; None in a categories league), the ``held``
+    slots, in the roster's order after the bench (``IL`` up to twice, then ``IL+`` up to once),
+    and the ``waivers`` (one of :data:`WAIVERS`) with a dropped player's ``waiver_days`` (a
+    whole number from 1 to 7, named only with waivers). One set for every path of a run;
+    :data:`PLAIN` is today's league. ValueError, in words, on anything else."""
 
     scoring: str = "categories"
     points: tuple[tuple[str, float], ...] | None = None
     held: tuple[str, ...] = ()
+    waivers: str = "none"
+    waiver_days: int = WAIVER_DAYS
 
     def __post_init__(self) -> None:
+        self._check_scoring()
+        self._check_waivers()
+
+    def _check_waivers(self) -> None:
+        if self.waivers == FAAB:
+            raise ValueError(
+                "waivers faab: a budget and sealed bids are PR Fb's; this PR plays none or priority"
+            )
+        if self.waivers not in WAIVERS:
+            raise ValueError(f"waivers {self.waivers!r} is not one of {', '.join(WAIVERS)}")
+        days = self.waiver_days
+        lo, hi = WAIVER_DAYS_RANGE
+        if not _whole(days):
+            raise ValueError(f"waiver days {days!r}: a whole number of days")
+        if not lo <= days <= hi:
+            raise ValueError(f"waiver days {days}: a dropped player waits {lo} to {hi} days")
+        if self.waivers == "none" and days != WAIVER_DAYS:
+            raise ValueError(
+                f"waiver days {days} with waivers none: a wait is a waiver league's, and a league "
+                "without waivers has none"
+            )
+
+    def _check_scoring(self) -> None:
         if self.scoring not in SCORINGS:
             raise ValueError(f"scoring {self.scoring!r} is not one of {', '.join(SCORINGS)}")
         if (self.scoring == "points") != (self.points is not None):
@@ -366,10 +410,28 @@ class LeagueRules:
             " and ".join(f"{_WORDS[n]} {k} slot{'s' if n > 1 else ''}" for n, k in counts)
             or "no held slot"
         )
-        return f"{scoring}, {held}"
+        if not self.waiting:
+            return f"{scoring}, {held}"
+        days = f"{self.waiver_days} day{'s' if self.waiver_days > 1 else ''}"
+        return f"{scoring}, {held}, waivers by priority after {days}"
+
+    @property
+    def waiting(self) -> bool:
+        """Whether a dropped player waits: the league has waivers."""
+        return self.waivers != "none"
 
     def payload(self) -> dict[str, Any]:
-        return {"scoring": self.scoring, "points": self.table, "held": list(self.held)}
+        """The record's ``league.rules``: the scoring, the table and the held slots, and in a
+        waiver league its waivers and waiver days (a league without waivers records the three
+        keys it did before PR Fa)."""
+        out: dict[str, Any] = {
+            "scoring": self.scoring,
+            "points": self.table,
+            "held": list(self.held),
+        }
+        if self.waiting:
+            out |= {"waivers": self.waivers, "waiver_days": self.waiver_days}
+        return out
 
     def slots(self, roster: tuple[str, ...]) -> tuple[str, ...]:
         """A league shape's ``roster`` with the held slots after it (the draft takes the active
@@ -440,7 +502,37 @@ def parse_points(text: str) -> tuple[tuple[str, float], ...]:
     return tuple((s, table[s]) for s in STATS if s in table)
 
 
+def parse_waivers(waivers: str, days: str | None = None) -> tuple[str, int]:
+    """The waivers ``replay --waivers`` and ``--waiver-days`` name (#172, PR Fa): ``none`` or
+    ``priority`` (``faab`` refused by name: PR Fb), and the whole days a dropped player waits,
+    1 to 7, named only with waivers (the default 2 when not named). ValueError, in words, on
+    anything else."""
+    kind = waivers.strip().lower()
+    if kind == FAAB:
+        raise ValueError(
+            "--waivers faab: a budget and sealed bids are PR Fb's; this PR plays none or priority"
+        )
+    if kind not in WAIVERS:
+        raise ValueError(f"--waivers {waivers}: one of {', '.join(WAIVERS)}")
+    if days is None:
+        return kind, WAIVER_DAYS
+    if kind == "none":
+        raise ValueError(
+            f"--waiver-days {days}: a dropped player's wait is a waiver league's; it is read only "
+            "with --waivers priority"
+        )
+    try:
+        n = int(days)
+    except ValueError:
+        raise ValueError(f"--waiver-days {days}: a whole number of days") from None
+    lo, hi = WAIVER_DAYS_RANGE
+    if not lo <= n <= hi:
+        raise ValueError(f"--waiver-days {days}: a dropped player waits {lo} to {hi} days")
+    return kind, n
+
+
 __all__ = [
+    "FAAB",
     "FIXED",
     "FIXED_GRID",
     "FULL",
@@ -452,6 +544,9 @@ __all__ = [
     "SLOTS",
     "STRIDE",
     "VISIT_RULE",
+    "WAIVERS",
+    "WAIVER_DAYS",
+    "WAIVER_DAYS_RANGE",
     "WIDE_SLOTS",
     "Grid",
     "LeagueRules",
@@ -462,6 +557,7 @@ __all__ = [
     "parse_held",
     "parse_league",
     "parse_points",
+    "parse_waivers",
     "place",
     "round_up",
     "visit",
