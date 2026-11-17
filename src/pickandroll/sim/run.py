@@ -38,7 +38,7 @@ from . import counts as ct
 from . import league as lg
 from . import opponents as op
 from .belief import CausalBelief, newcomer_prior
-from .engine import Week, mv, wk
+from .engine import FPTS, Week, mv, wk
 from .fit import W_DEFAULT
 from .forecast import MIN_GAMES, realized_rates
 from .state import (
@@ -1226,6 +1226,8 @@ def replay_setup(
     opening_days: int | None = OPENING_DAYS,
     draft: adp.Draft | None = None,
     weekly_adds: int | None = REPLAY_WEEKLY_ADDS,
+    scoring: str = "categories",
+    points: Mapping[str, float] | None = None,
 ) -> Setup:
     """A made-up league on a recorded season, from what is known before it starts. Its players
     are everyone ``players`` lists with a scheduled game, projected or not; ``teams`` seats
@@ -1247,7 +1249,16 @@ def replay_setup(
     A league shape (#172, PR D4b) is passed as its keywords (``shapes.LeagueShape.setup_args``):
     ``teams``, ``slots``, ``weekly_adds`` (None: no limit), ``playoff_teams`` and
     ``playoff_weeks``; the defaults are the fixed shape's. The season stays ``weeks`` long and the
-    regular season is what the playoffs leave."""
+    regular season is what the playoffs leave.
+
+    The league rules (#172, PR D4c, ``shapes.LeagueRules``): ``scoring`` ``"points"`` scores on
+    ``points`` (a stat's points per unit): the draft values by them, each seat's own board under
+    a table too, the setup's categories are fantasy points alone and the standings break a tie
+    on points for (``league.TIEBREAK_POINTS``); the default is the nine categories. The held
+    slots arrive in ``slots`` after the bench: the draft takes the active spots only, so a held
+    slot starts the season empty."""
+    if (scoring == "points") != bool(points):
+        raise ValueError(f"scoring {scoring!r} with points {points!r}: a points league has a table")
     schedule: dict[date, set[str]] = {}
     members: dict[int, Member] = {}
     game_days = league_days(lines, players, scheduled)
@@ -1269,8 +1280,8 @@ def replay_setup(
     ids = tuple(range(1, teams + 1))
     pairings = round_robin(ids, regular)
     projected = [k for k in projection if k in members]
-    points = None
-    value = wk.per_game_values({k: projection[k] for k in projected}, tuple(cats), points)
+    table = dict(points) if scoring == "points" and points else None
+    value = wk.per_game_values({k: projection[k] for k in projected}, tuple(cats), table)
     spots = sum(1 for s in slots if s not in mv.HELD)
     draftable = draftable_of(
         members,
@@ -1284,19 +1295,22 @@ def replay_setup(
         rosters = snake_draft(draftable, value, ids, spots)
         market = {k: value.get(k, 0.0) for k in projected}
     else:
-        boards = draft_boards(draft, draftable, value, ids, members, cats)
+        boards = draft_boards(draft, draftable, value, ids, members, cats, table)
         rosters = board_draft(boards, ids, spots)
         market = adp.market_view(draft.picks, value, list(members))
     taken = {k for r in rosters.values() for k, _ in r}
+    # A points league's spec names no category and its setup's one is fantasy points, the
+    # category the engine takes its odds on (``moves.MoveProblem.cats``).
     spec = lg.LeagueSpec(
         ids,
         pairings,
         playoffs,
-        tuple(cats),
-        "categories",
-        None,
+        () if table else tuple(cats),
+        "points" if table else "categories",
+        table,
         playoff_teams,
         2 ** math.ceil(math.log2(playoff_teams)) - playoff_teams,
+        lg.TIEBREAK_POINTS if table else lg.TIEBREAK,
     )
     return Setup(
         start=calendar.weeks[0].start,
@@ -1309,10 +1323,12 @@ def replay_setup(
         projection={k: dict(projection[k]) for k in projected},
         schedule={d: frozenset(t) for d, t in schedule.items()},
         roster_slots=tuple(slots),
-        cats=tuple(cats),
+        cats=(FPTS,) if table else tuple(cats),
         max_weekly_adds=weekly_adds,
         market=market,
         spec=spec,
+        scoring="points" if table else "categories",
+        points=table,
     )
 
 
@@ -1361,10 +1377,12 @@ def draft_boards(
     teams: Sequence[int],
     players: Mapping[int, Member],
     cats: Sequence[str],
+    points: Mapping[str, float] | None = None,
 ) -> dict[int, list[int]]:
     """Each seat's board under ``draft`` (#172, PR D4a): a seat ``draft.seats`` names drafts on
     its own forecaster's per-game values on draft day (over the league's ``players`` it
-    projects, as the run's ``value`` is over the run's), every other seat on a rival's board
+    projects, as the run's ``value`` is over the run's; in a points league on ``points``, PR
+    D4c), every other seat on a rival's board
     (``adp.rival_board``) drawn from its own generator on the path's ``(seed, path)`` and the
     ``draft`` stream, so two leagues on one path meet the same rivals' boards."""
     out: dict[int, list[int]] = {}
@@ -1374,7 +1392,7 @@ def draft_boards(
             g = world.rng(draft.seed, draft.path, t, 0, world.STREAMS["draft"])
             out[t] = adp.rival_board(draft.picks, draftable, value, draft.spread, g)
         else:
-            mine = wk.per_game_values({k: own[k] for k in own if k in players}, tuple(cats), None)
+            mine = wk.per_game_values({k: own[k] for k in own if k in players}, tuple(cats), points)
             out[t] = adp.seat_board(mine, draftable)
     return out
 

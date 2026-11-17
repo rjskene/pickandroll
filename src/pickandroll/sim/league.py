@@ -4,7 +4,8 @@ win-loss-tie, the playoff bracket and the title.
 A week is scored as the record scores a real one (``season.scorecard``): percentages from the
 makes and attempts to Yahoo's three decimals, the lower turnovers winning, a tie half. The
 standings order teams by win percentage and then by the tiebreak, parameterised because the
-settings page does not print the regular season's: total category wins, then head to head. The
+settings page does not print the regular season's: total category wins, then head to head (a
+points league's: points for, then head to head, PR D4c: its category wins are its wins). The
 bracket seeds the top ``playoff_teams`` with ``byes`` byes, reseeds each round (best against
 worst) or plays the fixed bracket when the league does not reseed, and a playoff tie sends the
 higher seed through. The bracket's rules come from the settings page (PR 2a):
@@ -24,6 +25,10 @@ from .engine import FPTS, PCT, SeasonSettings, total, won
 
 #: The tiebreak order the standings apply after win percentage.
 TIEBREAK = ("category_wins", "head_to_head")
+#: A points league's (#172, PR D4c): its category wins are its wins again, so a tie on win
+#: percentage would fall to head to head and then to the team's number; points for decides
+#: first, the quantity a points league's standings page prints.
+TIEBREAK_POINTS = ("points_for", "head_to_head")
 #: The playoff tie-breakers the settings page prints, by the rule the bracket plays.
 TIEBREAKS: Mapping[str, str] = {"higher seed wins": "higher_seed"}
 Totals = Mapping[str, float]
@@ -121,12 +126,14 @@ def fpts(totals: Totals, points: Mapping[str, float]) -> float:
 @dataclass(frozen=True)
 class WeekResult:
     """One team's week: categories won, lost and tied (a points league: 1-0-0 or 0-1-0 or
-    0-0-1 on the points), and each category's outcome, a tie half."""
+    0-0-1 on the points), and each category's outcome, a tie half; in a points league the
+    team's fantasy points that week (``points_for``, PR D4c; 0 in a categories league)."""
 
     won: float
     lost: float
     tied: float
     cats: Mapping[str, float] = field(default_factory=dict)
+    points_for: float = 0.0
 
     @property
     def outcome(self) -> str:
@@ -146,7 +153,7 @@ def week_result(mine: Totals, theirs: Totals, spec: LeagueSpec) -> WeekResult:
     if spec.scoring == "points":
         a, b = fpts(mine, spec.points or {}), fpts(theirs, spec.points or {})
         w = 1.0 if a > b else 0.0 if a < b else 0.5
-        return WeekResult(float(w == 1.0), float(w == 0.0), float(w == 0.5), {FPTS: w})
+        return WeekResult(float(w == 1.0), float(w == 0.0), float(w == 0.5), {FPTS: w}, a)
     cats: dict[str, float] = {}
     for cat in spec.cats:
         a = total(mine, cat) if cat in PCT else float(mine.get(cat, 0.0))
@@ -182,6 +189,8 @@ class Standing:
     ties: int
     category_wins: float
     rank: int = 0
+    #: A points league's points for over the regular weeks (PR D4c; 0 in a categories league).
+    points_for: float = 0.0
 
     @property
     def pct(self) -> float:
@@ -211,7 +220,7 @@ def standings(results: Mapping[int, Mapping[int, WeekResult]], spec: LeagueSpec)
     rows: dict[int, Standing] = {}
     for team in spec.teams:
         w = l = t = 0
-        cw = 0.0
+        cw = pf = 0.0
         for week in results:
             r = results[week].get(team)
             if r is None:
@@ -220,7 +229,8 @@ def standings(results: Mapping[int, Mapping[int, WeekResult]], spec: LeagueSpec)
             l += r.outcome == "L"
             t += r.outcome == "T"
             cw += r.category_wins
-        rows[team] = Standing(team, w, l, t, cw)
+            pf += r.points_for
+        rows[team] = Standing(team, w, l, t, cw, points_for=pf)
     ordered = sorted(rows.values(), key=lambda s: (-s.pct, s.team))
     # Break ties level by level: a group tied on everything before a level is ordered by it.
     keys: dict[int, list[float]] = {s.team: [-s.pct] for s in ordered}
@@ -236,6 +246,8 @@ def standings(results: Mapping[int, Mapping[int, WeekResult]], spec: LeagueSpec)
             for s in group:
                 if level == "category_wins":
                     keys[s.team].append(-s.category_wins)
+                elif level == "points_for":
+                    keys[s.team].append(-s.points_for)
                 elif level == "head_to_head":
                     others = [o.team for o in group if o.team != s.team]
                     keys[s.team].append(
@@ -245,7 +257,7 @@ def standings(results: Mapping[int, Mapping[int, WeekResult]], spec: LeagueSpec)
                     raise ValueError(f"unknown tiebreak {level!r}")
         ordered.sort(key=lambda s: (*keys[s.team], s.team))
     return [
-        Standing(s.team, s.wins, s.losses, s.ties, s.category_wins, i + 1)
+        Standing(s.team, s.wins, s.losses, s.ties, s.category_wins, i + 1, s.points_for)
         for i, s in enumerate(ordered)
     ]
 
