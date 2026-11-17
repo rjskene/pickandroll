@@ -368,6 +368,8 @@ def build(
         returns=espn_returns(data_dir, [*roster, *held]),
         held_slots=held_slots,
         claims=claims,
+        # A one-win league's moves rank on the matchup odds (#397).
+        one_win=s.one_win,
     )
     names = {t.team_id: t.name for t in season.teams}
     horizons = {
@@ -1118,6 +1120,9 @@ def _payload(built: Built) -> dict[str, Any]:
         "keep_rule": keep_payload(built),
         "stash": stash_payload(built, swaps, recommended),
         "system": built.system,
+        # What the values and gains are in (#397): "matchup" (a one-win league's win odds),
+        # "points" or "categories".
+        "measure": mv.measure_of(p),
         "horizons": {key: {**built.horizons[key], "base": _r(ev.base[key])} for key in HORIZONS},
         "adds": built.adds,
         "claim": claim_of(built),

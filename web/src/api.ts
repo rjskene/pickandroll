@@ -1986,6 +1986,9 @@ export interface PriorityClaim {
 
 export interface MovesPayload {
   system: ProjectionSystemInfo & { key: ProjectionSystem; fallback?: string };
+  /** What the values and gains are in (#397): a one-win league's matchup win odds, "points" or
+   * "categories"; absent before the API serves it. */
+  measure?: "matchup" | "points" | "categories";
   cleared?: ClearedPlayer[];
   /** Absent until the API serves it (#187). */
   room?: MoveRoom;

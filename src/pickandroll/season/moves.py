@@ -1,5 +1,6 @@
 """The move model (#94, docs/ADD_DROP.md): which available player to add and whom to drop for
-him, valued as expected categories won.
+him, valued as expected categories won, or as the matchup's win odds in a league where a week is
+one win (#397).
 
 A roster's value over a horizon is the sum over the horizon's weeks of its expected categories
 won (:func:`weekly.category_odds`), each week projected exactly as the season view projects it
@@ -7,6 +8,13 @@ won (:func:`weekly.category_odds`), each week projected exactly as the season vi
 starters chosen per day). A week is played against the teams of its :class:`WeekSpan`: the
 named opponent, with the week so far, or the field, the other teams of the league, where the
 odds against each team are taken on its own projected roster and then averaged.
+
+In a categories league whose standings count one win per matchup (``one_win``, the user's
+ruling on #397), a 5-4 week is worth a 9-0 week, so a week's value is the odds of winning the
+matchup (:func:`weekly.matchup_won`) instead of its expected categories, averaged over the
+week's opponents and summed over the horizon's weeks as before. Every search, plan and choice
+that ranks on :meth:`Evaluator.value` then ranks on the odds. A league where each category
+counts (or whose format is not known) is valued as before.
 
 A :class:`Move` is an add with a drop, or with nobody when a spot is open or a player can move to
 a held slot. An add plays from the day his move counts: the first day for a free agent, the
@@ -140,6 +148,10 @@ GAMES_PER_DAY = 82 / 174
 
 Member = tuple[int, Player]
 
+#: What a league's move values are in (#397): a one-win league's matchup odds, a points league's
+#: (its one category's odds), or expected categories won.
+MATCHUP, POINTS, CATEGORIES = "matchup", "points", "categories"
+
 
 @dataclass(frozen=True)
 class WeekSpan:
@@ -247,6 +259,9 @@ class MoveProblem:
     #: player's value net of return by which the player who keeps the spot must beat it for him
     #: to leave (:func:`stash_ok`, :func:`guarded_pool`); None for no test, as before the reader.
     stash_threshold: float | None = None
+    #: Whether the league's standings count one win per matchup (#397, ``SeasonSettings.one_win``):
+    #: each week is then valued as the matchup's win odds, not its expected categories won.
+    one_win: bool = False
 
 
 @dataclass(frozen=True)
@@ -531,6 +546,14 @@ def feasible(problem: MoveProblem, moves: Sequence[Move]) -> bool:
 Allowed = Callable[[Sequence[Move]], bool]
 #: A set's rest of the season, the searches' tie-break (#221): :func:`season_total`'s.
 Season = Callable[[Sequence[Move]], float]
+
+
+def measure_of(problem: MoveProblem) -> str:
+    """What ``problem``'s values are in: :data:`MATCHUP` in a one-win league (#397), else
+    :data:`POINTS` or :data:`CATEGORIES` by its scoring."""
+    if problem.one_win:
+        return MATCHUP
+    return POINTS if problem.points else CATEGORIES
 
 
 def admitted(problem: MoveProblem, moves: Sequence[Move], allowed: Allowed | None) -> bool:
@@ -1099,7 +1122,8 @@ class Evaluator:
         self.base = {key: self.value(key, ()) for key in problem.horizons}
 
     def value(self, key: str, moves: Iterable[Move]) -> float:
-        """Expected categories won over horizon ``key`` with ``moves`` made, summed over its weeks."""
+        """Expected categories won over horizon ``key`` with ``moves`` made, summed over its weeks;
+        in a one-win league (``one_win``) the matchup's win odds, summed over its weeks."""
         moves = frozenset(moves)
         memo = (key, moves)
         if memo not in self._memo:
@@ -1148,7 +1172,8 @@ class Evaluator:
         odds = self._odds(span, members, available, gone)
         if not odds:
             return 0.0
-        return sum(wk.expected_won(o) for o in odds) / len(odds)
+        won = wk.matchup_won if self.problem.one_win else wk.expected_won
+        return sum(won(o) for o in odds) / len(odds)
 
     def _odds(
         self,

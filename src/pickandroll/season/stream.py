@@ -54,6 +54,10 @@ EXACT = 8
 #: share of its scale.
 PLAN_FLOOR_CATS = 0.10
 PLAN_FLOOR_POINTS = 0.01
+#: The floor in a one-win league (#397), whose week is the matchup's win odds: 3 percentage
+#: points, the playoff week's floor (``plans.PLAYOFF_FLOOR``, the master's ruling on #397). The
+#: categories knob ``plan_floor_cats`` is in categories and does not apply there.
+PLAN_FLOOR_ODDS = 0.03
 
 
 @dataclass(frozen=True)
@@ -342,8 +346,11 @@ def plan(
 
 
 def floor_of(problem: mv.MoveProblem) -> float:
-    """The floor a plan's week must clear: the problem's own (the knob, #152), else
-    :data:`PLAN_FLOOR_POINTS` in a points league and :data:`PLAN_FLOOR_CATS` in another."""
+    """The floor a plan's week must clear: :data:`PLAN_FLOOR_ODDS` in a one-win league (#397),
+    else the problem's own (the knob, #152), else :data:`PLAN_FLOOR_POINTS` in a points league
+    and :data:`PLAN_FLOOR_CATS` in another."""
+    if problem.one_win:
+        return PLAN_FLOOR_ODDS
     if problem.plan_floor is not None:
         return problem.plan_floor
     return PLAN_FLOOR_POINTS if problem.points else PLAN_FLOOR_CATS

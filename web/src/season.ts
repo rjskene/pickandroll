@@ -1306,6 +1306,60 @@ export function stripOrder<T extends Pick<QueueLeague, "league" | "status">>(row
 /** The moves' horizon behind the table's: the rest of this week, or the three weeks after it. */
 export const MOVE_HORIZON: Record<Horizon, MoveHorizon> = { week: "week", next3: "three" };
 
+/** What a league's move values and gains are in (#397): a one-win league's matchup win odds,
+ * a points league's points, else expected categories won. */
+export type MoveMeasure = "matchup" | "points" | "categories";
+
+/** A league's move measure: the moves' own answer when given, else read off the summary. */
+export function measureOf(s: Pick<SeasonSummary, "scoring" | "h2h">, m?: { measure?: MoveMeasure } | null): MoveMeasure {
+  if (m?.measure) return m.measure;
+  if (s.scoring === "points") return "points";
+  return s.h2h === "one_win" ? "matchup" : "categories";
+}
+
+/** A move's gain in its league's measure (#397): "+2.1 pts win odds" in a one-win league, where
+ * the gain is the matchup's win odds, else :func:`gainLabel`'s "+0.42"; blank for none. */
+export function moveGain(g: number | null | undefined, measure: MoveMeasure | null | undefined): string {
+  if (measure !== "matchup") return gainLabel(g);
+  if (g == null || Number.isNaN(g)) return "";
+  return `${gainLabel(g * 100, 1)} pts win odds`;
+}
+
+/** What the gains are in, in words: "points of win odds" (#397) or "expected categories". */
+export function measureWords(measure: MoveMeasure | null | undefined): string {
+  return measure === "matchup" ? "points of win odds" : "expected categories";
+}
+
+/** The Moves card's line on what ranks the moves, in a one-win league only (#397). */
+export function rankedLine(measure: MoveMeasure | null | undefined): string | null {
+  return measure === "matchup"
+    ? "Ranked on matchup odds: one win a week. A 5-4 week counts as a 9-0 one, so each move is recommended by how much it raises the odds of winning the week."
+    : null;
+}
+
+/** A horizon's value before and after a move (#397): "expected categories won 4.10 → 4.32" or, in a
+ * one-win league, "win odds 52% → 55%", a week's odds averaged over its ``weeks``. */
+export function valueMove(before: number, after: number, measure: MoveMeasure | null | undefined, weeks = 1): string {
+  if (measure !== "matchup") return `expected categories won ${before.toFixed(2)} → ${after.toFixed(2)}`;
+  const n = Math.max(1, weeks);
+  return `${n > 1 ? "win odds a week" : "win odds"} ${oddsLabel(before / n)} → ${oddsLabel(after / n)}`;
+}
+
+/** A horizon's value with no move, for a title (#397): "4.10 expected categories" or, in a one-win
+ * league, "win odds 50% a week", the odds summed over ``weeks`` averaged back to one. */
+export function baseLabel(base: number, measure: MoveMeasure | null | undefined, weeks = 1): string {
+  if (measure !== "matchup") return `${base.toFixed(2)} expected categories`;
+  const n = Math.max(1, weeks);
+  return `win odds ${oddsLabel(base / n)}${n > 1 ? " a week" : ""}`;
+}
+
+/** "No move adds more than 0.01 expected categories." or "… 1 pt of win odds." (#397). */
+export function minGainText(min: number, measure: MoveMeasure | null | undefined): string {
+  if (measure !== "matchup") return `No move adds more than ${min} expected categories.`;
+  const pts = Number((min * 100).toFixed(1));
+  return `No move adds more than ${pts} ${pts === 1 ? "pt" : "pts"} of win odds.`;
+}
+
 /** "+0.42" for a gain in expected categories, "−0.10" for a loss, "0.00" for neither; blank for
  * none. */
 export function gainLabel(g: number | null | undefined, digits = 2): string {
