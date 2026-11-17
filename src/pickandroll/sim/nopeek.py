@@ -30,6 +30,10 @@ FIELDS = ("beliefs", "status", "returns", "landed", "decisions", "queued", "star
 #: variant's seats hold and which team holds which (#172, PR D1). A run whose seats all hold the
 #: run's forecaster digests as it did before them.
 HELD = ("held", "holds")
+#: The record's fields a digest hashes when they are not empty: a waiver league's day's claims
+#: placed and its morning's claims decided (#172, PR Fa). A run without waivers digests as it did
+#: before them.
+WAIVERS = ("claims", "cleared")
 
 
 def _rng(seed: int, player: int, day: date) -> np.random.Generator:
@@ -140,10 +144,10 @@ def _hash(x: Any) -> str:
 
 
 def digest(record: Any) -> dict[str, str]:
-    """A hash of each of the record's :data:`FIELDS`, and of each of :data:`HELD` it has and is
-    not empty."""
+    """A hash of each of the record's :data:`FIELDS`, and of each of :data:`HELD` and
+    :data:`WAIVERS` it has and is not empty."""
     out = {f: _hash(getattr(record, f)) for f in FIELDS}
-    for f in HELD:
+    for f in (*HELD, *WAIVERS):
         x = getattr(record, f, None)
         if x:
             out[f] = _hash(x)
@@ -160,7 +164,7 @@ def first_difference(
         da, db = a.get(key), b.get(key)
         if da is None or db is None:
             return (key[0], key[1], FIELDS)
-        fields = tuple(f for f in (*FIELDS, *HELD) if da.get(f) != db.get(f))
+        fields = tuple(f for f in (*FIELDS, *HELD, *WAIVERS) if da.get(f) != db.get(f))
         if fields:
             return (key[0], key[1], fields)
     return None
@@ -171,6 +175,7 @@ __all__ = [
     "FLIP",
     "HELD",
     "SCALE",
+    "WAIVERS",
     "canonical",
     "digest",
     "first_difference",

@@ -16,6 +16,7 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from pickandroll.sim import cli as ss
+from pickandroll.sim import counts as ct
 from pickandroll.sim import forecast as fc
 from pickandroll.sim import league as lg
 from pickandroll.sim import policy, shapes
@@ -114,7 +115,7 @@ def test_with_nothing_named_nothing_moves(wire: Path):
     assert {k: v for k, v in one.items() if k not in WHEN} == {
         k: v for k, v in two.items() if k not in WHEN
     }
-    assert one["replay_version"] == 8
+    assert one["replay_version"] == 9
     assert one["league"]["rules"] == {"scoring": "categories", "points": None, "held": []}
     assert "points_note" not in one["league"]
     assert all("league rules" not in out for out in outs)
@@ -308,3 +309,60 @@ def test_every_path_of_a_grid_plays_the_run_s_rules(wire: Path, monkeypatch):
     code, out = replay(wire, "--seats", *spec(wire, "R", "S"), "--grid", "full", "--no-peek", "2023-11-06", *rules)  # fmt: skip
     assert code == 0 and "agree through 2023-11-06" in out, out
     assert "points on ESPN's default table, one IL slot and one IL+ slot" in out
+
+
+def test_waivers_out_of_the_plan_are_refused_by_name_before_any_path(wire: Path):
+    """PR Fa: ``--waivers faab`` is Fb's; a wait is a waiver league's, a whole number of days
+    from 1 to 7."""
+    room = ("--seats", *spec(wire, "R", "S"), "--paths", "1", "--dry-run")
+    for flags, why in (
+        (("--waivers", "faab"), "--waivers faab: a budget and sealed bids are PR Fb's"),
+        (("--waivers", "fifo"), "--waivers fifo: one of none, priority"),
+        (("--waiver-days", "2"), "--waiver-days 2: a dropped player's wait is a waiver league's"),
+        (("--waivers", "priority", "--waiver-days", "0"), "--waiver-days 0: a dropped player"),
+        (("--waivers", "priority", "--waiver-days", "8"), "--waiver-days 8: a dropped player"),
+        (("--waivers", "priority", "--waiver-days", "two"), "--waiver-days two: a whole number"),
+    ):
+        code, out = replay(wire, *room, *flags)
+        assert code == 2 and f"refused: {why}" in out, out
+        assert "tasks (" not in out
+
+
+def test_a_waiver_run_records_its_rules_its_audit_and_its_claims(wire: Path):
+    """``--scoring points --waivers priority --waiver-days 3``: the league block's rules name
+    the waivers and the wait, the execution model has a name of its own, the audit holds the
+    two waiver rules, the counts count the claims and a points run's season scale says what its
+    gain is."""
+    code, out = replay(
+        wire,
+        "--seats",
+        *spec(wire, "R", "S"),
+        "--paths",
+        "1",
+        "--scoring",
+        "points",
+        "--waivers",
+        "priority",
+        "--waiver-days",
+        "3",
+    )
+    assert code == 0, out
+    rules = shapes.LeagueRules("points", shapes.POINTS_DEFAULT, (), "priority", 3)
+    assert f"league rules, on every path: {rules.label()}" in out
+    assert rules.label().endswith(", waivers by priority after 3 days")
+    p = written(out)
+    assert p["replay_version"] == 9
+    assert p["league"]["rules"] == {
+        "scoring": "points",
+        "points": dict(shapes.POINTS_DEFAULT),
+        "held": [],
+        "waivers": "priority",
+        "waiver_days": 3,
+    }
+    assert p["executions"] == policy.EXECUTIONS_PRIORITY
+    assert [r["name"] for r in p["audit"]["rules"]][-2:] == ["waiver_wait", "claim_priority"]
+    assert p["audit"]["paths_voided"] == 0
+    for row in p["counts"]["by_season"]["2024"]["prior"].values():
+        assert all(row[m]["mean"] is not None for m in ct.CLAIMS), row
+    assert p["season_scale"]["note"] == ss.scale_note("points") != ss.SCALE_NOTE
+    assert ss.scale_note("categories") == ss.SCALE_NOTE

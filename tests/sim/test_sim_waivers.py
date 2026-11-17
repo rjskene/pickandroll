@@ -13,8 +13,9 @@ from datetime import date, timedelta
 import numpy as np
 
 from pickandroll.season import moves as mv
+from pickandroll.sim import audit, nopeek, policy
+from pickandroll.sim import counts as ct
 from pickandroll.sim import opponents as op
-from pickandroll.sim import policy
 from pickandroll.sim import run as rn
 from pickandroll.sim.state import (
     FAILED,
@@ -304,3 +305,145 @@ def test_a_surrogate_seat_places_a_claim_and_wins_one():
     assert result.breaches == ()
     counts = seen[-1].claim_counts[1]
     assert counts["placed"] >= 1 and counts[WON] >= 1, counts
+
+
+# --------------------------------------------------------------------------- the audit, the counts
+def contested():
+    """Teams 2 and 3 claim x, team 3 ahead; team 4, first, claims y: the morning before (its
+    audit day) and after the claims are decided."""
+    setup = league()
+    spots, counts = spots_of(setup)
+    s = initial(setup)
+    x, y = sorted(s.pool)[:2]
+    clears = setup.start + 3 * DAY
+    a2, a3, a4 = (setup.rosters[t][-1][0] for t in (2, 3, 4))
+    s = on_waivers(s, 1, clears, x, y)
+    s = replace(
+        s,
+        day=clears - DAY,
+        claims={2: (claim(x, a2, clears),), 3: (claim(x, a3, clears),), 4: (claim(y, a4, clears),)},
+    )
+    after = replace(policy.clear_waivers(s, clears, spots, counts, {}, 2), day=clears)
+    return setup, s, after, x, y
+
+
+def day_of(state: SimState) -> audit.Day:
+    return audit.Day(state.day, 0, state, {}, {})
+
+
+def found(rule, setup, today: SimState, before: SimState) -> list:
+    return list(rule(setup, day_of(today), day_of(before)))
+
+
+def test_the_waiver_rules_hold_an_honest_morning_and_a_run_without_waivers_reads_none():
+    setup, before, after, _, _ = contested()
+    for rule in audit.WAIVER_RULES:
+        assert found(rule.check, setup, after, before) == [], rule.name
+    for rule in audit.RULES:
+        assert found(rule.check, setup, after, before) == [], rule.name
+    assert audit.rules_of("none") == audit.RULES
+    assert [r.name for r in audit.rules_of("priority")] == [
+        *(r.name for r in audit.RULES),
+        "waiver_wait",
+        "claim_priority",
+    ]
+    assert audit.Auditor(setup).rules == audit.rules_of("priority")
+    assert audit.Auditor(make_setup(teams=4)).rules == audit.RULES
+
+
+def test_waiver_wait_catches_a_player_who_joins_before_his_clear_date():
+    """The morning's claims landed a day early: both winners joined before the clear date."""
+    setup, before, after, x, y = contested()
+    early = replace(before, day=before.day - DAY)
+    clears = before.waivers[x].clears
+    assert found(audit.waiver_wait, setup, replace(after, day=before.day), early) == [
+        (3, f"player {x} joined before his clear date {clears}"),
+        (4, f"player {y} joined before his clear date {clears}"),
+    ]
+
+
+def test_claim_priority_catches_a_claim_won_out_of_turn_and_an_order_left_as_it_was():
+    setup, before, after, x, _ = contested()
+    # Team 2 took x though team 3 stood ahead of it with a claim on him.
+    swapped = tuple(replace(r, team=5 - r.team) if r.add == x else r for r in after.resolved)
+    bad = replace(after, resolved=swapped)
+    assert any(
+        "with team 3 ahead" in what for _, what in found(audit.claim_priority, setup, bad, before)
+    )
+    # The winners were not moved to the back.
+    stuck = replace(after, priority=before.priority)
+    assert any(
+        "priority after the morning" in what
+        for _, what in found(audit.claim_priority, setup, stuck, before)
+    )
+    # A claim counted lost on a player nobody took.
+    lost = replace(after, resolved=(*after.resolved, Resolved(1, 999, None, LOST, True)))
+    assert (1, "claim on player 999 lost to no other team") in found(
+        audit.claim_priority, setup, lost, before
+    )
+
+
+def test_weekly_adds_counts_a_claim_in_flight_in_the_week_it_is_charged_to():
+    setup = league()
+    s = replace(initial(setup), day=MONDAY + 4 * DAY, adds_used={2: 3})
+    x, y = sorted(s.pool)[:2]
+    this = replace(
+        s, claims={2: (claim(x, None, s.day + 2 * DAY, 1), claim(y, None, s.day + 2 * DAY, 1))}
+    )
+    assert list(audit.weekly_adds(setup, day_of(this), None)) == [
+        (2, "5 adds this week on a cap of 4")
+    ]
+    later = replace(s, claims={2: (claim(x, None, s.day + 4 * DAY, 2),)})
+    assert list(audit.weekly_adds(setup, day_of(later), None)) == []
+
+
+def test_the_counts_count_a_waiver_league_s_claims_and_none_without_waivers():
+    setup, _, after, _, _ = contested()
+    rows = ct.Tally(setup).rows(after)
+    assert list(rows[1]) == list(ct.METRICS)
+    assert {m: rows[2][m] for m in ct.CLAIMS} == {
+        "claims_placed": 0.0,
+        "claims_won": 0.0,
+        "claims_lost": 1.0,
+        "claims_failed": 0.0,
+        "claims_behind": 1.0,
+        "claims_behind_lost": 1.0,
+    }
+    assert rows[3]["claims_won"] == 1.0 and rows[4]["claims_won"] == 1.0
+    assert rows[4]["claims_behind"] == 0.0
+    plain = ct.Tally(make_setup(teams=4)).rows(initial(make_setup(teams=4)))
+    assert all(plain[1][m] is None for m in ct.CLAIMS)
+
+
+def test_a_waiver_run_s_days_do_not_depend_on_what_comes_after():
+    """The no-peek check on a waiver run: the claims placed and the claims decided join the
+    day's record, and a change to the lines after a day reaches no record through it."""
+    setup = league(pool=12)
+    u = arm("U", "surrogate", opponents="market")
+    variant = {**{t: op.Market(0.3) for t in setup.teams}, 1: u.seat()}
+    lines = recorded_lines(setup, 11)
+
+    def records(ls):
+        got = {}
+        w = rn.replay_world(setup, ls, 1, *CLAIM_PATH)
+        rn.simulate(
+            setup, w, [variant], on_day=lambda r: got.update({(r.day, r.variant): nopeek.digest(r)})
+        )
+        return got
+
+    base = records(lines)
+    cleared = sorted(k[0] for k, d in base.items() if "cleared" in d)
+    assert cleared and any("claims" in d for d in base.values())
+    day = cleared[0]
+    got = records(nopeek.perturb(lines, rn.game_days_of(setup), day, 11))
+    first = nopeek.first_difference(base, got)
+    assert first is not None and first[0] > day, first
+    # A record without waivers digests as before: no claims, nothing cleared.
+    assert not set(nopeek.WAIVERS) & set(
+        nopeek.digest(replace(_record_of(setup), claims={}, cleared=()))
+    )
+
+
+def _record_of(setup) -> rn.DayRecord:
+    s = initial(setup)
+    return rn.DayRecord(s.day, 0, {}, {}, {}, {}, {}, {}, {}, s)

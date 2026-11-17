@@ -42,7 +42,9 @@ from .engine import FPTS, Week, mv, wk
 from .fit import W_DEFAULT
 from .forecast import MIN_GAMES, realized_rates
 from .state import (
+    Claim,
     Member,
+    Resolved,
     Setup,
     SimState,
     board_draft,
@@ -556,6 +558,12 @@ def _record(
         state,
         dict(held or {}),
         dict(holds or {}),
+        {
+            t: placed
+            for t, cs in state.claims.items()
+            if (placed := tuple(c for c in cs if c.placed == state.day))
+        },
+        state.resolved,
     )
 
 
@@ -597,6 +605,10 @@ class DayRecord:
     #: team holds (#172, PR D1); both empty when every seat holds the run's.
     held: Mapping[str, Mapping[int, Rates]] = field(default_factory=dict)
     holds: Mapping[int, str] = field(default_factory=dict)
+    #: A waiver league's (PR Fa): the claims each team placed today, and this morning's claims
+    #: decided, in the order decided; both empty without waivers.
+    claims: Mapping[int, tuple[Claim, ...]] = field(default_factory=dict)
+    cleared: tuple[Resolved, ...] = ()
 
 
 def holds_of(w: World, variant: Mapping[int, op.Strategy]) -> dict[int, str]:
@@ -654,7 +666,7 @@ def simulate(
 ) -> list[VariantResult]:
     """Every variant (a strategy by seat) through one world in lockstep. Each day, after the
     lineup is set and before the day's lines are read, the audit (``sim.audit``: ``rules``, or
-    :data:`audit.RULES`) reads every variant's day and its counts are tallied; ``on_day`` is
+    the setup's, ``audit.rules_of``) reads every variant's day and its counts are tallied; ``on_day`` is
     handed a :class:`DayRecord` for each variant and day at the same point. A seat that names
     a forecaster (``opponents.Seat.forecaster``) decides, sets its lineup and is charged its
     forced drops on that forecaster's beliefs and values; every other seat on the run's. A
