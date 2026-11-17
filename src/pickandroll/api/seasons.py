@@ -3678,6 +3678,9 @@ def _summary(
         "league": s.league,
         "name": s.name,
         "scoring": s.scoring,
+        # A categories league's head-to-head format (#397), and where it was read.
+        "h2h": s.h2h,
+        "h2h_from": s.h2h_from,
         "num_teams": s.num_teams,
         "public": is_public,
         "week": s.current_week,

@@ -112,6 +112,7 @@ import {
   solvingLine,
   STALE_CAP_MS,
   staleLine,
+  formatLabel,
   type AvailableFilter,
   type AvailableSort,
   type AvailableSortKey,
@@ -412,7 +413,7 @@ export default function SeasonScreen({
         </AppBarLead>
         <span className="muted title">
           {leagueTitle(s?.name, league)}
-          {s && ` · ${s.scoring === "points" ? "H2H points" : "H2H categories"} · ${s.num_teams} teams`}
+          {s && ` · ${formatLabel(s)} · ${s.num_teams} teams`}
         </span>
         <span className="grow" />
         {s?.has_snapshot && (

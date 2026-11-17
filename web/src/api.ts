@@ -829,6 +829,9 @@ export interface SeasonSummary {
   league: string;
   name: string | null;
   scoring: "points" | "categories";
+  /** A categories league's head-to-head format (#397): every category counts in the standings,
+   * or a week is one win; null for points or not known. */
+  h2h?: "each_category" | "one_win" | null;
   num_teams: number;
   /** False for a private league: no public pages, the extension posts them. */
   public: boolean;

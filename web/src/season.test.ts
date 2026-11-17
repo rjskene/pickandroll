@@ -255,6 +255,7 @@ import {
   isStale,
   NO_FILTER,
   ordinal,
+  formatLabel,
   pctLabel,
   playersById,
   playsPosition,
@@ -2538,4 +2539,12 @@ test("a league's dollars and adds left read the same on the list and the Queue (
   assert.equal(fundsLabel({ dollars: null, bids: 0, priority: null, teams: 12, adds: null }), "");
   assert.equal(fundsLabel(null), "");
   assert.equal(fundsNote(undefined), undefined);
+});
+
+test("a league's format names a one-win league and keeps the others (#397)", () => {
+  assert.equal(formatLabel({ scoring: "categories", h2h: "one_win" }), "H2H one win");
+  assert.equal(formatLabel({ scoring: "categories", h2h: "each_category" }), "H2H categories");
+  assert.equal(formatLabel({ scoring: "categories", h2h: null }), "H2H categories");
+  assert.equal(formatLabel({ scoring: "categories" }), "H2H categories");
+  assert.equal(formatLabel({ scoring: "points", h2h: null }), "H2H points");
 });
