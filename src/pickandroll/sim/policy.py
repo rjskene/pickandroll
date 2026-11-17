@@ -38,18 +38,20 @@ status on the morning it lands (``moves.eligible``: a move is carried out agains
 as an add another team took is); an add that needs an active spot (no drop, a churn's held drop,
 #221, or a held move refused) takes a bench slot and is gone when none is open.
 
-**Waivers** (PR Fa, a league whose ``waivers`` is ``priority``): a player who leaves a roster on
-the morning of day ``d`` waits until his clear date, ``d`` plus the league's waiver days; an add
-of him before it is a **claim** (:class:`state.Claim`), decided on the morning of his clear date
-before anything else lands (:func:`clear_waivers`): the team with the best priority that still
-has a claim open that morning wins its first (in the order it placed them) and goes to the back
-of the order, every other claim on that player is lost, and a won claim its roster cannot take
-fails and the player goes to the next. A claim's drop and its held-slot moves are made only if
-it is won, and it is charged to the week of the day before it lands. The executor mirrors the
-autopilot's claim rules (:func:`queue`). The problem is built as the live build builds it: each
-candidate on waivers effective on his clear date and among ``claims``, and the seat's own claims
-in flight folded in (``moves.with_pending``). Fb adds the budget and bids. ``EXECUTIONS`` names
-the model in every run's payload.
+**Waivers** (PR Fa, a league whose ``waivers`` is ``priority``): a player who leaves a roster on the
+morning of day ``d`` waits until his clear date, ``d`` plus the league's waiver days; an add of him
+before it is a **claim** (:class:`state.Claim`), decided on the morning of his clear date before
+anything else lands (:func:`clear_waivers`): the team with the best priority that still has a claim
+open that morning wins its first (in the order it placed them) and goes to the back of the order,
+every other claim on that player is lost, and a won claim its roster cannot take fails and the
+player goes to the next. A claim's drop and its held-slot moves are made only if it is won, but for
+a churn on a claim: its held player leaves the next morning, won or not, as the autopilot drops him
+on his own before the claim (which is why the engine offers a churn on a claim only when the held
+player is worth nothing net of his return). A claim is charged to the week of the day before it
+lands. The executor mirrors the autopilot's claim rules (:func:`queue`). The problem is built as the
+live build builds it: each candidate on waivers effective on his clear date and among ``claims``,
+and the seat's own claims in flight folded in (``moves.with_pending``). Fb adds the budget and bids.
+``EXECUTIONS`` names the model in every run's payload.
 """
 
 from __future__ import annotations

@@ -883,29 +883,31 @@ What a replay with them does not model, each plainly:
    weakest. On such a morning the seat's queue was planned on one roster and lands on another.
    The held player's return is PR G's to finish, with `stash_threshold`.
 
-**The waivers** (`policy.clear_waivers`, `policy.queue`, PR Fa). Under `--waivers priority` a
-player who leaves a roster on the morning of day `d` (a seat's drop, a churn's held drop, a drop
-the world forces) is on waivers until `d` plus the waiver days, his clear date, and nobody adds
-him as a free agent before it. The draft's leftovers and a player who enters the league are free
-agents at once: a free agent lands the next morning, a contested one by the day's rotation. An
-add of a player on waivers is a **claim**: it waits for his clear date, and its drop and its
-held-slot moves are made only if it is won. On the clear morning, before anything else lands, the
-claims on him are decided by rolling priority: the team with the best priority that still has a
-claim open that morning wins its first (in the order it placed them) and goes to the back of the
-order; every other claim on that player is lost (no drop, counted as lost); repeat until no claim
-is open. A player nobody claimed is a free agent from that morning. A won claim its roster cannot
-take (its drop gone, no active spot open) fails, is counted apart from a lost one and among the
-moves gone, and the player goes to the next claim on him. The first order is the reverse of the
-draft's. The executor mirrors the autopilot's claim rules in its own code (`READD`, a claim on a
-player the team dropped who still waits; `DROP_CLAIMED`, a move whose drop an open claim takes;
-`ALREADY_CLAIMED`, a second claim on one add; `NO_ADDS`, a claim whose week has no add left, the
-claims in flight counted), and the daily cap counts claims and free agents alike. The seat's
-problem is built as the live build builds it: a candidate on waivers takes effect on his clear
-date and is among `claims` (a churn on one only when the held player is worth nothing net of his
-return), and the seat's claims in flight are folded in (`moves.with_pending`, as the live build
+**The waivers** (`policy.clear_waivers`, `policy.queue`, PR Fa). Under `--waivers priority` a player
+who leaves a roster on the morning of day `d` (a seat's drop, a churn's held drop, a drop the world
+forces) is on waivers until `d` plus the waiver days, his clear date, and nobody adds him as a free
+agent before it. The draft's leftovers and a player who enters the league are free agents at once: a
+free agent lands the next morning, a contested one by the day's rotation. An add of a player on
+waivers is a **claim**: it waits for his clear date, and its drop and its held-slot moves are made
+only if it is won, but for a churn on a claim: its held player leaves the next morning, won or not,
+as the autopilot drops him on his own before the claim (which is why the engine offers a churn on a
+claim only when the held player is worth nothing net of his return). On the clear morning, before
+anything else lands, the claims on him are decided by rolling priority: the team with the best
+priority that still has a claim open that morning wins its first (in the order it placed them) and
+goes to the back of the order; every other claim on that player is lost (no drop, counted as lost);
+repeat until no claim is open. A player nobody claimed is a free agent from that morning. A won
+claim its roster cannot take (its drop gone, no active spot open) fails, is counted apart from a
+lost one and among the moves gone, and the player goes to the next claim on him. The first order is
+the reverse of the draft's. The executor mirrors the autopilot's claim rules in its own code
+(`READD`, a claim on a player the team dropped who still waits; `DROP_CLAIMED`, a move whose drop an
+open claim takes; `ALREADY_CLAIMED`, a second claim on one add; `NO_ADDS`, a claim whose week has no
+add left, the claims in flight counted), and the daily cap counts claims and free agents alike. The
+seat's problem is built as the live build builds it: a candidate on waivers takes effect on his
+clear date and is among `claims` (a churn on one only when the held player is worth nothing net of
+his return), and the seat's claims in flight are folded in (`moves.with_pending`, as the live build
 folds the queue's open claims). A market rival's pick may be a claim; its rate and view do not
-change. The payload names the model (`executions`), the audit holds two more rules and the
-counts count the claims (below).
+change, and in a waiver league it picks among what it may add and drop (limit 4). The payload names
+the model (`executions`), the audit holds two more rules and the counts count the claims (below).
 
 What the waivers do not model, each plainly:
 
@@ -916,8 +918,12 @@ What the waivers do not model, each plainly:
 2. **The first order is the draft's reverse**, and a league that sets its own (last season's
    standings, a continual list) is not read. A failed claim keeps its team's place.
 3. **No budget and no bids** (`faab`): PR Fb's, with `faab_sizing`.
-4. **Rivals claim on their own rules.** A market rival claims the market's best when he waits;
-   no rival is fitted to a league's claims.
+4. **Rivals claim on their own rules.** A market rival claims the market's best when he waits.
+   Its pick is the best player it may add, not one it already claims and not its own drop still
+   waiting, and its drop the weakest it may drop, not one an open claim of its takes: the
+   executor would refuse either (`ALREADY_CLAIMED`, `READD`, `DROP_CLAIMED`), and the rival would
+   idle while its claim waits. Without waivers its pick is the pool's best and its weakest, as
+   before. No rival is fitted to a league's claims.
 5. **Waivers run at one clear time, the morning.** Game-time waivers (a player locked until his
    game ends) and a clear time read from a league are not modelled.
 6. `validate` plays the fixed league without waivers.

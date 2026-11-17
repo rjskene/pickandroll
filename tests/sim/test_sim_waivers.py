@@ -289,6 +289,41 @@ def test_a_market_rival_s_pick_on_waivers_is_a_claim():
     assert [c.move.add for c in out.claims[2]] == [best] and out.pending[2] == ()
 
 
+def test_a_market_rival_with_a_claim_in_flight_picks_what_it_may_add_and_drop():
+    """While its claim waits a market rival does not idle: it picks the next best player it may
+    add (not the one it claims, not its own drop still waiting) and drops the weakest its claim
+    does not take, and the executor queues that move. With no claim and nobody waiting, the
+    pool's best and its weakest, as before."""
+    setup = league()
+    spots, _ = spots_of(setup)
+    top = max(setup.market.values())
+    claimed, own, next_best = sorted(initial(setup).pool)[:3]
+    setup = replace(
+        setup, market={**setup.market, claimed: 4 * top, own: 3 * top, next_best: 2 * top}
+    )
+    start = replace(initial(setup), day=setup.start)
+    weakest, second = sorted(start.active(2), key=lambda k: (setup.market[k], k))[:2]
+    clears = setup.start + 2 * DAY
+    s = replace(
+        on_waivers(on_waivers(start, 1, clears, claimed), 2, clears, own),
+        claims={2: (claim(claimed, weakest, clears),)},
+    )
+
+    def pick(state):
+        decision = op.Market(1.0).decide(
+            setup, state, 2, setup.projection, {}, {}, np.random.default_rng(0)
+        )
+        return decision, decision.moves[0]
+
+    decision, move = pick(s)
+    assert (move.add, move.drop) == (next_best, second)
+    out = policy.queue(s, 2, decision, 1, 4, False, spots, setup)
+    assert out.pending[2] == (mv.Move(next_best, second),)
+    assert [c.move.add for c in out.claims[2]] == [claimed]
+    _, before = pick(start)
+    assert (before.add, before.drop) == (claimed, weakest)
+
+
 def test_a_surrogate_seat_places_a_claim_and_wins_one():
     """The test that catches a seat that never claims: a six-week made-up league of four seats
     and twelve free agents with waivers by priority, the surrogate in seat 1 among market rivals

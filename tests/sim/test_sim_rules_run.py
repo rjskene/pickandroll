@@ -102,7 +102,7 @@ def test_league_rules_out_of_the_plan_are_refused_by_name_before_any_path(wire: 
 
 
 def test_with_nothing_named_nothing_moves(wire: Path):
-    """Rule 1: ``--scoring categories`` named and nothing named give one payload, version 8, its
+    """Rule 1: ``--scoring categories`` named and nothing named give one payload, version 9, its
     league block naming today's rules; no line names them."""
     room = ("--seats", *spec(wire, "R", "S"), "--paths", "1")
     runs, outs = [], []
