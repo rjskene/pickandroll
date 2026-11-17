@@ -312,11 +312,10 @@ def test_every_path_of_a_grid_plays_the_run_s_rules(wire: Path, monkeypatch):
 
 
 def test_waivers_out_of_the_plan_are_refused_by_name_before_any_path(wire: Path):
-    """PR Fa: ``--waivers faab`` is Fb's; a wait is a waiver league's, a whole number of days
-    from 1 to 7."""
+    """PR Fa: a wait is a waiver league's, a whole number of days from 1 to 7 (PR Fb lifts the
+    refusal of ``--waivers faab``)."""
     room = ("--seats", *spec(wire, "R", "S"), "--paths", "1", "--dry-run")
     for flags, why in (
-        (("--waivers", "faab"), "--waivers faab: a budget and sealed bids are PR Fb's"),
         (("--waivers", "fifo"), "--waivers fifo: one of none, priority"),
         (("--waiver-days", "2"), "--waiver-days 2: a dropped player's wait is a waiver league's"),
         (("--waivers", "priority", "--waiver-days", "0"), "--waiver-days 0: a dropped player"),
